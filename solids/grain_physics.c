@@ -148,7 +148,7 @@ void apply_grain_dragforce(void)
                         startnode=All.MaxPart;dummy=0;h=0;numngb_inbox=0;pos=P[i].Pos;
                         h=PPP[i].Hsml; if(h<=0) h=All.SofteningTable[0];
                         do {
-                            numngb_inbox = ngb_treefind_variable(pos,h,-1,&startnode,0,&dummy,&dummy);
+                            numngb_inbox = ngb_treefind_variable_targeted(pos,h,-1,&startnode,0,&dummy,&dummy,1); // search for gas: 2^0=1
                             h2=h*h; hinv=1/h; hinv3=hinv*hinv*hinv; rho=0;
                             if((numngb_inbox>=N_MIN_KERNEL)&&(numngb_inbox<=N_MAX_KERNEL))
                             {
@@ -280,12 +280,12 @@ void grain_collisions(void)
     Ngblist = (int *) mymalloc(NumPart * sizeof(int));
     
     CPU_Step[CPU_MISC] += measure_time();
+#ifndef IO_REDUCED_MODE
     if(ThisTask == 0)
     {
         printf("Beginning Grain Collisions & Interactions \n");
-        fflush(stdout);
     }
-    
+#endif
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if(P[i].Type == 3)
@@ -536,28 +536,7 @@ void grain_density(void)
             }
             tend = my_second();
             timecomp1 += timediff(tstart, tend);
-            sumup_large_ints(1, &npleft, &ntot);
-            
-            /*
-             if(ntot > 0)
-             {
-             iter++;
-             
-             if(iter > 0 && ThisTask == 0)
-             {
-             printf("ngb (grain) iteration %d: need to repeat for %d%09d particles.\n", iter,
-             (int) (ntot / 1000000000), (int) (ntot % 1000000000));
-             fflush(stdout);
-             }
-             
-             if(iter > MAXITER)
-             {
-             printf("failed to converge in neighbour iteration in grain_density()\n");
-             fflush(stdout);
-             endrun(1155);
-             }
-             }
-             */
+            sumup_large_ints(1, &npleft, &ntot);            
         }
     } while(ntot > 0); /* closes the check for particles that need iteration */
     
@@ -651,7 +630,7 @@ int grain_density_evaluate(int target, int mode, int *nexport, int *nsend_local)
     {
         while(startnode >= 0)
         {
-            numngb_inbox = grain_ngb_treefind_variable(pos, h, target, &startnode, mode, nexport, nsend_local);
+            numngb_inbox = ngb_treefind_variable_targeted(pos, h, target, &startnode, mode, nexport, nsend_local, 8); // 8 = 2^3: search for particles of type=3
             if(numngb_inbox < 0) return -1;
             
             for(n = 0; n < numngb_inbox; n++)
@@ -728,150 +707,6 @@ int grain_density_isactive(int n)
 }
 
 
-/*! This function returns neighbours with distance <= hsml and returns them in
- *  Ngblist. Actually, particles in a box of half side length hsml are
- *  returned, i.e. the reduction to a sphere still needs to be done in the
- *  calling routine.
- */
-int grain_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode,
-                                int *nexport, int *nsend_local)
-{
-    int numngb, no, p, task, nexport_save;
-    struct NODE *current;
-    MyDouble dx, dy, dz, dist;
-    
-#ifdef PERIODIC
-    MyDouble xtmp;
-#endif
-    nexport_save = *nexport;
-    
-    numngb = 0;
-    no = *startnode;
-    
-    while(no >= 0)
-    {
-        if(no < All.MaxPart)	/* single particle */
-        {
-            p = no;
-            no = Nextnode[no];
-            
-            /* this is the only line changed from gas case:: use type=3 instead of type=0 */
-            if(P[p].Type != 3)
-                continue;
-            
-            if(P[p].Ti_current != All.Ti_Current)
-                drift_particle(p, All.Ti_Current);
-            
-            dist = hsml;
-            dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-            
-            Ngblist[numngb++] = p;
-        }
-        else
-        {
-            if(no >= All.MaxPart + MaxNodes)	/* pseudo particle */
-            {
-                if(mode == 1)
-                    endrun(12312);
-                
-                if(target >= 0)	/* if no target is given, export will not occur */
-                {
-                    if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
-                    {
-                        Exportflag[task] = target;
-                        Exportnodecount[task] = NODELISTLENGTH;
-                    }
-                    
-                    if(Exportnodecount[task] == NODELISTLENGTH)
-                    {
-                        if(*nexport >= All.BunchSize)
-                        {
-                            *nexport = nexport_save;
-                            if(nexport_save == 0)
-                                endrun(13004);	/* in this case, the buffer is too small to process even a single particle */
-                            for(task = 0; task < NTask; task++)
-                                nsend_local[task] = 0;
-                            for(no = 0; no < nexport_save; no++)
-                                nsend_local[DataIndexTable[no].Task]++;
-                            return -1;
-                        }
-                        Exportnodecount[task] = 0;
-                        Exportindex[task] = *nexport;
-                        DataIndexTable[*nexport].Task = task;
-                        DataIndexTable[*nexport].Index = target;
-                        DataIndexTable[*nexport].IndexGet = *nexport;
-                        *nexport = *nexport + 1;
-                        nsend_local[task]++;
-                    }
-                    
-                    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-                    DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
-                    
-                    if(Exportnodecount[task] < NODELISTLENGTH)
-                        DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-                }
-                
-                no = Nextnode[no - MaxNodes];
-                continue;
-            }
-            
-            current = &Nodes[no];
-            
-            if(mode == 1)
-            {
-                if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-                {
-                    *startnode = -1;
-                    return numngb;
-                }
-            }
-            
-            if(current->Ti_current != All.Ti_Current)
-                force_drift_node(no, All.Ti_Current);
-            
-            if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-            {
-                if(current->u.d.mass)	/* open cell */
-                {
-                    no = current->u.d.nextnode;
-                    continue;
-                }
-            }
-            
-            no = current->u.d.sibling;	/* in case the node can be discarded */
-            
-            dist = hsml + 0.5 * current->len;;
-            dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            /* now test against the minimal sphere enclosing everything */
-            dist += FACT1 * current->len;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-            
-            no = current->u.d.nextnode;	/* ok, we need to open the node */
-        }
-    }
-    
-    *startnode = -1;
-    return numngb;
-}
 
 #endif // closes GRAIN_COLLISIONS
 

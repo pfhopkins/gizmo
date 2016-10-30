@@ -33,8 +33,8 @@ extern pthread_mutex_t mutex_partnodedrift;
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
-#if defined(GALSF)
-#define RT_DUMP_PHOTONS_DISCRETELY_NOT_CONTINUOUSLY
+#if defined(GALSF) && !defined(RT_INJECT_PHOTONS_DISCRETELY)
+#define RT_INJECT_PHOTONS_DISCRETELY
 #endif
 
 #ifdef RT_SOURCE_INJECTION
@@ -69,7 +69,7 @@ void rt_particle2in_source(struct rt_sourcedata_in *in, int i)
     double lum[N_RT_FREQ_BINS];
     int active_check = rt_get_source_luminosity(i,0,lum);
     double dt = 1; // make this do nothing unless flags below are set:
-#if defined(RT_DUMP_PHOTONS_DISCRETELY_NOT_CONTINUOUSLY)
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
 #ifndef WAKEUP
     dt = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval / All.cf_hubble_a;
 #else
@@ -163,7 +163,7 @@ void rt_source_injection(void)
             if(NextParticle == save_NextParticle)
             {
                 /* in this case, the buffer is too small to process even a single particle */
-                endrun(116608);
+                endrun(116610);
             }
             int new_export = 0;
             for(j = 0, k = 0; j < Nexport; j++)
@@ -309,7 +309,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 for(k=0;k<N_RT_FREQ_BINS;k++) 
                 {
                     double dE = wk * local.Luminosity[k];
-#if defined(RT_DUMP_PHOTONS_DISCRETELY_NOT_CONTINUOUSLY)
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
                     SphP[j].E_gamma[k] += dE; SphP[j].E_gamma_Pred[k] += dE; // dump discreetly (noisier, but works smoothly with large timebin hierarchy)
 #else
                     SphP[j].Je[k] += dE; // treat continuously
@@ -334,75 +334,30 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 } // int rt_sourceinjection_evaluate
 
 
-
-
+int rt_sourceinjection_active_check(int i);
+int rt_sourceinjection_active_check(int i)
+{
+    if(PPP[i].NumNgb <= 0) return 0;
+    if(PPP[i].Hsml <= 0) return 0;
+    if(PPP[i].Mass <= 0) return 0;
+    double lum[N_RT_FREQ_BINS];
+    return rt_get_source_luminosity(i,-1,lum);
+}
 
 /* routine for initial loop of particles on local processor (and determination of which need passing) */
 void *rt_sourceinjection_evaluate_primary(void *p)
 {
-    int i, j, *exportflag, *exportnodecount, *exportindex, *ngblist, active_check = 0, thread_id = *(int *) p;
-    ngblist = Ngblist + thread_id * NumPart;
-    exportflag = Exportflag + thread_id * NTask;
-    exportnodecount = Exportnodecount + thread_id * NTask;
-    exportindex = Exportindex + thread_id * NTask;
-    /* Note: exportflag is local to each thread */
-    for(j = 0; j < NTask; j++) {exportflag[j] = -1;}
-    while(1)
-    {
-        int exitFlag = 0;
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            if(BufferFullFlag != 0 || NextParticle < 0)
-            {
-                exitFlag = 1;
-            }
-            else
-            {
-                i = NextParticle;
-                ProcessedFlag[i] = 0;
-                NextParticle = NextActiveParticle[NextParticle];
-            }
-        }
-        UNLOCK_NEXPORT;
-        if(exitFlag) {break;}
-        active_check = 0;
-        if((PPP[i].NumNgb > 0) && (PPP[i].Hsml > 0) && (P[i].Mass) > 0)
-        {
-            double lum[N_RT_FREQ_BINS];
-            active_check = rt_get_source_luminosity(i,-1,lum);
-        }
-        if(active_check==1)
-        {
-            if(rt_sourceinjection_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist) < 0) {break;} // export buffer has filled up //
-        }
-        ProcessedFlag[i] = 1; /* particle successfully finished */
-    }
-    return NULL;
+#define CONDITION_FOR_EVALUATION if(rt_sourceinjection_active_check(i)==1)
+#define EVALUATION_CALL rt_sourceinjection_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist)
+#include "../system/code_block_primary_loop_evaluation.h"
+#undef CONDITION_FOR_EVALUATION
+#undef EVALUATION_CALL
 }
-
-/* routine for looping over passed particles (with multi-threading): note here we dont need to check for activity, because nothing inactive is passed */
 void *rt_sourceinjection_evaluate_secondary(void *p)
 {
-    int j, dummy, *ngblist, thread_id = *(int *) p;
-    ngblist = Ngblist + thread_id * NumPart;
-    while(1)
-    {
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            j = NextJ;
-            NextJ++;
-        }
-        UNLOCK_NEXPORT;
-        if(j >= Nimport) {break;}
-        rt_sourceinjection_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist);
-    }
-    return NULL;
+#define EVALUATION_CALL rt_sourceinjection_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist);
+#include "../system/code_block_secondary_loop_evaluation.h"
+#undef EVALUATION_CALL
 }
 
 

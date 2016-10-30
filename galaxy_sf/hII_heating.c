@@ -162,9 +162,7 @@ void HII_heating_singledomain(void)
          jnearest=-1; rnearest=1.0e10;
          R_search = RHII;
          if(h_i>R_search) R_search=h_i;
-           numngb =
-           ngb_treefind_variable_threads(pos, R_search, -1, &startnode, 0, &dummy,
-                                         &dummy, &dummy, Ngblist);
+         numngb = ngb_treefind_variable_threads(pos, R_search, -1, &startnode, 0, &dummy, &dummy, &dummy, Ngblist);
          if(numngb>0)
          {
          for(n = 0; n < numngb; n++)
@@ -210,8 +208,6 @@ void HII_heating_singledomain(void)
                  already_ionized = 1;
                } // if(do_ionize==1) 
               mionized += prob*m_effective;
-              //printf("H2_A: i %d j %d doit %d prob %g mionized %g meff %g \n",
-              // i,j,do_ionize,prob,mionized,m_effective);fflush(stdout);
             } // if((r<=RHII)&&(already_ionized==0)&&(mionized<mionizable)) 
 
             /* if nearest un-ionized particle, mark as such */
@@ -241,8 +237,6 @@ void HII_heating_singledomain(void)
               SphP[j].DelayTimeHII = dt;
             } // if(do_ionize==1)
             mionized += prob*m_effective;
-            //printf("H2_N: i %d j %d doit %d prob %g mionized %g meff %g \n",
-            //  i,j,do_ionize,prob,mionized,m_effective);fflush(stdout);
           } // if((mionized<mionizable)&&(jnearest>=0))
 
 
@@ -271,10 +265,6 @@ void HII_heating_singledomain(void)
                startnode=All.MaxPart; // this will trigger the while loop to continue
              } // if((RHII >= 5.0*RHII_initial)||(RHII>=RHIIMAX)||(NITER_HIIFB >= MAX_N_ITERATIONS_HIIFB))
             } // if(mionized < 0.95*mionizable) 
- 
-          //printf("i %d mionized %g mionizable %g RHII %g RHII_i %g RHII_max %g RHIImult %g NITER %d \n",
-          //  i,mionized,mionizable,RHII,RHII_initial,RHIIMAX,RHIImultiplier,NITER_HIIFB);fflush(stdout);
-
        NITER_HIIFB++;
        } while(startnode >= 0);
      total_m_ionized += mionized;
@@ -291,16 +281,22 @@ void HII_heating_singledomain(void)
    MPI_Reduce(&avg_RHII, &totMPI_avg_RHII, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
    if(ThisTask == 0)
    {
-     if(totMPI_m_ionizing>0) {
-     totMPI_avg_RHII /= totMPI_m_ionizing;
-     printf("HII PhotoHeating: Time=%g: %g sources with L_tot/erg=%g ; M_ionized=%g ; <R_HII>=%g \n",
-       All.Time,totMPI_m_ionizing,totMPI_l_ionizing,totMPI_m_ionized,totMPI_avg_RHII);
-     fflush(stdout);
-     fprintf(FdHIIHeating, "%lg %g %g %g %g \n",
-       All.Time,totMPI_m_ionizing,totMPI_l_ionizing,totMPI_m_ionized,totMPI_avg_RHII);
-     fflush(FdHIIHeating);
+     if(totMPI_m_ionizing>0)
+       {
+           totMPI_avg_RHII /= totMPI_m_ionizing;
+#ifndef IO_REDUCED_MODE
+           printf("HII PhotoHeating: Time=%g: %g sources with L_tot/erg=%g ; M_ionized=%g ; <R_HII>=%g \n",
+                All.Time,totMPI_m_ionizing,totMPI_l_ionizing,totMPI_m_ionized,totMPI_avg_RHII);
+           fflush(stdout);
+#endif
+           fprintf(FdHIIHeating, "%lg %g %g %g %g \n",
+                   All.Time,totMPI_m_ionizing,totMPI_l_ionizing,totMPI_m_ionized,totMPI_avg_RHII);
      }
-   }
+#ifdef IO_REDUCED_MODE
+       if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
+       {fflush(FdHIIHeating);}
+   } // ThisTask == 0
 
 //  CPU_Step[CPU_HIIHEATING] += measure_time();
 

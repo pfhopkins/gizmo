@@ -20,8 +20,7 @@ void force_update_tree(void)
 {
   int i, j;
 
-  if(ThisTask == 0)
-    printf("kicks will prepare for dynamic update of tree\n");
+    if(ThisTask == 0) {printf("Kick-subroutine will prepare for dynamic update of tree\n");}
 
   GlobFlag++;
   DomainNumChanged = 0;
@@ -42,8 +41,9 @@ void force_update_tree(void)
   force_finish_kick_nodes();
   myfree(DomainList);
 
-  if(ThisTask == 0)
-    printf("Tree has been updated dynamically.\n");
+#ifndef IO_REDUCED_MODE
+    if(ThisTask == 0) {printf("Tree has been updated dynamically.\n");}
+#endif
 }
 
 
@@ -194,6 +194,9 @@ void force_finish_kick_nodes(void)
 	}
     }
 
+#ifdef IO_REDUCED_MODE
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
   if(ThisTask == 0)
     {
       printf("I exchange kick momenta for %d top-level nodes out of %d\n", totDomainNumChanged, NTopleaves);
@@ -472,9 +475,10 @@ void force_update_hmax(void)
 	}
     }
 
-  if(ThisTask == 0)
-    printf("Hmax exchange: %d topleaves out of %d\n", totDomainNumChanged, NTopleaves);
-
+#ifndef IO_REDUCED_MODE
+  if(ThisTask == 0) printf("Hmax exchange: %d topleaves out of %d\n", totDomainNumChanged, NTopleaves);
+#endif
+    
   domainHmax_all = (MyFloat *) mymalloc("domainHmax_all", totDomainNumChanged * OffsetSIZE * sizeof(MyFloat));
   domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
 

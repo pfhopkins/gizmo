@@ -117,6 +117,9 @@ void run(void)
         
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
+#ifdef IO_REDUCED_MODE
+        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
         if(ThisTask == 0)
         {
             FILE *fd;
@@ -244,7 +247,9 @@ void calculate_non_standard_physics(void)
     /* use the CG method to solve the RT diffusion equation implicitly for all particles */
     if(Flag_FullStep) /* only do it for full timesteps */
     {
-        if(ThisTask == 0) {printf("start CG iteration for radiative transfer (diffusion equation)...\n"); fflush(stdout);}
+#ifndef IO_REDUCED_MODE
+        if(ThisTask == 0) {printf("start CG iteration for radiative transfer (diffusion equation)...\n"); //fflush(stdout);}
+#endif
         All.Radiation_Ti_endstep = All.Ti_Current;
         double timeeach = 0, timeall = 0, tstart = 0, tend = 0;
         tstart = my_second();
@@ -252,7 +257,6 @@ void calculate_non_standard_physics(void)
         tend = my_second();
         timeeach = timediff(tstart, tend);
         MPI_Allreduce(&timeeach, &timeall, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        if(ThisTask == 0) {printf("done with CG iteration for radiative transfer (time consumed = %g)! \n",timeall); fflush(stdout);}
         All.Radiation_Ti_begstep = All.Radiation_Ti_endstep;
     }
 #endif
@@ -260,7 +264,9 @@ void calculate_non_standard_physics(void)
 #if defined(RT_CHEM_PHOTOION) && (!defined(COOLING) || defined(RT_COOLING_PHOTOHEATING_OLDFORMAT))
     /* chemistry updated at sub-stepping as well */
     rt_update_chemistry();
+#ifndef IO_REDUCED_MODE
     if(Flag_FullStep) {rt_write_chemistry_stats();}
+#endif
 #endif
     
 #endif
@@ -369,13 +375,14 @@ void compute_statistics(void)
 {
     if((All.Time - All.TimeLastStatistics) >= All.TimeBetStatistics)
     {
-#if !defined(EVALPOTENTIAL)          // DAA: compute_potential is not defined if EVALPOTENTIAL is on... check!
+#if !defined(EVALPOTENTIAL)          // compute_potential is not defined if EVALPOTENTIAL is on //
 #ifdef COMPUTE_POTENTIAL_ENERGY
         compute_potential();
 #endif
 #endif
+#ifndef IO_REDUCED_MODE
         energy_statistics();	/* compute and output energy statistics */
-        
+#endif
 #ifdef SCFPOTENTIAL
         SCF_write(0);
 #endif
@@ -467,8 +474,10 @@ void find_next_sync_point_and_drift(void)
 #endif
 
 
+#ifndef IO_REDUCED_MODE
       mpi_printf("\n\n\nI found the last snapshot call...\n\n\n");
-      savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#endif
+        savepositions(All.SnapshotFileCount++);	/* write snapshot file */
 
       All.Ti_nextoutput = find_next_outputtime(All.Ti_nextoutput + 1);
     }
@@ -539,8 +548,6 @@ void find_next_sync_point_and_drift(void)
 	    }
 	}
     }
-
- fflush(stdout);
 
 }
 
@@ -736,35 +743,39 @@ void output_log_messages(void)
   sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
   sumup_large_ints(TIMEBINS, TimeBinCountSph, tot_count_sph);
 
-  if(ThisTask == 0)
+    if(ThisTask == 0)
     {
-      if(All.ComovingIntegrationOn)
-	{
-	  z = 1.0 / (All.Time) - 1;
-	  fprintf(FdInfo, "\nSync-Point %d, Time: %g, Redshift: %g, Nf = %d%09d, Systemstep: %g, Dloga: %g\n",
-		  All.NumCurrentTiStep, All.Time, z,
-		  (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000),
-		  All.TimeStep, log(All.Time) - log(All.Time - All.TimeStep));
-	  printf("\nSync-Point %d, Time: %g, Redshift: %g, Systemstep: %g, Dloga: %g\n", All.NumCurrentTiStep,
-		 All.Time, z, All.TimeStep, log(All.Time) - log(All.Time - All.TimeStep));
-	  fprintf(FdTimebin, "\nSync-Point %d, Time: %g, Redshift: %g, Systemstep: %g, Dloga: %g\n",
-		  All.NumCurrentTiStep, All.Time, z, All.TimeStep,
-		  log(All.Time) - log(All.Time - All.TimeStep));
-	  fflush(FdInfo);
-	}
-      else
-	{
-	  fprintf(FdInfo, "\nSync-Point %d, Time: %g, Nf = %d%09d, Systemstep: %g\n", All.NumCurrentTiStep,
-		  All.Time, (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000),
-		  All.TimeStep);
-	  printf("\nSync-Point %d, Time: %g, Systemstep: %g\n", All.NumCurrentTiStep, All.Time, All.TimeStep);
-	  fprintf(FdTimebin, "\nSync-Point %d, Time: %g, Systemstep: %g\n", All.NumCurrentTiStep, All.Time,
-		  All.TimeStep);
-	  fflush(FdInfo);
-	}
+        if(All.ComovingIntegrationOn)
+        {
+            z = 1.0 / (All.Time) - 1;
+#ifndef IO_REDUCED_MODE
+            fprintf(FdInfo, "\nSync-Point %d, Time: %g, Redshift: %g, Nf = %d%09d, Systemstep: %g, Dloga: %g\n",
+                    All.NumCurrentTiStep, All.Time, z,
+                    (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000),
+                    All.TimeStep, log(All.Time) - log(All.Time - All.TimeStep));
+            fflush(FdInfo);
+            fprintf(FdTimebin, "\nSync-Point %d, Time: %g, Redshift: %g, Systemstep: %g, Dloga: %g\n",
+                    All.NumCurrentTiStep, All.Time, z, All.TimeStep,
+                    log(All.Time) - log(All.Time - All.TimeStep));
+#endif
+            printf("\nSync-Point %d, Time: %g, Redshift: %g, Systemstep: %g, Dloga: %g\n", All.NumCurrentTiStep,
+                   All.Time, z, All.TimeStep, log(All.Time) - log(All.Time - All.TimeStep));
+        }
+        else
+        {
+#ifndef IO_REDUCED_MODE
+            fprintf(FdInfo, "\nSync-Point %d, Time: %g, Nf = %d%09d, Systemstep: %g\n", All.NumCurrentTiStep,
+                    All.Time, (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000),
+                    All.TimeStep);
+            fflush(FdInfo);
+            fprintf(FdTimebin, "\nSync-Point %d, Time: %g, Systemstep: %g\n", All.NumCurrentTiStep, All.Time,
+                    All.TimeStep);
+#endif
+            printf("\nSync-Point %d, Time: %g, Systemstep: %g\n", All.NumCurrentTiStep, All.Time, All.TimeStep);
+        }
 
-      for(i = 1, tot_cumulative[0] = tot_count[0]; i < TIMEBINS; i++)
-	tot_cumulative[i] = tot_count[i] + tot_cumulative[i - 1];
+        for(i = 1, tot_cumulative[0] = tot_count[0]; i < TIMEBINS; i++)
+            tot_cumulative[i] = tot_count[i] + tot_cumulative[i - 1];
 
 
       for(i = 0; i < TIMEBINS; i++)
@@ -795,56 +806,61 @@ void output_log_messages(void)
 	}
 
 
-      printf
-	("Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");
-      fprintf(FdTimebin,
-	      "Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");
-      for(i = TIMEBINS - 1, tot = tot_sph = 0; i >= 0; i--)
-	if(tot_count_sph[i] > 0 || tot_count[i] > 0)
-	  {
-	    printf(" %c  bin=%2d      %10llu  %10llu   %16.12f       %10llu %c %c  %10.2f    %5.1f%%\n",
-		   TimeBinActive[i] ? 'X' : ' ',
-		   i, tot_count[i] - tot_count_sph[i], tot_count_sph[i],
-		   i > 0 ? (((integertime) 1) << i) * All.Timebase_interval : 0.0, tot_cumulative[i],
-		   (i == All.HighestActiveTimeBin) ? '<' : ' ',
-		   (tot_cumulative[i] > All.TreeDomainUpdateFrequency * All.TotNumPart) ? '*' : ' ',
-		   avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
-
-	    fprintf(FdTimebin,
-		    " %c  bin=%2d      %10llu  %10llu   %16.12f       %10llu %c %c  %10.2f    %5.1f%%\n",
-		    TimeBinActive[i] ? 'X' : ' ', i, tot_count[i] - tot_count_sph[i], tot_count_sph[i],
-		    i > 0 ? (((integertime) 1) << i) * All.Timebase_interval : 0.0, tot_cumulative[i],
-		    (i == All.HighestActiveTimeBin) ? '<' : ' ',
-		    (tot_cumulative[i] > All.TreeDomainUpdateFrequency * All.TotNumPart) ? '*' : ' ',
-		    avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
-
-	    if(TimeBinActive[i])
-	      {
-		tot += tot_count[i];
-		tot_sph += tot_count_sph[i];
-	      }
-	  }
-      printf("               ------------------------\n");
-      fprintf(FdTimebin, "               ------------------------\n");
-
-#ifdef PMGRID
-      if(All.PM_Ti_endstep == All.Ti_Current)
-	{
-	  printf("PM-Step. Total: %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
-	  fprintf(FdTimebin, "PM-Step. Total: %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
-	}
-      else
+        printf("Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");
+#ifndef IO_REDUCED_MODE
+        fprintf(FdTimebin,"Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");
 #endif
-	{
-	  printf("Total active:   %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
-	  fprintf(FdTimebin, "Total active:   %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
-
-	}
-      fprintf(FdTimebin, "\n");
-      fflush(FdTimebin);
-
+        for(i = TIMEBINS - 1, tot = tot_sph = 0; i >= 0; i--)
+            if(tot_count_sph[i] > 0 || tot_count[i] > 0)
+            {
+                printf(" %c  bin=%2d      %10llu  %10llu   %16.12f       %10llu %c %c  %10.2f    %5.1f%%\n",
+                       TimeBinActive[i] ? 'X' : ' ',
+                       i, tot_count[i] - tot_count_sph[i], tot_count_sph[i],
+                       i > 0 ? (((integertime) 1) << i) * All.Timebase_interval : 0.0, tot_cumulative[i],
+                       (i == All.HighestActiveTimeBin) ? '<' : ' ',
+                       (tot_cumulative[i] > All.TreeDomainUpdateFrequency * All.TotNumPart) ? '*' : ' ',
+                       avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
+#ifndef IO_REDUCED_MODE
+                fprintf(FdTimebin,
+                        " %c  bin=%2d      %10llu  %10llu   %16.12f       %10llu %c %c  %10.2f    %5.1f%%\n",
+                        TimeBinActive[i] ? 'X' : ' ', i, tot_count[i] - tot_count_sph[i], tot_count_sph[i],
+                        i > 0 ? (((integertime) 1) << i) * All.Timebase_interval : 0.0, tot_cumulative[i],
+                        (i == All.HighestActiveTimeBin) ? '<' : ' ',
+                        (tot_cumulative[i] > All.TreeDomainUpdateFrequency * All.TotNumPart) ? '*' : ' ',
+                        avg_CPU_TimeBin[i], 100.0 * frac_CPU_TimeBin[i]);
+#endif
+                if(TimeBinActive[i])
+                {
+                    tot += tot_count[i];
+                    tot_sph += tot_count_sph[i];
+                }
+            }
+        printf("               ------------------------\n");
+#ifndef IO_REDUCED_MODE
+        fprintf(FdTimebin, "               ------------------------\n");
+#endif
+#ifdef PMGRID
+        if(All.PM_Ti_endstep == All.Ti_Current)
+        {
+            printf("PM-Step. Total: %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
+#ifndef IO_REDUCED_MODE
+            fprintf(FdTimebin, "PM-Step. Total: %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
+#endif
+        }
+        else
+#endif
+        {
+            printf("Total active:   %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
+#ifndef IO_REDUCED_MODE
+            fprintf(FdTimebin, "Total active:   %10llu  %10llu    Sum: %10llu\n", tot - tot_sph, tot_sph, tot);
+#endif
+        }
+#ifndef IO_REDUCED_MODE
+        fprintf(FdTimebin, "\n");
+        fflush(FdTimebin);
+#endif
     }
-
+    
   output_extra_log_messages();
 }
 
@@ -890,10 +906,12 @@ void write_cpu_log(void)
 
       put_symbol(tsum / max_CPU_Step[0], 1.0, '-');
 
+#ifndef IO_REDUCED_MODE
       fprintf(FdBalance, "Step=%7d  sec=%10.3f  Nf=%2d%09d  %s\n", All.NumCurrentTiStep, max_CPU_Step[0],
 	      (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000), CPU_String);
       fflush(FdBalance);
-
+#endif
+        
       if(All.CPU_TimeBinCountMeasurements[All.HighestActiveTimeBin] == NUMBER_OF_MEASUREMENTS_TO_RECORD)
 	{
 	  All.CPU_TimeBinCountMeasurements[All.HighestActiveTimeBin]--;
@@ -908,14 +926,17 @@ void write_cpu_log(void)
 
   CPUThisRun += CPU_Step[0];
 
-  for(i = 0; i < CPU_PARTS; i++)
-    CPU_Step[i] = 0;
-
+    for(i = 0; i < CPU_PARTS; i++) {CPU_Step[i] = 0;}
+    if(ThisTask == 0)
+    {
+        for(i = 0; i < CPU_PARTS; i++) {All.CPU_Sum[i] += avg_CPU_Step[i];}
+    }
+        
+#ifdef IO_REDUCED_MODE
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) // only do the actual -print- operation on global timesteps
+#endif
   if(ThisTask == 0)
     {
-      for(i = 0; i < CPU_PARTS; i++)
-	All.CPU_Sum[i] += avg_CPU_Step[i];
-
       fprintf(FdCPU, "Step %d, Time: %g, CPUs: %d\n", All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"
@@ -1066,6 +1087,7 @@ void put_symbol(double t0, double t1, char c)
 
 
 
+#ifndef IO_REDUCED_MODE
 /*! This routine first calls a computation of various global
  * quantities of the particle distribution, and then writes some
  * statistics about the energies in the various particle components to
@@ -1093,7 +1115,7 @@ void energy_statistics(void)
       fflush(FdEnergy);
     }
 }
-
+#endif
 
 
 
@@ -1104,32 +1126,29 @@ void output_extra_log_messages(void)
     log_self_interactions();
 #endif
     
-#if defined(TURB_DRIVING)
+#if defined(TURB_DRIVING) && !defined(IO_REDUCED_MODE)
     log_turb_temp();
 #endif
     
-    if(ThisTask == 0)
+#if defined(DARKENERGY) && !defined(IO_REDUCED_MODE)
+    if((ThisTask == 0) && (All.ComovingIntegrationOn == 1)
     {
-#ifdef DARKENERGY
-        if(All.ComovingIntegrationOn == 1)
-        {
-            double hubble_a;
-            
-            hubble_a = hubble_function(All.Time);
-            fprintf(FdDE, "%d %g %e ", All.NumCurrentTiStep, All.Time, hubble_a);
+        double hubble_a;
+        
+        hubble_a = hubble_function(All.Time);
+        fprintf(FdDE, "%d %g %e ", All.NumCurrentTiStep, All.Time, hubble_a);
 #ifndef TIMEDEPDE
-            fprintf(FdDE, "%e ", All.DarkEnergyParam);
+        fprintf(FdDE, "%e ", All.DarkEnergyParam);
 #else
-            fprintf(FdDE, "%e %e ", get_wa(All.Time), DarkEnergy_a(All.Time));
+        fprintf(FdDE, "%e %e ", get_wa(All.Time), DarkEnergy_a(All.Time));
 #endif
 #ifdef TIMEDEPGRAV
-            fprintf(FdDE, "%e %e", dHfak(All.Time), dGfak(All.Time));
+        fprintf(FdDE, "%e %e", dHfak(All.Time), dGfak(All.Time));
 #endif
-            fprintf(FdDE, "\n");
-            fflush(FdDE);
-        }
-#endif
+        fprintf(FdDE, "\n");
+        fflush(FdDE);
     }
+#endif
 }
 
 

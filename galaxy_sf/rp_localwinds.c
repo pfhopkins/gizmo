@@ -44,10 +44,12 @@ void radiation_pressure_winds_consolidated(void)
     if(All.WindMomentumLoading<=0) return;
     Ngblist = (int *) mymalloc("Ngblist",NumPart * sizeof(int));
     
+#ifndef IO_REDUCED_MODE
     if(ThisTask == 0)
     {
-        printf("Beginning Local Radiation-Pressure Acceleration\n"); fflush(stdout);
+        printf("Beginning Local Radiation-Pressure Acceleration\n");
     } // if(ThisTask == 0)
+#endif
     
     unitmass_in_msun=(All.UnitMass_in_g/All.HubbleParam)/SOLAR_MASS;
     sigma_eff_0 = 0.955 * All.UnitMass_in_g*All.HubbleParam/(All.UnitLength_in_cm*All.UnitLength_in_cm) / (All.cf_atime*All.cf_atime) * KAPPA_IR;
@@ -329,17 +331,28 @@ void radiation_pressure_winds_consolidated(void)
         {
             if(totMPI_prob_kick>0)
             {
+#ifdef IO_REDUCED_MODE
                 if(totMPI_n_wind>0)
+#endif
                 {
-                    totMPI_avg_v /= totMPI_n_wind;
-                    totMPI_pwt_avg_v /= totMPI_mom_wind;
+                    if(totMPI_n_wind>0)
+                    {
+                        totMPI_avg_v /= totMPI_n_wind;
+                        totMPI_pwt_avg_v /= totMPI_mom_wind;
+                    }
+                    fprintf(FdMomWinds, "%lg %g %g %g %g %g \n",
+                            All.Time,totMPI_n_wind,totMPI_prob_kick,totMPI_mom_wind,totMPI_avg_v,totMPI_pwt_avg_v);
+#ifndef IO_REDUCED_MODE
+                    printf("Momentum Wind Feedback: Time=%g Nkicked=%g (L/c)dt=%g Momkicks=%g V_avg=%g tau_j_mean=%g \n",
+                           All.Time,totMPI_n_wind,totMPI_prob_kick,totMPI_mom_wind,totMPI_avg_v,totMPI_pwt_avg_v);
+                    fflush(stdout);
+#endif
                 }
-                printf("Momentum Wind Feedback: Time=%g Nkicked=%g (L/c)dt=%g Momkicks=%g V_avg=%g tau_j_mean=%g \n",
-                       All.Time,totMPI_n_wind,totMPI_prob_kick,totMPI_mom_wind,totMPI_avg_v,totMPI_pwt_avg_v); fflush(stdout);
-                fprintf(FdMomWinds, "%lg %g %g %g %g %g \n",
-                        All.Time,totMPI_n_wind,totMPI_prob_kick,totMPI_mom_wind,totMPI_avg_v,totMPI_pwt_avg_v);
-                fflush(FdMomWinds);
             }
+#ifdef IO_REDUCED_MODE
+            if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
+            {fflush(FdMomWinds);}
         } // if(ThisTask==0)
         
         //  CPU_Step[CPU_LOCALWIND] += measure_time();

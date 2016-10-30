@@ -119,22 +119,27 @@ void report_detailed_memory_usage_of_largest_task(size_t * OldHighMarkBytes, con
 
 void dump_memory_table(void)
 {
-  unsigned int i;
-  size_t totBlocksize = 0;
-
-  printf("------------------------ Allocated Memory Blocks----------------------------------------\n");
-  printf("Task   Nr F          Variable      MBytes   Cumulative         Function/File/Linenumber\n");
-  printf("----------------------------------------------------------------------------------------\n");
-  for(i = 0; i < Nblocks; i++)
+#ifdef IO_REDUCED_MODE
+    if(ThisTask==0 && All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
     {
-      totBlocksize += BlockSize[i];
-
-      printf("%4d %4d %d  %16s  %10.4f   %10.4f  %s()/%s/%d\n",
-	     ThisTask, i, MovableFlag[i], VarName + i * MAXCHARS, BlockSize[i] / (1024.0 * 1024.0),
-	     totBlocksize / (1024.0 * 1024.0), FunctionName + i * MAXCHARS,
-	     FileName + i * MAXCHARS, LineNumber[i]);
+        unsigned int i;
+        size_t totBlocksize = 0;
+        
+        printf("------------------------ Allocated Memory Blocks----------------------------------------\n");
+        printf("Task   Nr F          Variable      MBytes   Cumulative         Function/File/Linenumber\n");
+        printf("----------------------------------------------------------------------------------------\n");
+        for(i = 0; i < Nblocks; i++)
+        {
+            totBlocksize += BlockSize[i];
+            
+            printf("%4d %4d %d  %16s  %10.4f   %10.4f  %s()/%s/%d\n",
+                   ThisTask, i, MovableFlag[i], VarName + i * MAXCHARS, BlockSize[i] / (1024.0 * 1024.0),
+                   totBlocksize / (1024.0 * 1024.0), FunctionName + i * MAXCHARS,
+                   FileName + i * MAXCHARS, LineNumber[i]);
+        }
+        printf("----------------------------------------------------------------------------------------\n");
     }
-  printf("----------------------------------------------------------------------------------------\n");
 }
 
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int line)

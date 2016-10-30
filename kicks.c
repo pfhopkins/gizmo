@@ -424,6 +424,7 @@ void do_sph_kick_for_extra_physics(int i, integertime tstart, integertime tend, 
             if(phi_phys_abs > 1000. * phi_max_tolerance * vb_phy_abs)
             {
                 /* this indicates a serious problem! issue a warning and zero phi */
+#ifndef IO_REDUCED_MODE
                 printf("WARNING: MAJOR GROWTH IN PHI-FIELD: phi_phys_abs=%g vb_phy_abs=%g vsig_max=%g b_phys=%g particle_id_i=%d dtphi_code=%g Pressure=%g rho=%g x/y/z=%g/%g/%g vx/vy/vz=%g/%g/%g Bx/By/Bz=%g/%g/%g h=%g u=%g m=%g phi=%g bin=%d SigVel=%g a=%g \n",
                        phi_phys_abs,vb_phy_abs,vsig_max,b_phys,i,SphP[i].DtPhi,
                        SphP[i].Pressure,SphP[i].Density,P[i].Pos[0],P[i].Pos[1],P[i].Pos[2],
@@ -431,6 +432,7 @@ void do_sph_kick_for_extra_physics(int i, integertime tstart, integertime tend, 
                        PPP[i].Hsml,SphP[i].InternalEnergy,P[i].Mass,SphP[i].Phi,P[i].TimeBin,
                        SphP[i].MaxSignalVel,All.cf_atime);
                 fflush(stdout);
+#endif
                 SphP[i].PhiPred = SphP[i].Phi = SphP[i].DtPhi = 0;
             } else {
                 if(phi_phys_abs > phi_max_tolerance * vb_phy_abs)

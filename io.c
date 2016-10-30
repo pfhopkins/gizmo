@@ -563,7 +563,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k = 0; k < NUM_METAL_SPECIES; k++)
+                    {
                         fp[k] = P[pindex].Metallicity[k];
+                    }
                     fp += NUM_METAL_SPECIES;
                     n++;
                 }
@@ -928,8 +930,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                             
                         }
                     }
-                    
-                    fflush(stderr);
+                    //fflush(stderr);
                     n++;
                     fp += 9;
                 }
@@ -1842,9 +1843,9 @@ int get_values_per_blockelement(enum iofields blocknr)
  *  based on the information in the header-structure.  It also flags particle
  *  types that are present in the block in the typelist array.
  */
-int get_particles_in_block(enum iofields blocknr, int *typelist)
+long get_particles_in_block(enum iofields blocknr, int *typelist)
 {
-    int i, nall, nsel, ntot_withmasses, ngas, nstars, nngb;
+    long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb;
     
     nall = 0;
     nsel = 0;
@@ -4036,7 +4037,9 @@ void mpi_printf(const char *fmt, ...)
         va_list l;
         va_start(l, fmt);
         vprintf(fmt, l);
+#ifndef IO_REDUCED_MODE
         fflush(stdout);
+#endif
         va_end(l);
     }
 }

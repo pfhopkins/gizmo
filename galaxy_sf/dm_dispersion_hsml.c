@@ -40,19 +40,6 @@ extern pthread_mutex_t mutex_partnodedrift;
 
 #ifdef GALSF_SUBGRID_DMDISPERSION
 
-
-/*! this routine checks that we have the 'correct' particles talking to one another (primary=gas, secondary=dm) */
-int disp_gravity_kernel_shared_check(short int particle_type_primary, short int particle_type_secondary)
-{
-    /* gas particles see DM particles */
-    if(particle_type_primary == 0)
-        return (particle_type_secondary==1);
-    /* (only bother with high-resolution DM particles; otherwise this won't trigger) */
-    return 0;
-}
-
-
-
 /*! Structure for communication during the density computation. Holds data that is sent to other processors.
  */
 static struct disp_densdata_in
@@ -434,7 +421,6 @@ void disp_density(void)
                         ("DM disp: i=%d task=%d ID=%llu Type=%d Hsml=%g Left=%g Right=%g Ngbs=%g Right-Left=%g\n   pos=(%g|%g|%g)\n",
                          i, ThisTask, (unsigned long long) P[i].ID, P[i].Type, SphP[i].HsmlDM, Left[i], Right[i],
                          (float) SphP[i].NumNgbDM, Right[i] - Left[i], P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
-                        fflush(stdout);
                     }
                     
                     // right/left define upper/lower bounds from previous iterations
@@ -495,7 +481,6 @@ void disp_density(void)
             {
                 printf("DM disp: ngb iteration %d: need to repeat for %d%09d particles.\n", iter,
                        (int) (ntot / 1000000000), (int) (ntot % 1000000000));
-                fflush(stdout);
             }
             if(iter > MAXITER)
             {
@@ -592,8 +577,8 @@ int disp_density_evaluate(int target, int mode, int *exportflag, int *exportnode
     {
         while(startnode >= 0)
         {
-            numngb_inbox = dm_disp_ngb_treefind_variable_threads(local.Pos, local.HsmlDM, target, &startnode, mode, exportflag,
-                                                                 exportnodecount, exportindex, ngblist, 0);
+            numngb_inbox = ngb_treefind_variable_threads_targeted(local.Pos, local.HsmlDM, target, &startnode, mode, exportflag,
+                                                                 exportnodecount, exportindex, ngblist, 2); // search for high-res DM particles only: 2^1 = 2
             if(numngb_inbox < 0) return -1;
             for(n = 0; n < numngb_inbox; n++)
             {
@@ -631,76 +616,19 @@ int disp_density_evaluate(int target, int mode, int *exportflag, int *exportnode
 
 void *disp_density_evaluate_primary(void *p)
 {
-    int thread_id = *(int *) p;
-    int i, j;
-    int *exportflag, *exportnodecount, *exportindex, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
-    exportflag = Exportflag + thread_id * NTask;
-    exportnodecount = Exportnodecount + thread_id * NTask;
-    exportindex = Exportindex + thread_id * NTask;
-    /* Note: exportflag is local to each thread */
-    for(j = 0; j < NTask; j++)
-        exportflag[j] = -1;
-    
-    while(1)
-    {
-        int exitFlag = 0;
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            if(BufferFullFlag != 0 || NextParticle < 0)
-            {
-                exitFlag = 1;
-            }
-            else
-            {
-                i = NextParticle;
-                ProcessedFlag[i] = 0;
-                NextParticle = NextActiveParticle[NextParticle];
-            }
-        }
-        UNLOCK_NEXPORT;
-        if(exitFlag)
-            break;
-        
-        if(disp_density_isactive(i))
-        {
-            if(disp_density_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist) < 0)
-                break;		/* export buffer has filled up */
-        }
-        ProcessedFlag[i] = 1;	/* particle successfully finished */
-    }
-    return NULL;
+#define CONDITION_FOR_EVALUATION if(disp_density_isactive(i))
+#define EVALUATION_CALL disp_density_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist)
+#include "../system/code_block_primary_loop_evaluation.h"
+#undef CONDITION_FOR_EVALUATION
+#undef EVALUATION_CALL
 }
-
-
 void *disp_density_evaluate_secondary(void *p)
 {
-    int thread_id = *(int *) p;
-    int j, dummy, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
-    
-    while(1)
-    {
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            j = NextJ;
-            NextJ++;
-        }
-        UNLOCK_NEXPORT;
-        
-        if(j >= Nimport)
-            break;
-        
-        disp_density_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist);
-    }
-    return NULL;
+#define EVALUATION_CALL disp_density_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist);
+#include "../system/code_block_secondary_loop_evaluation.h"
+#undef EVALUATION_CALL
 }
+
 #endif
 
 

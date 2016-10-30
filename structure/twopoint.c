@@ -74,12 +74,13 @@ void twopoint(void)
   double mass, masstot;
   void *state_buffer;
 
-
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("begin two-point correlation function...\n");
       fflush(stdout);
     }
+#endif
 
   tstart = my_second();
 
@@ -286,15 +287,19 @@ void twopoint(void)
       Rbin[i] = exp((i + 0.5) / binfac + logR0);
     }
 
+#ifndef IO_REDUCED_MODE
   twopoint_save();
-
+#endif
+    
   tend = my_second();
 
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("end two-point: Took=%g seconds.\n", timediff(tstart, tend));
       fflush(stdout);
     }
+#endif
 }
 
 
@@ -394,11 +399,11 @@ int twopoint_count_local(int target, int mode, int *nexport, int *nsend_local)
 
 
 
-/*! This function finds all particles within the radius "rsearch",
- *  and counts them in the bins used for the two-point correlation function.
+/*! This function finds all particles within the radius "rsearch", and counts them in the bins used for the two-point correlation function.
+ *    this is a custom version of "ngb_treefind_variable", hard-coded for a square box (no shearing!) and variable search threshold radii, 
+ *    bin-dumping, etc. as a result, updates to the core neighbor search routine will not alter this subroutine
  */
-int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, int target, int *startnode,
-				   int mode, int *nexport, int *nsend_local)
+int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, int target, int *startnode, int mode, int *nexport, int *nsend_local)
 {
   double r2, r, ri, ro;
   int no, p, bin, task, bin2, nexport_save;
@@ -499,18 +504,14 @@ int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, in
 
 	  dist = rsearch + 0.5 * current->len;
 	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
+	  if(dx > dist) continue;
 	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
+	  if(dy > dist) continue;
 	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
+	  if(dz > dist) continue;
 	  /* now test against the minimal sphere enclosing everything */
 	  dist += FACT1 * current->len;
-	  if((r2 = dx * dx + dy * dy + dz * dz) > dist * dist)
-	    continue;
+	  if((r2 = dx * dx + dy * dy + dz * dz) > dist * dist) continue;
 
 	  r = sqrt(r2);
 

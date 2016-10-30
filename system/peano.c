@@ -30,9 +30,10 @@ void peano_hilbert_order(void)
 {
   int i;
 
-  if(ThisTask == 0)
-    printf("begin Peano-Hilbert order...\n");
-
+#ifndef IO_REDUCED_MODE
+    if(ThisTask == 0) {printf("begin Peano-Hilbert order...\n");}
+#endif
+    
   if(N_gas)
     {
       mp = (struct peano_hilbert_data *) mymalloc("mp", sizeof(struct peano_hilbert_data) * N_gas);
@@ -92,8 +93,9 @@ void peano_hilbert_order(void)
       myfree(mp);
     }
 
-  if(ThisTask == 0)
-    printf("Peano-Hilbert done.\n");
+#ifndef IO_REDUCED_MODE
+    if(ThisTask == 0) {printf("Peano-Hilbert done.\n");}
+#endif
 }
 
 

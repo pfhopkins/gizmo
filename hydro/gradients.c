@@ -107,9 +107,7 @@ struct GasGraddata_in
     MyFloat PhiGrad[3];
 #endif
 #endif
-#ifndef DONOTUSENODELIST
     int NodeList[NODELISTLENGTH];
-#endif
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
     MyFloat NV_DivVel;
 #endif
@@ -151,6 +149,8 @@ struct GasGraddata_out_iter
 #ifdef CONSTRAINED_GRADIENT_MHD_MIDPOINT
     MyDouble PhiGrad[3];
 #endif
+#else 
+    MyFloat dummy;
 #endif
 }
 *GasGradDataResult_iter, *GasGradDataOut_iter;
@@ -721,11 +721,8 @@ void hydro_gradient_calc(void)
             {
                 place = DataIndexTable[j].Index;
                 particle2in_GasGrad(&GasGradDataIn[j], place, gradient_iteration);
-#ifndef DONOTUSENODELIST
                 memcpy(GasGradDataIn[j].NodeList,
                        DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
-#endif
-                
             }
             
             /* exchange particle data */
@@ -1179,6 +1176,17 @@ void hydro_gradient_calc(void)
                 for(k=0;k<3;k++) {du_conduction += SphP[i].Gradients.InternalEnergy[k] * SphP[i].Gradients.InternalEnergy[k];}
                 double temp_scale_length = SphP[i].InternalEnergyPred / sqrt(du_conduction) * All.cf_atime;
                 SphP[i].Kappa_Conduction /= (1 + 4.2 * electron_free_path / temp_scale_length); // should be in physical units //
+
+#ifdef DIFFUSION_OPTIMIZERS
+                double cs = Particle_effective_soundspeed_i(i);
+#ifdef MAGNETIC
+                double vA_2 = 0.0; for(k=0;k<3;k++) {vA_2 += Get_Particle_BField(i,k)*Get_Particle_BField(i,k);}
+                vA_2 *= All.cf_afac1 / (All.cf_atime * SphP[i].Density);
+                cs = DMIN(1.e4*cs , sqrt(cs*cs+vA_2));
+#endif
+                cs *= All.cf_afac3;
+                SphP[i].Kappa_Conduction = DMIN(SphP[i].Kappa_Conduction , 42.85 * SphP[i].Density*All.cf_a3inv * cs * DMIN(20.*Get_Particle_Size(i)*All.cf_atime , temp_scale_length));
+#endif
 #endif
             }
 #endif
@@ -1216,6 +1224,9 @@ void hydro_gradient_calc(void)
                 double eta_sat = (SphP[i].Density*All.cf_a3inv) * cs / (ion_free_path * (1 + 4.2 * ion_free_path / vel_scale_length));
                 if(eta_sat <= 0) SphP[i].Eta_ShearViscosity=0;
                 if(SphP[i].Eta_ShearViscosity>0) {SphP[i].Eta_ShearViscosity = 1. / (1./SphP[i].Eta_ShearViscosity + 1./eta_sat);} // again, all physical units //
+#ifdef DIFFUSION_OPTIMIZERS
+                //SphP[i].Eta_ShearViscosity = DMIN(SphP[i].Eta_ShearViscosity , SphP[i].Density*All.cf_a3inv * cs * DMAX(Get_Particle_Size(i)*All.cf_atime , vel_scale_length));
+#endif
 #endif
             }
 #endif
@@ -1490,7 +1501,7 @@ void hydro_gradient_calc(void)
                                                          SphP[i].Gradients.Velocity[0][0]*SphP[i].Gradients.Velocity[2][2])));
                     // slope-limit and convert to physical units //
                     double shearfac_max = 0.5 * sqrt(SphP[i].VelPred[0]*SphP[i].VelPred[0]+SphP[i].VelPred[1]*SphP[i].VelPred[1]+SphP[i].VelPred[2]*SphP[i].VelPred[2]) / h_turb;
-                    shear_factor = DMIN(shear_factor , shearfac_max) * All.cf_a2inv; // physical
+                    shear_factor = DMIN(shear_factor , shearfac_max * All.cf_atime) * All.cf_a2inv; // physical
                     // ok, combine to get the diffusion coefficient //
                     SphP[i].TD_DiffCoeff = turb_prefactor * shear_factor; // physical
                 } else {
@@ -1963,7 +1974,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 #ifdef HYDRO_SPH
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
                     out.alpha_limiter += NV_MYSIGN(SphP[j].NV_DivVel) * P[j].Mass * kernel.wk_i;
-                    SphP[j].alpha_limiter += NV_MYSIGN(local.NV_DivVel) * local.Mass * kernel.wk_j;
+                    if(swap_to_j) SphP[j].alpha_limiter += NV_MYSIGN(local.NV_DivVel) * local.Mass * kernel.wk_j;
 #endif
 #ifdef MAGNETIC
                     double mji_dwk_r = P[j].Mass * kernel.dwk_i / kernel.r;
@@ -2088,7 +2099,6 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
             } // numngb loop
         } // while(startnode)
         
-#ifndef DONOTUSENODELIST
         if(mode == 1)
         {
             listindex++;
@@ -2099,7 +2109,6 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     startnode = Nodes[startnode].u.d.nextnode;	/* open it */
             }
         }
-#endif
     }
     
     
@@ -2128,75 +2137,16 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 
 void *GasGrad_evaluate_primary(void *p, int gradient_iteration)
 {
-    int thread_id = *(int *) p;
-    int i, j;
-    int *exportflag, *exportnodecount, *exportindex, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
-    exportflag = Exportflag + thread_id * NTask;
-    exportnodecount = Exportnodecount + thread_id * NTask;
-    exportindex = Exportindex + thread_id * NTask;
-    
-    /* Note: exportflag is local to each thread */
-    for(j = 0; j < NTask; j++)
-        exportflag[j] = -1;
-    
-    while(1)
-    {
-        int exitFlag = 0;
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            if(BufferFullFlag != 0 || NextParticle < 0)
-            {
-                exitFlag = 1;
-            }
-            else
-            {
-                i = NextParticle;
-                ProcessedFlag[i] = 0;
-                NextParticle = NextActiveParticle[NextParticle];
-            }
-        }
-        UNLOCK_NEXPORT;
-        if(exitFlag)
-            break;
-        
-        if(P[i].Type == 0)
-        {
-            if(GasGrad_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist, gradient_iteration) < 0)
-                break;		/* export buffer has filled up */
-        }
-        ProcessedFlag[i] = 1; /* particle successfully finished */
-    }
-    return NULL;
+#define CONDITION_FOR_EVALUATION if(P[i].Type==0)
+#define EVALUATION_CALL GasGrad_evaluate(i,0,exportflag,exportnodecount,exportindex,ngblist,gradient_iteration)
+#include "../system/code_block_primary_loop_evaluation.h"
+#undef CONDITION_FOR_EVALUATION
+#undef EVALUATION_CALL
 }
-
-
-
 void *GasGrad_evaluate_secondary(void *p, int gradient_iteration)
 {
-    int thread_id = *(int *) p;
-    int j, dummy, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
-    while(1)
-    {
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            j = NextJ;
-            NextJ++;
-        }
-        UNLOCK_NEXPORT;
-        
-        if(j >= Nimport)
-            break;
-        
-        GasGrad_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist, gradient_iteration);
-    }
-    return NULL;
+#define EVALUATION_CALL GasGrad_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist, gradient_iteration);
+#include "../system/code_block_secondary_loop_evaluation.h"
+#undef EVALUATION_CALL
 }
 

@@ -13,23 +13,30 @@
 #include "system/vector.h"
 
 
-/*! \file ngb.c
- *  \brief neighbour search by means of the tree
+/*!
+ * This file contains routines for neighbour finding.  We use the gravity-tree and a range-searching technique to find neighbours.
  *
- *  This file contains routines for neighbour finding.  We use the
- *  gravity-tree and a range-searching technique to find neighbours.
- */
-/*
- * This file was originally part of the GADGET3 code developed by
- * Volker Springel (volker.springel@h-its.org). The code has been modified
- * in part by Phil Hopkins (phopkins@caltech.edu) for GIZMO (adding/consolidating 
- * some of the search routines as needed for different fluids)
+ * This file was originally part of the GADGET3 code developed by Volker Springel (volker.springel@h-its.org). The code has been heavily modified
+ * by Phil Hopkins (phopkins@caltech.edu) for GIZMO (adding/consolidating some of the search routines as needed for different fluids)
  */
 
 
+/*! This function constructs the neighbour tree. To this end, we actually need to construct the gravitational tree, 
+ *  because we use it now for the neighbour search.
+ */
+void ngb_treebuild(void)
+{
+    if(ThisTask == 0) {printf("Begin Ngb-tree construction.\n");}
+    CPU_Step[CPU_MISC] += measure_time();
+    force_treebuild(NumPart, NULL);
+    CPU_Step[CPU_TREEBUILD] += measure_time();
+    if(ThisTask == 0) {printf("Ngb-Tree contruction finished \n");}
+}
+
+
+/* define pragmas, etc, as needed for OPENMP directives for threaded routines below */
 #ifdef OMP_NUM_THREADS
 extern pthread_mutex_t mutex_nexport, mutex_partnodedrift;
-
 #define LOCK_NEXPORT         pthread_mutex_lock(&mutex_nexport);
 #define UNLOCK_NEXPORT       pthread_mutex_unlock(&mutex_nexport);
 #define LOCK_PARTNODEDRIFT   pthread_mutex_lock(&mutex_partnodedrift);
@@ -42,8 +49,10 @@ extern pthread_mutex_t mutex_nexport, mutex_partnodedrift;
 #endif
 
 
-#ifdef DO_NOT_BRACH_IF
 
+#ifdef REDUCE_TREEWALK_BRANCHING
+/* definitions and filter sub-routine for reduced branching, vectorized version of tree walk algorithm [more computations, but more 
+    vector-friendly, so whether it speeds things up or not depends on your machine] */
 #ifdef __xlC__
 #pragma alloca
 #define ALLOC_STACK(n) alloca(n)
@@ -54,876 +63,97 @@ extern pthread_mutex_t mutex_nexport, mutex_partnodedrift;
 #else
 #define ALLOC_STACK(n) alloca(n)
 #endif
+int ngb_filter_variables(long long numngb, int list[], t_vector * center, t_vector * box, t_vector * hbox, MyFloat hsml, int searchbothways_mode) __attribute__ ((noinline));
 
-
-int ngb_filter_pairs(long long numngb, int list[], t_vector * center, t_vector * box, t_vector * hbox,
-		     MyFloat hsml) __attribute__ ((noinline));
-int ngb_filter_variables(long long numngb, int list[], t_vector * center, t_vector * box, t_vector * hbox,
-			 MyFloat hsml) __attribute__ ((noinline));
-
-int ngb_filter_pairs(long long numngb, int list[], t_vector * center, t_vector * box, t_vector * hbox,
-		     MyFloat hsml)
+int ngb_filter_variables(long long numngb, int list[], t_vector * center, t_vector * box, t_vector * hbox, MyFloat hsml, int searchbothways_mode)
 {
-  int numngb_old = numngb;
-  int *comp;
-  int no;
-  if(!(comp = ALLOC_STACK(numngb_old*sizeof(long long))))
+    int numngb_old = numngb, *comp, no;
+    if(!(comp = ALLOC_STACK(numngb_old*sizeof(long long)))) {printf("Failed to allocate additional memory for `comp' (%lu Mbytes), switch off 'REDUCE_TREEWALK_BRANCHING'.\n", numngb_old*sizeof(long long)); endrun(124);}
+    numngb = 0;
+    MyDouble dist = hsml;
+    for(no = 0; no < numngb_old; no++)
     {
-      printf("Failed to allocate additional memory for `comp' (%d Mbytes), switch off 'DO_NOT_BRACH_IF'.\n",
-	     numngb_old*sizeof(long long));
-      endrun(124);
-    }
-  // mymalloc is nod thread save !!
-  // comp = (int *) mymalloc("NgbFilter", numngb_old * sizeof(int));
-
-  // first compute all the distances                                                                                                                                            
-
-  numngb = 0;
-  for(no = 0; no < numngb_old; no++)
-    {
-      int p = list[no];
-      MyDouble dx, dy, dz, d2;
-      MyDouble dist = DMAX(PPP[p].Hsml, hsml);
-
+        int p = list[no];
+        MyDouble dx, dy, dz, d2;
+#ifdef PERIODIC
+        MyDouble xtmp;
+#endif
+        if(searchbothways_mode == 1) {dist = DMAX(PPP[p].Hsml, hsml);}
         dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
         dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
         dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
-      d2 = dx * dx + dy * dy + dz * dz;
-      comp[no] = (d2 < dist * dist);
+        d2 = dx * dx + dy * dy + dz * dz;
+        comp[no] = (d2 < dist * dist);
     }
-
-  // then filter out the distant particles
-  if(numngb_old > 0)
-    for(no = 0; no < numngb_old; no++)
-      {
-	if(comp[no])
-	  list[numngb++] = list[no];
-      }
-
-  //  myfree(comp);
-
-#ifdef NGB_DEBUG
-  printf("ngb_treefind_pairs: numngb before/after filter: %d / %d\n", numngb_old, numngb);
-#endif
-#
-  return (int) numngb;
+    if(numngb_old > 0) {for(no = 0; no < numngb_old; no++) {if(comp[no]) {list[numngb++] = list[no];}}}
+    return (int) numngb;
 }
-
-int ngb_filter_variables(long long numngb, int list[], t_vector * center, t_vector * box, t_vector * hbox,
-			 MyFloat dist)
-{
-  int numngb_old = numngb;
-  int *comp;
-  int no;
-  if(!(comp = ALLOC_STACK(numngb_old*sizeof(long long))))
-    {
-      printf("Failed to allocate additional memory for `comp' (%d Mbytes), switch off 'DO_NOT_BRACH_IF'.\n",
-	     numngb_old*sizeof(long long));
-      endrun(124);
-    }
-  // mymalloc is nod thread save !!
-  //  comp = (int *) mymalloc("NgbFilter", numngb_old * sizeof(int));
-
-  // first compute all the distances                                                                                                                                            
-
-  numngb = 0;
-  for(no = 0; no < numngb_old; no++)
-    {
-      int p = list[no];
-      MyDouble dx, dy, dz, d2;
-
-        dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
-        dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
-        dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
-      d2 = dx * dx + dy * dy + dz * dz;
-      comp[no] = (d2 < dist * dist);
-    }
-
-  // then filter out the distant particles
-  if(numngb_old > 0)
-    for(no = 0; no < numngb_old; no++)
-      {
-	if(comp[no])
-	  list[numngb++] = list[no];
-      }
-
-  //  myfree(comp);
-
-#ifdef NGB_DEBUG
-  printf("ngb_treefind_vars: numngb before/after filter: %d / %d\n", numngb_old, numngb);
-#endif
-#
-  return numngb;
-}
+#endif // REDUCE_TREEWALK_BRANCHING
 
 
-#endif // DO_NOT_BRACH_IF
 
 
-/*! This routine finds all neighbours `j' that can interact with the
- *  particle `i' in the communication buffer.
+
+/*! This routine finds all neighbours `j' that can interact with the particle `i' in the communication buffer.
+ *  Note that an interaction can take place if: \f$ r_{ij} < h_i \f$  OR if  \f$ r_{ij} < h_j \f$.
  *
- *  Note that an interaction can take place if 
- *  \f$ r_{ij} < h_i \f$  OR if  \f$ r_{ij} < h_j \f$. 
- * 
- *  In the range-search this is taken into account, i.e. it is guaranteed that
- *  all particles are found that fulfil this condition, including the (more
- *  difficult) second part of it. For this purpose, each node knows the
- *  maximum h occuring among the particles it represents.
+ *  In the range-search this is taken into account, i.e. it is guaranteed that all particles are found that fulfill this condition, 
+ *  including the (more difficult) second part of it. For this purpose, each node knows the maximum h occuring among the particles it represents.
  */
-int ngb_treefind_pairs(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-		       int mode, int *nexport, int *nsend_local)
-{
-  int no, p, numngb, task, nexport_save;
-  struct NODE *current;
-  // cache some global vars locally for improved compiler alias analysis
-  int maxPart = All.MaxPart;
-  int maxNodes = MaxNodes;
-  int bunchSize = All.BunchSize;
-  integertime ti_Current = All.Ti_Current;
-#ifndef DO_NOT_BRACH_IF
-  MyDouble dist, dx, dy, dz;
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-#else
-  t_vector box, hbox, vcenter;
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-
-  nexport_save = *nexport;
-
-  numngb = 0;
-
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < maxPart)		/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-	  if(P[p].Type > 0)
-	    continue;
-
-	  if(P[p].Mass <= 0)
-	    continue;
-
-	  if(P[p].Ti_current != ti_Current)
-	    drift_particle(p, ti_Current);
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = DMAX(PPP[p].Hsml, hsml);
-
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-#endif
-	  Ngblist[numngb++] = p;	/* Note: unlike in previous versions of the code, the buffer 
-					   can hold up to all particles */
-	}
-      else
-	{
-	  if(no >= maxPart + maxNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(23131);
-
-	      if(Exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-		{
-		  Exportflag[task] = target;
-		  Exportnodecount[task] = NODELISTLENGTH;
-		}
-
-	      if(Exportnodecount[task] == NODELISTLENGTH)
-		{
-		  if(*nexport >= bunchSize)
-		    {
-		      *nexport = nexport_save;
-		      if(nexport_save == 0)
-			endrun(13003);	/* in this case, the buffer is too small to process even a single particle */
-		      for(task = 0; task < NTask; task++)
-			nsend_local[task] = 0;
-		      for(no = 0; no < nexport_save; no++)
-			nsend_local[DataIndexTable[no].Task]++;
-		      return -1;
-		    }
-		  Exportnodecount[task] = 0;
-		  Exportindex[task] = *nexport;
-		  DataIndexTable[*nexport].Task = task;
-		  DataIndexTable[*nexport].Index = target;
-		  DataIndexTable[*nexport].IndexGet = *nexport;
-		  *nexport = *nexport + 1;
-		  nsend_local[task]++;
-		}
-
-	      DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		DomainNodeIndex[no - (maxPart + maxNodes)];
-
-	      if(Exportnodecount[task] < NODELISTLENGTH)
-		DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-
-	      no = Nextnode[no - maxNodes];
-	      continue;
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-		  return numngb;
-#else
-		  return ngb_filter_pairs(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-		}
-	    }
-
-	  if(current->Ti_current != ti_Current)
-	    force_drift_node(no, ti_Current);
-
-	  if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-	    {
-	      if(current->u.d.mass)	/* open cell */
-		{
-		  no = current->u.d.nextnode;
-		  continue;
-		}
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = DMAX(Extnodes[no].hmax, hsml) + 0.5 * current->len;
-
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-	  no = ngb_check_node(current, &vcenter, &box, &hbox, DMAX(Extnodes[no].hmax, hsml));
-#endif
-	}
-    }
-
-
-  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-  return numngb;
-#else
-  return ngb_filter_pairs(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-
-
 int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-			       int mode, int *exportflag, int *exportnodecount, int *exportindex,
-			       int *ngblist)
+                               int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist)
 {
-  int no, p, numngb, task, nexp;
-  struct NODE *current;
-  // cache some global vars locally for improved compiler alias analysis
-  int maxPart = All.MaxPart;
-  int maxNodes = MaxNodes;
-  int bunchSize = All.BunchSize;
-  integertime ti_Current = All.Ti_Current;
-#ifndef DO_NOT_BRACH_IF
-  MyDouble dist, dx, dy, dz;
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-#else
-  t_vector box, hbox, vcenter;
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-
-  numngb = 0;
-
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < maxPart)		/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-        if(P[p].Type > 0)
-            continue;
-        
-        if(P[p].Mass <= 0)
-            continue;
-
-	  if(P[p].Ti_current != ti_Current)
-	    {
-	      LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-	      drift_particle(p, ti_Current);
-	      UNLOCK_PARTNODEDRIFT;
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = DMAX(PPP[p].Hsml, hsml);
-
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-#endif
-
-	  ngblist[numngb++] = p;	/* Note: unlike in previous versions of the code, the buffer 
-					   can hold up to all particles */
-	}
-      else
-	{
-	  if(no >= maxPart + maxNodes)	/* pseudo particle */
-	    {
-#ifdef DONOTUSENODELIST
-	      if(mode == 1)
-		{
-		  no = Nextnode[no - maxNodes];
-		  continue;
-		}
-#endif
-	      if(mode == 1)
-		endrun(12312);
-
-	      if(target >= 0)	/* if no target is given, export will not occur */
-		{
-		  if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-		    {
-		      exportflag[task] = target;
-		      exportnodecount[task] = NODELISTLENGTH;
-		    }
-
-		  if(exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      int exitFlag = 0;
-		      LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-		      {
-			if(Nexport >= bunchSize)
-			  {
-			    /* out of buffer space. Need to discard work for this particle and interrupt */
-			    BufferFullFlag = 1;
-			    exitFlag = 1;
-			  }
-			else
-			  {
-			    nexp = Nexport;
-			    Nexport++;
-			  }
-		      }
-		      UNLOCK_NEXPORT;
-		      if(exitFlag)
-			return -1;
-
-		      exportnodecount[task] = 0;
-		      exportindex[task] = nexp;
-		      DataIndexTable[nexp].Task = task;
-		      DataIndexTable[nexp].Index = target;
-		      DataIndexTable[nexp].IndexGet = nexp;
-		    }
-
-#ifndef DONOTUSENODELIST
-		  DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-		    DomainNodeIndex[no - (maxPart + maxNodes)];
-
-		  if(exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-#endif
-		}
-
-	      no = Nextnode[no - maxNodes];
-	      continue;
-
-	    }
-
-	  current = &Nodes[no];
-
-#ifndef DONOTUSENODELIST
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-		  return numngb;
-#else
-		  return ngb_filter_pairs(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-		}
-	    }
-#endif
-
-	  if(current->Ti_current != ti_Current)
-	    {
-	      LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-	      force_drift_node(no, ti_Current);
-	      UNLOCK_PARTNODEDRIFT;
-	    }
-
-	  if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-	    {
-	      if(current->u.d.mass)	/* open cell */
-		{
-		  no = current->u.d.nextnode;
-		  continue;
-		}
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = DMAX(Extnodes[no].hmax, hsml) + 0.5 * current->len;
-
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-	  no = ngb_check_node(current, &vcenter, &box, &hbox, DMAX(Extnodes[no].hmax, hsml));
-#endif
-	}
-    }
-
-
-  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-  return numngb;
-#else
-  return ngb_filter_pairs(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
+#include "system/ngb_codeblock_before_condition.h"
+    if(P[p].Type > 0) continue; // skip particles with non-gas types
+    if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#define SEARCHBOTHWAYS 1 // need neighbors that can -mutually- see one another, not just single-directional searching here
+#include "system/ngb_codeblock_after_condition_threaded.h"
+#undef SEARCHBOTHWAYS // must be undefined after code block inserted, or compiler will crash
 }
 
 
-
-
-
-/*! This function returns neighbours with distance <= hsml and returns them in
- *  Ngblist. Actually, particles in a box of half side length hsml are
- *  returned, i.e. the reduction to a sphere still needs to be done in the
- *  calling routine.
- */
-int ngb_treefind_variable(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode,
-			  int *nexport, int *nsend_local)
-{
-  int numngb, no, p, task, nexport_save;
-  struct NODE *current;
-  // cache some global vars locally for improved compiler alias analysis
-  int maxPart = All.MaxPart;
-  int maxNodes = MaxNodes;
-  int bunchSize = All.BunchSize;
-  integertime ti_Current = All.Ti_Current;
-#ifndef DO_NOT_BRACH_IF
-  MyDouble dist, dx, dy, dz;
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-#else
-  t_vector box, hbox, vcenter;
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-
-  nexport_save = *nexport;
-
-  numngb = 0;
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < maxPart)		/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-        if(P[p].Type > 0)
-            continue;
-        
-        if(P[p].Mass <= 0)
-            continue;
-
-	  if(P[p].Ti_current != ti_Current)
-	    drift_particle(p, ti_Current);
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = hsml;
-
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-#endif
-
-	  Ngblist[numngb++] = p;
-	}
-      else
-	{
-	  if(no >= maxPart + maxNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(12312);
-
-	      if(target >= 0)	/* if no target is given, export will not occur */
-		{
-		  if(Exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-		    {
-		      Exportflag[task] = target;
-		      Exportnodecount[task] = NODELISTLENGTH;
-		    }
-
-		  if(Exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      if(*nexport >= bunchSize)
-			{
-			  *nexport = nexport_save;
-			  if(nexport_save == 0)
-			    endrun(13004);	/* in this case, the buffer is too small to process even a single particle */
-			  for(task = 0; task < NTask; task++)
-			    nsend_local[task] = 0;
-			  for(no = 0; no < nexport_save; no++)
-			    nsend_local[DataIndexTable[no].Task]++;
-			  return -1;
-			}
-		      Exportnodecount[task] = 0;
-		      Exportindex[task] = *nexport;
-		      DataIndexTable[*nexport].Task = task;
-		      DataIndexTable[*nexport].Index = target;
-		      DataIndexTable[*nexport].IndexGet = *nexport;
-		      *nexport = *nexport + 1;
-		      nsend_local[task]++;
-		    }
-
-		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (maxPart + maxNodes)];
-
-		  if(Exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-		}
-
-	      no = Nextnode[no - maxNodes];
-	      continue;
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-		  return numngb;
-#else
-		  return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-		}
-	    }
-
-	  if(current->Ti_current != ti_Current)
-	    force_drift_node(no, ti_Current);
-
-	  if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-	    {
-	      if(current->u.d.mass)	/* open cell */
-		{
-		  no = current->u.d.nextnode;
-		  continue;
-		}
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dist = hsml + 0.5 * current->len;
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-	  no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
-	}
-    }
-
-
-  //printf("%d\n", numngb);
-
-  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-  return numngb;
-#else
-  return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-
-
-/*! This function returns neighbours with distance <= hsml and returns them in
- *  Ngblist. Actually, particles in a box of half side length hsml are
- *  returned, i.e. the reduction to a sphere still needs to be done in the
- *  calling routine.
+/*! This function returns neighbours with distance <= hsml and returns them in Ngblist. Actually, particles in a box of half side length hsml are
+ *  returned, i.e. the reduction to a sphere still needs to be done in the calling routine.
  */
 int ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-				  int mode, int *exportflag, int *exportnodecount, int *exportindex,
-				  int *ngblist)
+				  int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist)
 {
-  int numngb, no, nexp, p, task;
-  struct NODE *current;
-  // cache some global vars locally for improved compiler alias analysis
-  int maxPart = All.MaxPart;
-  int maxNodes = MaxNodes;
-  int bunchSize = All.BunchSize;
-  integertime ti_Current = All.Ti_Current;
+#include "system/ngb_codeblock_before_condition.h"
+    if(P[p].Type > 0) continue; // skip particles with non-gas types
+    if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#define SEARCHBOTHWAYS 0 // only need neighbors inside of search radius, not particles 'looking at' primary
+#include "system/ngb_codeblock_after_condition_threaded.h"
+#undef SEARCHBOTHWAYS
+}
 
-#ifndef DO_NOT_BRACH_IF
-  MyDouble dx, dy, dz, dist;
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-#else
-  t_vector box, hbox, vcenter;
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
+/* this is the same as above, but the simpler un-threaded version, useful for historical reasons and because some sub-routines use 
+    this model without threading because there is no real performance gain. note the slightly different construction of the subroutine below.
+    TARGET_BITMASK should be set as a bitmask, i.e. SUM(2^n), where n are all the particle types desired for neighbor finding,
+    so e.g. if you want particle types 0 and 4, set TARGET_BITMASK = 17 = 1 + 16 = 2^0 + 2^4
+*/
+int ngb_treefind_variable_targeted(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode, int *nexport, int *nsend_local, int TARGET_BITMASK)
+{
+    int nexport_save = *nexport; /* this line must be here in the un-threaded versions */
+#include "system/ngb_codeblock_before_condition.h" // call the same variable/initialization block
+    if(!((1 << P[p].Type) & (TARGET_BITMASK))) continue; // skip anything not of the desired type
+    if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#include "system/ngb_codeblock_after_condition_unthreaded.h" // call the main loop block as above, but this time the -unthreaded- version
+}
 
-  numngb = 0;
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < maxPart)		/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-        if(P[p].Type > 0)
-            continue;
-        
-        if(P[p].Mass <= 0)
-            continue;
-
-	  if(P[p].Ti_current != ti_Current)
-	    {
-	      LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-	      drift_particle(p, ti_Current);
-	      UNLOCK_PARTNODEDRIFT;
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = hsml;
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-#endif
-	  ngblist[numngb++] = p;
-	}
-      else
-	{
-	  if(no >= maxPart + maxNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(12312);
-
-	      if(target >= 0)	/* if no target is given, export will not occur */
-		{
-		  if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-		    {
-		      exportflag[task] = target;
-		      exportnodecount[task] = NODELISTLENGTH;
-		    }
-
-		  if(exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      int exitFlag = 0;
-		      LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-		      {
-			if(Nexport >= bunchSize)
-			  {
-			    /* out of buffer space. Need to discard work for this particle and interrupt */
-			    BufferFullFlag = 1;
-			    exitFlag = 1;
-			  }
-			else
-			  {
-			    nexp = Nexport;
-			    Nexport++;
-			  }
-		      }
-		      UNLOCK_NEXPORT;
-		      if(exitFlag)
-			return -1;
-
-		      exportnodecount[task] = 0;
-		      exportindex[task] = nexp;
-		      DataIndexTable[nexp].Task = task;
-		      DataIndexTable[nexp].Index = target;
-		      DataIndexTable[nexp].IndexGet = nexp;
-		    }
-
-		  DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-		    DomainNodeIndex[no - (maxPart + maxNodes)];
-
-		  if(exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-
-		}
-
-	      no = Nextnode[no - maxNodes];
-	      continue;
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-		  return numngb;
-#else
-		  return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-		}
-	    }
-
-	  if(current->Ti_current != ti_Current)
-	    {
-	      LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-	      force_drift_node(no, ti_Current);
-	      UNLOCK_PARTNODEDRIFT;
-	    }
-
-	  if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-	    {
-	      if(current->u.d.mass)	/* open cell */
-		{
-		  no = current->u.d.nextnode;
-		  continue;
-		}
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dist = hsml + 0.5 * current->len;
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-	  no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
-	}
-    }
-
-  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-  return numngb;
-#else
-  return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
+/*  slightly modified version of treefind that searches for one or more types of particles: 
+        TARGET_BITMASK should be set as a bitmask, i.e. SUM(2^n), where n are all the particle types desired for neighbor finding,
+        so e.g. if you want particle types 0 and 4, set TARGET_BITMASK = 17 = 1 + 16 = 2^0 + 2^4
+ */
+int ngb_treefind_variable_threads_targeted(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
+                                           int mode, int *exportflag, int *exportnodecount, int *exportindex,
+                                           int *ngblist, int TARGET_BITMASK)
+{
+#include "system/ngb_codeblock_before_condition.h"
+    if(!((1 << P[p].Type) & (TARGET_BITMASK))) continue; // skip anything not of the desired type
+    if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#define SEARCHBOTHWAYS 0 // only need neighbors inside of search radius, not particles 'looking at' primary
+#include "system/ngb_codeblock_after_condition_threaded.h"
+#undef SEARCHBOTHWAYS
 }
 
 
@@ -932,609 +162,31 @@ int ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat hsml, int ta
 
 
 
-
-/*! This function returns neighbours with distance <= hsml and returns them in
- *  Ngblist. Actually, particles in a box of half side length hsml are
- *  returned, i.e. the reduction to a sphere still needs to be done in the
- *  calling routine. This is a modified version that searches for -one- type
+/* 
+    custom code for FOF finder -- needs to be able to deal with complications like pure node-linkages and hard-codes a
+    local requirement, so we can't use our simple routines above. this is a customized version of the "ngb_treefind_variable" routine above. 
+    as a result, updates to the core neighbor search routine will not alter this subroutine 
  */
-int ngb_treefind_variable_threads_targeted(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-                                  int mode, int *exportflag, int *exportnodecount, int *exportindex,
-                                  int *ngblist, int type_of_target_particles)
+int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode, int *nexport, int *nsend_local, int MyFOF_PRIMARY_LINK_TYPES)
 {
-    int numngb, no, nexp, p, task;
+    int numngb, no, p, task, nexport_save;
     struct NODE *current;
+    MyDouble dx, dy, dz, dist, r2;
     // cache some global vars locally for improved compiler alias analysis
     int maxPart = All.MaxPart;
     int maxNodes = MaxNodes;
     int bunchSize = All.BunchSize;
-    integertime ti_Current = All.Ti_Current;
     
-#ifndef DO_NOT_BRACH_IF
-    MyDouble dx, dy, dz, dist;
 #ifdef PERIODIC
     MyDouble xtmp;
 #endif
-#else
+#ifdef REDUCE_TREEWALK_BRANCHING
     t_vector box, hbox, vcenter;
+#ifdef PERIODIC
     INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
     INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
     SCALE_VECTOR3(0.5, &box, &hbox);
 #endif
-    
-    numngb = 0;
-    no = *startnode;
-    
-    while(no >= 0)
-    {
-        if(no < maxPart)		/* single particle */
-        {
-            p = no;
-            no = Nextnode[no];
-            
-            if(P[p].Type != type_of_target_particles)
-                continue;
-            
-            if(P[p].Mass <= 0)
-                continue;
-            
-            if(P[p].Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                drift_particle(p, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            dist = hsml;
-            dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-#endif
-            ngblist[numngb++] = p;
-        }
-        else
-        {
-            if(no >= maxPart + maxNodes)	/* pseudo particle */
-            {
-                if(mode == 1)
-                    endrun(12312);
-                
-                if(target >= 0)	/* if no target is given, export will not occur */
-                {
-                    if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-                    {
-                        exportflag[task] = target;
-                        exportnodecount[task] = NODELISTLENGTH;
-                    }
-                    
-                    if(exportnodecount[task] == NODELISTLENGTH)
-                    {
-                        int exitFlag = 0;
-                        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-                        {
-                            if(Nexport >= bunchSize)
-                            {
-                                /* out of buffer space. Need to discard work for this particle and interrupt */
-                                BufferFullFlag = 1;
-                                exitFlag = 1;
-                            }
-                            else
-                            {
-                                nexp = Nexport;
-                                Nexport++;
-                            }
-                        }
-                        UNLOCK_NEXPORT;
-                        if(exitFlag)
-                            return -1;
-                        
-                        exportnodecount[task] = 0;
-                        exportindex[task] = nexp;
-                        DataIndexTable[nexp].Task = task;
-                        DataIndexTable[nexp].Index = target;
-                        DataIndexTable[nexp].IndexGet = nexp;
-                    }
-                    
-                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                    DomainNodeIndex[no - (maxPart + maxNodes)];
-                    
-                    if(exportnodecount[task] < NODELISTLENGTH)
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-                    
-                }
-                
-                no = Nextnode[no - maxNodes];
-                continue;
-            }
-            
-            current = &Nodes[no];
-            
-            if(mode == 1)
-            {
-                if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-                {
-                    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-                    return numngb;
-#else
-                    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-                }
-            }
-            
-            if(current->Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                force_drift_node(no, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-            if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-            {
-                if(current->u.d.mass)	/* open cell */
-                {
-                    no = current->u.d.nextnode;
-                    continue;
-                }
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            no = current->u.d.sibling;	/* in case the node can be discarded */
-            
-            dist = hsml + 0.5 * current->len;
-            dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            /* now test against the minimal sphere enclosing everything */
-            dist += FACT1 * current->len;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-            
-            no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-            no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
-        }
-    }
-    
-    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-    return numngb;
-#else
-    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-
-
-
-
-
-/*! This function constructs the neighbour tree. To this end, we actually need
- *  to construct the gravitational tree, because we use it now for the
- *  neighbour search.
- */
-void ngb_treebuild(void)
-{
-  if(ThisTask == 0)
-    printf("Begin Ngb-tree construction.\n");
-
-  CPU_Step[CPU_MISC] += measure_time();
-
-  force_treebuild(NumPart, NULL);
-
-  CPU_Step[CPU_TREEBUILD] += measure_time();
-
-  if(ThisTask == 0)
-    printf("Ngb-Tree contruction finished \n");
-}
-
-
-
-int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode,
-			     int *nexport, int *nsend_local, int MyFOF_PRIMARY_LINK_TYPES)
-{
-  int numngb, no, p, task, nexport_save;
-  struct NODE *current;
-  MyDouble dx, dy, dz, dist, r2;
-  // cache some global vars locally for improved compiler alias analysis
-  int maxPart = All.MaxPart;
-  int maxNodes = MaxNodes;
-  int bunchSize = All.BunchSize;
-
-#ifndef DO_NOT_BRACH_IF
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-#else
-  t_vector box, hbox, vcenter;
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-
-  nexport_save = *nexport;
-
-  numngb = 0;
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < maxPart)		/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-	  if(!((1 << P[p].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
-	    continue;
-
-	  if(mode == 0)
-	    continue;
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = hsml;
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-#endif
-	  Ngblist[numngb++] = p;
-	}
-      else
-	{
-	  if(no >= maxPart + maxNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(12312);
-
-	      if(mode == 0)
-		{
-		  if(Exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-		    {
-		      Exportflag[task] = target;
-		      Exportnodecount[task] = NODELISTLENGTH;
-		    }
-
-		  if(Exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      if(*nexport >= bunchSize)
-			{
-			  *nexport = nexport_save;
-			  if(nexport_save == 0)
-			    endrun(13005);	/* in this case, the buffer is too small to process even a single particle */
-			  for(task = 0; task < NTask; task++)
-			    nsend_local[task] = 0;
-			  for(no = 0; no < nexport_save; no++)
-			    nsend_local[DataIndexTable[no].Task]++;
-			  return -1;
-			}
-		      Exportnodecount[task] = 0;
-		      Exportindex[task] = *nexport;
-		      DataIndexTable[*nexport].Task = task;
-		      DataIndexTable[*nexport].Index = target;
-		      DataIndexTable[*nexport].IndexGet = *nexport;
-		      *nexport = *nexport + 1;
-		      nsend_local[task]++;
-		    }
-
-		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (maxPart + maxNodes)];
-
-		  if(Exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-		}
-
-	      if(mode == -1)
-		{
-		  *nexport = 1;
-		}
-
-	      no = Nextnode[no - maxNodes];
-	      continue;
-
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-		  return numngb;
-#else
-		  return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-		}
-	    }
-
-	  if(mode == 0)
-	    {
-	      if(!(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL)))	/* we have a node with only local particles, can skip branch */
-		{
-		  no = current->u.d.sibling;
-		  continue;
-		}
-	    }
-
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dist = hsml + 0.5 * current->len;;
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if((r2 = (dx * dx + dy * dy + dz * dz)) > dist * dist)
-	    continue;
-
-	  if((current->u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) + (1 << BITFLAG_DEPENDS_ON_LOCAL_MASS))) == 0)	/* only use fully local nodes */
-	    {
-	      /* test whether the node is contained within the sphere */
-	      dist = hsml - FACT2 * current->len;
-	      if(dist > 0)
-		if(r2 < dist * dist)
-		  {
-		    if(current->u.d.bitflags & (1 << BITFLAG_INSIDE_LINKINGLENGTH))	/* already flagged */
-		      {
-			/* sufficient to return only one particle inside this cell */
-
-			p = current->u.d.nextnode;
-			while(p >= 0)
-			  {
-			    if(p < maxPart)
-			      {
-				if(((1 << P[p].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
-				  {
-#ifndef DO_NOT_BRACH_IF
-				    dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-				    dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-				    dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-				    if(dx * dx + dy * dy + dz * dz > hsml * hsml)
-				      break;
-#endif
-				    Ngblist[numngb++] = p;
-				    break;
-				  }
-				p = Nextnode[p];
-			      }
-			    else if(p >= maxPart + maxNodes)
-			      p = Nextnode[p - maxNodes];
-			    else
-			      p = Nodes[p].u.d.nextnode;
-			  }
-			continue;
-		      }
-		    else
-		      {
-			/* flag it now */
-			current->u.d.bitflags |= (1 << BITFLAG_INSIDE_LINKINGLENGTH);
-		      }
-		  }
-	    }
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-	}
-    }
-
-  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-  return numngb;
-#else
-  return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-
-
-
-/* find all particles of type FOF_PRIMARY_LINK_TYPES in kernel length in order to find nearest one */
-int ngb_treefind_fof_nearest(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode,
-			     int *nexport, int *nsend_local, int MyFOF_PRIMARY_LINK_TYPES)
-{
-  int numngb, no, p, task, nexport_save;
-  struct NODE *current;
-  // cache some global vars locally for improved compiler alias analysis
-  int maxPart = All.MaxPart;
-  int maxNodes = MaxNodes;
-  int bunchSize = All.BunchSize;
-#ifndef DO_NOT_BRACH_IF
-  MyDouble dx, dy, dz, dist;
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-#else
-  t_vector box, hbox, vcenter;
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-
-#define FACT2 0.86602540
-
-  nexport_save = *nexport;
-
-  numngb = 0;
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < maxPart)		/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-	  if(!((1 << P[p].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
-	    continue;
-
-#ifndef DO_NOT_BRACH_IF
-	  dist = hsml;
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-#endif
-
-	  Ngblist[numngb++] = p;
-	}
-      else
-	{
-	  if(no >= maxPart + maxNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(123192);
-
-	      if(Exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-		{
-		  Exportflag[task] = target;
-		  Exportnodecount[task] = NODELISTLENGTH;
-		}
-
-	      if(Exportnodecount[task] == NODELISTLENGTH)
-		{
-		  if(*nexport >= bunchSize)
-		    {
-		      *nexport = nexport_save;
-		      if(nexport_save == 0)
-			endrun(13005);	/* in this case, the buffer is too small to process even a single particle */
-		      for(task = 0; task < NTask; task++)
-			nsend_local[task] = 0;
-		      for(no = 0; no < nexport_save; no++)
-			nsend_local[DataIndexTable[no].Task]++;
-		      return -1;
-		    }
-		  Exportnodecount[task] = 0;
-		  Exportindex[task] = *nexport;
-		  DataIndexTable[*nexport].Task = task;
-		  DataIndexTable[*nexport].Index = target;
-		  DataIndexTable[*nexport].IndexGet = *nexport;
-		  *nexport = *nexport + 1;
-		  nsend_local[task]++;
-		}
-
-	      DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		DomainNodeIndex[no - (maxPart + maxNodes)];
-
-	      if(Exportnodecount[task] < NODELISTLENGTH)
-		DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-
-	      no = Nextnode[no - maxNodes];
-	      continue;
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-		  return numngb;
-#else
-		  return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-		}
-	    }
-
-#ifndef DO_NOT_BRACH_IF
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dist = hsml + 0.5 * current->len;;
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if((dx * dx + dy * dy + dz * dz) > dist * dist)
-	    continue;
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-	  no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
-	}
-    }
-
-  *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-  return numngb;
-#else
-  return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-
-
-
-
-
-
-
-
-
-#if defined(GALSF_FB_RPWIND_LOCAL) && defined(GALSF_FB_RPWIND_FROMSTARS)
-int ngb_treefind_newstars(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode,
-                          int *nexport, int *nsend_local)
-{
-    int numngb, no, p, task, nexport_save;
-    struct NODE *current;
-    // cache some global vars locally for improved compiler alias analysis
-    int maxPart = All.MaxPart;
-    int maxNodes = MaxNodes;
-    int bunchSize = All.BunchSize;
-    integertime ti_Current = All.Ti_Current;
-    MyDouble dist, dx, dy, dz;
-#ifdef PERIODIC
-    MyDouble xtmp;
 #endif
     
     nexport_save = *nexport;
@@ -1549,29 +201,22 @@ int ngb_treefind_newstars(MyDouble searchcenter[3], MyFloat hsml, int target, in
             p = no;
             no = Nextnode[no];
             
-            if(P[p].Type != 4)
+            if(!((1 << P[p].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
                 continue;
             
-            if(P[p].Mass <= 0)
+            if(mode == 0)
                 continue;
             
-            if(P[p].Ti_current != ti_Current)
-                drift_particle(p, ti_Current);
-            
+#ifndef REDUCE_TREEWALK_BRANCHING
             dist = hsml;
-            
             dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dx > dist)
-                continue;
+            if(dx > dist) continue;
             dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dy > dist)
-                continue;
+            if(dy > dist) continue;
             dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-            
+            if(dz > dist) continue;
+            if(dx * dx + dy * dy + dz * dz > dist * dist) continue;
+#endif
             Ngblist[numngb++] = p;
         }
         else
@@ -1581,7 +226,7 @@ int ngb_treefind_newstars(MyDouble searchcenter[3], MyFloat hsml, int target, in
                 if(mode == 1)
                     endrun(12312);
                 
-                if(target >= 0)	/* if no target is given, export will not occur */
+                if(mode == 0)
                 {
                     if(Exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
                     {
@@ -1595,7 +240,7 @@ int ngb_treefind_newstars(MyDouble searchcenter[3], MyFloat hsml, int target, in
                         {
                             *nexport = nexport_save;
                             if(nexport_save == 0)
-                                endrun(13004);	/* in this case, the buffer is too small to process even a single particle */
+                                endrun(13005);	/* in this case, the buffer is too small to process even a single particle */
                             for(task = 0; task < NTask; task++)
                                 nsend_local[task] = 0;
                             for(no = 0; no < nexport_save; no++)
@@ -1618,8 +263,14 @@ int ngb_treefind_newstars(MyDouble searchcenter[3], MyFloat hsml, int target, in
                         DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
                 }
                 
+                if(mode == -1)
+                {
+                    *nexport = 1;
+                }
+                
                 no = Nextnode[no - maxNodes];
                 continue;
+                
             }
             
             current = &Nodes[no];
@@ -1629,652 +280,93 @@ int ngb_treefind_newstars(MyDouble searchcenter[3], MyFloat hsml, int target, in
                 if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
                 {
                     *startnode = -1;
+#ifndef REDUCE_TREEWALK_BRANCHING
                     return numngb;
+#else
+                    return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml, 0);
+#endif
                 }
             }
             
-            if(current->Ti_current != ti_Current)
-                force_drift_node(no, ti_Current);
-            
-            if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
+            if(mode == 0)
             {
-                if(current->u.d.mass)	/* open cell */
+                if(!(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL)))	/* we have a node with only local particles, can skip branch */
                 {
-                    no = current->u.d.nextnode;
+                    no = current->u.d.sibling;
                     continue;
                 }
             }
             
             no = current->u.d.sibling;	/* in case the node can be discarded */
             
-            dist = hsml + 0.5 * current->len;
+            dist = hsml + 0.5 * current->len;;
             dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dx > dist)
-                continue;
+            if(dx > dist) continue;
             dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dy > dist)
-                continue;
+            if(dy > dist) continue;
             dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dz > dist)
-                continue;
+            if(dz > dist) continue;
             /* now test against the minimal sphere enclosing everything */
             dist += FACT1 * current->len;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
+            if((r2 = (dx * dx + dy * dy + dz * dz)) > dist * dist) continue;
             
-            no = current->u.d.nextnode;	/* ok, we need to open the node */
-        }
-    }
-    
-    
-    //printf("%d\n", numngb);
-    
-    *startnode = -1;
-    return numngb;
-}
-#endif 
-
-
-
-
-
-#ifdef GALSF_SUBGRID_DMDISPERSION
-int dm_disp_ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-                                       int mode, int *exportflag, int *exportnodecount, int *exportindex,
-                                       int *ngblist, int type_of_searching_particle)
-{
-    int numngb, no, nexp, p, task;
-    struct NODE *current;
-    // cache some global vars locally for improved compiler alias analysis
-    int maxPart = All.MaxPart;
-    int maxNodes = MaxNodes;
-    int bunchSize = All.BunchSize;
-    integertime ti_Current = All.Ti_Current;
-    
-#ifndef DO_NOT_BRACH_IF
-    MyDouble dx, dy, dz, dist;
-#ifdef PERIODIC
-    MyDouble xtmp;
-#endif
-#else
-    t_vector box, hbox, vcenter;
-    INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-    INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-    SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-    
-    
-    numngb = 0;
-    no = *startnode;
-    
-    while(no >= 0)
-    {
-        if(no < maxPart)		/* single particle */
-        {
-            p = no;
-            no = Nextnode[no];
-            
-            /* call the master routine which decides if particles "talk to" each other in-kernel */
-            if(disp_gravity_kernel_shared_check(type_of_searching_particle , P[p].Type) == 0)
-                continue;
-            
-            if(P[p].Mass <= 0)
-                continue;
-            
-            if(P[p].Ti_current != ti_Current)
+            if((current->u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) + (1 << BITFLAG_DEPENDS_ON_LOCAL_MASS))) == 0)	/* only use fully local nodes */
             {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                drift_particle(p, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            dist = hsml;
-            dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-#endif
-            ngblist[numngb++] = p;
-        }
-        else
-        {
-            if(no >= maxPart + maxNodes)	/* pseudo particle */
-            {
-                if(mode == 1)
-                    endrun(12312);
-                
-                if(target >= 0)	/* if no target is given, export will not occur */
-                {
-                    if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
+                /* test whether the node is contained within the sphere */
+                dist = hsml - FACT2 * current->len;
+                if(dist > 0)
+                    if(r2 < dist * dist)
                     {
-                        exportflag[task] = target;
-                        exportnodecount[task] = NODELISTLENGTH;
-                    }
-                    
-                    if(exportnodecount[task] == NODELISTLENGTH)
-                    {
-                        int exitFlag = 0;
-                        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
+                        if(current->u.d.bitflags & (1 << BITFLAG_INSIDE_LINKINGLENGTH))	/* already flagged */
                         {
-                            if(Nexport >= bunchSize)
+                            /* sufficient to return only one particle inside this cell */
+                            
+                            p = current->u.d.nextnode;
+                            while(p >= 0)
                             {
-                                /* out of buffer space. Need to discard work for this particle and interrupt */
-                                BufferFullFlag = 1;
-                                exitFlag = 1;
+                                if(p < maxPart)
+                                {
+                                    if(((1 << P[p].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
+                                    {
+#ifndef REDUCE_TREEWALK_BRANCHING
+                                        dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+                                        dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+                                        dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+                                        if(dx * dx + dy * dy + dz * dz > hsml * hsml) break;
+#endif
+                                        Ngblist[numngb++] = p;
+                                        break;
+                                    }
+                                    p = Nextnode[p];
+                                }
+                                else if(p >= maxPart + maxNodes)
+                                    p = Nextnode[p - maxNodes];
+                                else
+                                    p = Nodes[p].u.d.nextnode;
                             }
-                            else
-                            {
-                                nexp = Nexport;
-                                Nexport++;
-                            }
+                            continue;
                         }
-                        UNLOCK_NEXPORT;
-                        if(exitFlag)
-                            return -1;
-                        
-                        exportnodecount[task] = 0;
-                        exportindex[task] = nexp;
-                        DataIndexTable[nexp].Task = task;
-                        DataIndexTable[nexp].Index = target;
-                        DataIndexTable[nexp].IndexGet = nexp;
-                    }
-                    
-                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                    DomainNodeIndex[no - (maxPart + maxNodes)];
-                    
-                    if(exportnodecount[task] < NODELISTLENGTH)
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-                    
-                }
-                
-                no = Nextnode[no - maxNodes];
-                continue;
-            }
-            
-            current = &Nodes[no];
-            
-            if(mode == 1)
-            {
-                if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-                {
-                    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-                    return numngb;
-#else
-                    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-                }
-            }
-            
-            if(current->Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                force_drift_node(no, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-            if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-            {
-                if(current->u.d.mass)	/* open cell */
-                {
-                    no = current->u.d.nextnode;
-                    continue;
-                }
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            no = current->u.d.sibling;	/* in case the node can be discarded */
-            
-            dist = hsml + 0.5 * current->len;
-            dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            /* now test against the minimal sphere enclosing everything */
-            dist += FACT1 * current->len;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-            
-            no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-            no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
-        }
-    }
-    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-    return numngb;
-#else
-    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-#endif
-
-
-
-
-
-#ifdef ADAPTIVE_GRAVSOFT_FORALL
-/*! This function returns neighbours with distance <= hsml and returns them in
- *  Ngblist. Actually, particles in a box of half side length hsml are
- *  returned, i.e. the reduction to a sphere still needs to be done in the
- *  calling routine.
- */
-int ags_ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-                                  int mode, int *exportflag, int *exportnodecount, int *exportindex,
-                                  int *ngblist, int type_of_searching_particle)
-{
-    int numngb, no, nexp, p, task;
-    struct NODE *current;
-    // cache some global vars locally for improved compiler alias analysis
-    int maxPart = All.MaxPart;
-    int maxNodes = MaxNodes;
-    int bunchSize = All.BunchSize;
-    integertime ti_Current = All.Ti_Current;
-    
-#ifndef DO_NOT_BRACH_IF
-    MyDouble dx, dy, dz, dist;
-#ifdef PERIODIC
-    MyDouble xtmp;
-#endif
-#else
-    t_vector box, hbox, vcenter;
-    INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-    INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-    SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-    
-
-    numngb = 0;
-    no = *startnode;
-    
-    while(no >= 0)
-    {
-        if(no < maxPart)		/* single particle */
-        {
-            p = no;
-            no = Nextnode[no];
-            
-            /* call the master routine which decides if particles "talk to" each other in-kernel */
-            if(ags_gravity_kernel_shared_check(type_of_searching_particle , P[p].Type) == 0)
-                continue;
-            
-            if(P[p].Mass <= 0)
-                continue;
-            
-            if(P[p].Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                drift_particle(p, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            dist = hsml;
-            dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-#endif
-            ngblist[numngb++] = p;
-        }
-        else
-        {
-            if(no >= maxPart + maxNodes)	/* pseudo particle */
-            {
-                if(mode == 1)
-                    endrun(12312);
-                
-                if(target >= 0)	/* if no target is given, export will not occur */
-                {
-                    if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-                    {
-                        exportflag[task] = target;
-                        exportnodecount[task] = NODELISTLENGTH;
-                    }
-                    
-                    if(exportnodecount[task] == NODELISTLENGTH)
-                    {
-                        int exitFlag = 0;
-                        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
+                        else
                         {
-                            if(Nexport >= bunchSize)
-                            {
-                                /* out of buffer space. Need to discard work for this particle and interrupt */
-                                BufferFullFlag = 1;
-                                exitFlag = 1;
-                            }
-                            else
-                            {
-                                nexp = Nexport;
-                                Nexport++;
-                            }
+                            /* flag it now */
+                            current->u.d.bitflags |= (1 << BITFLAG_INSIDE_LINKINGLENGTH);
                         }
-                        UNLOCK_NEXPORT;
-                        if(exitFlag)
-                            return -1;
-                        
-                        exportnodecount[task] = 0;
-                        exportindex[task] = nexp;
-                        DataIndexTable[nexp].Task = task;
-                        DataIndexTable[nexp].Index = target;
-                        DataIndexTable[nexp].IndexGet = nexp;
                     }
-                    
-                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                    DomainNodeIndex[no - (maxPart + maxNodes)];
-                    
-                    if(exportnodecount[task] < NODELISTLENGTH)
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-                    
-                }
-                
-                no = Nextnode[no - maxNodes];
-                continue;
             }
-            
-            current = &Nodes[no];
-            
-            if(mode == 1)
-            {
-                if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-                {
-                    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-                    return numngb;
-#else
-                    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-                }
-            }
-            
-            if(current->Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                force_drift_node(no, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-            if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-            {
-                if(current->u.d.mass)	/* open cell */
-                {
-                    no = current->u.d.nextnode;
-                    continue;
-                }
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            no = current->u.d.sibling;	/* in case the node can be discarded */
-            
-            dist = hsml + 0.5 * current->len;
-            dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            /* now test against the minimal sphere enclosing everything */
-            dist += FACT1 * current->len;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
             
             no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-            no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
         }
     }
     
     *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
+#ifndef REDUCE_TREEWALK_BRANCHING
     return numngb;
 #else
-    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
+    return ngb_filter_variables(numngb, Ngblist, &vcenter, &box, &hbox, hsml, 0);
 #endif
 }
 
-#endif // ADAPTIVE_GRAVSOFT_FORALL
 
 
 
-
-
-
-
-
-#ifdef PM_HIRES_REGION_CLIPDM
-int ngb_treefind_variable_threads_nongas(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
-                                          int mode, int *exportflag, int *exportnodecount, int *exportindex,
-                                          int *ngblist)
-{
-    int numngb, no, nexp, p, task;
-    struct NODE *current;
-    // cache some global vars locally for improved compiler alias analysis
-    int maxPart = All.MaxPart;
-    int maxNodes = MaxNodes;
-    int bunchSize = All.BunchSize;
-    integertime ti_Current = All.Ti_Current;
-    
-#ifndef DO_NOT_BRACH_IF
-    MyDouble dx, dy, dz, dist;
-#ifdef PERIODIC
-    MyDouble xtmp;
-#endif
-#else
-    t_vector box, hbox, vcenter;
-    INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-    INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-    SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-    
-    
-    numngb = 0;
-    no = *startnode;
-    
-    while(no >= 0)
-    {
-        if(no < maxPart)		/* single particle */
-        {
-            p = no;
-            no = Nextnode[no];
-            
-            /* exclude gas but keep everything else */
-            if(P[p].Type == 0)
-                continue;
-            
-            if(P[p].Mass <= 0)
-                continue;
-            
-            if(P[p].Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                drift_particle(p, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            dist = hsml;
-            dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-#endif
-            ngblist[numngb++] = p;
-        }
-        else
-        {
-            if(no >= maxPart + maxNodes)	/* pseudo particle */
-            {
-                if(mode == 1)
-                    endrun(12312);
-                
-                if(target >= 0)	/* if no target is given, export will not occur */
-                {
-                    if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
-                    {
-                        exportflag[task] = target;
-                        exportnodecount[task] = NODELISTLENGTH;
-                    }
-                    
-                    if(exportnodecount[task] == NODELISTLENGTH)
-                    {
-                        int exitFlag = 0;
-                        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-                        {
-                            if(Nexport >= bunchSize)
-                            {
-                                /* out of buffer space. Need to discard work for this particle and interrupt */
-                                BufferFullFlag = 1;
-                                exitFlag = 1;
-                            }
-                            else
-                            {
-                                nexp = Nexport;
-                                Nexport++;
-                            }
-                        }
-                        UNLOCK_NEXPORT;
-                        if(exitFlag)
-                            return -1;
-                        
-                        exportnodecount[task] = 0;
-                        exportindex[task] = nexp;
-                        DataIndexTable[nexp].Task = task;
-                        DataIndexTable[nexp].Index = target;
-                        DataIndexTable[nexp].IndexGet = nexp;
-                    }
-                    
-                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                    DomainNodeIndex[no - (maxPart + maxNodes)];
-                    
-                    if(exportnodecount[task] < NODELISTLENGTH)
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-                    
-                }
-                
-                no = Nextnode[no - maxNodes];
-                continue;
-            }
-            
-            current = &Nodes[no];
-            
-            if(mode == 1)
-            {
-                if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-                {
-                    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-                    return numngb;
-#else
-                    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-                }
-            }
-            
-            if(current->Ti_current != ti_Current)
-            {
-                LOCK_PARTNODEDRIFT;
-#ifdef _OPENMP
-#pragma omp critical(_partnodedrift_)
-#endif
-                force_drift_node(no, ti_Current);
-                UNLOCK_PARTNODEDRIFT;
-            }
-            
-            if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-            {
-                if(current->u.d.mass)	/* open cell */
-                {
-                    no = current->u.d.nextnode;
-                    continue;
-                }
-            }
-            
-#ifndef DO_NOT_BRACH_IF
-            no = current->u.d.sibling;	/* in case the node can be discarded */
-            
-            dist = hsml + 0.5 * current->len;
-            dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dx > dist)
-                continue;
-            dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dy > dist)
-                continue;
-            dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-            if(dz > dist)
-                continue;
-            /* now test against the minimal sphere enclosing everything */
-            dist += FACT1 * current->len;
-            if(dx * dx + dy * dy + dz * dz > dist * dist)
-                continue;
-            
-            no = current->u.d.nextnode;	/* ok, we need to open the node */
-#else
-            no = ngb_check_node(current, &vcenter, &box, &hbox, hsml);
-#endif
-        }
-    }
-    *startnode = -1;
-#ifndef DO_NOT_BRACH_IF
-    return numngb;
-#else
-    return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml);
-#endif
-}
-#endif
 

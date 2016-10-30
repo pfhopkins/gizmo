@@ -203,10 +203,8 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 
 	  if(iter > 800 + 3*NTask && Local_ThisTask == 0)
 	    {
-	      printf("iter=%d: ranks_not_found=%d  Local_NTask=%d\n", iter, ranks_not_found, Local_NTask);
-	      fflush(stdout);
-	      if(iter > 900 + 3*NTask)
-		terminate("can't find the split points. That's odd");
+	      printf("iter=%d: ranks_not_found=%d  Local_NTask=%d\n", iter, ranks_not_found, Local_NTask); fflush(stdout);
+	      if(iter > 900 + 3*NTask) terminate("can't find the split points. That's odd");
 	    }
 	}
       while(ranks_not_found);

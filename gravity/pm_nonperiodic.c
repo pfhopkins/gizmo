@@ -2731,10 +2731,10 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
 
   if(ThisTask == 0)
     {
-      printf
-	("Starting non-periodic PM-Tidaltensor (component=%d) calculation (grid=%d)  presently allocated=%g MB).\n",
-	 component, grnr, AllocatedBytes / (1024.0 * 1024.0));
+      printf("Starting non-periodic PM-Tidaltensor (component=%d) calculation (grid=%d)  presently allocated=%g MB).\n", component, grnr, AllocatedBytes / (1024.0 * 1024.0));
+#ifndef IO_REDUCED_MODE
       fflush(stdout);
+#endif
     }
 
   fac = All.G / pow(All.TotalMeshSize[grnr], 4) * pow(All.TotalMeshSize[grnr] / GRID, 3);	/* to get potential */
@@ -3200,12 +3200,13 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
 
   pm_init_nonperiodic_free();
 
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("done PM-Tidaltensor (component=%d).\n", component);
-      fflush(stdout);
     }
-  return 0;
+#endif
+    return 0;
 }
 
 void check_tidaltensor_nonperiodic(int particle_ID)

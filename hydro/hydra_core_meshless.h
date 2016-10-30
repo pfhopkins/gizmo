@@ -31,7 +31,7 @@
     /* ------------------------------------------------------------------------------------------------------------------- */
     double wt_i,wt_j;
     wt_i=V_i; wt_j=V_j;
-/*
+#ifdef PROTECT_FROZEN_FIRE
 #ifdef AGGRESSIVE_SLOPE_LIMITERS
     wt_i=V_i; wt_j=V_j;
 #else
@@ -43,7 +43,7 @@
     if((fabs(V_i-V_j)/DMIN(V_i,V_j))/NUMDIMS > 1.50) {wt_i=wt_j=(V_i*PPP[j].Hsml+V_j*local.Hsml)/(local.Hsml+PPP[j].Hsml);} else {wt_i=V_i; wt_j=V_j;}
 #endif
 #endif
-*/
+#endif
     /* the effective gradient matrix is well-conditioned: we can safely use the consistent EOM */
     // note the 'default' formulation from Lanson and Vila takes wt_i=V_i, wt_j=V_j; but this assumes negligible variation in h between particles;
     //      it is more accurate to use a centered wt (centered face area), which we get by linear interpolation //
@@ -78,7 +78,8 @@
         {
             printf("PANIC! Face_Area_Norm=%g Mij=%g/%g wk_ij=%g/%g Vij=%g/%g dx/dy/dz=%g/%g/%g NVT=%g/%g/%g NVT_j=%g/%g/%g \n",Face_Area_Norm,local.Mass,P[j].Mass,kernel.wk_i,
                    kernel.wk_j,V_i,V_j,kernel.dp[0],kernel.dp[1],kernel.dp[2],local.NV_T[0][0],local.NV_T[0][1],local.NV_T[0][2],SphP[j].NV_T[0][0],SphP[j].NV_T[0][1],
-                   SphP[j].NV_T[0][2]);fflush(stdout);
+                   SphP[j].NV_T[0][2]);
+            fflush(stdout);
         }
         Face_Area_Norm = sqrt(Face_Area_Norm);
         for(k=0;k<3;k++) {n_unit[k] = Face_Area_Vec[k] / Face_Area_Norm;}
@@ -195,20 +196,9 @@
             Riemann_vec.L.p -= dt_half * GAMMA * SphP[j].Pressure * SphP[j].Gradients.Velocity[k][k];
             double dv_l_half = -dt_half * local.Gradients.Pressure[k] / local.Density;
             double dv_r_half = -dt_half * SphP[j].Gradients.Pressure[k] / SphP[j].Density;
-            /* // this part doesn't need to be done, because our derivatives are co-moving; but if they are not, use it //
-             Riemann_vec.R.rho -= dt_half * (local.Vel[k]-v_frame[k]) * local.Gradients.Density[k];
-             Riemann_vec.L.rho -= dt_half * (VelPred_j[k]-v_frame[k]) * SphP[j].Gradients.Density[k];
-             Riemann_vec.R.p -= dt_half * (local.Vel[k]-v_frame[k]) * local.Gradients.Pressure[k];
-             Riemann_vec.L.p -= dt_half * (VelPred_j[k]-v_frame[k]) * SphP[j].Gradients.Pressure[k];
-             for(int kx=0;kx<3;kx++)
-             {
-                dv_r_half -= dt_half * (local.Vel[kx]-v_frame[kx]) * local.Gradients.Velocity[k][kx];
-                dv_l_half -= dt_half * (VelPred_j[kx]-v_frame[kx]) * SphP[j].Gradients.Velocity[k][kx];
-             }
-            */
             Riemann_vec.R.v[k] += 0.5 * (dv_l_half - dv_r_half);
             Riemann_vec.L.v[k] += 0.5 * (dv_r_half - dv_l_half);
-            v_frame[k] += 0.5*(dv_l_half + dv_l_half);
+            v_frame[k] += 0.5*(dv_l_half + dv_r_half);
         }
 #endif
         
@@ -328,7 +318,8 @@
                 double PdV_j = kernel.dwk_j * V_j*V_j * PPP[j].DhsmlNgbFactor * PdV_fac;
                 du_new = 0.5 * (PdV_i - PdV_j + facenorm_pm * (face_vel_i+face_vel_j));
                 // check if, for the (weakly) diffusive case, heat is (correctly) flowing from hot to cold after particle averaging (flux-limit) //
-                if(SM_over_ceff > epsilon_entropic_eos_small)
+                double cnum2 = SphP[j].ConditionNumber*SphP[j].ConditionNumber;
+                if(SM_over_ceff > epsilon_entropic_eos_small && cnum2 < cnumcrit2)
                 {
                     double du_old = facenorm_pm * (Riemann_out.S_M + face_area_dot_vel);
                     if(local.Pressure/local.Density > SphP[j].Pressure/SphP[j].Density)
@@ -342,10 +333,10 @@
                             if(dtoi > du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}
                     }
                 }
+                if(cnum2 >= cnumcrit2) {use_entropic_energy_equation=1;}
                 // alright, if we've come this far, we need to subtract -off- the thermal energy part of the flux, and replace it //
+                if(use_entropic_energy_equation) {Fluxes.p = du_new;}
             }
-            if(SphP[j].ConditionNumber*SphP[j].ConditionNumber > cnumcrit2) {use_entropic_energy_equation=1;}
-            if(use_entropic_energy_equation) {Fluxes.p = du_new;}
 #endif
             
 #else
@@ -416,7 +407,8 @@
                 double du_old = facenorm_pm * (Riemann_out.S_M + face_area_dot_vel);
                 double du_new = 0.5 * (PdV_i - PdV_j + facenorm_pm * (face_vel_i+face_vel_j));
                 // more detailed check for intermediate cases //
-                if(SM_over_ceff > epsilon_entropic_eos_small)
+                double cnum2 = SphP[j].ConditionNumber*SphP[j].ConditionNumber;
+                if(SM_over_ceff > epsilon_entropic_eos_small && cnum2 < cnumcrit2)
                 {
                     if(local.Pressure/local.Density > SphP[j].Pressure/SphP[j].Density)
                     {
@@ -429,7 +421,7 @@
                             if(dtoi > du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}
                     }
                 }
-                if(SphP[j].ConditionNumber*SphP[j].ConditionNumber > cnumcrit2) {use_entropic_energy_equation=1;}
+                if(cnum2 >= cnumcrit2) {use_entropic_energy_equation=1;}
                 // alright, if we've come this far, we need to subtract -off- the thermal energy part of the flux, and replace it //
                 if(use_entropic_energy_equation) {Fluxes.p += du_new - du_old;}
             }

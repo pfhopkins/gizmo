@@ -529,7 +529,7 @@ void cooling_and_starformation(void)
             if ( (SphP[i].Density*All.cf_a3inv > All.PhysDensThresh) && (P[i].Metallicity[0]/All.SolarAbundances[0] < 0.1) )
             {
                 GradRho = evaluate_NH_from_GradRho(P[i].GradRho,PPP[i].Hsml,SphP[i].Density,PPP[i].NumNgb,1);
-                GradRho *= All.UnitDensity_in_cgs * All.UnitLength_in_cm * All.HubbleParam
+                GradRho *= All.UnitDensity_in_cgs * All.UnitLength_in_cm * All.HubbleParam;
                 /* surface dens in g/cm^2; threshold for bound cluster formation in our experiments is ~2 g/cm^2 (10^4 M_sun/pc^2) */
                 if (GradRho > 0.1)
                 {
@@ -725,9 +725,13 @@ if(All.WindMomentumLoading)
     MPI_Reduce(&avg_v_kick, &totMPI_avg_v, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&momwt_avg_v_kick, &totMPI_pwt_avg_v, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&avg_taufac, &totMPI_taufac, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#ifdef IO_REDUCED_MODE
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
     if(ThisTask == 0)
     {
-        if(totMPI_n_wind>0) {
+        if(totMPI_n_wind>0)
+        {
             totMPI_avg_v /= totMPI_n_wind;
             totMPI_pwt_avg_v /= totMPI_prob_kick;
             totMPI_taufac /= totMPI_n_wind;
@@ -735,13 +739,13 @@ if(All.WindMomentumLoading)
             printf("Momentum Wind Feedback: Time=%g Nkicked=%g Mkicked=%g Momkicks=%g dPdtkick=%g V_avg=%g V_momwt_avg=%g Tau_avg=%g \n",
                    All.Time,totMPI_n_wind,totMPI_m_wind,totMPI_mom_wind,totMPI_prob_kick,totMPI_avg_v,
                    totMPI_pwt_avg_v,totMPI_taufac);
-            fflush(stdout);
-        }
-        if(totMPI_n_wind>0) {
             fprintf(FdMomWinds, "%lg %g %g %g %g %g %g %g \n",
                     All.Time,totMPI_n_wind,totMPI_m_wind,totMPI_mom_wind,totMPI_prob_kick,totMPI_avg_v,
                     totMPI_pwt_avg_v,totMPI_taufac);
-            fflush(FdMomWinds); 
+#ifndef IO_REDUCED_MODE
+            fflush(stdout);
+#endif
+            fflush(FdMomWinds); // can flush because in reduced mode, only written on highest timesteps
         }
     }
 }
@@ -754,8 +758,9 @@ if(All.WindMomentumLoading)
   {
       if(ThisTask==0)
       {
+#ifndef IO_REDUCED_MODE
       printf("BH/Sink formation: %d gas particles converted into BHs \n",tot_bhformed);
-      fflush(stdout);
+#endif
       }
       All.TotBHs += tot_bhformed;
   } // if(tot_bhformed > 0)
@@ -767,10 +772,11 @@ if(All.WindMomentumLoading)
     {
       if(ThisTask == 0)
 	{
+#ifndef IO_REDUCED_MODE
 	  printf("SFR: spawned %d stars, converted %d gas particles into stars\n",
 		 tot_spawned, tot_converted);
-	  fflush(stdout);
-	}
+#endif
+    }
       All.TotNumPart += tot_spawned;
       All.TotN_gas -= tot_converted;
       NumPart += stars_spawned;
@@ -782,21 +788,25 @@ if(All.WindMomentumLoading)
     if(TimeBinCount[bin])
       sfrrate += TimeBinSfr[bin];
 
-  MPI_Allreduce(&sfrrate, &totsfrrate, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  MPI_Reduce(&sum_sm, &total_sm, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&sum_mass_stars, &total_sum_mass_stars, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-  if(ThisTask == 0)
+#ifdef IO_REDUCED_MODE
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+#endif
     {
-      if(All.TimeStep > 0)
-        rate = total_sm / (All.TimeStep / (All.cf_atime*All.cf_hubble_a));
-      else
-        rate = 0;
-      /* convert to solar masses per yr */
-      rate_in_msunperyear = rate * (All.UnitMass_in_g / SOLAR_MASS) / (All.UnitTime_in_s / SEC_PER_YEAR);
-      fprintf(FdSfr, "%g %g %g %g %g\n", All.Time, total_sm, totsfrrate, rate_in_msunperyear, total_sum_mass_stars);
-      fflush(FdSfr);
-    } // thistask==0
-
+        MPI_Allreduce(&sfrrate, &totsfrrate, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Reduce(&sum_sm, &total_sm, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&sum_mass_stars, &total_sum_mass_stars, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
+        {
+            if(All.TimeStep > 0)
+                rate = total_sm / (All.TimeStep / (All.cf_atime*All.cf_hubble_a));
+            else
+                rate = 0;
+            /* convert to solar masses per yr */
+            rate_in_msunperyear = rate * (All.UnitMass_in_g / SOLAR_MASS) / (All.UnitTime_in_s / SEC_PER_YEAR);
+            fprintf(FdSfr, "%g %g %g %g %g\n", All.Time, total_sm, totsfrrate, rate_in_msunperyear, total_sum_mass_stars);
+            fflush(FdSfr); // can flush it, because only occuring on master steps anyways
+        } // thistask==0
+    }
 
     if(tot_converted+tot_spawned > 0) {rearrange_particle_sequence();}
 
@@ -928,7 +938,8 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
         pos=P[i].Pos;
         m_st_kernel=0; l_st_kernel=0; //l_st_kernel_nonrad=0;
         do {
-            numngb_inbox = ngb_treefind_newstars(&pos[0],h,-1,&startnode,0,&dummy,&dummy);
+            numngb_inbox = ngb_treefind_variable_threads_targeted(pos, h, -1, &startnode, 0, &dummy, &dummy, &dummy, Ngblist, 16); // search for particles of type 4: 2^4=16
+            
             /* searches for all new stars inside h */
             if(numngb_inbox>0)
             {
@@ -953,7 +964,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
             m_gas_kernel=0; pos=P[i].Pos;
             startnode = All.MaxPart; dummy=0;
             do {
-                numngb_inbox = ngb_treefind_variable(pos,h,-1,&startnode,0,&dummy,&dummy);
+                numngb_inbox = ngb_treefind_variable_targeted(pos,h,-1,&startnode,0,&dummy,&dummy,1); // search for gas: 2^0=1
                 if(numngb_inbox>0) for(n=0; n<numngb_inbox; n++) m_gas_kernel+=P[Ngblist[n]].Mass;
             } while(startnode >= 0);
             //printf("wind h %g numngb %d m_gas_kernel %g \n",h,numngb_inbox,m_gas_kernel);
@@ -978,7 +989,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
             h=3.0*PPP[k].Hsml; pos=P[k].Pos;
             dmax1w=SphP[k].Density; vq=0;
             do {
-                numngb_inbox=ngb_treefind_variable(pos,h,-1,&startnode,0,&dummy,&dummy);
+                numngb_inbox=ngb_treefind_variable_targeted(pos,h,-1,&startnode,0,&dummy,&dummy,1); // search for gas: 2^0=1
                 if(numngb_inbox>0) {
                     for(n=0; n<numngb_inbox; n++) {
                         j = Ngblist[n];
@@ -1020,7 +1031,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
             startnode = All.MaxPart; dummy=0;
             do {
                 pos=P[k].Pos;
-                numngb_inbox = ngb_treefind_variable(pos,h,-1,&startnode,0,&dummy,&dummy);
+                numngb_inbox = ngb_treefind_variable_targeted(pos,h,-1,&startnode,0,&dummy,&dummy,1); // search for gas: 2^0=1
                 if(numngb_inbox>0) for(n=0; n<numngb_inbox; n++) m_gas_kernel+=P[Ngblist[n]].Mass;
             } while(startnode >= 0);
         }
@@ -1030,7 +1041,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
         startnode = All.MaxPart; dummy=0;
         do {
             pos=P[k].Pos;
-            numngb_inbox = ngb_treefind_newstars(pos,h,-1,&startnode,0,&dummy,&dummy);
+            numngb_inbox = ngb_treefind_variable_threads_targeted(pos, h, -1, &startnode, 0, &dummy, &dummy, &dummy, Ngblist, 16); // search for particles of type 4: 2^4=16
             stcom_pos[0]=0.0;stcom_pos[1]=0.0;stcom_pos[2]=0.0;
             if(numngb_inbox>0) { for(n=0; n<numngb_inbox; n++) {
                 star_age = evaluate_stellar_age_Gyr(P[Ngblist[n]].StellarAge);
@@ -1245,12 +1256,14 @@ void init_clouds(void)
       All.BlackHoleRefSoundspeed = sqrt(GAMMA * GAMMA_MINUS1 * egyeff);
 #endif
 
+#ifndef IO_REDUCED_MODE
       if(ThisTask == 0)
 	{
 	  printf("Run-away sets in for dens=%g\n", thresholdStarburst);
 	  printf("Dynamic range for quiescent star formation= %g\n", thresholdStarburst / All.PhysDensThresh);
 	  fflush(stdout);
 	}
+#endif
 
       if(All.ComovingIntegrationOn)
 	{

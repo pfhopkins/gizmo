@@ -338,10 +338,12 @@ void init_self_interactions()
 
 void log_self_interactions()
 {
+#ifndef IO_REDUCED_MODE
     if(ThisTask == 0)
     {
         fprintf(FdInfo, "\nNumber of DM self-interactions at this time-step: %lu\n", All.Ndmsi);
         printf("\nNumber of DM self-interactions at this time-step: %lu\n", All.Ndmsi);
     }
+#endif
 }
 

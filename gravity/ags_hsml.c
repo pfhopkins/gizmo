@@ -38,38 +38,36 @@ extern pthread_mutex_t mutex_partnodedrift;
     of the appropriate correction terms), to determine which particle types "talk to" which other particle types 
     (i.e. which particle types you search for to determine the softening radii for gravity). For effectively volume-filling
     fluids like gas or dark matter, it makes sense for this to be 'matched' to particles of the same type. For other 
-    particle types like stars or black holes, it's more ambiguous, and requires some judgement on the part of the user. */
-int ags_gravity_kernel_shared_check(short int particle_type_primary, short int particle_type_secondary)
+    particle types like stars or black holes, it's more ambiguous, and requires some judgement on the part of the user. 
+    The routine specifically returns a bitflag which defines all valid particles to which a particle of type 'primary' 
+    can 'see': i.e. SUM(2^n), where n are all the particle types desired for neighbor finding,
+    so e.g. if you want particle types 0 and 4, set the bitmask = 17 = 1 + 16 = 2^0 + 2^4
+ */
+int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary)
 {
     /* gas particles see gas particles */
-    if(particle_type_primary == 0)
-        return (particle_type_secondary==particle_type_primary);
+    if(particle_type_primary == 0) {return 1;}
 
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
 #ifdef BLACK_HOLES
     /* black hole particles see gas */
-    if(particle_type_primary == 5)
-        return (particle_type_secondary == 0);
+    if(particle_type_primary == 5) {return 1;}
 #endif
 #ifdef GALSF
     /* stars see baryons (any type) */
     if(All.ComovingIntegrationOn)
     {
-        if(particle_type_primary == 4)
-            return ((particle_type_secondary==0)||(particle_type_secondary==4));
+        if(particle_type_primary == 4) {return 17;} // 2^0+2^4
     } else {
-        if((particle_type_primary == 4)||(particle_type_primary == 2)||(particle_type_primary == 3))
-            return ((particle_type_secondary==0)||(particle_type_secondary==4)||(particle_type_secondary == 2)||(particle_type_secondary == 3));
+        if((particle_type_primary == 4)||(particle_type_primary == 2)||(particle_type_primary == 3)) {return 29;} // 2^0+2^2+2^3+2^4
     }
 #endif
 #ifdef SIDM
     /* SIDM particles see other SIDM particles */
-    if((1 << particle_type_primary) & (SIDM))
-        return ((1 << particle_type_secondary) & (SIDM));
+    if((1 << particle_type_primary) & (SIDM)) {return SIDM;}
 #endif
-    
     /* if we haven't been caught by one of the above checks, we simply return whether or not we see 'ourselves' */
-    return (particle_type_primary == particle_type_secondary);
+    return (1 << particle_type_primary);
 #endif
     
     return 0;
@@ -532,11 +530,13 @@ void ags_density(void)
                 {
                     if(iter >= MAXITER - 10)
                     {
+#ifndef IO_REDUCED_MODE
                         printf("AGS: i=%d task=%d ID=%llu Type=%d Hsml=%g dhsml=%g Left=%g Right=%g Ngbs=%g Right-Left=%g maxh_flag=%d minh_flag=%d  minsoft=%g maxsoft=%g desnum=%g desnumtol=%g redo=%d pos=(%g|%g|%g)\n",
                                i, ThisTask, (unsigned long long) P[i].ID, P[i].Type, PPP[i].AGS_Hsml, PPP[i].DhsmlNgbFactor, Left[i], Right[i],
                                (float) PPP[i].NumNgb, Right[i] - Left[i], particle_set_to_maxhsml_flag, particle_set_to_minhsml_flag, minsoft,
                                maxsoft, desnumngb, desnumngbdev, redo_particle, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
                         fflush(stdout);
+#endif
                     }
                     
                     /* need to redo this particle */
@@ -683,7 +683,6 @@ void ags_density(void)
             {
                 printf("ags-ngb iteration %d: need to repeat for %d%09d particles.\n", iter,
                        (int) (ntot / 1000000000), (int) (ntot % 1000000000));
-                fflush(stdout);
             }
             if(iter > MAXITER)
             {
@@ -781,6 +780,7 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
     
     h2 = local.AGS_Hsml * local.AGS_Hsml;
     kernel_hinv(local.AGS_Hsml, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
+    int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(local.Type); // determine allowed particle types for search for adaptive gravitational softening terms
     
     if(mode == 0)
     {
@@ -792,13 +792,15 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
         startnode = Nodes[startnode].u.d.nextnode;	/* open it */
     }
     
+    
+    
     double fac_mu = -3 / (All.cf_afac3 * All.cf_atime);
     while(startnode >= 0)
     {
         while(startnode >= 0)
         {
-            numngb_inbox = ags_ngb_treefind_variable_threads(local.Pos, local.AGS_Hsml, target, &startnode, mode, exportflag,
-                                          exportnodecount, exportindex, ngblist, local.Type);
+            numngb_inbox = ngb_treefind_variable_threads_targeted(local.Pos, local.AGS_Hsml, target, &startnode, mode, exportflag,
+                                          exportnodecount, exportindex, ngblist, AGS_kernel_shared_BITFLAG);
             
             if(numngb_inbox < 0)
                 return -1;
@@ -848,7 +850,7 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef WAKEUP
                         if(vsig > WAKEUP*P[j].AGS_vsig) {P[j].wakeup = 1;}
 #if defined(GALSF)
-                        if((P[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[i].Type == 2)||(P[i].Type==3)))) {P[j].wakeup = 0;} // don't wakeup star particles, or risk 2x-counting feedback events! //
+                        if((P[j].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[j].Type == 2)||(P[j].Type==3)))) {P[j].wakeup = 0;} // don't wakeup star particles, or risk 2x-counting feedback events! //
 #endif
 #endif
                         out.Particle_DivVel -= kernel.dwk * (kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2]) / kernel.r;
@@ -882,76 +884,17 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
 
 void *ags_density_evaluate_primary(void *p)
 {
-    int thread_id = *(int *) p;
-    int i, j;
-    int *exportflag, *exportnodecount, *exportindex, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
-    exportflag = Exportflag + thread_id * NTask;
-    exportnodecount = Exportnodecount + thread_id * NTask;
-    exportindex = Exportindex + thread_id * NTask;
-    /* Note: exportflag is local to each thread */
-    for(j = 0; j < NTask; j++)
-        exportflag[j] = -1;
-    
-    while(1)
-    {
-        int exitFlag = 0;
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            if(BufferFullFlag != 0 || NextParticle < 0)
-            {
-                exitFlag = 1;
-            }
-            else
-            {
-                i = NextParticle;
-                ProcessedFlag[i] = 0;
-                NextParticle = NextActiveParticle[NextParticle];
-            }
-        }
-        UNLOCK_NEXPORT;
-        if(exitFlag)
-            break;
-        
-        if(ags_density_isactive(i))
-        {
-            if(ags_density_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist) < 0)
-                break;		/* export buffer has filled up */
-        }
-        ProcessedFlag[i] = 1;	/* particle successfully finished */
-    }
-    return NULL;
+#define CONDITION_FOR_EVALUATION if(ags_density_isactive(i))
+#define EVALUATION_CALL ags_density_evaluate(i, 0, exportflag, exportnodecount, exportindex, ngblist)
+#include "../system/code_block_primary_loop_evaluation.h"
+#undef CONDITION_FOR_EVALUATION
+#undef EVALUATION_CALL
 }
-
-
-
 void *ags_density_evaluate_secondary(void *p)
 {
-    int thread_id = *(int *) p;
-    int j, dummy, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
-    
-    while(1)
-    {
-        LOCK_NEXPORT;
-#ifdef _OPENMP
-#pragma omp critical(_nexport_)
-#endif
-        {
-            j = NextJ;
-            NextJ++;
-        }
-        UNLOCK_NEXPORT;
-        
-        if(j >= Nimport)
-            break;
-        
-        ags_density_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist);
-    }
-    return NULL;
+#define EVALUATION_CALL ags_density_evaluate(j, 1, &dummy, &dummy, &dummy, ngblist);
+#include "../system/code_block_secondary_loop_evaluation.h"
+#undef EVALUATION_CALL
 }
 
 
@@ -986,7 +929,7 @@ double ags_return_maxsoft(int i)
 #endif
 #endif
 #ifdef BLACK_HOLES
-    if(P[i].Type == 5) {maxsoft = All.BlackHoleMaxAccretionRadius;}
+    if(P[i].Type == 5) {maxsoft = All.BlackHoleMaxAccretionRadius  / All.cf_atime;}   // MaxAccretionRadius is now defined in params.txt in PHYSICAL units
 #endif
     return maxsoft;
 }

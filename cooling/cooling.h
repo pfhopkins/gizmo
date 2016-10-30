@@ -27,7 +27,7 @@ void   ReadIonizeParams(char *fname);
 void   SetZeroIonization(void);
 void   TestCool(void);
 
-void   find_abundances_and_rates(double logT, double rho, double *ne_guess, int target);
+void   find_abundances_and_rates(double logT, double rho, double *ne_guess, int target, double shieldfac);
 double convert_u_to_temp(double u, double rho, double *ne_guess, int target);
 double CoolingRate(double logT, double rho, double *nelec, int target);
 double CoolingRateFromU(double u, double rho, double *ne_guess, int target);

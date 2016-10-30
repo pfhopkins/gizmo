@@ -30,12 +30,12 @@ void blackhole_end(void);
 
 /* blackholes.c */
 void blackhole_properties_loop(void);
-void blackhole_final_loop(void);
+void blackhole_final_operations(void);
 
 /* blackhole_environment.c */
 void blackhole_environment_loop(void);
 int blackhole_environment_evaluate(int target, int mode, int *nexport, int *nSend_local);
-#ifdef BH_GRAVACCRETION_BTOD   // DAA
+#ifdef BH_GRAVACCRETION
 void blackhole_environment_second_loop(void);
 int blackhole_environment_second_evaluate(int target, int mode, int *nexport, int *nSend_local);
 #endif

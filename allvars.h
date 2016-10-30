@@ -44,6 +44,10 @@
 #define MYSORT                  /* use our custom sort (as opposed to C default, which is compiler-dependent) */
 #define ALLOWEXTRAPARAMS        /* don't crash (just warn) if there are extra lines in the input parameterfile */
 #define INHOMOG_GASDISTR_HINT   /* if the gas is distributed very different from collisionless particles, this can helps to avoid problems in the domain decomposition */
+#ifndef OUTPUT_ADDITIONAL_RUNINFO
+#define IO_REDUCED_MODE
+#endif
+
 
 #define DO_PREPROCESSOR_EXPAND_(VAL)  VAL ## 1
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL)
@@ -114,6 +118,11 @@
 #define GALSF_FB_RPWIND_LOCAL
 #define GALSF_FB_RPROCESS_ENRICHMENT 6
 #define GALSF_SFR_IMF_VARIATION
+#define PROTECT_FROZEN_FIRE
+#else
+#if (defined(COOLING) && defined(GALSF) && defined(GALSF_FB_SNE_HEATING)) && !defined(FIRE_UNPROTECT_FROZEN)
+#define PROTECT_FROZEN_FIRE
+#endif
 #endif
 
 
@@ -353,6 +362,8 @@
 #endif
 
 
+
+
 #ifdef MAGNETIC
 /* recommended MHD switches -- only turn these off for de-bugging */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
@@ -370,6 +381,13 @@
 #endif
 #if defined(TURB_DIFF_ENERGY) && !defined(CONDUCTION)
 #define CONDUCTION
+#endif
+#endif
+
+
+#if defined(BLACK_HOLES) && (defined(BH_REPOSITION_ON_POTMIN) || defined(BH_SEED_FROM_STAR_PARTICLE))
+#ifndef EVALPOTENTIAL
+#define EVALPOTENTIAL
 #endif
 #endif
 
@@ -419,6 +437,17 @@
 #endif // SHEARING_BOX
 
 
+
+#if defined(ANALYTIC_GRAVITY)
+#if !(EXPAND_PREPROCESSOR_(ANALYTIC_GRAVITY) == 1)
+#if (ANALYTIC_GRAVITY > 0)
+#define ANALYTIC_GRAVITY_ANCHOR_TO_PARTICLE /* ok, analytic gravity is defined with a numerical value > 0, indicating we should use this flag */
+#ifndef BH_CALC_DISTANCES
+#define BH_CALC_DISTANCES
+#endif
+#endif
+#endif
+#endif
 
 
 #if defined(CONDUCTION) || defined(EOS_GENERAL)
@@ -971,6 +1000,8 @@ extern MyDouble Shearing_Box_Pos_Offset;
 /****************************************************************************************************************************/
 
 #ifdef PERIODIC
+#define NGB_PERIODIC_LONG_X(x,y,z,sign) (xtmp=fabs(x),(xtmp>boxHalf_X)?(boxSize_X-xtmp):xtmp) // normal periodic wrap //
+#define NGB_PERIODIC_LONG_Z(x,y,z,sign) (xtmp=fabs(z),(xtmp>boxHalf_Z)?(boxSize_Z-xtmp):xtmp) // normal periodic wrap //
 
 #if (SHEARING_BOX > 1)
 /* SHEARING PERIODIC BOX:: 
@@ -987,9 +1018,6 @@ xtmp = y + Shearing_Box_Pos_Offset * (((x)>boxHalf_X)?(1):(((x)<-boxHalf_X)?(-1)
 xtmp = fabs(((xtmp)>boxSize_Y)?((xtmp)-boxSize_Y):(((xtmp)<-boxSize_Y)?((xtmp)+boxSize_Y):(xtmp))),\
 (xtmp>boxHalf_Y)?(boxSize_Y-xtmp):xtmp)
 
-#define NGB_PERIODIC_LONG_X(x,y,z,sign) (xtmp=fabs(x),(xtmp>boxHalf_X)?(boxSize_X-xtmp):xtmp)
-#define NGB_PERIODIC_LONG_Z(x,y,z,sign) (xtmp=fabs(z),(xtmp>boxHalf_Z)?(boxSize_Z-xtmp):xtmp)
-
 #else
 /* STANDARD PERIODIC BOX:: 
     this box-wraps all three (x,y,z) separation variables when taking position differences */
@@ -997,9 +1025,7 @@ xtmp = fabs(((xtmp)>boxSize_Y)?((xtmp)-boxSize_Y):(((xtmp)<-boxSize_Y)?((xtmp)+b
 x=((x)>boxHalf_X)?((x)-boxSize_X):(((x)<-boxHalf_X)?((x)+boxSize_X):(x)),\
 y=((y)>boxHalf_Y)?((y)-boxSize_Y):(((y)<-boxHalf_Y)?((y)+boxSize_Y):(y)),\
 z=((z)>boxHalf_Z)?((z)-boxSize_Z):(((z)<-boxHalf_Z)?((z)+boxSize_Z):(z)))
-#define NGB_PERIODIC_LONG_X(x,y,z,sign) (xtmp=fabs(x),(xtmp>boxHalf_X)?(boxSize_X-xtmp):xtmp)
-#define NGB_PERIODIC_LONG_Y(x,y,z,sign) (xtmp=fabs(y),(xtmp>boxHalf_Y)?(boxSize_Y-xtmp):xtmp)
-#define NGB_PERIODIC_LONG_Z(x,y,z,sign) (xtmp=fabs(z),(xtmp>boxHalf_Z)?(boxSize_Z-xtmp):xtmp)
+#define NGB_PERIODIC_LONG_Y(x,y,z,sign) (xtmp=fabs(y),(xtmp>boxHalf_Y)?(boxSize_Y-xtmp):xtmp) // normal periodic wrap //
 
 #endif
 
@@ -1047,6 +1073,11 @@ extern double TimeBin_BH_mass[TIMEBINS];
 extern double TimeBin_BH_dynamicalmass[TIMEBINS];
 extern double TimeBin_BH_Mdot[TIMEBINS];
 extern double TimeBin_BH_Medd[TIMEBINS];
+#if defined(BH_GRAVCAPTURE_GAS) || defined(BH_GRAVACCRETION) || defined(BH_GRAVCAPTURE_NONGAS) || defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS) || defined(BH_DYNFRICTION)
+#define BH_NEIGHBOR_BITFLAG 63 /* allow all particle types in the BH search: 63=2^0+2^1+2^2+2^3+2^4+2^5 */
+#else
+#define BH_NEIGHBOR_BITFLAG 33 /* only search for particles of types 0 and 5 (gas and black holes) around a primary BH particle */
+#endif
 #endif
 
 extern int ThisTask;		/*!< the number of the local processor  */
@@ -1184,12 +1215,24 @@ extern int NumPartGroup;
 
 extern char ParameterFile[100];	/*!< file name of parameterfile used for starting the simulation */
 
-extern FILE *FdInfo,		/*!< file handle for info.txt log-file. */
- *FdEnergy,			/*!< file handle for energy.txt log-file. */
- *FdTimings,			/*!< file handle for timings.txt log-file. */
- *FdBalance,			/*!< file handle for balance.txt log-file. */
- *FdCPU,			/*!< file handle for cpu.txt log-file. */
- *FdTimebin;
+extern FILE
+#ifndef IO_REDUCED_MODE
+ *FdTimebin,    /*!< file handle for timebin.txt log-file. */
+ *FdInfo,       /*!< file handle for info.txt log-file. */
+ *FdEnergy,     /*!< file handle for energy.txt log-file. */
+ *FdTimings,    /*!< file handle for timings.txt log-file. */
+ *FdBalance,    /*!< file handle for balance.txt log-file. */
+#ifdef RT_CHEM_PHOTOION
+extern FILE *FdRad;		/*!< file handle for radtransfer.txt log-file. */
+#endif
+#ifdef TURB_DRIVING
+extern FILE *FdTurb;    /*!< file handle for turb.txt log-file */
+#endif
+#ifdef DARKENERGY
+extern FILE *FdDE;  /*!< file handle for darkenergy.txt log-file. */
+#endif
+#endif
+ *FdCPU;        /*!< file handle for cpu.txt log-file. */
 
 #ifdef SCFPOTENTIAL
 extern FILE *FdSCF;
@@ -1197,11 +1240,6 @@ extern FILE *FdSCF;
 
 #ifdef GALSF
 extern FILE *FdSfr;		/*!< file handle for sfr.txt log-file. */
-#endif
-
-
-#ifdef GALSF_FB_GASRETURN
-extern FILE *FdGasReturn;	/*!< file handle for GasReturn.txt log-file */
 #endif
 #ifdef GALSF_FB_RPWIND_LOCAL
 extern FILE *FdMomWinds;	/*!< file handle for MomWinds.txt log-file */
@@ -1213,14 +1251,6 @@ extern FILE *FdHIIHeating;	/*!< file handle for HIIheating.txt log-file */
 extern FILE *FdSneIIHeating;	/*!< file handle for SNIIheating.txt log-file */
 #endif
 
-#ifdef TURB_DRIVING
-extern FILE *FdTurb;    /*!< file handle for turb.txt log-file */
-#endif
-
-#ifdef RT_CHEM_PHOTOION
-extern FILE *FdRad;		/*!< file handle for radtransfer.txt log-file. */
-#endif
-
 #ifdef DISTORTIONTENSORPS
 #ifdef PMGRID
 extern FILE *FdTidaltensor;     /*!< file handle for tidaltensor.txt log-file. */
@@ -1229,6 +1259,7 @@ extern FILE *FdTidaltensor;     /*!< file handle for tidaltensor.txt log-file. *
 
 #ifdef BLACK_HOLES
 extern FILE *FdBlackHoles;	/*!< file handle for blackholes.txt log-file. */
+#ifndef IO_REDUCED_MODE
 extern FILE *FdBlackHolesDetails;
 #ifdef BH_OUTPUT_MOREINFO
 extern FILE *FdBhMergerDetails;
@@ -1237,9 +1268,6 @@ extern FILE *FdBhWindDetails;
 #endif
 #endif
 #endif
-
-#ifdef DARKENERGY
-extern FILE *FdDE;  /*!< file handle for darkenergy.txt log-file. */
 #endif
 
 
@@ -2006,11 +2034,16 @@ extern ALIGN(32) struct particle_data
     } b8;
 #endif
 #endif
+#ifdef BH_REPOSITION_ON_POTMIN
+    MyFloat BH_MinPotPos[3];
+    MyFloat BH_MinPot;
+#endif
 #endif  /* if !defined(DETACH_BLACK_HOLES) */
 #endif  /* if defined(BLACK_HOLES) */
     
 #ifdef BH_CALC_DISTANCES
     MyFloat min_dist_to_bh;
+    MyFloat min_xyz_to_bh[3];
 #endif
     
 #ifdef SINGLE_STAR_PROMOTION
@@ -2051,7 +2084,6 @@ extern ALIGN(32) struct particle_data
         MyFloat density_sum;
     } w;
 #endif
-    
 #ifdef SAVE_HSML_IN_IC_ORDER
     MyIDType ID_ic_order;
 #endif
@@ -2144,6 +2176,10 @@ extern struct bh_particle_data
     MyLongDouble dBH_accreted_BHMass_radio;
   } b8;
 #endif
+#endif
+#ifdef BH_REPOSITION_ON_POTMIN
+  MyFloat BH_MinPotPos[3];
+  MyFloat BH_MinPot;
 #endif
 #ifdef BH_WIND_SPAWN
     MyFloat unspawned_wind_mass;    /*!< tabulates the wind mass which has not yet been spawned */
@@ -2536,6 +2572,7 @@ extern struct gravdata_out
 #endif
 #ifdef BH_CALC_DISTANCES
     MyFloat min_dist_to_bh;
+    MyFloat min_xyz_to_bh[3];
 #endif
 }
  *GravDataResult,		/*!< holds the partial results computed for imported particles. Note: We use GravDataResult = GravDataGet, such that the result replaces the imported data */
@@ -2572,14 +2609,16 @@ extern struct blackhole_temp_particle_data       // blackholedata_topass
     MyLongDouble accreted_Mass;
     MyLongDouble accreted_BH_Mass;
     MyLongDouble accreted_momentum[3];
-    MyLongDouble Mgas_in_Kernel;
+    MyLongDouble Mgas_in_Kernel;                 // mass/angular momentum for GAS/STAR/TOTAL components computed always now
+    MyLongDouble Mstar_in_Kernel;
     MyLongDouble Malt_in_Kernel;
-    MyLongDouble Jalt_in_Kernel[3];
-#ifdef BH_GRAVACCRETION_BTOD
-    MyLongDouble Mbulge_in_Kernel;
-#endif
-#if defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS) || defined(BH_BAL_KICK_COLLIMATED) || defined(BH_GRAVACCRETION)  
+    MyLongDouble Sfr_in_Kernel;
     MyLongDouble Jgas_in_Kernel[3];
+    MyLongDouble Jstar_in_Kernel[3];
+    MyLongDouble Jalt_in_Kernel[3];
+#ifdef BH_GRAVACCRETION
+    MyLongDouble MgasBulge_in_Kernel;
+    MyLongDouble MstarBulge_in_Kernel;
 #endif
 #if defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS)
     MyLongDouble GradRho_in_Kernel[3];
@@ -2878,6 +2917,7 @@ extern ALIGN(32) struct NODE
 
 #ifdef BH_CALC_DISTANCES
     MyFloat bh_mass;      /*!< holds the BH mass in the node.  Used for calculating tree based dist to closest bh */
+    MyFloat bh_pos[3];    /*!< holds the mass-weighted position of the the actual black holes within the node */
 #endif
     
 #ifdef RT_SEPARATELY_TRACK_LUMPOS

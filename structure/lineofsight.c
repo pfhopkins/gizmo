@@ -83,12 +83,12 @@ void lineofsight_output(void)
 
   ti = All.TimeBegin * exp(next * All.Timebase_interval);
 
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("Line of sight output! ThisTask=%d Time=%g  NextTime=%g\n", ThisTask, All.Time, ti);
-      fflush(stdout);
     }
-
+#endif
   H_a = hubble_function(All.Time);
   Wmax = All.Time * H_a * All.BoxSize;
 

@@ -251,7 +251,6 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
     {
         printf("Task=%d is on %s, wants to send %d and has checksum=%d %d of send data\n",
                Local_ThisTask, getenv("HOST"), sendcount, (int) (sendCheckSum >> 32), (int) sendCheckSum);
-        fflush(stdout);
         
         do
         {
@@ -283,7 +282,6 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
                 if(iter > 5)
                 {
                     printf("we're trying to send each byte now on task=%d (iter=%d)\n", Local_ThisTask, iter);
-                    fflush(stdout);
                     if(dest > Local_ThisTask)
                     {
                         for(i = 0, p = sendbuf; i < sendcount * size_sendtype; i++, p++)
@@ -311,10 +309,10 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
             for(i = 0, p = sendbuf, sendCheckSum = 0; i < sendcount * size_sendtype; i++, p++)
                 sendCheckSum += *p;
             
-            printf("Task=%d gas send_checksum=%d %d\n", Local_ThisTask, (int) (sendCheckSum >> 32),
-                   (int) sendCheckSum);
+            printf("Task=%d gas send_checksum=%d %d\n", Local_ThisTask, (int) (sendCheckSum >> 32), (int) sendCheckSum);
+#ifndef IO_REDUCED_MODE
             fflush(stdout);
-            
+#endif
             if(dest > Local_ThisTask)
             {
                 if(sendcount > 0)
@@ -367,6 +365,7 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
         }
         while(iter < 10);
         
+#ifndef IO_REDUCED_MODE
         if(iter >= 10)
         {
             char buf[1000];
@@ -387,11 +386,11 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
             fwrite(recvbuf, recvcount, size_recvtype, fd);
             fclose(fd);
             
-            printf("MPI-ERROR: Even 10 trials proved to be insufficient on task=%d/%s. Stopping\n",
-                   Local_ThisTask, getenv("HOST"));
+            printf("MPI-ERROR: Even 10 trials proved to be insufficient on task=%d/%s. Stopping\n", Local_ThisTask, getenv("HOST"));
             fflush(stdout);
             endrun(10);
         }
+#endif
     }
     
     memcpy(recvbufreal, recvbuf, recvcount * size_recvtype);
@@ -439,9 +438,8 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype
             send_now = count_limit;
             if(iter == 0)
             {
-                printf("imposing size limit on MPI_Sendrecv() on task=%d (send of size=%d)\n",
-                       ThisTask, sendcount * size_sendtype);
-                fflush(stdout);
+                printf("imposing size limit on MPI_Sendrecv() on task=%d (send of size=%d)\n", ThisTask, sendcount * size_sendtype);
+                //fflush(stdout);
             }
             iter++;
         }

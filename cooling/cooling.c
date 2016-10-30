@@ -303,8 +303,8 @@ double DoCooling(double u_old, double rho, double dt, double *ne_guess, int targ
       if(iter >= (MAXITER - 10))
 	printf("u= %g\n", u);
     }
-    while(((fabs(du/u) > 1.0e-3)||((fabs(du/u) > 1.0e-6)&&(iter < 10))) && (iter < MAXITER));
-    //while(fabs(du / u) > 1.0e-6 && iter < MAXITER);
+    while(((fabs(du/u) > 3.0e-2)||((fabs(du/u) > 3.0e-4)&&(iter < 10))) && (iter < MAXITER));
+    //while(((fabs(du/u) > 1.0e-3)||((fabs(du/u) > 1.0e-6)&&(iter < 10))) && (iter < MAXITER));
 
   if(iter >= MAXITER)
     {
@@ -561,7 +561,7 @@ double convert_u_to_temp(double u, double rho, double *ne_guess, int target)
     {
       ne_old = *ne_guess;
 
-      find_abundances_and_rates(log10(temp), rho, ne_guess, target);
+      find_abundances_and_rates(log10(temp), rho, ne_guess, target, -1);
       temp_old = temp;
 
       //mu = (1 + 4 * yhelium(target)) / (1 + yhelium(target) + *ne_guess);
@@ -602,13 +602,12 @@ double convert_u_to_temp(double u, double rho, double *ne_guess, int target)
 
 /* this function computes the actual abundance ratios 
  */
-void find_abundances_and_rates(double logT, double rho, double *ne_guess, int target)
+void find_abundances_and_rates(double logT, double rho, double *ne_guess, int target, double shieldfac)
 {
   double neold, nenew;
   int j, niter;
   double Tlow, Thi, flow, fhi, t;
   double logT_input, rho_input, ne_input;
-  double NH_SS_z=NH_SS, shieldfac;
 
   logT_input = logT;
   rho_input = rho;
@@ -644,7 +643,9 @@ void find_abundances_and_rates(double logT, double rho, double *ne_guess, int ta
   j = (int) t;
     if(j<0){j=0;}
     if(j>NCOOLTAB){
+#ifndef IO_REDUCED_MODE
         printf("warning: j>NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g Tmin %g deltaT %g \n",j,t,Tmin+deltaT*j,Tmin+deltaT*(j+1),logT,Tmin,deltaT);fflush(stdout);
+#endif
         j=NCOOLTAB;
     }
   Tlow = Tmin + deltaT * j;
@@ -670,19 +671,22 @@ void find_abundances_and_rates(double logT, double rho, double *ne_guess, int ta
     
     /* CAFG: this is the density that we should use for UV background threshold */
     nHcgs = XH * rho / PROTONMASS;	/* hydrogen number dens in cgs units */
-    if(gJH0>0)
-        NH_SS_z = NH_SS*pow(local_gammamultiplier*gJH0/1.0e-12,0.66)*pow(10.,0.173*(logT-4.));
-    else
-        NH_SS_z = NH_SS*pow(10.,0.173*(logT-4.));
-    if(nHcgs<100.*NH_SS_z) shieldfac=exp(-nHcgs/NH_SS_z); else shieldfac=0;
+    if(shieldfac < 0)
+    {
+        double NH_SS_z;
+        if(gJH0>0)
+            NH_SS_z = NH_SS*pow(local_gammamultiplier*gJH0/1.0e-12,0.66)*pow(10.,0.173*(logT-4.));
+        else
+            NH_SS_z = NH_SS*pow(10.,0.173*(logT-4.));
+        if(nHcgs<100.*NH_SS_z) shieldfac=exp(-nHcgs/NH_SS_z); else shieldfac=0;
 #ifdef COOL_LOW_TEMPERATURES
-    if(logT < Tmin+1) shieldfac *= (logT-Tmin); // make cutoff towards Tmin more continuous //
-    //shieldfac *= 1 - exp(Tmin-logT);
+        if(logT < Tmin+1) shieldfac *= (logT-Tmin); // make cutoff towards Tmin more continuous //
 #endif
 #ifdef GALSF_EFFECTIVE_EQS
-    shieldfac = 1; // self-shielding is implicit in the sub-grid model already //
+        shieldfac = 1; // self-shielding is implicit in the sub-grid model already //
 #endif
-
+    }
+        
   ne = *ne_guess;
   neold = ne;
   niter = 0;
@@ -817,7 +821,8 @@ void find_abundances_and_rates(double logT, double rho, double *ne_guess, int ta
       ne = nenew;
       necgs = ne * nHcgs;
 
-      if(fabs(ne - neold) < 1.0e-4)
+        double dneTHhold = DMAX(ne*0.01 , 1.0e-4);
+        if(fabs(ne - neold) < dneTHhold)
 	break;
 
       if(niter > (MAXITER - 10))
@@ -990,7 +995,7 @@ double CoolingRate(double logT, double rho, double *nelec, int target)
     T = pow(10.0, logT);
     if(logT < Tmax)
     {
-        find_abundances_and_rates(logT, rho, nelec, target);
+        find_abundances_and_rates(logT, rho, nelec, target, shieldfac);
         
         /* Compute cooling and heating rate (cf KWH Table 1) in units of nH**2 */
         LambdaExcH0 = bH0 * ne * nH0;
@@ -1243,8 +1248,7 @@ double CoolingRate(double logT, double rho, double *nelec, int target)
                 temperature-dependent, though, fairly easily - for this particular problem it won't make much difference
         This rate then acts as an upper limit to the net heating/cooling calculated above (restricts absolute value)
      */
-    //if(nHcgs > 0.1) /* don't bother at very low densities, since youre not optically thick */  
-    if( (nHcgs > 0.1) && (target >= 0) )  // DAA: protect from target=-1 with GALSF_EFFECTIVE_EQS
+    if( (nHcgs > 0.1) && (target >= 0) )  /* don't bother at very low densities, since youre not optically thick, and protect from target=-1 with GALSF_EFFECTIVE_EQS */
     {
         double surface_density = evaluate_NH_from_GradRho(SphP[target].Gradients.Density,PPP[target].Hsml,SphP[target].Density,PPP[target].NumNgb,1);
         surface_density *= All.UnitDensity_in_cgs * All.UnitLength_in_cm * All.HubbleParam; // converts to cgs
@@ -1411,7 +1415,8 @@ void ReadMultiSpeciesTables(int iT)
         for(j=0;j<i_nH;j++) {
             for(k=0;k<i_Temp;k++) {
                 r=fread(&SpCoolTable0[i*i_nH*i_Temp + j*i_Temp + k],sizeof(float),1,fdcool);
-                if(r!=1) {printf(" Reached Cooling EOF! \n");fflush(stdout);}
+                if(r!=1) {printf(" Reached Cooling EOF! \n"); 
+                }
             }}}
     fclose(fdcool);
     /*
@@ -1434,7 +1439,8 @@ void ReadMultiSpeciesTables(int iT)
             for(j=0;j<i_nH;j++) {
                 for(k=0;k<i_Temp;k++) {
                     r=fread(&SpCoolTable1[i*i_nH*i_Temp + j*i_Temp + k],sizeof(float),1,fdcool);
-                    if(r!=1) {printf(" Reached Cooling EOF! \n");fflush(stdout);}
+                    if(r!=1) {printf(" Reached Cooling EOF! \n");
+                    }
                 }}}
         fclose(fdcool);
         /*
@@ -1708,107 +1714,65 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
 double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
 {
-    int k;
     double ne_over_nh_tbl=1, Lambda=0;
-    int N_species_active = NUM_METAL_SPECIES-1;
+    int k, N_species_active = NUM_METAL_SPECIES-1;
 #ifdef GALSF_FB_RPROCESS_ENRICHMENT
-    //N_species_active -= 1;
     N_species_active -= NUM_RPROCESS_SPECIES;
 #endif
     
-    ne_over_nh_tbl = GetLambdaSpecies(0,nHcgs,logT,0);
-    for (k=1;k<N_species_active;k++)
-        Lambda += GetLambdaSpecies(k,nHcgs,logT,0) * Z[k+1]/(All.SolarAbundances[k+1]*0.0127/All.SolarAbundances[0]);
+    /* pre-calculate the indices for density and temperature, then we just need to call the tables by species */
+    int ixmax=40, iymax=175;
+    int ix0, iy0, ix1, iy1;
+    double dx, dy, dz, mdz;
+    long i_T=iymax+1, inHT=i_T*(ixmax+1);
+    if(All.ComovingIntegrationOn && All.SpeciesTableInUse<48) {dz=log10(1/All.Time)*48; dz=dz-(int)dz; mdz=1-dz;} else {dz=0; mdz=1;}
     
-    if(ne_over_nh_tbl>0) Lambda /= ne_over_nh_tbl; else Lambda=0;
+    dx = (log10(nHcgs)-(-8.0))/(0.0-(-8.0))*ixmax;
+    dy = (logT-2.0)/(9.0-2.0)*iymax;
+    if(dx<0) {dx=0;} else {if(dx>ixmax) {dx=ixmax;}}
+    ix0=(int)dx; ix1=ix0+1; if(ix1>ixmax) {ix1=ixmax;}
+    dx=dx-ix0;
+    if(dy<0) {dy=0;} else {if(dy>iymax) {dy=iymax;}}
+    iy0=(int)dy; iy1=iy0+1; if(iy1>iymax) {iy1=iymax;}
+    dy=dy-iy0;
+    long index_x0y0=iy0+ix0*i_T, index_x0y1=iy1+ix0*i_T, index_x1y0=iy0+ix1*i_T, index_x1y1=iy1+ix1*i_T;
+    
+    ne_over_nh_tbl = GetLambdaSpecies(0,index_x0y0,index_x0y1,index_x1y0,index_x1y1,dx,dy,dz,mdz);
+    if(ne_over_nh_tbl > 0)
+    {
+        double zfac = 0.0127 / All.SolarAbundances[0];
+        for (k=1; k<N_species_active; k++)
+        {
+            long k_index = k * inHT;
+            Lambda += GetLambdaSpecies(k_index,index_x0y0,index_x0y1,index_x1y0,index_x1y1,dx,dy,dz,mdz) * Z[k+1]/(All.SolarAbundances[k+1]*zfac);
+        }
+        Lambda /= ne_over_nh_tbl;
+    }
     return Lambda;
 }
 
-double getSpCoolTableVal(long i,long j,long k,long tblK)
-{
-    long i_nH=41; long i_T=176; long inHT=i_nH*i_T;
-    if(tblK==0) {
-        //return SpCoolTable0[i][j][k];
-        return SpCoolTable0[i*inHT + j*i_T + k];
-    }
-    if(tblK==1) {
-        //return SpCoolTable1[i][j][k];
-        return SpCoolTable1[i*inHT + j*i_T + k];
-    }
-    return 0;
-}
 
-double GetLambdaSpecies(int k_species, double nHcgs, double logT, double fHe)
+double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long index_x1y0, long index_x1y1, double dx, double dy, double dz, double mdz)
 {
-    int ix0,iy0,ix1,iy1,ixmax,iymax;/*,ih0,ih1,ihmax;*/
-    double i1,i2,j1,j2,w1,w2,u1;
-    double v000,v010,v100,v110,v001,v011,v101,v111;
-    double dx,dy,dz,mdz;/*,dh,mdh;*/
-    dx=dy=dz=0; ix0=ix1=iy0=iy1=0; ixmax=40; iymax=175; /*ihmax=6;*/
-    
-    dx = (log10(nHcgs)-(-8.0))/(0.0-(-8.0))*ixmax;
-    if(dx<0) dx=0; if(dx>ixmax) dx=ixmax;
-    ix0=(int)dx; ix1=ix0+1; if(ix1>ixmax) ix1=ixmax;
-    dx=dx-ix0;
-    dy = (logT-2.0)/(9.0-2.0)*iymax;
-    if(dy<0) dy=0; if(dy>iymax) dy=iymax;
-    iy0=(int)dy; iy1=iy0+1; if(iy1>iymax) iy1=iymax;
-    dy=dy-iy0;
-    /*
-     if(k_species<=1) {
-     dh = (fHe-0.238)/(0.298-0.238)*ihmax;
-     if(dh<0) dh=0; if(dh>ihmax) dh=ihmax;
-     ih0=(int)dh; ih1=ih0+1; if(ih1>ihmax) ih1=ihmax;
-     dh=dh-ih0;
-     } */
-    
-    v000=getSpCoolTableVal(k_species,ix0,iy0,0);
-    v010=getSpCoolTableVal(k_species,ix0,iy1,0);
-    v100=getSpCoolTableVal(k_species,ix1,iy0,0);
-    v110=getSpCoolTableVal(k_species,ix1,iy1,0);
-    /*if(k_species>1) {
-     v000=SpCoolTable0[k_species-2][ix0][iy0];
-     v010=SpCoolTable0[k_species-2][ix0][iy1];
-     v100=SpCoolTable0[k_species-2][ix1][iy0];
-     v110=SpCoolTable0[k_species-2][ix1][iy1];
-     } else {
-     v000=SpCoolTable0_He[k_species][ix0][iy0][ih0]*mdh + SpCoolTable0_He[k_species][ix0][iy0][ih1]*dh;
-     v010=SpCoolTable0_He[k_species][ix0][iy1][ih0]*mdh + SpCoolTable0_He[k_species][ix0][iy1][ih1]*dh;
-     v100=SpCoolTable0_He[k_species][ix1][iy0][ih0]*mdh + SpCoolTable0_He[k_species][ix1][iy0][ih1]*dh;
-     v110=SpCoolTable0_He[k_species][ix1][iy1][ih0]*mdh + SpCoolTable0_He[k_species][ix1][iy1][ih1]*dh;
-     }*/
-    if(All.ComovingIntegrationOn) {
-        if(All.SpeciesTableInUse<48) {
-            dz=log10(1/All.Time)*48; dz=dz-(int)dz;
-            v001=getSpCoolTableVal(k_species,ix0,iy0,1);
-            v011=getSpCoolTableVal(k_species,ix0,iy1,1);
-            v101=getSpCoolTableVal(k_species,ix1,iy0,1);
-            v111=getSpCoolTableVal(k_species,ix1,iy1,1);
-            /*if(k_species>1) {
-             v001=SpCoolTable1[k_species-2][ix0][iy0];
-             v011=SpCoolTable1[k_species-2][ix0][iy1];
-             v101=SpCoolTable1[k_species-2][ix1][iy0];
-             v111=SpCoolTable1[k_species-2][ix1][iy1];
-             } else {
-             v001=SpCoolTable1_He[k_species][ix0][iy0][ih0]*mdh + SpCoolTable1_He[k_species][ix0][iy0][ih1]*dh;
-             v011=SpCoolTable1_He[k_species][ix0][iy1][ih0]*mdh + SpCoolTable1_He[k_species][ix0][iy1][ih1]*dh;
-             v101=SpCoolTable1_He[k_species][ix1][iy0][ih0]*mdh + SpCoolTable1_He[k_species][ix1][iy0][ih1]*dh;
-             v111=SpCoolTable1_He[k_species][ix1][iy1][ih0]*mdh + SpCoolTable1_He[k_species][ix1][iy1][ih1]*dh;
-             }*/
-        } else {
-            v001=v011=v101=v111=dz=0;
-        }
-    } else {
-        v001=v011=v101=v111=dz=0;
+    long x0y0 = index_x0y0 + k_index;
+    long x0y1 = index_x0y1 + k_index;
+    long x1y0 = index_x1y0 + k_index;
+    long x1y1 = index_x1y1 + k_index;
+    double i1, i2, j1, j2, w1, w2, u1;
+    i1 = SpCoolTable0[x0y0];
+    i2 = SpCoolTable0[x0y1];
+    j1 = SpCoolTable0[x1y0];
+    j2 = SpCoolTable0[x1y1];
+    if(dz > 0)
+    {
+        i1 = mdz * i1 + dz * SpCoolTable1[x0y0];
+        i2 = mdz * i2 + dz * SpCoolTable1[x0y1];
+        j1 = mdz * j1 + dz * SpCoolTable1[x1y0];
+        j2 = mdz * j2 + dz * SpCoolTable1[x1y1];
     }
-    mdz=1-dz;
-    i1=v000*mdz + v001*dz;
-    i2=v010*mdz + v011*dz;
-    j1=v100*mdz + v101*dz;
-    j2=v110*mdz + v111*dz;
-    w1=i1*(1-dy) + i2*dy;
-    w2=j1*(1-dy) + j2*dy;
-    u1=w1*(1-dx) + w2*dx;
+    w1 = i1*(1-dy) + i2*dy;
+    w2 = j1*(1-dy) + j2*dy;
+    u1 = w1*(1-dx) + w2*dx;
     return u1;
 }
 

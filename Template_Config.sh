@@ -140,8 +140,9 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 #NOGRAVITY                      # turn off self-gravity (compatible with analytic_gravity)
 #GRAVITY_NOT_PERIODIC           # self-gravity is not periodic, even though the rest of the box is periodic
 ## -----------------------------------------------------------------------------------------------------
-#ANALYTIC_GRAVITY               # Specific analytic gravitational force to use instead of/with self-gravity
-                                #  (edit these to assign specific parameters desired in "gravity/analytic_gravity.h")
+#ANALYTIC_GRAVITY               # Specific analytic gravitational force to use instead of/with self-gravity. If set to a numerical value
+                                #  > 0 (e.g. =1), then BH_CALC_DISTANCES will be enabled, and it will use the nearest BH particle as the center for analytic gravity computations
+                                #  (edit "gravity/analytic_gravity.h" to actually assign the analytic gravitational forces)
 ##-----------------------------------------------------------------------------------------------------
 #--------------------------------------- Self-Interacting DM (Rocha et al. 2012)
 #-------------------------------- use of these routines requires explicit pre-approval by developers
@@ -235,6 +236,7 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 ##GALSF_FB_RPWIND_CONTINUOUS	# wind accel term is continuous (more expensive and introduces more artificial dissipation)
 ##GALSF_FB_RPWIND_DO_IN_SFCALC	# do IR wind loop in SFR routine (allows fof clump-finding, useful for very IR-thick, but slow)
 ##GALSF_FB_RPWIND_FROMSFR       # drive radiation pressure with gas SFR (instead of default, which is nearby young stars)
+##FIRE_UNPROTECT_FROZEN         # by default, FIRE-2 code version is 'frozen' so it cannot be changed by any code updates. this removes the protection, so you will use whatever the newest algorithms in GIZMO are, but use it with CAUTION since the algorithm may NOT agree with the other FIRE runs
 ##-----------------------------------------------------------------------------------------------------
 
 
@@ -246,16 +248,17 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 ##-----------------------------------------------------------------------------------------------------
 #BLACK_HOLES                    # enables Black-Holes (master switch)
 #------ seed models
-#BH_HOST_TO_SEED_RATIO=1000     # Min stellar mass for seeding is BH_HOST_TO_SEED_RATIO * All.SeedBlackHoleMass
-                                # Requires FOF with linking type including star particles (MinFoFMassForNewSeed and massDMpart are ignored)
+#BH_HOST_TO_SEED_RATIO=1000     # Min FOF stellar mass for seeding is BH_HOST_TO_SEED_RATIO * All.SeedBlackHoleMass
+                                #   Requires FOF with linking type including star particles (MinFoFMassForNewSeed and massDMpart in the param file are ignored)
+#BH_SEED_FROM_STAR_PARTICLE     # star particle on FOF potential minimum gets converted into a BH (default is densest gas particle)
 #BH_POPIII_SEEDS                # BHs seeded on-the-fly from dense, low-metallicity gas
 #------ accretion models/options
 #BH_SWALLOWGAS                  # enables stochastic accretion of gas particles consistent with growth rate of hole
 #BH_ALPHADISK_ACCRETION         # gas accreted into 'virtual' alpha-disk, and from there onto the BH
 #BH_GRAVCAPTURE_GAS             # accretion determined only by resolved gravitational capture by the BH (for gas particles)
 #BH_GRAVCAPTURE_NONGAS          # as BH_GRAVCAPTURE_GAS, but applies to non-gas particles (can be enabled with other accretion models for gas)
-#BH_GRAVACCRETION               # Gravitational instability accretion estimator from Hopkins & Quataert 2010
-#BH_GRAVACCRETION_BTOD          # DAA: torque rate based on kinematic bulge/disk decomposition as in Angles-Alcazar et al 2013-2015  (requires BH_GRAVACCRETION)
+#BH_GRAVACCRETION=0             # Gravitational torque accretion estimator from Hopkins & Quataert (2011):
+                                #   [=0] for kinematic B/D decomposition as in Angles-Alcazar et al. (default) and [=1] for approximate f_disk evaluation
 ##BH_BONDI=0                    # Bondi-Hoyle style accretion model: 0=default (with velocity); 1=dont use gas velocity with sound speed; 2=variable-alpha tweak (Booth & Schaye 2009)
 #BH_SUBGRIDBHVARIABILITY        # model variability below resolved dynamical time for BH
 #BH_CALC_DISTANCES              # calculate distances for all particles to closest BH for, e.g., refinement
@@ -266,16 +269,19 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 #BH_COMPTON_HEATING             # enable Compton heating/cooling from BHs in cooling function (needs BH_PHOTONMOMENTUM)
 ##BH_THERMALFEEDBACK            # couple a fraction of the BH luminosity into surrounding gas as thermal energy (DiMatteo/Springel/Hernquist model)
 ##BH_BAL_KICK                   # do BAL winds with stochastic particle kicks at specified velocity (instead of continuous wind solution - requires BH_SWALLOWGAS - )
-##BH_BAL_KICK_COLLIMATED        # DAA: winds follow the direction of angular momentum within Kernel (only for BH_BAL_KICK winds)
-##BH_BAL_KICK_MOMENTUM_FLUX=10  # DAA: increase the effective mass-loading of BAL winds to reach the desired momentum flux in units of L_bol/c (needs BH_BAL_KICK)
+##BH_BAL_KICK_COLLIMATED        # winds follow the direction of angular momentum within Kernel (only for BH_BAL_KICK winds)
+##BH_BAL_KICK_MOMENTUM_FLUX=10  # increase the effective mass-loading of BAL winds to reach the desired momentum flux in units of L_bol/c (needs BH_BAL_KICK)
 #------------ use the BH_DRAG options only in cosmological cases where M_BH is not >> other particle masses
-#BH_DYNFRICTION                 # apply dynamical friction force to the BHs when m_bh not >> other particle mass
+#BH_DYNFRICTION=0               # apply dynamical friction force to the BHs when m_bh not >> other particle mass: 0=[DM+stars+gas] (default); 1=[DM+stars]; 2=[stars]
+##BH_DYNFRICTION_INCREASE=10    # artificially increase dynamic friction by this factor (requires BH_DYNFRICTION)
+#BH_INCREASE_DYNAMIC_MASS=100   # Increase the dynamic particle mass by this factor at the time of FOF seeding
 ##BH_DRAG=1                     # Drag on black-holes due to accretion (w real mdot); set =2 to boost as if BH is accreting at eddington
 #------ output options
-#BH_OUTPUT_MOREINFO             # DAA: output additional info to "blackhole_details"
+#BH_OUTPUT_MOREINFO             # output additional info to "blackhole_details"
 ##-----------------------------------------------------------------------------------------------------
 #------------ deprecated or de-bugging options (most have been combined or optimized into the functions above, here for legacy)
-##DETACH_BLACK_HOLES            # Insert an independent data structure for BHs (currently exlicitly depends on SEPARATE_STELLARDOMAINDECOMP)
+#BH_REPOSITION_ON_POTMIN=0      # reposition black hole on potential minimum (requires EVALPOTENTIAL). [set =1 to "jump" onto STARS only]
+##DETACH_BLACK_HOLES            # Insert an independent data structure for BHs (currently explicitly depends on SEPARATE_STELLARDOMAINDECOMP)
 ##BH_SEED_STAR_MASS_FRACTION=0.02 # minimum star mass fraction for BH seeding
 ##-----------------------------------------------------------------------------------------------------
 #-------------------------------------- AGN-Bubble feedback (D. Sijacki)
@@ -335,6 +341,8 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
 #OUTPUTLINEOFSIGHT_PARTICLES
 #POWERSPEC_ON_OUTPUT            # compute and output power spectra (not used)
 #RECOMPUTE_POTENTIAL_ON_OUTPUT	# update potential every output even it EVALPOTENTIAL is set
+#TWOPOINT_FUNCTION_COMPUTATION_ENABLED #calculate mass 2point function by enabling and setting restartflag=5
+#OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
 ####################################################################################################
 
 
@@ -348,6 +356,7 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
                                 # these can introduce numerical instability in problems with poorly-resolved large noise or density contrasts (e.g. multi-phase, self-gravitating flows)
 #ENERGY_ENTROPY_SWITCH_IS_ACTIVE # enable energy-entropy switch as described in GIZMO methods paper. This can greatly improve performance on some problems where the
                                 # the flow is very cold and highly super-sonic. it can cause problems in multi-phase flows with strong cooling, though, and is not compatible with non-barytropic equations of state
+#FORCE_ENTROPIC_EOS_BELOW=(0.01) # set (manually) the alternative energy-entropy switch which is enabled by default in MFM/MFV: if relative velocities are below this threshold, it uses the entropic EOS
 #TEST_FOR_IDUNIQUENESS          # explicitly check if particles have unique id numbers (only use for special behaviors)
 #LONGIDS                        # use long ints for IDs (needed for super-large simulations)
 #ASSIGN_NEW_IDS                 # assign IDs on startup instead of reading from ICs
@@ -359,7 +368,7 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
 
 
 #USE_MPI_IN_PLACE               # MPI debugging: makes AllGatherV compatible with MPI_IN_PLACE definitions in some MPI libraries
-#NO_ISEND_IRECV_IN_DOMAIN       # MPI debugging
+#NO_ISEND_IRECV_IN_DOMAIN       # MPI debugging: slower, but fixes memory errors during exchange in the domain decomposition (ANY RUN with >2e9 particles MUST SET THIS OR FAIL!)
 #FIX_PATHSCALE_MPI_STATUS_IGNORE_BUG # MPI debugging
 #MPISENDRECV_SIZELIMIT=100      # MPI debugging
 #MPISENDRECV_CHECKSUM           # MPI debugging
@@ -395,21 +404,28 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
 #------------------ This is originally developed as part of GADGET-3 (SUBFIND) by V. Springel
 #------------------ Use of these modules follows the GADGET-3 policies described above
 ####################################################################################################
-#FOF                                # enable FoF output
+##-----------------------------------------------------------------------------------------------------
+#-------------------------------------- Friends-of-friends on-the-fly finder options (source in fof.c)
+##-----------------------------------------------------------------------------------------------------
+#FOF                                # enable FoF searching on-the-fly and outputs
+#LINKLENGTH=0.16                    # Linkinglength for FoF (default=0.2)
 #FOF_PRIMARY_LINK_TYPES=2           # 2^type for the primary dark matter type
 #FOF_SECONDARY_LINK_TYPES=1+16+32   # 2^type for the types linked to nearest primaries
-#FOF_GROUP_MIN_LEN=32               # default is 32
-#SUBFIND                            # enables substructure finder
 #DENSITY_SPLIT_BY_TYPE=1+2+16+32    # 2^type for whch the densities should be calculated seperately
+#FOF_GROUP_MIN_LEN=32               # default is 32
+#ORDER_SNAPSHOTS_BY_ID              # order particles in snapshots by particle IDs (only works for simulations with NO GAS)
+#KD_CHOOSE_LINKING_LENGTH           # alternative way to estimate the linking length
+##-----------------------------------------------------------------------------------------------------
+#-------------------------------------- Subhalo on-the-fly finder options (needs "subfind" source code)
+##-----------------------------------------------------------------------------------------------------
+#SUBFIND                            # enables substructure finder
 #MAX_NGB_CHECK=3                    # Max numbers of neighbours for sattlepoint detection (default = 2)
 #SAVE_MASS_TAB                      # Saves the an additional array with the masses of the different components
 #SUBFIND_SAVE_PARTICLELISTS         # Saves also phase-space and type variables parallel to IDs
 #SO_VEL_DISPERSIONS                 # computes velocity dispersions for as part of FOF SO-properties
-#ORDER_SNAPSHOTS_BY_ID
-#SAVE_HSML_IN_IC_ORDER              # will store the hsml-values in the order of the particles in the IC file
 #ONLY_PRODUCE_HSML_FILES            # only carries out density estimate
+#SAVE_HSML_IN_IC_ORDER              # will store the hsml-values in the order of the particles in the IC file
 #KEEP_HSML_AS_GUESS                 # keep using hsml for gas particles in subfind_density
-#LINKLENGTH=0.16                    # Linkinglength for FoF (default=0.2)
 #NO_GAS_CLOUDS                      # Do not accept pure gaseous substructures
 #WRITE_SUB_IN_SNAP_FORMAT           # Save subfind results in snap format
 #DUSTATT=11                         # Includes dust attenuation into the luminosity calculation (using 11 radial bins)
@@ -418,7 +434,6 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
 #SUBFIND_COUNT_BIG_HALOS=1e4        # Adds extra blocks for Halos with M_TopHat > SUBFIND_COUNT_BIG_HALOS
 #KD_CHOOSE_PSUBFIND_LIMIT           # Increases the limit for the parallel subfind to the maximum possible
 #KD_ALTERNATIVE_GROUP_SORT          # Alternative way to sort the Groups/SubGroupe before writing
-#KD_CHOOSE_LINKING_LENGTH           # Special way to estimate the linking length
 #SUBFIND_READ_FOF
 #SUBFIND_COLLECTIVE_STAGE1
 #SUBFIND_COLLECTIVE_STAGE2
@@ -426,7 +441,6 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
 #SUBFIND_RESHUFFLE_CATALOGUE
 #SUBFIND_RESHUFFLE_AND_POTENTIAL    #needs -DSUBFIND_RESHUFFLE_CATALOGUE and COMPUTE_POTENTIAL_ENERGY
 #SUBFIND_DENSITY_AND_POTENTIAL      #only calculated density and potential and write them into snapshot
-#TWOPOINT_FUNCTION_COMPUTATION_ENABLED #calculate mass 2point function by enabling and setting restartflag=5
 ####################################################################################################
 
 
@@ -479,6 +493,7 @@ HAVE_HDF5						# needed when HDF5 I/O support is desired
 #RT_COOLING_PHOTOHEATING_OLDFORMAT      # includes photoheating and cooling (using RT information), doing just the photo-heating [for more general cooling physics, enable COOLING]
 #RT_FIRE_FIX_SPECTRAL_SHAPE             # enable with GALSF_FB_RT_PHOTONMOMENTUM to use a fixed SED shape set in parameterfile for all incident fluxes
 #RT_DISABLE_UV_BACKGROUND               # disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
+#RT_INJECT_PHOTONS_DISCRETELY           # do photon injection in discrete packets, instead of sharing a continuous source function. works better with adaptive timestepping (default with GALSF)
 ####################################################################################################
 
 

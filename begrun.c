@@ -547,6 +547,7 @@ void open_outputfiles(void)
   MPI_Barrier(MPI_COMM_WORLD);
 
 #ifdef BLACK_HOLES
+#ifndef IO_REDUCED_MODE
   /* Note: This is done by everyone */
   if(ThisTask == 0)
     {
@@ -561,7 +562,6 @@ void open_outputfiles(void)
       printf("error in opening file '%s'\n", buf);
       endrun(1);
     }
-
 #ifdef BH_OUTPUT_MOREINFO
   sprintf(buf, "%sblackhole_details/bhmergers_%d.txt", All.OutputDir, ThisTask); 
   if(!(FdBhMergerDetails = fopen(buf, mode)))
@@ -579,50 +579,21 @@ void open_outputfiles(void)
 #endif
 #endif
 #endif
+#endif
 
   if(ThisTask != 0)		/* only the root processors writes to the log files */
     return;
-
-  /*
-  sprintf(buf, "%s%s", All.OutputDir, All.CpuFile);
-  if(!(FdCPU = fopen(buf, mode)))
-    {
-      printf("error in opening file '%s'\n", buf);
-      endrun(1);
-    }
-
-  sprintf(buf, "%s%s", All.OutputDir, All.InfoFile);
-  if(!(FdInfo = fopen(buf, mode)))
-    {
-      printf("error in opening file '%s'\n", buf);
-      endrun(1);
-    }
-
-  sprintf(buf, "%s%s", All.OutputDir, All.EnergyFile);
-  if(!(FdEnergy = fopen(buf, mode)))
-    {
-      printf("error in opening file '%s'\n", buf);
-      endrun(1);
-    }
-
-  sprintf(buf, "%s%s", All.OutputDir, All.TimingsFile);
-  if(!(FdTimings = fopen(buf, mode)))
-    {
-      printf("error in opening file '%s'\n", buf);
-      endrun(1);
-    }
-
-  sprintf(buf, "%s%s", All.OutputDir, All.TimebinFile);
-  if(!(FdTimebin = fopen(buf, mode)))
-    {
-      printf("error in opening file '%s'\n", buf);
-      endrun(1);
-    }
-  */
-    
     
     sprintf(buf, "%s%s", All.OutputDir, "cpu.txt");
     if(!(FdCPU = fopen(buf, mode)))
+    {
+        printf("error in opening file '%s'\n", buf);
+        endrun(1);
+    }
+    
+#ifndef IO_REDUCED_MODE
+    sprintf(buf, "%s%s", All.OutputDir, "timebin.txt");
+    if(!(FdTimebin = fopen(buf, mode)))
     {
         printf("error in opening file '%s'\n", buf);
         endrun(1);
@@ -641,88 +612,79 @@ void open_outputfiles(void)
         printf("error in opening file '%s'\n", buf);
         endrun(1);
     }
-    
     sprintf(buf, "%s%s", All.OutputDir, "timings.txt");
     if(!(FdTimings = fopen(buf, mode)))
     {
         printf("error in opening file '%s'\n", buf);
         endrun(1);
     }
-    
-    sprintf(buf, "%s%s", All.OutputDir, "timebin.txt");
-    if(!(FdTimebin = fopen(buf, mode)))
-    {
-        printf("error in opening file '%s'\n", buf);
-        endrun(1);
-    }
-    
     sprintf(buf, "%s%s", All.OutputDir, "balance.txt");
     if(!(FdBalance = fopen(buf, mode)))
     {
         printf("error in opening file '%s'\n", buf);
         endrun(1);
     }
-
-
-  fprintf(FdBalance, "\n");
-  fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1],
-	  CPU_SymbolImbalance[CPU_TREEWALK1]);
-  fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2],
-	  CPU_SymbolImbalance[CPU_TREEWALK2]);
-  fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1],
-	  CPU_SymbolImbalance[CPU_TREEWAIT1]);
-  fprintf(FdBalance, "Treewait2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT2],
-	  CPU_SymbolImbalance[CPU_TREEWAIT2]);
-  fprintf(FdBalance, "Treesend       = '%c' / '%c'\n", CPU_Symbol[CPU_TREESEND],
-	  CPU_SymbolImbalance[CPU_TREESEND]);
-  fprintf(FdBalance, "Treerecv       = '%c' / '%c'\n", CPU_Symbol[CPU_TREERECV],
-	  CPU_SymbolImbalance[CPU_TREERECV]);
-  fprintf(FdBalance, "Treebuild      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEBUILD],
-	  CPU_SymbolImbalance[CPU_TREEBUILD]);
-  fprintf(FdBalance, "Treeupdate     = '%c' / '%c'\n", CPU_Symbol[CPU_TREEUPDATE],
-	  CPU_SymbolImbalance[CPU_TREEUPDATE]);
-  fprintf(FdBalance, "Treehmaxupdate = '%c' / '%c'\n", CPU_Symbol[CPU_TREEHMAXUPDATE],
-	  CPU_SymbolImbalance[CPU_TREEHMAXUPDATE]);
-  fprintf(FdBalance, "Treemisc =       '%c' / '%c'\n", CPU_Symbol[CPU_TREEMISC],
-	  CPU_SymbolImbalance[CPU_TREEMISC]);
-  fprintf(FdBalance, "Domain decomp  = '%c' / '%c'\n", CPU_Symbol[CPU_DOMAIN],
-	  CPU_SymbolImbalance[CPU_DOMAIN]);
-  fprintf(FdBalance, "Density compute= '%c' / '%c'\n", CPU_Symbol[CPU_DENSCOMPUTE],
-	  CPU_SymbolImbalance[CPU_DENSCOMPUTE]);
-  fprintf(FdBalance, "Density imbal  = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT],
-	  CPU_SymbolImbalance[CPU_DENSWAIT]);
-  fprintf(FdBalance, "Density commu  = '%c' / '%c'\n", CPU_Symbol[CPU_DENSCOMM],
-	  CPU_SymbolImbalance[CPU_DENSCOMM]);
-  fprintf(FdBalance, "Density misc   = '%c' / '%c'\n", CPU_Symbol[CPU_DENSMISC],
-	  CPU_SymbolImbalance[CPU_DENSMISC]);
-  fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE],
-	  CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
-  fprintf(FdBalance, "Hydro imbalance= '%c' / '%c'\n", CPU_Symbol[CPU_HYDWAIT],
-	  CPU_SymbolImbalance[CPU_HYDWAIT]);
-  fprintf(FdBalance, "Hydro comm     = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMM],
-	  CPU_SymbolImbalance[CPU_HYDCOMM]);
-  fprintf(FdBalance, "Hydro misc     = '%c' / '%c'\n", CPU_Symbol[CPU_HYDMISC],
-	  CPU_SymbolImbalance[CPU_HYDMISC]);
-  fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
-  fprintf(FdBalance, "Blackhole      = '%c' / '%c'\n", CPU_Symbol[CPU_BLACKHOLES],
-	  CPU_SymbolImbalance[CPU_BLACKHOLES]);
-  fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_TIMELINE],
-	  CPU_SymbolImbalance[CPU_TIMELINE]);
-  fprintf(FdBalance, "Potential      = '%c' / '%c'\n", CPU_Symbol[CPU_POTENTIAL],
-	  CPU_SymbolImbalance[CPU_POTENTIAL]);
-  fprintf(FdBalance, "PM             = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
-  fprintf(FdBalance, "Peano-Hilbert  = '%c' / '%c'\n", CPU_Symbol[CPU_PEANO], CPU_SymbolImbalance[CPU_PEANO]);
+    fprintf(FdBalance, "\n");
+    fprintf(FdBalance, "Treewalk1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK1],
+            CPU_SymbolImbalance[CPU_TREEWALK1]);
+    fprintf(FdBalance, "Treewalk2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWALK2],
+            CPU_SymbolImbalance[CPU_TREEWALK2]);
+    fprintf(FdBalance, "Treewait1      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT1],
+            CPU_SymbolImbalance[CPU_TREEWAIT1]);
+    fprintf(FdBalance, "Treewait2      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEWAIT2],
+            CPU_SymbolImbalance[CPU_TREEWAIT2]);
+    fprintf(FdBalance, "Treesend       = '%c' / '%c'\n", CPU_Symbol[CPU_TREESEND],
+            CPU_SymbolImbalance[CPU_TREESEND]);
+    fprintf(FdBalance, "Treerecv       = '%c' / '%c'\n", CPU_Symbol[CPU_TREERECV],
+            CPU_SymbolImbalance[CPU_TREERECV]);
+    fprintf(FdBalance, "Treebuild      = '%c' / '%c'\n", CPU_Symbol[CPU_TREEBUILD],
+            CPU_SymbolImbalance[CPU_TREEBUILD]);
+    fprintf(FdBalance, "Treeupdate     = '%c' / '%c'\n", CPU_Symbol[CPU_TREEUPDATE],
+            CPU_SymbolImbalance[CPU_TREEUPDATE]);
+    fprintf(FdBalance, "Treehmaxupdate = '%c' / '%c'\n", CPU_Symbol[CPU_TREEHMAXUPDATE],
+            CPU_SymbolImbalance[CPU_TREEHMAXUPDATE]);
+    fprintf(FdBalance, "Treemisc =       '%c' / '%c'\n", CPU_Symbol[CPU_TREEMISC],
+            CPU_SymbolImbalance[CPU_TREEMISC]);
+    fprintf(FdBalance, "Domain decomp  = '%c' / '%c'\n", CPU_Symbol[CPU_DOMAIN],
+            CPU_SymbolImbalance[CPU_DOMAIN]);
+    fprintf(FdBalance, "Density compute= '%c' / '%c'\n", CPU_Symbol[CPU_DENSCOMPUTE],
+            CPU_SymbolImbalance[CPU_DENSCOMPUTE]);
+    fprintf(FdBalance, "Density imbal  = '%c' / '%c'\n", CPU_Symbol[CPU_DENSWAIT],
+            CPU_SymbolImbalance[CPU_DENSWAIT]);
+    fprintf(FdBalance, "Density commu  = '%c' / '%c'\n", CPU_Symbol[CPU_DENSCOMM],
+            CPU_SymbolImbalance[CPU_DENSCOMM]);
+    fprintf(FdBalance, "Density misc   = '%c' / '%c'\n", CPU_Symbol[CPU_DENSMISC],
+            CPU_SymbolImbalance[CPU_DENSMISC]);
+    fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE],
+            CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
+    fprintf(FdBalance, "Hydro imbalance= '%c' / '%c'\n", CPU_Symbol[CPU_HYDWAIT],
+            CPU_SymbolImbalance[CPU_HYDWAIT]);
+    fprintf(FdBalance, "Hydro comm     = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMM],
+            CPU_SymbolImbalance[CPU_HYDCOMM]);
+    fprintf(FdBalance, "Hydro misc     = '%c' / '%c'\n", CPU_Symbol[CPU_HYDMISC],
+            CPU_SymbolImbalance[CPU_HYDMISC]);
+    fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
+    fprintf(FdBalance, "Blackhole      = '%c' / '%c'\n", CPU_Symbol[CPU_BLACKHOLES],
+            CPU_SymbolImbalance[CPU_BLACKHOLES]);
+    fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_TIMELINE],
+            CPU_SymbolImbalance[CPU_TIMELINE]);
+    fprintf(FdBalance, "Potential      = '%c' / '%c'\n", CPU_Symbol[CPU_POTENTIAL],
+            CPU_SymbolImbalance[CPU_POTENTIAL]);
+    fprintf(FdBalance, "PM             = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
+    fprintf(FdBalance, "Peano-Hilbert  = '%c' / '%c'\n", CPU_Symbol[CPU_PEANO], CPU_SymbolImbalance[CPU_PEANO]);
 #ifdef COOLING
-  fprintf(FdBalance, "Cooling & SFR  = '%c' / '%c'\n", CPU_Symbol[CPU_COOLINGSFR],
-	  CPU_SymbolImbalance[CPU_COOLINGSFR]);
+    fprintf(FdBalance, "Cooling & SFR  = '%c' / '%c'\n", CPU_Symbol[CPU_COOLINGSFR],
+            CPU_SymbolImbalance[CPU_COOLINGSFR]);
 #endif
-  fprintf(FdBalance, "Snapshot dump  = '%c' / '%c'\n", CPU_Symbol[CPU_SNAPSHOT],
-	  CPU_SymbolImbalance[CPU_SNAPSHOT]);
+    fprintf(FdBalance, "Snapshot dump  = '%c' / '%c'\n", CPU_Symbol[CPU_SNAPSHOT],
+            CPU_SymbolImbalance[CPU_SNAPSHOT]);
 #ifdef FOF
-  fprintf(FdBalance, "FoF            = '%c' / '%c'\n", CPU_Symbol[CPU_FOF], CPU_SymbolImbalance[CPU_FOF]);
+    fprintf(FdBalance, "FoF            = '%c' / '%c'\n", CPU_Symbol[CPU_FOF], CPU_SymbolImbalance[CPU_FOF]);
 #endif
-  fprintf(FdBalance, "Miscellaneous  = '%c' / '%c'\n", CPU_Symbol[CPU_MISC], CPU_SymbolImbalance[CPU_MISC]);
-  fprintf(FdBalance, "\n");
+    fprintf(FdBalance, "Miscellaneous  = '%c' / '%c'\n", CPU_Symbol[CPU_MISC], CPU_SymbolImbalance[CPU_MISC]);
+    fprintf(FdBalance, "\n");
+#endif
+
 
 #ifdef SCFPOTENTIAL
   sprintf(buf, "%s%s", All.OutputDir, "scf_coeff.txt");
@@ -743,14 +705,6 @@ void open_outputfiles(void)
 #endif
 
     
-#ifdef GALSF_FB_GASRETURN
-    sprintf(buf, "%s%s", All.OutputDir, "GasReturn.txt");
-    if(!(FdGasReturn = fopen(buf, mode)))
-    {
-        printf("error in opening file '%s'\n", buf);
-        endrun(1);
-    }
-#endif
 #ifdef GALSF_FB_RPWIND_LOCAL
     sprintf(buf, "%s%s", All.OutputDir, "MomWinds.txt");
     if(!(FdMomWinds = fopen(buf, mode)))
@@ -777,7 +731,7 @@ void open_outputfiles(void)
 #endif
     
     
-#ifdef RT_CHEM_PHOTOION
+#if defined(RT_CHEM_PHOTOION) && !defined(IO_REDUCED_MODE)
   sprintf(buf, "%s%s", All.OutputDir, "rt_photoion_chem.txt");
   if(!(FdRad = fopen(buf, mode)))
     {
@@ -795,7 +749,7 @@ void open_outputfiles(void)
     }
 #endif
 
-#ifdef TURB_DRIVING
+#if defined(TURB_DRIVING) && !defined(IO_REDUCED_MODE)
   sprintf(buf, "%s%s", All.OutputDir, "turb.txt");
   if(!(FdTurb = fopen(buf, mode)))
     {
@@ -805,7 +759,7 @@ void open_outputfiles(void)
 #endif
 
 
-#ifdef DARKENERGY
+#if defined(DARKENERGY) && !defined(IO_REDUCED_MODE)
   sprintf(buf, "%s%s", All.OutputDir, "darkenergy.txt");
   if(!(FdDE = fopen(buf, mode)))
     {
@@ -833,67 +787,6 @@ void open_outputfiles(void)
 
 }
 
-
-
-
-/*!  This function closes the global log-files.
- */
-void close_outputfiles(void)
-{
-#ifdef BLACK_HOLES
-  fclose(FdBlackHolesDetails);	/* needs to be done by everyone */
-#ifdef BH_OUTPUT_MOREINFO
-  fclose(FdBhMergerDetails);
-#ifdef BH_BAL_KICK
-  fclose(FdBhWindDetails);
-#endif
-#endif
-#endif
-
-  if(ThisTask != 0)		/* only the root processors writes to the log files */
-    return;
-
-  fclose(FdCPU);
-  fclose(FdInfo);
-  fclose(FdEnergy);
-  fclose(FdTimings);
-  fclose(FdTimebin);
-  fclose(FdBalance);
-
-#ifdef SCFPOTENTIAL
-  fclose(FdSCF);
-#endif
-
-#ifdef GALSF
-  fclose(FdSfr);
-#endif
-
-#ifdef GALSF_FB_GASRETURN
-    fclose(FdGasReturn);
-#endif
-#ifdef GALSF_FB_RPWIND_LOCAL
-    fclose(FdMomWinds);
-#endif
-#ifdef GALSF_FB_HII_HEATING
-    fclose(FdHIIHeating);
-#endif
-#ifdef GALSF_FB_SNE_HEATING
-    fclose(FdSneIIHeating);
-#endif
-    
-#ifdef RT_CHEM_PHOTOION
-  fclose(FdRad);
-#endif
-
-#ifdef BLACK_HOLES
-  fclose(FdBlackHoles);
-#endif
-
-#ifdef DARKENERGY
-  fclose(FdDE);
-#endif
-
-}
 
 
 
@@ -2178,11 +2071,11 @@ void read_parameter_file(char *fname)
     }
     
 #if defined(LONG_X) ||  defined(LONG_Y) || defined(LONG_Z)
-#ifndef NOGRAVITY
+#if !defined(NOGRAVITY) && !defined(GRAVITY_NOT_PERIODIC) && (defined(PERIODIC) || defined(PMGRID))
     if(ThisTask == 0)
     {
-        printf("Code was compiled with LONG_X/Y/Z, but not with NOGRAVITY.\n");
-        printf("Stretched periodic boxes are not implemented for gravity yet.\n");
+        printf("Code was compiled with LONG_X/Y/Z and either PERIODIC or PMGRID, but not with NOGRAVITY or GRAVITY_NOT_PERIODIC.\n");
+        printf("The gravitational solver does not allow stretched-periodic boxes (cubic-box periodic or non-periodic gravity required).\n");
     }
     endrun(0);
 #endif

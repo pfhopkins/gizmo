@@ -54,36 +54,24 @@ static int tree_allocated_flag = 0;
 
 
 #ifdef OMP_NUM_THREADS
-extern pthread_mutex_t mutex_nexport, mutex_partnodedrift, mutex_workcount;
+extern pthread_mutex_t mutex_nexport, mutex_partnodedrift;
 
 #define LOCK_NEXPORT         pthread_mutex_lock(&mutex_nexport);
 #define UNLOCK_NEXPORT       pthread_mutex_unlock(&mutex_nexport);
 #define LOCK_PARTNODEDRIFT   pthread_mutex_lock(&mutex_partnodedrift);
 #define UNLOCK_PARTNODEDRIFT pthread_mutex_unlock(&mutex_partnodedrift);
-
 /*! The cost computation for the tree-gravity (required for the domain
  decomposition) is not exactly thread-safe if THREAD_SAFE_COSTS is not defined.
  However using locks for an exactly thread-safe cost computiation results in a
  significant (~25%) performance penalty in the tree-walk while having only an
  extremely small effect on the obtained costs. The domain decomposition should
- thus not be significantly changed if THREAD_SAFE_COSTS is not used.*/
-#ifdef THREAD_SAFE_COSTS
-#define LOCK_WORKCOUNT       pthread_mutex_lock(&mutex_workcount);
-#define UNLOCK_WORKCOUNT     pthread_mutex_unlock(&mutex_workcount);
+ thus not be significantly changed if THREAD_SAFE_COSTS is not used.
+ (modern code no longer includes this option - need to consult legacy code) */
 #else
-#define LOCK_WORKCOUNT
-#define UNLOCK_WORKCOUNT
-#endif
-
-#else
-
 #define LOCK_NEXPORT
 #define UNLOCK_NEXPORT
 #define LOCK_PARTNODEDRIFT
 #define UNLOCK_PARTNODEDRIFT
-#define LOCK_WORKCOUNT
-#define UNLOCK_WORKCOUNT
-
 #endif
 
 
@@ -112,7 +100,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     
 #ifdef BH_CALC_DISTANCES
     int i;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) { P[i].min_dist_to_bh=1e37; }
+    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) { P[i].min_dist_to_bh=P[i].min_xyz_to_bh[0]=P[i].min_xyz_to_bh[1]=P[i].min_xyz_to_bh[2]=1e37; }
 #endif
     
     do
@@ -575,6 +563,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef BH_CALC_DISTANCES
         MyFloat bh_mass=0;
+        MyFloat bh_pos_times_mass[3]={0,0,0};   /* position of each black hole in the node times its mass; divide by total mass at the end to get COM */
 #endif
 #ifdef SCALARFIELD
         mass_dm = 0;
@@ -650,6 +639,9 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef BH_CALC_DISTANCES
                         bh_mass += Nodes[p].bh_mass;
+                        bh_pos_times_mass[0] += Nodes[p].bh_pos[0] * Nodes[p].bh_mass;
+                        bh_pos_times_mass[1] += Nodes[p].bh_pos[1] * Nodes[p].bh_mass;
+                        bh_pos_times_mass[2] += Nodes[p].bh_pos[2] * Nodes[p].bh_mass;
 #endif
 #ifdef SCALARFIELD
                         mass_dm += (Nodes[p].mass_dm);
@@ -731,6 +723,9 @@ void force_update_node_recursive(int no, int sib, int father)
                     if(pa->Type == 5)
                     {
                         bh_mass += pa->Mass;    /* actual value is not used for distances */
+                        bh_pos_times_mass[0] += pa->Pos[0] * pa->Mass;  /* positition times mass; divide by total mass later */
+                        bh_pos_times_mass[1] += pa->Pos[1] * pa->Mass;
+                        bh_pos_times_mass[2] += pa->Pos[2] * pa->Mass;
                     }
 #endif
                     
@@ -886,6 +881,12 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef BH_CALC_DISTANCES
         Nodes[no].bh_mass = bh_mass;
+        if(bh_mass > 0)
+            {
+                Nodes[no].bh_pos[0] = bh_pos_times_mass[0] / bh_mass;  /* weighted position is sum(pos*mass)/sum(mass) */
+                Nodes[no].bh_pos[1] = bh_pos_times_mass[1] / bh_mass;
+                Nodes[no].bh_pos[2] = bh_pos_times_mass[2] / bh_mass;
+            }
 #endif
 #ifdef SCALARFIELD
         Nodes[no].s_dm[0] = s_dm[0];
@@ -978,6 +979,7 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef BH_CALC_DISTANCES
         MyFloat bh_mass;
+        MyFloat bh_pos[3];
 #endif
 #ifdef SCALARFIELD
         MyFloat s_dm[3];
@@ -1044,6 +1046,9 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef BH_CALC_DISTANCES
             DomainMoment[i].bh_mass = Nodes[no].bh_mass;
+            DomainMoment[i].bh_pos[0] = Nodes[no].bh_pos[0];
+            DomainMoment[i].bh_pos[1] = Nodes[no].bh_pos[1];
+            DomainMoment[i].bh_pos[2] = Nodes[no].bh_pos[2];
 #endif
 #ifdef SCALARFIELD
             DomainMoment[i].s_dm[0] = Nodes[no].s_dm[0];
@@ -1124,6 +1129,9 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef BH_CALC_DISTANCES
                     Nodes[no].bh_mass = DomainMoment[i].bh_mass;
+                    Nodes[no].bh_pos[0] = DomainMoment[i].bh_pos[0];
+                    Nodes[no].bh_pos[1] = DomainMoment[i].bh_pos[1];
+                    Nodes[no].bh_pos[2] = DomainMoment[i].bh_pos[2];
 #endif
 #ifdef SCALARFIELD
                     Nodes[no].s_dm[0] = DomainMoment[i].s_dm[0];
@@ -1181,6 +1189,7 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef BH_CALC_DISTANCES
     MyFloat bh_mass=0;
+    MyFloat bh_pos_times_mass[3]={0,0,0};
 #endif
 #ifdef SCALARFIELD
     mass_dm = 0;
@@ -1235,6 +1244,9 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef BH_CALC_DISTANCES
             bh_mass += Nodes[p].bh_mass;
+            bh_pos_times_mass[0] += Nodes[p].bh_pos[0] * Nodes[p].bh_mass;
+            bh_pos_times_mass[1] += Nodes[p].bh_pos[1] * Nodes[p].bh_mass;
+            bh_pos_times_mass[2] += Nodes[p].bh_pos[2] * Nodes[p].bh_mass;
 #endif
 #ifdef SCALARFIELD
             mass_dm += (Nodes[p].mass_dm);
@@ -1372,6 +1384,12 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef BH_CALC_DISTANCES
     Nodes[no].bh_mass = bh_mass;
+    if(bh_mass > 0)
+        {
+            Nodes[no].bh_pos[0] = bh_pos_times_mass[0] / bh_mass;
+            Nodes[no].bh_pos[1] = bh_pos_times_mass[1] / bh_mass;
+            Nodes[no].bh_pos[2] = bh_pos_times_mass[2] / bh_mass;
+        }
 #endif
 #ifdef SCALARFIELD
     Nodes[no].s_dm[0] = s_dm[0];
@@ -1506,7 +1524,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double pos_x, pos_y, pos_z, aold;
 #ifdef PMGRID
     int tabindex;
-    double eff_dist, rcut, asmth, asmthfac, rcut2, dist;
+    double eff_dist, rcut, asmth, asmthfac, rcut2, dist, xtmp;
+    dist = 0;
 #endif
     MyLongDouble acc_x, acc_y, acc_z;
     // cache some global vars in local vars to help compiler with alias analysis
@@ -1521,7 +1540,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double fac2, h_tidal, h_inv_tidal, h3_inv_tidal, h5_inv_tidal, fac_tidal;
     MyDouble tidal_tensorps[3][3];
 #endif
-#ifdef DO_NOT_BRACH_IF
+#if defined(REDUCE_TREEWALK_BRANCHING) && defined(PMGRID)
     double dxx, dyy, dzz, pdxx, pdyy, pdzz;
 #endif
     
@@ -1547,7 +1566,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double incident_flux_agn=0;
 #endif
 #ifdef BH_CALC_DISTANCES
-    double min_dist_to_bh2=1e37;
+    double min_dist_to_bh2=1.e37;
+    double min_xyz_to_bh[3]={1.e37,1.e37,1.e37};
 #endif
     
     
@@ -1557,7 +1577,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(RT_USE_GRAVTREE)
     double soft=0, pmass;
 #if defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FORGAS)
-    double h_p_inv=0, h_p3_inv=0, u_p=0, zeta, ptype_sec=-1, zeta_sec=0;
+    double h_p_inv=0, h_p3_inv=0, u_p=0, zeta, zeta_sec=0;
+    int ptype_sec=-1;
 #endif
 #endif
 #ifdef EVALPOTENTIAL
@@ -1656,6 +1677,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FORGAS)
     /* quick check if particle has mass: if not, we won't deal with it */
     if(pmass<=0) return 0;
+    int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(ptype); // determine allowed particle types for correction terms for adaptive gravitational softening terms
 #endif
 #ifdef PMGRID
     rcut2 = rcut * rcut;
@@ -1718,10 +1740,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double fac_stellum[N_RT_FREQ_BINS],fac_stellum_0=0;
     if(valid_gas_particle_for_rt)
     {
-        fac_stellum_0 = - 1.15 * All.PhotonMomentum_Coupled_Fraction * 1.626e-11 * (soft * soft / (pow((float)All.DesNumNgb,0.66) * pmass)) /
-            (All.G * All.UnitVelocity_in_cm_per_s * All.HubbleParam / All.UnitTime_in_s) / All.cf_a2inv;
+        double sigma_particle =  pmass / (soft*soft) * pow( (float)All.DesNumNgb, 0.66 ) * All.cf_a2inv;
+        fac_stellum_0 = - 1.15 * All.PhotonMomentum_Coupled_Fraction * (1.626e-11 / sigma_particle) /
+            (All.G * All.UnitVelocity_in_cm_per_s * All.HubbleParam / All.UnitTime_in_s);
         sigma_eff = 0.955 * All.UnitMass_in_g*All.HubbleParam / (All.UnitLength_in_cm*All.UnitLength_in_cm); // (should be in -physical-, not comoving units now) //
-        double sigma_eff_abs = 0.955 * 0.333*pow((float)All.DesNumNgb,0.66) * pmass / (soft*soft/All.cf_a2inv); // (physical units) *(Z/Zsolar) for metal-dept
+        double sigma_eff_abs = 0.333 * 0.955 * sigma_particle; // (physical units) *(Z/Zsolar) for metal-dept
         int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {fac_stellum[kf] = 1 - exp(-rt_kappa(0,kf)*sigma_eff_abs);}
     }
 #endif
@@ -1785,6 +1808,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     if(r2 < min_dist_to_bh2)    /* is this the closest BH part I've found yet? */
                     {
                         min_dist_to_bh2 = r2;   /* if yes: adjust min bh dist */
+                        min_xyz_to_bh[0] = dx;  /* remember, dx = x_BH - myx */
+                        min_xyz_to_bh[1] = dy;
+                        min_xyz_to_bh[2] = dz;
                     }
                 }
 #endif
@@ -1928,17 +1954,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif // SIDM
                 } // closes (if((r2 > 0) && (mass > 0))) check
                 
-                if(TakeLevel >= 0)
-                {
-                    LOCK_WORKCOUNT;
-#ifdef _OPENMP
-#ifdef THREAD_SAFE_COSTS
-#pragma omp critical(_workcount_)
-#endif
-#endif
-                    P[no].GravCost[TakeLevel] += 1.0;
-                    UNLOCK_WORKCOUNT;
-                }
+                if(TakeLevel >= 0) {P[no].GravCost[TakeLevel] += 1.0;}
                 no = Nextnode[no];
             }
             else			/* we have an  internal node */
@@ -2039,14 +2055,21 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef BH_CALC_DISTANCES
                 if(nop->bh_mass > 0)        /* found a node with non-zero BH mass */
                 {
-                    double bh_dx = nop->center[0] - pos_x;
-                    double bh_dy = nop->center[1] - pos_y;
-                    double bh_dz = nop->center[2] - pos_z;
+                    double bh_dx = nop->bh_pos[0] - pos_x;      /* SHEA:  now using bh_pos instead of center */
+                    double bh_dy = nop->bh_pos[1] - pos_y;
+                    double bh_dz = nop->bh_pos[2] - pos_z;
 #if defined(PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
                     NEAREST_XYZ(bh_dx,bh_dy,bh_dz,-1);
 #endif
                     double bh_r2 = bh_dx * bh_dx + bh_dy * bh_dy + bh_dz * bh_dz; // + (nop->len)*(nop->len);
                     if(bh_r2 < min_dist_to_bh2) { min_dist_to_bh2 = bh_r2;}
+                    if(bh_r2 < min_dist_to_bh2)
+                        {
+                            min_dist_to_bh2 = bh_r2;
+                            min_xyz_to_bh[0] = bh_dx;    /* remember, dx = x_BH - myx */
+                            min_xyz_to_bh[1] = bh_dy;
+                            min_xyz_to_bh[2] = bh_dz;
+                        }
                 }
 #endif
                 
@@ -2085,7 +2108,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 
 #ifdef PMGRID
-#ifdef DO_NOT_BRACH_IF
+#ifdef REDUCE_TREEWALK_BRANCHING
                 dxx = (nop->center[0] - pos_x);
                 dyy = (nop->center[1] - pos_y);
                 dzz = (nop->center[2] - pos_z);
@@ -2103,7 +2126,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 /* check whether we can stop walking along this branch */
                 if(r2 > rcut2)
                 {
-                    double xtmp;
                     eff_dist = rcut + 0.5 * nop->len;
                     dist = NGB_PERIODIC_LONG_X(nop->center[0] - pos_x, nop->center[1] - pos_y, nop->center[2] - pos_z, -1);
                     if(dist > eff_dist)
@@ -2171,7 +2193,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         continue;
                     }
                     
-#ifdef DO_NOT_BRACH_IF
+#if defined(REDUCE_TREEWALK_BRANCHING) && defined(PMGRID)
                     if((mass * nop->len * nop->len > r2 * r2 * aold) |
                        ((pdxx < 0.60 * nop->len) & (pdyy < 0.60 * nop->len) & (pdzz < 0.60 * nop->len)))
                     {
@@ -2233,18 +2255,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #endif
                 
-                if(TakeLevel >= 0)
-                {
-                    LOCK_WORKCOUNT;
-#ifdef _OPENMP
-#ifdef THREAD_SAFE_COSTS
-#pragma omp critical(_workcount_)
-#endif
-#endif
-                    nop->GravCost += 1.0;
-                    UNLOCK_WORKCOUNT;
-                }
-                
+                if(TakeLevel >= 0) {nop->GravCost += 1.0;}
                 no = nop->u.d.sibling;	/* ok, node can be used */
                 
             }
@@ -2294,7 +2305,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     }
                     // correction only applies to 'shared-kernel' particles: so this needs to check if
                     // these are the same particles for which the kernel lengths are computed
-                    if(ags_gravity_kernel_shared_check(ptype, ptype_sec))
+                    if((1 << ptype_sec) & (AGS_kernel_shared_BITFLAG))
                     {
                         double dWdr, wp, fac_corr = 0;
                         if((r>0) && (u<1) && (pmass>0)) // checks that these aren't the same particle
@@ -2330,7 +2341,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     if((r > 0) && (pmass > 0)) // check for entering correction terms
 #endif
                     {
-                        if(ags_gravity_kernel_shared_check(ptype, ptype_sec))
+                        if((1 << ptype_sec) & (AGS_kernel_shared_BITFLAG))
                         {
                             double dWdr, wp, fac_corr=0;
                             if(h_p_inv >= h_inv)
@@ -2597,6 +2608,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef BH_CALC_DISTANCES
         P[target].min_dist_to_bh = sqrt( min_dist_to_bh2 );
+        P[target].min_xyz_to_bh[0] = min_xyz_to_bh[0];   /* remember, dx = x_BH - myx */
+        P[target].min_xyz_to_bh[1] = min_xyz_to_bh[1];
+        P[target].min_xyz_to_bh[2] = min_xyz_to_bh[2];
 #endif
     }
     else
@@ -2626,6 +2640,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef BH_CALC_DISTANCES
         GravDataResult[target].min_dist_to_bh = sqrt( min_dist_to_bh2 );
+        GravDataResult[target].min_xyz_to_bh[0] = min_xyz_to_bh[0];   /* remember, dx = x_BH - myx */
+        GravDataResult[target].min_xyz_to_bh[1] = min_xyz_to_bh[1];
+        GravDataResult[target].min_xyz_to_bh[2] = min_xyz_to_bh[2];
 #endif
         *exportflag = nodesinlist;
     }
@@ -3076,8 +3093,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
         ptype = GravDataGet[target].Type;
         aold = All.ErrTolForceAcc * GravDataGet[target].OldAcc;
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
-        if(ptype == 0)
-            soft = GravDataGet[target].Soft;
+        if(ptype == 0) {soft = GravDataGet[target].Soft;}
 #endif
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
         if(pmforce_is_particle_high_res(ptype, GravDataGet[target].Pos))
@@ -3239,7 +3255,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                 dyy = nop->center[1] - pos_y;	/* this vector is -y in my thesis notation */
                 dzz = nop->center[2] - pos_z;
                 NEAREST_XYZ(dxx,dyy,dzz,-1);
-#ifdef DO_NOT_BRACH_IF
+#ifdef REDUCE_TREEWALK_BRANCHING
                 if((fabs(dxx) > eff_dist) | (fabs(dyy) > eff_dist) | (fabs(dzz) > eff_dist))
                 {
                     no = nop->u.d.sibling;
@@ -3263,7 +3279,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                     no = nop->u.d.sibling;
                     continue;
                 }
-#endif // DO_NOT_BRACH_IF
+#endif // REDUCE_TREEWALK_BRANCHING
 #else // PMGRID
                 dxx = nop->center[0] - pos_x;	/* observe the sign ! */
                 dyy = nop->center[1] - pos_y;	/* this vector is -y in my thesis notation */
@@ -3283,7 +3299,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                 {
                     
                     /* force node to open if we are within the gravitational softening length */
-#if defined(NOGRAVITY) || defined(RT_NOGRAVITY) || (!(defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(RT_USE_GRAVTREE)))
+#if defined(NOGRAVITY) || defined(RT_NOGRAVITY) || (!(defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FORGAS)))
                     double soft = All.ForceSoftening[ptype];
 #endif
                     if((r2 < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (r2 < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len)))
@@ -3292,7 +3308,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                         continue;
                     }
 
-#ifdef DO_NOT_BRACH_IF
+#ifdef REDUCE_TREEWALK_BRANCHING
                     if((mass * nop->len * nop->len > r2 * r2 * aold) |
                        ((fabs(dxx) < 0.60 * nop->len) & (fabs(dyy) < 0.60 * nop->len) & (fabs(dzz) <
                                                                                          0.60 * nop->len)))
@@ -3320,7 +3336,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                             }
                         }
                     }
-#endif // DO_NOT_BRACH_IF //
+#endif // REDUCE_TREEWALK_BRANCHING //
                 }
                 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
@@ -3732,7 +3748,9 @@ void ewald_init(void)
     if(ThisTask == 0)
     {
         printf("initialize Ewald correction...\n");
+#ifndef IO_REDUCED_MODE
         fflush(stdout);
+#endif
     }
     
 #ifdef DOUBLEPRECISION
@@ -3742,12 +3760,6 @@ void ewald_init(void)
 #endif
     if((fd = fopen(buf, "r")))
     {
-        if(ThisTask == 0)
-        {
-            printf("\nreading Ewald tables from file `%s'\n", buf);
-            fflush(stdout);
-        }
-        
         my_fread(&fcorrx[0][0][0], sizeof(MyFloat), (EN + 1) * (EN + 1) * (EN + 1), fd);
         my_fread(&fcorry[0][0][0], sizeof(MyFloat), (EN + 1) * (EN + 1) * (EN + 1), fd);
         my_fread(&fcorrz[0][0][0], sizeof(MyFloat), (EN + 1) * (EN + 1) * (EN + 1), fd);
@@ -3759,7 +3771,9 @@ void ewald_init(void)
         if(ThisTask == 0)
         {
             printf("\nNo Ewald tables in file `%s' found.\nRecomputing them...\n", buf);
+#ifndef IO_REDUCED_MODE
             fflush(stdout);
+#endif
         }
         
         /* ok, let's recompute things. Actually, we do that in parallel. */
@@ -3778,11 +3792,13 @@ void ewald_init(void)
                     {
                         if(ThisTask == 0)
                         {
+#ifndef IO_REDUCED_MODE
                             if((count % (len / 20)) == 0)
                             {
                                 printf("%4.1f percent done\n", count / (len / 100.0));
                                 fflush(stdout);
                             }
+#endif
                         }
                         
                         x[0] = 0.5 * ((double) i) / EN;
@@ -3815,7 +3831,6 @@ void ewald_init(void)
         if(ThisTask == 0)
         {
             printf("\nwriting Ewald tables to file `%s'\n", buf);
-            fflush(stdout);
             if((fd = fopen(buf, "w")))
             {
                 my_fwrite(&fcorrx[0][0][0], sizeof(MyFloat), (EN + 1) * (EN + 1) * (EN + 1), fd);
@@ -3841,7 +3856,6 @@ void ewald_init(void)
     if(ThisTask == 0)
     {
         printf("initialization of periodic boundaries finished.\n");
-        fflush(stdout);
     }
 #endif // #ifndef NOGRAVITY
 }

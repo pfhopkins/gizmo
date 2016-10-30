@@ -28,6 +28,9 @@
         
         double flux_wt = rho_ij;
         double diffusion_wt = 0.5*(kappa_i+kappa_j);
+#ifdef COOLING
+        diffusion_wt = kappa_i*kappa_j/diffusion_wt;
+#endif
         int do_isotropic = 1;
         double b_hll=1, cmag=0, wt_i=0.5, wt_j=0.5, grad_dot_x_ij = 0;
         double grad_ij[3];

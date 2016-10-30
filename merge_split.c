@@ -70,7 +70,7 @@ int does_particle_need_to_be_split(int i)
 double ref_mass_factor(int i)
 {
     double ref_factor=1.0;
-#ifdef BH_CALC_DISTANCES
+#if defined(BH_CALC_DISTANCES) && !defined(ANALYTIC_GRAVITY_ANCHOR_TO_PARTICLE)
 #ifndef SINGLE_STAR_FORMATION
     ref_factor = sqrt(P[i].min_dist_to_bh + 0.0001);
     if(ref_factor>1.0) { ref_factor = 1.0; }
@@ -96,6 +96,7 @@ void merge_and_split_particles(void)
     /* loop over active particles */
     for(i=0; i<NumPart; i++)
     {
+        int Pi_BITFLAG = (1 << (int)P[i].Type); // bitflag for particles of type matching "i", used for restricting neighbor search
 #ifdef PM_HIRES_REGION_CLIPDM
         /* here we need to check whether a low-res DM particle is surrounded by all high-res particles, 
             in which case we clip its mass down or split it to prevent the most problematic contamination artifacts */
@@ -117,7 +118,7 @@ void merge_and_split_particles(void)
 #endif
             startnode=All.MaxPart; 
             do {
-                numngb_inbox = ngb_treefind_variable_threads_nongas(P[i].Pos,h_guess,-1,&startnode,0,&dummy,&dummy,&dummy,Ngblist);
+                numngb_inbox = ngb_treefind_variable_threads_targeted(P[i].Pos,h_guess,-1,&startnode,0,&dummy,&dummy,&dummy,Ngblist,62); // search for all particle types -except- gas: 62=2^1+2^2+2^3+2^4+2^5
                 if((numngb_inbox < n_search_min) && (h_guess < h_search_max) && (NITER < NITER_MAX))
                 {
                     h_guess *= 1.27;
@@ -172,7 +173,7 @@ void merge_and_split_particles(void)
             {
                 /* if merging: do a neighbor loop ON THE SAME DOMAIN to determine the target */
                 startnode=All.MaxPart;
-                numngb_inbox = ngb_treefind_variable_threads_targeted(P[i].Pos,PPP[i].Hsml,-1,&startnode,0,&dummy,&dummy,&dummy,Ngblist,P[i].Type);
+                numngb_inbox = ngb_treefind_variable_threads_targeted(P[i].Pos,PPP[i].Hsml,-1,&startnode,0,&dummy,&dummy,&dummy,Ngblist,Pi_BITFLAG); // search for particles of matching type
                 if(numngb_inbox>0)
                 {
                     target_for_merger = -1;
@@ -205,7 +206,7 @@ void merge_and_split_particles(void)
             {
                 /* if splitting: do a neighbor loop ON THE SAME DOMAIN to determine the nearest particle (so dont overshoot it) */
                 startnode=All.MaxPart;
-                numngb_inbox = ngb_treefind_variable_threads_targeted(P[i].Pos,PPP[i].Hsml,-1,&startnode,0,&dummy,&dummy,&dummy,Ngblist,P[i].Type);
+                numngb_inbox = ngb_treefind_variable_threads_targeted(P[i].Pos,PPP[i].Hsml,-1,&startnode,0,&dummy,&dummy,&dummy,Ngblist,Pi_BITFLAG); // search for particles of matching type
                 if(numngb_inbox>0)
                 {
                     target_for_merger = -1;
@@ -249,11 +250,15 @@ void merge_and_split_particles(void)
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0)
     {
-        printf("Particle split/merge check: %d particles merged, %d particles split \n",
-               MPI_n_particles_merged,MPI_n_particles_split);
-        fflush(stdout);
+        if(MPI_n_particles_merged > 0 || MPI_n_particles_split > 0)
+        {
+            printf("Particle split/merge check: %d particles merged, %d particles split \n", MPI_n_particles_merged,MPI_n_particles_split);
+#ifndef IO_REDUCED_MODE
+            fflush(stdout);
+#endif
+        }
     }
-    /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must- 
+    /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must-
         be called immediately after this routine! */
     All.TotNumPart += (long long)MPI_n_particles_split;
     All.TotN_gas += (long long)MPI_n_particles_split;
@@ -275,7 +280,12 @@ void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nea
         fflush(stdout);
         endrun(8888);
     }
-    if(P[i].Type != 0) {printf("SPLITTING NON-GAS-PARTICLE: i=%d ID=%d Type=%d \n",i,P[i].ID,P[i].Type); fflush(stdout); endrun(8889);}
+    if(P[i].Type != 0)
+    {
+        printf("SPLITTING NON-GAS-PARTICLE: i=%d ID=%d Type=%d \n",i,P[i].ID,P[i].Type);
+        fflush(stdout);
+        endrun(8889);
+    }
     
     /* here is where the details of the split are coded, the rest is bookkeeping */
     mass_of_new_particle = 0.5;
@@ -458,7 +468,13 @@ void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nea
     particle splitting */
 void merge_particles_ij(int i, int j)
 {
-    if((P[i].Type != 0)||(P[j].Type != 0)) {printf("Merging non-gas particle: ij=%d/%d ID=%d/%d type=%d/%d mass=%g/%g \n",i,j,P[i].ID,P[j].ID,P[i].Type,P[j].Type,P[i].Mass,P[j].Mass); fflush(stdout);}
+#ifndef IO_REDUCED_MODE
+    if((P[i].Type != 0)||(P[j].Type != 0))
+    {
+        printf("Merging non-gas particle: ij=%d/%d ID=%d/%d type=%d/%d mass=%g/%g \n",i,j,P[i].ID,P[j].ID,P[i].Type,P[j].Type,P[i].Mass,P[j].Mass);
+        fflush(stdout);
+    }
+#endif
     int k;
     if(P[i].Mass <= 0)
     {
@@ -785,9 +801,13 @@ void rearrange_particle_sequence(void)
     
     if(ThisTask == 0)
     {
-        printf("Rearrange: Eliminated %d/%d gas/star particles and merged away %d black holes.\n",
-               tot_gaselim, tot_elim - tot_gaselim - tot_bhelim, tot_bhelim);
+        if(tot_elim > 0)
+        {
+        printf("Rearrange: Eliminated %d/%d gas/star particles and merged away %d black holes.\n", tot_gaselim, tot_elim - tot_gaselim - tot_bhelim, tot_bhelim);
+#ifndef IO_REDUCED_MODE
         fflush(stdout);
+#endif
+        }
     }
     
     All.TotNumPart -= tot_elim;

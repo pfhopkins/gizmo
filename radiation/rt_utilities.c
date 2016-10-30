@@ -543,13 +543,20 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
         if(mode==0) {SphP[i].E_gamma[kf] = ef;} else {SphP[i].E_gamma_Pred[kf] = ef;}
 
 #if defined(RT_EVOLVE_FLUX)
-        int k_dir;
+        int k_dir; double f_mag=0;
         for(k_dir=0;k_dir<3;k_dir++)
         {
             double flux_0;
             if(mode==0) {flux_0 = SphP[i].Flux[kf][k_dir];} else {flux_0 = SphP[i].Flux_Pred[kf][k_dir];}
             double flux_f = flux_0 * e_abs_0 + SphP[i].Dt_Flux[kf][k_dir] * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
             if(mode==0) {SphP[i].Flux[kf][k_dir] = flux_f;} else {SphP[i].Flux_Pred[kf][k_dir] = flux_f;}
+            f_mag += flux_f*flux_f; // magnitude of flux vector
+        }
+        if(f_mag > 0)
+        {
+            // limit the flux according the physical (optically thin) maximum //
+            f_mag=sqrt(f_mag); double fmag_max = 1.1 * (C/All.UnitVelocity_in_cm_per_s) * ef; // maximum flux should be optically-thin limit: e_gamma/C: here allow some tolerance for numerical leapfrogging in timestepping
+            if(f_mag > fmag_max) {for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {SphP[i].Flux[kf][k_dir] *= fmag_max/f_mag;} else {SphP[i].Flux_Pred[kf][k_dir] *= fmag_max/f_mag;}}}
         }
 #endif
     }
@@ -607,16 +614,11 @@ void rt_set_simple_inits(void)
                 SphP[i].E_gamma_Pred[k] = SphP[i].E_gamma[k];
                 SphP[i].Dt_E_gamma[k] = 0;
 #endif
-#if defined(RT_EVOLVE_FLUX)
-                for(k=0;k<N_RT_FREQ_BINS;k++)
+#ifdef RT_EVOLVE_FLUX
+                int k_dir;
+                for(k_dir=0;k_dir<3;k_dir++)
                 {
-                    int k_dir;
-                    for(k_dir=0;k_dir<3;k_dir++)
-                    {
-                        SphP[i].Flux[k][k_dir] = 0;
-                        SphP[i].Flux_Pred[k][k_dir] = SphP[i].Flux[k][k_dir];
-                        SphP[i].Dt_Flux[k][k_dir] = 0;
-                    }
+                    SphP[i].Flux_Pred[k][k_dir] = SphP[i].Flux[k][k_dir] = SphP[i].Dt_Flux[k][k_dir] = 0;
                 }
 #endif
             }

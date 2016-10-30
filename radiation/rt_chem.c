@@ -351,6 +351,7 @@ void rt_update_chemistry(void)
 
 void rt_write_chemistry_stats(void)
 {
+#ifndef IO_REDUCED_MODE
     int i;
     double rho, total_nHI, total_V, total_nHI_all, total_V_all;
     total_nHI = 0.0; total_V = 0.0;
@@ -414,6 +415,7 @@ void rt_write_chemistry_stats(void)
 #endif
         fflush(FdRad);
     }
+#endif
 }
 
 #endif

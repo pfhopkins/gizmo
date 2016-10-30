@@ -197,7 +197,7 @@ void find_timesteps(void)
             if(P[i].Type == 0)
             {
                 TimeBinCountSph[binold]--;
-#ifdef SFR
+#ifdef GALSF
                 TimeBinSfr[binold] -= SphP[i].Sfr;
                 TimeBinSfr[bin] += SphP[i].Sfr;
 #endif
@@ -937,7 +937,7 @@ void find_dt_displacement_constraint(double hfac /*!<  should be  a^2*H(a)  */ )
     int i, type;
     int count[6];
     long long count_sum[6];
-    double v[6], v_sum[6], mim[6], min_mass[6];
+    double v[6], v_sum[6], mim[6], mnm[6], min_mass[6], mean_mass[6];
     double dt, dmean, asmth = 0;
     
     dt_displacement = All.MaxSizeTimestep;
@@ -949,30 +949,32 @@ void find_dt_displacement_constraint(double hfac /*!<  should be  a^2*H(a)  */ )
             count[type] = 0;
             v[type] = 0;
             mim[type] = 1.0e30;
+            mnm[type] = 0;
         }
         
         for(i = 0; i < NumPart; i++)
         {
-            v[P[i].Type] += P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2];
             if(P[i].Mass > 0)
             {
-                if(mim[P[i].Type] > P[i].Mass)
-                    mim[P[i].Type] = P[i].Mass;
+                count[P[i].Type]++;
+                v[P[i].Type] += P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2];
+                if(mim[P[i].Type] > P[i].Mass) {mim[P[i].Type] = P[i].Mass;}
+                mnm[P[i].Type] += P[i].Mass;
             }
-            count[P[i].Type]++;
         }
         
         MPI_Allreduce(v, v_sum, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(mim, min_mass, 6, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        
+        MPI_Allreduce(mnm, mean_mass, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         sumup_large_ints(6, count, count_sum);
         
-#ifdef SFR
+#ifdef GALSF
         /* add star and gas particles together to treat them on equal footing, using the original gas particle spacing. */
         v_sum[0] += v_sum[4];
         count_sum[0] += count_sum[4];
         v_sum[4] = v_sum[0];
         count_sum[4] = count_sum[0];
+        min_mass[0] = min_mass[4] = (mean_mass[0] + mean_mass[4]) / count_sum[0];
 #ifdef BLACK_HOLES
         v_sum[0] += v_sum[5];
         count_sum[0] += count_sum[5];
@@ -1080,9 +1082,9 @@ void process_wake_ups(void)
     
     MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     
-    if(ThisTask == 0)
-        printf("predicting next timestep: %g\n", (ti_next_kick_global - All.Ti_Current) * All.Timebase_interval);
-    
+#ifndef IO_REDUCED_MODE
+    if(ThisTask == 0) printf("predicting next timestep: %g\n", (ti_next_kick_global - All.Ti_Current) * All.Timebase_interval);
+#endif
     max_time_bin_active = 0;
     /* get the highest bin, that is active next time */
     for(n = 0; n < TIMEBINS; n++)

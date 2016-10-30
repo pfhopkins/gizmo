@@ -110,6 +110,7 @@ void report_pinning(void)
       buf[i]='-';
   buf[MAX_CORES]=0;
 
+#ifndef IO_REDUCED_MODE
   for(i=0; i<NTask; i++)
     {
       if(ThisTask == i)
@@ -117,6 +118,7 @@ void report_pinning(void)
       fflush(stdout);
       MPI_Barrier(MPI_COMM_WORLD);
     }
+#endif
 }
 
 #endif

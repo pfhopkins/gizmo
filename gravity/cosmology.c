@@ -113,18 +113,11 @@ void fwa_init(void)
   MyFloat a_first, w_first, a, w, sum;
 
 
-  if(ThisTask == 0)
-    {
-      printf("initialize time dependent w ...\n");
-      fflush(stdout);
-    }
-
   if((fd = fopen(All.DarkEnergyFile, "r")))
     {
       if(ThisTask == 0)
 	{
 	  printf("\nreading w of a from file `%s'\n", All.DarkEnergyFile);
-	  fflush(stdout);
 	}
       atab[0] = -1.0;		/* we have to extrapolate wtab[0] later ! */
       count = 1;
@@ -309,7 +302,6 @@ void fwa_init(void)
   if(ThisTask == 0)
     {
       printf("Integrating w(a) finisched.\n");
-      fflush(stdout);
     }
 }
 

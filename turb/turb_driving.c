@@ -525,6 +525,7 @@ void do_turb_driving_step_second_half(void)
 
 void log_turb_temp(void)
 {
+#ifndef IO_REDUCED_MODE
     int i;
     double dudt_drive = 0;
     double dudt_diss = 0;
@@ -565,6 +566,7 @@ void log_turb_temp(void)
                 glob_dudt_diss / glob_mass,
                 All.TurbInjectedEnergy / glob_mass, 
                 All.TurbDissipatedEnergy / glob_mass);
+#endif
 }
 
 #endif

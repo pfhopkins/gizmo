@@ -38,7 +38,9 @@ void compute_grav_accelerations(void)
   if(ThisTask == 0)
     {
       printf("Start gravity force computation...\n");
+#ifndef IO_REDUCED_MODE
       fflush(stdout);
+#endif
     }
 
 #ifdef PMGRID
@@ -56,11 +58,13 @@ void compute_grav_accelerations(void)
   if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0)
     gravity_tree();
 
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("gravity force computation done.\n");
       fflush(stdout);
     }
+#endif
 }
 
 
@@ -71,9 +75,14 @@ void compute_hydro_densities_and_forces(void)
     {
         if(ThisTask == 0)
         {
-            printf("Start density & tree-update computation...\n"); fflush(stdout);
+            printf("Start hydrodynamics computation...\n");
         }
-
+#ifndef IO_REDUCED_MODE
+        if(ThisTask == 0)
+        {
+            printf("Start density & tree-update computation...\n");
+        }
+#endif
         density();		/* computes density, and pressure */
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
         ags_density();
@@ -87,14 +96,12 @@ void compute_hydro_densities_and_forces(void)
          *  density().
          */
         
+#ifndef IO_REDUCED_MODE
         if(ThisTask == 0)
         {
-            printf("density & tree-update computation...\n"); fflush(stdout);
+            printf("density & tree-update computation done...\n");
         }
-        if(ThisTask == 0)
-        {
-            printf("Start gradient computation...\n"); fflush(stdout);
-        }
+#endif
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #if defined(COOLING) && defined(GALSF_FB_LOCAL_UV_HEATING)
         selfshield_local_incident_uv_flux();
@@ -102,30 +109,27 @@ void compute_hydro_densities_and_forces(void)
          and the local gradient calculation (GradRho) to
          properly self-shield the particles that had this calculated */
 #endif
-        
+#ifndef IO_REDUCED_MODE
         if(ThisTask == 0)
         {
-            printf("gradient computation done.\n"); fflush(stdout);
+            printf("gradient computation done.\n");
         }
-        
-        if(ThisTask == 0)
-        {
-            printf("Start hydro-force computation...\n"); fflush(stdout);
-        }
-        
+#endif
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
-        
+#ifndef IO_REDUCED_MODE
         if(ThisTask == 0)
         {
-            printf("hydro force computation done.\n"); fflush(stdout);
+            printf("hydro force computation done.\n");
         }
-
+#endif
 #ifdef GRAIN_FLUID
         apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
+#ifndef IO_REDUCED_MODE
         if(ThisTask == 0)
         {
-            printf("grain aerodynamic force evaluation done.\n"); fflush(stdout);
+            printf("grain aerodynamic force evaluation done.\n");
         }
+#endif
 #endif
 
     } else {

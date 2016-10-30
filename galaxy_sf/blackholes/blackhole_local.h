@@ -60,6 +60,10 @@ static struct blackholedata_out
     MyLongDouble accreted_Mass;
     MyLongDouble accreted_BH_Mass;
     MyLongDouble accreted_momentum[3];
+#ifdef BH_REPOSITION_ON_POTMIN
+    MyFloat BH_MinPotPos[3];
+    MyFloat BH_MinPot;
+#endif
 #ifdef BH_COUNTPROGS
     int BH_CountProgs;
 #endif

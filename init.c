@@ -112,17 +112,10 @@ void init(void)
     set_cosmo_factors_for_current_time();
     
 #ifdef SCFPOTENTIAL
-    if(ThisTask == 0)
-    {
-        printf("Init SCF...\n");
-        fflush(stdout);
-    }
     SCF_init();
     if(ThisTask == 0)
     {
         printf("Initial random seed = %ld\n", scf_seed);
-        printf("done.\n");
-        fflush(stdout);
     }
 #endif
     
@@ -1150,7 +1143,6 @@ void disp_setup_smoothinglengths(void)
     if(ThisTask == 0)
     {
         printf("computing DM Vel_disp around gas particles.\n");
-        fflush(stdout);
     }
     disp_density();
 }
@@ -1168,7 +1160,6 @@ void test_id_uniqueness(void)
     if(ThisTask == 0)
     {
         printf("Testing ID uniqueness...\n");
-        fflush(stdout);
     }
     
     if(NumPart == 0)
@@ -1223,7 +1214,6 @@ void test_id_uniqueness(void)
     if(ThisTask == 0)
     {
         printf("success.  took=%g sec\n", timediff(t0, t1));
-        fflush(stdout);
     }
 }
 

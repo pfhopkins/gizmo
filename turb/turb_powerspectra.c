@@ -346,11 +346,12 @@ void powerspec_turb(int filenr)
 
   double tend = my_second();
   
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("end turbulent power spectra  took %g seconds\n", timediff(tstart, tend));
-      fflush(stdout);
     }
+#endif
 }
 
 
@@ -508,13 +509,13 @@ double powerspec_turb_obtain_fields(void)
 
   double tstart = my_second();
 
+#ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
-      printf("Start finding nearest gas-particle for mesh-cell centers (presently allocated=%g MB)\n",
-	     AllocatedBytes / (1024.0 * 1024.0));
-      fflush(stdout);
+      printf("Start finding nearest gas-particle for mesh-cell centers (presently allocated=%g MB)\n", AllocatedBytes / (1024.0 * 1024.0));
     }
-  
+#endif
+    
   large_array_offset i, n, Ncount = ((large_array_offset)nslab_x) * (POWERSPEC_GRID * POWERSPEC_GRID);  /* number of grid points on the local slab */
 
   powerspec_turb_nearest_distance = (float *) mymalloc("powerspec_turb_nearest_distance", sizeof(float) * Ncount);
@@ -583,13 +584,12 @@ double powerspec_turb_obtain_fields(void)
 	  DataGet = (struct data_in *) mymalloc("DataGet", nimport * sizeof(struct data_in));
 	  DataIn = (struct data_in *) mymalloc("DataIn", nexport * sizeof(struct data_in));
 
+#ifndef IO_REDUCED_MODE
 	  if(ThisTask == 0)
 	    {
-	      printf("still finding nearest... (presently allocated=%g MB)\n",
-		     AllocatedBytes / (1024.0 * 1024.0));
-	      fflush(stdout);
+	      printf("still finding nearest... (presently allocated=%g MB)\n", AllocatedBytes / (1024.0 * 1024.0));
 	    }
-
+#endif
 	  for(j = 0; j < nexport; j++)
 	    {
 	      place = DataIndexTable[j].Index;
@@ -739,10 +739,6 @@ double powerspec_turb_obtain_fields(void)
             double x = (xx + 0.5) / POWERSPEC_GRID * boxSize_X;
             double y = (yy + 0.5) / POWERSPEC_GRID * boxSize_Y;
             double z = (zz + 0.5) / POWERSPEC_GRID * boxSize_Z;
-	      
-		  printf("i=%d task=%d Hsml=%g  pos=(%g|%g|%g)\n",
-			 (int)i, ThisTask, powerspec_turb_nearest_hsml[i], x, y, z);
-		  fflush(stdout);
 		}
 	    }
 	  else
@@ -755,12 +751,12 @@ double powerspec_turb_obtain_fields(void)
       if(ntot > 0)
 	{
 	  iter++;
+#ifndef IO_REDUCED_MODE
 	  if(iter > 0 && ThisTask == 0)
 	    {
 	      printf("powespec_vel nearest iteration %d: need to repeat for %lld particles.\n", iter, ntot);
-	      fflush(stdout);
 	    }
-	  
+#endif
 	  if(iter > MAXITER)
 	    terminate("failed to converge");
 	}
@@ -774,8 +770,7 @@ double powerspec_turb_obtain_fields(void)
   myfree(powerspec_turb_nearest_hsml);
   myfree(powerspec_turb_nearest_distance);
 
-  if(ThisTask == 0)
-    printf("done finding velocity field\n");
+    if(ThisTask == 0) {printf("done finding velocity field\n");}
 
   double tend = my_second();
   return timediff(tstart, tend);
@@ -917,7 +912,7 @@ int powerspec_turb_find_nearest_evaluate(int target, int mode, int *nexport, int
     {
       while(startnode >= 0)
 	{
-	  numngb_inbox = powerspec_turb_treefind(pos, h, target, &startnode, mode, nexport, nsend_local);
+	  numngb_inbox = ngb_treefind_variable_targeted(pos, h, target, &startnode, mode, nexport, nsend_local,1); // search for gas: 2^0=1
 
 	  if(numngb_inbox < 0)
 	    return -1;
@@ -1028,137 +1023,6 @@ int powerspec_turb_find_nearest_evaluate(int target, int mode, int *nexport, int
 }
 
 
-
-
-int powerspec_turb_treefind(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode, int mode, int *nexport, int *nsend_local)
-{
-  int numngb, no, p, task, nexport_save;
-  struct NODE *current;
-  MyDouble dx, dy, dz, dist, r2;
-
-#define FACT2 0.86602540
-#ifdef PERIODIC
-  MyDouble xtmp;
-#endif
-  nexport_save = *nexport;
-
-  numngb = 0;
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < All.MaxPart)	/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-	  if(P[p].Type != 0)
-	    continue;
-
-	  dist = hsml;
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  if(dx * dx + dy * dy + dz * dz > dist * dist)
-	    continue;
-
-	  Ngblist[numngb++] = p;
-	}
-      else
-	{
-	  if(no >= All.MaxPart + MaxNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(12312);
-
-	      if(mode == 0)
-		{
-		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
-		    {
-		      Exportflag[task] = target;
-		      Exportnodecount[task] = NODELISTLENGTH;
-		    }
-
-		  if(Exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      if(*nexport >= All.BunchSize)
-			{
-			  *nexport = nexport_save;
-			  if(nexport_save == 0)
-			    endrun(13005);	/* in this case, the buffer is too small to process even a single particle */
-			  for(task = 0; task < NTask; task++)
-			    nsend_local[task] = 0;
-			  for(no = 0; no < nexport_save; no++)
-			    nsend_local[DataIndexTable[no].Task]++;
-			  return -1;
-			}
-		      Exportnodecount[task] = 0;
-		      Exportindex[task] = *nexport;
-		      DataIndexTable[*nexport].Task = task;
-		      DataIndexTable[*nexport].Index = target;
-		      DataIndexTable[*nexport].IndexGet = *nexport;
-		      *nexport = *nexport + 1;
-		      nsend_local[task]++;
-		    }
-
-		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
-
-		  if(Exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-		}
-
-	      if(mode == -1)
-		{
-		  *nexport = 1;
-		}
-
-	      no = Nextnode[no - MaxNodes];
-	      continue;
-
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-		  return numngb;
-		}
-	    }
-
-	  no = current->u.d.sibling;	/* in case the node can be discarded */
-
-	  dist = hsml + 0.5 * current->len;;
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist)
-	    continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist)
-	    continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist)
-	    continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += FACT1 * current->len;
-	  if((r2 = (dx * dx + dy * dy + dz * dz)) > dist * dist)
-	    continue;
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-	}
-    }
-
-  *startnode = -1;
-  return numngb;
-}
 
 
 
