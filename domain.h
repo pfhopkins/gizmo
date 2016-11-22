@@ -8,6 +8,7 @@
  * slightly by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
+double domain_particle_cost_multiplier(int i);
 void domain_findSplit_work_balanced(int ncpu, int ndomain);
 void domain_findSplit_load_balanced(int ncpu, int ndomain);
 int domain_sort_loadorigin(const void *a, const void *b);

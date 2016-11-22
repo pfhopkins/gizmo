@@ -312,11 +312,10 @@ void calculate_non_standard_physics(void)
     
     
 #ifdef COOLING	/**** radiative cooling and star formation *****/
+    cooling_parent_routine(); // master cooling subroutine //
 #ifdef GALSF
-    cooling_and_starformation(); // standard cooling+star formation routine //
-#else // ifdef GALSF else
-    cooling_only();
-#endif // closes if GALSF
+    star_formation_parent_routine(); // master star formation routine //
+#endif
     CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif /*ends COOLING */
     

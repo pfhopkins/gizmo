@@ -84,6 +84,7 @@
         Face_Area_Norm = sqrt(Face_Area_Norm);
         for(k=0;k<3;k++) {n_unit[k] = Face_Area_Vec[k] / Face_Area_Norm;}
         
+#ifndef PROTECT_FROZEN_FIRE
         /* check if face area exceeds maximum geometric allowed limit (can occur when particles with -very- different
             Hsml interact at the edge of the kernel, must be limited to geometric max to prevent numerical instability */
         double Amax = Amax_i; // minimum of area "i" or area "j": this is "i"
@@ -96,12 +97,13 @@
             Amax = M_PI * pow((3.*V_j)/(4.*M_PI), 2./3.); // 3d Aj
 #endif
         }
+        Amax *= 2.0;
         if(Face_Area_Norm > Amax)
         {
             Face_Area_Norm = Amax; /* set the face area to the maximum limit, and reset the face vector as well */
             for(k=0;k<3;k++) {Face_Area_Vec[k] = n_unit[k] * Face_Area_Norm;} /* direction is preserved, just area changes */
         }
-
+#endif
 
         /* --------------------------------------------------------------------------------- */
         /* extrapolate the conserved quantities to the interaction face between the particles */

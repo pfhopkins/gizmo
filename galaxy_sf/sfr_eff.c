@@ -207,31 +207,6 @@ double evaluate_l_over_m_ssp(double stellar_age_in_gyr)
 
 
 
-/* check whether conditions for star formation are fulfilled for a given particle */
-int determine_sf_flag(int i)
-{
-    /*
-     * f=1  normal cooling
-     * f=0  star formation
-     */
-    int flag = 1; /* default is normal cooling */
-    if(SphP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;}
-    if(All.ComovingIntegrationOn) {if(SphP[i].Density < All.OverDensThresh) flag = 1;}
-    if(P[i].Mass <= 0) {flag = 1;}
-    
-#ifdef GALSF_SUBGRID_WINDS
-    if(SphP[i].DelayTime > 0)
-        flag = 1; /* only normal cooling for particles in the wind */
-    if(SphP[i].DelayTime > 0)
-        SphP[i].DelayTime -= (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval / All.cf_hubble_a;;
-    if(SphP[i].DelayTime > 0)
-        if(SphP[i].Density * All.cf_a3inv < All.WindFreeTravelDensFac * All.PhysDensThresh)
-            SphP[i].DelayTime = 0;
-    if(SphP[i].DelayTime < 0) SphP[i].DelayTime = 0;
-#endif // GALSF_SUBGRID_WINDS
-    
-    return flag;
-}
 
 
 /* simple routine to determine density thresholds and other common units for SF routines */
@@ -431,12 +406,12 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
 
 
 
-void cooling_and_starformation(void)
-/* cooling routine when star formation is enabled */
+/* master routine for star formation. for 'effective equation of state' models for star-forming gas, this also updates their effective EOS parameters */
+void star_formation_parent_routine(void)
 {
   int i, bin, flag, stars_spawned, tot_spawned, stars_converted, tot_converted, number_of_stars_generated;
   unsigned int bits;
-  double dt, dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate;
+  double dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate;
   double sum_sm, total_sm, sm=0, rate, sum_mass_stars, total_sum_mass_stars;
 #if defined(BH_POPIII_SEEDS) || defined(SINGLE_STAR_FORMATION)
   int num_bhformed=0, tot_bhformed=0;
@@ -450,12 +425,8 @@ void cooling_and_starformation(void)
   totMPI_n_wind=totMPI_m_wind=totMPI_mom_wind=totMPI_prob_kick=totMPI_avg_v=totMPI_pwt_avg_v=totMPI_taufac=0;
 #endif
     
-  for(bin = 0; bin < TIMEBINS; bin++)
-    if(TimeBinActive[bin])
-      TimeBinSfr[bin] = 0;
-
-  stars_spawned = stars_converted = 0;
-  sum_sm = sum_mass_stars = 0;
+    for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {TimeBinSfr[bin] = 0;}}
+  stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
 
   for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
 
@@ -463,29 +434,23 @@ void cooling_and_starformation(void)
     {
       if((P[i].Type == 0)&&(P[i].Mass>0))
 	{
-	  dt = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval;
-      dtime = dt / All.cf_hubble_a; /*  the actual time-step */
-
-	  flag = determine_sf_flag(i); /* check condition for SF: 1=normal cooling, 0=star formation */
-
-#if defined(GALSF_EFFECTIVE_EQS)
-      if(flag==1)
-#endif
-        {
-#ifndef GALSF_TURNOFF_COOLING_WINDS
-            do_the_cooling_for_particle(i); /* actual cooling subroutine for particle i */
-#else
-            if(SphP[i].DelayTimeCoolingSNe<=0)
-            {
-                do_the_cooling_for_particle(i); /* actual cooling subroutine for particle i */
-            } else {
-                SphP[i].DelayTimeCoolingSNe -= dtime; /* 'counts down' until cooling is restored */
-            }
-#endif
-            SphP[i].Sfr = 0; /* will be reset below if flag==0 */
-        }
+        SphP[i].Sfr = 0; flag = 1; /* will be reset below if flag==0, but default to flag = 1 (non-eligible) */
+        dtime = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval / All.cf_hubble_a; /*  the actual time-step */
         
-    if((flag == 0)&&(dt>0)&&(P[i].TimeBin))		/* active star formation (upon start-up, we need to protect against dt==0) */
+        /* check whether an initial (not fully-complete!) conditions for star formation are fulfilled for a given particle */
+        if(SphP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
+        if(All.ComovingIntegrationOn) {if(SphP[i].Density < All.OverDensThresh) flag = 1;} // (additional density check for cosmological runs) //
+
+#ifdef GALSF_SUBGRID_WINDS
+        if(SphP[i].DelayTime > 0) {flag=1; SphP[i].DelayTime -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
+        if((SphP[i].DelayTime<0) || (SphP[i].Density*All.cf_a3inv < All.WindFreeTravelDensFac*All.PhysDensThresh)) {SphP[i].DelayTime=0;}
+#endif
+#ifdef GALSF_TURNOFF_COOLING_WINDS
+        if(SphP[i].DelayTimeCoolingSNe > 0) {flag=1; SphP[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
+#endif
+        
+        
+    if((flag == 0)&&(dtime>0)&&(P[i].TimeBin))		/* active star formation (upon start-up, we need to protect against dt==0) */
 	    {
           sm = get_starformation_rate(i) * dtime; // expected stellar mass formed this timestep
             // (this also updates entropies for the effective equation-of-state model) //

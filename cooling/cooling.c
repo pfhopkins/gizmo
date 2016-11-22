@@ -71,18 +71,38 @@ static double DoCool_u_old_input, DoCool_rho_input, DoCool_dt_input, DoCool_ne_g
 
 
 
-/* this is just a simple loop if all we're doing is cooling (no star formation) */
-void cooling_only(void)
+/* this is just a simple loop to do the particle cooling. this is now openmp-parallelized, since the cooling iteration can be a non-negligible cost */
+void cooling_parent_routine(void)
 {
-    int i;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    NextParticle = FirstActiveParticle;
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
     {
-        if(P[i].Type == 0 && P[i].Mass > 0)
+        while(1)
         {
+            int i, exitFlag = 0;
+#ifdef _OPENMP
+#pragma omp critical(_nexport_)
+#endif
+            {
+                if(NextParticle<0) {exitFlag = 1;} else {i=NextParticle; NextParticle=NextActiveParticle[NextParticle];}
+            }
+            if(exitFlag) {break;}
+
+            /* here apply any conditional statements about whether we should or should not enter the cooling loop */
+            if(P[i].Type != 0) {continue;} /* only gas cools */
+            if(P[i].Mass <= 0) {continue;} /* only non-zero mass particles cool */
+#ifdef GALSF_EFFECTIVE_EQS
+            if(SphP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (SphP[i].Density>=All.OverDensThresh)) {continue;} /* no cooling for effective-eos star-forming particles */
+#endif
+#ifdef GALSF_TURNOFF_COOLING_WINDS
+            if(SphP[i].DelayTimeCoolingSNe > 0) {continue;} /* no cooling for particles marked in delayed cooling */
+#endif
             do_the_cooling_for_particle(i);
-        } // if(P[i].Type == 0 && P[i].Mass > 0)
-    } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
-} // void cooling_only(void)
+        } /* while bracket */
+    } /* omp bracket */
+}
 
 
 
