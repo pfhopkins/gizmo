@@ -651,7 +651,11 @@ void pm_setup_nonperiodic_kernel(void);
 
 
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
+#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
+int rt_get_source_luminosity(int i, double sigma_0, double *lum, double *L_EUV);
+#else 
 int rt_get_source_luminosity(int i, double sigma_0, double *lum);
+#endif 
 double rt_kappa(int j, int k_freq);
 double rt_absorption_rate(int i, int k_freq);
 double rt_diffusion_coefficient(int i, int k_freq);

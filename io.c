@@ -408,7 +408,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     u = DMAX(All.MinEgySpec, SphP[pindex].InternalEnergy); // needs to be in code units
 		            temp  = ThermalProperties(u, SphP[pindex].Density * All.cf_a3inv, &ne, &nh0, &nHeII, &mu, pindex);
 #ifdef GALSF_FB_HII_HEATING
-                    if(SphP[pindex].DelayTimeHII>0 || SphP[pindex].Ne>=1.15789) nh0=0;
+                    if(SphP[pindex].DelayTimeHII>0) nh0=0;
 #endif
                     *fp++ = (MyOutputFloat) nh0;
 #endif

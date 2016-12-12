@@ -1157,7 +1157,7 @@ void hydro_gradient_calc(void)
             u = DMAX(All.MinEgySpec, SphP[i].InternalEnergy); // needs to be in code units
 	        temperature = ThermalProperties(u, SphP[i].Density*All.cf_a3inv, &ne, &nh0, &nHeII, &mu_meanwt, i);
 #ifdef GALSF_FB_HII_HEATING
-            if(SphP[i].DelayTimeHII>0 || SphP[i].Ne>=1.15789) nh0=0;
+            if(SphP[i].DelayTimeHII>0) nh0=0;
 #endif 
 	        ion_frac = DMIN(DMAX(0,1.-nh0),1);
 #endif

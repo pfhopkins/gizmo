@@ -398,6 +398,9 @@ void init(void)
             P[i].GradRho[0]=0;
             P[i].GradRho[1]=0;
             P[i].GradRho[2]=1;
+#if defined(METALS) && defined(ALTERNATE_SHIELDING_LOCAL_SOURCES) 
+	    P[i].MetalDensAroundStar = 0; 
+#endif 
 #endif
 #ifdef GALSF_FB_SNE_HEATING
             P[i].SNe_ThisTimeStep = 0;

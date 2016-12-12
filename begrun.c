@@ -47,7 +47,6 @@ void begrun(void)
 #endif
   if(ThisTask == 0)
     {
-      printf("\nThis is GIZMO, version %s.\n", GIZMO_VERSION);
       printf("\nRunning on %d MPI tasks.\n", NTask);
 #ifdef _OPENMP
 #pragma omp parallel private(tid)
@@ -61,9 +60,6 @@ void begrun(void)
 	 */
       }
 #endif
-      printf("\nCode was compiled with settings:\n\n");
-
-      output_compile_time_options();
 
       printf("Size of particle structure       %d  [bytes]\n", (int) sizeof(struct particle_data));
       printf("\nSize of sph particle structure   %d  [bytes]\n", (int) sizeof(struct sph_particle_data));

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 #include <math.h>
 #include <gsl/gsl_math.h>
 
@@ -48,6 +49,29 @@ int main(int argc, char **argv)
   MPI_Barrier(MPI_COMM_WORLD);
 
   /* initialize OpenMP thread pool and bind (implicitly though OpenMP runtime) */
+  if(ThisTask == 0)
+    {
+      char *username = getenv("USER");
+      char hostname[201]; hostname[200] = '\0';
+      int have_hn = gethostname(hostname,200);
+      time_t rawtime;
+      struct tm * timeinfo;
+      time ( &rawtime );
+      timeinfo = localtime ( &rawtime );
+
+      printf("\nSystem time: %s", asctime(timeinfo) );
+      printf("This is GIZMO, version %s, running on %s as %s.\n",
+              GIZMO_VERSION,
+              have_hn == 0 ? hostname : "???",
+              username ? username : "???"
+      );
+#ifdef BUILDINFO
+      printf(BUILDINFO", " __DATE__ " " __TIME__ "\n");
+#endif
+      printf("\nCode was compiled with settings:\n\n");
+      output_compile_time_options();
+      printf("");
+   }
 
 #ifdef _OPENMP
 #pragma omp parallel

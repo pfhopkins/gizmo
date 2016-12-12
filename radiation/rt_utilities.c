@@ -50,7 +50,11 @@ extern pthread_mutex_t mutex_partnodedrift;
 /***********************************************************************************************************/
 /* routine which returns the luminosity for the desired source particles, as a function of whatever the user desires, in the relevant bands */
 /***********************************************************************************************************/
+#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
+int rt_get_source_luminosity(int i, double sigma_0, double *lum, double *L_EUV)
+#else 
 int rt_get_source_luminosity(int i, double sigma_0, double *lum)
+#endif 
 {
     int active_check = 0;
     
@@ -81,7 +85,14 @@ int rt_get_source_luminosity(int i, double sigma_0, double *lum)
             if(star_age <= 0.006) {f_op=0.09*(1+((star_age-0.0025)/0.004)*((star_age-0.0025)/0.004));
             } else {f_op=1-0.8410937/(1+sqrt((star_age-0.006)/0.3));}}
         
-        double tau_uv = sigma_eff*KAPPA_UV; double tau_op = sigma_eff*KAPPA_OP;
+#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
+	double Z_around_star = P[i].MetalDensAroundStar / (P[i].DensAroundStar + 1.0e-100); // The 1e-100 prevents division by zero. 
+        double tau_uv = sigma_eff * KAPPA_UV * (1.0e-3 + (Z_around_star / All.SolarAbundances[0])); 
+	double tau_op = sigma_eff * KAPPA_OP * (1.0e-3 + (Z_around_star / All.SolarAbundances[0]));
+	double tau_euv = sigma_eff * KAPPA_EUV; // Attenuated by HI, so no metallicity dependence. 
+#else 
+	double tau_uv = sigma_eff*KAPPA_UV; double tau_op = sigma_eff*KAPPA_OP;
+#endif 
         f_uv = (1-f_op)*(All.PhotonMomentum_fUV + (1-All.PhotonMomentum_fUV)/(1+0.8*tau_uv+0.85*tau_uv*tau_uv));
         f_op *= All.PhotonMomentum_fOPT + (1-All.PhotonMomentum_fOPT)/(1+0.8*tau_op+0.85*tau_op*tau_op);
         /*
@@ -99,6 +110,12 @@ int rt_get_source_luminosity(int i, double sigma_0, double *lum)
         lum[RT_FREQ_BIN_FIRE_UV]  = L * f_uv;
         lum[RT_FREQ_BIN_FIRE_OPT] = L * f_op;
         lum[RT_FREQ_BIN_FIRE_IR]  = L * (1-f_uv-f_op);
+
+#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
+	/* For the luminosity of ionising radiation, take the UV band (which has already been attenuated 
+	   by dust), and attenuate by tau_euv, which represents absorption by HI. */ 
+	*L_EUV = lum[RT_FREQ_BIN_FIRE_UV] * (All.PhotonMomentum_fUV + ((1 - All.PhotonMomentum_fUV) / (1 + 0.8 * tau_euv + 0.85 * tau_euv * tau_euv))); 
+#endif 
     }
 #endif
 
