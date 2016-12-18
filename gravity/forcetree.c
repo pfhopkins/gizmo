@@ -516,10 +516,7 @@ void force_update_node_recursive(int no, int sib, int father)
     MyFloat s_dm[3], vs_dm[3], mass_dm;
 #endif
 #ifdef RT_USE_GRAVTREE
-    MyFloat stellar_lum[N_RT_FREQ_BINS], sigma_eff=0; 
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    MyFloat stellar_lum_euv = 0;
-#endif 
+    MyFloat stellar_lum[N_RT_FREQ_BINS], sigma_eff=0;
     for(j=0;j<N_RT_FREQ_BINS;j++) {stellar_lum[j]=0;}
 #ifdef RT_FIRE
     sigma_eff = 0.955 * All.UnitMass_in_g*All.HubbleParam / (All.UnitLength_in_cm*All.UnitLength_in_cm); // (should be in physical, not comoving units)
@@ -623,9 +620,6 @@ void force_update_node_recursive(int no, int sib, int father)
                         vs[2] += (Nodes[p].u.d.mass * Extnodes[p].vs[2]);
 #ifdef RT_USE_GRAVTREE
                         for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += (Nodes[p].stellar_lum[k]);}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-			stellar_lum_euv += Nodes[p].stellar_lum_euv; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                         double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += (Nodes[p].stellar_lum[k]);}
@@ -696,18 +690,10 @@ void force_update_node_recursive(int no, int sib, int father)
                     
 #ifdef RT_USE_GRAVTREE
                     double lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-		    double L_EUV; 
-                    int active_check = rt_get_source_luminosity(p,sigma_eff,lum,&L_EUV);
-#else 
                     int active_check = rt_get_source_luminosity(p,sigma_eff,lum);
-#endif 
                     if(active_check)
                     {
                         double l_sum = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += lum[k]; l_sum += lum[k];}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-			stellar_lum_euv += L_EUV; 
-#endif 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                         rt_source_lum_s[0] += (l_sum * pa->Pos[0]);
                         rt_source_lum_s[1] += (l_sum * pa->Pos[1]);
@@ -874,9 +860,6 @@ void force_update_node_recursive(int no, int sib, int father)
         Nodes[no].GravCost = 0;
 #ifdef RT_USE_GRAVTREE
         for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = stellar_lum[k];}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-	Nodes[no].stellar_lum_euv = stellar_lum_euv; 
-#endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         Nodes[no].rt_source_lum_s[0] = rt_source_lum_s[0];
@@ -986,9 +969,6 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
         MyFloat stellar_lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-        MyFloat stellar_lum_euv; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         MyFloat rt_source_lum_s[3];
@@ -1048,9 +1028,6 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {DomainMoment[i].stellar_lum[k] = Nodes[no].stellar_lum[k];}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-	    DomainMoment[i].stellar_lum_euv = Nodes[no].stellar_lum_euv; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
             DomainMoment[i].rt_source_lum_s[0] = Nodes[no].rt_source_lum_s[0];
@@ -1134,9 +1111,6 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
                     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = DomainMoment[i].stellar_lum[k];}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-		    Nodes[no].stellar_lum_euv = DomainMoment[i].stellar_lum_euv; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                     Nodes[no].rt_source_lum_s[0] = DomainMoment[i].rt_source_lum_s[0];
@@ -1187,9 +1161,6 @@ void force_treeupdate_pseudos(int no)
     
 #ifdef RT_USE_GRAVTREE
     MyFloat stellar_lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    MyFloat stellar_lum_euv = 0; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     MyFloat rt_source_lum_s[3];
@@ -1254,9 +1225,6 @@ void force_treeupdate_pseudos(int no)
             s[2] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[2]);
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += (Nodes[p].stellar_lum[k]);}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-	    stellar_lum_euv += Nodes[p].stellar_lum_euv; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
             double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += (Nodes[p].stellar_lum[k]);}
@@ -1398,9 +1366,6 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.mass = mass;
 #ifdef RT_USE_GRAVTREE
     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = stellar_lum[k];}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    Nodes[no].stellar_lum_euv = stellar_lum_euv; 
-#endif 
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     Nodes[no].rt_source_lum_s[0] = rt_source_lum_s[0];
@@ -1581,9 +1546,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     
 #ifdef RT_USE_GRAVTREE
     double mass_stellarlum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    double mass_stellarlum_euv = 0;
-#endif
     int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {mass_stellarlum[k_freq]=0;}
     double dx_stellarlum=0, dy_stellarlum=0, dz_stellarlum=0, sigma_eff=0;
     int valid_gas_particle_for_rt = 0;
@@ -1859,19 +1821,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 {
                     dx_stellarlum=dx; dy_stellarlum=dy; dz_stellarlum=dz;
                     double lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-		    double L_EUV; 
-                    int active_check = rt_get_source_luminosity(no,sigma_eff,lum, &L_EUV);
-#else 
                     int active_check = rt_get_source_luminosity(no,sigma_eff,lum);
-#endif 
                     int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(active_check) {mass_stellarlum[kf]=lum[kf];} else {mass_stellarlum[kf]=0;}}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-		    if (active_check) 
-		      mass_stellarlum_euv = L_EUV; 
-		    else 
-		      mass_stellarlum_euv = 0; 
-#endif 
 #ifdef BH_PHOTONMOMENTUM
                     mass_bhlum=0; 
 		            if(P[no].Type==5) 
@@ -2125,9 +2076,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 if(valid_gas_particle_for_rt)	/* we have a (valid) gas particle as target */
                 {
                     int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {mass_stellarlum[kf] = nop->stellar_lum[kf];}
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-		    mass_stellarlum_euv = nop->stellar_lum_euv; 
-#endif 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                     dx_stellarlum = nop->rt_source_lum_s[0] - pos_x; dy_stellarlum = nop->rt_source_lum_s[1] - pos_y; dz_stellarlum = nop->rt_source_lum_s[2] - pos_z;
 #if defined(PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
@@ -2503,21 +2451,16 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 if((soft>r)&&(soft>0)) fac *= (r2/(soft*soft)); // don't allow cross-section > r2
 #ifdef GALSF_FB_LOCAL_UV_HEATING
                 incident_flux_uv += (0.079577*fac*r) * mass_stellarlum[RT_FREQ_BIN_FIRE_UV];// * shortrange_table[tabindex];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-		incident_flux_euv += (0.079577*fac*r) * mass_stellarlum_euv; // EUV luminosity is now explicitly tracked in the force tree, rather than 
-		                                                             // estimated from the UV and IR bins. 
-#else 
-		if((mass_stellarlum[RT_FREQ_BIN_FIRE_IR]<mass_stellarlum[RT_FREQ_BIN_FIRE_UV])&&(mass_stellarlum[RT_FREQ_BIN_FIRE_IR]>0)) // if this -isn't- satisfied, no chance you are optically thin to EUV // 
-		  {
+                if((mass_stellarlum[RT_FREQ_BIN_FIRE_IR]<mass_stellarlum[RT_FREQ_BIN_FIRE_UV])&&(mass_stellarlum[RT_FREQ_BIN_FIRE_IR]>0)) // if this -isn't- satisfied, no chance you are optically thin to EUV //
+                {
                     // here, use ratio and linear scaling of escape with tau to correct to the escape fraction for the correspondingly higher EUV kappa: factor ~2000 is KAPPA_EUV/KAPPA_UV
                     incident_flux_euv += (0.079577*fac*r) * mass_stellarlum[RT_FREQ_BIN_FIRE_UV] * (All.PhotonMomentum_fUV + (1-All.PhotonMomentum_fUV) *
-												    ((mass_stellarlum[RT_FREQ_BIN_FIRE_UV]+mass_stellarlum[RT_FREQ_BIN_FIRE_IR])/(mass_stellarlum[RT_FREQ_BIN_FIRE_UV]+mass_stellarlum[RT_FREQ_BIN_FIRE_IR]*(2042.6))));
-		  } else {
-		  // here, just enforce a minimum escape fraction // 
-		  double m_lum_total = 0; int ks_q; for(ks_q=0;ks_q<N_RT_FREQ_BINS;ks_q++) {m_lum_total += mass_stellarlum[ks_q];}
-		  incident_flux_euv += All.PhotonMomentum_fUV * (0.079577*fac*r) * m_lum_total;
+                                                                                       ((mass_stellarlum[RT_FREQ_BIN_FIRE_UV]+mass_stellarlum[RT_FREQ_BIN_FIRE_IR])/(mass_stellarlum[RT_FREQ_BIN_FIRE_UV]+mass_stellarlum[RT_FREQ_BIN_FIRE_IR]*(2042.6))));
+                } else {
+                    // here, just enforce a minimum escape fraction //
+                    double m_lum_total = 0; int ks_q; for(ks_q=0;ks_q<N_RT_FREQ_BINS;ks_q++) {m_lum_total += mass_stellarlum[ks_q];}
+                    incident_flux_euv += All.PhotonMomentum_fUV * (0.079577*fac*r) * m_lum_total;
                 }
-#endif
                 // don't multiply by shortrange_table since that is to prevent 2x-counting by PMgrid (which never happens here) //
 #endif
 #ifdef BH_PHOTONMOMENTUM

@@ -732,9 +732,6 @@ typedef unsigned long long peanokey;
 #define KAPPA_IR 10.0   /* in cm^2/g for solar abundances */
 #define KAPPA_OP 180.0
 #define KAPPA_UV 1800.0
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-#define KAPPA_EUV 3.7e6  /* Gas opacity, for ionising radiation */ 
-#endif 
 
 #ifdef GALSF_FB_HII_HEATING
 #define HIIRegion_Temp 1.0e4 /* temperature (in K) of heated gas */
@@ -1954,13 +1951,11 @@ extern ALIGN(32) struct particle_data
 #ifdef DO_DENSITY_AROUND_STAR_PARTICLES
     MyFloat DensAroundStar;         /*!< gas density in the neighborhood of the collisionless particle (evaluated from neighbors) */
     MyFloat GradRho[3];             /*!< gas density gradient evaluated simply from the neighboring particles, for collisionless centers */
-#if defined(METALS) && defined(ALTERNATE_SHIELDING_LOCAL_SOURCES) 
-    MyFloat MetalDensAroundStar;    /*!< Density of metals around star particle (evaluated from neighbours). */ 
-#endif 
 #endif
 #if defined(RT_SOURCE_INJECTION)
     MyFloat KernelSum_Around_RT_Source; /*!< kernel summation around sources for radiation injection (save so can be different from 'density') */
 #endif
+
     
 #ifdef GALSF_FB_SNE_HEATING
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
@@ -2912,9 +2907,6 @@ extern ALIGN(32) struct NODE
 
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-  MyFloat stellar_lum_euv;             /*!< luminosity of ionising radiation in the node */
-#endif 
 #endif
 
 #ifdef BH_PHOTONMOMENTUM

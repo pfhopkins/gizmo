@@ -67,12 +67,7 @@ void rt_particle2in_source(struct rt_sourcedata_in *in, int i)
     in->KernelSum_Around_RT_Source = P[i].KernelSum_Around_RT_Source;
     /* luminosity is set to zero here for gas particles because their self-illumination is handled trivially in a single loop, earlier */
     double lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    double L_EUV; 
-    int active_check = rt_get_source_luminosity(i,0,lum,&L_EUV);
-#else 
     int active_check = rt_get_source_luminosity(i,0,lum);
-#endif
     double dt = 1; // make this do nothing unless flags below are set:
 #if defined(RT_INJECT_PHOTONS_DISCRETELY)
 #ifndef WAKEUP
@@ -94,9 +89,6 @@ void rt_source_injection(void)
     int recvTask, place;
     int save_NextParticle;
     long long n_exported = 0;
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    double L_EUV; 
-#endif 
     
     /* first, we do a loop over the gas particles themselves. these are trivial -- they don't need to share any information,
      they just determine their own source functions. so we don't need to do any loops. and we can zero everything before the loop below. */
@@ -106,11 +98,7 @@ void rt_source_injection(void)
         {
             double lum[N_RT_FREQ_BINS];
             for(k=0;k<N_RT_FREQ_BINS;k++) {SphP[j].Je[k]=0;} // need to zero -before- calling injection //
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-            int active_check = rt_get_source_luminosity(j,0,lum, &L_EUV);
-#else 
-	    int active_check = rt_get_source_luminosity(j,0,lum);
-#endif 
+            int active_check = rt_get_source_luminosity(j,0,lum);
             for(k=0;k<N_RT_FREQ_BINS;k++) if(active_check) {SphP[j].Je[k]=lum[k];}
         }
     }
@@ -353,12 +341,7 @@ int rt_sourceinjection_active_check(int i)
     if(PPP[i].Hsml <= 0) return 0;
     if(PPP[i].Mass <= 0) return 0;
     double lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-    double L_EUV; 
-    return rt_get_source_luminosity(i,-1,lum,&L_EUV);
-#else     
     return rt_get_source_luminosity(i,-1,lum);
-#endif 
 }
 
 /* routine for initial loop of particles on local processor (and determination of which need passing) */

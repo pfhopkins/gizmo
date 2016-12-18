@@ -88,8 +88,6 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 #COOLING                        # enables radiative cooling and heating: if GALSF, also external UV background read from file "TREECOOL"
 #COOL_LOW_TEMPERATURES          # allow fine-structure and molecular cooling to ~10 K; account for optical thickness and line-trapping effects with proper opacities
 #COOL_METAL_LINES_BY_SPECIES    # use full multi-species-dependent cooling tables ( https://dl.dropbox.com/u/16659252/spcool_tables.tgz )
-#ALTERNATE_SHIELDING_LOCAL_SOURCES # Changes some aspects of how local sources are shielded. 
-#SELFSHIELDING_FITTING_FORMULA  # use the Rahmati+2013 self-shielding fitting formula as an approximation to Radiative Transfer
 #GRACKLE                        # enable GRACKLE: cooling+chemistry package (requires COOLING above; https://grackle.readthedocs.org/en/latest )
 #GRACKLE_CHEMISTRY=1            # choose GRACKLE cooling chemistry: (0)=tabular, (1)=Atomic, (2)=(1)+H2+H2I+H2II, (3)=(2)+DI+DII+HD
 ##-----------------------------------------------------------------------------------------------------

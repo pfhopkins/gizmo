@@ -76,12 +76,7 @@ void force_kick_node(int i, MyDouble * dp)
     {
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         double lum[N_RT_FREQ_BINS];
-#ifdef ALTERNATE_SHIELDING_LOCAL_SOURCES 
-	double L_EUV; 
-        int active_check = rt_get_source_luminosity(i,-1,lum,&L_EUV);
-#else 
         int active_check = rt_get_source_luminosity(i,-1,lum);
-#endif 
         if(active_check) {rt_source_lum_dp[j]=dp[j];} else {rt_source_lum_dp[j]=0;}
 #endif
 #ifdef SCALARFIELD

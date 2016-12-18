@@ -36,7 +36,6 @@ double GetCoolingTime(double u_old, double rho,  double *ne_guess, int target);
 double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double *ne_guess, int target);
 double get_mu(double T_guess, double rho, double *ne_guess, int target);
 double yhelium(int target);
-double calculate_shieldfac(double nHcgs, double NH_SS_z); 
 
 #ifdef GRACKLE
 void InitGrackle(void);
