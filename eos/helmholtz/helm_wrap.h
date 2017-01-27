@@ -1,3 +1,12 @@
+/* wrappers for the Timmes EOS Fortran code. 
+    written by David Radice
+    WARNING: because of the memory layout used by the original Fortran code 
+    which was not thread safe, the Helmholtz wrapper might perform poorly or 
+    throw an exception if a large number of OpenMP threads is used. 
+    Eventually, someone will have to make a thread safe version of the 
+    Helmholtz EOS if you want to run on things like the new KNL on Stampede2
+ */
+
 #ifndef EOS_HELM_WRAP_H
 #define EOS_HELM_WRAP_H
 

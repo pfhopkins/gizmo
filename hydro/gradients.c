@@ -1409,8 +1409,11 @@ void hydro_gradient_calc(void)
 #if !defined(MAGNETIC) && !defined(GALSF)
             h_lim=PPP[i].Hsml; stol=0.1;
 #endif
-#ifdef AGGRESSIVE_SLOPE_LIMITERS
+#if (SLOPE_LIMITER_TOLERANCE == 2)
             h_lim = PPP[i].Hsml; a_limiter *= 0.5; stol = 0.125;
+#endif
+#if (SLOPE_LIMITER_TOLERANCE == 0)
+            a_limiter *= 2.0; stol = 0.0;
 #endif
             
 #ifdef SINGLE_STAR_FORMATION
@@ -1483,7 +1486,7 @@ void hydro_gradient_calc(void)
                 {
                     // overall normalization //
                     double C_Smagorinsky_Lilly = 0.15; // this is the standard Smagorinsky-Lilly constant, calculated from Kolmogorov theory: should be 0.1-0.2 //
-                    double turb_prefactor = All.TurbDiffusion_Coefficient * C_Smagorinsky_Lilly*C_Smagorinsky_Lilly * sqrt(2.0);
+                    double turb_prefactor = 0.1 * All.TurbDiffusion_Coefficient * C_Smagorinsky_Lilly*C_Smagorinsky_Lilly * sqrt(2.0);
                     // then scale with inter-particle spacing //
                     turb_prefactor *= h_turb*h_turb;
                     // calculate frobenius norm of symmetric shear velocity gradient tensor //

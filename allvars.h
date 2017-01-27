@@ -52,9 +52,23 @@
 #define DO_PREPROCESSOR_EXPAND_(VAL)  VAL ## 1
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL)
 
-#ifndef DISABLE_SPH_PARTICLE_WAKEUP
-#define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
+
+#if !defined(SLOPE_LIMITER_TOLERANCE)
+#if defined(AGGRESSIVE_SLOPE_LIMITERS)
+#define SLOPE_LIMITER_TOLERANCE 2
+#else
+#define SLOPE_LIMITER_TOLERANCE 1
 #endif
+#endif
+
+#ifndef DISABLE_SPH_PARTICLE_WAKEUP
+#if (SLOPE_LIMITER_TOLERANCE > 0)
+#define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
+#else 
+#define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
+#endif
+#endif
+
 
 #ifdef PMGRID
 #define PM_ENLARGEREGION 1.1    /* enlarges PMGRID region as the simulation evolves */
@@ -97,6 +111,7 @@
 #define SPHAV_ARTIFICIAL_CONDUCTIVITY      /* Enables mixing entropy (J.Read's improved Price-Monaghan conductivity with Cullen-Dehnen switches) */
 #endif
 #endif
+
 
 
 #include "eos/eos.h"

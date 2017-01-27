@@ -62,8 +62,8 @@ int main(int argc, char **argv)
       printf("\nSystem time: %s", asctime(timeinfo) );
       printf("This is GIZMO, version %s, running on %s as %s.\n",
               GIZMO_VERSION,
-              have_hn == 0 ? hostname : "???",
-              username ? username : "???"
+              have_hn == 0 ? hostname : "?",
+              username ? username : "?"
       );
 #ifdef BUILDINFO
       printf(BUILDINFO", " __DATE__ " " __TIME__ "\n");

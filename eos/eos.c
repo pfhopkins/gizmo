@@ -25,7 +25,7 @@ double get_pressure(int i)
     
     
 #ifdef EOS_HELMHOLTZ
-    /* pass the necessary quantities to D. Radice's wrappers for the Timms EOS */
+    /* pass the necessary quantities to wrappers for the Timms EOS */
     struct eos_input eos_in;
     struct eos_output eos_out;
     eos_in.rho  = SphP[i].Density;

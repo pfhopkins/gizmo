@@ -136,7 +136,7 @@
             double thold_ptot_hll = 0.1 * exp(-2. * grad_v_mag * kernel.r / (1.e-30 + fabs(kernel.dv[k_v]))); // units ok
 #else
             double b_hll_eff=1;
-            double dv_visc = dv_visc = cmag_dir[k_v] * rinv*rinv / (All.cf_atime * DMAX(eta,zeta)); // physical
+            double dv_visc = cmag_dir[k_v] * rinv*rinv / (All.cf_atime * DMAX(eta,zeta)); // physical
             double thold_ptot_hll = 0.03;
 #endif
             /* obtain HLL correction terms for Reimann problem solution */
@@ -159,7 +159,7 @@
             double cmag_corr = cmag[k_v] + hll_tmp;
             cmag[k_v] = MINMOD(cmag[k_v], cmag_corr);
             double check_for_stability_sign = fluxlimiter_absnorm*cmag[k_v];
-            if((check_for_stability_sign < 0) && (fabs(fluxlimiter_absnorm) > 0.005*fabs(cmag[k_v]))) {cmag[k_v] = 0;}
+            if((check_for_stability_sign < 0) && (fabs(fluxlimiter_absnorm) > HLL_DIFFUSION_OVERSHOOT_FACTOR*fabs(cmag[k_v]))) {cmag[k_v] = 0;}
             
 #if defined(GALSF)
             if(check_for_stability_sign < 0) {cmag[k_v]=0;}
@@ -184,7 +184,7 @@
         double cmag_E = cmag[0]*v_interface[0] + cmag[1]*v_interface[1] + cmag[2]*v_interface[2];
         if(dt_hydrostep > 0)
         {
-            double cmag_lim = 0.5 * (v_interface[0]*v_interface[0]+v_interface[1]*v_interface[1]+v_interface[2]*v_interface[2]) / dt_hydrostep;
+            double cmag_lim = 0.25 * (local.Mass + P[j].Mass) * (v_interface[0]*v_interface[0]+v_interface[1]*v_interface[1]+v_interface[2]*v_interface[2]) / dt_hydrostep;
             if(fabs(cmag_E) > cmag_lim)
             {
                 double corr_visc = cmag_lim / fabs(cmag_E);

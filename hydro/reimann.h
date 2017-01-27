@@ -169,11 +169,16 @@ void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloa
 #else
     double fac_minmax = 0.5; /* 0.5, 0.1 works; 1.0 unstable; 0.75 is stable but begins to 'creep' */
     double fac_meddev = 0.375; /* 0.25,0.375 work well; 0.5 unstable; 0.44 is on-edge */
-#ifdef AGGRESSIVE_SLOPE_LIMITERS
+#if (SLOPE_LIMITER_TOLERANCE == 2)
     fac_minmax=0.75;
     fac_meddev=0.40;
 #endif
 #endif
+#if (SLOPE_LIMITER_TOLERANCE == 0)
+    fac_minmax=0.0;
+    fac_meddev=0.0;
+#endif
+    
     /* get the max/min vals, difference, and midpoint value */
     Qmed = 0.5*(Q_i+Q_j);
     if(Q_i<Q_j) {Qmax=Q_j; Qmin=Q_i;} else {Qmax=Q_i; Qmin=Q_j;}
