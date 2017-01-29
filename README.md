@@ -8,7 +8,11 @@ The code is descended from P-SPH/P-GADGET, itself descended from GADGET-3 (so a 
 
 No, the code title is not an acronym, I just liked it. It refers both to the code's multi-purpose applications and to its historical relationship to GADGET.
 
-The BitBucket site is where I will post code updates, news, and documentation, so check back regularly. If you have code issues, feature requests, bugs, or just questions, use the (public) BitBucket issue tracker and wiki pages. 
+The BitBucket site is where I will post code updates, news, and documentation, so check back regularly. If you have code issues, feature requests, bugs, or just questions, please post to the GIZMO Google Group (also the GIZMO mailing list):
+
+https://groups.google.com/d/forum/gizmo-code
+
+If you have confirmed bug reports, please use the (public) Bitbucket issue tracker (after consulting the Google Group site)
 
 The main reference for the numerical methods, setting up the code, code policies, branching etc, is the user's guide, available as the file "gizmo_documentation.html" in the "scripts" folder as part of this repository, or through download on the bitbucket site or at my website: 
 
