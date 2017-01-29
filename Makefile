@@ -318,6 +318,34 @@ OPT     += # -DUSE_MPI_IN_PLACE
 endif
 
 
+#------------------------------------------------------------------------------
+ifeq ($(SYSTYPE), "Edison")
+CC	 =  mpicc
+CXX	 =  mpipc
+FC	 =  $(CC)
+OPTIMIZE =  -O3 -funroll-loops -ffast-math -finline-functions -funswitch-loops
+OPTIMIZE += -g -Wall -fpredictive-commoning -fgcse-after-reload -fvect-cost-model
+ifeq (OPENMP, $(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+GMP_INCL =
+GMP_LIBS =
+MKL_INCL = -I$(INCLUDE)
+MKL_LIBS = -L$(LIBRARY_PATH) -mkl=sequential
+GSL_INCL = -I$(GSL_DIR)/include
+GSL_LIBS = -L$(GSL_DIR)/lib
+FFTW_INCL= -I$(FFTW_INC)
+FFTW_LIBS= -L$(FFTW_DIR)
+HDF5INCL = -I$(HDF5_INCLUDE_OPTS) -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_DIR)/lib -lhdf5 -lz
+MPICHLIB =
+OPT     += -DUSE_MPI_IN_PLACE
+##
+## modules to load: intel, impi, gsl, fftw/2.1.5.9, cray-hdf5
+## note: there is a module called "hdf5" which will not work. Use cray-hdf5.
+endif
+#-----------------------------------------------------------------------------
+
 
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"SciNet")
