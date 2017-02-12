@@ -8,11 +8,11 @@
 #include "../proto.h"
 #include "../kernel.h"
 #define NDEBUG
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 #include <pthread.h>
 #endif
 
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 extern pthread_mutex_t mutex_nexport;
 extern pthread_mutex_t mutex_partnodedrift;
 #define LOCK_NEXPORT     pthread_mutex_lock(&mutex_nexport);
@@ -928,16 +928,16 @@ void hydro_force(void)
         /* do local particles and prepare export list */
         tstart = my_second();
         
-#ifdef OMP_NUM_THREADS
-        pthread_t mythreads[OMP_NUM_THREADS - 1];
-        int threadid[OMP_NUM_THREADS - 1];
+#ifdef PTHREADS_NUM_THREADS
+        pthread_t mythreads[PTHREADS_NUM_THREADS - 1];
+        int threadid[PTHREADS_NUM_THREADS - 1];
         pthread_attr_t attr;
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
         pthread_mutex_init(&mutex_nexport, NULL);
         pthread_mutex_init(&mutex_partnodedrift, NULL);
         TimerFlag = 0;
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++)
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++)
         {
             threadid[j] = j + 1;
             pthread_create(&mythreads[j], &attr, hydro_evaluate_primary, &threadid[j]);
@@ -955,8 +955,8 @@ void hydro_force(void)
             hydro_evaluate_primary(&mainthreadid);	/* do local particles and prepare export list */
         }
         
-#ifdef OMP_NUM_THREADS
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++)
+#ifdef PTHREADS_NUM_THREADS
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++)
             pthread_join(mythreads[j], NULL);
 #endif
         tend = my_second();
@@ -1080,8 +1080,8 @@ void hydro_force(void)
         /* now do the particles that were sent to us */
         tstart = my_second();
         NextJ = 0;
-#ifdef OMP_NUM_THREADS
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++)
+#ifdef PTHREADS_NUM_THREADS
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++)
             pthread_create(&mythreads[j], &attr, hydro_evaluate_secondary, &threadid[j]);
 #endif
 #ifdef _OPENMP
@@ -1096,8 +1096,8 @@ void hydro_force(void)
             hydro_evaluate_secondary(&mainthreadid);
         }
         
-#ifdef OMP_NUM_THREADS
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++)
+#ifdef PTHREADS_NUM_THREADS
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++)
             pthread_join(mythreads[j], NULL);
         
         pthread_mutex_destroy(&mutex_partnodedrift);

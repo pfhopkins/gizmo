@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 #include <pthread.h>
 #endif
 
@@ -35,7 +35,7 @@ void ngb_treebuild(void)
 
 
 /* define pragmas, etc, as needed for OPENMP directives for threaded routines below */
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 extern pthread_mutex_t mutex_nexport, mutex_partnodedrift;
 #define LOCK_NEXPORT         pthread_mutex_lock(&mutex_nexport);
 #define UNLOCK_NEXPORT       pthread_mutex_unlock(&mutex_nexport);

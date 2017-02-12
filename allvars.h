@@ -243,11 +243,11 @@
 
 /* options for FIRE RT method */
 #if defined(GALSF_FB_RT_PHOTONMOMENTUM)
-#ifndef RT_FIRE
-#define RT_FIRE
+#ifndef RT_LEBRON
+#define RT_LEBRON
 #endif
 #endif
-#if defined(RT_FIRE)
+#if defined(RT_LEBRON)
 // use gravity tree for flux propagation
 #define RT_USE_GRAVTREE
 #endif
@@ -365,7 +365,7 @@
 
 
 
-#if defined(GALSF) || defined(BLACK_HOLES) || defined(RADTRANSFER) || defined(GALSF_FB_RPWIND_FROMSTARS) || defined(BH_POPIII_SEEDS) || defined(GALSF_FB_LOCAL_UV_HEATING) || defined(BH_PHOTONMOMENTUM) || defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_HII_HEATING) || defined(GALSF_FB_SNE_HEATING) || defined(RT_FIRE)
+#if defined(GALSF) || defined(BLACK_HOLES) || defined(RADTRANSFER) || defined(GALSF_FB_RPWIND_FROMSTARS) || defined(BH_POPIII_SEEDS) || defined(GALSF_FB_LOCAL_UV_HEATING) || defined(BH_PHOTONMOMENTUM) || defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_HII_HEATING) || defined(GALSF_FB_SNE_HEATING) || defined(RT_LEBRON)
 #define DO_DENSITY_AROUND_STAR_PARTICLES
 #endif
 
@@ -1596,7 +1596,7 @@ extern struct global_data_all_processes
 #endif
     
     
-#ifdef RT_FIRE
+#ifdef RT_LEBRON
     double PhotonMomentum_Coupled_Fraction;
 #ifdef GALSF_FB_RT_PHOTONMOMENTUM
     double PhotonMomentum_fUV;
@@ -2105,11 +2105,6 @@ extern ALIGN(32) struct particle_data
 #ifdef SUBFIND_ALTERNATIVE_COLLECTIVE
     peanokey Key;
 #endif
-#endif
-    
-#if defined(ORDER_SNAPSHOTS_BY_ID) && !defined(SUBFIND)
-    int     GrNr;
-    int     SubNr;
 #endif
     
     float GravCost[GRAVCOSTLEVELS];   /*!< weight factor used for balancing the work-load */

@@ -10,7 +10,7 @@
 #ifdef SUBFIND
 #include "../subfind/subfind.h"
 #endif
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 #include <pthread.h>
 #endif
 
@@ -53,7 +53,7 @@ static int first_flag = 0;
 static int tree_allocated_flag = 0;
 
 
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 extern pthread_mutex_t mutex_nexport, mutex_partnodedrift;
 
 #define LOCK_NEXPORT         pthread_mutex_lock(&mutex_nexport);
@@ -518,7 +518,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef RT_USE_GRAVTREE
     MyFloat stellar_lum[N_RT_FREQ_BINS], sigma_eff=0;
     for(j=0;j<N_RT_FREQ_BINS;j++) {stellar_lum[j]=0;}
-#ifdef RT_FIRE
+#ifdef RT_LEBRON
     sigma_eff = 0.955 * All.UnitMass_in_g*All.HubbleParam / (All.UnitLength_in_cm*All.UnitLength_in_cm); // (should be in physical, not comoving units)
 #endif
 #endif
@@ -1736,7 +1736,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     
 #ifdef RT_USE_GRAVTREE
     if(ptype==0) {if((soft>0)&&(pmass>0)) {valid_gas_particle_for_rt = 1;}}
-#ifdef RT_FIRE
+#ifdef RT_LEBRON
     double fac_stellum[N_RT_FREQ_BINS],fac_stellum_0=0;
     if(valid_gas_particle_for_rt)
     {
@@ -2491,7 +2491,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 
 #endif
                 
-#ifdef RT_FIRE
+#ifdef RT_LEBRON
                 /* if we are using the FIRE RT module, we simply apply an on-the-spot approximation and do the absorption now.
                  first apply the appropriate normalization (and swap the sign)  */
                 fac *= fac_stellum_0;

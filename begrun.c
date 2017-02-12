@@ -284,7 +284,7 @@ void begrun(void)
 #ifdef GALSF_FB_HII_HEATING
         All.HIIRegion_fLum_Coupled = all.HIIRegion_fLum_Coupled;
 #endif
-#ifdef RT_FIRE
+#ifdef RT_LEBRON
         All.PhotonMomentum_Coupled_Fraction = all.PhotonMomentum_Coupled_Fraction;
 #endif
 #ifdef GALSF_FB_RT_PHOTONMOMENTUM
@@ -1071,7 +1071,7 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #endif
 
-#ifdef RT_FIRE
+#ifdef RT_LEBRON
         strcpy(tag[nt], "PhotonMomentum_Coupled_Fraction");
         addr[nt] = &All.PhotonMomentum_Coupled_Fraction;
         id[nt++] = REAL;
@@ -2113,10 +2113,10 @@ void read_parameter_file(char *fname)
     
     
     
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 #ifdef _OPENMP
     if(ThisTask == 0)
-        printf("OMP_NUM_THREADS is incompatible with enabling OpenMP in the compiler options \n");
+        printf("PTHREADS_NUM_THREADS is incompatible with enabling OpenMP in the compiler options \n");
     endrun(0);
 #endif
 #endif

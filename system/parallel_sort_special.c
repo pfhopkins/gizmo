@@ -18,7 +18,7 @@
  * Volker Springel (volker.springel@h-its.org).
  */
 
-#if defined(ORDER_SNAPSHOTS_BY_ID) || defined(SUBFIND_READ_FOF) || defined(SUBFIND_RESHUFFLE_CATALOGUE)
+#if defined(SUBFIND_READ_FOF) || defined(SUBFIND_RESHUFFLE_CATALOGUE)
 
 static struct aux_data
 {

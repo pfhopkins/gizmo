@@ -83,7 +83,7 @@ int main(int argc, char **argv)
 	printf("Using %d OpenMP threads\n", maxThreads);
     }
   }
-#elif defined(OMP_NUM_THREADS)
+#elif defined(PTHREADS_NUM_THREADS)
   if(ThisTask == 0)
     printf("Using %d POSIX threads\n", maxThreads);
 #endif

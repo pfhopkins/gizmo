@@ -43,16 +43,16 @@ void pin_to_core_set(void)
   int core, task, num_threads;
   static cpu_set_t cpuset_new;
 
-  char *p = getenv("OMP_OMP_NUM_THREADS");
+  char *p = getenv("OMP_NUM_THREADS");
   if(p)
     num_threads = atoi(p);
   else
     num_threads = 1;
 
-#ifdef OMP_NUM_THREADS
-  if(num_threads != OMP_NUM_THREADS)
+#ifdef PTHREADS_NUM_THREADS
+  if(num_threads != PTHREADS_NUM_THREADS)
     {
-      terminate("You have activated OMP_NUM_THREADS, but the value of the environment variable OMP_OMP_NUM_THREADS is not equal to OMP_NUM_THREADS!"); 
+      terminate("You have activated PTHREADS_NUM_THREADS, but the value of the environment variable OMP_NUM_THREADS is not equal to PTHREADS_NUM_THREADS!"); 
     }
 #endif  
 

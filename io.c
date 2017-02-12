@@ -54,29 +54,6 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("\nwriting snapshot file #%d... \n", num);
         
-#ifdef ORDER_SNAPSHOTS_BY_ID
-        double t0, t1;
-        
-        if(All.TotN_gas > 0)
-        {
-            if(ThisTask == 0)
-                printf
-                ("\nThe option ORDER_SNAPSHOTS_BY_ID does not work yet with gas particles, only simulations with collisionless particles are allowed.\n\n");
-            endrun(0);
-        }
-        
-        t0 = my_second();
-        for(n = 0; n < NumPart; n++)
-        {
-            P[n].GrNr = ThisTask;
-            P[n].SubNr = n;
-        }
-        parallel_sort(P, NumPart, sizeof(struct particle_data), io_compare_P_ID);
-        t1 = my_second();
-        if(ThisTask == 0)
-            printf("Reordering of particle-data in ID-sequence took = %g sec\n", timediff(t0, t1));
-#endif
-        
         if(!(CommBuffer = mymalloc("CommBuffer", bytes = All.BufferSize * 1024 * 1024)))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
@@ -149,14 +126,6 @@ void savepositions(int num)
         }
         
         myfree(CommBuffer);
-        
-#ifdef ORDER_SNAPSHOTS_BY_ID
-        t0 = my_second();
-        parallel_sort(P, NumPart, sizeof(struct particle_data), io_compare_P_GrNr_SubNr);
-        t1 = my_second();
-        if(ThisTask == 0)
-            printf("Restoring order of particle-data took = %g sec\n", timediff(t0, t1));
-#endif
         
         if(ThisTask == 0)
             printf("done with snapshot.\n");
@@ -4044,7 +4013,7 @@ void mpi_printf(const char *fmt, ...)
     }
 }
 
-#if defined(ORDER_SNAPSHOTS_BY_ID) || defined(SUBFIND_READ_FOF) || defined(SUBFIND_RESHUFFLE_CATALOGUE)
+#if defined(SUBFIND_READ_FOF) || defined(SUBFIND_RESHUFFLE_CATALOGUE)
 int io_compare_P_ID(const void *a, const void *b)
 {
     if(((struct particle_data *) a)->ID < (((struct particle_data *) b)->ID))

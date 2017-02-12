@@ -7,10 +7,10 @@
 #include "../allvars.h"
 #include "../proto.h"
 #include "../kernel.h"
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 #include <pthread.h>
 #endif
-#ifdef OMP_NUM_THREADS
+#ifdef PTHREADS_NUM_THREADS
 extern pthread_mutex_t mutex_nexport;
 extern pthread_mutex_t mutex_partnodedrift;
 #define LOCK_NEXPORT     pthread_mutex_lock(&mutex_nexport);
@@ -120,16 +120,16 @@ void rt_source_injection(void)
         for(j = 0; j < NTask; j++) {Send_count[j] = 0; Exportflag[j] = -1;}
         
         /* do local particles and prepare export list */
-#ifdef OMP_NUM_THREADS
-        pthread_t mythreads[OMP_NUM_THREADS - 1];
-        int threadid[OMP_NUM_THREADS - 1];
+#ifdef PTHREADS_NUM_THREADS
+        pthread_t mythreads[PTHREADS_NUM_THREADS - 1];
+        int threadid[PTHREADS_NUM_THREADS - 1];
         pthread_attr_t attr;
         pthread_attr_init(&attr);
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
         pthread_mutex_init(&mutex_nexport, NULL);
         pthread_mutex_init(&mutex_partnodedrift, NULL);
         TimerFlag = 0;
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++)
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++)
         {
             threadid[j] = j + 1;
             pthread_create(&mythreads[j], &attr, rt_sourceinjection_evaluate_primary, &threadid[j]);
@@ -146,8 +146,8 @@ void rt_source_injection(void)
 #endif
             rt_sourceinjection_evaluate_primary(&mainthreadid);	/* do local particles and prepare export list */
         }
-#ifdef OMP_NUM_THREADS
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++) {pthread_join(mythreads[j], NULL);}
+#ifdef PTHREADS_NUM_THREADS
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++) {pthread_join(mythreads[j], NULL);}
 #endif
         if(BufferFullFlag)
         {
@@ -233,8 +233,8 @@ void rt_source_injection(void)
         myfree(RT_SourceDataIn);
         /* now do the particles that were sent to us */
         NextJ = 0;
-#ifdef OMP_NUM_THREADS
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++)
+#ifdef PTHREADS_NUM_THREADS
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++)
             pthread_create(&mythreads[j], &attr, rt_sourceinjection_evaluate_secondary, &threadid[j]);
 #endif
 #ifdef _OPENMP
@@ -249,8 +249,8 @@ void rt_source_injection(void)
             rt_sourceinjection_evaluate_secondary(&mainthreadid);
         }
         
-#ifdef OMP_NUM_THREADS
-        for(j = 0; j < OMP_NUM_THREADS - 1; j++) {pthread_join(mythreads[j], NULL);}
+#ifdef PTHREADS_NUM_THREADS
+        for(j = 0; j < PTHREADS_NUM_THREADS - 1; j++) {pthread_join(mythreads[j], NULL);}
         pthread_mutex_destroy(&mutex_partnodedrift);
         pthread_mutex_destroy(&mutex_nexport);
         pthread_attr_destroy(&attr);

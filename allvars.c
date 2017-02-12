@@ -377,8 +377,8 @@ int *Nextnode;			/*!< gives next node in tree walk  (nodes array) */
 int *Father;			/*!< gives parent node in tree (Prenodes array) */
 
 
-#if defined(OMP_NUM_THREADS)
-int maxThreads = OMP_NUM_THREADS;
+#if defined(PTHREADS_NUM_THREADS)
+int maxThreads = PTHREADS_NUM_THREADS;
 #else
 int maxThreads = 1;
 #endif
