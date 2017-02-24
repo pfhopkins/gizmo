@@ -1486,7 +1486,7 @@ void hydro_gradient_calc(void)
                 {
                     // overall normalization //
                     double C_Smagorinsky_Lilly = 0.15; // this is the standard Smagorinsky-Lilly constant, calculated from Kolmogorov theory: should be 0.1-0.2 //
-                    double turb_prefactor = 0.1 * All.TurbDiffusion_Coefficient * C_Smagorinsky_Lilly*C_Smagorinsky_Lilly * sqrt(2.0);
+                    double turb_prefactor = 0.25 * All.TurbDiffusion_Coefficient * C_Smagorinsky_Lilly*C_Smagorinsky_Lilly * sqrt(2.0);
                     // then scale with inter-particle spacing //
                     turb_prefactor *= h_turb*h_turb;
                     // calculate frobenius norm of symmetric shear velocity gradient tensor //
