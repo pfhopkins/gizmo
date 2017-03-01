@@ -253,7 +253,7 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 #GALSF_FB_GASRETURN              # Paul Torrey's addition for stochastic gas return (modified for continuous return)
 #GALSF_FB_HII_HEATING            # gas within HII regions around young stars is photo-heated to 10^4 K
 #GALSF_FB_SNE_HEATING=1          # time-dependent explosions from SNe (I & II) in shockwave radii around stars (values: 0=force-gridded in xyz (WRONG-for testing only!); 1=tensor-symmetrized (momentum-conserving; USE ME); 2=no tensor re-normalization [non-conservative!]
-#GALSF_FB_RPROCESS_ENRICHMENT=6  # tracks a set of 'dummy' species from neutron-star mergers (set to number: 6=extended model)
+#GALSF_FB_RPROCESS_ENRICHMENT=4  # tracks a set of 'dummy' species from neutron-star mergers (set to number: 4=extended model)
 #GALSF_FB_RT_PHOTONMOMENTUM      # continuous acceleration from starlight (uses luminosity tree)
 #GALSF_FB_LOCAL_UV_HEATING       # use local estimate of spectral information for photoionization and photoelectric heating
 #GALSF_FB_RPWIND_LOCAL           # turn on local radiation pressure coupling to gas

@@ -117,13 +117,11 @@ void particle2in_addFB_Rprocess(struct addFBdata_in *in, int i)
 {
 #ifdef GALSF_FB_RPROCESS_ENRICHMENT
     /*
-     k=0     no change to defaults (tmin=3e7yr, rate=1e-5, all neighbor particle)
-     k=1     as k=0, tmin=3e6yr
-     k=2     as k=0, tmin=1e7yr
-     k=3     as k=0, tmin=1e8yr
-     k=4     as k=0, rate=3e-6
-     k=5     as k=0, rate=3e-5
-     */
+    model 0    tmin = 3e7 yr, rate = 1e-5
+    model 1    tmin = 3e6 yr, rate = 1e-5
+    model 2    tmin = 3e7 yr, rate = 1e-6
+    model 3    tmin = 3e6 yr, rate = 1e-6
+    */
     if(P[i].RProcessEvent_ThisTimeStep<=0)
     {
         in->Msne = 0;
@@ -143,13 +141,11 @@ void particle2in_addFB_Rprocess(struct addFBdata_in *in, int i)
     for(k=0;k<NUM_RPROCESS_SPECIES;k++)
     {
         in->yields[NUM_METAL_SPECIES-NUM_RPROCESS_SPECIES+k] = 0.0;
-        tcrit=0.03; // default is age > 3e7
-        pcrit=0.3333333333;     // rate lower by 1/3 for 'default'
-        if(k==1) {tcrit=0.003;} // k=1 requires age > 3e6 yr
-        if(k==2) {tcrit=0.01;}  // k=2 requires age > 1e7 yr
-        if(k==3) {tcrit=0.1;}   // k=3 requires age > 1e8
-        if(k==4) {pcrit=0.1;}   // k=4 has rate lower by 3
-        if(k==5) {pcrit=1.0;}   // k=5 has rate higher by 3
+        if(k==0) {tcrit=0.03; pcrit=0.3333333333;}  // age > 3e7 yr, rate = 1e-5
+        if(k==1) {tcrit=0.003; pcrit=0.3333333333;} // age > 3e6 yr, rate = 1e-5
+        if(k==2) {tcrit=0.03; pcrit=0.03333333333;}  // age > 3e7 yr, rate = 1e-6
+        if(k==3) {tcrit=0.003; pcrit=0.03333333333;}   // age > 3e6 yr, rate = 1e-6
+
         if((star_age>=tcrit)&&(p<=pcrit)&&(P[i].RProcessEvent_ThisTimeStep>0))
         {
             in->yields[NUM_METAL_SPECIES-NUM_RPROCESS_SPECIES+k] = 1.0; // absolute unit is irrelevant, so use 1.0 //
