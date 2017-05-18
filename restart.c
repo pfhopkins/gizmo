@@ -142,8 +142,10 @@ void restart(int modus)
 		  All.PartAllocFactor = save_PartAllocFactor;
 		  All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
 		  All.MaxPartSph = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));
-          // All.MaxPartSph = All.MaxPart; // PFH: increasing All.MaxPartSph according to this line can allow better load-balancing in some cases. however it leads to more memory problems
-		  new_MaxPart = All.MaxPart;
+#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
+          All.MaxPartSph = All.MaxPart; // PFH: increasing All.MaxPartSph according to this line can allow better load-balancing in some cases. however it leads to more memory problems
+#endif
+          new_MaxPart = All.MaxPart;
 
 #if defined(BLACK_HOLES) && defined(DETACH_BLACK_HOLES)
 		  if(All.TotBHs == 0)

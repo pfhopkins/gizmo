@@ -827,9 +827,11 @@ void read_file(char *fname, int readTask, int lastTask)
         
         All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
         All.MaxPartSph = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
+#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
         All.MaxPartSph = All.MaxPart; // PFH: increasing All.MaxPartSph according to this line can allow better load-balancing in some cases. however it leads to more memory problems
         // (PFH: needed to revert the change -- i.e. INCLUDE the line above: commenting it out, while it improved memory useage, causes some instability in the domain decomposition for
         //   sufficiently irregular trees. overall more stable behavior with the 'buffer', albeit at the expense of memory )
+#endif
         
 #if defined(BLACK_HOLES) && defined(DETACH_BLACK_HOLES)
         if(All.TotBHs == 0)
@@ -840,7 +842,8 @@ void read_file(char *fname, int readTask, int lastTask)
         
         allocate_memory();
         
-        if(!(CommBuffer = mymalloc("CommBuffer", bytes = All.BufferSize * 1024 * 1024)))
+        size_t MyBufferSize = All.BufferSize;
+        if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
             endrun(2);
@@ -1013,7 +1016,8 @@ void read_file(char *fname, int readTask, int lastTask)
             
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
             
-            blockmaxlen = (size_t) ((All.BufferSize * 1024 * 1024) / bytes_per_blockelement);
+            size_t MyBufferSize = All.BufferSize;
+            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
             
             npart = get_particles_in_block(blocknr, &typelist[0]);
             

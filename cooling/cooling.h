@@ -15,7 +15,7 @@
  */
 
 
-double ThermalProperties(double u, double rho, double *ne_guess, double *nH0_pointer, double *nHeII_pointer, double *mu_pointer, int target);
+double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess);
 void   InitCool(void);
 void   InitCoolMemory(void);
 void   IonizeParams(void);
@@ -27,18 +27,19 @@ void   ReadIonizeParams(char *fname);
 void   SetZeroIonization(void);
 void   TestCool(void);
 
-void   find_abundances_and_rates(double logT, double rho, double *ne_guess, int target, double shieldfac);
-double convert_u_to_temp(double u, double rho, double *ne_guess, int target);
-double CoolingRate(double logT, double rho, double *nelec, int target);
-double CoolingRateFromU(double u, double rho, double *ne_guess, int target);
-double DoCooling(double u_old, double rho, double dt, double *ne_guess, int target);
-double GetCoolingTime(double u_old, double rho,  double *ne_guess, int target);
-double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double *ne_guess, int target);
+double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
+                                 double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess);
+double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess);
+double CoolingRate(double logT, double rho, double nelec, int target);
+double CoolingRateFromU(double u, double rho, double ne_guess, int target);
+double DoCooling(double u_old, double rho, double dt, double ne_guess, int target);
+double GetCoolingTime(double u_old, double rho,  double ne_guess, int target);
+double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, int target);
 double get_mu(double T_guess, double rho, double *ne_guess, int target);
 double yhelium(int target);
 
 #ifdef GRACKLE
 void InitGrackle(void);
-double CallGrackle(double u_old, double rho, double dt, double *ne_guess, int target, int mode);
+double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode);
 #endif
 

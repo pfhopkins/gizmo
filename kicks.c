@@ -373,6 +373,9 @@ void set_predicted_sph_quantities_for_extra_physics(int i)
 #endif
 #ifdef COSMIC_RAYS
         SphP[i].CosmicRayEnergyPred = SphP[i].CosmicRayEnergy;
+#ifdef COSMIC_RAYS_M1
+        for(k=0;k<3;k++) {SphP[i].CosmicRayFluxPred[k] = SphP[i].CosmicRayFlux[k];}
+#endif
 #endif
 #if defined(RT_EVOLVE_NGAMMA)
         int kf;
@@ -470,15 +473,7 @@ void do_sph_kick_for_extra_physics(int i, integertime tstart, integertime tend, 
 #endif
     
 #ifdef COSMIC_RAYS
-    double dCR = SphP[i].DtCosmicRayEnergy * dt_entr;
-#ifdef GALSF
-    double dCRmax = DMAX(0.5*SphP[i].CosmicRayEnergy , 0.01*SphP[i].InternalEnergy*P[i].Mass);
-#else
-    double dCRmax = 2.0 * SphP[i].CosmicRayEnergy;
-#endif
-    if(dCR > dCRmax) {dCR=dCRmax;}
-    SphP[i].CosmicRayEnergy += dCR;
-    if((SphP[i].CosmicRayEnergy < 0) || (isnan(SphP[i].CosmicRayEnergy))) {SphP[i].CosmicRayEnergy=0;}
+    CosmicRay_Update_DriftKick(i,dt_entr,0);
 #endif
     
 #ifdef RADTRANSFER

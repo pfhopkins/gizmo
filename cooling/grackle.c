@@ -19,7 +19,7 @@
 //     3 == calculate and return pressure
 //     4 == calculate and return gamma (only valid when GRACKLE_CHEMISTRY>0)
 //
-double CallGrackle(double u_old, double rho, double dt, double *ne_guess, int target, int mode)
+double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode)
 {
     gr_float returnval = 0.0;
     
@@ -60,7 +60,7 @@ double CallGrackle(double u_old, double rho, double dt, double *ne_guess, int ta
     gr_float tiny = 1.0e-20;
     
     // Atomic
-    ne_density    = density * *ne_guess;
+    ne_density    = density * ne_guess;
     
     HI_density    = density * SphP[target].grHI;  //initialized with HYDROGEN_MASSFRAC
     HII_density   = density * SphP[target].grHII;
@@ -105,8 +105,6 @@ double CallGrackle(double u_old, double rho, double dt, double *ne_guess, int ta
             }
             
             // Assign variables back
-            *ne_guess            = ne_density    / density;
-            
             SphP[target].grHI    = HI_density    / density;
             SphP[target].grHII   = HII_density   / density;
             SphP[target].grHM    = HM_density    / density;
@@ -209,7 +207,8 @@ double CallGrackle(double u_old, double rho, double dt, double *ne_guess, int ta
                 fprintf(stderr, "Error in solve_chemistry_table.\n");
                 endrun(ENDRUNVAL);
             }
-            convert_u_to_temp(energy, rho, ne_guess, target); //need to update *ne_guess for tabular!!, this may be wrong
+            double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess;
+            convert_u_to_temp(energy, rho, target, &ne_guess, &nH0_guess, &nHp_guess, &nHe0_guess, &nHep_guess, &nHepp_guess); //need to update *ne_guess for tabular!!, this may be wrong
             returnval = energy;
             break;
         case 1:  //cooling time (table)

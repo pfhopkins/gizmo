@@ -160,6 +160,79 @@ double Get_CosmicRayStreamingVelocity(int i)
     v_streaming *= All.cf_afac3; // converts to physical units and rescales according to chosen coefficient //
     return v_streaming;
 }
+
+
+double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
+{
+    /* routine to do the drift/kick operations for CRs: mode=0 is kick, mode=1 is drift */
+    if(dt_entr <= 0) {return 0;} // no update
+    int k;
+    double eCR, u0;
+    if(mode==0) {eCR=SphP[i].CosmicRayEnergy; u0=SphP[i].InternalEnergy;} else {eCR=SphP[i].CosmicRayEnergyPred; SphP[i].InternalEnergyPred;} // initial energy
+    if(eCR < 0) {eCR=0;} // limit to physical values
+    
+#ifdef COSMIC_RAYS_M1
+    // this is the exact solution for the CR flux-update equation over a finite timestep dt:
+    //   it needs to be solved this way [implicitly] as opposed to explicitly for dt because
+    //   in the limit of dt_cr_dimless being large, the problem exactly approaches the diffusive solution
+    double flux[3]={0}, CR_veff[3]={0}, CR_vmag=0, q_cr = 0, cr_speed = COSMIC_RAYS_M1;// * (C/All.UnitVelocity_in_cm_per_s);
+    double dt_cr_dimless = dt_entr * cr_speed*cr_speed / (MIN_REAL_NUMBER + fabs(SphP[i].CosmicRayDiffusionCoeff));
+    if((dt_cr_dimless > 0)&&(dt_cr_dimless < 20.)) {q_cr = exp(-dt_cr_dimless);} // factor for CR interpolation
+    if(mode==0) {for(k=0;k<3;k++) {flux[k]=SphP[i].CosmicRayFlux[k];}} else {for(k=0;k<3;k++) {flux[k]=SphP[i].CosmicRayFluxPred[k];}}
+    for(k=0;k<3;k++) {flux[k] = q_cr*flux[k] + (1.-q_cr)*SphP[i].DtCosmicRayFlux[k];} // updated flux
+    for(k=0;k<3;k++) {CR_veff[k]=flux[k]/(eCR+MIN_REAL_NUMBER); CR_vmag+=CR_veff[k]*CR_veff[k];} // effective streaming speed
+    if((CR_vmag <= 0) || (isnan(CR_vmag))) // check for valid numbers
+    {
+        for(k=0;k<3;k++) {flux[k]=0; for(k=0;k<3;k++) {CR_veff[k]=0;}} // zero if invalid
+    } else {
+        CR_vmag = sqrt(CR_vmag);
+        if(CR_vmag > COSMIC_RAYS_M1) {for(k=0;k<3;k++) {flux[k]*=COSMIC_RAYS_M1/CR_vmag; CR_veff[k]*=COSMIC_RAYS_M1/CR_vmag;}} // limit flux to free-streaming speed [as with RT]
+    }
+    if(mode==0) {for(k=0;k<3;k++) {SphP[i].CosmicRayFlux[k]=flux[k];}} else {for(k=0;k<3;k++) {SphP[i].CosmicRayFluxPred[k]=flux[k];}}
+#endif
+    
+    // now we update the CR energies. since this is positive-definite, some additional care is needed //
+    double dCR = SphP[i].DtCosmicRayEnergy*dt_entr, dCRmax = 2.*eCR;
+#ifdef GALSF
+    dCRmax = DMAX(0.5*eCR , 0.01*u0*P[i].Mass);
+#endif
+    if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
+    if(dCR < -eCR) {dCR=-eCR;} // don't allow it to go negative
+    eCR += dCR; if((eCR<0)||(isnan(eCR))) {eCR=0;}
+    double eCR_0 = eCR; // save this value for below
+    
+    /* now need to account for the adiabatic heating/cooling of the cosmic ray fluid, here: its an ultra-relativistic fluid with gamma=4/3 */
+    double d_div = (-GAMMA_COSMICRAY_MINUS1 * P[i].Particle_DivVel*All.cf_a2inv) * dt_entr;
+    /* adiabatic term from Hubble expansion (needed for cosmological integrations */
+    if(All.ComovingIntegrationOn) {d_div += (-3.*GAMMA_COSMICRAY_MINUS1 * All.cf_hubble_a) * dt_entr;}
+    
+#ifdef COSMIC_RAYS_M1
+    // need to get pressure gradient scale-lengths to slope-limit pressure gradient to resovable values //
+    double Pmag=0; for(k=0;k<3;k++) {Pmag += SphP[i].Gradients.CosmicRayPressure[k]*SphP[i].Gradients.CosmicRayPressure[k];} // magnitude of pressure gradient
+    if((Pmag<=0)||(isnan(Pmag))) {Pmag=0;} else {Pmag=sqrt(Pmag);} // check for unphysical values
+    double CR_P = Get_Particle_CosmicRayPressure(i); // CR pressure to normalize gradient (since only 1/scale actually matters)
+    double Pscale=CR_P/Pmag, Pscale_min=Get_Particle_Size(i), Pgrad_hat[3]={0}, fluxterm=0; // values for slope-limiter
+    for(k=0;k<3;k++) {Pgrad_hat[k] = GAMMA_COSMICRAY_MINUS1 * SphP[i].Gradients.CosmicRayPressure[k] / CR_P;} // pressure gradient / pressure
+    if(Pscale_min > Pscale) {for(k=0;k<3;k++) {Pgrad_hat[k] *= Pscale/Pscale_min;}} // slope-limited gradient
+    for(k=0;k<3;k++) {fluxterm += dt_entr * CR_veff[k] * Pgrad_hat[k];} // calculate the adiabatic term
+    double fluxterm_isotropic = -DMIN(COSMIC_RAYS_M1,CR_vmag) / DMAX(Pscale,Pscale_min) * dt_entr; // dissipative flux if the streaming were exactly along the CR pressure gradient [isotropic diffusion limit]
+    if(fluxterm > 0) {fluxterm = -DMIN(fabs(fluxterm), fabs(fluxterm_isotropic));} // limit anisotropic compression term since this should come only from integration error
+    if(isnan(fluxterm)||(eCR<=0)||(isnan(eCR))) {fluxterm=0;} // check against nans
+    d_div += fluxterm;
+#endif
+    
+    double dCR_div = DMIN(eCR*d_div , 0.5*u0*P[i].Mass); // limit so don't take away all the gas internal energy [to negative values]
+    if(dCR_div + eCR < 0) {dCR_div = -eCR;}
+    eCR += dCR_div; if((eCR<0)||(isnan(eCR))) {eCR=0;}
+    dCR_div = eCR - eCR_0; // actual change that is going to be applied
+    if(mode==0)
+    {
+        SphP[i].CosmicRayEnergy += dCR_div; SphP[i].InternalEnergy -= dCR_div/P[i].Mass;
+    } else {
+        SphP[i].CosmicRayEnergyPred += dCR_div; SphP[i].InternalEnergyPred -= dCR_div/P[i].Mass;
+    }
+    return 1;
+}
 #endif
 
 

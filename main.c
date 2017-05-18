@@ -70,7 +70,6 @@ int main(int argc, char **argv)
 #endif
       printf("\nCode was compiled with settings:\n\n");
       output_compile_time_options();
-      printf("");
    }
 
 #ifdef _OPENMP

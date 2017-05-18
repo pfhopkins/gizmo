@@ -263,7 +263,7 @@ double get_starformation_rate(int i)
     factorEVP = pow(SphP[i].Density * All.cf_a3inv / All.PhysDensThresh, -0.8) * All.FactorEVP;
     egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
     ne = SphP[i].Ne;
-    tcool = GetCoolingTime(egyhot, SphP[i].Density * All.cf_a3inv, &ne, i);
+    tcool = GetCoolingTime(egyhot, SphP[i].Density * All.cf_a3inv, ne, i);
     y = tsfr / tcool * egyhot / (All.FactorSN * All.EgySpecSN - (1 - All.FactorSN) * All.EgySpecCold);
     x = 1 + 1 / (2 * y) - sqrt(1 / y + 1 / (4 * y * y));
     cloudmass = x * P[i].Mass;
@@ -378,7 +378,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
     double trelax = tsfr * (1 - x) / x / (All.FactorSN * (1 + factorEVP));
     double egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
     double egyeff = egyhot * (1 - x) + All.EgySpecCold * x;
-    double egycurrent = SphP[i].InternalEnergy;
+    double egycurrent = SphP[i].InternalEnergy, ne=1.0;
 
 #if defined(BH_THERMALFEEDBACK)
     if((SphP[i].Injected_BH_Energy > 0) && (P[i].Mass>0))
@@ -386,7 +386,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
         egycurrent += SphP[i].Injected_BH_Energy / P[i].Mass;
         if(egycurrent > egyeff)
         {
-            tcool = GetCoolingTime(egycurrent, SphP[i].Density * All.cf_a3inv, &ne, i);
+            tcool = GetCoolingTime(egycurrent, SphP[i].Density * All.cf_a3inv, ne, i);
             if(tcool < trelax && tcool > 0) trelax = tcool;
         }
         SphP[i].Injected_BH_Energy = 0;
@@ -1167,7 +1167,7 @@ void init_clouds(void)
 
       ne = 1.0;
       SetZeroIonization();
-      tcool = GetCoolingTime(egyhot, dens, &ne, -1);
+      tcool = GetCoolingTime(egyhot, dens, ne, -1);
       coolrate = egyhot / tcool / dens;
       x = (egyhot - u4) / (egyhot - All.EgySpecCold);
 
@@ -1191,7 +1191,7 @@ void init_clouds(void)
 	  egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
 
 	  ne = 0.5;
-      tcool = GetCoolingTime(egyhot, dens, &ne, -1);
+      tcool = GetCoolingTime(egyhot, dens, ne, -1);
 
 	  y = tsfr / tcool * egyhot / (All.FactorSN * All.EgySpecSN - (1 - All.FactorSN) * All.EgySpecCold);
 	  x = 1 + 1 / (2 * y) - sqrt(1 / y + 1 / (4 * y * y));
@@ -1205,7 +1205,7 @@ void init_clouds(void)
 	  egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
 
 	  ne = 0.5;
-      tcool = GetCoolingTime(egyhot, dens, &ne, -1);
+      tcool = GetCoolingTime(egyhot, dens, ne, -1);
 
 	  y = tsfr / tcool * egyhot / (All.FactorSN * All.EgySpecSN - (1 - All.FactorSN) * All.EgySpecCold);
 	  x = 1 + 1 / (2 * y) - sqrt(1 / y + 1 / (4 * y * y));

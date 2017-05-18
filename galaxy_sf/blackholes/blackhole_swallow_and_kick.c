@@ -32,12 +32,12 @@ void blackhole_swallow_and_kick_loop(void)
     int Ntot_gas_swallowed, Ntot_star_swallowed, Ntot_dm_swallowed, Ntot_BH_swallowed;
     
     /* allocate buffers to arrange communication */
+    size_t MyBufferSize = All.BufferSize;
     Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
-    All.BunchSize = (int) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    All.BunchSize = (int) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct blackholedata_in) +
                                                              sizeof(struct blackholedata_out) +
-                                                             sizemax(sizeof(struct blackholedata_in),
-                                                                     sizeof(struct blackholedata_out))));
+                                                             sizemax(sizeof(struct blackholedata_in),sizeof(struct blackholedata_out))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     

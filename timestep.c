@@ -579,6 +579,11 @@ integertime get_timestep(int p,		/*!< particle index */
                         if(dt_conduction < dt) dt = dt_conduction; // this is an advective timestep and super-stepping doesn't apply
                     }
 #else
+#ifdef COSMIC_RAYS_M1
+                    double cr_speed = COSMIC_RAYS_M1;// * (C/All.UnitVelocity_in_cm_per_s);
+                    double dt_courant_CR = All.CourantFac * (L_particle*All.cf_atime) / cr_speed;
+                    if(dt_conduction < dt_courant_CR) {dt_conduction = dt_courant_CR;}
+#endif
                     if(dt_conduction < dt) dt = dt_conduction; // normal explicit time-step
 #endif
                 }
@@ -589,30 +594,63 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(RADTRANSFER)
             {
                 int kf;
+                double dt_rad = 1.e10 * dt;
                 for(kf=0;kf<N_RT_FREQ_BINS;kf++)
                 {
 #if defined(RT_DIFFUSION_EXPLICIT) && !defined(RT_EVOLVE_FLUX) /* for explicit diffusion, we include the usual second-order diffusion timestep */
                     double gradETmag=0; for(k=0;k<3;k++) {gradETmag += SphP[p].Gradients.E_gamma_ET[kf][k]*SphP[p].Gradients.E_gamma_ET[kf][k];}
                     double L_ETgrad_inv = sqrt(gradETmag) / (1.e-37 + SphP[p].E_gamma[kf] * SphP[p].Density/P[p].Mass);
                     double L_RT_diffusion = DMAX(L_particle , 1./(L_ETgrad_inv + 1./L_particle)) * All.cf_atime;
-                    double dt_rt_diffusion = dt_prefac_diffusion * L_RT_diffusion*L_RT_diffusion / (1.0e-33 + rt_diffusion_coefficient(p,kf));
+                    double dt_rt_diffusion = dt_prefac_diffusion * L_RT_diffusion*L_RT_diffusion / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf));
                     double dt_advective = dt_rt_diffusion * DMAX(1,DMAX(L_particle , 1/(MIN_REAL_NUMBER + L_ETgrad_inv))*All.cf_atime / L_RT_diffusion);
                     if(dt_advective > dt_rt_diffusion) {dt_rt_diffusion *= 1. + (1.-SphP[p].Lambda_FluxLim[kf]) * (dt_advective/dt_rt_diffusion-1.);}
                     if((SphP[p].Lambda_FluxLim[kf] <= 0)||(dt_rt_diffusion<=0)) {dt_rt_diffusion = 1.e9 * dt;}
                     if((SphP[p].E_gamma[kf] <= MIN_REAL_NUMBER) || (SphP[p].E_gamma_Pred[kf] <= MIN_REAL_NUMBER)) {dt_rt_diffusion = dt_advective;}
-
 #ifdef SUPER_TIMESTEP_DIFFUSION
                     if(dt_rt_diffusion < dt_superstep_explicit) dt_superstep_explicit = dt_rt_diffusion; // explicit time-step
                     double dt_advective = dt_rt_diffusion * DMAX(1,DMAX(L_particle , 1/(MIN_REAL_NUMBER + L_ETgrad_inv))*All.cf_atime / L_RT_diffusion);
-                    if(dt_advective < dt) dt = dt_advective; // 'advective' timestep: needed to limit super-stepping
+                    if(dt_advective < dt_rad) dt_rad = dt_advective; // 'advective' timestep: needed to limit super-stepping
 #else
-                    if(dt_rt_diffusion < dt) dt = dt_rt_diffusion; // normal explicit time-step
+                    if(dt_rt_diffusion < dt_rad) dt_rad = dt_rt_diffusion; // normal explicit time-step
 #endif
 #endif
                 }
                 /* even with a fully-implicit solver, we require a CFL-like criterion on timesteps (much larger steps allowed for stability, but not accuracy) */
-				dt_courant = All.CourantFac * (L_particle*All.cf_atime) / (RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s)); /* courant-type criterion, using the reduced speed of light */
-				if(dt_courant < dt) dt = dt_courant;
+                dt_courant = All.CourantFac * (L_particle*All.cf_atime) / (RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s)); /* courant-type criterion, using the reduced speed of light */
+#ifdef RT_M1
+#ifndef GALSF
+                dt_rad = dt_courant;
+#endif
+                double L_RT_diffusion = L_particle*All.cf_atime;
+                for(kf=0;kf<N_RT_FREQ_BINS;kf++)
+                {
+                    double dt_rt_diffusion = dt_prefac_diffusion * L_RT_diffusion*L_RT_diffusion / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf));
+#ifdef GALSF
+                    /* ignore particles where the radiation energy density is basically non-existant */
+                    if((SphP[p].E_gamma[kf] <= MIN_REAL_NUMBER) ||
+                       (SphP[p].E_gamma_Pred[kf] <= MIN_REAL_NUMBER) ||
+                       (SphP[p].E_gamma[kf] < 1.e-5*P[p].Mass*SphP[p].InternalEnergy)) {dt_rt_diffusion = 1.e10 * dt;}
+#endif
+                    if(dt_rt_diffusion < dt_rad) dt_rad = dt_rt_diffusion;
+                }
+                if(dt_rad > 1.e3*dt_courant) {dt_rad = 1.e3*dt_courant;}
+                if(dt_courant > dt_rad) {dt_rad = dt_courant;}
+#if defined(RT_CHEM_PHOTOION)
+                /* since we're allowing rather large timesteps above in special conditions, make sure this doesn't overshoot the recombination time for the opacity to 
+                    change, which can happen particularly for ionizing photons */
+                if(kf==RT_FREQ_BIN_H0)
+                {
+                    double ne_cgs = (SphP[p].Density * All.cf_a3inv * All.UnitDensity_in_cgs * All.HubbleParam * All.HubbleParam) / PROTONMASS;
+                    double dt_recombination = All.CourantFac * (3.3e12/ne_cgs) / (All.UnitTime_in_s / All.HubbleParam);
+                    double dt_change = 1.e10*dt; if((SphP[p].E_gamma[kf] > 0)&&(fabs(SphP[p].Dt_E_gamma[kf])>0)) {dt_change = SphP[p].E_gamma[kf] / fabs(SphP[p].Dt_E_gamma[kf]);}
+                    dt_recombination = DMAX(DMAX(dt_recombination, dt_change), dt_courant);
+                    if(dt_recombination < dt_rad) {dt_rad = dt_recombination;}
+                }
+#endif
+#else
+                if(dt_courant < dt_rad) {dt_rad = dt_courant;}
+#endif
+                if(dt_rad < dt) dt = dt_rad;
             }
 #endif
     
@@ -810,10 +848,10 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef BLACK_HOLES
     if(P[p].Type == 5)
     {
+        double dt_accr = 1.e-2 * 4.2e7 * SEC_PER_YEAR / All.UnitTime_in_s;
         if(BPP(p).BH_Mdot > 0 && BPP(p).BH_Mass > 0)
         {
-            double dt_accr;
-#if defined(BH_GRAVCAPTURE_GAS) || defined(BH_BAL_WINDS) || defined(BH_BAL_KICK) 
+#if defined(BH_GRAVCAPTURE_GAS) || defined(BH_BAL_WINDS) || defined(BH_BAL_KICK)
             /* really want prefactor to be ratio of median gas mass to bh mass */
             dt_accr = 0.001 * BPP(p).BH_Mass / BPP(p).BH_Mdot;
 #if defined(BH_BAL_WINDS) || defined(BH_BAL_KICK)
@@ -825,15 +863,18 @@ integertime get_timestep(int p,		/*!< particle index */
 #else
             dt_accr = 0.05 * BPP(p).BH_Mass / BPP(p).BH_Mdot;
 #endif // defined(BH_GRAVCAPTURE_GAS) || defined(BH_BAL_WINDS)
-            
-            if(dt_accr > 0 && dt_accr < dt)
-                dt = dt_accr;
         } // if(BPP(p).BH_Mdot > 0 && BPP(p).BH_Mass > 0)
+#ifdef BH_SEED_GROWTH_TESTS
+            double dt_evol = 1.e4 * SEC_PER_YEAR / All.UnitTime_in_s;
+#ifdef TURB_DRIVING
+            if(dt_evol > 1.e-3*All.StDecay) {dt_evol=1.e-3*All.StDecay;}
+#endif
+            if(dt_accr > dt_evol) {dt_accr=dt_evol;}
+#endif
+            if(dt_accr > 0 && dt_accr < dt) {dt = dt_accr;}
         
-        double dt_ngbs = (BPP(p).BH_TimeBinGasNeighbor ? (1 << BPP(p).BH_TimeBinGasNeighbor) : 0) *
-        All.Timebase_interval / All.cf_hubble_a;
-        if(dt > dt_ngbs && dt_ngbs > 0)
-            dt = 1.01 * dt_ngbs;
+        double dt_ngbs = (BPP(p).BH_TimeBinGasNeighbor ? (1 << BPP(p).BH_TimeBinGasNeighbor) : 0) * All.Timebase_interval / All.cf_hubble_a;
+        if(dt > dt_ngbs && dt_ngbs > 0) {dt = 1.01 * dt_ngbs;}
         
     } // if(P[p].Type == 5)
 #endif // BLACK_HOLES

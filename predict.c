@@ -276,9 +276,9 @@ void move_particles(integertime time1)
 void drift_sph_extra_physics(int i, integertime tstart, integertime tend, double dt_entr)
 {
 #ifdef MAGNETIC
-    int k;
+    int kB;
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
-    for(k=0;k<3;k++) {SphP[i].BPred[k] += SphP[i].DtB[k] * dt_entr * BphysVolphys_to_BcodeVolCode;} // fluxes are always physical, convert to code units //
+    for(kB=0;kB<3;kB++) {SphP[i].BPred[kB] += SphP[i].DtB[kB] * dt_entr * BphysVolphys_to_BcodeVolCode;} // fluxes are always physical, convert to code units //
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi fluxes (otherwise coefficient is 1)
     double dtphi_code = (PhiphysVolphys_to_PhicodeVolCode) * SphP[i].DtPhi;
@@ -297,8 +297,7 @@ void drift_sph_extra_physics(int i, integertime tstart, integertime tend, double
 #endif
 #endif
 #ifdef COSMIC_RAYS
-    double etmp = SphP[i].CosmicRayEnergyPred + SphP[i].DtCosmicRayEnergy * dt_entr;
-    if(etmp<1.e-4*SphP[i].CosmicRayEnergyPred) {SphP[i].CosmicRayEnergyPred *= 1.e-4;} else {SphP[i].CosmicRayEnergyPred=etmp;}
+    CosmicRay_Update_DriftKick(i,dt_entr,1);
 #endif
 #ifdef RADTRANSFER
     rt_update_driftkick(i,dt_entr,1);

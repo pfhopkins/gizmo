@@ -86,11 +86,11 @@ HG_COMMIT := $(shell hg id 2>/dev/null)
 HG_REPO := $(shell hg path default)
 HG_BRANCH := $(shell hg branch)
 BUILDINFO = "Build on $(HOSTNAME) by $(USER) from $(HG_BRANCH):$(HG_COMMIT) at $(HG_REPO)"
-OPT += -DBUILDINFO='$(BUILDINFO)'
+#OPT += -DBUILDINFO='$(BUILDINFO)'
 
 ifeq (FIRE_PHYSICS_DEFAULTS,$(findstring FIRE_PHYSICS_DEFAULTS,$(CONFIGVARS)))  # using 'fire default' instead of all the above
     CONFIGVARS += COOLING COOL_LOW_TEMPERATURES COOL_METAL_LINES_BY_SPECIES
-    CONFIGVARS += GALSF METALS GALSF_SFR_MOLECULAR_CRITERION GALSF_SFR_VIRIAL_SF_CRITERION=0
+    CONFIGVARS += GALSF METALS TURB_DIFF_METALS GALSF_SFR_MOLECULAR_CRITERION GALSF_SFR_VIRIAL_SF_CRITERION=0
     CONFIGVARS += GALSF_FB_GASRETURN GALSF_FB_HII_HEATING GALSF_FB_SNE_HEATING=1 GALSF_FB_RT_PHOTONMOMENTUM
     CONFIGVARS += GALSF_FB_LOCAL_UV_HEATING GALSF_FB_RPWIND_LOCAL GALSF_FB_RPROCESS_ENRICHMENT=4 GALSF_SFR_IMF_VARIATION
 endif
@@ -290,7 +290,7 @@ endif
 ifeq ($(SYSTYPE),"Zwicky")
 CC       =  mpicc
 CXX      =  mpicpc
-FC       =  mpiifort -nofor_main
+FC       =  $(CC) ##mpiifort -nofor_main
 OPTIMIZE = -O3 -funroll-loops
 OPTIMIZE += -g -Wall # compiler warnings
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
@@ -384,6 +384,41 @@ MPICHLIB =
 ##    OPTIMIZE =  -O2 -m64 -mt_mpi -openmp -xhost -g -debug parallel -mcmodel=medium -funroll-loops -Wall
 ##
 endif
+
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Comet")
+CC       =  mpicc
+CXX      =  mpiCC
+FC       =  $(CC)
+OPTIMIZE = -O3 -xhost -ipo -funroll-loops -no-prec-div -fp-model fast=2  # speed
+OPTIMIZE += -g -Wall # compiler warnings
+#OPTIMIZE += -parallel -openmp  # openmp (comment out this line if OPENMP not used)
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -parallel -openmp  # openmp required compiler flags
+endif
+GMP_INCL = #
+GMP_LIBS = #
+MKL_INCL = -I/opt/intel/composer_xe_2013_sp1.2.144/mkl/include
+MKL_LIBS = -L/opt/intel/composer_xe_2013_sp1.2.144/mkl/lib -mkl=sequential
+##MKL_LIBS = -L/opt/mvapich2/intel/ib/lib -lm -lmkl_core -lmkl_sequential -lmkl_scalapack_lp64 -lmkl_intel_lp64 -lmkl_blacs_intelmpi_lp64
+GSL_INCL = -I/opt/gsl/2.1/intel/include
+GSL_LIBS = -L/opt/gsl/2.1/intel/lib
+FFTW_INCL= -I/opt/fftw/2.1.5/intel/mvapich2_ib/include
+FFTW_LIBS= -L/opt/fftw/2.1.5/intel/mvapich2_ib/lib
+HDF5INCL = -I/opt/hdf5/intel/mvapich2_ib/include -DH5_USE_16_API
+HDF5LIB  = -L/opt/hdf5/intel/mvapich2_ib/lib -lhdf5 -lz
+MPICHLIB = -L/opt/mvapich2/intel/ib/lib
+#MPICHLIB = -L/opt/openmpi/intel/ib/lib
+OPT     += -DUSE_MPI_IN_PLACE
+## modules to load:
+## module load gsl intel hdf5 mvapich2_ib fftw/2.1.5
+##  -- performance is very similar with impi (intel-mpi) instead of mpavich2,
+##   if preferred use that with MPICHLIB line uncommented
+## newest version of code needed for compatibility with calls in MPI-2 libraries
+endif
+#----------------------------------------------------------------------------------------------
+
 
 
 #----------------------------------------------------------------------------------------------

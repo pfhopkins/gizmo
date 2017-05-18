@@ -326,8 +326,8 @@ double rt_kappa(int i, int k_freq)
     /* IR with dust opacity */
     if(k_freq==RT_FREQ_BIN_INFRARED)
     {
-        if(isnan(SphP[i].Dust_Temperature)) {SphP[i].Dust_Temperature=10;} // reset baseline
-        if(isnan(SphP[i].Radiation_Temperature) || SphP[i].Radiation_Temperature<=0) {SphP[i].Radiation_Temperature=10;} // reset baseline
+        if(isnan(SphP[i].Dust_Temperature) || SphP[i].Dust_Temperature<=0) {SphP[i].Dust_Temperature=DMAX(10.,2.73/All.cf_atime);} // reset baseline
+        if(isnan(SphP[i].Radiation_Temperature) || SphP[i].Radiation_Temperature<=0) {SphP[i].Radiation_Temperature=DMAX(10.,2.73/All.cf_atime);} // reset baseline
         
         double T_dust_em = SphP[i].Dust_Temperature; // dust temperature in K //
         double Trad = SphP[i].Radiation_Temperature; // radiation temperature in K //
@@ -440,7 +440,11 @@ void rt_eddington_update_calculation(int j)
         f_chifac = fmag_j / (1.e-37 + c_light * SphP[j].E_gamma[k_freq] * V_j_inv);
         if(f_chifac < 0) {f_chifac=0;}
         if(fmag_j <= 0) {f_chifac = 0;}
-        if(f_chifac > 1) {f_chifac=1;}
+        // restrict values of f_chifac to physical range.  
+        //   [optional, not here]: impose additional condition: if optically thick locally, use isotropic tensor
+        double f_min = 0.01, f_max = 0.99;
+        if((f_chifac < f_min) || (isnan(f_chifac))) {f_chifac = f_min;}
+        if(f_chifac > f_max) {f_chifac = f_max;}
         double chi_j = (3.+4.*f_chifac*f_chifac) / (5. + 2.*sqrt(4. - 3.*f_chifac*f_chifac));
         double chifac_iso_j = 0.5 * (1.-chi_j);
         double chifac_n_j = 0.5 * (3.*chi_j-1.);
@@ -482,6 +486,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
     {int j; for(j=0;j<N_RT_FREQ_BINS;j++) {E_gamma_tot += SphP[i].E_gamma[j];}}
     double u_gamma = E_gamma_tot * (SphP[i].Density*All.cf_a3inv/P[i].Mass) * All.UnitPressure_in_cgs * All.HubbleParam*All.HubbleParam; // photon energy density in CGS //
     double Dust_Temperature_4 = All.UnitVelocity_in_cm_per_s * c_light * u_gamma / (4. * 5.67e-5); // estimated effective temperature of local rad field in equilibrium with dust emission //
+    Dust_Temperature_4 /= RT_SPEEDOFLIGHT_REDUCTION*RT_SPEEDOFLIGHT_REDUCTION;
     SphP[i].Dust_Temperature = sqrt(sqrt(Dust_Temperature_4));
 #endif
     for(k_tmp=0; k_tmp<N_RT_FREQ_BINS; k_tmp++)
@@ -499,7 +504,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
         if(kf == RT_FREQ_BIN_INFRARED)
         {
             double T_cmb = 2.73 / All.cf_atime; // don't let dust or radiation temperatures drop below T_cmb //
-            if((mode==0) && (SphP[i].Dt_E_gamma[kf]!=0) && (dt_entr!=0)) // only update temperatures on kick operations //
+            if((mode==0) && (SphP[i].Dt_E_gamma[kf]!=0) && (dt_entr>0)) // only update temperatures on kick operations //
             {
                 // advected radiation changes temperature of radiation field, before absorption //
                 double dE_fac = SphP[i].Dt_E_gamma[kf] * dt_entr; // change in energy from advection
@@ -519,6 +524,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             {
                 Dust_Temperature_4 = total_emission_rate * (SphP[i].Density*All.cf_a3inv/P[i].Mass) / (4. * (MIN_REAL_NUMBER + fabs(a0)) / c_light); // flux units
                 Dust_Temperature_4 *= (All.UnitPressure_in_cgs * All.HubbleParam * All.HubbleParam * All.UnitVelocity_in_cm_per_s) / (5.67e-5); // convert to cgs
+                Dust_Temperature_4 /= RT_SPEEDOFLIGHT_REDUCTION*RT_SPEEDOFLIGHT_REDUCTION;
                 SphP[i].Dust_Temperature = sqrt(sqrt(Dust_Temperature_4));
                 if(SphP[i].Dust_Temperature < T_cmb) {SphP[i].Dust_Temperature = T_cmb;} // dust temperature shouldn't be below CMB
             }
@@ -534,12 +540,48 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
         }
 #endif
         
-        double abs_0 = DMAX(0,fabs(a0)*dt_entr); double slabfac = slab_averaging_function(abs_0); double e_abs_0=exp(-abs_0); if(abs_0>20.) {e_abs_0=0;}
+        /*---------------------------------------------------------------------------------------------------
+            the following block is for absorption and special behavior where 
+            photons absorbed in one band are re-radiated [or up/down-scattered] into another. 
+            this must be hard-coded to maintain conservation (as opposed to treated as a source term) 
+          -----------------------------------------------------------------------------------------------------*/
+        if(fabs(a0)*dt_entr > 50.) {a0 *= 50./(fabs(a0)*dt_entr);}
+        double abs_0 = DMAX(0,fabs(a0)*dt_entr); double slabfac = slab_averaging_function(abs_0); double e_abs_0=exp(-abs_0); if(abs_0>100.) {e_abs_0=0;}
+        /* since we're taking exponentials and inverses of some large numbers here, need to be careful not to let floating point errors cause nan's */
+        if((dt_entr <= 0.)||(a0 >= 0.)||(abs_0 <= 0.)) {abs_0=0.; slabfac=e_abs_0=1.;} else {if(abs_0 < 1.e-5) {slabfac=1.-0.5*abs_0; e_abs_0 = 1.-abs_0;} else {if(abs_0 > 100.) {slabfac = 1./abs_0; e_abs_0 = 0.;}}}
+        double e0_postabs = e0*e_abs_0, de_postabs = total_de_dt * dt_entr * slabfac, f_min = 0.01;
+        if(e0_postabs+de_postabs < f_min*e0_postabs) {slabfac *= fabs((1.-f_min)*e0_postabs)/(fabs(de_postabs)+MIN_REAL_NUMBER);}
+
         double ef = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
         if((ef < 0)||(isnan(ef))) {ef=0;}
-#ifdef RT_INFRARED
-        if(kf != RT_FREQ_BIN_INFRARED) {E_abs_tot += 0.5*(e0 + ef) * fabs(a0);} // timestep-averaged absorption from this band
+        double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
+        if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
+        int donor_bin = -1; // frequency into which the photons will be deposited, if any //
+#if defined(RT_CHEM_PHOTOION) && defined(RT_INFRARED)
+        /* assume absorbed ionizing photons are re-emitted via recombination into optical-NIR bins. valid if recombination time is fast. 
+            more accurately, this should be separately calculated in the cooling rates, and gas treated as a source */
+        if(kf==RT_FREQ_BIN_H0) {donor_bin=RT_FREQ_BIN_INFRARED;}
+#ifdef RT_PHOTOION_MULTIFREQUENCY
+        if(kf==RT_FREQ_BIN_He0) {donor_bin=RT_FREQ_BIN_INFRARED;}
+        if(kf==RT_FREQ_BIN_He1) {donor_bin=RT_FREQ_BIN_INFRARED;}
+        if(kf==RT_FREQ_BIN_He2) {donor_bin=RT_FREQ_BIN_INFRARED;}        
 #endif
+#endif
+#if defined(RT_PHOTOELECTRIC) && defined(RT_INFRARED)
+        /* this is direct dust absorption, re-radiated in IR */
+        if(kf==RT_FREQ_BIN_PHOTOELECTRIC) {donor_bin=RT_FREQ_BIN_INFRARED;}
+#endif
+#if defined(RT_OPTICAL_NIR) && defined(RT_INFRARED)
+        /* this is direct dust absorption, re-radiated in IR */
+        if(kf==RT_FREQ_BIN_OPTICAL_NIR) {donor_bin=RT_FREQ_BIN_INFRARED;}
+#endif
+#ifdef RT_INFRARED
+        /* donor bin is yourself in the IR - all self-absorption is re-emitted */
+        if(donor_bin==RT_FREQ_BIN_INFRARED) {E_abs_tot += de_abs/(MIN_REAL_NUMBER + dt_entr);}
+        if(kf==RT_FREQ_BIN_INFRARED) {ef = e0 + total_de_dt * dt_entr;} 
+#endif
+        if(donor_bin >= 0) {if(mode==0) {SphP[i].E_gamma[donor_bin] += de_abs;} else {SphP[i].E_gamma_Pred[donor_bin] += de_abs;}}
+        if((ef < 0)||(isnan(ef))) {ef=0;}
         if(mode==0) {SphP[i].E_gamma[kf] = ef;} else {SphP[i].E_gamma_Pred[kf] = ef;}
 
 #if defined(RT_EVOLVE_FLUX)
@@ -584,8 +626,8 @@ void rt_set_simple_inits(void)
         {
             int k;
 #ifdef RT_INFRARED
-            SphP[i].Dust_Temperature = 0;
-            SphP[i].Radiation_Temperature = 0;
+            SphP[i].Dust_Temperature = DMAX(10.,2.73/All.cf_atime); // in K, floor = CMB temperature or 10K
+            SphP[i].Radiation_Temperature = SphP[i].Dust_Temperature;
             SphP[i].Dt_E_gamma_T_weighted_IR = 0;
 #endif
 #ifdef RT_RAD_PRESSURE_OUTPUT

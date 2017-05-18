@@ -54,7 +54,8 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("\nwriting snapshot file #%d... \n", num);
         
-        if(!(CommBuffer = mymalloc("CommBuffer", bytes = All.BufferSize * 1024 * 1024)))
+        size_t MyBufferSize = All.BufferSize;
+        if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
             endrun(2);
@@ -372,10 +373,10 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #elif (GRACKLE_CHEMISTRY > 0)
                     *fp++ = SphP[pindex].grHI;
 #else
-                    double u, ne, nh0 = 0, mu = 1, temp, nHeII;
+                    double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp;
                     ne = SphP[pindex].Ne;
                     u = DMAX(All.MinEgySpec, SphP[pindex].InternalEnergy); // needs to be in code units
-		            temp  = ThermalProperties(u, SphP[pindex].Density * All.cf_a3inv, &ne, &nh0, &nHeII, &mu, pindex);
+                    temp = ThermalProperties(u, SphP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
 #ifdef GALSF_FB_HII_HEATING
                     if(SphP[pindex].DelayTimeHII>0) nh0=0;
 #endif
@@ -774,7 +775,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     double ne = SphP[pindex].Ne;
                     /* get cooling time */
                     u = SphP[pindex].InternalEnergyPred;
-                    tcool = GetCoolingTime(u, SphP[pindex].Density * All.cf_a3inv, &ne, i);
+                    tcool = GetCoolingTime(u, SphP[pindex].Density * All.cf_a3inv, ne, pindex);
                     /* convert cooling time with current thermal energy to du/dt */
                     if(tcool != 0)
                         *fp++ = u / tcool;
@@ -1968,12 +1969,12 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             return nngb;
             break;
 
+
         case IO_IMF:
-            for(i = 0; i < 6; i++)
-                if(i != 4)
-                    typelist[i] = 0;
-            return nstars;
+            for(i = 1; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
+            return nstars + header.npart[5];
             break;
+            
             
         case IO_TRUENGB:
             nngb = ngas;
@@ -3599,7 +3600,8 @@ void write_file(char *fname, int writeTask, int lastTask)
         {
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
             
-            blockmaxlen = (size_t) ((All.BufferSize * 1024 * 1024) / bytes_per_blockelement);
+            size_t MyBufferSize = All.BufferSize;
+            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
             
             npart = get_particles_in_block(blocknr, &typelist[0]);
             

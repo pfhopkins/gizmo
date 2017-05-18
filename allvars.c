@@ -209,22 +209,22 @@ char ParameterFile[100];	/*!< file name of parameterfile used for starting the s
 
 FILE
 #ifndef IO_REDUCED_MODE
-*FdTimebin,    /*!< file handle for timebin.txt log-file. */
-*FdInfo,       /*!< file handle for info.txt log-file. */
-*FdEnergy,     /*!< file handle for energy.txt log-file. */
-*FdTimings,    /*!< file handle for timings.txt log-file. */
-*FdBalance,    /*!< file handle for balance.txt log-file. */
+*FdTimebin,     /*!< file handle for timebin.txt log-file. */
+*FdInfo,        /*!< file handle for info.txt log-file. */
+*FdEnergy,      /*!< file handle for energy.txt log-file. */
+*FdTimings,     /*!< file handle for timings.txt log-file. */
+*FdBalance,     /*!< file handle for balance.txt log-file. */
 #ifdef RT_CHEM_PHOTOION
-FILE *FdRad;			/*!< file handle for radtransfer.txt log-file. */
+*FdRad,         /*!< file handle for radtransfer.txt log-file. */
 #endif
 #ifdef TURB_DRIVING
-FILE *FdTurb;    /*!< file handle for turb.txt log-file */
+*FdTurb,        /*!< file handle for turb.txt log-file */
 #endif
 #ifdef DARKENERGY
-FILE *FdDE;			/*!< file handle for darkenergy.txt log-file. */
+*FdDE,			/*!< file handle for darkenergy.txt log-file. */
 #endif
 #endif
-*FdCPU;        /*!< file handle for cpu.txt log-file. */
+*FdCPU;         /*!< file handle for cpu.txt log-file. */
 
 #ifdef SCFPOTENTIAL
 FILE *FdSCF;

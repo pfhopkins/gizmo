@@ -766,6 +766,14 @@ void init(void)
         SphP[i].CosmicRayEnergyPred = SphP[i].CosmicRayEnergy;
         SphP[i].CosmicRayDiffusionCoeff = 0;
         SphP[i].DtCosmicRayEnergy = 0;
+#ifdef COSMIC_RAYS_M1
+        for(j=0;j<3;j++) 
+        {
+            SphP[i].CosmicRayFlux[j]=0;
+            SphP[i].CosmicRayFluxPred[j]=0;
+            SphP[i].DtCosmicRayFlux[j]=0;    
+        }
+#endif
 #endif
         //SphP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
         SphP[i].DtInternalEnergy = 0;
@@ -840,6 +848,12 @@ void init(void)
 #endif
         /* All.MaxMassForParticleSplit  = 5.01 * mpi_mass_max; */
         All.MaxMassForParticleSplit  = 3.01 * mpi_mass_max;
+#ifdef MERGESPLIT_HARDCODE_MAX_MASS
+        All.MaxMassForParticleSplit = MERGESPLIT_HARDCODE_MAX_MASS;
+#endif
+#ifdef MERGESPLIT_HARDCODE_MIN_MASS
+        All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
+#endif
     }
     
     

@@ -111,8 +111,7 @@ void disp_density(void)
     size_t MyBufferSize = All.BufferSize;
     All.BunchSize = (int) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                            sizeof(struct disp_densdata_in) + sizeof(struct disp_densdata_out) +
-                                                           sizemax(sizeof(struct disp_densdata_in),
-                                                                   sizeof(struct disp_densdata_out))));
+                                                           sizemax(sizeof(struct disp_densdata_in),sizeof(struct disp_densdata_out))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     

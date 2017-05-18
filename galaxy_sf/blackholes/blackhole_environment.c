@@ -52,13 +52,12 @@ void blackhole_environment_loop(void)
     int ndone_flag, ndone;
     MPI_Status status;
     
+    size_t MyBufferSize = All.BufferSize;
     Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
-    All.BunchSize = (int) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    All.BunchSize = (int) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct blackholedata_in) +
                                                              sizeof(struct blackhole_temp_particle_data) +
-                                                             sizemax(sizeof(struct blackholedata_in),
-                                                                     sizeof(struct blackhole_temp_particle_data))));
-    
+                                                             sizemax(sizeof(struct blackholedata_in),sizeof(struct blackhole_temp_particle_data))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     
@@ -420,13 +419,12 @@ void blackhole_environment_second_loop(void)
     int mod_index;
     MPI_Status status;
 
+    size_t MyBufferSize = All.BufferSize;
     Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
-    All.BunchSize = (int) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    All.BunchSize = (int) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct blackholedata_in) +
                                                              sizeof(struct blackhole_temp_particle_data) +
-                                                             sizemax(sizeof(struct blackholedata_in),
-                                                                     sizeof(struct blackhole_temp_particle_data))));
-
+                                                             sizemax(sizeof(struct blackholedata_in),sizeof(struct blackhole_temp_particle_data))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
 

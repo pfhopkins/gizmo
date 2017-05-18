@@ -124,14 +124,16 @@ double bh_lum_bol(double mdot, double mass, long id)
 double bh_vesc(int j, double mass, double r_code)
 {
     double cs_to_add_km_s = 10.0; /* we can optionally add a 'fudge factor' to v_esc to set a minimum value; useful for galaxy applications */
-#if defined(SINGLE_STAR_FORMATION)
+#if defined(SINGLE_STAR_FORMATION) || defined(BH_SEED_GROWTH_TESTS)
     cs_to_add_km_s = 0.0;
 #endif
     cs_to_add_km_s *= 1.e5/All.UnitVelocity_in_cm_per_s;
     double m_eff = mass+P[j].Mass;
     if(P[j].Type==0)
     {
-//        m_eff += 3. * 4.*M_PI/3. * r_code*r_code*r_code * SphP[j].Density;
+#ifdef BH_SEED_GROWTH_TESTS
+        m_eff += 3. * 4.*M_PI/3. * r_code*r_code*r_code * SphP[j].Density;
+#endif
     }
     return sqrt(2.0*All.G*(m_eff)/(r_code*All.cf_atime) + cs_to_add_km_s*cs_to_add_km_s);
 }
@@ -155,6 +157,9 @@ int bh_check_boundedness(int j, double vrel, double vesc, double dr_code)
         double r_j = All.ForceSoftening[P[j].Type];
         if(P[j].Type==0) {r_j = DMAX(r_j , PPP[j].Hsml);}
         apocenter_max = DMAX(10.0*All.ForceSoftening[5],DMIN(50.0*All.ForceSoftening[5],r_j));
+#ifdef BH_SEED_GROWTH_TESTS
+        apocenter_max += MAX_REAL_NUMBER;
+#endif
 #endif
         if(apocenter < apocenter_max) {bound = 1;}
     }
