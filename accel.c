@@ -148,7 +148,9 @@ void compute_stellar_feedback(void)
 
     /* first, check the mechanical sources of feedback */
 #if defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_RPROCESS_ENRICHMENT)
+#ifndef USE_ORIGINAL_FIRE2_SNE_COUPLING_SCHEME
     mechanical_fb_calc(-2); /* compute weights for coupling [first weight-calculation pass] */
+#endif
     mechanical_fb_calc(-1); /* compute weights for coupling [second weight-calculation pass] */
     CPU_Step[CPU_SNIIHEATING] += measure_time();
 #ifdef GALSF_FB_SNE_HEATING

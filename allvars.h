@@ -133,12 +133,16 @@
 #define GALSF_FB_LOCAL_UV_HEATING
 #define GALSF_FB_RPWIND_LOCAL
 #define GALSF_FB_RPROCESS_ENRICHMENT 4
-#define GALSF_SFR_IMF_VARIATION
+//#define GALSF_SFR_IMF_VARIATION
 #define PROTECT_FROZEN_FIRE
 #else
 #if (defined(COOLING) && defined(GALSF) && defined(GALSF_FB_SNE_HEATING)) && !defined(FIRE_UNPROTECT_FROZEN)
 #define PROTECT_FROZEN_FIRE
 #endif
+#endif
+
+#ifdef PROTECT_FROZEN_FIRE
+#define USE_ORIGINAL_FIRE2_SNE_COUPLING_SCHEME // set to use the 'base' FIRE-2 SNe coupling. if commented out, will user newer version that more accurately manages the injected energy with neighbors moving to inject a specific target
 #endif
 
 

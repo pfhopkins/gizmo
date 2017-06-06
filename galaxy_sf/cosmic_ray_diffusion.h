@@ -163,8 +163,9 @@
             // enforce a flux limiter for stability (to prevent overshoot) //
             cmag *= dt_hydrostep; // all in physical units //
             double sVi = scalar_i*V_i_phys, sVj = scalar_j*V_j_phys; // physical units
-            thold_hll = 0.25 * DMIN(fabs(sVi-sVj), DMAX(fabs(sVi), fabs(sVj)));
-            if(sign_c0 < 0) {thold_hll *= 1.e-2;} // if opposing signs, restrict this term //
+            thold_hll = 0.1 * 0.25 * DMIN(fabs(sVi-sVj), DMAX(fabs(sVi), fabs(sVj)));
+            double thold_hll_lohi = 0.01 * 0.25 * DMIN(fabs(sVi-sVj), DMIN(fabs(sVi), fabs(sVj)));
+            if(sign_c0 < 0) {thold_hll = thold_hll_lohi;} // if opposing signs, restrict this term //
             if(fabs(cmag)>thold_hll) {cmag *= thold_hll/fabs(cmag);}
             cmag /= dt_hydrostep;
             Fluxes.CosmicRayPressure = cmag; // physical, as it needs to be

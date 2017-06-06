@@ -186,7 +186,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
         for(k=0;k<3;k++) {flux[k]=0; for(k=0;k<3;k++) {CR_veff[k]=0;}} // zero if invalid
     } else {
         CR_vmag = sqrt(CR_vmag);
-        if(CR_vmag > COSMIC_RAYS_M1) {for(k=0;k<3;k++) {flux[k]*=COSMIC_RAYS_M1/CR_vmag; CR_veff[k]*=COSMIC_RAYS_M1/CR_vmag;}} // limit flux to free-streaming speed [as with RT]
+        if(CR_vmag > cr_speed) {for(k=0;k<3;k++) {flux[k]*=cr_speed/CR_vmag; CR_veff[k]*=cr_speed/CR_vmag;}} // limit flux to free-streaming speed [as with RT]
     }
     if(mode==0) {for(k=0;k<3;k++) {SphP[i].CosmicRayFlux[k]=flux[k];}} else {for(k=0;k<3;k++) {SphP[i].CosmicRayFluxPred[k]=flux[k];}}
 #endif
@@ -199,6 +199,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
     if(dCR < -eCR) {dCR=-eCR;} // don't allow it to go negative
     eCR += dCR; if((eCR<0)||(isnan(eCR))) {eCR=0;}
+    if(mode==0) {SphP[i].CosmicRayEnergy=eCR;} else {SphP[i].CosmicRayEnergyPred=eCR;} // updated energy
     double eCR_0 = eCR; // save this value for below
     
     /* now need to account for the adiabatic heating/cooling of the cosmic ray fluid, here: its an ultra-relativistic fluid with gamma=4/3 */
@@ -214,8 +215,8 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     double Pscale=CR_P/Pmag, Pscale_min=Get_Particle_Size(i), Pgrad_hat[3]={0}, fluxterm=0; // values for slope-limiter
     for(k=0;k<3;k++) {Pgrad_hat[k] = GAMMA_COSMICRAY_MINUS1 * SphP[i].Gradients.CosmicRayPressure[k] / CR_P;} // pressure gradient / pressure
     if(Pscale_min > Pscale) {for(k=0;k<3;k++) {Pgrad_hat[k] *= Pscale/Pscale_min;}} // slope-limited gradient
-    for(k=0;k<3;k++) {fluxterm += dt_entr * CR_veff[k] * Pgrad_hat[k];} // calculate the adiabatic term
-    double fluxterm_isotropic = -DMIN(COSMIC_RAYS_M1,CR_vmag) / DMAX(Pscale,Pscale_min) * dt_entr; // dissipative flux if the streaming were exactly along the CR pressure gradient [isotropic diffusion limit]
+    for(k=0;k<3;k++) {fluxterm += dt_entr * CR_veff[k] * (Pgrad_hat[k]/All.cf_atime);} // calculate the adiabatic term [physical units]
+    double fluxterm_isotropic = -DMIN(cr_speed,CR_vmag) / (DMAX(Pscale,Pscale_min)*All.cf_atime) * dt_entr; // dissipative flux if the streaming were exactly along the CR pressure gradient [isotropic diffusion limit]
     if(fluxterm > 0) {fluxterm = -DMIN(fabs(fluxterm), fabs(fluxterm_isotropic));} // limit anisotropic compression term since this should come only from integration error
     if(isnan(fluxterm)||(eCR<=0)||(isnan(eCR))) {fluxterm=0;} // check against nans
     d_div += fluxterm;
