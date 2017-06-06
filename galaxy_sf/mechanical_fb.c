@@ -722,10 +722,10 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #if defined(COSMIC_RAYS) && defined(GALSF_FB_SNE_HEATING)
     // account for energy going into CRs, so we don't 'double count' //
     double CR_energy_to_inject = 0;
-    if((v_ejecta_eff > 2.0e8 / All.UnitVelocity_in_cm_per_s) && (feedback_type == 0))
+    if((local.SNe_v_ejecta > 2.0e8 / All.UnitVelocity_in_cm_per_s) && (feedback_type == 0))
     {
-        v_ejecta_eff *= sqrt(1-All.CosmicRay_SNeFraction);
-        CR_energy_to_inject = (All.CosmicRay_SNeFraction/(1.-All.CosmicRay_SNeFraction)) * 0.5 * local.Msne * v_ejecta_eff * v_ejecta_eff;
+        local.SNe_v_ejecta *= sqrt(1-All.CosmicRay_SNeFraction);
+        CR_energy_to_inject = (All.CosmicRay_SNeFraction/(1.-All.CosmicRay_SNeFraction)) * 0.5 * local.Msne * local.SNe_v_ejecta * local.SNe_v_ejecta;
     }
 #endif
     
