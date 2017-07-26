@@ -1940,10 +1940,10 @@ void read_parameter_file(char *fname)
             printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");
         endrun(1);
     }
-    if((All.ErrTolTheta<=0.5)||(All.ErrTolTheta>=0.9))
+    if((All.ErrTolTheta<=0.1)||(All.ErrTolTheta>=0.9))
     {
         if(ThisTask==0)
-            printf("ErrTolTheta must be >0.5 and <0.9 to ensure stability \n");
+            printf("ErrTolTheta must be >0.1 and <0.9 to ensure stability \n");
         endrun(1);
     }
     if((All.CourantFac<=0)||(All.CourantFac>0.5))

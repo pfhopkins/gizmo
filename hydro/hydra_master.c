@@ -210,7 +210,7 @@ struct hydrodata_in
 #if defined(COSMIC_RAYS) && !defined(COSMIC_RAYS_M1)
         MyDouble CosmicRayPressure[3];
 #endif
-#ifdef TURB_DIFF_METALS
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
         MyDouble Metallicity[NUM_METAL_SPECIES][3];
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -415,7 +415,7 @@ static inline void particle2in_hydra(struct hydrodata_in *in, int i)
 #if defined(COSMIC_RAYS) && !defined(COSMIC_RAYS_M1)
         in->Gradients.CosmicRayPressure[k] = SphP[i].Gradients.CosmicRayPressure[k];
 #endif
-#ifdef TURB_DIFF_METALS
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
         for(j=0;j<NUM_METAL_SPECIES;j++) {in->Gradients.Metallicity[j][k] = SphP[i].Gradients.Metallicity[j][k];}
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -726,9 +726,10 @@ void hydro_final_operations_and_cleanup(void)
                 for(k=0;k<3;k++)
                 {
 #if defined(RT_EVOLVE_FLUX)
-                    radacc[k] += slabfac * SphP[i].Kappa_RT[k2] * SphP[i].Flux_Pred[k2][k] / (C / All.UnitVelocity_in_cm_per_s); // no speed of light reduction multiplier here //
+                    radacc[k] += slabfac * SphP[i].Kappa_RT[k2] * (SphP[i].Flux_Pred[k2][k] * SphP[i].Density/P[i].Mass) / (RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s);
 #elif defined(RT_EVOLVE_EDDINGTON_TENSOR)
-                    radacc[k] += -slabfac * SphP[i].Lambda_FluxLim[k2] * SphP[i].Gradients.E_gamma_ET[k2][k] / SphP[i].Density;
+                    /* // -- moved for OTVET+FLD to drift-kick operation to deal with limiters more accurately -- // */
+                    //radacc[k] += -slabfac * SphP[i].Lambda_FluxLim[k2] * SphP[i].Gradients.E_gamma_ET[k2][k] / SphP[i].Density; // no speed of light reduction multiplier here //
 #endif
                 }
             }

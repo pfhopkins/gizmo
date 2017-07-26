@@ -90,7 +90,7 @@ BUILDINFO = "Build on $(HOSTNAME) by $(USER) from $(HG_BRANCH):$(HG_COMMIT) at $
 
 ifeq (FIRE_PHYSICS_DEFAULTS,$(findstring FIRE_PHYSICS_DEFAULTS,$(CONFIGVARS)))  # using 'fire default' instead of all the above
     CONFIGVARS += COOLING COOL_LOW_TEMPERATURES COOL_METAL_LINES_BY_SPECIES
-    CONFIGVARS += GALSF METALS TURB_DIFF_METALS GALSF_SFR_MOLECULAR_CRITERION GALSF_SFR_VIRIAL_SF_CRITERION=0
+    CONFIGVARS += GALSF METALS TURB_DIFF_METALS TURB_DIFF_METALS_LOWORDER GALSF_SFR_MOLECULAR_CRITERION GALSF_SFR_VIRIAL_SF_CRITERION=0
     CONFIGVARS += GALSF_FB_GASRETURN GALSF_FB_HII_HEATING GALSF_FB_SNE_HEATING=1 GALSF_FB_RT_PHOTONMOMENTUM
     CONFIGVARS += GALSF_FB_LOCAL_UV_HEATING GALSF_FB_RPWIND_LOCAL GALSF_FB_RPROCESS_ENRICHMENT=4
 #    CONFIGVARS += GALSF_SFR_IMF_VARIATION
@@ -184,7 +184,8 @@ OPT     += -DUSE_MPI_IN_PLACE
 ##
 endif
 
-ifeq ($(SYSTYPE),"Stampede-KNL")
+
+ifeq ($(SYSTYPE),"Stampede2")
 CC       =  mpicc
 CXX      =  mpic++
 FC       =  mpif90 -nofor_main
@@ -207,7 +208,18 @@ HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB =
 OPT     += -DUSE_MPI_IN_PLACE
-## modules to load:  intel impi gsl hdf5 fftw2 
+##
+## module load TACC intel impi hdf5 gsl fftw2
+## note the KNL system has a large number of slow cores, so some changes to 'usual' compilation parameters are advised:
+##  - recommend running with ~16 mpi tasks/node. higher [32 or 64] usually involves a performance hit unless the problem is more scale-able;
+##     use the remaining nodes in OPENMP. Do not use >64 MPI tasks/node [need ~4 cores free for management] and do not use >2 threads/core
+##     [should never have >128 threads/node] -- the claimed 4 hardware threads/core includes non-FP threads which will severely slow performance.
+##     so 'default' would be ~16 tasks/node, OMP_NUM_THREADS=8.
+##  - because of the large core/thread count, MULTIPLEDOMAINS should be set low, MULTIPLEDOMAINS=1 ideally [already problem is heavily-divided].
+##     - likewise be careful with domain decomposition, TreeDomainUpdateFrequency param [so don't spend very long running domain decompositions]
+##  - memory is large per node: for 16 tasks/node, large MaxMemSize=5450 is reasonable, with BufferSize=450, and large PartAllocFactor=40 can be used
+##  - run job with "tacc_affinity" on.
+##
 endif
 
 
@@ -347,9 +359,9 @@ endif
 
 #------------------------------------------------------------------------------
 ifeq ($(SYSTYPE), "Edison")
-CC	 =  mpicc
-CXX	 =  mpipc
-FC	 =  $(CC)
+CC       =  cc #instead ofmpicc
+CXX      =  CC #instead of mpipc
+FC       =  ftn #instead of $(CC)
 OPTIMIZE =  -O3 -funroll-loops -ffast-math -finline-functions -funswitch-loops
 OPTIMIZE += -g -Wall -fpredictive-commoning -fgcse-after-reload -fvect-cost-model
 ifeq (OPENMP, $(findstring OPENMP,$(CONFIGVARS)))
@@ -533,6 +545,41 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"BlueWaters")
+CC       =  cc
+CXX      =  CC
+FC       =  $(CC) #ftn
+#OPTIMIZE = -O3 -ipo -funroll-loops -no-prec-div -fp-model fast=2 -static
+OPTIMIZE = -fast -no-ipo
+OPTIMIZE += -g
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -parallel -qopenmp # (intel) openmp required compiler flags
+FC       = $(CC)
+endif
+GMP_INCL = #
+GMP_LIBS = #
+MKL_INCL = #
+MKL_LIBS = #
+GSL_INCL = -I$(GSL_DIR)/include
+GSL_LIBS = -L$(GSL_DIR)/lib -lgsl -lgslcblas -lm
+FFTW_INCL= -I$(FFTW_DIR)/include
+FFTW_LIBS= -L$(FFTW_DIR)/lib
+HDF5INCL = -I$(HDF5_DIR)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_DIR)/lib -lhdf5 -lz
+MPICHLIB =
+OPT     += -DUSE_MPI_IN_PLACE
+endif
+## in your .bashrc file, include
+## module load cray-hdf5-parallel fftw/2.1.5.9 gsl
+## compiler comparison: cray ok, intel good, gnu very slow (underflows for some reason are very bad
+##   on the AMD chips), pgi good. not surprisingly intel/pgi do best.
+## module swap PrgEnv-pgi PrgEnv-intel
+## module load cray-hdf5-parallel fftw/2.1.5.9 gsl
+##
+
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Mira")
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 CC       = mpixlc_r # xl compilers appear to give significant speedup vs gcc
@@ -591,6 +638,7 @@ endif
 
 
 
+
 #----------------------------------------------------------------------------------------------
 ifeq (Pleiades,$(findstring Pleiades,$(SYSTYPE)))
 CC       =  icc -lmpi
@@ -606,26 +654,27 @@ OPTIMIZE += -Wall # compiler warnings
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -parallel -qopenmp
 endif
+MATHLIBS = /nasa/pkgsrc/sles12/2016Q4/views/math-libs
 GMP_INCL =
 GMP_LIBS =
-GSL_INCL =
-GSL_LIBS =
+GSL_INCL = -I$(MATHLIBS)/include
+GSL_LIBS = -L$(MATHLIBS)/lib
 FFTW_INCL= -I$(FFTW2_HOME)/include
 FFTW_LIBS= -L$(FFTW2_HOME)/lib
-HDF5INCL = -I$(HDF5)/include -DH5_USE_16_API
-HDF5LIB  = -L$(HDF5)/lib -lhdf5 -lz -L/nasa/szip/2.1/lib -lsz
+HDF5INCL = -DH5_USE_16_API
+HDF5LIB  = -lhdf5 -lz -L/nasa/szip/2.1/lib -lsz
 MPICHLIB =
 OPT     += -DUSE_MPI_IN_PLACE
 endif
 ##
 ## Notes:
-##   1. modules to load:
-##          module load comp-intel mpi-sgi/mpt hdf5/1.8.3/intel/mpt gsl python/2.7.9 szip
+##   1. modules to load (math-libs is added now, this is needed to include GSL):
+##          module load comp-intel mpi-sgi/mpt hdf5/1.8.18_mpt szip math-libs
 ##   2. make sure you set the correct core-type: runs submitted to the wrong cores will not run
 ##   3. FFTW2: the pre-existing installation on Pleiades is incomplete and problematic.
 ##      you will need to install your own in your home directory. when building the library, use
 ##          ./configure --prefix=$HOME/fftw --enable-mpi --enable-type-prefix --enable-float
-##      where "$HOME/fftw" can be renamed but is the install director (should be your home directory);
+##      where "$HOME/fftw" can be renamed but is the install directory (should be your home directory);
 ##      then you need to define the variable (here or in your bashrc file)
 ##          FFTW2_HOME=$HOME/fftw
 ##      (matching what you used for the installation) so that the code can find fftw2

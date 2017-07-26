@@ -124,6 +124,7 @@
 #define GALSF
 #define METALS
 #define TURB_DIFF_METALS
+#define TURB_DIFF_METALS_LOWORDER
 #define GALSF_SFR_MOLECULAR_CRITERION
 #define GALSF_SFR_VIRIAL_SF_CRITERION 0
 #define GALSF_FB_GASRETURN
@@ -2284,7 +2285,7 @@ extern struct sph_particle_data
 #ifdef DOGRAD_INTERNAL_ENERGY
         MyDouble InternalEnergy[3];
 #endif
-#ifdef TURB_DIFF_METALS
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
         MyDouble Metallicity[NUM_METAL_SPECIES][3];
 #endif
 #ifdef COSMIC_RAYS

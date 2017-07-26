@@ -921,7 +921,6 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 
                 /* now we have the proper energy to couple */
                 E_coupled += e_shock;
-                out.M_coupled += dM_ejecta_in;
                 
                 /* inject actual mass from mass return */
                 if(P[j].Hsml<=0) {if(SphP[j].Density>0){SphP[j].Density*=(1+dM_ejecta_in/P[j].Mass);} else {SphP[j].Density=dM_ejecta_in*kernel.hinv3;}} else {SphP[j].Density+=kernel_zero*dM_ejecta_in*hinv3_j;}

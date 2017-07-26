@@ -12,8 +12,9 @@
 #############
 
 
-SYSTYPE="Stampede"
-#SYSTYPE="Stampede-KNL"
+SYSTYPE="BlueWaters"
+#SYSTYPE="Stampede"
+#SYSTYPE="Stampede2"
 #SYSTYPE="Zwicky"
 #SYSTYPE="Wheeler"
 #SYSTYPE="MacBookPro"

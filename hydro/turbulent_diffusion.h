@@ -41,8 +41,12 @@
             d_scalar = local.Metallicity[k_species]-P[j].Metallicity[k_species]; // physical
             for(k=0;k<3;k++)
             {
-                double grad_ij = wt_i*local.Gradients.Metallicity[k_species][k] + wt_j*SphP[j].Gradients.Metallicity[k_species][k]; // 1/code length
                 double grad_direct = d_scalar * kernel.dp[k] * rinv*rinv; // 1/code length
+#ifdef TURB_DIFF_METALS_LOWORDER
+                double grad_ij = grad_direct;
+#else
+                double grad_ij = wt_i*local.Gradients.Metallicity[k_species][k] + wt_j*SphP[j].Gradients.Metallicity[k_species][k]; // 1/code length
+#endif
                 grad_dot_x_ij += grad_ij * kernel.dp[k]; // physical
                 grad_ij = MINMOD(grad_ij , grad_direct);
                 cmag += Face_Area_Vec[k] * grad_ij; // 1/code length

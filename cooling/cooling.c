@@ -588,8 +588,8 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         if((necgs > 1.e-25)&&(target >= 0))
         {
             int k;
-            c_light_ne = C / (necgs * All.UnitLength_in_cm / All.HubbleParam); // want physical cgs units for quantities below
-            double gJH0ne_0=gJH0ne, gJHe0ne_0=gJHe0ne, gJHepne_0=gJHepne; // need a baseline, so we don't over-shoot below
+            c_light_ne = C / ((MIN_REAL_NUMBER + necgs) * All.UnitLength_in_cm / All.HubbleParam); // want physical cgs units for quantities below
+            double gJH0ne_0=gJH0 * local_gammamultiplier / necgs, gJHe0ne_0=gJHe0 * local_gammamultiplier / necgs, gJHepne_0=gJHep * local_gammamultiplier / necgs; // need a baseline, so we don't over-shoot below
 #if defined(RT_DISABLE_UV_BACKGROUND)
             gJH0ne_0=gJHe0ne_0=gJHepne_0=MAX_REAL_NUMBER;
 #endif
@@ -598,7 +598,10 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
                 if((k==RT_FREQ_BIN_H0)||(k==RT_FREQ_BIN_He0)||(k==RT_FREQ_BIN_He1)||(k==RT_FREQ_BIN_He2))
                 {
                     double c_ne_time_n_photons_vol = c_light_ne * rt_return_photon_number_density(target,k); // gives photon flux
-                    double cross_section_ion, dummy, thold=1.0e6;
+                    double cross_section_ion, dummy, thold=1.0e20;
+#ifdef GALSF
+                    if(All.ComovingIntegrationOn) {thold=1.0e10;}
+#endif
                     if(G_HI[k] > 0)
                     {
                         cross_section_ion = nH0 * rt_sigma_HI[k];

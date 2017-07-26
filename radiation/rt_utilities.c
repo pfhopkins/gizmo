@@ -556,6 +556,28 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
         if((ef < 0)||(isnan(ef))) {ef=0;}
         double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
         if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
+        
+#if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_EVOLVE_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX) 
+        // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
+        {
+        double radacc[3]={0}, rmag=0, L_particle = Get_Particle_Size(i)*All.cf_atime; // particle effective size/slab thickness
+        double Sigma_particle = P[i].Mass / (M_PI*L_particle*L_particle); // effective surface density through particle
+        double abs_per_kappa_dt = RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s) * (SphP[i].Density*All.cf_a3inv) * dt_entr; // fractional absorption over timestep
+        double slabfac_rp = slab_averaging_function(SphP[i].Kappa_RT[kf]*Sigma_particle) * slab_averaging_function(SphP[i].Kappa_RT[kf]*abs_per_kappa_dt); // reduction factor for absorption over dt
+        int kx; for(kx=0;kx<3;kx++)
+        {
+            radacc[kx] = -dt_entr * slabfac_rp * SphP[i].Lambda_FluxLim[kf] * SphP[i].Gradients.E_gamma_ET[kf][kx] / SphP[i].Density; // naive radiation-pressure calc for FLD methods
+            rmag += radacc[kx]*radacc[kx]; // compute magnitude
+        }
+        if(rmag > 0)
+        {
+            rmag = sqrt(rmag); for(kx=0;kx<3;kx++) {radacc[kx] /= rmag;} // normalize
+            double rmag_max = de_abs / (P[i].Mass * RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s); // limit magnitude to absorbed photon momentum
+            if(rmag > rmag_max) {rmag=rmag_max;}
+            for(kx=0;kx<3;kx++) {if(mode==0) {P[i].Vel[kx]+=radacc[kx]*rmag;} else {SphP[i].VelPred[kx]+=radacc[kx]*rmag;}}
+        }}
+#endif
+        
         int donor_bin = -1; // frequency into which the photons will be deposited, if any //
 #if defined(RT_CHEM_PHOTOION) && defined(RT_INFRARED)
         /* assume absorbed ionizing photons are re-emitted via recombination into optical-NIR bins. valid if recombination time is fast. 

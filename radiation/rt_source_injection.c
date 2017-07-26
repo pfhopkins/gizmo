@@ -33,6 +33,10 @@ extern pthread_mutex_t mutex_partnodedrift;
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
+#if defined(RT_RAD_PRESSURE_FORCES)
+#define RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION // adds correction for un-resolved extinction which cannot generate photon momentum with M1, FLD, OTVET, etc.
+#endif
+
 #if defined(GALSF) && !defined(RT_INJECT_PHOTONS_DISCRETELY)
 #define RT_INJECT_PHOTONS_DISCRETELY
 #endif
@@ -306,12 +310,25 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 //kernel_main(u, hinv3, hinv4, &wk, &dwk, -1); // traditional kernel
                 //wk *= P[j].Mass / local.KernelSum_Around_RT_Source;
                 double wk = (1 - r2*hinv*hinv) / local.KernelSum_Around_RT_Source;
+                double r = sqrt(r2);
+                double dv0 = -1. / (RT_SPEEDOFLIGHT_REDUCTION * (C / All.UnitVelocity_in_cm_per_s) * r);
+                double lmax_0 = DMAX(local.Hsml, r);
                 // now actually apply the kernel distribution
-                for(k=0;k<N_RT_FREQ_BINS;k++) 
+                for(k=0;k<N_RT_FREQ_BINS;k++)
                 {
                     double dE = wk * local.Luminosity[k];
 #if defined(RT_INJECT_PHOTONS_DISCRETELY)
                     SphP[j].E_gamma[k] += dE; SphP[j].E_gamma_Pred[k] += dE; // dump discreetly (noisier, but works smoothly with large timebin hierarchy)
+
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION)
+                    // add discrete photon momentum from un-resolved absorption //
+                    double x_abs = 2. * SphP[j].Kappa_RT[k] * (SphP[j].Density*All.cf_a3inv) * (DMAX(2.*Get_Particle_Size(j),lmax_0)*All.cf_atime); // effective optical depth through particle
+                    double slabfac_x = x_abs * slab_averaging_function(x_abs); // 1-exp(-x)
+                    if(isnan(slabfac_x)||(slabfac_x<=0)) {slabfac_x=0;}
+                    if(slabfac_x>1) {slabfac_x=1;}
+                    double dv = slabfac_x * dv0 * dE / P[j].Mass; // total absorbed momentum (needs multiplication by dp[kv] for directionality)
+                    int kv; for(kv=0;kv<3;kv++) {P[j].Vel[kv] += dv*dp[kv]; SphP[j].VelPred[kv] += dv*dp[kv];}
+#endif
 #else
                     SphP[j].Je[k] += dE; // treat continuously
 #endif

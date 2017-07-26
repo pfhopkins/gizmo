@@ -108,8 +108,10 @@ double bh_lum_bol(double mdot, double mass, long id)
         if(P[id].Type == 5)
         {
             double T4000_4 = pow(m_solar , 0.55); // protostellar temperature along Hayashi track
+#ifdef SINGLE_STAR_PROMOTION
             double l_kh = 0.2263 * P[id].ProtoStellar_Radius*P[id].ProtoStellar_Radius * T4000_4; // luminosity from KH contraction
             if(l_kh > lum_sol) {lum_sol = l_kh;} // if Hayashi-temp luminosity exceeds MS luminosity, use it. otherwise use main sequence luminosity, and assume the star is moving along the Henyey track
+#endif
         }
     }
     lum_sol *= SOLAR_LUM / (All.UnitEnergy_in_cgs / All.UnitTime_in_s);
