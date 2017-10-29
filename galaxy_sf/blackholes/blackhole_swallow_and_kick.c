@@ -375,11 +375,12 @@ int blackhole_swallow_and_kick_evaluate(int target, int mode, int *nexport, int 
                     /* this is a BH-BH merger */
                     if(P[j].Type == 5)
                     {
-#ifndef IO_REDUCED_MODE
+//#ifndef IO_REDUCED_MODE   DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MODE
 #ifdef BH_OUTPUT_MOREINFO
                         fprintf(FdBhMergerDetails,"%g  %u %g %2.7f %2.7f %2.7f  %u %g %2.7f %2.7f %2.7f\n",
                               All.Time,  id,bh_mass,pos[0],pos[1],pos[2],  P[j].ID,BPP(j).BH_Mass,P[j].Pos[0],P[j].Pos[1],P[j].Pos[2]);
 #else
+#ifndef IO_REDUCED_MODE
                         fprintf(FdBlackHolesDetails,
                                 "ThisTask=%d, time=%g: id=%u swallows %u (%g %g)\n",
                                 ThisTask, All.Time, id, P[j].ID, bh_mass, BPP(j).BH_Mass);
@@ -545,11 +546,11 @@ int blackhole_swallow_and_kick_evaluate(int target, int mode, int *nexport, int 
                         printf("BAL kick: P[j].ID %llu ID %llu Type(j) %d f_acc %g M(j) %g V(j).xyz %g/%g/%g P(j).xyz %g/%g/%g p(i).xyz %g/%g/%g v_out %g \n",
                                    (unsigned long long) P[j].ID, (unsigned long long) P[j].SwallowID,P[j].Type, All.BAL_f_accretion,P[j].Mass,
                                    P[j].Vel[0],P[j].Vel[1],P[j].Vel[2],P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],pos[0],pos[1],pos[2],v_kick);
+#endif  // DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MODE
 #ifdef BH_OUTPUT_MOREINFO
                         fprintf(FdBhWindDetails,"%g  %u %g  %2.7f %2.7f %2.7f  %2.7f %2.7f %2.7f  %g %g %g  %u  %2.7f %2.7f %2.7f\n",
                               All.Time, P[j].ID, P[j].Mass,  P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],  P[j].Vel[0],P[j].Vel[1],P[j].Vel[2],
                               dir[0]/norm,dir[1]/norm,dir[2]/norm, id, pos[0],pos[1],pos[2]);
-#endif
 #endif
 #endif   // #ifdef BH_BAL_KICK
 
@@ -602,7 +603,7 @@ int blackhole_swallow_and_kick_evaluate(int target, int mode, int *nexport, int 
 #if defined(BH_BAL_WINDS) && !defined(BH_BAL_KICK)
                                 mom_wt = bh_angleweight_localcoupling(j,BH_disk_hr,theta) / BH_angle_weighted_kernel_sum;
                                 
-                                fac = bh_angleweight_localcoupling(j,BH_disk_hr,theta) / BH_angle_weighted_kernel_sum;
+                                double fac = bh_angleweight_localcoupling(j,BH_disk_hr,theta) / BH_angle_weighted_kernel_sum;
                                 //if(fac > max_fac) fac = max_fac;
                                 mom_wt = fac;	//bh_angleweight_localcoupling(j,BH_disk_hr,theta) / BH_angle_weighted_kernel_sum;
                                 m_wind = mom_wt * All.BlackHoleFeedbackFactor * (1-All.BAL_f_accretion)/(All.BAL_f_accretion) * mdot*dt; /* mass to couple */

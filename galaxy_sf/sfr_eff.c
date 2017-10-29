@@ -305,7 +305,7 @@ double get_starformation_rate(int i)
     double k_cs = cs_eff / (Get_Particle_Size(i)*All.cf_atime);
 #ifdef SINGLE_STAR_FORMATION
     double press_grad_length = 0;
-    for(j=0;j<3;j++) {press_grad_length += SphP[i].Gradients.Pressure[k]*SphP[i].Gradients.Pressure[k];}
+    for(k=0;k<3;k++) {press_grad_length += SphP[i].Gradients.Pressure[k]*SphP[i].Gradients.Pressure[k];}
     press_grad_length = All.cf_atime * DMAX(Get_Particle_Size(i) , SphP[i].Pressure / (1.e-37 + sqrt(press_grad_length))); 
     k_cs = cs_eff / press_grad_length;
 #ifdef MAGNETIC
@@ -314,11 +314,7 @@ double get_starformation_rate(int i)
     k_cs = cs_b / (Get_Particle_Size(i)*All.cf_atime);
 #endif
 #endif
-//#if !defined(COSMIC_RAYS)
     dv2abs += 2.*k_cs*k_cs; // account for thermal pressure with standard Jeans criterion (k^2*cs^2 vs 4pi*G*rho) //
-//#endif
-    
-    //double alpha_vir = 0.2387 * dv2abs / (All.G * SphP[i].Density * All.cf_a3inv); // coefficient here was for old form, with only divv information
     double alpha_vir = dv2abs / (8. * M_PI * All.G * SphP[i].Density * All.cf_a3inv); // 1/4 or 1/8 ? //
 
     
@@ -333,7 +329,7 @@ double get_starformation_rate(int i)
         double MJ_solar = 2.*q*q*q/sqrt(q2);
         double MJ_crit = 1000.;
 #ifdef SINGLE_STAR_FORMATION
-        MJ_crit = 1.e4;
+        MJ_crit = DMIN(1.e4, DMAX(1.e-3 , 100.*P[i].Mass * All.UnitMass_in_g / (All.HubbleParam * SOLAR_MASS)));
 #endif
         if(MJ_solar > MJ_crit) {alpha_vir = 100.;}
     }

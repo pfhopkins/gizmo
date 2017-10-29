@@ -2396,6 +2396,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef EVALPOTENTIAL
 #if defined(PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
                 pot += FLT(mass * ewald_pot_corr(dx, dy, dz));
+#elif defined(PMGRID)
+                pot += FLT(facpot * shortrange_table_potential[tabindex]);
+#else
+                pot += FLT(facpot);
 #endif
 #endif
                 
@@ -2412,17 +2416,17 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  */
 #ifdef PMGRID
                 tidal_tensorps[0][0] += ((-fac_tidal + dx * dx * fac2) * shortrange_table[tabindex]) +
-                dx * dx * fac2 / 3.0 * shortrange_table_tidal[tabindex];
+                    dx * dx * fac2 / 3.0 * shortrange_table_tidal[tabindex];
                 tidal_tensorps[0][1] += ((dx * dy * fac2) * shortrange_table[tabindex]) +
-                dx * dy * fac2 / 3.0 * shortrange_table_tidal[tabindex];
+                    dx * dy * fac2 / 3.0 * shortrange_table_tidal[tabindex];
                 tidal_tensorps[0][2] += ((dx * dz * fac2) * shortrange_table[tabindex]) +
-                dx * dz * fac2 / 3.0 * shortrange_table_tidal[tabindex];
+                    dx * dz * fac2 / 3.0 * shortrange_table_tidal[tabindex];
                 tidal_tensorps[1][1] += ((-fac_tidal + dy * dy * fac2) * shortrange_table[tabindex]) +
-                dy * dy * fac2 / 3.0 * shortrange_table_tidal[tabindex];
+                    dy * dy * fac2 / 3.0 * shortrange_table_tidal[tabindex];
                 tidal_tensorps[1][2] += ((dy * dz * fac2) * shortrange_table[tabindex]) +
-                dy * dz * fac2 / 3.0 * shortrange_table_tidal[tabindex];
+                    dy * dz * fac2 / 3.0 * shortrange_table_tidal[tabindex];
                 tidal_tensorps[2][2] += ((-fac_tidal + dz * dz * fac2) * shortrange_table[tabindex]) +
-                dz * dz * fac2 / 3.0 * shortrange_table_tidal[tabindex];
+                    dz * dz * fac2 / 3.0 * shortrange_table_tidal[tabindex];
 #else
                 tidal_tensorps[0][0] += (-fac_tidal + dx * dx * fac2);
                 tidal_tensorps[0][1] += (dx * dy * fac2);
@@ -2435,9 +2439,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 tidal_tensorps[2][0] = tidal_tensorps[0][2];
                 tidal_tensorps[2][1] = tidal_tensorps[1][2];
 #endif // DISTORTIONTENSORPS //
-#ifdef EVALPOTENTIAL
-                pot += FLT(facpot * shortrange_table_potential[tabindex]);
-#endif
+
             } // closes TABINDEX<NTAB
             
             ninteractions++;

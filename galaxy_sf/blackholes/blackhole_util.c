@@ -113,12 +113,14 @@ void blackhole_end(void)
                     All.Time, All.TotBHs, total_mass_holes, total_mdot, mdot_in_msun_per_year,
                     total_mass_real, total_mdoteddington);
         }
-#ifdef IO_REDUCED_MODE
-        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
-#endif
-        {fflush(FdBlackHoles);}
+//#ifdef IO_REDUCED_MODE  DAA-IO: this is redundant
+//        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+//#endif
+//        {fflush(FdBlackHoles);} 
+        fflush(FdBlackHoles);
 
-#ifndef IO_REDUCED_MODE
+//#ifndef IO_REDUCED_MODE   DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MODE
+#if !defined(IO_REDUCED_MODE) || defined(BH_OUTPUT_MOREINFO)
         fflush(FdBlackHolesDetails);
 #ifdef BH_OUTPUT_MOREINFO
         fflush(FdBhMergerDetails);

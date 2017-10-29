@@ -543,7 +543,8 @@ void open_outputfiles(void)
   MPI_Barrier(MPI_COMM_WORLD);
 
 #ifdef BLACK_HOLES
-#ifndef IO_REDUCED_MODE
+//#ifndef IO_REDUCED_MODE  DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MODE
+#if !defined(IO_REDUCED_MODE) || defined(BH_OUTPUT_MOREINFO)
   /* Note: This is done by everyone */
   if(ThisTask == 0)
     {

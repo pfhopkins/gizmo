@@ -190,6 +190,7 @@
 #endif
 #ifdef SINGLE_STAR_FB_JETS
 #define BH_BAL_WINDS // use kinetic feedback module for protostellar jets
+#define BH_BAL_KICK // (for this, use the simple kicking module, it's not worth the expense of the other) 
 #endif
 #ifdef SINGLE_STAR_PROMOTION
 #define GALSF_FB_GASRETURN // stellar winds [scaled appropriately for particle masses]
@@ -1281,7 +1282,8 @@ extern FILE *FdTidaltensor;     /*!< file handle for tidaltensor.txt log-file. *
 
 #ifdef BLACK_HOLES
 extern FILE *FdBlackHoles;	/*!< file handle for blackholes.txt log-file. */
-#ifndef IO_REDUCED_MODE
+//#ifndef IO_REDUCED_MODE   DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MODE
+#if !defined(IO_REDUCED_MODE) || defined(BH_OUTPUT_MOREINFO)
 extern FILE *FdBlackHolesDetails;
 #ifdef BH_OUTPUT_MOREINFO
 extern FILE *FdBhMergerDetails;

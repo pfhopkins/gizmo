@@ -240,9 +240,10 @@ HYDRO_MESHLESS_FINITE_MASS      # Lagrangian (constant-mass) finite-volume Godun
 ##-----------------------------------------------------------------------------------------------------
 ##-----------------------------------------------------------------------------------------------------
 #------ PFH physical models for star formation and feedback: these are the FIRE simulation modules (Hopkins et al. 2014) ------ ##
-#--------- their use follows the FIRE authorship policy. Any new project using these physics must first be agreed to by all of the
+#--------- their use follows the FIRE authorship policy. They are NOT FREE TO USE, even if you are already using the development GIZMO code.
+#--------- Any new project using these physics must FIRST be PRE-APPROVED by all of the
 #--------- core development team of the FIRE simulations: P. Hopkins, E. Quataert, D. Keres, C.A. Faucher-Giguere.
-#--------- Papers using these modules must offer co-authorship to the members of the FIRE development team.
+#--------- Papers using these modules must offer co-authorship to all members of the FIRE development team.
 ##-----------------------------------------------------------------------------------------------------
 #FIRE_PHYSICS_DEFAULTS           # enable default set of FIRE physics packages (see details below)
 #---- star formation law ---- #

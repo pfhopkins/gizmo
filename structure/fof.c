@@ -177,20 +177,28 @@ void fof_fof(int num)
 #endif
 
   for(i = 0, ndm = 0, mass = 0; i < NumPart; i++)
-    {
-#ifdef BH_SEED_STAR_MASS_FRACTION
-      if(num == -2)
-	{
-	  if(P[i].Type == 1)
-	    ndm++;
-	}
-      else
-#endif
-      if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
-	ndm++;
-      if(((1 << P[i].Type) & (DENSITY_SPLIT_BY_TYPE)))
-	mass += P[i].Mass;
-    }
+//#ifdef KD_CHOOSE_LINKING_LENGTH                       // DAA: fixing error introduced when KD_CHOOSE_LINKING_LENGTH was deleted
+//    {
+//#ifdef BH_SEED_STAR_MASS_FRACTION
+//      if(num == -2)
+//	{
+//	  if(P[i].Type == 1)
+//	    ndm++;
+//	}
+//     else
+//#endif
+//      if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
+//	ndm++;
+//      if(((1 << P[i].Type) & (DENSITY_SPLIT_BY_TYPE)))
+//	mass += P[i].Mass;
+//    }
+//#else
+    if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
+      {
+        ndm++;
+        mass += P[i].Mass;
+      }
+//#endif
   sumup_large_ints(1, &ndm, &ndmtot);
   MPI_Allreduce(&mass, &masstot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
@@ -1865,7 +1873,7 @@ void fof_find_nearest_dmparticle(void)
 #ifndef IO_REDUCED_MODE
 	  if(iter > 0 && ThisTask == 0)
 #else
-      if(iter > 10 && ThisTask == 0)
+          if(iter > 10 && ThisTask == 0)
 #endif
 	    {
 	      printf("fof-nearest iteration %d: need to repeat for %d particles.\n", iter, ntot);

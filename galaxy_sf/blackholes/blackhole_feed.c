@@ -376,26 +376,26 @@ int blackhole_feed_evaluate(int target, int mode, int *nexport, int *nSend_local
                         {
                             if(id != P[j].ID) /* check its not the same bh  (DAA: this is duplicated here...) */
                             {
-                                if(vrel > BH_CSND_FRAC_BH_MERGE * vesc)
+                                if((vrel < BH_CSND_FRAC_BH_MERGE * vesc) && (bh_check_boundedness(j,vrel,vesc,r)==1))
+                                {
+#ifndef IO_REDUCED_MODE
+                                    printf("MARKING_BH_MERGER: P[j.]ID=%llu to be swallowed by id=%llu \n", (unsigned long long) P[j].ID, (unsigned long long) id);
+#endif
+//#ifndef SINGLE_STAR_FORMATION
+                                    if((P[j].SwallowID == 0) && (BPP(j).BH_Mass < bh_mass)) {P[j].SwallowID = id;} // most massive BH swallows the other - simplifies analysis
+//#endif
+                                }
+                                else
                                 {
 #ifndef IO_REDUCED_MODE
 #ifdef BH_OUTPUT_MOREINFO           // DAA: BH merger info will be saved in a separate output file
                                     printf("ThisTask=%d, time=%g: id=%u would like to swallow %u, but vrel=%g vesc=%g\n",
-                                            ThisTask, All.Time, id, P[j].ID, vrel, vesc);
+                                           ThisTask, All.Time, id, P[j].ID, vrel, vesc);
 #else
                                     fprintf(FdBlackHolesDetails,
                                             "ThisTask=%d, time=%g: id=%u would like to swallow %u, but vrel=%g vesc=%g\n",
                                             ThisTask, All.Time, id, P[j].ID, vrel, vesc);
 #endif
-#endif
-                                }
-                                else
-                                {
-#ifndef IO_REDUCED_MODE
-                                    printf("MARKING_BH_MERGER: P[j.]ID=%llu to be swallowed by id=%llu \n", (unsigned long long) P[j].ID, (unsigned long long) id);
-#endif
-#ifndef SINGLE_STAR_FORMATION
-                                    if((P[j].SwallowID == 0) && (BPP(j).BH_Mass < bh_mass)) {P[j].SwallowID = id;} // most massive BH swallows the other - simplifies analysis
 #endif
                                 }
                             }

@@ -92,7 +92,9 @@ double bh_lum_bol(double mdot, double mass, long id)
 #ifdef SINGLE_STAR_FORMATION
     double m_solar = mass * All.UnitMass_in_g / (All.HubbleParam * SOLAR_MASS);
     /* if below the deuterium burning limit, just use the potential energy efficiency at the surface of a jupiter-density object */
-    //if(m_solar < 0.012) {lum = mdot * c_code*c_code * 5.e-8 * pow(m_solar/0.00095,2./3.);}
+    double rad_eff_protostar = 5.0e-7;
+    if(m_solar < 0.012) {rad_eff_protostar = 5.e-8 * pow(m_solar/0.00095,2./3.);}
+    lum = rad_eff_protostar * mdot * c_code*c_code;
     /* now for pre-main sequence, need to also check the mass-luminosity relation */
     double lum_sol = 0;
     if(m_solar >= 0.012)
@@ -155,10 +157,12 @@ int bh_check_boundedness(int j, double vrel, double vesc, double dr_code)
     {
         double apocenter = dr_code / (1.0-v2);
         double apocenter_max = All.ForceSoftening[5]; // 2.8*epsilon (softening length) //
+        if(P[j].Type==5) {apocenter_max += MAX_REAL_NUMBER;} // default is to be unrestrictive for BH-BH mergers //
 #if defined(SINGLE_STAR_FORMATION) || defined(BH_SEED_GROWTH_TESTS) || defined(BH_GRAVCAPTURE_GAS) || defined(BH_GRAVCAPTURE_NONGAS)
         double r_j = All.ForceSoftening[P[j].Type];
         if(P[j].Type==0) {r_j = DMAX(r_j , PPP[j].Hsml);}
         apocenter_max = DMAX(10.0*All.ForceSoftening[5],DMIN(50.0*All.ForceSoftening[5],r_j));
+        if(P[j].Type==5) {apocenter_max = DMIN(apocenter_max , 3.*All.ForceSoftening[5]);}
 #ifdef BH_SEED_GROWTH_TESTS
         apocenter_max += MAX_REAL_NUMBER;
 #endif
@@ -341,7 +345,7 @@ void set_blackhole_mdot(int i, int n, double dt)
     double mdot=0;
     int k; k=0;
 #ifdef BH_GRAVACCRETION
-    double m_tmp_for_bhar, mdisk_for_bhar, bh_mass, fac;
+    double m_tmp_for_bhar, mdisk_for_bhar, mbulge_for_bhar, bh_mass, fac;
     double r0_for_bhar,j_tmp_for_bhar,fgas_for_bhar,f_disk_for_bhar;
     double f0_for_bhar;
 #endif
@@ -395,8 +399,9 @@ void set_blackhole_mdot(int i, int n, double dt)
 #else
         /* DAA: default torque rate based on kinematic B/D decomposition as in Angles-Alcazar et al. */
         m_tmp_for_bhar = BlackholeTempInfo[i].Mgas_in_Kernel + BlackholeTempInfo[i].Mstar_in_Kernel;
-        //mdisk_for_bhar = m_tmp_for_bhar - BlackholeTempInfo[i].Mbulge_in_Kernel;
-        mdisk_for_bhar = m_tmp_for_bhar - BlackholeTempInfo[i].MstarBulge_in_Kernel;
+        mbulge_for_bhar = BlackholeTempInfo[i].MstarBulge_in_Kernel; 
+        if(mbulge_for_bhar>BlackholeTempInfo[i].Mstar_in_Kernel) mbulge_for_bhar=BlackholeTempInfo[i].Mstar_in_Kernel;
+        mdisk_for_bhar = m_tmp_for_bhar - mbulge_for_bhar;
         f_disk_for_bhar = mdisk_for_bhar / m_tmp_for_bhar;
         if(mdisk_for_bhar>0){
            fgas_for_bhar = BlackholeTempInfo[i].Mgas_in_Kernel / mdisk_for_bhar;
@@ -851,7 +856,7 @@ void blackhole_final_operations(void)
         MstarBulge = BlackholeTempInfo[i].MstarBulge_in_Kernel;
 #endif
 
-#ifndef IO_REDUCED_MODE
+//#ifndef IO_REDUCED_MODE   DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MOD
 #if defined(BH_OUTPUT_MOREINFO)
         fprintf(FdBlackHolesDetails, "%2.12f %u  %g %g %g %g %g %g  %g %g %g %g %g %g %g %g  %2.10f %2.10f %2.10f  %2.7f %2.7f %2.7f  %g %g %g  %g %g %g\n",
                 All.Time, P[n].ID,  P[n].Mass, BPP(n).BH_Mass, mass_disk, BPP(n).BH_Mdot, mdot_disk, dt,
@@ -861,6 +866,7 @@ void blackhole_final_operations(void)
                 BlackholeTempInfo[i].Jgas_in_Kernel[0], BlackholeTempInfo[i].Jgas_in_Kernel[1], BlackholeTempInfo[i].Jgas_in_Kernel[2],
                 BlackholeTempInfo[i].Jstar_in_Kernel[0], BlackholeTempInfo[i].Jstar_in_Kernel[1], BlackholeTempInfo[i].Jstar_in_Kernel[2] );
 #else
+#ifndef IO_REDUCED_MODE
         fprintf(FdBlackHolesDetails, "BH=%u %g %g %g %g %g %g %g %g   %2.7f %2.7f %2.7f\n",
                 P[n].ID, All.Time, BPP(n).BH_Mass, mass_disk, P[n].Mass, BPP(n).BH_Mdot, mdot_disk,              
                 P[n].DensAroundStar*All.cf_a3inv, BlackholeTempInfo[i].BH_InternalEnergy,             // DAA: DensAroundStar is actually not defined in BHP->BPP...

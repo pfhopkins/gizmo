@@ -444,7 +444,7 @@ int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, in
 	  if(no >= All.MaxPart + MaxNodes)	/* pseudo particle */
 	    {
 	      if(mode == 1)
-		endrun(12312);
+		endrun(123127);
 
 	      if(target >= 0)	/* if no target is given, export will not occur */
 		{

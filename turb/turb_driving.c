@@ -156,10 +156,12 @@ void init_turb(void)
                     StMode[3*StNModes+0] = kx;
                     StMode[3*StNModes+1] = ky;
                     StMode[3*StNModes+2] = kz;
+#ifndef IO_REDUCED_MODE
                     if(ThisTask==0)
                     {
                         printf("Mode: %d, ikx=%d, iky=%d, ikz=%d, kx=%f, ky=%f, kz=%f, ampl=%f\n",StNModes,ikx,iky,ikz,kx,ky,kz,ampl);
                     }
+#endif
                     StNModes++;
                     
                     
@@ -168,10 +170,12 @@ void init_turb(void)
                     StMode[3*StNModes+0] = kx;
                     StMode[3*StNModes+1] = -ky;
                     StMode[3*StNModes+2] = kz;
+#ifndef IO_REDUCED_MODE
                     if(ThisTask==0)
                     {
                         printf("Mode: %d, ikx=%d, iky=%d, ikz=%d, kx=%f, ky=%f, kz=%f, ampl=%f\n",StNModes,ikx,-iky,ikz,kx,-ky,kz,ampl);
                     }
+#endif
                     StNModes++;
                     
 #if NUMDIMS > 2
@@ -179,20 +183,24 @@ void init_turb(void)
                     StMode[3*StNModes+0] = kx;
                     StMode[3*StNModes+1] = ky;
                     StMode[3*StNModes+2] = -kz;
+#ifndef IO_REDUCED_MODE
                     if(ThisTask==0)
                     {
                         printf("Mode: %d, ikx=%d, iky=%d, ikz=%d, kx=%f, ky=%f, kz=%f, ampl=%f\n",StNModes,ikx,iky,-ikz,kx,ky,-kz,ampl);
                     }
+#endif
                     StNModes++;
                     
                     StAmpl[StNModes] = ampl;
                     StMode[3*StNModes+0] = kx;
                     StMode[3*StNModes+1] = -ky;
                     StMode[3*StNModes+2] = -kz;
+#ifndef IO_REDUCED_MODE
                     if(ThisTask==0)
                     {
                         printf("Mode: %d, ikx=%d, iky=%d, ikz=%d, kx=%f, ky=%f, kz=%f, ampl=%f\n",StNModes,ikx,-iky,-ikz,kx,-ky,-kz,ampl);
                     }
+#endif
                     StNModes++;
 #endif
 #endif
@@ -280,14 +288,10 @@ void st_calc_phases(void)
 void set_turb_ampl(void)
 {
     int i;
-    mpi_printf("entering ... \n");
     double delta = (All.Ti_Current - StTPrev) * All.Timebase_interval / All.cf_hubble_a;
-    mpi_printf("entering ... \n");
     
     if(delta >= All.StDtFreq)
     {
-        
-        mpi_printf("entering ... \n");
         if(delta > 0)
         {
             mpi_printf("updating dudt_*\n");
@@ -304,7 +308,6 @@ void set_turb_ampl(void)
                 }
             }
         }
-        
         mpi_printf("st_update_ouseq() ... \n");
         st_update_ouseq();
         mpi_printf("st_calc_phases() ... \n");
@@ -317,7 +320,6 @@ void set_turb_ampl(void)
             printf("Updated turbulent stirring field at time %f.\n", StTPrev * All.Timebase_interval);
         }
     }
-    mpi_printf("exiting ... \n");
 }
 
 
@@ -374,11 +376,12 @@ void add_turb_accel()
             }
         }
     }
-    
+#ifndef IO_REDUCED_MODE
     if(ThisTask == 0)
     {
         printf("Finished turbulent accel computation.\n");
     }
+#endif
 }
 
 

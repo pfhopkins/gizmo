@@ -251,7 +251,8 @@ FILE *FdTidaltensor;		/*!< file handle for Tidaltensor.txt log-file. */
 
 #ifdef BLACK_HOLES
 FILE *FdBlackHoles;		/*!< file handle for blackholes.txt log-file. */
-#ifndef IO_REDUCED_MODE
+//#ifndef IO_REDUCED_MODE   DAA-IO: BH_OUTPUT_MOREINFO overrides IO_REDUCED_MODE
+#if !defined(IO_REDUCED_MODE) || defined(BH_OUTPUT_MOREINFO)
 FILE *FdBlackHolesDetails;
 #ifdef BH_OUTPUT_MOREINFO
 FILE *FdBhMergerDetails;

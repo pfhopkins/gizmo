@@ -224,7 +224,7 @@ int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target,
             if(no >= maxPart + maxNodes)	/* pseudo particle */
             {
                 if(mode == 1)
-                    endrun(12312);
+                    endrun(123125);
                 
                 if(mode == 0)
                 {
