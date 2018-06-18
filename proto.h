@@ -6,8 +6,8 @@
 #ifdef COOLING
 #include "cooling/cooling.h"
 #endif
-#ifdef ADJ_BOX_POWERSPEC
-#include "power_spec/adj_box_powerspec_proto.h"
+#ifdef TURB_DRIVING_DUMPSPECTRUM
+#include "power_spec/TURB_DRIVING_DUMPSPECTRUM_proto.h"
 #endif
 #ifdef BLACK_HOLES
 #include "./galaxy_sf/blackholes/blackhole.h"
@@ -23,7 +23,6 @@
  */
 
 #ifdef HAVE_HDF5
-#include <hdf5.h>
 void write_header_attributes_in_hdf5(hid_t handle);
 void read_header_attributes_in_hdf5(char *fname);
 void write_parameters_attributes_in_hdf5(hid_t handle);
@@ -84,6 +83,7 @@ double powerspec_turb_obtain_fields(void);
 void powerspec_turb_save(char *fname, double *disp);
 void powerspec_turb_collect(void);
 void powerspec_turb(int filenr);
+void compute_additional_forces_for_all_particles(void);
 
 
 void set_cosmo_factors_for_current_time(void);
@@ -113,7 +113,7 @@ static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMI
 static inline double MINMOD_G(double a, double b) {return a;}
 
 
-#ifdef SHEARING_BOX
+#ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void);
 #endif
 
@@ -121,6 +121,11 @@ void calc_shearing_box_pos_offset(void);
 int ngb_treefind_variable_threads_targeted(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
                                            int mode, int *exportflag, int *exportnodecount, int *exportindex,
                                            int *ngblist, int TARGET_BITMASK);
+
+int ngb_treefind_pairs_threads_targeted(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
+                                           int mode, int *exportflag, int *exportnodecount, int *exportindex,
+                                           int *ngblist, int TARGET_BITMASK);
+
 
 
 void do_distortion_tensor_kick(int i, double dt_gravkick);
@@ -130,6 +135,12 @@ void do_sph_kick_for_extra_physics(int i, integertime tstart, integertime tend, 
 void check_particle_for_temperature_minimum(int i);
 
 double get_pressure(int i);
+double return_user_desired_target_density(int i);
+double return_user_desired_target_pressure(int i);
+#ifdef EOS_TILLOTSON
+double calculate_eos_tillotson(int i);
+void tillotson_eos_init(void);
+#endif
 
 void read_fof(int num);
 int fof_compare_ID_list_ID(const void *a, const void *b);
@@ -137,7 +148,7 @@ int fof_compare_ID_list_ID(const void *a, const void *b);
 void myfree_msg(void *p, char *msg);
 void kspace_neutrinos_init(void);
 
-#ifdef TWOPOINT_FUNCTION_COMPUTATION_ENABLED
+#ifdef OUTPUT_TWOPOINT_ENABLED
 void twopoint(void);
 void twopoint_save(void);
 int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, int target, int *startnode, int mode, int *nexport, int *nsend_local);
@@ -199,7 +210,6 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 int compare_IDs(const void *a, const void *b);
 void test_id_uniqueness(void);
 
-void check_particles_info(const char *func, const char *file, int linenr);
 
 int io_compare_P_ID(const void *a, const void *b);
 int io_compare_P_GrNr_SubNr(const void *a, const void *b);
@@ -266,6 +276,9 @@ double Get_CosmicRayGradientLength(int i);
 double Get_CosmicRayStreamingVelocity(int i);
 double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode);
 #endif
+#ifdef EOS_ELASTIC
+void elastic_body_update_driftkick(int i, double dt_entr, int mode);
+#endif
 double INLINE_FUNC Particle_effective_soundspeed_i(int i);
 #ifdef MAGNETIC
 double INLINE_FUNC Get_Particle_BField(int i_particle_id, int k_vector_component);
@@ -275,23 +288,27 @@ double INLINE_FUNC Get_Particle_PhiField(int i_particle_id);
 double INLINE_FUNC Get_Particle_PhiField_DampingTimeInv(int i_particle_id);
 #endif
 #endif
+#ifdef ADAPTIVE_GRAVSOFT_FORALL
+double INLINE_FUNC Get_Particle_Size_AGS(int i);
+double get_particle_volume_ags(int j);
+#endif
 
 double INLINE_FUNC hubble_function(double a);
-#ifdef DARKENERGY
+#ifdef GR_TABULATED_COSMOLOGY
 double DarkEnergy_a(double);
 double DarkEnergy_t(double);
-#ifdef TIMEDEPDE
+#ifdef GR_TABULATED_COSMOLOGY_W
 void fwa_init(void);
 double INLINE_FUNC fwa(double);
 double INLINE_FUNC get_wa(double);
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
 double INLINE_FUNC dHfak(double a);
 double INLINE_FUNC dGfak(double a);
 #endif
 #endif
 #endif
 
-#ifdef EXTERNALHUBBLE
+#ifdef GR_TABULATED_COSMOLOGY_H
 double INLINE_FUNC hubble_function_external(double a);
 #endif
 
@@ -428,6 +445,9 @@ void process_wake_ups(void);
 #endif
 
 void set_units_sfr(void);
+#ifdef BH_SEED_FROM_LOCALGAS
+double return_probability_of_this_forming_bh_from_seed_model(int i);
+#endif
 
 void gravity_forcetest(void);
 
@@ -485,20 +505,23 @@ int HIIheating_evaluate(int target, int mode, int *nexport, int *nsend_local);
 void selfshield_local_incident_uv_flux(void);
 #endif
 
-#if defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_GASRETURN)
-void snII_heating_singledomain(void);
+#ifdef GALSF_FB_SNE_HEATING
 void determine_where_SNe_occur(void);
 void mechanical_fb_calc(int feedback_type);
 int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int feedback_type);
 void *addFB_evaluate_primary(void *p, int feedback_type);
 void *addFB_evaluate_secondary(void *p, int feedback_type);
-#ifdef GALSF_FB_SNE_HEATING_USEMULTIDOMAINSHARE
-void snII_heating_withMPIcomm(void);
-int snIIheating_evaluate(int target, int mode, int *nexport, int *nsend_local);
-#endif
 #ifdef GALSF_GASOLINE_RADHEATING
 void luminosity_heating_gasoline(void);
 #endif
+#endif
+
+#ifdef GALSF_FB_THERMAL
+void determine_where_addthermalFB_events_occur(void);
+void thermal_fb_calc(void);
+int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
+void *addthermalFB_evaluate_primary(void *p);
+void *addthermalFB_evaluate_secondary(void *p);
 #endif
 
 #ifdef COOL_METAL_LINES_BY_SPECIES
@@ -511,12 +534,14 @@ void ReadMultiSpeciesTables(int iT);
 char *GetMultiSpeciesFilename(int i, int hk);
 #endif
 
-#if defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS)
+#if defined(BH_PHOTONMOMENTUM) || defined(BH_WIND_CONTINUOUS)
+#ifdef BH_PHOTONMOMENTUM
 double bh_angleweight(double bh_lum_input, MyFloat bh_angle[3], double hR, double dx, double dy, double dz);
+#endif
 double bh_angleweight_localcoupling(int j, double hR, double theta);
 #endif
 
-#if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS) || defined(GALSF_SUBGRID_VARIABLEVELOCITY)
+#if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS)
 void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double* pvtau_return);
 #endif
 
@@ -528,13 +553,15 @@ void radiation_pressure_winds_consolidated(void);
 int blackhole_evaluate_PREPASS(int target, int mode, int *nexport, int *nSend_local);
 #endif
 
-#ifdef  GALSF_SUBGRID_DMDISPERSION
+#ifdef GALSF_SUBGRID_WINDS
+#if (GALSF_SUBGRID_WIND_SCALING==2)
 void disp_setup_smoothinglengths(void);
 void disp_density(void);
 int disp_density_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
 void *disp_density_evaluate_primary(void *p);
 void *disp_density_evaluate_secondary(void *p);
 int disp_density_isactive(int i);
+#endif
 #endif
 
 
@@ -598,7 +625,7 @@ void read_parameter_file(char *fname);
 void rearrange_particle_sequence(void);
 void reorder_gas(void);
 void reorder_particles(void);
-void restart(int mod);
+void restart(int modus);
 void run(void);
 void savepositions(int num);
 void savepositions_ioformat1(int num);
@@ -665,6 +692,9 @@ void rt_source_injection(void);
 
 #ifdef RADTRANSFER
 void rt_set_simple_inits(void);
+#if defined(RT_EVOLVE_INTENSITIES)
+void rt_init_intensity_directions(void);
+#endif
 void rt_get_lum_gas(int target, double *je);
 double slab_averaging_function(double x);
 
@@ -689,7 +719,7 @@ void rt_write_chemistry_stats(void);
 
 void find_block(char *label,FILE *fd);
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 void get_half_kick_distortion(int pindex, MyBigFloat half_kick_add[6][6]);
 void analyse_phase_space(int pindex,
                          MyBigFloat *s_1, MyBigFloat *s_2, MyBigFloat *s_3,
@@ -764,7 +794,18 @@ void *ags_density_evaluate_secondary(void *p);
 int ags_density_isactive(int i);
 double ags_return_maxsoft(int i);
 double ags_return_minsoft(int i);
+void AGSForce_calc(void);
+int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
+void *AGSForce_evaluate_primary(void *p);
+void *AGSForce_evaluate_secondary(void *p);
+int AGSForce_isactive(int i);
 #endif
+
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+void advect_mesh_point(int i, double dt);
+double calculate_face_area_for_cartesian_mesh(double *dp, double rinv, double l_side, double *Face_Area_Vec);
+#endif
+
 
 #ifdef ALTERNATIVE_PSORT
 void init_sort_ID(MyIDType *data, int ndata);
@@ -774,11 +815,47 @@ void hydro_gradient_calc(void);
 int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int gradient_iteration);
 void *GasGrad_evaluate_primary(void *p, int gradient_iteration);
 void *GasGrad_evaluate_secondary(void *p, int gradient_iteration);
+void local_slopelimiter(double *grad, double valmax, double valmin, double alim, double h, double shoot_tol);
 
 #ifdef PARTICLE_EXCISION
 void apply_excision();
 #endif
 
-#ifdef SIDM
-#include "./sidm/sidm_proto.h"
+#ifdef DM_SIDM
+double prob_of_interaction(double mass, double r, double h_si, double dV[3], int dt_step);
+double g_geo(double r);
+void calculate_interact_kick(double dV[3], double kick[3]);
+void init_geofactor_table(void);
+double geofactor_integ(double x, void * params);
+double geofactor_angle_integ(double u, void * params);
+void init_self_interactions();
 #endif
+
+
+#ifdef CBE_INTEGRATOR
+void do_cbe_initialization(void);
+void do_cbe_drift_kick(int i, double dt);
+double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS], double vface_dot_A, double vface[3], double Area[3],
+                               double moments_ngb[CBE_INTEGRATOR_NMOMENTS], double fluxes[CBE_INTEGRATOR_NMOMENTS]);
+void do_postgravity_cbe_calcs(int i);
+#endif
+
+#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
+double do_cbe_nvt_inversion_for_faces(int i);
+#endif
+
+#ifdef DM_FUZZY
+void do_dm_fuzzy_drift_kick(int pindex, double dt_entr);
+void DMGrad_gradient_calc(void);
+int DMGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int gradient_iteration);
+void *DMGrad_evaluate_primary(void *p, int gradient_iteration);
+void *DMGrad_evaluate_secondary(void *p, int gradient_iteration);
+void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double m0, double prev_a, double dp[3], double dv[3],
+                                  double GradRho_L[3], double GradRho_R[3],
+                                  double GradRho2_L[3][3], double GradRho2_R[3][3],
+                                  double rho_L, double rho_R, double dv_Right_minus_Left,
+                                  double Area[3], double fluxes[3], double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential);
+#endif
+
+
+

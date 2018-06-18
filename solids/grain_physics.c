@@ -57,15 +57,45 @@ void apply_grain_dragforce(void)
                         vgas_mag = sqrt(vgas_mag) / All.cf_atime;
                         double x0 = 0.469993*sqrt(GAMMA) * vgas_mag/cs; // (3/8)*sqrt[pi/2]*|vgas-vgrain|/cs //
                         double tstop_inv = 1.59577/sqrt(GAMMA) * rho_gas * cs / (R_grain_code * rho_grain_code); // 2*sqrt[2/pi] * 1/tstop //
-#ifdef GRAIN_EPSTEIN
+
+#ifdef GRAIN_LORENTZFORCE
+                        /* calculate the grain charge following Draine & Sutin */
+                        double cs_cgs = cs * All.UnitVelocity_in_cm_per_s;
+                        double tau_draine_sutin = R_grain_cgs * (2.3*PROTONMASS) * (cs_cgs*cs_cgs) / (GAMMA * ELECTRONCHARGE*ELECTRONCHARGE);
+                        double Z_grain = -DMAX( 1./(1. + sqrt(1.0e-3/tau_draine_sutin)) , 2.5*tau_draine_sutin );
+                        if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
+#endif
+
+#ifdef GRAIN_EPSTEIN_STOKES
                         double mu = 2.3 * PROTONMASS;
                         double temperature = mu * (P[i].Gas_InternalEnergy*All.UnitEnergy_in_cgs*All.HubbleParam/All.UnitMass_in_g) / BOLTZMANN;
-                        double cross_section = GRAIN_EPSTEIN * 2.0e-15 * (1. + 70./temperature);
+                        double cross_section = GRAIN_EPSTEIN_STOKES * 2.0e-15 * (1. + 70./temperature);
                         cross_section /= (All.UnitLength_in_cm * All.UnitLength_in_cm / (All.HubbleParam*All.HubbleParam));
                         double n_mol = rho_gas / (mu * All.HubbleParam/All.UnitMass_in_g);
                         double mean_free_path = 1 / (n_mol * cross_section); // should be in code units now //
                         double corr_mfp = R_grain_code / ((9./4.) * mean_free_path);
                         if(corr_mfp > 1) {tstop_inv /= corr_mfp;}
+#ifdef GRAIN_LORENTZFORCE
+                        /* also have charged grains, so we will calculate Coulomb forces as well */
+                        double a_Coulomb = sqrt(2.*GAMMA*GAMMA*GAMMA/(9.*M_PI));
+                        double tstop_Coulomb_inv = 0.797885/sqrt(GAMMA) * rho_gas * cs / (R_grain_code * rho_grain_code); // base normalization //
+                        tstop_Coulomb_inv /= (1. + a_Coulomb *(vgas_mag/cs)*(vgas_mag/cs)*(vgas_mag/cs)) * sqrt(1.+x0*x0); // velocity dependence (force becomes weak when super-sonic)
+                        tstop_Coulomb_inv *= (Z_grain/tau_draine_sutin) * (Z_grain/tau_draine_sutin) / 17.; // coulomb attraction terms, assuming ions have charge ~1, and Coulomb logarithm is 17
+                        // don't need super-accuration gas ionization states, just need approximate estimate, which we can make based on temperature //
+                        double T_Kelvin = (2.3*PROTONMASS) * (cs_cgs*cs_cgs) / (1.3807e-16 * GAMMA), f_ion_to_use = 0; // temperature in K
+#ifdef COOLING  // in this case, have the ability to calculate more accurate ionization fraction
+                        {
+                            double u_tmp, ne_tmp = 1, nh0_tmp = 0, mu_tmp = 1, temp_tmp, nHeII_tmp, nhp_tmp, nHe0_tmp, nHepp_tmp;
+                            u_tmp = 1.3807e-16 * T_Kelvin / (2.3*PROTONMASS) * (All.UnitMass_in_g/All.UnitEnergy_in_cgs); // needs to be in code units
+                            temp_tmp = ThermalProperties(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp);
+                            f_ion_to_use = DMIN(ne_tmp , 1.);
+                        }
+#else           // without cooling active, use a simple approximate guess for ionization
+                        if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);}
+#endif
+                        tstop_Coulomb_inv *= f_ion_to_use; // correct for ionization fraction
+                        tstop_inv += tstop_Coulomb_inv; // add both forces
+#endif // LORENTZ force (Coulomb computation)
 #endif
                         double C1 = (-1-sqrt(1+x0*x0)) / x0;
                         double xf = 0.0;
@@ -78,7 +108,7 @@ void apply_grain_dragforce(void)
                         double slow_fac = 1 - xf / x0;
                         // note that, with an external (gravitational) acceleration, we can still solve this equation for the relevant update //
 
-                        double external_forcing[3];
+                        double dv[3]={0}, external_forcing[3]={0};
                         for(k=0;k<3;k++) {external_forcing[k] = 0;}
                         /* this external_forcing parameter includes additional grain-specific forces. note that -anything- which imparts an 
                             identical acceleration onto gas and dust will cancel in the terms in t_stop, and just act like a 'normal' acceleration
@@ -95,15 +125,9 @@ void apply_grain_dragforce(void)
                         lorentz_units *= (ELECTRONCHARGE/C) * All.UnitVelocity_in_cm_per_s / (All.UnitMass_in_g / All.HubbleParam); // converts acceleration to cgs
                         lorentz_units /= All.UnitVelocity_in_cm_per_s / (All.UnitTime_in_s / All.HubbleParam); // converts it to code-units acceleration
 
-                        /* calculate the grain charge following Draine & Sutin */
-                        double cs_cgs = cs * All.UnitVelocity_in_cm_per_s;
-                        double tau_draine_sutin = R_grain_cgs * (2.3*PROTONMASS) * (cs_cgs*cs_cgs) / (ELECTRONCHARGE*ELECTRONCHARGE);
-                        double Z_grain = -DMAX( 1./(1. + sqrt(1.0e-3/tau_draine_sutin)) , 2.5*tau_draine_sutin );
-                        if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
-                        
                         /* define unit vectors and B for evolving the lorentz force */
-                        double bhat[3]={0}, bmag=0, dv[3]={0}, efield[3]={0}, efield_coeff=0;
-                        for(k=0;k<3;k++) {bhat[k]=P[i].Gas_B[k]; bmag[k]+=bhat[k]*bhat[k]; dv[k]=P[i].Vel[k]-P[i].Gas_Velocity[k];}
+                        double bhat[3]={0}, bmag=0, efield[3]={0}, efield_coeff=0;
+                        for(k=0;k<3;k++) {bhat[k]=P[i].Gas_B[k]; bmag+=bhat[k]*bhat[k]; dv[k]=P[i].Vel[k]-P[i].Gas_Velocity[k];}
                         if(bmag>0) {bmag=sqrt(bmag); for(k=0;k<3;k++) {bhat[k]/=bmag;}} else {bmag=0;}
                         double lorentz_coeff = (0.5*dt) * bmag * Z_grain / grain_mass * lorentz_units; // multiply in full timestep //
                         
@@ -128,7 +152,6 @@ void apply_grain_dragforce(void)
                         
                         double delta_egy = 0;
                         double delta_mom[3];
-                        double dv[3];
                         for(k=0; k<3; k++)
                         {
                             /* measure the imparted energy and momentum as if there were no external acceleration */
@@ -226,9 +249,9 @@ void apply_grain_dragforce(void)
                                         degy=0;
                                         MyDouble VelPred_j[3];
                                         for(k=0;k<3;k++) {VelPred_j[k]=P[j].Vel[k];}
-#ifdef SHEARING_BOX
-                                        if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {VelPred_j[SHEARING_BOX_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
-                                        if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {VelPred_j[SHEARING_BOX_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
+#ifdef BOX_SHEARING
+                                        if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {VelPred_j[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
+                                        if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {VelPred_j[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
 #endif
                                         for(k=0; k<3; k++)
                                         {
@@ -248,9 +271,9 @@ void apply_grain_dragforce(void)
                                 degy=0;
                                 MyDouble VelPred_j[3];
                                 for(k=0;k<3;k++) {VelPred_j[k]=P[j].Vel[k];}
-#ifdef SHEARING_BOX
-                                if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {VelPred_j[SHEARING_BOX_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
-                                if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {VelPred_j[SHEARING_BOX_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
+#ifdef BOX_SHEARING
+                                if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {VelPred_j[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
+                                if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {VelPred_j[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
 #endif
                                 for(k=0; k<3; k++)
                                 {
@@ -656,7 +679,7 @@ int grain_density_evaluate(int target, int mode, int *nexport, int *nsend_local)
                 dx = pos[0] - P[j].Pos[0];
                 dy = pos[1] - P[j].Pos[1];
                 dz = pos[2] - P[j].Pos[2];
-#ifdef PERIODIC			/*  now find the closest image in the given box size  */
+#ifdef BOX_PERIODIC			/*  now find the closest image in the given box size  */
                 NEAREST_XYZ(dx,dy,dz,1);
 #endif
                 r2 = dx*dx + dy*dy + dz*dz;
@@ -671,9 +694,9 @@ int grain_density_evaluate(int target, int mode, int *nexport, int *nsend_local)
                     weighted_numngb += FLT(NORM_COEFF * wk / hinv3);
                     MyDouble VelPred_j[3];
                     for(k=0;k<3;k++) {VelPred_j[k]=SphP[j].VelPred[k];}
-#ifdef SHEARING_BOX
-                    if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {VelPred_j[SHEARING_BOX_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
-                    if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {VelPred_j[SHEARING_BOX_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
+#ifdef BOX_SHEARING
+                    if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {VelPred_j[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
+                    if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {VelPred_j[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
 #endif
                     gasvel[0] += FLT(mass_j * wk * VelPred_j[0]);
                     gasvel[1] += FLT(mass_j * wk * VelPred_j[1]);

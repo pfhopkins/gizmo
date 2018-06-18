@@ -6,7 +6,7 @@
 #include "../proto.h"
 #include "./cooling.h"
 
-#ifdef GRACKLE
+#ifdef COOL_GRACKLE
 #include <grackle.h>
 #define ENDRUNVAL 91234
 
@@ -17,7 +17,7 @@
 //     1 == calculate and return cooling time
 //     2 == calculate and return temperature
 //     3 == calculate and return pressure
-//     4 == calculate and return gamma (only valid when GRACKLE_CHEMISTRY>0)
+//     4 == calculate and return gamma (only valid when COOL_GRACKLE_CHEMISTRY>0)
 //
 double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode)
 {
@@ -51,7 +51,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 #endif
     gamma         = GAMMA;
     
-#if (GRACKLE_CHEMISTRY >  0) // non-tabular
+#if (COOL_GRACKLE_CHEMISTRY >  0) // non-tabular
     gr_float ne_density;
     gr_float HI_density, HII_density, HM_density;
     gr_float HeI_density, HeII_density, HeIII_density;
@@ -76,12 +76,12 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     DII_density  = density * tiny;
     HDI_density  = density * tiny;
     
-#if (GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
+#if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
     H2I_density  = density * SphP[target].grH2I;
     H2II_density = density * SphP[target].grH2II;
 #endif
     
-#if (GRACKLE_CHEMISTRY >= 3) // Atomic+(H2+H2I+H2II)+(DI+DII+HD)
+#if (COOL_GRACKLE_CHEMISTRY >= 3) // Atomic+(H2+H2I+H2II)+(DI+DII+HD)
     DI_density   = density * SphP[target].grDI;
     DII_density  = density * SphP[target].grDII;
     HDI_density  = density * SphP[target].grHDI;
@@ -113,12 +113,12 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             SphP[target].grHeII  = HeII_density  / density;
             SphP[target].grHeIII = HeIII_density / density;
             
-#if (GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
+#if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
             SphP[target].grH2I   = H2I_density   / density;
             SphP[target].grH2II  = H2II_density  / density;
 #endif
             
-#if (GRACKLE_CHEMISTRY >= 3) // Atomic+(H2+H2I+H2II)+(DI+DII+HD)
+#if (COOL_GRACKLE_CHEMISTRY >= 3) // Atomic+(H2+H2I+H2II)+(DI+DII+HD)
             SphP[target].grDI    = DI_density    / density;
             SphP[target].grDII   = DII_density   / density;
             SphP[target].grHDI   = HDI_density   / density;
@@ -209,6 +209,15 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             }
             double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess;
             convert_u_to_temp(energy, rho, target, &ne_guess, &nH0_guess, &nHp_guess, &nHe0_guess, &nHep_guess, &nHepp_guess); //need to update *ne_guess for tabular!!, this may be wrong
+#ifdef RT_CHEM_PHOTOION
+            if(target >= 0)
+            {
+                SphP[target].HI = nH0_guess; SphP[target].HII = nHp_guess;
+#ifdef RT_CHEM_PHOTOION_HE
+                SphP[target].HeI = nHe0_guess; SphP[target].HeII = nHep_guess; SphP[target].HeIII = nHepp_guess;
+#endif
+            }
+#endif
             returnval = energy;
             break;
         case 1:  //cooling time (table)
@@ -252,7 +261,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             break;
     } //end switch
     
-#endif // GRACKLE_CHEMISTRY
+#endif // COOL_GRACKLE_CHEMISTRY
     
     return returnval;
 }
@@ -345,10 +354,10 @@ void InitGrackle(void)
     // The ratio of specific heats for an ideal gas. A direct calculation for the molecular component is used if primordial_chemistry > 1. Default: 5/3.
     grackle_data.Gamma                  = GAMMA;              // our eos set in Config.sh
     // Flag to control which primordial chemistry network is used (set by Config file)
-#ifndef GRACKLE_CHEMISTRY
+#ifndef COOL_GRACKLE_CHEMISTRY
     grackle_data.primordial_chemistry = 0;                     // fully tabulated cooling
 #else
-    grackle_data.primordial_chemistry = GRACKLE_CHEMISTRY;
+    grackle_data.primordial_chemistry = COOL_GRACKLE_CHEMISTRY;
 #endif
     
     // Set initial expansion factor (for internal units).
@@ -363,7 +372,7 @@ void InitGrackle(void)
     }
     
     if(ThisTask == 0)
-        printf("GRACKLE INITIALIZED\n");
+        printf("Grackle Initialized\n");
 }
 
-#endif  //GRACKLE
+#endif  //COOL_GRACKLE

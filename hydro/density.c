@@ -7,6 +7,7 @@
 #include "../allvars.h"
 #include "../proto.h"
 #include "../kernel.h"
+#include "../mesh_motion.h"
 #ifdef PTHREADS_NUM_THREADS
 #include <pthread.h>
 #endif
@@ -70,6 +71,9 @@ static struct densdata_out
     MyLongDouble DhsmlNgb;
     MyLongDouble Particle_DivVel;
     MyFloat NV_T[3][3];
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
+    MyDouble ParticleVel[3];
+#endif
 #ifdef HYDRO_SPH
     MyLongDouble DhsmlHydroSumFactor;
 #endif
@@ -77,7 +81,7 @@ static struct densdata_out
     MyLongDouble KernelSum_Around_RT_Source;
 #endif
     
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#ifdef HYDRO_PRESSURE_SPH
     MyLongDouble EgyRho;
 #endif
 
@@ -152,10 +156,10 @@ void out2particle_density(struct densdata_out *out, int i, int mode)
     if(P[i].Type == 0)
     {
         ASSIGN_ADD(SphP[i].Density, out->Rho, mode);
-
-        for(k = 0; k < 3; k++)
-            for(j = 0; j < 3; j++)
-                ASSIGN_ADD(SphP[i].NV_T[k][j], out->NV_T[k][j], mode);
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
+        for(k=0;k<3;k++) ASSIGN_ADD(SphP[i].ParticleVel[k], out->ParticleVel[k],   mode);
+#endif
+        for(k = 0; k < 3; k++) {for(j = 0; j < 3; j++) {ASSIGN_ADD(SphP[i].NV_T[k][j], out->NV_T[k][j], mode);}}
 
 #ifdef HYDRO_SPH
         ASSIGN_ADD(SphP[i].DhsmlHydroSumFactor, out->DhsmlHydroSumFactor, mode);
@@ -165,7 +169,7 @@ void out2particle_density(struct densdata_out *out, int i, int mode)
         ASSIGN_ADD(PPPZ[i].AGS_zeta, out->AGS_zeta,   mode);
 #endif
 
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#ifdef HYDRO_PRESSURE_SPH
         ASSIGN_ADD(SphP[i].EgyWtDensity,   out->EgyRho,   mode);
 #endif
 
@@ -671,12 +675,11 @@ void density(void)
                     }
                     ncorr_ngb=1; cn=SphP[i].ConditionNumber; if(cn>c0) {ncorr_ngb=sqrt(1.0+(cn-c0)/((double)CONDITION_NUMBER_DANGER));} if(ncorr_ngb>2) ncorr_ngb=2;
                 }
-                
                 desnumngb = All.DesNumNgb * ncorr_ngb;
                 desnumngbdev = desnumngbdev_0 * ncorr_ngb;
                 /* allow the neighbor tolerance to gradually grow as we iterate, so that we don't spend forever trapped in a narrow iteration */
                 if(iter > 1) {desnumngbdev = DMIN( 0.25*desnumngb , desnumngbdev * exp(0.1*log(desnumngb/(16.*desnumngbdev))*(double)iter) );}
-
+                
 #ifdef BLACK_HOLES
                 if(P[i].Type == 5)
                 {
@@ -980,8 +983,20 @@ void density(void)
             {
                 if(SphP[i].Density > 0)
                 {
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+                    /* set motion of the mesh-generating points */
+#if (HYDRO_FIX_MESH_MOTION==4)
+                    set_mesh_motion(i); // use user-specified analytic function to define mesh motions //
+#elif ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
+                    double eps_pvel = 0.3; // normalization for how much 'weight' to give to neighbors (unstable if >=0.5)
+                    for(k=0;k<3;k++) {SphP[i].ParticleVel[k] = (1.-eps_pvel)*SphP[i].VelPred[k] + eps_pvel*SphP[i].ParticleVel[k]/SphP[i].Density;} // assign mixture velocity
+#elif (HYDRO_FIX_MESH_MOTION==7)
+                    for(k=0;k<3;k++) {SphP[i].ParticleVel[k] = SphP[i].VelPred[k];} // move with fluid
+#endif
+#endif
+
 #ifdef HYDRO_SPH
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#ifdef HYDRO_PRESSURE_SPH
                     if(SphP[i].InternalEnergyPred > 0)
                     {
                         SphP[i].EgyWtDensity /= SphP[i].InternalEnergyPred;
@@ -1202,7 +1217,7 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
 #endif
                 r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
@@ -1217,13 +1232,16 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     
                     out.Ngb += kernel.wk;
                     out.Rho += kernel.mj_wk;
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
+                    if(local.Type == 0 && kernel.r==0) {int kv; for(kv=0;kv<3;kv++) {out.ParticleVel[kv] += kernel.mj_wk * SphP[j].VelPred[kv];}} // just the self-contribution //
+#endif
 #if defined(RT_SOURCE_INJECTION)
                     if((1 << local.Type) & (RT_SOURCES)) {out.KernelSum_Around_RT_Source += 1.-u*u;}
 #endif
                     out.DhsmlNgb += -(NUMDIMS * kernel.hinv * kernel.wk + u * kernel.dwk);
 #ifdef HYDRO_SPH
                     double mass_eff = mass_j;
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#ifdef HYDRO_PRESSURE_SPH
                     mass_eff *= SphP[j].InternalEnergyPred;
                     out.EgyRho += kernel.wk * mass_eff;
 #endif
@@ -1250,9 +1268,13 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                         kernel.dv[0] = local.Vel[0] - SphP[j].VelPred[0];
                         kernel.dv[1] = local.Vel[1] - SphP[j].VelPred[1];
                         kernel.dv[2] = local.Vel[2] - SphP[j].VelPred[2];
-#ifdef SHEARING_BOX
-                        if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {kernel.dv[SHEARING_BOX_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
-                        if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {kernel.dv[SHEARING_BOX_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
+#ifdef BOX_SHEARING
+                        if(local.Pos[0] - P[j].Pos[0] > +boxHalf_X) {kernel.dv[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset;}
+                        if(local.Pos[0] - P[j].Pos[0] < -boxHalf_X) {kernel.dv[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;}
+#endif
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
+                        // do neighbor contribution to smoothed particle velocity here, after wrap, so can account for shearing boxes correctly //
+                        {int kv; for(kv=0;kv<3;kv++) {out.ParticleVel[kv] += kernel.mj_wk * (local.Vel[kv] - kernel.dv[kv]);}}
 #endif
                         out.Particle_DivVel -= kernel.dwk * (kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2]) / kernel.r;
                         /* this is the -particle- divv estimator, which determines how Hsml will evolve (particle drift) */
@@ -1331,7 +1353,7 @@ int density_isactive(int n)
 #ifdef DO_DENSITY_AROUND_STAR_PARTICLES
     if(((P[n].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[n].Type == 2)||(P[n].Type==3))))&&(P[n].Mass>0))
     {
-#if defined(GALSF_FB_SNE_HEATING)
+#if defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_THERMAL)
         /* check if there is going to be a SNe this timestep, in which case, we want the density info! */
         if(P[n].SNe_ThisTimeStep>0) return 1;
 #endif

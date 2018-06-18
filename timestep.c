@@ -20,7 +20,7 @@
 
 static double dt_displacement = 0;
 
-#ifdef SHEARING_BOX
+#ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void)
 {
     Shearing_Box_Pos_Offset = Shearing_Box_Vel_Offset * All.Time;
@@ -258,7 +258,7 @@ void find_timesteps(void)
         
         P[i].Ti_begstep += ti_step_old;
         
-#if defined(WAKEUP) || defined(SIDM)
+#if defined(WAKEUP)
         P[i].dt_step = ti_step;
 #endif
     }
@@ -439,11 +439,30 @@ integertime get_timestep(int p,		/*!< particle index */
         {
             double dt_divv = 0.25 / (MIN_REAL_NUMBER + All.cf_a2inv*fabs(P[p].Particle_DivVel));
             if(dt_divv < dt) {dt = dt_divv;}
-            double dt_cour = All.CourantFac * (KERNEL_CORE_SIZE*PPP[p].AGS_Hsml*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig*All.cf_afac3);
+#ifdef CBE_INTEGRATOR
+            double dt_cour = All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + P[p].AGS_vsig*All.cf_afac3);
+#else
+            double dt_cour = All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig*All.cf_afac3);
+#endif
             if(dt_cour < dt) {dt = dt_cour;}
         }
     }
 #endif
+
+
+#ifdef DM_FUZZY
+    if((P[p].Type > 0) && (P[p].AGS_Density > 0))
+    {
+        /* fuzzy DM admits longitudinal waves with group velocity =(hbar/m_dm)*k, so need a courant criterion, but because of scaling with k (like diffusion), timestep is quadratic in resolution */
+        double vgroup_over_k_fuzzy = 591569.000 / ((double)All.FuzzyDM_Mass_in_eV * (double)All.UnitVelocity_in_cm_per_s * (double)All.UnitLength_in_cm/(double)All.HubbleParam); // this encodes the coefficient with the mass of the particle: units vel*L = hbar / particle_mass
+        double L_particle_ags_x = Get_Particle_Size_AGS(p) * All.cf_atime;
+        double dt_cour_ags_fuzzy = 0.25 * (L_particle_ags_x*L_particle_ags_x) / vgroup_over_k_fuzzy; // wavespeed of resolve-able waves
+        if(dt_cour_ags_fuzzy < dt) {dt = dt_cour_ags_fuzzy;}
+        dt_cour_ags_fuzzy = 0.25 * L_particle_ags_x / sqrt(MIN_REAL_NUMBER + (10./9.)*P[p].AGS_Numerical_QuantumPotential/P[p].Mass); // wavespeed based on 'stored' sub-grid energy [can get comparable]
+        if(dt_cour_ags_fuzzy < dt) {dt = dt_cour_ags_fuzzy;}
+    }
+#endif
+
 
 #ifdef GRAIN_FLUID
     if(P[p].Type > 0)
@@ -534,10 +553,18 @@ integertime get_timestep(int p,		/*!< particle index */
             {
                 if(Get_Particle_CosmicRayPressure(p) > 1.0e-20)
                 {
-                    int explicit_timestep_on;
+                    int explicit_timestep_on, cr_diffusion_opt = 0;
+#if defined(DIFFUSION_OPTIMIZERS) || defined(COSMIC_RAYS_M1)
+                    cr_diffusion_opt = 1;
+#endif
+                    if(All.ComovingIntegrationOn) {cr_diffusion_opt = 1;}
                     double CRPressureGradScaleLength = Get_CosmicRayGradientLength(p);
                     double L_cr_weak = CRPressureGradScaleLength;
+#if defined(COSMIC_RAYS_M1)
                     double L_cr_strong = DMAX(L_particle*All.cf_atime , 1./(1./CRPressureGradScaleLength + 1./(L_particle*All.cf_atime)));
+#else
+                    double L_cr_strong = DMAX(L_particle*All.cf_atime , 1./(1./CRPressureGradScaleLength + (1.-0.5*cr_diffusion_opt)/(L_particle*All.cf_atime)));
+#endif
                     double coeff_inv = 0.67 * L_cr_strong * dt_prefac_diffusion / (1.e-33 + fabs(SphP[p].CosmicRayDiffusionCoeff) * GAMMA_COSMICRAY_MINUS1);
                     double dt_conduction =  L_cr_strong * coeff_inv; /* true diffusion requires the stronger timestep criterion be applied */
                     explicit_timestep_on = 1;
@@ -553,20 +580,20 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef GALSF
                     /* for multi-physics problems, we will use a more aggressive timestep criterion
                      based on whether or not the cosmic ray physics are relevant for what we are modeling */
-                    //
                     if((SphP[p].CosmicRayEnergy==0)||(SphP[p].DtCosmicRayEnergy==0))
                     {
                         dt_conduction = 10. * dt;
                     } else {
                         double delta_cr = dt_conduction*fabs(SphP[p].DtCosmicRayEnergy);
                         double dL_cr = CRPressureGradScaleLength / (L_particle*All.cf_atime);
-                        if((dL_cr > 2.) || (delta_cr < 1.e-3*SphP[p].CosmicRayEnergy))
+                        double thres_dL = 2., thres_egy = 1.e-3;
+                        if(cr_diffusion_opt==1) {thres_dL = 1.; thres_egy = 1.e-2;}
+                        if((dL_cr > thres_dL) || (delta_cr < thres_egy*SphP[p].CosmicRayEnergy))
                         {
                             double dt_weak = DMIN(L_cr_weak*coeff_inv , (delta_cr + 1.e-4*SphP[p].CosmicRayEnergy)/fabs(SphP[p].DtCosmicRayEnergy));
-                            if((dL_cr > 3.) && (delta_cr < 1.e-4*SphP[p].CosmicRayEnergy)) {dt_conduction = dt_weak; explicit_timestep_on = 0;}
+                            if((dL_cr > thres_dL+1.) && (delta_cr < 0.1*thres_egy*SphP[p].CosmicRayEnergy)) {dt_conduction = dt_weak; explicit_timestep_on = 0;}
                         }
                     }
-                    //
 #endif
 #ifdef SUPER_TIMESTEP_DIFFUSION
                     if(explicit_timestep_on==1)
@@ -580,9 +607,27 @@ integertime get_timestep(int p,		/*!< particle index */
                     }
 #else
 #ifdef COSMIC_RAYS_M1
-                    double cr_speed = COSMIC_RAYS_M1;// * (C/All.UnitVelocity_in_cm_per_s);
-                    double dt_courant_CR = All.CourantFac * (L_particle*All.cf_atime) / cr_speed;
-                    if(dt_conduction < dt_courant_CR) {dt_conduction = dt_courant_CR;}
+                    if(cr_diffusion_opt==1)
+                    {
+                        if(SphP[p].CosmicRayEnergy > 0)
+                        {
+                            double cr_speed = COSMIC_RAYS_M1;
+                            int k; double crv=0; for(k=0;k<3;k++) {crv+=SphP[p].CosmicRayFlux[k]*SphP[p].CosmicRayFlux[k];}
+                            if(crv > 0)
+                            {
+                                crv = sqrt(crv) / SphP[p].CosmicRayEnergy;
+                                cr_speed = DMAX( DMIN(COSMIC_RAYS_M1 , All.cf_afac3*SphP[p].MaxSignalVel) , DMIN(COSMIC_RAYS_M1 , fabs(SphP[p].CosmicRayDiffusionCoeff)/(Get_Particle_Size(p)*All.cf_atime)));// * (C/All.UnitVelocity_in_cm_per_s);
+#ifdef COSMIC_RAYS_ALFVEN
+                                cr_speed = COSMIC_RAYS_ALFVEN;
+#endif
+                            }
+                            double dt_courant_CR = 0.4 * (L_particle*All.cf_atime) / cr_speed;
+                            dt_conduction = dt_courant_CR; // per TK, strictly enforce this timestep //
+                        } else {dt_conduction=10.*dt;}
+                    } else {
+                        double dt_courant_CR = 0.4 * (L_particle*All.cf_atime) / COSMIC_RAYS_M1;
+                        dt_conduction = dt_courant_CR; // per TK, strictly enforce this timestep //
+                    }
 #endif
                     if(dt_conduction < dt) dt = dt_conduction; // normal explicit time-step
 #endif
@@ -805,23 +850,18 @@ integertime get_timestep(int p,		/*!< particle index */
         } // closes if(P[p].Type == 0) [gas particle check] //
     
     
-#ifdef SIDM
+#ifdef DM_SIDM
     /* Reduce time-step if this particle got interaction probabilities > 0.2 during the last time-step */
     if(P[p].dt_step_sidm > 0)
     {
-        if(P[p].dt_step_sidm < dt)
-            dt = P[p].dt_step_sidm * All.Timebase_interval;
-        else
-            P[p].dt_step_sidm = 0;
-        
-        if(dt < All.MinSizeTimestep)
-            printf("Warning: A Timestep below the limit `MinSizeTimestep' is being used to keep self interaction probabilities smaller than 0.2. dt = %g\n",dt);
+        if(P[p].dt_step_sidm < dt) {dt = P[p].dt_step_sidm * All.Timebase_interval;} else {P[p].dt_step_sidm = 0;}
+        if(dt < All.MinSizeTimestep) {printf("Warning: A Timestep below the limit `MinSizeTimestep' is being used to keep self interaction probabilities smaller than 0.2. dt = %g\n",dt);}
     }
 #endif
     
     
     // add a 'stellar evolution timescale' criterion to the timestep, to prevent too-large jumps in feedback //
-#if defined(YOUNGSTARWINDDRIVING) || defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_HII_HEATING) || defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_RT_PHOTONMOMENTUM)
+#if defined(YOUNGSTARWINDDRIVING) || defined(GALSF_FB_HII_HEATING) || defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_RT_PHOTONMOMENTUM)
     if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
     {
         double star_age = evaluate_stellar_age_Gyr(P[p].StellarAge);
@@ -851,18 +891,18 @@ integertime get_timestep(int p,		/*!< particle index */
         double dt_accr = 1.e-2 * 4.2e7 * SEC_PER_YEAR / All.UnitTime_in_s;
         if(BPP(p).BH_Mdot > 0 && BPP(p).BH_Mass > 0)
         {
-#if defined(BH_GRAVCAPTURE_GAS) || defined(BH_BAL_WINDS) || defined(BH_BAL_KICK)
+#if defined(BH_GRAVCAPTURE_GAS) || defined(BH_WIND_CONTINUOUS) || defined(BH_WIND_KICK)
             /* really want prefactor to be ratio of median gas mass to bh mass */
-            dt_accr = 0.001 * BPP(p).BH_Mass / BPP(p).BH_Mdot;
-#if defined(BH_BAL_WINDS) || defined(BH_BAL_KICK)
-            dt_accr *= All.BAL_f_accretion;
-#endif // BH_BAL_WINDS
+            dt_accr = 0.001 * DMAX(BPP(p).BH_Mass, All.MaxMassForParticleSplit) / BPP(p).BH_Mdot;
+#if defined(BH_WIND_CONTINUOUS) || defined(BH_WIND_KICK)
+            dt_accr *= DMAX(0.1, All.BAL_f_accretion);
+#endif // BH_WIND_CONTINUOUS
 #ifdef SINGLE_STAR_FORMATION
-            dt_accr = 0.1 * BPP(p).BH_Mass / BPP(p).BH_Mdot;
+            dt_accr = 0.1 * DMAX(BPP(p).BH_Mass, 0.1*All.MinMassForParticleMerger) / BPP(p).BH_Mdot;
 #endif
 #else
-            dt_accr = 0.05 * BPP(p).BH_Mass / BPP(p).BH_Mdot;
-#endif // defined(BH_GRAVCAPTURE_GAS) || defined(BH_BAL_WINDS)
+            dt_accr = 0.05 * DMAX(BPP(p).BH_Mass , All.MaxMassForParticleSplit) / BPP(p).BH_Mdot;
+#endif // defined(BH_GRAVCAPTURE_GAS) || defined(BH_WIND_CONTINUOUS)
         } // if(BPP(p).BH_Mdot > 0 && BPP(p).BH_Mass > 0)
 #ifdef BH_SEED_GROWTH_TESTS
             double dt_evol = 1.e4 * SEC_PER_YEAR / All.UnitTime_in_s;

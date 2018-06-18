@@ -63,7 +63,7 @@ void force_kick_node(int i, MyDouble * dp)
     MyFloat rt_source_lum_dp[3];
 #endif
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   MyFloat dp_dm[3];
 #endif
 
@@ -79,7 +79,7 @@ void force_kick_node(int i, MyDouble * dp)
         int active_check = rt_get_source_luminosity(i,-1,lum);
         if(active_check) {rt_source_lum_dp[j]=dp[j];} else {rt_source_lum_dp[j]=0;}
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
       if(P[i].Type != 0)
 	dp_dm[j] = dp[j];
       else
@@ -103,7 +103,7 @@ void force_kick_node(int i, MyDouble * dp)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         Extnodes[no].rt_source_lum_dp[j] += rt_source_lum_dp[j];
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  Extnodes[no].dp_dm[j] += dp_dm[j];
 #endif
 	}
@@ -143,7 +143,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     MyLongDouble *domainDp_stellarlum_loc, *domainDp_stellarlum_all;
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   MyLongDouble *domainDp_dm_loc, *domainDp_dm_all;
 #endif
   MyFloat *domainVmax_loc, *domainVmax_all;
@@ -160,7 +160,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     domainDp_stellarlum_loc = (MyLongDouble *) mymalloc("domainDp_stellarlum_loc", DomainNumChanged * 3 * sizeof(MyLongDouble));
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   domainDp_dm_loc = (MyLongDouble *) mymalloc("domainDp_dm_loc", DomainNumChanged * 3 * sizeof(MyLongDouble));
 #endif
   domainVmax_loc = (MyFloat *) mymalloc("domainVmax_loc", DomainNumChanged * sizeof(MyFloat));
@@ -173,7 +173,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         domainDp_stellarlum_loc[i * 3 + j] = Extnodes[DomainList[i]].rt_source_lum_dp[j];
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  domainDp_dm_loc[i * 3 + j] = Extnodes[DomainList[i]].dp_dm[j];
 #endif
 	}
@@ -206,7 +206,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     domainDp_stellarlum_all = (MyLongDouble *) mymalloc("domainDp_stellarlum_all", totDomainNumChanged * 3 * sizeof(MyLongDouble));
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   domainDp_dm_all =
     (MyLongDouble *) mymalloc("domainDp_dm_all", totDomainNumChanged * 3 * sizeof(MyLongDouble));
 #endif
@@ -231,7 +231,7 @@ void force_finish_kick_nodes(void)
     MPI_Allgatherv(domainDp_stellarlum_loc, DomainNumChanged * 3 * sizeof(MyLongDouble), MPI_BYTE,
                    domainDp_stellarlum_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   MPI_Allgatherv(domainDp_dm_loc, DomainNumChanged * 3 * sizeof(MyLongDouble), MPI_BYTE,
 		 domainDp_dm_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
 #endif
@@ -258,7 +258,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
             Extnodes[no].rt_source_lum_dp[j] += domainDp_stellarlum_all[3 * i + j];
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      Extnodes[no].dp_dm[j] += domainDp_dm_all[3 * i + j];
 #endif
 	    }
@@ -278,7 +278,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     myfree(domainDp_stellarlum_all);
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   myfree(domainDp_dm_all);
 #endif
   myfree(domainDp_all);
@@ -286,7 +286,7 @@ void force_finish_kick_nodes(void)
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     myfree(domainDp_stellarlum_loc);
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   myfree(domainDp_dm_loc);
 #endif
   myfree(domainDp_loc);
@@ -329,7 +329,7 @@ void force_drift_node(int no, int time1)
         if(l_tot>0) {fac_stellar_lum = 1 / l_tot;} else {fac_stellar_lum = 0;}
 #endif
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
       double fac_dm;
 
       if(Nodes[no].mass_dm)
@@ -346,7 +346,7 @@ void force_drift_node(int no, int time1)
         Extnodes[no].rt_source_lum_vs[j] += fac_stellar_lum * FLT(Extnodes[no].rt_source_lum_dp[j]);
         Extnodes[no].rt_source_lum_dp[j] = 0;
 #endif
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  Extnodes[no].vs_dm[j] += fac_dm * FLT(Extnodes[no].dp_dm[j]);
 	  Extnodes[no].dp_dm[j] = 0;
 #endif
@@ -369,7 +369,7 @@ void force_drift_node(int no, int time1)
     for(j = 0; j < 3; j++) {Nodes[no].u.d.s[j] += Extnodes[no].vs[j] * dt_drift;}
   Nodes[no].len += 2 * Extnodes[no].vmax * dt_drift;
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
     for(j = 0; j < 3; j++) {Nodes[no].s_dm[j] += Extnodes[no].vs_dm[j] * dt_drift;}
 #endif
 

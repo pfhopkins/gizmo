@@ -25,7 +25,7 @@ extern pthread_mutex_t mutex_partnodedrift;
  *
  *  This file contains a loop modeled on the gas density computation which
  *    determines kernel lengths for dark matter particles around a given set of gas particles;
- *    this is used by the flag GALSF_SUBGRID_DMDISPERSION to estimate the local dark
+ *    this is used by the flag GALSF_SUBGRID_WIND_SCALING==2 to estimate the local dark
  *    matter velocity dispersion around a given gas particle, which (in turn) is used to set the
  *    sub-grid wind velocity and mass loading. The loop here needs to be called for these models (note this
  *    in general will require a different smoothing length from, say, the dm-dm force softening, or the
@@ -37,8 +37,8 @@ extern pthread_mutex_t mutex_partnodedrift;
  *
  */
 
-
-#ifdef GALSF_SUBGRID_DMDISPERSION
+#ifdef GALSF_SUBGRID_WINDS
+#if (GALSF_SUBGRID_WIND_SCALING==2)
 
 /*! Structure for communication during the density computation. Holds data that is sent to other processors.
  */
@@ -628,6 +628,7 @@ void *disp_density_evaluate_secondary(void *p)
 #undef EVALUATION_CALL
 }
 
+#endif
 #endif
 
 

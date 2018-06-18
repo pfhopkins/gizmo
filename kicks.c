@@ -112,7 +112,7 @@ void apply_long_range_kick(integertime tstart, integertime tend)
                 P[i].Vel[j] += dvel[j];
                 P[i].dp[j] += P[i].Mass * dvel[j];
             }
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
         do_long_range_phase_space_kick(i, dt_gravkick);
 #endif
     }
@@ -300,21 +300,21 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
  
         /* check for reflecting boundaries: if so, do the reflection! */
-#if defined(REFLECT_BND_X) || defined(REFLECT_BND_Y) || defined(REFLECT_BND_Z)
+#if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z)
         double box_upper[3]; box_upper[0]=box_upper[1]=box_upper[2]=1;
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
         box_upper[0]=boxSize_X; box_upper[1]=boxSize_Y; box_upper[2]=boxSize_Z;
 #endif
         for(j = 0; j < 3; j++)
         {
             /* skip the non-reflecting boundaries */
-#ifndef REFLECT_BND_X
+#ifndef BOX_REFLECT_X
             if(j==0) continue;
 #endif
-#ifndef REFLECT_BND_Y
+#ifndef BOX_REFLECT_Y
             if(j==1) continue;
 #endif
-#ifndef REFLECT_BND_Z
+#ifndef BOX_REFLECT_Z
             if(j==2) continue;
 #endif
             if(P[i].Pos[j] <= 0)
@@ -349,9 +349,15 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
         
         /* set the momentum shift so we know how to move the tree! */
         for(j=0;j<3;j++) {P[i].dp[j] += dp[j];}
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
         /* momentum-space correction for following phase-space distribution (call after momentum-space kicks) */
         do_the_phase_space_kick(i, dt_gravkick);
+#endif
+#ifdef DM_FUZZY
+        do_dm_fuzzy_drift_kick(i, dt_entr); /* kicks for fuzzy-dm integration */
+#endif
+#ifdef CBE_INTEGRATOR
+        do_cbe_drift_kick(i, dt_entr); /* kicks for cbe integration of phase-space distribution function */
 #endif
         
     } // if(TimeBinActive[P[i].TimeBin]) //
@@ -362,7 +368,7 @@ void set_predicted_sph_quantities_for_extra_physics(int i)
 {
     if(P[i].Type == 0 && P[i].Mass > 0)
     {
-        int k; k=0;
+        int k, kf; k=0, kf=0;
 #if defined(MAGNETIC)
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         for(k=0;k<3;k++) {SphP[i].BPred[k] = SphP[i].B[k];}
@@ -376,9 +382,12 @@ void set_predicted_sph_quantities_for_extra_physics(int i)
 #ifdef COSMIC_RAYS_M1
         for(k=0;k<3;k++) {SphP[i].CosmicRayFluxPred[k] = SphP[i].CosmicRayFlux[k];}
 #endif
+#ifdef COSMIC_RAYS_ALFVEN
+        for(k=0;k<2;k++) {SphP[i].CosmicRayAlfvenEnergyPred[k] = SphP[i].CosmicRayAlfvenEnergy[k];}
 #endif
+#endif
+        
 #if defined(RT_EVOLVE_NGAMMA)
-        int kf;
         for(kf=0;kf<N_RT_FREQ_BINS;kf++)
         {
             SphP[i].E_gamma_Pred[kf] = SphP[i].E_gamma[kf];
@@ -387,6 +396,13 @@ void set_predicted_sph_quantities_for_extra_physics(int i)
 #endif
         }
         rt_eddington_update_calculation(i);
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+        for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k=0;k<N_RT_INTENSITY_BINS;k++) {SphP[i].Intensity_Pred[kf][k] = SphP[i].Intensity[kf][k];}}
+#endif
+
+#ifdef EOS_ELASTIC
+        for(k=0;k<3;k++) {for(kf=0;kf<3;kf++) {SphP[i].Elastic_Stress_Tensor_Pred[k][kf]=SphP[i].Elastic_Stress_Tensor[k][kf];}}
 #endif
         
         SphP[i].Pressure = get_pressure(i);
@@ -478,6 +494,10 @@ void do_sph_kick_for_extra_physics(int i, integertime tstart, integertime tend, 
     
 #ifdef RADTRANSFER
     rt_update_driftkick(i,dt_entr,0);
+#endif
+
+#ifdef EOS_ELASTIC
+    elastic_body_update_driftkick(i,dt_entr,0);
 #endif
 }
 

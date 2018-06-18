@@ -20,19 +20,15 @@
 /* Note: This routine will only work correctly for particles of equal mass ! */
 
 
-#ifdef TWOPOINT_FUNCTION_COMPUTATION_ENABLED
+#ifdef OUTPUT_TWOPOINT_ENABLED
 
 #define BINS_TP  40		/* number of bins used */
 #define ALPHA  -1.0		/* slope used in randomly selecting radii around target particles */
 
 #ifndef FRACTION_TP
 #define FRACTION_TP  0.2
-#endif /* fraction of particles selected for sphere
-          placement. Will be scaled with total
-          particle number so that a fixed value
-          should give roughly the same noise level
-          in the meaurement, indpendent of
-          simulation size */
+#endif
+/* above sets fraction of particles selected for sphere placement. Will be scaled with total particle number so that a fixed value should give roughly the same noise level in the meaurement, indpendent of simulation size */
 
 struct twopointdata_in
 {
@@ -408,7 +404,7 @@ int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, in
   struct NODE *current;
   MyDouble dx, dy, dz, dist;
 
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
   MyDouble xtmp;
 #endif
 
@@ -423,9 +419,9 @@ int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, in
 	  p = no;
 	  no = Nextnode[no];
 
-	  dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+	  dx = NGB_PERIODIC_BOX_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+	  dy = NGB_PERIODIC_BOX_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+	  dz = NGB_PERIODIC_BOX_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
 
 	  r2 = dx * dx + dy * dy + dz * dz;
 
@@ -501,11 +497,11 @@ int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, in
 	  no = current->u.d.sibling;	/* make skipping the branch the default */
 
 	  dist = rsearch + 0.5 * current->len;
-	  dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
+	  dx = NGB_PERIODIC_BOX_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
 	  if(dx > dist) continue;
-	  dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
+	  dy = NGB_PERIODIC_BOX_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
 	  if(dy > dist) continue;
-	  dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
+	  dz = NGB_PERIODIC_BOX_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
 	  if(dz > dist) continue;
 	  /* now test against the minimal sphere enclosing everything */
 	  dist += FACT1 * current->len;

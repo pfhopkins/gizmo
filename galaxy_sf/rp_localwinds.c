@@ -19,17 +19,15 @@
 #if defined(GALSF_FB_RPWIND_FROMSTARS) && !defined(GALSF_FB_RPWIND_DO_IN_SFCALC)
 
 #define WindInitialVelocityBoost 1.0 // (optional) boost velocity coupled (fixed momentum)
+//#define GALSF_FB_RPWIND_FROMSTARS_FORCE_ISOTROPIC // for de-bugging and code-testing only -- forces acceleration to be random in direction
 
 void radiation_pressure_winds_consolidated(void)
 {
     MyDouble *pos;
     int N_MAX_KERNEL,N_MIN_KERNEL,MAXITER_FB,NITER,startnode,dummy,numngb_inbox,i,j,k,n;
-    double dx,dy,dz,r2,u,h,hinv,hinv3,wk,rho,wt_sum,p_random,p_cumulative;
+    double dx,dy,dz,r2,u,h,hinv,hinv3,wk,rho,wt_sum,p_random,p_cumulative; p_cumulative=0; p_random=0;
     double star_age,lm_ssp,dv_units,dE_over_c,unitmass_in_msun;
     double prob,dt,v,vq=0,dv_imparted,dv_imparted_uv,norm,dir[3];
-#ifdef GALSF_WINDS_ISOTROPIC
-    double theta, phi;
-#endif
     double total_n_wind,total_m_wind,total_mom_wind,total_prob_kick,avg_v_kick,momwt_avg_v_kick,avg_taufac;
     double totMPI_n_wind,totMPI_m_wind,totMPI_mom_wind,totMPI_prob_kick,totMPI_avg_v,totMPI_pwt_avg_v,totMPI_taufac;
     total_n_wind=total_m_wind=total_mom_wind=total_prob_kick=avg_v_kick=momwt_avg_v_kick=avg_taufac=0;
@@ -262,14 +260,12 @@ void radiation_pressure_winds_consolidated(void)
 #ifdef GALSF_FB_RPWIND_FROMCLUMPS
                                         dir[0]=dx; dir[1]=dy; dir[2]=dz;
 #endif
-#ifdef GALSF_WINDS_ISOTROPIC /* winds get a random direction */
-                                        theta = acos(2 * get_random_number(P[i].ID + P[j].ID + ThisTask + i + j + 3) - 1);
-                                        phi = 2 * M_PI * get_random_number(P[i].ID + P[j].ID + ThisTask + i + j + 4);
-                                        dir[0] = sin(theta) * cos(phi);
-                                        dir[1] = sin(theta) * sin(phi);
-                                        dir[2] = cos(theta);
-#endif // GALSF_WINDS_ISOTROPIC
-#if !defined(GALSF_WINDS_ISOTROPIC) && !defined(GALSF_FB_RPWIND_FROMCLUMPS)
+#ifdef GALSF_FB_RPWIND_FROMSTARS_FORCE_ISOTROPIC /* winds get a random direction */
+                                        double theta = acos(2 * get_random_number(P[i].ID + P[j].ID + ThisTask + i + j + 3) - 1);
+                                        double phi = 2 * M_PI * get_random_number(P[i].ID + P[j].ID + ThisTask + i + j + 4);
+                                        dir[0] = sin(theta) * cos(phi); dir[1] = sin(theta) * sin(phi); dir[2] = cos(theta);
+#endif
+#if !defined(GALSF_FB_RPWIND_FROMSTARS_FORCE_ISOTROPIC) && !defined(GALSF_FB_RPWIND_FROMCLUMPS)
 #ifdef GALSF_FB_RPWIND_CONTINUOUS
                                         v = dv_imparted; // ir kick: directed along opacity gradient //
                                         for(k=0;k<3;k++) dir[k]=-P[j].GradRho[k]; // based on density gradient near star //
@@ -296,7 +292,7 @@ void radiation_pressure_winds_consolidated(void)
                                         }
                                         
                                         /* if we're not forcing the kick orientation, need to separately apply the UV kick */
-#if defined(GALSF_FB_RPWIND_CONTINUOUS) && (!defined(GALSF_WINDS_ISOTROPIC) && !defined(GALSF_FB_RPWIND_FROMCLUMPS))
+#if defined(GALSF_FB_RPWIND_CONTINUOUS) && (!defined(GALSF_FB_RPWIND_FROMSTARS_FORCE_ISOTROPIC) && !defined(GALSF_FB_RPWIND_FROMCLUMPS))
                                         v = dv_imparted_uv; // uv kick: directed from star //
                                         dir[0]=dx; dir[1]=dy; dir[2]=dz; // based on density gradient near star //
                                         norm=0; for(k=0; k<3; k++) norm += dir[k]*dir[k];

@@ -38,7 +38,7 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 double get_mu(double T_guess, double rho, double *ne_guess, int target);
 double yhelium(int target);
 
-#ifdef GRACKLE
+#ifdef COOL_GRACKLE
 void InitGrackle(void);
 double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode);
 #endif

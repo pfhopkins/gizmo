@@ -15,6 +15,9 @@
     V_j = P[j].Mass / SphP[j].Density;
 #ifdef COSMIC_RAYS
     Fluxes.CosmicRayPressure = 0;
+#ifdef COSMIC_RAYS_ALFVEN
+    Fluxes.CosmicRayAlfvenEnergy[0] = Fluxes.CosmicRayAlfvenEnergy[1] = 0;
+#endif
 #endif
     
     /* --------------------------------------------------------------------------------- */
@@ -22,11 +25,30 @@
     /* ... EQUATION OF MOTION (HYDRO) ... */
     /* --------------------------------------------------------------------------------- */
     /* --------------------------------------------------------------------------------- */
-    double vi_dot_r,hfc,hfc_visc,hfc_i,hfc_j,hfc_dwk_i,hfc_dwk_j,hfc_egy=0;
+    double vi_dot_r,hfc,hfc_visc,hfc_i,hfc_j,hfc_dwk_i,hfc_dwk_j,hfc_egy=0,wt_corr_i=1,wt_corr_j=1;;
     /* 'Standard' (Lagrangian) Density Formulation: the acceleration term is identical whether we use 'entropy' or 'energy' sph */
     /* (this step is the same in both 'Lagrangian' and 'traditional' SPH */
 
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
+    /* need to include an effective stress for large negative pressures when elements are too close, to prevent tensile instability */
+    if((local.Pressure<0)||(SphP[j].Pressure<0))
+    {
+        double h_eff = 0.5*(Particle_Size_i + Get_Particle_Size(j)*All.cf_atime); // effective inter-particle spacing around these elements
+        if(kernel.r < 2.*h_eff) // check if close
+        {
+            double r_over_h_eff = kernel.r / h_eff, wk_0, wk_r, dwk_tmp; // define separation relative to mean
+            kernel_main(0.5, 1., 1., &wk_0, &dwk_tmp, -1); // use kernels because of their stability properties: here weight for 'mean separation'
+            kernel_main(0.5*r_over_h_eff, 1., 1., &wk_r, &dwk_tmp, -1); // here weight for actual half-separation
+            double wt_corr = wk_r / wk_0; // weighting function
+            wt_corr = 1. - 0.2 * wt_corr*wt_corr*wt_corr*wt_corr; // actual limiting function (if close enough, pressure reverses to repulsive) //
+            if(local.Pressure < 0) {wt_corr_i = wt_corr;}
+            if(SphP[j].Pressure<0) {wt_corr_j = wt_corr;}
+        }
+    }
+#endif
+
+    
+#ifdef HYDRO_PRESSURE_SPH
     /* Pressure-Energy and/or Pressure-Entropy form of SPH (using 'constant mass in kernel' h-constraint */
     /* -- note that, using appropriate definitions, both forms have an identical EOM in appearance here -- */
     double p_over_rho2_j = SphP[j].Pressure / (SphP[j].EgyWtDensity * SphP[j].EgyWtDensity);
@@ -40,7 +62,8 @@
     hfc_i = kernel.p_over_rho2_i * (1 + local.DhsmlHydroSumFactor / P[j].Mass);
     hfc_j = p_over_rho2_j * (1 + SphP[j].DhsmlHydroSumFactor / local.Mass);
 #endif
-    
+    hfc_i *= wt_corr_i; hfc_j *= wt_corr_j; // apply tensile instability suppression //
+
     hfc_egy = hfc_i; /* needed to follow the internal energy explicitly; note this is the same for any of the formulations above */
         
     /* use the traditional 'kernel derivative' (dwk) to compute derivatives */
@@ -72,7 +95,7 @@
     double mj_r = P[j].Mass / kernel.r;
     double mf_i = kernel.mf_i * mj_r * kernel.dwk_i;
     double mf_j = kernel.mf_j * mj_r * kernel.dwk_j / (SphP[j].Density * SphP[j].Density);
-#ifndef SPHEQ_DENSITY_INDEPENDENT_SPH
+#ifndef HYDRO_PRESSURE_SPH
     mf_i *= (1 + local.DhsmlHydroSumFactor / P[j].Mass);
     mf_j *= (1 + SphP[j].DhsmlHydroSumFactor / local.Mass);
 #endif
@@ -199,9 +222,9 @@
     /* --------------------------------------------------------------------------------- */
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
     double vsigu = (kernel.sound_i + kernel.sound_j - 3 * fac_mu * kernel.vdotr2 / kernel.r) / fac_mu; // want in code velocity units
-    if(vsigu > 0) // implicitly sets vsig=0 if 3*w_ij > (c_i+c_j)
+    if((vsigu > 0) && (fabs(local.Pressure) + fabs(SphP[j].Pressure) > 0)) // implicitly sets vsig=0 if 3*w_ij > (c_i+c_j)
     {
-        vsigu *= fabs(local.Pressure - SphP[j].Pressure)/(local.Pressure + SphP[j].Pressure);
+        vsigu *= fabs(local.Pressure - SphP[j].Pressure)/(fabs(local.Pressure) + fabs(SphP[j].Pressure));
         du_ij = kernel.spec_egy_u_i - SphP[j].InternalEnergyPred;
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
         du_ij *= 0.5 * (local.alpha + SphP[j].alpha_limiter * SphP[j].alpha); // in this case, All.ArtCondConstant is just a multiplier -relative- to art. visc.

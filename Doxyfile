@@ -142,7 +142,7 @@ SEARCH_INCLUDES        = YES
 INCLUDE_PATH           = 
 INCLUDE_FILE_PATTERNS  = 
 PREDEFINED             = PMGRID \
-                         PERIODIC \
+                         BOX_PERIODIC \
                          COOLING \
                          GALSF \
                          METALS \

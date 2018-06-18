@@ -20,7 +20,7 @@
 #include "../proto.h"
 
 #ifdef PMGRID
-#if !defined (PERIODIC) || defined (PM_PLACEHIGHRESREGION)
+#if !defined (BOX_PERIODIC) || defined (PM_PLACEHIGHRESREGION)
 
 #ifdef NOTYPEPREFIX_FFTW
 #include        <rfftw_mpi.h>
@@ -61,12 +61,12 @@ static fftw_real *kernel[2], *rhogrid, *forcegrid, *workspace;
 static fftw_complex *fft_of_kernel[2], *fft_of_rhogrid;
 static d_fftw_real *d_rhogrid, *d_forcegrid, *d_workspace;
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 static fftw_real *tidal_workspace;
 static fftw_real *d_tidal_workspace;
 #endif
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 static fftw_real *kernel_scalarfield[2];
 static fftw_complex *fft_of_kernel_scalarfield[2];
 #endif
@@ -75,7 +75,7 @@ void pm_nonperiodic_transposeA(fftw_real * field, fftw_real * scratch);
 void pm_nonperiodic_transposeB(fftw_real * field, fftw_real * scratch);
 int pm_nonperiodic_compare_sortindex(const void *a, const void *b);
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 void pm_nonperiodic_transposeAz(fftw_real * field, fftw_real * scratch);
 void pm_nonperiodic_transposeBz(fftw_real * field, fftw_real * scratch);
 #endif
@@ -170,7 +170,7 @@ void pm_init_regionsize(void)
       }
 
 
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
   All.Asmth[0] = ASMTH * All.TotalMeshSize[0] / GRID;
   All.Rcut[0] = RCUT * All.Asmth[0];
 #endif
@@ -209,7 +209,7 @@ void pm_init_regionsize(void)
 
   if(ThisTask == 0)
     {
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
       printf("Allowed region for isolated PM mesh (coarse):\n");
       printf("(%g|%g|%g)  -> (%g|%g|%g)   ext=%g  totmeshsize=%g  meshsize=%g\n\n",
 	     All.Xmintot[0][0], All.Xmintot[0][1], All.Xmintot[0][2],
@@ -267,7 +267,7 @@ void pm_init_nonperiodic(void)
 
   /* now allocate memory to hold the FFT fields */
 
-#if !defined(PERIODIC)
+#if !defined(BOX_PERIODIC)
   if(!(kernel[0] = (fftw_real *) mymalloc("kernel[0]", bytes = fftsize * sizeof(fftw_real))))
     {
       printf("failed to allocate memory for `FFT-kernel[0]' (%g MB).\n", bytes / (1024.0 * 1024.0));
@@ -275,7 +275,7 @@ void pm_init_nonperiodic(void)
     }
   bytes_tot += bytes;
   fft_of_kernel[0] = (fftw_complex *) kernel[0];
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   if(!
      (kernel_scalarfield[0] =
       (fftw_real *) mymalloc("kernel_scalarfield[0]", bytes = fftsize * sizeof(fftw_real))))
@@ -297,7 +297,7 @@ void pm_init_nonperiodic(void)
     }
   bytes_tot += bytes;
   fft_of_kernel[1] = (fftw_complex *) kernel[1];
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   if(!
      (kernel_scalarfield[1] =
       (fftw_real *) mymalloc("kernel_scalarfield[1]", bytes = fftsize * sizeof(fftw_real))))
@@ -359,7 +359,7 @@ void pm_init_nonperiodic_allocate(void)
     }
   bytes_tot += bytes;
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
   if(!(tidal_workspace = (fftw_real *) mymalloc("tidal_workspace", bytes = maxfftsize * sizeof(d_fftw_real))))
     {
       printf("failed to allocate memory for `FFT-tidal_workspace' (%g MB).\n", bytes / (1024.0 * 1024.0));
@@ -376,7 +376,7 @@ void pm_init_nonperiodic_allocate(void)
   d_rhogrid = (d_fftw_real *) rhogrid;
   d_forcegrid = (d_fftw_real *) forcegrid;
   d_workspace = (d_fftw_real *) workspace;
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
   d_tidal_workspace = (d_fftw_real *) tidal_workspace;
 #endif
 }
@@ -389,7 +389,7 @@ void pm_init_nonperiodic_allocate(void)
 void pm_init_nonperiodic_free(void)
 {
   /* deallocate memory */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
   myfree(tidal_workspace);
 #endif
   myfree(part_sortindex);
@@ -416,10 +416,10 @@ void pm_setup_nonperiodic_kernel(void)
 
   pm_init_nonperiodic_allocate();
 
-#if !defined(PERIODIC)
+#if !defined(BOX_PERIODIC)
   for(i = 0; i < fftsize; i++)	/* clear local density field */
     kernel[0][i] = 0;
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   for(i = 0; i < fftsize; i++)	/* clear local density field */
     kernel_scalarfield[0][i] = 0;
 #endif
@@ -450,7 +450,7 @@ void pm_setup_nonperiodic_kernel(void)
 	  else
 	    kernel[0][GRID * GRID2 * (i - slabstart_x) + GRID2 * j + k] =
 	      -1 / (sqrt(M_PI) * (((double) ASMTH) / GRID));
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  if(r > 0)
 	    kernel_scalarfield[0][GRID * GRID2 * (i - slabstart_x) + GRID2 * j + k] =
 	      -fac * All.ScalarBeta * exp(-r / All.ScalarScreeningLength) / r;
@@ -463,7 +463,7 @@ void pm_setup_nonperiodic_kernel(void)
   /* do the forward transform of the kernel */
 
   rfftwnd_mpi(fft_forward_plan, 1, kernel[0], workspace, FFTW_TRANSPOSED_ORDER);
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   rfftwnd_mpi(fft_forward_plan, 1, kernel_scalarfield[0], workspace, FFTW_TRANSPOSED_ORDER);
 #endif
 #endif
@@ -472,7 +472,7 @@ void pm_setup_nonperiodic_kernel(void)
 #if defined(PM_PLACEHIGHRESREGION)
   for(i = 0; i < fftsize; i++)	/* clear local density field */
     kernel[1][i] = 0;
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   for(i = 0; i < fftsize; i++)	/* clear local density field */
     kernel_scalarfield[1][i] = 0;
 #endif
@@ -505,7 +505,7 @@ void pm_setup_nonperiodic_kernel(void)
 	      kernel[1][GRID * GRID2 * (i - slabstart_x) + GRID2 * j + k] =
 		-fac / (sqrt(M_PI) * (((double) ASMTH) / GRID));
 	    }
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  if(r > 0)
 	    kernel_scalarfield[1][GRID * GRID2 * (i - slabstart_x) + GRID2 * j + k] =
 	      -fac * All.ScalarBeta * exp(-r / All.ScalarScreeningLength) / r;
@@ -522,7 +522,7 @@ void pm_setup_nonperiodic_kernel(void)
 
   /* do the forward transform of the kernel */
   rfftwnd_mpi(fft_forward_plan, 1, kernel[1], workspace, FFTW_TRANSPOSED_ORDER);
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   rfftwnd_mpi(fft_forward_plan, 1, kernel_scalarfield[1], workspace, FFTW_TRANSPOSED_ORDER);
 #endif
 #endif
@@ -570,10 +570,10 @@ void pm_setup_nonperiodic_kernel(void)
 	      ff = ff * ff * ff * ff;
 
 	      ip = GRID * (GRID / 2 + 1) * (y - slabstart_y) + (GRID / 2 + 1) * x + z;
-#if !defined(PERIODIC)
+#if !defined(BOX_PERIODIC)
 	      fft_of_kernel[0][ip].re *= ff;
 	      fft_of_kernel[0][ip].im *= ff;
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      fft_of_kernel_scalarfield[0][ip].re *= ff;
 	      fft_of_kernel_scalarfield[0][ip].im *= ff;
 #endif
@@ -581,7 +581,7 @@ void pm_setup_nonperiodic_kernel(void)
 #if defined(PM_PLACEHIGHRESREGION)
 	      fft_of_kernel[1][ip].re *= ff;
 	      fft_of_kernel[1][ip].im *= ff;
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      fft_of_kernel_scalarfield[1][ip].re *= ff;
 	      fft_of_kernel_scalarfield[1][ip].im *= ff;
 #endif
@@ -639,7 +639,7 @@ int pmforce_nonperiodic(int grnr)
   fftw_real *localfield_data, *import_data;
   MPI_Status status;
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   int phase;
   double kscreening2;
 
@@ -700,7 +700,7 @@ int pmforce_nonperiodic(int grnr)
 
   pm_init_nonperiodic_allocate();
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   for(phase = 0; phase < 2; phase++)
     {
 #endif
@@ -709,7 +709,7 @@ int pmforce_nonperiodic(int grnr)
       /* determine the cells each particles accesses, and how many particles lie on the grid patch */
       for(i = 0, num_on_grid = 0; i < NumPart; i++)
 	{
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  if(phase == 1)
 	    if(P[i].Type == 0)	/* don't bin baryonic mass in this phase */
 	      continue;
@@ -917,7 +917,7 @@ int pmforce_nonperiodic(int grnr)
 	    {
 	      ip = GRID * (GRID / 2 + 1) * y + (GRID / 2 + 1) * x + z;
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      if(phase == 1)
 		{
 		  re =
@@ -1176,7 +1176,7 @@ int pmforce_nonperiodic(int grnr)
 
 	  for(i = 0, j = 0; i < NumPart; i++)
 	    {
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      if(phase == 1)
 		if(P[i].Type == 0)	/* baryons don't get an extra scalar force */
 		  continue;
@@ -1219,7 +1219,7 @@ int pmforce_nonperiodic(int grnr)
       myfree(localfield_first);
       myfree(localfield_d_data);
       myfree(localfield_globalindex);
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
     }
 #endif
 
@@ -1346,7 +1346,7 @@ void pm_nonperiodic_transposeB(fftw_real * field, fftw_real * scratch)
 	  }
 }
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 void pm_nonperiodic_transposeAz(fftw_real * field, fftw_real * scratch)
 {
   int x, y, z, task;
@@ -1899,7 +1899,7 @@ int pmpotential_nonperiodic(int grnr)
 	+ localfield_data[part[j + 5].localindex] * (dx) * (1.0 - dy) * dz
 	+ localfield_data[part[j + 6].localindex] * (dx) * dy * (1.0 - dz)
 	+ localfield_data[part[j + 7].localindex] * (dx) * dy * dz;
-#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUTPOTENTIAL)
+#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
       P[i].Potential += fac * pot;
 #endif
     }
@@ -1983,7 +1983,7 @@ void mysort_pmnonperiodic(void *b, size_t n, size_t s, int (*cmp) (const void *,
 }
 
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /*! Calculates the long-range tidal field using the PM method.  The potential is
  *  Gaussian filtered with Asmth, given in mesh-cell units. We carry out a CIC
  *  charge assignment, and compute the potenial by Fourier transform
@@ -2011,7 +2011,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 
 
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   int phase;
   double kscreening2;
 
@@ -2067,7 +2067,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 
   pm_init_nonperiodic_allocate();
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   for(phase = 0; phase < 2; phase++)
     {
 #endif
@@ -2076,7 +2076,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
       /* determine the cells each particles accesses, and how many particles lie on the grid patch */
       for(i = 0, num_on_grid = 0; i < NumPart; i++)
 	{
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  if(phase == 1)
 	    if(P[i].Type == 0)	/* don't bin baryonic mass in this phase */
 	      continue;
@@ -2287,7 +2287,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 	    {
 	      ip = GRID * (GRID / 2 + 1) * y + (GRID / 2 + 1) * x + z;
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      if(phase == 1)
 		{
 		  re =
@@ -2619,7 +2619,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 
 	  for(i = 0, j = 0; i < NumPart; i++)
 	    {
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      if(phase == 1)
 		if(P[i].Type == 0)	/* baryons don't get an extra scalar force */
 		  continue;
@@ -2689,7 +2689,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
       myfree(localfield_first);
       myfree(localfield_d_data);
       myfree(localfield_globalindex);
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
     }
 #endif
 
@@ -3220,7 +3220,7 @@ void check_tidaltensor_nonperiodic(int particle_ID)
 	{
 
 	  FdTidaltensor = fopen("Tidaltensor.txt", "a");
-	  fprintf(FdTidaltensor, "NON-PERIODIC\n");
+	  fprintf(FdTidaltensor, "Non-Periodic\n");
 	  fprintf(FdTidaltensor, "Mesh-Force: %f %f %f\n", P[i].GravPM[0], P[i].GravPM[1], P[i].GravPM[2]);
 	  fprintf(FdTidaltensor, "Tree-Force: %f %f %f\n", P[i].GravAccel[0], P[i].GravAccel[1],
 		  P[i].GravAccel[2]);
@@ -3254,6 +3254,6 @@ void check_tidaltensor_nonperiodic(int particle_ID)
 	}
     }
 }
-#endif /*DISTORTIONTENSORPS*/
+#endif /*GDE_DISTORTIONTENSOR*/
 #endif
 #endif

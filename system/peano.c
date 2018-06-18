@@ -172,10 +172,6 @@ void reorder_particles(void)
 	      idsave = Id[dest];
 	      P[dest] = Psource;
 	      Id[dest] = idsource;
-#if defined(BLACK_HOLES) && defined(DETACH_BLACK_HOLES)
-	      if(P[dest].Type == 5)
-		BHP[P[dest].pt.BHID].PID = dest;
-#endif
 	      if(dest == i)
 		break;
 

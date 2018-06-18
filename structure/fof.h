@@ -34,7 +34,7 @@ typedef struct
   MyIDType MinIDTask;
   int LocCount;
   int ExtCount;
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
   int LocDMCount;
   int ExtDMCount;
 #endif
@@ -60,13 +60,12 @@ typedef struct
 #ifdef BLACK_HOLES
   MyOutputFloat BH_Mass;
   MyOutputFloat BH_Mdot;
-  MyOutputFloat MaxDens;
-#ifdef BH_SEED_FROM_STAR_PARTICLE
+#ifdef BH_SEED_FROM_FOF
   MyOutputFloat MinPot;
+  int index_maxdens, task_maxdens;
 #endif
-  int index_maxdens, task_maxdens;    // these will hold info for MinPot rather than MaxDens if BH_SEED_FROM_STAR_PARTICLE
 #endif
-
+    
 #ifdef SUBFIND
   int Nsubs;
   int FirstSub;
@@ -95,10 +94,10 @@ typedef struct
 
 
 #ifdef ALTERNATIVE_PSORT
-void fof_sort_FOF_GList_LocCountTaskDiffMinID (fof_group_list *data, int ndata);
-void fof_sort_FOF_GList_ExtCountMinID (fof_group_list *data, int ndata);
-void fof_sort_Group_GrNr (group_properties *data, int ndata);
-void fof_sort_ID_list_GrNrID (fof_id_list *data, int ndata);
+void fof_sort_FOF_GList_LocCountTaskDiffMinID(fof_group_list *data, int ndata);
+void fof_sort_FOF_GList_ExtCountMinID(fof_group_list *data, int ndata);
+void fof_sort_Group_GrNr(group_properties *data, int ndata);
+void fof_sort_ID_list_GrNrID(fof_id_list *data, int ndata);
 #endif
 
 

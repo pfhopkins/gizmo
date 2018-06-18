@@ -7,16 +7,10 @@
 #include <sys/types.h>
 #include <gsl/gsl_math.h>
 #include <inttypes.h>
-
 #include "../allvars.h"
 #include "../proto.h"
-
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
-
-#ifdef HAVE_HDF5
-#include <hdf5.h>
-#endif
 
 /*! \file fof.c
  *  \brief parallel FoF group finder
@@ -138,24 +132,9 @@ void fof_fof(int num)
   endrun(0);
 #endif
 
-#ifdef BH_SEED_STAR_MASS_FRACTION
-  if(num < -1)			/* only for BH seeding ! */
-    {
-      MyFOF_PRIMARY_LINK_TYPES = 16;
-      MyFOF_SECONDARY_LINK_TYPES = 4 + 32;
-      MyFOF_GROUP_MIN_LEN = 10;
-    }
-  else
-    {
-      MyFOF_PRIMARY_LINK_TYPES = FOF_PRIMARY_LINK_TYPES;
-      MyFOF_SECONDARY_LINK_TYPES = FOF_SECONDARY_LINK_TYPES;
-      MyFOF_GROUP_MIN_LEN = FOF_GROUP_MIN_LEN;
-    }
-#else
   MyFOF_PRIMARY_LINK_TYPES = FOF_PRIMARY_LINK_TYPES;
   MyFOF_SECONDARY_LINK_TYPES = FOF_SECONDARY_LINK_TYPES;
   MyFOF_GROUP_MIN_LEN = FOF_GROUP_MIN_LEN;
-#endif
 
   if(ThisTask == 0)
     {
@@ -177,28 +156,11 @@ void fof_fof(int num)
 #endif
 
   for(i = 0, ndm = 0, mass = 0; i < NumPart; i++)
-//#ifdef KD_CHOOSE_LINKING_LENGTH                       // DAA: fixing error introduced when KD_CHOOSE_LINKING_LENGTH was deleted
-//    {
-//#ifdef BH_SEED_STAR_MASS_FRACTION
-//      if(num == -2)
-//	{
-//	  if(P[i].Type == 1)
-//	    ndm++;
-//	}
-//     else
-//#endif
-//      if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
-//	ndm++;
-//      if(((1 << P[i].Type) & (DENSITY_SPLIT_BY_TYPE)))
-//	mass += P[i].Mass;
-//    }
-//#else
     if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
       {
         ndm++;
         mass += P[i].Mass;
       }
-//#endif
   sumup_large_ints(1, &ndm, &ndmtot);
   MPI_Allreduce(&mass, &masstot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
@@ -209,20 +171,10 @@ void fof_fof(int num)
 
   LinkL = LINKLENGTH * pow(masstot / ndmtot / rhodm, 1.0 / 3);
 
-#ifdef BH_SEED_STAR_MASS_FRACTION
-  if(num == -2)
-    LinkL /= 3;
-#endif
-
 #ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
     {
       printf("\nComoving linking length: %g    ", LinkL);
-#ifdef BH_SEED_STAR_MASS_FRACTION
-      if(num == -2)
-	printf("\n      linking on star particles for BH seeding (prim=%d, sec=%d, Nmin=%d) ...",
-	       MyFOF_PRIMARY_LINK_TYPES, MyFOF_SECONDARY_LINK_TYPES, MyFOF_GROUP_MIN_LEN);
-#endif
       printf("(presently allocated=%g MB)\n", AllocatedBytes / (1024.0 * 1024.0));
       fflush(stdout);
     }
@@ -407,26 +359,17 @@ void fof_fof(int num)
   if(ThisTask == 0)
     printf("computation of group properties took = %g sec\n", timediff(t0, t1));
 
-#ifdef BLACK_HOLES
+#ifdef BH_SEED_FROM_FOF
   if(num < 0){   // Make BHs in every call to fof_fof (including the group finding for each snapshot)
-      if(All.Time < 1.0/(1.0+All.SeedBlackHoleMinRedshift)) { fof_make_black_holes(); }
-      else {  printf("skipping black hole seeding at a = %g \n", All.Time); }
+      if(All.Time < 1.0/(1.0+All.SeedBlackHoleMinRedshift)) { fof_make_black_holes(); } else {  printf("skipping black hole seeding at a = %g \n", All.Time); }
   }
 #endif
 
-#if defined(GALSF_SUBGRID_WINDS) && defined(GALSF_SUBGRID_VARIABLEVELOCITY)
+#if defined(GALSF_SUBGRID_WINDS)
+#if (GALSF_SUBGRID_WIND_SCALING==1)
   if(num < 0)
     fof_assign_HostHaloMass();
 #endif
-
-#ifdef BUBBLES
-  if(num < 0)
-    find_CM_of_biggest_group();
-#endif
-
-#ifdef MULTI_BUBBLES
-  if(num < 0)
-    multi_bubbles();
 #endif
 
   CPU_Step[CPU_FOF] += measure_time();
@@ -873,7 +816,7 @@ void fof_compile_catalogue(void)
 	{
 	  FOF_GList[i].LocCount = 1;
 	  FOF_GList[i].ExtCount = 0;
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
 	  if(((1 << P[FOF_PList[i].Pindex].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
 	    FOF_GList[i].LocDMCount = 1;
 	  else
@@ -885,7 +828,7 @@ void fof_compile_catalogue(void)
 	{
 	  FOF_GList[i].LocCount = 0;
 	  FOF_GList[i].ExtCount = 1;
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
 	  FOF_GList[i].LocDMCount = 0;
 	  if(((1 << P[FOF_PList[i].Pindex].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
 	    FOF_GList[i].ExtDMCount = 1;
@@ -908,7 +851,7 @@ void fof_compile_catalogue(void)
 	{
 	  FOF_GList[start].LocCount += FOF_GList[i].LocCount;
 	  FOF_GList[start].ExtCount += FOF_GList[i].ExtCount;
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
 	  FOF_GList[start].LocDMCount += FOF_GList[i].LocDMCount;
 	  FOF_GList[start].ExtDMCount += FOF_GList[i].ExtDMCount;
 #endif
@@ -991,7 +934,7 @@ void fof_compile_catalogue(void)
 	endrun(124);
 
       FOF_GList[start].ExtCount += get_FOF_GList[i].ExtCount;
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
       FOF_GList[start].ExtDMCount += get_FOF_GList[i].ExtDMCount;
 #endif
     }
@@ -1008,7 +951,7 @@ void fof_compile_catalogue(void)
 
       get_FOF_GList[i].ExtCount = FOF_GList[start].ExtCount;
       get_FOF_GList[i].LocCount = FOF_GList[start].LocCount;
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
       get_FOF_GList[i].ExtDMCount = FOF_GList[start].ExtDMCount;
       get_FOF_GList[i].LocDMCount = FOF_GList[start].LocDMCount;
 #endif
@@ -1045,7 +988,7 @@ void fof_compile_catalogue(void)
   /* eliminate all groups that are too small, and count local groups */
   for(i = 0, Ngroups = 0, Nids = 0; i < NgroupsExt; i++)
     {
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
       if(FOF_GList[i].LocDMCount + FOF_GList[i].ExtDMCount < MyFOF_GROUP_MIN_LEN)
 #else
       if(FOF_GList[i].LocCount + FOF_GList[i].ExtCount < MyFOF_GROUP_MIN_LEN)
@@ -1084,10 +1027,9 @@ void fof_compute_group_properties(int gr, int start, int len)
 #ifdef BLACK_HOLES
   Group[gr].BH_Mass = 0;
   Group[gr].BH_Mdot = 0;
-  Group[gr].index_maxdens = Group[gr].task_maxdens = -1;
-  Group[gr].MaxDens = 0;
-#ifdef BH_SEED_FROM_STAR_PARTICLE
+#ifdef BH_SEED_FROM_FOF
   Group[gr].MinPot = BHPOTVALUEINIT;
+  Group[gr].index_maxdens = Group[gr].task_maxdens = -1;
 #endif
 #endif
 
@@ -1126,36 +1068,19 @@ void fof_compute_group_properties(int gr, int start, int len)
 	  Group[gr].BH_Mass += BPP(index).BH_Mass;
 	}
 
-#ifdef BH_SEED_FROM_STAR_PARTICLE
-
-      if( (P[index].Type == 4) && (P[index].Potential < Group[gr].MinPot) )
+#ifdef BH_SEED_FROM_FOF
+#if (BH_SEED_FROM_FOF==0)
+      if(P[index].Type==0)
+#elif (BH_SEED_FROM_FOF==1)
+      if(P[index].Type==4)
+#endif
+         if(P[index].Potential < Group[gr].MinPot)
         {
           Group[gr].MinPot = P[index].Potential;
           Group[gr].index_maxdens = index;
           Group[gr].task_maxdens = ThisTask;
         }
-
-#else // BH_SEED_FROM_STAR_PARTICLE
-
-#ifdef BH_SEED_STAR_MASS_FRACTION
-      if(P[index].Type == 4)
-#else
-      if(P[index].Type == 0)
 #endif
-	{
-#if defined(GALSF_SUBGRID_WINDS) && !defined(BH_SEED_STAR_MASS_FRACTION)
-	  if(SphP[index].DelayTime == 0)
-#endif
-	    if(SphP[index].Density > Group[gr].MaxDens)
-	      {
-		Group[gr].MaxDens = SphP[index].Density;
-		Group[gr].index_maxdens = index;
-		Group[gr].task_maxdens = ThisTask;
-	      }
-	}
-
-#endif // BH_SEED_FROM_STAR_PARTICLE
-
 #endif // BLACK_HOLES
 
         for(j = 0; j < 3; j++) {xyz[j] = P[index].Pos[j] - Group[gr].FirstPos[j];}
@@ -1248,20 +1173,13 @@ void fof_exchange_group_data(void)
 #ifdef BLACK_HOLES
       Group[start].BH_Mdot += get_Group[i].BH_Mdot;
       Group[start].BH_Mass += get_Group[i].BH_Mass;
-#ifdef BH_SEED_FROM_STAR_PARTICLE
+#ifdef BH_SEED_FROM_FOF
       if(get_Group[i].MinPot < Group[start].MinPot)
         {
           Group[start].MinPot = get_Group[i].MinPot;
           Group[start].index_maxdens = get_Group[i].index_maxdens;     // "index" and "task" refer to MinPot here
           Group[start].task_maxdens = get_Group[i].task_maxdens;
         }
-#else
-      if(get_Group[i].MaxDens > Group[start].MaxDens)
-	{
-	  Group[start].MaxDens = get_Group[i].MaxDens;
-	  Group[start].index_maxdens = get_Group[i].index_maxdens;
-	  Group[start].task_maxdens = get_Group[i].task_maxdens;
-	}
 #endif
 #endif
 
@@ -1338,7 +1256,7 @@ void fof_save_groups(int num)
     {
       FOF_GList[i].LocCount += FOF_GList[i].ExtCount;	/* total length */
       FOF_GList[i].ExtCount = ThisTask;	/* original task */
-#ifdef DENSITY_SPLIT_BY_TYPE
+#ifdef FOF_DENSITY_SPLIT_TYPES
       FOF_GList[i].LocDMCount += FOF_GList[i].ExtDMCount;	/* total length */
       FOF_GList[i].ExtDMCount = ThisTask;	/* not longer needed/used (hopefully) */
 #endif
@@ -1952,7 +1870,7 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
             dx = pos[0] - P[j].Pos[0];
             dy = pos[1] - P[j].Pos[1];
             dz = pos[2] - P[j].Pos[2];
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
             NEAREST_XYZ(dx,dy,dz,1);
 #endif
             r2 = dx * dx + dy * dy + dz * dz;
@@ -2003,7 +1921,7 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
 
 
 
-#ifdef BLACK_HOLES
+#ifdef BH_SEED_FROM_FOF
 
 void fof_make_black_holes(void)
 {
@@ -2012,34 +1930,17 @@ void fof_make_black_holes(void)
   int *import_indices, *export_indices;
   gsl_rng *random_generator_forbh;
   double random_number_forbh=0, unitmass_in_msun;
-    
-#ifdef BH_SEED_STAR_MASS_FRACTION
-  float *import_fofmass, *export_fofmass;
-#else
-  double massDMpart;
-
-  if(All.MassTable[1] > 0)
-    massDMpart = All.MassTable[1];
-  else
-    massDMpart = All.massDMpart;
-#endif // BH_SEED_STAR_MASS_FRACTION
 
   for(n = 0; n < NTask; n++)
     Send_count[n] = 0;
 
   for(i = 0; i < Ngroups; i++)
     {
-#ifdef BH_HOST_TO_SEED_RATIO
-      if(Group[i].MassType[4] > BH_HOST_TO_SEED_RATIO * All.SeedBlackHoleMass)
-#else
-#ifndef BH_SEED_STAR_MASS_FRACTION
-      if(Group[i].LenType[1] * massDMpart >=
-	 (All.Omega0 - All.OmegaBaryon) / All.Omega0 * All.MinFoFMassForNewSeed)
-#else
-      if(Group[i].MassType[4] > BH_SEED_STAR_MASS_FRACTION * All.MinFoFMassForNewSeed
-	 && Group[i].LenType[2] == 0)
+#if (BH_SEED_FROM_FOF==0)
+    if(Group[i].MassType[1] >= (All.Omega0 - All.OmegaBaryon) / All.Omega0 * All.MinFoFMassForNewSeed)
+#elif (BH_SEED_FROM_FOF==1)
+    if(Group[i].MassType[4] > All.MinFoFMassForNewSeed)
 #endif
-#endif //ifdef BH_HOST_TO_SEED_RATIO
 	if(Group[i].LenType[5] == 0)
 	  {
 	    if(Group[i].index_maxdens >= 0)
@@ -2063,34 +1964,19 @@ void fof_make_black_holes(void)
 
   import_indices = mymalloc("import_indices", nimport * sizeof(int));
   export_indices = mymalloc("export_indices", nexport * sizeof(int));
-#ifdef BH_SEED_STAR_MASS_FRACTION
-  import_fofmass = mymalloc("import_fofmass", nimport * sizeof(float));
-  export_fofmass = mymalloc("export_fofmass", nexport * sizeof(float));
-#endif
 
   for(n = 0; n < NTask; n++)
     Send_count[n] = 0;
 
   for(i = 0; i < Ngroups; i++)
     {
-#ifdef BH_HOST_TO_SEED_RATIO
-      if(Group[i].MassType[4] > BH_HOST_TO_SEED_RATIO * All.SeedBlackHoleMass)
-#else
-#ifndef BH_SEED_STAR_MASS_FRACTION
-      if(Group[i].LenType[1] * massDMpart >=
-	 (All.Omega0 - All.OmegaBaryon) / All.Omega0 * All.MinFoFMassForNewSeed)
-#else
-      if(Group[i].MassType[4] > BH_SEED_STAR_MASS_FRACTION * All.MinFoFMassForNewSeed
-	 && Group[i].LenType[2] == 0)
+#if (BH_SEED_FROM_FOF==0)
+        if(Group[i].MassType[1] >= (All.Omega0 - All.OmegaBaryon) / All.Omega0 * All.MinFoFMassForNewSeed)
+#elif (BH_SEED_FROM_FOF==1)
+        if(Group[i].MassType[4] > All.MinFoFMassForNewSeed)
 #endif
-#endif //ifdef BH_HOST_TO_SEED_RATIO
 	if(Group[i].LenType[5] == 0)
 	  {
-#ifdef BH_SEED_STAR_MASS_FRACTION
-	    if(Group[i].index_maxdens >= 0)
-	      export_fofmass[Send_offset[Group[i].task_maxdens] +
-			     Send_count[Group[i].task_maxdens]] = Group[i].MassType[4];
-#endif
 	    if(Group[i].index_maxdens >= 0)
 	      export_indices[Send_offset[Group[i].task_maxdens] +
 			     Send_count[Group[i].task_maxdens]++] = Group[i].index_maxdens;
@@ -2099,10 +1985,6 @@ void fof_make_black_holes(void)
 
   memcpy(&import_indices[Recv_offset[ThisTask]], &export_indices[Send_offset[ThisTask]],
 	 Send_count[ThisTask] * sizeof(int));
-#ifdef BH_SEED_STAR_MASS_FRACTION
-  memcpy(&import_fofmass[Recv_offset[ThisTask]], &export_fofmass[Send_offset[ThisTask]],
-	 Send_count[ThisTask] * sizeof(float));
-#endif
 
   for(level = 1; level < (1 << PTask); level++)
     {
@@ -2115,15 +1997,6 @@ void fof_make_black_holes(void)
 		     &import_indices[Recv_offset[recvTask]],
 		     Recv_count[recvTask] * sizeof(int),
 		     MPI_BYTE, recvTask, TAG_FOF_I, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-#ifdef BH_SEED_STAR_MASS_FRACTION
-      if(recvTask < NTask)
-	MPI_Sendrecv(&export_fofmass[Send_offset[recvTask]],
-		     Send_count[recvTask] * sizeof(float),
-		     MPI_BYTE, recvTask, TAG_FOF_J,
-		     &import_fofmass[Recv_offset[recvTask]],
-		     Recv_count[recvTask] * sizeof(float),
-		     MPI_BYTE, recvTask, TAG_FOF_J, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-#endif
     }
 
   MPI_Allreduce(&nimport, &ntot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -2139,96 +2012,72 @@ void fof_make_black_holes(void)
 
   for(n = 0; n < nimport; n++)
     {
-#if defined(BH_SEED_STAR_MASS_FRACTION) || defined(BH_SEED_FROM_STAR_PARTICLE)
-      if(P[import_indices[n]].Type != 4)
-#else
-      if(P[import_indices[n]].Type != 0)
+#if (BH_SEED_FROM_FOF==0)
+        if(P[import_indices[n]].Type != 0)
+#elif (BH_SEED_FROM_FOF==1)
+            if(P[import_indices[n]].Type != 4)
 #endif
-	endrun(7772);
-
-      P[import_indices[n]].Type = 5;	/* make it a black hole particle */
-#ifdef DETACH_BLACK_HOLES
-      if(N_BHs + 1 > All.MaxPartBH)
-	{
-	  printf
-	    ("On Task=%d with NumPart=%d I tried to make too many BH. Sorry, no space left...(All.MaxPartBH=%d)\n",
-	     ThisTask, NumPart, All.MaxPartBH);
-	  fflush(stdout);
-	  endrun(8890);
-	}
-
-      P[import_indices[n]].pt.BHID = N_BHs;
-      BHP[N_BHs].PID = import_indices[n];
-      N_BHs++;
-#endif
-
+                endrun(7772);
+        
+        P[import_indices[n]].Type = 5;    /* make it a black hole particle */
 #ifdef GALSF
-      P[import_indices[n]].StellarAge = All.Time;
+        P[import_indices[n]].StellarAge = All.Time; /* reset formation time to match BH formation */
 #endif
-
-#ifdef BH_SEED_STAR_MASS_FRACTION
-      BPP(import_indices[n]).BH_Mass =
-	All.SeedBlackHoleMass * import_fofmass[n] / (BH_SEED_STAR_MASS_FRACTION * All.MinFoFMassForNewSeed);
-#else
-      if(All.SeedBlackHoleMassSigma > 0)
-      {
-        /* compute gaussian random number: mean=0, sigma=All.SeedBlackHoleMassSigma */
-        random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1);
-        gsl_rng_set(random_generator_forbh,P[import_indices[n]].ID+17);
-        random_number_forbh = gsl_ran_gaussian(random_generator_forbh, All.SeedBlackHoleMassSigma);
-        BPP(import_indices[n]).BH_Mass = pow( 10., log10(All.SeedBlackHoleMass) + random_number_forbh );
-        unitmass_in_msun = (All.UnitMass_in_g/All.HubbleParam)/SOLAR_MASS;
-        if( BPP(import_indices[n]).BH_Mass < 100./unitmass_in_msun )
-          BPP(import_indices[n]).BH_Mass = 100./unitmass_in_msun;      // enforce lower limit of Mseed = 100 x Msun
-      }else{
-          BPP(import_indices[n]).BH_Mass = All.SeedBlackHoleMass;
-      }
+        /* generate BH mass */
+        if(All.SeedBlackHoleMassSigma > 0)
+        {
+            /* compute gaussian random number: mean=0, sigma=All.SeedBlackHoleMassSigma */
+            random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1);
+            gsl_rng_set(random_generator_forbh,P[import_indices[n]].ID+17);
+            random_number_forbh = gsl_ran_gaussian(random_generator_forbh, All.SeedBlackHoleMassSigma);
+            BPP(import_indices[n]).BH_Mass = pow( 10., log10(All.SeedBlackHoleMass) + random_number_forbh );
+            unitmass_in_msun = (All.UnitMass_in_g/All.HubbleParam)/SOLAR_MASS;
+            if( BPP(import_indices[n]).BH_Mass < 100./unitmass_in_msun )
+                BPP(import_indices[n]).BH_Mass = 100./unitmass_in_msun;      // enforce lower limit of Mseed = 100 x Msun
+        } else {
+            BPP(import_indices[n]).BH_Mass = All.SeedBlackHoleMass;
+        }
+        BPP(import_indices[n]).BH_Mdot = 0;
+        /* set hydro-ish variables */
+        if(BPP(import_indices[n]).Type == 0){
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            P[import_indices[n]].Mass = SphP[import_indices[n]].MassTrue + SphP[import_indices[n]].dMass;
 #endif
-
+            P[import_indices[n]].DensAroundStar = SphP[import_indices[n]].Density;
+        }
+        /* set some specific BH variables that are needed below */
+#ifdef BH_PHOTONMOMENTUM
+        P[import_indices[n]].BH_disk_hr = 0.333333;
+#endif
 #ifdef BH_INCREASE_DYNAMIC_MASS
-      P[import_indices[n]].Mass *= BH_INCREASE_DYNAMIC_MASS;
+        P[import_indices[n]].Mass *= BH_INCREASE_DYNAMIC_MASS;
 #endif
-
-#ifdef BH_ALPHADISK_ACCRETION                                
-      BPP(import_indices[n]).BH_Mass_AlphaDisk = 0;
+#ifdef BH_ALPHADISK_ACCRETION
+        BPP(import_indices[n]).BH_Mass_AlphaDisk = All.SeedAlphaDiskMass;
 #endif
-
-      BPP(import_indices[n]).BH_Mdot = 0;
-
 #ifdef BH_COUNTPROGS
-      BPP(import_indices[n]).BH_CountProgs = 1;
+        BPP(import_indices[n]).BH_CountProgs = 1;
 #endif
-
-#ifdef BH_BUBBLES
-      P[import_indices[n]].BH_Mass_bubbles = All.SeedBlackHoleMass;
-      P[import_indices[n]].BH_Mass_ini = All.SeedBlackHoleMass;
-#ifdef UNIFIED_FEEDBACK
-      P[import_indices[n]].BH_Mass_radio = All.SeedBlackHoleMass;
-#endif
-#endif
-
-#if !( defined(BH_SEED_STAR_MASS_FRACTION) || defined(BH_SEED_FROM_STAR_PARTICLE) )
-      Stars_converted++;
-      TimeBinCountSph[P[import_indices[n]].TimeBin]--;
+        /* record that we actually made a BH, count numbers for book-keeping in domains */
+#if (BH_SEED_FROM_FOF != 1)
+        Stars_converted++;
+        TimeBinCountSph[P[import_indices[n]].TimeBin]--;
 #endif
 
     }
 
   All.TotN_gas -= ntot;
 
-#ifdef BH_SEED_STAR_MASS_FRACTION
-  myfree(export_fofmass);
-  myfree(import_fofmass);
-#endif
   myfree(export_indices);
   myfree(import_indices);
 }
 
-#endif // BLACK_HOLES
+#endif // BH_SEED_FROM_FOF
 
 
 
-#if defined(GALSF_SUBGRID_WINDS) && defined(GALSF_SUBGRID_VARIABLEVELOCITY)
+#if defined(GALSF_SUBGRID_WINDS)
+#if (GALSF_SUBGRID_WIND_SCALING==1)
 
 struct group_mass_MinID
 {
@@ -2361,352 +2210,8 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to SphP[].H
   qsort(FOF_GList, NgroupsExt, sizeof(fof_group_list), fof_compare_FOF_GList_MinID);	/* restore original order */
 }
 
-#endif // defined(GALSF_SUBGRID_WINDS) && defined(GALSF_SUBGRID_VARIABLEVELOCITY)
-
-
-#ifdef BUBBLES
-
-void find_CM_of_biggest_group(void)
-{
-  int i, rootcpu;
-  group_properties BiggestGroup;
-
-  parallel_sort(Group, Ngroups, sizeof(group_properties), fof_compare_Group_Len);
-
-  /* the biggest group will now be the first group on the first cpu that has any groups */
-  MPI_Allgather(&Ngroups, 1, MPI_INT, Send_count, 1, MPI_INT, MPI_COMM_WORLD);
-
-  for(rootcpu = 0; Send_count[rootcpu] == 0 && rootcpu < NTask - 1; rootcpu++);
-
-  if(rootcpu == ThisTask)
-    BiggestGroup = Group[0];
-
-  /* bring groups back into original order */
-  parallel_sort(Group, Ngroups, sizeof(group_properties), fof_compare_Group_MinIDTask_MinID);
-
-  MPI_Bcast(&BiggestGroup, sizeof(group_properties), MPI_BYTE, rootcpu, MPI_COMM_WORLD);
-
-  All.BiggestGroupLen = BiggestGroup.Len;
-
-  for(i = 0; i < 3; i++)
-    All.BiggestGroupCM[i] = BiggestGroup.CM[i];
-
-  All.BiggestGroupMass = BiggestGroup.Mass;
-
-  if(ThisTask == 0)
-    {
-      printf("Biggest group length has %d particles.\n", All.BiggestGroupLen);
-      printf("CM of biggest group is: (%g|%g|%g)\n", All.BiggestGroupCM[0], All.BiggestGroupCM[1],
-	     All.BiggestGroupCM[2]);
-      printf("Mass of biggest group is: %g\n", All.BiggestGroupMass);
-    }
-}
-
-#endif // BUBBLES
-
-
-
-#ifdef MULTI_BUBBLES
-void multi_bubbles(void)
-{
-  double phi, theta;
-  double dx, dy, dz, rr, r2, dE;
-  double E_bubble, totE_bubble, hubble_a = 0.0;
-  double BubbleDistance, BubbleRadius, BubbleEnergy;
-  MyFloat Mass_bubble, totMass_bubble;
-  MyFloat pos[3];
-  int numngb, tot_numngb, startnode, numngb_inbox;
-  int n, i, j, k, l, dummy;
-  int nheat, tot_nheat;
-  int eff_nheat, tot_eff_nheat;
-  double *GroupMassType_common, *GroupMassType_dum;
-  float *GroupCM_common_x, *GroupCM_dum_x;
-  float *GroupCM_common_y, *GroupCM_dum_y;
-  float *GroupCM_common_z, *GroupCM_dum_z;
-  int logical;
-  int *nn_heat, *disp;
-  double massDMpart;
-
-  if(All.MassTable[1] > 0)
-    massDMpart = All.MassTable[1];
-  else
-    massDMpart = All.massDMpart;
-
-
-  if(All.ComovingIntegrationOn)
-    {
-      hubble_a = hubble_function(All.Time) / All.Hubble_H0_CodeUnits;
-    }
-
-  nheat = tot_nheat = 0;
-  eff_nheat = tot_eff_nheat = 0;
-
-  logical = 0;
-
-  for(k = 0; k < Ngroups; k++)
-    {
-      if(massDMpart > 0)
-	{
-	  if(Group[k].LenType[1] * massDMpart >=
-	     (All.Omega0 - All.OmegaBaryon) / All.Omega0 * All.MinFoFMassForNewSeed)
-	    nheat++;
-	}
-      else
-	{
-	  printf("The DM particles mass is zero! I will stop.\n");
-	  endrun(0);
-	}
-
-    }
-
-  MPI_Allreduce(&nheat, &tot_nheat, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-
-  if(ThisTask == 0)
-    printf("The total number of clusters to heat is: %d\n", tot_nheat);
-
-
-  nn_heat = mymalloc("nn_heat", NTask * sizeof(int));
-  disp = mymalloc("disp", NTask * sizeof(int));
-
-  MPI_Allgather(&nheat, 1, MPI_INT, nn_heat, 1, MPI_INT, MPI_COMM_WORLD);
-
-  for(k = 1, disp[0] = 0; k < NTask; k++)
-    disp[k] = disp[k - 1] + nn_heat[k - 1];
-
-
-  if(tot_nheat > 0)
-    {
-      GroupMassType_common = mymalloc("GroupMassType_common", tot_nheat * sizeof(double));
-      GroupMassType_dum = mymalloc("GroupMassType_dum", nheat * sizeof(double));
-
-      GroupCM_common_x = mymalloc("GroupCM_common_x", tot_nheat * sizeof(float));
-      GroupCM_dum_x = mymalloc("GroupCM_dum_x", nheat * sizeof(float));
-
-      GroupCM_common_y = mymalloc("GroupCM_common_y", tot_nheat * sizeof(float));
-      GroupCM_dum_y = mymalloc("GroupCM_dum_y", nheat * sizeof(float));
-
-      GroupCM_common_z = mymalloc("GroupCM_common_z", tot_nheat * sizeof(float));
-      GroupCM_dum_z = mymalloc("GroupCM_dum_z", nheat * sizeof(float));
-
-
-      for(k = 0, i = 0; k < Ngroups; k++)
-	{
-	  if(massDMpart > 0)
-	    {
-	      if(Group[k].LenType[1] * massDMpart >=
-		 (All.Omega0 - All.OmegaBaryon) / All.Omega0 * All.MinFoFMassForNewSeed)
-		{
-		  GroupCM_dum_x[i] = Group[k].CM[0];
-		  GroupCM_dum_y[i] = Group[k].CM[1];
-		  GroupCM_dum_z[i] = Group[k].CM[2];
-
-		  GroupMassType_dum[i] = Group[k].Mass;
-
-		  i++;
-		}
-	    }
-	  else
-	    {
-	      printf("The DM particles mass is zero! I will stop.\n");
-	      endrun(0);
-	    }
-	}
-
-      MPI_Allgatherv(GroupMassType_dum, nheat, MPI_DOUBLE, GroupMassType_common, nn_heat, disp, MPI_DOUBLE,
-		     MPI_COMM_WORLD);
-
-      MPI_Allgatherv(GroupCM_dum_x, nheat, MPI_FLOAT, GroupCM_common_x, nn_heat, disp, MPI_FLOAT,
-		     MPI_COMM_WORLD);
-
-      MPI_Allgatherv(GroupCM_dum_y, nheat, MPI_FLOAT, GroupCM_common_y, nn_heat, disp, MPI_FLOAT,
-		     MPI_COMM_WORLD);
-
-      MPI_Allgatherv(GroupCM_dum_z, nheat, MPI_FLOAT, GroupCM_common_z, nn_heat, disp, MPI_FLOAT,
-		     MPI_COMM_WORLD);
-
-
-      for(l = 0; l < tot_nheat; l++)
-	{
-	  if(All.ComovingIntegrationOn > 0)
-	    {
-	      BubbleDistance =
-		All.BubbleDistance * 1. / All.Time * pow(GroupMassType_common[l] / All.ClusterMass200,
-							 1. / 3.) / pow(hubble_a, 2. / 3.);
-
-	      BubbleRadius =
-		All.BubbleRadius * 1. / All.Time * pow(GroupMassType_common[l] / All.ClusterMass200,
-						       1. / 3.) / pow(hubble_a, 2. / 3.);
-
-	      BubbleEnergy =
-		All.BubbleEnergy * pow(GroupMassType_common[l] / All.ClusterMass200, 5. / 3.) * pow(hubble_a,
-												    2. / 3.);
-
-	      phi = theta = rr = 0.0;
-
-	      phi = 2 * M_PI * get_random_number(0);
-	      theta = acos(2 * get_random_number(0) - 1);
-	      rr = pow(get_random_number(0), 1. / 3.) * BubbleDistance;
-
-	      pos[0] = pos[1] = pos[2] = 0.0;
-
-	      pos[0] = sin(theta) * cos(phi);
-	      pos[1] = sin(theta) * sin(phi);
-	      pos[2] = cos(theta);
-
-	      for(k = 0; k < 3; k++)
-		pos[k] *= rr;
-
-	      pos[0] += GroupCM_common_x[l];
-	      pos[1] += GroupCM_common_y[l];
-	      pos[2] += GroupCM_common_z[l];
-
-
-	      /* First, let's see how many particles are in the bubble */
-
-	      Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
-
-	      numngb = 0;
-	      E_bubble = 0.;
-	      Mass_bubble = 0.;
-
-	      startnode = All.MaxPart;
-	      do
-		{
-		  numngb_inbox = ngb_treefind_variable_targeted(pos, BubbleRadius, -1, &startnode, 0, &dummy, &dummy, 1); // search for gas: 2^0=1
-
-		  for(n = 0; n < numngb_inbox; n++)
-		    {
-                j = Ngblist[n];
-                dx = pos[0] - P[j].Pos[0];
-                dy = pos[1] - P[j].Pos[1];
-                dz = pos[2] - P[j].Pos[2];
-#ifdef PERIODIC
-                NEAREST_XYZ(dx,dy,dz,1);
 #endif
-                r2 = dx * dx + dy * dy + dz * dz;
-
-		      if(r2 < BubbleRadius * BubbleRadius)
-			{
-			  numngb++;
-
-                E_bubble += P[j].Mass * SphP[j].InternalEnergyPred;
-			  Mass_bubble += P[j].Mass;
-
-			}
-		    }
-		}
-	      while(startnode >= 0);
-
-
-	      tot_numngb = totE_bubble = totMass_bubble = 0.0;
-
-	      MPI_Allreduce(&numngb, &tot_numngb, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-	      MPI_Allreduce(&E_bubble, &totE_bubble, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	      MPI_Allreduce(&Mass_bubble, &totMass_bubble, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-
-
-	      if(tot_numngb == 0)
-		{
-		  tot_numngb = 1;
-		  totMass_bubble = 1;
-		  totE_bubble = 1;
-		  logical = 0;
-		}
-	      else
-		{
-		  logical = 1;
-		  eff_nheat++;
-		}
-
-	      totE_bubble *= All.UnitEnergy_in_cgs;
-
-
-#ifndef IO_REDUCED_MODE
-	      if(ThisTask == 0)
-		{
-		  if(logical == 1)
-		    {
-		      printf("%g, %g, %g, %g, %d, %g, %g, %g\n", GroupMassType_common[l], GroupCM_common_x[l],
-			     GroupCM_common_y[l], GroupCM_common_z[l], tot_numngb, BubbleRadius, BubbleEnergy,
-			     (BubbleEnergy + totE_bubble) / totE_bubble);
-
-		    }
-		  fflush(stdout);
-		}
-#endif
-	      /* now find particles in Bubble again, and inject energy */
-
-	      startnode = All.MaxPart;
-
-	      do
-		{
-		  numngb_inbox = ngb_treefind_variable_targeted(pos, BubbleRadius, -1, &startnode, 0, &dummy, &dummy, 1); // search for gas: 2^0=1
-
-		  for(n = 0; n < numngb_inbox; n++)
-		    {
-                j = Ngblist[n];
-                dx = pos[0] - P[j].Pos[0];
-                dy = pos[1] - P[j].Pos[1];
-                dz = pos[2] - P[j].Pos[2];
-#ifdef PERIODIC
-                NEAREST_XYZ(dx,dy,dz,1);
-#endif
-                r2 = dx * dx + dy * dy + dz * dz;
-
-		      if(r2 < BubbleRadius * BubbleRadius)
-			{
-			  /* with sf on gas particles have mass that is not fixed */
-			  /* energy we want to inject in this particle */
-
-			  if(logical == 1)
-			    dE = ((BubbleEnergy / All.UnitEnergy_in_cgs) / totMass_bubble) * P[j].Mass;
-			  else
-			    dE = 0;
-                
-                SphP[j].InternalEnergy += dE / P[j].Mass;
-			  if(dE > 0 && P[j].ID > 0)
-			    P[j].ID = -P[j].ID;
-
-			}
-		    }
-		}
-	      while(startnode >= 0);
-
-	      myfree(Ngblist);
-
-	    }
-	}
-
-      myfree(GroupCM_dum_z);
-      myfree(GroupCM_common_z);
-      myfree(GroupCM_dum_y);
-      myfree(GroupCM_common_y);
-      myfree(GroupCM_dum_x);
-      myfree(GroupCM_common_x);
-      myfree(GroupMassType_dum);
-      myfree(GroupMassType_common);
-
-      MPI_Allreduce(&eff_nheat, &tot_eff_nheat, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-
-      if(ThisTask == 0)
-	printf("The total effective! number of clusters to heat is: %d\n", eff_nheat);
-
-    }
-  else
-    {
-      printf("There are no clusters to heat. I will stop.\n");
-      endrun(0);
-    }
-
-
-  myfree(disp);
-  myfree(nn_heat);
-
-}
-
-#endif // MULTI_BUBBLES
-
-
+#endif // defined(GALSF_SUBGRID_WINDS) && defined(GALSF_SUBGRID_WIND_SCALING==1)
 
 
 
@@ -2775,12 +2280,12 @@ int fof_compare_FOF_GList_LocCountTaskDiffMinID(const void *a, const void *b)
   if(((fof_group_list *) a)->MinID > ((fof_group_list *) b)->MinID)
     return +1;
 
-  if(labs(((fof_group_list *) a)->ExtCount - ((fof_group_list *) a)->MinIDTask) <
-     labs(((fof_group_list *) b)->ExtCount - ((fof_group_list *) b)->MinIDTask))
+  if((((fof_group_list *) a)->ExtCount - ((fof_group_list *) a)->MinIDTask) <
+     (((fof_group_list *) b)->ExtCount - ((fof_group_list *) b)->MinIDTask))
     return -1;
 
-  if(labs(((fof_group_list *) a)->ExtCount - ((fof_group_list *) a)->MinIDTask) >
-     labs(((fof_group_list *) b)->ExtCount - ((fof_group_list *) b)->MinIDTask))
+  if((((fof_group_list *) a)->ExtCount - ((fof_group_list *) a)->MinIDTask) >
+     (((fof_group_list *) b)->ExtCount - ((fof_group_list *) b)->MinIDTask))
     return +1;
 
   return 0;

@@ -26,18 +26,18 @@ double INLINE_FUNC hubble_function(double a)
 {
     double hubble_a;
     
-#ifdef EXTERNALHUBBLE
-    hubble_a = hubble_function_external(a);
+#ifdef GR_TABULATED_COSMOLOGY_H
+    hubble_a = All.Hubble_H0_CodeUnits * hubble_function_external(a);
 #else
     hubble_a = All.Omega0 / (a * a * a) + (1 - All.Omega0 - All.OmegaLambda) / (a * a)
-#ifdef DARKENERGY
+#ifdef GR_TABULATED_COSMOLOGY
     + DarkEnergy_a(a);
 #else
     + All.OmegaLambda;
 #endif
     hubble_a = All.Hubble_H0_CodeUnits * sqrt(hubble_a);
 #endif
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
     hubble_a *= dHfak(a);
 #endif
     return (hubble_a);
@@ -45,35 +45,8 @@ double INLINE_FUNC hubble_function(double a)
 
 
 
-/* Using Dark Energy instead of a Cosmological constant can be archived by
- * replacing Lambda by Lambda * a^(-3*(1+w)) in the Hubble function.
- * So easy to see that w = -1 gives back a standard Cosmological Constant !
- * Also w = -1/3 gives Lambda / a^2 which then cancel within the Hubble
- * function and is then equal to the dynamics of a universe with Lambda = 0 !
- *
- * For a time varying w once has to replace Lambda * a^(-3*(1+w)) by
- * Lambda * exp(Integral(a,1,3*(1+w)/a))
- *
- * One can now also read in colums for the change of the gravitational
- * constant and the correction by this to the hubble function.
- *
- * Additional once can read also an "external" hubble function from a
- * column of the dark energy file.
- *
- * Note that the first column is 'z+1' !
- *
- * Dark Energy does not alter the powerspectrum of initial conditions.
- * To get the same cluster for various values or functions of w, once
- * has do assign a new redshift to the initial cond. to match the
- * linear growth factors, so g(z=0)/g(z_ini) == g_w(z=0)/g_w(z_ini^new)
- * Also the initial velocities field has to be scaled by
- * (Hubble_w(z_ini^new)*Omega_w(z_ini^new)^0.6)/(Hubble(z_ini)*Omega(z_ini)^0.6)
- * where _w means the according functions including the terms for
- * Dark Energy.
- */
-
-#ifdef DARKENERGY
-#ifdef TIMEDEPDE
+#ifdef GR_TABULATED_COSMOLOGY
+#if defined(GR_TABULATED_COSMOLOGY_W) || defined(GR_TABULATED_COSMOLOGY_G) || defined(GR_TABULATED_COSMOLOGY_H)
 
 #define ANZ_W_A_IN 4000
 #define ANZ_W_A 10000
@@ -83,13 +56,14 @@ static MyFloat wtab[ANZ_W_A_IN];
 static MyFloat intwtab[ANZ_W_A + 1];
 static MyFloat intwatab[ANZ_W_A + 1];
 
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
 static MyFloat dHtab[ANZ_W_A_IN];
 static MyFloat dGtab[ANZ_W_A_IN];
 static MyFloat intdHtab[ANZ_W_A + 1];
 static MyFloat intdGtab[ANZ_W_A + 1];
 #endif
-#ifdef EXTERNALHUBBLE
+
+#ifdef GR_TABULATED_COSMOLOGY_H
 static MyFloat Htab[ANZ_W_A_IN];
 static MyFloat intHtab[ANZ_W_A + 1];
 #endif
@@ -101,23 +75,16 @@ static MyFloat intHtab[ANZ_W_A + 1];
 void fwa_init(void)
 {
   int count = 0, i;
-  char buf[200], buf1[200], buf2[200];
-
-#ifdef TIMEDEPGRAV
-  char buf3[200], buf4[200];
-#endif
-#ifdef EXTERNALHUBBLE
-  char buf5[200];
-#endif
+  char buf[200], buf1[200], buf2[200], buf3[200], buf4[200], buf5[200];
   FILE *fd;
   MyFloat a_first, w_first, a, w, sum;
 
 
-  if((fd = fopen(All.DarkEnergyFile, "r")))
+  if((fd = fopen(All.TabulatedCosmologyFile, "r")))
     {
       if(ThisTask == 0)
 	{
-	  printf("\nreading w of a from file `%s'\n", All.DarkEnergyFile);
+	  printf("\nreading w of a from file `%s'\n", All.TabulatedCosmologyFile);
 	}
       atab[0] = -1.0;		/* we have to extrapolate wtab[0] later ! */
       count = 1;
@@ -125,34 +92,25 @@ void fwa_init(void)
 	{
 	  if(fgets(buf, 200, fd))
 	    {
-#ifdef TIMEDEPGRAV
-#ifdef EXTERNALHUBBLE
 	      if(sscanf(buf, "%s%s%s%s%s", buf1, buf2, buf3, buf4, buf5) < 5)
-#else
-	      if(sscanf(buf, "%s%s%s%s", buf1, buf2, buf3, buf4) < 4)
-#endif
-#else
-	      if(sscanf(buf, "%s%s", buf1, buf2) < 2)
-#endif
 		{
 		  if(ThisTask == 0)
 		    {
-		      printf("Wrong syntax in file `%s', line %d\n", All.DarkEnergyFile, count);
+		      printf("Wrong syntax in file `%s', line %d\n", All.TabulatedCosmologyFile, count);
 		      fflush(stdout);
 		    }
 		  endrun(0);
 		}
-	      a = 1. / atof(buf1);
-	      if(a == 0.0 && count == 1)
-		count--;	/* w(0) present in file, so fill the first element ! */
+	      a = atof(buf1); /* column is scale factor */
+	      if(a == 0.0 && count == 1) count--; /* w(0) present in file, so fill the first element ! */
 	      atab[count] = a;
 	      wtab[count] = atof(buf2);
-#ifdef TIMEDEPGRAV
-	      dHtab[count] = atof(buf3);
-	      dGtab[count] = atof(buf4);
+#ifdef GR_TABULATED_COSMOLOGY_H
+          Htab[count] = atof(buf3);
 #endif
-#ifdef EXTERNALHUBBLE
-	      Htab[count] = atof(buf5);
+#ifdef GR_TABULATED_COSMOLOGY_G
+	      dGtab[count] = atof(buf4);
+          dHtab[count] = atof(buf5);
 #endif
 	      count++;
 	    }
@@ -162,7 +120,7 @@ void fwa_init(void)
 	{
 	  if(ThisTask == 0)
 	    {
-	      printf("File `%s' contains to many datapoints, increase ANZ_W_A_IN !\n", All.DarkEnergyFile);
+	      printf("File `%s' contains to many datapoints, increase ANZ_W_A_IN !\n", All.TabulatedCosmologyFile);
 	      fflush(stdout);
 	    }
 	  endrun(0);
@@ -171,7 +129,7 @@ void fwa_init(void)
 	{
 	  if(ThisTask == 0)
 	    {
-	      printf("File `%s' has to less Data Points (%d) !\n", All.DarkEnergyFile, count);
+	      printf("File `%s' has to less Data Points (%d) !\n", All.TabulatedCosmologyFile, count);
 	      fflush(stdout);
 	    }
 	  endrun(0);
@@ -181,11 +139,11 @@ void fwa_init(void)
 	{
 	  atab[0] = 0.;
 	  wtab[0] = wtab[1] - (wtab[2] - wtab[1]) / (atab[2] - atab[1]) * (atab[1] - atab[0]);
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
 	  dHtab[0] = dHtab[1] - (dHtab[2] - dHtab[1]) / (atab[2] - atab[1]) * (atab[1] - atab[0]);
 	  dGtab[0] = dGtab[1] - (dGtab[2] - dGtab[1]) / (atab[2] - atab[1]) * (atab[1] - atab[0]);
 #endif
-#ifdef EXTERNALHUBBLE
+#ifdef GR_TABULATED_COSMOLOGY_H
 	  Htab[0] = Htab[1] - (Htab[2] - Htab[1]) / (atab[2] - atab[1]) * (atab[1] - atab[0]);
 #endif
 	}
@@ -198,17 +156,13 @@ void fwa_init(void)
       if(atab[count - 1] < 1.)
 	{
 	  atab[count] = 1.0;
-	  wtab[count] = wtab[count - 1] + (wtab[count - 1] - wtab[count - 2])
-	    / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
-#ifdef TIMEDEPGRAV
-	  dHtab[count] = dHtab[count - 1] + (dHtab[count - 1] - dHtab[count - 2])
-	    / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
-	  dGtab[count] = dGtab[count - 1] + (dGtab[count - 1] - dGtab[count - 2])
-	    / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
+	  wtab[count] = wtab[count - 1] + (wtab[count - 1] - wtab[count - 2]) / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
+#ifdef GR_TABULATED_COSMOLOGY_G
+	  dHtab[count] = dHtab[count - 1] + (dHtab[count - 1] - dHtab[count - 2]) / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
+	  dGtab[count] = dGtab[count - 1] + (dGtab[count - 1] - dGtab[count - 2]) / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
 #endif
-#ifdef EXTERNALHUBBLE
-	  Htab[count] = Htab[count - 1] + (Htab[count - 1] - Htab[count - 2])
-	    / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
+#ifdef GR_TABULATED_COSMOLOGY_H
+	  Htab[count] = Htab[count - 1] + (Htab[count - 1] - Htab[count - 2]) / (atab[count - 1] - atab[count - 2]) * (1. - atab[count - 1]);
 #endif
 /*            if(ThisTask ==0) 
               {
@@ -225,11 +179,11 @@ void fwa_init(void)
 /* Set todays values in the tables */
       intwtab[ANZ_W_A] = All.OmegaLambda;
       intwatab[ANZ_W_A] = wtab[count - 1];
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
       intdHtab[ANZ_W_A] = dHtab[count - 1];
       intdGtab[ANZ_W_A] = dGtab[count - 1];
 #endif
-#ifdef EXTERNALHUBBLE
+#ifdef GR_TABULATED_COSMOLOGY_H
       intHtab[ANZ_W_A] = Htab[count - 1];
 #endif
 
@@ -267,25 +221,22 @@ void fwa_init(void)
 	  intwtab[i] = All.OmegaLambda * exp(3. * sum);
 	  intwatab[i] = wtab[count - 1] + (wtab[count] - wtab[count - 1]) /
 	    (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
-#ifdef TIMEDEPGRAV
-	  intdHtab[i] = dHtab[count - 1] + (dHtab[count] - dHtab[count - 1]) /
-	    (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
-	  intdGtab[i] = dGtab[count - 1] + (dGtab[count] - dGtab[count - 1]) /
-	    (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
+#ifdef GR_TABULATED_COSMOLOGY_G
+	  intdHtab[i] = dHtab[count - 1] + (dHtab[count] - dHtab[count - 1]) / (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
+	  intdGtab[i] = dGtab[count - 1] + (dGtab[count] - dGtab[count - 1]) / (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
 #endif
-#ifdef EXTERNALHUBBLE
-	  intHtab[i] = Htab[count - 1] + (Htab[count] - Htab[count - 1]) /
-	    (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
+#ifdef GR_TABULATED_COSMOLOGY_H
+	  intHtab[i] = Htab[count - 1] + (Htab[count] - Htab[count - 1]) / (atab[count] - atab[count - 1]) * (a - atab[count - 1]);
 #endif
 	}
       /* artificially define value for a=0 */
       intwtab[0] = intwtab[1];
       intwatab[0] = intwatab[1];
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
       intdHtab[0] = intdHtab[1];
       intdGtab[0] = intdGtab[1];
 #endif
-#ifdef EXTERNALHUBBLE
+#ifdef GR_TABULATED_COSMOLOGY_H
       intHtab[0] = intHtab[1];
 #endif
     }
@@ -293,7 +244,7 @@ void fwa_init(void)
     {
       if(ThisTask == 0)
 	{
-	  printf("\nFile `%s' not found !\n", All.DarkEnergyFile);
+	  printf("\nFile `%s' not found !\n", All.TabulatedCosmologyFile);
 	  fflush(stdout);
 	}
       endrun(0);
@@ -332,20 +283,20 @@ double INLINE_FUNC fwa(double a)
 
 double DarkEnergy_a(double a)	/* only needed for comoving integration */
 {
-#ifdef TIMEDEPDE
+#ifdef GR_TABULATED_COSMOLOGY_W
   return fwa(a);
 #else
-  return (All.OmegaLambda * pow(a, -3. * (1 + All.DarkEnergyParam)));
+  return (All.OmegaLambda * pow(a, -3. * (1 + All.DarkEnergyConstantW)));
 #endif
 }
 
 
 double DarkEnergy_t(double Time)	/* only needed for physical integration */
 {
-  return All.DarkEnergyParam;
+  return All.DarkEnergyConstantW;
 }
 
-#ifdef TIMEDEPDE
+#ifdef GR_TABULATED_COSMOLOGY_W
 
 /* This function returns the interpolated equation of state parameter.
 This is only used for information in the log files.
@@ -367,7 +318,7 @@ double INLINE_FUNC get_wa(double a)
   return (fw);
 }
 
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
 
 /* This function returns the interpolated correction for the Hubble function
  */
@@ -409,7 +360,7 @@ double INLINE_FUNC dGfak(double a)
 
 #endif
 
-#ifdef EXTERNALHUBBLE
+#ifdef GR_TABULATED_COSMOLOGY_H
 
 /* This function returns the interpolated correction for the Hubble function
  */

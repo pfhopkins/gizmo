@@ -18,7 +18,7 @@
  */
 
 
-#if defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_GASRETURN)
+#ifdef GALSF_FB_SNE_HEATING
 
 /* in case you're wondering, here are some conventions that may be useful for solar abundances
  All.SolarAbundances[0]=0.02;        // all metals (by mass); present photospheric abundances from Asplund et al. 2009 (Z=0.0134, proto-solar=0.0142) in notes;
@@ -176,7 +176,7 @@ void particle2in_addFB_wt(struct addFBdata_in *in, int i)
     in->unit_mom_SNe = 1;
     in->SNe_v_ejecta = 500.;
     for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {in->Area_weighted_sum[k] = P[i].Area_weighted_sum[k];}
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
     /* calculate the 'blast radius' and 'cooling turnoff time' used by this model */
     double n0 = P[i].DensAroundStar*All.cf_a3inv*All.UnitDensity_in_cgs * All.HubbleParam*All.HubbleParam / PROTONMASS;
     n0 = SNeIIBW_Radius_Factor * 0.087*pow(n0,-0.36) / (All.UnitLength_in_cm/All.HubbleParam/3.086e21*All.cf_atime);
@@ -284,7 +284,7 @@ void particle2in_addFB_SNe(struct addFBdata_in *in, int i)
     in->SNe_v_ejecta = SNe_v_ejecta;
     in->unit_mom_SNe = unit_mom_SNe;
     for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {in->Area_weighted_sum[k] = P[i].Area_weighted_sum[k];}
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
     /* calculate the 'blast radius' and 'cooling turnoff time' used by this model */
     double n0 = P[i].DensAroundStar*All.cf_a3inv*All.UnitDensity_in_cgs * All.HubbleParam*All.HubbleParam / PROTONMASS;
     n0 = SNeIIBW_Radius_Factor * 0.087*pow(n0,-0.36) / (All.UnitLength_in_cm/All.HubbleParam/3.086e21*All.cf_atime);
@@ -715,7 +715,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
     double unitlength_in_kpc=All.UnitLength_in_cm/All.HubbleParam/3.086e21*All.cf_atime;
     double density_to_n=All.cf_a3inv*All.UnitDensity_in_cgs * All.HubbleParam*All.HubbleParam / PROTONMASS;
     double unit_egy_SNe = 1.0e51/(All.UnitEnergy_in_cgs/All.HubbleParam);
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
     double pressure_to_p4 = (1/All.cf_afac1)*density_to_n*(All.UnitEnergy_in_cgs/All.UnitMass_in_g) / 1.0e4;
 #endif
     
@@ -768,7 +768,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 if(P[j].Mass <= 0) continue; // require the particle has mass //
                 
                 for(k=0; k<3; k++) {kernel.dp[k] = local.Pos[k] - P[j].Pos[k];}
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); // find the closest image in the given box size  //
 #endif
                 r2=0; for(k=0;k<3;k++) {r2 += kernel.dp[k]*kernel.dp[k];}
@@ -825,11 +825,9 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     double q;
                     q = 0;
                     
-#if !(EXPAND_PREPROCESSOR_(GALSF_FB_SNE_HEATING) == 1) // check whether a numerical value is assigned
 #if (GALSF_FB_SNE_HEATING == 0) // code for symmetrized but non-isotropic
 //#define DO_SYMMETRIZED_SNE_HEATING_ONLY_BUT_NOT_FULLY_ISOTROPIC
 #define DO_FULLY_ISOTROPIZED_SNE_HEATING
-#endif
 #endif
                     
 //#ifdef DO_SYMMETRIZED_SNE_HEATING_ONLY_BUT_NOT_FULLY_ISOTROPIC
@@ -872,17 +870,18 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     v_bw[k] = local.SNe_v_ejecta*pvec[k]/pnorm + (local.Vel[k]-P[j].Vel[k])/All.cf_atime;
                     e_shock += v_bw[k]*v_bw[k];
                 }
-                double mj_preshock = P[j].Mass;
-                double dM_ejecta_in = dM;
-                double massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + P[j].Mass);
-                double mu_j = P[j].Mass / (dM + P[j].Mass); 
+                double mj_preshock, dM_ejecta_in, massratio_ejecta, mu_j;
+                mj_preshock = P[j].Mass;
+                dM_ejecta_in = dM;
+                massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + P[j].Mass);
+                mu_j = P[j].Mass / (dM + P[j].Mass);
                 e_shock *= pnorm * 0.5*local.Msne * mu_j;
                 
                 
                 
                 if((wk <= 0)||(isnan(wk))) continue;
                 
-#ifndef GALSF_TURNOFF_COOLING_WINDS
+#ifndef GALSF_FB_TURNOFF_COOLING
                 RsneKPC = RsneKPC_0;
                 double n0 = SphP[j].Density*density_to_n;
                 /* this is tedious, but is a fast approximation (essentially a lookup table) for the -0.429 power above */
@@ -939,13 +938,17 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 /* inject cosmic rays */
                 SphP[j].CosmicRayEnergy += pnorm * CR_energy_to_inject;
                 SphP[j].CosmicRayEnergyPred += pnorm * CR_energy_to_inject;
+#ifdef COSMIC_RAYS_M1
+                double dflux = -pnorm * CR_energy_to_inject * COSMIC_RAYS_M1 / kernel.r; // add free-streaming flux of these CRs to the neighbor cells (so initial flux is correct and not from gradient which can suppress transport)
+                for(k=0;k<3;k++) {SphP[j].CosmicRayFlux[k]+=dflux*kernel.dp[k]; SphP[j].CosmicRayFluxPred[k]+=dflux*kernel.dp[k];}
+#endif
 #endif
                 
                 /* inject the post-shock energy and momentum (convert to specific units as needed first) */
                 e_shock *= 1 / P[j].Mass;
                 SphP[j].InternalEnergy += e_shock;
                 SphP[j].InternalEnergyPred += e_shock;
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
                 /* if the sub-grid 'cooling turnoff' model is enabled, turn off cooling for the 'blastwave timescale' */
                 dP = 7.08 * pow(Esne51*SphP[j].Density*density_to_n,0.34) * pow(SphP[j].Pressure*pressure_to_p4,-0.70) / (All.UnitTime_in_Megayears/All.HubbleParam);
                 if(dP>SphP[j].DelayTimeCoolingSNe) SphP[j].DelayTimeCoolingSNe=dP;
@@ -1040,7 +1043,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
     double unitlength_in_kpc=All.UnitLength_in_cm/All.HubbleParam/3.086e21*All.cf_atime;
     double density_to_n=All.cf_a3inv*All.UnitDensity_in_cgs * All.HubbleParam*All.HubbleParam / PROTONMASS;
     double unit_egy_SNe = 1.0e51/(All.UnitEnergy_in_cgs/All.HubbleParam);
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
     double pressure_to_p4 = (1/All.cf_afac1)*density_to_n*(All.UnitEnergy_in_cgs/All.UnitMass_in_g) / 1.0e4;
 #endif
     
@@ -1120,7 +1123,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 if(P[j].Mass <= 0) continue; // require the particle has mass //
                 
                 for(k=0; k<3; k++) {kernel.dp[k] = local.Pos[k] - P[j].Pos[k];}
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); // find the closest image in the given box size  //
 #endif
                 r2=0; for(k=0;k<3;k++) {r2 += kernel.dp[k]*kernel.dp[k];}
@@ -1151,7 +1154,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 if(kernel.dp[1]>0) {wk_vec[3]=wk*kernel.dp[1]/kernel.r; wk_vec[4]=0;} else {wk_vec[3]=0; wk_vec[4]=wk*kernel.dp[1]/kernel.r;}
                 if(kernel.dp[2]>0) {wk_vec[5]=wk*kernel.dp[2]/kernel.r; wk_vec[6]=0;} else {wk_vec[5]=0; wk_vec[6]=wk*kernel.dp[2]/kernel.r;}
 
-#ifndef GALSF_TURNOFF_COOLING_WINDS
+#ifndef GALSF_FB_TURNOFF_COOLING
                 RsneKPC = RsneKPC_0;
                 /* calculate cooling radius given density and metallicity in this annulus into which the ejecta propagate */
                 if(feedback_type != 2)
@@ -1246,8 +1249,9 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 }
                 pnorm = sqrt(pnorm); // this (vector norm) is the new 'weight function' for our purposes
                 dM_ejecta_in = pnorm * local.Msne;
-                double mj_preshock = P[j].Mass;
-                double massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + P[j].Mass);
+                double mj_preshock, massratio_ejecta;
+                mj_preshock = P[j].Mass;
+                massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + P[j].Mass);
                 
                 /* inject actual mass from mass return */
                 if(P[j].Hsml<=0) {if(SphP[j].Density>0){SphP[j].Density*=(1+dM_ejecta_in/P[j].Mass);} else {SphP[j].Density=dM_ejecta_in*kernel.hinv3;}} else {SphP[j].Density+=kernel_zero*dM_ejecta_in*hinv3_j;}
@@ -1269,7 +1273,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
                 
                 /* inject the post-shock energy and momentum (convert to specific units as needed first) */
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
                 /* if the sub-grid 'cooling turnoff' model is enabled, turn off cooling for the 'blastwave timescale' */
                 dP = 7.08 * pow(Esne51*SphP[j].Density*density_to_n,0.34) * pow(SphP[j].Pressure*pressure_to_p4,-0.70) / (All.UnitTime_in_Megayears/All.HubbleParam);
                 if(dP>SphP[j].DelayTimeCoolingSNe) SphP[j].DelayTimeCoolingSNe=dP;
@@ -1281,10 +1285,17 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 double mom_boost_fac = 1;
                 if(feedback_type == 0)
                 {
+                    double psi0 = 1; // factor to use below for velocity-limiter
                     boost_max *= psi_cool; // appropriately re-weight boost to avoid energy conservation errors [cooling-limit]
                     boost_egycon *= psi_egycon; // appropriately re-weight boost to avoid energy conservation errors [energy-conserving-limit]
-                    if((wk_m_cooling < mj_preshock) || (boost_max < boost_egycon)) {mom_boost_fac = boost_max;} else {mom_boost_fac = boost_egycon;} // limit to cooling case if egy-conserving exceeds terminal boost, or coupled mass short of cooling mass
+                    if((wk_m_cooling < mj_preshock) || (boost_max < boost_egycon)) {mom_boost_fac=boost_max; psi0=DMAX(psi0,psi_cool);} else {mom_boost_fac=boost_egycon; psi0=DMAX(psi0,psi_egycon);} // limit to cooling case if egy-conserving exceeds terminal boost, or coupled mass short of cooling mass
                     if(mom_boost_fac < 1) {mom_boost_fac=1;} // impose lower limit of initial ejecta momentum
+                    // finally account for simple physical limiter: if particle moving away faster than cooling terminal velocity, can't reach that velocity //
+                    double vcool = DMIN(v_cooling/psi0 , v_ejecta_eff/mom_boost_fac); // effective velocity at stalling/cooling radius
+                    double dv_dp_phys = 0; for(k=0;k<3;k++) {dv_dp_phys += (1-massratio_ejecta) * (kernel.dp[k]/kernel.r) * ((local.Vel[k] - P[j].Vel[k])/All.cf_atime);} // recession velocity of particle from SNe
+                    double v_cooling_lim = DMAX( vcool , dv_dp_phys ); // cooling vel can't be smaller than actual vel (note: negative dvdp here automatically returns vcool, as desired)
+                    double boostfac_max = DMIN(1000. , v_ejecta_eff/v_cooling_lim); // boost factor cant exceed velocity limiter - if recession vel large, limits boost
+                    if(mom_boost_fac > boostfac_max) {mom_boost_fac = boostfac_max;} // apply limiter
                 } else {
                     mom_boost_fac = DMIN(boost_egycon , boost_max); // simply take minimum - nothing fancy for winds
                 }
@@ -1414,6 +1425,7 @@ void determine_where_SNe_occur()
     agemin=0.003401; agebrk=0.01037; agemax=0.03753; // in Gyr //
     // converts rate to code units //
     RSNeFac=(All.UnitTime_in_Megayears/All.HubbleParam) * (All.UnitMass_in_g/All.HubbleParam)/SOLAR_MASS;
+    n_sn_0=0;
     
     // loop over particles //
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])

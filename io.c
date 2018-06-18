@@ -7,11 +7,6 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-
-#ifdef HAVE_HDF5
-#include <hdf5.h>
-#endif
-
 #include "allvars.h"
 #include "proto.h"
 
@@ -155,7 +150,7 @@ void savepositions(int num)
     }
 #endif
     
-#ifdef POWERSPEC_ON_OUTPUT
+#ifdef OUTPUT_POWERSPEC
     if(RestartFlag != 4)
     {
         if(ThisTask == 0)
@@ -187,7 +182,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
     float *fp_single;
     integertime dt_step;
     
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
     MyFloat boxSize;
 #endif
 #ifdef PMGRID
@@ -195,11 +190,11 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
     double dt_gravkick, dt_hydrokick;
     
-#ifdef OUTPUTCOOLRATE
+#ifdef OUTPUT_COOLRATE
     double tcool, u;
 #endif
     
-#if (defined(OUTPUT_DISTORTIONTENSORPS) || defined(OUTPUT_TIDALTENSORPS))
+#if (defined(OUTPUT_DISTORTIONTENSOR) || defined(OUTPUT_TIDALTENSORPS))
     MyBigFloat half_kick_add[6][6];
     int l;
 #endif
@@ -223,7 +218,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         dt_gravkick_pm = (All.Ti_Current - (All.PM_Ti_begstep + All.PM_Ti_endstep) / 2) * All.Timebase_interval;
 #endif
     
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
     MyBigFloat flde, psde;
 #endif
     
@@ -244,7 +239,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     for(k = 0; k < 3; k++)
                     {
                         fp_pos[k] = P[pindex].Pos[k];
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
                         boxSize = All.BoxSize;
                         if(k==0) {boxSize = boxSize_X;}
                         if(k==1) {boxSize = boxSize_Y;}
@@ -370,7 +365,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 {
 #if defined(RT_CHEM_PHOTOION)
                     *fp++ = SphP[pindex].HI;
-#elif (GRACKLE_CHEMISTRY > 0)
+#elif (COOL_GRACKLE_CHEMISTRY > 0)
                     *fp++ = SphP[pindex].grHI;
 #else
                     double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp;
@@ -543,7 +538,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_POT:		/* gravitational potential */
-#if defined(OUTPUTPOTENTIAL)  || defined(SUBFIND_RESHUFFLE_AND_POTENTIAL)
+#if defined(OUTPUT_POTENTIAL)  || defined(SUBFIND_RESHUFFLE_AND_POTENTIAL)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -565,7 +560,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_ACCEL:		/* acceleration */
-#ifdef OUTPUTACCELERATION
+#ifdef OUTPUT_ACCELERATION
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -585,7 +580,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_DTENTR:		/* rate of change of internal energy */
-#ifdef OUTPUTCHANGEOFENERGY
+#ifdef OUTPUT_CHANGEOFENERGY
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -619,7 +614,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_TSTP:		/* timestep  */
-#ifdef OUTPUTTIMESTEP
+#ifdef OUTPUT_TIMESTEP
             
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -705,6 +700,19 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
 #endif
             break;
+
+        case IO_COSMICRAY_ALFVEN:    /* energy in the resonant (~gyro-radii) Alfven modes field, in the +/- (with respect to B) fields  */
+#ifdef COSMIC_RAYS_ALFVEN
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < 2; k++)
+                        *fp++ = SphP[pindex].CosmicRayAlfvenEnergyPred[k];
+                    n++;
+                }
+#endif
+            break;
+
             
         case IO_DIVB:		/* divergence of magnetic field  */
 #ifdef MAGNETIC
@@ -768,7 +776,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_COOLRATE:		/* current cooling rate of particle  */
-#ifdef OUTPUTCOOLRATE
+#ifdef OUTPUT_COOLRATE
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -783,7 +791,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                         *fp++ = 0;
                     n++;
                 }
-#endif // OUTPUTCOOLRATE
+#endif // OUTPUT_COOLRATE
             break;
             
         case IO_CONDRATE:		/* current heating/cooling due to thermal conduction  */
@@ -837,39 +845,6 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
             
-        case IO_BHMBUB:
-#ifdef BH_BUBBLES
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    *fp++ = P[pindex].BH_Mass_bubbles;
-                    n++;
-                }
-#endif
-            break;
-            
-        case IO_BHMINI:
-#ifdef BH_BUBBLES
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    *fp++ = P[pindex].BH_Mass_ini;
-                    n++;
-                }
-#endif
-            break;
-            
-        case IO_BHMRAD:
-#ifdef UNIFIED_FEEDBACK
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    *fp++ = P[pindex].BH_Mass_radio;
-                    n++;
-                }
-#endif
-            break;
-            
         case IO_ACRB:
 #ifdef BLACK_HOLES
             for(n = 0; n < pc; pindex++)
@@ -908,9 +883,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
             
-        case IO_DISTORTIONTENSORPS:
+        case IO_GDE_DISTORTIONTENSOR:
             /* full 6D phase-space distortion tensor from GDE integration */
-#ifdef OUTPUT_DISTORTIONTENSORPS
+#ifdef OUTPUT_DISTORTIONTENSOR
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -931,7 +906,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_CAUSTIC_COUNTER:
             /* caustic counter */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -943,7 +918,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_FLOW_DETERMINANT:
             /* physical NON-CUTOFF corrected stream determinant = 1.0/normed stream density * 1.0/initial stream density */
-#if defined(DISTORTIONTENSORPS) && !defined(GDE_LEAN)
+#if defined(GDE_DISTORTIONTENSOR) && !defined(GDE_LEAN)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -956,7 +931,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_STREAM_DENSITY:
             /* physical CUTOFF corrected stream density = normed stream density * initial stream density */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -968,7 +943,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_PHASE_SPACE_DETERMINANT:
             /* determinant of phase-space distortion tensor -> should be 1 due to Liouville theorem */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -981,7 +956,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_ANNIHILATION_RADIATION:
             /* time integrated stream density in physical units */
-#if defined(DISTORTIONTENSORPS) && !defined(GDE_LEAN)
+#if defined(GDE_DISTORTIONTENSOR) && !defined(GDE_LEAN)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1028,7 +1003,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_SHEET_ORIENTATION:
             /* initial orientation of the CDM sheet where the particle started */
-#if defined(DISTORTIONTENSORPS) && (!defined(GDE_LEAN) || defined(GDE_READIC))
+#if defined(GDE_DISTORTIONTENSOR) && (!defined(GDE_LEAN) || defined(GDE_READIC))
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1048,7 +1023,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
         case IO_INIT_DENSITY:
             /* initial stream density in physical units  */
-#if defined(DISTORTIONTENSORPS) && (!defined(GDE_LEAN) || defined(GDE_READIC))
+#if defined(GDE_DISTORTIONTENSOR) && (!defined(GDE_LEAN) || defined(GDE_READIC))
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1108,6 +1083,83 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
 #endif
             break;
+
+            case IO_EOSCS:
+#if defined(EOS_GENERAL)
+            for(n = 0; n < pc; pindex++)
+            if(P[pindex].Type == type)
+        {
+            *fp++ = SphP[pindex].SoundSpeed;
+            n++;
+        }
+#endif
+            break;
+
+        case IO_CBE_MOMENTS:
+#if defined(CBE_INTEGRATOR)
+            for(n = 0; n < pc; pindex++)
+            {
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < CBE_INTEGRATOR_NBASIS; k++)
+                    {
+                        int kf;
+                        for(kf = 0; kf < CBE_INTEGRATOR_NMOMENTS; kf++)
+                        {
+                            fp[CBE_INTEGRATOR_NMOMENTS*k + kf] = P[pindex].CBE_basis_moments[k][kf];
+                        }
+                    }
+                    n++;
+                    fp += (CBE_INTEGRATOR_NMOMENTS*CBE_INTEGRATOR_NBASIS);
+                }
+            }
+#endif
+            break;
+
+            
+        case IO_EOS_STRESS_TENSOR:
+#if defined(EOS_ELASTIC)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < 3; k++)
+                    {
+                        int kf;
+                        for(kf = 0; kf < 3; kf++)
+                            fp[3*k + kf] = SphP[pindex].Elastic_Stress_Tensor[kf][k];
+                    }
+                    n++;
+                    fp += 9;
+                }
+#endif
+            break;
+
+            
+            case IO_EOSCOMP:
+#ifdef EOS_TILLOTSON
+            for(n = 0; n < pc; pindex++)
+            if(P[pindex].Type == type)
+        {
+            *ip_int++ = SphP[pindex].CompositionType;
+            n++;
+        }
+#endif
+            break;
+
+        case IO_PARTVEL:
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < 3; k++)
+                            fp[k] = SphP[pindex].ParticleVel[k];
+
+                    n++;
+                    fp += 3;
+                }
+#endif
+            break;
+
             
         case IO_RADGAMMA:
 #ifdef RADTRANSFER
@@ -1144,7 +1196,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     {
                         int kf;
                         for(kf = 0; kf < N_RT_FREQ_BINS; kf++)
-                            fp[k] = SphP[pindex].ET[kf][k];
+                            fp[N_RT_FREQ_BINS*k + kf] = SphP[pindex].ET[kf][k];
                     }
                     n++;
                     fp += 6*N_RT_FREQ_BINS;
@@ -1203,6 +1255,30 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
 #endif
             break;
+        case IO_AGS_RHO:        /* Adaptive Gravitational Softening: density */
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && defined(DM_FUZZY)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = PPP[pindex].AGS_Density;
+                    n++;
+                }
+#endif
+            break;
+        case IO_AGS_QPT:        /* quantum potential (Q) */
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && defined(DM_FUZZY)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    double f00 = 0.5 * 591569.0 / (All.FuzzyDM_Mass_in_eV * All.UnitVelocity_in_cm_per_s * All.UnitLength_in_cm/All.HubbleParam); // this encodes the coefficient with the mass of the particle: units vel*L = hbar / particle_mass
+                    double d2rho = P[pindex].AGS_Gradients2_Density[0][0] + P[pindex].AGS_Gradients2_Density[1][1] + P[pindex].AGS_Gradients2_Density[2][2]; // laplacian
+                    double drho2 = P[pindex].AGS_Gradients_Density[0]*P[pindex].AGS_Gradients_Density[0] + P[pindex].AGS_Gradients_Density[1]*P[pindex].AGS_Gradients_Density[1] + P[pindex].AGS_Gradients_Density[2]*P[pindex].AGS_Gradients_Density[2];
+                    double AGS_QuantumPotential = (f00*f00 / P[pindex].AGS_Density) * (d2rho - 0.5*drho2/P[pindex].AGS_Density);
+                    *fp++ = AGS_QuantumPotential;
+                    n++;
+                }
+#endif
+            break;
         case IO_AGS_ZETA:		/* Adaptive Gravitational Softening: zeta */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL) && defined(AGS_OUTPUTZETA)
             for(n = 0; n < pc; pindex++)
@@ -1228,7 +1304,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             
             
         case IO_grHI:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHI;
@@ -1239,7 +1315,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grHII:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHII;
@@ -1250,7 +1326,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grHM:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHM;
@@ -1261,7 +1337,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grHeI:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHeI;
@@ -1272,7 +1348,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grHeII:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHeII;
@@ -1283,7 +1359,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grHeIII:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHeIII;
@@ -1294,7 +1370,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grH2I:
-#if (GRACKLE_CHEMISTRY >= 2)
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grH2I;
@@ -1305,7 +1381,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grH2II:
-#if (GRACKLE_CHEMISTRY >= 2)
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grH2II;
@@ -1316,7 +1392,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grDI:
-#if (GRACKLE_CHEMISTRY >= 3)
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grDI;
@@ -1327,7 +1403,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grDII:
-#if (GRACKLE_CHEMISTRY >= 3)
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grDII;
@@ -1338,7 +1414,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
             
         case IO_grHDI:
-#if (GRACKLE_CHEMISTRY >= 3)
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
             for(n = 0; n < pc; pindex++){
                 if(P[pindex].Type == type){
                     *fp++ = SphP[pindex].grHDI;
@@ -1377,6 +1453,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
             
         case IO_VEL:
+        case IO_PARTVEL:
         case IO_ACCEL:
         case IO_VBULK:
         case IO_BFLD:
@@ -1393,7 +1470,14 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             else
                 bytes_per_blockelement = 3 * sizeof(MyOutputFloat);
             break;
-            
+
+        case IO_COSMICRAY_ALFVEN:
+            if(mode)
+                bytes_per_blockelement = 2 * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = 2 * sizeof(MyOutputFloat);
+            break;
+
         case IO_ID:
             bytes_per_blockelement = sizeof(MyIDType);
             break;
@@ -1402,6 +1486,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             bytes_per_blockelement = sizeof(MyIDType);
             break;
 
+        case IO_EOSCOMP:
         case IO_GENERATION_ID:
         case IO_BHPROGS:
         case IO_TRUENGB:
@@ -1456,9 +1541,6 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_BHMASSALPHA:
         case IO_ACRB:
         case IO_BHMDOT:
-        case IO_BHMBUB:
-        case IO_BHMINI:
-        case IO_BHMRAD:
         case IO_CAUSTIC_COUNTER:
         case IO_FLOW_DETERMINANT:
         case IO_STREAM_DENSITY:
@@ -1466,9 +1548,12 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSTEMP:
         case IO_EOSABAR:
         case IO_EOSYE:
+        case IO_EOSCS:
         case IO_PRESSURE:
         case IO_INIT_DENSITY:
         case IO_AGS_SOFT:
+        case IO_AGS_RHO:
+        case IO_AGS_QPT:
         case IO_AGS_ZETA:
         case IO_AGS_OMEGA:
         case IO_AGS_CORR:
@@ -1539,6 +1624,25 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
             
+            
+        case IO_EOS_STRESS_TENSOR:
+            if(mode)
+                bytes_per_blockelement = 9 * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = 9 * sizeof(MyOutputFloat);
+            break;
+
+            
+        case IO_CBE_MOMENTS:
+#ifdef CBE_INTEGRATOR
+            if(mode)
+                bytes_per_blockelement = (CBE_INTEGRATOR_NBASIS*CBE_INTEGRATOR_NMOMENTS) * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = (CBE_INTEGRATOR_NBASIS*CBE_INTEGRATOR_NMOMENTS) * sizeof(MyOutputFloat);
+            break;
+#endif
+
+            
         case IO_TIDALTENSORPS:
             if(mode)
                 bytes_per_blockelement = 9 * sizeof(MyInputFloat);
@@ -1546,7 +1650,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
                 bytes_per_blockelement = 9 * sizeof(MyOutputFloat);
             break;
             
-        case IO_DISTORTIONTENSORPS:
+        case IO_GDE_DISTORTIONTENSOR:
             if(mode)
                 bytes_per_blockelement = 36 * sizeof(MyInputFloat);
             else
@@ -1639,6 +1743,7 @@ int get_values_per_blockelement(enum iofields blocknr)
     {
         case IO_POS:
         case IO_VEL:
+        case IO_PARTVEL:
         case IO_ACCEL:
         case IO_BFLD:
         case IO_GRADPHI:
@@ -1705,15 +1810,14 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_ACRB:
         case IO_BHMDOT:
         case IO_BHPROGS:
-        case IO_BHMBUB:
-        case IO_BHMINI:
-        case IO_BHMRAD:
         case IO_CAUSTIC_COUNTER:
         case IO_FLOW_DETERMINANT:
         case IO_STREAM_DENSITY:
         case IO_PHASE_SPACE_DETERMINANT:
         case IO_EOSTEMP:
         case IO_EOSABAR:
+        case IO_EOSCS:
+        case IO_EOSCOMP:
         case IO_EOSYE:
         case IO_PRESSURE:
         case IO_INIT_DENSITY:
@@ -1723,6 +1827,8 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DMHSML_V:
         case IO_DMDENSITY_V:
         case IO_AGS_SOFT:
+        case IO_AGS_RHO:
+        case IO_AGS_QPT:
         case IO_AGS_ZETA:
         case IO_AGS_OMEGA:
         case IO_AGS_CORR:
@@ -1743,7 +1849,23 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_grHDI:
             values = 1;
             break;
-            
+
+        case IO_COSMICRAY_ALFVEN:
+            values = 2;
+            break;
+
+        case IO_EOS_STRESS_TENSOR:
+            values = 9;
+            break;
+
+        case IO_CBE_MOMENTS:
+#ifdef CBE_INTEGRATOR
+            values = (CBE_INTEGRATOR_NBASIS*CBE_INTEGRATOR_NMOMENTS);
+#else
+            values = 0;
+#endif
+            break;
+
         case IO_EDDINGTON_TENSOR:
 #ifdef RADTRANSFER
             values = (6*N_RT_FREQ_BINS);
@@ -1781,7 +1903,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_TIDALTENSORPS:
             values = 9;
             break;
-        case IO_DISTORTIONTENSORPS:
+        case IO_GDE_DISTORTIONTENSOR:
             values = 36;
             break;
         case IO_ANNIHILATION_RADIATION:
@@ -1851,12 +1973,15 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_POT:
         case IO_SECONDORDERMASS:
         case IO_AGS_SOFT:
+        case IO_AGS_RHO:
+        case IO_AGS_QPT:
         case IO_AGS_ZETA:
         case IO_AGS_OMEGA:
         case IO_AGS_CORR:
         case IO_AGS_NGBS:
         case IO_MG_PHI:
         case IO_BH_DIST:
+        case IO_CBE_MOMENTS:
             return nall;
             break;
             
@@ -1870,6 +1995,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             return ntot_withmasses;
             break;
             
+        case IO_PARTVEL:
         case IO_RAD_ACCEL:
         case IO_RADGAMMA:
         case IO_EDDINGTON_TENSOR:
@@ -1906,6 +2032,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_VROT:
         case IO_VORT:
         case IO_COSMICRAY_ENERGY:
+        case IO_COSMICRAY_ALFVEN:
         case IO_DIVB:
         case IO_ABVC:
         case IO_AMDC:
@@ -1918,6 +2045,9 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_EOSTEMP:
         case IO_EOSABAR:
         case IO_EOSYE:
+        case IO_EOSCS:
+        case IO_EOS_STRESS_TENSOR:
+        case IO_EOSCOMP:
         case IO_PRESSURE:
         case IO_CHEM:
         case IO_VSTURB_DISS:
@@ -2007,9 +2137,6 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_BHMASSALPHA:
         case IO_ACRB:
         case IO_BHMDOT:
-        case IO_BHMBUB:
-        case IO_BHMINI:
-        case IO_BHMRAD:
         case IO_BHPROGS:
             for(i = 0; i < 6; i++)
                 if(i != 5)
@@ -2018,7 +2145,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             break;
             
         case IO_TIDALTENSORPS:
-        case IO_DISTORTIONTENSORPS:
+        case IO_GDE_DISTORTIONTENSOR:
         case IO_CAUSTIC_COUNTER:
         case IO_FLOW_DETERMINANT:
         case IO_STREAM_DENSITY:
@@ -2181,7 +2308,7 @@ int blockpresent(enum iofields blocknr)
             break;
             
         case IO_POT:
-#if defined(OUTPUTPOTENTIAL) || defined(SUBFIND_RESHUFFLE_AND_POTENTIAL)
+#if defined(OUTPUT_POTENTIAL) || defined(SUBFIND_RESHUFFLE_AND_POTENTIAL)
             return 1;
 #else
             return 0;
@@ -2199,7 +2326,7 @@ int blockpresent(enum iofields blocknr)
             
             
         case IO_ACCEL:
-#ifdef OUTPUTACCELERATION
+#ifdef OUTPUT_ACCELERATION
             return 1;
 #else
             return 0;
@@ -2208,7 +2335,7 @@ int blockpresent(enum iofields blocknr)
             
             
         case IO_DTENTR:
-#ifdef OUTPUTCHANGEOFENERGY
+#ifdef OUTPUT_CHANGEOFENERGY
             return 1;
 #else
             return 0;
@@ -2232,7 +2359,7 @@ int blockpresent(enum iofields blocknr)
             break;
             
         case IO_TSTP:
-#ifdef OUTPUTTIMESTEP
+#ifdef OUTPUT_TIMESTEP
             return 1;
 #else
             return 0;
@@ -2299,7 +2426,15 @@ int blockpresent(enum iofields blocknr)
             return 0;
 #endif
             break;
-            
+
+        case IO_COSMICRAY_ALFVEN:
+#ifdef COSMIC_RAYS_ALFVEN
+            return 1;
+#else
+            return 0;
+#endif
+            break;
+
             
         case IO_DIVB:
 #ifdef MAGNETIC
@@ -2349,7 +2484,7 @@ int blockpresent(enum iofields blocknr)
             
             
         case IO_COOLRATE:
-#ifdef OUTPUTCOOLRATE
+#ifdef OUTPUT_COOLRATE
             return 1;
 #else
             return 0;
@@ -2396,24 +2531,7 @@ int blockpresent(enum iofields blocknr)
             return 0;
 #endif
             break;
-            
-        case IO_BHMBUB:
-        case IO_BHMINI:
-#ifdef BH_BUBBLES
-            return 1;
-#else
-            return 0;
-#endif
-            break;
-            
-        case IO_BHMRAD:
-#ifdef UNIFIED_FEEDBACK
-            return 1;
-#else
-            return 0;
-#endif
-            break;
-            
+                        
             
         case IO_TIDALTENSORPS:
 #ifdef OUTPUT_TIDALTENSORPS
@@ -2421,43 +2539,43 @@ int blockpresent(enum iofields blocknr)
 #else
             return 0;
 #endif
-        case IO_DISTORTIONTENSORPS:
-#ifdef OUTPUT_DISTORTIONTENSORPS
+        case IO_GDE_DISTORTIONTENSOR:
+#ifdef OUTPUT_DISTORTIONTENSOR
             return 1;
 #else
             return 0;
 #endif
             
         case IO_CAUSTIC_COUNTER:
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
             return 1;
 #else
             return 0;
 #endif
             
         case IO_FLOW_DETERMINANT:
-#if defined(DISTORTIONTENSORPS) && !defined(GDE_LEAN)
+#if defined(GDE_DISTORTIONTENSOR) && !defined(GDE_LEAN)
             return 1;
 #else
             return 0;
 #endif
             
         case IO_STREAM_DENSITY:
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
             return 1;
 #else
             return 0;
 #endif
             
         case IO_PHASE_SPACE_DETERMINANT:
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
             return 1;
 #else
             return 0;
 #endif
             
         case IO_ANNIHILATION_RADIATION:
-#if defined(DISTORTIONTENSORPS) && !defined(GDE_LEAN)
+#if defined(GDE_DISTORTIONTENSOR) && !defined(GDE_LEAN)
             return 1;
 #else
             return 0;
@@ -2471,14 +2589,14 @@ int blockpresent(enum iofields blocknr)
 #endif
             
         case IO_SHEET_ORIENTATION:
-#if defined(DISTORTIONTENSORPS) && (!defined(GDE_LEAN) || defined(GDE_READIC))
+#if defined(GDE_DISTORTIONTENSOR) && (!defined(GDE_LEAN) || defined(GDE_READIC))
             return 1;
 #else
             return 0;
 #endif
             
         case IO_INIT_DENSITY:
-#if defined(DISTORTIONTENSORPS) && (!defined(GDE_LEAN) || defined(GDE_READIC))
+#if defined(GDE_DISTORTIONTENSOR) && (!defined(GDE_LEAN) || defined(GDE_READIC))
             return 1;
 #else
             return 0;
@@ -2503,6 +2621,24 @@ int blockpresent(enum iofields blocknr)
 #else
             return 0;
 #endif
+        case IO_EOSCS:
+#ifdef EOS_GENERAL
+            return 1;
+#else
+            return 0;
+#endif
+        case IO_EOS_STRESS_TENSOR:
+#ifdef EOS_ELASTIC
+            return 1;
+#else
+            return 0;
+#endif
+        case IO_EOSCOMP:
+#ifdef EOS_TILLOTSON
+            return 1;
+#else
+            return 0;
+#endif
         case IO_EOSABAR:
 #ifdef EOS_CARRIES_ABAR
             return 1;
@@ -2511,6 +2647,20 @@ int blockpresent(enum iofields blocknr)
 #endif
         case IO_EOSYE:
 #ifdef EOS_CARRIES_YE
+            return 1;
+#else
+            return 0;
+#endif
+            
+        case IO_CBE_MOMENTS:
+#ifdef CBE_INTEGRATOR
+            return 1;
+#else
+            return 0;
+#endif
+
+        case IO_PARTVEL:
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
             return 1;
 #else
             return 0;
@@ -2550,7 +2700,23 @@ int blockpresent(enum iofields blocknr)
             return 0;
 #endif
             break;
-            
+
+        case IO_AGS_RHO:
+#if defined (ADAPTIVE_GRAVSOFT_FORALL) && defined(DM_FUZZY)
+            return 1;
+#else
+            return 0;
+#endif
+            break;
+
+        case IO_AGS_QPT:
+#if defined (ADAPTIVE_GRAVSOFT_FORALL) && defined(DM_FUZZY)
+            return 1;
+#else
+            return 0;
+#endif
+            break;
+
         case IO_AGS_ZETA:
 #if defined (ADAPTIVE_GRAVSOFT_FORALL) && defined(AGS_OUTPUTZETA)
             return 1;
@@ -2586,7 +2752,7 @@ int blockpresent(enum iofields blocknr)
         case IO_grHeI:
         case IO_grHeII:
         case IO_grHeIII:
-#if (GRACKLE_CHEMISTRY >= 1)
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
             return 1;
 #else
             return 0;
@@ -2595,7 +2761,7 @@ int blockpresent(enum iofields blocknr)
             
         case IO_grH2I:
         case IO_grH2II:
-#if (GRACKLE_CHEMISTRY >= 2)
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
             return 1;
 #else
             return 0;
@@ -2605,7 +2771,7 @@ int blockpresent(enum iofields blocknr)
         case IO_grDI:
         case IO_grDII:
         case IO_grHDI:
-#if (GRACKLE_CHEMISTRY >= 3)
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
             return 1;
 #else
             return 0;
@@ -2778,6 +2944,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_COSMICRAY_ENERGY:
             strncpy(label, "CREG ", 4);
             break;
+        case IO_COSMICRAY_ALFVEN:
+            strncpy(label, "CRAV ", 4);
+            break;
         case IO_DIVB:
             strncpy(label, "DIVB", 4);
             break;
@@ -2823,19 +2992,10 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_BHPROGS:
             strncpy(label, "BHPC", 4);
             break;
-        case IO_BHMBUB:
-            strncpy(label, "BHMB", 4);
-            break;
-        case IO_BHMINI:
-            strncpy(label, "BHMI", 4);
-            break;
-        case IO_BHMRAD:
-            strncpy(label, "BHMR", 4);
-            break;
         case IO_TIDALTENSORPS:
             strncpy(label, "TIPS", 4);
             break;
-        case IO_DISTORTIONTENSORPS:
+        case IO_GDE_DISTORTIONTENSOR:
             strncpy(label, "DIPS", 4);
             break;
         case IO_CAUSTIC_COUNTER:
@@ -2870,6 +3030,21 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_EOSABAR:
             strncpy(label, "ABAR", 4);
+            break;
+        case IO_EOSCS:
+            strncpy(label, "EQCS", 4);
+            break;
+        case IO_EOS_STRESS_TENSOR:
+            strncpy(label, "ESTT", 4);
+            break;
+        case IO_CBE_MOMENTS:
+            strncpy(label, "VMOM", 4);
+            break;
+        case IO_EOSCOMP:
+            strncpy(label, "COMP", 4);
+            break;
+        case IO_PARTVEL:
+            strncpy(label, "PVEL", 4);
             break;
         case IO_EOSYE:
             strncpy(label, "YE  ", 4);
@@ -2906,6 +3081,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_AGS_SOFT:
             strncpy(label, "AGSH", 4);
+            break;
+        case IO_AGS_RHO:
+            strncpy(label, "ARHO", 4);
+            break;
+        case IO_AGS_QPT:
+            strncpy(label, "AQPT", 4);
             break;
         case IO_AGS_ZETA:
             strncpy(label, "AGSZ", 4);
@@ -3132,6 +3313,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_COSMICRAY_ENERGY:
             strcpy(buf, "CosmicRayEnergy");
             break;
+        case IO_COSMICRAY_ALFVEN:
+            strcpy(buf, "CosmicRayAlfvenEnergyPM");
+            break;
         case IO_DIVB:
             strcpy(buf, "DivergenceOfMagneticField");
             break;
@@ -3177,19 +3361,10 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_BHPROGS:
             strcpy(buf, "BH_NProgs");
             break;
-        case IO_BHMBUB:
-            strcpy(buf, "BH_Mass_bubbles");
-            break;
-        case IO_BHMINI:
-            strcpy(buf, "BH_Mass_ini");
-            break;
-        case IO_BHMRAD:
-            strcpy(buf, "BH_Mass_radio");
-            break;
         case IO_TIDALTENSORPS:
             strcpy(buf, "TidalTensorPS");
             break;
-        case IO_DISTORTIONTENSORPS:
+        case IO_GDE_DISTORTIONTENSOR:
             strcpy(buf, "DistortionTensorPS");
             break;
         case IO_CAUSTIC_COUNTER:
@@ -3225,6 +3400,21 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_EOSABAR:
             strcpy(buf, "Abar");
             break;
+        case IO_EOSCS:
+            strcpy(buf, "SoundSpeed");
+            break;
+        case IO_EOS_STRESS_TENSOR:
+            strcpy(buf, "StressTensor");
+            break;
+        case IO_CBE_MOMENTS:
+            strcpy(buf, "VlasovMoments");
+            break;
+        case IO_EOSCOMP:
+            strcpy(buf, "CompositionType");
+            break;
+        case IO_PARTVEL:
+            strcpy(buf, "ParticleVelocities");
+            break;
         case IO_EOSYE:
             strcpy(buf, "Ye");
             break;
@@ -3254,6 +3444,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_AGS_SOFT:
             strcpy(buf, "AGS-Softening");
+            break;
+        case IO_AGS_RHO:
+            strcpy(buf, "AGS-Density");
+            break;
+        case IO_AGS_QPT:
+            strcpy(buf, "AGS-QuantumPotentialQ");
             break;
         case IO_AGS_ZETA:
             strcpy(buf, "AGS-Zeta");
@@ -3683,10 +3879,20 @@ void write_file(char *fname, int writeTask, int lastTask)
                             get_dataset_name(blocknr, buf);
                             
                             hdf5_dataspace_in_file = H5Screate_simple(rank, dims, NULL);
-                            hdf5_dataset =
-                            H5Dcreate(hdf5_grp[type], buf, hdf5_datatype, hdf5_dataspace_in_file,
-                                      H5P_DEFAULT);
-                            
+#ifndef IO_COMPRESS_HDF5
+                            hdf5_dataset = H5Dcreate(hdf5_grp[type], buf, hdf5_datatype, hdf5_dataspace_in_file, H5P_DEFAULT);
+#else
+                            if(dims[0] > 10)
+			    {
+                            	hid_t plist_id = H5Pcreate(H5P_DATASET_CREATE);
+                            	hsize_t cdims[2]; cdims[0] = (hsize_t) (dims[0] / 10); cdims[1] = dims[1];
+                            	hdf5_status = H5Pset_chunk (plist_id, rank, cdims);
+                            	hdf5_status = H5Pset_deflate (plist_id, 4);
+                            	hdf5_dataset = H5Dcreate2(hdf5_grp[type], buf, hdf5_datatype, hdf5_dataspace_in_file, H5P_DEFAULT, plist_id, H5P_DEFAULT);
+			    } else {
+                            	hdf5_dataset = H5Dcreate(hdf5_grp[type], buf, hdf5_datatype, hdf5_dataspace_in_file, H5P_DEFAULT);
+			    }                      
+#endif
                             pcsum = 0;
                         }
 #endif

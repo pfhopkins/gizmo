@@ -33,8 +33,8 @@ void rt_get_sigma(void)
     /* just the hydrogen ionization bin */
     rt_sigma_HI[RT_FREQ_BIN_H0] = 6.3e-18 * fac; // cross-section (blackbody-weighted) for photons
     nu[RT_FREQ_BIN_H0] = 13.6; // minimum frequency [in eV] of photons of interest
-    rt_nu_eff_eV[RT_FREQ_BIN_H0] = 13.6; // typical blackbody-weighted frequency [in eV] of photons of interest: to convert energies to numbers
-    G_HI[RT_FREQ_BIN_H0] = rt_nu_eff_eV[RT_FREQ_BIN_H0]*ELECTRONVOLT_IN_ERGS / All.UnitEnergy_in_cgs * All.HubbleParam; // absorption cross-section weighted photon energy in code units
+    rt_nu_eff_eV[RT_FREQ_BIN_H0] = 27.2; // typical blackbody-weighted frequency [in eV] of photons of interest: to convert energies to numbers
+    G_HI[RT_FREQ_BIN_H0] = (rt_nu_eff_eV[RT_FREQ_BIN_H0]-13.6)*ELECTRONVOLT_IN_ERGS / All.UnitEnergy_in_cgs * All.HubbleParam; // absorption cross-section weighted photon energy in code units
 #else
     
     /* now we use the multi-bin spectral information */
@@ -75,7 +75,7 @@ void rt_get_sigma(void)
             if(nu[i] >= 13.6)
             {
                 f = sqrt((e / 13.6) - 1.0);
-                if(j == 0) {sig = 6.3e-18;} else {sig = 6.3e-18 * pow(13.6 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
+                if(j <= 13.6) {sig = 6.3e-18;} else {sig = 6.3e-18 * pow(13.6 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
                 rt_sigma_HI[i] += d_nu * sig * I_nu / e;
                 sum_HI_sigma += d_nu * I_nu / e;
                 G_HI[i] += d_nu * sig * (e - 13.6) * I_nu / e;
@@ -85,7 +85,7 @@ void rt_get_sigma(void)
             if(nu[i] >= 24.6)
             {
                 f = sqrt((e / 24.6) - 1.0);
-                if(j == 0) {sig = 7.83e-18;} else {sig = 7.83e-18 * pow(24.6 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
+                if(j <= 24.6) {sig = 7.83e-18;} else {sig = 7.83e-18 * pow(24.6 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
                 rt_sigma_HeI[i] += d_nu * sig * I_nu / e;
                 sum_HeI_sigma += d_nu * I_nu / e;
                 G_HeI[i] += d_nu * sig * (e - 24.6) * I_nu / e;
@@ -94,7 +94,7 @@ void rt_get_sigma(void)
             if(nu[i] >= 54.4)
             {
                 f = sqrt((e / 54.4) - 1.0);
-                if(j == 0) {sig = 1.58e-18;} else {sig = 1.58e-18 * pow(54.4 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}    
+                if(j <= 54.4) {sig = 1.58e-18;} else {sig = 1.58e-18 * pow(54.4 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
                 rt_sigma_HeII[i] += d_nu * sig * I_nu / e;
                 sum_HeII_sigma += d_nu * I_nu / e;
                 G_HeII[i] += d_nu * sig * (e - 54.4) * I_nu / e;

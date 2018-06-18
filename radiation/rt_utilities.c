@@ -109,6 +109,24 @@ int rt_get_source_luminosity(int i, double sigma_0, double *lum)
         lum[RT_FREQ_BIN_INFRARED] = 0.0;
     }
 #endif
+
+#if defined(RT_NUV)
+    /* Near-UV approximate spectra (UV/optical spectra, sub-photo-electric, but high-opacity) for stars as used in the FIRE (Hopkins et al.) models */
+    if((1 << P[i].Type) & (RT_SOURCES)) // check if the particle falls into one of the allowed source types
+    {
+        if( ((P[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[i].Type == 2)||(P[i].Type==3)))) && P[i].Mass>0 && PPP[i].Hsml>0 )
+        {
+            if(sigma_0<0) {return 1;} active_check = 1;
+            double star_age = evaluate_stellar_age_Gyr(P[i].StellarAge), f_op=0;
+            if(star_age <= 0.0025) {f_op=0.09;} else {
+                if(star_age <= 0.006) {f_op=0.09*(1+((star_age-0.0025)/0.004)*((star_age-0.0025)/0.004));
+                } else {f_op=1-0.8410937/(1+sqrt((star_age-0.006)/0.3));}}
+            double fac = 3.95e33 * (P[i].Mass * All.UnitMass_in_g / SOLAR_MASS) * All.UnitTime_in_s / (All.HubbleParam * All.UnitEnergy_in_cgs); // converts to code units
+            lum[RT_FREQ_BIN_NUV] = (1-f_op) * fac * evaluate_l_over_m_ssp(star_age) * calculate_relative_light_to_mass_ratio_from_imf(i);
+        }
+    }
+#endif
+
     
 #if defined(RT_OPTICAL_NIR)
     /* Optical-NIR approximate spectra for stars as used in the FIRE (Hopkins et al.) models */
@@ -290,7 +308,7 @@ double rt_kappa(int i, int k_freq)
 #endif
 
 
-#if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_PHOTOELECTRIC) || defined (GALSF_FB_RT_PHOTONMOMENTUM) || defined(RT_OPTICAL_NIR) || defined(RT_LYMAN_WERNER) || defined(RT_INFRARED)
+#if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_PHOTOELECTRIC) || defined (GALSF_FB_RT_PHOTONMOMENTUM) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_LYMAN_WERNER) || defined(RT_INFRARED)
     double fac = All.UnitMass_in_g * All.HubbleParam / (All.UnitLength_in_cm * All.UnitLength_in_cm); /* units */
     double Zfac = 1.0; // assume solar metallicity 
 #ifdef METALS
@@ -317,6 +335,10 @@ double rt_kappa(int i, int k_freq)
 #ifdef RT_LYMAN_WERNER
     /* opacity from molecular H2 and dust (dominant at higher-metallicity) should be included */
     if(k_freq==RT_FREQ_BIN_LYMAN_WERNER) {return 2400.*Zfac * fac;} // just dust term for now
+#endif
+#ifdef RT_NUV
+    /* opacity comes primarily from dust */
+    if(k_freq==RT_FREQ_BIN_NUV) {return 1800.*Zfac * fac;}
 #endif
 #ifdef RT_OPTICAL_NIR
     /* opacity comes primarily from dust */
@@ -477,8 +499,11 @@ void rt_eddington_update_calculation(int j)
 /***********************************************************************************************************/
 void rt_update_driftkick(int i, double dt_entr, int mode)
 {
-#if defined(RT_EVOLVE_NGAMMA)
-    int kf, k_tmp; 
+#if defined(RT_EVOLVE_NGAMMA) || defined(RT_EVOLVE_INTENSITIES)
+    int kf, k_tmp;
+#if defined(RT_EVOLVE_INTENSITIES)
+    for(kf=0;kf<N_RT_FREQ_BINS;kf++) {SphP[i].E_gamma[kf]=0; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {SphP[i].E_gamma[kf]+=RT_INTENSITY_BINS_DOMEGA*SphP[i].Intensity[kf][k_tmp];}}
+#endif
 #ifdef RT_INFRARED
     double E_abs_tot = 0;/* energy absorbed in other bands is transfered to IR, by default: track it here */
     double c_light = (C / All.UnitVelocity_in_cm_per_s) * RT_SPEEDOFLIGHT_REDUCTION;
@@ -491,138 +516,163 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
 #endif
     for(k_tmp=0; k_tmp<N_RT_FREQ_BINS; k_tmp++)
     {
-        kf = k_tmp; // normal loop 
 #ifdef RT_INFRARED
         // need to do IR last after summing absorption from other bands //
         if(RT_FREQ_BIN_INFRARED < N_RT_FREQ_BINS-1) {if(kf == RT_FREQ_BIN_INFRARED) {kf = N_RT_FREQ_BINS-1;} if(kf == N_RT_FREQ_BINS-1) {kf = RT_FREQ_BIN_INFRARED;}}
 #endif
-        double e0;
-        if(mode==0) {e0 = SphP[i].E_gamma[kf];} else {e0 = SphP[i].E_gamma_Pred[kf];}
-        double a0 = -rt_absorption_rate(i,kf);
-        double total_de_dt = SphP[i].Je[kf] + SphP[i].Dt_E_gamma[kf];
+#if defined(RT_EVOLVE_INTENSITIES)
+        int k_angle; for(k_angle=0;k_angle<N_RT_INTENSITY_BINS;k_angle++)
+#endif
+        {
+            kf = k_tmp; // normal loop
+            double e0, a0 = -rt_absorption_rate(i,kf);
+#if defined(RT_EVOLVE_INTENSITIES)
+            if(mode==0) {e0 = RT_INTENSITY_BINS_DOMEGA*SphP[i].Intensity[kf][k_angle];} else {e0 = RT_INTENSITY_BINS_DOMEGA*SphP[i].Intensity_Pred[kf][k_angle];}
+            double total_de_dt = SphP[i].Je[kf] + RT_INTENSITY_BINS_DOMEGA*SphP[i].Dt_Intensity[kf][k_angle];
+#else
+            if(mode==0) {e0 = SphP[i].E_gamma[kf];} else {e0 = SphP[i].E_gamma_Pred[kf];}
+            double total_de_dt = SphP[i].Je[kf] + SphP[i].Dt_E_gamma[kf];
+#endif
+            
 #ifdef RT_INFRARED
-        if(kf == RT_FREQ_BIN_INFRARED)
-        {
-            double T_cmb = 2.73 / All.cf_atime; // don't let dust or radiation temperatures drop below T_cmb //
-            if((mode==0) && (SphP[i].Dt_E_gamma[kf]!=0) && (dt_entr>0)) // only update temperatures on kick operations //
+            if(kf == RT_FREQ_BIN_INFRARED)
             {
-                // advected radiation changes temperature of radiation field, before absorption //
-                double dE_fac = SphP[i].Dt_E_gamma[kf] * dt_entr; // change in energy from advection
-                double dTE_fac = SphP[i].Dt_E_gamma_T_weighted_IR * dt_entr; // T-weighted change from advection
-                double dE_abs = -e0 * (1. - exp(a0*dt_entr)); // change in energy from absorption
-                double rfac=1; if(dE_fac < -0.5*(e0+dE_abs)) {rfac=fabs(0.5*(e0+dE_abs))/fabs(dE_fac);} else {if(dE_fac > 0.5*e0) {rfac=0.5*e0/dE_fac;}}
-                dE_fac*=rfac; dTE_fac*=rfac; // limit temperature change from advection to prevent spurious divergences
-                
-                double T_max = DMAX(SphP[i].Radiation_Temperature , dE_fac / dTE_fac);
-                SphP[i].Radiation_Temperature = (e0 + dE_fac) / (MIN_REAL_NUMBER + DMAX(0., e0 / SphP[i].Radiation_Temperature + dTE_fac));
-                SphP[i].Radiation_Temperature = DMIN(SphP[i].Radiation_Temperature, T_max);
-                a0 = -rt_absorption_rate(i,kf); // update absorption rate using the new radiation temperature //
+                double T_cmb = 2.73 / All.cf_atime; // don't let dust or radiation temperatures drop below T_cmb //
+                if((mode==0) && (SphP[i].Dt_E_gamma[kf]!=0) && (dt_entr>0)) // only update temperatures on kick operations //
+                {
+                    // advected radiation changes temperature of radiation field, before absorption //
+                    double dE_fac = SphP[i].Dt_E_gamma[kf] * dt_entr; // change in energy from advection
+                    double dTE_fac = SphP[i].Dt_E_gamma_T_weighted_IR * dt_entr; // T-weighted change from advection
+                    double dE_abs = -e0 * (1. - exp(a0*dt_entr)); // change in energy from absorption
+                    double rfac=1; if(dE_fac < -0.5*(e0+dE_abs)) {rfac=fabs(0.5*(e0+dE_abs))/fabs(dE_fac);} else {if(dE_fac > 0.5*e0) {rfac=0.5*e0/dE_fac;}}
+                    dE_fac*=rfac; dTE_fac*=rfac; // limit temperature change from advection to prevent spurious divergences
+                    
+                    double T_max = DMAX(SphP[i].Radiation_Temperature , dE_fac / dTE_fac);
+                    SphP[i].Radiation_Temperature = (e0 + dE_fac) / (MIN_REAL_NUMBER + DMAX(0., e0 / SphP[i].Radiation_Temperature + dTE_fac));
+                    SphP[i].Radiation_Temperature = DMIN(SphP[i].Radiation_Temperature, T_max);
+                    a0 = -rt_absorption_rate(i,kf); // update absorption rate using the new radiation temperature //
+                }
+                double total_emission_rate = E_abs_tot + fabs(a0)*e0 + SphP[i].Je[kf]; // add the summed absorption as emissivity here //
+                total_de_dt = total_emission_rate + SphP[i].Dt_E_gamma[kf];
+                if(fabs(a0)>0)
+                {
+                    Dust_Temperature_4 = total_emission_rate * (SphP[i].Density*All.cf_a3inv/P[i].Mass) / (4. * (MIN_REAL_NUMBER + fabs(a0)) / c_light); // flux units
+                    Dust_Temperature_4 *= (All.UnitPressure_in_cgs * All.HubbleParam * All.HubbleParam * All.UnitVelocity_in_cm_per_s) / (5.67e-5); // convert to cgs
+                    Dust_Temperature_4 /= RT_SPEEDOFLIGHT_REDUCTION*RT_SPEEDOFLIGHT_REDUCTION;
+                    SphP[i].Dust_Temperature = sqrt(sqrt(Dust_Temperature_4));
+                    if(SphP[i].Dust_Temperature < T_cmb) {SphP[i].Dust_Temperature = T_cmb;} // dust temperature shouldn't be below CMB
+                }
+                if(mode==0) // only update temperatures on kick operations //
+                {
+                    // dust absorption and re-emission brings T_rad towards T_dust: //
+                    double dE_abs = -e0 * (1. - exp(a0*dt_entr)); // change in energy from absorption
+                    double T_max = DMAX(SphP[i].Radiation_Temperature , SphP[i].Dust_Temperature); // should not exceed either initial temperature //
+                    SphP[i].Radiation_Temperature = (e0 + dE_abs + total_emission_rate*dt_entr) / ((e0 + dE_abs) / SphP[i].Radiation_Temperature + total_emission_rate*dt_entr / SphP[i].Dust_Temperature);
+                    SphP[i].Radiation_Temperature = DMIN(SphP[i].Radiation_Temperature, T_max);
+                }
+                if(SphP[i].Radiation_Temperature < T_cmb) {SphP[i].Radiation_Temperature = T_cmb;} // radiation temperature shouldn't be below CMB
             }
-            double total_emission_rate = E_abs_tot + fabs(a0)*e0 + SphP[i].Je[kf]; // add the summed absorption as emissivity here //
-            total_de_dt = total_emission_rate + SphP[i].Dt_E_gamma[kf];
-            if(fabs(a0)>0)
-            {
-                Dust_Temperature_4 = total_emission_rate * (SphP[i].Density*All.cf_a3inv/P[i].Mass) / (4. * (MIN_REAL_NUMBER + fabs(a0)) / c_light); // flux units
-                Dust_Temperature_4 *= (All.UnitPressure_in_cgs * All.HubbleParam * All.HubbleParam * All.UnitVelocity_in_cm_per_s) / (5.67e-5); // convert to cgs
-                Dust_Temperature_4 /= RT_SPEEDOFLIGHT_REDUCTION*RT_SPEEDOFLIGHT_REDUCTION;
-                SphP[i].Dust_Temperature = sqrt(sqrt(Dust_Temperature_4));
-                if(SphP[i].Dust_Temperature < T_cmb) {SphP[i].Dust_Temperature = T_cmb;} // dust temperature shouldn't be below CMB
-            }
-            if(mode==0) // only update temperatures on kick operations //
-            {
-                // dust absorption and re-emission brings T_rad towards T_dust: //
-                double dE_abs = -e0 * (1. - exp(a0*dt_entr)); // change in energy from absorption
-                double T_max = DMAX(SphP[i].Radiation_Temperature , SphP[i].Dust_Temperature); // should not exceed either initial temperature //
-                SphP[i].Radiation_Temperature = (e0 + dE_abs + total_emission_rate*dt_entr) / ((e0 + dE_abs) / SphP[i].Radiation_Temperature + total_emission_rate*dt_entr / SphP[i].Dust_Temperature);
-                SphP[i].Radiation_Temperature = DMIN(SphP[i].Radiation_Temperature, T_max);
-            }
-            if(SphP[i].Radiation_Temperature < T_cmb) {SphP[i].Radiation_Temperature = T_cmb;} // radiation temperature shouldn't be below CMB
-        }
 #endif
-        
-        /*---------------------------------------------------------------------------------------------------
-            the following block is for absorption and special behavior where 
-            photons absorbed in one band are re-radiated [or up/down-scattered] into another. 
-            this must be hard-coded to maintain conservation (as opposed to treated as a source term) 
-          -----------------------------------------------------------------------------------------------------*/
-        if(fabs(a0)*dt_entr > 50.) {a0 *= 50./(fabs(a0)*dt_entr);}
-        double abs_0 = DMAX(0,fabs(a0)*dt_entr); double slabfac = slab_averaging_function(abs_0); double e_abs_0=exp(-abs_0); if(abs_0>100.) {e_abs_0=0;}
-        /* since we're taking exponentials and inverses of some large numbers here, need to be careful not to let floating point errors cause nan's */
-        if((dt_entr <= 0.)||(a0 >= 0.)||(abs_0 <= 0.)) {abs_0=0.; slabfac=e_abs_0=1.;} else {if(abs_0 < 1.e-5) {slabfac=1.-0.5*abs_0; e_abs_0 = 1.-abs_0;} else {if(abs_0 > 100.) {slabfac = 1./abs_0; e_abs_0 = 0.;}}}
-        double e0_postabs = e0*e_abs_0, de_postabs = total_de_dt * dt_entr * slabfac, f_min = 0.01;
-        if(e0_postabs+de_postabs < f_min*e0_postabs) {slabfac *= fabs((1.-f_min)*e0_postabs)/(fabs(de_postabs)+MIN_REAL_NUMBER);}
-
-        double ef = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
-        if((ef < 0)||(isnan(ef))) {ef=0;}
-        double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
-        if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
-        
-#if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_EVOLVE_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX) 
-        // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
-        {
-        double radacc[3]={0}, rmag=0, L_particle = Get_Particle_Size(i)*All.cf_atime; // particle effective size/slab thickness
-        double Sigma_particle = P[i].Mass / (M_PI*L_particle*L_particle); // effective surface density through particle
-        double abs_per_kappa_dt = RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s) * (SphP[i].Density*All.cf_a3inv) * dt_entr; // fractional absorption over timestep
-        double slabfac_rp = slab_averaging_function(SphP[i].Kappa_RT[kf]*Sigma_particle) * slab_averaging_function(SphP[i].Kappa_RT[kf]*abs_per_kappa_dt); // reduction factor for absorption over dt
-        int kx; for(kx=0;kx<3;kx++)
-        {
-            radacc[kx] = -dt_entr * slabfac_rp * SphP[i].Lambda_FluxLim[kf] * SphP[i].Gradients.E_gamma_ET[kf][kx] / SphP[i].Density; // naive radiation-pressure calc for FLD methods
-            rmag += radacc[kx]*radacc[kx]; // compute magnitude
-        }
-        if(rmag > 0)
-        {
-            rmag = sqrt(rmag); for(kx=0;kx<3;kx++) {radacc[kx] /= rmag;} // normalize
-            double rmag_max = de_abs / (P[i].Mass * RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s); // limit magnitude to absorbed photon momentum
-            if(rmag > rmag_max) {rmag=rmag_max;}
-            for(kx=0;kx<3;kx++) {if(mode==0) {P[i].Vel[kx]+=radacc[kx]*rmag;} else {SphP[i].VelPred[kx]+=radacc[kx]*rmag;}}
-        }}
+            
+            /*---------------------------------------------------------------------------------------------------
+             the following block is for absorption and special behavior where
+             photons absorbed in one band are re-radiated [or up/down-scattered] into another.
+             this must be hard-coded to maintain conservation (as opposed to treated as a source term)
+             -----------------------------------------------------------------------------------------------------*/
+            if(fabs(a0)*dt_entr > 50.) {a0 *= 50./(fabs(a0)*dt_entr);}
+            double abs_0 = DMAX(0,fabs(a0)*dt_entr); double slabfac = slab_averaging_function(abs_0); double e_abs_0=exp(-abs_0); if(abs_0>100.) {e_abs_0=0;}
+            /* since we're taking exponentials and inverses of some large numbers here, need to be careful not to let floating point errors cause nan's */
+            if((dt_entr <= 0.)||(a0 >= 0.)||(abs_0 <= 0.)) {abs_0=0.; slabfac=e_abs_0=1.;} else {if(abs_0 < 1.e-5) {slabfac=1.-0.5*abs_0; e_abs_0 = 1.-abs_0;} else {if(abs_0 > 100.) {slabfac = 1./abs_0; e_abs_0 = 0.;}}}
+            double e0_postabs = e0*e_abs_0, de_postabs = total_de_dt * dt_entr * slabfac, f_min = 0.01;
+            if(e0_postabs+de_postabs < f_min*e0_postabs) {slabfac *= fabs((1.-f_min)*e0_postabs)/(fabs(de_postabs)+MIN_REAL_NUMBER);}
+            
+            double ef = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
+            if((ef < 0)||(isnan(ef))) {ef=0;}
+            double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
+            if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
+            
+#if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_EVOLVE_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX)
+            // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
+            {
+                double radacc[3]={0}, rmag=0, L_particle = Get_Particle_Size(i)*All.cf_atime; // particle effective size/slab thickness
+                double Sigma_particle = P[i].Mass / (M_PI*L_particle*L_particle); // effective surface density through particle
+                double abs_per_kappa_dt = RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s) * (SphP[i].Density*All.cf_a3inv) * dt_entr; // fractional absorption over timestep
+                double slabfac_rp = slab_averaging_function(SphP[i].Kappa_RT[kf]*Sigma_particle) * slab_averaging_function(SphP[i].Kappa_RT[kf]*abs_per_kappa_dt); // reduction factor for absorption over dt
+                int kx; for(kx=0;kx<3;kx++)
+                {
+                    radacc[kx] = -dt_entr * slabfac_rp * SphP[i].Lambda_FluxLim[kf] * SphP[i].Gradients.E_gamma_ET[kf][kx] / SphP[i].Density; // naive radiation-pressure calc for FLD methods
+                    rmag += radacc[kx]*radacc[kx]; // compute magnitude
+                }
+                if(rmag > 0)
+                {
+                    rmag = sqrt(rmag); for(kx=0;kx<3;kx++) {radacc[kx] /= rmag;} // normalize
+                    double rmag_max = de_abs / (P[i].Mass * RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s); // limit magnitude to absorbed photon momentum
+#if defined(RT_DISABLE_R15_GRADIENTFIX)
+                    if(rmag > rmag_max) {rmag=rmag_max;}
+#else
+#ifdef RT_INFRARED
+                    if(kf!=RT_FREQ_BIN_INFRARED || rmag > rmag_max)
 #endif
-        
-        int donor_bin = -1; // frequency into which the photons will be deposited, if any //
-#if defined(RT_CHEM_PHOTOION) && defined(RT_INFRARED)
-        /* assume absorbed ionizing photons are re-emitted via recombination into optical-NIR bins. valid if recombination time is fast. 
-            more accurately, this should be separately calculated in the cooling rates, and gas treated as a source */
-        if(kf==RT_FREQ_BIN_H0) {donor_bin=RT_FREQ_BIN_INFRARED;}
+                    rmag = rmag_max;
+#endif
+                    for(kx=0;kx<3;kx++) {if(mode==0) {P[i].Vel[kx]+=radacc[kx]*rmag;} else {SphP[i].VelPred[kx]+=radacc[kx]*rmag;}}
+                }}
+#endif
+            
+            int donation_target_bin = -1; // frequency into which the photons will be deposited, if any //
+#if defined(RT_CHEM_PHOTOION) && defined(RT_OPTICAL_NIR)
+            /* assume absorbed ionizing photons are re-emitted via recombination into optical-NIR bins. valid if recombination time is fast.
+             more accurately, this should be separately calculated in the cooling rates, and gas treated as a source */
+            if(kf==RT_FREQ_BIN_H0) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
 #ifdef RT_PHOTOION_MULTIFREQUENCY
-        if(kf==RT_FREQ_BIN_He0) {donor_bin=RT_FREQ_BIN_INFRARED;}
-        if(kf==RT_FREQ_BIN_He1) {donor_bin=RT_FREQ_BIN_INFRARED;}
-        if(kf==RT_FREQ_BIN_He2) {donor_bin=RT_FREQ_BIN_INFRARED;}        
+            if(kf==RT_FREQ_BIN_He0) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
+            if(kf==RT_FREQ_BIN_He1) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
+            if(kf==RT_FREQ_BIN_He2) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
 #endif
 #endif
 #if defined(RT_PHOTOELECTRIC) && defined(RT_INFRARED)
-        /* this is direct dust absorption, re-radiated in IR */
-        if(kf==RT_FREQ_BIN_PHOTOELECTRIC) {donor_bin=RT_FREQ_BIN_INFRARED;}
+            if(kf==RT_FREQ_BIN_PHOTOELECTRIC) {donation_target_bin=RT_FREQ_BIN_INFRARED;} /* this is direct dust absorption, re-radiated in IR */
+#endif
+#if defined(RT_NUV) && defined(RT_INFRARED)
+            if(kf==RT_FREQ_BIN_NUV) {donation_target_bin=RT_FREQ_BIN_INFRARED;} /* this is direct dust absorption, re-radiated in IR */
 #endif
 #if defined(RT_OPTICAL_NIR) && defined(RT_INFRARED)
-        /* this is direct dust absorption, re-radiated in IR */
-        if(kf==RT_FREQ_BIN_OPTICAL_NIR) {donor_bin=RT_FREQ_BIN_INFRARED;}
+            if(kf==RT_FREQ_BIN_OPTICAL_NIR) {donation_target_bin=RT_FREQ_BIN_INFRARED;} /* this is direct dust absorption, re-radiated in IR */
 #endif
 #ifdef RT_INFRARED
-        /* donor bin is yourself in the IR - all self-absorption is re-emitted */
-        if(donor_bin==RT_FREQ_BIN_INFRARED) {E_abs_tot += de_abs/(MIN_REAL_NUMBER + dt_entr);}
-        if(kf==RT_FREQ_BIN_INFRARED) {ef = e0 + total_de_dt * dt_entr;} 
+            if(donation_target_bin==RT_FREQ_BIN_INFRARED) {E_abs_tot += de_abs/(MIN_REAL_NUMBER + dt_entr);} /* donor bin is yourself in the IR - all self-absorption is re-emitted */
+            if(kf==RT_FREQ_BIN_INFRARED) {ef = e0 + total_de_dt * dt_entr;} /* donor bin is yourself in the IR - all self-absorption is re-emitted */
 #endif
-        if(donor_bin >= 0) {if(mode==0) {SphP[i].E_gamma[donor_bin] += de_abs;} else {SphP[i].E_gamma_Pred[donor_bin] += de_abs;}}
-        if((ef < 0)||(isnan(ef))) {ef=0;}
-        if(mode==0) {SphP[i].E_gamma[kf] = ef;} else {SphP[i].E_gamma_Pred[kf] = ef;}
-
+            
+#if defined(RT_EVOLVE_INTENSITIES)
+            if(donation_target_bin >= 0) // isotropically re-emit the donated radiation into the target bin[s] //
+            {
+                int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {if(mode==0) {SphP[i].Intensity[kf][k_q] += de_abs/RT_INTENSITY_BINS_DOMEGA;} else {SphP[i].Intensity_Pred[kf][k_q] += de_abs/RT_INTENSITY_BINS_DOMEGA;}}
+            }
+            if((ef < 0)||(isnan(ef))) {ef=0;}
+            if(mode==0) {SphP[i].Intensity[kf][k_angle] = ef/RT_INTENSITY_BINS_DOMEGA;} else {SphP[i].Intensity_Pred[kf][k_angle] = ef/RT_INTENSITY_BINS_DOMEGA;}
+#else
+            if(donation_target_bin >= 0) {if(mode==0) {SphP[i].E_gamma[donation_target_bin] += de_abs;} else {SphP[i].E_gamma_Pred[donation_target_bin] += de_abs;}}
+            if((ef < 0)||(isnan(ef))) {ef=0;}
+            if(mode==0) {SphP[i].E_gamma[kf] = ef;} else {SphP[i].E_gamma_Pred[kf] = ef;}
+#endif
+            
 #if defined(RT_EVOLVE_FLUX)
-        int k_dir; double f_mag=0;
-        for(k_dir=0;k_dir<3;k_dir++)
-        {
-            double flux_0;
-            if(mode==0) {flux_0 = SphP[i].Flux[kf][k_dir];} else {flux_0 = SphP[i].Flux_Pred[kf][k_dir];}
-            double flux_f = flux_0 * e_abs_0 + SphP[i].Dt_Flux[kf][k_dir] * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
-            if(mode==0) {SphP[i].Flux[kf][k_dir] = flux_f;} else {SphP[i].Flux_Pred[kf][k_dir] = flux_f;}
-            f_mag += flux_f*flux_f; // magnitude of flux vector
-        }
-        if(f_mag > 0)
-        {
-            // limit the flux according the physical (optically thin) maximum //
-            f_mag=sqrt(f_mag); double fmag_max = 1.1 * (C/All.UnitVelocity_in_cm_per_s) * ef; // maximum flux should be optically-thin limit: e_gamma/C: here allow some tolerance for numerical leapfrogging in timestepping
-            if(f_mag > fmag_max) {for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {SphP[i].Flux[kf][k_dir] *= fmag_max/f_mag;} else {SphP[i].Flux_Pred[kf][k_dir] *= fmag_max/f_mag;}}}
-        }
+            int k_dir; double f_mag=0;
+            for(k_dir=0;k_dir<3;k_dir++)
+            {
+                double flux_0; if(mode==0) {flux_0 = SphP[i].Flux[kf][k_dir];} else {flux_0 = SphP[i].Flux_Pred[kf][k_dir];}
+                double flux_f = flux_0 * e_abs_0 + SphP[i].Dt_Flux[kf][k_dir] * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
+                if(mode==0) {SphP[i].Flux[kf][k_dir] = flux_f;} else {SphP[i].Flux_Pred[kf][k_dir] = flux_f;}
+                f_mag += flux_f*flux_f; // magnitude of flux vector
+            }
+            if(f_mag > 0) // limit the flux according the physical (optically thin) maximum //
+            {
+                f_mag=sqrt(f_mag); double fmag_max = 1.1 * (C/All.UnitVelocity_in_cm_per_s) * ef; // maximum flux should be optically-thin limit: e_gamma/C: here allow some tolerance for numerical leapfrogging in timestepping
+                if(f_mag > fmag_max) {for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {SphP[i].Flux[kf][k_dir] *= fmag_max/f_mag;} else {SphP[i].Flux_Pred[kf][k_dir] *= fmag_max/f_mag;}}}
+            }
 #endif
+        }
     }
     if(mode > 0) {rt_eddington_update_calculation(i);} /* update the eddington tensor (if we calculate it) as well */
 #endif
@@ -679,11 +729,10 @@ void rt_set_simple_inits(void)
                 SphP[i].Dt_E_gamma[k] = 0;
 #endif
 #ifdef RT_EVOLVE_FLUX
-                int k_dir;
-                for(k_dir=0;k_dir<3;k_dir++)
-                {
-                    SphP[i].Flux_Pred[k][k_dir] = SphP[i].Flux[k][k_dir] = SphP[i].Dt_Flux[k][k_dir] = 0;
-                }
+                int k_dir; for(k_dir=0;k_dir<3;k_dir++) {SphP[i].Flux_Pred[k][k_dir] = SphP[i].Flux[k][k_dir] = SphP[i].Dt_Flux[k][k_dir] = 0;}
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+                int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {SphP[i].Intensity_Pred[k][k_dir] = SphP[i].Intensity[k][k_dir] = SphP[i].Dt_Intensity[k][k_dir] = 0;}
 #endif
             }
         }
@@ -693,8 +742,58 @@ void rt_set_simple_inits(void)
 
 
 
+#if defined(RT_EVOLVE_INTENSITIES)
+/***********************************************************************************************************/
+/* routine to initialize the distribution of ray angles along which the intensities are explicitly evolved.
+    this follows Bruhls et al. 1999 [Appendix B]. the rays uniformly sample the unit sphere, are distributed
+    isotropically, and satisfy the numerical quadtratures through second order
+    J=SUM[dOmega*I]/4PI=I, F=SUM[dOmega*I*Omega_hat]=0, K=SUM[dOmega*I*Omega_hat.x.Omega_hat]/4PI=(1/3)*Identity*J
+    to machine accuracy for an isotropic (I=constant along all discrete directions) radiation field.
+    The user specifies the number of independent polar angles Np=RT_LOCALRAYGRID (any integer). The total number of rays
+    per octant of the unit sphere is then Np*(Np+1)/2, and the total number of rays
+    altogether is 4*Np*(Np+1). The exact numerical quadrature assumption is used throughout.
+ */
+/***********************************************************************************************************/
+void rt_init_intensity_directions(void)
+{
+    int n_polar = RT_LOCALRAYGRID;
+    if(n_polar < 1) {printf("Number of rays is invalid (<1). Terminating.\n"); endrun(5346343);}
 
-
+    double mu[n_polar]; int i,j,k,l,n=0,n_oct=n_polar*(n_polar+1)/2,n_tot=8*n_oct;
+    double Intensity_Direction_tmp[n_oct][3];
+    for(j=0;j<n_polar;j++) {mu[j] = sqrt( (j + 1./6.) / (n_polar - 1./2.) );}
+    
+    for(i=0;i<n_polar;i++)
+    {
+        for(j=0;j<n_polar-i;j++)
+        {
+            k=n_polar-1-i-j;
+            Intensity_Direction_tmp[n][0]=mu[i]; Intensity_Direction_tmp[n][1]=mu[j]; Intensity_Direction_tmp[n][2]=mu[k];
+            n++;
+        }
+    }
+    n=0;
+    for(i=0;i<2;i++)
+    {
+        double sign_x = 1 - 2*i;
+        for(j=0;j<2;j++)
+        {
+            double sign_y = 1 - 2*j;
+            for(k=0;k<2;k++)
+            {
+                double sign_z = 1 - 2*k;
+                for(l=0;l<n_oct;l++)
+                {
+                    All.RT_Intensity_Direction[n][0] = Intensity_Direction_tmp[l][0] * sign_x;
+                    All.RT_Intensity_Direction[n][1] = Intensity_Direction_tmp[l][1] * sign_y;
+                    All.RT_Intensity_Direction[n][2] = Intensity_Direction_tmp[l][2] * sign_z;
+                    n++;
+                }
+            }
+        }
+    }
+}
+#endif
 
 
 /***********************************************************************************************************/

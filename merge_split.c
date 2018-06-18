@@ -29,15 +29,17 @@
     when particles fall below some minimum mass threshold */
 int does_particle_need_to_be_merged(int i)
 {
+    if(P[i].Mass <= 0) return 0;
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
 #ifdef BH_WIND_SPAWN
-    MyFloat vr2 = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2] ;
-    MyFloat r2  = P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2] ;
-    if( (r2 < 1.0) && (vr2 > All.BAL_v_outflow*All.BAL_v_outflow/100.0)) return 0;
+    if(P[i].ID == All.AGNWindID)
+    {
+        MyFloat vr2 = (P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2]) * All.cf_a2inv; // physical
+        if(vr2 <= 0.01 * All.BAL_v_outflow*All.BAL_v_outflow) {return 1;} else {return 0;} // merge only if velocity condition satisfied, even if surrounded by more massive particles //
+    }
 #endif
-    if(P[i].Mass <= 0) return 0;
     if((P[i].Type>0) && (P[i].Mass > 0.5*All.MinMassForParticleMerger*ref_mass_factor(i))) return 0;
     if(P[i].Mass <= (All.MinMassForParticleMerger* ref_mass_factor(i))) return 1;
     return 0;
@@ -53,13 +55,7 @@ int does_particle_need_to_be_split(int i)
     return 0;
 #else
 #ifdef BH_WIND_SPAWN
-    MyFloat vr2 = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2] ;
-    MyFloat r2  = P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2] ;
-    if( (r2 < 1.0) && (vr2 > All.BAL_v_outflow*All.BAL_v_outflow/100.0)) return 0;
-    
-    double fac = All.Time * All.Time / (0.001*0.001 + All.Time * All.Time);
-    if( (P[i].Hsml * fac > sqrt(P[i].min_dist_to_bh+0.005) ) && (All.ExtraRef==1) ) return 1;
-    
+    if(P[i].ID == All.AGNWindID) return 0;
 #endif
     if(P[i].Mass >= (All.MaxMassForParticleSplit * ref_mass_factor(i))) return 1;
     return 0;
@@ -70,7 +66,7 @@ int does_particle_need_to_be_split(int i)
 double ref_mass_factor(int i)
 {
     double ref_factor=1.0;
-#if defined(BH_CALC_DISTANCES) && !defined(ANALYTIC_GRAVITY_ANCHOR_TO_PARTICLE)
+#if defined(BH_CALC_DISTANCES) && !defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
 #ifndef SINGLE_STAR_FORMATION
     ref_factor = sqrt(P[i].min_dist_to_bh + 0.0001);
     if(ref_factor>1.0) { ref_factor = 1.0; }
@@ -185,6 +181,9 @@ void merge_and_split_particles(void)
                         /* make sure we're not taking the same particle (and that its available to be merged into)! */
                         if((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type)&&(P[j].Mass > P[i].Mass)&&(P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit))
                         {
+#ifdef BH_WIND_SPAWN
+                            if(P[j].ID != All.AGNWindID)
+#endif
                             if(P[j].Mass<threshold_val) {threshold_val=P[j].Mass; target_for_merger=j;} // mass-based //
                         }
                     } // for(n=0; n<numngb_inbox; n++)
@@ -220,7 +219,7 @@ void merge_and_split_particles(void)
                         {
                             double dp[3]; int k; double r2=0;
                             for(k=0;k<3;k++) {dp[k]=P[i].Pos[k]-P[j].Pos[k];}
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
                             NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
                             for(k=0;k<3;k++) {r2+=dp[k]*dp[k];}
@@ -238,7 +237,7 @@ void merge_and_split_particles(void)
             /* alright, particle splitting operations are complete! */
         } // P[i].Type & active timebin check
     } // for(i = 0; i < NumPart; i++)
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
     /* map the particles back onto the box (make sure they get wrapped if they go off the edges). this is redundant here,
      because we only do splits in the beginning of a domain decomposition step, where this will be called as soon as
      the particle re-order is completed. but it is still useful to keep here in case this changes (and to note what needs
@@ -274,7 +273,7 @@ void merge_and_split_particles(void)
 void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nearest)
 {
     double mass_of_new_particle;
-    if(NumPart + n_particles_split >= All.MaxPart)
+    if(NumPart + n_particles_split >= All.MaxPartSph)
     {
         printf ("On Task=%d with NumPart=%d we try to split a particle. Sorry, no space left...(All.MaxPart=%d)\n", ThisTask, NumPart, All.MaxPart);
         fflush(stdout);
@@ -305,7 +304,7 @@ void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nea
     double d_r = 0.25 * hsml; // needs to be epsilon*Hsml where epsilon<<1, to maintain stability //
     d_r = DMAX( DMAX(0.1*r_near , 0.005*hsml) , DMIN(d_r , r_near) ); // use a 'buffer' to limit to some multiple of the distance to the nearest particle //
     */ // the change above appears to cause some numerical instability //
-#ifndef NOGRAVITY
+#ifndef SELFGRAVITY_OFF
     d_r = DMAX(d_r , 2.0*EPSILON_FOR_TREERND_SUBNODE_SPLITTING * All.ForceSoftening[0]);
 #endif
     
@@ -352,22 +351,15 @@ void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nea
     /* we evolve the -conserved- VB and Vphi, so this must be partitioned */
     for(k=0;k<3;k++)
     {
-        SphP[j].B[k] = mass_of_new_particle * SphP[i].B[k];
-        SphP[i].B[k] -= SphP[j].B[k];
-        SphP[j].BPred[k] = mass_of_new_particle * SphP[i].BPred[k];
-        SphP[i].BPred[k] -= SphP[j].BPred[k];
-        SphP[j].DtB[k] = mass_of_new_particle * SphP[i].DtB[k];
-        SphP[i].DtB[k] -= SphP[j].DtB[k];
+        SphP[j].B[k] = mass_of_new_particle * SphP[i].B[k]; SphP[i].B[k] -= SphP[j].B[k];
+        SphP[j].BPred[k] = mass_of_new_particle * SphP[i].BPred[k]; SphP[i].BPred[k] -= SphP[j].BPred[k];
+        SphP[j].DtB[k] = mass_of_new_particle * SphP[i].DtB[k]; SphP[i].DtB[k] -= SphP[j].DtB[k];
     }
-    SphP[j].divB = mass_of_new_particle * SphP[i].divB;
-    SphP[i].divB -= SphP[j].divB;
+    SphP[j].divB = mass_of_new_particle * SphP[i].divB; SphP[i].divB -= SphP[j].divB;
 #ifdef DIVBCLEANING_DEDNER
-    SphP[j].Phi = mass_of_new_particle * SphP[i].Phi;
-    SphP[i].Phi -= SphP[j].Phi;
-    SphP[j].DtPhi = mass_of_new_particle * SphP[i].DtPhi;
-    SphP[i].DtPhi -= SphP[j].DtPhi;
-    SphP[j].PhiPred = mass_of_new_particle * SphP[i].PhiPred;
-    SphP[i].PhiPred -= SphP[j].PhiPred;
+    SphP[j].Phi = mass_of_new_particle * SphP[i].Phi; SphP[i].Phi -= SphP[j].Phi;
+    SphP[j].DtPhi = mass_of_new_particle * SphP[i].DtPhi; SphP[i].DtPhi -= SphP[j].DtPhi;
+    SphP[j].PhiPred = mass_of_new_particle * SphP[i].PhiPred; SphP[i].PhiPred -= SphP[j].PhiPred;
 #endif
     /* ideally, particle-splits should be accompanied by a re-partition of the density via the density() call
         for the particles affected, after the tree-reconstruction, with quantities like B used to re-calculate after */
@@ -375,13 +367,27 @@ void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nea
 #ifdef RADTRANSFER
     for(k=0;k<N_RT_FREQ_BINS;k++)
     {
-        SphP[j].E_gamma[k] = mass_of_new_particle * SphP[i].E_gamma[k];
-        SphP[i].E_gamma[k] -= SphP[j].E_gamma[k];
+        int k_dir; k_dir=0;
+        SphP[j].E_gamma[k] = mass_of_new_particle * SphP[i].E_gamma[k]; SphP[i].E_gamma[k] -= SphP[j].E_gamma[k];
 #if defined(RT_EVOLVE_NGAMMA)
-        SphP[j].E_gamma_Pred[k] = mass_of_new_particle * SphP[i].E_gamma_Pred[k];
-        SphP[i].E_gamma_Pred[k] -= SphP[j].E_gamma_Pred[k];
-        SphP[j].Dt_E_gamma[k] = mass_of_new_particle * SphP[i].Dt_E_gamma[k];
-        SphP[i].Dt_E_gamma[k] -= SphP[j].Dt_E_gamma[k];
+        SphP[j].E_gamma_Pred[k] = mass_of_new_particle * SphP[i].E_gamma_Pred[k]; SphP[i].E_gamma_Pred[k] -= SphP[j].E_gamma_Pred[k];
+        SphP[j].Dt_E_gamma[k] = mass_of_new_particle * SphP[i].Dt_E_gamma[k]; SphP[i].Dt_E_gamma[k] -= SphP[j].Dt_E_gamma[k];
+#endif
+#if defined(RT_EVOLVE_FLUX)
+        for(k_dir=0;k_dir<3;k_dir++)
+        {
+            SphP[j].Flux[k][k_dir] = mass_of_new_particle * SphP[i].Flux[k][k_dir]; SphP[i].Flux[k][k_dir] -= SphP[j].Flux[k][k_dir];
+            SphP[j].Flux_Pred[k][k_dir] = mass_of_new_particle * SphP[i].Flux_Pred[k][k_dir]; SphP[i].Flux_Pred[k][k_dir] -= SphP[j].Flux_Pred[k][k_dir];
+            SphP[j].Dt_Flux[k][k_dir] = mass_of_new_particle * SphP[i].Dt_Flux[k][k_dir]; SphP[i].Dt_Flux[k][k_dir] -= SphP[j].Dt_Flux[k][k_dir];
+        }
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+        for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++)
+        {
+            SphP[j].Intensity[k][k_dir] = mass_of_new_particle * SphP[i].Intensity[k][k_dir]; SphP[i].Intensity[k][k_dir] -= SphP[j].Intensity[k][k_dir];
+            SphP[j].Intensity_Pred[k][k_dir] = mass_of_new_particle * SphP[i].Intensity_Pred[k][k_dir]; SphP[i].Intensity_Pred[k][k_dir] -= SphP[j].Intensity_Pred[k][k_dir];
+            SphP[j].Dt_Intensity[k][k_dir] = mass_of_new_particle * SphP[i].Dt_Intensity[k][k_dir]; SphP[i].Dt_Intensity[k][k_dir] -= SphP[j].Dt_Intensity[k][k_dir];
+        }
 #endif
     }
 #endif
@@ -401,21 +407,22 @@ void split_particle_i(int i, int n_particles_split, int i_nearest, double r2_nea
     SphP[i].MassTrue -= SphP[j].MassTrue;
 #endif
 #ifdef COSMIC_RAYS
-    SphP[j].CosmicRayEnergy = mass_of_new_particle * SphP[i].CosmicRayEnergy;
-    SphP[i].CosmicRayEnergy -= SphP[j].CosmicRayEnergy;
-    SphP[j].CosmicRayEnergyPred = mass_of_new_particle * SphP[i].CosmicRayEnergyPred;
-    SphP[i].CosmicRayEnergyPred -= SphP[j].CosmicRayEnergyPred;
-    SphP[j].DtCosmicRayEnergy = mass_of_new_particle * SphP[i].DtCosmicRayEnergy;
-    SphP[i].DtCosmicRayEnergy -= SphP[j].DtCosmicRayEnergy;
+    SphP[j].CosmicRayEnergy = mass_of_new_particle * SphP[i].CosmicRayEnergy; SphP[i].CosmicRayEnergy -= SphP[j].CosmicRayEnergy;
+    SphP[j].CosmicRayEnergyPred = mass_of_new_particle * SphP[i].CosmicRayEnergyPred; SphP[i].CosmicRayEnergyPred -= SphP[j].CosmicRayEnergyPred;
+    SphP[j].DtCosmicRayEnergy = mass_of_new_particle * SphP[i].DtCosmicRayEnergy; SphP[i].DtCosmicRayEnergy -= SphP[j].DtCosmicRayEnergy;
 #ifdef COSMIC_RAYS_M1
     for(k=0;k<3;k++)
     {
-        SphP[j].CosmicRayFlux[k] = mass_of_new_particle * SphP[i].CosmicRayFlux[k];
-        SphP[i].CosmicRayFlux[k] -= SphP[j].CosmicRayFlux[k];
-        SphP[j].CosmicRayFluxPred[k] = mass_of_new_particle * SphP[i].CosmicRayFluxPred[k];
-        SphP[i].CosmicRayFluxPred[k] -= SphP[j].CosmicRayFluxPred[k];
-        SphP[j].DtCosmicRayFlux[k] = mass_of_new_particle * SphP[i].DtCosmicRayFlux[k];
-        SphP[i].DtCosmicRayFlux[k] -= SphP[j].DtCosmicRayFlux[k];
+        SphP[j].CosmicRayFlux[k] = mass_of_new_particle * SphP[i].CosmicRayFlux[k]; SphP[i].CosmicRayFlux[k] -= SphP[j].CosmicRayFlux[k];
+        SphP[j].CosmicRayFluxPred[k] = mass_of_new_particle * SphP[i].CosmicRayFluxPred[k]; SphP[i].CosmicRayFluxPred[k] -= SphP[j].CosmicRayFluxPred[k];
+    }
+#endif
+#ifdef COSMIC_RAYS_ALFVEN
+    for(k=0;k<2;k++)
+    {
+        SphP[j].CosmicRayAlfvenEnergy[k] = mass_of_new_particle * SphP[i].CosmicRayAlfvenEnergy[k]; SphP[i].CosmicRayAlfvenEnergy[k] -= SphP[j].CosmicRayAlfvenEnergy[k];
+        SphP[j].CosmicRayAlfvenEnergyPred[k] = mass_of_new_particle * SphP[i].CosmicRayAlfvenEnergyPred[k]; SphP[i].CosmicRayAlfvenEnergyPred[k] -= SphP[j].CosmicRayAlfvenEnergyPred[k];
+        SphP[j].DtCosmicRayAlfvenEnergy[k] = mass_of_new_particle * SphP[i].DtCosmicRayAlfvenEnergy[k]; SphP[i].DtCosmicRayAlfvenEnergy[k] -= SphP[j].DtCosmicRayAlfvenEnergy[k];
     }
 #endif
 #endif
@@ -513,7 +520,7 @@ void merge_particles_ij(int i, int j)
     {
         double pos_new_xyz[3], dp[3];
         for(k=0;k<3;k++) {dp[k]=P[j].Pos[k]-P[i].Pos[k];}
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
         NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
 #endif
         for(k=0;k<3;k++) {pos_new_xyz[k] = P[i].Pos[k] + wt_j * dp[k];}
@@ -592,7 +599,7 @@ void merge_particles_ij(int i, int j)
     /* for periodic boxes, we need to (arbitrarily) pick one position as our coordinate center. we pick i. then everything defined in 
         position differences relative to i. the final position will be appropriately box-wrapped after these operations are completed */
     for(k=0;k<3;k++) {dp[k]=P[j].Pos[k]-P[i].Pos[k];}
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
     NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
 #endif
     for(k=0;k<3;k++) {pos_new_xyz[k] = P[i].Pos[k] + wt_j * dp[k];}
@@ -692,6 +699,14 @@ void merge_particles_ij(int i, int j)
             SphP[j].Dt_Flux[k][k_dir] = SphP[j].Dt_Flux[k][k_dir] + SphP[i].Dt_Flux[k][k_dir];
         }
 #endif
+#ifdef RT_EVOLVE_INTENSITIES
+        for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++)
+        {
+            SphP[j].Intensity[k][k_dir] = SphP[j].Intensity[k][k_dir] + SphP[i].Intensity[k][k_dir];
+            SphP[j].Intensity_Pred[k][k_dir] = SphP[j].Intensity_Pred[k][k_dir] + SphP[i].Intensity_Pred[k][k_dir];
+            SphP[j].Dt_Intensity[k][k_dir] = SphP[j].Dt_Intensity[k][k_dir] + SphP[i].Dt_Intensity[k][k_dir];
+        }
+#endif
     }
 #endif
 #ifdef METALS
@@ -707,7 +722,14 @@ void merge_particles_ij(int i, int j)
     {
         SphP[j].CosmicRayFlux[k] += SphP[i].CosmicRayFlux[k];
         SphP[j].CosmicRayFluxPred[k] += SphP[i].CosmicRayFluxPred[k];
-        SphP[j].DtCosmicRayFlux[k] += SphP[i].DtCosmicRayFlux[k];
+    }
+#endif
+#ifdef COSMIC_RAYS_ALFVEN
+    for(k=0;k<3;k++)
+    {
+        SphP[j].CosmicRayAlfvenEnergy[k] += SphP[i].CosmicRayAlfvenEnergy[k];
+        SphP[j].CosmicRayAlfvenEnergyPred[k] += SphP[i].CosmicRayAlfvenEnergyPred[k];
+        SphP[j].DtCosmicRayAlfvenEnergy[k] += SphP[i].DtCosmicRayAlfvenEnergy[k];
     }
 #endif
 #endif

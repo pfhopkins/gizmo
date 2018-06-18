@@ -206,7 +206,29 @@ double evaluate_l_over_m_ssp(double stellar_age_in_gyr)
 }
 
 
-
+#ifdef BH_SEED_FROM_LOCALGAS
+/* function which takes properties of a gas particle 'i' and returns probability of its turning into a BH seed particle */
+double return_probability_of_this_forming_bh_from_seed_model(int i)
+{
+    double p=0;
+    if(All.Time < 1.0/(1.0+All.SeedBlackHoleMinRedshift)) /* within the allowed redshift range for forming seeds */
+        if(SphP[i].Density*All.cf_a3inv > All.PhysDensThresh) /* require it be above the SF density threshold */
+            if(P[i].Metallicity[0]/All.SolarAbundances[0] < 0.1) /* and below some metallicity */
+    {
+        double GradRho = evaluate_NH_from_GradRho(P[i].GradRho,PPP[i].Hsml,SphP[i].Density,PPP[i].NumNgb,1) * All.UnitDensity_in_cgs * All.UnitLength_in_cm * All.HubbleParam; /* this gives the Sobolev-estimated column density */
+        /* surface dens in g/cm^2; threshold for bound cluster formation in our experiments is ~2 g/cm^2 (10^4 M_sun/pc^2) */
+        if (GradRho > 0.1)
+        {
+            /* now calculate probability of forming a BH seed particle */
+            p = 0.0004; /* ratio of BH mass formed to stellar mass for Z~0.01 Zsun population */
+            p *= (P[i].Mass / All.SeedBlackHoleMass); /* resolves resolution-dependence by making p=massfrac */
+            p *= (1-exp(-GradRho/1.0)) * exp(-(P[i].Metallicity[0]/All.SolarAbundances[0])/0.01);
+            /* want to add factors to control this probability in zoom-in runs */
+        }
+    }
+    return p;
+}
+#endif
 
 
 /* simple routine to determine density thresholds and other common units for SF routines */
@@ -244,15 +266,19 @@ double get_starformation_rate(int i)
 #endif
 
     flag = 1;			/* default is normal cooling */
-    if(SphP[i].Density*All.cf_a3inv >= All.PhysDensThresh)
-    flag = 0;
+    if(SphP[i].Density*All.cf_a3inv >= All.PhysDensThresh) {flag = 0;}
+#if (GALSF_SFR_VIRIAL_SF_CRITERION==3)
+    else {SphP[i].AlphaVirial_SF_TimeSmoothed = 0.;}
+#endif
     if(All.ComovingIntegrationOn)
     if(SphP[i].Density < All.OverDensThresh)
     flag = 1;
     if((flag == 1)||(P[i].Mass<=0))
     return 0;
-    
-    
+#if (GALSF_SFR_VIRIAL_SF_CRITERION==3)
+    double dt = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval;
+    double dtime = dt / All.cf_hubble_a; /*  the actual time-step */
+#endif
     tsfr = sqrt(All.PhysDensThresh / (SphP[i].Density * All.cf_a3inv)) * All.MaxSfrTimescale;
     if(tsfr<=0) return 0;
     
@@ -290,16 +316,22 @@ double get_starformation_rate(int i)
     
 #ifdef GALSF_SFR_VIRIAL_SF_CRITERION
     double dv2abs = 0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
+#if (GALSF_SFR_VIRIAL_SF_CRITERION==3)
+    double divv = 0;
+#endif
     int j,k;
     for(j=0;j<3;j++)
+    {
         for(k=0;k<3;k++)
         {
             double vt = SphP[i].Gradients.Velocity[j][k]*All.cf_a2inv; /* physical velocity gradient */
-            if(All.ComovingIntegrationOn)
-                if(j==k)
-                    vt += All.cf_hubble_a; /* add hubble-flow correction */
+            if(All.ComovingIntegrationOn) {if(j==k) {vt += All.cf_hubble_a;}} /* add hubble-flow correction */
+#if (GALSF_SFR_VIRIAL_SF_CRITERION==3)
+            if(j==k) {divv += vt;}
+#endif
             dv2abs += vt*vt;
         }
+    }
     /* add thermal support, although it is almost always irrelevant */
     double cs_eff = Particle_effective_soundspeed_i(i);
     double k_cs = cs_eff / (Get_Particle_Size(i)*All.cf_atime);
@@ -317,9 +349,6 @@ double get_starformation_rate(int i)
     dv2abs += 2.*k_cs*k_cs; // account for thermal pressure with standard Jeans criterion (k^2*cs^2 vs 4pi*G*rho) //
     double alpha_vir = dv2abs / (8. * M_PI * All.G * SphP[i].Density * All.cf_a3inv); // 1/4 or 1/8 ? //
 
-    
-#if !(EXPAND_PREPROCESSOR_(GALSF_SFR_VIRIAL_SF_CRITERION) == 1)
-    /* the above macro checks if GALSF_SFR_VIRIAL_SF_CRITERION has been assigned a numerical value */
 #if (GALSF_SFR_VIRIAL_SF_CRITERION > 0) || (GALSF_SFR_VIRIAL_SF_CRITERION == 2)
     if(alpha_vir < 1.0)
     {
@@ -334,16 +363,17 @@ double get_starformation_rate(int i)
         if(MJ_solar > MJ_crit) {alpha_vir = 100.;}
     }
 #endif
-#if (GALSF_SFR_VIRIAL_SF_CRITERION > 1)
+#if (GALSF_SFR_VIRIAL_SF_CRITERION==3)
+    SphP[i].AlphaVirial_SF_TimeSmoothed += 8.*(1./(1+alpha_vir) - SphP[i].AlphaVirial_SF_TimeSmoothed) * dt/tsfr;
+    if (SphP[i].AlphaVirial_SF_TimeSmoothed < 0.5 || divv >= 0) rateOfSF *= 0.0;
+#elif (GALSF_SFR_VIRIAL_SF_CRITERION > 1)
     if(alpha_vir >= 1.0) {rateOfSF *= 0.0;}
 #endif
+#if (GALSF_SFR_VIRIAL_SF_CRITERION<3)
+    if((alpha_vir<1.0)||(SphP[i].Density*All.cf_a3inv>100.*All.PhysDensThresh)) {rateOfSF *= 1.0;} else {rateOfSF *= 0.0015;} // PFH: note the latter flag is an arbitrary choice currently set -by hand- to prevent runaway densities from this prescription! //
 #endif
-    if((alpha_vir<1.0)||(SphP[i].Density*All.cf_a3inv>100.*All.PhysDensThresh)) {rateOfSF *= 1.0;} else {rateOfSF *= 0.0015;}
-    // PFH: note the latter flag is an arbitrary choice currently set -by hand- to prevent runaway densities from this prescription! //
-    
-    //  if( divv>=0 ) rateOfSF=0; // restrict to convergent flows (optional) //
-    //  rateOfSF *= 1.0/(1.0 + alpha_vir); // continuous cutoff w alpha_vir instead of sharp (optional) //
 #endif // GALSF_SFR_VIRIAL_SF_CRITERION
+    
     
 #ifdef SINGLE_STAR_FORMATION
     rateOfSF *= 1.0e5; // make sink formation guaranteed to happen, where it can
@@ -368,13 +398,10 @@ double get_starformation_rate(int i)
 /* compute the 'effective eos' cooling/heating, including thermal feedback sources, here */
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double x, double rateOfSF)
 {
-    double dt = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval;
-    double dtime = dt / All.cf_hubble_a; /*  the actual time-step */
-    double factorEVP = pow(SphP[i].Density * All.cf_a3inv / All.PhysDensThresh, -0.8) * All.FactorEVP;
-    double trelax = tsfr * (1 - x) / x / (All.FactorSN * (1 + factorEVP));
-    double egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
-    double egyeff = egyhot * (1 - x) + All.EgySpecCold * x;
-    double egycurrent = SphP[i].InternalEnergy, ne=1.0;
+    double dt = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval, dtime = dt / All.cf_hubble_a; /*  the actual time-step */
+    double factorEVP = pow(SphP[i].Density * All.cf_a3inv / All.PhysDensThresh, -0.8) * All.FactorEVP, trelax = tsfr * (1 - x) / x / (All.FactorSN * (1 + factorEVP));
+    double egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold, egyeff = egyhot * (1 - x) + All.EgySpecCold * x, egycurrent = SphP[i].InternalEnergy, ne;
+    ne=1.0;
 
 #if defined(BH_THERMALFEEDBACK)
     if((SphP[i].Injected_BH_Energy > 0) && (P[i].Mass>0))
@@ -409,10 +436,8 @@ void star_formation_parent_routine(void)
   unsigned int bits;
   double dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate;
   double sum_sm, total_sm, sm=0, rate, sum_mass_stars, total_sum_mass_stars;
-#if defined(BH_POPIII_SEEDS) || defined(SINGLE_STAR_FORMATION)
+#if defined(BH_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_FORMATION)
   int num_bhformed=0, tot_bhformed=0;
-  double GradRho;
-  GradRho=0;
 #endif
 #if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) && defined(GALSF_FB_RPWIND_LOCAL)
   double total_n_wind,total_m_wind,total_mom_wind,total_prob_kick,avg_v_kick,momwt_avg_v_kick,avg_taufac;
@@ -441,7 +466,7 @@ void star_formation_parent_routine(void)
         if(SphP[i].DelayTime > 0) {flag=1; SphP[i].DelayTime -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
         if((SphP[i].DelayTime<0) || (SphP[i].Density*All.cf_a3inv < All.WindFreeTravelDensFac*All.PhysDensThresh)) {SphP[i].DelayTime=0;}
 #endif
-#ifdef GALSF_TURNOFF_COOLING_WINDS
+#ifdef GALSF_FB_TURNOFF_COOLING
         if(SphP[i].DelayTimeCoolingSNe > 0) {flag=1; SphP[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
 #endif
         
@@ -484,23 +509,9 @@ void star_formation_parent_routine(void)
         if(get_random_number(P[i].ID + 1) < prob)	/* ok, make a star */
 		{
 
-#ifdef BH_POPIII_SEEDS
+#ifdef BH_SEED_FROM_LOCALGAS
             /* before making a star, assess whether or not we can instead make a BH seed particle */
-            p=0;
-            if ( (SphP[i].Density*All.cf_a3inv > All.PhysDensThresh) && (P[i].Metallicity[0]/All.SolarAbundances[0] < 0.1) )
-            {
-                GradRho = evaluate_NH_from_GradRho(P[i].GradRho,PPP[i].Hsml,SphP[i].Density,PPP[i].NumNgb,1);
-                GradRho *= All.UnitDensity_in_cgs * All.UnitLength_in_cm * All.HubbleParam;
-                /* surface dens in g/cm^2; threshold for bound cluster formation in our experiments is ~2 g/cm^2 (10^4 M_sun/pc^2) */
-                if (GradRho > 0.1)
-                {
-                    /* now calculate probability of forming a BH seed particle */
-                    p = 0.0004; /* ratio of BH mass formed to stellar mass for Z~0.01 Zsun population */
-                    p *= (P[i].Mass / All.SeedBlackHoleMass); /* resolves resolution-dependence by making p=massfrac */
-                    p *= (1-exp(-GradRho/1.0)) * exp(-(P[i].Metallicity[0]/All.SolarAbundances[0])/0.01);
-                    /* want to add factors to control this probability in zoom-in runs */
-                } // (y>2)
-            } // (above density threshold and below metallicity threshold)
+            p = return_probability_of_this_forming_bh_from_seed_model(i);
             if(get_random_number(P[i].ID + 2) < p)
             {
                 /* make a BH particle */
@@ -510,13 +521,24 @@ void star_formation_parent_routine(void)
                 Stars_converted++;
                 stars_converted++;
                 P[i].StellarAge = All.Time;
+
                 P[i].BH_Mass = All.SeedBlackHoleMass;
+                if(All.SeedBlackHoleMassSigma > 0)
+                {
+                    gsl_rng *random_generator_forbh; /* generate gaussian random number for random BH seed mass */
+                    random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1); gsl_rng_set(random_generator_forbh, P[i].ID+17);
+                    P[i].BH_Mass = pow( 10., log10(All.SeedBlackHoleMass) + gsl_ran_gaussian(random_generator_forbh, All.SeedBlackHoleMassSigma) );
+                }
+
                 if(p>1) P[i].BH_Mass *= p; /* assume multiple seeds in particle merge */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                 P[i].Mass = SphP[i].MassTrue + SphP[i].dMass;
 #endif
+#ifdef BH_INCREASE_DYNAMIC_MASS
+                P[i].Mass *= BH_INCREASE_DYNAMIC_MASS;
+#endif
 #ifdef BH_ALPHADISK_ACCRETION
-                P[i].BH_Mass_AlphaDisk = 0;
+                P[i].BH_Mass_AlphaDisk = All.SeedAlphaDiskMass;
 #endif
 #ifdef BH_COUNTPROGS
                 P[i].BH_CountProgs = 1;
@@ -526,15 +548,8 @@ void star_formation_parent_routine(void)
                 P[i].BH_disk_hr = 0.333333;
 #endif
                 P[i].DensAroundStar = SphP[i].Density;
-#ifdef BH_BUBBLES
-                P[i].BH_Mass_bubbles = All.SeedBlackHoleMass;
-                P[i].BH_Mass_ini = All.SeedBlackHoleMass;
-#endif
-#ifdef UNIFIED_FEEDBACK
-                P[i].BH_Mass_radio = All.SeedBlackHoleMass;
-#endif
             } else {
-#endif /* closes ifdef(BH_POPIII_SEEDS) */ 
+#endif /* closes ifdef(BH_SEED_FROM_LOCALGAS) */ 
 
             /* ok, we're going to make a star! */
 #if defined(GALSF_SFR_IMF_VARIATION) || defined(GALSF_SFR_IMF_SAMPLING)
@@ -568,7 +583,7 @@ void star_formation_parent_routine(void)
                 num_bhformed++;
                 P[i].BH_Mass = All.SeedBlackHoleMass;
 #ifdef BH_ALPHADISK_ACCRETION
-                P[i].BH_Mass_AlphaDisk = DMAX(0, P[i].Mass-P[i].BH_Mass);
+                P[i].BH_Mass_AlphaDisk = DMAX(DMAX(0, P[i].Mass-P[i].BH_Mass), All.SeedAlphaDiskMass);
 #endif
 #ifdef BH_COUNTPROGS
                 P[i].BH_CountProgs = 1;
@@ -632,7 +647,7 @@ void star_formation_parent_routine(void)
 
 		      stars_spawned++;
 		    }
-#ifdef BH_POPIII_SEEDS
+#ifdef BH_SEED_FROM_LOCALGAS
             } /* closes else for decision to make a BH particle */
 #endif
 		}
@@ -650,7 +665,7 @@ void star_formation_parent_routine(void)
 #endif
         } // closes check of flag==0 for star-formation operation
 
-#if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS) || defined(GALSF_SUBGRID_VARIABLEVELOCITY) || defined(GALSF_SUBGRID_VARIABLEVELOCITY_DM_DISPSERSION)
+#if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS)
         if( (flag==0 || All.ComovingIntegrationOn==0) &&
            (P[i].Mass>0) && (P[i].Type==0) && (dtime>0) && (All.Time>0) )
         {
@@ -713,7 +728,7 @@ if(All.WindMomentumLoading)
 #endif /* GALSF_FB_RPWIND_DO_IN_SFCALC */
 
     
-#if defined(BH_POPIII_SEEDS) || defined(SINGLE_STAR_FORMATION)
+#if defined(BH_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_FORMATION)
   MPI_Allreduce(&num_bhformed, &tot_bhformed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   if(tot_bhformed > 0)
   {
@@ -778,7 +793,7 @@ if(All.WindMomentumLoading)
 
 
 
-#if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS) || defined(GALSF_SUBGRID_VARIABLEVELOCITY) || defined(GALSF_SUBGRID_VARIABLEVELOCITY_DM_DISPSERSION)
+#if defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS)
 void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvtau_return[4])
 {
     int j;
@@ -800,42 +815,18 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
     int ngb_run_cntr,kmin,k;
     double dmin1w,dmax1w,dmax2w;
 #endif
-#ifdef GALSF_WINDS_ISOTROPIC
-    double theta, phi;
-#endif
 
+    
 #ifdef GALSF_SUBGRID_WINDS
+
+#if (GALSF_SUBGRID_WIND_SCALING == 0)
     /* this is the simple, old standard wind model, with constant velocity & loading with SFR */
     p = All.WindEfficiency * sm / P[i].Mass;
     v = sqrt(2 * All.WindEnergyFraction*All.FactorSN*All.EgySpecSN / (1 - All.FactorSN) / All.WindEfficiency);
     prob = 1 - exp(-p);
 #endif
     
-
-#ifdef GALSF_SUBGRID_DMDISPERSION
-    /* wind model where launching scales with halo/galaxy bulk properties (as in Vogelsberger's simulations) */
-    if(SphP[i].DM_VelDisp > 0 && sm > 0)
-    {
-        double wind_energy, wind_momentum, wind_mass;
-        v = All.VariableWindVelFactor * SphP[i].DM_VelDisp;  /* physical wind velocity */
-        //      if(v < 50.0) v = 50.0;
-        wind_momentum = sm * All.VariableWindSpecMomentum;
-        wind_energy = sm * All.WindEnergyFraction * All.FactorSN * All.EgySpecSN / (1 - All.FactorSN);
-        wind_mass = (wind_energy + sqrt(wind_energy * wind_energy + v * v * wind_momentum * wind_momentum)) / (v * v);
-        /* wind mass for this particle, assuming the wind is first given the energy wind_energy and then the momentum wind_momentum */
-        p = wind_mass / P[i].Mass;
-    }
-    else
-    {
-        v = 0;
-        p = 0;
-    }
-    prob = 1 - exp(-p);
-#endif
-    
-    
-    
-#ifdef GALSF_SUBGRID_VARIABLEVELOCITY
+#if (GALSF_SUBGRID_WIND_SCALING == 1)
     /* wind model where launching scales with halo/galaxy bulk properties (as in Romeel's simulations) */
     if(SphP[i].HostHaloMass > 0 && sm > 0)
     {
@@ -866,6 +857,29 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
     }
     prob = 1 - exp(-p);
 #endif
+    
+#if (GALSF_SUBGRID_WIND_SCALING == 2)
+    /* wind model where launching scales with halo/galaxy bulk properties (as in Vogelsberger's simulations) */
+    if(SphP[i].DM_VelDisp > 0 && sm > 0)
+    {
+        double wind_energy, wind_momentum, wind_mass;
+        v = All.VariableWindVelFactor * SphP[i].DM_VelDisp;  /* physical wind velocity */
+        //      if(v < 50.0) v = 50.0;
+        wind_momentum = sm * All.VariableWindSpecMomentum;
+        wind_energy = sm * All.WindEnergyFraction * All.FactorSN * All.EgySpecSN / (1 - All.FactorSN);
+        wind_mass = (wind_energy + sqrt(wind_energy * wind_energy + v * v * wind_momentum * wind_momentum)) / (v * v);
+        /* wind mass for this particle, assuming the wind is first given the energy wind_energy and then the momentum wind_momentum */
+        p = wind_mass / P[i].Mass;
+    }
+    else
+    {
+        v = 0;
+        p = 0;
+    }
+    prob = 1 - exp(-p);
+#endif
+    
+#endif // GALSF_SUBGRID_WINDS
     
     
     
@@ -1093,14 +1107,6 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
 #ifdef GALSF_FB_RPWIND_FROMSTARS
         for(j=0;j<3;j++) dir[j]=-P[i].GradRho[j]; // default is along opacity gradient //
 #endif
-        
-#if defined(GALSF_WINDS_POLAR) || !defined(GALSF_FB_RPWIND_FROMSTARS) // polar wind (defined by acel.cross.vel)
-        dir[0] = P[i].GravAccel[1] * P[i].Vel[2] - P[i].GravAccel[2] * P[i].Vel[1];
-        dir[1] = P[i].GravAccel[2] * P[i].Vel[0] - P[i].GravAccel[0] * P[i].Vel[2];
-        dir[2] = P[i].GravAccel[0] * P[i].Vel[1] - P[i].GravAccel[1] * P[i].Vel[0];
-        if(get_random_number(P[i].ID + 5) < 0.5) {for(j=0;j<3;j++) dir[j]=-dir[j];}
-#endif
-        
 #ifdef GALSF_FB_RPWIND_FROMCLUMPS // in this case wind is directed from the local clump center //
         if(i != k)
         {
@@ -1109,12 +1115,25 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
             for(j=0;j<3;j++) dir[j]=P[kmin].Pos[j]-P[i].Pos[j];
         }
 #endif
+    
+#if !defined(GALSF_WINDS_ORIENTATION) && !defined(GALSF_FB_RPWIND_FROMSTARS) && !defined(GALSF_FB_RPWIND_FROMCLUMPS)
+#define GALSF_WINDS_ORIENTATION 0
+#endif
         
-#ifdef GALSF_WINDS_ISOTROPIC // here the direction is random //
-        theta = acos(2 * get_random_number(P[i].ID + 3) - 1);
-        phi = 2 * M_PI * get_random_number(P[i].ID + 4);
+#if (GALSF_WINDS_ORIENTATION==0) // random wind direction
+        double theta = acos(2 * get_random_number(P[i].ID + 3) - 1);
+        double phi = 2 * M_PI * get_random_number(P[i].ID + 4);
         dir[0] = sin(theta) * cos(phi); dir[1] = sin(theta) * sin(phi); dir[2] = cos(theta);
         if(get_random_number(P[i].ID + 5) < 0.5) {for(j=0;j<3;j++) dir[j]=-dir[j];}
+#endif
+#if (GALSF_WINDS_ORIENTATION==1) || !defined(GALSF_FB_RPWIND_FROMSTARS) // polar wind (defined by accel.cross.vel)
+        dir[0] = P[i].GravAccel[1] * P[i].Vel[2] - P[i].GravAccel[2] * P[i].Vel[1];
+        dir[1] = P[i].GravAccel[2] * P[i].Vel[0] - P[i].GravAccel[0] * P[i].Vel[2];
+        dir[2] = P[i].GravAccel[0] * P[i].Vel[1] - P[i].GravAccel[1] * P[i].Vel[0];
+        if(get_random_number(P[i].ID + 5) < 0.5) {for(j=0;j<3;j++) dir[j]=-dir[j];}
+#endif
+#if (GALSF_WINDS_ORIENTATION==2)
+        for(j=0;j<3;j++) dir[j]=-P[i].GradRho[j]; // along density gradient //
 #endif
         
         // now actually do the kick for the wind //
@@ -1130,7 +1149,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
 #endif
     } /* if(get_random_number(P[i].ID + 2) < prob) */
 }
-#endif // defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS) || defined(GALSF_SUBGRID_VARIABLEVELOCITY) //
+#endif // defined(GALSF_FB_RPWIND_DO_IN_SFCALC) || defined(GALSF_SUBGRID_WINDS)
 
 
 

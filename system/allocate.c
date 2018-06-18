@@ -81,26 +81,6 @@ void allocate_memory(void)
     }
 
 
-#if defined(BLACK_HOLES) && defined(DETACH_BLACK_HOLES)
-  if(All.MaxPartBH > 0)
-    {
-      bytes_tot = 0;
-
-      if(!
-	 (BHP =
-	  (struct bh_particle_data *) mymalloc("BHP", bytes =
-					       All.MaxPartBH * sizeof(struct bh_particle_data))))
-	{
-	  printf("failed to allocate memory for `BHP' (%g MB).\n", bytes / (1024.0 * 1024.0));
-	  endrun(1);
-	}
-      bytes_tot += bytes;
-
-      if(ThisTask == 0)
-	printf("Allocated %g MByte for storage of BH data.\n\n", bytes_tot / (1024.0 * 1024.0));
-
-    }
-#endif
 
 
 }

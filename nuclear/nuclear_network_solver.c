@@ -247,7 +247,7 @@ static void network_solver_integrate_internal(double temp, double rho, double *y
   jacob_t *jacob;
   struct network_solver_data *nsd = nw->nsd;
   double start;
-#ifdef NETWORK_OUTPUT_TIMEEVOLUTION
+#ifdef NUCLEARNET_OUTPUT_TIMEEVOLUTION
   FILE *fp;
 
   fp = fopen("network_output.dat", "w");
@@ -315,7 +315,7 @@ static void network_solver_integrate_internal(double temp, double rho, double *y
       sanitize(y, nd);
       normalize(y, nsd);
 
-#ifdef NETWORK_OUTPUT_TIMEEVOLUTION
+#ifdef NUCLEARNET_OUTPUT_TIMEEVOLUTION
       printf("t(%03d): %11.5e, dt (%02d): %11.5e, x:", step, time, m, dttry);
       for(i = 0; i < nsd->nelements; i++)
 	{
@@ -490,7 +490,7 @@ static void network_solver_integrate_internal(double temp, double rho, double *y
 	}
     }
 
-#ifdef NETWORK_OUTPUT_TIMEEVOLUTION
+#ifdef NUCLEARNET_OUTPUT_TIMEEVOLUTION
   printf("t(%03d): %11.5e, dt (%02d): %11.5e, x:", step, t, m, dttry);
   for(i = 0; i < nsd->nelements; i++)
     {

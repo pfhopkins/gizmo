@@ -75,13 +75,13 @@ int ngb_filter_variables(long long numngb, int list[], t_vector * center, t_vect
     {
         int p = list[no];
         MyDouble dx, dy, dz, d2;
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
         MyDouble xtmp;
 #endif
         if(searchbothways_mode == 1) {dist = DMAX(PPP[p].Hsml, hsml);}
-        dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
-        dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
-        dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
+        dx = NGB_PERIODIC_BOX_LONG_X(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
+        dy = NGB_PERIODIC_BOX_LONG_Y(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
+        dz = NGB_PERIODIC_BOX_LONG_Z(P[p].Pos[0] - center->d[0], P[p].Pos[1] - center->d[1], P[p].Pos[2] - center->d[2],-1);
         d2 = dx * dx + dy * dy + dz * dz;
         comp[no] = (d2 < dist * dist);
     }
@@ -156,6 +156,19 @@ int ngb_treefind_variable_threads_targeted(MyDouble searchcenter[3], MyFloat hsm
 #undef SEARCHBOTHWAYS
 }
 
+/* identical to above but includes 'both ways' search for interacting neighbors */
+int ngb_treefind_pairs_threads_targeted(MyDouble searchcenter[3], MyFloat hsml, int target, int *startnode,
+                                           int mode, int *exportflag, int *exportnodecount, int *exportindex,
+                                           int *ngblist, int TARGET_BITMASK)
+{
+#include "system/ngb_codeblock_before_condition.h"
+    if(!((1 << P[p].Type) & (TARGET_BITMASK))) continue; // skip anything not of the desired type
+    if(P[p].Mass <= 0) continue; // skip zero-mass particles
+#define SEARCHBOTHWAYS 1 // only need neighbors inside of search radius, not particles 'looking at' primary
+#include "system/ngb_codeblock_after_condition_threaded.h"
+#undef SEARCHBOTHWAYS
+}
+
 
 
 
@@ -177,12 +190,12 @@ int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target,
     int maxNodes = MaxNodes;
     int bunchSize = All.BunchSize;
     
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
     MyDouble xtmp;
 #endif
 #ifdef REDUCE_TREEWALK_BRANCHING
     t_vector box, hbox, vcenter;
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
     INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
     INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
     SCALE_VECTOR3(0.5, &box, &hbox);
@@ -209,11 +222,11 @@ int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target,
             
 #ifndef REDUCE_TREEWALK_BRANCHING
             dist = hsml;
-            dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+            dx = NGB_PERIODIC_BOX_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
             if(dx > dist) continue;
-            dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+            dy = NGB_PERIODIC_BOX_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
             if(dy > dist) continue;
-            dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+            dz = NGB_PERIODIC_BOX_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
             if(dz > dist) continue;
             if(dx * dx + dy * dy + dz * dz > dist * dist) continue;
 #endif
@@ -300,11 +313,11 @@ int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target,
             no = current->u.d.sibling;	/* in case the node can be discarded */
             
             dist = hsml + 0.5 * current->len;;
-            dx = NGB_PERIODIC_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
+            dx = NGB_PERIODIC_BOX_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
             if(dx > dist) continue;
-            dy = NGB_PERIODIC_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
+            dy = NGB_PERIODIC_BOX_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
             if(dy > dist) continue;
-            dz = NGB_PERIODIC_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
+            dz = NGB_PERIODIC_BOX_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
             if(dz > dist) continue;
             /* now test against the minimal sphere enclosing everything */
             dist += FACT1 * current->len;
@@ -329,9 +342,9 @@ int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat hsml, int target,
                                     if(((1 << P[p].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
                                     {
 #ifndef REDUCE_TREEWALK_BRANCHING
-                                        dx = NGB_PERIODIC_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-                                        dy = NGB_PERIODIC_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-                                        dz = NGB_PERIODIC_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+                                        dx = NGB_PERIODIC_BOX_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+                                        dy = NGB_PERIODIC_BOX_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
+                                        dz = NGB_PERIODIC_BOX_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
                                         if(dx * dx + dy * dy + dz * dz > hsml * hsml) break;
 #endif
                                         Ngblist[numngb++] = p;

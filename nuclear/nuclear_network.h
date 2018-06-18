@@ -211,9 +211,6 @@ struct network_solver_data {
 #if NETWORK_VAR_RHO_T == NETWORK_VAR_RHO
     int iRho;
 #endif
-#ifdef NETWORK_OUTPUT
-    FILE *fp;
-#endif
 };
 
 struct network_solver_trajectory {

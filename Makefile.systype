@@ -12,16 +12,17 @@
 #############
 
 
-SYSTYPE="BlueWaters"
+#SYSTYPE="BlueWaters"
 #SYSTYPE="Stampede"
 #SYSTYPE="Stampede2"
 #SYSTYPE="Zwicky"
 #SYSTYPE="Wheeler"
-#SYSTYPE="MacBookPro"
+SYSTYPE="MacBookPro"
 #SYSTYPE="Quest"
 #SYSTYPE="Iron"
 #SYSTYPE="Darter"
 #SYSTYPE="Comet"
+#SYSTYPE="Gordon"
 #SYSTYPE="odyssey"
 #SYSTYPE="antares"
 #SYSTYPE="Pleiades-Haswell"

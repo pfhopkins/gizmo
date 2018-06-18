@@ -145,6 +145,9 @@ struct Conserved_var_Riemann
 #ifdef COSMIC_RAYS_M1
     MyDouble CosmicRayFlux[3];
 #endif
+#ifdef COSMIC_RAYS_ALFVEN
+    MyDouble CosmicRayAlfvenEnergy[2];
+#endif
 #endif
 };
 
@@ -181,6 +184,9 @@ struct hydrodata_in
     /* basic hydro variables */
     MyDouble Pos[3];
     MyFloat Vel[3];
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    MyFloat ParticleVel[3];
+#endif
     MyFloat Hsml;
     MyFloat Mass;
     MyFloat Density;
@@ -225,7 +231,10 @@ struct hydrodata_in
     } Gradients;
     MyFloat NV_T[3][3];
     
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#if defined(KERNEL_CRK_FACES)
+    MyFloat Tensor_CRK_Face_Corrections[16];
+#endif
+#ifdef HYDRO_PRESSURE_SPH
     MyFloat EgyWtRho;
 #endif
 
@@ -283,8 +292,20 @@ struct hydrodata_in
 #ifdef COSMIC_RAYS_M1
     MyDouble CosmicRayFlux[3];
 #endif
+#ifdef COSMIC_RAYS_ALFVEN
+    MyDouble CosmicRayAlfvenEnergy[2];
 #endif
-
+#endif
+    
+#ifdef GALSF_SUBGRID_WINDS
+    MyDouble DelayTime;
+#endif
+    
+#ifdef EOS_ELASTIC
+    int CompositionType;
+    MyFloat Elastic_Stress_Tensor[3][3];
+#endif
+    
 #ifndef DONOTUSENODELIST
     int NodeList[NODELISTLENGTH];
 #endif
@@ -340,8 +361,8 @@ struct hydrodata_out
     
 #ifdef COSMIC_RAYS
     MyDouble DtCosmicRayEnergy;
-#ifdef COSMIC_RAYS_M1
-    MyDouble DtCosmicRayFlux[3];
+#ifdef COSMIC_RAYS_ALFVEN
+    MyDouble DtCosmicRayAlfvenEnergy[2];
 #endif
 #endif
 
@@ -363,6 +384,9 @@ static inline void particle2in_hydra(struct hydrodata_in *in, int i)
     {
         in->Pos[k] = P[i].Pos[k];
         in->Vel[k] = SphP[i].VelPred[k];
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        in->ParticleVel[k] = SphP[i].ParticleVel[k];
+#endif
     }
     in->Hsml = PPP[i].Hsml;
     in->Mass = P[i].Mass;
@@ -372,7 +396,7 @@ static inline void particle2in_hydra(struct hydrodata_in *in, int i)
     in->SoundSpeed = Particle_effective_soundspeed_i(i);
     in->Timestep = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0);
     in->ConditionNumber = SphP[i].ConditionNumber;
-#ifdef CONSTRAINED_GRADIENT_MHD
+#ifdef MHD_CONSTRAINED_GRADIENT
     /* since it is not used elsewhere, we can use the sign of the condition number as a bit 
         to conveniently indicate the status of the parent particle flag, for the constrained gradients */
     if(SphP[i].FlagForConstrainedGradients == 0) {in->ConditionNumber *= -1;}
@@ -391,14 +415,16 @@ static inline void particle2in_hydra(struct hydrodata_in *in, int i)
 #endif
 #endif
     
-#ifdef SPHEQ_DENSITY_INDEPENDENT_SPH
+#ifdef HYDRO_PRESSURE_SPH
     in->EgyWtRho = SphP[i].EgyWtDensity;
 #endif
-    
+#if defined(KERNEL_CRK_FACES)
+    for(k=0;k<16;k++) {in->Tensor_CRK_Face_Corrections[k] = SphP[i].Tensor_CRK_Face_Corrections[k];}
+#endif
+
     int j;
-    for(j=0;j<3;j++)
-        for(k=0;k<3;k++)
-            in->NV_T[j][k] = SphP[i].NV_T[j][k];
+    for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->NV_T[j][k] = SphP[i].NV_T[j][k];}}
+
     
     /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */
     for(k=0;k<3;k++)
@@ -436,8 +462,7 @@ static inline void particle2in_hydra(struct hydrodata_in *in, int i)
         in->Kappa_RT[k] = SphP[i].Kappa_RT[k];
         in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k);
 #if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-        int k_dir;
-        for(k_dir=0;k_dir<6;k_dir++) in->ET[k][k_dir] = SphP[i].ET[k][k_dir];
+        int k_dir; for(k_dir=0;k_dir<6;k_dir++) in->ET[k][k_dir] = SphP[i].ET[k][k_dir];
 #endif
 #ifdef RT_EVOLVE_FLUX
         for(k_dir=0;k_dir<3;k_dir++) in->Flux[k][k_dir] = SphP[i].Flux_Pred[k][k_dir];
@@ -488,6 +513,18 @@ static inline void particle2in_hydra(struct hydrodata_in *in, int i)
 #ifdef COSMIC_RAYS_M1
     for(k=0;k<3;k++) {in->CosmicRayFlux[k] = SphP[i].CosmicRayFluxPred[k];}
 #endif
+#ifdef COSMIC_RAYS_ALFVEN
+    for(k=0;k<2;k++) {in->CosmicRayAlfvenEnergy[k] = SphP[i].CosmicRayAlfvenEnergyPred[k];}
+#endif
+#endif
+
+#ifdef EOS_ELASTIC
+    in->CompositionType = SphP[i].CompositionType;
+    {int k_v; for(k=0;k<3;k++) {for(k_v=0;k_v<3;k_v++) {in->Elastic_Stress_Tensor[k][k_v] = SphP[i].Elastic_Stress_Tensor_Pred[k][k_v];}}}
+#endif
+    
+#ifdef GALSF_SUBGRID_WINDS
+    in->DelayTime = SphP[i].DelayTime;
 #endif
 
 }
@@ -508,6 +545,7 @@ static inline void out2particle_hydra(struct hydrodata_out *out, int i, int mode
     }
     SphP[i].DtInternalEnergy += out->DtInternalEnergy;
     //SphP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
+
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     SphP[i].DtMass += out->DtMass;
     SphP[i].dMass += out->dMass;
@@ -557,8 +595,8 @@ static inline void out2particle_hydra(struct hydrodata_out *out, int i, int mode
 
 #ifdef COSMIC_RAYS
     SphP[i].DtCosmicRayEnergy += out->DtCosmicRayEnergy;
-#ifdef COSMIC_RAYS_M1
-    for(k=0;k<3;k++) {SphP[i].DtCosmicRayFlux[k] += out->DtCosmicRayFlux[k];}
+#ifdef COSMIC_RAYS_ALFVEN
+    for(k=0;k<2;k++) {SphP[i].DtCosmicRayAlfvenEnergy[k] += out->DtCosmicRayAlfvenEnergy[k];}
 #endif
 #endif
 }
@@ -585,7 +623,13 @@ void hydro_final_operations_and_cleanup(void)
             double dt;
             dt = (P[i].TimeBin ? (1 << P[i].TimeBin) : 0) * All.Timebase_interval / All.cf_hubble_a;
             
-            
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            /* signal velocity needs to include rate of gas flow -over- the resolution element, which can be non-zero here */
+            double v2_p = SphP[i].MaxSignalVel*SphP[i].MaxSignalVel;
+            for(k=0;k<3;k++) {v2_p += (SphP[i].VelPred[k]-SphP[i].ParticleVel[k])*(SphP[i].VelPred[k]-SphP[i].ParticleVel[k]);}
+            SphP[i].MaxSignalVel = sqrt(v2_p);
+#endif
+
 #if defined(MAGNETIC)
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             for(k = 0; k < 3; k++)
@@ -668,7 +712,7 @@ void hydro_final_operations_and_cleanup(void)
                 SphP[i].HydroAccel[k] /= P[i].Mass; /* we solved for momentum flux */
             }
             
-#if defined(COSMIC_RAYS) && !defined(COSMIC_RAYS_DISABLE_STREAMING)
+#if defined(COSMIC_RAYS) && !defined(COSMIC_RAYS_DISABLE_STREAMING) && !defined(COSMIC_RAYS_ALFVEN)
             /* energy transfer from CRs to gas due to the streaming instability (mediated by high-frequency Alfven waves, but they thermalize quickly
                 (note this is important; otherwise build up CR 'traps' where the gas piles up and cools but is entirely supported by CRs in outer disks) */
             double cr_stream_cool = -GAMMA_COSMICRAY_MINUS1 * Get_CosmicRayStreamingVelocity(i) / Get_CosmicRayGradientLength(i);
@@ -713,6 +757,7 @@ void hydro_final_operations_and_cleanup(void)
             
             
 #ifdef RT_RAD_PRESSURE_FORCES
+#if defined(RT_EVOLVE_FLUX)
             /* calculate the radiation pressure force */
             double radacc[3]; radacc[0]=radacc[1]=radacc[2]=0; int k2;
             // a = kappa*F/c = Gradients.E_gamma_ET[gradient of photon energy density] / rho[gas_density] //
@@ -722,16 +767,29 @@ void hydro_final_operations_and_cleanup(void)
             for(k2=0;k2<N_RT_FREQ_BINS;k2++)
             {
                 // want to average over volume (through-slab) and over time (over absorption): both give one 'slab_fac' below //
-                double slabfac = slab_averaging_function(SphP[i].Kappa_RT[k2]*Sigma_particle) * slab_averaging_function(SphP[i].Kappa_RT[k2]*abs_per_kappa_dt);
-                for(k=0;k<3;k++)
+                double slabfac = 1;// slab_averaging_function(SphP[i].Kappa_RT[k2]*Sigma_particle) * slab_averaging_function(SphP[i].Kappa_RT[k2]*abs_per_kappa_dt); // (actually dt average not appropriate if there is a source, dx average implicit -already- in averaging operation of Riemann problem //
+#ifdef RT_DISABLE_R15_GRADIENTFIX
+                // use actual flux -- appropriate for highly optically-thick, multiple scattering bands //
+                for(k=0;k<3;k++) {radacc[k] += slabfac * SphP[i].Kappa_RT[k2] * (SphP[i].Flux_Pred[k2][k] * SphP[i].Density/P[i].Mass) / (RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s);}
+#else
+                // use optically-thin flux: for optically thin cases this is better, but actually for thick cases, if optical depth is highly un-resolved, this is also better (see Appendices and discussion of Rosdahl et al. 2015)
+                double Fmag=0; for(k=0;k<3;k++) {Fmag+=SphP[i].Flux_Pred[k2][k]*SphP[i].Flux_Pred[k2][k];}
+#ifdef RT_INFRARED
+                if(k2==RT_FREQ_BIN_INFRARED)
+                    for(k=0;k<3;k++) {radacc[k] += slabfac * SphP[i].Kappa_RT[k2] * (SphP[i].Flux_Pred[k2][k] * SphP[i].Density/P[i].Mass) / (RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s);}
+                else
+#endif
+                if(Fmag > 0)
                 {
-#if defined(RT_EVOLVE_FLUX)
-                    radacc[k] += slabfac * SphP[i].Kappa_RT[k2] * (SphP[i].Flux_Pred[k2][k] * SphP[i].Density/P[i].Mass) / (RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s);
-#elif defined(RT_EVOLVE_EDDINGTON_TENSOR)
+                    Fmag = sqrt(Fmag);
+                    double Fthin = SphP[i].E_gamma[k2] * (RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s);
+                    double F_eff = DMAX(Fthin , Fmag);
+                    for(k=0;k<3;k++) {radacc[k] += (F_eff/Fmag) * slabfac * SphP[i].Kappa_RT[k2] * (SphP[i].Flux_Pred[k2][k] * SphP[i].Density/P[i].Mass) / (RT_SPEEDOFLIGHT_REDUCTION * C / All.UnitVelocity_in_cm_per_s);}
+                }
+#endif
+//#elif defined(RT_EVOLVE_EDDINGTON_TENSOR)
                     /* // -- moved for OTVET+FLD to drift-kick operation to deal with limiters more accurately -- // */
                     //radacc[k] += -slabfac * SphP[i].Lambda_FluxLim[k2] * SphP[i].Gradients.E_gamma_ET[k2][k] / SphP[i].Density; // no speed of light reduction multiplier here //
-#endif
-                }
             }
             for(k=0;k<3;k++)
             {
@@ -741,6 +799,7 @@ void hydro_final_operations_and_cleanup(void)
                 SphP[i].HydroAccel[k] += radacc[k];
 #endif
             } 
+#endif
 #endif
 
             
@@ -761,7 +820,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
             
             
-#ifdef BND_PARTICLES
+#ifdef BOX_BND_PARTICLES
             /* this flag signals all particles with id=0 are frozen (boundary particles) */
             if(P[i].ID == 0)
             {
@@ -889,8 +948,8 @@ void hydro_force(void)
 
 #ifdef COSMIC_RAYS
             SphP[i].DtCosmicRayEnergy = 0;
-#ifdef COSMIC_RAYS_M1
-            for(k=0;k<3;k++) {SphP[i].DtCosmicRayFlux[k] = 0;}
+#ifdef COSMIC_RAYS_ALFVEN
+            for(k=0;k<2;k++) {SphP[i].DtCosmicRayAlfvenEnergy[k] = 0;}
 #endif
 #endif
 #ifdef WAKEUP

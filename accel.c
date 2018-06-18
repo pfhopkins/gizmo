@@ -73,15 +73,9 @@ void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
     {
-        if(ThisTask == 0)
-        {
-            printf("Start hydrodynamics computation...\n");
-        }
+        if(ThisTask == 0) {printf("Start hydrodynamics computation...\n");}
 #ifndef IO_REDUCED_MODE
-        if(ThisTask == 0)
-        {
-            printf("Start density & tree-update computation...\n");
-        }
+        if(ThisTask == 0) {printf("Start density & tree-update computation...\n");}
 #endif
         density();		/* computes density, and pressure */
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
@@ -97,10 +91,7 @@ void compute_hydro_densities_and_forces(void)
          */
         
 #ifndef IO_REDUCED_MODE
-        if(ThisTask == 0)
-        {
-            printf("density & tree-update computation done...\n");
-        }
+        if(ThisTask == 0) {printf("density & tree-update computation done...\n");}
 #endif
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #if defined(COOLING) && defined(GALSF_FB_LOCAL_UV_HEATING)
@@ -110,26 +101,12 @@ void compute_hydro_densities_and_forces(void)
          properly self-shield the particles that had this calculated */
 #endif
 #ifndef IO_REDUCED_MODE
-        if(ThisTask == 0)
-        {
-            printf("gradient computation done.\n");
-        }
+        if(ThisTask == 0) {printf("gradient computation done.\n");}
 #endif
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
+        compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
 #ifndef IO_REDUCED_MODE
-        if(ThisTask == 0)
-        {
-            printf("hydro force computation done.\n");
-        }
-#endif
-#ifdef GRAIN_FLUID
-        apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
-#ifndef IO_REDUCED_MODE
-        if(ThisTask == 0)
-        {
-            printf("grain aerodynamic force evaluation done.\n");
-        }
-#endif
+        if(ThisTask == 0) {printf("hydro force computation done.\n");}
 #endif
 
     } else {
@@ -137,8 +114,27 @@ void compute_hydro_densities_and_forces(void)
         ags_density(); // if there are no gas particles but ags-all is active, still need to enter this loop //
         force_update_hmax();    /* update kernel lengths in tree */
 #endif
+        compute_additional_forces_for_all_particles();
     }
 }
+
+
+
+void compute_additional_forces_for_all_particles(void)
+{
+#ifdef DM_FUZZY
+    DMGrad_gradient_calc();
+#endif
+#if defined(DM_FUZZY) || defined(DM_SIDM) || defined(CBE_INTEGRATOR)
+    AGSForce_calc();
+#endif
+#ifdef GRAIN_FLUID
+    apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
+    if(ThisTask == 0) {printf("grain aerodynamic force evaluation done.\n");}
+#endif
+}
+
+
 
 
 #ifdef GALSF
@@ -147,7 +143,7 @@ void compute_stellar_feedback(void)
     CPU_Step[CPU_MISC] += measure_time();
 
     /* first, check the mechanical sources of feedback */
-#if defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_RPROCESS_ENRICHMENT)
+#ifdef GALSF_FB_SNE_HEATING
 #ifndef USE_ORIGINAL_FIRE2_SNE_COUPLING_SCHEME
     mechanical_fb_calc(-2); /* compute weights for coupling [first weight-calculation pass] */
 #endif
@@ -165,7 +161,13 @@ void compute_stellar_feedback(void)
     mechanical_fb_calc(2); /* do the R-process element injection */
     CPU_Step[CPU_GASRETURN] += measure_time();
 #endif
-#endif // (defined(GALSF_FB_SNE_HEATING)||defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_RPROCESS_ENRICHMENT))
+#endif // GALSF_FB_SNE_HEATING
+    
+    
+    /* alternatively use the pure-thermal/scalar sub-grid feedback model */
+#ifdef GALSF_FB_THERMAL
+    thermal_fb_calc();
+#endif
     
     /* alternatively use the 'turn off cooling' sub-grid feedback model */
 #ifdef GALSF_GASOLINE_RADHEATING

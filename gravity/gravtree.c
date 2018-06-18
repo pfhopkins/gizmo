@@ -81,7 +81,7 @@ void gravity_tree(void)
     int counter;
     double min_time_first_phase, min_time_first_phase_glob;
 #endif
-#ifndef NOGRAVITY
+#ifndef SELFGRAVITY_OFF
     int k, ewald_max, diff, save_NextParticle;
     int ndone, ndone_flag, ngrp;
     int place;
@@ -89,17 +89,9 @@ void gravity_tree(void)
     double tstart, tend, ax, ay, az;
     MPI_Status status;
     
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
     int i1, i2;
 #endif
-#endif
-    
-#ifdef SIDM
-    All.Ndmsi_thisTask = 0;
-    All.Ndmsi = 0;
-    for (i = 0; i < INTERACTION_TABLE_LENGTH; i++)
-        for(j = 0; j < PARTICLE_MAX_INTERACTIONS + 1; j++)
-            InteractionTable[i][j] = 0;
 #endif
     
     
@@ -128,7 +120,7 @@ void gravity_tree(void)
 #endif
     }
     
-#ifndef NOGRAVITY
+#ifndef SELFGRAVITY_OFF
     
     /* allocate buffers to arrange communication */
 #ifdef IO_REDUCED_MODE
@@ -156,7 +148,7 @@ void gravity_tree(void)
     CPU_Step[CPU_TREEMISC] += measure_time();
     t0 = my_second();
     
-#if defined(PERIODIC) && !defined(PMGRID) && !defined(GRAVITY_NOT_PERIODIC)
+#if defined(BOX_PERIODIC) && !defined(PMGRID) && !defined(GRAVITY_NOT_PERIODIC)
     ewald_max = 1;
 #else
     ewald_max = 0;
@@ -417,16 +409,7 @@ void gravity_tree(void)
                     
                     GravDataIn[j].Type = P[place].Type;
                     GravDataIn[j].OldAcc = P[place].OldAcc;
-                    for(k = 0; k < 3; k++)
-                        GravDataIn[j].Pos[k] = P[place].Pos[k];
-                    
-#ifdef SIDM
-                    for(k = 0; k < 3; k++)
-                        GravDataIn[j].Vel[k] = P[place].Vel[k];
-                    GravDataIn[j].dt_step = P[place].dt_step;
-                    GravDataIn[j].dt_step_sidm = P[place].dt_step_sidm;
-                    GravDataIn[j].ID = P[place].ID;
-#endif
+                    for(k = 0; k < 3; k++) {GravDataIn[j].Pos[k] = P[place].Pos[k];}
 #if defined(RT_USE_GRAVTREE) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FORGAS)
                     GravDataIn[j].Mass = P[place].Mass;
 #endif
@@ -563,23 +546,12 @@ void gravity_tree(void)
                 for(j = 0; j < Nexport; j++)
                 {
                     place = DataIndexTable[j].Index;
-                    
-                    for(k = 0; k < 3; k++)
-                        P[place].GravAccel[k] += GravDataOut[j].Acc[k];
-                    
-#ifdef SIDM
-                    if( (All.ErrTolTheta == 0) || (All.TypeOfOpeningCriterion == 0) ) //else gravity_tree() will be called again for this time-step
-                    {
-                        for(k = 0; k < 3; k++)
-                            P[place].Vel[k] += GravDataOut[j].Vel[k];
-                        P[place].dt_step_sidm = GravDataOut[j].dt_step_sidm;
-                        P[place].NInteractions += GravDataOut[j].NInteractions;
-                    }
-#endif
-                    
+                    for(k = 0; k < 3; k++) {P[place].GravAccel[k] += GravDataOut[j].Acc[k];}
+
 #ifdef BH_CALC_DISTANCES
                     /* GravDataOut[j].min_dist_to_bh contains the min dist to particle "P[place]" on another
                      task.  We now check if it is smaller than the current value */
+                    if(Ewald_iter==0)
                     if(GravDataOut[j].min_dist_to_bh < P[place].min_dist_to_bh)
                     {
                         P[place].min_dist_to_bh = GravDataOut[j].min_dist_to_bh;
@@ -602,7 +574,7 @@ void gravity_tree(void)
 #endif
                     }
                     
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
                     for(i1 = 0; i1 < 3; i1++)
                         for(i2 = 0; i2 < 3; i2++)
                             P[place].tidal_tensorps[i1][i2] += GravDataOut[j].tidal_tensorps[i1][i2];
@@ -682,7 +654,7 @@ void gravity_tree(void)
     
     /* now add things for comoving integration */
     
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
 #ifndef PMGRID
     if(All.ComovingIntegrationOn)
     {
@@ -733,7 +705,7 @@ void gravity_tree(void)
         for(j = 0; j < 3; j++)
             P[i].GravAccel[j] *= All.G;
         
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
         /*
          Diagonal terms of tidal tensor need correction, because tree is running over
          all particles -> also over target particle -> extra term -> correct it
@@ -761,13 +733,13 @@ void gravity_tree(void)
         for(i1 = 0; i1 < 3; i1++)
             for(i2 = 0; i2 < 3; i2++)
                 P[i].tidal_tensorps[i1][i2] *= All.G;
-#endif /* DISTORTIONTENSORPS */
+#endif /* GDE_DISTORTIONTENSOR */
         
 #ifdef EVALPOTENTIAL
         /* remove self-potential */
         P[i].Potential += P[i].Mass / All.SofteningTable[P[i].Type];
         
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
         if(All.ComovingIntegrationOn)
             P[i].Potential -= 2.8372975 * pow(P[i].Mass, 2.0 / 3) *
             pow(All.Omega0 * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);
@@ -781,7 +753,7 @@ void gravity_tree(void)
         
         if(All.ComovingIntegrationOn)
         {
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
             double fac, r2;
             
             fac = -0.5 * All.Omega0 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits;
@@ -837,7 +809,7 @@ void gravity_tree(void)
     
     /* Finally, the following factor allows a computation of a cosmological simulation
      with vacuum energy in physical coordinates */
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
 #ifndef PMGRID
     if(All.ComovingIntegrationOn == 0)
     {
@@ -859,7 +831,7 @@ void gravity_tree(void)
             P[i].GravAccel[j] = 0;
     
     
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         P[i].tidal_tensorps[0][0] = 0.0;
@@ -873,7 +845,7 @@ void gravity_tree(void)
         P[i].tidal_tensorps[2][2] = 0.0;
     }
 #endif
-#endif /* end of NOGRAVITY */
+#endif /* end of SELFGRAVITY_OFF */
     
     
     
@@ -966,7 +938,7 @@ void gravity_tree(void)
 #endif
     
     
-#ifdef RT_NOGRAVITY
+#ifdef RT_SELFGRAVITY_OFF
     /* if this is set, we zero out gravity here, just after computing it! */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
@@ -1007,9 +979,6 @@ void gravity_tree(void)
     plb = (NumPart / ((double) All.TotNumPart)) * NTask;
     MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-#ifdef SIDM
-    MPI_Reduce(&All.Ndmsi_thisTask, &All.Ndmsi, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-#endif
     
     CPU_Step[CPU_TREEMISC] += timeall - (timetree + timewait + timecomm);
     CPU_Step[CPU_TREEWALK1] += timetree1;
@@ -1123,7 +1092,7 @@ void *gravity_primary_loop(void *p)
             break;
         
 #if !defined(PMGRID)
-#if defined(PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
         if(Ewald_iter)
         {
             ret = force_treeevaluate_ewald_correction(i, 0, exportflag, exportnodecount, exportindex);
@@ -1196,7 +1165,7 @@ void *gravity_secondary_loop(void *p)
             break;
         
 #if !defined(PMGRID)
-#if defined(PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
         if(Ewald_iter)
         {
             int cost = force_treeevaluate_ewald_correction(j, 1, &dummy, &dummy, &dummy);
@@ -1297,7 +1266,7 @@ void set_softenings(void)
     }
     /* set the minimum gas kernel length to be used this timestep */
     All.MinHsml = All.MinGasHsmlFractional * All.ForceSoftening[0];
-#ifndef NOGRAVITY
+#ifndef SELFGRAVITY_OFF
     if(All.MinHsml <= 5.0*EPSILON_FOR_TREERND_SUBNODE_SPLITTING * All.ForceSoftening[0])
         All.MinHsml = 5.0*EPSILON_FOR_TREERND_SUBNODE_SPLITTING * All.ForceSoftening[0];
 #endif

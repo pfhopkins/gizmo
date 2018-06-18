@@ -299,7 +299,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 if(P[j].Type != 0) continue; // require a gas particle //
                 if(P[j].Mass <= 0) continue; // require the particle has mass //
                 double dp[3]; for(k=0; k<3; k++) {dp[k] = local.Pos[k] - P[j].Pos[k];}
-#ifdef PERIODIC	/* find the closest image in the given box size  */
+#ifdef BOX_PERIODIC	/* find the closest image in the given box size  */
                 NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
                 double r2=0; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}
@@ -310,16 +310,32 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 //kernel_main(u, hinv3, hinv4, &wk, &dwk, -1); // traditional kernel
                 //wk *= P[j].Mass / local.KernelSum_Around_RT_Source;
                 double wk = (1 - r2*hinv*hinv) / local.KernelSum_Around_RT_Source;
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION)
                 double r = sqrt(r2);
                 double dv0 = -1. / (RT_SPEEDOFLIGHT_REDUCTION * (C / All.UnitVelocity_in_cm_per_s) * r);
                 double lmax_0 = DMAX(local.Hsml, r);
+#ifdef RT_EVOLVE_INTENSITIES
+                int kx; double angle_wt_Inu_sum=0, angle_wt_Inu[N_RT_INTENSITY_BINS];
+                // pre-compute a set of weights based on the projection of the particle position along the radial direction for the radiation direction //
+                for(kx=0;kx<N_RT_INTENSITY_BINS;kx++)
+                {
+                    double cos_t=0; int kq; for(kq=0;kq<3;kq++) {cos_t+=dp[kq]*All.RT_Intensity_Direction[kx][kq];}
+                    cos_t *= -1/r;
+                    double wt_function = cos_t*cos_t*cos_t*cos_t;
+                    if(cos_t < 0) {wt_function=0;}
+                    angle_wt_Inu[kx] = wt_function; angle_wt_Inu_sum += angle_wt_Inu[kx];
+                }
+#endif
+#endif
                 // now actually apply the kernel distribution
                 for(k=0;k<N_RT_FREQ_BINS;k++)
                 {
                     double dE = wk * local.Luminosity[k];
 #if defined(RT_INJECT_PHOTONS_DISCRETELY)
-                    SphP[j].E_gamma[k] += dE; SphP[j].E_gamma_Pred[k] += dE; // dump discreetly (noisier, but works smoothly with large timebin hierarchy)
-
+                    SphP[j].E_gamma[k] += dE;
+#ifdef RT_EVOLVE_NGAMMA
+                    SphP[j].E_gamma_Pred[k] += dE; // dump discreetly (noisier, but works smoothly with large timebin hierarchy)
+#endif
 #if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION)
                     // add discrete photon momentum from un-resolved absorption //
                     double x_abs = 2. * SphP[j].Kappa_RT[k] * (SphP[j].Density*All.cf_a3inv) * (DMAX(2.*Get_Particle_Size(j),lmax_0)*All.cf_atime); // effective optical depth through particle
@@ -328,6 +344,14 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     if(slabfac_x>1) {slabfac_x=1;}
                     double dv = slabfac_x * dv0 * dE / P[j].Mass; // total absorbed momentum (needs multiplication by dp[kv] for directionality)
                     int kv; for(kv=0;kv<3;kv++) {P[j].Vel[kv] += dv*dp[kv]; SphP[j].VelPred[kv] += dv*dp[kv];}
+#if defined(RT_EVOLVE_FLUX)
+                    double dflux = -dE * (RT_SPEEDOFLIGHT_REDUCTION * (C / All.UnitVelocity_in_cm_per_s)) / r;
+                    for(kv=0;kv<3;kv++) {SphP[j].Flux[k][kv] += dflux*dp[kv]; SphP[j].Flux_Pred[k][kv] += dflux*dp[kv];}
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+                    double dflux = dE * (RT_SPEEDOFLIGHT_REDUCTION * (C / All.UnitVelocity_in_cm_per_s)) / angle_wt_Inu_sum;
+                    for(kv=0;kv<N_RT_INTENSITY_BINS;kv++) {SphP[j].Intensity[k][kv] += dflux * angle_wt_Inu[N_RT_INTENSITY_BINS]; SphP[j].Intensity_Pred[k][kv] += dflux * angle_wt_Inu[N_RT_INTENSITY_BINS];}
+#endif
 #endif
 #else
                     SphP[j].Je[k] += dE; // treat continuously

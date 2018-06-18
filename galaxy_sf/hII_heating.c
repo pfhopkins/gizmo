@@ -114,8 +114,7 @@ void HII_heating_singledomain(void)
          total_m_ionizing += 1;//P[i].Mass;
          total_l_ionizing += stellum;
         
-         RHII = 4.67e-9*pow(stellum,0.333)*
-                pow(rho*All.cf_a3inv*All.UnitDensity_in_cgs*All.HubbleParam*All.HubbleParam,-0.66667);
+         RHII = 4.67e-9*pow(stellum,0.333)*pow(rho*All.cf_a3inv*All.UnitDensity_in_cgs*All.HubbleParam*All.HubbleParam,-0.66667);
          RHII /= All.cf_atime*All.UnitLength_in_cm/All.HubbleParam;
          // crude estimate of where flux falls below cosmic background
          RHIIMAX=240.0*pow(stellum,0.5)/(All.cf_atime*All.UnitLength_in_cm/All.HubbleParam);
@@ -142,6 +141,9 @@ void HII_heating_singledomain(void)
          */
          
          mionizable=NORM_COEFF*rho*RHII*RHII*RHII;
+	 double M_ionizing_emitted = (3.05e10 * PROTONMASS) * stellum * (dt * All.UnitTime_in_s / All.HubbleParam) ; // number of ionizing photons times proton mass, gives max mass ionized
+	 mionizable = DMIN( mionizable , M_ionizing_emitted/(All.UnitMass_in_g/All.HubbleParam) );
+
          if(RHII>RHIIMAX) RHII=RHIIMAX;
          if(RHII<0.5*h_i) RHII=0.5*h_i;
          RHII_initial=RHII;
@@ -173,7 +175,7 @@ void HII_heating_singledomain(void)
             dx = pos[0] - P[j].Pos[0];
             dy = pos[1] - P[j].Pos[1];
             dz = pos[2] - P[j].Pos[2];
-#ifdef PERIODIC               /*  now find the closest image in the given box size  */
+#ifdef BOX_PERIODIC               /*  now find the closest image in the given box size  */
               NEAREST_XYZ(dx,dy,dz,1);
 #endif
             r2 = dx * dx + dy * dy + dz * dz;
@@ -191,7 +193,7 @@ void HII_heating_singledomain(void)
             if((r<=RHII)&&(already_ionized==0)&&(mionized<mionizable)) 
             {
                m_effective = P[j].Mass*(SphP[j].Density/rho);
-               // weight by density b/c of how the recomination rate in each particle scales            
+               // weight by density b/c of how the recombination rate in each particle scales            
               m_available = mionizable-mionized;
               if(m_effective<=m_available) {
                 do_ionize=1;

@@ -92,7 +92,8 @@ void run(void)
         
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
-#ifdef GALSF_SUBGRID_DMDISPERSION
+#ifdef GALSF_SUBGRID_WINDS
+#if (GALSF_SUBGRID_WIND_SCALING==2)
         // Need to figure out how frequently we calculate this; below is pretty rough //
 #ifdef PMGRID
         if(All.Ti_Current == All.PM_Ti_endstep && get_random_number(1+All.Ti_Current) < 0.05)
@@ -103,10 +104,14 @@ void run(void)
             disp_density(); /* compute the DM velocity dispersion around gas particles every 20 PM steps, should be sufficient */
         }
 #endif
+#endif
 
-#if (defined(GALSF_FB_SNE_HEATING) || defined(GALSF_FB_GASRETURN) || defined(GALSF_FB_RPROCESS_ENRICHMENT))
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
-        determine_where_SNe_occur();
+#ifdef GALSF_FB_SNE_HEATING
+        determine_where_SNe_occur(); // for mechanical FB models
+#endif
+#ifdef GALSF_FB_THERMAL
+        determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
         
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
@@ -222,7 +227,7 @@ void calculate_non_standard_physics(void)
 #ifdef EOS_ENFORCE_ADIABAT
     reset_turb_temp();
 #endif
-#if defined(POWERSPEC_GRID)
+#if defined(TURB_DRIVING_SPECTRUMGRID)
     if(All.Time >= All.TimeNextTurbSpectrum)
     {
         powerspec_turb(All.FileNumberTurbSpectrum++);
@@ -280,20 +285,12 @@ void calculate_non_standard_physics(void)
 #endif
     
     
-#if defined(BLACK_HOLES) || defined(GALSF_SUBGRID_VARIABLEVELOCITY)
+#if defined(BLACK_HOLES) || defined(GALSF_SUBGRID_WINDS)
 #ifdef FOF
     /* this will find new black hole seed halos and/or assign host halo masses for the variable wind model */
-#if !defined(GALSF_SUBGRID_VARIABLEVELOCITY)   // BH seeding only at z > All.SeedBlackHoleMinRedshift
-    if((All.Time < 1.0/(1.0+All.SeedBlackHoleMinRedshift)) && (All.Time >= All.TimeNextOnTheFlyFoF))
-#else
     if(All.Time >= All.TimeNextOnTheFlyFoF)
-#endif
     {
-#ifdef BH_SEED_STAR_MASS_FRACTION
-        fof_fof(-2);
-#else
         fof_fof(-1);
-#endif
         if(All.ComovingIntegrationOn)
             All.TimeNextOnTheFlyFoF *= All.TimeBetOnTheFlyFoF;
         else
@@ -308,7 +305,7 @@ void calculate_non_standard_physics(void)
         force_treebuild(NumPart, NULL);
     }
 #endif
-#endif // ifdef BLACK_HOLES or GALSF_SUBGRID_VARIABLEVELOCITY
+#endif // ifdef BLACK_HOLES or GALSF_SUBGRID_WINDS
     
     
 #ifdef COOLING	/**** radiative cooling and star formation *****/
@@ -319,51 +316,7 @@ void calculate_non_standard_physics(void)
     star_formation_parent_routine(); // master star formation routine //
     CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
-    
-    
-#ifndef BH_BUBBLES
-#ifdef BUBBLES
-    double hubble_a;
-    /**** bubble feedback *****/
-    if(All.Time >= All.TimeOfNextBubble)
-    {
-#ifdef FOF
-        fof_fof(-1);
-        bubble();
-#else
-        bubble();
-#endif
-        if(All.ComovingIntegrationOn)
-        {
-            hubble_a = hubble_function(All.Time);
-            All.TimeOfNextBubble *= (1.0 + All.BubbleTimeInterval * hubble_a);
-        }
-        else
-            All.TimeOfNextBubble += All.BubbleTimeInterval / All.UnitTime_in_Megayears;
         
-        if(ThisTask == 0)
-            printf("Time of the bubble generation: %g\n", 1. / All.TimeOfNextBubble - 1.);
-    }
-#endif
-#endif
-    
-#if defined(MULTI_BUBBLES) && defined(FOF)
-    if(All.Time >= All.TimeOfNextBubble)
-    {
-        fof_fof(-1);
-        if(All.ComovingIntegrationOn)
-        {
-            hubble_a = hubble_func(All.Time);
-            All.TimeOfNextBubble *= (1.0 + All.BubbleTimeInterval * hubble_a);
-        }
-        else
-            All.TimeOfNextBubble += All.BubbleTimeInterval / All.UnitTime_in_Megayears;
-        
-        if(ThisTask == 0)
-            printf("Time of the bubble generation: %g\n", 1. / All.TimeOfNextBubble - 1.);
-    }
-#endif
-    
 #ifdef SCF_HYBRID
     SCF_do_center_of_mass_correction(0.75, 10.0 * SCF_HQ_A, 0.01, 1000);
 #endif
@@ -457,7 +410,7 @@ void find_next_sync_point_and_drift(void)
 
       set_cosmo_factors_for_current_time();
 
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
       All.G = All.Gini * dGfak(All.Time);
 #endif
 
@@ -465,10 +418,9 @@ void find_next_sync_point_and_drift(void)
 
       CPU_Step[CPU_DRIFT] += measure_time();
 
-#ifdef OUTPUTPOTENTIAL
-#if !defined(EVALPOTENTIAL) || (defined(EVALPOTENTIAL) && defined(RECOMPUTE_POTENTIAL_ON_OUTPUT))
+#ifdef OUTPUT_POTENTIAL
+#if !defined(EVALPOTENTIAL) || (defined(EVALPOTENTIAL) && defined(OUTPUT_RECOMPUTE_POTENTIAL))
       domain_Decomposition(0, 0, 0);
-
       compute_potential();
 #endif
 #endif
@@ -492,11 +444,11 @@ void find_next_sync_point_and_drift(void)
     All.Time = All.TimeBegin + All.Ti_Current * All.Timebase_interval;
 
   set_cosmo_factors_for_current_time();
-#ifdef SHEARING_BOX
+#ifdef BOX_SHEARING
     calc_shearing_box_pos_offset();
 #endif
 
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
   All.G = All.Gini * dGfak(All.Time);
 #endif
 
@@ -951,11 +903,10 @@ void write_cpu_log(void)
 	      "   agsdensity %10.2f  %5.1f%%\n"
 	      "   agscomm    %10.2f  %5.1f%%\n"
 	      "   agsimbal   %10.2f  %5.1f%%\n"
+          "   agsmisc    %10.2f  %5.1f%%\n"
 #endif
-#ifdef SIDM
+#ifdef DM_SIDM
           "sidm_total    %10.2f  %5.1f%%\n"
-          "    scatter   %10.2f  %5.1f%%\n"
-          "    cellopen  %10.2f  %5.1f%%\n"
 #endif
 	      "pmgrav        %10.2f  %5.1f%%\n"
 	      "hydro         %10.2f  %5.1f%%\n"
@@ -1003,11 +954,10 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_AGSDENSCOMPUTE], (All.CPU_Sum[CPU_AGSDENSCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_AGSDENSCOMM], (All.CPU_Sum[CPU_AGSDENSCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_AGSDENSWAIT], (All.CPU_Sum[CPU_AGSDENSWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_AGSDENSMISC], (All.CPU_Sum[CPU_AGSDENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
-#ifdef SIDM
-    All.CPU_Sum[CPU_SIDMSCATTER] +  All.CPU_Sum[CPU_SIDMCELLOPEN], (All.CPU_Sum[CPU_SIDMSCATTER] + All.CPU_Sum[CPU_SIDMCELLOPEN])/ All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_SIDMSCATTER], (All.CPU_Sum[CPU_SIDMSCATTER]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_SIDMCELLOPEN], (All.CPU_Sum[CPU_SIDMCELLOPEN]) / All.CPU_Sum[CPU_ALL] * 100,
+#ifdef DM_SIDM
+    All.CPU_Sum[CPU_SIDMSCATTER], (All.CPU_Sum[CPU_SIDMSCATTER])/ All.CPU_Sum[CPU_ALL] * 100,
 #endif
     All.CPU_Sum[CPU_MESH], (All.CPU_Sum[CPU_MESH]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSMISC]
@@ -1121,28 +1071,23 @@ void energy_statistics(void)
 
 void output_extra_log_messages(void)
 {
-    
-#if defined(SIDM)
-    log_self_interactions();
-#endif
-    
 #if defined(TURB_DRIVING) && !defined(IO_REDUCED_MODE)
     log_turb_temp();
 #endif
     
-#if defined(DARKENERGY) && !defined(IO_REDUCED_MODE)
+#if defined(GR_TABULATED_COSMOLOGY) && !defined(IO_REDUCED_MODE)
     if((ThisTask == 0) && (All.ComovingIntegrationOn == 1)
     {
         double hubble_a;
         
         hubble_a = hubble_function(All.Time);
         fprintf(FdDE, "%d %g %e ", All.NumCurrentTiStep, All.Time, hubble_a);
-#ifndef TIMEDEPDE
-        fprintf(FdDE, "%e ", All.DarkEnergyParam);
+#ifndef GR_TABULATED_COSMOLOGY_W
+        fprintf(FdDE, "%e ", All.DarkEnergyConstantW);
 #else
         fprintf(FdDE, "%e %e ", get_wa(All.Time), DarkEnergy_a(All.Time));
 #endif
-#ifdef TIMEDEPGRAV
+#ifdef GR_TABULATED_COSMOLOGY_G
         fprintf(FdDE, "%e %e", dHfak(All.Time), dGfak(All.Time));
 #endif
         fprintf(FdDE, "\n");
@@ -1151,100 +1096,5 @@ void output_extra_log_messages(void)
 #endif
 }
 
-
-
-
-void check_particles_info(const char *func, const char *file, int linenr)
-{
-  int i,k,vok=0,pok=0,vsph=0;
-  double vv;
-
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  if(ThisTask == 0)
-    printf("Checking particle data (function %s in file %s at line %d) ...\n",func,file,linenr);
-
-  for(i = 0; i < NumPart; i++)
-    {
-      
-      for(k = 0; k < 3; k++)
-	{
-	  if( P[i].Vel[k] > -1e8 && P[i].Vel[k] < 1e8)
-	    {
-	      vv = sqrt(P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2]);
-	      if(vv > 15000)
-		{
-		  printf("task=%d: WARNING: Large velocity for particle %d ID %llu v[%d]=%g, renormalizing it !!\n", ThisTask, i,
-			 (unsigned long long) P[i].ID,k,vv);
-		  fflush(stdout);
-                  P[i].Vel[0] = P[i].Vel[0] / vv * 10000;
-                  P[i].Vel[1] = P[i].Vel[1] / vv * 10000;
-                  P[i].Vel[2] = P[i].Vel[2] / vv * 10000;
-		}
-	      vok++;
-	    }
-	  else
-	    {
-	      printf("task=%d:  strange value in velocity in for particle %d ID %llu , type=%d, mass=%g, v[%d]=%g\n", ThisTask, i,
-		     (unsigned long long) P[i].ID,P[i].Type,P[i].Mass,k,P[i].Vel[k]);
-		     fflush(stdout);
-		     endrun(712401);
-	    }
-
-	  if( P[i].Pos[k] > -10000 && P[i].Pos[k] < All.BoxSize + 10000)
-	    pok++;
-	  else
-	    {
-	      printf("task=%d:  strange value in position in for particle %d ID %llu x[%d]=%g\n", ThisTask, i,
-		     (unsigned long long) P[i].ID,k,P[i].Pos[k]);
-		     fflush(stdout);
-		     endrun(712402);
-	    }
-	}
-
-      if(P[i].Type == 0)
-        {
-          if( (SphP[i].InternalEnergyPred > -1e20 && SphP[i].InternalEnergyPred < 1e20))
-            vsph++;
-          else
-            printf("task=%d: Particle id=%llu, m=%e strange InternalEnergy value in hydro: %e\n",
-		   ThisTask,(unsigned long long) P[i].ID,P[i].Mass,SphP[i].InternalEnergyPred);
-
-          if( (SphP[i].DtInternalEnergy > -1e20 && SphP[i].DtInternalEnergy < 1e20))
-            vsph++;
-          else
-            printf("task=%d: Particle id=%llu, m=%e strange DtInternalEnergy value in hydro: %e\n",
-		   ThisTask,(unsigned long long) P[i].ID,P[i].Mass,SphP[i].DtInternalEnergy);
-
-          if( (SphP[i].Pressure  > -1e20 && SphP[i].Pressure <1e20))
-            vsph++;
-          else
-            printf("task=%d: Particle id=%llu,m=%e strange Pressure value in hydro: %e\n",
-		   ThisTask,(unsigned long long) P[i].ID,P[i].Mass,SphP[i].Pressure);
-        }
-
-      if(P[i].Type > 5 || P[i].Type < 0)
-	{
-	  printf("task=%d:  P[i=%d].Type=%d\n", ThisTask, i, P[i].Type);
-	  endrun(712411);
-	}
-
-#if defined(BLACK_HOLES) && defined(DETACH_BLACK_HOLES)
-      if(P[i].Type == 5)
-	if(BHP[P[i].pt.BHID].PID != i)
-	  {
-	    printf("task=%d:  error in cross-indexes for bh-particle %d ID %llu\n", ThisTask, i,
-		   (unsigned long long) P[i].ID);
-	    fflush(stdout);
-	    endrun(712413);
-	  }
-#endif
-    }
-
-  if(ThisTask == 0)
-    printf("Positions and Velocities fine for (%d,%d,%d) of %d cases on task 0...\n",pok,vok,vsph,NumPart*3);
-
-  MPI_Barrier(MPI_COMM_WORLD);
-}
 
 

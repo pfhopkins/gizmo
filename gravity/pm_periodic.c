@@ -18,7 +18,7 @@
 #include "../proto.h"
 
 #ifdef PMGRID
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
 
 #ifdef NOTYPEPREFIX_FFTW
 #include        <rfftw_mpi.h>
@@ -56,7 +56,7 @@ static d_fftw_real *d_rhogrid, *d_forcegrid, *d_workspace;
 static fftw_complex *Cdata;
 #endif
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 static fftw_real *tidal_workspace;
 static fftw_real *d_tidal_workspace;
 #endif
@@ -71,7 +71,7 @@ void pm_periodic_transposeA(fftw_real * field, fftw_real * scratch);
 void pm_periodic_transposeB(fftw_real * field, fftw_real * scratch);
 int pm_periodic_compare_sortindex(const void *a, const void *b);
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 void pm_periodic_transposeAz(fftw_real * field, fftw_real * scratch);
 void pm_periodic_transposeBz(fftw_real * field, fftw_real * scratch);
 #endif
@@ -94,7 +94,7 @@ void pm_init_periodic(void)
   int i;
   int slab_to_task_local[PMGRID];
 
-  All.Asmth[0] = ASMTH * All.BoxSize / PMGRID; /* note that these routines REQUIRE a uniform (LONG_X=LONG_Y=LONG_Z=1) box, so we can just use 'BoxSize' */
+  All.Asmth[0] = ASMTH * All.BoxSize / PMGRID; /* note that these routines REQUIRE a uniform (BOX_LONG_X=BOX_LONG_Y=BOX_LONG_Z=1) box, so we can just use 'BoxSize' */
   All.Rcut[0] = RCUT * All.Asmth[0];
 
   /* Set up the FFTW plan files. */
@@ -177,7 +177,7 @@ void pm_init_periodic_allocate(void)
     }
   bytes_tot += bytes;
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
   if(!(tidal_workspace = (fftw_real *) mymalloc("tidal_workspace", bytes = maxfftsize * sizeof(d_fftw_real))))
     {
       printf("failed to allocate memory for `FFT-tidal_workspace' (%g MB).\n", bytes / (1024.0 * 1024.0));
@@ -198,7 +198,7 @@ void pm_init_periodic_allocate(void)
   d_rhogrid = (d_fftw_real *) rhogrid;
   d_forcegrid = (d_fftw_real *) forcegrid;
   d_workspace = (d_fftw_real *) workspace;
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
   d_tidal_workspace = (d_fftw_real *) tidal_workspace;
 #endif
 }
@@ -210,7 +210,7 @@ void pm_init_periodic_allocate(void)
 void pm_init_periodic_free(void)
 {
   /* allocate the memory to hold the FFT fields */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
   myfree(tidal_workspace);
 #endif
   myfree(part_sortindex);
@@ -261,7 +261,7 @@ void pmforce_periodic(int mode, int *typelist)
   d_fftw_real *localfield_d_data, *import_d_data;
   fftw_real *localfield_data, *import_data;
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   int phase;
   double kscreening2;
 
@@ -289,7 +289,7 @@ void pmforce_periodic(int mode, int *typelist)
 
   pm_init_periodic_allocate();
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   for(phase = 0; phase < 2; phase++)
     {
 #endif
@@ -304,7 +304,7 @@ void pmforce_periodic(int mode, int *typelist)
 		continue;
 	    }
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  if(phase == 1)
 	    if(P[i].Type == 0)	/* don't bin baryonic mass in this phase */
 	      continue;
@@ -573,7 +573,7 @@ void pmforce_periodic(int mode, int *typelist)
 
 		  if(k2 > 0)
 		    {
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 		      if(phase == 1)
 			smth = -All.ScalarBeta * exp(-k2 * asmth2) / (k2 + kscreening2);
 		      else
@@ -868,7 +868,7 @@ void pmforce_periodic(int mode, int *typelist)
 
 	      for(i = 0, j = 0; i < NumPart; i++)
 		{
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 		  if(phase == 1)
 		    if(P[i].Type == 0)	/* baryons don't get an extra scalar force */
 		      continue;
@@ -914,7 +914,7 @@ void pmforce_periodic(int mode, int *typelist)
       myfree(localfield_first);
       myfree(localfield_d_data);
       myfree(localfield_globalindex);
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
     }
 #endif
 
@@ -1325,7 +1325,7 @@ void pmpotential_periodic(void)
         + localfield_data[part[j + 6].localindex] * (dx) * dy * (1.0 - dz)
         + localfield_data[part[j + 7].localindex] * (dx) * dy * dz;
 
-#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUTPOTENTIAL)
+#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
       P[i].Potential += pot;
 #endif
     }
@@ -1523,7 +1523,7 @@ void pm_periodic_transposeB(fftw_real * field, fftw_real * scratch)
 
 }
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 void pm_periodic_transposeAz(fftw_real * field, fftw_real * scratch)
 {
   int x, y, z, task;
@@ -1647,11 +1647,11 @@ void pm_periodic_transposeBz(fftw_real * field, fftw_real * scratch)
 
 
 #ifdef PMGRID
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
 
 
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /*! Calculates the long-range tidal field using the PM method.  The potential is
  *  Gaussian filtered with Asmth, given in mesh-cell units. We carry out a CIC
  *  charge assignment, and compute the potenial by Fourier transform
@@ -1677,7 +1677,7 @@ void pmtidaltensor_periodic_diff(void)
   d_fftw_real *localfield_d_data, *import_d_data;
   fftw_real *localfield_data, *import_data;
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   int phase;
   double kscreening2;
 
@@ -1701,7 +1701,7 @@ void pmtidaltensor_periodic_diff(void)
 
   pm_init_periodic_allocate();
 
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
   for(phase = 0; phase < 2; phase++)
     {
 #endif
@@ -1709,7 +1709,7 @@ void pmtidaltensor_periodic_diff(void)
       /* determine the cells each particles accesses */
       for(i = 0, num_on_grid = 0; i < NumPart; i++)
 	{
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	  if(phase == 1)
 	    if(P[i].Type == 0)	/* don't bin baryonic mass in this phase */
 	      continue;
@@ -1994,7 +1994,7 @@ void pmtidaltensor_periodic_diff(void)
 
 	      if(k2 > 0)
 		{
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 		  if(phase == 1)
 		    smth = -All.ScalarBeta * exp(-k2 * asmth2) / (k2 + kscreening2);
 		  else
@@ -2356,7 +2356,7 @@ void pmtidaltensor_periodic_diff(void)
 
 	  for(i = 0, j = 0; i < NumPart; i++)
 	    {
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
 	      if(phase == 1)
 		if(P[i].Type == 0)	/* baryons don't get an extra scalar force */
 		  continue;
@@ -2425,7 +2425,7 @@ void pmtidaltensor_periodic_diff(void)
       myfree(localfield_first);
       myfree(localfield_d_data);
       myfree(localfield_globalindex);
-#ifdef SCALARFIELD
+#ifdef DM_SCALARFIELD_SCREENING
     }
 #endif
 
@@ -2969,7 +2969,7 @@ void check_tidaltensor_periodic(int particle_ID)
 	{
 
 	  FdTidaltensor = fopen("Tidaltensor.txt", "a");
-	  fprintf(FdTidaltensor, "PERIODIC\n");
+	  fprintf(FdTidaltensor, "Periodic\n");
 	  fprintf(FdTidaltensor, "Mesh-Force: %f %f %f\n", P[i].GravPM[0], P[i].GravPM[1], P[i].GravPM[2]);
 	  fprintf(FdTidaltensor, "Tree-Force: %f %f %f\n", P[i].GravAccel[0], P[i].GravAccel[1],
 		  P[i].GravAccel[2]);
@@ -3003,7 +3003,7 @@ void check_tidaltensor_periodic(int particle_ID)
 */
 }
 
-#endif /*DISTORTIONTENSORPS*/
+#endif /*GDE_DISTORTIONTENSOR*/
 /*           Here comes code for the power-sepctrum computation.
  */
 #define BINS_PS  2000		/* number of bins for power spectrum computation */
@@ -3276,7 +3276,7 @@ void calculate_power_spectra(int num, long long *ntot_type_all)
 
   pmforce_periodic(1, typeflag);	/* calculate power spectrum for all particle types */
 
-#ifdef POWERSPEC_ON_OUTPUT_EACH_TYPE
+#ifdef OUTPUT_POWERSPEC_EACH_TYPE
   if(ntot_type_all)
     for(i = 0; i < 6; i++)
       {

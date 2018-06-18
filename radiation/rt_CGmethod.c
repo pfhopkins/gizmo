@@ -488,7 +488,7 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
                 if(P[j].Type != 0) continue; // require a gas particle //
                 if(P[j].Mass <= 0) continue; // require the particle has mass //
                 double dp[3]; for(k=0; k<3; k++) {dp[k] = local.Pos[k] - P[j].Pos[k];}
-#ifdef PERIODIC	/* find the closest image in the given box size  */
+#ifdef BOX_PERIODIC	/* find the closest image in the given box size  */
                 NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
                 double r2=0; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}

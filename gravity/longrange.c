@@ -26,7 +26,7 @@
  */
 void long_range_init(void)
 {
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
   pm_init_periodic();
 #ifdef PM_PLACEHIGHRESREGION
   pm_init_nonperiodic();
@@ -39,7 +39,7 @@ void long_range_init(void)
 
 void long_range_init_regionsize(void)
 {
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
 #ifdef PM_PLACEHIGHRESREGION
   if(RestartFlag != 1)
     pm_init_regionsize();
@@ -59,7 +59,7 @@ void long_range_force(void)
 {
   int i;
 
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
   int j;
   double fac;
 #endif
@@ -71,7 +71,7 @@ void long_range_force(void)
 #ifdef EVALPOTENTIAL
       P[i].PM_Potential = 0;
 #endif
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
       P[i].tidal_tensorpsPM[0][0] = 0;
       P[i].tidal_tensorpsPM[0][1] = 0;
       P[i].tidal_tensorpsPM[0][2] = 0;
@@ -84,14 +84,14 @@ void long_range_force(void)
 #endif
     }
 
-#ifdef NOGRAVITY
+#ifdef SELFGRAVITY_OFF
   return;
 #endif
 
 
-#ifdef PERIODIC
+#ifdef BOX_PERIODIC
   pmforce_periodic(0, NULL);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -109,7 +109,7 @@ void long_range_force(void)
 #endif
 #ifdef PM_PLACEHIGHRESREGION
   i = pmforce_nonperiodic(1);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -128,7 +128,7 @@ void long_range_force(void)
       pm_init_regionsize();
       pm_setup_nonperiodic_kernel();
       i = pmforce_nonperiodic(1);	/* try again */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -146,13 +146,13 @@ void long_range_force(void)
     }
   if(i == 1)
     endrun(68686);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 //  check_tidaltensor_nonperiodic(10000);
 #endif
 #endif
 #else
   i = pmforce_nonperiodic(0);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -172,7 +172,7 @@ void long_range_force(void)
       pm_init_regionsize();
       pm_setup_nonperiodic_kernel();
       i = pmforce_nonperiodic(0);	/* try again */
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -189,12 +189,12 @@ void long_range_force(void)
     }
   if(i == 1)
     endrun(68687);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 //  check_tidaltensor_nonperiodic(10000);
 #endif
 #ifdef PM_PLACEHIGHRESREGION
   i = pmforce_nonperiodic(1);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -218,7 +218,7 @@ void long_range_force(void)
       for(i = 0; i < NumPart; i++)
 	P[i].GravPM[0] = P[i].GravPM[1] = P[i].GravPM[2] = 0;
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
       P[i].tidal_tensorpsPM[0][0] = 0;
       P[i].tidal_tensorpsPM[0][1] = 0;
       P[i].tidal_tensorpsPM[0][2] = 0;
@@ -231,7 +231,7 @@ void long_range_force(void)
 #endif
       i = pmforce_nonperiodic(0) + pmforce_nonperiodic(1);
 
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 /* choose what kind of tidal field calculation you want */
 /* FOURIER based */
 /*
@@ -261,7 +261,7 @@ void long_range_force(void)
     }
   if(i != 0)
     endrun(68688);
-#ifdef DISTORTIONTENSORPS
+#ifdef GDE_DISTORTIONTENSOR
 //  check_tidaltensor_periodic(10000);
 //  check_tidaltensor_nonperiodic(10000);
 #endif
@@ -269,7 +269,7 @@ void long_range_force(void)
 #endif
 
 
-#ifndef PERIODIC
+#ifndef BOX_PERIODIC
   if(All.ComovingIntegrationOn)
     {
       fac = 0.5 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits * All.Omega0;

@@ -68,16 +68,12 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 
       MPI_Allgather(&nmemb, sizeof(size_t), MPI_BYTE, nlist, sizeof(size_t), MPI_BYTE, MPI_CommLocal);
 
-      for(i = 1, noffs[0] = 0; i < Local_NTask; i++)
-	noffs[i] = noffs[i - 1] + nlist[i - 1];
+      for(i = 1, noffs[0] = 0; i < Local_NTask; i++) noffs[i] = noffs[i - 1] + nlist[i - 1];
 
       char *element_guess = (char *) mymalloc("element_guess", (Local_NTask - 1) * size);
-      size_t *element_tie_braking_rank =
-	(size_t *) mymalloc("element_tie_braking_rank", (Local_NTask - 1) * sizeof(size_t));
-      size_t *desired_glob_rank =
-	(size_t *) mymalloc("desired_glob_rank", (Local_NTask - 1) * sizeof(size_t));
-      size_t *current_glob_rank =
-	(size_t *) mymalloc("current_glob_rank", (Local_NTask - 1) * sizeof(size_t));
+      size_t *element_tie_braking_rank = (size_t *) mymalloc("element_tie_braking_rank", (Local_NTask - 1) * sizeof(size_t));
+      size_t *desired_glob_rank = (size_t *) mymalloc("desired_glob_rank", (Local_NTask - 1) * sizeof(size_t));
+      size_t *current_glob_rank = (size_t *) mymalloc("current_glob_rank", (Local_NTask - 1) * sizeof(size_t));
       size_t *current_loc_rank = (size_t *) mymalloc("current_loc_rank", (Local_NTask - 1) * sizeof(size_t));
       long long *range_left = (long long *) mymalloc("range_left", (Local_NTask - 1) * sizeof(long long));
       long long *range_right = (long long *) mymalloc("range_right", (Local_NTask - 1) * sizeof(long long));
@@ -92,13 +88,11 @@ void parallel_sort_comm(void *base, size_t nmemb, size_t size, int (*compar) (co
 	    max_task = i;
 	  }
 
-      if(Local_ThisTask == max_task)
-	memcpy(element_guess, (char *) base + size * (max_nmemb / 2), size);
+      if(Local_ThisTask == max_task) memcpy(element_guess, (char *) base + size * (max_nmemb / 2), size);
 
       MPI_Bcast(element_guess, size, MPI_BYTE, max_task, MPI_CommLocal);
 
-      for(i = 1; i < Local_NTask - 1; i++)
-	memcpy(element_guess + i * size, element_guess, size);
+      for(i = 1; i < Local_NTask - 1; i++) memcpy(element_guess + i * size, element_guess, size);
 
       for(i = 0; i < Local_NTask - 1; i++)
 	{

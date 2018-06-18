@@ -43,11 +43,7 @@
 # (B) set SYSTYPE in Makefile.systype 
 #     This file has priority over your shell variable.:
 #
-#    (1) Copy the file "Template-Makefile.systype"  to  "Makefile.systype"
-#
-#        cp Template-Makefile.systype Makefile.systype 
-#
-#    (2) Uncomment your system in  "Makefile.systype".
+#     Uncomment your system in  "Makefile.systype".
 #
 # If you add an ifeq for a new system below, also add that systype to
 # Template-Makefile.systype
@@ -60,21 +56,6 @@
 #   dealing with new files and filename conventions)
 #
 #############
-
-ifdef SYSTYPE
-SYSTYPE := "$(SYSTYPE)"
--include Makefile.systype
-else
-include Makefile.systype
-endif
-
-ifeq ($(wildcard Makefile.systype), Makefile.systype)
-INCL = Makefile.systype
-else
-INCL =
-endif
-FINCL =
-
 
 CONFIG   =  Config.sh
 PERL     =  /usr/bin/perl
@@ -95,6 +76,7 @@ ifeq (FIRE_PHYSICS_DEFAULTS,$(findstring FIRE_PHYSICS_DEFAULTS,$(CONFIGVARS)))  
     CONFIGVARS += GALSF_FB_LOCAL_UV_HEATING GALSF_FB_RPWIND_LOCAL GALSF_FB_RPROCESS_ENRICHMENT=4
 #    CONFIGVARS += GALSF_SFR_IMF_VARIATION
 endif
+
 
 
 CC       = mpicc        # sets the C-compiler (default)
@@ -132,8 +114,8 @@ else
 endif
 endif
 else
-# or if POWERSPEC_GRID is activated
-ifeq (POWERSPEC_GRID, $(findstring POWERSPEC_GRID, $(CONFIGVARS)))
+# or if TURB_DRIVING_SPECTRUMGRID is activated
+ifeq (TURB_DRIVING_SPECTRUMGRID, $(findstring TURB_DRIVING_SPECTRUMGRID, $(CONFIGVARS)))
 ifeq (NOTYPEPREFIX_FFTW,$(findstring NOTYPEPREFIX_FFTW,$(CONFIGVARS)))  # fftw installed without type prefix?
   FFTW_LIBNAMES = -lrfftw_mpi -lfftw_mpi -lrfftw -lfftw
 else
@@ -148,6 +130,21 @@ else
 endif
 
 endif
+
+
+ifdef SYSTYPE
+SYSTYPE := "$(SYSTYPE)"
+-include Makefile.systype
+else
+include Makefile.systype
+endif
+
+ifeq ($(wildcard Makefile.systype), Makefile.systype)
+INCL = Makefile.systype
+else
+INCL =
+endif
+FINCL =
 
 
 
@@ -456,6 +453,38 @@ GMP_LIBs =  #-L$(GMPDIR)/lib
 #module add lib/fftw2/2.1.5-openmpi2
 #module add lib/gsl
 endif
+#----------------------------------------------------------------------------------------------
+
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Gordon")
+CC       =  mpicc
+CXX      =  mpicxx
+FC       =  $(CC)  #mpif90 -nofor-main
+OPTIMIZE =  -O3 -no-prec-div -xHOST
+OPTIMIZE += -g -Wall # compiler warnings
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -openmp # openmp required compiler flags
+endif
+GMP_INCL = #
+GMP_LIBS = #
+MKL_INCL = -I/opt/intel/composer_xe_2013_sp1.2.144/mkl/include
+MKL_LIBS = -L/opt/intel/composer_xe_2013_sp1.2.144/mkl/lib -mkl=sequential
+GSL_INCL = -I/opt/gsl/2.1/intel/include
+GSL_LIBS = -L/opt/gsl/2.1/intel/lib
+FFTW_INCL= -I/opt/fftw/2.1.5/intel/mvapich2_ib/include
+FFTW_LIBS= -L/opt/fftw/2.1.5/intel/mvapich2_ib/lib
+HDF5INCL = -I/opt/hdf5/intel/mvapich2_ib/include -DH5_USE_16_API
+HDF5LIB  = -L/opt/hdf5/intel/mvapich2_ib/lib -lhdf5 -lz
+MPICHLIB = -L/opt/mvapich2/intel/ib/lib
+OPT     += -DUSE_MPI_IN_PLACE
+## modules to load:
+## module load intel mvapich2_ib
+## module load hdf5
+## module load fftw/2.1.5
+## module load gsl
+endif
+#----------------------------------------------------------------------------------------------
 
 
 #----------------------------------------------------------------------------------------------
@@ -913,13 +942,13 @@ endif
 
 
 
-ifneq (HAVE_HDF5,$(findstring HAVE_HDF5,$(CONFIGVARS)))
+ifeq (IO_DISABLE_HDF5,$(findstring IO_DISABLE_HDF5,$(CONFIGVARS)))
 HDF5INCL =
 HDF5LIB  =
 endif
 
 
-ifeq (GRACKLE,$(findstring GRACKLE,$(CONFIGVARS)))
+ifeq (COOL_GRACKLE,$(findstring COOL_GRACKLE,$(CONFIGVARS)))
 OPT += -DCONFIG_BFLOAT_8
 else
 GRACKLEINCL =
@@ -935,7 +964,7 @@ GRAVITY_OBJS  = gravity/forcetree.o gravity/cosmology.o gravity/pm_periodic.o gr
                 gravity/gravtree.o gravity/forcetree_update.o gravity/pm_nonperiodic.o gravity/longrange.o \
                 gravity/ags_hsml.o
 
-HYDRO_OBJS = hydro/hydra_master.o hydro/density.o hydro/gradients.o eos/eos.o
+HYDRO_OBJS = hydro/hydra_master.o hydro/density.o hydro/gradients.o eos/eos.o solids/elastic_physics.o
 
 
 L3_OBJS =
@@ -958,7 +987,7 @@ OBJS	+= $(L3_OBJS)
 INCL    += allvars.h proto.h gravity/forcetree.h domain.h system/myqsort.h kernel.h eos/eos.h Makefile \
 
 
-ifeq (GALSF_SUBGRID_VARIABLEVELOCITY_DM_DISPERSION,$(findstring GALSF_SUBGRID_VARIABLEVELOCITY_DM_DISPERSION,$(CONFIGVARS)))
+ifeq (GALSF_SUBGRID_WINDS,$(findstring GALSF_SUBGRID_WINDS,$(CONFIGVARS)))
 OBJS    += galaxy_sf/dm_dispersion_hsml.o
 endif
 
@@ -978,14 +1007,24 @@ ifeq (RT_CHEM_PHOTOION,$(findstring RT_CHEM_PHOTOION,$(CONFIGVARS)))
 OBJS    += galaxy_sf/hII_heating.o
 endif
 
+ifeq (CBE_INTEGRATOR,$(findstring CBE_INTEGRATOR,$(CONFIGVARS)))
+OBJS    += sidm/cbe_integrator.o
+endif
 
+ifeq (DM_FUZZY,$(findstring DM_FUZZY,$(CONFIGVARS)))
+OBJS    += sidm/dm_fuzzy.o
+endif
 
-ifeq (TWOPOINT_FUNCTION_COMPUTATION_ENABLED,$(findstring TWOPOINT_FUNCTION_COMPUTATION_ENABLED,$(CONFIGVARS)))
+ifeq (OUTPUT_TWOPOINT_ENABLED,$(findstring OUTPUT_TWOPOINT_ENABLED,$(CONFIGVARS)))
 OBJS    += structure/twopoint.o
 endif
 
 ifeq (GALSF_FB_SNE_HEATING,$(findstring GALSF_FB_SNE_HEATING,$(CONFIGVARS)))
 OBJS    += galaxy_sf/mechanical_fb.o
+endif
+
+ifeq (GALSF_FB_THERMAL,$(findstring GALSF_FB_THERMAL,$(CONFIGVARS)))
+OBJS    += galaxy_sf/thermal_fb.o
 endif
 
 ifeq (GALSF_FB_RPWIND_LOCAL,$(findstring GALSF_FB_RPWIND_LOCAL,$(CONFIGVARS)))
@@ -1020,7 +1059,7 @@ OBJS    += structure/fof.o
 INCL	+= structure/fof.h
 endif
 
-ifeq (OUTPUTLINEOFSIGHT,$(findstring OUTPUTLINEOFSIGHT,$(CONFIGVARS)))
+ifeq (OUTPUT_LINEOFSIGHT,$(findstring OUTPUT_LINEOFSIGHT,$(CONFIGVARS)))
 OBJS    += structure/lineofsight.o
 endif
 
@@ -1029,12 +1068,8 @@ OBJS    += cooling/cooling.o
 INCL	+= cooling/cooling.h
 endif
 
-ifeq (GRACKLE,$(findstring GRACKLE,$(CONFIGVARS)))
+ifeq (COOL_GRACKLE,$(findstring COOL_GRACKLE,$(CONFIGVARS)))
 OBJS    += cooling/grackle.o
-endif
-
-ifeq (BUBBLES,$(findstring BUBBLES,$(CONFIGVARS)))
-OBJS    += modules/bubbles/bubbles.o
 endif
 
 ifeq (EOS_HELMHOLTZ,$(findstring EOS_HELMHOLTZ,$(CONFIGVARS)))
@@ -1044,11 +1079,12 @@ FOBJS   += eos/helmholtz/helm_impl.o eos/helmholtz/helm_wrap.o
 FINCL   += eos/helmholtz/helm_const.dek eos/helmholtz/helm_implno.dek eos/helmholtz/helm_table_storage.dek eos/helmholtz/helm_vector_eos.dek
 endif
 
+
 ifeq (IMPOSE_PINNING,$(findstring IMPOSE_PINNING,$(CONFIGVARS)))
 OBJS	+= system/pinning.o
 endif
 
-ifeq (DISTORTIONTENSORPS,$(findstring DISTORTIONTENSORPS,$(CONFIGVARS)))
+ifeq (GDE_DISTORTIONTENSOR,$(findstring GDE_DISTORTIONTENSOR,$(CONFIGVARS)))
 OBJS	+= modules/phasespace/phasespace.o modules/phasespace/phasespace_math.o
 endif
 
@@ -1063,9 +1099,8 @@ OBJS	+= subfind/subfind.o subfind/subfind_vars.o subfind/subfind_collective.o su
 INCL	+= subfind/subfind.h
 endif
 
-ifeq (SIDM,$(findstring SIDM,$(CONFIGVARS)))
-OBJS    +=  sidm/sidm_core.o sidm/sidm_allvars.o
-INCL    +=  sidm/sidm_proto.h
+ifeq (DM_SIDM,$(findstring DM_SIDM,$(CONFIGVARS)))
+OBJS    +=  sidm/sidm_core.o 
 endif
 
 ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))

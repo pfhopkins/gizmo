@@ -31,10 +31,10 @@ static struct blackholedata_in
     MyFloat Vel[3];
     MyIDType ID;
     int NodeList[NODELISTLENGTH];
-#if defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS) || defined(BH_BAL_KICK_COLLIMATED)
+#if defined(BH_PHOTONMOMENTUM) || defined(BH_WIND_CONTINUOUS) || defined(BH_WIND_KICK)
     MyFloat Jgas_in_Kernel[3];
 #endif
-#if defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS)
+#if defined(BH_PHOTONMOMENTUM) || defined(BH_WIND_CONTINUOUS)
     MyFloat BH_disk_hr;
     MyFloat BH_angle_weighted_kernel_sum;
 #endif
@@ -70,7 +70,7 @@ static struct blackholedata_out
 #ifdef GALSF
     MyFloat Accreted_Age;
 #endif
-#if defined(BH_PHOTONMOMENTUM) || defined(BH_BAL_WINDS)
+#if defined(BH_PHOTONMOMENTUM) || defined(BH_WIND_CONTINUOUS)
     MyFloat BH_angle_weighted_kernel_sum;
 #endif
 }

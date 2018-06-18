@@ -11,9 +11,8 @@
  */
 /* --------------------------------------------------------------------------------- */
 double c_light = RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s);
-
-#if !defined(RT_EVOLVE_FLUX) /* this means we just solve the diffusion equation for the eddington tensor, done in the loop below */
 {
+#if !defined(RT_EVOLVE_FLUX) /* this means we just solve the diffusion equation for the eddington tensor, done in the loop below */
     int k_freq;
     for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
@@ -92,13 +91,11 @@ double c_light = RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s);
             
         } // close check that kappa and particle masses are positive
     }
-}
 
 
 #else /* RT_EVOLVE_FLUX is ON, so we don't solve a diffusion equation, but a system of two standard advection-like equations */
 
 
-{
     int k_freq;
     double c_hll = 0.5*fabs(face_vel_i-face_vel_j) + c_light; // physical units
     double V_i_phys = V_i / All.cf_a3inv;
@@ -223,6 +220,19 @@ double c_light = RT_SPEEDOFLIGHT_REDUCTION * (C/All.UnitVelocity_in_cm_per_s);
             }
         } // close check that energy and masses are positive
     }
-}
 
 #endif
+    
+    // assign the actual fluxes //
+    for(k=0;k<N_RT_FREQ_BINS;k++) {out.Dt_E_gamma[k] += Fluxes_E_gamma[k];}
+    if(j_is_active_for_fluxes) {for(k=0;k<N_RT_FREQ_BINS;k++) {SphP[j].Dt_E_gamma[k] -= Fluxes_E_gamma[k];}}
+#if defined(RT_INFRARED)
+    out.Dt_E_gamma_T_weighted_IR += Fluxes_E_gamma_T_weighted_IR;
+    if(j_is_active_for_fluxes) {SphP[j].Dt_E_gamma_T_weighted_IR -= Fluxes_E_gamma_T_weighted_IR;}
+#endif
+#ifdef RT_EVOLVE_FLUX
+    for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {out.Dt_Flux[k][k_dir] += Fluxes_Flux[k][k_dir];}}
+    if(j_is_active_for_fluxes) {for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {SphP[j].Dt_Flux[k][k_dir] -= Fluxes_Flux[k][k_dir];}}}
+#endif
+    
+}

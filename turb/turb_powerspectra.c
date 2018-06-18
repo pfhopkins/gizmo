@@ -16,7 +16,7 @@
  *   modified slightly by Phil Hopkins for GIZMO, but is largely intact.
  */
 
-#if defined(POWERSPEC_GRID) && defined(PERIODIC) && (defined(TURB_DRIVING))
+#if defined(TURB_DRIVING_SPECTRUMGRID) && defined(BOX_PERIODIC) && (defined(TURB_DRIVING))
 
 
 #ifdef NOTYPEPREFIX_FFTW
@@ -29,9 +29,9 @@
 #endif
 #endif
 
-#define  POWERSPEC_GRID2 (2*(POWERSPEC_GRID/2 + 1))
+#define  TURB_DRIVING_SPECTRUMGRID2 (2*(TURB_DRIVING_SPECTRUMGRID/2 + 1))
 
-#if (POWERSPEC_GRID > 1024)
+#if (TURB_DRIVING_SPECTRUMGRID > 1024)
 typedef long long large_array_offset;
 #else
 typedef unsigned int large_array_offset;
@@ -106,10 +106,11 @@ void powerspec_turb(int filenr)
   if(ThisTask == 0)
     printf("Start turbulent powerspec computation\n");
 
-  double tstart = my_second();
+  double tstart, tend;
+  tstart = my_second();
 
   /* Set up the FFTW plan  */
-  fft_forward_plan = rfftw3d_mpi_create_plan(MPI_COMM_WORLD, POWERSPEC_GRID, POWERSPEC_GRID, POWERSPEC_GRID,
+  fft_forward_plan = rfftw3d_mpi_create_plan(MPI_COMM_WORLD, TURB_DRIVING_SPECTRUMGRID, TURB_DRIVING_SPECTRUMGRID, TURB_DRIVING_SPECTRUMGRID,
 					     FFTW_REAL_TO_COMPLEX, FFTW_ESTIMATE | FFTW_IN_PLACE);
 
   /* Workspace out the ranges on each processor. */
@@ -344,7 +345,7 @@ void powerspec_turb(int filenr)
 
   rfftwnd_mpi_destroy_plan(fft_forward_plan);
 
-  double tend = my_second();
+  tend = my_second();
   
 #ifndef IO_REDUCED_MODE
   if(ThisTask == 0)
@@ -362,7 +363,7 @@ void powerspec_turb_calc_and_bin_spectrum(fftw_real *field, int flag)
   int x, y, z, zz, ip;
   
   K0 = 2 * M_PI / All.BoxSize;	                        /* minimum k */
-  K1 = K0 * POWERSPEC_GRID / 2;	                                /* maximum k */
+  K1 = K0 * TURB_DRIVING_SPECTRUMGRID / 2;	                                /* maximum k */
   binfac = BINS_PS / (log(K1) - log(K0));
 
   /* Do the FFT of the velocity_field */  /* rhogrid -> velfield */
@@ -372,36 +373,36 @@ void powerspec_turb_calc_and_bin_spectrum(fftw_real *field, int flag)
   fft_of_field = (fftw_complex *) field;
 
   for(y = slabstart_y; y < slabstart_y + nslab_y; y++)
-    for(x = 0; x < POWERSPEC_GRID; x++)
-      for(z = 0; z < POWERSPEC_GRID; z++)
+    for(x = 0; x < TURB_DRIVING_SPECTRUMGRID; x++)
+      for(z = 0; z < TURB_DRIVING_SPECTRUMGRID; z++)
 	{
 	  zz = z;
-	  if(z >= POWERSPEC_GRID / 2 + 1)
-	    zz = POWERSPEC_GRID - z;
+	  if(z >= TURB_DRIVING_SPECTRUMGRID / 2 + 1)
+	    zz = TURB_DRIVING_SPECTRUMGRID - z;
 	  
-	  if(x > POWERSPEC_GRID / 2)
-	    kx = x - POWERSPEC_GRID;
+	  if(x > TURB_DRIVING_SPECTRUMGRID / 2)
+	    kx = x - TURB_DRIVING_SPECTRUMGRID;
 	  else
 	    kx = x;
-	  if(y > POWERSPEC_GRID / 2)
-	    ky = y - POWERSPEC_GRID;
+	  if(y > TURB_DRIVING_SPECTRUMGRID / 2)
+	    ky = y - TURB_DRIVING_SPECTRUMGRID;
 	  else
 	    ky = y;
-	  if(z > POWERSPEC_GRID / 2)
-	    kz = z - POWERSPEC_GRID;
+	  if(z > TURB_DRIVING_SPECTRUMGRID / 2)
+	    kz = z - TURB_DRIVING_SPECTRUMGRID;
 	  else
 	    kz = z;
 
 	  k2 = kx * kx + ky * ky + kz * kz;
 	  
-	  ip = POWERSPEC_GRID * (POWERSPEC_GRID / 2 + 1) * (y - slabstart_y) + (POWERSPEC_GRID / 2 + 1) * x + zz;
+	  ip = TURB_DRIVING_SPECTRUMGRID * (TURB_DRIVING_SPECTRUMGRID / 2 + 1) * (y - slabstart_y) + (TURB_DRIVING_SPECTRUMGRID / 2 + 1) * x + zz;
 	  
 	  double po = (fft_of_field[ip].re * fft_of_field[ip].re
-		       + fft_of_field[ip].im * fft_of_field[ip].im) / pow(POWERSPEC_GRID, 6);
+		       + fft_of_field[ip].im * fft_of_field[ip].im) / pow(TURB_DRIVING_SPECTRUMGRID, 6);
 	  	  
 	  if(k2 > 0)
 	    {
-	      if(k2 < (POWERSPEC_GRID / 2.0) * (POWERSPEC_GRID / 2.0))
+	      if(k2 < (TURB_DRIVING_SPECTRUMGRID / 2.0) * (TURB_DRIVING_SPECTRUMGRID / 2.0))
 		{
 		  double k = sqrt(k2) * 2 * M_PI / All.BoxSize;
 		  
@@ -478,7 +479,7 @@ void powerspec_turb_save(char *fname, double *disp)
 	}
 
       fprintf(fd, "%g\n", All.Time);
-      i = POWERSPEC_GRID;
+      i = TURB_DRIVING_SPECTRUMGRID;
       fprintf(fd, "%d\n", i);
       i = BINS_PS;
       fprintf(fd, "%d\n", i);
@@ -516,7 +517,7 @@ double powerspec_turb_obtain_fields(void)
     }
 #endif
     
-  large_array_offset i, n, Ncount = ((large_array_offset)nslab_x) * (POWERSPEC_GRID * POWERSPEC_GRID);  /* number of grid points on the local slab */
+  large_array_offset i, n, Ncount = ((large_array_offset)nslab_x) * (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);  /* number of grid points on the local slab */
 
   powerspec_turb_nearest_distance = (float *) mymalloc("powerspec_turb_nearest_distance", sizeof(float) * Ncount);
   powerspec_turb_nearest_hsml = (float *) mymalloc("powerspec_turb_nearest_hsml", sizeof(float) * Ncount);
@@ -592,14 +593,14 @@ double powerspec_turb_obtain_fields(void)
 	    {
 	      place = DataIndexTable[j].Index;
 
-	      int xx = place / (POWERSPEC_GRID * POWERSPEC_GRID);
-	      int yy = (place - xx * POWERSPEC_GRID * POWERSPEC_GRID) / POWERSPEC_GRID;
-	      int zz = (place - xx * POWERSPEC_GRID * POWERSPEC_GRID - yy * POWERSPEC_GRID); 
+	      int xx = place / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+	      int yy = (place - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+	      int zz = (place - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - yy * TURB_DRIVING_SPECTRUMGRID); 
 	      xx += slabstart_x;
 	      
-	      double x = (xx + 0.5) / POWERSPEC_GRID * boxSize_X;
-	      double y = (yy + 0.5) / POWERSPEC_GRID * boxSize_Y;
-	      double z = (zz + 0.5) / POWERSPEC_GRID * boxSize_Z;
+	      double x = (xx + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_X;
+	      double y = (yy + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Y;
+	      double z = (zz + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Z;
 	      
 	      DataIn[j].Pos[0] = x;
 	      DataIn[j].Pos[1] = y;
@@ -667,10 +668,10 @@ double powerspec_turb_obtain_fields(void)
 		{
 		  powerspec_turb_nearest_distance[place] = DataOut[j].Distance;
 
-		  int ii = place / (POWERSPEC_GRID * POWERSPEC_GRID);
-		  int jj = (place - ii * POWERSPEC_GRID * POWERSPEC_GRID) / POWERSPEC_GRID;
-		  int kk = (place - ii * POWERSPEC_GRID * POWERSPEC_GRID - jj * POWERSPEC_GRID); 
-		  int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * ii + jj) + kk;
+		  int ii = place / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+		  int jj = (place - ii * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+		  int kk = (place - ii * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - jj * TURB_DRIVING_SPECTRUMGRID); 
+		  int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * ii + jj) + kk;
 
 		  velfield[0][ip] = DataOut[j].Vel[0];
 		  velfield[1][ip] = DataOut[j].Vel[1];
@@ -727,17 +728,19 @@ double powerspec_turb_obtain_fields(void)
 	      /* need to redo this particle */
 	      npleft++;
 	      powerspec_turb_nearest_hsml[i] *= 2.0;
+/*
 	      if(iter >= MAXITER - 10)
 		{
-		  int xx = i / (POWERSPEC_GRID * POWERSPEC_GRID);
-		  int yy = (i - xx * POWERSPEC_GRID * POWERSPEC_GRID) / POWERSPEC_GRID;
-		  int zz = (i - xx * POWERSPEC_GRID * POWERSPEC_GRID - yy * POWERSPEC_GRID); 
+		  int xx = i / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+		  int yy = (i - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+		  int zz = (i - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - yy * TURB_DRIVING_SPECTRUMGRID); 
 		  xx += slabstart_x;
 		  
-            double x = (xx + 0.5) / POWERSPEC_GRID * boxSize_X;
-            double y = (yy + 0.5) / POWERSPEC_GRID * boxSize_Y;
-            double z = (zz + 0.5) / POWERSPEC_GRID * boxSize_Z;
+            //double x = (xx + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_X;
+            //double y = (yy + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Y;
+            //double z = (zz + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Z;
 		}
+*/
 	    }
 	  else
 	    {
@@ -784,38 +787,38 @@ void powerspec_turb_calc_dispersion(void)
       double vsum = 0, vsum_all, vmean, vdisp = 0, vdisp_all;
 
       for(i=0; i < nslab_x;i++)
-	for(j=0; j< POWERSPEC_GRID; j++)
-	  for(k=0; k< POWERSPEC_GRID; k++)
+	for(j=0; j< TURB_DRIVING_SPECTRUMGRID; j++)
+	  for(k=0; k< TURB_DRIVING_SPECTRUMGRID; k++)
 	    {
-	      int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	      int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 
 	      vsum += velfield[dim][ip];
 	    }
 
       MPI_Allreduce(&vsum, &vsum_all, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-      vmean = vsum_all / pow(POWERSPEC_GRID, 3);
+      vmean = vsum_all / pow(TURB_DRIVING_SPECTRUMGRID, 3);
       
       for(i=0; i < nslab_x;i++)
-	for(j=0; j< POWERSPEC_GRID; j++)
-	  for(k=0; k< POWERSPEC_GRID; k++)
+	for(j=0; j< TURB_DRIVING_SPECTRUMGRID; j++)
+	  for(k=0; k< TURB_DRIVING_SPECTRUMGRID; k++)
 	    {
-	      int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	      int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 	      
 	      velfield[dim][ip] -= vmean;
 	    }
 
       for(i=0; i < nslab_x;i++)
-	for(j=0; j< POWERSPEC_GRID; j++)
-	  for(k=0; k< POWERSPEC_GRID; k++)
+	for(j=0; j< TURB_DRIVING_SPECTRUMGRID; j++)
+	  for(k=0; k< TURB_DRIVING_SPECTRUMGRID; k++)
 	    {
-	      int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	      int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 	      
 	      vdisp += velfield[dim][ip] * velfield[dim][ip];
 	    }
 
       MPI_Allreduce(&vdisp, &vdisp_all, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-      vel_disp[dim] = vdisp_all / pow(POWERSPEC_GRID, 3);      
+      vel_disp[dim] = vdisp_all / pow(TURB_DRIVING_SPECTRUMGRID, 3);      
     }
 
 
@@ -824,38 +827,38 @@ void powerspec_turb_calc_dispersion(void)
       double vsum = 0, vsum_all, vmean, vdisp = 0, vdisp_all;
 
       for(i=0; i < nslab_x;i++)
-	for(j=0; j< POWERSPEC_GRID; j++)
-	  for(k=0; k< POWERSPEC_GRID; k++)
+	for(j=0; j< TURB_DRIVING_SPECTRUMGRID; j++)
+	  for(k=0; k< TURB_DRIVING_SPECTRUMGRID; k++)
 	    {
-	      int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	      int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 
 	      vsum += velrhofield[dim][ip];
 	    }
 
       MPI_Allreduce(&vsum, &vsum_all, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-      vmean = vsum_all / pow(POWERSPEC_GRID, 3);
+      vmean = vsum_all / pow(TURB_DRIVING_SPECTRUMGRID, 3);
       
       for(i=0; i < nslab_x;i++)
-	for(j=0; j< POWERSPEC_GRID; j++)
-	  for(k=0; k< POWERSPEC_GRID; k++)
+	for(j=0; j< TURB_DRIVING_SPECTRUMGRID; j++)
+	  for(k=0; k< TURB_DRIVING_SPECTRUMGRID; k++)
 	    {
-	      int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	      int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 	      
 	      velrhofield[dim][ip] -= vmean;
 	    }
 
       for(i=0; i < nslab_x;i++)
-	for(j=0; j< POWERSPEC_GRID; j++)
-	  for(k=0; k< POWERSPEC_GRID; k++)
+	for(j=0; j< TURB_DRIVING_SPECTRUMGRID; j++)
+	  for(k=0; k< TURB_DRIVING_SPECTRUMGRID; k++)
 	    {
-	      int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	      int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 	      
 	      vdisp += velrhofield[dim][ip] * velrhofield[dim][ip];
 	    }
 
       MPI_Allreduce(&vdisp, &vdisp_all, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-      velrho_disp[dim] = vdisp_all / pow(POWERSPEC_GRID, 3);      
+      velrho_disp[dim] = vdisp_all / pow(TURB_DRIVING_SPECTRUMGRID, 3);      
     }
 }
 
@@ -871,14 +874,14 @@ int powerspec_turb_find_nearest_evaluate(int target, int mode, int *nexport, int
 
   if(mode == 0)
     {
-      int xx = target / (POWERSPEC_GRID * POWERSPEC_GRID);
-      int yy = (target - xx * POWERSPEC_GRID * POWERSPEC_GRID) / POWERSPEC_GRID;
-      int zz = (target - xx * POWERSPEC_GRID * POWERSPEC_GRID - yy * POWERSPEC_GRID); 
+      int xx = target / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+      int yy = (target - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+      int zz = (target - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - yy * TURB_DRIVING_SPECTRUMGRID); 
       xx += slabstart_x;
 
-        double x = (xx + 0.5) / POWERSPEC_GRID * boxSize_X;
-        double y = (yy + 0.5) / POWERSPEC_GRID * boxSize_Y;
-        double z = (zz + 0.5) / POWERSPEC_GRID * boxSize_Z;
+        double x = (xx + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_X;
+        double y = (yy + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Y;
+        double z = (zz + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Z;
 
       pos[0] = x;
       pos[1] = y;
@@ -955,10 +958,10 @@ int powerspec_turb_find_nearest_evaluate(int target, int mode, int *nexport, int
 
 	  powerspec_turb_nearest_distance[target] = sqrt(r2max);
 	  
-	  int i = target / (POWERSPEC_GRID * POWERSPEC_GRID);
-	  int j = (target - i * POWERSPEC_GRID * POWERSPEC_GRID) / POWERSPEC_GRID;
-	  int k = (target - i * POWERSPEC_GRID * POWERSPEC_GRID - j * POWERSPEC_GRID); 
-	  int ip = POWERSPEC_GRID2 * (POWERSPEC_GRID * i + j) + k;
+	  int i = target / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+	  int j = (target - i * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+	  int k = (target - i * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - j * TURB_DRIVING_SPECTRUMGRID); 
+	  int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * i + j) + k;
 
 	  velfield[0][ip] = P[index].Vel[0];
 	  velfield[1][ip] = P[index].Vel[1];

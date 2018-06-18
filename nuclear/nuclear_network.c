@@ -1424,7 +1424,7 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
     0}, dedrho =
     {
     0};
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
     network_var dedA = { 0 }, dedZ =
     {
     0}, dpdA =
@@ -1432,7 +1432,7 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
     0}, dpdZ =
     {
     0};
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
     struct eos_result res;
 
 #endif /* NETWORK_VARIABLE */
@@ -1452,12 +1452,12 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
       dp_drho.v = res.p.drho;
       dpdT.v = res.p.dtemp;
       dedrho.v = res.e.drho;
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
       dedA.v = res.e.dabar;
       dedZ.v = res.e.dzbar;
       dpdA.v = res.p.dabar;
       dpdZ.v = res.p.dzbar;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 
       if(compute_derivs)
 	{
@@ -1473,12 +1473,12 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 	  dp_drho.dabar = (res.p.drho - dp_drho.v) / diff;
 	  dpdT.dabar = (res.p.dtemp - dpdT.v) / diff;
 	  dedrho.dabar = (res.e.drho - dedrho.v) / diff;
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
 	  dedA.dabar = (res.e.dabar - dedA.v) / diff;
 	  dedZ.dabar = (res.e.dzbar - dedZ.v) / diff;
 	  dpdA.dabar = (res.p.dabar - dpdA.v) / diff;
 	  dpdZ.dabar = (res.p.dzbar - dpdZ.v) / diff;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 
 	  diff = max(NETWORK_DIFFVAR, fabs(zbar) * NETWORK_DIFFVAR);
 	  old = zbar;
@@ -1490,12 +1490,12 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 	  dp_drho.dzbar = (res.p.drho - dp_drho.v) / diff;
 	  dpdT.dzbar = (res.p.dtemp - dpdT.v) / diff;
 	  dedrho.dzbar = (res.e.drho - dedrho.v) / diff;
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
 	  dedA.dzbar = (res.e.dabar - dedA.v) / diff;
 	  dedZ.dzbar = (res.e.dzbar - dedZ.v) / diff;
 	  dpdA.dzbar = (res.p.dabar - dpdA.v) / diff;
 	  dpdZ.dzbar = (res.p.dzbar - dpdZ.v) / diff;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 
 	  diff = max(NETWORK_DIFFVAR, fabs(temp) * NETWORK_DIFFVAR);
 	  old = temp;
@@ -1507,12 +1507,12 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 	  dp_drho.dT = (res.p.drho - dp_drho.v) / diff;
 	  dpdT.dT = (res.p.dtemp - dpdT.v) / diff;
 	  dedrho.dT = (res.e.drho - dedrho.v) / diff;
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
 	  dedA.dT = (res.e.dabar - dedA.v) / diff;
 	  dedZ.dT = (res.e.dzbar - dedZ.v) / diff;
 	  dpdA.dT = (res.p.dabar - dpdA.v) / diff;
 	  dpdZ.dT = (res.p.dzbar - dpdZ.v) / diff;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 
 #if NETWORK_VARIABLE == NETWORK_VAR_RHO_TEMP
 	  diff = max(NETWORK_DIFFVAR, fabs(rho) * NETWORK_DIFFVAR);
@@ -1525,12 +1525,12 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 	  dp_drho.drho = (res.p.drho - dp_drho.v) / diff;
 	  dpdT.drho = (res.p.dtemp - dpdT.v) / diff;
 	  dedrho.drho = (res.e.drho - dedrho.v) / diff;
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
 	  dedA.drho = (res.e.dabar - dedA.v) / diff;
 	  dedZ.drho = (res.e.dzbar - dedZ.v) / diff;
 	  dpdA.drho = (res.p.dabar - dpdA.v) / diff;
 	  dpdZ.drho = (res.p.dzbar - dpdZ.v) / diff;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 #endif /* NETWORK_VARIABLE == NETWORK_VAR_RHO_T */
 	}
     }
@@ -1557,7 +1557,7 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 
     deriv[nd->iTemp] = n_m(dedtime, nw->temp_deriv_fac);
 
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
     if(compute_derivs)
       {
 	const network_var abar = {.v = res.abar,.dabar = 1.0 };
@@ -1623,7 +1623,7 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 
 	deriv[nd->iTemp].v += sum;
       }
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 
 #if NETWORK_VARIABLE == NETWORK_VAR_RHO_TEMP
     {
@@ -1637,7 +1637,7 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 
       nw->rho_deriv_fac = n_d(dpdT, n_s(n_m(dpdT, dedrho), n_m(dedT_var, dp_drho)));
       deriv[nd->iRho] = n_m(dedtime, nw->rho_deriv_fac);
-#ifndef NETWORK_NEGLECT_DTDY_TERMS
+#ifndef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
       {
 	const network_var abar = {.v = res.abar,.dabar = 1.0 };
 	const network_var zbar = {.v = res.zbar,.dzbar = 1.0 };
@@ -1670,7 +1670,7 @@ int network_getrhs(double rho, double temp, const double y[], int compute_derivs
 	    deriv[nd->iRho] = n_a(deriv[nd->iRho], n_m(deriv[i], nw->drhodYi[i]));
 	  }
       }
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
     }
 #endif /* NETWORK_VARIABLE == NETWORK_VAR_RHO_TEMP */
   }
@@ -1753,18 +1753,18 @@ int network_getjacob(const double y[], const network_var * rhs, const struct net
 	 * before adding the other derivatives */
 	{
 	  double *temp_row = &matrix[nd->iTemp * nd->n_matrix];
-#ifdef NETWORK_NEGLECT_DTDY_TERMS
+#ifdef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
 	  const double temp_fac = nd->nucdata[i].exm * (-conv) * nw->temp_deriv_fac.v;
 #else
 	  const double temp_fac = nd->nucdata[i].exm * (-conv) * nw->temp_deriv_fac.v + nw->dTdYi[i].v;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 #if NETWORK_VARIABLE == NETWORK_VAR_RHO_TEMP
 	  double *rho_row = &matrix[nd->iRho * nd->n_matrix];
-#ifdef NETWORK_NEGLECT_DTDY_TERMS
+#ifdef NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS
 	  const double rho_fac = nd->nucdata[i].exm * (-conv) * nw->rho_deriv_fac.v;
 #else
 	  const double rho_fac = nd->nucdata[i].exm * (-conv) * nw->rho_deriv_fac.v + nw->drhodYi[i].v;
-#endif /* NETWORK_NEGLECT_DTDY_TERMS */
+#endif /* NETWORK_NUCLEARNET_NEGLECT_DTDY_TERMS */
 #endif /* NETWORK_VARIABLE == NETWORK_VAR_RHO_TEMP */
 
 	  for(j = 0; j < nd->nuc_count; j++)
