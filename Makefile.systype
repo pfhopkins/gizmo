@@ -6,7 +6,8 @@
 #
 #############
 
-SYSTYPE="Frontera"
+SYSTYPE="github-ubuntu"
+#SYSTYPE="Frontera"
 #SYSTYPE="Stampede2"
 #SYSTYPE="Bridges2"
 #SYSTYPE="Anvil"
