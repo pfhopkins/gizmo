@@ -42,6 +42,7 @@
 void begrun(void)
 {
   struct global_data_all_processes all;
+  memset(&All, 0, sizeof(struct global_data_all_processes));
 #ifdef _OPENMP
   int tid;
 #endif
