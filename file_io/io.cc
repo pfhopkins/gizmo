@@ -784,6 +784,28 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_FORMATION_DENSITY:
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].FormationDensity;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_SAMPLED_IMF:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = (int) P[pindex].sampled;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_POT:		/* gravitational potential */
 #if defined(OUTPUT_POTENTIAL)
             for(n = 0; n < pc; pindex++)
@@ -1813,6 +1835,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_GRAINTYPE:
         case IO_EOSCOMP:
         case IO_STAGE_PROTOSTAR:
+        case IO_SAMPLED_IMF:
             bytes_per_blockelement = sizeof(int);
             break;
             
@@ -1900,6 +1923,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_MOLECULARFRACTION:
         case IO_CHEMCOOL_DUSTTEMP:
         case IO_STOCHASTIC_IMF_MSTAR:
+        case IO_FORMATION_DENSITY:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
@@ -2101,6 +2125,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_GRAINTYPE:
         case IO_EOSCOMP:
         case IO_STAGE_PROTOSTAR:
+        case IO_SAMPLED_IMF:
             typekey = 0;		/* native int */
             break;
             
@@ -2227,6 +2252,8 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_MOLECULARFRACTION:
         case IO_CHEMCOOL_DUSTTEMP:
         case IO_STOCHASTIC_IMF_MSTAR:
+        case IO_FORMATION_DENSITY:
+        case IO_SAMPLED_IMF:
             values = 1;
             break;
 
@@ -2506,6 +2533,8 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
 
         case IO_SAMPLE_IMF_MSTAR:
         case IO_STOCHASTIC_IMF_MSTAR:
+        case IO_FORMATION_DENSITY:
+        case IO_SAMPLED_IMF:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
             break;
@@ -2801,6 +2830,18 @@ int blockpresent(enum iofields blocknr)
 
         case IO_STOCHASTIC_IMF_MSTAR:
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+            return 1;
+#endif
+            break;
+
+        case IO_FORMATION_DENSITY:
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            return 1;
+#endif
+            break;
+
+        case IO_SAMPLED_IMF:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             return 1;
 #endif
             break;
@@ -3375,6 +3416,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_STOCHASTIC_IMF_MSTAR:
             strncpy(label, "SMST", 4);
             break;
+        case IO_FORMATION_DENSITY:
+            strncpy(label, "FDEN", 4);
+            break;
+        case IO_SAMPLED_IMF:
+            strncpy(label, "SAMF", 4);
+            break;
         case IO_POT:
             strncpy(label, "POT ", 4);
             break;
@@ -3796,6 +3843,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_STOCHASTIC_IMF_MSTAR:
             strcpy(buf, "StochasticIMFMstar");
+            break;
+        case IO_FORMATION_DENSITY:
+            strcpy(buf, "FormationDensity");
+            break;
+        case IO_SAMPLED_IMF:
+            strcpy(buf, "IMFSampledFlag");
             break;
         case IO_POT:
             strcpy(buf, "Potential");

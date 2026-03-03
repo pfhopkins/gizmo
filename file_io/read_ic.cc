@@ -580,6 +580,18 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_FORMATION_DENSITY:
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            for(n = 0; n < pc; n++) {P[offset + n].FormationDensity = *fp++;}
+#endif
+            break;
+
+        case IO_SAMPLED_IMF:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            for(n = 0; n < pc; n++) {P[offset + n].sampled = *ip_int++;}
+#endif
+            break;
+
         case IO_NH:        /* neutral hydrogen fraction */
 #if defined(RT_CHEM_PHOTOION)
             for(n = 0; n < pc; n++) {CellP[offset + n].HI = *fp++;}

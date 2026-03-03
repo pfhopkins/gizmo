@@ -1355,6 +1355,8 @@ enum iofields
   IO_TREE_RAD_PROJECTION,
   IO_SAMPLE_IMF_MSTAR,
   IO_STOCHASTIC_IMF_MSTAR,
+  IO_FORMATION_DENSITY,
+  IO_SAMPLED_IMF,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
