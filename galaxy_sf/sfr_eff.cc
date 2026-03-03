@@ -708,6 +708,9 @@ void star_formation_parent_routine(void)
 #endif
                             sum_mass_stars += P[NumPart + stars_spawned].Mass;
                             P[NumPart + stars_spawned].StellarAge = All.Time;
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                            P[NumPart + stars_spawned].FormationDensity = CellP[i].Density;
+#endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
                             { /* stochastic IMF: probabilistically assign a single massive-star mass */
                                 int ns = NumPart + stars_spawned;
