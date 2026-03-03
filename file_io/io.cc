@@ -726,6 +726,64 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_CHEMCOOL_TRACABUND:
+#ifdef CHEMCOOL
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < TRAC_NUM; k++) {fp[k] = (MyOutputFloat) CellP[pindex].TracAbund[k];}
+                    fp += TRAC_NUM;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_CHEMCOOL_DUSTTEMP:
+#ifdef CHEMCOOL
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].DustTemp;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_TREE_RAD_PROJECTION:
+#ifdef TREE_RAD
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < NPIX; k++) {fp[k] = (MyOutputFloat) CellP[pindex].Projection[k];}
+                    fp += NPIX;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_SAMPLE_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < N_STELLAR_MASS; k++) {fp[k] = (MyOutputFloat) P[pindex].MstarSampleIMF[k];}
+                    fp += N_STELLAR_MASS;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_STOCHASTIC_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].Mstar;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_POT:		/* gravitational potential */
 #if defined(OUTPUT_POTENTIAL)
             for(n = 0; n < pc; pindex++)
@@ -1840,12 +1898,34 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
+        case IO_CHEMCOOL_DUSTTEMP:
+        case IO_STOCHASTIC_IMF_MSTAR:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
                 bytes_per_blockelement = sizeof(MyOutputFloat);
             break;
 
+        case IO_CHEMCOOL_TRACABUND:
+#ifdef CHEMCOOL
+            if(mode) bytes_per_blockelement = TRAC_NUM * sizeof(MyInputFloat);
+            else bytes_per_blockelement = TRAC_NUM * sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_TREE_RAD_PROJECTION:
+#ifdef TREE_RAD
+            if(mode) bytes_per_blockelement = NPIX * sizeof(MyInputFloat);
+            else bytes_per_blockelement = NPIX * sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_SAMPLE_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            if(mode) bytes_per_blockelement = N_STELLAR_MASS * sizeof(MyInputFloat);
+            else bytes_per_blockelement = N_STELLAR_MASS * sizeof(MyOutputFloat);
+#endif
+            break;
 
         case IO_COSMICRAY_ENERGY:
         case IO_COSMICRAY_SLOPES:
@@ -2145,7 +2225,27 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
+        case IO_CHEMCOOL_DUSTTEMP:
+        case IO_STOCHASTIC_IMF_MSTAR:
             values = 1;
+            break;
+
+        case IO_CHEMCOOL_TRACABUND:
+#ifdef CHEMCOOL
+            values = TRAC_NUM;
+#endif
+            break;
+
+        case IO_TREE_RAD_PROJECTION:
+#ifdef TREE_RAD
+            values = NPIX;
+#endif
+            break;
+
+        case IO_SAMPLE_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            values = N_STELLAR_MASS;
+#endif
             break;
 
         case IO_COSMICRAY_ENERGY:
@@ -2397,8 +2497,17 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DUSTCHEMZMET:
         case IO_DUSTCHEMSPECIESMET:
         case IO_ISMDUSTCHEMMOL:
+        case IO_CHEMCOOL_TRACABUND:
+        case IO_CHEMCOOL_DUSTTEMP:
+        case IO_TREE_RAD_PROJECTION:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
+            break;
+
+        case IO_SAMPLE_IMF_MSTAR:
+        case IO_STOCHASTIC_IMF_MSTAR:
+            for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
+            return nstars;
             break;
 
         case IO_KERNELRADIUS:
@@ -2662,6 +2771,36 @@ int blockpresent(enum iofields blocknr)
 
         case IO_MOLECULARFRACTION:
 #if defined(OUTPUT_MOLECULAR_FRACTION)
+            return 1;
+#endif
+            break;
+
+        case IO_CHEMCOOL_TRACABUND:
+#ifdef CHEMCOOL
+            return 1;
+#endif
+            break;
+
+        case IO_CHEMCOOL_DUSTTEMP:
+#ifdef CHEMCOOL
+            return 1;
+#endif
+            break;
+
+        case IO_TREE_RAD_PROJECTION:
+#ifdef TREE_RAD
+            return 1;
+#endif
+            break;
+
+        case IO_SAMPLE_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            return 1;
+#endif
+            break;
+
+        case IO_STOCHASTIC_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
             return 1;
 #endif
             break;
@@ -3221,6 +3360,21 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_MOLECULARFRACTION:
             strncpy(label, "FMOL", 4);
             break;
+        case IO_CHEMCOOL_TRACABUND:
+            strncpy(label, "CCTA", 4);
+            break;
+        case IO_CHEMCOOL_DUSTTEMP:
+            strncpy(label, "CCDT", 4);
+            break;
+        case IO_TREE_RAD_PROJECTION:
+            strncpy(label, "TRPR", 4);
+            break;
+        case IO_SAMPLE_IMF_MSTAR:
+            strncpy(label, "SIMF", 4);
+            break;
+        case IO_STOCHASTIC_IMF_MSTAR:
+            strncpy(label, "SMST", 4);
+            break;
         case IO_POT:
             strncpy(label, "POT ", 4);
             break;
@@ -3627,6 +3781,21 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_MOLECULARFRACTION:
             strcpy(buf, "MolecularMassFraction");
+            break;
+        case IO_CHEMCOOL_TRACABUND:
+            strcpy(buf, "ChemcoolTracAbund");
+            break;
+        case IO_CHEMCOOL_DUSTTEMP:
+            strcpy(buf, "ChemcoolDustTemp");
+            break;
+        case IO_TREE_RAD_PROJECTION:
+            strcpy(buf, "TreeRadProjection");
+            break;
+        case IO_SAMPLE_IMF_MSTAR:
+            strcpy(buf, "SampleIMFStellarMasses");
+            break;
+        case IO_STOCHASTIC_IMF_MSTAR:
+            strcpy(buf, "StochasticIMFMstar");
             break;
         case IO_POT:
             strcpy(buf, "Potential");

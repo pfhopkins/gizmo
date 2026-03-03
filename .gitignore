@@ -1,0 +1,10 @@
+# Build artifacts
+*.o
+*.oo
+GIZMO
+GIZMO_config.h
+compile_time_info.cc
+
+# Machine-specific config
+Config.sh
+Makefile.systype

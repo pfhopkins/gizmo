@@ -448,6 +448,37 @@ extern struct global_data_all_processes
   double Chimes_f_esc_G0;
 #endif
 #endif // CHIMES
+#ifdef CHEMCOOL
+  double G0;                    /*!< UV radiation field strength in Habing units */
+  double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
+  double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
+  double InitialMetallicity;    /*!< initial metallicity in solar units */
+#endif
+#ifdef TREE_RAD
+  double ShieldingLength;       /*!< maximum distance for column density integration in tree walk */
+#endif
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+  double MinMassIMF;            /*!< minimum mass for stochastic IMF sampling [Msun] */
+  double MaxMassIMF;            /*!< maximum mass for stochastic IMF sampling [Msun] */
+  double MassPerStarIMF;        /*!< mass budget per star particle for massive star probability [Msun] */
+#endif
+#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
+  double nHcutoffSF;            /*!< hydrogen number density above which SF is instant [cm^-3] */
+#endif
+#ifdef GALSF_RESOLVEDISM
+  double FacSfThreshMJ;         /*!< factor for Jeans mass SF threshold: M_J < FacSfThreshMJ * DesNumNgb * M_particle */
+#endif
+#ifdef GALSF_RESOLVEDISM_INSTANT_SN
+  double TimeInstantSN;         /*!< time before which all SNe are instant (code units) */
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+  double SearchingRadius;       /*!< radius for neighbor search in IMF sampling */
+  double MassTolerance;         /*!< mass tolerance for IMF sampling convergence */
+  double IMFSampleStellarMassCut; /*!< minimum stellar mass to record in IMF sampling */
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
+  double FactorG0;              /*!< scaling factor for G0 from total SFR */
+#endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
@@ -1044,6 +1075,16 @@ extern struct gravdata_out
     double Chimes_G0[CHIMES_LOCAL_UV_NBINS];
     double Chimes_fluxPhotIon[CHIMES_LOCAL_UV_NBINS];
 #endif
+#ifdef TREE_RAD
+    MyDouble Projection[NPIX];            /*!< HEALPix column density per pixel */
+#ifdef TREE_RAD_H2
+    MyDouble ProjectionH2[NPIX];          /*!< HEALPix H2 column density per pixel */
+    MyDouble ProjectionCO[NPIX];          /*!< HEALPix CO column density per pixel */
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    MyDouble UV_flux[NPIX];               /*!< HEALPix UV flux per pixel */
+#endif
 #ifdef SINK_COMPTON_HEATING
     MyDouble Rad_Flux_AGN;
 #endif
@@ -1309,6 +1350,11 @@ enum iofields
   IO_DENS_AROUND_STAR,
   IO_DELAY_TIME_HII,
   IO_MOLECULARFRACTION,
+  IO_CHEMCOOL_TRACABUND,
+  IO_CHEMCOOL_DUSTTEMP,
+  IO_TREE_RAD_PROJECTION,
+  IO_SAMPLE_IMF_MSTAR,
+  IO_STOCHASTIC_IMF_MSTAR,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
@@ -1393,6 +1439,15 @@ extern ALIGN(32) struct NODE
     MyFloat maxsoft;        /*!< hold the maximum gravitational softening of particle in the node */
 #if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
   MyFloat gasmass;
+#ifdef TREE_RAD_H2
+  MyFloat h2mass;               /*!< H2 mass in tree node */
+#endif
+#ifdef TREE_RAD_CO
+  MyFloat comass;               /*!< CO mass in tree node */
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+  MyFloat uv_luminosity;        /*!< total UV luminosity in tree node (from star particles) */
 #endif
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/

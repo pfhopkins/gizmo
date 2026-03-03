@@ -2115,6 +2115,76 @@ void read_parameter_file(char *fname)
 #endif
 #endif  // CHIMES
 
+#ifdef CHEMCOOL
+      strcpy(tag[nt], "G0");
+      addr[nt] = &All.G0;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "CosmicRayIonRate");
+      addr[nt] = &All.CosmicRayIonRate;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "DGRnormalized");
+      addr[nt] = &All.DGRnormalized;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "InitialMetallicity");
+      addr[nt] = &All.InitialMetallicity;
+      id[nt++] = REAL;
+#endif
+
+#ifdef TREE_RAD
+      strcpy(tag[nt], "ShieldingLength");
+      addr[nt] = &All.ShieldingLength;
+      id[nt++] = REAL;
+#endif
+
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+      strcpy(tag[nt], "MinMassIMF");
+      addr[nt] = &All.MinMassIMF;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "MaxMassIMF");
+      addr[nt] = &All.MaxMassIMF;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "MassPerStarIMF");
+      addr[nt] = &All.MassPerStarIMF;
+      id[nt++] = REAL;
+#endif
+
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+      strcpy(tag[nt], "SearchingRadius");
+      addr[nt] = &All.SearchingRadius;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "MassTolerance");
+      addr[nt] = &All.MassTolerance;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "IMFSampleStellarMassCut");
+      addr[nt] = &All.IMFSampleStellarMassCut;
+      id[nt++] = REAL;
+#endif
+
+#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
+      strcpy(tag[nt], "nHcutoffSF");
+      addr[nt] = &All.nHcutoffSF;
+      id[nt++] = REAL;
+#endif
+
+#ifdef GALSF_RESOLVEDISM
+      strcpy(tag[nt], "FacSfThreshMJ");
+      addr[nt] = &All.FacSfThreshMJ;
+      id[nt++] = REAL;
+#endif
+
+#ifdef GALSF_RESOLVEDISM_INSTANT_SN
+      strcpy(tag[nt], "TimeInstantSN");
+      addr[nt] = &All.TimeInstantSN;
+      id[nt++] = REAL;
+#endif
+
         if((fd = fopen(fname, "r")))
         {
             snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", fname, "-usedvalues");

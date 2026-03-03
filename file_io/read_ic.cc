@@ -550,6 +550,36 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_CHEMCOOL_TRACABUND:
+#ifdef CHEMCOOL
+            for(n = 0; n < pc; n++) {for(k = 0; k < TRAC_NUM; k++) {CellP[offset + n].TracAbund[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_CHEMCOOL_DUSTTEMP:
+#ifdef CHEMCOOL
+            for(n = 0; n < pc; n++) {CellP[offset + n].DustTemp = *fp++;}
+#endif
+            break;
+
+        case IO_TREE_RAD_PROJECTION:
+#ifdef TREE_RAD
+            for(n = 0; n < pc; n++) {for(k = 0; k < NPIX; k++) {CellP[offset + n].Projection[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_SAMPLE_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            for(n = 0; n < pc; n++) {for(k = 0; k < N_STELLAR_MASS; k++) {P[offset + n].MstarSampleIMF[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_STOCHASTIC_IMF_MSTAR:
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+            for(n = 0; n < pc; n++) {P[offset + n].Mstar = *fp++;}
+#endif
+            break;
+
         case IO_NH:        /* neutral hydrogen fraction */
 #if defined(RT_CHEM_PHOTOION)
             for(n = 0; n < pc; n++) {CellP[offset + n].HI = *fp++;}

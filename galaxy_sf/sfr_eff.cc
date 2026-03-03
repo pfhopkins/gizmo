@@ -292,7 +292,9 @@ double get_starformation_rate(int i, int mode)
 #endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 2) /* restrict to convergent flows */
-#if defined(SINGLE_STAR_SINK_DYNAMICS)
+#if defined(GALSF_RESOLVEDISM)
+    if(P[i].Particle_DivVel * All.cf_a2inv >= 0) {rateOfSF=0;} /* resolved ISM: simple div(v) < 0 check using existing Particle_DivVel */
+#elif defined(SINGLE_STAR_SINK_DYNAMICS)
     if(divv >= 0) {rateOfSF=0;} /* diverging flow, no SF [simplest version of this] */
 #else
     if(divv < 0) { // here need to more carefully account for the fact that we are not trying to capture laminar collapse, but whether a patch should or should not -fragment-
@@ -314,6 +316,14 @@ double get_starformation_rate(int i, int mode)
 #endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 64) /* check if Jeans mass is low enough for conceivable formation of 'stars' */
+#if defined(GALSF_RESOLVEDISM)
+    { /* resolved ISM Jeans mass: M_J = pi^(5/2)/6 * cs^3 / (G^(3/2) * sqrt(rho)) */
+        double rho_phys = CellP[i].Density * All.cf_a3inv;
+        double cs = Get_Gas_effective_soundspeed_i(i) * All.cf_atime;
+        double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* Jeans mass in code units */
+        if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {rateOfSF=0;}
+    }
+#else
     double cs_touse=cs_eff, MJ_crit=DMAX(DMIN(1.e6, 1.*P[i].Mass*UNIT_MASS_IN_SOLAR), 100.); /* for galaxy-scale SF, default to large ~1000 Msun threshold */
     if(exceeds_force_softening_threshold) {MJ_crit = DMAX(1.e6 , 100.*P[i].Mass*UNIT_MASS_IN_SOLAR);}
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
@@ -321,6 +331,7 @@ double get_starformation_rate(int i, int mode)
 #endif
     double MJ_solar = 2.*pow(cs_touse*UNIT_VEL_IN_KMS/0.2,3)/sqrt(CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS / (HYDROGEN_MASSFRAC*1.0e3));
     if(MJ_solar > MJ_crit) {rateOfSF=0;} /* if too massive Jeans mass, go no further */
+#endif
 #endif
 
 #ifdef SINGLE_STAR_AND_SSP_HYBRID_MODEL
@@ -424,7 +435,7 @@ void star_formation_parent_routine(void)
             /* check whether an initial (not fully-complete!) conditions for star formation are fulfilled for a given particle */
             if(CellP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
             if(All.ComovingIntegrationOn) {if(CellP[i].Density < All.OverDensThresh) {flag = 1;}} // (additional density check for cosmological runs) //
-            
+
 #ifdef GALSF_SUBGRID_WINDS
             if(CellP[i].DelayTime > 0) {flag=1; CellP[i].DelayTime -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
             if((CellP[i].DelayTime < 0) || (CellP[i].Density*All.cf_a3inv < All.WindFreeTravelDensFac*All.PhysDensThresh)) {CellP[i].DelayTime=0;}
@@ -452,7 +463,12 @@ void star_formation_parent_routine(void)
                 if(dtime>0) {TimeBinSfr[P[i].TimeBin] += CellP[i].Sfr;}
                 
                 prob = P[i].Mass / mass_of_star * pfac;
-                
+
+#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
+                {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+                if(nH > All.nHcutoffSF) {prob = 2.0;}} /* instant SF above density cutoff */
+#endif
+
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
                 double w = get_random_number(P[i].ID);
                 P[i].Metallicity[0] += w * All.SolarAbundances[0] * pfac;
@@ -627,6 +643,28 @@ void star_formation_parent_routine(void)
                             }
 #endif // SINGLE_STAR_SINK_DYNAMICS			   
                             if(P[i].Type != 5) {P[i].Type = 4;} // if we didn't set to type 5 above, default to type 4
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+                            if(P[i].Type == 4) { /* stochastic IMF: probabilistically assign a single massive-star mass */
+                                double mass_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+                                double prob_massive = mass_solar / All.MassPerStarIMF;
+                                P[i].Mstar = 0;
+                                if(gsl_rng_uniform(random_generator) < prob_massive) {
+                                    double xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
+                                    double y = gsl_rng_uniform(random_generator);
+                                    double nor = pow(xmax, -1.3) - pow(xmin, -1.3);
+                                    P[i].Mstar = pow(pow(xmin, -1.3) + nor * y, -1.0/1.3);
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+                                    P[i].UV_luminosity = pow(10., get_logL_pe(P[i].Mstar));
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                                    P[i].Lyman_photons_per_sec = pow(10., get_logS_ly(P[i].Mstar));
+#endif
+#endif
+                                }
+                            }
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                            if(P[i].Type == 4) {P[i].sampled = 0; int jj_imf; for(jj_imf=0; jj_imf<N_STELLAR_MASS; jj_imf++) P[i].MstarSampleIMF[jj_imf]=0;}
+#endif
                         } /* closes final generation from original gas particle */
                         else
                         {
@@ -670,9 +708,31 @@ void star_formation_parent_routine(void)
 #endif
                             sum_mass_stars += P[NumPart + stars_spawned].Mass;
                             P[NumPart + stars_spawned].StellarAge = All.Time;
-                            
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+                            { /* stochastic IMF: probabilistically assign a single massive-star mass */
+                                int ns = NumPart + stars_spawned;
+                                double mass_solar = P[ns].Mass * UNIT_MASS_IN_SOLAR;
+                                double prob_massive = mass_solar / All.MassPerStarIMF;
+                                P[ns].Mstar = 0;
+                                if(gsl_rng_uniform(random_generator) < prob_massive) {
+                                    double xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
+                                    double y = gsl_rng_uniform(random_generator);
+                                    double nor = pow(xmax, -1.3) - pow(xmin, -1.3);
+                                    P[ns].Mstar = pow(pow(xmin, -1.3) + nor * y, -1.0/1.3);
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+                                    P[ns].UV_luminosity = pow(10., get_logL_pe(P[ns].Mstar));
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                                    P[ns].Lyman_photons_per_sec = pow(10., get_logS_ly(P[ns].Mstar));
+#endif
+#endif
+                                }
+                            }
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                            {int ns = NumPart + stars_spawned; P[ns].sampled = 0; int jj_imf; for(jj_imf=0; jj_imf<N_STELLAR_MASS; jj_imf++) P[ns].MstarSampleIMF[jj_imf]=0;}
+#endif
                             force_add_element_to_tree(i, NumPart + stars_spawned);
-                            
+
                             stars_spawned++;
                         }
 #ifdef SINK_SEED_FROM_LOCALGAS

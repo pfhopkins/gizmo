@@ -1,5 +1,5 @@
 /*------- PRECOMPILER MACROS DEFINED BELOW -------*/
-
+/* DMAX/DMIN are defined as static inline functions in core/proto.h */
 
 #define ASSIGN_ADD(x,y,mode) (mode == 0 ? (x=y) : (x+=y))
 

@@ -196,6 +196,24 @@ extern struct gas_cell_data
     MyFloat AlphaVirial_SF_TimeSmoothed;  /*!< dimensionless number > 0.5 if self-gravitating for smoothed virial criterion */
 #endif
 #endif
+#ifdef CHEMCOOL
+    MyFloat TracAbund[TRAC_NUM];          /*!< non-equilibrium chemical abundances */
+    MyFloat DustTemp;                     /*!< dust temperature [K] */
+    MyFloat Temp;                         /*!< gas temperature [K] */
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+    int Ionized;                          /*!< flag: 1 if particle is in HII region */
+#endif
+#endif
+#ifdef TREE_RAD
+    MyFloat Projection[NPIX];             /*!< HEALPix column density per pixel */
+#ifdef TREE_RAD_H2
+    MyFloat ProjectionH2[NPIX];           /*!< HEALPix H2 column density per pixel */
+    MyFloat ProjectionCO[NPIX];           /*!< HEALPix CO column density per pixel */
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    MyFloat UV_flux[NPIX];                /*!< HEALPix UV flux per pixel from stars */
+#endif
 #ifdef GALSF_SUBGRID_WINDS
     MyFloat DelayTime;                /*!< remaining maximum decoupling time of wind particle */
 #if (GALSF_SUBGRID_WIND_SCALING==1)

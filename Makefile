@@ -110,6 +110,11 @@ ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
+## HEALPix vec2pix_ring is now implemented inline in gravity/healpix_utils.h - no external library needed
+ifeq (NEED_HEALPIX,$(findstring NEED_HEALPIX,$(CONFIGVARS)))
+HEALPIXINCL =
+HEALPIXLIBS =
+endif
 MKL_INCL = -I$(TACC_MKL_INC)
 MKL_LIBS = -L$(TACC_MKL_LIB) -mkl=sequential
 GSL_INCL = -I$(TACC_GSL_INC)
@@ -121,6 +126,42 @@ HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ## compiles with module set: intel/19 impi hdf5 fftw3 gsl valgrind python3
+endif
+
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Raven-OpenMPI")
+CC       =  mpicc
+CXX      =  mpicxx -std=c++11
+FC       =  mpifort
+OPTIMIZE = -g -O3 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
+MPICHLIB =
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
+endif
+
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"ViperGccOpenMPI")
+CC       =  mpicc
+CXX      =  mpicxx -std=c++11
+FC       =  mpifort
+OPTIMIZE = -g -O2 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
+MPICHLIB =
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
 endif
 
 
@@ -371,8 +412,35 @@ endif
 # chimes files are treated as special for now because they require special external libraries (e.g. sundials) that are otherwise not
 #   used anywhere else in the code, and have not had their macro logic cleaned up to allow appropriate compilation without chimes flags enabled
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
-OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chimes/init_chimes.o cooling/chimes/rate_equations.o cooling/chimes/update_rates.o 
-INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h 
+OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chimes/init_chimes.o cooling/chimes/rate_equations.o cooling/chimes/update_rates.o
+INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h
+endif
+
+# chemcool non-equilibrium chemistry: fortran backend + C++ interface
+ifeq (CHEMCOOL,$(findstring CHEMCOOL,$(CONFIGVARS)))
+OBJS    += cooling/chemcool/chemcool.o
+FOBJS   += cooling/chemcool/coolinmo.o cooling/chemcool/cheminmo.o cooling/chemcool/spline.o cooling/chemcool/cool_func.o cooling/chemcool/photoinit_ism.o \
+           cooling/chemcool/dvode.o cooling/chemcool/evolve_abundances.o cooling/chemcool/rate_eq_simple.o cooling/chemcool/jac.o cooling/chemcool/cool_util.o \
+           cooling/chemcool/const_rates.o cooling/chemcool/validate_rates.o cooling/chemcool/calc_photo.o cooling/chemcool/calc_temp.o \
+           cooling/chemcool/compute_gamma.o cooling/chemcool/wss_z_collis.o
+endif
+
+# resolved ISM star formation / feedback modules
+ifeq (GALSF_RESOLVEDISM,$(findstring GALSF_RESOLVEDISM,$(CONFIGVARS)))
+OBJS    += galaxy_sf/stellar_properties_resolvedism.o
+OBJS    += galaxy_sf/resolvedism_fb.o
+OBJS    += galaxy_sf/resolvedism_photoion.o
+endif
+
+# expanded IMF sampling
+ifeq (GALSF_RESOLVEDISM_SAMPLE_IMF,$(findstring GALSF_RESOLVEDISM_SAMPLE_IMF,$(CONFIGVARS)))
+OBJS    += galaxy_sf/resolvedism_imf_sampling.o
+endif
+
+# HEALPix library for TREE_RAD angular column density binning
+ifeq (NEED_HEALPIX,$(findstring NEED_HEALPIX,$(CONFIGVARS)))
+HEALPIXINCL =
+HEALPIXLIBS =
 endif
 
 # if grackle libraries are installed they must be a shared library as defined here
@@ -387,7 +455,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL)
+         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL)
 
 
 
@@ -413,17 +481,24 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS)
 
+FFLAGS = $(FOPTIONS) -Icooling/chemcool
 
+# if we have Fortran objects (e.g. CHEMCOOL, EOS_HELMHOLTZ), link with FC; otherwise use CXX
+ifneq ($(FOBJS),)
+$(EXEC): $(OBJS) $(FOBJS)
+	$(FC) $(OPTIMIZE) $(OBJS) $(FOBJS) $(LIBS) -o $(EXEC)
+else
 $(EXEC): $(OBJS)
 	$(CXX) $(OPTIMIZE) $(OBJS) $(LIBS) -o $(EXEC)
+endif
 
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-#$(FOBJS): %.o: %.f90
-#	$(FC) $(OPTIMIZE) -c $< -o $@
+$(FOBJS): %.o: %.F
+	$(FC) $(FOPTIONS) -I. -Icooling/chemcool -c $< -o $@
 
 compile_time_info.cc: $(CONFIG)
 	$(PERL) file_io/prepare-config.perl $(CONFIG)

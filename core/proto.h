@@ -759,6 +759,26 @@ void chimes_compute_depletions(double nH, double T, int thread_id);
 #else
 #endif
 void cooling_parent_routine(void);
+#ifdef CHEMCOOL
+void chemcool_init(void);
+double do_chemcool_step(int target, double dt, double dl, int mode);
+#endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
+double get_lifetime(double mass);
+double get_logL_pe(double mass);
+double get_logS_ly(double mass);
+int get_index(double search);
+#endif
+#ifdef GALSF_RESOLVEDISM_FB
+void resolvedism_determine_SNe(void);
+void resolvedism_inject_sn_energy(void);
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+void resolvedism_photoionize(void);
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+void assign_stellar_masses(void);
+#endif
 void count_hot_phase(void);
 void delete_node(int i);
 void density(void);

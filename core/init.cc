@@ -7,6 +7,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef CHEMCOOL
+#include "../cooling/chemcool/chemcool_consts.h"
+#endif
 
 
 /*! \file init.c
@@ -602,6 +605,24 @@ void init(void)
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
 	    int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[i].Chimes_fluxPhotIon[kc] = 0; CellP[i].Chimes_G0[kc] = 0;}
+#endif
+#ifdef CHEMCOOL
+            {int ka; for(ka = 0; ka < TRAC_NUM; ka++) {CellP[i].TracAbund[ka] = 0;}}
+            CellP[i].TracAbund[IHP] = 1.0e-4; /* initial ionization fraction */
+            CellP[i].DustTemp = 10.0; /* initial dust temperature [K] */
+            CellP[i].Temp = 100.0; /* initial gas temperature [K] */
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            CellP[i].Ionized = 0;
+#endif
+#endif
+#ifdef TREE_RAD
+            {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].Projection[kp] = 0;}}
+#ifdef TREE_RAD_H2
+            {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].ProjectionH2[kp] = 0; CellP[i].ProjectionCO[kp] = 0;}}
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].UV_flux[kp] = 0;}}
+#endif
 #endif
 #ifdef SINK_COMPTON_HEATING
             CellP[i].Rad_Flux_AGN = 0;

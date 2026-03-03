@@ -6,7 +6,9 @@
 #
 #############
 
-SYSTYPE="Frontera"
+#SYSTYPE="Frontera"
+SYSTYPE="Raven-OpenMPI"
+#SYSTYPE="ViperGccOpenMPI"
 #SYSTYPE="Stampede2"
 #SYSTYPE="Bridges2"
 #SYSTYPE="Anvil"

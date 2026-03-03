@@ -226,6 +226,38 @@
 #GALSF_FB_FIRE_RT_HIIHEATING    # enable the generic stochastic HII-region model when HII regions are not extremely well-resolved, ionize and heat to local equilibrium temperature in immediate vicinity of O-stars probabilistically so they can be semi-resolved in a statistical sense. cite FIRE methods papers. do not use if enabling FIRE defaults flags OR any explicit RHD modules of your own (FIRE modules will work with any other RHD modules/bands where they are enabled)
 #GALSF_FB_FIRE_RT_LONGRANGE     # enables LEBRON radiative transport with continuous acceleration from starlight (uses luminosity tree) to propagate approximate RT, also enables simple uv/euv/nuv/optical/nir/fir band set, for photo-ionization, photo-electric, and dust radiation heating. do not use if enabling FIRE defaults flags OR any explicit RHD modules of your own (FIRE modules will work with any other RHD modules/bands where they are enabled)
 #GALSF_FB_FIRE_RT_LOCALRP       # enables local radiation pressure coupling to gas - account for local multiple-scattering and isotropic local absorption, assuming unresolved local-source approximation, designed to be used when those are not treated explicitly (i.e. if and only if an RHD module like LEBRON is used, as opposed to M1 or some other RHD module. do not use if enabling FIRE defaults flags OR any explicit RHD modules of your own (FIRE modules will work with any other RHD modules/bands where they are enabled)
+## ----------------------------------------------------------------------------------------------------
+# ----- Resolved-ISM single-star galaxy formation (mutually exclusive with FIRE feedback) ------
+# ---- These modules implement individual massive star tracking, Stromgren-sphere photo-ionization,
+# ---- SN feedback, and optionally full Kroupa IMF sampling or stochastic single-star IMF assignment.
+#GALSF_RESOLVEDISM              # master switch: auto-enables GALSF, COOLING, METALS; undefs FIRE FB flags
+#GALSF_RESOLVEDISM_FB           # SN energy injection from resolved massive stars
+#GALSF_RESOLVEDISM_PHOTOION     # Stromgren-sphere photo-ionization around massive stars
+#GALSF_RESOLVEDISM_STOCHASTIC_IMF # quick-and-dirty: assign single massive-star mass per particle (Salpeter draw)
+#GALSF_RESOLVEDISM_SAMPLE_IMF   # full Kroupa IMF sampling into N_STELLAR_MASS slots (mutually exclusive with STOCHASTIC_IMF)
+#N_STELLAR_MASS=300             # number of individual stellar mass slots per star particle (default=300)
+#GALSF_RESOLVEDISM_G0_VARIABLE  # per-star UV luminosity tracked in tree walk for spatially-varying G0
+#GALSF_RESOLVEDISM_G0_SCALE_SFR # scale G0 with total SFR instead of individual stars
+#GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF # instant SF above nHcutoffSF density (prob=1)
+#GALSF_RESOLVEDISM_INSTANT_SN  # all SNe fire instantly before TimeInstantSN
+## note: convergent flow (bit 2) and Jeans mass (bit 64) criteria use GALSF_SFR_CRITERION bitflag
+## with GALSF_RESOLVEDISM-specific implementations (Particle_DivVel, FacSfThreshMJ param)
+#GALSF_RESOLVEDISM_OUTPUT_SFINFO # log SF/SN events to stdout
+## ----------------------------------------------------------------------------------------------------
+# ----- CHEMCOOL non-equilibrium chemistry (Fortran backend, mutually exclusive with CHIMES) ------
+#CHEMCOOL                       # master switch: non-equilibrium chemistry solver
+#CHEMISTRYNETWORK=5             # chemistry network selection (default=5)
+#WSS_CIE_COOL                   # CIE metal-line cooling
+#DGR_SCALE_WITH_Z               # dust-to-gas ratio scales with metallicity
+#BS19_XH2                       # Bialy & Sternberg 2019 H2 prescription
+#CR_HEATING_DM72                # Dalgarno & McCray 1972 cosmic ray heating
+#CR_SCALE_WITH_G0               # cosmic ray ionization rate scales with G0
+## ----------------------------------------------------------------------------------------------------
+# ----- TREE_RAD: HEALPix column density in gravity tree walk (replaces RT_USE_TREECOL_FOR_NH) ------
+#TREE_RAD                       # HEALPix angular binning for column density (mutually exclusive with RT_USE_TREECOL_FOR_NH)
+#TREE_RAD_H2                    # H2 column density per HEALPix pixel
+#TREE_RAD_CO                    # CO column density per HEALPix pixel
+#NSIDE=1                        # HEALPix resolution: NPIX = 12*NSIDE^2 (default=1, giving 12 pixels)
 ############################################################################################################################
 
 

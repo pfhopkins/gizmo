@@ -117,6 +117,9 @@ void run(void)
 #ifdef GALSF_FB_MECHANICAL
         determine_where_SNe_occur(); // for mechanical FB models
 #endif
+#ifdef GALSF_RESOLVEDISM_FB
+        resolvedism_determine_SNe(); // resolved ISM SN event flagging
+#endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
@@ -299,6 +302,13 @@ void calculate_non_standard_physics(void)
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
+#ifdef GALSF_RESOLVEDISM_FB
+    resolvedism_inject_sn_energy(); // resolved ISM SN energy injection
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+    resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization
+#endif
+
 #ifdef COOLING	/* radiative cooling and chemistry  */
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
@@ -307,6 +317,9 @@ void calculate_non_standard_physics(void)
 
 #ifdef GALSF /* star/sink particle formation */
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
+#endif
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 

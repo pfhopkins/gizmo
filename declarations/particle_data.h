@@ -102,11 +102,24 @@ extern ALIGN(32) struct particle_data
     MyFloat ColumnDensityBins[RT_USE_TREECOL_FOR_NH];     /*!< angular bins for column density */
     MyFloat SigmaEff;              /*!< effective column density -log(avg(exp(-sigma))) averaged over column density bins from the gravity tree (does not include the self-contribution) */
 #endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    MyFloat UV_luminosity;                /*!< UV luminosity of star particle for photoelectric heating */
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+    MyFloat Lyman_photons_per_sec;        /*!< ionizing photon rate [sec^-1] */
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    int sampled;                          /*!< flag: 1 if IMF has been sampled for this star */
+    MyFloat MstarSampleIMF[N_STELLAR_MASS]; /*!< individual stellar masses from IMF sampling */
+#endif
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+    MyFloat Mstar;                        /*!< single massive-star mass assigned to particle */
+#endif
 #if defined(RT_SOURCE_INJECTION)
     MyFloat KernelSum_Around_RT_Source; /*!< kernel summation around sources for radiation injection (save so can be different from 'density') */
 #endif
     
-#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
+#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL) || defined(GALSF_RESOLVEDISM_FB)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     MyFloat MassReturn_ThisTimeStep; /* gas return from stellar winds */

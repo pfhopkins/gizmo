@@ -102,6 +102,13 @@ void do_the_cooling_for_particle(int i)
 
     if((dtime>0)&&(P[i].Mass>0)&&(P[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
+#ifdef CHEMCOOL
+        /* CHEMCOOL handles its own cooling, chemistry, and internal energy update internally */
+        double dl = Get_Particle_Size(i) * All.cf_atime; /* shielding length in code units */
+        do_chemcool_step(i, dtime, dl, 0);
+        set_eos_pressure(i);
+        return;
+#endif
         double uold = DMAX(All.MinEgySpec, CellP[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
@@ -1681,6 +1688,10 @@ void InitCool(void)
 
     All.Time = All.TimeBegin;
     set_cosmo_factors_for_current_time();
+
+#ifdef CHEMCOOL
+    chemcool_init();
+#endif
 
 #ifdef COOL_GRACKLE
     InitGrackle();

@@ -1140,6 +1140,101 @@
 #endif
 
 
+/* ---- GALSF_RESOLVEDISM: resolved ISM single-star galaxy formation ---- */
+#ifdef GALSF_RESOLVEDISM
+#ifndef GALSF
+#define GALSF
+#endif
+#ifndef COOLING
+#define COOLING
+#endif
+#ifndef METALS
+#define METALS
+#endif
+/* undef FIRE feedback flags to avoid conflicts */
+#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#undef GALSF_FB_FIRE_RT_HIIHEATING
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+#undef GALSF_FB_FIRE_RT_LONGRANGE
+#endif
+#ifdef GALSF_FB_FIRE_RT_LOCALRP
+#undef GALSF_FB_FIRE_RT_LOCALRP
+#endif
+#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#undef GALSF_FB_FIRE_STELLAREVOLUTION
+#endif
+#endif /* GALSF_RESOLVEDISM */
+
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#ifndef TREE_RAD
+#define TREE_RAD
+#endif
+#endif
+
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+#ifndef N_STELLAR_MASS
+#define N_STELLAR_MASS 300
+#endif
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF and GALSF_RESOLVEDISM_STOCHASTIC_IMF are mutually exclusive"
+#endif
+#endif
+
+/* ---- CHEMCOOL: non-equilibrium chemistry solver (Fortran backend) ---- */
+#ifdef CHEMCOOL
+#ifndef COOLING
+#define COOLING
+#endif
+#if defined(CHIMES)
+#error "CHEMCOOL and CHIMES are mutually exclusive chemistry solvers"
+#endif
+#ifndef CHEMISTRYNETWORK
+#define CHEMISTRYNETWORK 5
+#endif
+/* define TRAC_NUM (number of tracked species) based on chemistry network */
+#if CHEMISTRYNETWORK == 1
+#define TRAC_NUM 6
+#elif CHEMISTRYNETWORK == 2
+#define TRAC_NUM 10
+#elif CHEMISTRYNETWORK == 3
+#define TRAC_NUM 19
+#elif CHEMISTRYNETWORK == 4
+#define TRAC_NUM 2
+#elif CHEMISTRYNETWORK == 5
+#define TRAC_NUM 3
+#elif CHEMISTRYNETWORK == 6
+#define TRAC_NUM 4
+#elif CHEMISTRYNETWORK == 7 || CHEMISTRYNETWORK == 11
+#define TRAC_NUM 19
+#elif CHEMISTRYNETWORK == 8
+#define TRAC_NUM 19
+#elif CHEMISTRYNETWORK == 9
+#define TRAC_NUM 15
+#elif CHEMISTRYNETWORK == 15
+#define TRAC_NUM 9
+#endif
+#endif /* CHEMCOOL */
+
+
+/* ---- TREE_RAD: HEALPix column density in gravity tree ---- */
+#ifdef TREE_RAD
+#if defined(RT_USE_TREECOL_FOR_NH)
+#error "TREE_RAD and RT_USE_TREECOL_FOR_NH are mutually exclusive column density methods"
+#endif
+#ifndef NEED_HEALPIX
+#define NEED_HEALPIX
+#endif
+#ifndef NSIDE
+#define NSIDE 1
+#endif
+#define NPIX (12*NSIDE*NSIDE)
+#if !defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
+#define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+#endif
+#endif /* TREE_RAD */
+
+
 #if defined(COOLING) && defined(GALSF_EFFECTIVE_EQS)
 #ifndef COOLING_OPERATOR_SPLIT
 #define COOLING_OPERATOR_SPLIT /*!< the Springel-Hernquist EOS depends explicitly on the cooling time in a way that requires de-coupled hydro cooling */
