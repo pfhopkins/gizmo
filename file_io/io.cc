@@ -785,7 +785,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
 
         case IO_FORMATION_DENSITY:
-#ifdef GALSF_RESOLVEDISM_PHOTOION
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -2835,7 +2835,7 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_FORMATION_DENSITY:
-#ifdef GALSF_RESOLVEDISM_PHOTOION
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
             return 1;
 #endif
             break;

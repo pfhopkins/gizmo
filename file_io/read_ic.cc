@@ -581,7 +581,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_FORMATION_DENSITY:
-#ifdef GALSF_RESOLVEDISM_PHOTOION
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
             for(n = 0; n < pc; n++) {P[offset + n].FormationDensity = *fp++;}
 #endif
             break;

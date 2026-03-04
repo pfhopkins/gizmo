@@ -112,7 +112,7 @@ extern ALIGN(32) struct particle_data
     int sampled;                          /*!< flag: 1 if IMF has been sampled for this star */
     MyFloat MstarSampleIMF[N_STELLAR_MASS]; /*!< individual stellar masses from IMF sampling */
 #endif
-#ifdef GALSF_RESOLVEDISM_PHOTOION
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
     MyFloat FormationDensity;             /*!< gas density at time of star formation (code units, comoving) */
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
