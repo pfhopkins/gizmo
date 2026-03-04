@@ -553,6 +553,9 @@ void star_formation_parent_routine(void)
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
                             P[i].DensityAroundParticle = CellP[i].Density;
 #endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
+                            P[i].FormationDensity = CellP[i].Density;
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                             P[i].Mass = CellP[i].MassTrue + CellP[i].dMass;
 #endif
@@ -708,7 +711,7 @@ void star_formation_parent_routine(void)
 #endif
                             sum_mass_stars += P[NumPart + stars_spawned].Mass;
                             P[NumPart + stars_spawned].StellarAge = All.Time;
-#ifdef GALSF_RESOLVEDISM_PHOTOION
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
                             P[NumPart + stars_spawned].FormationDensity = CellP[i].Density;
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
