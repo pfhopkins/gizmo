@@ -6,14 +6,32 @@
 #include <gsl/gsl_rng.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../mesh/kernel.h"
 
-/* Single-star IMF sampling: draws one stellar mass from a Kroupa IMF for each
- * new star particle. Mass difference from the drawn value is borrowed from or
- * returned to neighboring gas cells via tree neighbor search.
- * Mass and momentum conserving: search radius expands until enough gas is found,
- * and velocities are updated to conserve total momentum during mass transfer. */
+/* Single-star IMF sampling: draws ONE stellar mass from a Kroupa IMF for each
+ * new star particle. Each star particle represents exactly one star.
+ *
+ * Two cases for the mass difference between drawn stellar mass and gas cell:
+ *   M_drawn > M_cell: borrow mass from gas neighbors, nearest-first,
+ *                     consuming cells fully if needed (gizmo removes zero-mass cells).
+ *   M_drawn < M_cell: return excess mass to gas neighbors, kernel-weighted.
+ * Both cases are mass and momentum conserving.
+ *
+ * An IMFDonorFlag prevents the same gas cell from being consumed by two
+ * different stars in the same sampling pass.
+ *
+ * Uses the code_block_xchange framework for MPI-parallel tree walks.
+ * The search radius is pre-scaled for massive stars that need to borrow
+ * from more cells than the standard kernel contains. */
 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+
+#if (N_STELLAR_MASS < 5)
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF requires N_STELLAR_MASS >= 5 (indices 0-4 used)"
+#endif
+#if (GALSF_GENERATIONS > 1)
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF requires GALSF_GENERATIONS=1 (full cell conversion, no fractional spawning)"
+#endif
 
 static const double M_max = 50.;
 static const double M_min = 0.08;
@@ -32,37 +50,314 @@ static inline double envelope_function(double x)
     return 2.0 * 0.126512 * pow(x, -1.3);
 }
 
+#define MIN_IMF_NGBS 128
 
-/* Main entry: each rank processes its own unsampled stars, using tree neighbor
- * search to borrow/return mass from/to nearby gas cells. Not OpenMP-parallel
- * (number of unsampled stars per timestep is small). */
+struct imf_ngb_entry { int index; double dist2; };
+
+/* Sort by distance (nearest first) for borrowing case */
+static int compare_by_dist(const void *a, const void *b)
+{
+    const struct imf_ngb_entry *ea = (const struct imf_ngb_entry *)a;
+    const struct imf_ngb_entry *eb = (const struct imf_ngb_entry *)b;
+    if(ea->dist2 < eb->dist2) return -1;
+    if(ea->dist2 > eb->dist2) return  1;
+    return 0;
+}
+
+/* Per-rank flag array: prevents the same gas cell from being consumed by
+ * multiple stars in the same IMF sampling pass. Allocated in assign_stellar_masses(),
+ * used in the evaluate function, freed after the xchange. */
+static int *IMFDonorFlag = NULL;
+
+
+/* =========================================================================== */
+/*  Mass transfer via code_block_xchange framework.                            */
+/*  Borrowing case: nearest-first consumption of gas cells.                    */
+/*  Return case: kernel-weighted distribution to gas cells.                    */
+/*  MstarSampleIMF[1..3] used as temporary storage for momentum gained.        */
+/* =========================================================================== */
+
+#define CORE_FUNCTION_NAME resolvedismIMF_evaluate
+#define INPUTFUNCTION_NAME particle2in_resolvedismIMF
+#define OUTPUTFUNCTION_NAME out2particle_resolvedismIMF
+#define CONDITIONFUNCTION_FOR_EVALUATION if(resolvedismIMF_active_check(i))
+#include "../system/code_block_xchange_initialize.h"
+
+struct INPUT_STRUCT_NAME
+{
+    MyDouble Pos[3], KernelRadius;
+    MyDouble delta_code;   /* mass difference in code units (positive = borrow from gas) */
+    MyDouble star_vel[3];  /* star velocity (for returning mass at star velocity) */
+    int max_ngbs;          /* dynamic buffer size based on mass ratio */
+    int NodeList[NODELISTLENGTH];
+}
+*DATAIN_NAME, *DATAGET_NAME;
+
+void particle2in_resolvedismIMF(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
+{
+    int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->star_vel[k]=P[i].Vel[k];}
+    in->KernelRadius = P[i].KernelRadius;
+    if(in->KernelRadius <= 0) in->KernelRadius = All.ForceSoftening[P[i].Type] * 5.0; /* fallback for new stars */
+    in->delta_code = 0;
+    in->max_ngbs = MIN_IMF_NGBS;
+    if(P[i].MstarSampleIMF[0] <= 0 || P[i].sampled != 0) return;
+    in->delta_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR - P[i].Mass;
+    if(fabs(in->delta_code) < 1.0e-3 * P[i].Mass) {in->delta_code = 0; return;} /* within 0.1% of cell mass: treat as exact match */
+
+    /* Subtract mass already transferred in a previous mode 0 pass (prevents over-borrowing
+     * or over-returning when particle2in is called again to pack export data for mode 1).
+     * MstarSampleIMF[4] tracks |mass already transferred|, works for both borrow and return. */
+    if(P[i].MstarSampleIMF[4] > 0) {
+        if(in->delta_code > 0) in->delta_code -= P[i].MstarSampleIMF[4];
+        else                   in->delta_code += P[i].MstarSampleIMF[4];
+        if(fabs(in->delta_code) < 1.0e-3 * P[i].Mass) {in->delta_code = 0; return;}
+    }
+
+    /* For borrowing case: pre-scale search radius so we enclose enough gas mass.
+     * Uses REMAINING delta (after subtracting already-transferred mass) to size
+     * the radius and buffer. In iterative passes the outer loop also bumps
+     * KernelRadius by 10% each iteration, so radius grows until enough mass is found. */
+    if(in->delta_code > 0) {
+        double n_needed = in->delta_code / P[i].Mass; /* how many cell-masses still needed */
+        in->max_ngbs = (int)(n_needed * 2.0) + MIN_IMF_NGBS; /* 2x safety margin */
+        if(n_needed > All.DesNumNgb) {
+            in->KernelRadius *= pow(n_needed / All.DesNumNgb, 1.0/3.0) * 1.5;
+        }
+    }
+}
+
+struct OUTPUT_STRUCT_NAME
+{
+    MyFloat mom_gained[3]; /* momentum gained from gas (borrowing case) */
+    MyFloat mass_borrowed;  /* actual mass taken from gas in this mode */
+}
+*DATARESULT_NAME, *DATAOUT_NAME;
+
+void out2particle_resolvedismIMF(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
+{
+    /* Accumulate momentum gained into temporary storage MstarSampleIMF[1..3] */
+    int k; for(k=0;k<3;k++) {ASSIGN_ADD(P[i].MstarSampleIMF[k+1], out->mom_gained[k], mode);}
+    /* Accumulate actual mass borrowed into MstarSampleIMF[4] so that particle2in
+     * can reduce delta_code for subsequent mode 1 exports (prevents over-borrowing) */
+    ASSIGN_ADD(P[i].MstarSampleIMF[4], out->mass_borrowed, mode);
+}
+
+int resolvedismIMF_active_check(int i);
+int resolvedismIMF_active_check(int i)
+{
+    if(P[i].Type != 4) {return 0;}
+    if(P[i].sampled != 0) {return 0;} /* already sampled */
+    if(P[i].MstarSampleIMF[0] <= 0) {return 0;} /* no drawn mass (pre-processing didn't run) */
+    return 1;
+}
+
+
+/*!   -- this subroutine writes to shared memory [updating the neighbor values]: need to protect these writes for openmp below */
+int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)
+{
+    int startnode, numngb_inbox, listindex = 0, j, k, n;
+    double r2, h2;
+    struct INPUT_STRUCT_NAME local;
+    struct OUTPUT_STRUCT_NAME out;
+    memset(&out, 0, sizeof(struct OUTPUT_STRUCT_NAME));
+
+    if(mode == 0) {particle2in_resolvedismIMF(&local, target, loop_iteration);} else {local = DATAGET_NAME[target];}
+    if(local.delta_code == 0) return 0;
+    if(local.KernelRadius <= 0) return 0;
+    h2 = local.KernelRadius * local.KernelRadius;
+
+    /* Phase 1: Tree walk — collect gas neighbors, record distance and kernel weight */
+    int max_ngbs = local.max_ngbs;
+    if(max_ngbs < MIN_IMF_NGBS) max_ngbs = MIN_IMF_NGBS;
+    struct imf_ngb_entry *ngb_buf = (struct imf_ngb_entry *) malloc(max_ngbs * sizeof(struct imf_ngb_entry));
+    if(!ngb_buf) {printf("IMF sampling: malloc failed for %d ngbs\n", max_ngbs); return 0;}
+    int n_collected = 0;
+
+    if(mode == 0) {startnode = All.MaxPart;}
+    else {startnode = DATAGET_NAME[target].NodeList[0]; startnode = Nodes[startnode].u.d.nextnode;}
+
+    while(startnode >= 0)
+    {
+        while(startnode >= 0)
+        {
+            numngb_inbox = ngb_treefind_pairs_threads(local.Pos, local.KernelRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
+            if(numngb_inbox < 0) {free(ngb_buf); return -2;}
+            for(n = 0; n < numngb_inbox; n++)
+            {
+                j = ngblist[n];
+                if(P[j].Type != 0) continue;
+                double Mass_j;
+                #pragma omp atomic read
+                Mass_j = P[j].Mass;
+                if(Mass_j <= 0) continue;
+
+                double dp[3];
+                for(k=0;k<3;k++) {dp[k] = local.Pos[k] - P[j].Pos[k];}
+                NEAREST_XYZ(dp[0],dp[1],dp[2],1);
+                r2=0; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}
+                if(r2 <= 0 || r2 >= h2) continue;
+
+                if(n_collected < max_ngbs) {
+                    ngb_buf[n_collected].index = j;
+                    ngb_buf[n_collected].dist2 = r2;
+                    n_collected++;
+                }
+            }
+        }
+        if(mode == 1)
+        {
+            listindex++;
+            if(listindex < NODELISTLENGTH)
+            {
+                startnode = DATAGET_NAME[target].NodeList[listindex];
+                if(startnode >= 0) {startnode = Nodes[startnode].u.d.nextnode;}
+            }
+        }
+    }
+
+    if(n_collected == 0) {free(ngb_buf); return 0;}
+    if(n_collected >= max_ngbs)
+        printf("IMF sampling WARNING: neighbor buffer full (%d), some neighbors dropped\n", max_ngbs);
+
+    /* Phase 2: Mass transfer — different strategies for borrowing vs returning */
+    if(local.delta_code > 0)
+    {
+        /* === BORROW from gas: nearest-first consumption ===
+         * Sort neighbors by distance, walk outward, consume cells fully
+         * (mass -> 0, gizmo removes them) until enough mass is accumulated.
+         * The last cell may be only partially consumed.
+         * IMFDonorFlag prevents double-consumption by multiple stars. */
+        qsort(ngb_buf, n_collected, sizeof(struct imf_ngb_entry), compare_by_dist);
+        double mass_still_needed = local.delta_code;
+
+        for(n = 0; n < n_collected && mass_still_needed > 0; n++)
+        {
+            j = ngb_buf[n].index;
+
+            /* Atomically claim this gas cell via donor flag (prevents two stars
+             * from consuming the same cell in the same sampling pass) */
+            if(IMFDonorFlag != NULL) {
+                int was_flagged;
+                #pragma omp atomic capture
+                { was_flagged = IMFDonorFlag[j]; IMFDonorFlag[j] = 1; }
+                if(was_flagged) continue;
+            }
+
+            double Mass_j;
+            #pragma omp atomic read
+            Mass_j = P[j].Mass;
+            if(Mass_j <= 0) continue;
+
+            /* Take at most what this cell has, or what we still need */
+            double take = fmin(mass_still_needed, Mass_j);
+
+            /* Read gas velocity for momentum tracking */
+            double Vel_j[3];
+            for(k=0;k<3;k++) {
+                #pragma omp atomic read
+                Vel_j[k] = P[j].Vel[k];
+            }
+
+            /* Remove mass from gas cell */
+            #pragma omp atomic
+            P[j].Mass -= take;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            #pragma omp atomic
+            CellP[j].MassTrue -= take;
+#endif
+            /* Accumulate momentum and mass carried to star */
+            for(k=0;k<3;k++) out.mom_gained[k] += take * Vel_j[k];
+            out.mass_borrowed += take;
+            mass_still_needed -= take;
+        }
+    }
+    else
+    {
+        /* === RETURN excess mass to gas: hand it to the first valid neighbor ===
+         * Star is lighter than the original gas cell (within factor ~2 of cell mass).
+         * Just attach the residual to the first neighbor found, momentum conserving:
+         * v_gas_new = (M_gas * v_gas + give * v_star) / (M_gas + give) */
+        double give = fabs(local.delta_code);
+        for(n = 0; n < n_collected; n++)
+        {
+            j = ngb_buf[n].index;
+            double Mass_j;
+            #pragma omp atomic read
+            Mass_j = P[j].Mass;
+            if(Mass_j <= 0) continue;
+
+            double Vel_j[3];
+            for(k=0;k<3;k++) {
+                #pragma omp atomic read
+                Vel_j[k] = P[j].Vel[k];
+            }
+
+            double Mass_j_new = Mass_j + give;
+            for(k=0;k<3;k++) {
+                double dv = (give / Mass_j_new) * (local.star_vel[k] - Vel_j[k]);
+                #pragma omp atomic
+                P[j].Vel[k] += dv;
+                #pragma omp atomic
+                CellP[j].VelPred[k] += dv;
+            }
+            #pragma omp atomic
+            P[j].Mass += give;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            #pragma omp atomic
+            CellP[j].MassTrue += give;
+#endif
+            out.mass_borrowed += give; /* track so mode 1 knows it's done */
+            break; /* done — all excess mass handed to this one neighbor */
+        }
+    }
+
+    free(ngb_buf);
+    if(mode == 0) {out2particle_resolvedismIMF(&out, target, 0, loop_iteration);} else {DATARESULT_NAME[target] = out;}
+    return 0;
+}
+
+
+void assign_stellar_masses_xchange(void)
+{
+    #include "../system/code_block_xchange_perform_ops_malloc.h"
+    #include "../system/code_block_xchange_perform_ops.h"
+    #include "../system/code_block_xchange_perform_ops_demalloc.h"
+}
+#include "../system/code_block_xchange_finalize.h"
+
+
+/* =========================================================================== */
+/*  Top-level routine: pre-processing, xchange mass transfer, post-processing  */
+/* =========================================================================== */
 void assign_stellar_masses(void)
 {
-    int i, j, n, k;
+    int i, k;
 
     /* Count unsampled stars across all ranks */
     int nstars_local = 0;
     for(i = 0; i < NumPart; i++)
-        if(P[i].Type == 4 && P[i].sampled == 0) nstars_local++;
+        if(P[i].Type == 4 && P[i].sampled == 0 && P[i].Mass > 0) nstars_local++;
 
     int nstars_total;
     MPI_Allreduce(&nstars_local, &nstars_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(nstars_total == 0) return;
 
-    if(ThisTask == 0) printf("IMF sampling: %d unsampled star particles\n", nstars_total);
+    if(ThisTask == 0) printf("IMF sampling: %d unsampled single-star particles\n", nstars_total);
 
-    /* Allocate neighbor list buffer (same pattern as radfb_local.cc) */
-    Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
-
+    /* === Pre-processing: draw one IMF mass per unsampled star particle === */
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 4 || P[i].sampled != 0) continue;
-        if(P[i].Mass <= 0) continue;
+        if(P[i].Type != 4 || P[i].sampled != 0 || P[i].Mass <= 0) continue;
 
-        double M_particle_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
-        double m_i_old_code = P[i].Mass; /* save original star mass in code units */
+        /* Restart safety: if MstarSampleIMF[0] > 0 but sampled == 0, this star was
+         * already drawn in a previous run that got interrupted. Skip the redraw,
+         * just zero the temporary storage so the xchange can run cleanly. */
+        if(P[i].MstarSampleIMF[0] > 0) {
+            int j; for(j = 1; j < N_STELLAR_MASS; j++) P[i].MstarSampleIMF[j] = 0;
+            continue;
+        }
 
-        /* === Phase 1: Draw ONE stellar mass from Kroupa IMF === */
+        /* Draw ONE stellar mass from Kroupa IMF via rejection sampling */
         double M_drawn;
         do {
             M_drawn = pow((pow(M_max, -0.3) - pow(M_min, -0.3)) * gsl_rng_uniform(random_generator)
@@ -70,157 +365,77 @@ void assign_stellar_masses(void)
         } while(gsl_rng_uniform(random_generator) > (drawMassFromIMF(M_drawn) / envelope_function(M_drawn)));
 
         /* Store drawn mass in MstarSampleIMF[0], zero the rest */
-        for(j = 0; j < N_STELLAR_MASS; j++) P[i].MstarSampleIMF[j] = 0;
+        int j; for(j = 0; j < N_STELLAR_MASS; j++) P[i].MstarSampleIMF[j] = 0;
         P[i].MstarSampleIMF[0] = M_drawn;
+        /* MstarSampleIMF[1..3] = 0: temporary momentum storage for xchange */
+    }
 
-        /* === Phase 2: Mass & momentum conserving transfer with gas neighbors === */
-        double delta_solar = M_drawn - M_particle_solar;
+    /* === Iterative xchange: mass borrowing/returning ===
+     * The initial search radius is pre-scaled in particle2in to enclose enough
+     * gas for the drawn stellar mass. If that's not enough (e.g. star near void),
+     * we bump KernelRadius by 10% and repeat until all stars have enough mass.
+     * In practice the pre-scaling is generous (1.5x safety factor), so iteration
+     * rarely triggers. */
+    PRINT_STATUS(" ..IMF sampling: mass transfer for single stars");
+    int iter = 0, max_iter = 50;
+    int incomplete_total;
+    do {
+        IMFDonorFlag = (int *) mymalloc("IMFDonorFlag", NumPart * sizeof(int));
+        memset(IMFDonorFlag, 0, NumPart * sizeof(int));
 
-        if(fabs(delta_solar) > All.MassTolerance)
-        {
-            double h_search = All.SearchingRadius;
-            if(h_search <= 0) h_search = P[i].KernelRadius;
-            if(h_search <= 0) h_search = All.ForceSoftening[0];
+        assign_stellar_masses_xchange();
 
-            int numngb = 0, NITER = 0, MAX_SEARCH_ITER = 30;
-            int enough_mass = 0;
+        myfree(IMFDonorFlag); IMFDonorFlag = NULL;
 
-            /* Iteratively expand search radius until enough gas mass is found */
-            while(!enough_mass && h_search > 0 && NITER < MAX_SEARCH_ITER)
-            {
-                int startnode = All.MaxPart, dummy = 0;
-                numngb = ngb_treefind_variable_targeted(P[i].Pos, h_search, -1,
-                                &startnode, 0, &dummy, &dummy, 1);
-
-                if(numngb > 0)
-                {
-                    if(delta_solar < 0) {
-                        enough_mass = 1; /* any neighbor works for returning mass */
-                    } else {
-                        double total_avail = 0;
-                        for(n = 0; n < numngb; n++) {
-                            j = Ngblist[n];
-                            if(P[j].Mass > 0) total_avail += 0.99 * P[j].Mass * UNIT_MASS_IN_SOLAR;
-                        }
-                        if(total_avail >= delta_solar - All.MassTolerance) enough_mass = 1;
-                    }
-                }
-
-                if(!enough_mass) {
-                    h_search *= 2.0;
-                    NITER++;
-                }
+        /* Check for incomplete borrowing across all ranks */
+        int incomplete_local = 0;
+        for(i = 0; i < NumPart; i++) {
+            if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+            double m_new_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
+            double delta_code = m_new_code - P[i].Mass;
+            if(delta_code <= 1.0e-3 * P[i].Mass) continue; /* not borrowing or within tolerance */
+            double remaining = delta_code - P[i].MstarSampleIMF[4];
+            if(remaining > 1.0e-3 * P[i].Mass) {
+                incomplete_local++;
+                P[i].KernelRadius *= 1.1; /* expand search radius by 10% for next pass */
             }
+        }
+        MPI_Allreduce(&incomplete_local, &incomplete_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        iter++;
+        if(ThisTask == 0 && incomplete_total > 0)
+            printf("IMF sampling iter %d: %d stars still need more mass, expanding search radius\n", iter, incomplete_total);
+    } while(incomplete_total > 0 && iter < max_iter);
 
-            if(NITER >= MAX_SEARCH_ITER && !enough_mass) {
-                printf("Task %d: WARNING — IMF sampling for particle %d could not find enough gas after %d iterations (h=%g, delta=%g Msun)\n",
-                       ThisTask, i, NITER, h_search, delta_solar);
-            }
+    if(ThisTask == 0 && iter >= max_iter && incomplete_total > 0)
+        printf("WARNING: IMF sampling did not converge after %d iterations, %d stars incomplete\n", max_iter, incomplete_total);
 
-            if(enough_mass && numngb > 0)
-            {
-                /* Sort neighbors by distance (insertion sort) */
-                double *ngb_dist2 = (double *) mymalloc("ngb_d2", numngb * sizeof(double));
-                int *ngb_idx = (int *) mymalloc("ngb_idx", numngb * sizeof(int));
+    /* === Post-processing: velocity update for momentum conservation, finalize === */
+    for(i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
 
-                for(n = 0; n < numngb; n++) {
-                    ngb_idx[n] = Ngblist[n];
-                    double dx[3];
-                    for(k = 0; k < 3; k++) dx[k] = P[Ngblist[n]].Pos[k] - P[i].Pos[k];
-                    NEAREST_XYZ(dx[0], dx[1], dx[2], 1);
-                    ngb_dist2[n] = dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2];
-                }
+        double M_drawn = P[i].MstarSampleIMF[0]; /* solar masses */
+        double m_old_code = P[i].Mass; /* original gas cell mass in code units */
+        double m_new_code = M_drawn / UNIT_MASS_IN_SOLAR;
+        double delta_code = m_new_code - m_old_code;
 
-                for(n = 1; n < numngb; n++) {
-                    double kd = ngb_dist2[n]; int ki = ngb_idx[n];
-                    int m = n - 1;
-                    while(m >= 0 && ngb_dist2[m] > kd) {
-                        ngb_dist2[m+1] = ngb_dist2[m];
-                        ngb_idx[m+1] = ngb_idx[m];
-                        m--;
-                    }
-                    ngb_dist2[m+1] = kd;
-                    ngb_idx[m+1] = ki;
-                }
-
-                /* Track total momentum gained by star from gas (code units) */
-                double star_mom_gained[3] = {0, 0, 0};
-
-                if(delta_solar > 0)
-                {
-                    /* Overshoot: borrow mass from nearest gas first.
-                     * Gas velocity unchanged (mass removed at gas velocity).
-                     * Star accumulates momentum from borrowed mass. */
-                    double remaining = delta_solar;
-                    for(n = 0; n < numngb && remaining > All.MassTolerance; n++)
-                    {
-                        j = ngb_idx[n];
-                        if(P[j].Mass <= 0) continue;
-                        double gas_solar = P[j].Mass * UNIT_MASS_IN_SOLAR;
-                        double available = 0.99 * gas_solar; /* 1% mass floor */
-                        if(available <= 0) continue;
-                        double take = DMIN(available, remaining);
-                        double take_code = take / UNIT_MASS_IN_SOLAR;
-
-                        /* Gas mass update */
-                        P[j].Mass -= take_code;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                        CellP[j].MassTrue -= take_code;
-                        if(CellP[j].MassTrue < 0) CellP[j].MassTrue = 0;
-#endif
-                        /* Gas velocity stays the same (mass leaves at gas velocity).
-                         * Momentum carried to star = take_code * v_gas */
-                        for(k = 0; k < 3; k++)
-                            star_mom_gained[k] += take_code * P[j].Vel[k];
-
-                        remaining -= take;
-                    }
-                }
-                else
-                {
-                    /* Undershoot: return excess mass to nearest viable gas cell.
-                     * Star velocity unchanged (mass leaves at star velocity).
-                     * Gas velocity updated to conserve momentum. */
-                    double to_return_code = (-delta_solar) / UNIT_MASS_IN_SOLAR;
-                    for(n = 0; n < numngb; n++)
-                    {
-                        j = ngb_idx[n];
-                        if(P[j].Mass <= 0) continue;
-
-                        double m_j_new = P[j].Mass + to_return_code;
-                        /* v_gas_new = (m_gas_old * v_gas + dm * v_star) / m_gas_new */
-                        for(k = 0; k < 3; k++) {
-                            double dv = (to_return_code / m_j_new) * (P[i].Vel[k] - P[j].Vel[k]);
-                            P[j].Vel[k] += dv;
-                            CellP[j].VelPred[k] += dv;
-                        }
-                        P[j].Mass = m_j_new;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                        CellP[j].MassTrue += to_return_code;
-#endif
-                        break; /* all returned to nearest neighbor */
-                    }
-                }
-
-                myfree(ngb_idx);
-                myfree(ngb_dist2);
-
-                /* Update star velocity for momentum conservation (borrowing case).
-                 * v_star_new = (m_old * v_old + sum(take_k * v_gas_k)) / m_new */
-                if(delta_solar > 0 && (star_mom_gained[0] != 0 || star_mom_gained[1] != 0 || star_mom_gained[2] != 0))
-                {
-                    double m_i_new_code = M_drawn / UNIT_MASS_IN_SOLAR;
-                    for(k = 0; k < 3; k++)
-                        P[i].Vel[k] = (m_i_old_code * P[i].Vel[k] + star_mom_gained[k]) / m_i_new_code;
-                }
+        /* Update star velocity for momentum conservation (borrowing case only).
+         * v_star_new = (m_old * v_old + mom_gained) / m_new
+         * where mom_gained was accumulated in MstarSampleIMF[1..3] by the xchange */
+        if(delta_code > 0 && m_new_code > 0) {
+            for(k=0;k<3;k++) {
+                P[i].Vel[k] = (m_old_code * P[i].Vel[k] + P[i].MstarSampleIMF[k+1]) / m_new_code;
             }
         }
 
-        /* Set dynamical mass to drawn IMF mass and mark as sampled */
-        P[i].Mass = M_drawn / UNIT_MASS_IN_SOLAR;
+        /* Set dynamical mass to drawn IMF mass */
+        P[i].Mass = m_new_code;
         P[i].sampled = 1;
 
-        /* === Phase 3: Compute UV luminosity from drawn star === */
+        /* Clear temporary storage (momentum [1..3] and mass_borrowed [4]) */
+        P[i].MstarSampleIMF[1] = P[i].MstarSampleIMF[2] = P[i].MstarSampleIMF[3] = P[i].MstarSampleIMF[4] = 0;
+
+        /* Compute UV luminosity from the single drawn star */
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         P[i].UV_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
@@ -236,11 +451,10 @@ void assign_stellar_masses(void)
             }
         }
 #endif
-    } /* for i over all particles */
 
-    myfree(Ngblist);
+    }
 
-    if(ThisTask == 0) printf("IMF sampling done.\n");
+    if(ThisTask == 0) printf("IMF sampling done (%d iterations).\n", iter);
 }
 
 
