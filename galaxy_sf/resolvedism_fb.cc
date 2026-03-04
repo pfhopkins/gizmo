@@ -33,6 +33,38 @@ void resolvedism_determine_SNe(void)
     int i;
     int n_sne_local = 0, n_sne_total = 0;
 
+    /* first pass: count local SNe so we can allocate buffers */
+    int n_sne_count = 0;
+    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    {
+        if(P[i].Type != 4 || P[i].Mass <= 0 || P[i].SNe_ThisTimeStep != 0) continue;
+        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        if(star_age_yr <= 0) continue;
+        double Mstar = 0;
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+        Mstar = P[i].Mstar;
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+        if(P[i].sampled) {Mstar = P[i].MstarSampleIMF[0];}
+#endif
+        if(Mstar < 8.0 || Mstar <= 0) continue;
+        double lifetime_yr = get_lifetime(Mstar);
+#ifdef GALSF_RESOLVEDISM_INSTANT_SN
+        if(All.Time < All.TimeInstantSN) {lifetime_yr = 0;}
+#endif
+        if(star_age_yr > lifetime_yr) {n_sne_count++;}
+    }
+
+    /* allocate local SN info buffers */
+    double *sn_x = (double *)mymalloc("sn_x", n_sne_count * sizeof(double));
+    double *sn_y = (double *)mymalloc("sn_y", n_sne_count * sizeof(double));
+    double *sn_z = (double *)mymalloc("sn_z", n_sne_count * sizeof(double));
+    double *sn_u = (double *)mymalloc("sn_u", n_sne_count * sizeof(double));
+    double *sn_rho = (double *)mymalloc("sn_rho", n_sne_count * sizeof(double));
+    double *sn_mstar = (double *)mymalloc("sn_mstar", n_sne_count * sizeof(double));
+    long long *sn_id = (long long *)mymalloc("sn_id", n_sne_count * sizeof(long long));
+
+    /* second pass: flag SNe and collect info */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if(P[i].Type != 4) continue;
@@ -57,6 +89,13 @@ void resolvedism_determine_SNe(void)
 #endif
             if(star_age_yr > lifetime_yr) {
                 P[i].SNe_ThisTimeStep = 1; /* this single star dies as SN */
+                sn_x[n_sne_local] = P[i].Pos[0];
+                sn_y[n_sne_local] = P[i].Pos[1];
+                sn_z[n_sne_local] = P[i].Pos[2];
+                sn_u[n_sne_local] = P[i].InternalEnergyAroundParticle;
+                sn_rho[n_sne_local] = P[i].DensityAroundParticle;
+                sn_mstar[n_sne_local] = Mstar;
+                sn_id[n_sne_local] = (long long)P[i].ID;
                 P[i].Mstar = 0; /* prevent re-trigger on snapshot restart */
                 n_sne_local++;
             }
@@ -75,6 +114,13 @@ void resolvedism_determine_SNe(void)
 #endif
             if(star_age_yr > lifetime_yr) {
                 P[i].SNe_ThisTimeStep = 1; /* this single star dies as SN */
+                sn_x[n_sne_local] = P[i].Pos[0];
+                sn_y[n_sne_local] = P[i].Pos[1];
+                sn_z[n_sne_local] = P[i].Pos[2];
+                sn_u[n_sne_local] = P[i].InternalEnergyAroundParticle;
+                sn_rho[n_sne_local] = P[i].DensityAroundParticle;
+                sn_mstar[n_sne_local] = Mstar;
+                sn_id[n_sne_local] = (long long)P[i].ID;
                 P[i].MstarSampleIMF[0] = 0; /* remove the dead star */
                 n_sne_local++;
             }
@@ -82,11 +128,67 @@ void resolvedism_determine_SNe(void)
 #endif
     }
 
-    MPI_Reduce(&n_sne_local, &n_sne_total, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    if(ThisTask == 0 && n_sne_total > 0) {
-        printf("ResolvedISM: %d single-star SNe this timestep at t=%g\n", n_sne_total, All.Time);
-        fflush(stdout);
+    /* MPI_Gatherv to rank 0 for file output */
+    MPI_Allreduce(&n_sne_local, &n_sne_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(n_sne_total > 0)
+    {
+        if(ThisTask == 0) {printf("ResolvedISM: %d single-star SNe this timestep at t=%g\n", n_sne_total, All.Time); fflush(stdout);}
+
+        int *recvcounts = NULL, *displs = NULL;
+        double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL;
+        long long *all_id = NULL;
+
+        if(ThisTask == 0)
+        {
+            recvcounts = (int *)mymalloc("recvcounts", NTask * sizeof(int));
+            displs = (int *)mymalloc("displs", NTask * sizeof(int));
+        }
+        MPI_Gather(&n_sne_local, 1, MPI_INT, recvcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
+        {
+            displs[0] = 0;
+            for(i = 1; i < NTask; i++) {displs[i] = displs[i-1] + recvcounts[i-1];}
+            all_x = (double *)mymalloc("all_x", n_sne_total * sizeof(double));
+            all_y = (double *)mymalloc("all_y", n_sne_total * sizeof(double));
+            all_z = (double *)mymalloc("all_z", n_sne_total * sizeof(double));
+            all_u = (double *)mymalloc("all_u", n_sne_total * sizeof(double));
+            all_rho = (double *)mymalloc("all_rho", n_sne_total * sizeof(double));
+            all_mstar = (double *)mymalloc("all_mstar", n_sne_total * sizeof(double));
+            all_id = (long long *)mymalloc("all_id", n_sne_total * sizeof(long long));
+        }
+        MPI_Gatherv(sn_x, n_sne_local, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_y, n_sne_local, MPI_DOUBLE, all_y, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_z, n_sne_local, MPI_DOUBLE, all_z, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_u, n_sne_local, MPI_DOUBLE, all_u, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_rho, n_sne_local, MPI_DOUBLE, all_rho, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_mstar, n_sne_local, MPI_DOUBLE, all_mstar, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_id, n_sne_local, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+
+        if(ThisTask == 0)
+        {
+            for(i = 0; i < n_sne_total; i++) {
+                fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g\n",
+                    All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i], all_id[i], all_mstar[i]);
+            }
+            fflush(FdSNinfo);
+            myfree(all_id);
+            myfree(all_mstar);
+            myfree(all_rho);
+            myfree(all_u);
+            myfree(all_z);
+            myfree(all_y);
+            myfree(all_x);
+            myfree(displs);
+            myfree(recvcounts);
+        }
     }
+    myfree(sn_id);
+    myfree(sn_mstar);
+    myfree(sn_rho);
+    myfree(sn_u);
+    myfree(sn_z);
+    myfree(sn_y);
+    myfree(sn_x);
 }
 
 

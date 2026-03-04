@@ -242,6 +242,12 @@ FILE
 #ifdef GALSF
 FILE *FdSfr;			/*!< file handle for sfr.txt log-file. */
 #endif
+#ifdef GALSF_RESOLVEDISM_FB
+FILE *FdSNinfo;			/*!< file handle for SNinfo.txt per-SN diagnostic log */
+#endif
+#ifdef GALSF_RESOLVEDISM
+FILE *FdSFinfo;			/*!< file handle for SFinfo.txt per-SF-event diagnostic log */
+#endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 FILE *FdMomWinds;	/*!< file handle for MomWinds.txt log-file */
 #endif

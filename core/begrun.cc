@@ -743,6 +743,23 @@ void open_outputfiles(void)
   }
 #endif
 
+#ifdef GALSF_RESOLVEDISM_FB
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SNinfo.txt");
+  if(!(FdSNinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdSNinfo,"%s Per-SN diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
+      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star\n",prefix_char);
+  }
+#endif
+#ifdef GALSF_RESOLVEDISM
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SFinfo.txt");
+  if(!(FdSFinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdSFinfo,"%s Per-SF-event diagnostic log [GALSF_RESOLVEDISM]. Columns: \n",prefix_char);
+      fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star\n",prefix_char);
+  }
+#endif
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "MomWinds.txt");
     if(!(FdMomWinds = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}

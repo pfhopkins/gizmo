@@ -309,6 +309,12 @@ extern FILE
 #ifdef GALSF
 extern FILE *FdSfr;        /*!< file handle for star formation log-file. */
 #endif
+#ifdef GALSF_RESOLVEDISM_FB
+extern FILE *FdSNinfo;     /*!< file handle for SNinfo.txt per-SN diagnostic log */
+#endif
+#ifdef GALSF_RESOLVEDISM
+extern FILE *FdSFinfo;     /*!< file handle for SFinfo.txt per-SF-event diagnostic log */
+#endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 extern FILE *FdMomWinds;    /*!< file handle for local photon-momentum subgrid model log-file */
 #endif

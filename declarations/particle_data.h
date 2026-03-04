@@ -122,6 +122,9 @@ extern ALIGN(32) struct particle_data
     MyFloat KernelSum_Around_RT_Source; /*!< kernel summation around sources for radiation injection (save so can be different from 'density') */
 #endif
     
+#ifdef GALSF_RESOLVEDISM_FB
+    MyFloat InternalEnergyAroundParticle; /*!< mass-weighted ambient internal energy around star (from density loop) */
+#endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL) || defined(GALSF_RESOLVEDISM_FB)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION

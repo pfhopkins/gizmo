@@ -425,6 +425,19 @@ void star_formation_parent_routine(void)
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
     for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
 
+#ifdef GALSF_RESOLVEDISM
+    int sf_buf_size = 64, n_sf_local = 0;
+    double *sf_x = NULL, *sf_y = NULL, *sf_z = NULL, *sf_u = NULL, *sf_rho = NULL, *sf_mstar = NULL;
+    long long *sf_id = NULL;
+    sf_x = (double *)mymalloc_movable(&sf_x, "sf_x", sf_buf_size * sizeof(double));
+    sf_y = (double *)mymalloc_movable(&sf_y, "sf_y", sf_buf_size * sizeof(double));
+    sf_z = (double *)mymalloc_movable(&sf_z, "sf_z", sf_buf_size * sizeof(double));
+    sf_u = (double *)mymalloc_movable(&sf_u, "sf_u", sf_buf_size * sizeof(double));
+    sf_rho = (double *)mymalloc_movable(&sf_rho, "sf_rho", sf_buf_size * sizeof(double));
+    sf_mstar = (double *)mymalloc_movable(&sf_mstar, "sf_mstar", sf_buf_size * sizeof(double));
+    sf_id = (long long *)mymalloc_movable(&sf_id, "sf_id", sf_buf_size * sizeof(long long));
+#endif
+
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if((P[i].Type == 0)&&(P[i].Mass>0))
@@ -549,12 +562,32 @@ void star_formation_parent_routine(void)
                             TimeBinSfr[P[i].TimeBin] -= CellP[i].Sfr;
                             
                             P[i].StellarAge = All.Time;
-                            
+
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
                             P[i].DensityAroundParticle = CellP[i].Density;
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
                             P[i].FormationDensity = CellP[i].Density;
+#endif
+#ifdef GALSF_RESOLVEDISM
+                            if(n_sf_local >= sf_buf_size) {
+                                sf_buf_size *= 2;
+                                sf_x = (double *)myrealloc_movable(sf_x, sf_buf_size * sizeof(double));
+                                sf_y = (double *)myrealloc_movable(sf_y, sf_buf_size * sizeof(double));
+                                sf_z = (double *)myrealloc_movable(sf_z, sf_buf_size * sizeof(double));
+                                sf_u = (double *)myrealloc_movable(sf_u, sf_buf_size * sizeof(double));
+                                sf_rho = (double *)myrealloc_movable(sf_rho, sf_buf_size * sizeof(double));
+                                sf_mstar = (double *)myrealloc_movable(sf_mstar, sf_buf_size * sizeof(double));
+                                sf_id = (long long *)myrealloc_movable(sf_id, sf_buf_size * sizeof(long long));
+                            }
+                            sf_x[n_sf_local] = P[i].Pos[0];
+                            sf_y[n_sf_local] = P[i].Pos[1];
+                            sf_z[n_sf_local] = P[i].Pos[2];
+                            sf_u[n_sf_local] = CellP[i].InternalEnergyPred;
+                            sf_rho[n_sf_local] = CellP[i].Density;
+                            sf_mstar[n_sf_local] = P[i].Mass;
+                            sf_id[n_sf_local] = (long long)P[i].ID;
+                            n_sf_local++;
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                             P[i].Mass = CellP[i].MassTrue + CellP[i].dMass;
@@ -737,6 +770,29 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                             {int ns = NumPart + stars_spawned; P[ns].sampled = 0; int jj_imf; for(jj_imf=0; jj_imf<N_STELLAR_MASS; jj_imf++) P[ns].MstarSampleIMF[jj_imf]=0;}
 #endif
+#ifdef GALSF_RESOLVEDISM
+                            if(n_sf_local >= sf_buf_size) {
+                                sf_buf_size *= 2;
+                                sf_x = (double *)myrealloc_movable(sf_x, sf_buf_size * sizeof(double));
+                                sf_y = (double *)myrealloc_movable(sf_y, sf_buf_size * sizeof(double));
+                                sf_z = (double *)myrealloc_movable(sf_z, sf_buf_size * sizeof(double));
+                                sf_u = (double *)myrealloc_movable(sf_u, sf_buf_size * sizeof(double));
+                                sf_rho = (double *)myrealloc_movable(sf_rho, sf_buf_size * sizeof(double));
+                                sf_mstar = (double *)myrealloc_movable(sf_mstar, sf_buf_size * sizeof(double));
+                                sf_id = (long long *)myrealloc_movable(sf_id, sf_buf_size * sizeof(long long));
+                            }
+                            {
+                                int ns = NumPart + stars_spawned;
+                                sf_x[n_sf_local] = P[ns].Pos[0];
+                                sf_y[n_sf_local] = P[ns].Pos[1];
+                                sf_z[n_sf_local] = P[ns].Pos[2];
+                                sf_u[n_sf_local] = CellP[i].InternalEnergyPred;
+                                sf_rho[n_sf_local] = CellP[i].Density;
+                                sf_mstar[n_sf_local] = P[ns].Mass;
+                                sf_id[n_sf_local] = (long long)P[ns].ID;
+                                n_sf_local++;
+                            }
+#endif
                             force_add_element_to_tree(i, NumPart + stars_spawned);
 
                             stars_spawned++;
@@ -789,7 +845,72 @@ void star_formation_parent_routine(void)
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)
-    
+
+#ifdef GALSF_RESOLVEDISM
+    /* write SFinfo.txt: per-SF-event diagnostics via MPI_Gatherv to rank 0 */
+    {
+        int n_sf_total = 0;
+        MPI_Allreduce(&n_sf_local, &n_sf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(n_sf_total > 0)
+        {
+            int *recvcounts = NULL, *displs = NULL;
+            double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL;
+            long long *all_id = NULL;
+
+            if(ThisTask == 0)
+            {
+                recvcounts = (int *)mymalloc("sf_recvcounts", NTask * sizeof(int));
+                displs = (int *)mymalloc("sf_displs", NTask * sizeof(int));
+            }
+            MPI_Gather(&n_sf_local, 1, MPI_INT, recvcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0)
+            {
+                displs[0] = 0;
+                for(i = 1; i < NTask; i++) {displs[i] = displs[i-1] + recvcounts[i-1];}
+                all_x = (double *)mymalloc("sf_all_x", n_sf_total * sizeof(double));
+                all_y = (double *)mymalloc("sf_all_y", n_sf_total * sizeof(double));
+                all_z = (double *)mymalloc("sf_all_z", n_sf_total * sizeof(double));
+                all_u = (double *)mymalloc("sf_all_u", n_sf_total * sizeof(double));
+                all_rho = (double *)mymalloc("sf_all_rho", n_sf_total * sizeof(double));
+                all_mstar = (double *)mymalloc("sf_all_mstar", n_sf_total * sizeof(double));
+                all_id = (long long *)mymalloc("sf_all_id", n_sf_total * sizeof(long long));
+            }
+            MPI_Gatherv(sf_x, n_sf_local, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_y, n_sf_local, MPI_DOUBLE, all_y, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_z, n_sf_local, MPI_DOUBLE, all_z, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_u, n_sf_local, MPI_DOUBLE, all_u, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_rho, n_sf_local, MPI_DOUBLE, all_rho, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_mstar, n_sf_local, MPI_DOUBLE, all_mstar, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_id, n_sf_local, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+
+            if(ThisTask == 0)
+            {
+                for(i = 0; i < n_sf_total; i++) {
+                    fprintf(FdSFinfo, "%.16g %g %g %g %g %g %lld %g\n",
+                        All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i], all_id[i], all_mstar[i]);
+                }
+                fflush(FdSFinfo);
+                myfree(all_id);
+                myfree(all_mstar);
+                myfree(all_rho);
+                myfree(all_u);
+                myfree(all_z);
+                myfree(all_y);
+                myfree(all_x);
+                myfree(displs);
+                myfree(recvcounts);
+            }
+        }
+        myfree_movable(sf_id);
+        myfree_movable(sf_mstar);
+        myfree_movable(sf_rho);
+        myfree_movable(sf_u);
+        myfree_movable(sf_z);
+        myfree_movable(sf_y);
+        myfree_movable(sf_x);
+    }
+#endif
+
     for(bin = 0, sfrrate = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin]) {sfrrate += TimeBinSfr[bin];}}
     
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
