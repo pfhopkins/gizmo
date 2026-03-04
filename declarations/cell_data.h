@@ -200,6 +200,10 @@ extern struct gas_cell_data
     MyFloat TracAbund[TRAC_NUM];          /*!< non-equilibrium chemical abundances */
     MyFloat DustTemp;                     /*!< dust temperature [K] */
     MyFloat Temp;                         /*!< gas temperature [K] */
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+    MyFloat Lambda[28];                   /*!< individual thermal cooling rates */
+    MyFloat LambdaChem[6];                /*!< individual chemical cooling rates */
+#endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     int Ionized;                          /*!< flag: 1 if particle is in HII region */
 #endif

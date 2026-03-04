@@ -277,9 +277,15 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     /* Compute cooling rate */
     double cooling_rate = 0.;
     for(i = 0; i < 28; i++) {
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        CellP[target].Lambda[i] = COOLR.lambda[i] / yn / yn;
+#endif
         cooling_rate += COOLR.lambda[i];
     }
     for(i = 0; i < 6; i++) {
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        CellP[target].LambdaChem[i] = COOLR.lambda_chem[i] / yn / yn;
+#endif
         cooling_rate += COOLR.lambda_chem[i];
     }
     cooling_rate *= (UNIT_LENGTH_IN_CGS * pow(UNIT_TIME_IN_CGS, 3) / UNIT_MASS_IN_CGS);

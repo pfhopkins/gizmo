@@ -749,6 +749,30 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_CHEMCOOL_COOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < 28; k++) {fp[k] = (MyOutputFloat) CellP[pindex].Lambda[k];}
+                    fp += 28;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_CHEMCOOL_CHEMCOOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < 6; k++) {fp[k] = (MyOutputFloat) CellP[pindex].LambdaChem[k];}
+                    fp += 6;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_TREE_RAD_PROJECTION:
 #ifdef TREE_RAD
             for(n = 0; n < pc; pindex++)
@@ -1937,6 +1961,20 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+        case IO_CHEMCOOL_COOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+            if(mode) bytes_per_blockelement = 28 * sizeof(MyInputFloat);
+            else bytes_per_blockelement = 28 * sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_CHEMCOOL_CHEMCOOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+            if(mode) bytes_per_blockelement = 6 * sizeof(MyInputFloat);
+            else bytes_per_blockelement = 6 * sizeof(MyOutputFloat);
+#endif
+            break;
+
         case IO_TREE_RAD_PROJECTION:
 #ifdef TREE_RAD
             if(mode) bytes_per_blockelement = NPIX * sizeof(MyInputFloat);
@@ -2263,6 +2301,18 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+        case IO_CHEMCOOL_COOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+            values = 28;
+#endif
+            break;
+
+        case IO_CHEMCOOL_CHEMCOOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+            values = 6;
+#endif
+            break;
+
         case IO_TREE_RAD_PROJECTION:
 #ifdef TREE_RAD
             values = NPIX;
@@ -2526,6 +2576,8 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_ISMDUSTCHEMMOL:
         case IO_CHEMCOOL_TRACABUND:
         case IO_CHEMCOOL_DUSTTEMP:
+        case IO_CHEMCOOL_COOLRATES:
+        case IO_CHEMCOOL_CHEMCOOLRATES:
         case IO_TREE_RAD_PROJECTION:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
@@ -2812,6 +2864,13 @@ int blockpresent(enum iofields blocknr)
 
         case IO_CHEMCOOL_DUSTTEMP:
 #ifdef CHEMCOOL
+            return 1;
+#endif
+            break;
+
+        case IO_CHEMCOOL_COOLRATES:
+        case IO_CHEMCOOL_CHEMCOOLRATES:
+#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             return 1;
 #endif
             break;
@@ -3407,6 +3466,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_CHEMCOOL_DUSTTEMP:
             strncpy(label, "CCDT", 4);
             break;
+        case IO_CHEMCOOL_COOLRATES:
+            strncpy(label, "CCLR", 4);
+            break;
+        case IO_CHEMCOOL_CHEMCOOLRATES:
+            strncpy(label, "CCCH", 4);
+            break;
         case IO_TREE_RAD_PROJECTION:
             strncpy(label, "TRPR", 4);
             break;
@@ -3834,6 +3899,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_CHEMCOOL_DUSTTEMP:
             strcpy(buf, "ChemcoolDustTemp");
+            break;
+        case IO_CHEMCOOL_COOLRATES:
+            strcpy(buf, "ChemcoolCoolRates");
+            break;
+        case IO_CHEMCOOL_CHEMCOOLRATES:
+            strcpy(buf, "ChemcoolChemCoolRates");
             break;
         case IO_TREE_RAD_PROJECTION:
             strcpy(buf, "TreeRadProjection");
