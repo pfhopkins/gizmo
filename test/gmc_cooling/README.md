@@ -1,0 +1,13 @@
+# GMC cooling test
+
+This test initializes a $$2\times10^4 M_\odot$$ giant molecular cloud at $1M_\odot$ resolution, runs it for about a crossing time, and verifies that 
+
+Compile-time flags used for this setup:
+`
+SINGLE_STAR_STARFORGE_DEFAULTS
+COOLING
+MAGNETIC
+BOX_PERIODIC
+GRAVITY_NOT_PERIODIC
+ADAPTIVE_TREEFORCE_UPDATE=0.0625
+`
