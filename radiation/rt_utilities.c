@@ -1710,7 +1710,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
 
     if(dust_or_gas_opacity_only_flag >= 0) // dust opacities
     {
-#ifdef RT_INFRARED // use fancy detailed fit with composition varying by dust temperature
+        // use fancy detailed fit with composition varying by dust temperature
         /* opacities are from tables of Semenov et al 2003; we use their 'standard'
          model, for each -dust- temperature range (which gives a different dust composition,
          hence different wavelength-dependent specific opacity). We then integrate to
@@ -1723,7 +1723,6 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
          to different grain composition choices (porous/non, composite/non, 5-layer/aggregated/etc)
          in Semenov et al's paper */
         kappa = dust_planck_mean_opacity(Trad, T_dust_opacitytable);
-#endif	
 #ifdef RADTRANSFER
         if((do_emission_absorption_scattering_opacity==1) || (do_emission_absorption_scattering_opacity==-1)) {
             kappa *= (1.-0.5/(1.+((725.*725.)/(1.+Trad*Trad)))); /* rough interpolation for dust depending on the radiation temperature: high Trad, this is 1/2, low Trad, gets closer to unity */
