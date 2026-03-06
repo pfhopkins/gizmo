@@ -1329,8 +1329,6 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				turb/turb_powerspectra.o
 
 EOSCOOL_OBJS =  cooling/cooling.o \
-                                cooling/jaco.o \
-	                        cooling/microphysics_func_jac.o \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
 				eos/eos.o \
