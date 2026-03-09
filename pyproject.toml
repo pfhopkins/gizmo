@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gizmo_test"
+version = "0.1"
+description = "pytest testing for gizmo"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+"mpi4py",
+"pytest",
+]
+
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Homepage = "https://github.com/mikegrudic/gizmo_imf"
+Issues = "https://github.com/mikegrudic/gizmo_imf/issues"
