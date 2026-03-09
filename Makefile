@@ -1358,7 +1358,8 @@ RHD_OBJS =  radiation/rt_utilities.o \
 			radiation/rt_CGmethod.o \
 			radiation/rt_source_injection.o \
 			radiation/rt_chem.o \
-			radiation/rt_cooling.o
+			radiation/rt_cooling.o \
+			radiation/rt_dust_opacity.o 
 
 FOF_OBJS =	structure/fof.o \
 			structure/subfind/subfind.o \
