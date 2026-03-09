@@ -1,9 +1,11 @@
-"""A trivial test for pytest"""
+"""GMC cooling and chemistry test"""
 
-from os import system, environ
+from gizmo.test import build_and_run_test, get_cooling_tables
+from os import system
 
 
-def test_trivial():
-    environ["TEST_NAME"] = "gmc_cooling"
-    system("bash test/build_gizmo_for_test.sh")
+def test_gmc_cooling():
+    test_name = "gmc_cooling"
+    get_cooling_tables()
+    build_and_run_test(test_name)
     assert True
