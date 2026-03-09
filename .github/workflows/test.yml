@@ -30,6 +30,8 @@ jobs:
       uses: mpi4py/setup-mpi@v1
       with:
         mpi: openmpi
+    - name: Install libraries
+      run: sudo apt install gsl hdf5
     - name: Test with pytest
       run: |
         pytest
