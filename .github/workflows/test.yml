@@ -31,7 +31,7 @@ jobs:
       with:
         mpi: openmpi
     - name: Install libraries
-      run: sudo apt install libgsl-dev libhdf5-mpi-dev
+      run: sudo apt install libhdf5-openmpi-dev libgsl-dev
     - name: Test with pytest
       run: |
         pytest
