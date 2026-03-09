@@ -8,6 +8,8 @@ def build_gizmo_for_test(test_name: str):
     """Sets environment variables and runs a script for building gizmo for a given test"""
     environ["TEST_NAME"] = test_name
     system("bash test/build_gizmo_for_test.sh")
+    if not path.isfile("GIZMO"):
+        raise FileNotFoundError("Did not successfully build GIZMO")
 
 
 def download_test_files(test_name: str):
