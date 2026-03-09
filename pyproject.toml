@@ -18,7 +18,6 @@ dependencies = [
 ]
 
 license = "MIT"
-license-files = ["LICEN[CS]E*"]
 
 [project.urls]
 Homepage = "https://github.com/mikegrudic/gizmo_imf"
