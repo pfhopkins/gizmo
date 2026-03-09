@@ -147,6 +147,39 @@ OPT     += -DHDF5_DISABLE_VERSION_CHECK
 endif
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"BigRed200")
+CC       =  cc # For Cray use this instead of mpicc
+CXX      =  CC # mpic++
+FC       =  $(CC)
+OPTIMIZE =  -O2
+
+# Extra compile time warning flags
+# OPTIMIZE += -Wall -Wextra -Wuninitialized -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion -Wno-unused-variable -Wno-unused-but-set-variable
+
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -qopenmp
+endif
+# All the library paths are already setup
+MKL_INCL =
+MKL_LIBS = -mkl=sequential
+GSL_INCL = -I/N/soft/sles15sp6/gsl/gnu/2.8/include
+GSL_LIBS = -L/N/soft/sles15sp6/gsl/gnu/2.8/lib
+FFTW_INCL=
+FFTW_LIBS=
+HDF5INCL =
+HDF5LIB  = -lhdf5 -lz
+MPICHLIB =
+
+# For mpi intel compilers and HDF5
+OPT += -DUSE_MPI_IN_PLACE -DH5_USE_16_API -DNO_ISEND_IRECV_IN_DOMAIN -DHDF5_DISABLE_VERSION_CHECK
+## modules to load: (August 2025)
+## module swap PrgEnv-gnu PrgEnv-intel
+## module swap cray-mpich-ucx/9.0.0 cray-mpich-ucx/8.1.32  # currently defaults to a pre-release mpi version
+## module load gsl cray-fftw cray-hdf5
+## srun --cpus-per-task=$SLURM_CPUS_PER_TASK --ntasks-per-node=$SLURM_NTASKS_PER_NODE --nodes=$SLURM_JOB_NUM_NODES ./GIZMO ./gizmo_parameters.txt
+endif
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Expanse")
 CC       = mpicc
 CXX      = mpicxx
