@@ -7,6 +7,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+#include "../galaxy_sf/resolvedism_stellar_tables.h"
+#endif
 
 /*! \file rt_utilities.c
  *  \brief useful functions for radiation modules
@@ -68,7 +71,11 @@ int rt_get_source_luminosity(int i, int mode, double *lum)
     active_check += rt_get_lum_band_singlestar(i,mode,lum); // get luminosities for individual star/sink particles assuming they are protostars or stars
 #endif
 #else
+#if defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+    active_check += rt_get_lum_band_resolvedism(i,mode,lum); // get luminosities from single-star stellar tables
+#else
     active_check += rt_get_lum_band_stellarpopulation(i,mode,lum); // get luminosities for star particles assuming they represent IMF-averaged populations
+#endif
 #if defined(SINK_PARTICLES)
     active_check += rt_get_lum_band_agn(i,mode,lum); // get luminosities for BH/sink particles assuming they represent AGN
 #endif
@@ -161,8 +168,14 @@ double rt_kappa(int i, int k_freq)
 #ifdef COOLING
     if(i>=0) {kappa_HHe=0.02 + 0.35*CellP[i].Ne;}
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    if(i>=0) { /* use per-particle DGR from evolved dust fields instead of metallicity-based estimate */
+        double DGR_actual = 0; int kd; for(kd=0;kd<NUM_RESOLVEDISM_DUST;kd++) {DGR_actual += CellP[i].Dust[kd];}
+        Zfac = 1.0; dust_to_metals_vs_standard = DGR_actual / 0.01; /* DGR / DGR_solar */
+    }
+#endif
 
-    
+
 #ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
     if(k_freq==RT_FREQ_BIN_FREEFREE)
     {
@@ -275,6 +288,73 @@ double rt_absorb_frac_albedo(int i, int k_freq)
     return 0.5; /* default to assuming kappa_scattering = kappa_absorption (pretty reasonable for dust at most wavelengths) */
 }
 
+
+
+
+/* subroutine for 'rt_get_source_luminosity', using per-star luminosities from the resolvedism stellar tables.
+   Band luminosities come directly from pre-tabulated Planck integrals over each RT frequency band. */
+#if defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+int rt_get_lum_band_resolvedism(int i, int mode, double *lum)
+{
+    if(P[i].Type != 4) return 0;
+    if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) return 0;
+    int active_check = 0;
+
+    /* get initial stellar mass */
+    double Mstar = 0;
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+    Mstar = P[i].Mstar;
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    if(P[i].sampled) Mstar = P[i].MstarSampleIMF[0];
+#endif
+    if(Mstar <= 0) return 0;
+
+    double logM = log10(Mstar);
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+    double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
+#else
+    double logZ = log10(0.014);
+#endif
+
+    double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+    if(star_age_yr <= 0) return 0;
+    double log_age = log10(DMAX(star_age_yr, 100.0));
+
+    /* check if star is still alive */
+    double lifetime_yr = stellar_lifetime(logM, logZ);
+    if(star_age_yr > lifetime_yr) return 0; /* dead star — no luminosity */
+
+    SET_ACTIVE_RT_CHECK();
+
+#if defined(RT_CHEM_PHOTOION)
+    { /* ionizing bands: assign directly from per-band table luminosities */
+        double l_ion_tot = pow(10.0, stellar_log_L_ion_tot(logM, logZ, log_age)) / UNIT_LUM_IN_CGS;
+        lum[RT_FREQ_BIN_H0] = l_ion_tot; /* default: all ionizing into H0 bin */
+#if defined(RT_PHOTOION_MULTIFREQUENCY)
+        lum[RT_FREQ_BIN_H0]  = pow(10.0, stellar_log_L_ion_H0(logM, logZ, log_age))  / UNIT_LUM_IN_CGS;
+        lum[RT_FREQ_BIN_He0] = pow(10.0, stellar_log_L_ion_He0(logM, logZ, log_age)) / UNIT_LUM_IN_CGS;
+        lum[RT_FREQ_BIN_He1] = pow(10.0, stellar_log_L_ion_He1(logM, logZ, log_age)) / UNIT_LUM_IN_CGS;
+        lum[RT_FREQ_BIN_He2] = pow(10.0, stellar_log_L_ion_He2(logM, logZ, log_age)) / UNIT_LUM_IN_CGS;
+#endif
+    }
+#endif
+
+#if defined(RT_PHOTOELECTRIC)
+    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pow(10.0, stellar_log_L_FUV(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 6-11.2 eV */
+#endif
+
+#if defined(RT_LYMAN_WERNER)
+    lum[RT_FREQ_BIN_LYMAN_WERNER] = pow(10.0, stellar_log_L_LW(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 11.2-13.6 eV */
+#endif
+
+#if defined(RT_INFRARED)
+    lum[RT_FREQ_BIN_INFRARED] = 0; /* no direct IR — only re-emitted by dust */
+#endif
+
+    return active_check;
+}
+#endif /* GALSF_RESOLVEDISM_STELLAR_TABLES && RADTRANSFER */
 
 
 
