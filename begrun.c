@@ -1839,6 +1839,12 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.RadiationBackgroundRedshift;
         id[nt++] = REAL;
 #endif
+#ifdef RT_INFRARED
+    strcpy(tag[nt], "InitRadiationTemp");
+	strcpy(alternate_tag[nt], "InitRadTemp");
+    addr[nt] = &All.InitRadiationTemp;
+    id[nt++] = REAL;
+#endif
 
 #ifdef AGS_HSML_CALCULATION_IS_ACTIVE
         strcpy(tag[nt], "AGS_DesNumNgb");
@@ -2333,6 +2339,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("InterstellarRadiationFieldStrength",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to assuming Solar neighborhood (Draine) background radiation field (=%g) \n",tag[i],alternate_tag[i],All.InterstellarRadiationFieldStrength); continue;}
 
                 if(strcmp("Redshift_RT_Background",tag[i])==0) {*((double *)addr[i])=0.0; printf("Tag %s (%s) not set in parameter file: defaulting to assuming z=0 background radiation field \n",tag[i],alternate_tag[i]); continue;}
+#endif
+#if defined(RT_INFRARED)
+                if(strcmp("InitRadiationTemp",tag[i])==0) {*((double *)addr[i])=20.; printf("Tag %s (%s) not set in parameter file: defaulting to assuming 20K radiation temperature \n",tag[i],alternate_tag[i]); continue;}
 #endif
 #if defined(FIRE_PHYSICS_DEFAULTS)
                 if(strcmp("SfEffPerFreeFall",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to FIRE-default of unity (=%g) \n",tag[i],alternate_tag[i],All.MaxSfrTimescale); continue;}

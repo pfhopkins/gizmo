@@ -45,9 +45,9 @@ def test_gmc_cooling():
     test_name = "gmc_cooling"
     get_cooling_tables()
     build_and_run_test(test_name)
-    if not path.isfile("output/snapshot_010.hdf5"):
+    if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
 
-    test_stats = compute_test_statistic("output/snapshot_010.hdf5", plot=True)
+    test_stats = compute_test_statistic("test/gmc_cooling/output/snapshot_010.hdf5", plot=True)
     benchmark_stats = compute_test_statistic("gmc_cooling_exact.hdf5")
     assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
