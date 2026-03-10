@@ -144,6 +144,13 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.log_L_FUV_total = (float *)mymalloc("stbl_logLFUVt",n3d * sizeof(float));
     StellarTbl.log_L_bol       = (float *)mymalloc("stbl_logLbol", n3d * sizeof(float));
 
+    /* Ionizing sub-band luminosities for M1 RT */
+    StellarTbl.log_L_ion_tot   = (float *)mymalloc("stbl_logLiont", n3d * sizeof(float));
+    StellarTbl.log_L_ion_H0    = (float *)mymalloc("stbl_logLiH0",  n3d * sizeof(float));
+    StellarTbl.log_L_ion_He0   = (float *)mymalloc("stbl_logLiHe0", n3d * sizeof(float));
+    StellarTbl.log_L_ion_He1   = (float *)mymalloc("stbl_logLiHe1", n3d * sizeof(float));
+    StellarTbl.log_L_ion_He2   = (float *)mymalloc("stbl_logLiHe2", n3d * sizeof(float));
+
     /* Surface abundances: only if winds enabled (~500 MB as float) */
     StellarTbl.surface_abundances = NULL;
 #ifdef GALSF_RESOLVEDISM_WINDS
@@ -183,6 +190,13 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "log_L_LW",       StellarTbl.log_L_LW,        n3d);
         read_hdf5_dataset_as_float(file, "log_L_FUV_total",StellarTbl.log_L_FUV_total, n3d);
         read_hdf5_dataset_as_float(file, "log_L_bol",      StellarTbl.log_L_bol,       n3d);
+
+        /* Ionizing sub-band luminosities */
+        read_hdf5_dataset_as_float(file, "log_L_ion_tot",  StellarTbl.log_L_ion_tot,   n3d);
+        read_hdf5_dataset_as_float(file, "log_L_ion_H0",   StellarTbl.log_L_ion_H0,    n3d);
+        read_hdf5_dataset_as_float(file, "log_L_ion_He0",  StellarTbl.log_L_ion_He0,   n3d);
+        read_hdf5_dataset_as_float(file, "log_L_ion_He1",  StellarTbl.log_L_ion_He1,   n3d);
+        read_hdf5_dataset_as_float(file, "log_L_ion_He2",  StellarTbl.log_L_ion_He2,   n3d);
 
         /* Surface abundances */
 #ifdef GALSF_RESOLVEDISM_WINDS
@@ -225,6 +239,12 @@ void resolvedism_load_stellar_tables(void)
     MPI_Bcast(StellarTbl.log_L_FUV_total, n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_bol,       n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
+    MPI_Bcast(StellarTbl.log_L_ion_tot,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_ion_H0,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_ion_He0,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_ion_He1,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_ion_He2,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
 #ifdef GALSF_RESOLVEDISM_WINDS
     /* Surface abundances are large — broadcast in chunks to avoid MPI limits */
     size_t chunk = 100000000; /* 100M floats per chunk (~400 MB) */
@@ -258,7 +278,7 @@ void resolvedism_load_stellar_tables(void)
         printf("  logM: [%.3f, %.3f], dlogM=%.4f\n", StellarTbl.log_M_min, StellarTbl.log_M_max, StellarTbl.dlog_M);
         printf("  log_age: [%.3f, %.3f], dlog_age=%.4f\n", StellarTbl.log_age_min, StellarTbl.log_age_max, StellarTbl.dlog_age);
         printf("  Memory: %.1f MB (3D arrays) + %.1f MB (surface abundances)\n",
-               7.0 * n3d * sizeof(float) / 1e6,
+               12.0 * n3d * sizeof(float) / 1e6,
                StellarTbl.surface_abundances ? (double)(n3d * STBL_NELEM * sizeof(float)) / 1e6 : 0.0);
 
         /* Spot-check: print a few values for verification */
@@ -278,6 +298,11 @@ void resolvedism_free_stellar_tables(void)
 #ifdef GALSF_RESOLVEDISM_WINDS
     if(StellarTbl.surface_abundances) { myfree(StellarTbl.surface_abundances); StellarTbl.surface_abundances = NULL; }
 #endif
+    if(StellarTbl.log_L_ion_He2)   { myfree(StellarTbl.log_L_ion_He2);   StellarTbl.log_L_ion_He2 = NULL; }
+    if(StellarTbl.log_L_ion_He1)   { myfree(StellarTbl.log_L_ion_He1);   StellarTbl.log_L_ion_He1 = NULL; }
+    if(StellarTbl.log_L_ion_He0)   { myfree(StellarTbl.log_L_ion_He0);   StellarTbl.log_L_ion_He0 = NULL; }
+    if(StellarTbl.log_L_ion_H0)    { myfree(StellarTbl.log_L_ion_H0);    StellarTbl.log_L_ion_H0 = NULL; }
+    if(StellarTbl.log_L_ion_tot)   { myfree(StellarTbl.log_L_ion_tot);   StellarTbl.log_L_ion_tot = NULL; }
     if(StellarTbl.log_L_bol)       { myfree(StellarTbl.log_L_bol);       StellarTbl.log_L_bol = NULL; }
     if(StellarTbl.log_L_FUV_total) { myfree(StellarTbl.log_L_FUV_total); StellarTbl.log_L_FUV_total = NULL; }
     if(StellarTbl.log_L_LW)        { myfree(StellarTbl.log_L_LW);        StellarTbl.log_L_LW = NULL; }
@@ -360,6 +385,31 @@ double stellar_log_L_bol(double logM, double logZ, double log_age)
     return interp3d(StellarTbl.log_L_bol, logM, logZ, log_age);
 }
 
+double stellar_log_L_ion_tot(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_tot, logM, logZ, log_age);
+}
+
+double stellar_log_L_ion_H0(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_H0, logM, logZ, log_age);
+}
+
+double stellar_log_L_ion_He0(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_He0, logM, logZ, log_age);
+}
+
+double stellar_log_L_ion_He1(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_He1, logM, logZ, log_age);
+}
+
+double stellar_log_L_ion_He2(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_He2, logM, logZ, log_age);
+}
+
 /* --- Surface abundances --- */
 
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem)
@@ -421,3 +471,25 @@ double stellar_type_ia_yield(int elem)
 
 
 #endif /* GALSF_RESOLVEDISM_STELLAR_TABLES */
+
+
+/* Accessor for turbulent diffusion: returns the resolved ISM passive scalar
+   (ElementAbundance or Dust) at global index k, or -1 if k is not ours */
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
+double return_resolvedism_species_for_diffusion(int i, int k)
+{
+    k -= NUM_METAL_SPECIES;
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    k -= (NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES + NUM_ISMDUSTCHEM_SPECIES);
+#endif
+    if(k < 0) return -1;
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    if(k < NUM_RESOLVEDISM_ELEMENTS) return P[i].ElementAbundance[k];
+    k -= NUM_RESOLVEDISM_ELEMENTS;
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST)
+    if(k < NUM_RESOLVEDISM_DUST) return CellP[i].Dust[k];
+#endif
+    return -1;
+}
+#endif

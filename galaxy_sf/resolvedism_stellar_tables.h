@@ -56,6 +56,13 @@ struct StellarTables {
     float *log_L_FUV_total;/* log10(erg/s), 6-13.6 eV total FUV */
     float *log_L_bol;      /* log10(erg/s), bolometric */
 
+    /* Ionizing sub-band luminosities for M1 RT [NZ * NM * NAGE] */
+    float *log_L_ion_tot;  /* log10(erg/s), total ionizing (>13.6 eV) */
+    float *log_L_ion_H0;   /* log10(erg/s), 13.6-24.6 eV */
+    float *log_L_ion_He0;  /* log10(erg/s), 24.6-54.4 eV */
+    float *log_L_ion_He1;  /* log10(erg/s), 54.4-70 eV */
+    float *log_L_ion_He2;  /* log10(erg/s), >70 eV */
+
     /* 4D surface abundances [NZ * NM * NAGE * NELEM] — only if winds enabled */
     float *surface_abundances;
 
@@ -88,6 +95,11 @@ double stellar_log_L_FUV(double logM, double logZ, double log_age);
 double stellar_log_L_LW(double logM, double logZ, double log_age);
 double stellar_log_L_FUV_total(double logM, double logZ, double log_age);
 double stellar_log_L_bol(double logM, double logZ, double log_age);
+double stellar_log_L_ion_tot(double logM, double logZ, double log_age);
+double stellar_log_L_ion_H0(double logM, double logZ, double log_age);
+double stellar_log_L_ion_He0(double logM, double logZ, double log_age);
+double stellar_log_L_ion_He1(double logM, double logZ, double log_age);
+double stellar_log_L_ion_He2(double logM, double logZ, double log_age);
 
 /* ---- Surface abundances (3D + element index) ---- */
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem);

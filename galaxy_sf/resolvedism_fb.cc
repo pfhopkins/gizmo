@@ -194,6 +194,19 @@ void resolvedism_determine_SNe(void)
             P[i].Mstar = 0;
 #endif
             P[i].SNe_ThisTimeStep = -1; /* mark as done, no explosion */
+#ifdef GALSF_RESOLVEDISM_BH_PROMOTION
+            /* Promote to Type 5 sink (stellar-mass BH) */
+            P[i].Type = 5;
+            P[i].SinkSubType = 1;
+            P[i].Sink_Mass = P[i].Mass;
+            P[i].Sink_Formation_Mass = P[i].Mass;
+            P[i].Sink_Mdot = 0;
+            P[i].Sink_TimeBinGasNeighbor = 0;
+            P[i].SwallowID = 0;
+            P[i].IndexMapToTempStruc = -1;
+            P[i].KernelRadius = All.ForceSoftening[5];
+            TreeReconstructFlag = 1;
+#endif
             n_collapse_local++;
             continue;
         }
@@ -356,6 +369,9 @@ struct INPUT_STRUCT_NAME
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS]; /* element masses in ejecta [code units] */
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    MyDouble DustYields[NUM_RESOLVEDISM_DUST]; /* dust mass in ejecta [code units] */
+#endif
     MyDouble MetalMass; /* total metal mass in ejecta [code units] (Z > He) */
     int NodeList[NODELISTLENGTH];
 }
@@ -368,6 +384,9 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
     in->wt_sum = 0; in->Esne = 0; in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    for(k=0; k<NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = 0;
 #endif
     if(P[i].Mass <= 0) return;
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
@@ -389,6 +408,14 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
             if(k >= ELEM_C) metal_mass_solar += y_k;
         }
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+#ifdef GALSF_RESOLVEDISM_DUST
+        {
+            double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
+            for(int kk = 0; kk < STBL_NELEM; kk++) metal_yields_solar[kk] = in->ElemYields[kk] * UNIT_MASS_IN_SOLAR;
+            resolvedism_dust_condensation(4, metal_yields_solar, dust_yields_solar);
+            for(int kk = 0; kk < NUM_RESOLVEDISM_DUST; kk++) in->DustYields[kk] = dust_yields_solar[kk] / UNIT_MASS_IN_SOLAR;
+        }
+#endif
         return;
     }
 #endif
@@ -414,10 +441,15 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         if(dt <= 0) return;
         double dt_cgs = dt * UNIT_TIME_IN_CGS;
 
-        /* Dust-to-gas ratio: use same value as CHEMCOOL for consistency */
+        /* Dust-to-gas ratio */
+#ifdef GALSF_RESOLVEDISM_DUST
+        /* Use kernel-weighted local DGR from density loop, normalized to solar (DGR_solar ~ 0.01) */
+        double DGR = P[i].DGR_around / 0.01;
+#else
         double DGR = All.DGRnormalized;
 #ifdef DGR_SCALE_WITH_Z
         DGR = All.DGRnormalized * All.InitialMetallicity;
+#endif
 #endif
 
         /* Local column density estimate: Sigma ~ rho * h */
@@ -539,6 +571,17 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
     }
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 
+#ifdef GALSF_RESOLVEDISM_DUST
+    {
+        /* Compute dust yields from metal yields: sne_flag = 1 for CCSN, 2 for AGB */
+        int dust_flag = (P[i].SNe_ThisTimeStep == 2) ? 2 : 1;
+        double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
+        for(k = 0; k < STBL_NELEM; k++) metal_yields_solar[k] = in->ElemYields[k] * UNIT_MASS_IN_SOLAR;
+        resolvedism_dust_condensation(dust_flag, metal_yields_solar, dust_yields_solar);
+        for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = dust_yields_solar[k] / UNIT_MASS_IN_SOLAR;
+    }
+#endif
+
 #else
     /* Fallback: no tables, just thermal energy, no mass/metal injection */
     in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS;
@@ -649,11 +692,22 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
 
                 /* ---- Thermal energy injection ---- */
                 if(local.Esne > 0) {
+#ifdef COSMIC_RAY_FLUID
+                    double cr_frac = All.CosmicRay_SNeFraction; /* fraction of SN energy into CRs (typically 0.1) */
+                    double dE = wk * local.Esne * (1.0 - cr_frac) / Mass_j;
+#else
                     double dE = wk * local.Esne / Mass_j;
+#endif
                     #pragma omp atomic
                     CellP[j].InternalEnergy += dE;
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += dE;
+#ifdef COSMIC_RAY_FLUID
+                    double dEcr = wk * local.Esne * cr_frac;
+                    double v_ej = (local.Mej > 0) ? sqrt(2.0 * local.Esne / local.Mej) : 3000.0/UNIT_VEL_IN_KMS;
+                    double crdir[3]; for(k=0;k<3;k++) {crdir[k] = -kernel.dp[k] / kernel.r;}
+                    inject_cosmic_rays(dEcr, v_ej, 0, j, crdir);
+#endif
                 }
 
                 /* ---- Mass injection ---- */
@@ -690,6 +744,37 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
                     #pragma omp atomic
                     P[j].Mass += dM;
                 }
+
+#ifdef GALSF_RESOLVEDISM_DUST
+                /* ---- SN shock destruction of pre-existing dust ---- */
+                if(local.Esne > 0) {
+                    double E_into_cell = wk * local.Esne;
+                    double Rho_j;
+                    #pragma omp atomic read
+                    Rho_j = CellP[j].Density;
+                    double frac_dest = resolvedism_dust_sn_destruction_frac(Rho_j, E_into_cell, Mass_j);
+                    if(frac_dest > 0) {
+                        for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) {
+                            #pragma omp atomic
+                            CellP[j].Dust[k] *= (1.0 - frac_dest);
+                        }
+                    }
+                }
+                /* ---- Inject new dust from ejecta ---- */
+                if(local.Mej > 0) {
+                    double dM = wk * local.Mej;
+                    double Mnew_j = Mass_j + dM; /* mass already updated above */
+                    for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) {
+                        double D_old;
+                        #pragma omp atomic read
+                        D_old = CellP[j].Dust[k];
+                        double dMD = wk * local.DustYields[k];
+                        double dD = (dMD - D_old * dM) / Mnew_j;
+                        #pragma omp atomic
+                        CellP[j].Dust[k] += dD;
+                    }
+                }
+#endif
 
 #ifdef GALSF_RESOLVEDISM_WINDS
                 /* ---- Wind momentum kick ---- */
@@ -860,6 +945,21 @@ void resolvedism_inject_sn_energy(void)
             /* Mark WD remnants as eligible for future Type Ia */
             if(rem_type == REM_WD) {
                 P[i].M_drawn_Ia = Mstar; /* store original mass for DTD probability */
+            }
+#endif
+#ifdef GALSF_RESOLVEDISM_BH_PROMOTION
+            /* PPISN: explosive SN that still leaves a BH remnant — promote after ejecta injection */
+            if(rem_type == REM_PPISN) {
+                P[i].Type = 5;
+                P[i].SinkSubType = 1;
+                P[i].Sink_Mass = P[i].Mass;
+                P[i].Sink_Formation_Mass = P[i].Mass;
+                P[i].Sink_Mdot = 0;
+                P[i].Sink_TimeBinGasNeighbor = 0;
+                P[i].SwallowID = 0;
+                P[i].IndexMapToTempStruc = -1;
+                P[i].KernelRadius = All.ForceSoftening[5];
+                TreeReconstructFlag = 1;
             }
 #endif
         }
