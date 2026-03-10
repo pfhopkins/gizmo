@@ -2194,6 +2194,44 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef KETJU_REGULARIZATION
+      strcpy(tag[nt], "KetjuRegionRadius");
+      addr[nt] = &All.KetjuRegionRadius;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuMinBHMass");
+      addr[nt] = &All.KetjuMinBHMass;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuMinStarMass");
+      addr[nt] = &All.KetjuMinStarMass;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuIntegrationTolerance");
+      addr[nt] = &All.KetjuIntegrationTolerance;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuPNTerms");
+      addr[nt] = All.KetjuPNTerms;
+      id[nt++] = STRING;
+
+      strcpy(tag[nt], "KetjuEnableBHMergerKicks");
+      addr[nt] = &All.KetjuEnableBHMergerKicks;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "KetjuUseStarStarSoftening");
+      addr[nt] = &All.KetjuUseStarStarSoftening;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "KetjuTimestepLimitingFactor");
+      addr[nt] = &All.KetjuTimestepLimitingFactor;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuMaxStepCount");
+      addr[nt] = &All.KetjuMaxStepCount;
+      id[nt++] = INT;
+#endif
+
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
       strcpy(tag[nt], "SearchingRadius");
       addr[nt] = &All.SearchingRadius;
@@ -2414,6 +2452,16 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
                 if(strcmp("MaxStellarTimestep",tag[i])==0) {*((double *)addr[i])=50000.; printf("Tag %s (%s) not set in parameter file: defaulting to 50 kyr (=%g yr)\n",tag[i],alternate_tag[i],All.MaxStellarTimestep); continue;}
+#endif
+#ifdef KETJU_REGULARIZATION
+                if(strcmp("KetjuMinBHMass",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Type 5 chain centers disabled)\n",tag[i]); continue;}
+                if(strcmp("KetjuMinStarMass",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Type 4 chain centers disabled)\n",tag[i]); continue;}
+                if(strcmp("KetjuIntegrationTolerance",tag[i])==0) {*((double *)addr[i])=1e-9; printf("Tag %s not set: defaulting to 1e-9\n",tag[i]); continue;}
+                if(strcmp("KetjuPNTerms",tag[i])==0) {strcpy((char *)addr[i],"none"); printf("Tag %s not set: defaulting to 'none'\n",tag[i]); continue;}
+                if(strcmp("KetjuEnableBHMergerKicks",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0\n",tag[i]); continue;}
+                if(strcmp("KetjuUseStarStarSoftening",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1\n",tag[i]); continue;}
+                if(strcmp("KetjuTimestepLimitingFactor",tag[i])==0) {*((double *)addr[i])=100.; printf("Tag %s not set: defaulting to 100\n",tag[i]); continue;}
+                if(strcmp("KetjuMaxStepCount",tag[i])==0) {*((int *)addr[i])=100000; printf("Tag %s not set: defaulting to 100000\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}

@@ -62,6 +62,9 @@ void run(void)
         }
 
         find_timesteps();		/* find-timesteps */
+#ifdef KETJU_REGULARIZATION
+        ketju_limit_timesteps();    /* force chain particles to shared timebin */
+#endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
@@ -69,6 +72,11 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+
+#ifdef KETJU_REGULARIZATION
+        ketju_find_regions();       /* detect chain regions around massive stars/BHs */
+        ketju_run_integration();    /* subtract tree force, run MSTAR, apply velocity trick */
+#endif
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
@@ -144,6 +152,9 @@ void run(void)
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
         do_hermite_correction();
+#endif
+#ifdef KETJU_REGULARIZATION
+        ketju_finish_step();        /* clean up KETJU region data (flags persist for next step's guards) */
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
@@ -313,6 +324,9 @@ void calculate_non_standard_physics(void)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    resolvedism_dust_evolve(); // ISM dust sputtering (operator-split after chemistry)
+#endif
 
 
 #ifdef GALSF /* star/sink particle formation */
@@ -475,6 +489,10 @@ void find_next_sync_point_and_drift(void)
    * may still need to old list in the dynamic tree update */
   for(n = 0, prev = -1; n < TIMEBINS; n++)
     {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current);}}}
+
+#ifdef KETJU_REGULARIZATION
+  ketju_set_final_velocities(); /* swap in true physical velocities after drift (velocity trick) */
+#endif
 
 }
 

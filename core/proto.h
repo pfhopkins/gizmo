@@ -62,6 +62,14 @@ int eligible_for_hermite(int i);
 void do_hermite_prediction(void);
 void do_hermite_correction(void);
 #endif
+#ifdef KETJU_REGULARIZATION
+void ketju_limit_timesteps(void);
+void ketju_find_regions(void);
+void ketju_run_integration(void);
+void ketju_set_final_velocities(void);
+void ketju_finish_step(void);
+int ketju_is_particle_in_region(int i);
+#endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
 #endif
@@ -614,6 +622,9 @@ double ISMDustChem_Return_Mass_Fraction_Where_Dust_Destroyed(double rho_cell_in_
 void update_ISMDustChem_after_mechanical_injection(int j, double massfrac_destroyed, double m0, double mf, double *Z_injected);
 #endif
 
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
+double return_resolvedism_species_for_diffusion(int i, int k);
+#endif
 
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
 void update_stellarnumber_and_timedistribofstarformation(void);
@@ -783,6 +794,11 @@ void assign_stellar_masses(void);
 void resolvedism_load_stellar_tables(void);
 void resolvedism_free_stellar_tables(void);
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+void resolvedism_dust_evolve(void);
+void resolvedism_dust_condensation(int sne_flag, double *metal_yields, double *dust_yields);
+double resolvedism_dust_sn_destruction_frac(double rho_code, double E_sne_code, double mass_code);
+#endif
 void count_hot_phase(void);
 void delete_node(int i);
 void density(void);
@@ -921,6 +937,9 @@ int rt_get_donation_target_bin(int bin);
 int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum);
 int rt_get_lum_band_agn(int i, int mode, double *lum);
 int rt_get_lum_band_singlestar(int i, int mode, double *lum);
+#if defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+int rt_get_lum_band_resolvedism(int i, int mode, double *lum);
+#endif
 void rt_define_effective_frequencies_in_bands(void);
 void eddington_tensor_dot_vector(double ET[6], double vec_in[3], double vec_out[3]);
 double return_flux_limiter(int target, int k_freq);

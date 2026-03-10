@@ -114,10 +114,14 @@ void drift_particle(int i, integertime time1)
     if(P[i].Type==0) {advect_mesh_point(i,dt_drift);} else {for(j=0;j<3;j++) {P[i].Pos[j] += P[i].Vel[j] * dt_drift;}}
 #elif (SINGLE_STAR_TIMESTEPPING > 0)
     double fewbody_drift_dx[3], fewbody_kick_dv[3]; // if super-timestepping, the updates above account for COM motion of the binary; now we account for the internal motion
-    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) ) 
+#ifdef KETJU_REGULARIZATION
+    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) && !P[i].KetjuIntegrated )
+#else
+    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) )
+#endif
     {
         double COM_Vel[3]; //center of mass velocity
-        for(j=0;j<3;j++) 
+        for(j=0;j<3;j++)
         {
             COM_Vel[j] = P[i].Vel[j] + P[i].comp_dv[j] * P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass); //center of mass velocity
             P[i].Pos[j] += COM_Vel[j] * dt_drift; //center of mass drift

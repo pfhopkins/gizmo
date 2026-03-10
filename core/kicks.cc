@@ -350,7 +350,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             }
             dp[j] += mass_pred * P[i].GravAccel[j] * dt_gravkick;
 #if (SINGLE_STAR_TIMESTEPPING > 0)  //if we're super-timestepping, the above accounts for the change in COM velocity. Now we do the internal binary velocity change
-            if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {dp[j] += mass_pred * (P[i].COM_GravAccel[j]-P[i].GravAccel[j]) * dt_gravkick;} 
+#ifdef KETJU_REGULARIZATION
+            if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) && !P[i].KetjuIntegrated) {dp[j] += mass_pred * (P[i].COM_GravAccel[j]-P[i].GravAccel[j]) * dt_gravkick;}
+#else
+            if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {dp[j] += mass_pred * (P[i].COM_GravAccel[j]-P[i].GravAccel[j]) * dt_gravkick;}
+#endif
 #endif
 #ifdef HERMITE_INTEGRATION
             // we augment this to a whole-step kick for the initial Hermite prediction step, which is done alongside the first half-step kick.
