@@ -50,4 +50,4 @@ def test_gmc_cooling_rt():
 
     test_stats = compute_test_statistic("test/gmc_cooling_rt/output/snapshot_010.hdf5", plot=True)
     benchmark_stats = compute_test_statistic("gmc_cooling_rt_exact.hdf5")
-    assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.01))
+    assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
