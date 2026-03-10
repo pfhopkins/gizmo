@@ -913,6 +913,9 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[j].ISMDustChem_Dust_Species[k] = wt_j*CellP[j].ISMDustChem_Dust_Species[k] + wt_i*CellP[i].ISMDustChem_Dust_Species[k];} /* dust species-mass conserving */
 #endif
+#if defined(GALSF_RESOLVEDISM_DUST)
+    for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[j].Dust[k] = wt_j*CellP[j].Dust[k] + wt_i*CellP[i].Dust[k];} /* dust-mass conserving */
+#endif
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
