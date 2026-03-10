@@ -27,6 +27,9 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
     if plot:
         plt.loglog(nH, T, ".", markersize=1, color="black", label="Test")
+        with h5py.File("gmc_cooling_exact.hdf5", "r") as F:
+            nH = F["PartType0/Density"][:] * rho_to_nH
+            T = F["PartType0/Temperature"][:]
         plt.loglog(nH, T, ".", markersize=1, color="red", label="Benchmark")
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(r"$T (\rm K)$")
@@ -42,7 +45,7 @@ def test_gmc_cooling():
     get_cooling_tables()
     build_and_run_test(test_name)
     if not path.isfile("output/snapshot_010.hdf5"):
-        assert False
+        raise (RuntimeError("GIZMO did not run successfully."))
 
     test_stats = compute_test_statistic("output/snapshot_010.hdf5", plot=True)
     benchmark_stats = compute_test_statistic("gmc_cooling_exact.hdf5")
