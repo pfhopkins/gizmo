@@ -6,7 +6,7 @@
 #
 #############
 
-SYSTYPE="Frontera"
+#SYSTYPE="Frontera"
 #SYSTYPE="Stampede2"
 #SYSTYPE="Bridges2"
 #SYSTYPE="Anvil"
@@ -40,7 +40,7 @@ SYSTYPE="Frontera"
 #SYSTYPE="HLRB2"
 #SYSTYPE="MPA"
 #SYSTYPE="VIP"
-#SYSTYPE="Ubuntu"
+SYSTYPE="Ubuntu"
 #SYSTYPE="MBM"
 #SYSTYPE="OpteronMPA-Gnu"
 #SYSTYPE="OpteronMPA-Intel"
