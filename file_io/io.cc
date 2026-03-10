@@ -853,6 +853,42 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_RESOLVEDISM_DUST:
+#ifdef GALSF_RESOLVEDISM_DUST
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {fp[k] = (MyOutputFloat) CellP[pindex].Dust[k];}
+                    fp += NUM_RESOLVEDISM_DUST;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_KETJU_FINAL_VEL:
+#ifdef KETJU_REGULARIZATION
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) P[pindex].KetjuFinalVel[k];}
+                    fp += 3;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_KETJU_SPIN:
+#if defined(KETJU_REGULARIZATION) && defined(SINK_PARTICLES)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) P[pindex].KetjuSpin[k];}
+                    fp += 3;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_WIND_MASS_ACCUM:
 #ifdef GALSF_RESOLVEDISM_WINDS
             for(n = 0; n < pc; pindex++)
@@ -1454,7 +1490,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     *fp++ = (MyOutputFloat) CellP[pindex].Temperature;
                     n++;
                 }
-#elif defined(OUTPUT_TEMPERATURE)
+#elif defined(OUTPUT_TEMPERATURE) || defined(CHEMCOOL)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1462,7 +1498,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     temp = ThermalProperties(u, CellP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
                     *fp++ = (MyOutputFloat) temp;
                     n++;
-                }	    
+                }
 #endif
             break;
 
@@ -2031,6 +2067,29 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+        case IO_RESOLVEDISM_DUST:
+#ifdef GALSF_RESOLVEDISM_DUST
+            if(mode)
+                bytes_per_blockelement = (NUM_RESOLVEDISM_DUST) * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = (NUM_RESOLVEDISM_DUST) * sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_KETJU_FINAL_VEL:
+#ifdef KETJU_REGULARIZATION
+            if(mode) bytes_per_blockelement = 3 * sizeof(MyInputFloat);
+            else bytes_per_blockelement = 3 * sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_KETJU_SPIN:
+#if defined(KETJU_REGULARIZATION) && defined(SINK_PARTICLES)
+            if(mode) bytes_per_blockelement = 3 * sizeof(MyInputFloat);
+            else bytes_per_blockelement = 3 * sizeof(MyOutputFloat);
+#endif
+            break;
+
         case IO_WIND_MASS_ACCUM:
         case IO_WIND_MOMENTUM_ACCUM:
         case IO_M_CURRENT_OLD:
@@ -2389,6 +2448,17 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+        case IO_RESOLVEDISM_DUST:
+#ifdef GALSF_RESOLVEDISM_DUST
+            values = NUM_RESOLVEDISM_DUST;
+#endif
+            break;
+
+        case IO_KETJU_FINAL_VEL:
+        case IO_KETJU_SPIN:
+            values = 3;
+            break;
+
         case IO_WIND_MASS_ACCUM:
         case IO_WIND_MOMENTUM_ACCUM:
         case IO_M_CURRENT_OLD:
@@ -2696,6 +2766,21 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_ELEMENT_ABUNDANCE:
             for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
             return ngas + nstars + header.npart[5];
+            break;
+
+        case IO_RESOLVEDISM_DUST:
+            for(i = 0; i < 6; i++) {if(i != 0) {typelist[i] = 0;}}
+            return ngas;
+            break;
+
+        case IO_KETJU_FINAL_VEL:
+            for(i = 0; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
+            return nstars + header.npart[5];
+            break;
+
+        case IO_KETJU_SPIN:
+            for(i = 0; i < 6; i++) {if(i != 5) {typelist[i] = 0;}}
+            return header.npart[5];
             break;
 
         case IO_WIND_MASS_ACCUM:
@@ -3032,6 +3117,24 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+        case IO_RESOLVEDISM_DUST:
+#ifdef GALSF_RESOLVEDISM_DUST
+            return 1;
+#endif
+            break;
+
+        case IO_KETJU_FINAL_VEL:
+#ifdef KETJU_REGULARIZATION
+            return 1;
+#endif
+            break;
+
+        case IO_KETJU_SPIN:
+#if defined(KETJU_REGULARIZATION) && defined(SINK_PARTICLES)
+            return 1;
+#endif
+            break;
+
         case IO_WIND_MASS_ACCUM:
         case IO_WIND_MOMENTUM_ACCUM:
         case IO_M_CURRENT_OLD:
@@ -3335,7 +3438,7 @@ int blockpresent(enum iofields blocknr)
         case IO_EOSTEMP:
 #ifdef EOS_CARRIES_TEMPERATURE
             return 1;
-#elif defined(OUTPUT_TEMPERATURE)
+#elif defined(OUTPUT_TEMPERATURE) || defined(CHEMCOOL)
 	    return 1;
 #endif
             break;
@@ -3633,6 +3736,15 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_ELEMENT_ABUNDANCE:
             strncpy(label, "ELAB", 4);
+            break;
+        case IO_RESOLVEDISM_DUST:
+            strncpy(label, "DUST", 4);
+            break;
+        case IO_KETJU_FINAL_VEL:
+            strncpy(label, "KVEL", 4);
+            break;
+        case IO_KETJU_SPIN:
+            strncpy(label, "KSPN", 4);
             break;
         case IO_WIND_MASS_ACCUM:
             strncpy(label, "WMAC", 4);
@@ -4085,6 +4197,15 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_ELEMENT_ABUNDANCE:
             strcpy(buf, "ElementAbundance");
+            break;
+        case IO_RESOLVEDISM_DUST:
+            strcpy(buf, "DustMassFraction");
+            break;
+        case IO_KETJU_FINAL_VEL:
+            strcpy(buf, "KetjuFinalVelocity");
+            break;
+        case IO_KETJU_SPIN:
+            strcpy(buf, "KetjuBHSpin");
             break;
         case IO_WIND_MASS_ACCUM:
             strcpy(buf, "WindMassAccum");

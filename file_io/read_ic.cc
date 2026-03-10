@@ -604,6 +604,24 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_RESOLVEDISM_DUST:
+#ifdef GALSF_RESOLVEDISM_DUST
+            for(n = 0; n < pc; n++) {for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) {CellP[offset + n].Dust[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_KETJU_FINAL_VEL:
+#ifdef KETJU_REGULARIZATION
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].KetjuFinalVel[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_KETJU_SPIN:
+#if defined(KETJU_REGULARIZATION) && defined(SINK_PARTICLES)
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].KetjuSpin[k] = *fp++;}}
+#endif
+            break;
+
         case IO_WIND_MASS_ACCUM:
 #ifdef GALSF_RESOLVEDISM_WINDS
             for(n = 0; n < pc; n++) {P[offset + n].WindMassAccum = *fp++;}
