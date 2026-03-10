@@ -449,6 +449,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         MyFloat uv_luminosity = 0;
+        MyFloat lw_luminosity = 0;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         cr_injection = 0;
@@ -538,6 +539,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                         uv_luminosity += Nodes[p].uv_luminosity;
+                        lw_luminosity += Nodes[p].lw_luminosity;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                         cr_injection += Nodes[p].cr_injection;
@@ -637,7 +639,7 @@ void force_update_node_recursive(int no, int sib, int father)
                     }
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                    if(pa->Type == 4 || pa->Type == 5) uv_luminosity += P[p].UV_luminosity;
+                    if(pa->Type == 4 || pa->Type == 5) {uv_luminosity += P[p].UV_luminosity; lw_luminosity += P[p].LW_luminosity;}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     cr_injection += cr_get_source_injection_rate(p);
@@ -837,6 +839,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[no].uv_luminosity = uv_luminosity;
+        Nodes[no].lw_luminosity = lw_luminosity;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         Nodes[no].cr_injection = cr_injection;
@@ -1632,7 +1635,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double treecol_UV_flux[NPIX] = {0};
-    double uv_lum = 0;
+    double treecol_LW_flux[NPIX] = {0};
+    double uv_lum = 0, lw_lum = 0;
 #endif
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
@@ -1863,8 +1867,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                uv_lum = 0;
-                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity;}
+                uv_lum = 0; lw_lum = 0;
+                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;}
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
                 {int ki,kj; for(ki=0;ki<3;ki++) {for(kj=0;kj<3;kj++) {j_zeta_tidal_tensorps_prevstep[ki][kj]=P[no].tidal_tensorps_prevstep[ki][kj];}}}
@@ -2160,6 +2164,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = nop->uv_luminosity;
+                lw_lum = nop->lw_luminosity;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                 r_source = sqrt(pow(nop->u.d.s[0] - center[0],2) + pow(nop->u.d.s[1] - center[1],2) + pow(nop->u.d.s[2] - center[2],2));
@@ -2529,12 +2534,14 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                if(uv_lum > 0 && r2 > 0)
+                if((uv_lum > 0 || lw_lum > 0) && r2 > 0)
                 {
                     long iheal;
                     double vec_hp[3] = {dx, dy, dz};
                     vec2pix_ring(NSIDE, vec_hp, &iheal);
-                    treecol_UV_flux[iheal] += uv_lum / (4.0*M_PI*r2);
+                    double inv_4pi_r2 = 1.0 / (4.0*M_PI*r2);
+                    treecol_UV_flux[iheal] += uv_lum * inv_4pi_r2;
+                    treecol_LW_flux[iheal] += lw_lum * inv_4pi_r2;
                 }
 #endif
 #endif
@@ -2707,7 +2714,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; CellP[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) CellP[target].UV_flux[kp] = treecol_UV_flux[kp];}
+        if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].UV_flux[kp] = treecol_UV_flux[kp]; CellP[target].LW_flux[kp] = treecol_LW_flux[kp];}}
 #endif
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
@@ -2801,7 +2808,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; GravDataResult[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        {int kp; for(kp=0; kp<NPIX; kp++) GravDataResult[target].UV_flux[kp] = treecol_UV_flux[kp];}
+        {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].UV_flux[kp] = treecol_UV_flux[kp]; GravDataResult[target].LW_flux[kp] = treecol_LW_flux[kp];}}
 #endif
 #endif
 #ifdef RT_OTVET
