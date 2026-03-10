@@ -472,6 +472,20 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k);}
 #endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
+    {int k_offset = NUM_METAL_SPECIES;
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    k_offset += NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES + NUM_ISMDUSTCHEM_SPECIES;
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {in->Metallicity[k_offset+k] = P[i].ElementAbundance[k];}
+    k_offset += NUM_RESOLVEDISM_ELEMENTS;
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST)
+    for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {in->Metallicity[k_offset+k] = CellP[i].Dust[k];}
+#endif
+    }
+#endif
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -799,6 +813,20 @@ void hydro_final_operations_and_cleanup(void)
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
             for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
             for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = DMAX(CellP[i].ISMDustChem_Dust_Species[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Species[k]);}
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
+            {int k_offset = NUM_METAL_SPECIES;
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            k_offset += NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES + NUM_ISMDUSTCHEM_SPECIES;
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+            for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {P[i].ElementAbundance[k] = DMAX(P[i].ElementAbundance[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*P[i].ElementAbundance[k]);}
+            k_offset += NUM_RESOLVEDISM_ELEMENTS;
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST)
+            for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[i].Dust[k] = DMAX(CellP[i].Dust[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*CellP[i].Dust[k]);}
+#endif
+            }
 #endif
 #endif
             
