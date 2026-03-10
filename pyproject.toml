@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gizmo"
 version = "0.1"
-description = "Tests and help scripts for the gizmo mesh-free multi-physics code"
+description = "Tests and helper scripts for the gizmo mesh-free multi-physics code"
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-dependencies = ["pytest",]
+dependencies = ["pytest","h5py","matplotlib","astropy","numpy", "scipy"]
 
 license = "MIT"
 

@@ -22,8 +22,9 @@ def download_test_files(test_name: str):
     paramsfile = f"{test_name}.params"
     icfile = f"{test_name}_ics.hdf5"
     exactfile = f"{test_name}_exact.txt"  # exact solution (might not exist!)
+    exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
 
-    for f in paramsfile, icfile, exactfile:
+    for f in paramsfile, icfile, exactfile, exactfile2:
         try:
             urlretrieve(website_path + f, f)
         except HTTPError as err:
