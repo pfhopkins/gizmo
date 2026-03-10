@@ -181,6 +181,9 @@ static struct OUTPUT_STRUCT_NAME
 #ifdef GALSF_RESOLVEDISM_FB
     MyDouble InternalEnergyAroundStar;
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    MyDouble DGR_around;
+#endif
 }
  *DATARESULT_NAME, *DATAOUT_NAME;
 
@@ -237,6 +240,9 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
     ASSIGN_ADD(P[i].InternalEnergyAroundParticle, out->InternalEnergyAroundStar, mode);
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    ASSIGN_ADD(P[i].DGR_around, out->DGR_around, mode);
 #endif
 
 #if defined(RT_SOURCE_INJECTION)
@@ -382,6 +388,13 @@ void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct 
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
         out->InternalEnergyAroundStar += kernel->mj_wk * CellP[j].InternalEnergyPred;
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST
+        {
+            double DGR_j = 0;
+            for(int kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) DGR_j += CellP[j].Dust[kd];
+            out->DGR_around += kernel->mj_wk * DGR_j;
+        }
 #endif
 
 #if defined(SINK_PARTICLES)
@@ -1034,6 +1047,9 @@ void density(void)
             if(P[i].Type != 0 && P[i].DensityAroundParticle > 0)
             {
                 P[i].InternalEnergyAroundParticle /= P[i].DensityAroundParticle;
+#ifdef GALSF_RESOLVEDISM_DUST
+                P[i].DGR_around /= P[i].DensityAroundParticle;
+#endif
             }
 #endif
 
