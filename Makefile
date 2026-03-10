@@ -433,6 +433,11 @@ OBJS    += galaxy_sf/resolvedism_fb.o
 OBJS    += galaxy_sf/resolvedism_photoion.o
 endif
 
+# dust evolution for resolved ISM
+ifeq (GALSF_RESOLVEDISM_DUST,$(findstring GALSF_RESOLVEDISM_DUST,$(CONFIGVARS)))
+OBJS    += galaxy_sf/resolvedism_dust.o
+endif
+
 # stellar evolution tables for single-star feedback
 ifeq (GALSF_RESOLVEDISM_STELLAR_TABLES,$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS)))
 OBJS    += galaxy_sf/resolvedism_stellar_tables.o
@@ -441,6 +446,16 @@ endif
 # expanded IMF sampling
 ifeq (GALSF_RESOLVEDISM_SAMPLE_IMF,$(findstring GALSF_RESOLVEDISM_SAMPLE_IMF,$(CONFIGVARS)))
 OBJS    += galaxy_sf/resolvedism_imf_sampling.o
+endif
+
+# KETJU regularized integrator for BH and stellar dynamics
+ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
+OBJS    += galaxy_sf/ketju_coupling.o
+KETJU_INCL = -I/raven/u/uli/phil/ketju-integrator/include
+KETJU_LIBS = -L/raven/u/uli/phil/ketju-integrator/lib -lketju-integrator -lstdc++
+else
+KETJU_INCL =
+KETJU_LIBS =
 endif
 
 # HEALPix library for TREE_RAD angular column density binning
@@ -461,7 +476,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL)
+         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL) $(KETJU_INCL)
 
 
 
@@ -487,7 +502,7 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS) $(KETJU_LIBS)
 
 FFLAGS = $(FOPTIONS) -Icooling/chemcool
 
