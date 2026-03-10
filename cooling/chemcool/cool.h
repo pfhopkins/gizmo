@@ -305,9 +305,9 @@ c H2O vibrational cooling
 c
 c These variables are initialized during problem setup
 c 
-      REAL deff, abundc, abundo, abundsi, abundD, abundM, 
-     $     abundN, G0, phi_pah, tdust, dust_to_gas_ratio, 
-     $     AV_conversion_factor, cosmic_ray_ion_rate, redshift, 
+      REAL deff, abundc, abundo, abundsi, abundD, abundM,
+     $     abundN, G0, G0_LW, phi_pah, tdust, dust_to_gas_ratio,
+     $     AV_conversion_factor, cosmic_ray_ion_rate, redshift,
      $     AV_ext, pdv_term, h2_form_ex, h2_form_kin, dm_density
       integer iphoto, iflag_mn, iflag_ad, iflag_atom, 
      $        iflag_3bh2a, iflag_3bh2b, iflag_h3pra,
@@ -318,7 +318,7 @@ c
 #endif /* TEST */
 
 c     Do not indent the next line!
-       REAL lambda(28), lambda_chem(6) 
+       REAL lambda(28), lambda_chem(NRATES_CHEM)
 #ifdef OUTPUT_SHIELD_FAC
        REAL fac_shield_h2, fac_shield_dust
 #endif
@@ -326,7 +326,7 @@ c     Do not indent the next line!
      $               crtab, crphot, 
      $               phtab, cst, dtlog, tdust, tmax, tmin, 
      $               deff, abundc, abundo, abundsi, abundD, 
-     $               abundM, abundN, G0, f_rsc, phi_pah, 
+     $               abundM, abundN, G0, G0_LW, f_rsc, phi_pah,
      $               dust_to_gas_ratio, AV_conversion_factor,
      $               cosmic_ray_ion_rate, redshift, AV_ext,
      $               pdv_term, h2_form_ex, h2_form_kin,
@@ -390,7 +390,7 @@ c     Do not indent the next line!
      $                 column_density_projection_co
 #endif
 
-#if CHEMISTRYNETWORK == 1
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
       integer no_dchem
       common /dchem_block/ no_dchem
 #endif

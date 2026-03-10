@@ -487,6 +487,48 @@
 #define IN2HP UNUSED
 #endif
 
+#if CHEMISTRYNETWORK == 17  /* Primordial H/He + NL97 CO + D+/HD */
+#define TRAC_NUM 7
+#define NSPEC 8
+#define IH2   0
+#define IHP   1
+#define ICO   2
+#define IHEP  3
+#define IHEPP 4
+#define IDP   5
+#define IHD   6
+#define ITMP  7
+#define IC    UNUSED
+#define ISi   UNUSED
+#define IO    UNUSED
+#define IC2   UNUSED
+#define IOH   UNUSED
+#define IH2O  UNUSED
+#define IO2   UNUSED
+#define IHCOP UNUSED
+#define ICH   UNUSED
+#define ICH2  UNUSED
+#define ISIPP UNUSED
+#define ICH3P UNUSED
+#define IMGP  UNUSED
+#define ITD   UNUSED
+#define ICH3  UNUSED
+#define ICH4  UNUSED
+#define ICO2  UNUSED
+#define ICOS  UNUSED
+#define IH2OS UNUSED
+#define IO2S  UNUSED
+#define ICH4S UNUSED
+#define ICHX  UNUSED
+#define IOHX  UNUSED
+#define IMP   UNUSED
+#define IH3OP UNUSED
+#define IO2P  UNUSED
+#define INO   UNUSED
+#define IN2   UNUSED
+#define IN2HP UNUSED
+#endif
+
 #define  ABUND_NUM 16
 
 /* Number of steps that evolve_abundances can take before giving up */ 
@@ -562,6 +604,9 @@
 #endif
 #if CHEMISTRYNETWORK == 15
 #define  NRATES_CHEM 6
+#endif
+#if CHEMISTRYNETWORK == 17
+#define  NRATES_CHEM 22
 #endif
 
 #define  NRATES_TOT NRATES+NRATES_CHEM

@@ -18,11 +18,11 @@ extern "C" {
                crtab[NCRTAB], crphot[NCRPHOT],
                phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
                deff, abundc, abundo, abundsi, abundD,
-               abundM, abundN, G0, f_rsc, phi_pah,
+               abundM, abundN, G0, G0_LW, f_rsc, phi_pah,
                dust_to_gas_ratio, AV_conversion_factor,
                cosmic_ray_ion_rate, redshift, AV_ext,
                pdv_term, h2_form_ex, h2_form_kin,
-               lambda[28], lambda_chem[6],
+               lambda[28], lambda_chem[NRATES_CHEM],
 #ifdef OUTPUT_SHIELD_FAC
                fac_shield_h2, fac_shield_dust,
 #endif
@@ -129,11 +129,41 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         divv     = CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2];
     }
 
-    /* WNM values (Sembach+ 2000) */
+    /* Per-particle element abundances for cooling rates */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+    {
+        /* Number abundances n_X/n_H = (X_mass_frac / A_X) / (X_H / A_H) where A_X = atomic weight */
+        double X_H = DMAX(P[target].ElementAbundance[ELEM_H], 1e-10);
+        COOLR.abundc  = (P[target].ElementAbundance[ELEM_C]  / 12.0) / (X_H / 1.0);
+        COOLR.abundo  = (P[target].ElementAbundance[ELEM_O]  / 16.0) / (X_H / 1.0);
+        COOLR.abundsi = (P[target].ElementAbundance[ELEM_Si] / 28.0) / (X_H / 1.0);
+        COOLR.abundN  = (P[target].ElementAbundance[ELEM_N]  / 14.0) / (X_H / 1.0);
+
+#ifdef WSS_CIE_COOL
+        /* Map ElementAbundance[15] -> Zmass[12] (mass fractions, gadget_tnt_new ordering) */
+        COOLR.Zmass[0]  = P[target].ElementAbundance[ELEM_He];  /* He */
+        COOLR.Zmass[1]  = P[target].ElementAbundance[ELEM_C];   /* C  */
+        COOLR.Zmass[2]  = P[target].ElementAbundance[ELEM_Mg];  /* Mg */
+        COOLR.Zmass[3]  = P[target].ElementAbundance[ELEM_O];   /* O  */
+        COOLR.Zmass[4]  = P[target].ElementAbundance[ELEM_Fe];  /* Fe */
+        COOLR.Zmass[5]  = P[target].ElementAbundance[ELEM_Si];  /* Si */
+        COOLR.Zmass[6]  = P[target].ElementAbundance[ELEM_H];   /* H  */
+        COOLR.Zmass[7]  = P[target].ElementAbundance[ELEM_N];   /* N  */
+        COOLR.Zmass[8]  = P[target].ElementAbundance[ELEM_Ne];  /* Ne */
+        COOLR.Zmass[9]  = P[target].ElementAbundance[ELEM_S];   /* S  */
+        COOLR.Zmass[10] = P[target].ElementAbundance[ELEM_Ca];  /* Ca */
+        COOLR.Zmass[11] = 0; /* unused slot */
+#endif
+    }
+#else
+    /* Fallback: WNM values (Sembach+ 2000) scaled by global metallicity */
     COOLR.abundc  = All.InitialMetallicity * 1.4e-4;
     COOLR.abundo  = All.InitialMetallicity * 3.2e-4;
     COOLR.abundsi = All.InitialMetallicity * 1.5e-5;
+#endif
+    COOLR.abundD  = All.DeutAbund;
     COOLR.G0      = All.G0;
+    COOLR.G0_LW   = All.G0; /* default: LW = full FUV, overridden below if G0_VARIABLE */
     COOLR.cosmic_ray_ion_rate = All.CosmicRayIonRate;
 
     COOLI.id_current = P[target].ID;
@@ -149,14 +179,20 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     double fac_flux2habing = 1.0 / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)) / u_Habing;
 
     double UV_flux_tot = 0.0;
+    double LW_flux_tot = 0.0;
     double UV_flux_min_pix = 0.324e-2/NPIX / fac_flux2habing;
     for(i = 0; i < NPIX; i++) {
         CellP[target].UV_flux[i] = DMAX(CellP[target].UV_flux[i], UV_flux_min_pix);
         UV_flux_tot += CellP[target].UV_flux[i];
+        LW_flux_tot += CellP[target].LW_flux[i]; /* LW has no floor — can be zero in pristine regions */
     }
 
     double G0_tot = UV_flux_tot * fac_flux2habing * All.G0;
     COOLR.G0 = G0_tot;
+
+    /* Lyman-Werner G0 for H2 photodissociation (11.2-13.6 eV only) */
+    double G0_LW = LW_flux_tot * fac_flux2habing * All.G0;
+    COOLR.G0_LW = G0_LW;
 
 #ifdef CR_SCALE_WITH_G0
     COOLR.cosmic_ray_ion_rate = (COOLR.G0 / 1.7) * All.CosmicRayIonRate;
@@ -168,6 +204,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     double g0 = All.FactorG0 * All.G0;
     if(g0 < 0.324e-2) g0 = 0.324e-2;
     COOLR.G0 = g0;
+    COOLR.G0_LW = g0; /* no separate LW in SFR-scaled mode */
 #ifdef CR_SCALE_WITH_G0
     COOLR.cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
 #endif
@@ -198,7 +235,11 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     rpar[1] = dl;
     rpar[2] = divv;
     abh2 = abundances[IH2];
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+    abhd = abundances[IHD];
+#else
     abhd = 0.0;
+#endif
 #if CHEMISTRYNETWORK != 4
     abco = abundances[ICO];
 #else
@@ -256,13 +297,22 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     double temp_HII = 1e4;
-    double energy_HII = temp_HII * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE - 0. + 1.);
+    /* abe_HII = H+ + He+ + D+ + C+ ≈ 1 + abhe + abundD + abundc */
+    double abe_HII = 1.0 + ABHE + COOLR.abundD + COOLR.abundc;
+    double energy_HII = temp_HII * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE + abe_HII);
     if(CellP[target].Ionized == 1) {
         skip_evolve_abundances = 1;
         abundances[IH2] = 0.0;
         abundances[IHP] = 0.9998;
 #if CHEMISTRYNETWORK != 4
         abundances[ICO] = 0.0;
+#endif
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        /* In HII regions: He singly ionized, D fully ionized, HD destroyed */
+        abundances[IHEP]  = ABHE;        /* He -> He+ (13.6-54.4 eV photons) */
+        abundances[IHEPP] = 0.0;         /* He++ negligible for most O stars */
+        abundances[IDP]   = COOLR.abundD; /* D -> D+ (same IP as H) */
+        abundances[IHD]   = 0.0;         /* HD dissociated */
 #endif
         if(energy < energy_HII) energy = energy_HII;
     }
@@ -282,9 +332,9 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #endif
         cooling_rate += COOLR.lambda[i];
     }
-    for(i = 0; i < 6; i++) {
+    for(i = 0; i < NRATES_CHEM; i++) {
 #ifdef OUTPUT_INDIVIDUAL_COOLRATES
-        CellP[target].LambdaChem[i] = COOLR.lambda_chem[i] / yn / yn;
+        if(i < 6) CellP[target].LambdaChem[i] = COOLR.lambda_chem[i] / yn / yn;
 #endif
         cooling_rate += COOLR.lambda_chem[i];
     }

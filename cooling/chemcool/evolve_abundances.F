@@ -34,6 +34,11 @@ c
       DATA safety /1d-1, 1d-1, 1d-1, DTCOOL_SCALE_FACTOR/
       DATA used_for_stepsize_control /1, 1, 1, 1/
 #endif
+#if CHEMISTRYNETWORK == 17
+      DATA safety /1d-1, 1d-1, 1d-1, 1d-1, 1d-1, 1d-1, 1d-1,
+     $             DTCOOL_SCALE_FACTOR/
+      DATA used_for_stepsize_control /1, 1, 1, 1, 1, 1, 1, 1/
+#endif
 c
       integer I, J
 c
@@ -360,6 +365,16 @@ c
         max_abundance(icos)  = min(abundc, abundo)
       endif
 c
+      if (nchem_network .eq. 17) then
+        max_abundance(ih2)   = 0.5d0
+        max_abundance(ihp)   = 1.0d0
+        max_abundance(ico)   = min(abundc, abundo)
+        max_abundance(ihep)  = abhe
+        max_abundance(ihepp) = abhe
+        max_abundance(idp)   = abundD
+        max_abundance(ihd)   = abundD
+      endif
+c
       if (nchem_network .eq. 7 .or. nchem_network .eq. 8 .or.
      $    nchem_network .eq. 11) then
         max_abundance(ih2)    = 0.5d0
@@ -600,6 +615,16 @@ c
         atol(ihcop) = ATOL_HCOP
         atol(ihep)  = ATOL_HEP
         atol(imp)   = ATOL_MP
+      endif
+c
+      if (nchem_network .eq. 17) then
+        atol(ih2)   = ATOL_H2
+        atol(ihp)   = ATOL_HP
+        atol(ico)   = ATOL_CO
+        atol(ihep)  = ATOL_HEP
+        atol(ihepp) = ATOL_HEPP
+        atol(idp)   = ATOL_DP
+        atol(ihd)   = ATOL_HD
       endif
 c
       atol(itmp)  = ATOL_TMP

@@ -447,12 +447,12 @@ c
 #endif /* CO_SHIELDING */
 #endif /* NEEDS_CO_RATES */
 
-c H2:
+c H2: use Lyman-Werner band (11.2-13.6 eV) specifically for H2 photodissociation
 #if CHEMISTRYNETWORK != 1
 c Network 1 doesn't use CPHOTO stuff
-      phrates(1) = phtab(1) * G0 * f_dust
+      phrates(1) = phtab(1) * G0_LW * f_dust
 #else
-      phrates(1) = phtab(1) * G0 * fshield * f_dust
+      phrates(1) = phtab(1) * G0_LW * fshield * f_dust
 #endif
 
 #ifdef OUTPUT_SHIELD_FAC
@@ -486,8 +486,8 @@ c corresponding photoion. or photodissoc. rate
       phrates(8) = phtab(8) * G0 * df05
       phrates(9) = phtab(9) * G0 * df19
 c
-c HD:
-      phrates(35) = phtab(35) * G0 * fshield_hd * f_dust
+c HD: use Lyman-Werner band for HD photodissociation
+      phrates(35) = phtab(35) * G0_LW * fshield_hd * f_dust
 
 c Photoionization of HI, HeI, HeII, H2, OI and SiII. In this implementation, 
 c we assume that absorption from gas outside of the simulation volume dominates,
@@ -548,6 +548,10 @@ c
 CO:
       phrates(10) = phtab(10) * G0 * fshield_CO * df25
       UNUSED_PARAM(f_simp)
+c Network 17 only needs phrates 1,4,5,8,9,10,35,38-45 -- skip the rest
+      if (nchem_network .eq. 17) then
+        goto 212
+      endif
       phrates(11) = phtab(11) * G0 * df17
       phrates(12) = phtab(12) * G0 * df17
       phrates(14) = phtab(14) * G0 * df25

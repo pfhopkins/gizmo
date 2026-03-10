@@ -40,6 +40,9 @@ c
 #if CHEMISTRYNETWORK == 9
       parameter (num_eqb_species = 6)
 #endif
+#if CHEMISTRYNETWORK == 17
+      parameter (num_eqb_species = 3)
+#endif
 c
       integer nspec
       parameter (nspec = NSPEC)
