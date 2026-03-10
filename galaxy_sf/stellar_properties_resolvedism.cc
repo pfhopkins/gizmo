@@ -8,8 +8,14 @@
 
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
 
-/* Stellar lifetime as a function of mass [yr], piecewise power-law fit */
+/* Stellar lifetime as a function of mass [yr] */
 double get_lifetime(double mass) {
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+    /* Use tabulated Z-dependent lifetime; assume solar Z if no birth metallicity available */
+    double logM = log10(DMAX(mass, 0.09));
+    double logZ = log10(0.014); /* solar default; callers with metallicity should use stellar_lifetime() directly */
+    return stellar_lifetime(logM, logZ);
+#else
     double A, B;
     if(mass < 3.0) {
         A = -2.926; B = 9.892;
@@ -22,6 +28,7 @@ double get_lifetime(double mass) {
     }
     double logAge = A * log10(mass) + B;
     return pow(10., logAge); /* [yr] */
+#endif
 }
 
 
@@ -67,6 +74,12 @@ int get_index(double search) {
 
 /* Interpolate log10(L_pe) from mass table */
 double get_logL_pe(double mass) {
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+    /* Use tabulated FUV luminosity (6-13.6 eV, photoelectric); assume ZAMS age */
+    double logM = log10(DMAX(mass, 0.09));
+    double logZ = log10(0.014);
+    return stellar_log_L_FUV_total(logM, logZ, 2.0); /* log_age=2.0 ~ 100 yr ~ ZAMS */
+#else
     double a, y;
     int idx = get_index(mass);
     if(mass < tbl_Mass[0]) {y = tbl_logL_pe[0];}
@@ -76,10 +89,17 @@ double get_logL_pe(double mass) {
         y = (1.0 - a) * tbl_logL_pe[idx] + a * tbl_logL_pe[idx+1];
     }
     return y;
+#endif
 }
 
 /* Interpolate log10(S_ly) from mass table */
 double get_logS_ly(double mass) {
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+    /* Use tabulated ionizing photon rate */
+    double logM = log10(DMAX(mass, 0.09));
+    double logZ = log10(0.014);
+    return stellar_log_Q_ion(logM, logZ, 2.0); /* log_age=2.0 ~ ZAMS */
+#else
     double a, y;
     int idx = get_index(mass);
     if(mass < tbl_Mass[0]) {y = tbl_logS_ly[0];}
@@ -89,6 +109,7 @@ double get_logS_ly(double mass) {
         y = (1.0 - a) * tbl_logS_ly[idx] + a * tbl_logS_ly[idx+1];
     }
     return y;
+#endif
 }
 
 

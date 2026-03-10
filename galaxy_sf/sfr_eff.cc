@@ -691,6 +691,7 @@ void star_formation_parent_routine(void)
                                     P[i].Mstar = pow(pow(xmin, -1.3) + nor * y, -1.0/1.3);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                                     P[i].UV_luminosity = pow(10., get_logL_pe(P[i].Mstar));
+                                    P[i].LW_luminosity = P[i].UV_luminosity;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                                     P[i].Lyman_photons_per_sec = pow(10., get_logS_ly(P[i].Mstar));
 #endif
@@ -700,6 +701,9 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                             if(P[i].Type == 4) {P[i].sampled = 0; int jj_imf; for(jj_imf=0; jj_imf<N_STELLAR_MASS; jj_imf++) P[i].MstarSampleIMF[jj_imf]=0;}
+#endif
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+                            if(P[i].Type == 4) {P[i].BirthMetallicity = P[i].Metallicity[0];}
 #endif
                         } /* closes final generation from original gas particle */
                         else
@@ -760,6 +764,7 @@ void star_formation_parent_routine(void)
                                     P[ns].Mstar = pow(pow(xmin, -1.3) + nor * y, -1.0/1.3);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                                     P[ns].UV_luminosity = pow(10., get_logL_pe(P[ns].Mstar));
+                                    P[ns].LW_luminosity = P[ns].UV_luminosity;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                                     P[ns].Lyman_photons_per_sec = pow(10., get_logS_ly(P[ns].Mstar));
 #endif
@@ -769,6 +774,9 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                             {int ns = NumPart + stars_spawned; P[ns].sampled = 0; int jj_imf; for(jj_imf=0; jj_imf<N_STELLAR_MASS; jj_imf++) P[ns].MstarSampleIMF[jj_imf]=0;}
+#endif
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+                            {int ns = NumPart + stars_spawned; P[ns].BirthMetallicity = P[ns].Metallicity[0];}
 #endif
 #ifdef GALSF_RESOLVEDISM
                             if(n_sf_local >= sf_buf_size) {

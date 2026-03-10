@@ -432,21 +432,43 @@ void assign_stellar_masses(void)
         P[i].Mass = m_new_code;
         P[i].sampled = 1;
 
+#ifdef GALSF_RESOLVEDISM_WINDS
+        P[i].WindMassAccum = 0;
+        P[i].WindMomentumAccum = 0;
+        P[i].M_current_old = M_drawn; /* initial mass = ZAMS mass */
+#endif
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+        P[i].M_drawn_Ia = 0; /* set when star dies as WD */
+#endif
+
         /* Clear temporary storage (momentum [1..3] and mass_borrowed [4]) */
         P[i].MstarSampleIMF[1] = P[i].MstarSampleIMF[2] = P[i].MstarSampleIMF[3] = P[i].MstarSampleIMF[4] = 0;
 
         /* Compute UV luminosity from the single drawn star */
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         P[i].UV_luminosity = 0;
+        P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
         P[i].Lyman_photons_per_sec = 0;
 #endif
         if(M_drawn > All.IMFSampleStellarMassCut) {
             double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
             if(star_age_yr < get_lifetime(M_drawn)) {
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+                double logM = log10(M_drawn);
+                double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
+                double log_age = log10(DMAX(star_age_yr, 100.0));
+                P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
+                P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                P[i].Lyman_photons_per_sec = pow(10., stellar_log_Q_ion(logM, logZ, log_age));
+#endif
+#else
                 P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
+                P[i].LW_luminosity = P[i].UV_luminosity; /* fallback: assume all FUV is LW */
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                 P[i].Lyman_photons_per_sec = pow(10., get_logS_ly(M_drawn));
+#endif
 #endif
             }
         }
