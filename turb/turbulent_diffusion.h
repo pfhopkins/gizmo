@@ -41,6 +41,9 @@
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             if(k_species >= NUM_METAL_SPECIES) {Z_j = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k_species);}
 #endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
+            if(k_species >= NUM_METAL_SPECIES) {double Zr = return_resolvedism_species_for_diffusion(j,k_species); if(Zr >= 0) {Z_j = Zr;}}
+#endif
             d_scalar = local.Metallicity[k_species]-Z_j; // physical
             for(k=0;k<3;k++)
             {
