@@ -830,6 +830,73 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_BIRTH_METALLICITY:
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].BirthMetallicity;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_ELEMENT_ABUNDANCE:
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {fp[k] = (MyOutputFloat) P[pindex].ElementAbundance[k];}
+                    fp += NUM_RESOLVEDISM_ELEMENTS;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_WIND_MASS_ACCUM:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].WindMassAccum;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_WIND_MOMENTUM_ACCUM:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].WindMomentumAccum;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_M_CURRENT_OLD:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].M_current_old;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_M_DRAWN_IA:
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].M_drawn_Ia;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_POT:		/* gravitational potential */
 #if defined(OUTPUT_POTENTIAL)
             for(n = 0; n < pc; pindex++)
@@ -1948,6 +2015,26 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_CHEMCOOL_DUSTTEMP:
         case IO_STOCHASTIC_IMF_MSTAR:
         case IO_FORMATION_DENSITY:
+        case IO_BIRTH_METALLICITY:
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+            break;
+
+        case IO_ELEMENT_ABUNDANCE:
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            if(mode)
+                bytes_per_blockelement = (NUM_RESOLVEDISM_ELEMENTS) * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = (NUM_RESOLVEDISM_ELEMENTS) * sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_WIND_MASS_ACCUM:
+        case IO_WIND_MOMENTUM_ACCUM:
+        case IO_M_CURRENT_OLD:
+        case IO_M_DRAWN_IA:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
@@ -2292,6 +2379,20 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_STOCHASTIC_IMF_MSTAR:
         case IO_FORMATION_DENSITY:
         case IO_SAMPLED_IMF:
+        case IO_BIRTH_METALLICITY:
+            values = 1;
+            break;
+
+        case IO_ELEMENT_ABUNDANCE:
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            values = NUM_RESOLVEDISM_ELEMENTS;
+#endif
+            break;
+
+        case IO_WIND_MASS_ACCUM:
+        case IO_WIND_MOMENTUM_ACCUM:
+        case IO_M_CURRENT_OLD:
+        case IO_M_DRAWN_IA:
             values = 1;
             break;
 
@@ -2587,6 +2688,20 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_STOCHASTIC_IMF_MSTAR:
         case IO_FORMATION_DENSITY:
         case IO_SAMPLED_IMF:
+        case IO_BIRTH_METALLICITY:
+            for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
+            return nstars;
+            break;
+
+        case IO_ELEMENT_ABUNDANCE:
+            for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
+            return ngas + nstars + header.npart[5];
+            break;
+
+        case IO_WIND_MASS_ACCUM:
+        case IO_WIND_MOMENTUM_ACCUM:
+        case IO_M_CURRENT_OLD:
+        case IO_M_DRAWN_IA:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
             break;
@@ -2901,6 +3016,32 @@ int blockpresent(enum iofields blocknr)
 
         case IO_SAMPLED_IMF:
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            return 1;
+#endif
+            break;
+
+        case IO_BIRTH_METALLICITY:
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+            return 1;
+#endif
+            break;
+
+        case IO_ELEMENT_ABUNDANCE:
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            return 1;
+#endif
+            break;
+
+        case IO_WIND_MASS_ACCUM:
+        case IO_WIND_MOMENTUM_ACCUM:
+        case IO_M_CURRENT_OLD:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            return 1;
+#endif
+            break;
+
+        case IO_M_DRAWN_IA:
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
             return 1;
 #endif
             break;
@@ -3487,6 +3628,24 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SAMPLED_IMF:
             strncpy(label, "SAMF", 4);
             break;
+        case IO_BIRTH_METALLICITY:
+            strncpy(label, "BMET", 4);
+            break;
+        case IO_ELEMENT_ABUNDANCE:
+            strncpy(label, "ELAB", 4);
+            break;
+        case IO_WIND_MASS_ACCUM:
+            strncpy(label, "WMAC", 4);
+            break;
+        case IO_WIND_MOMENTUM_ACCUM:
+            strncpy(label, "WPAC", 4);
+            break;
+        case IO_M_CURRENT_OLD:
+            strncpy(label, "MCOL", 4);
+            break;
+        case IO_M_DRAWN_IA:
+            strncpy(label, "MDIA", 4);
+            break;
         case IO_POT:
             strncpy(label, "POT ", 4);
             break;
@@ -3920,6 +4079,24 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_SAMPLED_IMF:
             strcpy(buf, "IMFSampledFlag");
+            break;
+        case IO_BIRTH_METALLICITY:
+            strcpy(buf, "BirthMetallicity");
+            break;
+        case IO_ELEMENT_ABUNDANCE:
+            strcpy(buf, "ElementAbundance");
+            break;
+        case IO_WIND_MASS_ACCUM:
+            strcpy(buf, "WindMassAccum");
+            break;
+        case IO_WIND_MOMENTUM_ACCUM:
+            strcpy(buf, "WindMomentumAccum");
+            break;
+        case IO_M_CURRENT_OLD:
+            strcpy(buf, "MCurrentOld");
+            break;
+        case IO_M_DRAWN_IA:
+            strcpy(buf, "MDrawnIa");
             break;
         case IO_POT:
             strcpy(buf, "Potential");

@@ -592,6 +592,42 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_BIRTH_METALLICITY:
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+            for(n = 0; n < pc; n++) {P[offset + n].BirthMetallicity = *fp++;}
+#endif
+            break;
+
+        case IO_ELEMENT_ABUNDANCE:
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            for(n = 0; n < pc; n++) {for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {P[offset + n].ElementAbundance[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_WIND_MASS_ACCUM:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            for(n = 0; n < pc; n++) {P[offset + n].WindMassAccum = *fp++;}
+#endif
+            break;
+
+        case IO_WIND_MOMENTUM_ACCUM:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            for(n = 0; n < pc; n++) {P[offset + n].WindMomentumAccum = *fp++;}
+#endif
+            break;
+
+        case IO_M_CURRENT_OLD:
+#ifdef GALSF_RESOLVEDISM_WINDS
+            for(n = 0; n < pc; n++) {P[offset + n].M_current_old = *fp++;}
+#endif
+            break;
+
+        case IO_M_DRAWN_IA:
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+            for(n = 0; n < pc; n++) {P[offset + n].M_drawn_Ia = *fp++;}
+#endif
+            break;
+
         case IO_NH:        /* neutral hydrogen fraction */
 #if defined(RT_CHEM_PHOTOION)
             for(n = 0; n < pc; n++) {CellP[offset + n].HI = *fp++;}
