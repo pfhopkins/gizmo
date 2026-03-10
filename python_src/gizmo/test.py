@@ -33,7 +33,7 @@ def download_test_files(test_name: str):
             except HTTPError as err:
                 print(f"Could not find {f} at {website_path} or {website_path2}")
 
-    if not (path.isfile(icfile) and path.isfile(icfile)):
+    if not (path.isfile(icfile) and path.isfile(paramsfile)):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
