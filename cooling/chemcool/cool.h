@@ -308,7 +308,9 @@ c
       REAL deff, abundc, abundo, abundsi, abundD, abundM,
      $     abundN, G0, G0_LW, phi_pah, tdust, dust_to_gas_ratio,
      $     AV_conversion_factor, cosmic_ray_ion_rate, redshift,
-     $     AV_ext, pdv_term, h2_form_ex, h2_form_kin, dm_density
+     $     AV_ext, pdv_term, h2_form_ex, h2_form_kin, dm_density,
+     $     rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
+     $     rt_heat_HI, rt_heat_HeI, rt_heat_HeII
       integer iphoto, iflag_mn, iflag_ad, iflag_atom, 
      $        iflag_3bh2a, iflag_3bh2b, iflag_h3pra,
      $        iflag_h2opc, id_current, idma_mass_option,
@@ -341,7 +343,9 @@ c     Do not indent the next line!
      $               S_tbl, Ca_tbl, Fe_tbl,
      $               HeI_tbl, HeII_tbl,
 #endif
-     $               dm_density 
+     $               dm_density,
+     $               rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
+     $               rt_heat_HI, rt_heat_HeI, rt_heat_HeII
 
       common /cooli/ iphoto, iflag_mn, iflag_ad, iflag_atom
      $,              iflag_3bh2a, iflag_3bh2b, iflag_h3pra

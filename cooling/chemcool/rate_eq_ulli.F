@@ -56,7 +56,8 @@ c
 
       REAL abM
 
-      REAL ph4, ph5, ph8, ph9, ph35, ph38, ph41
+      REAL ph4, ph5, ph8, ph9, ph35, ph38, ph39, ph40, ph41
+      REAL ph42, ph43, ph44
 
       REAL h2p_pd_low, h2p_pd_lte
 
@@ -487,10 +488,15 @@ c HD photodissociation (from LW band, computed in calc_photo)
 c
       ph35 = phrates(35)
 c
-c Photoionization of HI and H2
+c Photoionization of HI, HeI, HeII, H2 and associated heating
 c
       ph38 = phrates(38)
+      ph39 = phrates(39)
+      ph40 = phrates(40)
       ph41 = phrates(41)
+      ph42 = phrates(42)
+      ph43 = phrates(43)
+      ph44 = phrates(44)
 c
 c Photodissociation (due to diffuse field):
 c
@@ -692,6 +698,8 @@ c
      $              - cst(75) * abhep * abh2
      $              -  ch92   * abhep * abco) * yn
      $              + cr6     * abheI
+     $              + ph39    * abheI
+     $              - ph40    * abhep
       endif
 c
 c D coupling to He+
@@ -709,6 +717,7 @@ c
       else
         ydot(ihepp) = (ch15 * abhep  * abe
      $              -  ch20 * abhepp * abe) * yn
+     $              + ph40  * abhep
       endif
 c
 c Ionized deuterium (D+)
@@ -851,12 +860,14 @@ c H2+ photodissociation heating
 c
       rates_chem(16) = - ph9 * abh2p * yn
 c
-c UNUSED
+c Photoionization heating from HI, HeI, HeII (from M1 RT or external rates)
+c ph42/43/44 = Gamma_X * epsilon_X [erg/s per atom], negative = heating
 c
       rates_chem(17) = 0d0
       rates_chem(18) = 0d0
       rates_chem(19) = 0d0
-      rates_chem(20) = 0d0
+      rates_chem(20) = - (ph42 * abHI + ph43 * abheI
+     $                  +  ph44 * abhep) * yn
 c
 c H- formation cooling (NB kinetic contribution is approximate)
 c

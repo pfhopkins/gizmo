@@ -518,6 +518,16 @@ c
       phrates(44) = phtab(44) * G0
       phrates(45) = phtab(45) * G0
 c
+c Add M1 RT per-cell photoionization and heating rates (set from C side)
+c These are non-zero only when RADTRANSFER is active
+c
+      phrates(38) = phrates(38) + rt_phot_HI
+      phrates(39) = phrates(39) + rt_phot_HeI
+      phrates(40) = phrates(40) + rt_phot_HeII
+      phrates(42) = phrates(42) + rt_heat_HI
+      phrates(43) = phrates(43) + rt_heat_HeI
+      phrates(44) = phrates(44) + rt_heat_HeII
+c
 c Network 1 is done, so skip to the end
 c
       if (nchem_network .eq. 1) then

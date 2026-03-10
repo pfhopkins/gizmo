@@ -104,6 +104,9 @@ void do_the_cooling_for_particle(int i)
     {
 #ifdef CHEMCOOL
         /* CHEMCOOL handles its own cooling, chemistry, and internal energy update internally */
+#if defined(RADTRANSFER)
+        {int k_rt; for(k_rt=0;k_rt<N_RT_FREQ_BINS;k_rt++) {CellP[i].Lambda_RadiativeCooling_toRHDBins[k_rt]=0;}} /* prevent stale values from affecting RT solver */
+#endif
         double dl = Get_Particle_Size(i) * All.cf_atime; /* shielding length in code units */
         do_chemcool_step(i, dtime, dl, 0);
         set_eos_pressure(i);

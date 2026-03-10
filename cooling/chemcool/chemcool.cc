@@ -33,7 +33,9 @@ extern "C" {
                S_tbl[352], Ca_tbl[352], Fe_tbl[352],
                HeI_tbl[51], HeII_tbl[51],
 #endif
-               dm_density;
+               dm_density,
+               rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
+               rt_heat_HI, rt_heat_HeI, rt_heat_HeII;
     } COOLR;
 
     extern struct {
@@ -134,9 +136,19 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     {
         /* Number abundances n_X/n_H = (X_mass_frac / A_X) / (X_H / A_H) where A_X = atomic weight */
         double X_H = DMAX(P[target].ElementAbundance[ELEM_H], 1e-10);
+#ifdef GALSF_RESOLVEDISM_DUST
+        /* Gas-phase abundances: total metal minus metal locked in dust */
+        double C_gas  = DMAX(P[target].ElementAbundance[ELEM_C]  - CellP[target].Dust[0], 0);
+        double O_gas  = DMAX(P[target].ElementAbundance[ELEM_O]  - CellP[target].Dust[1], 0);
+        double Si_gas = DMAX(P[target].ElementAbundance[ELEM_Si] - CellP[target].Dust[3], 0);
+        COOLR.abundc  = (C_gas  / 12.0) / (X_H / 1.0);
+        COOLR.abundo  = (O_gas  / 16.0) / (X_H / 1.0);
+        COOLR.abundsi = (Si_gas / 28.0) / (X_H / 1.0);
+#else
         COOLR.abundc  = (P[target].ElementAbundance[ELEM_C]  / 12.0) / (X_H / 1.0);
         COOLR.abundo  = (P[target].ElementAbundance[ELEM_O]  / 16.0) / (X_H / 1.0);
         COOLR.abundsi = (P[target].ElementAbundance[ELEM_Si] / 28.0) / (X_H / 1.0);
+#endif
         COOLR.abundN  = (P[target].ElementAbundance[ELEM_N]  / 14.0) / (X_H / 1.0);
 
 #ifdef WSS_CIE_COOL
@@ -168,9 +180,18 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
     COOLI.id_current = P[target].ID;
 
+#ifdef GALSF_RESOLVEDISM_DUST
+    {
+        /* Per-particle DGR from evolved dust fields, normalized to solar (DGR_solar ~ 0.01) */
+        double DGR_actual = 0;
+        for(int kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) DGR_actual += CellP[target].Dust[kd];
+        COOLR.dust_to_gas_ratio = DGR_actual / 0.01;
+    }
+#else
     COOLR.dust_to_gas_ratio = All.DGRnormalized;
 #ifdef DGR_SCALE_WITH_Z
     COOLR.dust_to_gas_ratio = All.DGRnormalized * All.InitialMetallicity;
+#endif
 #endif
 
 
@@ -194,8 +215,14 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     double G0_LW = LW_flux_tot * fac_flux2habing * All.G0;
     COOLR.G0_LW = G0_LW;
 
-#ifdef CR_SCALE_WITH_G0
-    COOLR.cosmic_ray_ion_rate = (COOLR.G0 / 1.7) * All.CosmicRayIonRate;
+#ifdef COSMIC_RAY_FLUID
+    { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
+        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target); /* [erg cm^-3] */
+        double ecr_eVcm3 = ecr_cgs / 1.602e-12; /* convert to [eV cm^-3] */
+        COOLR.cosmic_ray_ion_rate = 3e-17 * ecr_eVcm3;
+    }
+#elif defined(CR_SCALE_WITH_G0)
+    COOLR.cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (COOLR.G0 / 1.7) * All.CosmicRayIonRate));
 #endif
 #endif /* GALSF_RESOLVEDISM_G0_VARIABLE */
 
@@ -210,6 +237,72 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #endif
 #endif
 
+    /* Default RT photoionization rates to zero */
+    COOLR.rt_phot_HI = COOLR.rt_phot_HeI = COOLR.rt_phot_HeII = 0;
+    COOLR.rt_heat_HI = COOLR.rt_heat_HeI = COOLR.rt_heat_HeII = 0;
+
+#if defined(RADTRANSFER)
+    { /* M1 RT active: compute G0, G0_LW, and photoionization rates from radiation field */
+        double rho_code = CellP[target].Density * All.cf_a3inv;
+        double u_Habing_cgs = HABING_FLUX_CGS / C_LIGHT_CGS; /* 5.33e-14 erg/cm^3 */
+
+        /* Convert Rad_E_gamma (extensive: total energy per particle) to physical energy density (erg/cm^3):
+           u_rad = Rad_E_gamma / V_i = Rad_E_gamma * Density / Mass  [code energy/volume]
+           u_rad_cgs = u_rad * UNIT_PRESSURE_IN_CGS */
+        double fac_to_cgs = (rho_code / P[target].Mass) * UNIT_PRESSURE_IN_CGS; /* converts Rad_E_gamma to erg/cm^3 */
+
+#if defined(RT_PHOTOELECTRIC)
+        double u_PE_cgs  = CellP[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * fac_to_cgs;
+#else
+        double u_PE_cgs  = 0;
+#endif
+#if defined(RT_LYMAN_WERNER)
+        double u_LW_cgs  = CellP[target].Rad_E_gamma[RT_FREQ_BIN_LYMAN_WERNER] * fac_to_cgs;
+#else
+        double u_LW_cgs  = 0;
+#endif
+        /* G0 measures the 6-13.6 eV field in Habing units (PE + LW combined) */
+        COOLR.G0    = DMAX((u_PE_cgs + u_LW_cgs) / u_Habing_cgs, 1e-6);
+        COOLR.G0_LW = DMAX(u_LW_cgs / u_Habing_cgs, 0.0);
+
+#if defined(RT_CHEM_PHOTOION)
+        /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]
+           Gamma_X = c * (u_rad / E_photon) * sigma_X   where all quantities in CGS */
+        double fac_sigma = UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS; /* convert code sigma to cm^2 */
+        { /* HI band */
+            double u_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_H0] * fac_to_cgs;
+            double E_phot = rt_nu_eff_eV[RT_FREQ_BIN_H0] * ELECTRONVOLT_IN_ERGS;
+            double sigma  = rt_ion_sigma_HI[RT_FREQ_BIN_H0] * fac_sigma;
+            double Gamma  = C_LIGHT_CGS * (u_cgs / E_phot) * sigma;
+            COOLR.rt_phot_HI = Gamma;
+            COOLR.rt_heat_HI = Gamma * (rt_nu_eff_eV[RT_FREQ_BIN_H0] - 13.6) * ELECTRONVOLT_IN_ERGS;
+        }
+#if defined(RT_PHOTOION_MULTIFREQUENCY)
+        { /* HeI band */
+            double u_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_He0] * fac_to_cgs;
+            double E_phot = rt_nu_eff_eV[RT_FREQ_BIN_He0] * ELECTRONVOLT_IN_ERGS;
+            double sigma  = rt_ion_sigma_HeI[RT_FREQ_BIN_He0] * fac_sigma;
+            double Gamma  = C_LIGHT_CGS * (u_cgs / E_phot) * sigma;
+            COOLR.rt_phot_HeI = Gamma;
+            COOLR.rt_heat_HeI = Gamma * (rt_nu_eff_eV[RT_FREQ_BIN_He0] - 24.6) * ELECTRONVOLT_IN_ERGS;
+        }
+        { /* HeII band */
+            double u_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_He1] * fac_to_cgs;
+            double E_phot = rt_nu_eff_eV[RT_FREQ_BIN_He1] * ELECTRONVOLT_IN_ERGS;
+            double sigma  = rt_ion_sigma_HeII[RT_FREQ_BIN_He1] * fac_sigma;
+            double Gamma  = C_LIGHT_CGS * (u_cgs / E_phot) * sigma;
+            COOLR.rt_phot_HeII = Gamma;
+            COOLR.rt_heat_HeII = Gamma * (rt_nu_eff_eV[RT_FREQ_BIN_He1] - 54.4) * ELECTRONVOLT_IN_ERGS;
+        }
+#endif /* RT_PHOTOION_MULTIFREQUENCY */
+#endif /* RT_CHEM_PHOTOION */
+
+        /* CR ionization from CR fluid (already set above if COSMIC_RAY_FLUID) or scale with G0 */
+#if !defined(COSMIC_RAY_FLUID) && defined(CR_SCALE_WITH_G0)
+        COOLR.cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (COOLR.G0 / 1.7) * All.CosmicRayIonRate));
+#endif
+    }
+#endif /* RADTRANSFER */
 
     /* Set correct dust temperature in coolr common block */
     COOLR.tdust = CellP[target].DustTemp;
