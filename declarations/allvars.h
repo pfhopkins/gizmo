@@ -495,6 +495,17 @@ extern struct global_data_all_processes
   char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */
   double MaxStellarTimestep;    /*!< hard cap on Type 4 timesteps [yr] */
 #endif
+#ifdef KETJU_REGULARIZATION
+  double KetjuRegionRadius;              /*!< physical radius of KETJU regions [code units] */
+  double KetjuMinBHMass;                 /*!< minimum Type 5 mass for region center [code units], 0=off */
+  double KetjuMinStarMass;               /*!< minimum Type 4 mass for region center [code units], 0=off */
+  double KetjuIntegrationTolerance;      /*!< GBS relative tolerance (default 1e-9) */
+  char   KetjuPNTerms[20];              /*!< PN term flags: "all","none","no_spin", or bitstring */
+  int    KetjuEnableBHMergerKicks;       /*!< enable GW recoil kicks for BH mergers */
+  int    KetjuUseStarStarSoftening;      /*!< keep softening between stars inside chain */
+  double KetjuTimestepLimitingFactor;    /*!< radius factor for timestep limiting (default 100) */
+  int    KetjuMaxStepCount;              /*!< max MSTAR integration steps before bail-out (default 100000, 0=off) */
+#endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
@@ -1382,6 +1393,9 @@ enum iofields
   IO_WIND_MOMENTUM_ACCUM,
   IO_M_CURRENT_OLD,
   IO_M_DRAWN_IA,
+  IO_RESOLVEDISM_DUST,
+  IO_KETJU_FINAL_VEL,
+  IO_KETJU_SPIN,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 

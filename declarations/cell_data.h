@@ -37,6 +37,10 @@ extern struct gas_cell_data
     MyDouble ISMDustChem_MassFractionInDenseMolecular; /*!< mass fraction of gas in dense MC phase */
 #endif
     
+#ifdef GALSF_RESOLVEDISM_DUST
+    MyFloat Dust[NUM_RESOLVEDISM_DUST];  /*!< dust mass fractions: [0]=C, [1]=O_sil, [2]=Mg_sil, [3]=Si_sil, [4]=Fe_sil (FeMgSiO4 stoichiometry) */
+#endif
+
 #ifdef MAGNETIC
     MyDouble Face_Area[3];          /*!< vector sum of effective areas of 'faces'; this is used to check closure for meshless methods */
     MyDouble BPred[3];              /*!< current magnetic field strength */

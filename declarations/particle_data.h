@@ -140,6 +140,9 @@ extern ALIGN(32) struct particle_data
 #ifdef GALSF_RESOLVEDISM_FB
     MyFloat InternalEnergyAroundParticle; /*!< mass-weighted ambient internal energy around star (from density loop) */
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+    MyFloat DGR_around; /*!< kernel-weighted local dust-to-gas ratio around star (from density loop) */
+#endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL) || defined(GALSF_RESOLVEDISM_FB)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -180,6 +183,7 @@ extern ALIGN(32) struct particle_data
 #if defined(SINK_PARTICLES)
     MyIDType SwallowID;
     int IndexMapToTempStruc;   /*!< allows for mapping to SinkTempInfo struc */
+    short int SinkSubType;     /*!< 0=SMBH (from IC or seeded), 1=stellar-mass BH (from dead star) */
 #ifdef SINK_WIND_SPAWN
     MyFloat unspawned_wind_mass;    /*!< tabulates the wind mass which has not yet been spawned */
 #endif
@@ -294,6 +298,14 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
     
+#ifdef KETJU_REGULARIZATION
+    MyDouble KetjuFinalVel[3];  /* true physical velocity from KETJU, swapped in after drift */
+    short int KetjuIntegrated;  /* 1 if this particle was KETJU-integrated this step */
+#if defined(SINK_PARTICLES)
+    MyDouble KetjuSpin[3];     /* BH spin angular momentum vector S [length*mass*velocity units] */
+#endif
+#endif
+
 #if defined(DM_SIDM)
     double dtime_sidm; /*!< timestep used if self-interaction probabilities greater than 0.2 are found */
     long unsigned int NInteractions; /*!< Total number of interactions */
