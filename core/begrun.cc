@@ -100,6 +100,10 @@ void begrun(void)
   InitCool();
 #endif
 
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+  resolvedism_load_stellar_tables();
+#endif
+
 #ifdef BOX_PERIODIC
   ewald_init();
 #endif
@@ -747,8 +751,14 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SNinfo.txt");
   if(!(FdSNinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdSNinfo,"%s Per-SN diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
-      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star\n",prefix_char);
+      fprintf(FdSNinfo,"%s Per-death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
+      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star  (9) remnant_type [0=WD,1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH]\n",prefix_char);
+  }
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "FeedbackBudget.txt");
+  if(!(FdFeedbackBudget = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdFeedbackBudget,"%s Per-timestep feedback budget [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
+      fprintf(FdFeedbackBudget,"%s   (1) time  (2) channel [0=SN,1=AGB,2=wind,3=radpressure,4=Ia]  (3) N_events  (4) M_injected[Msun]  (5) M_removed_from_stars[Msun]  (6) E_injected[erg]  (7) |dp_injected|[g*cm/s]  (8) Z_injected[Msun]\n",prefix_char);
   }
 #endif
 #ifdef GALSF_RESOLVEDISM
@@ -2145,6 +2155,10 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.DGRnormalized;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "DeutAbund");
+      addr[nt] = &All.DeutAbund;
+      id[nt++] = REAL;
+
       strcpy(tag[nt], "InitialMetallicity");
       addr[nt] = &All.InitialMetallicity;
       id[nt++] = REAL;
@@ -2167,6 +2181,16 @@ void read_parameter_file(char *fname)
 
       strcpy(tag[nt], "MassPerStarIMF");
       addr[nt] = &All.MassPerStarIMF;
+      id[nt++] = REAL;
+#endif
+
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+      strcpy(tag[nt], "StellarTablesFile");
+      addr[nt] = All.StellarTablesFile;
+      id[nt++] = STRING;
+
+      strcpy(tag[nt], "MaxStellarTimestep");
+      addr[nt] = &All.MaxStellarTimestep;
       id[nt++] = REAL;
 #endif
 
@@ -2387,6 +2411,9 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
+#endif
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+                if(strcmp("MaxStellarTimestep",tag[i])==0) {*((double *)addr[i])=50000.; printf("Tag %s (%s) not set in parameter file: defaulting to 50 kyr (=%g yr)\n",tag[i],alternate_tag[i],All.MaxStellarTimestep); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}

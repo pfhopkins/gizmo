@@ -420,7 +420,8 @@ endif
 ifeq (CHEMCOOL,$(findstring CHEMCOOL,$(CONFIGVARS)))
 OBJS    += cooling/chemcool/chemcool.o
 FOBJS   += cooling/chemcool/coolinmo.o cooling/chemcool/cheminmo.o cooling/chemcool/spline.o cooling/chemcool/cool_func.o cooling/chemcool/photoinit_ism.o \
-           cooling/chemcool/dvode.o cooling/chemcool/evolve_abundances.o cooling/chemcool/rate_eq_simple.o cooling/chemcool/jac.o cooling/chemcool/cool_util.o \
+           cooling/chemcool/dvode.o cooling/chemcool/evolve_abundances.o cooling/chemcool/rate_eq_simple.o cooling/chemcool/rate_eq_ulli.o \
+           cooling/chemcool/jac.o cooling/chemcool/cool_util.o \
            cooling/chemcool/const_rates.o cooling/chemcool/validate_rates.o cooling/chemcool/calc_photo.o cooling/chemcool/calc_temp.o \
            cooling/chemcool/compute_gamma.o cooling/chemcool/wss_z_collis.o
 endif
@@ -430,6 +431,11 @@ ifeq (GALSF_RESOLVEDISM,$(findstring GALSF_RESOLVEDISM,$(CONFIGVARS)))
 OBJS    += galaxy_sf/stellar_properties_resolvedism.o
 OBJS    += galaxy_sf/resolvedism_fb.o
 OBJS    += galaxy_sf/resolvedism_photoion.o
+endif
+
+# stellar evolution tables for single-star feedback
+ifeq (GALSF_RESOLVEDISM_STELLAR_TABLES,$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS)))
+OBJS    += galaxy_sf/resolvedism_stellar_tables.o
 endif
 
 # expanded IMF sampling

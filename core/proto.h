@@ -779,6 +779,10 @@ void resolvedism_photoionize(void);
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 void assign_stellar_masses(void);
 #endif
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+void resolvedism_load_stellar_tables(void);
+void resolvedism_free_stellar_tables(void);
+#endif
 void count_hot_phase(void);
 void delete_node(int i);
 void density(void);
