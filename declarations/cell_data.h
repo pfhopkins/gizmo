@@ -216,7 +216,8 @@ extern struct gas_cell_data
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyFloat UV_flux[NPIX];                /*!< HEALPix UV flux per pixel from stars */
+    MyFloat UV_flux[NPIX];                /*!< HEALPix UV flux per pixel from stars, 6-13.6 eV */
+    MyFloat LW_flux[NPIX];               /*!< HEALPix LW flux per pixel from stars, 11.2-13.6 eV */
 #endif
 #ifdef GALSF_SUBGRID_WINDS
     MyFloat DelayTime;                /*!< remaining maximum decoupling time of wind particle */

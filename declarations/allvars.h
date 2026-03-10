@@ -67,6 +67,10 @@
 #include "../cooling/chimes/chimes_proto.h"
 #endif
 
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+#include "../galaxy_sf/resolvedism_stellar_tables.h"
+#endif
+
 /*********************************************************/
 /*  Global variables                                     */
 /*********************************************************/
@@ -311,6 +315,7 @@ extern FILE *FdSfr;        /*!< file handle for star formation log-file. */
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
 extern FILE *FdSNinfo;     /*!< file handle for SNinfo.txt per-SN diagnostic log */
+extern FILE *FdFeedbackBudget; /*!< file handle for FeedbackBudget.txt conservation log */
 #endif
 #ifdef GALSF_RESOLVEDISM
 extern FILE *FdSFinfo;     /*!< file handle for SFinfo.txt per-SF-event diagnostic log */
@@ -458,6 +463,7 @@ extern struct global_data_all_processes
   double G0;                    /*!< UV radiation field strength in Habing units */
   double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
   double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
+  double DeutAbund;             /*!< primordial deuterium abundance D/H by number */
   double InitialMetallicity;    /*!< initial metallicity in solar units */
 #endif
 #ifdef TREE_RAD
@@ -484,6 +490,10 @@ extern struct global_data_all_processes
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
   double FactorG0;              /*!< scaling factor for G0 from total SFR */
+#endif
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+  char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */
+  double MaxStellarTimestep;    /*!< hard cap on Type 4 timesteps [yr] */
 #endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
@@ -1089,7 +1099,8 @@ extern struct gravdata_out
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyDouble UV_flux[NPIX];               /*!< HEALPix UV flux per pixel */
+    MyDouble UV_flux[NPIX];               /*!< HEALPix UV flux per pixel, 6-13.6 eV */
+    MyDouble LW_flux[NPIX];               /*!< HEALPix LW flux per pixel, 11.2-13.6 eV */
 #endif
 #ifdef SINK_COMPTON_HEATING
     MyDouble Rad_Flux_AGN;
@@ -1365,6 +1376,12 @@ enum iofields
   IO_STOCHASTIC_IMF_MSTAR,
   IO_FORMATION_DENSITY,
   IO_SAMPLED_IMF,
+  IO_BIRTH_METALLICITY,
+  IO_ELEMENT_ABUNDANCE,
+  IO_WIND_MASS_ACCUM,
+  IO_WIND_MOMENTUM_ACCUM,
+  IO_M_CURRENT_OLD,
+  IO_M_DRAWN_IA,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
@@ -1457,7 +1474,8 @@ extern ALIGN(32) struct NODE
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-  MyFloat uv_luminosity;        /*!< total UV luminosity in tree node (from star particles) */
+  MyFloat uv_luminosity;        /*!< total UV luminosity in tree node (from star particles), 6-13.6 eV */
+  MyFloat lw_luminosity;        /*!< total LW luminosity in tree node (from star particles), 11.2-13.6 eV */
 #endif
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/

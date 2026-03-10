@@ -103,7 +103,8 @@ extern ALIGN(32) struct particle_data
     MyFloat SigmaEff;              /*!< effective column density -log(avg(exp(-sigma))) averaged over column density bins from the gravity tree (does not include the self-contribution) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyFloat UV_luminosity;                /*!< UV luminosity of star particle for photoelectric heating */
+    MyFloat UV_luminosity;                /*!< UV luminosity of star particle for photoelectric heating [erg/s], 6-13.6 eV */
+    MyFloat LW_luminosity;                /*!< Lyman-Werner band luminosity [erg/s], 11.2-13.6 eV for H2 photodissociation */
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     MyFloat Lyman_photons_per_sec;        /*!< ionizing photon rate [sec^-1] */
 #endif
@@ -114,6 +115,20 @@ extern ALIGN(32) struct particle_data
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
     MyFloat FormationDensity;             /*!< gas density at time of star formation (code units, comoving) */
+#endif
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+    MyFloat BirthMetallicity;             /*!< total metallicity Z at birth, for table lookups */
+#endif
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+    MyFloat ElementAbundance[NUM_RESOLVEDISM_ELEMENTS]; /*!< per-element mass fractions: H,He,C,N,O,F,Ne,Na,Mg,Al,Si,S,Ca,Ti,Fe */
+#endif
+#ifdef GALSF_RESOLVEDISM_WINDS
+    MyFloat WindMassAccum;       /*!< accumulated wind mass since last injection [Msun] */
+    MyFloat WindMomentumAccum;   /*!< accumulated wind momentum magnitude [Msun * km/s] */
+    MyFloat M_current_old;       /*!< M_current at start of previous timestep [Msun] */
+#endif
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+    MyFloat M_drawn_Ia;          /*!< original drawn mass for Type Ia DTD [Msun], >0 = WD eligible */
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
     MyFloat Mstar;                        /*!< single massive-star mass assigned to particle */
