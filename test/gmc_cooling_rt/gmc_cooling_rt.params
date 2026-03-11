@@ -1,0 +1,249 @@
+%-------------------------------------------------------------------------
+%----  This file contains the input parameters needed at run-time for 
+%       simulations. It is based on and closely resembles the GADGET-3
+%       parameterfile (format of which and parsing routines written by 
+%       Volker Springel [volker.springel@h-its.org]). It has been updated
+%       with new naming conventions and additional variables as needed by 
+%       Phil Hopkins [phopkins@caltech.edu] for GIZMO.
+%-------------------------------------------------------------------------
+
+%----  Relevant files (filenames and directories)
+InitCondFile  gmc_cooling_rt_ics
+OutputDir     test/gmc_cooling_rt/output
+
+%---- File formats (input and output)
+ICFormat    3  % 1=unformatted (gadget) binary, 3=hdf5, 4=cluster
+SnapFormat  3  % 1=unformatted (gadget) binary, 3=hdf5
+
+
+%---- Output parameters 
+RestartFile                 restart 
+SnapshotFileBase            snapshot 
+OutputListOn                0  % =1 to use list in "OutputListFilename" 
+OutputListFilename          output_times.txt  % list of times (in code units) for snaps
+NumFilesPerSnapshot         1
+NumFilesWrittenInParallel   1  % must be < N_processors & power of 2
+
+%---- Output frequency 
+TimeOfFirstSnapshot     0.  % time (code units) of first snapshot
+TimeBetSnapshot         0.1  % time between (if OutputListOn=0), code units
+TimeBetStatistics       2.52e-02 % time between additional statistics (e.g. energy)
+
+%---- CPU run-time and checkpointing time-limits
+TimeLimitCPU            172800  % in seconds
+CpuTimeBetRestartFile   7200  	% in seconds 
+ResubmitOn              0 
+ResubmitCommand         my-scriptfile 
+
+%---- Desired simulation beginning and end times (in code units) for run
+TimeBegin   0.0    % Beginning of the simulation
+TimeMax     1.0    % End of the simulation
+
+%---- Maximum and minimum timesteps allowed
+MaxSizeTimestep         2.52e-02  % in code units, set for your problem
+MinSizeTimestep         1.0e-15 % set this very low, or get the wrong answer
+
+
+%---- System of units
+UnitLength_in_cm            3.09e+18
+UnitMass_in_g               1.99e+33
+UnitVelocity_in_cm_per_s    1.00e+05
+UnitMagneticField_in_gauss  1.00e+00
+GravityConstantInternal     1e-100           % calculated by code if =0
+
+%---- Cosmological parameters
+ComovingIntegrationOn   0       % is it cosmological? (yes=1, no=0)
+BoxSize                 1.00e+02  % in code units
+Omega0                  0.    % =0 for non-cosmological
+OmegaLambda             0.    % =0 for non-cosmological
+OmegaBaryon             0.  % =0 for non-cosmological
+HubbleParam             1.     % little 'h'; =1 for non-cosmological runs
+
+
+%----- Memory allocation
+MaxMemSize          5000    % sets maximum MPI process memory use in MByte
+PartAllocFactor     5.0     % memory load allowed for better cpu balance
+BufferSize          500     % in MByte
+
+%---- Rebuild domains when >this fraction of particles active
+TreeDomainUpdateFrequency   0.005    % 0.0005-0.05, dept on core+particle number
+
+
+%---- (Optional) Initial hydro temperature & temperature floor (in Kelvin)
+InitGasTemp     1e4	    % set by IC file if =0
+MinGasTemp     	2.73	    % don't trust cooling function below ~5K, whether dust, molecular lines, or photoelectric heating
+
+%---- Hydro reconstruction (kernel) parameters
+DesNumNgb               32      % domain-reconstruction kernel number: 32 standard, 60-114 for quintic
+MaxHsml                 1.0e10  % minimum gas kernel length (some very large value to prevent errors)
+MinGasHsmlFractional    0       % minimum kernel length relative to gas force softening (<= 1)
+
+
+%---- Gravitational softening lengths 
+%----- Softening lengths per particle type. If ADAPTIVE_GRAVSOFT is set, these  
+%-------- are the minimum softening allowed for each type ------- 
+%-------- (units are co-moving for cosmological integrations)
+SofteningGas    1e-10   % gas (particle type=0) (in co-moving code units)
+SofteningHalo   0.020    % dark matter/collisionless particles (type=1)
+SofteningDisk   0.150    % collisionless particles (type=2)
+SofteningBulge  0.500    % collisionless particles (type=3)
+SofteningStars  1.00e-01   % stars spawned from gas (type=4)
+SofteningBndry  1.00e-01       % black holes (if active), or collisionless (type=5)
+
+%---- if these are set in cosmo runs, SofteningX switches from comoving to physical
+%------- units when the comoving value exceeds the choice here
+%------- (these are ignored, and *only* the above are used, for non-cosmo runs)
+SofteningGasMaxPhys     0.0005  % e.g. switch to 0.5pc physical below z=1
+SofteningHaloMaxPhys    0.010
+SofteningDiskMaxPhys    0.075 
+SofteningBulgeMaxPhys   0.250 
+SofteningStarsMaxPhys   0.0005 
+SofteningBndryMaxPhys   0.0005 
+%----- parameters for adaptive gravitational softening 
+AGS_DesNumNgb           32  % neighbor number for calculating adaptive gravsoft
+
+
+
+
+%-------------------------------------------------------------------------
+%-------------------------------------------------------------------------
+%---------- Physics Modules ----------------------------------------------
+%-------------------------------------------------------------------------
+%-------------------------------------------------------------------------
+
+
+%------------------------------------------------------------
+%------------------ Additional Fluid Physics ----------------
+%------------------------------------------------------------
+
+%---- Magneto-Hydrodynamics Parameters (MAGNETIC on)
+%----- Initial B-Field Strengths (if MHD_B_SET_IN_PARAMS on, otherwise read from IC file)
+BiniX   1.0e-8    % initial B_x, in code units
+BiniY   1.0e-8    % initial B_y, in code units
+BiniZ   1.0e-8    % initial B_z, in code units
+
+%---- Thermal Conduction (CONDUCTION on)
+%----- set coefficient kappa [code units] or, if CONDUCTION_SPITZER on, multiplies value
+ConductionCoeff  1.0  % set/multiply conduction coefficient
+
+%---- Navier-Stokes Viscosity (VISCOSITY on)
+%--- set coefficients eta,zeta [code units] or, if VISCOSITY_BRAGINSKII on, multiplies value
+ShearViscosityCoeff     1.0     % set/multiply shear viscosity coefficient
+BulkViscosityCoeff      1.0     % set/multiply bulk viscosity coefficient
+
+%---- Turbulent Diffusion Master Switch (TURB_DIFFUSION on)
+TurbDiffusionCoefficient 1.0    % Normalizes diffusion rates relative to Smagorinsky-Lilly theory [best calibration] (~0.5-2)
+
+%---- Cosmic Ray + Gas Fluids (COSMIC_RAYS on)
+CosmicRayDiffusionCoeff     1.0     % multiplies anisotropic diffusion/streaming coefficients
+
+%---- Dust-Gas Mixtures (GRAIN_FLUID on)
+Grain_Internal_Density      1.0     % internal/material density of grains in g/cm^3
+Grain_Size_Min              1.e-6   % minimum grain size in cm
+Grain_Size_Max              1.e-4   % maximum grain size in cm
+Grain_Size_Spectrum_Powerlaw  0.5   % power-law distribution of grain sizes (dm/dlnr~r^x)
+
+
+%-------------------------------------------------------------------------
+%------------------ Star, Black Hole, and Galaxy Formation ---------------
+%-------------------------------------------------------------------------
+
+
+%---- Star Formation parameters (GALSF on)
+CritPhysDensity     1.00e+02    %  critical physical density for star formation (cm^(-3)) 
+SfEffPerFreeFall    1.0     %  SFR/(Mgas/tfreefall) for gas which meets SF criteria
+
+
+
+%-------------- FIRE (PFH) explicit star formation & feedback model (FIRE on)
+%--- initial metallicity of gas & stars in simulation 
+InitMetallicity             1.00e+00  % initial gas+stellar metallicity (in solar)
+InitStellarAge              0.0   % initial mean age (in Gyr; for stars in sim ICs)
+%--- local radiation-pressure driven winds (GALSF_FB_FIRE_RT_LOCALRP) 
+WindMomentumLoading         1.0     % fraction of photon momentum to couple
+%--- SneII Heating Model (GALSF_FB_MECHANICAL) 
+SNeIIEnergyFrac             1.0     % fraction of mechanical energy to couple
+%--- HII region photo-heating model (GALSF_FB_FIRE_RT_HIIHEATING)  
+HIIRegion_fLum_Coupled      1.0     % fraction of ionizing photons allowed to see gas
+%--- long-range radiation pressure acceleration (GALSF_FB_FIRE_RT_LONGRANGE) 
+PhotonMomentum_Coupled_Fraction  1.0  % fraction of L to allow incident
+PhotonMomentum_fUV          0.0    % incident SED f(L) in UV (minimum scattering)
+PhotonMomentum_fOPT         0.0    % incident SED f(L) in optical/near-IR 
+%--- gas return/recycling
+GasReturnFraction           1.0     % fraction of gas mass returned (relative to ssp)
+GasReturnEnergy             1.0     % fraction of returned gas energy+momentum (relative to ssp)
+%--- cosmic rays (COSMIC_RAYS)
+CosmicRay_SNeFraction       0.1     % fraction of SNe ejecta kinetic energy into cosmic rays (~10%)
+
+InterstellarRadiationFieldStrength  1.00e+00 % interstellar radiation field intensity relative to values measured in Solar neighborhood
+
+%-------------- Black Hole accretion & formation (BLACK_HOLES on)
+%--- formation/seeding  
+SeedBlackHoleMass            5.00e-01    % initial mass (on-the-fly or single galaxy)
+SeedAlphaDiskMass            0.0        % initial mass in the alpha disk (BH_ALPHADISK_ACCRETION)
+SeedBlackHoleMinRedshift     2.0        % minimum redshift where new BH particles are seeded (lower-z ceases seeding)
+SeedBlackHoleMassSigma       0.5        % lognormal standard deviation (in dex) in initial BH seed masses
+%----- (specific options for on-the-fly friends-of-friends based BH seeding: FOF on)
+MinFoFMassForNewSeed         10.	    % minimum mass of FOF group (stars or DM) to get seed, in code units
+TimeBetOnTheFlyFoF           1.01       % time (in code units, e.g. scale-factor) between on-the-fly FOF searches
+%--- accretion
+BlackHoleAccretionFactor     1.0	    % multiplier for mdot (relative to model)
+BlackHoleEddingtonFactor     1e100	    % fraction of eddington to cap (can be >1) 
+BlackHoleNgbFactor           1.0	    % multiplier for kernel neighbors for BH 
+BlackHoleMaxAccretionRadius  1.00e+02	    % max radius for BH neighbor search/accretion (code units)
+BlackHoleRadiativeEfficiency 5e-7        % radiative efficiency (for accretion and feedback)
+%--- feedback 
+BlackHoleFeedbackFactor      1.0	    % generic feedback strength multiplier 
+BH_FluxMomentumFactor        0.0	    % multiply radiation pressure (BH_PHOTONMOMENTUM), set it to zero to avoid launching gas from rad. pressure 
+BAL_f_accretion              0.7        % fraction of gas swallowed by BH (BH_WIND options)
+BAL_v_outflow                100.	    % velocity (km/s) of BAL outflow (BH_WIND options)
+BAL_internal_temperature     1.0e3      % internal temperature (K) of BAL outflow (BH_WIND_SPAWN)
+BAL_wind_particle_mass       1.00e-01     % mass of 'virtual wind particles' in code units (BH_WIND_SPAWN)
+BAL_wind_particle_mass_MS    1.00e-02     % mass of 'virtual wind particles' in MS stellar winds, if 0 then BAL_wind_particle_mass is used, in code units (SINGLE_STAR_FB_WINDS)
+
+
+%-------------------------------------------------------------------------
+%------------------ Grackle cooling module -----------------
+%-------------------------------------------------------------------------
+
+%-------------- Grackle UVB file (COOL_GRACKLE on)
+GrackleDataFile		     CloudyData_UVB=HM2012.h5
+
+
+
+%-------------------------------------------------------------------------
+%------------------ Driven Turbulence (Large-Eddy boxes) -----------------
+%-------------------------------------------------------------------------
+
+%-------------- Turbulent stirring parameters (TURB_DRIVING on)
+TurbDrive_ApproxRMSVturb            3.21e+00
+TurbDrive_MinWavelength             5.00e+00 
+TurbDrive_MaxWavelength             2.00e+01 
+TurbDrive_SolenoidalFraction        1  
+TurbDrive_CoherenceTime             2.51e+00
+TurbDrive_DrivingSpectrum           1
+TurbDrive_RandomNumberSeed          42
+TurbDrive_TimeBetweenTurbUpdates    2.52e-02
+TurbDrive_TimeBetTurbSpectrum       2.52e-02
+
+
+%-------------------------------------------------------------------------------------------------
+%------------------ Non-Standard Dark Matter, Dark Energy, Gravity, or Expansion -----------------
+%-------------------------------------------------------------------------------------------------
+
+%-------------- Parameters for non-standard or time-dependent Gravity/Dark Energy/Expansion (GR_TABULATED_COSMOLOGY on)
+DarkEnergyConstantW       -1        % time-independent DE parameter w, used only if no table
+TabulatedCosmologyFile    CosmoTbl  % table with cosmological parameters
+
+%--- Developer-Mode Parameters (usually hard-coded, but set manually if DEVELOPER_MODE is on) --------
+ErrTolTheta                  0.5    % 0.7=standard
+ErrTolForceAcc               0.0025 % 0.0025=standard
+ErrTolIntAccuracy        0.01  % <0.02
+CourantFac               0.2    % <0.20
+MaxRMSDisplacementFac    0.125  % <0.25
+MaxNumNgbDeviation      0.05    % <<DesNumNgb (values<1 are fine)
+AGS_MaxNumNgbDeviation  0.10  % tolerance in Nngb (make larger than gas)
+%---- Magneto-Hydrodynamics Developer-Mode Parameters (MAGNETIC on)
+%--- Dedner 2002 div-cleaning parameters
+DivBcleaningParabolicSigma   1.0 % (3D~0.7-1.0,2D~0.2-0.3)
+DivBcleaningHyperbolicSigma  1.0 % (~1)
