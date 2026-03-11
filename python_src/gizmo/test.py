@@ -19,12 +19,11 @@ def download_test_files(test_name: str):
     website_path2 = f"https://users.flatironinstitute.org/~mgrudic/gizmo_tests/{test_name}/"
 
     # Note: we are assuming a convention for the test ICs, params, and exact values
-    paramsfile = f"{test_name}.params"
     icfile = f"{test_name}_ics.hdf5"
     exactfile = f"{test_name}_exact.txt"  # exact solution (might not exist!)
     exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
 
-    for f in paramsfile, icfile, exactfile, exactfile2:
+    for f in icfile, exactfile, exactfile2:
         try:
             urlretrieve(website_path + f, f)
         except HTTPError as err:
@@ -33,13 +32,13 @@ def download_test_files(test_name: str):
             except HTTPError as err:
                 print(f"Could not find {f} at {website_path} or {website_path2}")
 
-    if not (path.isfile(icfile) and path.isfile(icfile)):
+    if not path.isfile(icfile):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
 def run_test(test_name: str):
     """Runs the test"""
-    paramsfile = f"{test_name}.params"
+    paramsfile = f"test/{test_name}/{test_name}.params"
     system(f"mpirun ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 

@@ -2522,6 +2522,9 @@ extern struct global_data_all_processes
     double InterstellarRadiationFieldStrength;
     double RadiationBackgroundRedshift;
 #endif
+#ifdef RT_INFRARED
+    double InitRadiationTemp;
+#endif
 
 #ifdef RT_LEBRON
     double PhotonMomentum_Coupled_Fraction;

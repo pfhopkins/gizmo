@@ -1006,7 +1006,7 @@ void rt_apply_boundary_conditions(int i)
 #ifdef RT_INFRARED
             if(k==RT_FREQ_BIN_INFRARED) {
                 SphP[i].Radiation_Temperature = background_isrf_cmb_Teff();
-                SphP[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);
+                SphP[i].Dust_Temperature = DMIN(All.InitRadiationTemp,100.);
             }
 #endif
         }
@@ -1041,7 +1041,7 @@ void get_background_isrf_urad(int i, double *urad){
 double background_isrf_cmb_Teff(){
     // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
     // Necessary because current IR band treatment lumps both radiation fields together
-    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = DMIN(All.InitGasTemp,100.);
+    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = DMIN(All.InitRadiationTemp,100.);
     double fac_TCMB= 1.+All.RadiationBackgroundRedshift, fac_uCMB = pow(fac_TCMB,4);
     double urad_CMB_CGS_eV = fac_uCMB * 0.262, Trad_CMB = 2.73 * fac_TCMB;
     return (urad_ISRF_CGS_eV * Trad_ISRF + urad_CMB_CGS_eV * Trad_CMB) / (urad_ISRF_CGS_eV + urad_CMB_CGS_eV); // weighting by SED energy
@@ -1070,7 +1070,7 @@ void rt_set_simple_inits(int RestartFlag)
         {
             int k;
 #ifdef RT_INFRARED
-            if(flag_to_reset_values_on_startup) {SphP[i].Radiation_Temperature = SphP[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);} //get_min_allowed_dustIRrad_temperature(); // in K, floor = CMB temperature or 10K
+            if(flag_to_reset_values_on_startup) {SphP[i].Radiation_Temperature = SphP[i].Dust_Temperature = DMIN(All.InitRadiationTemp,100.);} //get_min_allowed_dustIRrad_temperature(); // in K, floor = CMB temperature or 10K
 #ifdef RT_ISRF_BACKGROUND
             if(flag_to_reset_values_on_startup) {SphP[i].Radiation_Temperature = background_isrf_cmb_Teff();} //SphP[i].Dust_Temperature;
 #endif
@@ -1114,7 +1114,7 @@ void rt_set_simple_inits(int RestartFlag)
 
 #ifdef RT_INFRARED
                 if(flag_to_reset_values_on_startup && k==RT_FREQ_BIN_INFRARED) { // only initialize the IR energy if starting a new run, otherwise use what's in the snapshot
-                    SphP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] = (4.*5.67e-5 / C_LIGHT_CGS) * pow(DMIN(All.InitGasTemp,100.),4.) / UNIT_PRESSURE_IN_CGS * P[i].Mass / (SphP[i].Density*All.cf_a3inv);
+                    SphP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] = (4.*5.67e-5 / C_LIGHT_CGS) * pow(DMIN(All.InitRadiationTemp,100.),4.) / UNIT_PRESSURE_IN_CGS * P[i].Mass / (SphP[i].Density*All.cf_a3inv);
                 }
 #endif
 #ifdef RT_ISRF_BACKGROUND

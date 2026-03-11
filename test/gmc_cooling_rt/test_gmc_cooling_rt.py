@@ -20,34 +20,34 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         T = F["PartType0/Temperature"][:]
 
     if save_reference_solution:
-        with h5py.File("gmc_cooling_exact.hdf5", "w") as F:
+        with h5py.File("gmc_cooling_rt_exact.hdf5", "w") as F:
             F.create_dataset("PartType0/Metallicity", data=Z)
             F.create_dataset("PartType0/Density", data=rho)
             F.create_dataset("PartType0/Temperature", data=T)
 
     if plot:
         plt.loglog(nH, T, ".", markersize=1, color="black", label="Test")
-        with h5py.File("gmc_cooling_exact.hdf5", "r") as F:
+        with h5py.File("gmc_cooling_rt_exact.hdf5", "r") as F:
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
         plt.loglog(nH_ref, T_ref, ".", markersize=1, color="red", label="Benchmark")
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(r"$T (\rm K)$")
         plt.legend(loc=3)
-        plt.savefig("test/gmc_cooling/nH_vs_T.png", bbox_inches="tight")
+        plt.savefig("test/gmc_cooling_rt/nH_vs_T.png", bbox_inches="tight")
         plt.close()
 
     nH_bins = np.logspace(1, 3, 10)
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-def test_gmc_cooling():
-    test_name = "gmc_cooling"
+def test_gmc_cooling_rt():
+    test_name = "gmc_cooling_rt"
     get_cooling_tables()
     build_and_run_test(test_name)
-    if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):
+    if not path.isfile("test/gmc_cooling_rt/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
 
-    test_stats = compute_test_statistic("test/gmc_cooling/output/snapshot_010.hdf5", plot=True)
-    benchmark_stats = compute_test_statistic("gmc_cooling_exact.hdf5")
+    test_stats = compute_test_statistic("test/gmc_cooling_rt/output/snapshot_010.hdf5", plot=True)
+    benchmark_stats = compute_test_statistic("gmc_cooling_rt_exact.hdf5")
     assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
