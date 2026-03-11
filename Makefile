@@ -574,8 +574,8 @@ ifeq ($(SYSTYPE),"Ubuntu")
 CC       =  mpicc
 CXX      =  mpiccxx
 FC       =  $(CC)
-#OPTIMIZE = -g -fcommon -O1 -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
-#OPTIMIZE += -ftree-loop-distribute-patterns -fvect-cost-model -ftree-partial-pre   ## optimizations for gcc compilers (2/2)
+OPTIMIZE = -g -fcommon -O1 -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
+OPTIMIZE += -ftree-loop-distribute-patterns -fvect-cost-model -ftree-partial-pre   ## optimizations for gcc compilers (2/2)
 OPTIMIZE += -g -Wall # compiler warnings
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CXX     = mpic++
