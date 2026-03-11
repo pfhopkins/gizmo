@@ -202,7 +202,9 @@ double gamma_eos(int i)
 #ifdef COOLING
 /* Returns the temperature, either pre-computed or calling the routine to re-compute it*/
 double get_temperature(int i){
-#if defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)
+#ifdef CHEMCOOL
+    if(CellP[i].Temp > 0) {return CellP[i].Temp;} /* CHEMCOOL exact T from non-equilibrium abundances */
+#elif defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)
     if(All.Time > 0 || CellP[i].Temperature > 0) {return CellP[i].Temperature;}
 #endif
     return compute_temperature(i);

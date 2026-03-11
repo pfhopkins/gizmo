@@ -1038,6 +1038,43 @@ void energy_statistics(void)
       fflush(FdEnergy);
     }
 #endif
+
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+  /* Conservation budget: mass and energy tracking */
+  {
+#ifndef OUTPUT_ADDITIONAL_RUNINFO
+    compute_global_quantities_of_system(); /* ensure SysState is populated */
+#endif
+    double cool_glob = 0;
+    MPI_Reduce(&CumulCoolingEnergyLoss, &cool_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    /* min/max metallicity for gas (Type 0) and stars (Type 4) */
+    double Zmin_gas_loc = 1e30, Zmax_gas_loc = -1e30, Zmin_star_loc = 1e30, Zmax_star_loc = -1e30;
+    {int ii; for(ii = 0; ii < NumPart; ii++) {
+        if(P[ii].Mass <= 0) continue;
+        double Z = P[ii].Metallicity[0];
+        if(P[ii].Type == 0) { if(Z < Zmin_gas_loc) Zmin_gas_loc = Z; if(Z > Zmax_gas_loc) Zmax_gas_loc = Z; }
+        if(P[ii].Type == 4) { if(Z < Zmin_star_loc) Zmin_star_loc = Z; if(Z > Zmax_star_loc) Zmax_star_loc = Z; }
+    }}
+    double Zmin_gas, Zmax_gas, Zmin_star, Zmax_star;
+    MPI_Reduce(&Zmin_gas_loc, &Zmin_gas, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&Zmax_gas_loc, &Zmax_gas, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&Zmin_star_loc, &Zmin_star, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&Zmax_star_loc, &Zmax_star, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    if(ThisTask == 0) {
+      double M_gas = SysState.MassComp[0], M_star = SysState.MassComp[4];
+      double M_total = M_gas + M_star + SysState.MassComp[1] + SysState.MassComp[2] + SysState.MassComp[3] + SysState.MassComp[5];
+      double E_therm_gas = SysState.EnergyIntComp[0];
+      double E_kin_gas = SysState.EnergyKinComp[0];
+      double cool_erg = cool_glob * UNIT_ENERGY_IN_CGS;
+      printf("BUDGET t=%.6g  M_gas=%.6g M_star=%.6g M_tot=%.6g  E_therm=%.6g E_kin=%.6g  E_cool_cum=%.4e[erg]  E_fb_cum=%.4e[erg]  M_fb_ret=%.4g[Msun]\n",
+        All.Time, M_gas, M_star, M_total, E_therm_gas, E_kin_gas, cool_erg, CumulFeedbackEnergy, CumulFeedbackMass);
+      printf("BUDGET_Z t=%.6g  Z_gas=[%.4e,%.4e]  Z_star=[%.4e,%.4e]\n",
+        All.Time, Zmin_gas, Zmax_gas, Zmin_star, Zmax_star);
+    }
+  }
+#endif
 }
 
 

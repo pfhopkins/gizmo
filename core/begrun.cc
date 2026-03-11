@@ -766,7 +766,7 @@ void open_outputfiles(void)
   if(!(FdSFinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdSFinfo,"%s Per-SF-event diagnostic log [GALSF_RESOLVEDISM]. Columns: \n",prefix_char);
-      fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star\n",prefix_char);
+      fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_cell[code]  (9) Z  (10) T[K]\n",prefix_char);
   }
 #endif
 
@@ -2243,6 +2243,10 @@ void read_parameter_file(char *fname)
 
       strcpy(tag[nt], "IMFSampleStellarMassCut");
       addr[nt] = &All.IMFSampleStellarMassCut;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "IMFSampleMinMass");
+      addr[nt] = &All.IMFSampleMinMass;
       id[nt++] = REAL;
 #endif
 

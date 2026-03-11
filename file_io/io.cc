@@ -865,6 +865,84 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].G0;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_G0_LW:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].G0_LW;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_CR_ZETA:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].CR_ionization_rate;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_UV_LUM:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].UV_luminosity;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_LW_LUM:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].LW_luminosity;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_LYMAN_Q:
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].Lyman_photons_per_sec;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+#ifdef GALSF_RESOLVEDISM_FB
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<4;k++) {fp[k] = (MyOutputFloat) CellP[pindex].MetalMassFrom[k];}
+                    fp += 4;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_KETJU_FINAL_VEL:
 #ifdef KETJU_REGULARIZATION
             for(n = 0; n < pc; pindex++)
@@ -1487,7 +1565,11 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+#ifdef CHEMCOOL
+                    *fp++ = (MyOutputFloat) CellP[pindex].Temp; /* CHEMCOOL exact T from non-equilibrium abundances */
+#else
                     *fp++ = (MyOutputFloat) CellP[pindex].Temperature;
+#endif
                     n++;
                 }
 #elif defined(OUTPUT_TEMPERATURE) || defined(CHEMCOOL)
@@ -2076,6 +2158,37 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0:
+        case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_CR_ZETA:
+        case IO_RESOLVEDISM_UV_LUM:
+        case IO_RESOLVEDISM_LW_LUM:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_RESOLVEDISM_LYMAN_Q:
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+#ifdef GALSF_RESOLVEDISM_FB
+            if(mode)
+                bytes_per_blockelement = 4 * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = 4 * sizeof(MyOutputFloat);
+#endif
+            break;
+
         case IO_KETJU_FINAL_VEL:
 #ifdef KETJU_REGULARIZATION
             if(mode) bytes_per_blockelement = 3 * sizeof(MyInputFloat);
@@ -2454,6 +2567,19 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0:
+        case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_CR_ZETA:
+        case IO_RESOLVEDISM_UV_LUM:
+        case IO_RESOLVEDISM_LW_LUM:
+        case IO_RESOLVEDISM_LYMAN_Q:
+            values = 1;
+            break;
+
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+            values = 4;
+            break;
+
         case IO_KETJU_FINAL_VEL:
         case IO_KETJU_SPIN:
             values = 3;
@@ -2769,6 +2895,25 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             break;
 
         case IO_RESOLVEDISM_DUST:
+            for(i = 0; i < 6; i++) {if(i != 0) {typelist[i] = 0;}}
+            return ngas;
+            break;
+
+        case IO_RESOLVEDISM_G0:
+        case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_CR_ZETA:
+            for(i = 0; i < 6; i++) {if(i != 0) {typelist[i] = 0;}}
+            return ngas;
+            break;
+
+        case IO_RESOLVEDISM_UV_LUM:
+        case IO_RESOLVEDISM_LW_LUM:
+        case IO_RESOLVEDISM_LYMAN_Q:
+            for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
+            return nstars;
+            break;
+
+        case IO_RESOLVEDISM_METAL_ORIGIN:
             for(i = 0; i < 6; i++) {if(i != 0) {typelist[i] = 0;}}
             return ngas;
             break;
@@ -3119,6 +3264,28 @@ int blockpresent(enum iofields blocknr)
 
         case IO_RESOLVEDISM_DUST:
 #ifdef GALSF_RESOLVEDISM_DUST
+            return 1;
+#endif
+            break;
+
+        case IO_RESOLVEDISM_G0:
+        case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_CR_ZETA:
+        case IO_RESOLVEDISM_UV_LUM:
+        case IO_RESOLVEDISM_LW_LUM:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            return 1;
+#endif
+            break;
+
+        case IO_RESOLVEDISM_LYMAN_Q:
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
+            return 1;
+#endif
+            break;
+
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+#ifdef GALSF_RESOLVEDISM_FB
             return 1;
 #endif
             break;
@@ -3740,6 +3907,27 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_RESOLVEDISM_DUST:
             strncpy(label, "DUST", 4);
             break;
+        case IO_RESOLVEDISM_G0:
+            strncpy(label, "G0  ", 4);
+            break;
+        case IO_RESOLVEDISM_G0_LW:
+            strncpy(label, "G0LW", 4);
+            break;
+        case IO_RESOLVEDISM_CR_ZETA:
+            strncpy(label, "CRZT", 4);
+            break;
+        case IO_RESOLVEDISM_UV_LUM:
+            strncpy(label, "UVLM", 4);
+            break;
+        case IO_RESOLVEDISM_LW_LUM:
+            strncpy(label, "LWLM", 4);
+            break;
+        case IO_RESOLVEDISM_LYMAN_Q:
+            strncpy(label, "LYQN", 4);
+            break;
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+            strncpy(label, "MTOR", 4);
+            break;
         case IO_KETJU_FINAL_VEL:
             strncpy(label, "KVEL", 4);
             break;
@@ -4200,6 +4388,27 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_RESOLVEDISM_DUST:
             strcpy(buf, "DustMassFraction");
+            break;
+        case IO_RESOLVEDISM_G0:
+            strcpy(buf, "G0_FUV");
+            break;
+        case IO_RESOLVEDISM_G0_LW:
+            strcpy(buf, "G0_LW");
+            break;
+        case IO_RESOLVEDISM_CR_ZETA:
+            strcpy(buf, "CR_IonizationRate");
+            break;
+        case IO_RESOLVEDISM_UV_LUM:
+            strcpy(buf, "UV_Luminosity");
+            break;
+        case IO_RESOLVEDISM_LW_LUM:
+            strcpy(buf, "LW_Luminosity");
+            break;
+        case IO_RESOLVEDISM_LYMAN_Q:
+            strcpy(buf, "Lyman_PhotonRate");
+            break;
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+            strcpy(buf, "MetalOrigin");
             break;
         case IO_KETJU_FINAL_VEL:
             strcpy(buf, "KetjuFinalVelocity");

@@ -427,7 +427,7 @@ void star_formation_parent_routine(void)
 
 #ifdef GALSF_RESOLVEDISM
     int sf_buf_size = 64, n_sf_local = 0;
-    double *sf_x = NULL, *sf_y = NULL, *sf_z = NULL, *sf_u = NULL, *sf_rho = NULL, *sf_mstar = NULL;
+    double *sf_x = NULL, *sf_y = NULL, *sf_z = NULL, *sf_u = NULL, *sf_rho = NULL, *sf_mstar = NULL, *sf_Z = NULL, *sf_T = NULL;
     long long *sf_id = NULL;
     sf_x = (double *)mymalloc_movable(&sf_x, "sf_x", sf_buf_size * sizeof(double));
     sf_y = (double *)mymalloc_movable(&sf_y, "sf_y", sf_buf_size * sizeof(double));
@@ -435,6 +435,8 @@ void star_formation_parent_routine(void)
     sf_u = (double *)mymalloc_movable(&sf_u, "sf_u", sf_buf_size * sizeof(double));
     sf_rho = (double *)mymalloc_movable(&sf_rho, "sf_rho", sf_buf_size * sizeof(double));
     sf_mstar = (double *)mymalloc_movable(&sf_mstar, "sf_mstar", sf_buf_size * sizeof(double));
+    sf_Z = (double *)mymalloc_movable(&sf_Z, "sf_Z", sf_buf_size * sizeof(double));
+    sf_T = (double *)mymalloc_movable(&sf_T, "sf_T", sf_buf_size * sizeof(double));
     sf_id = (long long *)mymalloc_movable(&sf_id, "sf_id", sf_buf_size * sizeof(long long));
 #endif
 
@@ -456,7 +458,10 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_FB_TURNOFF_COOLING
             if(CellP[i].DelayTimeCoolingSNe > 0) {flag=1; CellP[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
 #endif
-            
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            if(CellP[i].IMFSpawnBlock) {flag=1;} /* recently spawned a star — wait for density recomputation */
+#endif
+
             if((flag == 0)&&(dtime>0))        /* active star formation (upon start-up, we need to protect against dt==0) */
             {
                 /* Alright, now we consider the actual gas-to-star particle conversion and associated steps */
@@ -476,6 +481,16 @@ void star_formation_parent_routine(void)
                 if(dtime>0) {TimeBinSfr[P[i].TimeBin] += CellP[i].Sfr;}
                 
                 prob = P[i].Mass / mass_of_star * pfac;
+
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                /* LYRA-style: draw stellar mass FIRST, then compute probability.
+                 * P = (M_cell / M_star) * pfac  (Gutcke+ 2021, eq. 3).
+                 * Massive stars have low P; low-mass stars have high P.
+                 * SFR is conserved on average: <M_star * P> = M_cell * pfac. */
+                double M_drawn_imf = draw_one_mass_from_kroupa_IMF();
+                double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
+                prob = (P[i].Mass / m_drawn_code) * pfac;
+#endif
 
 #ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
                 {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
@@ -544,13 +559,62 @@ void star_formation_parent_routine(void)
                         P[i].DensityAroundParticle = CellP[i].Density;
                     } else {
 #endif /* closes ifdef(SINK_SEED_FROM_LOCALGAS) */
-                        
+
                         /* ok, we're going to make a star! */
 #if defined(GALSF_SFR_IMF_VARIATION) || defined(GALSF_SFR_IMF_SAMPLING)
-                        /* if we're allowing for a variable IMF, this is where we will calculate the IMF properties produced from the gas forming stars */
                         assign_imf_properties_from_starforming_gas(i);
 #endif
-                        
+
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                        /* === LYRA-style: always spawn, accretion walk fills mass === */
+                        /* M_drawn_imf was drawn before the probability check above */
+                        {
+                            if(NumPart + stars_spawned >= All.MaxPart) {
+                                PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. No space left (All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);
+                                fflush(stdout); endrun(8888);
+                            }
+                            int ns = NumPart + stars_spawned;
+                            P[ns] = P[i]; /* copy all properties from parent gas cell */
+                            P[ns].Type = 4;
+                            P[ns].Mass = 1e-10 / UNIT_MASS_IN_SOLAR; /* tiny placeholder — filled by accretion walk */
+                            P[ns].StellarAge = All.Time;
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+                            P[ns].DensityAroundParticle = CellP[i].Density;
+#endif
+                            P[ns].FormationDensity = CellP[i].Density;
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+                            P[ns].BirthMetallicity = P[ns].Metallicity[0];
+#endif
+                            P[ns].sampled = 0; /* needs accretion walk in assign_stellar_masses() */
+                            P[ns].MstarSampleIMF[0] = M_drawn_imf; /* target mass in solar masses */
+                            {int jj; for(jj=1; jj<N_STELLAR_MASS; jj++) P[ns].MstarSampleIMF[jj]=0;}
+                            /* Link into active/timebin lists */
+                            NextActiveParticle[ns] = FirstActiveParticle; FirstActiveParticle = ns;
+                            ActiveParticleList[ActiveParticleNumber] = ns; ActiveParticleNumber++; NumForceUpdate++;
+                            TimeBinCount[P[ns].TimeBin]++;
+                            PrevInTimeBin[ns] = i; NextInTimeBin[ns] = NextInTimeBin[i];
+                            if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = ns;}
+                            NextInTimeBin[i] = ns;
+                            if(LastInTimeBin[P[i].TimeBin] == i) {LastInTimeBin[P[i].TimeBin] = ns;}
+                            /* DON'T subtract mass from parent — accretion walk handles all cells equally */
+                            sum_mass_stars += m_drawn_code;
+#ifdef GALSF_RESOLVEDISM
+                            if(n_sf_local >= sf_buf_size) { sf_buf_size *= 2;
+                                sf_x=(double*)myrealloc_movable(sf_x,sf_buf_size*sizeof(double)); sf_y=(double*)myrealloc_movable(sf_y,sf_buf_size*sizeof(double));
+                                sf_z=(double*)myrealloc_movable(sf_z,sf_buf_size*sizeof(double)); sf_u=(double*)myrealloc_movable(sf_u,sf_buf_size*sizeof(double));
+                                sf_rho=(double*)myrealloc_movable(sf_rho,sf_buf_size*sizeof(double)); sf_mstar=(double*)myrealloc_movable(sf_mstar,sf_buf_size*sizeof(double));
+                                sf_Z=(double*)myrealloc_movable(sf_Z,sf_buf_size*sizeof(double)); sf_T=(double*)myrealloc_movable(sf_T,sf_buf_size*sizeof(double));
+                                sf_id=(long long*)myrealloc_movable(sf_id,sf_buf_size*sizeof(long long)); }
+                            sf_x[n_sf_local]=P[ns].Pos[0]; sf_y[n_sf_local]=P[ns].Pos[1]; sf_z[n_sf_local]=P[ns].Pos[2];
+                            sf_u[n_sf_local]=CellP[i].InternalEnergyPred; sf_rho[n_sf_local]=CellP[i].Density;
+                            sf_mstar[n_sf_local]=M_drawn_imf; sf_Z[n_sf_local]=P[ns].Metallicity[0];
+                            sf_T[n_sf_local]=CellP[i].Temp; sf_id[n_sf_local]=(long long)P[ns].ID; n_sf_local++;
+#endif
+                            force_add_element_to_tree(i, ns);
+                            CellP[i].IMFSpawnBlock = 1; /* block SF on this cell until density is recomputed */
+                            stars_spawned++;
+                        }
+#else /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
                         if(number_of_stars_generated == (GALSF_GENERATIONS - 1))
                         {
                             /* here we turn the gas particle itself into a star */
@@ -578,6 +642,8 @@ void star_formation_parent_routine(void)
                                 sf_u = (double *)myrealloc_movable(sf_u, sf_buf_size * sizeof(double));
                                 sf_rho = (double *)myrealloc_movable(sf_rho, sf_buf_size * sizeof(double));
                                 sf_mstar = (double *)myrealloc_movable(sf_mstar, sf_buf_size * sizeof(double));
+                                sf_Z = (double *)myrealloc_movable(sf_Z, sf_buf_size * sizeof(double));
+                                sf_T = (double *)myrealloc_movable(sf_T, sf_buf_size * sizeof(double));
                                 sf_id = (long long *)myrealloc_movable(sf_id, sf_buf_size * sizeof(long long));
                             }
                             sf_x[n_sf_local] = P[i].Pos[0];
@@ -586,6 +652,8 @@ void star_formation_parent_routine(void)
                             sf_u[n_sf_local] = CellP[i].InternalEnergyPred;
                             sf_rho[n_sf_local] = CellP[i].Density;
                             sf_mstar[n_sf_local] = P[i].Mass;
+                            sf_Z[n_sf_local] = P[i].Metallicity[0];
+                            sf_T[n_sf_local] = CellP[i].Temp; /* CHEMCOOL exact temperature from non-equilibrium abundances */
                             sf_id[n_sf_local] = (long long)P[i].ID;
                             n_sf_local++;
 #endif
@@ -787,6 +855,8 @@ void star_formation_parent_routine(void)
                                 sf_u = (double *)myrealloc_movable(sf_u, sf_buf_size * sizeof(double));
                                 sf_rho = (double *)myrealloc_movable(sf_rho, sf_buf_size * sizeof(double));
                                 sf_mstar = (double *)myrealloc_movable(sf_mstar, sf_buf_size * sizeof(double));
+                                sf_Z = (double *)myrealloc_movable(sf_Z, sf_buf_size * sizeof(double));
+                                sf_T = (double *)myrealloc_movable(sf_T, sf_buf_size * sizeof(double));
                                 sf_id = (long long *)myrealloc_movable(sf_id, sf_buf_size * sizeof(long long));
                             }
                             {
@@ -797,6 +867,8 @@ void star_formation_parent_routine(void)
                                 sf_u[n_sf_local] = CellP[i].InternalEnergyPred;
                                 sf_rho[n_sf_local] = CellP[i].Density;
                                 sf_mstar[n_sf_local] = P[ns].Mass;
+                                sf_Z[n_sf_local] = P[ns].Metallicity[0];
+                                sf_T[n_sf_local] = CellP[i].Temp; /* CHEMCOOL exact temperature from non-equilibrium abundances */
                                 sf_id[n_sf_local] = (long long)P[ns].ID;
                                 n_sf_local++;
                             }
@@ -805,6 +877,7 @@ void star_formation_parent_routine(void)
 
                             stars_spawned++;
                         }
+#endif /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
 #ifdef SINK_SEED_FROM_LOCALGAS
                     } /* closes else for decision to make a sink particle */
 #endif
@@ -862,7 +935,7 @@ void star_formation_parent_routine(void)
         if(n_sf_total > 0)
         {
             int *recvcounts = NULL, *displs = NULL;
-            double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL;
+            double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL, *all_Z = NULL, *all_T = NULL;
             long long *all_id = NULL;
 
             if(ThisTask == 0)
@@ -881,6 +954,8 @@ void star_formation_parent_routine(void)
                 all_u = (double *)mymalloc("sf_all_u", n_sf_total * sizeof(double));
                 all_rho = (double *)mymalloc("sf_all_rho", n_sf_total * sizeof(double));
                 all_mstar = (double *)mymalloc("sf_all_mstar", n_sf_total * sizeof(double));
+                all_Z = (double *)mymalloc("sf_all_Z", n_sf_total * sizeof(double));
+                all_T = (double *)mymalloc("sf_all_T", n_sf_total * sizeof(double));
                 all_id = (long long *)mymalloc("sf_all_id", n_sf_total * sizeof(long long));
             }
             MPI_Gatherv(sf_x, n_sf_local, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -889,16 +964,20 @@ void star_formation_parent_routine(void)
             MPI_Gatherv(sf_u, n_sf_local, MPI_DOUBLE, all_u, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(sf_rho, n_sf_local, MPI_DOUBLE, all_rho, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(sf_mstar, n_sf_local, MPI_DOUBLE, all_mstar, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_Z, n_sf_local, MPI_DOUBLE, all_Z, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(sf_T, n_sf_local, MPI_DOUBLE, all_T, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(sf_id, n_sf_local, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
 
             if(ThisTask == 0)
             {
                 for(i = 0; i < n_sf_total; i++) {
-                    fprintf(FdSFinfo, "%.16g %g %g %g %g %g %lld %g\n",
-                        All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i], all_id[i], all_mstar[i]);
+                    fprintf(FdSFinfo, "%.16g %g %g %g %g %g %lld %g %g %g\n",
+                        All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i], all_id[i], all_mstar[i], all_Z[i], all_T[i]);
                 }
                 fflush(FdSFinfo);
                 myfree(all_id);
+                myfree(all_T);
+                myfree(all_Z);
                 myfree(all_mstar);
                 myfree(all_rho);
                 myfree(all_u);
@@ -910,6 +989,8 @@ void star_formation_parent_routine(void)
             }
         }
         myfree_movable(sf_id);
+        myfree_movable(sf_T);
+        myfree_movable(sf_Z);
         myfree_movable(sf_mstar);
         myfree_movable(sf_rho);
         myfree_movable(sf_u);

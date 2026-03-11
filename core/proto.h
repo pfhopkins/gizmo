@@ -773,6 +773,12 @@ void cooling_parent_routine(void);
 #ifdef CHEMCOOL
 void chemcool_init(void);
 double do_chemcool_step(int target, double dt, double dl, int mode);
+extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code energy units] */
+#endif
+#ifdef GALSF_RESOLVEDISM_FB
+extern double CumulFeedbackEnergy;   /* cumulative feedback energy [erg] */
+extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
+extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
 double get_lifetime(double mass);
@@ -789,6 +795,8 @@ void resolvedism_photoionize(void);
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 void assign_stellar_masses(void);
+double draw_one_mass_from_kroupa_IMF(void);
+void finalize_sampled_star(int i, double M_drawn);
 #endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
 void resolvedism_load_stellar_tables(void);

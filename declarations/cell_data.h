@@ -222,6 +222,15 @@ extern struct gas_cell_data
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyFloat UV_flux[NPIX];                /*!< HEALPix UV flux per pixel from stars, 6-13.6 eV */
     MyFloat LW_flux[NPIX];               /*!< HEALPix LW flux per pixel from stars, 11.2-13.6 eV */
+    MyFloat G0;                           /*!< FUV radiation field in Habing units (from tree walk) */
+    MyFloat G0_LW;                        /*!< LW radiation field in Habing units (from tree walk) */
+    MyFloat CR_ionization_rate;           /*!< cosmic ray ionization rate [s^-1] */
+#endif
+#ifdef GALSF_RESOLVEDISM_FB
+    MyFloat MetalMassFrom[4];             /*!< metal mass fraction by channel: [0]=SN, [1]=AGB, [2]=Wind, [3]=Ia */
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    short int IMFSpawnBlock;              /*!< flag: 1 = recently spawned a star, skip SF until density is recomputed */
 #endif
 #ifdef GALSF_SUBGRID_WINDS
     MyFloat DelayTime;                /*!< remaining maximum decoupling time of wind particle */

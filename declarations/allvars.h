@@ -487,6 +487,7 @@ extern struct global_data_all_processes
   double SearchingRadius;       /*!< radius for neighbor search in IMF sampling */
   double MassTolerance;         /*!< mass tolerance for IMF sampling convergence */
   double IMFSampleStellarMassCut; /*!< minimum stellar mass to record in IMF sampling */
+  double IMFSampleMinMass;        /*!< lower bound of IMF sampling [Msun]: 0.08 = full IMF, higher = truncated (LYRA-style) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
   double FactorG0;              /*!< scaling factor for G0 from total SFR */
@@ -1394,6 +1395,13 @@ enum iofields
   IO_M_CURRENT_OLD,
   IO_M_DRAWN_IA,
   IO_RESOLVEDISM_DUST,
+  IO_RESOLVEDISM_G0,
+  IO_RESOLVEDISM_G0_LW,
+  IO_RESOLVEDISM_CR_ZETA,
+  IO_RESOLVEDISM_UV_LUM,
+  IO_RESOLVEDISM_LW_LUM,
+  IO_RESOLVEDISM_LYMAN_Q,
+  IO_RESOLVEDISM_METAL_ORIGIN,
   IO_KETJU_FINAL_VEL,
   IO_KETJU_SPIN,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */

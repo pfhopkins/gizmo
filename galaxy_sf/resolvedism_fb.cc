@@ -25,6 +25,10 @@
 
 #ifdef GALSF_RESOLVEDISM_FB
 
+double CumulFeedbackEnergy = 0;  /* cumulative feedback energy injected, all channels [erg] */
+double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
+double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
+
 #ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
 #error "GALSF_RESOLVEDISM_FB requires DO_DENSITY_AROUND_NONGAS_PARTICLES for kernel weights (wt_sum)"
 #endif
@@ -373,6 +377,7 @@ struct INPUT_STRUCT_NAME
     MyDouble DustYields[NUM_RESOLVEDISM_DUST]; /* dust mass in ejecta [code units] */
 #endif
     MyDouble MetalMass; /* total metal mass in ejecta [code units] (Z > He) */
+    int fb_channel; /* feedback channel: 0=SN, 1=AGB, 2=wind, 3=Ia */
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -382,6 +387,8 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
     in->KernelRadius = P[i].KernelRadius;
     in->wt_sum = 0; in->Esne = 0; in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
+    /* Map SNe_ThisTimeStep (1=SN,2=AGB,3=wind,4=Ia) to fb_channel (0=SN,1=AGB,2=wind,3=Ia) */
+    in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
 #endif
@@ -476,6 +483,9 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         if(tau_IR > 0) dp_cgs += tau_IR * Lbol_cgs * dt_cgs / C_LIGHT_CGS;
 
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code momentum */
+        if(Mstar >= 8.0) /* only log massive stars to avoid flooding stdout */
+            printf("RADPRESSURE: Task=%d ID=%llu M=%.2f logL=%.2f tau_UV=%.2f tau_IR=%.2f dp=%.3e[g*cm/s]\n",
+                ThisTask, (unsigned long long)P[i].ID, Mstar, log_Lbol, tau_UV, tau_IR, dp_cgs);
         return;
     }
 #endif
@@ -725,6 +735,20 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
                     }
+                    /* Per-channel metal origin tracking: same dilution formula, only the active channel gets dMZ */
+                    {
+                        int ch = local.fb_channel;
+                        double Mnew_j = Mass_j + dM;
+                        for(int c = 0; c < 4; c++) {
+                            double F_old;
+                            #pragma omp atomic read
+                            F_old = CellP[j].MetalMassFrom[c];
+                            double dMZ_c = (c == ch) ? wk * local.MetalMass : 0;
+                            double dF = (dMZ_c - F_old * dM) / Mnew_j;
+                            #pragma omp atomic
+                            CellP[j].MetalMassFrom[c] += dF;
+                        }
+                    }
 #endif
 
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -794,6 +818,26 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
                     }
                 }
 #endif
+
+                /* NaN/Inf sanity check on neighbor after injection */
+                {
+                    double u_j;
+                    #pragma omp atomic read
+                    u_j = CellP[j].InternalEnergy;
+                    if(!isfinite(u_j) || u_j < 0) {
+                        printf("NAN_CHECK_FB: Task=%d neighbor ID=%llu u=%.6e after injection from star target=%d\n",
+                            ThisTask, (unsigned long long)P[j].ID, u_j, target);
+                    }
+                    for(k=0;k<3;k++) {
+                        double vk;
+                        #pragma omp atomic read
+                        vk = P[j].Vel[k];
+                        if(!isfinite(vk)) {
+                            printf("NAN_CHECK_FB: Task=%d neighbor ID=%llu Vel[%d]=%.6e after injection from star target=%d\n",
+                                ThisTask, (unsigned long long)P[j].ID, k, vk, target);
+                        }
+                    }
+                }
 
             } /* for(n = 0; n < numngb; n++) */
         } /* while(startnode >= 0) inner */
@@ -868,6 +912,8 @@ void resolvedism_inject_sn_energy(void)
                 Z_injected[2] += Z_wind;
             }
 
+            printf("WIND: Task=%d ID=%llu M_init=%.2f dM=%.4f dp=%.3e\n",
+                ThisTask, (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0], dM_wind, dp_wind);
             P[i].WindMassAccum = 0;
             P[i].WindMomentumAccum = 0;
             P[i].SNe_ThisTimeStep = -1;
@@ -885,6 +931,8 @@ void resolvedism_inject_sn_energy(void)
             double Z_ia = 0;
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk);
             Z_injected[4] += Z_ia;
+            printf("TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
+                ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
             P[i].Mass = 0; /* WD fully disrupted */
             P[i].M_drawn_Ia = 0; /* no longer eligible */
             P[i].SNe_ThisTimeStep = -1;
@@ -940,6 +988,13 @@ void resolvedism_inject_sn_energy(void)
 
             /* Set particle mass to remnant mass */
             P[i].Mass = rem_mass / UNIT_MASS_IN_SOLAR;
+            if(channel == 0) {
+                printf("SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type, (rem_type==REM_PISN)?1.0e52:1.0e51);
+            } else {
+                printf("AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);
+            }
 
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
             /* Mark WD remnants as eligible for future Type Ia */
@@ -1020,6 +1075,8 @@ void resolvedism_inject_sn_energy(void)
                 fprintf(FdFeedbackBudget, "%.16g %d %.0f %g %g %g %g %g\n",
                     All.Time, ch, glob_n[ch], glob_Mi[ch], glob_Mr[ch],
                     glob_E[ch], glob_dp[ch], glob_Z[ch]);
+                CumulFeedbackEnergy += glob_E[ch];
+                CumulFeedbackMass += glob_Mi[ch];
             }
         }
         fflush(FdFeedbackBudget);

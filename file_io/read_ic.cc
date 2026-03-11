@@ -610,6 +610,48 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {CellP[offset + n].G0 = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_G0_LW:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {CellP[offset + n].G0_LW = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_CR_ZETA:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {CellP[offset + n].CR_ionization_rate = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_UV_LUM:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {P[offset + n].UV_luminosity = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_LW_LUM:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {P[offset + n].LW_luminosity = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_LYMAN_Q:
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
+            for(n = 0; n < pc; n++) {P[offset + n].Lyman_photons_per_sec = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_METAL_ORIGIN:
+#ifdef GALSF_RESOLVEDISM_FB
+            for(n = 0; n < pc; n++) {for(k = 0; k < 4; k++) {CellP[offset + n].MetalMassFrom[k] = *fp++;}}
+#endif
+            break;
+
         case IO_KETJU_FINAL_VEL:
 #ifdef KETJU_REGULARIZATION
             for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].KetjuFinalVel[k] = *fp++;}}

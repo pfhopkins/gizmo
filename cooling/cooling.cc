@@ -52,6 +52,8 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 /* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost */
+double CumulCoolingEnergyLoss = 0; /* cumulative cooling energy loss on this rank [code energy units] */
+
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
@@ -71,6 +73,12 @@ void cooling_parent_routine(void)
         N_active++;
 	}
 
+#ifdef CHEMCOOL
+    /* Save internal energies before cooling for budget tracking */
+    double *u_before_cool = (double *) malloc(N_active * sizeof(double));
+    for(j=0;j<N_active;j++) {u_before_cool[j] = CellP[active_indices[j]].InternalEnergy;}
+#endif
+
 #ifdef _OPENMP
 #pragma omp parallel private(i, j)
 #endif
@@ -84,6 +92,31 @@ void cooling_parent_routine(void)
         do_the_cooling_for_particle(i); /* do the actual cooling */
     }
     } /* close parallel block */
+
+#ifdef CHEMCOOL
+    /* Accumulate cooling energy losses (positive = energy removed) + sanity checks */
+    double dE_cool_step = 0;
+    for(j=0;j<N_active;j++) {
+        i = active_indices[j];
+        double u_now = CellP[i].InternalEnergy;
+        if(!isfinite(u_now)) {
+            printf("NAN_CHECK_COOL: Task=%d ID=%llu u=%.6e (was %.6e) after cooling\n",
+                ThisTask, (unsigned long long)P[i].ID, u_now, u_before_cool[j]);
+            CellP[i].InternalEnergy = u_before_cool[j]; /* revert to pre-cooling value */
+            CellP[i].InternalEnergyPred = u_before_cool[j];
+        } else if(u_now < 0) {
+            printf("NEG_ENERGY_COOL: Task=%d ID=%llu u=%.6e (was %.6e) — flooring to u_min\n",
+                ThisTask, (unsigned long long)P[i].ID, u_now, u_before_cool[j]);
+            double u_min = All.MinEgySpec;
+            CellP[i].InternalEnergy = u_min;
+            CellP[i].InternalEnergyPred = u_min;
+        }
+        dE_cool_step += (u_before_cool[j] - CellP[i].InternalEnergy) * P[i].Mass;
+    }
+    CumulCoolingEnergyLoss += dE_cool_step;
+    free(u_before_cool);
+#endif
+
     free(active_indices); /* free memory */
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */

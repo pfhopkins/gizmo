@@ -1020,6 +1020,9 @@ void density(void)
 #ifdef HYDRO_VOLUME_CORRECTIONS
                 CellP[i].Volume_1 = CellP[i].Volume_0 = Volume_0; // initialize this value for use in the correction loop, and in case this is not set in the subsequent loop because of inactivity, set this first to the zeroth-order estimator
 #endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                CellP[i].IMFSpawnBlock = 0; /* density is fresh — allow SF again */
+#endif
                 set_eos_pressure(i);		// should account for density independent pressure
 
             } // P[i].Type == 0

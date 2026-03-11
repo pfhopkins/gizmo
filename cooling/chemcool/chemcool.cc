@@ -210,10 +210,12 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
     double G0_tot = UV_flux_tot * fac_flux2habing * All.G0;
     COOLR.G0 = G0_tot;
+    CellP[target].G0 = G0_tot;
 
     /* Lyman-Werner G0 for H2 photodissociation (11.2-13.6 eV only) */
     double G0_LW = LW_flux_tot * fac_flux2habing * All.G0;
     COOLR.G0_LW = G0_LW;
+    CellP[target].G0_LW = G0_LW;
 
 #ifdef COSMIC_RAY_FLUID
     { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
@@ -224,6 +226,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #elif defined(CR_SCALE_WITH_G0)
     COOLR.cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (COOLR.G0 / 1.7) * All.CosmicRayIonRate));
 #endif
+    CellP[target].CR_ionization_rate = COOLR.cosmic_ray_ion_rate;
 #endif /* GALSF_RESOLVEDISM_G0_VARIABLE */
 
 
