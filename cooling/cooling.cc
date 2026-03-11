@@ -109,6 +109,7 @@ void do_the_cooling_for_particle(int i)
 #endif
         double dl = Get_Particle_Size(i) * All.cf_atime; /* shielding length in code units */
         do_chemcool_step(i, dtime, dl, 0);
+
         set_eos_pressure(i);
         return;
 #endif

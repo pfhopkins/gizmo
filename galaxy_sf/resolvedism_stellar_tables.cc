@@ -145,11 +145,16 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.log_L_bol       = (float *)mymalloc("stbl_logLbol", n3d * sizeof(float));
 
     /* Ionizing sub-band luminosities for M1 RT */
+#ifdef RADTRANSFER
     StellarTbl.log_L_ion_tot   = (float *)mymalloc("stbl_logLiont", n3d * sizeof(float));
     StellarTbl.log_L_ion_H0    = (float *)mymalloc("stbl_logLiH0",  n3d * sizeof(float));
     StellarTbl.log_L_ion_He0   = (float *)mymalloc("stbl_logLiHe0", n3d * sizeof(float));
     StellarTbl.log_L_ion_He1   = (float *)mymalloc("stbl_logLiHe1", n3d * sizeof(float));
     StellarTbl.log_L_ion_He2   = (float *)mymalloc("stbl_logLiHe2", n3d * sizeof(float));
+#else
+    StellarTbl.log_L_ion_tot = StellarTbl.log_L_ion_H0 = StellarTbl.log_L_ion_He0 = NULL;
+    StellarTbl.log_L_ion_He1 = StellarTbl.log_L_ion_He2 = NULL;
+#endif
 
     /* Surface abundances: only if winds enabled (~500 MB as float) */
     StellarTbl.surface_abundances = NULL;
@@ -191,12 +196,14 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "log_L_FUV_total",StellarTbl.log_L_FUV_total, n3d);
         read_hdf5_dataset_as_float(file, "log_L_bol",      StellarTbl.log_L_bol,       n3d);
 
-        /* Ionizing sub-band luminosities */
+        /* Ionizing sub-band luminosities (only for M1 RT) */
+#ifdef RADTRANSFER
         read_hdf5_dataset_as_float(file, "log_L_ion_tot",  StellarTbl.log_L_ion_tot,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_H0",   StellarTbl.log_L_ion_H0,    n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_He0",  StellarTbl.log_L_ion_He0,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_He1",  StellarTbl.log_L_ion_He1,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_He2",  StellarTbl.log_L_ion_He2,   n3d);
+#endif
 
         /* Surface abundances */
 #ifdef GALSF_RESOLVEDISM_WINDS
@@ -239,11 +246,13 @@ void resolvedism_load_stellar_tables(void)
     MPI_Bcast(StellarTbl.log_L_FUV_total, n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_bol,       n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
+#ifdef RADTRANSFER
     MPI_Bcast(StellarTbl.log_L_ion_tot,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_H0,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_He0,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_He1,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_He2,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+#endif
 
 #ifdef GALSF_RESOLVEDISM_WINDS
     /* Surface abundances are large — broadcast in chunks to avoid MPI limits */
@@ -298,11 +307,13 @@ void resolvedism_free_stellar_tables(void)
 #ifdef GALSF_RESOLVEDISM_WINDS
     if(StellarTbl.surface_abundances) { myfree(StellarTbl.surface_abundances); StellarTbl.surface_abundances = NULL; }
 #endif
+#ifdef RADTRANSFER
     if(StellarTbl.log_L_ion_He2)   { myfree(StellarTbl.log_L_ion_He2);   StellarTbl.log_L_ion_He2 = NULL; }
     if(StellarTbl.log_L_ion_He1)   { myfree(StellarTbl.log_L_ion_He1);   StellarTbl.log_L_ion_He1 = NULL; }
     if(StellarTbl.log_L_ion_He0)   { myfree(StellarTbl.log_L_ion_He0);   StellarTbl.log_L_ion_He0 = NULL; }
     if(StellarTbl.log_L_ion_H0)    { myfree(StellarTbl.log_L_ion_H0);    StellarTbl.log_L_ion_H0 = NULL; }
     if(StellarTbl.log_L_ion_tot)   { myfree(StellarTbl.log_L_ion_tot);   StellarTbl.log_L_ion_tot = NULL; }
+#endif
     if(StellarTbl.log_L_bol)       { myfree(StellarTbl.log_L_bol);       StellarTbl.log_L_bol = NULL; }
     if(StellarTbl.log_L_FUV_total) { myfree(StellarTbl.log_L_FUV_total); StellarTbl.log_L_FUV_total = NULL; }
     if(StellarTbl.log_L_LW)        { myfree(StellarTbl.log_L_LW);        StellarTbl.log_L_LW = NULL; }
