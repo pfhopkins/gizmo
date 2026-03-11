@@ -14,13 +14,13 @@ c
       REAL foo
       integer I
 
-      open(1, file='energy-table.txt',
+      open(1, file='gizmo/cooling/chemcool/energy-table.txt',
      $     status='old')
       do I = 1, isize
         read(1, *) foo, temp_table(I), gamma_table(I)
       enddo
       close(1, status='keep')
-      open(1, file='eh2-table.txt', 
+      open(1, file='gizmo/cooling/chemcool/eh2-table.txt',
      $     status='old')
       do I = 1, isize2
         read(1, *) foo, eh2_table(I)

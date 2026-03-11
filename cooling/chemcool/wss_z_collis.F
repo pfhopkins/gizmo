@@ -23,7 +23,7 @@ c     $     Ca_tbl, Fe_tbl
 
       integer I
 
-      open(1, file='wss_z_collis.txt',
+      open(1, file='gizmo/cooling/chemcool/wss_z_collis.txt',
      $     status='old')
 
 c     wss_z_collis.txt has 352 rows and 25 columns                                

@@ -476,7 +476,7 @@ c
 #include "mol_data.h"
       integer I, J
 
-      open(12,file='H2-cooling-ratios.dat',
+      open(12,file='gizmo/cooling/chemcool/H2-cooling-ratios.dat',
      $     status='old')
       do I = 1, nh2op
         do J = 1, nh2op
