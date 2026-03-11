@@ -1,0 +1,256 @@
+J/ApJS/237/13 Models and yields of 13-120M_{sun}_ massive stars (Limongi+, 2018)
+================================================================================
+Presupernova evolution and explosive nucleosynthesis of rotating massive stars
+in the metallicity range -3<=[Fe/H]<=0.
+    Limongi M., Chieffi A.
+   <Astrophys. J. Suppl. Ser., 237, 13 (2018)>
+   =2018ApJS..237...13L
+================================================================================
+ADC_Keywords: Models; Supernovae; Stars, masses; Abundances, [Fe/H]
+Keywords: stars: evolution; stars: interiors; stars: massive; stars: rotation;
+          supernovae: general
+
+Abstract:
+    We present a new grid of presupernova models of massive stars
+    extending in mass between 13 and 120M_{sun}_, covering four
+    metallicities (i.e., [Fe/H]=0, -1, -2, and -3) and three initial
+    rotation velocities (i.e., 0, 150, and 300km/s). The explosion has
+    been simulated following three different assumptions in order to show
+    how the yields depend on the remnant mass-initial mass relation. An
+    extended network from H to Bi is fully coupled to the physical
+    evolution of the models. The main results can be summarized as
+    follows. (a) At solar metallicity, the maximum mass exploding as a red
+    supergiant (RSG) is of the order of 17M_{sun}_ in the nonrotating
+    case, with the more massive stars exploding as Wolf-Rayet (WR) stars.
+    All rotating models, conversely, explode as WR stars. (b) The
+    interplay between the core He-burning and the H-burning shell,
+    triggered by the rotation-induced instabilities, drives the synthesis
+    of a large primary amount of all the products of CNO, not just ^14^N.
+    A fraction of them greatly enriches the radiative part of the He core
+    (and is responsible for the large production of F), and a fraction
+    enters the convective core, leading therefore to an important primary
+    neutron flux able to synthesize heavy nuclei up to Pb. (c) In our
+    scenario, remnant masses of the order of those inferred from the first
+    detections of gravitational waves (GW 150914, GW 151226, GW 170104, GW
+    170814) are predicted at all metallicities for none or moderate
+    initial rotation velocities.
+
+File Summary:
+--------------------------------------------------------------------------------
+ FileName    Lrecl  Records   Explanations
+--------------------------------------------------------------------------------
+ReadMe          80        .   This file
+table3.dat      77      333   Network reference matrix
+table5.dat     130      864   Main evolutionary properties of the models
+table6.dat      90      108   Wolf-Rayet lifetimes of the models
+table7.dat      76       96   Properties of the presupernova models
+table8.dat     111     3996   Isotopic yields - Recommended set
+table9.dat      56     3996   Isotopic yields in the wind - Recommended set
+--------------------------------------------------------------------------------
+
+See also:
+ J/A+A/416/1117 : Abundances in the early Galaxy (Cayrel+, 2004)
+ J/ApJ/608/405  : Explosive yields of massive star (Chieffi+, 2004)
+ J/A+A/479/541  : VLT-FLAMES survey of massive stars (Hunter+, 2008)
+ J/A+A/496/841  : VLT-FLAMES survey of massive stars (Hunter+, 2009)
+ J/MNRAS/408/827  : Simulations of supernova explosions (Dessart+, 2010)
+ J/ApJ/724/341  : Nucleosynthesis of massive metal-free stars (Heger+, 2010)
+ J/A+A/530/A115 : Rotating massive MS stars evolutionary models (Brott+, 2011)
+ J/AJ/144/130   : Rotational velocities of nearby HIP B stars (Braganca+, 2012)
+ J/A+A/537/A146 : Stellar models with rotation. 0.8<M<120 (Ekstrom+, 2012)
+ J/ApJS/199/38  : Presupernova evolution (Limongi+, 2012)
+ J/ApJ/764/21   : Stellar evolutionary models with 13-120Msun (Chieffi+, 2013)
+ J/A+A/558/A131 : Model spectra of hot stars at the pre-SN stage (Groh+, 2013)
+ J/A+A/600/A81  : VLTS. 30Dor O giants and supergiants (Ramirez-Agudelo+, 2017)
+
+Byte-by-byte Description of file: table3.dat
+--------------------------------------------------------------------------------
+   Bytes Format Units   Label        Explanations
+--------------------------------------------------------------------------------
+   1-  5 A5     ---     Iso          Isotope identifier
+   7-  7 A1     ---   f_Iso          Flag on Iso (1)
+   9- 12 A4     ---     p.alp        The (p,{alpha}) reference code (2)
+  14- 17 A4     ---     p.n          The (p,n) reference code (2)
+  19- 22 A4     ---     p.gam        The (p,{gamma}) reference code (2)
+  24- 27 A4     ---     alp.p        The ({alpha},p) reference code (2)
+  29- 32 A4     ---     alp.n        The ({alpha},n) reference code (2)
+  34- 37 A4     ---     alp.gam      The ({alpha},{gamma}) reference code (2)
+  39- 42 A4     ---     n.p          The (n,p) reference code (2)
+  44- 47 A4     ---     n.alp        The (n,{alpha}) reference code (2)
+  49- 52 A4     ---     n.gam        The (n,{gamma}) reference code (2)
+  54- 57 A4     ---     gam.p        The ({gamma},p) reference code (2)
+  59- 62 A4     ---     gam.alp      The ({gamma},{alpha}) reference code (2)
+  64- 67 A4     ---     gam.n        The ({gamma},n) reference code (2)
+  69- 72 A4     ---     betaP        The (beta^+^) reference code (2)
+  74- 77 A4     ---     betaM        The (beta^-^) reference code (2)
+--------------------------------------------------------------------------------
+Note (1): Flag as follows:
+    a = We treat the ground (26Alg) and isomeric (26Alm) states of 26Al as
+        separate species for T{<=}1e9K, while we assume the two states to be
+        in statistical equilibrium (and therefore we consider just one isotope)
+        above this temperature (Limongi & Chieffi 2006)
+    b = 26Alg ground state
+    c = 26Alm isomeric state
+Note (2): Reference as follows:
+   betD = beta plus decay;
+   desc = Descouvemont et al. (2004ADNDT..88..203D);
+   ka03 = Dillmann et al. (2014NDS...120..171D), KADoNiS v0.3;
+   nacr = Angulo et al.(1999NuPhA.656....3A), NACRE;
+   cf88 = Caughlan & Fowler (1988ADNDT..40..283C);
+   ku02 = Kunz et al. (2002ApJ...567..643K), adopted rate;
+   im05 = Imbriani et al. (2005EPJA...25..455I);
+   mc10 = Iliadis et al. (2010NuPhA.841...31M);
+   bb92 = Rauscher et al. (1994ApJ...429..499R);
+   wies = M. Wiescher and collaborators;
+   rath = last version of the REACLIB available at the web site
+          http://nucastro.org/reaclib.html;
+   wago = Wagoner (1969ApJS...18..247W);
+   mafo = Malaney & Fowler (1989ApJ...345L...5M);
+   fkth = Cowan et al. (1991PhR...208..267C);
+   wfho = Wagoner et al. (1967ApJ...148....3W);
+   od94 = Oda et al. (1994ADNDT..56..231O);
+   bl03 = Blackmon et al. (2003NuPhA.718..127B);
+   kart = Dillmann+ (Dillmann I., Plag R., Kappeler F. and Rauscher T. 2009
+          in Proc. Workshop "EFNUDAT Fast Neutrons--Scientific Workshop on
+          Neutron Measurements, Theory Applications" ed F.-J. Hambsch
+          (Luxembourg: Publications Office of the European Union) 55) in the
+          energy range 5-100keV and Rauscher & Thielemann (2000ADNDT..75....1R)
+          above this limit, but rescaled to match the experimental values of
+          Dillmann+ at 100keV;
+   mc11 = Sallaska et al. (2011PhRvC..83c4611S);
+   rt   = Rauscher & Thielemann (2000);
+   de07 = de Smet et al. (2007PhRvC..76d5804D);
+   ko97 = Koehler et al. (1997PhRvC..56.1138K);
+   ffn8 = Fuller, Fowler & Newman (1982ApJS...48..279F) ;
+   og10 = Oginni et al. (2011PhRvC..83b5802O);
+   ka02 = KADoNiS v0.2 - http://kadonis.org/
+   il09 = Iliadis et al. (2011ApJS..193...16I);
+   nass = Nassar et al. (2006PhRvL..96d1102N);
+   lp00 = Langanke & Martinez-Pinedo (2000NuPhA.673..481L);
+   laur = van Wormer et al. (1994ApJ...432..326V);
+   re98 = Rehm et al. (1998PhRvL..80..676R);
+   taka = Takahashi & Yokoi (1987ADNDT..36..375T);
+   tanu = terrestrial half-life.
+--------------------------------------------------------------------------------
+
+Byte-by-byte Description of file: table5.dat
+--------------------------------------------------------------------------------
+   Bytes Format Units        Label  Explanations
+--------------------------------------------------------------------------------
+   1-  3 I3     km/s         Vel    [0/300] Velocity
+   5-  6 I2     [Sun]        [Fe/H] [-3/0] Metallicity
+   8- 10 I3     Msun         IMass  [13/120] Initial mass
+  12- 14 A3     ---          Phase  Evolutionary phase (1)
+  16- 22 E7.2   yr           Time   [1e-05/21500000] Lifetime
+  24- 28 F5.2   Msun         MCC    [0/95.5] Maximum mass of convective core
+  30- 33 F4.2   [K]          logT   [3.5/5.4] log effective temperature
+  35- 38 F4.2   [solLum]     logL   [4/6.7] log luminosity
+  40- 45 F6.2   Msun         TMass  [5/120] Total mass
+  47- 51 F5.2   Msun         MHe    [0/81] Helium core mass
+  53- 57 F5.2   Msun         MCO    [0/59] CarbonOxygen core mass
+  59- 65 E7.2   km/s         vEqua  [0/645] Equatorial velocity
+  67- 74 E8.2   s-1          omega  [0/0.0007] Surface angular velocity
+  76- 82 E7.2   ---          Ratio  [0/1] Ratio of omega to critical angular
+                                     velocity
+  84- 90 E7.2   10+53g/cm2/s Jtot   [0/6.2] Total angular momentum
+  92- 98 E7.2   ---          H      [0/0.8] Surface Hydrogen mass fraction
+ 100-106 E7.2   ---          He     [0.2/1] Surface Helium mass fraction
+ 108-114 E7.2   ---          N      [2.7e-08/2.3] Surface Nitrogen mass fraction
+ 116-122 E7.2   ---          N/C    [6.3e-08/156] Nitrogen to Carbon abundance
+                                     ratio
+ 124-130 E7.2   ---          N/O    [1.4e-09/165] Nitrogen to Oxygen abundance
+                                     ratio
+--------------------------------------------------------------------------------
+Note (1): "MS" refers to the end of the pre main sequence phase, "H" to the end
+          of core H burning phase, "He" to the end of core He burning phase,
+          "PSN" to the end of the evolution.
+--------------------------------------------------------------------------------
+
+Byte-by-byte Description of file: table6.dat
+--------------------------------------------------------------------------------
+   Bytes Format Units  Label  Explanations
+--------------------------------------------------------------------------------
+   1-  3 I3     km/s   Vel    [0/300] Velocity
+   5-  6 I2     [Sun]  [Fe/H] [-3/0] Metallicity
+   8- 10 I3     Msun   Mass   [13/120] Initial mass
+  12- 18 E7.2   yr     tO     [11400/17800000]? Lifetime during the O-type phase
+  20- 26 E7.2   yr     tWR    [307/1160000]? Lifetime during the WNR phase
+  28- 34 E7.2   yr     tWNL   [307/851000]? Lifetime during the WNL phase
+  36- 42 A7     ---    WNL    ? Central mass fraction at WNL stage start (1)
+  44- 50 E7.2   yr     tWNE   [812/156000]? Lifetime during the WNE phase
+  52- 58 A7     ---    WNE    ? Central mass fraction at WNE stage start (1)
+  60- 66 E7.2   yr     tWNC   [0.003/134000]? Lifetime during the WNC phase
+  68- 74 A7     ---    WNC    ? Central mass fraction at WNC stage start (1)
+  76- 82 E7.2   yr     tWC    [3220/295000]? Lifetime during the WC phase
+  84- 90 A7     ---    WC     ? Central mass fraction at WC stage start (1)
+--------------------------------------------------------------------------------
+Note (1): In the format XX Y.YY where XX is the element (either "H " or "He")
+          and Y.YY is the mass fraction of XX.
+--------------------------------------------------------------------------------
+
+Byte-by-byte Description of file: table7.dat
+--------------------------------------------------------------------------------
+   Bytes Format Units    Label  Explanations
+--------------------------------------------------------------------------------
+   1-  3 I3     km/s     Vel    [0/300] Velocity
+   5-  6 I2     [Sun]    [Fe/H] [-3/0] Metallicity
+   8- 10 I3     Msun     Mass   [13/120] Initial mass
+  12- 16 F5.2   Msun     H      [0/24.2] Hydrogen present in the envelope
+  18- 22 F5.2   Msun     He     [0.4/26.5] Helium present in the envelope
+  24- 27 F4.2   Msun     Fe     [1/2.8] Iron core mass (1)
+  29- 33 F5.2   10+44J   Ebind  [0.6/47.6] Binding energy; 1e+51erg (2)
+  35- 38 F4.2   ---      xi2.5  [0.02/0.6] Compactness parameter
+  40- 44 F5.3   10+44J.s JFe    [0/0.2] Angular momentum within iron core (3)
+  46- 51 F6.3   10+44J.s JCO    [0/11.4] Angular momentum within CO core (3)
+  53- 58 F6.3   10+44J.s JHe    [0/19.1] Angular momentum within He core (3)
+  60- 64 F5.3   10+44J.s J1.5   [0/0.06] Angular momentum within inner
+                                 1.5M_{sun}_ (3)
+  66- 70 F5.3   10+44J.s J2.0   [0/0.2] Angular momentum within inner
+                                 2.0M_{sun}_ (3)
+  72- 76 A5     ---      SNType Expected supernova type (SNIIP: 50 occurrences;
+                                 or SNIb) (4)
+--------------------------------------------------------------------------------
+Note (1): Defined as the mass coordinate corresponding to the sharp drop
+          of the electron profile below ~0.49.
+Note (2): Of the mass above the iron core.
+Note (3): In units of 1e+51erg.s
+Note (4): According to the classification suggested by
+          Hachinger et al. (2012MNRAS.422...70H).
+--------------------------------------------------------------------------------
+
+Byte-by-byte Description of file: table8.dat
+--------------------------------------------------------------------------------
+   Bytes Format Units Label  Explanations
+--------------------------------------------------------------------------------
+   1-  3 I3     km/s  Vel    [0/300] Velocity
+   5-  6 I2     [Sun] [Fe/H] [-3/0] Metallicity
+   8- 12 A5     ---   Iso    Isotope identifier
+  14- 23 E10.4  ---   13M    [2.8e-60/6.3] The 13M_{sun}_ model yield of Isotope
+  25- 34 E10.4  ---   15M    [3.9e-60/7.1] The 15M_{sun}_ model yield of Isotope
+  36- 45 E10.4  ---   20M    [4.7e-60/9] The 20M_{sun}_ model yield of Isotope
+  47- 56 E10.4  ---   25M    [6.4e-60/10.5] 25M_{sun}_ model yield of Isotope
+  58- 67 E10.4  ---   30M    [0/11.6] The 30M_{sun}_ model yield of Isotope
+  69- 78 E10.4  ---   40M    [0/15.6] The 40M_{sun}_ model yield of Isotope
+  80- 89 E10.4  ---   60M    [0/29] The 60M_{sun}_ model yield of Isotope
+  91-100 E10.4  ---   80M    [0/42.1] The 80M_{sun}_ model yield of Isotope
+ 102-111 E10.4  ---   120M   [0/68] The 120M_{sun}_ model yield of Isotope
+--------------------------------------------------------------------------------
+
+Byte-by-byte Description of file: table9.dat
+--------------------------------------------------------------------------------
+   Bytes Format Units Label    Explanations
+--------------------------------------------------------------------------------
+   1-  3 I3     km/s  Vel      [0/300] Velocity
+   5-  6 I2     [Sun] [Fe/H]   [-3/0] Metallicity
+   8- 12 A5     ---   Iso      Isotope identifier
+  14- 23 E10.4  ---   13M      [0/4.8] The 13M_{sun}_ model yield of Isotope
+  25- 34 E10.4  ---   15M      [0/5.2] The 15M_{sun}_ model yield of Isotope
+  36- 45 E10.4  ---   20M      [0/8.5] The 20M_{sun}_ model yield of Isotope
+  47- 56 E10.4  ---   25M      [0/10.2] The 25M_{sun}_ model yield of Isotope
+--------------------------------------------------------------------------------
+
+History:
+    From electronic version of the journal
+
+================================================================================
+(End)                    Prepared by [AAS], Emmanuelle Perret [CDS]  04-Sep-2018
