@@ -1750,12 +1750,14 @@ void InitCool(void)
 #endif
 
 #else // CHIMES
+#ifndef CHEMCOOL
     InitCoolMemory();
     MakeCoolingTable();
     ReadIonizeParams("TREECOOL");
     IonizeParams();
 #ifdef COOL_METAL_LINES_BY_SPECIES
     LoadMultiSpeciesTables();
+#endif
 #endif
 #endif // CHIMES
 }
