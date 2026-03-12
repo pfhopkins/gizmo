@@ -885,6 +885,8 @@ void force_update_node_recursive(int no, int sib, int father)
         Extnodes[no].dp[2] = 0;
         
         Nodes[no].N_part = count_particles; /* save this value */
+        if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);} else {multiple_flag = 0;} /* this flags that the node represents more than one particle */
+        Nodes[no].u.d.bitflags = multiple_flag;
         Nodes[no].maxsoft = maxsoft;
         Nodes[no].u.d.sibling = sib;
         Nodes[no].u.d.father = father;
@@ -1092,6 +1094,7 @@ void force_exchange_pseudodata(void)
                     Extnodes[no].vmax = DomainMoment[i].vmax;
                     Extnodes[no].divVmax = DomainMoment[i].divVmax;
                     Nodes[no].N_part = DomainMoment[i].N_part;
+                    Nodes[no].u.d.bitflags = (Nodes[no].u.d.bitflags & (~((1 << BITFLAG_MULTIPLEPARTICLES)))) | (DomainMoment[i].bitflags & ((1 << BITFLAG_MULTIPLEPARTICLES)));
                     Nodes[no].maxsoft = DomainMoment[i].maxsoft;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     Nodes[no].cr_injection = DomainMoment[i].cr_injection;
@@ -1472,6 +1475,9 @@ void force_treeupdate_pseudos(int no)
     Extnodes[no].divVmax = divVmax;
     Extnodes[no].Flag = GlobFlag;
     Nodes[no].N_part = count_particles; // record
+    if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);} else {multiple_flag = 0;}
+    Nodes[no].u.d.bitflags &= (~((1 << BITFLAG_MULTIPLEPARTICLES)));    /* this clears the bits */
+    Nodes[no].u.d.bitflags |= multiple_flag;
     Nodes[no].maxsoft = maxsoft;
 }
 
@@ -1990,7 +1996,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     no = nop->u.d.sibling;
                     continue;
                 }
-                if(nop->N_part <= 1)
+                //if(nop->N_part <= 1)
+                if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
                     if(mass) /* open cell */
                     {
@@ -2912,7 +2919,8 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
                         continue;
                     }
                 }
-                if(nop->N_part <= 1) /* open cell */
+                //if(nop->N_part <= 1) /* open cell */
+                if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
                     no = nop->u.d.nextnode;
                     continue;
@@ -3247,7 +3255,8 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                         continue;
                     }
                 }
-                if(nop->N_part <= 1) /* open cell */
+                //if(nop->N_part <= 1) /* open cell */
+                if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
                     no = nop->u.d.nextnode;
                     continue;
@@ -3507,7 +3516,8 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
                 }
                 
                 mass = nop->u.d.mass;
-                if(nop->N_part <= 1)
+                //if(nop->N_part <= 1)
+                if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
                     if(mass) /* open cell */
                     {

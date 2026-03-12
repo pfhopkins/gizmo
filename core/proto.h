@@ -135,6 +135,7 @@ static inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(1+x*x));} /*
 static inline double ForceSoftening_KernelRadius(int p)
 {
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+    //if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass*UNIT_MASS_IN_SOLAR / (0.5*(All.MaxMassForParticleSplit/3.01+All.MinMassForParticleMerger/0.49)),0.333);} // alternative 'adaptive' version for constant-resolution runs
     if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass*UNIT_MASS_IN_SOLAR / (GALSF_MERGER_STARCLUSTER_PARTICLES),0.333);}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
