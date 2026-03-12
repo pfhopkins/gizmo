@@ -315,6 +315,7 @@ extern FILE *FdSfr;        /*!< file handle for star formation log-file. */
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
 extern FILE *FdSNinfo;     /*!< file handle for SNinfo.txt per-SN diagnostic log */
+extern FILE *FdAGBinfo;    /*!< file handle for AGBinfo.txt per-AGB-death diagnostic log */
 extern FILE *FdFeedbackBudget; /*!< file handle for FeedbackBudget.txt conservation log */
 #endif
 #ifdef GALSF_RESOLVEDISM

@@ -244,6 +244,7 @@ FILE *FdSfr;			/*!< file handle for sfr.txt log-file. */
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
 FILE *FdSNinfo;			/*!< file handle for SNinfo.txt per-SN diagnostic log */
+FILE *FdAGBinfo;		/*!< file handle for AGBinfo.txt per-AGB-death diagnostic log */
 FILE *FdFeedbackBudget;		/*!< file handle for FeedbackBudget.txt conservation log */
 #endif
 #ifdef GALSF_RESOLVEDISM

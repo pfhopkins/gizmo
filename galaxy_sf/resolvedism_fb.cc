@@ -292,11 +292,17 @@ void resolvedism_determine_SNe(void)
         if(ThisTask == 0)
         {
             for(i = 0; i < n_logged_total; i++) {
-                fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d\n",
-                    All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
-                    all_id[i], all_mstar[i], all_remtype[i]);
+                if(all_remtype[i] == REM_WD) {
+                    fprintf(FdAGBinfo, "%.16g %g %g %g %g %g %lld %g\n",
+                        All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
+                        all_id[i], all_mstar[i]);
+                } else {
+                    fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d\n",
+                        All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
+                        all_id[i], all_mstar[i], all_remtype[i]);
+                }
             }
-            fflush(FdSNinfo);
+            fflush(FdSNinfo); fflush(FdAGBinfo);
             myfree(all_remtype);
             myfree(all_id);
             myfree(all_mstar);
@@ -347,6 +353,72 @@ void resolvedism_determine_SNe(void)
         if(n_ia_total > 0 && ThisTask == 0) {
             printf("ResolvedISM: %d Type Ia SNe this timestep at t=%g\n", n_ia_total, All.Time);
             fflush(stdout);
+        }
+
+        /* Log Type Ia events to SNinfo.txt (same format, rem_type=7) */
+        if(n_ia_total > 0)
+        {
+            double *ia_x, *ia_y, *ia_z, *ia_u, *ia_rho, *ia_mstar;
+            long long *ia_id;
+            ia_x = (double *)mymalloc("ia_x", n_ia_local * sizeof(double));
+            ia_y = (double *)mymalloc("ia_y", n_ia_local * sizeof(double));
+            ia_z = (double *)mymalloc("ia_z", n_ia_local * sizeof(double));
+            ia_u = (double *)mymalloc("ia_u", n_ia_local * sizeof(double));
+            ia_rho = (double *)mymalloc("ia_rho", n_ia_local * sizeof(double));
+            ia_mstar = (double *)mymalloc("ia_mstar", n_ia_local * sizeof(double));
+            ia_id = (long long *)mymalloc("ia_id", n_ia_local * sizeof(long long));
+            int n_ia_logged = 0;
+            for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+                if(P[i].Type == 4 && P[i].SNe_ThisTimeStep == 4) {
+                    ia_x[n_ia_logged] = P[i].Pos[0];
+                    ia_y[n_ia_logged] = P[i].Pos[1];
+                    ia_z[n_ia_logged] = P[i].Pos[2];
+                    ia_u[n_ia_logged] = P[i].InternalEnergyAroundParticle;
+                    ia_rho[n_ia_logged] = P[i].DensityAroundParticle;
+                    ia_mstar[n_ia_logged] = P[i].MstarSampleIMF[0];
+                    ia_id[n_ia_logged] = (long long)P[i].ID;
+                    n_ia_logged++;
+                }
+            }
+            int *recvcounts_ia = NULL, *displs_ia = NULL;
+            double *all_ia_x=NULL, *all_ia_y=NULL, *all_ia_z=NULL, *all_ia_u=NULL, *all_ia_rho=NULL, *all_ia_mstar=NULL;
+            long long *all_ia_id = NULL;
+            if(ThisTask == 0) {
+                recvcounts_ia = (int *)mymalloc("recvcounts_ia", NTask * sizeof(int));
+                displs_ia = (int *)mymalloc("displs_ia", NTask * sizeof(int));
+            }
+            MPI_Gather(&n_ia_logged, 1, MPI_INT, recvcounts_ia, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                displs_ia[0] = 0;
+                for(i = 1; i < NTask; i++) {displs_ia[i] = displs_ia[i-1] + recvcounts_ia[i-1];}
+                all_ia_x = (double *)mymalloc("all_ia_x", n_ia_total * sizeof(double));
+                all_ia_y = (double *)mymalloc("all_ia_y", n_ia_total * sizeof(double));
+                all_ia_z = (double *)mymalloc("all_ia_z", n_ia_total * sizeof(double));
+                all_ia_u = (double *)mymalloc("all_ia_u", n_ia_total * sizeof(double));
+                all_ia_rho = (double *)mymalloc("all_ia_rho", n_ia_total * sizeof(double));
+                all_ia_mstar = (double *)mymalloc("all_ia_mstar", n_ia_total * sizeof(double));
+                all_ia_id = (long long *)mymalloc("all_ia_id", n_ia_total * sizeof(long long));
+            }
+            MPI_Gatherv(ia_x, n_ia_logged, MPI_DOUBLE, all_ia_x, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_y, n_ia_logged, MPI_DOUBLE, all_ia_y, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_z, n_ia_logged, MPI_DOUBLE, all_ia_z, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_u, n_ia_logged, MPI_DOUBLE, all_ia_u, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_rho, n_ia_logged, MPI_DOUBLE, all_ia_rho, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_mstar, n_ia_logged, MPI_DOUBLE, all_ia_mstar, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_id, n_ia_logged, MPI_LONG_LONG, all_ia_id, recvcounts_ia, displs_ia, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                for(i = 0; i < n_ia_total; i++) {
+                    fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d\n",
+                        All.Time, all_ia_x[i], all_ia_y[i], all_ia_z[i], all_ia_u[i], all_ia_rho[i],
+                        all_ia_id[i], all_ia_mstar[i], 7); /* 7 = Type Ia */
+                }
+                fflush(FdSNinfo);
+                myfree(all_ia_id); myfree(all_ia_mstar); myfree(all_ia_rho);
+                myfree(all_ia_u); myfree(all_ia_z); myfree(all_ia_y); myfree(all_ia_x);
+                myfree(displs_ia); myfree(recvcounts_ia);
+            }
+            myfree(ia_id); myfree(ia_mstar); myfree(ia_rho);
+            myfree(ia_u); myfree(ia_z); myfree(ia_y); myfree(ia_x);
         }
     }
 #endif

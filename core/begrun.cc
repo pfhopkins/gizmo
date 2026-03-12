@@ -751,8 +751,14 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SNinfo.txt");
   if(!(FdSNinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdSNinfo,"%s Per-death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
-      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star  (9) remnant_type [0=WD,1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH]\n",prefix_char);
+      fprintf(FdSNinfo,"%s Per-SN/death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
+      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]\n",prefix_char);
+  }
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "AGBinfo.txt");
+  if(!(FdAGBinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdAGBinfo,"%s Per-AGB-death diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
+      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "FeedbackBudget.txt");
   if(!(FdFeedbackBudget = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
