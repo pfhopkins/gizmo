@@ -2255,14 +2255,6 @@ void read_parameter_file(char *fname)
 #endif
 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-      strcpy(tag[nt], "SearchingRadius");
-      addr[nt] = &All.SearchingRadius;
-      id[nt++] = REAL;
-
-      strcpy(tag[nt], "MassTolerance");
-      addr[nt] = &All.MassTolerance;
-      id[nt++] = REAL;
-
       strcpy(tag[nt], "IMFSampleStellarMassCut");
       addr[nt] = &All.IMFSampleStellarMassCut;
       id[nt++] = REAL;

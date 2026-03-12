@@ -79,6 +79,35 @@ void chemcool_init(void)
         fflush(stdout);
     }
 
+    /* Set COOLI flags before COOLINMO/CHEMINMO (they read these via common block).
+       Standard Glover & Clark values, matching gadget_tnt_new defaults. */
+    COOLI.iflag_mn   = 1;  /* GP98 mutual neutralization rate */
+    COOLI.iflag_ad   = 1;  /* GP98 H- associative detachment rate */
+    COOLI.iflag_atom = 2;  /* SD93 combined atomic cooling table */
+    COOLI.iflag_3bh2a = 1; /* three-body H2 formation channel a (PSS83) */
+    COOLI.iflag_3bh2b = 1; /* three-body H2 formation channel b (PSS83) */
+    COOLI.iflag_h3pra = 1; /* H3+ dissociative recombination (GP98) */
+    COOLI.iphoto     = 6;  /* TREECOL column densities (overridden per-particle) */
+    COOLI.irad_heat  = 0;  /* no external radiative heating (handled via G0) */
+    COOLI.isrf_option = 1; /* Draine (1978) ISRF spectral shape */
+    COOLI.no_chem    = 0;
+
+    /* Set COOLR defaults before COOLINMO (matching gadget_tnt_new standard values) */
+    COOLR.h2_form_ex  = 0.84;       /* fraction of H2 binding energy → vibrational excitation */
+    COOLR.h2_form_kin = 0.12;       /* fraction → kinetic energy of H2 molecule */
+    COOLR.deff        = 1.0;        /* H2 formation on dust efficiency factor */
+    COOLR.phi_pah     = 1.0;        /* PAH photoelectric heating efficiency */
+    COOLR.AV_conversion_factor = 5.348e-22; /* N_H to A_V conversion (Bohlin+ 1978) */
+    COOLR.AV_ext      = 0.0;        /* no external dust extinction */
+    COOLR.dm_density  = 0.0;        /* no dark matter annihilation heating */
+    COOLR.pdv_term    = 0.0;
+    COOLR.redshift    = 0.0;        /* isolated galaxy, non-cosmological */
+    COOLR.abundD      = All.DeutAbund;
+    COOLR.G0          = All.G0;
+    COOLR.G0_LW       = All.G0;
+    COOLR.cosmic_ray_ion_rate = All.CosmicRayIonRate;
+    COOLR.dust_to_gas_ratio = All.DGRnormalized;
+
     COOLINMO();
     CHEMINMO();
     INIT_TOLERANCES();
@@ -188,9 +217,13 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         COOLR.dust_to_gas_ratio = DGR_actual / 0.01;
     }
 #else
+    /* No evolved dust model: assume fixed dust-to-metal ratio, scale DGR with local metallicity.
+       DGRnormalized is the dust-to-metal efficiency (1.0 = MW-like ~40% depletion).
+       dust_to_gas_ratio is in solar units: 1.0 = DGR_solar ~ 0.01 */
+#ifdef METALS
+    COOLR.dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];
+#else
     COOLR.dust_to_gas_ratio = All.DGRnormalized;
-#ifdef DGR_SCALE_WITH_Z
-    COOLR.dust_to_gas_ratio = All.DGRnormalized * All.InitialMetallicity;
 #endif
 #endif
 

@@ -491,8 +491,6 @@ extern struct global_data_all_processes
   double TimeInstantSN;         /*!< time before which all SNe are instant (code units) */
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-  double SearchingRadius;       /*!< radius for neighbor search in IMF sampling */
-  double MassTolerance;         /*!< mass tolerance for IMF sampling convergence */
   double IMFSampleStellarMassCut; /*!< minimum stellar mass to record in IMF sampling */
   double IMFSampleMinMass;        /*!< lower bound of IMF sampling [Msun]: 0.08 = full IMF, higher = truncated (LYRA-style) */
 #endif

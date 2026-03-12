@@ -8,3 +8,5 @@ compile_time_info.cc
 # Machine-specific config
 Config.sh
 Makefile.systype
+stella.params
+

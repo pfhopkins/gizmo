@@ -3258,7 +3258,7 @@ int blockpresent(enum iofields blocknr)
 
         case IO_ELEMENT_ABUNDANCE:
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            return 1;
+            if(RestartFlag >= 2) return 1; /* only read from snapshots, not ICs; init.cc sets values for RestartFlag==0 */
 #endif
             break;
 

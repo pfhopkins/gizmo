@@ -399,6 +399,38 @@ void init(void)
             if(NUM_LIVE_SPECIES_FOR_COOLTABLES>=10) P[i].Metallicity[1]=(1.-HYDROGEN_MASSFRAC)+(All.SolarAbundances[1]-(1.-HYDROGEN_MASSFRAC))*P[i].Metallicity[0]/All.SolarAbundances[0];
         } // if(RestartFlag == 0)
 
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        if(RestartFlag == 0) {
+            /* Initialize per-element mass fractions (ElementAbundance[15]: H,He,C,N,O,F,Ne,Na,Mg,Al,Si,S,Ca,Ti,Fe).
+               Solar proto-solar mass fractions from Asplund+ 2009 Table 1 (proto-solar column).
+               FIRE-tracked elements use values from SolarAbundances[] above; F,Na,Al,Ti from Asplund directly. */
+            static const double solar_elem[15] = {
+                0.7154,   /* H  = 1 - Y - Z */
+                0.2703,   /* He (proto-solar Y) */
+                2.53e-3,  /* C  (8.47) */
+                7.41e-4,  /* N  (7.87) */
+                6.13e-3,  /* O  (8.73) */
+                4.90e-7,  /* F  (4.56) */
+                1.34e-3,  /* Ne (8.09) */
+                3.28e-5,  /* Na (6.30) */
+                7.57e-4,  /* Mg (7.54) */
+                5.69e-5,  /* Al (6.47) */
+                7.12e-4,  /* Si (7.53) */
+                3.31e-4,  /* S  (7.16) */
+                6.87e-5,  /* Ca (6.33) */
+                2.72e-6,  /* Ti (4.93) */
+                1.38e-3   /* Fe (7.47) */
+            };
+            double Zfrac = All.InitMetallicityinSolar; /* fraction of solar metallicity */
+            double Zmetal = 0;
+            for(j = 2; j < 15; j++) {P[i].ElementAbundance[j] = solar_elem[j] * Zfrac; Zmetal += P[i].ElementAbundance[j];}
+            /* He: primordial (1-X_prim) + enrichment scaled to solar */
+            P[i].ElementAbundance[1] = (1. - HYDROGEN_MASSFRAC) + (solar_elem[1] - (1. - HYDROGEN_MASSFRAC)) * Zfrac;
+            /* H: remainder */
+            P[i].ElementAbundance[0] = 1. - P[i].ElementAbundance[1] - Zmetal;
+        } // ElementAbundance init
+#endif
+
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         Initialize_ISMDustChem_Variables(i);
 #endif
