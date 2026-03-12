@@ -4,9 +4,7 @@
 #ifdef WSS_CIE_COOL
 #include "cool.h"
 
-      REAL Temp, metal_only
-      REAL C_only, N_only, O_only, Ne_only
-      REAL Mg_only, Si_only, S_only, Ca_only, Fe_only
+      REAL metal_only
       REAL l1, l2, l3, l4, l5, l6, l7
       REAL n1, n2, n3, n4, n5, n6, n7
       REAL fac

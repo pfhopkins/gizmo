@@ -162,10 +162,10 @@ c=======================================================================
 #include "cool.h"
 #include "gamma.h"
       REAL abh2, ekn, temp, gamma
-      REAL foo, diff_en, diff_h2
+      REAL diff_en, diff_h2
       REAL t1, t2, g1, g2
       REAL temp_1, temp_2, gamma_1, gamma_2
-      integer I, idx_en, idx_h2
+      integer idx_en, idx_h2
 c
       if (ekn .lt. 1d0 .or. ekn .gt. 5d4 .or. abh2 .eq. 0d0) then
 c We assume that for ekn > 50000, H2 content of the gas is negligible

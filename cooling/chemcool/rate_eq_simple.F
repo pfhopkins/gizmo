@@ -38,7 +38,9 @@ c
 c
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
       REAL k0, k1, gamma_chx, gamma_co, beta
+#if CHEMISTRYNETWORK == 6
       REAL kd1, kd2, kd3
+#endif
 #endif
 c
       REAL phi     , h_gr    , hgrvar1 , hgrvar2

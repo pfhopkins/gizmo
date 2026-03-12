@@ -143,6 +143,7 @@ void finalize_sampled_star(int i, double M_drawn)
 /* Global accumulators — allocated in assign_stellar_masses(), indexed by particle index */
 static double *IMF_MassAccreted = NULL;
 static double *IMF_MomAccreted = NULL;   /* [NumPart * 3] */
+static double *IMF_MassOriginal = NULL;  /* pre-accretion gas masses for floor enforcement */
 #ifdef METALS
 static double *IMF_MetalAccreted = NULL;
 #endif

@@ -1070,8 +1070,10 @@ void energy_statistics(void)
       double cool_erg = cool_glob * UNIT_ENERGY_IN_CGS;
       printf("BUDGET t=%.6g  M_gas=%.6g M_star=%.6g M_tot=%.6g  E_therm=%.6g E_kin=%.6g  E_cool_cum=%.4e[erg]  E_fb_cum=%.4e[erg]  M_fb_ret=%.4g[Msun]\n",
         All.Time, M_gas, M_star, M_total, E_therm_gas, E_kin_gas, cool_erg, CumulFeedbackEnergy, CumulFeedbackMass);
-      printf("BUDGET_Z t=%.6g  Z_gas=[%.4e,%.4e]  Z_star=[%.4e,%.4e]\n",
-        All.Time, Zmin_gas, Zmax_gas, Zmin_star, Zmax_star);
+      printf("BUDGET_Z t=%.6g  Z_gas=[%.4e,%.4e]", All.Time, Zmin_gas, Zmax_gas);
+      if(M_star > 0) printf("  Z_star=[%.4e,%.4e]", Zmin_star, Zmax_star);
+      else printf("  Z_star=n/a");
+      printf("\n");
     }
   }
 #endif

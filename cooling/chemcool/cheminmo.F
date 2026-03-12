@@ -141,8 +141,9 @@ c
       integer k, itemp, ifix, I, J
 c
       REAL temp    , temp2    , tfix     ,
-     $     t4log   , yncrh    , yncrh2   , dtemp , tinv  , 
-     $     te      , temp_1ev , lnte     , temp3 , u
+     $     t4log   , yncrh    , yncrh2   , dtemp , tinv  ,
+     $     te      , temp_1ev , lnte     , temp3 , u     ,
+     $     temp_msm
 c
       REAL h2_low_n, h2_high_n, alpha    , f1       , f2
 c
@@ -1702,6 +1703,124 @@ c of it is converted back to N2 by reactions with atomic N. In reality,
 c some will be photodissociated, and so will react with C to form CN...
 c
         chtab(152, itemp) = 1d-6 / temp3**0.51d0
+c
+c HeH+ + e- -> He + H
+c
+c Rate from G94. SLD98 recommend this rate (without rescaling) for
+c HeD+ DR too.
+c
+        chtab(153, itemp) = 3.0d-8 * (temp / 3d2)**(-0.47d0)
+c
+c He + H2+  -> HeH+ + H
+c
+        chtab(154, itemp) = 3.0d-10 * dexp(-6.72d3 / temp)
+c
+c He + H+  -> HeH+ + PHOTON
+c
+c Fit by SLD98 to JSK95.
+c
+        chtab(155, itemp) = 8.0d-20 * (temp / 3d2)**(-0.24d0) *
+     $                      dexp(-temp / 4000)
+c
+c HeH+ + H -> H2+ + He
+c
+c Rate from SLD98, based on cross-section from LJB95.
+c
+        chtab(156, itemp) = 1.04d-9 * (temp /3d2)**0.13d0 *
+     $                     exp(-temp / 3.31d4)
+c
+c Dissociative recombination of H2+ -- LTE limit
+c Taken from Coppola et al (2011), based on Takagi (2002)
+c
+c Fit valid only up to 10000K, so assume rate constant at higher T
+c
+        if (temp .gt. 1d4) then
+          tfix = 1d4
+        else
+          tfix = temp
+        endif
+c
+        chtab(157, itemp) = 1d6 * (4.2278d-14 - 2.3088d-17 * tfix
+     $                    + 7.3428d-21 * tfix**2
+     $                    - 7.5474d-25 * tfix**3
+     $                    + 3.3468d-29 * tfix**4
+     $                    - 5.5280d-34 * tfix**5)
+c
+c Collisional ionization of H by He
+c From Lenzuni et al (1991), based on Van Zyl et al (1981)
+c
+        chtab(158, itemp) = 1.75d-17 * temp**1.3 * dexp(-1.578d5/temp)
+c
+c Collisional dissociation of H2+ by H, low density limit
+c My fit, based on cross-sections from Krstic & Janev (2003)
+c
+        chtab(159, itemp) = 1.54d-12 * temp**0.45 * dexp(-3.1d4 / temp)
+c
+c Collisional dissociation of H2+ by H, LTE limit
+c From Coppola et al (2011), based on Krstic & Janev (2003)
+c
+        chtab(160, itemp) = dexp(-32.912 + 6.9498d-5 * temp
+     $                    - 3.3248d4 / temp - 4.08d-9 * temp**2)
+c
+c H2 collisional dissociation by H: CID and DT rates from MSM96
+c
+c Fits valid only in 450 < T < 45000. Outside this range, use edge value.
+c
+        if (temp .gt. 4.5d4) then
+          temp_msm = 4.5d4
+        elseif (temp .lt. 4.5d2) then
+          temp_msm = 4.5d2
+        else
+          temp_msm = temp
+        endif
+c
+c High n CID rate
+        chtab(161, itemp) = -178.4239d0 - 68.42243d0 * log10(temp_msm)
+     $                    + 43.20243d0 * dlog10(temp_msm)**2
+     $                    - 4.633167d0 * dlog10(temp_msm)**3
+     $                    + 69.70086d0 * dlog10(1d0 + 4.087038d4
+     $                                 / temp_msm)
+        chtab(162, itemp) = -2.370570d4 / temp_msm
+c Low n CID rate
+        chtab(163, itemp) = 1.288953d2 - 5.391334d1 * log10(temp_msm)
+     $                    + 5.315517d0 * dlog10(temp_msm)**2
+     $                    - 1.973427d1 * dlog10(1d0 + 1.678095d4
+     $                                 / temp_msm)
+        chtab(164, itemp) = -2.578611d4 / temp_msm
+c ncrit (CID)
+        chtab(165, itemp) = 1d1**(1.482123d1
+     $                    - 4.890915d0  * dlog10(temp_msm)
+     $                    + 4.749030d-1 * dlog10(temp_msm)**2
+     $                    - 1.338283d2 / temp_msm)
+        chtab(166, itemp) = 8.227443d-1 + 5.864073d-1
+     $                    * dexp(-temp_msm / 1.85d3)
+     $                    - 2.056313d0 * dexp(-temp_msm / 4.4d2)
+c High n DT rate
+        chtab(167, itemp) = -142.7664d0 + 42.70741d0 * dlog10(temp_msm)
+     $                    - 2.027365d0  * dlog10(temp_msm)**2
+     $                    - 2.582097d-1 * dlog10(temp_msm)**3
+     $                    + 2.136094d1  * dlog10(1d0 + 2.753531d4
+     $                                  / temp_msm)
+        chtab(168, itemp) = -2.146779d4 / temp_msm
+c Low n DT rate
+        chtab(169, itemp) = 60.34928d0 - 27.43096d0 * dlog10(temp_msm)
+     $                    + 2.676150d0 * dlog10(temp_msm)**2
+     $                    - 11.28215d0 * dlog10(1d0 + 1.425455d4
+     $                                 / temp_msm)
+        chtab(170, itemp) = -23125.2d0 / temp_msm
+c ncrit (DT)
+        chtab(171, itemp) = 1d1**(9.305564d0
+     $                    - 2.464009d0 * dlog10(temp_msm)
+     $                    + 0.1985955d0 * dlog10(temp_msm)**2
+     $                    + 743.0600d0 / temp_msm)
+        chtab(172, itemp) = 7.502286d-1 + 2.358848d-1
+     $                    * dexp(-temp_msm / 1.85d3)
+     $                    + 2.937507d0 * dexp(-temp_msm / 4d2)
+c
+c H2 + H+ -> H2+ + H, LTE limit; from Coppola et al 2011
+c
+        chtab(173, itemp) = 1d6 * dexp(-33.081 + 6.3173d-5 * temp
+     $                    - 2.3478d4 / temp - 1.8691d-9 * temp**2)
 c
  200  continue
 c

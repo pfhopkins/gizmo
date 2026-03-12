@@ -925,6 +925,7 @@ void force_update_node_recursive(int no, int sib, int father)
         Extnodes[no].dp[2] = 0;
         
         Nodes[no].N_part = count_particles; /* save this value */
+        Nodes[no].u.d.bitflags = 0; /* must initialize before TOPLEVEL bits are set later */
         Nodes[no].maxsoft = maxsoft;
         Nodes[no].u.d.sibling = sib;
         Nodes[no].u.d.father = father;

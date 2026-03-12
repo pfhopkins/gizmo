@@ -24,6 +24,7 @@ c
       REAL coefficients(4,nval-1)
       REAL dpt, pt, a, b, c, d
       integer I, J, index
+      dpt = 0d0
 
       call spline_coefficients(nval, values, coefficients)
 

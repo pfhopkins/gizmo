@@ -95,7 +95,7 @@ c
        REAL co_lte_fxT(nco_column), co_n05_fxT(nco_column),
      $      co_alp_fxT(nco_column)
 
-       REAL co_lte_smalltab(nco_column,nTco), 
+       REAL, SAVE :: co_lte_smalltab(nco_column,nTco),
      $      co_n05_smalltab(nco_column,nTco),
      $      co_alp_smalltab(nco_column,nTco)
 c
@@ -116,10 +116,10 @@ c
      $      h2o_n05_fxT_para(nh2o_column),
      $      h2o_alp_fxT_para(nh2o_column)
 
-       REAL h2o_LTE_smalltab_ortho(nh2o_column,nTh2o), 
+       REAL, SAVE :: h2o_LTE_smalltab_ortho(nh2o_column,nTh2o),
      $      h2o_n05_smalltab_ortho(nh2o_column,nTh2o),
      $      h2o_alp_smalltab_ortho(nh2o_column,nTh2o),
-     $      h2o_LTE_smalltab_para(nh2o_column,nTh2o), 
+     $      h2o_LTE_smalltab_para(nh2o_column,nTh2o),
      $      h2o_n05_smalltab_para(nh2o_column,nTh2o),
      $      h2o_alp_smalltab_para(nh2o_column,nTh2o)
 c
@@ -127,15 +127,15 @@ c CO vibrational cooling:
 c
        REAL co_vib_LTE_fit(nTco_vib), co_vib_LTE_fit2(ncdco_vib),
      $      co_vib_LTE_fxT(nco_vib_column)
-       REAL co_vib_LTE_smalltab(nco_vib_column, nTco_vib)
+       REAL, SAVE :: co_vib_LTE_smalltab(nco_vib_column, nTco_vib)
 c
 c H2O vibrational cooling:
 c
        REAL h2o_vib_LTE_fit(nTh2o_vib), h2o_vib_LTE_fit2(ncdh2o_vib),
      $      h2o_vib_LTE_fxT(nh2o_vib_column)
-       REAL h2o_vib_LTE_smalltab(nh2o_vib_column, nTh2o_vib)
+       REAL, SAVE :: h2o_vib_LTE_smalltab(nh2o_vib_column, nTh2o_vib)
 c
-       REAL rate0(nmd), rate1(nmd), rate2(nmd), rate3(nmd)
+       REAL, SAVE :: rate0(nmd), rate1(nmd), rate2(nmd), rate3(nmd)
 c
        REAL   temp    , temp2   , f       , gg       , hh      
      $      , t4log   , dtemp   , tinv    , tinth    , tintq

@@ -614,7 +614,7 @@
 
 #define  COOL_EPS 1d-6
 #define  NCLTAB 67
-#define  NCHTAB 152
+#define  NCHTAB 173
 #define  NCRTAB 12
 #define  NCRPHOT 12
 #define  NPHTAB 54

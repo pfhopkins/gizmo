@@ -96,6 +96,7 @@ void cooling_parent_routine(void)
 #ifdef CHEMCOOL
     /* Accumulate cooling energy losses (positive = energy removed) + sanity checks */
     double dE_cool_step = 0;
+    double T_min = 1e30, T_max = -1e30, nH_min = 1e30, nH_max = -1e30;
     for(j=0;j<N_active;j++) {
         i = active_indices[j];
         double u_now = CellP[i].InternalEnergy;
@@ -112,8 +113,16 @@ void cooling_parent_routine(void)
             CellP[i].InternalEnergyPred = u_min;
         }
         dE_cool_step += (u_before_cool[j] - CellP[i].InternalEnergy) * P[i].Mass;
+        double T_i = CellP[i].Temp;
+        double nH_i = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS * HYDROGEN_MASSFRAC;
+        if(T_i < T_min) T_min = T_i;
+        if(T_i > T_max) T_max = T_i;
+        if(nH_i < nH_min) nH_min = nH_i;
+        if(nH_i > nH_max) nH_max = nH_i;
     }
     CumulCoolingEnergyLoss += dE_cool_step;
+    PRINT_STATUS("CHEMCOOL_DIAG: N_active=%d  dE_cool=%.4e[code]  E_cool_cum=%.4e[code]  T=[%.2e,%.2e]K  nH=[%.2e,%.2e]cm^-3",
+        N_active, dE_cool_step, CumulCoolingEnergyLoss, T_min, T_max, nH_min, nH_max);
     free(u_before_cool);
 #endif
 
@@ -140,8 +149,8 @@ void do_the_cooling_for_particle(int i)
 #if defined(RADTRANSFER)
         {int k_rt; for(k_rt=0;k_rt<N_RT_FREQ_BINS;k_rt++) {CellP[i].Lambda_RadiativeCooling_toRHDBins[k_rt]=0;}} /* prevent stale values from affecting RT solver */
 #endif
-        double dl = Get_Particle_Size(i) * All.cf_atime; /* shielding length in code units */
-        do_chemcool_step(i, dtime, dl, 0);
+        do_chemcool_step(i, dtime, 0, 0); /* dl=0: shielding columns come from TREE_RAD/TREE_RAD_H2, not local approx */
+        if(CellP[i].InternalEnergy < All.MinEgySpec) { CellP[i].InternalEnergy = All.MinEgySpec; CellP[i].InternalEnergyPred = All.MinEgySpec; }
 
         set_eos_pressure(i);
         return;
@@ -2377,6 +2386,23 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
     *nHep_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeII]]; *nHepp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeIII]];
     double temp = ChimesGasVars[target].temperature;
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target);
+    return temp;
+#elif defined(CHEMCOOL)
+    /* CHEMCOOL tracks temperature and abundances in the Fortran chemistry — use stored values directly,
+       the C cooling tables (AlphaHp etc.) are never allocated when CHEMCOOL is active */
+    double temp = 0;
+    *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0; *nHe0_guess = yhelium(target); *nHep_guess = 0; *nHepp_guess = 0;
+    if(target >= 0) {
+        temp = CellP[target].Temp;
+        double abh2 = CellP[target].TracAbund[0]; /* IH2 = 0 for all CHEMISTRYNETWORK */
+        double abe  = CellP[target].TracAbund[1]; /* IHP = 1 for all CHEMISTRYNETWORK */
+        *nH0_guess = DMAX(0, 1.0 - 2.0*abh2 - abe);
+        *nHp_guess = abe;
+        *ne_guess  = abe;
+        *nHe0_guess = yhelium(target); *nHep_guess = 0; *nHepp_guess = 0;
+    }
+    if(temp <= 0) {temp = u * PROTONMASS_CGS * (GAMMA(target)-1) / BOLTZMANN_CGS;} /* fallback if Temp not yet set */
+    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0., target);
     return temp;
 #else
     if(target >= 0) {*ne_guess=CellP[target].Ne; *nH0_guess = DMAX(0,DMIN(1,1.-( *ne_guess / 1.2 )));} else {*ne_guess=1.; *nH0_guess=0.;}

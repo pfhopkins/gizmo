@@ -148,6 +148,24 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Orion-OpenMPI")
+CC       =  mpicc
+CXX      =  mpicxx -std=c++11
+FC       =  mpifort
+OPTIMIZE = -g -O3 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
+MPICHLIB =
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
+endif
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"ViperGccOpenMPI")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++11

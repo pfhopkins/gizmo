@@ -84,7 +84,7 @@ c
 
       REAL sigma_dust
 
-      REAL f_dust, NH, fshield_CO, NH2,
+      REAL f_dust, NH, fshield_CO,
      $     AV, f_simp, localapprox, chi
       REAL NH_ext
       REAL AVlocal
@@ -157,8 +157,8 @@ c
       endif
 #ifdef DEBUG_SIGMA_PCC
       write(88,8888) NH, localapprox
-#endif      
-8888  format(7(1X,E13.6))      
+8888  format(7(1X,E13.6))
+#endif
 c
 c H2 self-shielding
 c

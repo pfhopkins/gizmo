@@ -19,8 +19,7 @@ c
 c
       REAL    time, dl, yn, divv, energy
       REAL    non_eq_abundances(num_non_eq_species)
-      REAL    radius, column_est
-      REAL    abe, abh2, yntot, ekn, temp, gamma
+      REAL    column_est
       REAL    t_start, t_end, dt_est, dt, t_in, t_out
       REAL    tdust_old
       integer new_step
@@ -45,7 +44,7 @@ c
 c DVODE control variables -- NB atol declared in non_eq.h
 c
       REAL    rtol
-      integer itask, iopt, itol, mf, istate, iflag_dvi
+      integer itask, iopt, itol, mf, istate
 c
 c Other DVODE variables
 c
@@ -57,6 +56,10 @@ c
       REAL    y(nspec), ydot(nspec), y_old(nspec)
 c
       external jac, rate_eq
+c
+      do I = 1, nspec
+        y_old(I) = 0d0
+      enddo
 c
 c Sanity check for our input time
 c
