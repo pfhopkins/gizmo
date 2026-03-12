@@ -380,6 +380,26 @@ void begrun(void)
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
+#ifdef GALSF_ISMDUSTCHEM_MODEL
+        All.ISMDustChem_SNeIIDustScaling = all.ISMDustChem_SNeIIDustScaling;
+        All.ISMDustChem_SNeIaDustScaling = all.ISMDustChem_SNeIaDustScaling;
+        All.ISMDustChem_AGBDustScaling = all.ISMDustChem_AGBDustScaling;
+        All.ISMDustChem_DustAccretionScaling = all.ISMDustChem_DustAccretionScaling;
+        All.ISMDustChem_ThermalSputteringScaling = all.ISMDustChem_ThermalSputteringScaling;
+        All.ISMDustChem_AccretionTcutoffScaling = all.ISMDustChem_AccretionTcutoffScaling;
+        All.ISMDustChem_SNeGasClearedOfDustScaling = all.ISMDustChem_SNeGasClearedOfDustScaling;
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+        All.ISMDustChem_SNeShatteringScaling = all.ISMDustChem_SNeShatteringScaling;
+        All.ISMDustChem_SNeSputteringScaling = all.ISMDustChem_SNeSputteringScaling;
+        All.ISMDustChem_ShatteringScaling = all.ISMDustChem_ShatteringScaling;
+        All.ISMDustChem_CoagDensityEnhancementScaling = all.ISMDustChem_CoagDensityEnhancementScaling;
+        All.ISMDustChem_VCoagScaling = all.ISMDustChem_VCoagScaling;
+        All.ISMDustChem_CoagulationScaling = all.ISMDustChem_CoagulationScaling;
+        All.ISMDustChem_GrainVelocityScaling = all.ISMDustChem_GrainVelocityScaling;
+        All.ISMDustChem_PhotodestructionScaling = all.ISMDustChem_PhotodestructionScaling;
+#endif
+#endif
+
 #ifdef GR_TABULATED_COSMOLOGY
       All.DarkEnergyConstantW = all.DarkEnergyConstantW;
 #endif
@@ -1195,6 +1215,85 @@ void read_parameter_file(char *fname)
         strcpy(alternate_tag[nt],"Initial_ISMDustChem_Silicate_to_Carbon_Dust_Ratio");
         addr[nt] = &All.Initial_ISMDustChem_SiliconToCarbonRatio;
         id[nt++] = REAL;
+
+        strcpy(tag[nt],"SNeIIDustScaling");
+        addr[nt] = &All.ISMDustChem_SNeIIDustScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"SNeIaDustScaling");
+        addr[nt] = &All.ISMDustChem_SNeIaDustScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"AGBDustScaling");
+        addr[nt] = &All.ISMDustChem_AGBDustScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"DustAccretionScaling");
+        addr[nt] = &All.ISMDustChem_DustAccretionScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"ThermalSputteringScaling");
+        addr[nt] = &All.ISMDustChem_ThermalSputteringScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"SNeGasClearedOfDustScaling");
+        addr[nt] = &All.ISMDustChem_SNeGasClearedOfDustScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"AccretionTcutoffScaling");
+        addr[nt] = &All.ISMDustChem_AccretionTcutoffScaling;
+        id[nt++] = REAL;        
+
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+
+        strcpy(tag[nt], "UnitGrainNumber");
+        addr[nt] = &All.UnitGrainNumber;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "UnitGrainLength_in_cm");
+        addr[nt] = &All.UnitGrainLength_in_cm;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"ISMDustChem_Grain_Size_Min");
+        addr[nt] = &All.ISMDustChem_Grain_Size_Min;
+        id[nt++] = REAL;    
+
+        strcpy(tag[nt],"ISMDustChem_Grain_Size_Max");
+        addr[nt] = &All.ISMDustChem_Grain_Size_Max;
+        id[nt++] = REAL;    
+
+        strcpy(tag[nt],"SNeShatteringScaling");
+        addr[nt] = &All.ISMDustChem_SNeShatteringScaling;
+        id[nt++] = REAL; 
+
+        strcpy(tag[nt],"SNeSputteringScaling");
+        addr[nt] = &All.ISMDustChem_SNeSputteringScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"GrainShatteringScaling");
+        addr[nt] = &All.ISMDustChem_ShatteringScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"GrainCoagulationScaling");
+        addr[nt] = &All.ISMDustChem_CoagulationScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"VCoagScaling");
+        addr[nt] = &All.ISMDustChem_VCoagScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"CoagDensityEnhancementScaling");
+        addr[nt] = &All.ISMDustChem_CoagDensityEnhancementScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"GrainVelocityScaling");
+        addr[nt] = &All.ISMDustChem_GrainVelocityScaling;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt],"PhotodestructionScaling");
+        addr[nt] = &All.ISMDustChem_PhotodestructionScaling;
+        id[nt++] = REAL;
+#endif
 #endif
 
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -2308,6 +2407,24 @@ void read_parameter_file(char *fname)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if(strcmp("Initial_ISMDustChem_Depletion",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g) \n",tag[i],alternate_tag[i],All.Initial_ISMDustChem_Depletion); continue;}
                 if(strcmp("Initial_ISMDustChem_SiltoCarbRatio",tag[i])==0) {*((double *)addr[i])=0.; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g)\n",tag[i],alternate_tag[i],All.Initial_ISMDustChem_SiliconToCarbonRatio); continue;}
+                if(strcmp("SNeIIDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeIIDustScaling); continue;}
+                if(strcmp("SNeIaDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeIaDustScaling); continue;}
+                if(strcmp("AGBDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_AGBDustScaling); continue;}
+                if(strcmp("DustAccretionScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_DustAccretionScaling); continue;}
+                if(strcmp("ThermalSputteringScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_ThermalSputteringScaling); continue;}
+                if(strcmp("SNeGasClearedOfDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeGasClearedOfDustScaling); continue;}
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+                if(strcmp("ISMDustChem_Grain_Size_Min",tag[i])==0) {*((double *)addr[i])=1E-7; printf("Tag %s (%s) not set in parameter file: defaulting to 1E-7 (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_Grain_Size_Min); continue;}
+                if(strcmp("ISMDustChem_Grain_Size_Max",tag[i])==0) {*((double *)addr[i])=1E-4; printf("Tag %s (%s) not set in parameter file: defaulting to 1E-4 (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_Grain_Size_Max); continue;}
+                if(strcmp("SNeShatteringScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeShatteringScaling); continue;}
+                if(strcmp("SNeSputteringScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeSputteringScaling); continue;}
+                if(strcmp("GrainShatteringScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_ShatteringScaling); continue;}
+                if(strcmp("GrainCoagulationScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_CoagulationScaling); continue;}
+                if(strcmp("VCoagScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_VCoagScaling); continue;}
+                if(strcmp("CoagDensityEnhancementScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_CoagDensityEnhancementScaling); continue;}
+                if(strcmp("GrainVelocityScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_GrainVelocityScaling); continue;}
+                if(strcmp("PhotodestructionScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_PhotodestructionScaling); continue;}
+#endif
 #endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
                 if(strcmp("SNeIIEnergyFrac",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to standard stellar-evolution-defaults (=%g) \n",tag[i],alternate_tag[i],All.SNe_Energy_Renormalization); continue;}
