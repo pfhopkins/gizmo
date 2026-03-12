@@ -362,6 +362,111 @@ void resolvedism_photoionize(void)
             printf("PI iter %d: %d stars need larger search radius, expanding\n", iter, incomplete_total);
     } while(incomplete_total > 0 && iter < max_iter);
 
+    /* Log per-star PI diagnostics to PIinfo.txt */
+    {
+        int npi_local = 0;
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+            if(P[i].Type != 4) continue;
+            if(PISearchRadius[i] <= 0) continue;
+            npi_local++;
+        }
+        int npi_total = 0;
+        MPI_Allreduce(&npi_local, &npi_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+        if(ThisTask == 0)
+            printf("ResolvedISM PI: %d ionizing stars this timestep at t=%g (%d iterations)\n", npi_total, All.Time, iter);
+
+        if(npi_total > 0) {
+            double *pi_x = (double *)mymalloc("pi_x", DMAX(npi_local,1) * sizeof(double));
+            double *pi_y = (double *)mymalloc("pi_y", DMAX(npi_local,1) * sizeof(double));
+            double *pi_z = (double *)mymalloc("pi_z", DMAX(npi_local,1) * sizeof(double));
+            double *pi_mstar = (double *)mymalloc("pi_mstar", DMAX(npi_local,1) * sizeof(double));
+            double *pi_sly = (double *)mymalloc("pi_sly", DMAX(npi_local,1) * sizeof(double));
+            double *pi_rsearch = (double *)mymalloc("pi_rsearch", DMAX(npi_local,1) * sizeof(double));
+            double *pi_frac = (double *)mymalloc("pi_frac", DMAX(npi_local,1) * sizeof(double));
+            int *pi_npix = (int *)mymalloc("pi_npix", DMAX(npi_local,1) * sizeof(int));
+            long long *pi_id = (long long *)mymalloc("pi_id", DMAX(npi_local,1) * sizeof(long long));
+            int npi = 0;
+            for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+                if(P[i].Type != 4) continue;
+                if(PISearchRadius[i] <= 0) continue;
+                double S_ly = compute_single_star_S_ly(i);
+                double S_initial = S_ly; /* total budget at start */
+                double budget_remaining = 0;
+                int npix_complete = 0;
+                int k;
+                for(k = 0; k < HEALPIX_NPIX; k++) {
+                    double rem = PIPixelBudget[i * HEALPIX_NPIX + k];
+                    if(rem <= 0) npix_complete++;
+                    else budget_remaining += rem;
+                }
+                double frac_consumed = (S_initial > 0) ? 1.0 - budget_remaining / S_initial : 0;
+                double Mstar = 0;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                Mstar = P[i].MstarSampleIMF[0];
+#endif
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+                Mstar = P[i].Mstar;
+#endif
+                pi_x[npi] = P[i].Pos[0];
+                pi_y[npi] = P[i].Pos[1];
+                pi_z[npi] = P[i].Pos[2];
+                pi_mstar[npi] = Mstar;
+                pi_sly[npi] = (S_ly > 0) ? log10(S_ly) : 0;
+                pi_rsearch[npi] = PISearchRadius[i];
+                pi_frac[npi] = frac_consumed;
+                pi_npix[npi] = npix_complete;
+                pi_id[npi] = (long long)P[i].ID;
+                npi++;
+            }
+            /* Gather on rank 0 */
+            int *recvcounts = NULL, *displs = NULL;
+            double *all_x=NULL, *all_y=NULL, *all_z=NULL, *all_mstar=NULL, *all_sly=NULL, *all_rsearch=NULL, *all_frac=NULL;
+            int *all_npix = NULL;
+            long long *all_id = NULL;
+            if(ThisTask == 0) {
+                recvcounts = (int *)mymalloc("recvcounts_pi", NTask * sizeof(int));
+                displs = (int *)mymalloc("displs_pi", NTask * sizeof(int));
+            }
+            MPI_Gather(&npi, 1, MPI_INT, recvcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                displs[0] = 0;
+                for(i = 1; i < NTask; i++) {displs[i] = displs[i-1] + recvcounts[i-1];}
+                all_x = (double *)mymalloc("api_x", npi_total * sizeof(double));
+                all_y = (double *)mymalloc("api_y", npi_total * sizeof(double));
+                all_z = (double *)mymalloc("api_z", npi_total * sizeof(double));
+                all_mstar = (double *)mymalloc("api_ms", npi_total * sizeof(double));
+                all_sly = (double *)mymalloc("api_sl", npi_total * sizeof(double));
+                all_rsearch = (double *)mymalloc("api_rs", npi_total * sizeof(double));
+                all_frac = (double *)mymalloc("api_fr", npi_total * sizeof(double));
+                all_npix = (int *)mymalloc("api_np", npi_total * sizeof(int));
+                all_id = (long long *)mymalloc("api_id", npi_total * sizeof(long long));
+            }
+            MPI_Gatherv(pi_x, npi, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_y, npi, MPI_DOUBLE, all_y, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_z, npi, MPI_DOUBLE, all_z, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_mstar, npi, MPI_DOUBLE, all_mstar, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_sly, npi, MPI_DOUBLE, all_sly, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_rsearch, npi, MPI_DOUBLE, all_rsearch, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_frac, npi, MPI_DOUBLE, all_frac, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_npix, npi, MPI_INT, all_npix, recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(pi_id, npi, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                for(i = 0; i < npi_total; i++) {
+                    fprintf(FdPIinfo, "%.16g %g %g %g %lld %.2f %.3f %g %.4f %d\n",
+                        All.Time, all_x[i], all_y[i], all_z[i], all_id[i],
+                        all_mstar[i], all_sly[i], all_rsearch[i], all_frac[i], all_npix[i]);
+                }
+                fflush(FdPIinfo);
+                myfree(all_id); myfree(all_npix); myfree(all_frac); myfree(all_rsearch);
+                myfree(all_sly); myfree(all_mstar); myfree(all_z); myfree(all_y); myfree(all_x);
+                myfree(displs); myfree(recvcounts);
+            }
+            myfree(pi_id); myfree(pi_npix); myfree(pi_frac); myfree(pi_rsearch);
+            myfree(pi_sly); myfree(pi_mstar); myfree(pi_z); myfree(pi_y); myfree(pi_x);
+        }
+    }
+
     /* Free in LIFO order */
     myfree(PIPixelBudget); PIPixelBudget = NULL;
     myfree(PISearchRadius); PISearchRadius = NULL;

@@ -163,6 +163,8 @@ void resolvedism_determine_SNe(void)
     double *sn_mstar = (double *)mymalloc("sn_mstar", DMAX(n_death_count,1) * sizeof(double));
     long long *sn_id = (long long *)mymalloc("sn_id", DMAX(n_death_count,1) * sizeof(long long));
     int *sn_remtype = (int *)mymalloc("sn_remtype", DMAX(n_death_count,1) * sizeof(int));
+    double *sn_age = (double *)mymalloc("sn_age", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_lifetime = (double *)mymalloc("sn_lifetime", DMAX(n_death_count,1) * sizeof(double));
     int n_logged = 0;
 
     /* second pass: flag death events and handle direct collapses */
@@ -232,6 +234,8 @@ void resolvedism_determine_SNe(void)
         sn_mstar[n_logged] = Mstar;
         sn_id[n_logged] = (long long)P[i].ID;
         sn_remtype[n_logged] = rem_type;
+        sn_age[n_logged] = star_age_yr;
+        sn_lifetime[n_logged] = lifetime_yr;
         n_logged++;
     }
 
@@ -258,6 +262,7 @@ void resolvedism_determine_SNe(void)
     {
         int *recvcounts = NULL, *displs = NULL;
         double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL;
+        double *all_age = NULL, *all_lifetime = NULL;
         long long *all_id = NULL;
         int *all_remtype = NULL;
 
@@ -279,6 +284,8 @@ void resolvedism_determine_SNe(void)
             all_mstar = (double *)mymalloc("all_mstar", n_logged_total * sizeof(double));
             all_id = (long long *)mymalloc("all_id", n_logged_total * sizeof(long long));
             all_remtype = (int *)mymalloc("all_remtype", n_logged_total * sizeof(int));
+            all_age = (double *)mymalloc("all_age", n_logged_total * sizeof(double));
+            all_lifetime = (double *)mymalloc("all_lifetime", n_logged_total * sizeof(double));
         }
         MPI_Gatherv(sn_x, n_logged, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
         MPI_Gatherv(sn_y, n_logged, MPI_DOUBLE, all_y, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -288,21 +295,25 @@ void resolvedism_determine_SNe(void)
         MPI_Gatherv(sn_mstar, n_logged, MPI_DOUBLE, all_mstar, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
         MPI_Gatherv(sn_id, n_logged, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
         MPI_Gatherv(sn_remtype, n_logged, MPI_INT, all_remtype, recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_age, n_logged, MPI_DOUBLE, all_age, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_lifetime, n_logged, MPI_DOUBLE, all_lifetime, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
         if(ThisTask == 0)
         {
             for(i = 0; i < n_logged_total; i++) {
                 if(all_remtype[i] == REM_WD) {
-                    fprintf(FdAGBinfo, "%.16g %g %g %g %g %g %lld %g\n",
+                    fprintf(FdAGBinfo, "%.16g %g %g %g %g %g %lld %g %.6e %.6e\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
-                        all_id[i], all_mstar[i]);
+                        all_id[i], all_mstar[i], all_age[i], all_lifetime[i]);
                 } else {
-                    fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d\n",
+                    fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d %.6e %.6e\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
-                        all_id[i], all_mstar[i], all_remtype[i]);
+                        all_id[i], all_mstar[i], all_remtype[i], all_age[i], all_lifetime[i]);
                 }
             }
             fflush(FdSNinfo); fflush(FdAGBinfo);
+            myfree(all_lifetime);
+            myfree(all_age);
             myfree(all_remtype);
             myfree(all_id);
             myfree(all_mstar);
@@ -315,6 +326,8 @@ void resolvedism_determine_SNe(void)
             myfree(recvcounts);
         }
     }
+    myfree(sn_lifetime);
+    myfree(sn_age);
     myfree(sn_remtype);
     myfree(sn_id);
     myfree(sn_mstar);

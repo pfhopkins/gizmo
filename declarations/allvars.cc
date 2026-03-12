@@ -250,6 +250,12 @@ FILE *FdFeedbackBudget;		/*!< file handle for FeedbackBudget.txt conservation lo
 #ifdef GALSF_RESOLVEDISM
 FILE *FdSFinfo;			/*!< file handle for SFinfo.txt per-SF-event diagnostic log */
 #endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+FILE *FdIMFinfo;		/*!< file handle for IMFinfo.txt per-star IMF accretion log */
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+FILE *FdPIinfo;			/*!< file handle for PIinfo.txt per-star photo-ionization log */
+#endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 FILE *FdMomWinds;	/*!< file handle for MomWinds.txt log-file */
 #endif

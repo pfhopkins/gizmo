@@ -752,13 +752,13 @@ void open_outputfiles(void)
   if(!(FdSNinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdSNinfo,"%s Per-SN/death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
-      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]\n",prefix_char);
+      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) age_at_death[yr]  (11) lifetime_table[yr]\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "AGBinfo.txt");
   if(!(FdAGBinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdAGBinfo,"%s Per-AGB-death diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
-      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star\n",prefix_char);
+      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) age_at_death[yr]  (10) lifetime_table[yr]\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "FeedbackBudget.txt");
   if(!(FdFeedbackBudget = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
@@ -773,6 +773,22 @@ void open_outputfiles(void)
   else if(RestartFlag == 0) {
       fprintf(FdSFinfo,"%s Per-SF-event diagnostic log [GALSF_RESOLVEDISM]. Columns: \n",prefix_char);
       fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_cell[code]  (9) Z  (10) T[K]\n",prefix_char);
+  }
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "IMFinfo.txt");
+  if(!(FdIMFinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdIMFinfo,"%s Per-star IMF accretion log [GALSF_RESOLVEDISM_SAMPLE_IMF]. Columns: \n",prefix_char);
+      fprintf(FdIMFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) id  (6) M_drawn[Msun]  (7) M_accreted[Msun]  (8) R_acc[code]  (9) f_acc  (10) Z_birth\n",prefix_char);
+  }
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "PIinfo.txt");
+  if(!(FdPIinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdPIinfo,"%s Per-star photo-ionization log [GALSF_RESOLVEDISM_PHOTOION]. Columns: \n",prefix_char);
+      fprintf(FdPIinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) id  (6) M_star[Msun]  (7) log10_S_ly[phot/s]  (8) R_search[code]  (9) frac_consumed  (10) n_pix_complete[/12]\n",prefix_char);
   }
 #endif
 
