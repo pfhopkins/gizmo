@@ -143,13 +143,14 @@ void finalize_sampled_star(int i, double M_drawn)
 /* Global accumulators — allocated in assign_stellar_masses(), indexed by particle index */
 static double *IMF_MassAccreted = NULL;
 static double *IMF_MomAccreted = NULL;   /* [NumPart * 3] */
-static double *IMF_MassOriginal = NULL;  /* pre-accretion gas masses for floor enforcement */
 #ifdef METALS
 static double *IMF_MetalAccreted = NULL;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 static double *IMF_ElemAccreted = NULL;  /* [NumPart * NUM_RESOLVEDISM_ELEMENTS] */
 #endif
+/* Two-pass mode flag: 0 = count enclosed mass only (no removal), 1 = remove mass */
+static int IMF_AccretionMode = 0;
 
 
 #define CORE_FUNCTION_NAME resolvedismIMF_evaluate
@@ -273,42 +274,47 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                 r2=0; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}
                 if(r2 < 0 || r2 >= h2) continue; /* allow r2==0: parent cell at same position */
 
-                /* Equal-fraction removal, cap at 50% of cell mass */
-                double dM = local.f_acc * Mass_j;
-                if(dM > 0.5 * Mass_j) dM = 0.5 * Mass_j;
-                if(dM <= 0) continue;
-
-                /* Read gas velocity */
-                double Vel_j[3];
-                for(k=0;k<3;k++) {
-                    #pragma omp atomic read
-                    Vel_j[k] = P[j].Vel[k];
+                if(IMF_AccretionMode == 0)
+                {
+                    /* --- COUNTING PASS: sum neighbor mass, no removal --- */
+                    out.mass_accreted += Mass_j;
                 }
+                else
+                {
+                    /* --- REMOVAL PASS: use correct f_acc --- */
+                    double dM = local.f_acc * Mass_j;
+                    if(dM > 0.5 * Mass_j) dM = 0.5 * Mass_j;
+                    if(dM <= 0) continue;
+
+                    double Vel_j[3];
+                    for(k=0;k<3;k++) {
+                        #pragma omp atomic read
+                        Vel_j[k] = P[j].Vel[k];
+                    }
 
 #ifdef METALS
-                double Z_j;
-                #pragma omp atomic read
-                Z_j = P[j].Metallicity[0];
-                out.metal_accreted += dM * Z_j;
+                    double Z_j;
+                    #pragma omp atomic read
+                    Z_j = P[j].Metallicity[0];
+                    out.metal_accreted += dM * Z_j;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {
-                    double Xk_j;
-                    #pragma omp atomic read
-                    Xk_j = P[j].ElementAbundance[k];
-                    out.elem_accreted[k] += dM * Xk_j;
-                }
+                    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {
+                        double Xk_j;
+                        #pragma omp atomic read
+                        Xk_j = P[j].ElementAbundance[k];
+                        out.elem_accreted[k] += dM * Xk_j;
+                    }
 #endif
-                /* Remove mass from gas cell */
-                #pragma omp atomic
-                P[j].Mass -= dM;
+                    #pragma omp atomic
+                    P[j].Mass -= dM;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                #pragma omp atomic
-                CellP[j].MassTrue -= dM;
+                    #pragma omp atomic
+                    CellP[j].MassTrue -= dM;
 #endif
-                /* Accumulate into output */
-                out.mass_accreted += dM;
-                for(k=0;k<3;k++) out.mom_accreted[k] += dM * Vel_j[k];
+                    out.mass_accreted += dM;
+                    for(k=0;k<3;k++) out.mom_accreted[k] += dM * Vel_j[k];
+                }
             }
         }
         if(mode == 1)
@@ -355,6 +361,25 @@ void assign_stellar_masses(void)
     if(ThisTask == 0) printf("IMF accretion: %d stars drawing mass from neighbors\n", nstars_total);
     PRINT_STATUS(" ..IMF accretion walk for single stars");
 
+    /* --- DIAGNOSTIC: scan for corrupted particles BEFORE IMF accretion --- */
+    {
+        int nbad = 0;
+        for(i = 0; i < NumPart; i++) {
+            double v2 = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2];
+            double r2 = P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2];
+            if(v2 > 1e10*1e10 || r2 > 1e10*1e10 || !isfinite(v2) || !isfinite(r2)) {
+                if(nbad < 20)
+                    printf("IMF_PRE_CORRUPT: Task=%d i=%d ID=%llu Type=%d Pos=(%g,%g,%g) Vel=(%g,%g,%g) Mass=%g bin=%d\n",
+                        ThisTask, i, (unsigned long long)P[i].ID, P[i].Type,
+                        P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
+                        P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
+                        P[i].Mass, P[i].TimeBin);
+                nbad++;
+            }
+        }
+        if(nbad > 0) printf("IMF_PRE_CORRUPT: Task=%d found %d corrupted particles BEFORE IMF accretion!\n", ThisTask, nbad);
+    }
+
     /* Allocate accumulators (persist across iterations, zeroed each pass) */
     IMF_MassAccreted = (double *) mymalloc("IMF_MassAccreted", NumPart * sizeof(double));
     IMF_MomAccreted = (double *) mymalloc("IMF_MomAccreted", NumPart * 3 * sizeof(double));
@@ -375,11 +400,11 @@ void assign_stellar_masses(void)
     memset(IMF_ElemAccreted, 0, NumPart * NUM_RESOLVEDISM_ELEMENTS * sizeof(double));
 #endif
 
-    int iter = 0, max_iter = 20;
+    int iter = 0, max_iter = 10;
     int incomplete_total;
 
     do {
-        /* Pre-compute R_acc and f_acc for each star */
+        /* --- Set R_acc for this iteration --- */
         for(i = 0; i < NumPart; i++) {
             if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
 
@@ -397,33 +422,79 @@ void assign_stellar_masses(void)
                     P[i].MstarSampleIMF[2] = 0; /* converged — skip */
                     continue;
                 }
-                /* Expand radius for another attempt at the deficit */
-                h_parent *= 1.3;
-                M_star_code = deficit; /* only need the remaining deficit */
+                /* Expand radius for another attempt */
+                h_parent *= 1.5;
             }
 
             /* Estimate R_acc from density: want M_enclosed >= 2 * M_star */
+            double M_remaining = (iter > 0) ? (M_star_code - IMF_MassAccreted[i]) : M_star_code;
             double M_kernel = (4.0/3.0) * M_PI * h_parent * h_parent * h_parent * rho;
             double R_acc = h_parent;
-            if(2.0 * M_star_code > M_kernel && M_kernel > 0) {
-                R_acc = h_parent * pow(2.0 * M_star_code / M_kernel, 1.0/3.0);
-            }
-
-            double M_enclosed_est = (4.0/3.0) * M_PI * R_acc * R_acc * R_acc * rho;
-            double f_acc = (M_enclosed_est > 0) ? M_star_code / M_enclosed_est : 0.5;
-
-            /* Cap f_acc at 0.5 by expanding R_acc */
-            if(f_acc > 0.5) {
-                R_acc *= pow(f_acc / 0.5, 1.0/3.0);
-                f_acc = 0.5;
+            if(2.0 * M_remaining > M_kernel && M_kernel > 0) {
+                R_acc = h_parent * pow(2.0 * M_remaining / M_kernel, 1.0/3.0);
             }
 
             P[i].KernelRadius = R_acc;
-            P[i].MstarSampleIMF[2] = f_acc;
+            P[i].MstarSampleIMF[2] = 1.0; /* dummy positive value so active_check passes */
         }
 
-        /* Run xchange */
+        /* --- PASS 1: Count actual enclosed mass --- */
+        IMF_AccretionMode = 0;
+        /* Use a temporary accumulator for enclosed mass (reuse MassAccreted buffer but save/restore) */
+        double *IMF_MassEnclosed = (double *) mymalloc("IMF_MassEnclosed", NumPart * sizeof(double));
+        memset(IMF_MassEnclosed, 0, NumPart * sizeof(double));
+        /* Temporarily swap the accumulator pointer */
+        double *save_MassAccreted = IMF_MassAccreted;
+        IMF_MassAccreted = IMF_MassEnclosed;
         assign_stellar_masses_xchange();
+        IMF_MassAccreted = save_MassAccreted; /* restore */
+
+        /* --- Compute correct f_acc from actual enclosed mass --- */
+        for(i = 0; i < NumPart; i++) {
+            if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+            if(P[i].MstarSampleIMF[2] <= 0) continue; /* already converged */
+
+            double M_star_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
+            double M_remaining = (iter > 0) ? (M_star_code - save_MassAccreted[i]) : M_star_code;
+            double M_enclosed = IMF_MassEnclosed[i];
+
+            double f_acc;
+            if(M_enclosed > 0) {
+                f_acc = M_remaining / M_enclosed;
+            } else {
+                f_acc = 0; /* no neighbors found */
+            }
+            /* Cap at 0.5 per cell */
+            if(f_acc > 0.5) f_acc = 0.5;
+
+            P[i].MstarSampleIMF[2] = f_acc;
+
+            if(ThisTask == 0 || P[i].ID == 6880060)
+                printf("IMF_TWO_PASS: iter=%d ID=%llu R_acc=%.6f M_enclosed=%.6e M_remaining=%.6e f_acc=%.6e\n",
+                    iter, (unsigned long long)P[i].ID, P[i].KernelRadius, M_enclosed, M_remaining, f_acc);
+        }
+        myfree(IMF_MassEnclosed);
+
+        /* --- PASS 2: Remove mass with correct f_acc --- */
+        IMF_AccretionMode = 1;
+        /* Zero the per-pass portion of accumulators (MassAccreted keeps running total across iterations) */
+        /* We need a temporary to capture THIS pass's accreted mass */
+        double *IMF_PassMass = (double *) mymalloc("IMF_PassMass", NumPart * sizeof(double));
+        memset(IMF_PassMass, 0, NumPart * sizeof(double));
+        memset(IMF_MomAccreted, 0, NumPart * 3 * sizeof(double));
+#ifdef METALS
+        memset(IMF_MetalAccreted, 0, NumPart * sizeof(double));
+#endif
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        memset(IMF_ElemAccreted, 0, NumPart * NUM_RESOLVEDISM_ELEMENTS * sizeof(double));
+#endif
+        double *save2 = IMF_MassAccreted;
+        IMF_MassAccreted = IMF_PassMass;
+        assign_stellar_masses_xchange();
+        IMF_MassAccreted = save2;
+        /* Add this pass's accreted mass to running total */
+        for(i = 0; i < NumPart; i++) IMF_MassAccreted[i] += IMF_PassMass[i];
+        myfree(IMF_PassMass);
 
         /* Check for incomplete accretion */
         int incomplete_local = 0;
@@ -570,6 +641,25 @@ void assign_stellar_masses(void)
     myfree(IMF_MassAccreted); IMF_MassAccreted = NULL;
 
     if(ThisTask == 0) printf("IMF accretion done (%d pass%s).\n", iter, iter==1?"":"es");
+
+    /* --- DIAGNOSTIC: scan for corrupted particles after IMF accretion --- */
+    {
+        int nbad = 0;
+        for(i = 0; i < NumPart; i++) {
+            double v2 = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2];
+            double r2 = P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2];
+            if(v2 > 1e10*1e10 || r2 > 1e10*1e10 || !isfinite(v2) || !isfinite(r2)) {
+                if(nbad < 20)
+                    printf("IMF_CORRUPT: Task=%d i=%d ID=%llu Type=%d Pos=(%g,%g,%g) Vel=(%g,%g,%g) Mass=%g h=%g bin=%d\n",
+                        ThisTask, i, (unsigned long long)P[i].ID, P[i].Type,
+                        P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
+                        P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
+                        P[i].Mass, P[i].KernelRadius, P[i].TimeBin);
+                nbad++;
+            }
+        }
+        if(nbad > 0) printf("IMF_CORRUPT: Task=%d found %d corrupted particles after IMF accretion!\n", ThisTask, nbad);
+    }
 }
 
 
