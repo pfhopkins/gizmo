@@ -372,6 +372,34 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             P[i].Vel[j] += dp[j] / mass_new; /* correctly accounts for mass change if its allowed */
         }
 
+        /* --- DIAGNOSTIC: catch particles with extreme velocity kicks or extreme absolute velocity --- */
+        {
+            double dv2 = 0, v2_abs = 0;
+            for(j=0;j<3;j++) {dv2 += (dp[j]/mass_new)*(dp[j]/mass_new); v2_abs += P[i].Vel[j]*P[i].Vel[j];}
+            if(dv2 > 1e6*1e6 || v2_abs > 1e10*1e10) {
+                double ga2=0, ha2=0;
+                for(j=0;j<3;j++) { ga2 += P[i].GravAccel[j]*P[i].GravAccel[j]; }
+                if(P[i].Type==0) { for(j=0;j<3;j++) { ha2 += CellP[i].HydroAccel[j]*CellP[i].HydroAccel[j]; } }
+                printf("KICK_DIAG: Task=%d i=%d ID=%llu Type=%d Pos=(%g,%g,%g) Vel=(%g,%g,%g) Mass=%g "
+                       "|dv|=%g |GravAcc|=%g |HydroAcc|=%g dt_grav=%g dt_hydro=%g "
+                       "mass_pred=%g mass_new=%g KernelRadius=%g TimeBin=%d\n",
+                       ThisTask, i, (unsigned long long)P[i].ID, P[i].Type,
+                       P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
+                       P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
+                       P[i].Mass, sqrt(dv2), sqrt(ga2), sqrt(ha2),
+                       dt_gravkick, dt_hydrokick, mass_pred, mass_new,
+                       P[i].KernelRadius, P[i].TimeBin);
+                if(P[i].Type==0) {
+                    printf("KICK_DIAG_HYDRO: Task=%d i=%d HydroAcc=(%g,%g,%g) GravAcc=(%g,%g,%g) "
+                           "rho=%g InternalEnergy=%g\n",
+                           ThisTask, i,
+                           CellP[i].HydroAccel[0], CellP[i].HydroAccel[1], CellP[i].HydroAccel[2],
+                           P[i].GravAccel[0], P[i].GravAccel[1], P[i].GravAccel[2],
+                           CellP[i].Density, CellP[i].InternalEnergy);
+                }
+            }
+        }
+
 #ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
         double a_fac = return_timestep_dilation_factor(i,0);
         if(a_fac > 1.) {

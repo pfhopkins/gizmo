@@ -575,6 +575,11 @@ void star_formation_parent_routine(void)
                             }
                             int ns = NumPart + stars_spawned;
                             P[ns] = P[i]; /* copy all properties from parent gas cell */
+                            /* give the star a unique ID: use child-number system like mesh split */
+                            P[ns].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation));
+                            P[i].ID_generation = P[i].ID_generation + 1;
+                            if(P[i].ID_generation > 30) {P[i].ID_generation = 0;}
+                            P[ns].ID_generation = 0;
                             P[ns].Type = 4;
                             P[ns].Mass = 1e-10 / UNIT_MASS_IN_SOLAR; /* tiny placeholder — filled by accretion walk */
                             P[ns].StellarAge = All.Time;
@@ -610,9 +615,24 @@ void star_formation_parent_routine(void)
                             sf_mstar[n_sf_local]=M_drawn_imf; sf_Z[n_sf_local]=P[ns].Metallicity[0];
                             sf_T[n_sf_local]=CellP[i].Temp; sf_id[n_sf_local]=(long long)P[ns].ID; n_sf_local++;
 #endif
-                            force_add_element_to_tree(i, ns);
+                            /* defer tree insertion until after accretion walk sets real mass */
+                            P[ns].MstarSampleIMF[1] = (double)i; /* store parent index for deferred tree insertion */
                             CellP[i].IMFSpawnBlock = 1; /* block SF on this cell until density is recomputed */
                             stars_spawned++;
+                            /* log which SF criteria triggered */
+                            {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+                            printf("SF_SPAWN: Task=%d gasID=%llu starID=%llu M_drawn=%.4f[Msun] nH=%.2e rho=%.4e T=%.1f prob=%.4e pfac=%.4e"
+#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
+                                   " instant_cutoff=%d(nH>%.0e)"
+#endif
+                                   " Pos=(%.4f,%.4f,%.4f)\n",
+                                   ThisTask, (unsigned long long)P[i].ID, (unsigned long long)P[ns].ID,
+                                   M_drawn_imf, nH, CellP[i].Density, CellP[i].Temp, prob, pfac
+#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
+                                   , (nH > All.nHcutoffSF), All.nHcutoffSF
+#endif
+                                   , P[ns].Pos[0], P[ns].Pos[1], P[ns].Pos[2]);
+                            }
                         }
 #else /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
                         if(number_of_stars_generated == (GALSF_GENERATIONS - 1))

@@ -306,6 +306,66 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                         out.elem_accreted[k] += dM * Xk_j;
                     }
 #endif
+                    /* Rescale conserved MHD quantities proportional to mass removed,
+                     * matching parent-side of split in merge_split.cc:517-525.
+                     * Star doesn't inherit B-flux; removed portion is discarded. */
+                    double frac = dM / Mass_j;
+#ifdef MAGNETIC
+                    for(k=0;k<3;k++) {
+                        double dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].B[k];
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].B[k] -= dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].BPred[k];
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].BPred[k] -= dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].DtB[k];
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].DtB[k] -= dq;
+                    }
+                    {
+                        double dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].divB;
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].divB -= dq;
+                    }
+#ifdef DIVBCLEANING_DEDNER
+                    {
+                        double dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].Phi;
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].Phi -= dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].PhiPred;
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].PhiPred -= dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].DtPhi;
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].DtPhi -= dq;
+                    }
+                    for(k=0;k<3;k++) {
+                        double dq;
+                        #pragma omp atomic read
+                        dq = CellP[j].DtB_PhiCorr[k];
+                        dq *= frac;
+                        #pragma omp atomic
+                        CellP[j].DtB_PhiCorr[k] -= dq;
+                    }
+#endif
+#endif
                     #pragma omp atomic
                     P[j].Mass -= dM;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -573,6 +633,13 @@ void assign_stellar_masses(void)
         nimf++;
 
         finalize_sampled_star(i, M_drawn);
+
+        /* Deferred tree insertion: now the star has its real mass */
+        {
+            int iparent = (int)P[i].MstarSampleIMF[1];
+            force_add_element_to_tree(iparent, i);
+            P[i].MstarSampleIMF[1] = 0; /* clear temporary */
+        }
     }
 
     /* Gather IMF info and write to IMFinfo.txt on rank 0 */

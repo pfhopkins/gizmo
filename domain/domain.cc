@@ -109,7 +109,17 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 
     UseAllParticles = UseAllTimeBins;
     
-    for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
+    for(i = 0; i < NumPart; i++) {
+        double v2_check = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2];
+        if(v2_check > 1e10*1e10) {
+            printf("DOMAIN_VEL_CHECK: Task=%d i=%d ID=%llu Type=%d Pos=(%g,%g,%g) Vel=(%g,%g,%g) Mass=%g TimeBin=%d Ti_current=%lld Ti_Current=%lld\n",
+                ThisTask, i, (unsigned long long)P[i].ID, P[i].Type,
+                P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
+                P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
+                P[i].Mass, P[i].TimeBin, (long long)P[i].Ti_current, (long long)All.Ti_Current);
+        }
+        if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}
+    }
     
     force_treefree();
     domain_free();
