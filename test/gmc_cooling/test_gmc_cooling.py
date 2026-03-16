@@ -11,6 +11,8 @@ import numpy as np
 
 def compute_test_statistic(f, save_reference_solution=False, plot=False):
     """Returns the test statistic to be compared with the reference solution. Optionally, saves the input snapshot data as the reference solution."""
+
+    # get data required to plot n_H vs. T
     with h5py.File(f, "r") as F:
         Z = F["PartType0/Metallicity"][:]
         XH = 1 - F["PartType0/Metallicity"][:, 0] - F["PartType0/Metallicity"][:, 1]
@@ -20,12 +22,13 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         T = F["PartType0/Temperature"][:]
 
     if save_reference_solution:
+        # this option will save the current test solution as the reference solution
         with h5py.File("gmc_cooling_exact.hdf5", "w") as F:
             F.create_dataset("PartType0/Metallicity", data=Z)
             F.create_dataset("PartType0/Density", data=rho)
             F.create_dataset("PartType0/Temperature", data=T)
 
-    if plot:
+    if plot:  # generate a plot of n_H vs T for the test and benchmark solutions
         plt.loglog(nH, T, ".", markersize=1, color="black", label="Test")
         with h5py.File("gmc_cooling_exact.hdf5", "r") as F:
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
@@ -37,7 +40,10 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         plt.savefig("test/gmc_cooling/nH_vs_T.png", bbox_inches="tight")
         plt.close()
 
+    # set logarithmic bins for n_H in which to measure the median temperature
     nH_bins = np.logspace(1, 3, 10)
+
+    # return nH-binned median temperature
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
