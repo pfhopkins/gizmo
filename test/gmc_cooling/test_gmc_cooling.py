@@ -42,12 +42,24 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
 
 def test_gmc_cooling():
+    # specify the test name
     test_name = "gmc_cooling"
+
+    # download necessary cooling tables (needed for tests with COOLING flag)
     get_cooling_tables()
+
+    # build GIZMO and run the test
     build_and_run_test(test_name)
+
+    # Check that the specific required output file exists:
     if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
 
+    # Compute a test statistic from the output
     test_stats = compute_test_statistic("test/gmc_cooling/output/snapshot_010.hdf5", plot=True)
+
+    # compute that same test statistic from a benchmark snapshot
     benchmark_stats = compute_test_statistic("gmc_cooling_exact.hdf5")
+
+    # check that the test and benchmark agree within 10%
     assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
