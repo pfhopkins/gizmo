@@ -9,11 +9,10 @@
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
 
 /* Stellar lifetime as a function of mass [yr] */
-double get_lifetime(double mass) {
+double get_lifetime(double mass, double Z) {
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-    /* Use tabulated Z-dependent lifetime; assume solar Z if no birth metallicity available */
     double logM = log10(DMAX(mass, 0.09));
-    double logZ = log10(0.014); /* solar default; callers with metallicity should use stellar_lifetime() directly */
+    double logZ = log10(DMAX(Z, 1e-10));
     return stellar_lifetime(logM, logZ);
 #else
     double A, B;

@@ -82,7 +82,7 @@ static inline double get_star_lifetime(double Mstar, double logM, double logZ)
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     return stellar_lifetime(logM, logZ);
 #else
-    return get_lifetime(Mstar);
+    return get_lifetime(Mstar, pow(10.0, logZ));
 #endif
 }
 

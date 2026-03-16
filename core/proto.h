@@ -781,7 +781,7 @@ extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] *
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
-double get_lifetime(double mass);
+double get_lifetime(double mass, double Z);
 double get_logL_pe(double mass);
 double get_logS_ly(double mass);
 int get_index(double search);

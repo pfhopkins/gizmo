@@ -64,7 +64,7 @@ static double compute_single_star_S_ly(int i)
     Mstar = P[i].MstarSampleIMF[0]; /* single star */
 #endif
     if(Mstar < 8.0 || Mstar <= 0) return 0;
-    if(star_age_yr >= get_lifetime(Mstar)) return 0; /* star already dead */
+    if(star_age_yr >= get_lifetime(Mstar, P[i].BirthMetallicity)) return 0; /* star already dead */
 
     /* PI feedback delay: stars younger than min(t_KH, t_ff) do not ionize */
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
@@ -137,6 +137,9 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
             if(h_stromgren > in->SearchRadius) in->SearchRadius = h_stromgren;
         }
         if(in->SearchRadius <= 0) in->SearchRadius = All.ForceSoftening[P[i].Type];
+        /* Cap at MaxPISearchRadius (set in parameter file, in kpc) */
+        double max_r = All.MaxPISearchRadius / UNIT_LENGTH_IN_KPC;
+        if(max_r > 0 && in->SearchRadius > max_r) in->SearchRadius = max_r;
         /* Store the initial estimate for potential iteration */
         if(PISearchRadius != NULL) PISearchRadius[i] = in->SearchRadius;
     }

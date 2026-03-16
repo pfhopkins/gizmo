@@ -2264,6 +2264,12 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+      strcpy(tag[nt], "MaxPISearchRadius");
+      addr[nt] = &All.MaxPISearchRadius;
+      id[nt++] = REAL;
+#endif
+
 #ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
       strcpy(tag[nt], "nHcutoffSF");
       addr[nt] = &All.nHcutoffSF;

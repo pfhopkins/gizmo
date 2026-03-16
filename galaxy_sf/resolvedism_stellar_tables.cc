@@ -295,14 +295,48 @@ void resolvedism_load_stellar_tables(void)
                12.0 * n3d * sizeof(float) / 1e6,
                StellarTbl.surface_abundances ? (double)(n3d * STBL_NELEM * sizeof(float)) / 1e6 : 0.0);
 
-        /* Spot-check: print a few values for verification */
-        double logM_test = log10(20.0), logZ_test = log10(0.014);
-        printf("  Spot check (20 Msun, Z=0.014):\n");
-        printf("    lifetime = %.3f Myr\n", stellar_lifetime(logM_test, logZ_test) / 1e6);
-        printf("    remnant_mass = %.2f Msun, type = %d\n",
-               stellar_remnant_mass(logM_test, logZ_test), stellar_remnant_type(logM_test, logZ_test));
-        printf("    M_current(ZAMS) = %.2f Msun\n", stellar_M_current(logM_test, logZ_test, 2.0));
-        printf("    log_Q_ion(ZAMS) = %.2f\n", stellar_log_Q_ion(logM_test, logZ_test, 2.0));
+        /* Spot-check and validation */
+        double logZ_test = log10(0.014);
+        printf("  Spot checks (Z=0.014):\n");
+        double test_masses[] = {1.0, 8.0, 20.0, 35.0, 100.0};
+        int ntm = 5;
+        for(int it = 0; it < ntm; it++) {
+            double M = test_masses[it], logM_t = log10(M);
+            double Mcur_zams = stellar_M_current(logM_t, logZ_test, 2.0);
+            double lt = stellar_lifetime(logM_t, logZ_test);
+            printf("    M=%.0f: M_current(ZAMS)=%.4f (err=%.2e) lifetime=%.3f Myr",
+                   M, Mcur_zams, (Mcur_zams - M) / M, lt / 1e6);
+            if(M >= 8.0) {
+                printf(" rem=%.2f(type=%d) log_Q=%.2f log_Lbol=%.2f",
+                       stellar_remnant_mass(logM_t, logZ_test), stellar_remnant_type(logM_t, logZ_test),
+                       stellar_log_Q_ion(logM_t, logZ_test, 2.0), stellar_log_L_bol(logM_t, logZ_test, 2.0));
+            }
+            printf("\n");
+            /* Validate: M_current at ZAMS must equal M_drawn */
+            if(fabs(Mcur_zams - M) / M > 0.01) {
+                printf("  WARNING: M_current(ZAMS) deviates >1%% from M_init for M=%.1f Msun!\n", M);
+            }
+        }
+        /* Validate: no M_current=0 for living stars */
+        {
+            int nbad = 0;
+            for(int im = 0; im < STBL_NM; im++) {
+                for(int iz = 0; iz < STBL_NZ; iz++) {
+                    double lt = StellarTbl.lifetime_yr[IDX2(iz, im)];
+                    if(lt <= 0) continue;
+                    int ia_end = (int)((log10(lt * 0.95) - StellarTbl.log_age_min) / StellarTbl.dlog_age);
+                    if(ia_end < 0) ia_end = 0; if(ia_end >= STBL_NAGE) ia_end = STBL_NAGE - 1;
+                    float mc = StellarTbl.M_current[IDX3(iz, im, ia_end)];
+                    if(mc <= 0 && StellarTbl.remnant_type[IDX2(iz,im)] != 5) { /* PISN (type=5) is allowed to be 0 */
+                        if(nbad < 5) printf("  WARNING: M_current=0 for living star iz=%d im=%d (M=%.1f, Z=%.4f) at 0.95*lifetime\n",
+                            iz, im, StellarTbl.M[im], pow(10., StellarTbl.log_Z[iz]));
+                        nbad++;
+                    }
+                }
+            }
+            if(nbad > 0) printf("  WARNING: %d table entries have M_current=0 before death (non-PISN)\n", nbad);
+            else printf("  Validation: M_current > 0 for all living non-PISN stars OK\n");
+        }
     }
 }
 
@@ -368,7 +402,37 @@ double stellar_M_preSN(double logM, double logZ)
 
 double stellar_M_current(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.M_current, logM, logZ, log_age);
+    /* Interpolate M_current/M_init (fractional mass remaining) then scale by
+       the queried mass, so off-grid masses always get M_current <= M_drawn at
+       ZAMS and the wind mass-loss detection works correctly. */
+    int iz, im, ia; double fz, fm, fa;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    stbl_idx_age(log_age, &ia, &fa);
+
+    double Mstar = pow(10.0, logM);
+    double M0 = StellarTbl.M[im], M1 = StellarTbl.M[im+1];
+    if(M0 <= 0) M0 = 1e-30;
+    if(M1 <= 0) M1 = 1e-30;
+
+    double f000 = StellarTbl.M_current[IDX3(iz,   im,   ia  )] / M0;
+    double f001 = StellarTbl.M_current[IDX3(iz,   im,   ia+1)] / M0;
+    double f010 = StellarTbl.M_current[IDX3(iz,   im+1, ia  )] / M1;
+    double f011 = StellarTbl.M_current[IDX3(iz,   im+1, ia+1)] / M1;
+    double f100 = StellarTbl.M_current[IDX3(iz+1, im,   ia  )] / M0;
+    double f101 = StellarTbl.M_current[IDX3(iz+1, im,   ia+1)] / M0;
+    double f110 = StellarTbl.M_current[IDX3(iz+1, im+1, ia  )] / M1;
+    double f111 = StellarTbl.M_current[IDX3(iz+1, im+1, ia+1)] / M1;
+
+    double c00 = f000*(1-fa) + f001*fa;
+    double c01 = f010*(1-fa) + f011*fa;
+    double c10 = f100*(1-fa) + f101*fa;
+    double c11 = f110*(1-fa) + f111*fa;
+    double c0  = c00*(1-fm)  + c01*fm;
+    double c1  = c10*(1-fm)  + c11*fm;
+    double frac = c0*(1-fz) + c1*fz;
+
+    return Mstar * DMAX(frac, 0.0);
 }
 
 double stellar_v_wind(double logM, double logZ, double log_age)

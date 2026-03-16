@@ -501,6 +501,9 @@ extern struct global_data_all_processes
   char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */
   double MaxStellarTimestep;    /*!< hard cap on Type 4 timesteps [yr] */
 #endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+  double MaxPISearchRadius;     /*!< maximum PI search radius [kpc] */
+#endif
 #ifdef KETJU_REGULARIZATION
   double KetjuRegionRadius;              /*!< physical radius of KETJU regions [code units] */
   double KetjuMinBHMass;                 /*!< minimum Type 5 mass for region center [code units], 0=off */

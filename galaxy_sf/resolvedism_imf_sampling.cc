@@ -98,7 +98,7 @@ void finalize_sampled_star(int i, double M_drawn)
 #endif
     if(M_drawn > All.IMFSampleStellarMassCut) {
         double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
-        if(star_age_yr < get_lifetime(M_drawn)) {
+        if(star_age_yr < get_lifetime(M_drawn, P[i].BirthMetallicity)) {
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             double logM = log10(M_drawn);
             double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
@@ -459,7 +459,7 @@ void assign_stellar_masses(void)
             /* On iterations after the first, check if this star is already converged */
             if(iter > 0) {
                 double deficit = M_star_code - IMF_MassAccreted[i];
-                if(deficit <= 0.05 * M_star_code) {
+                if(deficit <= 0.01 * M_star_code) {
                     P[i].MstarSampleIMF[2] = 0; /* converged — skip */
                     continue;
                 }
@@ -543,7 +543,7 @@ void assign_stellar_masses(void)
             if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
             double M_star_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
             double deficit = M_star_code - IMF_MassAccreted[i];
-            if(deficit > 0.05 * M_star_code) incomplete_local++;
+            if(deficit > 0.01 * M_star_code) incomplete_local++;
         }
         MPI_Allreduce(&incomplete_local, &incomplete_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         iter++;
