@@ -1,4 +1,4 @@
-# How to run tests
+# How to run and interpret tests
 
 ## Step 1: install gizmo as a python package
 
