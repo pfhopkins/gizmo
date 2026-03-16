@@ -787,8 +787,8 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "PIinfo.txt");
   if(!(FdPIinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdPIinfo,"%s Per-star photo-ionization log [GALSF_RESOLVEDISM_PHOTOION]. Columns: \n",prefix_char);
-      fprintf(FdPIinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) id  (6) M_star[Msun]  (7) log10_S_ly[phot/s]  (8) R_search[code]  (9) frac_consumed  (10) n_pix_complete[/12]\n",prefix_char);
+      fprintf(FdPIinfo,"%s Photo-ionization summary [GALSF_RESOLVEDISM_PHOTOION]. Columns:\n",prefix_char);
+      fprintf(FdPIinfo,"%s   (1) time  (2) N_stars  (3) Q_total[phot/s]  (4) Q_consumed[phot/s]  (5) f_escape  (6) R_max[code]  (7) N_escaping(f<0.5)  (8) N_bad  (9) N_iter\n",prefix_char);
   }
 #endif
 

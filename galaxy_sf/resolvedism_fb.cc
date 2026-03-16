@@ -568,9 +568,6 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         if(tau_IR > 0) dp_cgs += tau_IR * Lbol_cgs * dt_cgs / C_LIGHT_CGS;
 
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code momentum */
-        if(Mstar >= 8.0) /* only log massive stars to avoid flooding stdout */
-            printf("RADPRESSURE: Task=%d ID=%llu M=%.2f logL=%.2f tau_UV=%.2f tau_IR=%.2f f_abs=%.3e dp=%.3e[g*cm/s] WindMom=%.3e\n",
-                ThisTask, (unsigned long long)P[i].ID, Mstar, log_Lbol, tau_UV, tau_IR, f_abs, dp_cgs, in->WindMomentum);
         return;
     }
 #endif
@@ -729,7 +726,7 @@ int resolvedismFB_active_check(int i, int loop_iteration)
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
         Mstar = P[i].Mstar;
 #endif
-        if(Mstar > 0) {return 1;} /* living star with mass has luminosity */
+        if(Mstar >= 2.0) {return 1;} /* radpressure only significant for M >= 2 Msun */
     }
 #endif
     return 0;
@@ -1140,7 +1137,7 @@ void resolvedism_inject_sn_energy(void)
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
         Mstar_rp = P[i].Mstar;
 #endif
-        if(Mstar_rp > 0) n_events[3] += 1;
+        if(Mstar_rp >= 2.0) n_events[3] += 1;
     }
 #endif
 

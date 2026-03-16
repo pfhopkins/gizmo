@@ -510,9 +510,6 @@ void assign_stellar_masses(void)
 
             P[i].MstarSampleIMF[2] = f_acc;
 
-            if(ThisTask == 0 || P[i].ID == 6880060)
-                printf("IMF_TWO_PASS: iter=%d ID=%llu R_acc=%.6f M_enclosed=%.6e M_remaining=%.6e f_acc=%.6e\n",
-                    iter, (unsigned long long)P[i].ID, P[i].KernelRadius, M_enclosed, M_remaining, f_acc);
         }
         myfree(IMF_MassEnclosed);
 
