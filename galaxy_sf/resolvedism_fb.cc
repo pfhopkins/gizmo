@@ -526,7 +526,7 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
 
         double log_age = log10(DMAX(star_age_yr, 100.0));
         double log_Lbol = stellar_log_L_bol(logM, logZ, log_age);
-        double Lbol_cgs = pow(10.0, log_Lbol) * SOLAR_LUM_CGS; /* erg/s */
+        double Lbol_cgs = pow(10.0, log_Lbol); /* erg/s — table already stores log10(L [erg/s]) */
         if(Lbol_cgs <= 0) return;
 
         double dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i); /* code time */
@@ -569,8 +569,8 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
 
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code momentum */
         if(Mstar >= 8.0) /* only log massive stars to avoid flooding stdout */
-            printf("RADPRESSURE: Task=%d ID=%llu M=%.2f logL=%.2f tau_UV=%.2f tau_IR=%.2f dp=%.3e[g*cm/s]\n",
-                ThisTask, (unsigned long long)P[i].ID, Mstar, log_Lbol, tau_UV, tau_IR, dp_cgs);
+            printf("RADPRESSURE: Task=%d ID=%llu M=%.2f logL=%.2f tau_UV=%.2f tau_IR=%.2f f_abs=%.3e dp=%.3e[g*cm/s] WindMom=%.3e\n",
+                ThisTask, (unsigned long long)P[i].ID, Mstar, log_Lbol, tau_UV, tau_IR, f_abs, dp_cgs, in->WindMomentum);
         return;
     }
 #endif
@@ -702,8 +702,7 @@ void out2particle_resolvedismFB(struct OUTPUT_STRUCT_NAME *out, int i, int mode,
     if(do_recoil && P[i].Mass > 0) {
         int k;
         for(k = 0; k < 3; k++) {
-            if(mode == 0) P[i].Vel[k] -= out->MomentumInjected[k] / P[i].Mass;
-            else P[i].Vel[k] -= DATARESULT_NAME[i].MomentumInjected[k] / P[i].Mass;
+            P[i].Vel[k] -= out->MomentumInjected[k] / P[i].Mass;
         }
     }
 }
@@ -730,7 +729,7 @@ int resolvedismFB_active_check(int i, int loop_iteration)
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
         Mstar = P[i].Mstar;
 #endif
-        if(Mstar > 0) {return 1;} /* living star with mass → has luminosity */
+        if(Mstar > 0) {return 1;} /* living star with mass has luminosity */
     }
 #endif
     return 0;

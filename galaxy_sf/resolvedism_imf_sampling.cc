@@ -421,25 +421,6 @@ void assign_stellar_masses(void)
     if(ThisTask == 0) printf("IMF accretion: %d stars drawing mass from neighbors\n", nstars_total);
     PRINT_STATUS(" ..IMF accretion walk for single stars");
 
-    /* --- DIAGNOSTIC: scan for corrupted particles BEFORE IMF accretion --- */
-    {
-        int nbad = 0;
-        for(i = 0; i < NumPart; i++) {
-            double v2 = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2];
-            double r2 = P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2];
-            if(v2 > 1e10*1e10 || r2 > 1e10*1e10 || !isfinite(v2) || !isfinite(r2)) {
-                if(nbad < 20)
-                    printf("IMF_PRE_CORRUPT: Task=%d i=%d ID=%llu Type=%d Pos=(%g,%g,%g) Vel=(%g,%g,%g) Mass=%g bin=%d\n",
-                        ThisTask, i, (unsigned long long)P[i].ID, P[i].Type,
-                        P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
-                        P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
-                        P[i].Mass, P[i].TimeBin);
-                nbad++;
-            }
-        }
-        if(nbad > 0) printf("IMF_PRE_CORRUPT: Task=%d found %d corrupted particles BEFORE IMF accretion!\n", ThisTask, nbad);
-    }
-
     /* Allocate accumulators (persist across iterations, zeroed each pass) */
     IMF_MassAccreted = (double *) mymalloc("IMF_MassAccreted", NumPart * sizeof(double));
     IMF_MomAccreted = (double *) mymalloc("IMF_MomAccreted", NumPart * 3 * sizeof(double));
@@ -708,25 +689,6 @@ void assign_stellar_masses(void)
     myfree(IMF_MassAccreted); IMF_MassAccreted = NULL;
 
     if(ThisTask == 0) printf("IMF accretion done (%d pass%s).\n", iter, iter==1?"":"es");
-
-    /* --- DIAGNOSTIC: scan for corrupted particles after IMF accretion --- */
-    {
-        int nbad = 0;
-        for(i = 0; i < NumPart; i++) {
-            double v2 = P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2];
-            double r2 = P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2];
-            if(v2 > 1e10*1e10 || r2 > 1e10*1e10 || !isfinite(v2) || !isfinite(r2)) {
-                if(nbad < 20)
-                    printf("IMF_CORRUPT: Task=%d i=%d ID=%llu Type=%d Pos=(%g,%g,%g) Vel=(%g,%g,%g) Mass=%g h=%g bin=%d\n",
-                        ThisTask, i, (unsigned long long)P[i].ID, P[i].Type,
-                        P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
-                        P[i].Vel[0], P[i].Vel[1], P[i].Vel[2],
-                        P[i].Mass, P[i].KernelRadius, P[i].TimeBin);
-                nbad++;
-            }
-        }
-        if(nbad > 0) printf("IMF_CORRUPT: Task=%d found %d corrupted particles after IMF accretion!\n", ThisTask, nbad);
-    }
 }
 
 

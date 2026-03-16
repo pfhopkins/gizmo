@@ -13,30 +13,35 @@
 struct StellarTables StellarTbl;
 
 /* ========================================================================
- *  Index computation on regular log-uniform grids.
- *  Grid spacing is constant → index = (x - x_min) / dx.  O(1), no search.
+ *  Index computation: binary search for non-uniform grids (M, Z),
+ *  direct O(1) formula for the uniform age grid.
  * ======================================================================== */
+
+/* Binary search: find i0 such that grid[i0] <= val < grid[i0+1], with
+ * fractional position f in [0,1].  Clamps to grid boundaries. */
+static inline void stbl_idx_bsearch(const double *grid, int N, double val, int *i0, double *f)
+{
+    if(val <= grid[0])   { *i0 = 0;     *f = 0.0; return; }
+    if(val >= grid[N-1]) { *i0 = N - 2; *f = 1.0; return; }
+    int lo = 0, hi = N - 1;
+    while(hi - lo > 1) { int mid = (lo + hi) / 2; if(grid[mid] <= val) lo = mid; else hi = mid; }
+    *i0 = lo;
+    *f  = (val - grid[lo]) / (grid[hi] - grid[lo]);
+}
 
 static inline void stbl_idx_Z(double logZ, int *i0, double *f)
 {
-    double x = (logZ - StellarTbl.log_Z_min) / StellarTbl.dlog_Z;
-    if(x < 0) x = 0;
-    if(x >= STBL_NZ - 1) { *i0 = STBL_NZ - 2; *f = 1.0; return; }
-    *i0 = (int)x;
-    *f  = x - *i0;
+    stbl_idx_bsearch(StellarTbl.log_Z, STBL_NZ, logZ, i0, f);
 }
 
 static inline void stbl_idx_M(double logM, int *i0, double *f)
 {
-    double x = (logM - StellarTbl.log_M_min) / StellarTbl.dlog_M;
-    if(x < 0) x = 0;
-    if(x >= STBL_NM - 1) { *i0 = STBL_NM - 2; *f = 1.0; return; }
-    *i0 = (int)x;
-    *f  = x - *i0;
+    stbl_idx_bsearch(StellarTbl.log_M, STBL_NM, logM, i0, f);
 }
 
 static inline void stbl_idx_age(double log_age, int *i0, double *f)
 {
+    /* Age grid is uniform — keep O(1) formula */
     double x = (log_age - StellarTbl.log_age_min) / StellarTbl.dlog_age;
     if(x < 0) x = 0;
     if(x >= STBL_NAGE - 1) { *i0 = STBL_NAGE - 2; *f = 1.0; return; }
