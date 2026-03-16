@@ -11,8 +11,7 @@
 %        GALSF
 %
 %        and e.g. flags like:
-%        GALSF_SFR_MOLECULAR_CRITERION
-%        GALSF_SFR_VIRIAL_SF_CRITERION=0
+%        GALSF_SFR_CRITERION=(1+256)
 %
 %        and/or:
 %        GALSF_EFFECTIVE_EQS
@@ -73,7 +72,7 @@ SofteningHalo   0.050    % dark matter/collisionless particles (type=1)
 SofteningDisk   0.020    % collisionless particles (type=2)
 SofteningBulge  0.020    % collisionless particles (type=3)
 SofteningStars  0.005    % stars spawned from gas (type=4)
-SofteningBndry  0.005    % black holes (if active), or collisionless (type=5)
+SofteningBndry  0.005    % sink particles (if active), or collisionless (type=5)
 %----- parameters for adaptive gravitational softening 
 AGS_DesNumNgb           32  % neighbor number for calculating adaptive gravsoft
 
@@ -143,22 +142,22 @@ VariableWindVelFactor    1.0    % wind velocity relative to estimated halo v_esc
 VariableWindSpecMomentum 5000.  % wind momentum per unit stellar mass (code velocity units)
 
 
-%-------------- Black Hole accretion & formation (BLACK_HOLES on)
+%-------------- sink particle accretion & formation (SINK_PARTICLES on)
 %--- formation/seeding  
-MinFoFMassForNewSeed         10.	    % log(M_stars) for on-the-fly FoF seeding 
-TimeBetOnTheFlyFoF           200000     % time (in sec) between FoF searches 
-SeedBlackHoleMass            1.0e-7 	% initial mass (on-the-fly or single galaxy) 
+MinFoFMassForNewSeed    10.	    % log(M_stars) for on-the-fly FoF seeding
+TimeBetOnTheFlyFoF      200000     % time (in sec) between FoF searches
+SeedSinkMass            1.0e-7 	% initial mass (on-the-fly or single galaxy)
 %--- accretion  
-BlackHoleAccretionFactor     1.0	    % multiplier for mdot 
-BlackHoleEddingtonFactor     1.0	    % fraction of eddington to cap (can be >1) 
-BlackHoleNgbFactor           3.0	    % multiplier for kernel neighbors for BH 
-BlackHoleMaxAccretionRadius  0.02	    % max radius for BH neighbor search/accretion 
-BlackHoleRadiativeEfficiency 0.1        % radiative efficiency 
+SinkAccretionFactor     1.0	    % multiplier for mdot 
+SinkEddingtonFactor     1.0	    % fraction of eddington to cap (can be >1) 
+SinkNgbFactor           3.0	    % multiplier for kernel neighbors for BH 
+SinkMaxAccretionRadius  0.02    % max radius for BH neighbor search/accretion
+SinkRadiativeEfficiency 0.1     % radiative efficiency 
 %--- feedback 
-BlackHoleFeedbackFactor      1.0	    % generic feedback strength multiplier 
-BH_Rad_MomentumFactor        1.0	    % multiply radiation pressure (BH_PHOTONMOMENTUM) 
-BAL_f_accretion              0.5        % fraction of gas swallowed by BH (BH_BAL_WINDS) 
-BAL_v_outflow                30000	    % velocity (code units) of BAL outflow (BH_BAL_WINDS) 
+SinkFeedbackFactor           1.0	    % generic feedback strength multiplier
+Sink_Rad_MomentumFactor      1.0	    % multiply radiation pressure (SINK_PHOTONMOMENTUM)
+Sink_accreted_fraction       0.5        % fraction of gas swallowed by BH
+Sink_outflow_velocity        30000	    % velocity (code units) of BH outflow
 
 
 %-------------- Grackle UVB file (GRACKLE on)

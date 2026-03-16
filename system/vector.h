@@ -1,5 +1,6 @@
-/*
- * This file was originally part of the GADGET3 code by Volker Springel.
+/*!
+ * This file was originally part of the GADGET3 code by Volker Springel. Minor modifications for updated variable
+ * and memory structures in GIZMO by Phil Hopkins.
  */
 
 #ifndef _VECTOR_H_
@@ -17,21 +18,11 @@
 
 // generic scalar code
 
-#ifdef DOUBLEPRECISION
-
 typedef ALIGN(32) union {
     unsigned long long i[4];
     double d[4];
 } t_vector;
 
-#else
-
-typedef ALIGN(16) union {
-    unsigned int i[4];
-    float d[4];
-} t_vector;
-
-#endif
 
 // read the first 3 components of a vector, 4th component is undefined
 static inline void LOAD_VECTOR3(MyFloat * src,t_vector * v)

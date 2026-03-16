@@ -5,20 +5,6 @@
     up some definitions for the multi-threading, and pre-defines some of the
     subroutines which will be referenced. */
 
-/* initialize some thread information */
-#ifdef PTHREADS_NUM_THREADS
-#include <pthread.h>
-#endif
-#ifdef PTHREADS_NUM_THREADS
-extern pthread_mutex_t mutex_nexport;
-extern pthread_mutex_t mutex_partnodedrift;
-#define LOCK_NEXPORT     pthread_mutex_lock(&mutex_nexport);
-#define UNLOCK_NEXPORT   pthread_mutex_unlock(&mutex_nexport);
-#else
-#define LOCK_NEXPORT
-#define UNLOCK_NEXPORT
-#endif
-
 /* initialize macro and variable names: these define structures/variables with names following the value of CORE_FUNCTION_NAME with the '_data_in' and other terms appended -- this should be unique within the file defined! */
 #define INPUT_STRUCT_NAME   MACRO_NAME_CONCATENATE(CORE_FUNCTION_NAME, _data_in_)
 #define DATAIN_NAME         MACRO_NAME_CONCATENATE(CORE_FUNCTION_NAME, _DataIn_)

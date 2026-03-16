@@ -1,5 +1,5 @@
 GIZMO_config.h:  $(CONFIG)
-	$(PERL) prepare-config.perl $(CONFIG)
+	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
-compile_time_info.c: $(CONFIG)
-	$(PERL) prepare-config.perl $(CONFIG)
+compile_time_info.cc: $(CONFIG)
+	$(PERL) file_io/prepare-config.perl $(CONFIG)

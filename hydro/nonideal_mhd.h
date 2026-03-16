@@ -18,11 +18,11 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
 {
     // set the effective scalar coefficients //
     double eta_i, eta_j, eta_ohmic, eta_hall, eta_ad;
-    eta_i = local.Eta_MHD_OhmicResistivity_Coeff; eta_j = SphP[j].Eta_MHD_OhmicResistivity_Coeff;
+    eta_i = local.Eta_MHD_OhmicResistivity_Coeff; eta_j = CellP[j].Eta_MHD_OhmicResistivity_Coeff;
     if(eta_i*eta_j>0) {eta_ohmic = 2*eta_i*eta_j / (eta_i+eta_j);} else {eta_ohmic = 0;}
-    eta_i = local.Eta_MHD_HallEffect_Coeff; eta_j = SphP[j].Eta_MHD_HallEffect_Coeff;
+    eta_i = local.Eta_MHD_HallEffect_Coeff; eta_j = CellP[j].Eta_MHD_HallEffect_Coeff;
     if(eta_i*eta_j>0) {eta_hall = 2*eta_i*eta_j / (eta_i+eta_j);} else {eta_hall = 0;}
-    eta_i = local.Eta_MHD_AmbiPolarDiffusion_Coeff; eta_j = SphP[j].Eta_MHD_AmbiPolarDiffusion_Coeff;
+    eta_i = local.Eta_MHD_AmbiPolarDiffusion_Coeff; eta_j = CellP[j].Eta_MHD_AmbiPolarDiffusion_Coeff;
     if(eta_i*eta_j>0) {eta_ad = 2*eta_i*eta_j / (eta_i+eta_j);} else {eta_ad = 0;}
     
     // only go further if these are non-zero //
@@ -40,14 +40,14 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
             if(k==0) {k_xyz_A=2; k_xyz_B=1;}
             if(k==1) {k_xyz_A=0; k_xyz_B=2;}
             if(k==2) {k_xyz_A=1; k_xyz_B=0;}
-            double tmp_grad_A = 0.5*(local.Gradients.B[k_xyz_A][k_xyz_B] + SphP[j].Gradients.B[k_xyz_A][k_xyz_B]); // construct averaged slopes //
-            double tmp_grad_B = 0.5*(local.Gradients.B[k_xyz_B][k_xyz_A] + SphP[j].Gradients.B[k_xyz_B][k_xyz_A]);
+            double tmp_grad_A = 0.5*(local.Gradients.B[k_xyz_A][k_xyz_B] + CellP[j].Gradients.B[k_xyz_A][k_xyz_B]); // construct averaged slopes //
+            double tmp_grad_B = 0.5*(local.Gradients.B[k_xyz_B][k_xyz_A] + CellP[j].Gradients.B[k_xyz_B][k_xyz_A]);
             J_current[k] = tmp_grad_B - tmp_grad_A; // determine contribution to J //
             // calculate the 'direct' J needed for stabilizing numerical diffusion terms //
             J_direct[k] = rinv2*(kernel.dp[k_xyz_A]*d_scalar[k_xyz_B]-kernel.dp[k_xyz_B]*d_scalar[k_xyz_A]);
             if(J_current[k]*J_direct[k] < 0) {if(fabs(J_direct[k]) > 5.*fabs(J_current[k])) {J_current[k] = 0.0;}}
             Jmag += J_current[k]*J_current[k];
-            for(k2=0;k2<3;k2++) {grad_dot_x_ij[k] += 0.5*(local.Gradients.B[k][k2]+SphP[j].Gradients.B[k][k2]) * kernel.dp[k2];}
+            for(k2=0;k2<3;k2++) {grad_dot_x_ij[k] += 0.5*(local.Gradients.B[k][k2]+CellP[j].Gradients.B[k][k2]) * kernel.dp[k2];}
         }
         
         // calculate the actual fluxes : need term = -[eta_O*(J) + eta_A*(-(Jxbhat)xbhat) + (-|eta_H|)*(Jxbhat)], assuming we're passed |eta| (=eta for eta_O,eta_A, but =-eta for eta_H) //
@@ -117,19 +117,6 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
             for(k=0;k<3;k++) {bflux_from_nonideal_effects[k] -= db_dot_direct_diff * db_direct_diff[k] / db_direct_diff_mag2;}
         }
         
-        // finally add one more flux-limiter to prevent the change in B from exceeding a large threshold in a single timestep //
-#if 0
-        double cmag_B2 = bhat_mag * (bhat[0]*bflux_from_nonideal_effects[0]+bhat[1]*bflux_from_nonideal_effects[1]+bhat[2]*bflux_from_nonideal_effects[2]);
-        if(dt_hydrostep > 0)
-        {
-            double cmag_lim = 0.01 * bhat_mag*bhat_mag / dt_hydrostep;
-            if(fabs(cmag_B2) > cmag_lim)
-            {
-                double corr_visc = cmag_lim / fabs(cmag_B2);
-                bflux_from_nonideal_effects[0]*=corr_visc; bflux_from_nonideal_effects[1]*=corr_visc; bflux_from_nonideal_effects[2]*=corr_visc;
-            }
-        }
-#endif
         // -now- we can finally add this to the numerical fluxes //
         for(k=0;k<3;k++) {Fluxes.B[k] += bflux_from_nonideal_effects[k];}
     }

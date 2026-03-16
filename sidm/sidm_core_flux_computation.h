@@ -18,7 +18,7 @@
 #ifdef WAKEUP
             if(!(TimeBinActive[P[j].TimeBin])) {if(WAKEUP*local.dtime < Pj_dtime) {
                 #pragma omp atomic write
-                PPPZ[j].wakeup=1;
+                P[j].wakeup=1;
                 #pragma omp atomic write
                 NeedToWakeupParticles_local = 1;
             }}

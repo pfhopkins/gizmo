@@ -92,9 +92,9 @@ struct gasVariables
  */ 
 struct globalVariables
 {
-  char MainDataTablePath[500];                 /*!< Path to the chimes_main_data.hdf5 data file. */ 
-  char PhotoIonTablePath[CHIMES_MAX_UV_SPECTRA][500]; /*!< Array of strings containing the paths to the cross sections tables, one for each UV spectrum. */ 
-  char EqAbundanceTablePath[500];              /*!< Path to the equilibrium abundance table. */ 
+  char MainDataTablePath[DEFAULT_PATH_BUFFERSIZE_TOUSE];                 /*!< Path to the chimes_main_data.hdf5 data file. */
+  char PhotoIonTablePath[CHIMES_MAX_UV_SPECTRA][DEFAULT_PATH_BUFFERSIZE_TOUSE]; /*!< Array of strings containing the paths to the cross sections tables, one for each UV spectrum. */
+  char EqAbundanceTablePath[DEFAULT_PATH_BUFFERSIZE_TOUSE];              /*!< Path to the equilibrium abundance table. */ 
   int cellSelfShieldingOn;                     /*!< 0 - switch off self-shielding; 1 - switch on self-shielding. */ 
   int N_spectra;                               /*!< The number of UV spectra. */ 
   int redshift_dependent_UVB_index;            /*!< Specifies which of the UV spectra corresponds to the redshift-dependent UVB. */ 

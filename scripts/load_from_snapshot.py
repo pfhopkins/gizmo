@@ -204,11 +204,11 @@ def load_from_snapshot(value,ptype,sdir,snum,particle_mask=numpy.zeros(0),axis_m
     # convert units if requested by the user. note this only does a few obvious units: there are many possible values here which cannot be anticipated!
     if(units_to_physical):
         hinv=1./hubble; rconv=ascale*hinv;
-        if((value=='Coordinates')|(value=='SmoothingLength')): q*=rconv; # comoving length
+        if((value=='Coordinates')|(value=='SmoothingLength')|(value=='KernelMaxRadius')): q*=rconv; # comoving length
         if(value=='Velocities'): q *= numpy.sqrt(ascale); # special comoving velocity units
         if((value=='Density')|(value=='Pressure')): q *= hinv/(rconv*rconv*rconv); # density = mass/comoving length^3
         if((value=='StellarFormationTime')&(cosmological==False)): q*=hinv; # time has h^-1 in non-cosmological runs
-        if((value=='Masses')|('BH_Mass' in value)|(value=='CosmicRayEnergy')|(value=='PhotonEnergy')): q*=hinv; # mass x [no-h] units
+        if((value=='Masses')|('Sink_Mass' in value)|(value=='CosmicRayEnergy')|(value=='PhotonEnergy')): q*=hinv; # mass x [no-h] units
 
     # return final value, if we have not already
     particle_mask=numpy.array(particle_mask)

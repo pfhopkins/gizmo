@@ -18,113 +18,18 @@ for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     double scalar_i = local.CosmicRayPressure[k_CRegy] * cosmo_unit; // physical units
     double scalar_j = CosmicRayPressure_j[k_CRegy] * cosmo_unit;
     double kappa_i = fabs(local.CosmicRayDiffusionCoeff[k_CRegy]); // physical units
-    double kappa_j = fabs(SphP[j].CosmicRayDiffusionCoeff[k_CRegy]);
+    double kappa_j = fabs(CellP[j].CosmicRayDiffusionCoeff[k_CRegy]);
     double d_scalar = scalar_i - scalar_j;
     double gamma_cr_m1 = GAMMA_COSMICRAY(k_CRegy)-1.;
     
     if(((kappa_i>MIN_REAL_NUMBER)||(kappa_j>MIN_REAL_NUMBER))&&(local.Mass>0)&&(P[j].Mass>0)&&(dt_hydrostep>MIN_REAL_NUMBER)&&(Face_Area_Norm>MIN_REAL_NUMBER))
     {
-#ifndef CRFLUID_M1
-        // NOT SPH: Now we use the more accurate finite-volume formulation, with the effective faces we have already calculated //
-        double *grad_i = local.Gradients.CosmicRayPressure[k_CRegy]; // units = E/[L_comoving^4]
-        double *grad_j = SphP[j].Gradients.CosmicRayPressure[k_CRegy];
-        double flux_wt = 1;
-        double diffusion_wt = 0.5*(kappa_i+kappa_j);
-        int do_isotropic = 1;
-        double b_hll=1, cmag=0, wt_i=0.5, wt_j=0.5, grad_dot_x_ij = 0;
-        double grad_ij[3];
-        for(k=0;k<3;k++)
-        {
-            double q_grad = (wt_i*grad_i[k] + wt_j*grad_j[k]) * cosmo_unit; // units = E/[L_phys^3 * L_comoving]
-            double q_direct = d_scalar * kernel.dp[k] * rinv*rinv; // units = E/[L_phys^3 * L_comoving]
-            grad_dot_x_ij += q_grad * kernel.dp[k]; // units = E/L_phys^3
-#ifdef MAGNETIC
-            grad_ij[k] = MINMOD_G(q_grad , q_direct);
-            if(q_grad*q_direct < 0) {if(fabs(q_direct) > 5.*fabs(q_grad)) {grad_ij[k] = 0.0;}}
-#else
-            grad_ij[k] = MINMOD(q_grad , q_direct);
-#endif
-            // negative coefficient is used here as shorthand for a particle being a local extremum in CR density.
-            //  in this case we use a zeroth-order estimate for the flux: more diffusive, but needed to get the gradients resolved
-            if((local.CosmicRayDiffusionCoeff[k_CRegy]<0)||(SphP[j].CosmicRayDiffusionCoeff[k_CRegy]<0)) {grad_ij[k] = q_direct;}
-        }
-        
-        double grad_mag = 0.0;
-        for(k=0;k<3;k++) {grad_mag += grad_ij[k]*grad_ij[k];}
-        if(grad_mag > 0) {grad_mag = sqrt(grad_mag);} else {grad_mag=MIN_REAL_NUMBER;}
-        if((local.CosmicRayDiffusionCoeff[k_CRegy]<0)||(SphP[j].CosmicRayDiffusionCoeff[k_CRegy]<0)) // codes for local maximum: need lower-order gradient estimator
-        {
-            double gmag_a=0,gmag_b=0,g0=grad_mag*grad_mag;
-            for(k=0;k<3;k++) {gmag_a += grad_i[k]*grad_i[k]; gmag_b += grad_j[k]*grad_j[k];}
-            double gnew = DMAX(g0,DMAX(gmag_a,gmag_b));
-            if(gnew > 0)
-            {
-                gnew = sqrt(gnew);
-                for(k=0;k<3;k++) {grad_ij[k] *= gnew / grad_mag;}
-                grad_mag = gnew;
-            }
-        }
-#ifdef MAGNETIC
-        if(bhat_mag > 0)
-        {
-            do_isotropic = 0;
-            double B_interface_dot_grad_T = 0.0;
-            for(k=0;k<3;k++)
-            {
-                B_interface_dot_grad_T += bhat[k] * grad_ij[k];
-                cmag += bhat[k] * Face_Area_Vec[k];
-            }
-            cmag *= B_interface_dot_grad_T; // L_phys^2 * E/[L_phys^3 * L_comoving] ~ E / (L_phys*L_comoving)
-            b_hll = B_interface_dot_grad_T / grad_mag; // dimensionless
-            b_hll *= b_hll;
-        }
-#endif
-        if(do_isotropic) {for(k=0;k<3;k++) {cmag += Face_Area_Vec[k] * grad_ij[k];}} // L_phys^2 * E/[L_phys^3 * L_comoving] ~ E / (L_phys*L_comoving)
-        cmag /= All.cf_atime; // cmag has units of [E/(L_phys*L_comoving)] -- convert to physical
-        
-        double check_for_stability_sign = 1; /* if we are using the zeroth-order method, no HLL flux, etc is needed */
-        if((local.CosmicRayDiffusionCoeff[k_CRegy]>=0)&&(SphP[j].CosmicRayDiffusionCoeff[k_CRegy]>=0))
-        {
-            /* obtain HLL correction terms for Reimann problem solution */
-            double d_scalar_tmp = d_scalar - grad_dot_x_ij; // both in physical units
-            double d_scalar_hll = MINMOD(d_scalar , d_scalar_tmp);
-            double hll_corr = b_hll * flux_wt * HLL_correction(d_scalar_hll, 0, flux_wt, diffusion_wt) / (-diffusion_wt); // physical units
-            double cmag_corr = cmag + hll_corr; // physical units
-            cmag = MINMOD(HLL_DIFFUSION_COMPROMISE_FACTOR*cmag, cmag_corr); // physical units
-            /* slope-limiter to ensure heat always flows from hot to cold */
-            double d_scalar_b = b_hll * d_scalar; // physical units
-            double f_direct = Face_Area_Norm * d_scalar_b * (rinv/All.cf_atime); // physical units
-            check_for_stability_sign = d_scalar*cmag;
-            if((check_for_stability_sign < 0) && (fabs(f_direct) > HLL_DIFFUSION_OVERSHOOT_FACTOR*fabs(cmag))) {cmag = 0;}
-        }
-        if(check_for_stability_sign<0) {cmag=0;}
-        cmag *= -diffusion_wt; /* multiply through coefficient to get flux; all physical units here */
-        
-        /* follow that with a flux limiter as well */
-        diffusion_wt = dt_hydrostep * cmag; // all in physical units //
-        if(fabs(diffusion_wt) > 0)
-        {
-            // enforce a flux limiter for stability (to prevent overshoot) //
-            double CR_egy_i = local.CosmicRayPressure[k_CRegy]*V_i / gamma_cr_m1; // (E_cr = Volume * (Pressure/gamma_cr_m1)) - this is physical units //
-            double CR_egy_j = CosmicRayPressure_j[k_CRegy]*V_j / gamma_cr_m1;
-            double prefac_duij = 0.25, flux_multiplier = 1;
-            if((local.CosmicRayDiffusionCoeff[k_CRegy]<0)||(SphP[j].CosmicRayDiffusionCoeff[k_CRegy]<0)) {prefac_duij = 0.05;}
-            double du_ij_cond = prefac_duij * DMAX(DMIN( fabs(CR_egy_i-CR_egy_j) , DMAX(CR_egy_i , CR_egy_j)) , DMIN(CR_egy_i , CR_egy_j));
-            if(diffusion_wt > 0) {du_ij_cond=DMIN(du_ij_cond,0.25*CR_egy_j);} else {du_ij_cond=DMIN(du_ij_cond,0.25*CR_egy_i);} // prevent flux from creating negative values //
-            if(fabs(diffusion_wt)>du_ij_cond) {flux_multiplier = du_ij_cond/fabs(diffusion_wt);}
-            diffusion_wt *= flux_multiplier;
-            Fluxes.CosmicRayPressure[k_CRegy] += diffusion_wt / dt_hydrostep; // physical units, as needed
-        } // if(diffusion_wt > 0)
-        
-        
-#else // CRFLUID_M1 is active
-        
         /* calculate the eigenvalues for the HLLE flux-weighting */
         double cmag=0., flux_norm=0, flux_i[3]={0}, flux_j[3]={0}, thold_hll;
         for(k=0;k<3;k++)
         {
             /* the flux is already known (its explicitly evolved, rather than determined by the gradient of the energy density */
-            flux_i[k] = local.CosmicRayFlux[k_CRegy][k]/V_i_phys; flux_j[k] = SphP[j].CosmicRayFlux[k_CRegy][k]/V_j_phys; // this needs to be in physical units
+            flux_i[k] = local.CosmicRayFlux[k_CRegy][k]/V_i_phys; flux_j[k] = CellP[j].CosmicRayFlux[k_CRegy][k]/V_j_phys; // this needs to be in physical units
             double flux_ij = 0.5*(flux_i[k] + flux_j[k]); flux_norm += flux_ij*flux_ij;
             cmag += Face_Area_Vec[k] * flux_ij; // remember, our 'flux' variable is a volume-integral; physical units here//
         }
@@ -142,7 +47,7 @@ for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
         double CRopticaldepth = DMIN(Particle_Size_i,Particle_Size_j)*cr_m1_speed_touse/kappa_ij;
         double reductionfactor = (4.+CRopticaldepth*(4.+3.*CRopticaldepth)) / (4.+CRopticaldepth*(4.+CRopticaldepth*(4.+3.*CRopticaldepth))); // this is just an excellent but simpler/faster approximation to SQRT[1-EXP[-x^2]]/x, which also deals better with small-x limits //
         double reducedcM1 = reductionfactor*cr_m1_speed_touse*sqrtthreeinv; //TK test: correct HLL according Jiang & Oh 2018
-        double c_light_eff = DMAX(2.*All.cf_afac3*kernel.vsig, reducedcM1);
+        double c_light_eff = DMAX(2.*kernel.vsig, reducedcM1);
         double v_eff_touse = DMIN(c_light_eff , kappa_ij / Particle_Size_j); // physical
         double c_hll = 0.5*fabs(face_vel_i-face_vel_j) + v_eff_touse; // physical
         double hll_corr = 1. / (1. + 1.5 * c_light_eff * DMAX(Particle_Size_j/kappa_j , Particle_Size_i/kappa_i)); // all physical units
@@ -190,33 +95,28 @@ for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
         if(flux_tmp[k_j_to_i]*dt_hydrostep > +0.5) {flux_tmp[k_j_to_i] = +0.5/dt_hydrostep;}
         if(flux_tmp[k_i_to_j]*dt_hydrostep < -0.5) {flux_tmp[k_i_to_j] = -0.5/dt_hydrostep;}
         // now just assign these fluxes: written lengthily here to prevent any typos, but trivial assignment //
-        Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_j_to_i] += flux_tmp[k_j_to_i] * SphP[j].CosmicRayAlfvenEnergyPred[k_CRegy][k_j_to_i];
+        Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_j_to_i] += flux_tmp[k_j_to_i] * CellP[j].CosmicRayAlfvenEnergyPred[k_CRegy][k_j_to_i];
         Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_i_to_j] += flux_tmp[k_i_to_j] * local.CosmicRayAlfvenEnergy[k_CRegy][k_i_to_j];
         for(k=0;k<2;k++) {out.DtCosmicRayAlfvenEnergy[k_CRegy][k] += FluxCorrectionFactor_to_i * Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k];}
-        if(j_is_active_for_fluxes) {for(k=0;k<2;k++) {SphP[j].DtCosmicRayAlfvenEnergy[k_CRegy][k] -= FluxCorrectionFactor_to_j * Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k];}}
+        if(j_is_active_for_fluxes) {for(k=0;k<2;k++) {CellP[j].DtCosmicRayAlfvenEnergy[k_CRegy][k] -= FluxCorrectionFactor_to_j * Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k];}}
 #endif
-        
-#endif // CRFLUID_M1
+                
     } // close check that kappa and particle masses are positive
     // actually assign the fluxes //
     out.DtCosmicRayEnergy[k_CRegy] += FluxCorrectionFactor_to_i * Fluxes.CosmicRayPressure[k_CRegy];
-    if(j_is_active_for_fluxes) {SphP[j].DtCosmicRayEnergy[k_CRegy] -= FluxCorrectionFactor_to_j * Fluxes.CosmicRayPressure[k_CRegy];}
+    if(j_is_active_for_fluxes) {CellP[j].DtCosmicRayEnergy[k_CRegy] -= FluxCorrectionFactor_to_j * Fluxes.CosmicRayPressure[k_CRegy];}
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
     double CR_number_to_energy_ratio = 0; // ratio of flux of CR number per unit flux of CR energy, follows whichever cell CRs are flowing 'out' of
-#if defined(CRFLUID_DIFFUSION_CORRECTION_TERMS)
-    if(Fluxes.CosmicRayPressure[k_CRegy] > 0) {CR_number_to_energy_ratio =  SphP[j].Flux_Number_to_Energy_Correction_Factor[k_CRegy] * SphP[j].CosmicRay_Number_in_Bin[k_CRegy] / (SphP[j].CosmicRayEnergy[k_CRegy] + MIN_REAL_NUMBER);} else {CR_number_to_energy_ratio = local.CR_number_to_energy_ratio[k_CRegy];}
-#else
-    if(Fluxes.CosmicRayPressure[k_CRegy] > 0) {CR_number_to_energy_ratio =  SphP[j].CosmicRay_Number_in_Bin[k_CRegy] / (SphP[j].CosmicRayEnergy[k_CRegy] + MIN_REAL_NUMBER);} else {CR_number_to_energy_ratio = local.CR_number_to_energy_ratio[k_CRegy];}
-#endif
+    if(Fluxes.CosmicRayPressure[k_CRegy] > 0) {CR_number_to_energy_ratio =  CellP[j].Flux_Number_to_Energy_Correction_Factor[k_CRegy] * CellP[j].CosmicRay_Number_in_Bin[k_CRegy] / (CellP[j].CosmicRayEnergy[k_CRegy] + MIN_REAL_NUMBER);} else {CR_number_to_energy_ratio = local.CR_number_to_energy_ratio[k_CRegy];}
     //CR_number_to_energy_ratio *= 0.98; // = if want a simple approximation to the difference b/t diffusivities in energy vs number: multiply by 1 - 0.103021*epsilon, where epsilon = D_diffusion (0.5-ish) - gamma_slope where L_grad[R] ~ R^gamma_slope and kappa_diffusion ~ R^D_diffusion. reasonable approx is something like gamma_slope ~ (0.5-0.75)*D_diffusion [trends towards D_diffusion in eqm]
     out.DtCosmicRay_Number_in_Bin[k_CRegy] += FluxCorrectionFactor_to_i * Fluxes.CosmicRayPressure[k_CRegy] * CR_number_to_energy_ratio;
-    if(j_is_active_for_fluxes) {SphP[j].DtCosmicRay_Number_in_Bin[k_CRegy] -= FluxCorrectionFactor_to_j * Fluxes.CosmicRayPressure[k_CRegy] * CR_number_to_energy_ratio;}
+    if(j_is_active_for_fluxes) {CellP[j].DtCosmicRay_Number_in_Bin[k_CRegy] -= FluxCorrectionFactor_to_j * Fluxes.CosmicRayPressure[k_CRegy] * CR_number_to_energy_ratio;}
 #endif
 }
 
 
 out.Face_DivVel_ForAdOps += -(All.cf_a3inv/V_i) * Face_Area_Norm * (Riemann_out.S_M + face_area_dot_vel) / All.cf_a2inv;
-if(j_is_active_for_fluxes) {SphP[j].Face_DivVel_ForAdOps -= -(All.cf_a3inv/V_j) * Face_Area_Norm * (Riemann_out.S_M + face_area_dot_vel) / All.cf_a2inv;}
+if(j_is_active_for_fluxes) {CellP[j].Face_DivVel_ForAdOps -= -(All.cf_a3inv/V_j) * Face_Area_Norm * (Riemann_out.S_M + face_area_dot_vel) / All.cf_a2inv;}
 
 
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -225,20 +125,20 @@ double min_shockvel_for_accel = 100., min_machnum_for_accel = 5., machnum_estima
 double vdotf2_phys = face_vel_i - face_vel_j, vdotr2_phys = kernel.vdotr2 / (kernel.r * All.cf_atime);
 if(All.ComovingIntegrationOn) {vdotr2_phys -= All.cf_hubble_a2 * kernel.r / All.cf_atime;}
 if(vdotr2_phys < 0 && vdotf2_phys < 0 && (DMAX(vdotf2_phys, vdotr2_phys)*UNIT_VEL_IN_KMS > min_shockvel_for_accel)) { // particles must be approaching, with some normal to face, above some relative velocity
-    if((local.InternalEnergyPred - SphP[j].InternalEnergyPred)*(local.Density - SphP[j].Density) > 0) { // sign of temperature and density jump must be consistent (help filtering contact discontinuities)
-        if((local.Pressure - SphP[j].Pressure)*(local.InternalEnergyPred - SphP[j].InternalEnergyPred) > 0) { // consistent pressure and temperature jump
+    if((local.InternalEnergyPred - CellP[j].InternalEnergyPred)*(local.Density - CellP[j].Density) > 0) { // sign of temperature and density jump must be consistent (help filtering contact discontinuities)
+        if((local.Pressure - CellP[j].Pressure)*(local.InternalEnergyPred - CellP[j].InternalEnergyPred) > 0) { // consistent pressure and temperature jump
             double gamma_touse = 5./3., m2 = min_machnum_for_accel*min_machnum_for_accel, gplus = gamma_touse+1., gminus = gamma_touse-1., pjump_crit = (2.*gamma_touse*min_machnum_for_pressurecrit*min_machnum_for_pressurecrit - gminus)/gplus, tjump_crit = (2.*gamma_touse*m2 - gminus)*(gminus*m2 + 2.)/(gplus*gplus*m2); // various critical definitions
-            double tjump = local.InternalEnergyPred/SphP[j].InternalEnergyPred, pjump = local.Pressure/SphP[j].Pressure; // temperature and pressure ratios used to estimate shock strength
+            double tjump = local.InternalEnergyPred/CellP[j].InternalEnergyPred, pjump = local.Pressure/CellP[j].Pressure; // temperature and pressure ratios used to estimate shock strength
             if(tjump < 1.) {tjump=1./tjump; pjump=1./pjump;} // make sure have correct upwind/downwind assignment
             if((tjump > tjump_crit) && (pjump > pjump_crit)) { // ok, sufficiently strong shock to justify some application of the scalings here, and passes pressure minimum check
-                double m2_guess = (16./5.)*tjump, dissipation_fac = (0.5625 - 2.9607/m2_guess), upwind_density = DMIN(local.Density,SphP[j].Density), zeta_obliquity_fac = 1., velforflux = fabs(vdotf2_phys);
+                double m2_guess = (16./5.)*tjump, dissipation_fac = (0.5625 - 2.9607/m2_guess), upwind_density = DMIN(local.Density,CellP[j].Density), zeta_obliquity_fac = 1., velforflux = fabs(vdotf2_phys);
 #ifdef MAGNETIC
                 double cos_t=0,dvmag=0,bmag=0; for(k=0;k<3;k++) {double dv=local.Vel[k]-VelPred_j[k]; cos_t+=bhat[k]*dv; dvmag+=dv*dv; bmag+=bhat[k]*bhat[k];}
                 if(dvmag>0 && bmag>0) {cos_t/=sqrt(dvmag*bmag);} else {cos_t=0;}
                 double q = (1.-fabs(cos_t))/0.34; zeta_obliquity_fac = exp(-q*q*q);
 #endif
                 double DtCREgyNewInjection = saturation_fraction_for_craccel * zeta_obliquity_fac * dissipation_fac * 0.5 * upwind_density * velforflux*velforflux*velforflux * Face_Area_Norm;
-                if(local.InternalEnergyPred > SphP[j].InternalEnergyPred) {out.DtCREgyNewInjectionFromShocks += FluxCorrectionFactor_to_i * DtCREgyNewInjection;} else {if(j_is_active_for_fluxes) {SphP[j].DtCREgyNewInjectionFromShocks += FluxCorrectionFactor_to_j * DtCREgyNewInjection;}} // do injection upstream
+                if(local.InternalEnergyPred > CellP[j].InternalEnergyPred) {out.DtCREgyNewInjectionFromShocks += FluxCorrectionFactor_to_i * DtCREgyNewInjection;} else {if(j_is_active_for_fluxes) {CellP[j].DtCREgyNewInjectionFromShocks += FluxCorrectionFactor_to_j * DtCREgyNewInjection;}} // do injection upstream
             }}}}
 #endif
 

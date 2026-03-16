@@ -3,11 +3,6 @@
 
 #include "../GIZMO_config.h"
 
-
-#if (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_HELMHOLTZ) || defined(COSMIC_RAY_FLUID) || defined(RT_RADPRESSURE_IN_HYDRO) || defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE) || defined(EOS_GMC_BAROTROPIC) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && !defined(EOS_GENERAL)
-#define EOS_GENERAL
-#endif
-
 #ifdef EOS_HELMHOLTZ
 #define EOS_TABULATED
 #define EOS_USES_CGS

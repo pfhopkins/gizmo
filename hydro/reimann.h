@@ -309,17 +309,11 @@ void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs
         }
         Riemann_vec.L.rho *= All.cf_a3inv;
         Riemann_vec.R.rho *= All.cf_a3inv;
-        Riemann_vec.L.p *= All.cf_a3inv / All.cf_afac1;
-        Riemann_vec.R.p *= All.cf_a3inv / All.cf_afac1;
+        Riemann_vec.L.p *= All.cf_a3inv;
+        Riemann_vec.R.p *= All.cf_a3inv;
 #ifdef DIVBCLEANING_DEDNER
         Riemann_vec.L.phi *= All.cf_a3inv;
         Riemann_vec.R.phi *= All.cf_a3inv;
-#endif
-#ifdef EOS_GENERAL
-        Riemann_vec.L.cs *= All.cf_afac3;
-        Riemann_vec.R.cs *= All.cf_afac3;
-        Riemann_vec.L.u /= All.cf_afac1;
-        Riemann_vec.R.u /= All.cf_afac1;
 #endif
     }
 #ifndef EOS_GENERAL
@@ -486,7 +480,7 @@ void Riemann_solver_KurganovTadmor_PWK(struct Input_vec_Riemann Riemann_vec, str
 {
     /* estimate wave speed using the PWK 'switch' alpha */
     double S_L, S_R, S_M, nu, alpha; int k; nu=0;
-#if (SLOPE_LIMITER_TOLERANCE==0) || defined(HYDRO_FACE_AREA_LIMITER) || defined(HYDRO_RIEMANN_KT_UNLIMITED)
+#if (SLOPE_LIMITER_TOLERANCE==0)
     alpha = 1; /* default to the more dissipative but smoother limiter function */
 #else
     double delta_threshold = 0.001 * 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho) * 0.5*(cs_L+cs_R); /* alpha is non-zero only if relative momentum is appreciable fraction of this value */

@@ -11,8 +11,8 @@
  */
 /* --------------------------------------------------------------------------------- */
 {
-    if( (((local.Eta_ShearViscosity>MIN_REAL_NUMBER)&&(SphP[j].Eta_ShearViscosity>MIN_REAL_NUMBER)) ||
-         ((local.Zeta_BulkViscosity>MIN_REAL_NUMBER)&&(SphP[j].Zeta_BulkViscosity>MIN_REAL_NUMBER))) &&
+    if( (((local.Eta_ShearViscosity>MIN_REAL_NUMBER)&&(CellP[j].Eta_ShearViscosity>MIN_REAL_NUMBER)) ||
+         ((local.Zeta_BulkViscosity>MIN_REAL_NUMBER)&&(CellP[j].Zeta_BulkViscosity>MIN_REAL_NUMBER))) &&
        ((local.Mass>0)&&(P[j].Mass>0)) )
     {
         int k_v;
@@ -24,10 +24,10 @@
         for(k=0;k<3;k++) {v_interface[k] = (wt_i*local.Vel[k] + wt_j*VelPred_j[k]) * a_inv;} // physical units //
         
         // use a geometric average, since we want to weight the smaller of the two coefficients //
-        double eta = 0.5 * (local.Eta_ShearViscosity + SphP[j].Eta_ShearViscosity);
-        if(eta > 0) {eta = local.Eta_ShearViscosity * SphP[j].Eta_ShearViscosity / eta;} else {eta = 0;} // also converts to physical units
-        double zeta = 0.5 * (local.Zeta_BulkViscosity + SphP[j].Zeta_BulkViscosity);
-        if(zeta > 0) {zeta = local.Zeta_BulkViscosity * SphP[j].Zeta_BulkViscosity / zeta;} else {zeta = 0;} // also converts to physical units
+        double eta = 0.5 * (local.Eta_ShearViscosity + CellP[j].Eta_ShearViscosity);
+        if(eta > 0) {eta = local.Eta_ShearViscosity * CellP[j].Eta_ShearViscosity / eta;} else {eta = 0;} // also converts to physical units
+        double zeta = 0.5 * (local.Zeta_BulkViscosity + CellP[j].Zeta_BulkViscosity);
+        if(zeta > 0) {zeta = local.Zeta_BulkViscosity * CellP[j].Zeta_BulkViscosity / zeta;} else {zeta = 0;} // also converts to physical units
         double viscous_wt_physical = DMAX(eta,zeta);
         // we need a minus sign at some point; its handy to just include it now in the weights //
         wt_i *= -1.; wt_j *= -1.;
@@ -61,7 +61,7 @@
                 // note that because of the symmetry of the tensors here, the order of k,k_v doesn't matter //
                 for(k=0;k<3;k++)
                 {
-                    double grad_v = wt_i*local.Gradients.Velocity[k_v][k]+wt_j*SphP[j].Gradients.Velocity[k_v][k];
+                    double grad_v = wt_i*local.Gradients.Velocity[k_v][k]+wt_j*CellP[j].Gradients.Velocity[k_v][k];
                     double grad_direct = -kernel.dv[k_v] * kernel.dp[k] * rinv*rinv;
                     grad_v = MINMOD_G( grad_v, grad_direct);
                     if(grad_v*grad_direct < 0) {if(fabs(grad_direct) > 2.*fabs(grad_v)) {grad_v = 0.0;}}
@@ -91,20 +91,20 @@
             for(k=0;k<3;k++)
             {
                 divv_i += local.Gradients.Velocity[k][k];
-                divv_j += SphP[j].Gradients.Velocity[k][k];
+                divv_j += CellP[j].Gradients.Velocity[k][k];
             }
             double divv = (wt_i*divv_i + wt_j*divv_j) * (zeta - eta*(2./3.));
             wt_i*=eta; wt_j*=eta;
             
-            double Pxx = 2*(wt_i*local.Gradients.Velocity[0][0]+wt_j*SphP[j].Gradients.Velocity[0][0]) + divv;
-            double Pyy = 2*(wt_i*local.Gradients.Velocity[1][1]+wt_j*SphP[j].Gradients.Velocity[1][1]) + divv;
-            double Pzz = 2*(wt_i*local.Gradients.Velocity[2][2]+wt_j*SphP[j].Gradients.Velocity[2][2]) + divv;
+            double Pxx = 2*(wt_i*local.Gradients.Velocity[0][0]+wt_j*CellP[j].Gradients.Velocity[0][0]) + divv;
+            double Pyy = 2*(wt_i*local.Gradients.Velocity[1][1]+wt_j*CellP[j].Gradients.Velocity[1][1]) + divv;
+            double Pzz = 2*(wt_i*local.Gradients.Velocity[2][2]+wt_j*CellP[j].Gradients.Velocity[2][2]) + divv;
             double Pxy = wt_i*(local.Gradients.Velocity[0][1]+local.Gradients.Velocity[1][0]) +
-                         wt_j*(SphP[j].Gradients.Velocity[0][1]+SphP[j].Gradients.Velocity[1][0]);
+                         wt_j*(CellP[j].Gradients.Velocity[0][1]+CellP[j].Gradients.Velocity[1][0]);
             double Pxz = wt_i*(local.Gradients.Velocity[0][2]+local.Gradients.Velocity[2][0]) +
-                         wt_j*(SphP[j].Gradients.Velocity[0][2]+SphP[j].Gradients.Velocity[2][0]);
+                         wt_j*(CellP[j].Gradients.Velocity[0][2]+CellP[j].Gradients.Velocity[2][0]);
             double Pyz = wt_i*(local.Gradients.Velocity[1][2]+local.Gradients.Velocity[2][1]) +
-                         wt_j*(SphP[j].Gradients.Velocity[1][2]+SphP[j].Gradients.Velocity[2][1]);
+                         wt_j*(CellP[j].Gradients.Velocity[1][2]+CellP[j].Gradients.Velocity[2][1]);
             
             cmag[0] = Pxx*Face_Area_Vec[0] + Pxy*Face_Area_Vec[1] + Pxz*Face_Area_Vec[2]; // units vcode/rcode
             cmag[1] = Pxy*Face_Area_Vec[0] + Pyy*Face_Area_Vec[1] + Pyz*Face_Area_Vec[2];
@@ -123,7 +123,7 @@
         }
         
         /* slope-limit this to be sure that viscosity always acts in the proper direction when there is local noise */
-        double rho_i = local.Density*All.cf_a3inv, rho_j = SphP[j].Density*All.cf_a3inv, rho_ij=0.5*(rho_i+rho_j);
+        double rho_i = local.Density*All.cf_a3inv, rho_j = CellP[j].Density*All.cf_a3inv, rho_ij=0.5*(rho_i+rho_j);
 
         /* convert to physical units */
         for(k_v=0;k_v<3;k_v++) {cmag[k_v] *= All.cf_a2inv;}

@@ -8,8 +8,8 @@
 %        SELFGRAVITY_OFF  
 %        EOS_GAMMA=(1.4)
 %
-% You may want to experiment with the neighbor number and the AGGRESSIVE_SLOPE_LIMITERS or
-%  SLOPE_LIMITER_TOLERANCE and KERNEL_FUNCTION (try =5 or 7 instead of 3) settings, 
+% You may want to experiment with the neighbor number and the
+%  SLOPE_LIMITER_TOLERANCE (try =2 or =1)and KERNEL_FUNCTION (try =5 or 7 instead of 3) settings,
 %  to see how the numerical diffusivity is affected on this problem (you have significant 
 %  room to trade stability/noise versus diffusivity, and the problem in any code is, at this
 %  relatively low resolution, strongly influenced by the slope-limiter)

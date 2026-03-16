@@ -18,7 +18,7 @@ TimeBetSnapshot                    0.1
 MaxSizeTimestep                    0.001
 DesNumNgb                          40
 GravityConstantInternal            1
-MaxHsml                            2000
+MaxKernelRadius                            2000
 SofteningGas                       0.0001 % set me larger if not using adaptive softenings!
 SofteningHalo                      0.07
 Softening_Type2                    0.003

@@ -1,9 +1,9 @@
 #ifndef FOF_H
 #define FOF_H
-#include "../allvars.h"
+#include "../declarations/allvars.h"
 
 /* variables for fof.c code */
-/*
+/*!
 * This file was originally part of the GADGET3 code developed by Volker Springel.
 * It has been updated significantly by PFH for basic compatibility with GIZMO,
 * as well as code cleanups, and accommodating new GIZMO functionality for various
@@ -61,10 +61,10 @@ typedef struct
 #ifdef GALSF
   double Sfr;
 #endif
-#ifdef BLACK_HOLES
-  MyOutputFloat BH_Mass;
-  MyOutputFloat BH_Mdot;
-#ifdef BH_SEED_FROM_FOF
+#ifdef SINK_PARTICLES
+  MyOutputFloat Sink_Mass;
+  MyOutputFloat Sink_Mdot;
+#ifdef SINK_SEED_FROM_FOF
   MyOutputFloat MinPot;
   int index_maxdens, task_maxdens;
 #endif

@@ -26,7 +26,6 @@ if(BufferCollisionFlag && thread_id) {return NULL;} /* force to serial for this 
 while(1)
 {
     int exitFlag = 0;
-    LOCK_NEXPORT;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistprimblox_)
 #endif
@@ -41,7 +40,6 @@ while(1)
             NextParticle = NextActiveParticle[NextParticle];
         }
     }
-    UNLOCK_NEXPORT;
     if(exitFlag) {break;}
     if(ProcessedFlag[i]) {continue;}
     CONDITION_FOR_EVALUATION

@@ -65,7 +65,7 @@ CHIMES_INITIALISE_IN_EQM
   By default, Gizmo will read in the initial ion and molecule abundances from the ICs file. However, when this option is enabled, Gizmo will instead compute the initial abundances in chemical equilibrium, by evolving the chemistry of each gas cell for a long period of time. 
 
 CHIMES_STELLAR_FLUXES 
-  Tracks stellar fluxes in different age bins through the luminosity tree, using the LEBRON method from FIRE, and couples these to the CHIMES chemistry routines. Note that this should be used instead of FIRE's standard GALSF_FB_FIRE_RT_UVHEATING routine. 
+  Tracks stellar fluxes in different age bins through the luminosity tree, using the LEBRON method from FIRE, and couples these to the CHIMES chemistry routines. Note that this should be used instead of FIRE's standard UV heating routine. 
 
 CHIMES_REDUCED_OUTPUT 
   By default, the full array of chemical abundances (with 157 species) is written out in every snapshot. When this option is turned on, the full abundance array is only written out in a subset of snapshots, with a frequency given by the ``N_chimes_full_output_freq`` parameter (see the next section). For all other snapshots, it just writes out a smaller array containing the abundances of electrons, HI, H2 and CO. 

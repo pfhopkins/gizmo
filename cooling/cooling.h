@@ -6,11 +6,13 @@
 #endif
 #endif
 
-/*
+/*!
  * This file contains the definitions for the cooling.c routines
- *
- * This file was originally part of the GADGET3 code developed by
- *   Volker Springel. The code has been modified by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
+ */
+
+/*!
+ * This file was originally part of the GADGET3 code developed by Volker Springel.
+ * The code has been modified by Phil Hopkins and Mike Grudic for GIZMO. Essentially everything has been re-written at this point.
  */
 
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess);

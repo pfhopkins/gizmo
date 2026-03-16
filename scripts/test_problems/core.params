@@ -27,14 +27,14 @@
 %  compilation. In the file "eos.c", find the lines:
 %
 % #ifdef EOS_ENFORCE_ADIABAT
-%      press = EOS_ENFORCE_ADIABAT * pow(SphP[i].Density, GAMMA);
+%      press = EOS_ENFORCE_ADIABAT * pow(CellP[i].Density, GAMMA);
 % #endif
 % 
 % Obviously, this line enforces a typical adiabatic equation of state. 
 %   We just need to replace this particular press = .... line with the following:
 %
 % #ifdef EOS_ENFORCE_ADIABAT
-%  press = 0.04*SphP[i].Density*sqrt(1.+pow(SphP[i].Density/1.47705e8 ,4./3.));
+%  press = 0.04*CellP[i].Density*sqrt(1.+pow(CellP[i].Density/1.47705e8 ,4./3.));
 % #endif
 % 
 %  This will use the specific barytropic equation of state from the paper, instead. 
@@ -63,4 +63,4 @@ Softening_Type4                    5e-6
 Softening_Type5                    5e-6
 % -- optional parameters - speed up the test with bigger steps, but maybe bigger errors
 MaxSizeTimestep                    5e-05
-MaxHsml                            100
+MaxKernelRadius                            100

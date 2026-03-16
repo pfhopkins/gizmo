@@ -8,7 +8,7 @@ import os.path
 def readsnap(sdir,snum,ptype,
     snapshot_name='snapshot',
     extension='.hdf5',
-    h0=0,cosmological=0,skip_bh=0,four_char=0,
+    h0=0,cosmological=0,skip_sink=0,four_char=0,
     header_only=0,loud=0):
     '''
     This is a sub-routine designed to copy a GIZMO snapshot portion - specifically
@@ -65,7 +65,7 @@ def readsnap(sdir,snum,ptype,
       
       cosmological: default 0/False: turn on (set to 1/True) to convert cosmological 
         co-moving units to physical units. will specifically convert Coordinates, 
-        Masses, Velocities, Densities, Smoothing Lengths, and Times/Ages. If this 
+        Masses, Velocities, Densities, Kernel Sizes, and Times/Ages. If this 
         is on, you do not need to set 'h0' (this will force it to be set -also-), 
         but it does no harm to set it as well.
 
@@ -73,12 +73,12 @@ def readsnap(sdir,snum,ptype,
         of the hubble constant (h = H0/100 km/s/Mpc) saved in the snapshot to convert 
         from code units. Recall, units of time, length, and mass in the code are in 
         h^-1. So this on means your units are physical, with no "h" in them. 
-        Will specifically convert Coordinates, Masses, Densities, Smoothing Lengths, 
+        Will specifically convert Coordinates, Masses, Densities, Kernel sizes, 
         and Times/Ages. 
 
-      skip_bh: default 0/False: turn on (set to 1/True) to skip black hole-specific 
+      skip_sink: default 0/False: turn on (set to 1/True) to skip sink particle-specific 
         fields for particles of type 5 (use if your snapshot contains elements of type 5, 
-        but the black hole physics modules were not actually used; otherwise you will 
+        but the sink particle physics modules were not actually used; otherwise you will 
         get an error).
       
       four_char: default numbering is that snapshots with numbers below 1000 have 
@@ -160,7 +160,7 @@ def readsnap(sdir,snum,ptype,
     if (ptype==0):
         ugas=np.copy(mass)
         rho=np.copy(mass)
-        hsml=np.copy(mass) 
+        rkern=np.copy(mass) 
         #if (flag_cooling>0): 
         nume=np.copy(mass)
         numh=np.copy(mass)
@@ -171,7 +171,7 @@ def readsnap(sdir,snum,ptype,
         metal=np.zeros([npartTotal[ptype],flag_metals],dtype=np.float64)
     if (ptype == 4) and (flag_sfr > 0) and (flag_stellarage > 0):
         stellage=np.copy(mass)
-    if (ptype == 5) and (skip_bh == 0):
+    if (ptype == 5) and (skip_sink == 0):
         bhmass=np.copy(mass)
         bhmdot=np.copy(mass)
 
@@ -192,7 +192,7 @@ def readsnap(sdir,snum,ptype,
             bname = "PartType"+str(ptype)+"/"
         else:
             npart = header_toparse['NumPart_ThisFile']
-            input_struct = load_gadget_format_binary_particledat(file, header_toparse, ptype, skip_bh=skip_bh)
+            input_struct = load_gadget_format_binary_particledat(file, header_toparse, ptype, skip_sink=skip_sink)
             bname = ''
             
         
@@ -208,7 +208,7 @@ def readsnap(sdir,snum,ptype,
             if (ptype==0):
                 ugas[nL:nR]=input_struct[bname+"InternalEnergy"]
                 rho[nL:nR]=input_struct[bname+"Density"]
-                hsml[nL:nR]=input_struct[bname+"SmoothingLength"]
+                rkern[nL:nR]=input_struct[bname+"KernelMaxRadius"]
                 if (flag_cooling > 0): 
                     nume[nL:nR]=input_struct[bname+"ElectronAbundance"]
                     numh[nL:nR]=input_struct[bname+"NeutralHydrogenAbundance"]
@@ -224,9 +224,9 @@ def readsnap(sdir,snum,ptype,
                 metal[nL:nR,:]=metal_t
             if (ptype == 4) and (flag_sfr > 0) and (flag_stellarage > 0):
                 stellage[nL:nR]=input_struct[bname+"StellarFormationTime"]
-            if (ptype == 5) and (skip_bh == 0):
-                bhmass[nL:nR]=input_struct[bname+"BH_Mass"]
-                bhmdot[nL:nR]=input_struct[bname+"BH_Mdot"]
+            if (ptype == 5) and (skip_sink == 0):
+                bhmass[nL:nR]=input_struct[bname+"Sink_Mass"]
+                bhmdot[nL:nR]=input_struct[bname+"Sink_Mdot"]
             nL = nR # sets it for the next iteration	
 
 	## correct to same ID as original gas particle for new stars, if bit-flip applied
@@ -240,18 +240,18 @@ def readsnap(sdir,snum,ptype,
     vel *= np.sqrt(ascale) # remember gizmo's (and gadget's) weird velocity units!
     if (ptype == 0):
         rho *= (hinv/((ascale*hinv)**3))
-        hsml *= hinv*ascale
+        rkern *= hinv*ascale
     if (ptype == 4) and (flag_sfr > 0) and (flag_stellarage > 0) and (cosmological == 0):
         stellage *= hinv
-    if (ptype == 5) and (skip_bh == 0):
+    if (ptype == 5) and (skip_sink == 0):
         bhmass *= hinv
 
     file.close();
     if (ptype == 0):
-        return {'k':1,'p':pos,'v':vel,'m':mass,'id':ids,'u':ugas,'rho':rho,'h':hsml,'ne':nume,'nh':numh,'sfr':sfr,'z':metal};
+        return {'k':1,'p':pos,'v':vel,'m':mass,'id':ids,'u':ugas,'rho':rho,'h':rkern,'ne':nume,'nh':numh,'sfr':sfr,'z':metal};
     if (ptype == 4):
         return {'k':1,'p':pos,'v':vel,'m':mass,'id':ids,'z':metal,'age':stellage}
-    if (ptype == 5) and (skip_bh == 0):
+    if (ptype == 5) and (skip_sink == 0):
         return {'k':1,'p':pos,'v':vel,'m':mass,'id':ids,'mbh':bhmass,'mdot':bhmdot}
     return {'k':1,'p':pos,'v':vel,'m':mass,'id':ids}
 
@@ -389,11 +389,11 @@ def load_gadget_format_binary_header(f):
     'Flag_EntrICs':flag_entr_ics[0]}
 
 
-def load_gadget_format_binary_particledat(f, header, ptype, skip_bh=0):
+def load_gadget_format_binary_particledat(f, header, ptype, skip_sink=0):
     ## load old format=1 style gadget-format binary snapshot files (unformatted fortran binary)
     import array
-    gas_u=0.; gas_rho=0.; gas_ne=0.; gas_nhi=0.; gas_hsml=0.; gas_SFR=0.; star_age=0.; 
-    zmet=0.; bh_mass=0.; bh_mdot=0.; mm=0.;
+    gas_u=0.; gas_rho=0.; gas_ne=0.; gas_nhi=0.; gas_rkern=0.; gas_SFR=0.; star_age=0.; 
+    zmet=0.; sink_mass=0.; sink_mdot=0.; mm=0.;
     Npart = header['NumPart_ThisFile']
     Massarr = header['MassTable']
     NpartTot = np.sum(Npart)
@@ -452,9 +452,8 @@ def load_gadget_format_binary_particledat(f, header, ptype, skip_bh=0):
                 gas_nhi.fromfile(f, Npart[0])
                 f.read(4+4) # Read block size fields.
 
-            ### Smoothing length (kpc/h). ###
-            gas_hsml = array.array('f')
-            gas_hsml.fromfile(f, Npart[0])
+            gas_rkern = array.array('f')
+            gas_rkern.fromfile(f, Npart[0])
             f.read(4+4) # Read block size fields.
 
             if (header['Flag_Sfr'] > 0):
@@ -485,17 +484,17 @@ def load_gadget_format_binary_particledat(f, header, ptype, skip_bh=0):
                 if (ptype==4): zmet=np.reshape(star_z,(-1,header['Flag_Metals']))
         
         if (Npart[5]>0):
-            if (skip_bh > 0):
+            if (skip_sink > 0):
                 ## BH mass (same as code units, but this is the separately-tracked BH mass from particle mass)
-                bh_mass = array.array('f')
-                bh_mass.fromfile(f, Npart[5])
+                sink_mass = array.array('f')
+                sink_mass.fromfile(f, Npart[5])
                 f.read(4+4) # Read block size fields.
                 ## BH accretion rate in snapshot
-                bh_mdot = array.array('f')
-                bh_mdot.fromfile(f, Npart[5])
+                sink_mdot = array.array('f')
+                sink_mdot.fromfile(f, Npart[5])
                 f.read(4+4) # Read block size fields.
     
     return {'Coordinates':pos[n0:n1,:], 'Velocities':vel[n0:n1,:], 'ParticleIDs':id[n0:n1], \
-        'Masses':mm, 'Metallicity':zmet, 'StellarFormationTime':star_age, 'BH_Mass':bh_mass, \
-        'BH_Mdot':bh_mdot, 'InternalEnergy':gas_u, 'Density':gas_rho, 'SmoothingLength':gas_hsml, \
+        'Masses':mm, 'Metallicity':zmet, 'StellarFormationTime':star_age, 'Sink_Mass':sink_mass, \
+        'Sink_Mdot':sink_mdot, 'InternalEnergy':gas_u, 'Density':gas_rho, 'KernelMaxRadius':gas_rkern, \
         'ElectronAbundance':gas_ne, 'NeutralHydrogenAbundance':gas_nhi, 'StarFormationRate':gas_SFR}

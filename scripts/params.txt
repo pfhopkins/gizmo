@@ -68,8 +68,8 @@ MinGasTemp                 10.	    % Temperature floor. [Default=0]
 
 %---- Hydro reconstruction (kernel) parameters
 DesNumNgb                  32      % Cell-reconstruction kernel number: 32-60 standard in 3D, 60-114 for quintic [Default=Guess for kernel]
-MaxHsml                    1.0e10  % minimum gas kernel length (some very large value to prevent errors) [Default=infinity]
-MinGasHsmlFractional       0       % minimum kernel length relative to gas force softening (<= 1) [Default=0]
+MaxKernelRadius                    1.0e10  % minimum gas kernel length (some very large value to prevent errors) [Default=infinity]
+MinGasKernelRadiusFractional       0       % minimum kernel length relative to gas force softening (<= 1) [Default=0]
 %----- adaptive grav softening or other kernel-interactions for non-gas elements
 AGS_DesNumNgb              32      % Neighbor number for calculating interaction kernel for non-gas cells [Default=Guess for kernel]
 %---- Rebuild domains when >this fraction of particles active, set lower to rebuild more frequently
@@ -201,40 +201,38 @@ StellarMassLoss_Energy_Renormalization  1   % fraction of returned gas energy+mo
 CosmicRay_SNeFraction                   0.1 % fraction of SNe ejecta kinetic energy into cosmic rays (~10%)
 
 
-%-------------- Black Hole accretion & formation (BLACK_HOLES on)
+%-------------- sink particle accretion & formation (SINK_PARTICLES on)
 %--- formation/seeding
-SeedBlackHoleMass            1.0e-7 	% initial mass (on-the-fly or single galaxy)
-SeedAlphaDiskMass            0.0        % initial mass in the alpha disk (BH_ALPHADISK_ACCRETION)
-SeedBlackHoleMinRedshift     2.0        % minimum redshift where new BH particles are seeded (lower-z ceases seeding)
-SeedBlackHoleMassSigma       0.5        % lognormal standard deviation (in dex) in initial BH seed masses
-SeedBlackHolePerUnitMass     1.e-4      % stellar mass (code unit) per BH seed (BH_SEED_FROM_LOCALGAS)
+SeedSinkMass            1.0e-7 	   % initial mass (on-the-fly or single galaxy)
+SeedReservoirMass       0.0        % initial mass in the alpha disk (SINK_ALPHADISK_ACCRETION)
+SeedSinkMinRedshift     2.0        % minimum redshift where new BH particles are seeded (lower-z ceases seeding)
+SeedSinkMassSigma       0.5        % lognormal standard deviation (in dex) in initial BH seed masses
+SeedSinkPerUnitMass     1.e-4      % stellar mass (code unit) per BH seed (SINK_SEED_FROM_LOCALGAS)
 %----- (specific options for on-the-fly friends-of-friends based BH seeding: FOF on)
-MinFoFMassForNewSeed         10.	    % minimum mass of FOF group (stars or DM) to get seed, in code units
-TimeBetOnTheFlyFoF           1.01       % time (in code units, e.g. scale-factor) between on-the-fly FOF searches
+MinFoFMassForNewSeed         10.   % minimum mass of FOF group (stars or DM) to get seed, in code units
+TimeBetOnTheFlyFoF           1.01  % time (in code units, e.g. scale-factor) between on-the-fly FOF searches
 %--- accretion
-BlackHoleAccretionFactor     1.0	    % multiplier for mdot (relative to model)
-BlackHoleEddingtonFactor     1.0	    % fraction of eddington to cap (can be >1)
-BlackHoleNgbFactor           3.0	    % multiplier for kernel neighbors for BH
-BlackHoleMaxAccretionRadius  0.02	    % max radius for BH neighbor search/accretion (code units)
-BlackHoleRadiativeEfficiency 0.1        % radiative efficiency (for accretion and feedback)
+SinkAccretionFactor     1.0	    % multiplier for mdot (relative to model)
+SinkEddingtonFactor     1.0	    % fraction of eddington to cap (can be >1)
+SinkNgbFactor           3.0	    % multiplier for kernel neighbors for BH
+SinkMaxAccretionRadius  0.02    % max radius for BH neighbor search/accretion (code units)
+SinkRadiativeEfficiency 0.1     % radiative efficiency (for accretion and feedback)
 %--- feedback
-BlackHoleFeedbackFactor      1.0	    % generic feedback strength multiplier
-BH_Rad_MomentumFactor        1.0	    % multiply radiation pressure (BH_PHOTONMOMENTUM)
-BAL_f_accretion              0.5        % fraction of gas swallowed by BH (BH_WIND options)
-BAL_v_outflow                30000	    % velocity (code units) of BAL outflow (BH_WIND options)
-BAL_internal_temperature     1.0e4      % internal temperature (K) of BAL outflow (BH_WIND_SPAWN)
-BAL_wind_particle_mass       1.e-10     % mass of 'virtual wind particles' in code units (BH_WIND_SPAWN)
-BH_CosmicRay_Injection_Efficiency 0.1   % fraction of accretion energy into cosmic rays (BH_COSMIC_RAYS)
+SinkFeedbackFactor             1.0	    % generic feedback strength multiplier
+Sink_Rad_MomentumFactor        1.0	    % multiply radiation pressure (SINK_PHOTONMOMENTUM)
+Sink_accreted_fraction         0.5      % fraction of gas swallowed by BH (SINK_WIND options)
+Sink_outflow_velocity          30000	% velocity (code units) of BAL outflow (SINK_WIND options)
+Sink_outflow_temperature       1.0e4    % internal temperature (K) of BAL outflow (SINK_WIND_SPAWN)
+Sink_outflow_particlemass      1.e-10   % mass of 'virtual wind particles' in code units (SINK_WIND_SPAWN)
+Sink_CosmicRay_Injection_Efficiency 0.1 % fraction of accretion energy into cosmic rays (SINK_COSMIC_RAYS)
 %------------------------------------------------------------------------------------------------------------
-%--- optional BH parameters if special options [debug/non-standard blackhole options] are enabled
+%--- optional BH parameters if special options [debug/non-standard sink options] are enabled
 %------------------------------------------------------------------------------------------------------------
-BH_spawn_injection_radius    0.01       % manually set the spatial radius/injection scale for jet cell-spawning, in code units (if BH_WIND_SPAWN_SET_BFIELD_POLTOR on)
-BH_spawn_poloidal_B          1e-4       % manually set poloidal magnetic field for spawned cells at the jet or angular momentum axis at r=BH_spawn_rinj in Gauss (positive means upward), if BH_WIND_SPAWN_SET_BFIELD_POLTOR on
-BH_spawn_toroidal_B          1e-4       % manually set toroidal magnetic field for spawned cells in the plane perpendicular to the jet or angular momentum axis at r=BH_spawn_rinj in Gauss (positive means anti-clockwise), if BH_WIND_SPAWN_SET_BFIELD_POLTOR on
-BH_fb_duty_cycle             1.0        % manually set fraction of the time that accretion/feedback is 'on', set=1 for constant accretion (if BH_DEBUG_FIX_MDOT_MBH on)
-BH_fb_period                 0.1        % manually set period for the duty cycle above, in time code units (time for entire on-off cycle, if BH_DEBUG_FIX_MDOT_MBH on)
-BH_jet_precession_degree     15         % manually set a precession angle in degrees (between 0 and 90; if BH_WIND_SPAWN_SET_JET_PRECESSION on)
-BH_jet_precession_period     0.1        % manually set a precession period in code units (>0, in code units; if BH_WIND_SPAWN_SET_JET_PRECESSION on)
+Sink_spawn_injection_radius    0.01       % manually set the spatial radius/injection scale for jet cell-spawning, in code units (if SINK_WIND_SPAWN_SET_BFIELD_POLTOR on)
+Sink_spawn_poloidal_B          1e-4       % manually set poloidal magnetic field for spawned cells at the jet or angular momentum axis at r=Sink_spawn_injectionradius in Gauss (positive means upward), if SINK_WIND_SPAWN_SET_BFIELD_POLTOR on
+Sink_spawn_toroidal_B          1e-4       % manually set toroidal magnetic field for spawned cells in the plane perpendicular to the jet or angular momentum axis at r=Sink_spawn_injectionradius in Gauss (positive means anti-clockwise), if SINK_WIND_SPAWN_SET_BFIELD_POLTOR on
+Sink_jet_precession_degree     15         % manually set a precession angle in degrees (between 0 and 90; if SINK_WIND_SPAWN_SET_JET_PRECESSION on)
+Sink_jet_precession_period     0.1        % manually set a precession period in code units (>0, in code units; if SINK_WIND_SPAWN_SET_JET_PRECESSION on)
 
 
 %-------------------------------------------------------------------------

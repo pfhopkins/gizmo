@@ -6,7 +6,7 @@ See the [User Guide](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO_files/giz
 
 The code is descended from P-SPH, itself descended from GADGET-3 (so a huge debt owes to the work of Volker Springel), and many of the GADGET conventions remain (for compatibility with GADGET outputs and codes). See the source code for appropriate attribution of the code elements. 
 
-Both the [public code](https://github.com/pfhopkins/gizmo-public) ([alternative repo here](https://bitbucket.org/phopkins/gizmo-public)) and the [development (private) code](https://bitbucket.org/phopkins/gizmo) are hosted on git version-controlled repositories. For code issues, feature requests, or bugs, please post Discussion and Issues interface at the [public code github repository](https://github.com/pfhopkins/gizmo-public). The previous GIZMO Google Group had to be de-activated owing to security and spam concerns.
+Both the [public code](https://github.com/pfhopkins/gizmo-public) ([alternative repo here](https://bitbucket.org/phopkins/gizmo-public)) and the [development (private) code](https://github.com/pfhopkins/gizmo) ([alternative repo here](https://bitbucket.org/phopkins/gizmo)) are hosted on git version-controlled repositories. For code issues, feature requests, or bugs, please post Discussion and Issues interface at the [public code github repository](https://github.com/pfhopkins/gizmo-public). The previous GIZMO Google Group had to be de-activated owing to security and spam concerns.
 
 Basic Rules: 
 
@@ -16,4 +16,4 @@ Basic Rules:
 
 The public version of the code is free software, distributed under the [GNU General Public License](http://www.gnu.org/copyleft/gpl.html). You may freely distribute and copy the public code. You may also modify it as you wish, and distribute these modified versions as long as you indicate prominently any changes you made in the original code, and as long as you leave the copyright notices, and the no-warranty notice intact. Please read the General Public License for more details. Note that the authors retain their copyright on the code. 
 
-If you use any version of the code, please reference the code paper, [Hopkins 2015, MNRAS, 450, 53](http://arxiv.org/abs/1409.7395); you should also reference Volker Springel's GADGET paper (Springel, 2005, MNRAS, 364, 1105) for the domain decomposition and N-body algorithms. Appropriate citations for specific modules are described in the Users Guide.
+If you use any version of the code, please reference the code paper, [Hopkins 2015, MNRAS, 450, 53](http://arxiv.org/abs/1409.7395); you should also reference Volker Springel's GADGET paper (Springel, 2005, MNRAS, 364, 1105) for the domain decomposition and N-body algorithms, as appropriate. Appropriate citations for specific modules are described in the Users Guide.

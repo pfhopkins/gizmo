@@ -47,5 +47,5 @@ CourantFac                         0.2
 ArtCondConstant                    0.25
 ViscosityAMin                      0.025
 ViscosityAMax                      2
-MinGasHsmlFractional               1
+MinGasKernelRadiusFractional               1
 

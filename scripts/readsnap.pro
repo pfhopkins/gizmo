@@ -9,7 +9,7 @@
 ;;                                                      ;;
 ;;  use as follows:                                     ;;
 ;;                                                      ;;
-;;      ok= fload_snapshot_bh(frun,0,[....])            ;;
+;;      ok= readsnap(frun,0,[....])            ;;
 ;;                                                      ;;
 ;;      frun= full path to data directory.              ;;
 ;;            it assumes that all snapshots are         ;;
@@ -56,10 +56,10 @@ function readsnap, frun, num, $
 			show_header=show_header, $		;; show header info
 			direct_name_used=direct_name_used, $
 			find_center=find_center, $
-			center_on_bh=center_on_bh, $
+			center_on_sink=center_on_sink, $
 			do_four=do_four, $				;; 
 			skip_extra_gas_info=skip_extra_gas_info, $
-			skip_bh=skip_bh,$
+			skip_sink=skip_sink,$
 			SET_BASENAME=SET_BASENAME,$
 			cosmological=cosmological
 
@@ -73,7 +73,7 @@ function readsnap, frun, num, $
     COMMON HaloData, xhalo,yhalo,zhalo,vxhalo,vyhalo,vzhalo, mhalo,dmid
     COMMON DiskData, xdisk,ydisk,zdisk,vxdisk,vydisk,vzdisk, mdisk,did
     COMMON OtherData, id, mass
-    COMMON GasData, xgas,ygas,zgas,vxgas,vygas,vzgas,u,rho,volume,hsml,mgas,gid
+    COMMON GasData, xgas,ygas,zgas,vxgas,vygas,vzgas,u,rho,volume,rkern,mgas,gid
     COMMON OldStarData, diskage, diskmetals, bulgeage, bulgemetals
     COMMON SfrData, mfs, sfr, stellage, gmetals, smetals
     COMMON MultiphaseData, mclouds
@@ -85,9 +85,9 @@ function readsnap, frun, num, $
     COMMON PotData, pgas, phalo, pdisk, pbulge, pstars, pbh
     COMMON EnergyDetail, totradiated, totshocked, totfeedback
     COMMON ParentID, parentid
-    COMMON StarOrig, origmass, orighsml
+    COMMON StarOrig, origmass, origrkern
     COMMON Center, com, alternate_com, b_com
-    COMMON BlackHoleData, xbh, ybh, zbh, vxbh, vybh, vzbh, mbh, bhmass, bhaccrate, bhid
+    COMMON SinkData, xbh, ybh, zbh, vxbh, vybh, vzbh, mbh, bhmass, bhaccrate, bhid
 ;    COMMON Galaxy1, startid1, numpart1, gas_startid1, gas_numpart1
 ;    COMMON Galaxy2, startid2, numpart2, gas_startid2, gas_numpart2
 ;    COMMON SnapInfo, frun
@@ -106,7 +106,7 @@ function readsnap, frun, num, $
     if not keyword_set(num) then num=0
     if not keyword_set(frun) then begin
 	print, "  "
-	print, "fload_snapshot, frun, num"
+	print, "readsnap, frun, num"
 	return, -1
     endif
 
@@ -127,7 +127,7 @@ function readsnap, frun, num, $
 	exts=strmid(exts,strlen(exts)-4,4)
 		print, "******************************"
 		print, "******************************"
-		print, "   fload_snapshot_bh "
+		print, "       readsnap      "
 		print, "          is  "
 		print, "  momentarily changed"
 		print, "******************************"
@@ -250,7 +250,7 @@ foundfile:
 	return, -1
     endif
 
-    ; volker isn't using a flag, so do it manually
+    ; no flag, so do it manually
     flag_snaphaspot= 0L
     if keyword_set(nopot_in_snap) then flag_snaphaspot= 0L 
     if keyword_set(havepot_in_snap) then flag_snaphaspot= 1L
@@ -335,9 +335,9 @@ if keyword_set(skip_extra_gas_info) then goto, moveon
     endif
 
     if Ngas gt 0 then begin
-	hsml=fltarr(Ngas)
-	if not keyword_set(ics) then readu,1,hsml
-	check_field, hsml, 'hsml'
+	rkern=fltarr(Ngas)
+	if not keyword_set(ics) then readu,1,rkern
+	check_field, rkern, 'rkern'
     endif
 
     if flag_sfr gt 0 and Ngas gt 0 then begin
@@ -389,7 +389,7 @@ if keyword_set(skip_extra_gas_info) then goto, moveon
 
     if eof(1) eq 1 then goto, moveon
 
-    if Nbh gt 0 and not keyword_set(skip_bh) then begin
+    if Nbh gt 0 and not keyword_set(skip_sink) then begin
         bhmass= fltarr(Nbh)
         readu, 1, bhmass
         check_field, bhmass, 'bhmass'
@@ -425,20 +425,20 @@ moveon:
         if keyword_set(arepo) then volume=volume/hubble/hubble/hubble
         ;mfs=mfs/hubble
         ;if flag_multiphase gt 0 then mclouds=mclouds/hubble
-		hsml=hsml/hubble
+		rkern=rkern/hubble
 	if not keyword_set(cosmological) then begin
 	if flag_stellarage gt 0 and Nstars gt 0 then stellage= stellage/hubble
 	endif
 	;if flag_metals gt 0 then gmetals=gmetals/hubble
 	;if flag_metals gt 0 and Nstars gt 0 then smetals=smetals/hubble
 	;if flag_starorig gt 0 and Nstars gt 0 then origmass=origmass/hubble
-	;if flag_starorig gt 0 and Nstars gt 0 then orighsml=orighsml/hubble
+	;if flag_starorig gt 0 and Nstars gt 0 then origrkern=origrkern/hubble
 
 	;
 	; potential and velocity should be fine
 
 	if keyword_set(cosmological) then begin
-	  ascale=time & hsml=hsml*ascale & pos=pos*ascale & rho=rho/(ascale*ascale*ascale) 
+	  ascale=time & rkern=rkern*ascale & pos=pos*ascale & rho=rho/(ascale*ascale*ascale) 
 	endif
     endif
 
@@ -727,7 +727,7 @@ moveon:
         return, -1
     endif
 
-    ; volker isn't using a flag, so do these manually
+    ; no flag, so do these manually
     flag_stargens= 1L
     flag_energydetail= 0L
     flag_parentid= 0L
@@ -766,7 +766,7 @@ moveon:
 	npart_done = 0*npartTotal
 	if npartTotal(0) gt 0 then begin
 	  xgas=fltarr(npartTotal(0)) & ygas=xgas & zgas=xgas & vxgas=xgas & vygas=xgas & vzgas=xgas
-	  mgas=xgas & u=xgas & rho=xgas & nume=xgas & numh=xgas & sfr=xgas & hsml=xgas & gid=lonarr(npartTotal(0))
+	  mgas=xgas & u=xgas & rho=xgas & nume=xgas & numh=xgas & sfr=xgas & rkern=xgas & gid=lonarr(npartTotal(0))
 	  if flag_metals gt 0 then gmetals=fltarr(npartTotal(0),flag_metals)
 	endif
 	if npartTotal(1) gt 0 then begin
@@ -825,7 +825,7 @@ moveon:
 	if flag_cooling gt 0 then nume[npart_done(0):npart_done(0)+npart(0)-1]= h5d_read(h5d_open(group_id,"ElectronAbundance"))
 	if flag_cooling gt 0 then numh[npart_done(0):npart_done(0)+npart(0)-1]= h5d_read(h5d_open(group_id,"NeutralHydrogenAbundance"))
 	if flag_sfr gt 0 then sfr[npart_done(0):npart_done(0)+npart(0)-1]= h5d_read(h5d_open(group_id,"StarFormationRate"))
-	hsml[npart_done(0):npart_done(0)+npart(0)-1]= hinv * h5d_read(h5d_open(group_id,"SmoothingLength")) * ascale
+	rkern[npart_done(0):npart_done(0)+npart(0)-1]= hinv * h5d_read(h5d_open(group_id,"KernelMaxRadius")) * ascale
 	;pgas= h5d_read(h5d_open(group_id,"Potential"))
 	gid[npart_done(0):npart_done(0)+npart(0)-1]= h5d_read(h5d_open(group_id,"ParticleIDs"))
 	h5g_close, group_id
@@ -935,7 +935,7 @@ moveon:
     endif
 
 
-    ;  Black Holes
+    ;  sink particles
     ; --------------
     if npart(5) gt 0 then begin
         group_id= h5g_open(file_id,"PartType5")
@@ -950,9 +950,9 @@ moveon:
         if massarr[5] le 0 then mbh[npart_done(5):npart_done(5)+npart(5)-1]= hinv* h5d_read(h5d_open(group_id,"Masses")) else mbh= 0.0*xbh + massarr[5]
         ;pbh= h5d_read(h5d_open(group_id,"Potential"))
         bhid[npart_done(5):npart_done(5)+npart(5)-1]= h5d_read(h5d_open(group_id,"ParticleIDs"))
-		if not keyword_set(skip_bh) then begin
-        	bhmdot[npart_done(5):npart_done(5)+npart(5)-1]= h5d_read(h5d_open(group_id,"BH_Mdot"))
-        	bhmass[npart_done(5):npart_done(5)+npart(5)-1]= h5d_read(h5d_open(group_id,"BH_Mass"))
+		if not keyword_set(skip_sink) then begin
+        	bhmdot[npart_done(5):npart_done(5)+npart(5)-1]= h5d_read(h5d_open(group_id,"Sink_Mdot"))
+        	bhmass[npart_done(5):npart_done(5)+npart(5)-1]= h5d_read(h5d_open(group_id,"Sink_Mass"))
         endif
         h5g_close, group_id
     endif
@@ -1000,7 +1000,7 @@ moveon:
 calccenter:
 
 	com=[0.,0.,0.]
-    if keyword_set(center_on_bh) then if Nbh gt 0 then com=[xbh(0),ybh(0),zbh(0)]
+    if keyword_set(center_on_sink) then if Nbh gt 0 then com=[xbh(0),ybh(0),zbh(0)]
     if keyword_set(find_center) then com=fload_center(1) ;; fload_center_felix(1)
     alternate_com=com
 

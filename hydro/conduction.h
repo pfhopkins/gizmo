@@ -12,19 +12,19 @@
 /* --------------------------------------------------------------------------------- */
 {
     double scalar_i = local.InternalEnergyPred; // physical units
-    double scalar_j = SphP[j].InternalEnergyPred; // physical units
+    double scalar_j = CellP[j].InternalEnergyPred; // physical units
     double kappa_i = local.Kappa_Conduction; // physical units
-    double kappa_j = SphP[j].Kappa_Conduction; // physical units
+    double kappa_j = CellP[j].Kappa_Conduction; // physical units
     
     if((kappa_i>MIN_REAL_NUMBER)&&(kappa_j>MIN_REAL_NUMBER)&&(local.Mass>0)&&(P[j].Mass>0))
     {
         double d_scalar = scalar_i - scalar_j;
         double rho_i, rho_j, rho_ij;
-        rho_i = local.Density*All.cf_a3inv; rho_j = SphP[j].Density*All.cf_a3inv; rho_ij = 0.5*(rho_i+rho_j); // physical units
+        rho_i = local.Density*All.cf_a3inv; rho_j = CellP[j].Density*All.cf_a3inv; rho_ij = 0.5*(rho_i+rho_j); // physical units
         
         // NOT SPH: Now we use the more accurate finite-volume formulation, with the effective faces we have already calculated //
         double *grad_i = local.Gradients.InternalEnergy;  // physical u / code length
-        double *grad_j = SphP[j].Gradients.InternalEnergy;
+        double *grad_j = CellP[j].Gradients.InternalEnergy;
         
         double flux_wt = rho_ij;
         double diffusion_wt = 0.5*(kappa_i+kappa_j);

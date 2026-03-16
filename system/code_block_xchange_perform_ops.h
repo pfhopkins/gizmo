@@ -78,7 +78,7 @@ be copy-pasted and can be generically optimized in a single place */
         n_exported += Nexport;
         for(j = 0; j < NTask; j++) {Send_count[j] = 0;}
         for(j = 0; j < Nexport; j++) {Send_count[DataIndexTable[j].Task]++;}
-        MYSORT_DATAINDEX(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
+        mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
         tstart = my_second();
         MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD); /* broadcast import/export counts */
         tend = my_second(); timewait += timediff(tstart, tend);
@@ -90,9 +90,7 @@ be copy-pasted and can be generically optimized in a single place */
         {
             place = DataIndexTable[j].Index;
             INPUTFUNCTION_NAME(&DATAIN_NAME[j], place, loop_iteration);
-#ifndef DONOTUSENODELIST
             memcpy(DATAIN_NAME[j].NodeList,DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
-#endif
         }
 
         /* ok now we have to figure out if there is enough memory to handle all the tasks sending us their data, and if not, break it into sub-chunks */

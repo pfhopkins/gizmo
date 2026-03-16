@@ -82,8 +82,8 @@ then
     ## some of the output files are useful, but can get incredibly large 
     ##   (depending on the details of the simulation), because they are written 
     ##   as ascii with a lot of repeating numbers. this includes all of the 'baryonic' 
-    ##   diagnostic files like sfr.txt, HIIheating.txt, blackhole information, etc. 
-    ##   (especially the blackhole_details files). these can be zipped to compress
+    ##   diagnostic files like sfr.txt, HIIheating.txt, sink information, etc. 
+    ##   (especially the sink_details files). these can be zipped to compress
     ##   them by typical factors of ~100, so we do that here if they exist.
     if [ -f "sfr.txt" ]
     then
@@ -95,15 +95,15 @@ then
       tar -czvf HIIheating.tgz HIIheating.txt
       rm HIIheating.txt
     fi
-    if [ -f "blackholes.txt" ]
+    if [ -f "sinks.txt" ]
     then
-      tar -czvf blackholes.tgz blackholes.txt
-      rm blackholes.txt
+      tar -czvf sinks.tgz sinks.txt
+      rm sinks.txt
     fi
-    if [ -d "blackhole_details" ]
+    if [ -d "sink_details" ]
     then
-      tar -czvf blackhole_details.tgz blackhole_details
-      rm -r blackhole_details
+      tar -czvf sink_details.tgz sink_details
+      rm -r sink_details
     fi
 fi
 ## Now we compress the snapshots themselves. This calls a python script, also 

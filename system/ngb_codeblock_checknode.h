@@ -31,21 +31,12 @@
         if(dy > dist) continue;
     }
     // now test against the minimal sphere enclosing everything //
-    dist += FACT1 * current->len;
+    dist += CUBE_EDGEFACTOR_1 * current->len;
     if(dx * dx + dy * dy + dz * dz > dist * dist) continue;
 
 #else
 /* this is the 'normal' operation mode */
 
-#ifdef REDUCE_TREEWALK_BRANCHING
-    // On the Power platform it is more efficient to compute all conditions first and then perform a single branch (on current Intel processors this is equally fast)
-    MyDouble dist2 = dist + FACT1*current->len;
-    dx = NGB_PERIODIC_BOX_LONG_X(current->center[0] - vcenter.d[0], current->center[1] - vcenter.d[1], current->center[2] - vcenter.d[2],-1);
-    dy = NGB_PERIODIC_BOX_LONG_Y(current->center[0] - vcenter.d[0], current->center[1] - vcenter.d[1], current->center[2] - vcenter.d[2],-1);
-    dz = NGB_PERIODIC_BOX_LONG_Z(current->center[0] - vcenter.d[0], current->center[1] - vcenter.d[1], current->center[2] - vcenter.d[2],-1);
-    // now test against the minimal sphere enclosing everything
-    if ((dx > dist) || (dy > dist) || (dz > dist) || (dx * dx + dy * dy + dz * dz > dist2 * dist2)) continue;    // ok, we need to open the node
-#else
     // On older Intel and AMD processors it seems better to avoid the computations and branch early
     dx = NGB_PERIODIC_BOX_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
     if(dx > dist) continue;
@@ -54,7 +45,6 @@
     dz = NGB_PERIODIC_BOX_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
     if(dz > dist) continue;
     // now test against the minimal sphere enclosing everything //
-    dist += FACT1 * current->len;
+    dist += CUBE_EDGEFACTOR_1 * current->len;
     if(dx * dx + dy * dy + dz * dz > dist * dist) continue;
-#endif
 #endif

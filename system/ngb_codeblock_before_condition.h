@@ -11,15 +11,6 @@
   integertime ti_Current = All.Ti_Current;
   MyDouble dx, dy, dz, dist, xtmp; xtmp=0;
 
-#ifdef REDUCE_TREEWALK_BRANCHING
-  t_vector box, hbox, vcenter;
-#ifdef BOX_PERIODIC
-  INIT_VECTOR3(boxSize_X, boxSize_Y, boxSize_Z, &box);
-  INIT_VECTOR3(searchcenter[0], searchcenter[1], searchcenter[2], &vcenter);
-  SCALE_VECTOR3(0.5, &box, &hbox);
-#endif
-#endif
-
   numngb = 0;
   no = *startnode;
 

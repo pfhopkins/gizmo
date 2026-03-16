@@ -4,20 +4,16 @@
  */
 if(P[p].Ti_current != ti_Current)
 {
-    LOCK_PARTNODEDRIFT;
 #ifdef _OPENMP
 #pragma omp critical(_partdriftngb_)
 #endif
-    drift_particle(p, ti_Current);
-    UNLOCK_PARTNODEDRIFT;
+    {
+        drift_particle(p, ti_Current);
+    }
 }
 
-#ifndef REDUCE_TREEWALK_BRANCHING
 #if (SEARCHBOTHWAYS==1)
-dist = DMAX(PPP[p].Hsml, hsml);
-#else
-dist = hsml;
-#endif
+dist = DMAX(P[p].KernelRadius, rkern);
 dx = NGB_PERIODIC_BOX_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
 if(dx > dist) continue;
 dy = NGB_PERIODIC_BOX_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
@@ -32,13 +28,6 @@ else
 {
     if(no >= maxPart + maxNodes)	/* pseudo particle */
     {
-#ifdef DONOTUSENODELIST
-        if(mode == 1)
-        {
-            no = Nextnode[no - maxNodes];
-            continue;
-        }
-#endif
         if(mode == 1) {endrun(123128);}
         
         if(target >= 0)	/* if no target is given, export will not occur */
@@ -52,7 +41,6 @@ else
             if(exportnodecount[task] == NODELISTLENGTH)
             {
                 int exitFlag = 0, nexp;
-                LOCK_NEXPORT;
 #ifdef _OPENMP
 #pragma omp critical(_nexportngb_)
 #endif
@@ -69,7 +57,6 @@ else
                         Nexport++;
                     }
                 }
-                UNLOCK_NEXPORT;
                 if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
                 
                 exportnodecount[task] = 0;
@@ -78,11 +65,9 @@ else
                 DataIndexTable[nexp].Index = target;
                 DataIndexTable[nexp].IndexGet = nexp;
             }
-#ifndef DONOTUSENODELIST
             DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (maxPart + maxNodes)];
             if(exportnodecount[task] < NODELISTLENGTH)
                 DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;
-#endif
                 }
         
         no = Nextnode[no - maxNodes];
@@ -91,32 +76,26 @@ else
     
     current = &Nodes[no];
     
-#ifndef DONOTUSENODELIST
     if(mode == 1)
     {
         if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
         {
             *startnode = -1;
-#ifndef REDUCE_TREEWALK_BRANCHING
             return numngb;
-#else
-            return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml, SEARCHBOTHWAYS);
-#endif
         }
     }
-#endif
     
     if(current->Ti_current != ti_Current)
     {
-        LOCK_PARTNODEDRIFT;
 #ifdef _OPENMP
 #pragma omp critical(_nodedriftngb_)
 #endif
-        force_drift_node(no, ti_Current);
-        UNLOCK_PARTNODEDRIFT;
+        {
+            force_drift_node(no, ti_Current);
+        }
     }
     
-    if(!(current->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
+    if(current->N_part <= 1)
     {
         if(current->u.d.mass)	/* open cell */
         {
@@ -127,9 +106,9 @@ else
     
     double hmax = Extnodes[no].hmax;
 #if (SEARCHBOTHWAYS==1)
-    dist = DMAX(hmax, hsml) + 0.5 * current->len;
+    dist = DMAX(hmax, rkern) + 0.5 * current->len;
 #else
-    dist = hsml + 0.5 * current->len;
+    dist = rkern + 0.5 * current->len;
 #endif
     no = current->u.d.sibling;	/* in case the node can be discarded */
 #include "ngb_codeblock_checknode.h"
@@ -138,8 +117,4 @@ else
 }
 
 *startnode = -1;
-#ifndef REDUCE_TREEWALK_BRANCHING
 return numngb;
-#else
-return ngb_filter_variables(numngb, ngblist, &vcenter, &box, &hbox, hsml, SEARCHBOTHWAYS);
-#endif

@@ -1,4 +1,4 @@
-/*
+/*!
 * This file was originally part of the GADGET3 code developed by Volker Springel.
 * It has been updated significantly by PFH for basic compatibility with GIZMO,
 * as well as code cleanups, and accommodating new GIZMO functionality for various
@@ -20,15 +20,15 @@ sort_r2list;
 void subfind_col_find_candidates(int totgrouplen);
 void subfind_reshuffle_free(void);
 
-void read_hsml_files(float *Values, int count, enum iofields blocknr, long long nskip);
-void read_hsml_files_voronoi(float *Values, int count, enum iofields blocknr, long long nskip);
+void read_rkern_files(float *Values, int count, enum iofields blocknr, long long nskip);
+void read_rkern_files_voronoi(float *Values, int count, enum iofields blocknr, long long nskip);
 
 void subfind_distlinklist_get_two_heads(long long ngb_index1, long long ngb_index2, 
 					long long *head,      long long *head_attach);
 
 int subfind_reshuffle_compare_ID_list_ID(const void *a, const void *b);
-void  read_hsml_table(void);
-void get_hsml_file(long long nskip, int count, int *filenr, int *n_to_read, int *n_to_skip);
+void  read_rkern_table(void);
+void get_rkern_file(long long nskip, int count, int *filenr, int *n_to_read, int *n_to_skip);
 void read_subfind_ids(void);
 int subfind_reshuffle_compare_ID_list_ID(const void *a, const void *b);
 
@@ -40,7 +40,7 @@ void subfind_col_load_candidates(int num);
 
 void subfind(int num);
 int Subfind_DensityOtherProps_evaluate(int target, int mode, int *nexport, int *nsend_local);
-int subfind_contamination_treefind(MyDouble *searchcenter, MyFloat hsml, int target, int *startnode,
+int subfind_contamination_treefind(MyDouble *searchcenter, MyFloat rkern, int target, int *startnode,
                                       int mode, int *nexport, int *nsend_local, double *Mass);
 int subfind_contamination_evaluate(int target, int mode, int *nexport, int *nsend_local);
 void subfind_contamination(void);
@@ -48,20 +48,20 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
 void subfind_density(int j);
 void Subfind_DensityOtherProps_Loop(void);
 int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_local);
-double subfind_ovderdens_treefind(MyDouble *searchcenter, MyFloat hsml, int target, int *startnode,
+double subfind_ovderdens_treefind(MyDouble *searchcenter, MyFloat rkern, int target, int *startnode,
 				  int mode, int *nexport, int *nsend_local);
 void subfind_save_densities(int num);
 void subfind_save_local_densities(int num);
 void subfind_setup_smoothinglengths(int j);
 int subfind_density_evaluate(int target, int mode, int *nexport, int *nsend_local, int tp);
-int subfind_ngb_treefind_linkpairs(MyDouble *searchcenter, double hsml, int target, int *startnode, int mode,
+int subfind_ngb_treefind_linkpairs(MyDouble *searchcenter, double rkern, int target, int *startnode, int mode,
                                  double *hmax, int *nexport, int *nsend_local);
 void subfind_save_local_catalogue(int num);
 void subfind_save_final(int num);
 int subfind_linkngb_evaluate(int target, int mode, int *nexport, int *nsend_local);
-int subfind_ngb_treefind_linkngb(MyDouble *searchcenter, double hsml, int target, int *startnode, int mode,
+int subfind_ngb_treefind_linkngb(MyDouble *searchcenter, double rkern, int target, int *startnode, int mode,
                                  double *hmax, int *nexport, int *nsend_local);
-int subfind_ngb_treefind_nearesttwo(MyDouble *searchcenter, double hsml, int target, int *startnode, int mode,
+int subfind_ngb_treefind_nearesttwo(MyDouble *searchcenter, double rkern, int target, int *startnode, int mode,
                                     double *hmax, int *nexport, int *nsend_local);
 void subfind_distribute_particles(int mode);
 void subfind_unbind_independent_ones(int count);
@@ -114,7 +114,7 @@ int subfind_compare_unbind_data_seqnr(const void *a, const void *b);
 int subfind_compare_densities(const void *a, const void *b);
 int subfind_compare_candidates_rank(const void *a, const void *b);
 int subfind_ngb_compare_dist(const void *a, const void *b);
-int subfind_compare_hsml_data(const void *a, const void *b);
+int subfind_compare_rkern_data(const void *a, const void *b);
 int subfind_compare_ID_list(const void *a, const void *b);
 int subfind_compare_SubGroup_GrNr_SubNr(const void *a, const void *b);
 int subfind_compare_candidates_subnr(const void *a, const void *b);

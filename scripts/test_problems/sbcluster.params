@@ -8,7 +8,6 @@
 % The following parameters are recommended, but not strictly necessary: 
 %
 %        PMGRID=32
-%        PM_HIRES_REGION_CLIPPING=1000
 %        MULTIPLEDOMAINS=16
 %        ADAPTIVE_GRAVSOFT_FORGAS
 %
@@ -37,7 +36,7 @@ UnitLength_in_cm                   9.87417e+25
 UnitMass_in_g                      1.80886e+49
 UnitVelocity_in_cm_per_s           1.10567e+08
 UnitMagneticField_in_gauss         1
-MinGasHsmlFractional               1
+MinGasKernelRadiusFractional               1
 % set softenings in code units. note the default setup here has only gas and DM
 %  which are types 0 and 1, respectively. values for other types wont matter
 %  unless added physics (e.g. star formation) is enabled

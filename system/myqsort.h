@@ -1,6 +1,7 @@
 /* must define macros QSORT, KEY_TYPE, STRUCT_TYPE, KEY_COPY, GET_KEYVAL */
-/*
- * This file was originally part of the GADGET3 code by Volker Springel.
+/*!
+ * This file was originally part of the GADGET3 code by Volker Springel. Minor modifications for new memory
+ * conventions in GIZMO implemented by Phil Hopkins.
  */
 static void QSORT(KEY_TYPE *a,int n)
 {

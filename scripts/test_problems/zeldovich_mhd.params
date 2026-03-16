@@ -43,7 +43,7 @@ Softening_Type1                    0 % no DM (OmegaBaryon=1); otherwise set this
 Softening_Type2                    0 % no type-2 particles
 Softening_Type3                    0 % no type-3 particles
 Softening_Type4                    0 % no type-4 (newly-formed star) particles
-Softening_Type5                    0 % no type-5 (blackhole) particles
+Softening_Type5                    0 % no type-5 (sink) particles
 SofteningGasMaxPhys                0.00015
 Softening_Type1_MaxPhysLimit       0
 Softening_Type2_MaxPhysLimit       0
@@ -51,4 +51,4 @@ Softening_Type3_MaxPhysLimit       0
 Softening_Type4_MaxPhysLimit       0
 Softening_Type5_MaxPhysLimit       0
 MinGasTemp                         1e-20
-MinGasHsmlFractional               1
+MinGasKernelRadiusFractional               1

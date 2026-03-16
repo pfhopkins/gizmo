@@ -11,7 +11,6 @@ int j, dummy, *ngblist, thread_id = *(int *) p;
 ngblist = Ngblist + thread_id * NumPart;
 while(1)
 {
-    LOCK_NEXPORT;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistsecblox_)
 #endif
@@ -19,7 +18,6 @@ while(1)
         j = NextJ;
         NextJ++;
     }
-    UNLOCK_NEXPORT;
     if(j >= Nimport) {break;}
     EVALUATION_CALL
 }

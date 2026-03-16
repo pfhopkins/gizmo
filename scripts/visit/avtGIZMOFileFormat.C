@@ -46,43 +46,21 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
 #include <vtkFloatArray.h>
 #include <vtkRectilinearGrid.h>
 #include <vtkStructuredGrid.h>
 #include <vtkUnstructuredGrid.h>
 #include <vtkVertex.h>
-
 #include <avtDatabaseMetaData.h>
-
 #include <DBOptionsAttributes.h>
 #include <Expression.h>
-
 #include <InvalidDBTypeException.h>
 #include <InvalidVariableException.h>
-
 #include <DebugStream.h>
-
 #include <hdf5.h>
-
-// Uncomment to debug the code
-//#define GIZMO_PLUGIN_DEBUG
-
-#ifdef GIZMO_PLUGIN_DEBUG
-
-#ifdef debug4
-#undef debug4
-#endif
-
-#define debug4 std::cout
-#define MYH5CHECK(X) if((X) < 0) assert(false)
-
-#else 
 
 #define MYH5CHECK(X) if((X) < 0) \
         EXCEPTION1(InvalidDBTypeException, "The file could not be opened")
-
-#endif
 
 #define GIZMO_STRLEN 1024
 
@@ -527,7 +505,7 @@ avtGIZMOFileFormat::GetVar(const char *varname)
   char mesh_name[GIZMO_STRLEN];
   char field_name[GIZMO_STRLEN];
   sscanf(varname, "PartType%d/%s", &ptype, field_name);
-  sprintf(mesh_name, "PartType%d", ptype);
+  snprintf(mesh_name, GIZMO_STRLEN, "PartType%d", ptype);
 
   hid_t file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     MYH5CHECK(file_id);
@@ -581,7 +559,7 @@ avtGIZMOFileFormat::GetVectorVar(const char *varname)
   char mesh_name[GIZMO_STRLEN];
   char field_name[GIZMO_STRLEN];
   sscanf(varname, "PartType%d/%s", &ptype, field_name);
-  sprintf(mesh_name, "PartType%d", ptype);
+  snprintf(mesh_name, GIZMO_STRLEN, "PartType%d", ptype);
 
   hid_t file_id = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     MYH5CHECK(file_id);
