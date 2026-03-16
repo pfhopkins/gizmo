@@ -570,7 +570,7 @@ OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION #
 endif
 
 #----------------------------
-ifeq ($(SYSTYPE),"Ubuntu")
+ifeq ($(SYSTYPE),"github-ubuntu")
 CC       =  mpicc
 CXX      =  mpiccxx
 FC       =  $(CC)
