@@ -1,0 +1,19 @@
+Table 2
+Choice of 
+
+
+
+
+
+ for Stellar Models in Different Mass Ranges
+
+M_mix/ M_sun =	0	1 x 10^-4	1 x 10^-3	2 x 10^-3	
+Standard	M >or= 5 M_sun	4 < M < 5 M_sun	3 < M <or= 4 M_sun	M <or= 3 M_sun	
+
+
+	
+Extra models	(4.25, 0.03)	(5, 0.03)	(3.0, 0.007)	(3.25, 0.03)	
+	(4.5, 0.007)	(4, 0.007)	(4.25, 0.03)	cdots	
+	(4.75, 0.007)	cdots	(4.5, 0.03)	cdots	
+
+Note. We also show additional stellar models (mass in  Msun, metallicity) calculated with different values of Mmix for metallicities other than Z = 0.014.

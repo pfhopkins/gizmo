@@ -1,0 +1,32 @@
+Table 3
+The Stellar Nucleosynthesis Models Calculated for Z = 0.014
+
+M_mix/ M_sun =	0	1 x 10^-4	1 x 10^-3	2 x 10^-3	4 x 10^-3	
+Stellar Mass (M_sun)						
+1.00	check					
+1.25	check					
+1.50	check^a
+			check^b [ST]		
+1.75	check^a
+			check^b [ST]		
+2.00		check	check	check [ST]	check	
+2.25				check [ST]		
+2.50				check [ST]		
+2.75				check [ST]		
+3.00		check	check	check [ST]		
+3.25			check [ST]	check		
+3.50			check [ST]			
+3.75			check [ST]			
+4.00		check	check [ST]			
+4.25		check [ST]	check			
+4.50	check	check [ST]	check			
+4.75	check	check [ST]				
+5.00	check [ST]	check				
+5.50	check [ST]					
+6.00	check [ST]					
+7.00	check [ST]					
+8.00	check [ST]					
+
+Notes. A checkmark (check) shows the the size of Mmix used in the calculations. The [ST] label indicates the cases with the standard choice for each model with TDU.
+a For the model without overshoot.
+b For the model with overshoot.

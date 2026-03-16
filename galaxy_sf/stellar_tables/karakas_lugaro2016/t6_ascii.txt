@@ -1,0 +1,19 @@
+Table 6
+Example of the Isotopic Abundance Tables Available
+
+#	
+# Initial mass = 3.500, Z = 0.0300, Y = 0.300, M_mix = 1.00E-03	
+#	
+#Initial isotopic abundance ratios:	
+# c12/c13	n14/n15	o16/o17	o16/o18	mg24/mg25	...	
+8.940E+01	4.476E+02	2.632E+03	4.988E+02	7.899E+00	...	
+#	
+# During TP-AGB	
+#	
+1.963E+01	2.757E+03	3.911E+02	6.987E+02	7.957E+00 ...	
+1.963E+01	2.757E+03	3.911E+02	6.987E+02	7.957E+00 ...	
+1.964E+01	2.754E+03	3.913E+02	6.986E+02	7.957E+00 ...	
+...					
+
+Note. We show the first few lines of the 3.5 Msun, Z = 0.03 model table for the first five isotopic ratios in the table.
+(This table is available in its entirety in FITS format.)

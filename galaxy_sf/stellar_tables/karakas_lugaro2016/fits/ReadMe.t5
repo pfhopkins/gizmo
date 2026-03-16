@@ -1,0 +1,28 @@
+================================================================================
+Title: Stellar yields from metal-rich asymptotic giant branch models 
+Authors: Karakas A.I., Lugaro M. 
+================================================================================
+Description of contents: The surface abundance data tables from Karakas
+    & Lugaro 2016 (Table 5). Each file comprises N models with
+    permutations of initial mass, M_mix, and N_ov at fixed Z. Each model
+    includes 1) initial abundances used in the post-processing
+    calculations; 2) abundances calculated at M (14-84) thermal pulse
+    steps; 3) final elemental abundances, computed at the last time step
+    (which may fall on a thermal pulse or during the interpulse period).
+    Each thermal pulse (TP) step entry includes the stellar parameters:
+    stellar mass (Mass), core mass (Mcore), envelope mass (Menv), and
+    surface luminosity (log L) expressed in solar units. At each TP
+    abundances are tabulated for each of 81 elements are given along
+    with the surface elemental ratios of He/H, C/O and N/O.
+
+    Filename        Z      N_models
+    surf_z007.dat   0.007  27
+    surf_z014.dat   0.014  35
+    surf_z03.dat    0.03   28
+
+
+System requirements: None specific to these files.
+
+Additional comments: 
+    
+================================================================================

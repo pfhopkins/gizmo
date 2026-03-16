@@ -1,0 +1,40 @@
+Table 4
+Example of the Surface Abundance Tables Available
+
+#	
+# Initial mass = 3.500, Z = 0.0300, Y = 0.300, M_mix = 1.00E-03	
+#	
+# Initial abundances	
+#El	Z	log e(X)	[X/H]	[X/Fe]	[X/O]	X(i)	
+...	
+# TP   Mass   Mcore   Menv   log L	
+# 15 3.498070 0.694067 2.804000 4.096260	
+#El	Z	
+
+
+
+
+
+
+
+	[X/H]	[X/Fe]	[X/O]	
+
+
+
+
+
+
+
+	
+p	1	12.000000	0.000000	0.000000	0.000000	6.59291E-01	
+he	2	11.050125	0.152777	-0.187120	-0.167322	3.16795E-01	
+c	6	8.799475	0.218580	-0.121316	-0.101519	3.83509E-03	
+n	7	8.199430	0.774327	0.434431	0.454228	4.03913E-03	
+o	8	9.059475	0.320489	-0.019408	0.000000	1.17543E-02	
+f	9	4.789476	0.370921	0.031024	0.050432	8.41870E-07	
+...							
+# Elemental abundance ratios:	
+# He/H = 1.2100E-01, C/O = 4.3460E-01, N/O = 3.92498E-01	
+
+Note. We show the first few lines at the beginning of the 3.5 Msun, Z = 0.03 model table, and the first few lines after thermal pulse #15.
+(This table is available in its entirety in FITS format.)

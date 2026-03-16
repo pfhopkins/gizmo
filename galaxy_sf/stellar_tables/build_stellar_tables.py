@@ -1871,16 +1871,15 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     Yields (nucleosynthesis):
       M < 8:      Karakas AGB (K&L 2016 for Z>=0.007, K2010 for Z<0.007)
       8 ≤ M < 14: Limongi+2025 CCSNe + NuGrid Z-scaling
-      M ≥ 14:     CL18 explosion yields (13-120 Msun), PARSEC v2 for PISN
+      M ≥ 14:     PARSEC v2 ejecta (all types)
 
     Remnants (what the star becomes):
       M < 8:      WD (from core mass)
       8 ≤ M < 14: ECSN(NS) or CCSN(NS)
       M ≥ 14:     PARSEC v2 verdict (CCSN/FSN/PPISN/PISN/DBH)
-                   → FSN/DBH: yields zeroed (failed SN, no ejecta)
-                   → CCSN: CL18 yields kept
-                   → PPISN: CL18 yields scaled by ejecta fraction
-                   → PISN: PARSEC v2 yields (complete disruption)
+                   → FSN/DBH: yields zeroed (failed SN, wind handled separately)
+                   → CCSN/PPISN: PARSEC v2 net yields
+                   → PISN: PARSEC v2 yields (complete disruption, M_rem=0)
     """
     # Load all yield sources
     print("  Loading Karakas 2010 AGB yields...", flush=True)
@@ -1946,7 +1945,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     rem_type = np.zeros((N_Z, N_M), dtype=int)
     rem_mass = np.zeros((N_Z, N_M))
     yield_src = np.zeros((N_Z, N_M), dtype=int)
-    # yield_src: 0=none, 1=Karakas_AGB, 2=Limongi25+NuGrid, 3=CL18, 4=PARSEC_v2_PISN
+    # yield_src: 0=none, 1=Karakas_AGB, 2=Limongi25+NuGrid, 3=CL18(unused), 4=PARSEC_v2
 
     n_src = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 
@@ -2011,95 +2010,36 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 continue
 
             # ═══ Massive stars: M ≥ 14 Msun ═══
-            # Step 1: Get REMNANT from PARSEC v2 (type + mass)
-            p2_rem_type = None
-            p2_rem_mass = 0.0
+            # Remnant + yields: all from PARSEC v2
+            result = None
             if p2_Ms:
                 result = _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, p2_init_comp)
-                if result is not None:
-                    _, p2_rem_mass, p2_rem_type = result
 
-            # Step 2: Get YIELDS from Limongi25/CL18/NuGrid or PARSEC v2 (PISN)
-            # Always set remnant from PARSEC v2
-            if p2_rem_type is not None:
+            if result is not None:
+                net_y, p2_rem_mass, p2_rem_type = result
                 rem_type[iz, im] = p2_rem_type
                 rem_mass[iz, im] = p2_rem_mass
+
+                # FSN/DBH: no explosion, yields stay zero (wind handled separately)
+                # All others (CCSN, PPISN, PISN): use PARSEC v2 net yields
+                if p2_rem_type not in (3, 6):
+                    for ie, elem in enumerate(TRACKED_ELEMENTS):
+                        yields[iz, im, ie] = net_y.get(elem, 0.0)
+
+                if p2_rem_type == 5:  # PISN: complete disruption
+                    rem_mass[iz, im] = 0.0
+
+                yield_src[iz, im] = 4  # PARSEC_v2
+                n_src[4] += 1
             else:
-                # No PARSEC v2 coverage: fall back to initial mass classification
+                # No PARSEC v2 data: fallback to initial mass classification
                 rt, rm = classify_remnant_initial(M, Z, cl_presn, kar_wd)
                 rem_type[iz, im] = rt
                 rem_mass[iz, im] = rm
-
-            # PISN: complete disruption — use PARSEC v2 yields
-            if rem_type[iz, im] == 5:
-                if result is not None:
-                    net_y, _, _ = result
-                    for ie, elem in enumerate(TRACKED_ELEMENTS):
-                        yields[iz, im, ie] = net_y.get(elem, 0.0)
-                yield_src[iz, im] = 4  # PARSEC_v2_PISN
-                rem_mass[iz, im] = 0.0
-                n_src[4] += 1
-
-            # FSN or DBH: failed SN — no explosion yields
-            elif rem_type[iz, im] in (3, 6):
-                yield_src[iz, im] = 3
-                # yields stay at 0
-                n_src[3] += 1
-
-            # CCSN / PPISN: get explosion yields from Limongi25 or CL18
-            else:
-                # Prefer Limongi+2025 for 14-15 Msun (newer, overlaps)
-                if M <= lim25_masses[-1]:
-                    yield_src[iz, im] = 2
-                    M_ej = M - rem_mass[iz, im]
-                    for ie, elem in enumerate(TRACKED_ELEMENTS):
-                        y_total = np.interp(M, lim25_masses, lim25_yields[elem])
-                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej
-                        if Z_ng is not None and abs(log_Z - np.log10(0.014)) > 0.15:
-                            scale = nugrid_z_scale.get(Z_ng, {}).get(elem, 1.0)
-                            y_net *= scale
-                        yields[iz, im, ie] = y_net
-                    n_src[2] += 1
-
-                elif M <= CL_MASSES[-1]:
-                    # CL18 for 15-120 Msun
-                    yield_src[iz, im] = 3
-                    M_ej = M - rem_mass[iz, im]
-                    X_init_z = p2_init_comp.get(Z_p2, {}) if Z_p2 else {}
-                    for ie, elem in enumerate(TRACKED_ELEMENTS):
-                        cl_y = cl_yields.get((feh_near, elem))
-                        if cl_y is not None:
-                            y_gross = np.interp(M, CL_MASSES, cl_y)
-                            yields[iz, im, ie] = y_gross - X_init_z.get(elem, 0.0) * M_ej
-                    n_src[3] += 1
-
-                else:
-                    # M > 120 Msun, PPISN with CL18 unavailable: use P2 yields
-                    if result is not None:
-                        net_y, _, _ = result
-                        yield_src[iz, im] = 4
-                        for ie, elem in enumerate(TRACKED_ELEMENTS):
-                            yields[iz, im, ie] = net_y.get(elem, 0.0)
-                        n_src[4] += 1
-                    else:
-                        # Last resort: CL18 edge extrapolation
-                        yield_src[iz, im] = 3
-                        M_ej = M - rem_mass[iz, im]
-                        X_init_z = p2_init_comp.get(Z_p2, {}) if Z_p2 else {}
-                        for ie, elem in enumerate(TRACKED_ELEMENTS):
-                            cl_y = cl_yields.get((feh_near, elem))
-                            if cl_y is not None:
-                                y_gross = cl_y[-1]
-                                yields[iz, im, ie] = y_gross - X_init_z.get(elem, 0.0) * M_ej
-                        n_src[3] += 1
-
-                # PPISN: scale yields by ejecta fraction
-                if rem_type[iz, im] == 4 and rem_mass[iz, im] > 0:
-                    f_ej = max(0, (M - rem_mass[iz, im]) / M)
-                    yields[iz, im, :] *= f_ej
+                n_src[0] += 1
 
     print(f"  Yield sources: Karakas={n_src[1]}, Limongi25={n_src[2]}, "
-          f"CL18={n_src[3]}, PARSEC_v2_PISN={n_src[4]}, none={n_src[0]}")
+          f"CL18={n_src[3]}, PARSEC_v2={n_src[4]}, none={n_src[0]}")
 
     return yields, rem_type, rem_mass, yield_src
 
@@ -2454,10 +2394,10 @@ def build_all(base_dir, output_file):
         f.create_dataset('yield_source', data=yield_src)
         f['yield_source'].attrs['encoding'] = ('0=none, 1=Karakas_AGB(KL16+K10), '
                                                  '2=Limongi25+NuGrid, '
-                                                 '3=CL18, 4=PARSEC_v2_PISN')
-        f['yield_source'].attrs['note'] = ('Remnants always from PARSEC v2. '
-                                           'Explosion yields from CL18/Limongi25. '
-                                           'FSN/DBH: yields=0 (failed SN). PISN: PARSEC v2 yields.')
+                                                 '3=unused, 4=PARSEC_v2')
+        f['yield_source'].attrs['note'] = ('Remnants + yields for M>=14 from PARSEC v2. '
+                                           'FSN/DBH: yields=0 (failed SN, wind handled separately). '
+                                           'CCSN/PPISN/PISN: PARSEC v2 net yields.')
 
         # Type Ia yields (mass-independent, single yield vector)
         ia_yields = get_type_ia_yields()
@@ -2486,9 +2426,8 @@ def build_all(base_dir, output_file):
         f.attrs['evolution_sources'] = ('PARSEC v2 VMS (M >= 2, primary) + MIST v1.2 (M < 2 + fallback) '
                                           '+ BoOST v1.3 (fallback) + PARSEC v1.2s (last resort)')
         f.attrs['yield_sources'] = ('Karakas AGB [K&L(2016) Z>=0.007 + K(2010) Z<0.007] '
-                                    '+ Limongi+(2025) 8-13Msun '
-                                    '+ CL18 14-120Msun + NuGrid Z-scaling '
-                                    '+ PARSEC v2 PISN yields + Iwamoto(1999) Type Ia')
+                                    '+ Limongi+(2025) 8-13Msun + NuGrid Z-scaling (8-13) '
+                                    '+ PARSEC v2 14+Msun + Iwamoto(1999) Type Ia')
         f.attrs['remnant_source'] = 'PARSEC v2 VMS (CCSN/FSN/PPISN/PISN/DBH) for M>=14'
         f.attrs['tracked_elements'] = TRACKED_ELEMENTS
         f.attrs['N_Z'] = N_Z
@@ -2609,7 +2548,7 @@ def verify(output_file):
 
 
 if __name__ == '__main__':
-    base_dir = '/raven/u/uli/phil/stellar_tables'
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     output_file = os.path.join(base_dir, 'stellar_tables_unified.hdf5')
     build_all(base_dir, output_file)
     verify(output_file)

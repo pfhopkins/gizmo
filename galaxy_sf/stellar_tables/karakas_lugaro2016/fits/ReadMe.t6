@@ -1,0 +1,60 @@
+================================================================================
+Title: Stellar yields from metal-rich asymptotic giant branch models 
+Authors: Karakas A.I., Lugaro M. 
+================================================================================
+Description of contents: The isotopic data tables from Karakas & Lugaro
+    2016 (Table 6). Each file comprises N models with permutations of
+    initial mass, M_mix, and N_ov at fixed Z. Each model includes 1)
+    initial isotopic ratios; 2) isotopic ratios calculated at M (14-84)
+    thermal pulse steps; 3) final isotopic ratios.
+
+    Filename           Z      N_models
+    isotope_z007.dat   0.007  27
+    isotope_z014.dat   0.014  35
+    isotope_z03.dat    0.03   28
+
+
+System requirements: None specific to these files.
+
+Additional comments: There are 36 isotopic ratios given at each initial, 
+    thermal pulse, and final stage:
+
+    c12/c13
+    n14/n15
+    o16/o17
+    o16/o18
+    mg24/mg25
+    mg24/mg26
+    al26/al27
+    si28/si29
+    si28/si30
+    cl36/cl35
+    cl37/cl35
+    s33/s32
+    s34/s32
+    s36/s32
+    ar36/ar40
+    ar38/ar40
+    k40/k39
+    k41/k39
+    ca42/ca40
+    ca43/ca40
+    ca44/ca40
+    ca46/ca40
+    ca48/ca40
+    ti46/ti48
+    ti47/ti48
+    ti49/ti48
+    ti50/ti48
+    cr53/cr52
+    cr54/cr52
+    fe54/fe56
+    fe57/fe56
+    fe58/fe56
+    fe60/fe56
+    ni60/ni58
+    ni61/ni58
+    ni62/ni58
+
+================================================================================
+

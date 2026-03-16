@@ -1,0 +1,16 @@
+Table 7
+Example of the Yield Tables Available
+
+# Initial mass = 3.500, Z = 0.0300, Y = 0.300, M_mix = 1.00E-03	
+# Final mass = 0.727, Mass expelled = 2.7730	
+#El	Z	log e(X)	[X/H]	[X/Fe]	X(i)	Mass(i)	
+p	1	12.000000	0.000000	0.000000	6.35230E-01	1.76149E+00	
+he	2	11.119857	0.189857	-0.165502	3.32440E-01	9.21855E-01	
+c	6	9.147092	0.677092	0.321733	1.06204E-02	2.94504E-02	
+n	7	8.643233	0.773233	0.417875	3.88194E-03	1.07646E-02	
+o	8	9.057708	0.327708	-0.027650	1.15152E-02	3.19316E-02	
+f	9	5.442862	0.982862	0.627503	3.31925E-06	9.20429E-06	
+...	
+
+Note. We show the first few lines of the 3.5 Msun, Z = 0.03 model yield table.
+(This table is available in its entirety in FITS format.)
