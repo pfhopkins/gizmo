@@ -26,11 +26,11 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
             F.create_dataset("PartType0/Temperature", data=T)
 
     if plot:
-        plt.loglog(nH, T, ".", markersize=1, color="black", label="Test")
         with h5py.File("gmc_cooling_rt_exact.hdf5", "r") as F:
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
-        plt.loglog(nH_ref, T_ref, ".", markersize=1, color="red", label="Benchmark")
+        plt.loglog(nH_ref, T_ref, ".", markersize=0.3, color="red", label="Benchmark")
+        plt.loglog(nH, T, ".", markersize=0.3, color="black", label="Test")        
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(r"$T (\rm K)$")
         plt.legend(loc=3)

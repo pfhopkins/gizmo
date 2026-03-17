@@ -196,7 +196,7 @@ endif
 #----------------------------
 ifeq ($(SYSTYPE),"github-ubuntu")
 CC       =  mpicc
-CXX      =  mpiccxx
+CXX      =  mpicxx
 FC       =  $(CC)
 OPTIMIZE = -g -fcommon -O1 -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
 OPTIMIZE += -ftree-loop-distribute-patterns -fvect-cost-model -ftree-partial-pre   ## optimizations for gcc compilers (2/2)

@@ -6,7 +6,7 @@
 #
 #############
 
-#SYSTYPE="github-ubuntu"
+SYSTYPE="github-ubuntu"
 #SYSTYPE="Frontera"
 #SYSTYPE="Stampede2"
 #SYSTYPE="Bridges2"
@@ -14,7 +14,7 @@
 #SYSTYPE="Wheeler"
 #SYSTYPE="CaltechHPC"
 #SYSTYPE="MacBookPro"
-SYSTYPE="MacBookCellar"
+#SYSTYPE="MacBookCellar"
 #SYSTYPE="Quest"
 #SYSTYPE="Quest-intel"
 #SYSTYPE="TSCC"
