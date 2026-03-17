@@ -71,8 +71,6 @@ void finalize_sampled_star(int i, double M_drawn)
 {
     P[i].sampled = 1;
 
-    printf("IMF_DRAW: Task=%d ID=%llu M_drawn=%.3f[Msun] M_particle=%.4f\n",
-        ThisTask, (unsigned long long)P[i].ID, M_drawn, P[i].Mass * UNIT_MASS_IN_SOLAR);
     if(!isfinite(P[i].Mass) || P[i].Mass <= 0)
         printf("NAN_CHECK_IMF: Task=%d ID=%llu Mass=%.6e after IMF sampling\n",
             ThisTask, (unsigned long long)P[i].ID, P[i].Mass);
@@ -418,7 +416,7 @@ void assign_stellar_masses(void)
     MPI_Allreduce(&nstars_local, &nstars_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(nstars_total == 0) return;
 
-    if(ThisTask == 0) printf("IMF accretion: %d stars drawing mass from neighbors\n", nstars_total);
+    if(ThisTask == 0) printf("IMF: accreting mass for %d new stars\n", nstars_total);
     PRINT_STATUS(" ..IMF accretion walk for single stars");
 
     /* Allocate accumulators (persist across iterations, zeroed each pass) */
@@ -560,8 +558,9 @@ void assign_stellar_masses(void)
     double *imf_mdrawn = (double *)mymalloc("imf_mdrawn", DMAX(nstars_local,1) * sizeof(double));
     double *imf_macc = (double *)mymalloc("imf_macc", DMAX(nstars_local,1) * sizeof(double));
     double *imf_racc = (double *)mymalloc("imf_racc", DMAX(nstars_local,1) * sizeof(double));
-    double *imf_facc = (double *)mymalloc("imf_facc", DMAX(nstars_local,1) * sizeof(double));
     double *imf_zbirth = (double *)mymalloc("imf_zbirth", DMAX(nstars_local,1) * sizeof(double));
+    double *imf_nH = (double *)mymalloc("imf_nH", DMAX(nstars_local,1) * sizeof(double));
+    double *imf_T = (double *)mymalloc("imf_T", DMAX(nstars_local,1) * sizeof(double));
     long long *imf_id = (long long *)mymalloc("imf_id", DMAX(nstars_local,1) * sizeof(long long));
     int nimf = 0;
 
@@ -598,16 +597,17 @@ void assign_stellar_masses(void)
         P[i].BirthMetallicity = P[i].Metallicity[0];
 #endif
 
-        /* Log IMF accretion info */
+        /* Log SF + IMF accretion info */
         imf_x[nimf] = P[i].Pos[0];
         imf_y[nimf] = P[i].Pos[1];
         imf_z[nimf] = P[i].Pos[2];
         imf_mdrawn[nimf] = M_drawn;
         imf_macc[nimf] = mass_acc * UNIT_MASS_IN_SOLAR;
         imf_racc[nimf] = P[i].KernelRadius;
-        imf_facc[nimf] = P[i].MstarSampleIMF[2];
-        imf_zbirth[nimf] = P[i].Metallicity[0];
+        imf_zbirth[nimf] = P[i].BirthMetallicity;
         imf_id[nimf] = (long long)P[i].ID;
+        imf_nH[nimf] = P[i].FormationDensity * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+        imf_T[nimf] = P[i].MstarSampleIMF[3]; /* CellP.Temp stored at spawn time */
         nimf++;
 
         finalize_sampled_star(i, M_drawn);
@@ -620,7 +620,7 @@ void assign_stellar_masses(void)
         }
     }
 
-    /* Gather IMF info and write to IMFinfo.txt on rank 0 */
+    /* Gather SF info and write to SFinfo.txt on rank 0 */
     {
         int nimf_total = 0;
         MPI_Allreduce(&nimf, &nimf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -628,7 +628,7 @@ void assign_stellar_masses(void)
         {
             int *recvcounts = NULL, *displs = NULL;
             double *all_x=NULL, *all_y=NULL, *all_z=NULL, *all_mdrawn=NULL, *all_macc=NULL;
-            double *all_racc=NULL, *all_facc=NULL, *all_zbirth=NULL;
+            double *all_racc=NULL, *all_zbirth=NULL, *all_nH=NULL, *all_T=NULL;
             long long *all_id = NULL;
             if(ThisTask == 0) {
                 recvcounts = (int *)mymalloc("recvcounts_imf", NTask * sizeof(int));
@@ -644,8 +644,9 @@ void assign_stellar_masses(void)
                 all_mdrawn = (double *)mymalloc("aimf_md", nimf_total * sizeof(double));
                 all_macc = (double *)mymalloc("aimf_ma", nimf_total * sizeof(double));
                 all_racc = (double *)mymalloc("aimf_ra", nimf_total * sizeof(double));
-                all_facc = (double *)mymalloc("aimf_fa", nimf_total * sizeof(double));
                 all_zbirth = (double *)mymalloc("aimf_zb", nimf_total * sizeof(double));
+                all_nH = (double *)mymalloc("aimf_nH", nimf_total * sizeof(double));
+                all_T = (double *)mymalloc("aimf_T", nimf_total * sizeof(double));
                 all_id = (long long *)mymalloc("aimf_id", nimf_total * sizeof(long long));
             }
             MPI_Gatherv(imf_x, nimf, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -654,17 +655,23 @@ void assign_stellar_masses(void)
             MPI_Gatherv(imf_mdrawn, nimf, MPI_DOUBLE, all_mdrawn, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(imf_macc, nimf, MPI_DOUBLE, all_macc, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(imf_racc, nimf, MPI_DOUBLE, all_racc, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(imf_facc, nimf, MPI_DOUBLE, all_facc, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(imf_zbirth, nimf, MPI_DOUBLE, all_zbirth, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(imf_nH, nimf, MPI_DOUBLE, all_nH, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(imf_T, nimf, MPI_DOUBLE, all_T, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(imf_id, nimf, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
             if(ThisTask == 0) {
+                double worst_err = 0; int worst_idx = 0;
                 for(i = 0; i < nimf_total; i++) {
-                    fprintf(FdIMFinfo, "%.16g %g %g %g %lld %.4f %.4f %g %g %.6e\n",
+                    fprintf(FdSFinfo, "%12.6f %9.4f %9.4f %9.4f %10lld %8.4f %8.4f %10.6f %10.4e %10.2f %10.2e\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_id[i],
-                        all_mdrawn[i], all_macc[i], all_racc[i], all_facc[i], all_zbirth[i]);
+                        all_mdrawn[i], all_macc[i], all_racc[i], all_zbirth[i], all_T[i], all_nH[i]);
+                    double err = (all_mdrawn[i] > 0) ? fabs(all_macc[i] - all_mdrawn[i]) / all_mdrawn[i] : 0;
+                    if(err > worst_err) {worst_err = err; worst_idx = i;}
                 }
-                fflush(FdIMFinfo);
-                myfree(all_id); myfree(all_zbirth); myfree(all_facc); myfree(all_racc);
+                fflush(FdSFinfo);
+                printf("IMF: drew %d stars, max deviation: ID=%lld M_drawn=%.4f M_acc=%.4f (err=%.2f%%)\n",
+                    nimf_total, all_id[worst_idx], all_mdrawn[worst_idx], all_macc[worst_idx], worst_err*100);
+                myfree(all_id); myfree(all_T); myfree(all_nH); myfree(all_zbirth); myfree(all_racc);
                 myfree(all_macc); myfree(all_mdrawn); myfree(all_z); myfree(all_y); myfree(all_x);
                 myfree(displs); myfree(recvcounts);
             }
@@ -672,7 +679,7 @@ void assign_stellar_masses(void)
     }
 
     /* Free IMF logging buffers (LIFO) */
-    myfree(imf_id); myfree(imf_zbirth); myfree(imf_facc); myfree(imf_racc);
+    myfree(imf_id); myfree(imf_T); myfree(imf_nH); myfree(imf_zbirth); myfree(imf_racc);
     myfree(imf_macc); myfree(imf_mdrawn); myfree(imf_z); myfree(imf_y); myfree(imf_x);
 
     /* Free accumulators (LIFO order for mymalloc) */
@@ -685,7 +692,7 @@ void assign_stellar_masses(void)
     myfree(IMF_MomAccreted); IMF_MomAccreted = NULL;
     myfree(IMF_MassAccreted); IMF_MassAccreted = NULL;
 
-    if(ThisTask == 0) printf("IMF accretion done (%d pass%s).\n", iter, iter==1?"":"es");
+    if(ThisTask == 0 && iter > 1) printf("IMF: accretion required %d passes\n", iter);
 }
 
 

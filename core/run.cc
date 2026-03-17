@@ -352,9 +352,13 @@ void calculate_non_standard_physics(void)
 #endif // RADTRANSFER block
 
 #ifdef GALSF_RESOLVEDISM_FB
+    /* Clear wakeup flags before feedback so we only detect fresh energy/mass injection */
+    {int ii; for(ii = 0; ii < NumPart; ii++) {if(P[ii].Type == 0) P[ii].wakeup = 0;}}
+    NeedToWakeupParticles_local = 0;
     resolvedism_inject_sn_energy(); // resolved ISM SN energy injection
-    /* Recompute hydro for cells that received feedback energy/mass (matches gizmo2017 approach) */
-    {   int fb_count_local = 0, fb_count_total = 0, ii;
+    /* Recompute hydro only if SN/wind/AGB injected energy or mass (not for radpressure) */
+    if(NeedToWakeupParticles_local) {
+        int fb_count_local = 0, fb_count_total = 0, ii;
         for(ii = 0; ii < NumPart; ii++) {if(P[ii].Type == 0 && P[ii].wakeup) fb_count_local++;}
         MPI_Allreduce(&fb_count_local, &fb_count_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(fb_count_total > 0) {

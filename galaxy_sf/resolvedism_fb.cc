@@ -1177,6 +1177,8 @@ void resolvedism_inject_sn_energy(void)
     if(ThisTask == 0) {
         for(int ch = 0; ch < 5; ch++) {
             if(glob_n[ch] > 0) {
+                /* Radpressure (ch=3): only log on full (domain decomp) steps to avoid flooding */
+                if(ch == 3 && All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) continue;
                 fprintf(FdFeedbackBudget, "%.16g %d %.0f %g %g %g %g %g\n",
                     All.Time, ch, glob_n[ch], glob_Mi[ch], glob_Mr[ch],
                     glob_E[ch], glob_dp[ch], glob_Z[ch]);

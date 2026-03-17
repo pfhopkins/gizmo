@@ -617,22 +617,9 @@ void star_formation_parent_routine(void)
 #endif
                             /* defer tree insertion until after accretion walk sets real mass */
                             P[ns].MstarSampleIMF[1] = (double)i; /* store parent index for deferred tree insertion */
+                            P[ns].MstarSampleIMF[3] = CellP[i].Temp; /* formation temperature [K] for SFinfo log */
                             CellP[i].IMFSpawnBlock = 1; /* block SF on this cell until density is recomputed */
                             stars_spawned++;
-                            /* log which SF criteria triggered */
-                            {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-                            printf("SF_SPAWN: Task=%d gasID=%llu starID=%llu M_drawn=%.4f[Msun] nH=%.2e rho=%.4e T=%.1f prob=%.4e pfac=%.4e"
-#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
-                                   " instant_cutoff=%d(nH>%.0e)"
-#endif
-                                   " Pos=(%.4f,%.4f,%.4f)\n",
-                                   ThisTask, (unsigned long long)P[i].ID, (unsigned long long)P[ns].ID,
-                                   M_drawn_imf, nH, CellP[i].Density, CellP[i].Temp, prob, pfac
-#ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
-                                   , (nH > All.nHcutoffSF), All.nHcutoffSF
-#endif
-                                   , P[ns].Pos[0], P[ns].Pos[1], P[ns].Pos[2]);
-                            }
                         }
 #else /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
                         if(number_of_stars_generated == (GALSF_GENERATIONS - 1))
@@ -939,7 +926,8 @@ void star_formation_parent_routine(void)
     MPI_Allreduce(&stars_converted, &tot_converted, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(tot_spawned > 0 || tot_converted > 0)
     {
-        if(ThisTask==0) printf("SFR: spawned %d stars, converted %d gas particles into stars\n", tot_spawned, tot_converted);
+        static long long cumul_spawned = 0; cumul_spawned += tot_spawned;
+        if(ThisTask==0) printf("SFR: spawned %d stars this step (%lld cumulative)\n", tot_spawned, cumul_spawned);
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;
@@ -948,76 +936,16 @@ void star_formation_parent_routine(void)
     } //(tot_spawned > 0 || tot_converted > 0)
 
 #ifdef GALSF_RESOLVEDISM
-    /* write SFinfo.txt: per-SF-event diagnostics via MPI_Gatherv to rank 0 */
-    {
-        int n_sf_total = 0;
-        MPI_Allreduce(&n_sf_local, &n_sf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        if(n_sf_total > 0)
-        {
-            int *recvcounts = NULL, *displs = NULL;
-            double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL, *all_Z = NULL, *all_T = NULL;
-            long long *all_id = NULL;
-
-            if(ThisTask == 0)
-            {
-                recvcounts = (int *)mymalloc("sf_recvcounts", NTask * sizeof(int));
-                displs = (int *)mymalloc("sf_displs", NTask * sizeof(int));
-            }
-            MPI_Gather(&n_sf_local, 1, MPI_INT, recvcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
-            if(ThisTask == 0)
-            {
-                displs[0] = 0;
-                for(i = 1; i < NTask; i++) {displs[i] = displs[i-1] + recvcounts[i-1];}
-                all_x = (double *)mymalloc("sf_all_x", n_sf_total * sizeof(double));
-                all_y = (double *)mymalloc("sf_all_y", n_sf_total * sizeof(double));
-                all_z = (double *)mymalloc("sf_all_z", n_sf_total * sizeof(double));
-                all_u = (double *)mymalloc("sf_all_u", n_sf_total * sizeof(double));
-                all_rho = (double *)mymalloc("sf_all_rho", n_sf_total * sizeof(double));
-                all_mstar = (double *)mymalloc("sf_all_mstar", n_sf_total * sizeof(double));
-                all_Z = (double *)mymalloc("sf_all_Z", n_sf_total * sizeof(double));
-                all_T = (double *)mymalloc("sf_all_T", n_sf_total * sizeof(double));
-                all_id = (long long *)mymalloc("sf_all_id", n_sf_total * sizeof(long long));
-            }
-            MPI_Gatherv(sf_x, n_sf_local, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_y, n_sf_local, MPI_DOUBLE, all_y, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_z, n_sf_local, MPI_DOUBLE, all_z, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_u, n_sf_local, MPI_DOUBLE, all_u, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_rho, n_sf_local, MPI_DOUBLE, all_rho, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_mstar, n_sf_local, MPI_DOUBLE, all_mstar, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_Z, n_sf_local, MPI_DOUBLE, all_Z, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_T, n_sf_local, MPI_DOUBLE, all_T, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-            MPI_Gatherv(sf_id, n_sf_local, MPI_LONG_LONG, all_id, recvcounts, displs, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
-
-            if(ThisTask == 0)
-            {
-                for(i = 0; i < n_sf_total; i++) {
-                    fprintf(FdSFinfo, "%.16g %g %g %g %g %g %lld %g %g %g\n",
-                        All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i], all_id[i], all_mstar[i], all_Z[i], all_T[i]);
-                }
-                fflush(FdSFinfo);
-                myfree(all_id);
-                myfree(all_T);
-                myfree(all_Z);
-                myfree(all_mstar);
-                myfree(all_rho);
-                myfree(all_u);
-                myfree(all_z);
-                myfree(all_y);
-                myfree(all_x);
-                myfree(displs);
-                myfree(recvcounts);
-            }
-        }
-        myfree_movable(sf_id);
-        myfree_movable(sf_T);
-        myfree_movable(sf_Z);
-        myfree_movable(sf_mstar);
-        myfree_movable(sf_rho);
-        myfree_movable(sf_u);
-        myfree_movable(sf_z);
-        myfree_movable(sf_y);
-        myfree_movable(sf_x);
-    }
+    /* SFinfo.txt is now written from resolvedism_imf_sampling.cc after accretion walk */
+    myfree_movable(sf_id);
+    myfree_movable(sf_T);
+    myfree_movable(sf_Z);
+    myfree_movable(sf_mstar);
+    myfree_movable(sf_rho);
+    myfree_movable(sf_u);
+    myfree_movable(sf_z);
+    myfree_movable(sf_y);
+    myfree_movable(sf_x);
 #endif
 
     for(bin = 0, sfrrate = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin]) {sfrrate += TimeBinSfr[bin];}}

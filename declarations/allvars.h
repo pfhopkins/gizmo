@@ -321,12 +321,6 @@ extern FILE *FdFeedbackBudget; /*!< file handle for FeedbackBudget.txt conservat
 #ifdef GALSF_RESOLVEDISM
 extern FILE *FdSFinfo;     /*!< file handle for SFinfo.txt per-SF-event diagnostic log */
 #endif
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-extern FILE *FdIMFinfo;    /*!< file handle for IMFinfo.txt per-star IMF accretion log */
-#endif
-#ifdef GALSF_RESOLVEDISM_PHOTOION
-extern FILE *FdPIinfo;     /*!< file handle for PIinfo.txt per-star photo-ionization log */
-#endif
 #ifdef GALSF_RESOLVEDISM
 extern FILE *FdSFRrism;    /*!< file handle for sfr_rism.txt resolved ISM SFR log */
 #endif

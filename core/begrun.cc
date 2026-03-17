@@ -771,24 +771,8 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SFinfo.txt");
   if(!(FdSFinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdSFinfo,"%s Per-SF-event diagnostic log [GALSF_RESOLVEDISM]. Columns: \n",prefix_char);
-      fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_cell[code]  (9) Z  (10) T[K]\n",prefix_char);
-  }
-#endif
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "IMFinfo.txt");
-  if(!(FdIMFinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
-  else if(RestartFlag == 0) {
-      fprintf(FdIMFinfo,"%s Per-star IMF accretion log [GALSF_RESOLVEDISM_SAMPLE_IMF]. Columns: \n",prefix_char);
-      fprintf(FdIMFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) id  (6) M_drawn[Msun]  (7) M_accreted[Msun]  (8) R_acc[code]  (9) f_acc  (10) Z_birth\n",prefix_char);
-  }
-#endif
-#ifdef GALSF_RESOLVEDISM_PHOTOION
-  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "PIinfo.txt");
-  if(!(FdPIinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
-  else if(RestartFlag == 0) {
-      fprintf(FdPIinfo,"%s Photo-ionization summary [GALSF_RESOLVEDISM_PHOTOION]. Columns:\n",prefix_char);
-      fprintf(FdPIinfo,"%s   (1) time  (2) N_stars  (3) Q_total[phot/s]  (4) Q_consumed[phot/s]  (5) f_escape  (6) R_max[code]  (7) N_escaping(f<0.5)  (8) N_bad  (9) N_iter\n",prefix_char);
+      fprintf(FdSFinfo,"%s Per-star formation log [GALSF_RESOLVEDISM]. Columns:\n",prefix_char);
+      fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) ID  (6) M_drawn[Msun]  (7) M_accreted[Msun]  (8) R_acc[kpc]  (9) Z_birth  (10) T[K]  (11) nH[cm-3]\n",prefix_char);
   }
 #endif
 

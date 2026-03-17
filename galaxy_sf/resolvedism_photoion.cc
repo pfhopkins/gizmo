@@ -133,7 +133,7 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
                 nH_local = HYDROGEN_MASSFRAC * P[i].DensityAroundParticle * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;
 #endif
             double Rs_cgs = compute_stromgren_radius_cgs(in->S_ly, nH_local);
-            double h_stromgren = 2.0 * Rs_cgs / (UNIT_LENGTH_IN_CGS * All.cf_atime);
+            double h_stromgren = 1.0 * Rs_cgs / (UNIT_LENGTH_IN_CGS * All.cf_atime);
             if(h_stromgren > in->SearchRadius) in->SearchRadius = h_stromgren;
         }
         if(in->SearchRadius <= 0) in->SearchRadius = All.ForceSoftening[P[i].Type];
@@ -350,7 +350,10 @@ void resolvedism_photoionize(void)
             for(k = 0; k < HEALPIX_NPIX; k++)
                 if(PIPixelBudget[i * HEALPIX_NPIX + k] > 0) budget_remaining += PIPixelBudget[i * HEALPIX_NPIX + k];
             if(budget_remaining > 0) {
+                double max_r = All.MaxPISearchRadius / UNIT_LENGTH_IN_KPC;
+                if(max_r > 0 && PISearchRadius[i] >= max_r) {continue;} /* hit cap, stop expanding */
                 PISearchRadius[i] *= 1.1; /* expand by 10% */
+                if(max_r > 0 && PISearchRadius[i] > max_r) PISearchRadius[i] = max_r;
                 /* Re-initialize per-pixel budget for re-run with larger search radius */
                 double S_ly = compute_single_star_S_ly(i);
                 double S_pix = (S_ly > 0) ? S_ly / HEALPIX_NPIX : 0;
@@ -361,9 +364,18 @@ void resolvedism_photoionize(void)
         }
         MPI_Allreduce(&incomplete_local, &incomplete_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         iter++;
-        if(ThisTask == 0 && incomplete_total > 0)
-            printf("PI iter %d: %d stars need larger search radius, expanding\n", iter, incomplete_total);
     } while(incomplete_total > 0 && iter < max_iter);
+    if(iter > 1) {
+        double local_max_r = 0;
+        for(i = 0; i < NumPart; i++) {
+            if(P[i].Type == 4 && PISearchRadius != NULL && PISearchRadius[i] > local_max_r) local_max_r = PISearchRadius[i];
+        }
+        double glob_max_r = 0;
+        MPI_Reduce(&local_max_r, &glob_max_r, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
+            printf("PI: expanded search radius in %d iterations (R_max=%.1f pc, cap=%.1f pc)\n",
+                iter, glob_max_r * UNIT_LENGTH_IN_KPC * 1e3, All.MaxPISearchRadius * 1e3);
+    }
 
     /* Log per-star PI diagnostics to PIinfo.txt */
     {
@@ -376,59 +388,8 @@ void resolvedism_photoionize(void)
         int npi_total = 0;
         MPI_Allreduce(&npi_local, &npi_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-        if(ThisTask == 0)
-            printf("ResolvedISM PI: %d ionizing stars this timestep at t=%g (%d iterations)\n", npi_total, All.Time, iter);
-
-        /* --- PI summary: aggregate locally, reduce to rank 0, log one line per coarse step --- */
-        if(npi_total > 0) {
-            double local_Q_total = 0, local_Q_consumed = 0;
-            double local_R_max = 0;
-            int local_n_escaping = 0, local_n_bad = 0;
-            for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
-                if(P[i].Type != 4) continue;
-                if(PISearchRadius[i] <= 0) continue;
-                double S_ly = compute_single_star_S_ly(i);
-                double budget_remaining = 0;
-                int npix_complete = 0, k;
-                for(k = 0; k < HEALPIX_NPIX; k++) {
-                    double rem = PIPixelBudget[i * HEALPIX_NPIX + k];
-                    if(rem <= 0) npix_complete++;
-                    else budget_remaining += rem;
-                }
-                double frac_consumed = (S_ly > 0) ? 1.0 - budget_remaining / S_ly : 0;
-                local_Q_total += S_ly;
-                local_Q_consumed += S_ly * frac_consumed;
-                if(PISearchRadius[i] > local_R_max) local_R_max = PISearchRadius[i];
-                if(frac_consumed < 0.5 && S_ly > 0) local_n_escaping++;
-                if(!isfinite(S_ly) || S_ly < 0 || npix_complete < HEALPIX_NPIX - 2) local_n_bad++;
-                /* Per-star event: warn if >50% photons escaping or pixel walk incomplete */
-                if((frac_consumed < 0.5 && S_ly > 1e45) || npix_complete < HEALPIX_NPIX - 2) {
-                    double Mstar = 0;
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-                    if(P[i].sampled) Mstar = P[i].MstarSampleIMF[0];
-#endif
-                    printf("PI_WARN: t=%.6g ID=%llu M=%.1f log_Q=%.2f frac=%.3f R=%.4f npix=%d/%d\n",
-                        All.Time, (unsigned long long)P[i].ID, Mstar,
-                        (S_ly > 0) ? log10(S_ly) : 0, frac_consumed,
-                        PISearchRadius[i], npix_complete, HEALPIX_NPIX);
-                }
-            }
-            /* MPI reduce to rank 0 */
-            double glob_Q_total = 0, glob_Q_consumed = 0, glob_R_max = 0;
-            int glob_n_escaping = 0, glob_n_bad = 0;
-            MPI_Reduce(&local_Q_total, &glob_Q_total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(&local_Q_consumed, &glob_Q_consumed, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(&local_R_max, &glob_R_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-            MPI_Reduce(&local_n_escaping, &glob_n_escaping, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(&local_n_bad, &glob_n_bad, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-            if(ThisTask == 0) {
-                double f_esc = (glob_Q_total > 0) ? 1.0 - glob_Q_consumed / glob_Q_total : 0;
-                fprintf(FdPIinfo, "%.16g %d %.4e %.4e %.4f %.4f %d %d %d\n",
-                    All.Time, npi_total, glob_Q_total, glob_Q_consumed, f_esc,
-                    glob_R_max, glob_n_escaping, glob_n_bad, iter);
-                fflush(FdPIinfo);
-            }
-        }
+        if(ThisTask == 0 && npi_total > 0)
+            printf("ResolvedISM PI: %d ionizing stars at t=%g (%d iter)\n", npi_total, All.Time, iter);
     }
 
     /* Free in LIFO order */
