@@ -120,9 +120,12 @@ void resolvedism_dust_evolve(void)
         }
 
         /* ---- ISM grain growth (accretion of gas-phase metals onto grains) ---- */
-        /* Only in cold gas (sticking efficiency ~ 1 for T < 300 K, drops to 0 above) */
+        /* Sticking efficiency S(T_gas, T_dust) = 1 / (1 + 0.04*sqrt(T_gas + T_dust))
+           (Hirashita 2000).  Smoothly transitions from S~1 at low T to S~0 at high T. */
         /* Rates from Dwek 1998 / Draine 2009, same form as gizmo2017 evolve_abundances_dust.F */
-        if(T < 300 && dust_total > 0) {
+        double T_dust = CellP[i].DustTemp;
+        double sticking = 1.0 / (1.0 + 0.04 * sqrt(T + T_dust));
+        if(sticking > 1e-4 && dust_total > 0) {
             double sqrtT = sqrt(T);
             /* gas-phase metal mass fractions */
             double Z_C  = DMAX(P[i].ElementAbundance[ELEM_C]  - CellP[i].Dust[0], 0);
@@ -138,8 +141,8 @@ void resolvedism_dust_evolve(void)
 
             /* accretion timescale^{-1} [yr^-1] (gizmo2017 formula) */
             /* t_accr_inv = prefactor * nH / grain_size * sqrt(T) * (Z_elem / Z_solar) * sticking * (1 - f) */
-            double t_accr_C_inv  = 2.15e-12 * nH / grain_size * sqrtT * (Z_C  / 2.07e-3) * (1.0 - f_C);
-            double t_accr_Si_inv = 2.01e-12 * nH / grain_size * sqrtT * (Z_Si / 6.83e-4) * (1.0 - f_Si);
+            double t_accr_C_inv  = 2.15e-12 * nH / grain_size * sqrtT * (Z_C  / 2.07e-3) * sticking * (1.0 - f_C);
+            double t_accr_Si_inv = 2.01e-12 * nH / grain_size * sqrtT * (Z_Si / 6.83e-4) * sticking * (1.0 - f_Si);
 
             /* convert to code time^-1 */
             t_accr_C_inv  *= yr_to_code;
