@@ -192,8 +192,8 @@ double return_timestep_dilation_factor(int i, int mode)
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     double fac_amax = 100.;
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES
-#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES == 3)
-    fac_amax = 1.e4;
+#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
+    fac_amax = 1.e6;
 #endif
 #endif
     double amax = fac_amax;
@@ -210,6 +210,9 @@ double return_timestep_dilation_factor(int i, int mode)
         r = sqrt(r2); if(r < rmin) {rmin = r;}
     }
     r = rmin;
+#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
+    if(mode==0) {r = sqrt(P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2]);}
+#endif
     if(r < 1.e-10 || isnan(r) || isfinite(r)==0) {r = 1.e-10;}
     a = 1. + 1. / (1./amax + pow(r / r_amax, index));
 #endif

@@ -58,7 +58,7 @@
 #define USE_TIMESTEP_DILATION_FOR_ZOOMS
 #endif
 #if defined(SPECIAL_POINT_WEIGHTED_MOTION) && !defined(SPECIAL_POINT_MOTION)
-#define SPECIAL_POINT_MOTION (SPECIAL_POINT_WEIGHTED_MOTION) /* doesn't seem to be working ???? */
+#define SPECIAL_POINT_MOTION (SPECIAL_POINT_WEIGHTED_MOTION) /* doesn't seem to be working ??? */
 #endif
 #if defined(SPECIAL_POINT_MOTION) && !defined(SINK_CALC_DISTANCES)
 #define SINK_CALC_DISTANCES
@@ -1127,7 +1127,7 @@
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
 #endif
 
-/* ??? this should be done with an inline function inside the particle data */
+/* ??? this should be done with an inline function inside the particle data, not a compiler directive */
 #define SinkParticle_GravityKernelRadius (All.ForceSoftening[5])
 
 

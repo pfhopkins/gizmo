@@ -212,7 +212,7 @@ double get_temperature(int i){
 
 
 /* Simple wrapper for calling ThermalProperties for temperature only - should only be called by get_temperature() above */
-double compute_temperature(int i){
+double compute_temperature(int i) {
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred;
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
     return temperature;
@@ -352,6 +352,7 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
     double T_dust = T_dust_manual_override; if(T_dust == 0) {T_dust = CellP[i].Dust_Temperature;} // use this iff the dust temp sent is nil
     double Tdust_Tsub = T_dust / T_evap; // ratio for below
     double fdust = sigmoid_sqrt(9.*(1.-Tdust_Tsub)) * exp(-DMIN(40.,Tdust_Tsub*Tdust_Tsub/9.)); // crudely don't bother accounting for size spectrum, just adopt an exponential cutoff above the sublimation temperature
+    //if(CellP[i].Dust_Temperature >= MAX_DUST_TEMP) {return 1.e-22;} // since using this upper limit as a value to represent where things are basically all sublimated, use a (intentionally very low compared to the slower formula below) low floor value in this case */
     return DMAX(fdust, 1.e-25); // floor at value too small to influence physical dust processes, just so dust temp root-finders have something finite and continuous to work with
 #endif
 #if defined(COOL_LOW_TEMPERATURES) && !defined(SINGLE_STAR_SINK_DYNAMICS) // skip this and assume fdust=1 if SINGLE_STAR_SINK_DYNAMICS on because it uses the fancy dust temp solver whose result depends implicitly on the dust fraction - if sublimation is important then we should be running full RT anyway

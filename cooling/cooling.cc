@@ -278,7 +278,7 @@ void do_the_cooling_for_particle(int i)
                     {
                         de_rad_tot_final += de_rad; // add to our running total                        
 #ifdef RT_INFRARED  
-                       if(k==RT_FREQ_BIN_INFRARED) {CellP[i].Radiation_Temperature = CellP[i].Radiation_Temperature_CoolingWeighted;}// need to also update the IR band temperature measure
+                        if(k==RT_FREQ_BIN_INFRARED) {CellP[i].Radiation_Temperature = CellP[i].Radiation_Temperature_CoolingWeighted;} // need to also update the IR band temperature measure
 #endif
                         double Rad_E_gamma_before = CellP[i].Rad_E_gamma[k]; // save for immediate use below
                         CellP[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
