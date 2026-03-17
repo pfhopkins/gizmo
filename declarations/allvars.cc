@@ -256,6 +256,9 @@ FILE *FdIMFinfo;		/*!< file handle for IMFinfo.txt per-star IMF accretion log */
 #ifdef GALSF_RESOLVEDISM_PHOTOION
 FILE *FdPIinfo;			/*!< file handle for PIinfo.txt per-star photo-ionization log */
 #endif
+#ifdef GALSF_RESOLVEDISM
+FILE *FdSFRrism;
+#endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 FILE *FdMomWinds;	/*!< file handle for MomWinds.txt log-file */
 #endif

@@ -104,6 +104,44 @@ void run(void)
             make_list_of_active_particles();	/* now we can set the new chain list of active particles */
         }
 
+
+#ifdef GALSF_RESOLVEDISM
+        /* Log resolved-ISM SFR at domain decomposition steps */
+        if(reconstructed_tree) {
+            double windows_myr[] = {50.0, 40.0, 30.0, 20.0, 5.0, 1.0};
+            int nwin = 6;
+            double local_mass[6] = {0,0,0,0,0,0};
+            int local_nstars = 0;
+            for(int ii = 0; ii < NumPart; ii++) {
+                if(P[ii].Type != 4 || P[ii].Mass <= 0) continue;
+                local_nstars++;
+                double age_gyr = evaluate_stellar_age_Gyr(ii);
+                double age_myr = age_gyr * 1e3;
+                double Mstar_solar = 0;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                Mstar_solar = P[ii].MstarSampleIMF[0];
+                if(Mstar_solar <= 0) Mstar_solar = P[ii].Mass * UNIT_MASS_IN_SOLAR;
+#else
+                Mstar_solar = P[ii].Mass * UNIT_MASS_IN_SOLAR;
+#endif
+                for(int w = 0; w < nwin; w++) {
+                    if(age_myr <= windows_myr[w]) local_mass[w] += Mstar_solar;
+                }
+            }
+            double glob_mass[6]; int glob_nstars;
+            MPI_Reduce(local_mass, glob_mass, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+            MPI_Reduce(&local_nstars, &glob_nstars, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                fprintf(FdSFRrism, "%.16g %d", All.Time, glob_nstars);
+                for(int w = 0; w < nwin; w++) {
+                    double sfr_w = (windows_myr[w] > 0) ? glob_mass[w] / (windows_myr[w] * 1e6) : 0;
+                    fprintf(FdSFRrism, " %.6e", sfr_w);
+                }
+                fprintf(FdSFRrism, "\n"); fflush(FdSFRrism);
+            }
+        }
+#endif
+
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
 #ifdef GALSF_SUBGRID_WINDS
@@ -315,6 +353,15 @@ void calculate_non_standard_physics(void)
 
 #ifdef GALSF_RESOLVEDISM_FB
     resolvedism_inject_sn_energy(); // resolved ISM SN energy injection
+    /* Recompute hydro for cells that received feedback energy/mass (matches gizmo2017 approach) */
+    {   int fb_count_local = 0, fb_count_total = 0, ii;
+        for(ii = 0; ii < NumPart; ii++) {if(P[ii].Type == 0 && P[ii].wakeup) fb_count_local++;}
+        MPI_Allreduce(&fb_count_local, &fb_count_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(fb_count_total > 0) {
+            if(ThisTask == 0) printf("Recomputing hydro for %d feedback-affected cells\n", fb_count_total);
+            compute_hydro_densities_and_forces();
+        }
+    }
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization

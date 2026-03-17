@@ -792,6 +792,15 @@ void open_outputfiles(void)
   }
 #endif
 
+#ifdef GALSF_RESOLVEDISM
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "sfr_rism.txt");
+  if(!(FdSFRrism = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdSFRrism,"%s Resolved-ISM SFR [Msun/yr] over lookback windows. Columns:\n",prefix_char);
+      fprintf(FdSFRrism,"%s   (1) time  (2) N_stars_total  (3) SFR_50Myr  (4) SFR_40Myr  (5) SFR_30Myr  (6) SFR_20Myr  (7) SFR_5Myr  (8) SFR_1Myr\n",prefix_char);
+  }
+#endif
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "MomWinds.txt");
     if(!(FdMomWinds = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}

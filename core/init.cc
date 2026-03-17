@@ -1008,7 +1008,11 @@ void init(void)
             All.MinMassForParticleMerger /= (float)GALSF_GENERATIONS;
 #endif
         } else {All.MinMassForParticleMerger = mpi_splitmerge_readmin;} /* use the version from the ICs */
+#ifdef GALSF_RESOLVEDISM
+        if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 2.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
+#else
         if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 3.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
+#endif
 #ifdef MERGESPLIT_HARDCODE_MAX_MASS
         All.MaxMassForParticleSplit = MERGESPLIT_HARDCODE_MAX_MASS;
 #endif

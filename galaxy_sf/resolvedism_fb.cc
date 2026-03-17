@@ -635,6 +635,9 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
             in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS;
             break;
         case REM_ECSN:
+            /* Electron-capture SN: 5x10^50 erg */
+            in->Esne = 5.0e50 / UNIT_ENERGY_IN_CGS;
+            break;
         case REM_CCSN:
         default:
             /* Standard core-collapse: 10^51 erg */
