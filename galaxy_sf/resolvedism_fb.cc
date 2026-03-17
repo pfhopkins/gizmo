@@ -104,6 +104,11 @@ void resolvedism_determine_SNe(void)
     int n_collapse_local = 0;
     int n_wind_local = 0, n_wind_total = 0;
 
+    /* Reset SNe flags for active particles (allows re-entry after wind dump or previous -1 marking) */
+    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+        if(P[i].Type == 4) P[i].SNe_ThisTimeStep = 0;
+    }
+
     /* ---- Wind accumulation for living massive stars ---- */
 #ifdef GALSF_RESOLVEDISM_WINDS
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
@@ -217,6 +222,16 @@ void resolvedism_determine_SNe(void)
             continue;
         }
 
+        /* Force-dump any remaining accumulated wind mass before the SN/AGB event.
+           This ensures wind mass tracked by M_current but not yet injected to gas
+           gets properly returned before the explosion yields are computed. */
+#ifdef GALSF_RESOLVEDISM_WINDS
+        if(P[i].WindMassAccum > 0) {
+            P[i].SNe_ThisTimeStep = 3; /* wind dump first — SN will fire next timestep */
+            n_wind_local++;
+            continue; /* skip SN flagging this step */
+        }
+#endif
         /* Determine flag: 1 = explosive SN (ECSN/CCSN/PISN/PPISN), 2 = AGB/WD death */
         if(rem_type == REM_WD) {
             P[i].SNe_ThisTimeStep = 2; /* AGB: mass+metals, no energy */
@@ -627,7 +642,9 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
             break;
     }
 
-    double Mej_solar = Mstar - rem_mass;
+    /* Ejecta = what the particle actually has minus remnant. Exact mass conservation. */
+    double M_particle_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    double Mej_solar = M_particle_solar - rem_mass;
     if(Mej_solar < 0) Mej_solar = 0;
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
@@ -793,6 +810,8 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
                     CellP[j].InternalEnergy += dE;
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += dE;
+                    P[j].wakeup = 1; /* force cell to small timebin so it can respond to energy injection */
+                    NeedToWakeupParticles_local = 1;
 #ifdef COSMIC_RAY_FLUID
                     double dEcr = wk * local.Esne * cr_frac;
                     double v_ej = (local.Mej > 0) ? sqrt(2.0 * local.Esne / local.Mej) : 3000.0/UNIT_VEL_IN_KMS;
@@ -848,6 +867,8 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
                     /* Finally update gas mass */
                     #pragma omp atomic
                     P[j].Mass += dM;
+                    P[j].wakeup = 1;
+                    NeedToWakeupParticles_local = 1;
                 }
 
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -1041,12 +1062,12 @@ void resolvedism_inject_sn_energy(void)
             double rem_mass = stellar_remnant_mass(logM, logZ);
             if(rem_type == REM_PISN) rem_mass = 0; /* complete disruption */
 
-            double Mej_solar = Mstar - rem_mass;
+            double Mej_solar = M_star_old - rem_mass;
             if(Mej_solar < 0) Mej_solar = 0;
 
             n_events[channel] += 1;
             M_injected[channel] += Mej_solar;
-            M_removed[channel] += M_star_old - rem_mass;
+            M_removed[channel] += Mej_solar;
             if(channel == 0) { /* SN: has energy */
                 double Esne_erg = 1.0e51;
                 if(rem_type == REM_PISN) Esne_erg = 1.0e52;
