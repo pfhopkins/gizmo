@@ -751,20 +751,26 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SNinfo.txt");
   if(!(FdSNinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdSNinfo,"%s Per-SN/death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
-      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) age_at_death[yr]  (11) lifetime_table[yr]\n",prefix_char);
+      fprintf(FdSNinfo,"%s Per-SN/death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
+      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) M_ej[Msun]  (11) Z_ej[Msun]  (12) C[Msun]  (13) O[Msun]  (14) Si[Msun]  (15) Fe[Msun]  (16) age_at_death[yr]  (17) lifetime_table[yr]  (18) timebin\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "AGBinfo.txt");
   if(!(FdAGBinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdAGBinfo,"%s Per-AGB-death diagnostic log [GALSF_RESOLVEDISM_FB]. Columns: \n",prefix_char);
-      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) age_at_death[yr]  (10) lifetime_table[yr]\n",prefix_char);
+      fprintf(FdAGBinfo,"%s Per-AGB-death diagnostic log [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
+      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) M_ej[Msun]  (10) Z_ej[Msun]  (11) C[Msun]  (12) O[Msun]  (13) Si[Msun]  (14) Fe[Msun]  (15) age_at_death[yr]  (16) lifetime_table[yr]  (17) timebin\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "FeedbackBudget.txt");
   if(!(FdFeedbackBudget = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdFeedbackBudget,"%s Per-timestep feedback budget [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
       fprintf(FdFeedbackBudget,"%s   (1) time  (2) channel [0=SN,1=AGB,2=wind,3=radpressure,4=Ia]  (3) N_events  (4) M_injected[Msun]  (5) M_removed_from_stars[Msun]  (6) E_injected[erg]  (7) |dp_injected|[g*cm/s]  (8) Z_injected[Msun]\n",prefix_char);
+  }
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "WINDinfo.txt");
+  if(!(FdWINDinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdWINDinfo,"%s Per-wind-injection diagnostic log [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
+      fprintf(FdWINDinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) id  (6) M_init[Msun]  (7) dM_wind[Msun]  (8) dp_wind[g*cm/s]  (9) Z_wind[Msun]  (10) timebin\n",prefix_char);
   }
 #endif
 #ifdef GALSF_RESOLVEDISM

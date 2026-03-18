@@ -27,6 +27,8 @@
 
 double CumulFeedbackEnergy = 0;  /* cumulative feedback energy injected, all channels [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
+double CumulFeedbackMetals = 0;  /* cumulative metals returned to gas by feedback [Msun] */
+int CumulSNe = 0, CumulAGB = 0, CumulIa = 0; /* cumulative event counts */
 double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
 static double RadPressure_dp_thisStep = 0; /* total radpressure momentum this step [g*cm/s] */
 
@@ -171,6 +173,13 @@ void resolvedism_determine_SNe(void)
     int *sn_remtype = (int *)mymalloc("sn_remtype", DMAX(n_death_count,1) * sizeof(int));
     double *sn_age = (double *)mymalloc("sn_age", DMAX(n_death_count,1) * sizeof(double));
     double *sn_lifetime = (double *)mymalloc("sn_lifetime", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_mej = (double *)mymalloc("sn_mej", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_zej = (double *)mymalloc("sn_zej", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_yC = (double *)mymalloc("sn_yC", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_yO = (double *)mymalloc("sn_yO", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_ySi = (double *)mymalloc("sn_ySi", DMAX(n_death_count,1) * sizeof(double));
+    double *sn_yFe = (double *)mymalloc("sn_yFe", DMAX(n_death_count,1) * sizeof(double));
+    int *sn_timebin = (int *)mymalloc("sn_timebin", DMAX(n_death_count,1) * sizeof(int));
     int n_logged = 0;
 
     /* second pass: flag death events and handle direct collapses */
@@ -252,6 +261,37 @@ void resolvedism_determine_SNe(void)
         sn_remtype[n_logged] = rem_type;
         sn_age[n_logged] = star_age_yr;
         sn_lifetime[n_logged] = lifetime_yr;
+        /* Pre-compute ejecta mass and metal yield for logging */
+        {
+            double mej_log = P[i].Mass * UNIT_MASS_IN_SOLAR - rem_mass;
+            if(rem_type == REM_PISN) mej_log = P[i].Mass * UNIT_MASS_IN_SOLAR;
+            if(mej_log < 0) mej_log = 0;
+            double zej_log = 0, yC_log = 0, yO_log = 0, ySi_log = 0, yFe_log = 0;
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
+                double sy = stellar_sn_yield(logM, logZ, kk);
+                double xb = 0;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                xb = P[i].ElementAbundance[kk];
+#endif
+                double me = sy + xb * mej_log;
+                if(me < 0) me = 0;
+                zej_log += me;
+                if(kk == ELEM_C)  yC_log  = me;
+                if(kk == ELEM_O)  yO_log  = me;
+                if(kk == ELEM_Si) ySi_log = me;
+                if(kk == ELEM_Fe) yFe_log = me;
+            }
+            if(zej_log > mej_log) zej_log = mej_log;
+#endif
+            sn_mej[n_logged] = mej_log;
+            sn_zej[n_logged] = zej_log;
+            sn_yC[n_logged] = yC_log;
+            sn_yO[n_logged] = yO_log;
+            sn_ySi[n_logged] = ySi_log;
+            sn_yFe[n_logged] = yFe_log;
+        }
+        sn_timebin[n_logged] = P[i].TimeBin;
         n_logged++;
     }
 
@@ -278,9 +318,10 @@ void resolvedism_determine_SNe(void)
     {
         int *recvcounts = NULL, *displs = NULL;
         double *all_x = NULL, *all_y = NULL, *all_z = NULL, *all_u = NULL, *all_rho = NULL, *all_mstar = NULL;
-        double *all_age = NULL, *all_lifetime = NULL;
+        double *all_age = NULL, *all_lifetime = NULL, *all_mej = NULL, *all_zej = NULL;
+        double *all_yC = NULL, *all_yO = NULL, *all_ySi = NULL, *all_yFe = NULL;
         long long *all_id = NULL;
-        int *all_remtype = NULL;
+        int *all_remtype = NULL, *all_timebin = NULL;
 
         if(ThisTask == 0)
         {
@@ -302,6 +343,13 @@ void resolvedism_determine_SNe(void)
             all_remtype = (int *)mymalloc("all_remtype", n_logged_total * sizeof(int));
             all_age = (double *)mymalloc("all_age", n_logged_total * sizeof(double));
             all_lifetime = (double *)mymalloc("all_lifetime", n_logged_total * sizeof(double));
+            all_mej = (double *)mymalloc("all_mej", n_logged_total * sizeof(double));
+            all_zej = (double *)mymalloc("all_zej", n_logged_total * sizeof(double));
+            all_yC  = (double *)mymalloc("all_yC",  n_logged_total * sizeof(double));
+            all_yO  = (double *)mymalloc("all_yO",  n_logged_total * sizeof(double));
+            all_ySi = (double *)mymalloc("all_ySi", n_logged_total * sizeof(double));
+            all_yFe = (double *)mymalloc("all_yFe", n_logged_total * sizeof(double));
+            all_timebin = (int *)mymalloc("all_timebin", n_logged_total * sizeof(int));
         }
         MPI_Gatherv(sn_x, n_logged, MPI_DOUBLE, all_x, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
         MPI_Gatherv(sn_y, n_logged, MPI_DOUBLE, all_y, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -313,21 +361,36 @@ void resolvedism_determine_SNe(void)
         MPI_Gatherv(sn_remtype, n_logged, MPI_INT, all_remtype, recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Gatherv(sn_age, n_logged, MPI_DOUBLE, all_age, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
         MPI_Gatherv(sn_lifetime, n_logged, MPI_DOUBLE, all_lifetime, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_mej, n_logged, MPI_DOUBLE, all_mej, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_zej, n_logged, MPI_DOUBLE, all_zej, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_yC, n_logged, MPI_DOUBLE, all_yC, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_yO, n_logged, MPI_DOUBLE, all_yO, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_ySi, n_logged, MPI_DOUBLE, all_ySi, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_yFe, n_logged, MPI_DOUBLE, all_yFe, recvcounts, displs, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        MPI_Gatherv(sn_timebin, n_logged, MPI_INT, all_timebin, recvcounts, displs, MPI_INT, 0, MPI_COMM_WORLD);
 
         if(ThisTask == 0)
         {
             for(i = 0; i < n_logged_total; i++) {
                 if(all_remtype[i] == REM_WD) {
-                    fprintf(FdAGBinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %.6e  %.6e\n",
+                    fprintf(FdAGBinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %8.3f  %8.3f  %8.4f %8.4f %8.4f %8.4f  %.6e  %.6e  %3d\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
-                        all_id[i], all_mstar[i], all_age[i], all_lifetime[i]);
+                        all_id[i], all_mstar[i], all_mej[i], all_zej[i],
+                        all_yC[i], all_yO[i], all_ySi[i], all_yFe[i],
+                        all_age[i], all_lifetime[i], all_timebin[i]);
                 } else {
-                    fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d  %.6e  %.6e\n",
+                    fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d  %8.3f  %8.3f  %8.4f %8.4f %8.4f %8.4f  %.6e  %.6e  %3d\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
-                        all_id[i], all_mstar[i], all_remtype[i], all_age[i], all_lifetime[i]);
+                        all_id[i], all_mstar[i], all_remtype[i], all_mej[i], all_zej[i],
+                        all_yC[i], all_yO[i], all_ySi[i], all_yFe[i],
+                        all_age[i], all_lifetime[i], all_timebin[i]);
                 }
             }
             fflush(FdSNinfo); fflush(FdAGBinfo);
+            myfree(all_timebin);
+            myfree(all_yFe); myfree(all_ySi); myfree(all_yO); myfree(all_yC);
+            myfree(all_zej);
+            myfree(all_mej);
             myfree(all_lifetime);
             myfree(all_age);
             myfree(all_remtype);
@@ -342,6 +405,10 @@ void resolvedism_determine_SNe(void)
             myfree(recvcounts);
         }
     }
+    myfree(sn_timebin);
+    myfree(sn_yFe); myfree(sn_ySi); myfree(sn_yO); myfree(sn_yC);
+    myfree(sn_zej);
+    myfree(sn_mej);
     myfree(sn_lifetime);
     myfree(sn_age);
     myfree(sn_remtype);
@@ -387,7 +454,7 @@ void resolvedism_determine_SNe(void)
         /* Log Type Ia events to SNinfo.txt (same format, rem_type=7) */
         if(n_ia_total > 0)
         {
-            double *ia_x, *ia_y, *ia_z, *ia_u, *ia_rho, *ia_mstar;
+            double *ia_x, *ia_y, *ia_z, *ia_u, *ia_rho, *ia_mstar, *ia_age;
             long long *ia_id;
             ia_x = (double *)mymalloc("ia_x", n_ia_local * sizeof(double));
             ia_y = (double *)mymalloc("ia_y", n_ia_local * sizeof(double));
@@ -396,6 +463,7 @@ void resolvedism_determine_SNe(void)
             ia_rho = (double *)mymalloc("ia_rho", n_ia_local * sizeof(double));
             ia_mstar = (double *)mymalloc("ia_mstar", n_ia_local * sizeof(double));
             ia_id = (long long *)mymalloc("ia_id", n_ia_local * sizeof(long long));
+            ia_age = (double *)mymalloc("ia_age", n_ia_local * sizeof(double));
             int n_ia_logged = 0;
             for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
                 if(P[i].Type == 4 && P[i].SNe_ThisTimeStep == 4) {
@@ -406,11 +474,12 @@ void resolvedism_determine_SNe(void)
                     ia_rho[n_ia_logged] = P[i].DensityAroundParticle;
                     ia_mstar[n_ia_logged] = P[i].MstarSampleIMF[0];
                     ia_id[n_ia_logged] = (long long)P[i].ID;
+                    ia_age[n_ia_logged] = evaluate_stellar_age_Gyr(i) * 1.0e9;
                     n_ia_logged++;
                 }
             }
             int *recvcounts_ia = NULL, *displs_ia = NULL;
-            double *all_ia_x=NULL, *all_ia_y=NULL, *all_ia_z=NULL, *all_ia_u=NULL, *all_ia_rho=NULL, *all_ia_mstar=NULL;
+            double *all_ia_x=NULL, *all_ia_y=NULL, *all_ia_z=NULL, *all_ia_u=NULL, *all_ia_rho=NULL, *all_ia_mstar=NULL, *all_ia_age=NULL;
             long long *all_ia_id = NULL;
             if(ThisTask == 0) {
                 recvcounts_ia = (int *)mymalloc("recvcounts_ia", NTask * sizeof(int));
@@ -427,6 +496,7 @@ void resolvedism_determine_SNe(void)
                 all_ia_rho = (double *)mymalloc("all_ia_rho", n_ia_total * sizeof(double));
                 all_ia_mstar = (double *)mymalloc("all_ia_mstar", n_ia_total * sizeof(double));
                 all_ia_id = (long long *)mymalloc("all_ia_id", n_ia_total * sizeof(long long));
+                all_ia_age = (double *)mymalloc("all_ia_age", n_ia_total * sizeof(double));
             }
             MPI_Gatherv(ia_x, n_ia_logged, MPI_DOUBLE, all_ia_x, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(ia_y, n_ia_logged, MPI_DOUBLE, all_ia_y, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -435,18 +505,19 @@ void resolvedism_determine_SNe(void)
             MPI_Gatherv(ia_rho, n_ia_logged, MPI_DOUBLE, all_ia_rho, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(ia_mstar, n_ia_logged, MPI_DOUBLE, all_ia_mstar, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             MPI_Gatherv(ia_id, n_ia_logged, MPI_LONG_LONG, all_ia_id, recvcounts_ia, displs_ia, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(ia_age, n_ia_logged, MPI_DOUBLE, all_ia_age, recvcounts_ia, displs_ia, MPI_DOUBLE, 0, MPI_COMM_WORLD);
             if(ThisTask == 0) {
                 for(i = 0; i < n_ia_total; i++) {
-                    fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d\n",
+                    fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d  %8.3f  %8.3f  %.6e  %.6e\n",
                         All.Time, all_ia_x[i], all_ia_y[i], all_ia_z[i], all_ia_u[i], all_ia_rho[i],
-                        all_ia_id[i], all_ia_mstar[i], 7); /* 7 = Type Ia */
+                        all_ia_id[i], all_ia_mstar[i], 7, IA_EJECTA_MASS, 0.0, all_ia_age[i], 0.0); /* 7=TypeIa, M_ej=Mch, Z_ej=0(Fe-peak in budget), no lifetime */
                 }
                 fflush(FdSNinfo);
-                myfree(all_ia_id); myfree(all_ia_mstar); myfree(all_ia_rho);
+                myfree(all_ia_age); myfree(all_ia_id); myfree(all_ia_mstar); myfree(all_ia_rho);
                 myfree(all_ia_u); myfree(all_ia_z); myfree(all_ia_y); myfree(all_ia_x);
                 myfree(displs_ia); myfree(recvcounts_ia);
             }
-            myfree(ia_id); myfree(ia_mstar); myfree(ia_rho);
+            myfree(ia_age); myfree(ia_id); myfree(ia_mstar); myfree(ia_rho);
             myfree(ia_u); myfree(ia_z); myfree(ia_y); myfree(ia_x);
         }
     }
@@ -991,6 +1062,18 @@ void resolvedism_inject_sn_energy(void)
     double dp_injected[5] = {0,0,0,0,0};  /* |momentum| [g*cm/s] */
     double Z_injected[5] = {0,0,0,0,0};   /* metals injected [Msun] */
 
+    /* Wind event logging buffers */
+    int n_wind_logged = 0, n_wind_alloc = 64;
+    double *wind_log_x = (double *)mymalloc("wind_log_x", n_wind_alloc * sizeof(double));
+    double *wind_log_y = (double *)mymalloc("wind_log_y", n_wind_alloc * sizeof(double));
+    double *wind_log_z = (double *)mymalloc("wind_log_z", n_wind_alloc * sizeof(double));
+    double *wind_log_mstar = (double *)mymalloc("wind_log_mstar", n_wind_alloc * sizeof(double));
+    double *wind_log_dm = (double *)mymalloc("wind_log_dm", n_wind_alloc * sizeof(double));
+    double *wind_log_dp = (double *)mymalloc("wind_log_dp", n_wind_alloc * sizeof(double));
+    double *wind_log_zw = (double *)mymalloc("wind_log_zw", n_wind_alloc * sizeof(double));
+    long long *wind_log_id = (long long *)mymalloc("wind_log_id", n_wind_alloc * sizeof(long long));
+    int *wind_log_tb = (int *)mymalloc("wind_log_tb", n_wind_alloc * sizeof(int));
+
     /* Post-injection: handle latching, cleanup, and budget tracking for pass 0 */
     int i;
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
@@ -1019,6 +1102,27 @@ void resolvedism_inject_sn_energy(void)
                 Z_injected[2] += Z_wind;
             }
 
+            /* Log wind event */
+            if(n_wind_logged < n_wind_alloc) {
+                double Z_w_log = 0;
+                double Mstar_wl, logM_wl, logZ_wl;
+                if(get_star_info(i, &Mstar_wl, &logM_wl, &logZ_wl)) {
+                    double age_wl = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                    double lage_wl = log10(DMAX(age_wl, 100.0));
+                    for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
+                        Z_w_log += stellar_surface_abundance(logM_wl, logZ_wl, lage_wl, kk) * dM_wind;
+                }
+                wind_log_x[n_wind_logged] = P[i].Pos[0];
+                wind_log_y[n_wind_logged] = P[i].Pos[1];
+                wind_log_z[n_wind_logged] = P[i].Pos[2];
+                wind_log_id[n_wind_logged] = (long long)P[i].ID;
+                wind_log_mstar[n_wind_logged] = P[i].MstarSampleIMF[0];
+                wind_log_dm[n_wind_logged] = dM_wind;
+                wind_log_dp[n_wind_logged] = dp_wind;
+                wind_log_zw[n_wind_logged] = Z_w_log;
+                wind_log_tb[n_wind_logged] = P[i].TimeBin;
+                n_wind_logged++;
+            }
             printf("RESOLVEDISM WIND: Task=%d ID=%llu M_init=%.2f dM=%.4f dp=%.3e\n",
                 ThisTask, (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0], dM_wind, dp_wind);
             P[i].WindMassAccum = 0;
@@ -1150,6 +1254,56 @@ void resolvedism_inject_sn_energy(void)
         P[i].SNe_ThisTimeStep = -1;
     }
 
+    /* ---- Write wind events to WINDinfo.txt ---- */
+    {
+        int n_wind_total_log = 0;
+        MPI_Allreduce(&n_wind_logged, &n_wind_total_log, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(n_wind_total_log > 0) {
+            int *wrc = NULL, *wdp = NULL;
+            double *aw_x=NULL, *aw_y=NULL, *aw_z=NULL, *aw_ms=NULL, *aw_dm=NULL, *aw_dp=NULL, *aw_zw=NULL;
+            long long *aw_id = NULL;
+            int *aw_tb = NULL;
+            if(ThisTask == 0) {
+                wrc = (int *)mymalloc("wrc", NTask * sizeof(int));
+                wdp = (int *)mymalloc("wdp", NTask * sizeof(int));
+            }
+            MPI_Gather(&n_wind_logged, 1, MPI_INT, wrc, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                wdp[0] = 0; for(i=1;i<NTask;i++) wdp[i] = wdp[i-1]+wrc[i-1];
+                aw_x  = (double *)mymalloc("aw_x",  n_wind_total_log * sizeof(double));
+                aw_y  = (double *)mymalloc("aw_y",  n_wind_total_log * sizeof(double));
+                aw_z  = (double *)mymalloc("aw_z",  n_wind_total_log * sizeof(double));
+                aw_ms = (double *)mymalloc("aw_ms", n_wind_total_log * sizeof(double));
+                aw_dm = (double *)mymalloc("aw_dm", n_wind_total_log * sizeof(double));
+                aw_dp = (double *)mymalloc("aw_dp", n_wind_total_log * sizeof(double));
+                aw_zw = (double *)mymalloc("aw_zw", n_wind_total_log * sizeof(double));
+                aw_id = (long long *)mymalloc("aw_id", n_wind_total_log * sizeof(long long));
+                aw_tb = (int *)mymalloc("aw_tb", n_wind_total_log * sizeof(int));
+            }
+            MPI_Gatherv(wind_log_x,     n_wind_logged, MPI_DOUBLE,    aw_x,  wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_y,     n_wind_logged, MPI_DOUBLE,    aw_y,  wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_z,     n_wind_logged, MPI_DOUBLE,    aw_z,  wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_mstar, n_wind_logged, MPI_DOUBLE,    aw_ms, wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_dm,    n_wind_logged, MPI_DOUBLE,    aw_dm, wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_dp,    n_wind_logged, MPI_DOUBLE,    aw_dp, wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_zw,    n_wind_logged, MPI_DOUBLE,    aw_zw, wrc, wdp, MPI_DOUBLE,    0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_id,    n_wind_logged, MPI_LONG_LONG, aw_id, wrc, wdp, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(wind_log_tb,    n_wind_logged, MPI_INT,       aw_tb, wrc, wdp, MPI_INT,       0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                for(i = 0; i < n_wind_total_log; i++)
+                    fprintf(FdWINDinfo, "%12.6f  %10.6f %10.6f %10.6f  %10lld  %8.3f  %10.4f  %12.4e  %10.4f  %3d\n",
+                        All.Time, aw_x[i], aw_y[i], aw_z[i], aw_id[i], aw_ms[i], aw_dm[i], aw_dp[i], aw_zw[i], aw_tb[i]);
+                fflush(FdWINDinfo);
+                myfree(aw_tb); myfree(aw_id); myfree(aw_zw); myfree(aw_dp); myfree(aw_dm);
+                myfree(aw_ms); myfree(aw_z); myfree(aw_y); myfree(aw_x);
+                myfree(wdp); myfree(wrc);
+            }
+        }
+    }
+    /* Free wind logging buffers (LIFO) */
+    myfree(wind_log_tb); myfree(wind_log_id); myfree(wind_log_zw); myfree(wind_log_dp); myfree(wind_log_dm);
+    myfree(wind_log_mstar); myfree(wind_log_z); myfree(wind_log_y); myfree(wind_log_x);
+
     /* ---- Pass 1: radiation pressure ---- */
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     PRINT_STATUS(" ..injecting single-star radiation pressure");
@@ -1190,6 +1344,10 @@ void resolvedism_inject_sn_energy(void)
                     glob_E[ch], glob_dp[ch], glob_Z[ch]);
                 CumulFeedbackEnergy += glob_E[ch];
                 CumulFeedbackMass += glob_Mi[ch];
+                CumulFeedbackMetals += glob_Z[ch];
+                if(ch == 0) CumulSNe += (int)glob_n[ch];
+                if(ch == 1) CumulAGB += (int)glob_n[ch];
+                if(ch == 4) CumulIa += (int)glob_n[ch];
             }
         }
         fflush(FdFeedbackBudget);
@@ -1197,6 +1355,64 @@ void resolvedism_inject_sn_energy(void)
         if(glob_n[3] > 0 && All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {
             printf("RESOLVEDISM RADPRESSURE: %.0f active stars, dp_tot=%.3e [cgs] at t=%g\n",
                    glob_n[3], glob_dp[3], All.Time);
+            fflush(stdout);
+        }
+    }
+
+    /* ---- Stellar census + cumulative summary (domain decomp steps only) ---- */
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+    {
+        int local_census[5] = {0,0,0,0,0}; /* bins: M<1, 1-8, 8-20, 20-40, >40 */
+        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+            if(P[i].Type != 4 || P[i].Mass <= 0) continue;
+            double ms = 0;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            if(P[i].sampled) ms = P[i].MstarSampleIMF[0];
+#endif
+#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
+            ms = P[i].Mstar;
+#endif
+            if(ms <= 0) continue;
+            if(ms < 1.0) local_census[0]++;
+            else if(ms < 8.0) local_census[1]++;
+            else if(ms < 20.0) local_census[2]++;
+            else if(ms < 40.0) local_census[3]++;
+            else local_census[4]++;
+        }
+        int glob_census[5];
+        MPI_Reduce(local_census, glob_census, 5, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0) {
+            int ntot = glob_census[0]+glob_census[1]+glob_census[2]+glob_census[3]+glob_census[4];
+            printf("RESOLVEDISM CENSUS: %d stars alive (<1:%d  1-8:%d  8-20:%d  20-40:%d  >40:%d) at t=%g\n",
+                ntot, glob_census[0], glob_census[1], glob_census[2], glob_census[3], glob_census[4], All.Time);
+            printf("RESOLVEDISM CUMUL: %d SNe + %d AGB + %d Ia | M_returned=%.1f Msun | Z_returned=%.1f Msun | E_total=%.2e erg\n",
+                CumulSNe, CumulAGB, CumulIa, CumulFeedbackMass, CumulFeedbackMetals, CumulFeedbackEnergy);
+            fflush(stdout);
+        }
+
+        /* Gas phase diagnostics */
+        double local_gas[6] = {0,0,0,0,0,0}; /* M_gas, M_metals, rho_max, T_max, nH_max, u_max */
+        for(i = 0; i < N_gas; i++) {
+            if(P[i].Type != 0 || P[i].Mass <= 0) continue;
+            double mi = P[i].Mass * UNIT_MASS_IN_SOLAR;
+            local_gas[0] += mi;
+            double rho_cgs = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+            double nH = rho_cgs * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+            if(nH > local_gas[4]) local_gas[4] = nH;
+            if(CellP[i].Density > local_gas[2]) local_gas[2] = CellP[i].Density;
+#ifdef CHEMCOOL
+            if(CellP[i].Temp > local_gas[3]) local_gas[3] = CellP[i].Temp;
+#endif
+        }
+        double glob_gas_sum[2], glob_gas_max[4];
+        MPI_Reduce(&local_gas[0], &glob_gas_sum[0], 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* M_gas */
+        MPI_Reduce(&local_gas[1], &glob_gas_sum[1], 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* M_metals */
+        MPI_Reduce(&local_gas[2], &glob_gas_max[0], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); /* rho_max */
+        MPI_Reduce(&local_gas[3], &glob_gas_max[1], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); /* T_max */
+        MPI_Reduce(&local_gas[4], &glob_gas_max[2], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); /* nH_max */
+        if(ThisTask == 0) {
+            printf("RESOLVEDISM GAS: M_gas=%.2e Msun | nH_max=%.2e cm-3 | T_max=%.1f K\n",
+                glob_gas_sum[0], glob_gas_max[2], glob_gas_max[1]);
             fflush(stdout);
         }
     }
