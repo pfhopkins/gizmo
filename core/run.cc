@@ -352,12 +352,14 @@ void calculate_non_standard_physics(void)
 #endif // RADTRANSFER block
 
 #ifdef GALSF_RESOLVEDISM_FB
-    NeedToWakeupParticles_local = 0;
-    resolvedism_inject_sn_energy(); // resolved ISM SN energy injection
-    /* Recompute hydro if SN/wind/AGB injected energy or mass (NeedToWakeupParticles_local set by feedback) */
-    {   int fb_flag = 0;
-        MPI_Allreduce(&NeedToWakeupParticles_local, &fb_flag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(fb_flag > 0) {
+    {   int saved_wakeup = NeedToWakeupParticles_local; /* preserve hydro wakeup flag */
+        NeedToWakeupParticles_local = 0;
+        resolvedism_inject_sn_energy(); // resolved ISM SN energy injection
+        int fb_flag = NeedToWakeupParticles_local; /* did feedback set it? */
+        NeedToWakeupParticles_local = saved_wakeup; /* restore hydro wakeup flag */
+        int fb_recompute = 0;
+        MPI_Allreduce(&fb_flag, &fb_recompute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(fb_recompute > 0) {
             if(ThisTask == 0) printf("Recomputing hydro for feedback-affected cells\n");
             compute_hydro_densities_and_forces();
         }
