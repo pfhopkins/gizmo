@@ -403,6 +403,9 @@ extern struct gas_cell_data
 #endif
 #endif
     
+#if defined(OUTPUT_COOLRATE) && defined(CHEMCOOL)
+    MyFloat CoolingRate_CHEMCOOL;
+#endif
 #if defined(OUTPUT_COOLRATE_DETAIL) && defined(COOLING)
     MyFloat CoolingRate;
     MyFloat HeatingRate;

@@ -1339,9 +1339,13 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    double ne = CellP[pindex].Ne, ne_out=ne; u = CellP[pindex].InternalEnergyPred; tcool = GetCoolingTime(u, CellP[pindex].Density * All.cf_a3inv, ne, &ne_out, pindex); /* get cooling time */
-                    double coolrate_to_output = 0; if(tcool != 0) {coolrate_to_output = u / tcool;} /* convert cooling time with current thermal energy to du/dt */
+#ifdef CHEMCOOL
+                    *fp++ = (MyOutputFloat) CellP[pindex].CoolingRate_CHEMCOOL;
+#else
+                    double ne = CellP[pindex].Ne, ne_out=ne; u = CellP[pindex].InternalEnergyPred; tcool = GetCoolingTime(u, CellP[pindex].Density * All.cf_a3inv, ne, &ne_out, pindex);
+                    double coolrate_to_output = 0; if(tcool != 0) {coolrate_to_output = u / tcool;}
                     *fp++ = (MyOutputFloat) coolrate_to_output;
+#endif
                     n++;
                 }
 #endif
@@ -1576,9 +1580,13 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp; u = DMAX(All.MinEgySpec, CellP[pindex].InternalEnergy); // needs to be in code units
+#ifdef CHEMCOOL
+                    *fp++ = (MyOutputFloat) CellP[pindex].Temp;
+#else
+                    double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp; u = DMAX(All.MinEgySpec, CellP[pindex].InternalEnergy);
                     temp = ThermalProperties(u, CellP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
                     *fp++ = (MyOutputFloat) temp;
+#endif
                     n++;
                 }
 #endif

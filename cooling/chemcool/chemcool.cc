@@ -488,6 +488,9 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         CellP[target].InternalEnergyPred = CellP[target].InternalEnergy;
         CellP[target].Temp = temp;
         CellP[target].DustTemp = COOLR.tdust;
+#ifdef OUTPUT_COOLRATE
+        CellP[target].CoolingRate_CHEMCOOL = cooling_rate;
+#endif
         return CellP[target].InternalEnergy;
     } else if(mode == 1) {
         return cooling_rate;
