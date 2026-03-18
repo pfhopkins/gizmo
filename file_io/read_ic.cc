@@ -286,7 +286,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_ISMDUSTCHEMMOL:    /* gas dust species following Species routines */
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; n++) {CellP[offset + n].ISMDustChem_MassFractionInDenseMolecular = *fp++; CellP[offset + n].ISMDustChem_C_in_CO = *fp++;}
 #endif
             break;

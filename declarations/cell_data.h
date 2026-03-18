@@ -38,8 +38,6 @@ extern struct gas_cell_data
     MyDouble ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES]; /*!< metallicity of dust species types. 0=silicates, 1=carbon, 2=SiC, 3=free-flying iron, (optional) 4=oxygen reservoir, (optional) 5=iron inclusions in silicates */
 #endif
     MyDouble ISMDustChem_DelayTimeSNeSputtering;       /*!< delay time for thermal sputtering due to recent SNe, used to not double count dust destruction with thermal sputtering */
-    MyDouble ISMDustChem_C_in_CO;                      /*!< C metallicity locked in CO */
-    MyDouble ISMDustChem_MassFractionInDenseMolecular; /*!< mass fraction of gas in dense MC phase */
 #if (!defined(RADTRANSFER) && !defined(RT_INFRARED)) && (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
     MyFloat Dust_Temperature;
 #endif
@@ -50,6 +48,9 @@ extern struct gas_cell_data
     MyDouble ISMDustChem_Coag_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
     MyDouble ISMDustChem_Shat_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
 #endif
+#else
+    MyDouble ISMDustChem_C_in_CO;                      /*!< C metallicity locked in CO */
+    MyDouble ISMDustChem_MassFractionInDenseMolecular; /*!< mass fraction of gas in dense MC phase */
 #endif
 #endif
     

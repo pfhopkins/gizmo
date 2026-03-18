@@ -125,7 +125,10 @@ void Initialize_ISMDustChem_Particle_Variables(int i)
 #else
     if(RestartFlag == 0) {
 #endif
-        CellP[i].ISMDustChem_DelayTimeSNeSputtering = CellP[i].ISMDustChem_C_in_CO = CellP[i].ISMDustChem_MassFractionInDenseMolecular = 0.;
+        CellP[i].ISMDustChem_DelayTimeSNeSputtering = 0;
+#if !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+        CellP[i].ISMDustChem_C_in_CO = CellP[i].ISMDustChem_MassFractionInDenseMolecular = 0.;
+#endif
         double temp_cutoff=1E5, ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
         if(All.Initial_ISMDustChem_Depletion > 0 && temp < temp_cutoff)
@@ -1177,7 +1180,7 @@ void update_dust_processes(int i, double dtime_gyr)
     }
 }
 
-
+#if !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 void update_dense_molecular_fields(int i, double temp, double rho, double nh0, double ne)
 {
     /* Choban+22 version for FIRE-2.
@@ -1221,6 +1224,7 @@ void update_dense_molecular_fields(int i, double temp, double rho, double nh0, d
 
     CellP[i].ISMDustChem_MassFractionInDenseMolecular = new_ISMDustChem_MassFractionInDenseMolecular;
 }
+#endif
 
 
 void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
