@@ -318,11 +318,11 @@ void resolvedism_determine_SNe(void)
         {
             for(i = 0; i < n_logged_total; i++) {
                 if(all_remtype[i] == REM_WD) {
-                    fprintf(FdAGBinfo, "%.16g %g %g %g %g %g %lld %g %.6e %.6e\n",
+                    fprintf(FdAGBinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %.6e  %.6e\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
                         all_id[i], all_mstar[i], all_age[i], all_lifetime[i]);
                 } else {
-                    fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d %.6e %.6e\n",
+                    fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d  %.6e  %.6e\n",
                         All.Time, all_x[i], all_y[i], all_z[i], all_u[i], all_rho[i],
                         all_id[i], all_mstar[i], all_remtype[i], all_age[i], all_lifetime[i]);
                 }
@@ -437,7 +437,7 @@ void resolvedism_determine_SNe(void)
             MPI_Gatherv(ia_id, n_ia_logged, MPI_LONG_LONG, all_ia_id, recvcounts_ia, displs_ia, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
             if(ThisTask == 0) {
                 for(i = 0; i < n_ia_total; i++) {
-                    fprintf(FdSNinfo, "%.16g %g %g %g %g %g %lld %g %d\n",
+                    fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d\n",
                         All.Time, all_ia_x[i], all_ia_y[i], all_ia_z[i], all_ia_u[i], all_ia_rho[i],
                         all_ia_id[i], all_ia_mstar[i], 7); /* 7 = Type Ia */
                 }
@@ -1185,7 +1185,7 @@ void resolvedism_inject_sn_energy(void)
             if(glob_n[ch] > 0) {
                 /* Radpressure (ch=3): only log on full (domain decomp) steps to avoid flooding */
                 if(ch == 3 && All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) continue;
-                fprintf(FdFeedbackBudget, "%.16g %d %.0f %g %g %g %g %g\n",
+                fprintf(FdFeedbackBudget, "%12.6f  %d  %6.0f  %12.4f  %12.4f  %12.4e  %12.4e  %12.4f\n",
                     All.Time, ch, glob_n[ch], glob_Mi[ch], glob_Mr[ch],
                     glob_E[ch], glob_dp[ch], glob_Z[ch]);
                 CumulFeedbackEnergy += glob_E[ch];

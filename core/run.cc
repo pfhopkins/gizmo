@@ -132,10 +132,10 @@ void run(void)
             MPI_Reduce(local_mass, glob_mass, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
             MPI_Reduce(&local_nstars, &glob_nstars, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
             if(ThisTask == 0) {
-                fprintf(FdSFRrism, "%.16g %d", All.Time, glob_nstars);
+                fprintf(FdSFRrism, "%12.6f  %8d", All.Time, glob_nstars);
                 for(int w = 0; w < nwin; w++) {
                     double sfr_w = (windows_myr[w] > 0) ? glob_mass[w] / (windows_myr[w] * 1e6) : 0;
-                    fprintf(FdSFRrism, " %.6e", sfr_w);
+                    fprintf(FdSFRrism, "  %12.6e", sfr_w);
                 }
                 fprintf(FdSFRrism, "\n"); fflush(FdSFRrism);
             }

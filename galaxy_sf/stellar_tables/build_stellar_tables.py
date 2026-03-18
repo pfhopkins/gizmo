@@ -2074,8 +2074,8 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                             y_a = np.array([p[1] for p in pairs])
                             yields[iz, im, ie] = np.interp(
                                 M, m_a, y_a, left=y_a[0], right=y_a[-1])
-                # AGB: all mass loss is via winds (no SN), wind_yields = net_yields
-                wind_yields[iz, im, :] = yields[iz, im, :]
+                # AGB: no wind injection in code (M<8 skipped), full Karakas yields at death
+                # wind_yields stays 0 so sn_yield = net_yield = full Karakas yields
                 n_src[yield_src[iz, im]] += 1
                 continue
 
@@ -2503,7 +2503,7 @@ def build_all(base_dir, output_file):
         ds.attrs['shape'] = '(N_Z, N_M, N_elements)'
         ds.attrs['description'] = ('Wind-only net yields (pre-SN mass loss). '
                                    'SN-only yields = net_yields - wind_yields. '
-                                   'AGB (M<8): wind_yields = net_yields (no SN). '
+                                   'AGB (M<8): wind_yields = 0 (no wind injection in code, full yields at death). '
                                    'Limongi (8-14): wind_yields = 0 (SN ejecta only). '
                                    'PARSEC v2 (M>=14): from winds_ejecta.dat. '
                                    'FSN/DBH: wind_yields = net_yields (no explosion).')
