@@ -269,6 +269,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
             while(idx < n_collected && ngb_buf[idx].pixel == k)
             {
                 j = ngb_buf[idx].index;
+                if(CellP[j].Ionized == 1) {idx++; continue;} /* already ionized by another star — skip, don't spend photons */
                 double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
                 double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
                 double recomb  = alpha_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
@@ -276,9 +277,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                 budget -= recomb;
                 consumed += recomb;
                 last_r = sqrt(ngb_buf[idx].dist2);
-#ifdef GALSF_RESOLVEDISM_PHOTOION
                 CellP[j].Ionized = 1;
-#endif
                 idx++;
                 if(budget < 10.0 * recomb) {front_found = 1; break;} /* ionization front reached */
             }
@@ -434,6 +433,14 @@ void resolvedism_photoionize(void)
             printf("RESOLVEDISM PI: %d ionizing stars at t=%g (%d iter)\n", npi_total, All.Time, iter);
             printf("RESOLVEDISM PI: HII front R_min=%.1f pc, R_max=%.1f pc, max asymmetry=%.1f:1\n",
                 glob_rfront_min * UNIT_LENGTH_IN_KPC * 1e3, glob_rfront_max * UNIT_LENGTH_IN_KPC * 1e3, glob_asym_max);
+        }
+    }
+
+    /* Wakeup newly ionized cells so they respond on the next timestep (matching gizmo2017) */
+    for(j = 0; j < N_gas; j++) {
+        if(P[j].Type == 0 && CellP[j].Ionized == 1) {
+            P[j].wakeup = 1;
+            NeedToWakeupParticles_local = 1;
         }
     }
 

@@ -1580,6 +1580,51 @@ def load_parsec2_ejecta(ejecta_dir):
     return data
 
 
+def load_parsec2_wind_ejecta(ejecta_dir):
+    """
+    Load PARSEC v2 VMS wind-only ejecta tables (14-600+ Msun).
+    Same format as total ejecta but without M_rem/Mbar/SNT columns.
+    Returns dict: (Z, M_init) → {'yields': {elem: Msun}, ...}
+    """
+    # Column indices (0-based) for wind ejecta files:
+    # Min(0) Mfin(1) M_HE(2) M_CO(3) H(4) HE3(5) HE4(6) ... (no M_rem/Mbar/SNT)
+    # = total_ejecta columns shifted by -3
+    ELEM_COLS_WIND = {
+        'H': [4], 'He': [5, 6], 'C': [9, 10], 'N': [11, 12], 'O': [13, 14, 15],
+        'F': [16], 'Ne': [17, 18, 19], 'Na': [20], 'Mg': [21, 22, 23],
+        'Al': [24, 25], 'Si': [26, 27], 'S': [29], 'Ca': [33], 'Ti': [35], 'Fe': [39],
+    }
+
+    data = {}
+    for zdir in sorted(glob(os.path.join(ejecta_dir, 'ejecta_Z*'))):
+        m = re.search(r'ejecta_Z([\d.Ee-]+)', zdir)
+        if not m:
+            continue
+        Z = float(m.group(1))
+        wind_files = glob(os.path.join(zdir, '*winds_ejecta.dat'))
+        if not wind_files:
+            continue
+        with open(wind_files[0]) as f:
+            lines = f.readlines()
+        for line in lines[4:]:  # skip 4 header lines
+            parts = line.split()
+            if len(parts) < 44:
+                continue
+            M_init = float(parts[0])
+            yields = {}
+            for elem, cols in ELEM_COLS_WIND.items():
+                yields[elem] = sum(float(parts[c]) for c in cols)
+            # Ni → Fe (radioactive decay in wind is negligible, but include for consistency)
+            yields['Fe'] += float(parts[41])  # col 41 = NI in wind files
+            data[(Z, M_init)] = {
+                'yields': yields,
+                'M_fin': float(parts[1]),
+                'M_HE': float(parts[2]),
+                'M_CO': float(parts[3]),
+            }
+    return data
+
+
 def load_nugrid_yields(nugrid_dir):
     """
     Load NuGrid Set1ext element yields (Ritter+ 2018, Fryer12 delay).
@@ -1864,6 +1909,49 @@ def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
     return net, M_rem, sn_type
 
 
+def _interp_p2_wind_yields(p2_wind, Z_p2, M, p2_wind_Ms, init_comp):
+    """
+    Interpolate PARSEC v2 wind-only ejecta to target mass M.
+    Returns net wind yields dict or None if no data.
+    Wind ejecta = total mass ejected via winds (pre-SN mass loss).
+    Net wind yields = wind ejecta - initial composition * wind mass lost.
+    """
+    if not p2_wind_Ms:
+        return None
+    X_init = init_comp.get(Z_p2, {})
+
+    def _wind_net(d, M_init_ref):
+        """Compute net wind yields for one data point."""
+        # Wind mass lost = M_init - M_fin (pre-SN mass)
+        M_wind = M_init_ref - d['M_fin']
+        net = {}
+        for elem in TRACKED_ELEMENTS:
+            net[elem] = d['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_wind
+        return net
+
+    # Clamp or interpolate
+    if M <= p2_wind_Ms[0]:
+        d = p2_wind[(Z_p2, p2_wind_Ms[0])]
+        return _wind_net(d, p2_wind_Ms[0])
+    if M >= p2_wind_Ms[-1]:
+        d = p2_wind[(Z_p2, p2_wind_Ms[-1])]
+        return _wind_net(d, p2_wind_Ms[-1])
+
+    # Bracket and linearly interpolate
+    idx = int(np.searchsorted(p2_wind_Ms, M)) - 1
+    M_lo, M_hi = p2_wind_Ms[idx], p2_wind_Ms[idx + 1]
+    f = (M - M_lo) / (M_hi - M_lo)
+    d_lo = p2_wind[(Z_p2, M_lo)]
+    d_hi = p2_wind[(Z_p2, M_hi)]
+
+    net_lo = _wind_net(d_lo, M_lo)
+    net_hi = _wind_net(d_hi, M_hi)
+    net = {}
+    for elem in TRACKED_ELEMENTS:
+        net[elem] = net_lo[elem] * (1 - f) + net_hi[elem] * f
+    return net
+
+
 def build_yield_grid(Z_grid, M_grid, base_dir):
     """
     Build yield + remnant arrays.
@@ -1907,6 +1995,10 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     p2_Zs = sorted(set(k[0] for k in p2_ejecta.keys()))
     p2_init_comp = _parse_parsec2_init_comp(os.path.join(base_dir, 'parsec2_vms'))
 
+    print("  Loading PARSEC v2 VMS wind-only ejecta...", flush=True)
+    p2_wind = load_parsec2_wind_ejecta(os.path.join(base_dir, 'parsec2_vms'))
+    p2_wind_Zs = sorted(set(k[0] for k in p2_wind.keys()))
+
     print("  Loading NuGrid Set1ext yields...", flush=True)
     nugrid = load_nugrid_yields(os.path.join(base_dir, 'nugrid'))
     nugrid_Zs = sorted(set(k[0] for k in nugrid.keys()))
@@ -1942,6 +2034,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
 
     N_Z, N_M = len(Z_grid), len(M_grid)
     yields = np.zeros((N_Z, N_M, N_ELEM))
+    wind_yields = np.zeros((N_Z, N_M, N_ELEM))
     rem_type = np.zeros((N_Z, N_M), dtype=int)
     rem_mass = np.zeros((N_Z, N_M))
     yield_src = np.zeros((N_Z, N_M), dtype=int)
@@ -1960,6 +2053,9 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
 
         # PARSEC v2 masses at this Z (for remnant classification)
         p2_Ms = sorted(m for (z, m) in p2_ejecta if z == Z_p2) if Z_p2 else []
+        # Wind ejecta masses at nearest Z
+        Z_p2w = min(p2_wind_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if p2_wind_Zs else None
+        p2_wind_Ms = sorted(m for (z, m) in p2_wind if z == Z_p2w) if Z_p2w else []
 
         for im, M in enumerate(M_grid):
 
@@ -1978,6 +2074,8 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                             y_a = np.array([p[1] for p in pairs])
                             yields[iz, im, ie] = np.interp(
                                 M, m_a, y_a, left=y_a[0], right=y_a[-1])
+                # AGB: all mass loss is via winds (no SN), wind_yields = net_yields
+                wind_yields[iz, im, :] = yields[iz, im, :]
                 n_src[yield_src[iz, im]] += 1
                 continue
 
@@ -2006,14 +2104,19 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
 
                     yields[iz, im, ie] = y_net
 
+                # Limongi data is SN ejecta only; wind contribution is small
+                # for 8-14 Msun and not separated → wind_yields stays 0
                 n_src[2] += 1
                 continue
 
             # ═══ Massive stars: M ≥ 14 Msun ═══
             # Remnant + yields: all from PARSEC v2
             result = None
+            wind_result = None
             if p2_Ms:
                 result = _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, p2_init_comp)
+            if p2_wind_Ms:
+                wind_result = _interp_p2_wind_yields(p2_wind, Z_p2w, M, p2_wind_Ms, p2_init_comp)
 
             if result is not None:
                 net_y, p2_rem_mass, p2_rem_type = result
@@ -2029,6 +2132,17 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 if p2_rem_type == 5:  # PISN: complete disruption
                     rem_mass[iz, im] = 0.0
 
+                # Wind yields for M >= 14 from PARSEC v2 wind ejecta
+                if wind_result is not None:
+                    for ie, elem in enumerate(TRACKED_ELEMENTS):
+                        wind_yields[iz, im, ie] = wind_result.get(elem, 0.0)
+
+                # FSN/DBH: no explosion → all mass loss is via winds
+                # So wind_yields = net_yields (total ejected = wind ejected)
+                if p2_rem_type in (3, 6):
+                    for ie, elem in enumerate(TRACKED_ELEMENTS):
+                        wind_yields[iz, im, ie] = net_y.get(elem, 0.0)
+
                 yield_src[iz, im] = 4  # PARSEC_v2
                 n_src[4] += 1
             else:
@@ -2041,7 +2155,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
     print(f"  Yield sources: Karakas={n_src[1]}, Limongi25={n_src[2]}, "
           f"CL18={n_src[3]}, PARSEC_v2={n_src[4]}, none={n_src[0]}")
 
-    return yields, rem_type, rem_mass, yield_src
+    return yields, wind_yields, rem_type, rem_mass, yield_src
 
 
 def scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield_src=None):
@@ -2300,7 +2414,7 @@ def build_all(base_dir, output_file):
 
     # ── Build yield grid ──
     print("\nBuilding yield tables...", flush=True)
-    yields, rem_type, rem_mass, yield_src = build_yield_grid(Z_grid, M_grid, base_dir)
+    yields, wind_yields, rem_type, rem_mass, yield_src = build_yield_grid(Z_grid, M_grid, base_dir)
 
     # ── Reclassify remnants using He/CO core masses from tracks ──
     print("  Reclassifying remnants with core masses...", flush=True)
@@ -2383,6 +2497,16 @@ def build_all(base_dir, output_file):
         ds = f.create_dataset('net_yields', data=yields, **comp)
         ds.attrs['units'] = 'Msun (net yield per element)'
         ds.attrs['shape'] = '(N_Z, N_M, N_elements)'
+
+        ds = f.create_dataset('wind_yields', data=wind_yields, **comp)
+        ds.attrs['units'] = 'Msun (net wind-only yield per element)'
+        ds.attrs['shape'] = '(N_Z, N_M, N_elements)'
+        ds.attrs['description'] = ('Wind-only net yields (pre-SN mass loss). '
+                                   'SN-only yields = net_yields - wind_yields. '
+                                   'AGB (M<8): wind_yields = net_yields (no SN). '
+                                   'Limongi (8-14): wind_yields = 0 (SN ejecta only). '
+                                   'PARSEC v2 (M>=14): from winds_ejecta.dat. '
+                                   'FSN/DBH: wind_yields = net_yields (no explosion).')
 
         f.create_dataset('remnant_type', data=rem_type)
         f['remnant_type'].attrs['encoding'] = ('0=WD, 1=ECSN(NS), 2=CCSN(NS), 3=FSN(BH), '

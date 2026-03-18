@@ -218,6 +218,14 @@ void resolvedism_load_stellar_tables(void)
         /* Net yields [NZ x NM x NELEM] */
         read_hdf5_dataset_double(file, "net_yields", StellarTbl.net_yields, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
 
+        /* Wind yields [NZ x NM x NELEM] — wind-only portion of net yields */
+        if(H5Lexists(file, "wind_yields", H5P_DEFAULT) > 0) {
+            read_hdf5_dataset_double(file, "wind_yields", StellarTbl.wind_yields, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
+        } else {
+            memset(StellarTbl.wind_yields, 0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
+            if(ThisTask == 0) printf("RESOLVEDISM TABLES: WARNING — wind_yields not found in table, SN yields = net yields\n");
+        }
+
         /* Type Ia yields [NELEM] */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
         read_hdf5_dataset_double(file, "type_ia_yields", StellarTbl.type_ia_yields, STBL_NELEM);
@@ -269,6 +277,7 @@ void resolvedism_load_stellar_tables(void)
 #endif
 
     MPI_Bcast(StellarTbl.net_yields,     STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.wind_yields,    STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.type_ia_yields, STBL_NELEM,                      MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     /* Compute grid spacing for O(1) index lookup */
@@ -541,6 +550,31 @@ double stellar_net_yield(double logM, double logZ, int elem)
     double v10 = StellarTbl.net_yields[base10];
     double v11 = StellarTbl.net_yields[base11];
     return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+}
+
+double stellar_wind_yield(double logM, double logZ, int elem)
+{
+    if(elem < 0 || elem >= STBL_NELEM) return 0;
+
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+
+    int base00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
+    int base01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
+    int base10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
+    int base11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
+
+    double v00 = StellarTbl.wind_yields[base00];
+    double v01 = StellarTbl.wind_yields[base01];
+    double v10 = StellarTbl.wind_yields[base10];
+    double v11 = StellarTbl.wind_yields[base11];
+    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+}
+
+double stellar_sn_yield(double logM, double logZ, int elem)
+{
+    return stellar_net_yield(logM, logZ, elem) - stellar_wind_yield(logM, logZ, elem);
 }
 
 double stellar_type_ia_yield(int elem)

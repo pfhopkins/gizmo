@@ -1079,18 +1079,20 @@ void resolvedism_inject_sn_energy(void)
                 E_injected[channel] += Esne_erg;
             }
 
-            /* Metals: net yields + birth composition of ejecta */
+            /* Metals: SN-only yields (net - wind, since wind metals already injected during life)
+             * plus birth composition of the SN ejecta */
             double Z_ej = 0;
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
-                double net_y = stellar_net_yield(logM, logZ, kk);
+                double sn_y = stellar_sn_yield(logM, logZ, kk);
                 double X_birth = 0;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                 X_birth = P[i].ElementAbundance[kk];
 #endif
-                double M_elem = net_y + X_birth * Mej_solar;
+                double M_elem = sn_y + X_birth * Mej_solar;
                 if(M_elem < 0) M_elem = 0;
                 Z_ej += M_elem;
             }
+            if(Z_ej > Mej_solar) Z_ej = Mej_solar; /* metals cannot exceed total ejecta */
             Z_injected[channel] += Z_ej;
 
             /* Set particle mass to remnant mass */

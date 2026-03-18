@@ -68,6 +68,7 @@ struct StellarTables {
 
     /* 3D yield datasets — flat [NZ * NM * NELEM] */
     double net_yields[STBL_NZ * STBL_NM * STBL_NELEM];
+    double wind_yields[STBL_NZ * STBL_NM * STBL_NELEM];
 
     /* Type Ia yields [NELEM] */
     double type_ia_yields[STBL_NELEM];
@@ -106,6 +107,8 @@ double stellar_surface_abundance(double logM, double logZ, double log_age, int e
 
 /* ---- Yields (2D + element index) ---- */
 double stellar_net_yield(double logM, double logZ, int elem);
+double stellar_wind_yield(double logM, double logZ, int elem);
+double stellar_sn_yield(double logM, double logZ, int elem); /* net_yield - wind_yield */
 double stellar_type_ia_yield(int elem);
 
 #endif /* GALSF_RESOLVEDISM_STELLAR_TABLES */
