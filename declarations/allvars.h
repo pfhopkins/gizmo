@@ -502,9 +502,7 @@ extern struct global_data_all_processes
 #ifdef GALSF_RESOLVEDISM_PHOTOION
   double MaxPISearchRadius;     /*!< maximum PI search radius [kpc] */
 #endif
-#ifdef TREE_RAD
-  double ShieldingLength;       /*!< max distance for column density integration [code units] */
-#endif
+/* ShieldingLength already declared above (line ~475) */
 #ifdef KETJU_REGULARIZATION
   double KetjuRegionRadius;              /*!< physical radius of KETJU regions [code units] */
   double KetjuMinBHMass;                 /*!< minimum Type 5 mass for region center [code units], 0=off */
