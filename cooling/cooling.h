@@ -52,3 +52,5 @@ void InitGrackle(void);
 double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode);
 #endif
 
+void get_uvb_rates(double *out_gJH0, double *out_gJHe0, double *out_gJHep, double *out_epsH0, double *out_epsHe0, double *out_epsHep);
+

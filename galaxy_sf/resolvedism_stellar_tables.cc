@@ -136,7 +136,7 @@ static void read_hdf5_dataset_int(hid_t file, const char *name, int *buf, size_t
  * ======================================================================== */
 void resolvedism_load_stellar_tables(void)
 {
-    if(ThisTask == 0) printf("ResolvedISM: loading stellar tables from %s\n", All.StellarTablesFile);
+    if(ThisTask == 0) printf("RESOLVEDISM TABLES: loading stellar tables from %s\n", All.StellarTablesFile);
 
     size_t n3d = (size_t)STBL_NZ * STBL_NM * STBL_NAGE;
 
@@ -287,7 +287,7 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.loaded = 1;
 
     if(ThisTask == 0) {
-        printf("ResolvedISM: stellar tables loaded. Grid: %d Z x %d M x %d ages\n", STBL_NZ, STBL_NM, STBL_NAGE);
+        printf("RESOLVEDISM TABLES: stellar tables loaded. Grid: %d Z x %d M x %d ages\n", STBL_NZ, STBL_NM, STBL_NAGE);
         printf("  logZ: [%.3f, %.3f], dlogZ=%.4f\n", StellarTbl.log_Z_min, StellarTbl.log_Z_max, StellarTbl.dlog_Z);
         printf("  logM: [%.3f, %.3f], dlogM=%.4f\n", StellarTbl.log_M_min, StellarTbl.log_M_max, StellarTbl.dlog_M);
         printf("  log_age: [%.3f, %.3f], dlog_age=%.4f\n", StellarTbl.log_age_min, StellarTbl.log_age_max, StellarTbl.dlog_age);

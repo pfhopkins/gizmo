@@ -1640,6 +1640,17 @@ void SetZeroIonization(void)
     gJHe0 = gJHep = gJH0 = 0; epsHe0 = epsHep = epsH0 = 0; J_UV = 0;
 }
 
+/* Expose UVB rates to CHEMCOOL */
+void get_uvb_rates(double *out_gJH0, double *out_gJHe0, double *out_gJHep, double *out_epsH0, double *out_epsHe0, double *out_epsHep)
+{
+    if(out_gJH0) *out_gJH0 = gJH0;
+    if(out_gJHe0) *out_gJHe0 = gJHe0;
+    if(out_gJHep) *out_gJHep = gJHep;
+    if(out_epsH0) *out_epsH0 = epsH0;
+    if(out_epsHe0) *out_epsHe0 = epsHe0;
+    if(out_epsHep) *out_epsHep = epsHep;
+}
+
 
 void IonizeParamsFunction(void)
 {

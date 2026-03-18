@@ -28,6 +28,7 @@
 double CumulFeedbackEnergy = 0;  /* cumulative feedback energy injected, all channels [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
 double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
+static double RadPressure_dp_thisStep = 0; /* total radpressure momentum this step [g*cm/s] */
 
 #ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
 #error "GALSF_RESOLVEDISM_FB requires DO_DENSITY_AROUND_NONGAS_PARTICLES for kernel weights (wt_sum)"
@@ -265,7 +266,7 @@ void resolvedism_determine_SNe(void)
     if(n_sne_total > 0 || n_agb_total > 0 || n_collapse_total > 0 || n_wind_total > 0)
     {
         if(ThisTask == 0) {
-            printf("ResolvedISM: %d SNe + %d AGB + %d collapses + %d wind-inj this timestep at t=%g\n",
+            printf("RESOLVEDISM FB: %d SNe + %d AGB + %d collapses + %d wind-inj at t=%g\n",
                    n_sne_total, n_agb_total, n_collapse_total, n_wind_total, All.Time);
             fflush(stdout);
         }
@@ -379,7 +380,7 @@ void resolvedism_determine_SNe(void)
         }
         MPI_Allreduce(&n_ia_local, &n_ia_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(n_ia_total > 0 && ThisTask == 0) {
-            printf("ResolvedISM: %d Type Ia SNe this timestep at t=%g\n", n_ia_total, All.Time);
+            printf("RESOLVEDISM TYPE_IA: %d Type Ia SNe this timestep at t=%g\n", n_ia_total, All.Time);
             fflush(stdout);
         }
 
@@ -583,6 +584,7 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         if(tau_IR > 0) dp_cgs += tau_IR * Lbol_cgs * dt_cgs / C_LIGHT_CGS;
 
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code momentum */
+        RadPressure_dp_thisStep += dp_cgs; /* accumulate for budget tracking */
         return;
     }
 #endif
@@ -1017,7 +1019,7 @@ void resolvedism_inject_sn_energy(void)
                 Z_injected[2] += Z_wind;
             }
 
-            printf("WIND: Task=%d ID=%llu M_init=%.2f dM=%.4f dp=%.3e\n",
+            printf("RESOLVEDISM WIND: Task=%d ID=%llu M_init=%.2f dM=%.4f dp=%.3e\n",
                 ThisTask, (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0], dM_wind, dp_wind);
             P[i].WindMassAccum = 0;
             P[i].WindMomentumAccum = 0;
@@ -1036,7 +1038,7 @@ void resolvedism_inject_sn_energy(void)
             double Z_ia = 0;
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk);
             Z_injected[4] += Z_ia;
-            printf("TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
+            printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
             P[i].Mass = 0; /* WD fully disrupted */
             P[i].M_drawn_Ia = 0; /* no longer eligible */
@@ -1094,10 +1096,10 @@ void resolvedism_inject_sn_energy(void)
             /* Set particle mass to remnant mass */
             P[i].Mass = rem_mass / UNIT_MASS_IN_SOLAR;
             if(channel == 0) {
-                printf("SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
+                printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type, (rem_type==REM_PISN)?1.0e52:1.0e51);
             } else {
-                printf("AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
+                printf("RESOLVEDISM AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);
             }
 
@@ -1149,6 +1151,7 @@ void resolvedism_inject_sn_energy(void)
     /* ---- Pass 1: radiation pressure ---- */
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     PRINT_STATUS(" ..injecting single-star radiation pressure");
+    RadPressure_dp_thisStep = 0;
     resolvedism_fb_calc(1);
 
     /* Count radiation pressure events */
@@ -1163,6 +1166,7 @@ void resolvedism_inject_sn_energy(void)
 #endif
         if(Mstar_rp >= 2.0) n_events[3] += 1;
     }
+    dp_injected[3] = RadPressure_dp_thisStep; /* exact dp from particle2in */
 #endif
 
     /* ---- MPI reduce and write feedback budget ---- */
@@ -1187,6 +1191,12 @@ void resolvedism_inject_sn_energy(void)
             }
         }
         fflush(FdFeedbackBudget);
+        /* Radpressure summary (only on domain decomp steps) */
+        if(glob_n[3] > 0 && All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {
+            printf("RESOLVEDISM RADPRESSURE: %.0f active stars, dp_tot=%.3e [cgs] at t=%g\n",
+                   glob_n[3], glob_dp[3], All.Time);
+            fflush(stdout);
+        }
     }
 }
 #include "../system/code_block_xchange_finalize.h"

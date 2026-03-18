@@ -35,21 +35,25 @@
 
 static const double M_max = 350.;
 
-/* Kroupa IMF: alpha_1=1.3 (M<0.5), alpha_2=2.3 (M>=0.5), normalization A=0.126512 */
+/* Mass-weighted Kroupa IMF: M * dN/dM.  Slopes are -0.3 (M<0.5) and -1.3 (M>=0.5).
+   Used with the LYRA probability P = M_cell/M_star * pfac, where the 1/M in P
+   cancels the extra M here, giving the correct number-weighted Kroupa for formed stars. */
 static inline double drawMassFromIMF(double x)
 {
     double A = 0.126512;
-    if(x < 0.5) return 2.0 * A * pow(x, -1.3);
-    return A * pow(x, -2.3);
+    if(x < 0.5) return 2.0 * A * pow(x, -0.3);
+    return A * pow(x, -1.3);
 }
 
-/* Envelope function for rejection sampling (upper bound of IMF) */
+/* Envelope function for rejection sampling (upper bound of mass-weighted IMF) */
 static inline double envelope_function(double x)
 {
-    return 2.0 * 0.126512 * pow(x, -1.3);
+    return 2.0 * 0.126512 * pow(x, -0.3);
 }
 
-/* Public function: draw a single stellar mass from the Kroupa IMF via rejection sampling.
+/* Public function: draw a single stellar mass from the mass-weighted Kroupa IMF via rejection sampling.
+ * The mass-weighting is cancelled by the LYRA probability P = M_cell/M_star * pfac,
+ * giving the correct number-weighted Kroupa distribution for formed stars.
  * Lower bound from All.IMFSampleMinMass (default 0.08), upper bound 350 Msun. */
 double draw_one_mass_from_kroupa_IMF(void)
 {
@@ -58,8 +62,9 @@ double draw_one_mass_from_kroupa_IMF(void)
     if(M_min > M_max) M_min = M_max * 0.99; /* safety */
     double M_drawn;
     do {
-        M_drawn = pow((pow(M_max, -0.3) - pow(M_min, -0.3)) * gsl_rng_uniform(random_generator)
-                      + pow(M_min, -0.3), -1.0 / 0.3);
+        /* Proposal from CDF inversion of envelope M^{-0.3}: integral gives M^{0.7} */
+        M_drawn = pow((pow(M_max, 0.7) - pow(M_min, 0.7)) * gsl_rng_uniform(random_generator)
+                      + pow(M_min, 0.7), 1.0 / 0.7);
     } while(gsl_rng_uniform(random_generator) > (drawMassFromIMF(M_drawn) / envelope_function(M_drawn)));
     return M_drawn;
 }
@@ -416,7 +421,7 @@ void assign_stellar_masses(void)
     MPI_Allreduce(&nstars_local, &nstars_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(nstars_total == 0) return;
 
-    if(ThisTask == 0) printf("IMF: accreting mass for %d new stars\n", nstars_total);
+    if(ThisTask == 0) printf("RESOLVEDISM IMF: accreting mass for %d new stars\n", nstars_total);
     PRINT_STATUS(" ..IMF accretion walk for single stars");
 
     /* Allocate accumulators (persist across iterations, zeroed each pass) */
@@ -669,7 +674,7 @@ void assign_stellar_masses(void)
                     if(err > worst_err) {worst_err = err; worst_idx = i;}
                 }
                 fflush(FdSFinfo);
-                printf("IMF: drew %d stars, max deviation: ID=%lld M_drawn=%.4f M_acc=%.4f (err=%.2f%%)\n",
+                printf("RESOLVEDISM IMF: drew %d stars, max deviation: ID=%lld M_drawn=%.4f M_acc=%.4f (err=%.2f%%)\n",
                     nimf_total, all_id[worst_idx], all_mdrawn[worst_idx], all_macc[worst_idx], worst_err*100);
                 myfree(all_id); myfree(all_T); myfree(all_nH); myfree(all_zbirth); myfree(all_racc);
                 myfree(all_macc); myfree(all_mdrawn); myfree(all_z); myfree(all_y); myfree(all_x);
@@ -692,7 +697,7 @@ void assign_stellar_masses(void)
     myfree(IMF_MomAccreted); IMF_MomAccreted = NULL;
     myfree(IMF_MassAccreted); IMF_MassAccreted = NULL;
 
-    if(ThisTask == 0 && iter > 1) printf("IMF: accretion required %d passes\n", iter);
+    if(ThisTask == 0 && iter > 1) printf("RESOLVEDISM IMF: accretion required %d passes\n", iter);
 }
 
 

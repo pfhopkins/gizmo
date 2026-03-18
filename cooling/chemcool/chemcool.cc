@@ -148,17 +148,13 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
 
     if(All.ComovingIntegrationOn) {
-        /* comoving case placeholder - not currently used */
-        COOLR.redshift = 0.;
-        rho      = CellP[target].Density * All.cf_a3inv;
-        timestep = dt;
-        divv     = CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2];
+        COOLR.redshift = 1.0 / All.Time - 1.0;
     } else {
-        rho      = CellP[target].Density * All.cf_a3inv;
         COOLR.redshift = 0.;
-        timestep = dt;
-        divv     = CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2];
     }
+    rho      = CellP[target].Density * All.cf_a3inv;
+    timestep = dt;
+    divv     = CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2];
 
     /* Per-particle element abundances for cooling rates */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -242,11 +238,20 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 
     double G0_tot = UV_flux_tot * fac_flux2habing * All.G0;
-    COOLR.G0 = G0_tot;
-    CellP[target].G0 = G0_tot;
-
     /* Lyman-Werner G0 for H2 photodissociation (11.2-13.6 eV only) */
     double G0_LW = LW_flux_tot * fac_flux2habing * All.G0;
+
+    /* For cosmological runs: add metagalactic FUV background floor from TREECOOL */
+    if(All.ComovingIntegrationOn) {
+        double uvb_gJH0 = 0;
+        get_uvb_rates(&uvb_gJH0, NULL, NULL, NULL, NULL, NULL);
+        double G0_uvb = uvb_gJH0 / 2.29e-10; /* convert Gamma_HI to G0 in Habing (FIRE convention) */
+        if(G0_tot < G0_uvb) G0_tot = G0_uvb;
+        if(G0_LW < 0.1 * G0_uvb) G0_LW = 0.1 * G0_uvb; /* LW ~ 10% of FUV for metagalactic spectrum */
+    }
+
+    COOLR.G0 = G0_tot;
+    CellP[target].G0 = G0_tot;
     COOLR.G0_LW = G0_LW;
     CellP[target].G0_LW = G0_LW;
 
@@ -340,6 +345,22 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 #endif /* RADTRANSFER */
 
+    /* Cosmological UVB floor: applied AFTER RT and G0_VARIABLE so it acts as a minimum.
+       Adds metagalactic photoionization + photoheating rates from TREECOOL (FG2020).
+       Compatible with RT (additive) and G0_VARIABLE (floor). */
+    if(All.ComovingIntegrationOn) {
+        double uvb_gJH0=0, uvb_gJHe0=0, uvb_gJHep=0, uvb_epsH0=0, uvb_epsHe0=0, uvb_epsHep=0;
+        get_uvb_rates(&uvb_gJH0, &uvb_gJHe0, &uvb_gJHep, &uvb_epsH0, &uvb_epsHe0, &uvb_epsHep);
+        /* Photoionization: add UVB as floor (RT may have set higher local values) */
+        if(COOLR.rt_phot_HI   < uvb_gJH0)  COOLR.rt_phot_HI   = uvb_gJH0;
+        if(COOLR.rt_phot_HeI  < uvb_gJHe0) COOLR.rt_phot_HeI  = uvb_gJHe0;
+        if(COOLR.rt_phot_HeII < uvb_gJHep) COOLR.rt_phot_HeII = uvb_gJHep;
+        if(COOLR.rt_heat_HI   < uvb_epsH0)  COOLR.rt_heat_HI   = uvb_epsH0;
+        if(COOLR.rt_heat_HeI  < uvb_epsHe0) COOLR.rt_heat_HeI  = uvb_epsHe0;
+        if(COOLR.rt_heat_HeII < uvb_epsHep) COOLR.rt_heat_HeII = uvb_epsHep;
+        COOLI.irad_heat = 1;
+    }
+
     /* Set correct dust temperature in coolr common block */
     COOLR.tdust = CellP[target].DustTemp;
 
@@ -383,7 +404,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
 #ifdef TREE_RAD
     for(i = 0; i < NPIX; i++) {
-        columni = CellP[target].Projection[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS;
+        columni = CellP[target].Projection[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
         NH = columni / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
         PROJECT.column_density_projection[i] = NH;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
@@ -394,14 +415,14 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
 #ifdef TREE_RAD_H2
     for(i = 0; i < NPIX; i++) {
-        columni = CellP[target].ProjectionH2[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS;
+        columni = CellP[target].ProjectionH2[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
         NH2 = columni / (2.0 * PROTONMASS_CGS);
         PROJECT.column_density_projection_h2[i] = NH2;
     }
 
 #if CHEMISTRYNETWORK != 1 && CHEMISTRYNETWORK != 4
     for(i = 0; i < NPIX; i++) {
-        columni = CellP[target].ProjectionCO[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS;
+        columni = CellP[target].ProjectionCO[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
         NCO = columni / (28.0 * PROTONMASS_CGS);
         PROJECT.column_density_projection_co[i] = NCO;
     }

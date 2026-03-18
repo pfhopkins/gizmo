@@ -927,7 +927,7 @@ void star_formation_parent_routine(void)
     if(tot_spawned > 0 || tot_converted > 0)
     {
         static long long cumul_spawned = 0; cumul_spawned += tot_spawned;
-        if(ThisTask==0) printf("SFR: spawned %d stars this step (%lld cumulative)\n", tot_spawned, cumul_spawned);
+        if(ThisTask==0) printf("RESOLVEDISM SFR: spawned %d stars this step (%lld cumulative)\n", tot_spawned, cumul_spawned);
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;

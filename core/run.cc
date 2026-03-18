@@ -360,7 +360,7 @@ void calculate_non_standard_physics(void)
         int fb_recompute = 0;
         MPI_Allreduce(&fb_flag, &fb_recompute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(fb_recompute > 0) {
-            if(ThisTask == 0) printf("Recomputing hydro for feedback-affected cells\n");
+            if(ThisTask == 0) printf("RESOLVEDISM: Recomputing hydro for feedback-affected cells\n");
             compute_hydro_densities_and_forces();
         }
     }

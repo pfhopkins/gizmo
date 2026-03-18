@@ -2275,6 +2275,12 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef TREE_RAD
+      strcpy(tag[nt], "ShieldingLength");
+      addr[nt] = &All.ShieldingLength;
+      id[nt++] = REAL;
+#endif
+
 #ifdef GALSF_RESOLVEDISM_INSTANT_SN
       strcpy(tag[nt], "TimeInstantSN");
       addr[nt] = &All.TimeInstantSN;

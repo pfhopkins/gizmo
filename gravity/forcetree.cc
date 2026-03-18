@@ -2528,7 +2528,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #endif
 #ifdef TREE_RAD
-                if(gasmass > 0 && r > 0)
+                if(gasmass > 0 && r > 0 && r < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
                 {
                     long iheal;
                     double vec_hp[3] = {dx, dy, dz};

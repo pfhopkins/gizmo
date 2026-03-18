@@ -48,6 +48,7 @@ static int compare_pix_then_dist(const void *a, const void *b)
  * Allocated in resolvedism_photoionize(), used in particle2in/evaluate/out2particle. */
 static double *PISearchRadius = NULL;
 static double *PIPixelBudget = NULL;  /* per-star per-pixel remaining photon budget [NumPart * HEALPIX_NPIX] */
+static double *PIFrontRadius = NULL;  /* per-star per-pixel ionization front distance [code units, NumPart * HEALPIX_NPIX] */
 
 /* Compute S_ly for a single star (used in particle2in and pre-processing) */
 static double compute_single_star_S_ly(int i)
@@ -138,7 +139,7 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         }
         if(in->SearchRadius <= 0) in->SearchRadius = All.ForceSoftening[P[i].Type];
         /* Cap at MaxPISearchRadius (set in parameter file, in kpc) */
-        double max_r = All.MaxPISearchRadius / UNIT_LENGTH_IN_KPC;
+        double max_r = All.MaxPISearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime); /* physical kpc -> comoving code */
         if(max_r > 0 && in->SearchRadius > max_r) in->SearchRadius = max_r;
         /* Store the initial estimate for potential iteration */
         if(PISearchRadius != NULL) PISearchRadius[i] = in->SearchRadius;
@@ -148,6 +149,7 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
 struct OUTPUT_STRUCT_NAME
 {
     MyFloat consumed_per_pixel[HEALPIX_NPIX]; /* per-pixel consumed photon budget */
+    MyFloat front_radius[HEALPIX_NPIX]; /* per-pixel distance to ionization front [code units] */
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
@@ -155,8 +157,11 @@ void out2particle_resolvedismPI(struct OUTPUT_STRUCT_NAME *out, int i, int mode,
 {
     if(PIPixelBudget == NULL) return;
     int k;
-    for(k = 0; k < HEALPIX_NPIX; k++)
+    for(k = 0; k < HEALPIX_NPIX; k++) {
         PIPixelBudget[i * HEALPIX_NPIX + k] -= out->consumed_per_pixel[k];
+        if(PIFrontRadius != NULL && out->front_radius[k] > PIFrontRadius[i * HEALPIX_NPIX + k])
+            PIFrontRadius[i * HEALPIX_NPIX + k] = out->front_radius[k]; /* take max across mode 0/1 */
+    }
 }
 
 int resolvedismPI_active_check(int i);
@@ -254,8 +259,10 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
             double budget = local.budget_per_pixel[k];
             double consumed = 0;
             int front_found = 0;
+            double last_r = 0;
             if(budget <= 0) { /* no budget remaining (front found in previous mode) */
                 out.consumed_per_pixel[k] = 0;
+                out.front_radius[k] = 0;
                 while(idx < n_collected && ngb_buf[idx].pixel == k) idx++;
                 continue;
             }
@@ -268,6 +275,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                                  * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
                 budget -= recomb;
                 consumed += recomb;
+                last_r = sqrt(ngb_buf[idx].dist2);
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                 CellP[j].Ionized = 1;
 #endif
@@ -278,6 +286,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                 out.consumed_per_pixel[k] = local.budget_per_pixel[k]; /* consume all: front found */
             else
                 out.consumed_per_pixel[k] = consumed; /* report actual consumption only */
+            out.front_radius[k] = last_r;
             /* skip remaining cells in this pixel (beyond ionization front) */
             while(idx < n_collected && ngb_buf[idx].pixel == k) idx++;
         }
@@ -314,8 +323,10 @@ void resolvedism_photoionize(void)
     /* Allocate per-star arrays for iterative search radius adjustment */
     PISearchRadius = (double *) mymalloc("PISearchRadius", NumPart * sizeof(double));
     PIPixelBudget = (double *) mymalloc("PIPixelBudget", (size_t)NumPart * HEALPIX_NPIX * sizeof(double));
+    PIFrontRadius = (double *) mymalloc("PIFrontRadius", (size_t)NumPart * HEALPIX_NPIX * sizeof(double));
     memset(PISearchRadius, 0, NumPart * sizeof(double));
     memset(PIPixelBudget, 0, (size_t)NumPart * HEALPIX_NPIX * sizeof(double));
+    memset(PIFrontRadius, 0, (size_t)NumPart * HEALPIX_NPIX * sizeof(double));
 
     /* Initialize per-pixel budgets for active ionizing stars */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
@@ -350,15 +361,17 @@ void resolvedism_photoionize(void)
             for(k = 0; k < HEALPIX_NPIX; k++)
                 if(PIPixelBudget[i * HEALPIX_NPIX + k] > 0) budget_remaining += PIPixelBudget[i * HEALPIX_NPIX + k];
             if(budget_remaining > 0) {
-                double max_r = All.MaxPISearchRadius / UNIT_LENGTH_IN_KPC;
+                double max_r = All.MaxPISearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime); /* physical kpc -> comoving code */
                 if(max_r > 0 && PISearchRadius[i] >= max_r) {continue;} /* hit cap, stop expanding */
                 PISearchRadius[i] *= 1.1; /* expand by 10% */
                 if(max_r > 0 && PISearchRadius[i] > max_r) PISearchRadius[i] = max_r;
-                /* Re-initialize per-pixel budget for re-run with larger search radius */
+                /* Re-initialize per-pixel budget and front radii for re-run with larger search radius */
                 double S_ly = compute_single_star_S_ly(i);
                 double S_pix = (S_ly > 0) ? S_ly / HEALPIX_NPIX : 0;
-                for(k = 0; k < HEALPIX_NPIX; k++)
+                for(k = 0; k < HEALPIX_NPIX; k++) {
                     PIPixelBudget[i * HEALPIX_NPIX + k] = S_pix;
+                    PIFrontRadius[i * HEALPIX_NPIX + k] = 0;
+                }
                 incomplete_local++;
             }
         }
@@ -366,33 +379,66 @@ void resolvedism_photoionize(void)
         iter++;
     } while(incomplete_total > 0 && iter < max_iter);
     if(iter > 1) {
-        double local_max_r = 0;
+        double local_max_r = 0, local_min_r = MAX_REAL_NUMBER;
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type == 4 && PISearchRadius != NULL && PISearchRadius[i] > local_max_r) local_max_r = PISearchRadius[i];
+            if(P[i].Type == 4 && PISearchRadius != NULL && PISearchRadius[i] > 0) {
+                if(PISearchRadius[i] > local_max_r) local_max_r = PISearchRadius[i];
+                if(PISearchRadius[i] < local_min_r) local_min_r = PISearchRadius[i];
+            }
         }
-        double glob_max_r = 0;
+        if(local_min_r >= MAX_REAL_NUMBER) local_min_r = 0;
+        double glob_max_r = 0, glob_min_r = 0;
         MPI_Reduce(&local_max_r, &glob_max_r, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&local_min_r, &glob_min_r, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
         if(ThisTask == 0)
-            printf("PI: expanded search radius in %d iterations (R_max=%.1f pc, cap=%.1f pc)\n",
-                iter, glob_max_r * UNIT_LENGTH_IN_KPC * 1e3, All.MaxPISearchRadius * 1e3);
+            printf("RESOLVEDISM PI: expanded search radius in %d iterations (R_min=%.1f pc, R_max=%.1f pc, cap=%.1f pc)\n",
+                iter, glob_min_r * UNIT_LENGTH_IN_KPC * 1e3, glob_max_r * UNIT_LENGTH_IN_KPC * 1e3, All.MaxPISearchRadius * 1e3);
     }
 
-    /* Log per-star PI diagnostics to PIinfo.txt */
+    /* HII region size summary: per-star min/max pixel front radius (asymmetry measure) */
     {
         int npi_local = 0;
+        double local_rfront_min = MAX_REAL_NUMBER, local_rfront_max = 0;
+        double local_asym_max = 0; /* max asymmetry ratio (R_max_pix / R_min_pix) across all local stars */
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
             if(P[i].Type != 4) continue;
             if(PISearchRadius[i] <= 0) continue;
             npi_local++;
+            double star_rmin = MAX_REAL_NUMBER, star_rmax = 0;
+            int k, npix_active = 0;
+            for(k = 0; k < HEALPIX_NPIX; k++) {
+                double rf = PIFrontRadius[i * HEALPIX_NPIX + k];
+                if(rf > 0) {
+                    npix_active++;
+                    if(rf < star_rmin) star_rmin = rf;
+                    if(rf > star_rmax) star_rmax = rf;
+                }
+            }
+            if(npix_active > 0) {
+                if(star_rmin < local_rfront_min) local_rfront_min = star_rmin;
+                if(star_rmax > local_rfront_max) local_rfront_max = star_rmax;
+                double asym = (star_rmin > 0) ? star_rmax / star_rmin : 0;
+                if(asym > local_asym_max) local_asym_max = asym;
+            }
         }
-        int npi_total = 0;
-        MPI_Allreduce(&npi_local, &npi_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(local_rfront_min >= MAX_REAL_NUMBER) local_rfront_min = 0;
 
-        if(ThisTask == 0 && npi_total > 0)
-            printf("ResolvedISM PI: %d ionizing stars at t=%g (%d iter)\n", npi_total, All.Time, iter);
+        int npi_total = 0;
+        double glob_rfront_min = 0, glob_rfront_max = 0, glob_asym_max = 0;
+        MPI_Allreduce(&npi_local, &npi_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Reduce(&local_rfront_min, &glob_rfront_min, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&local_rfront_max, &glob_rfront_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&local_asym_max, &glob_asym_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+        if(ThisTask == 0 && npi_total > 0) {
+            printf("RESOLVEDISM PI: %d ionizing stars at t=%g (%d iter)\n", npi_total, All.Time, iter);
+            printf("RESOLVEDISM PI: HII front R_min=%.1f pc, R_max=%.1f pc, max asymmetry=%.1f:1\n",
+                glob_rfront_min * UNIT_LENGTH_IN_KPC * 1e3, glob_rfront_max * UNIT_LENGTH_IN_KPC * 1e3, glob_asym_max);
+        }
     }
 
     /* Free in LIFO order */
+    myfree(PIFrontRadius); PIFrontRadius = NULL;
     myfree(PIPixelBudget); PIPixelBudget = NULL;
     myfree(PISearchRadius); PISearchRadius = NULL;
 }
