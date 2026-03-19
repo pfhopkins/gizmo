@@ -304,48 +304,408 @@ void resolvedism_load_stellar_tables(void)
                12.0 * n3d * sizeof(float) / 1e6,
                StellarTbl.surface_abundances ? (double)(n3d * STBL_NELEM * sizeof(float)) / 1e6 : 0.0);
 
-        /* Spot-check and validation */
-        double logZ_test = log10(0.014);
-        printf("  Spot checks (Z=0.014):\n");
-        double test_masses[] = {1.0, 8.0, 20.0, 35.0, 100.0};
-        int ntm = 5;
-        for(int it = 0; it < ntm; it++) {
-            double M = test_masses[it], logM_t = log10(M);
-            double Mcur_zams = stellar_M_current(logM_t, logZ_test, 2.0);
-            double lt = stellar_lifetime(logM_t, logZ_test);
-            printf("    M=%.0f: M_current(ZAMS)=%.4f (err=%.2e) lifetime=%.3f Myr",
-                   M, Mcur_zams, (Mcur_zams - M) / M, lt / 1e6);
-            if(M >= 8.0) {
-                printf(" rem=%.2f(type=%d) log_Q=%.2f log_Lbol=%.2f",
-                       stellar_remnant_mass(logM_t, logZ_test), stellar_remnant_type(logM_t, logZ_test),
-                       stellar_log_Q_ion(logM_t, logZ_test, 2.0), stellar_log_L_bol(logM_t, logZ_test, 2.0));
-            }
-            printf("\n");
-            /* Validate: M_current at ZAMS must equal M_drawn */
-            if(fabs(Mcur_zams - M) / M > 0.01) {
-                printf("  WARNING: M_current(ZAMS) deviates >1%% from M_init for M=%.1f Msun!\n", M);
-            }
-        }
-        /* Validate: no M_current=0 for living stars */
+        /* ======== Comprehensive table validation (Monte Carlo + grid) ======== */
+        printf("  Running table validation...\n");
+        int n_warn = 0;
+
+        /* --- Test 1: M_current(ZAMS) = M_init for on-grid and off-grid masses --- */
         {
-            int nbad = 0;
-            for(int im = 0; im < STBL_NM; im++) {
+            int nfail = 0;
+            double worst_err = 0, worst_M = 0, worst_Z = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                double logZ_t = StellarTbl.log_Z[iz];
+                /* Test on-grid masses */
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im], logM_t = StellarTbl.log_M[im];
+                    double Mc = stellar_M_current(logM_t, logZ_t, 2.0);
+                    double err = fabs(Mc - M) / M;
+                    if(err > 0.01) nfail++;
+                    if(err > worst_err) { worst_err = err; worst_M = M; worst_Z = pow(10., logZ_t); }
+                }
+                /* Test mid-grid masses (between every pair of adjacent grid points) */
+                for(int im = 0; im < STBL_NM - 1; im++) {
+                    double logM_mid = 0.5 * (StellarTbl.log_M[im] + StellarTbl.log_M[im+1]);
+                    double M_mid = pow(10., logM_mid);
+                    double Mc = stellar_M_current(logM_mid, logZ_t, 2.0);
+                    double err = fabs(Mc - M_mid) / M_mid;
+                    if(err > 0.01) nfail++;
+                    if(err > worst_err) { worst_err = err; worst_M = M_mid; worst_Z = pow(10., logZ_t); }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d M_current(ZAMS) deviations >1%% (worst: M=%.2f Z=%.4f err=%.2e)\n", nfail, worst_M, worst_Z, worst_err); n_warn++; }
+            else printf("  [PASS] M_current(ZAMS) = M_init for all on-grid and mid-grid masses (worst err=%.2e)\n", worst_err);
+        }
+
+        /* --- Test 2: M_current monotonically decreases with age (no spurious jumps from corner mixing) --- */
+        {
+            int nfail = 0; double worst_jump = 0; double worst_M2 = 0;
+            /* Test at mid-grid masses where interpolation mixing is strongest */
+            for(int im = 0; im < STBL_NM - 1; im++) {
+                double logM_mid = 0.5 * (StellarTbl.log_M[im] + StellarTbl.log_M[im+1]);
+                double M_mid = pow(10., logM_mid);
+                if(M_mid < 8.0) continue; /* only test massive stars with significant winds */
                 for(int iz = 0; iz < STBL_NZ; iz++) {
-                    double lt = StellarTbl.lifetime_yr[IDX2(iz, im)];
+                    double logZ_t = StellarTbl.log_Z[iz];
+                    double lt = stellar_lifetime(logM_mid, logZ_t);
                     if(lt <= 0) continue;
-                    int ia_end = (int)((log10(lt * 0.95) - StellarTbl.log_age_min) / StellarTbl.dlog_age);
-                    if(ia_end < 0) ia_end = 0; if(ia_end >= STBL_NAGE) ia_end = STBL_NAGE - 1;
-                    float mc = StellarTbl.M_current[IDX3(iz, im, ia_end)];
-                    if(mc <= 0 && StellarTbl.remnant_type[IDX2(iz,im)] != 5) { /* PISN (type=5) is allowed to be 0 */
-                        if(nbad < 5) printf("  WARNING: M_current=0 for living star iz=%d im=%d (M=%.1f, Z=%.4f) at 0.95*lifetime\n",
-                            iz, im, StellarTbl.M[im], pow(10., StellarTbl.log_Z[iz]));
-                        nbad++;
+                    double Mc_prev = M_mid;
+                    int nstep = 50;
+                    for(int s = 1; s <= nstep; s++) {
+                        double age = lt * 0.99 * s / nstep;
+                        if(age < 100) age = 100;
+                        double Mc = stellar_M_current(logM_mid, logZ_t, log10(age));
+                        if(Mc > Mc_prev * 1.01 && Mc_prev > 0) { /* allow 1% numerical noise */
+                            double jump = (Mc - Mc_prev) / Mc_prev;
+                            if(jump > worst_jump) { worst_jump = jump; worst_M2 = M_mid; }
+                            nfail++;
+                            break; /* one failure per (M,Z) pair is enough */
+                        }
+                        Mc_prev = Mc;
                     }
                 }
             }
-            if(nbad > 0) printf("  WARNING: %d table entries have M_current=0 before death (non-PISN)\n", nbad);
-            else printf("  Validation: M_current > 0 for all living non-PISN stars OK\n");
+            if(nfail > 0) { printf("  WARNING: %d M_current non-monotonic cases (worst jump=%.2e at M=%.1f)\n", nfail, worst_jump, worst_M2); n_warn++; }
+            else printf("  [PASS] M_current monotonically decreasing with age for all mid-grid massive stars\n");
         }
+
+        /* --- Test 3: Surface abundances nonzero for all living stars (mid-grid, near lifetime boundary) --- */
+        {
+            int nfail = 0; double worst_M3 = 0, worst_Z3 = 0, worst_age_frac = 0;
+            for(int im = 0; im < STBL_NM - 1; im++) {
+                double logM_mid = 0.5 * (StellarTbl.log_M[im] + StellarTbl.log_M[im+1]);
+                double M_mid = pow(10., logM_mid);
+                if(M_mid < 8.0) continue;
+                for(int iz = 0; iz < STBL_NZ; iz++) {
+                    double logZ_t = StellarTbl.log_Z[iz];
+                    double lt = stellar_lifetime(logM_mid, logZ_t);
+                    if(lt <= 0) continue;
+                    /* Test at 90%, 95%, 99% of lifetime */
+                    double fracs[] = {0.90, 0.95, 0.99};
+                    for(int f = 0; f < 3; f++) {
+                        double age = lt * fracs[f];
+                        if(age < 100) continue;
+                        double Z_surf = 0;
+                        for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
+                            Z_surf += stellar_surface_abundance(logM_mid, logZ_t, log10(age), kk);
+                        if(Z_surf <= 0) {
+                            nfail++;
+                            if(nfail <= 3) printf("  WARNING: Z_surface=0 at %.0f%% lifetime for M=%.2f Z=%.4f\n", fracs[f]*100, M_mid, pow(10., logZ_t));
+                            worst_M3 = M_mid; worst_Z3 = pow(10., logZ_t); worst_age_frac = fracs[f];
+                        }
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d surface abundance=0 cases for living mid-grid stars\n", nfail); n_warn++; }
+            else printf("  [PASS] Surface abundances > 0 for all living mid-grid stars at 90/95/99%% lifetime\n");
+        }
+
+        /* --- Test 4: Wind yields + SN yields = net yields for on-grid masses --- */
+        {
+            int nfail = 0; double worst_err4 = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                for(int im = 0; im < STBL_NM; im++) {
+                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
+                    for(int kk = 0; kk < STBL_NELEM; kk++) {
+                        double ny = stellar_net_yield(logM_t, logZ_t, kk);
+                        double wy = stellar_wind_yield(logM_t, logZ_t, kk);
+                        double sy = stellar_sn_yield(logM_t, logZ_t, kk);
+                        double err = fabs((wy + sy) - ny);
+                        if(fabs(ny) > 1e-10) err /= fabs(ny);
+                        if(err > worst_err4) worst_err4 = err;
+                        if(err > 0.01) nfail++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d wind+SN != net yield inconsistencies (worst=%.2e)\n", nfail, worst_err4); n_warn++; }
+            else printf("  [PASS] wind_yield + sn_yield = net_yield for all on-grid (Z,M) (roundoff=%.2e)\n", worst_err4);
+        }
+
+        /* --- Test 5: Lifetime monotonically decreases with mass at each Z --- */
+        {
+            int nfail = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                double lt_prev = 1e30;
+                for(int im = 0; im < STBL_NM; im++) {
+                    double lt = StellarTbl.lifetime_yr[IDX2(iz, im)];
+                    if(lt > lt_prev * 1.05) { /* allow 5% for numerical non-monotonicity */
+                        nfail++;
+                        if(nfail <= 3) printf("  WARNING: lifetime not monotonic at Z=%.4f M=%.1f (%.3e > %.3e)\n",
+                            pow(10., StellarTbl.log_Z[iz]), StellarTbl.M[im], lt, lt_prev);
+                    }
+                    lt_prev = lt;
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d lifetime non-monotonic entries\n", nfail); n_warn++; }
+            else printf("  [PASS] Lifetime monotonically decreasing with mass at all Z\n");
+        }
+
+        /* --- Test 6: Ionizing luminosity reasonable for massive stars --- */
+        {
+            int nfail = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                double logZ_t = StellarTbl.log_Z[iz];
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    if(M < 20.0) continue;
+                    double logQ = stellar_log_Q_ion(StellarTbl.log_M[im], logZ_t, 2.0);
+                    double logL = stellar_log_L_bol(StellarTbl.log_M[im], logZ_t, 2.0);
+                    if(logQ < 44.0) { nfail++; if(nfail<=3) printf("  WARNING: log_Q_ion=%.1f < 44 for M=%.0f Z=%.4f\n", logQ, M, pow(10.,logZ_t)); }
+                    if(logL < 37.0) { nfail++; if(nfail<=3) printf("  WARNING: log_Lbol=%.1f < 37 for M=%.0f Z=%.4f\n", logL, M, pow(10.,logZ_t)); }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d unreasonable luminosity/Q_ion values for M>=20\n", nfail); n_warn++; }
+            else printf("  [PASS] Ionizing luminosity and L_bol reasonable for all massive stars\n");
+        }
+
+        /* --- Test 7: Monte Carlo IMF draw — check interpolation at random masses --- */
+        {
+            int ntest = 100000;
+            int n_mcur_fail = 0, n_surf_fail = 0, n_mono_fail = 0;
+            double worst_mcur = 0;
+            unsigned long seed = 12345;
+            for(int it = 0; it < ntest; it++) {
+                /* Simple LCG random for reproducibility without GSL */
+                seed = seed * 1103515245 + 12345;
+                double u1 = (double)((seed >> 16) & 0x7FFF) / 32767.0;
+                seed = seed * 1103515245 + 12345;
+                double u2 = (double)((seed >> 16) & 0x7FFF) / 32767.0;
+                /* Draw from mass-weighted Kroupa CDF */
+                double M_min = 0.08, M_max_t = 350.0;
+                double M = pow((pow(M_max_t, 0.7) - pow(M_min, 0.7)) * u1 + pow(M_min, 0.7), 1.0 / 0.7);
+                double logM_t = log10(M);
+                /* Random Z from grid range */
+                double logZ_t = StellarTbl.log_Z_min + u2 * (StellarTbl.log_Z_max - StellarTbl.log_Z_min);
+
+                /* Check M_current at ZAMS */
+                double Mc = stellar_M_current(logM_t, logZ_t, 2.0);
+                double err = fabs(Mc - M) / M;
+                if(err > worst_mcur) worst_mcur = err;
+                if(err > 0.02) n_mcur_fail++;
+
+                /* For massive stars: check surface abundances near death */
+                if(M >= 8.0) {
+                    double lt = stellar_lifetime(logM_t, logZ_t);
+                    if(lt > 0) {
+                        double age95 = lt * 0.95;
+                        if(age95 > 100) {
+                            double Z_surf = 0;
+                            for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
+                                Z_surf += stellar_surface_abundance(logM_t, logZ_t, log10(age95), kk);
+                            if(Z_surf <= 0) n_surf_fail++;
+                        }
+                        /* Check M_current monotonicity (3 age samples) */
+                        double Mc1 = stellar_M_current(logM_t, logZ_t, log10(DMAX(lt*0.3, 100)));
+                        double Mc2 = stellar_M_current(logM_t, logZ_t, log10(DMAX(lt*0.6, 100)));
+                        double Mc3 = stellar_M_current(logM_t, logZ_t, log10(DMAX(lt*0.9, 100)));
+                        if(Mc2 > Mc1 * 1.01 || Mc3 > Mc2 * 1.01) n_mono_fail++;
+                    }
+                }
+            }
+            printf("  Monte Carlo validation (%d random stars):\n", ntest);
+            if(n_mcur_fail > 0) { printf("    WARNING: %d M_current(ZAMS) errors >2%% (worst=%.2e)\n", n_mcur_fail, worst_mcur); n_warn++; }
+            else printf("    [PASS] M_current(ZAMS) within 2%% for all draws (worst=%.2e)\n", worst_mcur);
+            if(n_surf_fail > 0) { printf("    WARNING: %d surface abundance=0 at 95%% lifetime for M>=8\n", n_surf_fail); n_warn++; }
+            else printf("    [PASS] Surface abundances > 0 at 95%% lifetime for all M>=8 draws\n");
+            if(n_mono_fail > 0) { printf("    WARNING: %d M_current non-monotonic cases\n", n_mono_fail); n_warn++; }
+            else printf("    [PASS] M_current monotonic (30%%->60%%->90%% lifetime) for all M>=8 draws\n");
+        }
+
+        /* --- Test 8: Remnant mass sanity --- */
+        {
+            int nfail = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    int rt = StellarTbl.remnant_type[IDX2(iz, im)];
+                    double rm = StellarTbl.remnant_mass[IDX2(iz, im)];
+                    /* Remnant mass must be < M_init */
+                    if(rm > M * 1.01) {
+                        if(nfail < 3) printf("  WARNING: remnant_mass=%.2f > M_init=%.2f at Z=%.4f (type=%d)\n", rm, M, pow(10., StellarTbl.log_Z[iz]), rt);
+                        nfail++;
+                    }
+                    /* Remnant mass must be > 0 for non-PISN */
+                    if(rt != 5 && rm <= 0 && M >= 0.5) {
+                        if(nfail < 6) printf("  WARNING: remnant_mass=0 for non-PISN M=%.2f Z=%.4f type=%d\n", M, pow(10., StellarTbl.log_Z[iz]), rt);
+                        nfail++;
+                    }
+                    /* PISN must have rm=0 */
+                    if(rt == 5 && rm > 0.01) {
+                        if(nfail < 9) printf("  WARNING: PISN with remnant_mass=%.2f at M=%.1f Z=%.4f\n", rm, M, pow(10., StellarTbl.log_Z[iz]));
+                        nfail++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d remnant mass inconsistencies\n", nfail); n_warn++; }
+            else printf("  [PASS] Remnant mass consistent for all (Z,M): 0 < rem < M_init (PISN=0)\n");
+        }
+
+        /* --- Test 9: Net yield mass conservation: sum over all elements ≈ 0 --- */
+        {
+            int nfail = 0; double worst_imbal = 0, worst_M9 = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    int rt = StellarTbl.remnant_type[IDX2(iz, im)];
+                    if(rt == 3 || rt == 6) continue; /* FSN/DBH have zeroed yields */
+                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
+                    double sum_all = 0;
+                    for(int kk = 0; kk < STBL_NELEM; kk++)
+                        sum_all += stellar_net_yield(logM_t, logZ_t, kk);
+                    /* sum should be ~0 (mass in = mass out), allow tolerance relative to M_init */
+                    double imbal = fabs(sum_all) / DMAX(M, 1.0);
+                    if(imbal > worst_imbal) { worst_imbal = imbal; worst_M9 = M; }
+                    if(imbal > 0.05) { /* 5% of M_init */
+                        if(nfail < 3) printf("  WARNING: yield mass imbalance %.2f Msun (%.1f%% of M=%.1f) at Z=%.4f\n",
+                            sum_all, imbal*100, M, pow(10., logZ_t));
+                        nfail++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d yield mass conservation violations >5%% (worst %.1f%% at M=%.1f)\n", nfail, worst_imbal*100, worst_M9); n_warn++; }
+            else printf("  [PASS] Net yield mass conservation: sum(all elements) ~ 0 (worst=%.1f%% of M_init)\n", worst_imbal*100);
+        }
+
+        /* --- Test 10: SN yields (net - wind) non-negative for major elements --- */
+        {
+            int nfail = 0;
+            int check_elems[] = {ELEM_C, ELEM_O, ELEM_Si, ELEM_Fe};
+            const char *check_names[] = {"C", "O", "Si", "Fe"};
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    if(M < 8.0) continue; /* AGB handled separately */
+                    int rt = StellarTbl.remnant_type[IDX2(iz, im)];
+                    if(rt == 3 || rt == 6) continue; /* FSN/DBH: no SN yields */
+                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
+                    for(int e = 0; e < 4; e++) {
+                        double sy = stellar_sn_yield(logM_t, logZ_t, check_elems[e]);
+                        if(sy < -0.01) { /* allow small negative from numerical noise */
+                            if(nfail < 5) printf("  WARNING: negative SN yield %s=%.4f at M=%.1f Z=%.4f type=%d\n",
+                                check_names[e], sy, M, pow(10., logZ_t), rt);
+                            nfail++;
+                        }
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d negative SN yields (net-wind) for major elements\n", nfail); n_warn++; }
+            else printf("  [PASS] SN yields (net-wind) >= 0 for C, O, Si, Fe at all exploding (Z,M)\n");
+        }
+
+        /* --- Test 11: Lifetime within age grid range --- */
+        {
+            int nfail = 0;
+            double age_max = pow(10., StellarTbl.log_age_max);
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                for(int im = 0; im < STBL_NM; im++) {
+                    double lt = StellarTbl.lifetime_yr[IDX2(iz, im)];
+                    if(lt > age_max * 1.1) { /* 10% tolerance */
+                        if(nfail < 3) printf("  WARNING: lifetime %.3e yr > age_max %.3e yr at M=%.2f Z=%.4f\n",
+                            lt, age_max, StellarTbl.M[im], pow(10., StellarTbl.log_Z[iz]));
+                        nfail++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d lifetimes exceed age grid range\n", nfail); n_warn++; }
+            else printf("  [PASS] All lifetimes within age grid range\n");
+        }
+
+        /* --- Test 12: AGB yields — C enrichment from 3rd dredge-up (M=2-4 Msun) --- */
+        {
+            int n_checked = 0, n_c_enriched = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                double logZ_t = StellarTbl.log_Z[iz];
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    if(M < 2.0 || M > 4.0) continue;
+                    int rt = StellarTbl.remnant_type[IDX2(iz, im)];
+                    if(rt != 0) continue; /* WD only */
+                    n_checked++;
+                    double yC = stellar_net_yield(StellarTbl.log_M[im], logZ_t, ELEM_C);
+                    if(yC > 0) n_c_enriched++;
+                }
+            }
+            if(n_checked > 0) {
+                double frac = (double)n_c_enriched / n_checked * 100;
+                if(frac < 50) { printf("  WARNING: only %.0f%% of AGB stars (2-4 Msun) have net C > 0 (expected ~100%%)\n", frac); n_warn++; }
+                else printf("  [PASS] AGB C enrichment: %.0f%% of 2-4 Msun WD stars have net C > 0 (%d/%d)\n", frac, n_c_enriched, n_checked);
+            }
+        }
+
+        /* --- Test 13: Cross-Z smoothness — same mass at adjacent Z shouldn't differ wildly --- */
+        {
+            int nfail = 0;
+            for(int iz = 0; iz < STBL_NZ - 1; iz++) {
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    if(M < 8.0) continue;
+                    double lt1 = StellarTbl.lifetime_yr[IDX2(iz, im)];
+                    double lt2 = StellarTbl.lifetime_yr[IDX2(iz+1, im)];
+                    if(lt1 <= 0 || lt2 <= 0) continue;
+                    double ratio = lt1 / lt2;
+                    if(ratio > 3.0 || ratio < 0.33) { /* factor 3 jump between adjacent Z */
+                        if(nfail < 3) printf("  WARNING: lifetime jump x%.1f between Z=%.4f and Z=%.4f at M=%.1f\n",
+                            ratio, pow(10., StellarTbl.log_Z[iz]), pow(10., StellarTbl.log_Z[iz+1]), M);
+                        nfail++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d sharp lifetime jumps between adjacent Z bins\n", nfail); n_warn++; }
+            else printf("  [PASS] Lifetime smooth across Z (no jumps > 3x between adjacent bins)\n");
+        }
+
+        /* --- Test 14: Q_ion = 0 after death (age clamping works for luminosity) --- */
+        {
+            int nfail = 0;
+            for(int im = 0; im < STBL_NM; im++) {
+                double M = StellarTbl.M[im];
+                if(M < 20.0) continue;
+                for(int iz = 0; iz < STBL_NZ; iz++) {
+                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
+                    double lt = StellarTbl.lifetime_yr[IDX2(iz, im)];
+                    if(lt <= 0) continue;
+                    double age_dead = lt * 1.5; /* 50% past death */
+                    if(age_dead < 100) continue;
+                    double logQ = stellar_log_Q_ion(logM_t, logZ_t, log10(age_dead));
+                    if(logQ > 40.0) { /* should be ~0, definitely not > 10^40 photons/s */
+                        if(nfail < 3) printf("  WARNING: log_Q_ion=%.1f for dead star M=%.0f Z=%.4f (age=1.5*lifetime)\n",
+                            logQ, M, pow(10., logZ_t));
+                        nfail++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d dead stars with significant Q_ion\n", nfail); n_warn++; }
+            else printf("  [PASS] Q_ion negligible for all dead stars (age > lifetime)\n");
+        }
+
+        /* --- Test 15: Monte Carlo — wind surface composition matches birth Z at ZAMS --- */
+        {
+            int ntest_w = 10000;
+            int nfail_zbirth = 0;
+            unsigned long seed_w = 54321;
+            for(int it = 0; it < ntest_w; it++) {
+                seed_w = seed_w * 1103515245 + 12345;
+                double u1 = (double)((seed_w >> 16) & 0x7FFF) / 32767.0;
+                seed_w = seed_w * 1103515245 + 12345;
+                double u2 = (double)((seed_w >> 16) & 0x7FFF) / 32767.0;
+                double M = pow((pow(350.0, 0.7) - pow(8.0, 0.7)) * u1 + pow(8.0, 0.7), 1.0 / 0.7);
+                double logM_t = log10(M);
+                double logZ_t = StellarTbl.log_Z_min + u2 * (StellarTbl.log_Z_max - StellarTbl.log_Z_min);
+                /* At ZAMS (age=100 yr), surface Z should be close to birth Z */
+                double Z_surf = 0;
+                for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
+                    Z_surf += stellar_surface_abundance(logM_t, logZ_t, 2.0, kk); /* log10(100)=2 */
+                double Z_birth = pow(10., logZ_t);
+                if(Z_surf > 0 && Z_birth > 0) {
+                    double ratio = Z_surf / Z_birth;
+                    if(ratio < 0.3 || ratio > 3.0) nfail_zbirth++;
+                }
+            }
+            if(nfail_zbirth > 0) { printf("  WARNING: %d/%d stars have ZAMS surface Z differing >3x from birth Z\n", nfail_zbirth, ntest_w); n_warn++; }
+            else printf("  [PASS] ZAMS surface metallicity matches birth Z within 3x for all %d random M>=8 draws\n", ntest_w);
+        }
+
+        if(n_warn == 0) printf("  === All %d table validation tests PASSED ===\n", 15);
+        else printf("  === Table validation: %d WARNINGS out of 15 tests — check above ===\n", n_warn);
     }
 }
 
@@ -413,32 +773,33 @@ double stellar_M_current(double logM, double logZ, double log_age)
 {
     /* Interpolate M_current/M_init (fractional mass remaining) then scale by
        the queried mass, so off-grid masses always get M_current <= M_drawn at
-       ZAMS and the wind mass-loss detection works correctly. */
-    int iz, im, ia; double fz, fm, fa;
+       ZAMS and the wind mass-loss detection works correctly.
+       Per-corner age clamping: each (iz,im) corner has a different lifetime.
+       If the queried age exceeds a corner's lifetime, clamp to the last alive age
+       to avoid mixing pre-death M_current with post-death remnant mass. */
+    int iz, im; double fz, fm;
     stbl_idx_Z(logZ, &iz, &fz);
     stbl_idx_M(logM, &im, &fm);
-    stbl_idx_age(log_age, &ia, &fa);
 
     double Mstar = pow(10.0, logM);
-    double M0 = StellarTbl.M[im], M1 = StellarTbl.M[im+1];
-    if(M0 <= 0) M0 = 1e-30;
-    if(M1 <= 0) M1 = 1e-30;
+    int iz_c[4] = {iz, iz, iz+1, iz+1};
+    int im_c[4] = {im, im+1, im, im+1};
+    double M_grid[4] = {StellarTbl.M[im], StellarTbl.M[im+1], StellarTbl.M[im], StellarTbl.M[im+1]};
+    double corners[4];
 
-    double f000 = StellarTbl.M_current[IDX3(iz,   im,   ia  )] / M0;
-    double f001 = StellarTbl.M_current[IDX3(iz,   im,   ia+1)] / M0;
-    double f010 = StellarTbl.M_current[IDX3(iz,   im+1, ia  )] / M1;
-    double f011 = StellarTbl.M_current[IDX3(iz,   im+1, ia+1)] / M1;
-    double f100 = StellarTbl.M_current[IDX3(iz+1, im,   ia  )] / M0;
-    double f101 = StellarTbl.M_current[IDX3(iz+1, im,   ia+1)] / M0;
-    double f110 = StellarTbl.M_current[IDX3(iz+1, im+1, ia  )] / M1;
-    double f111 = StellarTbl.M_current[IDX3(iz+1, im+1, ia+1)] / M1;
+    for(int c = 0; c < 4; c++) {
+        double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
+        double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
+        int ia_c; double fa_c;
+        stbl_idx_age(log_age_c, &ia_c, &fa_c);
+        double Mg = (M_grid[c] > 0) ? M_grid[c] : 1e-30;
+        double f0 = StellarTbl.M_current[IDX3(iz_c[c], im_c[c], ia_c  )] / Mg;
+        double f1 = StellarTbl.M_current[IDX3(iz_c[c], im_c[c], ia_c+1)] / Mg;
+        corners[c] = f0*(1-fa_c) + f1*fa_c;
+    }
 
-    double c00 = f000*(1-fa) + f001*fa;
-    double c01 = f010*(1-fa) + f011*fa;
-    double c10 = f100*(1-fa) + f101*fa;
-    double c11 = f110*(1-fa) + f111*fa;
-    double c0  = c00*(1-fm)  + c01*fm;
-    double c1  = c10*(1-fm)  + c11*fm;
+    double c0 = corners[0]*(1-fm) + corners[1]*fm;
+    double c1 = corners[2]*(1-fm) + corners[3]*fm;
     double frac = c0*(1-fz) + c1*fz;
 
     return Mstar * DMAX(frac, 0.0);
@@ -505,27 +866,28 @@ double stellar_surface_abundance(double logM, double logZ, double log_age, int e
 {
     if(!StellarTbl.surface_abundances || elem < 0 || elem >= STBL_NELEM) return 0;
 
-    int iz, im, ia; double fz, fm, fa;
+    int iz, im; double fz, fm;
     stbl_idx_Z(logZ, &iz, &fz);
     stbl_idx_M(logM, &im, &fm);
-    stbl_idx_age(log_age, &ia, &fa);
 
-    /* 8-corner trilinear with fixed element index */
-    double v000 = StellarTbl.surface_abundances[IDX4(iz,   im,   ia,   elem)];
-    double v001 = StellarTbl.surface_abundances[IDX4(iz,   im,   ia+1, elem)];
-    double v010 = StellarTbl.surface_abundances[IDX4(iz,   im+1, ia,   elem)];
-    double v011 = StellarTbl.surface_abundances[IDX4(iz,   im+1, ia+1, elem)];
-    double v100 = StellarTbl.surface_abundances[IDX4(iz+1, im,   ia,   elem)];
-    double v101 = StellarTbl.surface_abundances[IDX4(iz+1, im,   ia+1, elem)];
-    double v110 = StellarTbl.surface_abundances[IDX4(iz+1, im+1, ia,   elem)];
-    double v111 = StellarTbl.surface_abundances[IDX4(iz+1, im+1, ia+1, elem)];
+    /* Per-corner age clamping: each (iz,im) corner has a different lifetime.
+     * If the queried age exceeds a corner's lifetime, clamp to the last alive age
+     * to avoid mixing live surface abundances with post-death zeros. */
+    double corners[4]; /* [00, 01, 10, 11] = [(iz,im), (iz,im+1), (iz+1,im), (iz+1,im+1)] */
+    int iz_c[4] = {iz, iz, iz+1, iz+1};
+    int im_c[4] = {im, im+1, im, im+1};
+    for(int c = 0; c < 4; c++) {
+        double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
+        double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
+        int ia_c; double fa_c;
+        stbl_idx_age(log_age_c, &ia_c, &fa_c);
+        double v0 = StellarTbl.surface_abundances[IDX4(iz_c[c], im_c[c], ia_c,   elem)];
+        double v1 = StellarTbl.surface_abundances[IDX4(iz_c[c], im_c[c], ia_c+1, elem)];
+        corners[c] = v0*(1-fa_c) + v1*fa_c;
+    }
 
-    double c00 = v000*(1-fa) + v001*fa;
-    double c01 = v010*(1-fa) + v011*fa;
-    double c10 = v100*(1-fa) + v101*fa;
-    double c11 = v110*(1-fa) + v111*fa;
-    double c0  = c00*(1-fm)  + c01*fm;
-    double c1  = c10*(1-fm)  + c11*fm;
+    double c0 = corners[0]*(1-fm) + corners[1]*fm;
+    double c1 = corners[2]*(1-fm) + corners[3]*fm;
     return c0*(1-fz) + c1*fz;
 }
 
