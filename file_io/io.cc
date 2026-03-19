@@ -215,8 +215,14 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                         if(k==0) {box_length_xyz = boxSize_X;}
                         if(k==1) {box_length_xyz = boxSize_Y;}
                         if(k==2) {box_length_xyz = boxSize_Z;}
+#ifdef SHIFTBACK_ON_OUTPUT
+                        fp_pos[k] -= (MyOutputPosFloat)(0.5 * box_length_xyz);
+                        while(fp_pos[k] < -0.5 * box_length_xyz) {fp_pos[k] += (MyOutputPosFloat) box_length_xyz;}
+                        while(fp_pos[k] >= 0.5 * box_length_xyz) {fp_pos[k] -= (MyOutputPosFloat) box_length_xyz;}
+#else
                         while(fp_pos[k] < 0) {fp_pos[k] += (MyOutputFloat) box_length_xyz;}
                         while(fp_pos[k] >= box_length_xyz) {fp_pos[k] -= (MyOutputFloat) box_length_xyz;}
+#endif
 #endif
                     }
                     fp_pos += 3;

@@ -586,7 +586,7 @@ void star_formation_parent_routine(void)
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
                             P[ns].DensityAroundParticle = CellP[i].Density;
 #endif
-                            P[ns].FormationDensity = CellP[i].Density;
+                            P[ns].FormationDensity = CellP[i].Density * All.cf_a3inv; /* physical density at formation */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
                             P[ns].BirthMetallicity = P[ns].Metallicity[0];
 #endif
@@ -638,7 +638,7 @@ void star_formation_parent_routine(void)
                             P[i].DensityAroundParticle = CellP[i].Density;
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
-                            P[i].FormationDensity = CellP[i].Density;
+                            P[i].FormationDensity = CellP[i].Density * All.cf_a3inv; /* physical density at formation */
 #endif
 #ifdef GALSF_RESOLVEDISM
                             if(n_sf_local >= sf_buf_size) {
@@ -824,7 +824,7 @@ void star_formation_parent_routine(void)
                             sum_mass_stars += P[NumPart + stars_spawned].Mass;
                             P[NumPart + stars_spawned].StellarAge = All.Time;
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
-                            P[NumPart + stars_spawned].FormationDensity = CellP[i].Density;
+                            P[NumPart + stars_spawned].FormationDensity = CellP[i].Density * All.cf_a3inv; /* physical density at formation */
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
                             { /* stochastic IMF: probabilistically assign a single massive-star mass */

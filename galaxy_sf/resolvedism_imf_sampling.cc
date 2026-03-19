@@ -453,7 +453,7 @@ void assign_stellar_masses(void)
             if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
 
             double M_star_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
-            double rho = P[i].FormationDensity;
+            double rho = P[i].FormationDensity / All.cf_a3inv; /* convert physical back to comoving for volume estimate */
             if(rho <= 0) rho = 1e-30;
 
             double h_parent = P[i].KernelRadius;
@@ -611,7 +611,7 @@ void assign_stellar_masses(void)
         imf_racc[nimf] = P[i].KernelRadius;
         imf_zbirth[nimf] = P[i].BirthMetallicity;
         imf_id[nimf] = (long long)P[i].ID;
-        imf_nH[nimf] = P[i].FormationDensity * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+        imf_nH[nimf] = P[i].FormationDensity * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS; /* already physical at formation */
         imf_T[nimf] = P[i].MstarSampleIMF[3]; /* CellP.Temp stored at spawn time */
         nimf++;
 

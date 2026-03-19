@@ -71,7 +71,7 @@ static double compute_single_star_S_ly(int i)
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
     if(P[i].FormationDensity > 0) {
         double t_KH = 1.5e7 * pow(Mstar, -2.1); /* Kelvin-Helmholtz time [yr] */
-        double rho_form_cgs = P[i].FormationDensity * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+        double rho_form_cgs = P[i].FormationDensity * UNIT_DENSITY_IN_CGS; /* already physical at formation */
         double t_ff_yr = sqrt(3.0 * M_PI / (32.0 * GRAVITY_G_CGS * rho_form_cgs)) / SECONDS_PER_YEAR;
         double delay = fmin(t_KH, t_ff_yr);
         if(delay > 1.0e6) delay = 1.0e6; /* cap at 1 Myr */
@@ -391,7 +391,7 @@ void resolvedism_photoionize(void)
         MPI_Reduce(&local_min_r, &glob_min_r, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
         if(ThisTask == 0)
             printf("RESOLVEDISM PI: expanded search radius in %d iterations (R_min=%.1f pc, R_max=%.1f pc, cap=%.1f pc)\n",
-                iter, glob_min_r * UNIT_LENGTH_IN_KPC * 1e3, glob_max_r * UNIT_LENGTH_IN_KPC * 1e3, All.MaxPISearchRadius * 1e3);
+                iter, glob_min_r * All.cf_atime * UNIT_LENGTH_IN_KPC * 1e3, glob_max_r * All.cf_atime * UNIT_LENGTH_IN_KPC * 1e3, All.MaxPISearchRadius * 1e3);
     }
 
     /* HII region size summary: per-star min/max pixel front radius (asymmetry measure) */
@@ -432,7 +432,7 @@ void resolvedism_photoionize(void)
         if(ThisTask == 0 && npi_total > 0) {
             printf("RESOLVEDISM PI: %d ionizing stars at t=%g (%d iter)\n", npi_total, All.Time, iter);
             printf("RESOLVEDISM PI: HII front R_min=%.1f pc, R_max=%.1f pc, max asymmetry=%.1f:1\n",
-                glob_rfront_min * UNIT_LENGTH_IN_KPC * 1e3, glob_rfront_max * UNIT_LENGTH_IN_KPC * 1e3, glob_asym_max);
+                glob_rfront_min * All.cf_atime * UNIT_LENGTH_IN_KPC * 1e3, glob_rfront_max * All.cf_atime * UNIT_LENGTH_IN_KPC * 1e3, glob_asym_max);
         }
     }
 

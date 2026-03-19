@@ -695,7 +695,7 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
     /* Energy depends on remnant type */
     switch(rem_type) {
         case REM_WD:
-            /* AGB end-of-life: mass+metals only, no energy */
+            /* AGB end-of-life: mass+metals, no energy (momentum set below after Mej computed) */
             in->Esne = 0;
             break;
         case REM_PISN:
@@ -724,10 +724,16 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
     if(Mej_solar < 0) Mej_solar = 0;
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
-    /* Compute yields: total element mass in ejecta = net_yield + X_birth * Mej */
+    /* AGB momentum: planetary nebula ejection at 30 km/s */
+    if(rem_type == REM_WD && Mej_solar > 0) {
+        in->WindMomentum = Mej_solar * 30.0 * SOLAR_MASS_CGS * 1.0e5 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
+    }
+
+    /* Compute yields: total element mass in ejecta = sn_yield + X_birth * Mej
+     * sn_yield = net_yield - wind_yield (wind metals already injected during life) */
     double metal_mass_solar = 0;
     for(k = 0; k < STBL_NELEM; k++) {
-        double net_y = stellar_net_yield(logM, logZ, k); /* net yield in Msun */
+        double net_y = stellar_sn_yield(logM, logZ, k); /* SN-only yield in Msun */
         double X_birth = 0;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         X_birth = P[i].ElementAbundance[k]; /* birth mass fraction */
@@ -983,9 +989,10 @@ int resolvedismFB_evaluate(int target, int mode, int *exportflag, int *exportnod
                 if(local.WindMomentum > 0) {
                     /* Radial direction: star -> neighbor (opposite of kernel.dp which is star - neighbor) */
                     double dp_share = wk * local.WindMomentum; /* momentum share for this neighbor [code units] */
+                    double dM_wind = wk * local.Mej; /* wind mass already added to this cell above */
                     for(k = 0; k < 3; k++) {
                         double dp_k = dp_share * (-kernel.dp[k] / kernel.r); /* momentum component */
-                        double dv_k = dp_k / Mass_j;
+                        double dv_k = dp_k / (Mass_j + dM_wind); /* use post-injection mass */
                         #pragma omp atomic
                         P[j].Vel[k] += dv_k;
                         #pragma omp atomic

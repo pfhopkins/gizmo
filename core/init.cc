@@ -262,6 +262,26 @@ void init(void)
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
         if(RestartFlag == 0) {P[i].ProtoStellarStage = 0;}
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST
+        if(RestartFlag == 0 && P[i].Type == 0) {
+            /* Initialize dust mass fractions from DGR scaled to local metallicity (MW-like mixture).
+             * Dust[k] = mass fraction of dust species k relative to gas cell mass. */
+            double Z_gas = 0;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            for(int kd = ELEM_C; kd < NUM_RESOLVEDISM_ELEMENTS; kd++) Z_gas += P[i].ElementAbundance[kd];
+#else
+            Z_gas = All.InitMetallicityinSolar * 0.014;
+#endif
+            double DGR = 0.01 * (Z_gas / 0.014); /* DGR_solar=0.01, linear with Z */
+            double C_frac = 0.3, sil_frac = 0.7; /* MW: 30% carbonaceous, 70% silicate */
+            CellP[i].Dust[0] = C_frac * DGR; /* C dust mass fraction */
+            double sil_DGR = sil_frac * DGR;
+            CellP[i].Dust[1] = sil_DGR * (64.0 / 172.0);  /* O in silicate */
+            CellP[i].Dust[2] = sil_DGR * (24.0 / 172.0);  /* Mg in silicate */
+            CellP[i].Dust[3] = sil_DGR * (28.0 / 172.0);  /* Si in silicate */
+            CellP[i].Dust[4] = sil_DGR * (56.0 / 172.0);  /* Fe in silicate */
+        }
+#endif
 
         if(RestartFlag != 1)
         {

@@ -1811,6 +1811,11 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     LoadMultiSpeciesTables();
 #endif
+#else /* CHEMCOOL: need TREECOOL for UV background rates via get_uvb_rates() in cosmological runs */
+    if(All.ComovingIntegrationOn) {
+        ReadIonizeParams("TREECOOL");
+        IonizeParams();
+    }
 #endif
 #endif // CHIMES
 }

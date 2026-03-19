@@ -114,7 +114,7 @@ extern ALIGN(32) struct particle_data
     MyFloat MstarSampleIMF[N_STELLAR_MASS]; /*!< individual stellar masses from IMF sampling */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
-    MyFloat FormationDensity;             /*!< gas density at time of star formation (code units, comoving) */
+    MyFloat FormationDensity;             /*!< physical gas density at time of star formation (code units * cf_a3inv at formation) */
 #endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     MyFloat BirthMetallicity;             /*!< total metallicity Z at birth, for table lookups */
