@@ -7,6 +7,7 @@ import h5py
 from astropy import units as u, constants as c
 from scipy.stats import binned_statistic
 import numpy as np
+import pytest
 
 
 def compute_test_statistic(f, save_reference_solution=False, plot=False):
@@ -33,7 +34,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
         plt.loglog(nH_ref, T_ref, ".", markersize=0.3, color="red", label="Benchmark")
-        plt.loglog(nH, T, ".", markersize=0.3, color="black", label="Test")        
+        plt.loglog(nH, T, ".", markersize=0.3, color="black", label="Test")
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(r"$T (\rm K)$")
         plt.legend(loc=3)
@@ -47,7 +48,8 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-def test_gmc_cooling():
+@pytest.mark.parametrize("num_mpi_ranks", (1, 2, 4))
+def test_gmc_cooling(num_mpi_ranks):
     # specify the test name
     test_name = "gmc_cooling"
 
@@ -55,7 +57,7 @@ def test_gmc_cooling():
     get_cooling_tables()
 
     # build GIZMO and run the test
-    build_and_run_test(test_name)
+    build_and_run_test(test_name, num_mpi_ranks)
 
     # Check that the specific required output file exists:
     if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):

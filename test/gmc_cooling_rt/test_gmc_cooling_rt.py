@@ -1,5 +1,6 @@
 """GMC cooling and chemistry test"""
 
+import pytest
 from gizmo.test import build_and_run_test, get_cooling_tables
 from os import path
 from matplotlib import pyplot as plt
@@ -97,10 +98,11 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-def test_gmc_cooling_rt():
+@pytest.mark.parametrize("num_mpi_ranks", (1, 2, 4))
+def test_gmc_cooling_rt(num_mpi_ranks):
     test_name = "gmc_cooling_rt"
     get_cooling_tables()
-    build_and_run_test(test_name)
+    build_and_run_test(test_name, num_mpi_ranks)
     if not path.isfile("test/gmc_cooling_rt/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
 

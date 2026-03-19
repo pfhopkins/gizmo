@@ -36,11 +36,9 @@ def download_test_files(test_name: str):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
-def run_test(test_name: str, num_mpi_ranks: int=1, num_openmp_threads: int=0):
+def run_test(test_name: str, num_mpi_ranks: int=1):#, num_openmp_threads: int=0):
     """Runs the test"""
     paramsfile = f"test/{test_name}/{test_name}.params"
-    if num_openmp_threads > 0:
-        os.environ["OMP_NUM_THREADS"] = num_openmp_threads
     system(f"mpirun -np {num_mpi_ranks} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 
@@ -53,8 +51,10 @@ def get_cooling_tables():
     system("cp cooling/TREECOOL .")
 
 
-def build_and_run_test(test_name: str):
+def build_and_run_test(test_name: str, num_mpi_ranks: int=1, num_openmp_threads: int=0):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
+    if num_openmp_threads > 0:
+        os.environ["OMP_NUM_THREADS"] = num_openmp_threads
     build_gizmo_for_test(test_name)
     download_test_files(test_name)
-    run_test(test_name)
+    run_test(test_name, num_mpi_ranks)
