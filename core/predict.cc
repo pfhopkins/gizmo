@@ -309,7 +309,7 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
  *  has been called, a new domain decomposition should be done, which will
  *  also force a new tree construction.
  */
-#ifdef BOX_PERIODIC
+#if defined(BOX_PERIODIC) && !defined(TALLBOX)
 void do_box_wrapping(void)
 {
     int i, j;
@@ -370,6 +370,30 @@ void do_box_wrapping(void)
 }
 #endif
 
+#ifdef TALLBOX
+/*! TALLBOX variant of do_box_wrapping: periodic in X/Y only, open in Z.
+ *  Particles beyond +/- BoxTallHalf in Z are flagged for deletion (mass=0). */
+void do_box_wrapping(void)
+{
+    int i, j;
+    double boxsize[2];
+    boxsize[0] = boxSize_X;
+    boxsize[1] = boxSize_Y;
+
+    for(i = 0; i < NumPart; i++)
+    {
+        for(j = 0; j < 2; j++) /* only wrap X and Y (periodic) */
+        {
+            while(P[i].Pos[j] < 0)
+                P[i].Pos[j] += boxsize[j];
+            while(P[i].Pos[j] >= boxsize[j])
+                P[i].Pos[j] -= boxsize[j];
+        }
+        if(fabs(P[i].Pos[2]) >= All.BoxTallHalf) /* Z is open: remove particles that escape */
+            P[i].Mass = 0;
+    }
+}
+#endif
 
 
 

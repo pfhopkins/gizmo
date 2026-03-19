@@ -552,6 +552,10 @@ extern struct global_data_all_processes
 
   double BoxSize;		/*!< Boxsize in case periodic boundary conditions are used */
 
+#ifdef TALLBOX
+  double BoxTallHalf;   /*!< remove particles beyond +/- BoxTallHalf in Z (midplane is z=0) */
+#endif
+
   /* Code options */
   int ComovingIntegrationOn;	/*!< flags that comoving integration is enabled */
   int ResubmitOn;		/*!< flags that automatic resubmission of job to queue system is enabled */

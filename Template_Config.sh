@@ -36,6 +36,7 @@
 #BOX_OUTFLOW_X=0            # make the x-boundary outflowing (assumes a box 0<x<BoxSize_X, where BoxSize_X=BoxSize*BOX_LONG_X, if BOX_LONG_X is set); if no value set or =0, both x-boundaries outflow, if =-1, only lower-x (x=0) boundary outflows, if =+1, only upper-x (x=BoxSize) boundary outflows
 #BOX_OUTFLOW_Y              # make the y-boundary outflowing (rules follow BOX_OUTFLOW_X, for the y-axis here). note that outflow boundaries are usually not needed, with Lagrangian methods, but may be useful in special cases.
 #BOX_OUTFLOW_Z              # make the z-boundary outflowing (rules follow BOX_OUTFLOW_X, for the z-axis here)
+#TALLBOX                    # periodic in X/Y, open in Z: for isolated disk simulations with PMGRID. Requires BoxTallHalf param (removes particles beyond +/- BoxTallHalf in Z). Auto-enables BOX_PERIODIC + BOX_OUTFLOW_Z.
 ####################################################################################################
 
 

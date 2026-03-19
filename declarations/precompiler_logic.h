@@ -1039,6 +1039,17 @@
 #endif // BOX_SHEARING
 
 
+/* TALLBOX: periodic in X and Y, open (non-periodic) in Z. Used for isolated disk galaxy simulations
+   where PMGRID handles in-plane long-range gravity but boundaries are open vertically.
+   Auto-enables BOX_PERIODIC for boxSize/boxHalf variables, PM grid, etc. The Z-axis non-periodicity
+   is handled by explicit overrides in macros.h (not via BOX_OUTFLOW_Z, to avoid side effects in
+   apply_special_boundary_conditions -- TALLBOX has its own Z-boundary handling via BoxTallHalf). */
+#ifdef TALLBOX
+#ifndef BOX_PERIODIC
+#define BOX_PERIODIC
+#endif
+#endif // TALLBOX
+
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */
 #ifdef METALS
