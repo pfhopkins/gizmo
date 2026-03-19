@@ -25,6 +25,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         Z = F["PartType0/Metallicity"][:]
         XH = 1 - F["PartType0/Metallicity"][:, 0] - F["PartType0/Metallicity"][:, 1]
         rho_to_nH = XH * (u.Msun / u.pc**3).to(c.m_p / u.cm**3)
+        xe = F["PartType0/ElectronAbundance"][:]
         rho = F["PartType0/Density"][:]
         nH = F["PartType0/Density"][:] * rho_to_nH
         T = F["PartType0/Temperature"][:]
@@ -41,6 +42,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     if plot:
         with h5py.File("gmc_cooling_rt_exact.hdf5", "r") as F:
             XH = 1 - F["PartType0/Metallicity"][:, 0] - F["PartType0/Metallicity"][:, 1]
+            xe_ref = F["PartType0/ElectronAbundance"][:]
             rho_ref = F["PartType0/Density"][:]
             nH_ref = rho_ref * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
@@ -74,6 +76,14 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         plt.savefig("test/gmc_cooling_rt/nH_vs_Trad.png", bbox_inches="tight")
         plt.close()
 
+        plot_quantiles_vs_nH(nH_ref, xe_ref, label="Benchmark")
+        plot_quantiles_vs_nH(nH, xe, label="Test")
+        plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
+        plt.ylabel(r"$x_e$")
+        plt.legend(loc=3)
+        plt.savefig("test/gmc_cooling_rt/nH_vs_xe.png", bbox_inches="tight")
+        plt.close()
+
         for i, band in enumerate(("EUV", "FUV", "NUV", "ONIR", "FIR")):
             plot_quantiles_vs_nH(nH, urad_eV_cm3[:, i], label=band)
             # plt.loglog(nH, urad_eV_cm3[:, i], ".", markersize=0.3, label=band)
@@ -95,7 +105,9 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         plt.close()
 
     nH_bins = np.logspace(1, 3, 10)
-    return binned_statistic(nH, T, "median", nH_bins)[0]
+
+    stats_to_check = T, Tdust, Trad, urad_eV_cm3[:, 1], urad_eV_cm3[:, 4], xe
+    return np.array([binned_statistic(nH, s, "median", nH_bins)[0] for s in stats_to_check])
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1, 2, 4))
