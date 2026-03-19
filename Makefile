@@ -170,6 +170,8 @@ OPT     += #
 endif
 
 #----------------------------------------------------------------------------------------------
+# Environment for building GIZMO on a macbook with libraries installed via homebrew. But note
+# that the specific GSL and HDF5 versions are hardcoded here...
 ifeq ($(SYSTYPE),"MacBookCellar")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++11
@@ -221,6 +223,24 @@ HDF5LIB  = -L/usr/lib/x86_64-linux-gnu/hdf5/openmpi/ -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION
 ## to get required packages: sudo apt install libhdf5-openmpi-dev libgsl-dev libopenmpi-dev
+endif
+
+#----------------------------
+# Should work on any Flatiron institute linux cluster environment: rusty, popeye and linux workstations
+ifeq ($(SYSTYPE),"RUSTY")
+CC       =   mpicc
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC      = mpifort
+OPTIMIZE =  -O2 -g -Wall
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
 
