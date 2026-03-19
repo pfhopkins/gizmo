@@ -1,0 +1,24 @@
+% Example compile-time options:
+%  (HYDRO_MESHLESS_FINITE_MASS is optional, replace with your
+%   choice of hydro/mhd options)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=1
+%        BOX_PERIODIC 
+%        SELFGRAVITY_OFF 
+%        EOS_GAMMA=(5.0/3.0)
+%
+InitCondFile                       soundwave_ics
+OutputDir                          output
+TimeMax                            1.5
+BoxSize                            1
+TimeBetSnapshot                    0.1
+DesNumNgb                          4
+MaxMemSize                         1000
+% -- optional numerical parameters (requires additional Config flags)
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+
