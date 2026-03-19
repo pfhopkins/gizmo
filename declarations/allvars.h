@@ -513,6 +513,8 @@ extern struct global_data_all_processes
   int    KetjuUseStarStarSoftening;      /*!< keep softening between stars inside chain */
   double KetjuTimestepLimitingFactor;    /*!< radius factor for timestep limiting (default 100) */
   int    KetjuMaxStepCount;              /*!< max MSTAR integration steps before bail-out (default 100000, 0=off) */
+  double KetjuExpandBinariesFactor;      /*!< expand tight binaries if period < factor*dt (default 0=off, typical 0.1) */
+  double KetjuMinParticlesPerTask;       /*!< minimum particles per compute task for load balancing (default 10) */
 #endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */

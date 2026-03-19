@@ -148,6 +148,7 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.log_L_LW        = (float *)mymalloc("stbl_logLLW",  n3d * sizeof(float));
     StellarTbl.log_L_FUV_total = (float *)mymalloc("stbl_logLFUVt",n3d * sizeof(float));
     StellarTbl.log_L_bol       = (float *)mymalloc("stbl_logLbol", n3d * sizeof(float));
+    StellarTbl.logR_cm         = (float *)mymalloc("stbl_logRcm",  n3d * sizeof(float));
 
     /* Ionizing sub-band luminosities for M1 RT */
 #ifdef RADTRANSFER
@@ -200,6 +201,7 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "log_L_LW",       StellarTbl.log_L_LW,        n3d);
         read_hdf5_dataset_as_float(file, "log_L_FUV_total",StellarTbl.log_L_FUV_total, n3d);
         read_hdf5_dataset_as_float(file, "log_L_bol",      StellarTbl.log_L_bol,       n3d);
+        read_hdf5_dataset_as_float(file, "logR_cm",         StellarTbl.logR_cm,         n3d);
 
         /* Ionizing sub-band luminosities (only for M1 RT) */
 #ifdef RADTRANSFER
@@ -258,6 +260,7 @@ void resolvedism_load_stellar_tables(void)
     MPI_Bcast(StellarTbl.log_L_LW,        n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_FUV_total, n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_bol,       n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.logR_cm,         n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
 #ifdef RADTRANSFER
     MPI_Bcast(StellarTbl.log_L_ion_tot,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
@@ -768,6 +771,7 @@ void resolvedism_free_stellar_tables(void)
     if(StellarTbl.log_L_ion_H0)    { myfree(StellarTbl.log_L_ion_H0);    StellarTbl.log_L_ion_H0 = NULL; }
     if(StellarTbl.log_L_ion_tot)   { myfree(StellarTbl.log_L_ion_tot);   StellarTbl.log_L_ion_tot = NULL; }
 #endif
+    if(StellarTbl.logR_cm)         { myfree(StellarTbl.logR_cm);         StellarTbl.logR_cm = NULL; }
     if(StellarTbl.log_L_bol)       { myfree(StellarTbl.log_L_bol);       StellarTbl.log_L_bol = NULL; }
     if(StellarTbl.log_L_FUV_total) { myfree(StellarTbl.log_L_FUV_total); StellarTbl.log_L_FUV_total = NULL; }
     if(StellarTbl.log_L_LW)        { myfree(StellarTbl.log_L_LW);        StellarTbl.log_L_LW = NULL; }
@@ -879,6 +883,11 @@ double stellar_log_L_FUV_total(double logM, double logZ, double log_age)
 double stellar_log_L_bol(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.log_L_bol, logM, logZ, log_age);
+}
+
+double stellar_log_R_cm(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.logR_cm, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_tot(double logM, double logZ, double log_age)
