@@ -763,7 +763,7 @@ void do_the_cooling_for_particle(int i);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T);
 double gas_dust_heating_coeff(int i, double T, double Tdust);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate);
-double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate);
+double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp);
