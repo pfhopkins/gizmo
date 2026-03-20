@@ -110,7 +110,10 @@ int eligible_for_hermite(int i)
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(P[i].SuperTimestepFlag >= 2) {return 0;}
-#endif   
+#endif
+#ifdef KETJU_REGULARIZATION
+    if(P[i].KetjuIntegrated) {return 0;} /* KETJU particles use MSTAR, not Hermite */
+#endif
     return 1;
 }
 
@@ -174,12 +177,17 @@ void apply_long_range_kick(integertime tstart, integertime tend)
     for(i = 0; i < NumPart; i++)
     {
         if(P[i].Mass > 0)
+        {
+#ifdef KETJU_REGULARIZATION
+            if(P[i].KetjuIntegrated) continue; /* KETJU particles: gravity handled by MSTAR */
+#endif
             for(j = 0; j < 3; j++)	/* do the kick, only collisionless particles */
             {
                 dvel[j] = P[i].GravPM[j] * dt_gravkick;
                 P[i].Vel[j] += dvel[j];
                 P[i].dp[j] += P[i].Mass * dvel[j];
             }
+        }
     }
 }
 #endif
@@ -348,6 +356,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 dp[j] += mass_pred * CellP[i].Rad_Accel[j] * All.cf_atime * dt_hydrokick;
 #endif
             }
+#ifdef KETJU_REGULARIZATION
+            if(!P[i].KetjuIntegrated) /* KETJU particles: tree gravity replaced by MSTAR — skip tree kick */
+#endif
             dp[j] += mass_pred * P[i].GravAccel[j] * dt_gravkick;
 #if (SINGLE_STAR_TIMESTEPPING > 0)  //if we're super-timestepping, the above accounts for the change in COM velocity. Now we do the internal binary velocity change
 #ifdef KETJU_REGULARIZATION

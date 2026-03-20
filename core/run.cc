@@ -76,6 +76,7 @@ void run(void)
 #ifdef KETJU_REGULARIZATION
         ketju_find_regions();       /* detect chain regions around massive stars/BHs */
         ketju_run_integration();    /* subtract tree force, run MSTAR, apply velocity trick */
+        ketju_write_output();       /* write KETJU diagnostics to HDF5 */
 #endif
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.

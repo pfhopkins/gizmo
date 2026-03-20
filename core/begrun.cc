@@ -104,6 +104,10 @@ void begrun(void)
   resolvedism_load_stellar_tables();
 #endif
 
+#ifdef KETJU_REGULARIZATION
+  ketju_open_output_file();
+#endif
+
 #ifdef BOX_PERIODIC
   ewald_init();
 #endif

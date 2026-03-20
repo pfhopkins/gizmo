@@ -697,15 +697,20 @@ static void setup_integrator(KetjuRegion &reg)
             reg.integrator->options->star_star_softening = h;
         }
 
-        /* fill particle data (relative to CoM) */
+        /* fill particle data (relative to CoM, converted to physical coordinates) */
         reg.extra_data.resize(reg.total_particle_count);
         struct ketju_system_physical_state *ps = reg.integrator->physical_state;
         ps->time = 0;
+        double a = All.cf_atime; /* scale factor: 1 for non-cosmo */
         for(int i = 0; i < reg.total_particle_count; i++) {
             ps->mass[i] = reg.all_particles[i].Mass;
             for(int j = 0; j < 3; j++) {
-                ps->pos[i][j] = reg.all_particles[i].Pos[j] - reg.com_pos[j];
-                ps->vel[i][j] = reg.all_particles[i].Vel[j] - reg.com_vel[j];
+                /* comoving -> physical: pos_phys = (pos_comov - com_comov) * a */
+                ps->pos[i][j] = (reg.all_particles[i].Pos[j] - reg.com_pos[j]) * a;
+                /* GIZMO velocity is v_peculiar (physical) already in non-cosmo;
+                 * in cosmo mode, Vel stores v_code = v_peculiar, and Hubble flow
+                 * is handled by the drift factor. For MSTAR we need peculiar velocity. */
+                ps->vel[i][j] = (reg.all_particles[i].Vel[j] - reg.com_vel[j]);
             }
             reg.extra_data[i].ID = reg.all_particles[i].ID;
             reg.extra_data[i].Task = reg.all_particles[i].Task;
@@ -895,8 +900,14 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     /* subtract first half of tree force */
     do_negative_halfstep_kick(reg, first_halfkick);
 
-    /* expand tight binaries before integration to prevent stalling */
+    /* expand tight binaries before integration to prevent stalling.
+     * Runs on compute root only — broadcast updated velocities to all compute tasks. */
     expand_tight_binaries(reg, dt_physical);
+    if(reg.compute_tasks.is_member() && reg.integrator && reg.compute_tasks.size > 1) {
+        int n = reg.integrator->num_particles;
+        MPI_Bcast(reg.integrator->physical_state->vel, 3 * n, MPI_DOUBLE,
+                  reg.compute_tasks.root, reg.compute_tasks.comm);
+    }
 
     /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
     if(reg.compute_tasks.is_member() && reg.integrator) {
@@ -1099,8 +1110,9 @@ static void scatter_results(KetjuRegion &reg)
             original_mass[i] = reg.all_particles[i].Mass;
 #endif
             for(int j = 0; j < 3; j++) {
-                final_abs_pos[3*i + j] = reg.com_pos[j] + ps->pos[i][j];
-                final_rel_vel[3*i + j] = ps->vel[i][j];
+                /* physical -> comoving: pos_comov = com_comov + pos_phys / a */
+                final_abs_pos[3*i + j] = reg.com_pos[j] + ps->pos[i][j] / All.cf_atime;
+                final_rel_vel[3*i + j] = ps->vel[i][j]; /* peculiar velocity, same in both frames */
             }
         }
 
@@ -1189,55 +1201,52 @@ static void scatter_results(KetjuRegion &reg)
 
 #ifdef KETJU_MERGE_STARS
     /* Stellar collision check: merge living Type 4 pairs closer than R1+R2 (physical radii from tables).
-     * Dead remnants (NS/BH) are point masses — skip collision check for those. */
+     * Dead remnants (NS/BH) are point masses — skip collision check for those.
+     * Collect all stellar radii once upfront to avoid per-pair MPI broadcasts. */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-    for(int i = 0; i < n; i++) {
-        if(final_mass[i] <= 0 || reg.extra_data[i].Type != 4) continue;
-        if(reg.all_particles[i].is_dead_remnant) continue; /* NS/BH — no physical radius */
-        for(int j = i + 1; j < n; j++) {
-            if(final_mass[j] <= 0 || reg.extra_data[j].Type != 4) continue;
-            if(reg.all_particles[j].is_dead_remnant) continue;
-            double d2 = 0;
-            for(int k = 0; k < 3; k++) {
-                double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
-                d2 += dx * dx;
+    {
+        /* collect stellar radii for all living Type 4 particles */
+        std::vector<double> star_radius_cm(n, 0.0);
+        std::vector<double> local_radii(n, 0.0);
+        for(int i = 0; i < n; i++) {
+            if(reg.extra_data[i].Type != 4 || reg.all_particles[i].is_dead_remnant) continue;
+            if(reg.extra_data[i].Task == ThisTask) {
+                int idx = reg.extra_data[i].Index;
+                double logM = log10(DMAX(P[idx].MstarSampleIMF[0], 0.08));
+                double logZ = log10(DMAX(P[idx].BirthMetallicity, 1e-10));
+                double age_yr = evaluate_stellar_age_Gyr(idx) * 1e9;
+                double log_age = log10(DMAX(age_yr, 100.0));
+                local_radii[i] = pow(10., stellar_log_R_cm(logM, logZ, log_age));
             }
-            double sep_cm = sqrt(d2) * UNIT_LENGTH_IN_CGS * All.cf_atime;
-            /* get stellar radii from tables at current age */
-            int idx_i = reg.extra_data[i].Index, idx_j = reg.extra_data[j].Index;
-            int task_i = reg.extra_data[i].Task, task_j = reg.extra_data[j].Task;
-            double logMi = 0, logMj = 0, logZi = -2.7, logZj = -2.7, log_age_i = 2.0, log_age_j = 2.0;
-            if(task_i == ThisTask) {
-                logMi = log10(DMAX(P[idx_i].MstarSampleIMF[0], 0.08));
-                logZi = log10(DMAX(P[idx_i].BirthMetallicity, 1e-10));
-                double age_yr = evaluate_stellar_age_Gyr(idx_i) * 1e9;
-                log_age_i = log10(DMAX(age_yr, 100.0));
-            }
-            if(task_j == ThisTask) {
-                logMj = log10(DMAX(P[idx_j].MstarSampleIMF[0], 0.08));
-                logZj = log10(DMAX(P[idx_j].BirthMetallicity, 1e-10));
-                double age_yr = evaluate_stellar_age_Gyr(idx_j) * 1e9;
-                log_age_j = log10(DMAX(age_yr, 100.0));
-            }
-            MPI_Bcast(&logMi, 1, MPI_DOUBLE, task_i, MPI_COMM_WORLD);
-            MPI_Bcast(&logZi, 1, MPI_DOUBLE, task_i, MPI_COMM_WORLD);
-            MPI_Bcast(&log_age_i, 1, MPI_DOUBLE, task_i, MPI_COMM_WORLD);
-            MPI_Bcast(&logMj, 1, MPI_DOUBLE, task_j, MPI_COMM_WORLD);
-            MPI_Bcast(&logZj, 1, MPI_DOUBLE, task_j, MPI_COMM_WORLD);
-            MPI_Bcast(&log_age_j, 1, MPI_DOUBLE, task_j, MPI_COMM_WORLD);
-            double Ri_cm = pow(10., stellar_log_R_cm(logMi, logZi, log_age_i));
-            double Rj_cm = pow(10., stellar_log_R_cm(logMj, logZj, log_age_j));
-            if(sep_cm < Ri_cm + Rj_cm) {
-                /* collision: absorb less massive into more massive */
-                int victim = (final_mass[i] < final_mass[j]) ? i : j;
-                int surv = (victim == i) ? j : i;
-                final_mass[surv] += final_mass[victim];
-                final_mass[victim] = 0;
-                if(ThisTask == 0)
-                    printf("KETJU STELLAR COLLISION: ID %llu (%.1f Msun) + ID %llu (%.1f Msun) at sep=%.2e cm (R1+R2=%.2e cm)\n",
-                        (unsigned long long)reg.extra_data[i].ID, Mi,
-                        (unsigned long long)reg.extra_data[j].ID, Mj,
-                        sep_cm, Ri_cm + Rj_cm);
+        }
+        /* single Allreduce to collect all radii (each task contributes its local particles, others are 0) */
+        MPI_Allreduce(local_radii.data(), star_radius_cm.data(), n, MPI_DOUBLE, MPI_SUM, reg.affected_tasks.comm);
+
+        for(int i = 0; i < n; i++) {
+            if(final_mass[i] <= 0 || reg.extra_data[i].Type != 4) continue;
+            if(star_radius_cm[i] <= 0) continue; /* dead remnant or failed lookup */
+            for(int j = i + 1; j < n; j++) {
+                if(final_mass[j] <= 0 || reg.extra_data[j].Type != 4) continue;
+                if(star_radius_cm[j] <= 0) continue;
+                double d2 = 0;
+                for(int k = 0; k < 3; k++) {
+                    double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
+                    d2 += dx * dx;
+                }
+                double sep_cm = sqrt(d2) * UNIT_LENGTH_IN_CGS * All.cf_atime;
+                if(sep_cm < star_radius_cm[i] + star_radius_cm[j]) {
+                    int victim = (final_mass[i] < final_mass[j]) ? i : j;
+                    int surv = (victim == i) ? j : i;
+                    final_mass[surv] += final_mass[victim];
+                    final_mass[victim] = 0;
+                    double Mi = original_mass[i] * UNIT_MASS_IN_SOLAR;
+                    double Mj = original_mass[j] * UNIT_MASS_IN_SOLAR;
+                    if(ThisTask == 0)
+                        printf("KETJU STELLAR COLLISION: ID %llu (%.1f Msun) + ID %llu (%.1f Msun) at sep=%.2e cm (R1+R2=%.2e cm)\n",
+                            (unsigned long long)reg.extra_data[i].ID, Mi,
+                            (unsigned long long)reg.extra_data[j].ID, Mj,
+                            sep_cm, star_radius_cm[i] + star_radius_cm[j]);
+                }
             }
         }
     }
@@ -1404,10 +1413,16 @@ void ketju_run_integration(void)
 
 void ketju_set_final_velocities(void)
 {
-    /* called after drift: swap in true physical velocities */
+    /* called after drift: swap in true physical velocities and correct dp[] momentum.
+     * The velocity trick set Vel = delta_pos/dt_drift for the drift.
+     * Now we replace it with the true MSTAR velocity and correct dp[]. */
     for(int i = 0; i < NumPart; i++) {
         if(P[i].KetjuIntegrated) {
             for(int j = 0; j < 3; j++) {
+                /* dp correction: the difference between true velocity and trick velocity,
+                 * converted to momentum. This ensures the kick integrator is consistent. */
+                double dv = P[i].KetjuFinalVel[j] - P[i].Vel[j];
+                P[i].dp[j] += P[i].Mass * dv;
                 P[i].Vel[j] = P[i].KetjuFinalVel[j];
             }
         }

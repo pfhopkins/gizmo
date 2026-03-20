@@ -409,8 +409,8 @@ void resolvedism_photoionize(void)
                 double rf = PIFrontRadius[i * HEALPIX_NPIX + k];
                 if(rf > 0) {
                     npix_active++;
-                    if(rf < star_rmin) star_rmin = rf;
                     if(rf > star_rmax) star_rmax = rf;
+                    if(rf < star_rmin && rf > 0) star_rmin = rf; /* skip zero = no gas in that direction */
                 }
             }
             if(npix_active > 0) {
