@@ -53,7 +53,7 @@ def get_cooling_tables(test_directory="."):
 
     url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
     urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
-    system(f"tar -xvf {test_directory}/spcool_tables.tgz {test_directory}/; rm spcool_tables.tgz")
+    system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
     system(f"cp cooling/TREECOOL {test_directory}")
 
 
