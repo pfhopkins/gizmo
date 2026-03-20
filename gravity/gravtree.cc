@@ -826,7 +826,7 @@ void mysort_dataindex(void *b, size_t n, size_t s, int (*cmp) (const void *, con
 void subtract_companion_gravity(int i)
 {
     /* Remove contribution to gravitational field and tidal tensor from the stars in the binary to the center of mass */
-    double u, dr, fac, fac2, h, h_inv, h3_inv, u2, tidal_tensorps[3][3]; int i1, i2;
+    double u, dr, fac, fac2, h, h_inv, h3_inv, u2; SymmetricTensor2<double> tidal_tensorps; int i1, i2;
     dr = sqrt(P[i].comp_dx[0]*P[i].comp_dx[0] + P[i].comp_dx[1]*P[i].comp_dx[1] + P[i].comp_dx[2]*P[i].comp_dx[2]);
     h = SinkParticle_GravityKernelRadius;  h_inv = 1.0 / h; h3_inv = h_inv*h_inv*h_inv; u = dr*h_inv; u2=u*u;
     fac = P[i].comp_Mass / (dr*dr*dr); fac2 = 3.0 * P[i].comp_Mass / (dr*dr*dr*dr*dr); /* no softening nonsense */
@@ -844,13 +844,11 @@ void subtract_companion_gravity(int i)
     tidal_tensorps[1][1] = P[i].tidal_tensorps[1][1] - (-fac + P[i].comp_dx[1] * P[i].comp_dx[1] * fac2);
     tidal_tensorps[1][2] = P[i].tidal_tensorps[1][2] - (P[i].comp_dx[1] * P[i].comp_dx[2] * fac2);
     tidal_tensorps[2][2] = P[i].tidal_tensorps[2][2] - (-fac + P[i].comp_dx[2] * P[i].comp_dx[2] * fac2);
-    tidal_tensorps[1][0]=tidal_tensorps[0][1]; tidal_tensorps[2][0]=tidal_tensorps[0][2]; tidal_tensorps[2][1]=tidal_tensorps[1][2]; /* symmetric so just set these now */
 
 #ifdef SINK_OUTPUT_MOREINFO
     printf("Corrected center of mass acceleration %g %g %g tidal tensor diagonal elements %g %g %g \n", P[i].COM_GravAccel[0], P[i].COM_GravAccel[1], P[i].COM_GravAccel[2], tidal_tensorps[0][0],tidal_tensorps[1][1],tidal_tensorps[2][2]);
 #endif
-    P[i].COM_dt_tidal = 0; for(i1=0;i1<3;i1++) for(i2=0;i2<3;i2++) {P[i].COM_dt_tidal += tidal_tensorps[i1][i2]*tidal_tensorps[i1][i2];}
-    P[i].COM_dt_tidal = sqrt(1.0 / (All.G * sqrt(P[i].COM_dt_tidal)));
+    P[i].COM_dt_tidal = sqrt(1.0 / (All.G * tidal_tensorps.frobenius_norm()));
 }
 #endif
 

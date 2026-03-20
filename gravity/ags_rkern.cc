@@ -678,8 +678,6 @@ double do_cbe_nvt_inversion_for_faces(int i)
 {
     /* initialize the matrix to be inverted */
     MyDouble NV_T[3][3], Tinv[3][3]; int j,k; for(j=0;j<3;j++) {for(k=0;k<3;k++) {NV_T[j][k]=P[i].NV_T[j][k];}}
-    /* fill in the missing elements of NV_T (it's symmetric, so we saved time not computing these directly) */
-    NV_T[1][0]=NV_T[0][1]; NV_T[2][0]=NV_T[0][2]; NV_T[2][1]=NV_T[1][2];
     /* want to work in dimensionless units for defining certain quantities robustly, so normalize out the units */
     double dimensional_NV_T_normalizer = pow( P[i].KernelRadius , 2-NUMDIMS ); /* this has the same dimensions as NV_T here */
     for(j=0;j<3;j++) {for(k=0;k<3;k++) {NV_T[j][k] /= dimensional_NV_T_normalizer;}} /* now NV_T should be dimensionless */

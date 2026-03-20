@@ -32,11 +32,13 @@ struct SymmetricTensor2 {
     Row operator[](int i) noexcept { return {*this, i}; }
     ConstRow operator[](int i) const noexcept { return {*this, i}; }
 
-    // Frobenius norm: sqrt(sum of squares of all 9 entries).
-    // Off-diagonal elements each contribute twice due to symmetry.
-    double frobenius_norm() const noexcept {
+    // Squared Frobenius norm: sum of squares of all 9 entries (off-diagonal count twice).
+    double frobenius_norm_sq() const noexcept {
         const double diag    = data[0]*data[0] + data[3]*data[3] + data[5]*data[5];
         const double offdiag = data[1]*data[1] + data[2]*data[2] + data[4]*data[4];
-        return std::sqrt(diag + 2.0 * offdiag);
+        return diag + 2.0 * offdiag;
     }
+
+    // Frobenius norm: sqrt(sum of squares of all 9 entries).
+    double frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
 };
