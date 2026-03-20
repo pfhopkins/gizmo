@@ -71,4 +71,4 @@ def test_gmc_cooling(num_mpi_ranks):
     benchmark_stats = compute_test_statistic("test/gmc_cooling/gmc_cooling_exact.hdf5")
 
     # check that the test and benchmark agree within 10%
-    assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
+    assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
