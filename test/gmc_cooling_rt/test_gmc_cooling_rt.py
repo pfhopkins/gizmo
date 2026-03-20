@@ -121,4 +121,4 @@ def test_gmc_cooling_rt(num_mpi_ranks):
 
     test_stats = compute_test_statistic(test_dir + "/output/snapshot_010.hdf5", plot=True)
     benchmark_stats = compute_test_statistic(test_dir + "/gmc_cooling_rt_exact.hdf5")
-    assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
+    assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
