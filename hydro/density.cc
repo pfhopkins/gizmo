@@ -147,6 +147,7 @@ static struct OUTPUT_STRUCT_NAME
     MyDouble DrkernNgb;
     MyDouble Particle_DivVel;
     MyDouble NV_T[3][3];
+    MyDouble NV_T_face_weights[3]; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
     MyDouble ParticleVel[3];
 #endif
@@ -199,6 +200,7 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
         for(k=0;k<3;k++) ASSIGN_ADD(CellP[i].ParticleVel[k], out->ParticleVel[k],   mode);
 #endif
         for(k=0;k<3;k++) {for(j=0;j<3;j++) {ASSIGN_ADD(CellP[i].NV_T[k][j], out->NV_T[k][j], mode);}}
+        for(k=0;k<3;k++) {ASSIGN_ADD(CellP[i].NV_T_face_weights[k], out->NV_T_face_weights[k], mode);}
 
 #ifdef HYDRO_SPH
         ASSIGN_ADD(CellP[i].DrkernHydroSumFactor, out->DrkernHydroSumFactor, mode);
@@ -327,10 +329,10 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             out.NV_T[1][1] +=  wk * kernel.dp[1] * kernel.dp[1];
                             out.NV_T[1][2] +=  wk * kernel.dp[1] * kernel.dp[2];
                             out.NV_T[2][2] +=  wk * kernel.dp[2] * kernel.dp[2];
-                            /* these will temporarily hold the 'face area' terms */
-                            out.NV_T[1][0] += wk * kernel.dp[0];
-                            out.NV_T[2][0] += wk * kernel.dp[1];
-                            out.NV_T[2][1] += wk * kernel.dp[2];
+                            /* weighted first moments, used for face area estimation */
+                            out.NV_T_face_weights[0] += wk * kernel.dp[0];
+                            out.NV_T_face_weights[1] += wk * kernel.dp[1];
+                            out.NV_T_face_weights[2] += wk * kernel.dp[2];
                         }
                         kernel.dv[0] = local.Vel[0] - CellP[j].VelPred[0];
                         kernel.dv[1] = local.Vel[1] - CellP[j].VelPred[1];
@@ -541,21 +543,20 @@ void density(void)
                     /* use the single-moment terms of NV_T to construct the faces one would have if the system were perfectly symmetric in reconstruction 'from both sides' */
                     double V_i = VOLUME_NORM_COEFF_FOR_NDIMS * pow(P[i].KernelRadius,NUMDIMS) / P[i].NumNgb, dx_i = pow(V_i , 1./NUMDIMS); // this is the effective volume which will be used below
                     dx_i = sqrt(V_i * (CellP[i].NV_T[0][0] + CellP[i].NV_T[1][1] + CellP[i].NV_T[2][2])); // this is the sqrt of the weighted sum of (w*r^2)
-                    double Face_Area_OneSided_Estimator_in[3]={0}, Face_Area_OneSided_Estimator_out[3]={0}; Face_Area_OneSided_Estimator_in[0]=CellP[i].NV_T[1][0]; Face_Area_OneSided_Estimator_in[1]=CellP[i].NV_T[2][0]; Face_Area_OneSided_Estimator_in[2]=CellP[i].NV_T[2][1];
-                    /* now fill in the missing elements of NV_T (it's symmetric, so we saved time not computing these directly) */
-                    CellP[i].NV_T[1][0]=CellP[i].NV_T[0][1]; CellP[i].NV_T[2][0]=CellP[i].NV_T[0][2]; CellP[i].NV_T[2][1]=CellP[i].NV_T[1][2];
+                    double Face_Area_OneSided_Estimator_in[3]={0}, Face_Area_OneSided_Estimator_out[3]={0}; Face_Area_OneSided_Estimator_in[0]=CellP[i].NV_T_face_weights[0]; Face_Area_OneSided_Estimator_in[1]=CellP[i].NV_T_face_weights[1]; Face_Area_OneSided_Estimator_in[2]=CellP[i].NV_T_face_weights[2];
                     double dimensional_NV_T_normalizer = pow( P[i].KernelRadius , 2-NUMDIMS ); /* this has the same dimensions as NV_T here */
-                    for(k1=0;k1<3;k1++) {for(k2=0;k2<3;k2++) {CellP[i].NV_T[k1][k2] /= dimensional_NV_T_normalizer;}} /* now NV_T should be dimensionless */
+                    double NV_T_local[3][3]; /* local working copy for inversion: avoids passing SymmetricTensor2 to matrix_invert_ndims and avoids double-applying normalizer to off-diagonal elements */
+                    for(k1=0;k1<3;k1++) {for(k2=0;k2<3;k2++) {NV_T_local[k1][k2] = CellP[i].NV_T[k1][k2] / dimensional_NV_T_normalizer;}} /* dimensionless copy */
                     /* Also, we want to be able to calculate the condition number of the matrix to be inverted, since
                         this will tell us how robust our procedure is (and let us know if we need to expand the neighbor number */
                     double ConditionNumber_threshold = 10. * CONDITION_NUMBER_DANGER; /* set a threshold condition number - above this we will 'pre-condition' the matrix for better behavior */
-                    double trace_initial = CellP[i].NV_T[0][0] + CellP[i].NV_T[1][1] + CellP[i].NV_T[2][2]; /* initial trace of this symmetric, positive-definite matrix; used below as a characteristic value for adding the identity */
+                    double trace_initial = NV_T_local[0][0] + NV_T_local[1][1] + NV_T_local[2][2]; /* initial trace of this symmetric, positive-definite matrix; used below as a characteristic value for adding the identity */
                     double conditioning_term_to_add = 1.05 * (trace_initial / NUMDIMS) / ConditionNumber_threshold; /* this will be added as a test value if the code does not reach the desired condition number */
                     while(1)
                     {
-                        ConditionNumber = matrix_invert_ndims(CellP[i].NV_T, Tinv);
+                        ConditionNumber = matrix_invert_ndims(NV_T_local, Tinv);
                         if(ConditionNumber < ConditionNumber_threshold) {break;}
-                        for(k1=0;k1<NUMDIMS;k1++) {CellP[i].NV_T[k1][k1] += conditioning_term_to_add;} /* add the conditioning term which should make the matrix better-conditioned for subsequent use */
+                        for(k1=0;k1<NUMDIMS;k1++) {NV_T_local[k1][k1] += conditioning_term_to_add;} /* add the conditioning term which should make the matrix better-conditioned for subsequent use */
                         conditioning_term_to_add *= 1.2; /* multiply the conditioning term so it will grow and eventually satisfy our criteria */
                     }
                     for(k1=0;k1<3;k1++) {for(k2=0;k2<3;k2++) {CellP[i].NV_T[k1][k2] = Tinv[k1][k2] / dimensional_NV_T_normalizer;}} /* re-insert normalization correctly */

@@ -125,7 +125,8 @@ extern struct gas_cell_data
         MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
 #endif
     } Gradients;
-    MyDouble NV_T[3][3];        /*!< holds the tensor used for gradient estimation */
+    SymmetricTensor2<MyDouble> NV_T; /*!< holds the tensor used for gradient estimation */
+    MyDouble NV_T_face_weights[3]; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
     MyDouble ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */
     MyDouble FaceClosureError;      /*!< dimensionless measure of face closure */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE

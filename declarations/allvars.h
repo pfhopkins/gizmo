@@ -62,6 +62,7 @@
 #include "macros.h"
 
 #include "typedefs.h"
+#include "../symmetric_tensor2.h"
 
 #ifdef CHIMES
 #include "../cooling/chimes/chimes_proto.h"
@@ -1006,7 +1007,7 @@ extern struct gravdata_in
     int is_in_a_binary;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    MyFloat tidal_tensorps_prevstep[3][3];
+    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     int SuperTimestepFlag;  /*!< 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise */
@@ -1057,7 +1058,7 @@ extern struct gravdata_out
     MyDouble Potential;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    MyDouble tidal_tensorps[3][3];
+    SymmetricTensor2<MyDouble> tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     MyDouble tidal_zeta;
 #endif
@@ -1086,7 +1087,7 @@ extern struct gravdata_out
     MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
     MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-    MyDouble COM_tidal_tensorps[3][3]; //tidal tensor evaluated at the center of mass without contribution from the companion
+    SymmetricTensor2<MyDouble> COM_tidal_tensorps; //tidal tensor evaluated at the center of mass without contribution from the companion
     MyDouble COM_GravAccel[3]; //gravitational acceleration evaluated at the center of mass without contribution from the companion
     int COM_calc_flag; //flag that tells whether this was only a rerun to get the acceleration ad the tidal tenor at the center of mass of a binary
     int SuperTimestepFlag; // 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise
@@ -1433,7 +1434,7 @@ extern ALIGN(32) struct NODE
 
 
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    MyFloat tidal_tensorps_prevstep[3][3];
+    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
   MyFloat s_dm[3];

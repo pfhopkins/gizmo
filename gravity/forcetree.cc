@@ -996,7 +996,7 @@ void force_exchange_pseudodata(void)
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        MyFloat tidal_tensorps_prevstep[3][3];
+        SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         MyFloat s_dm[3];
