@@ -40,7 +40,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     #         F.create_dataset("PartType0/Temperature", data=T)
 
     if plot:
-        with h5py.File("gmc_cooling_rt_exact.hdf5", "r") as F:
+        with h5py.File("test/gmc_cooling_rt/gmc_cooling_rt_exact.hdf5", "r") as F:
             XH = 1 - F["PartType0/Metallicity"][:, 0] - F["PartType0/Metallicity"][:, 1]
             xe_ref = F["PartType0/ElectronAbundance"][:]
             rho_ref = F["PartType0/Density"][:]
@@ -110,14 +110,15 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return np.array([binned_statistic(nH, s, "median", nH_bins)[0] for s in stats_to_check])
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (1, 2, 4))
+@pytest.mark.parametrize("num_mpi_ranks", (1, 16))
 def test_gmc_cooling_rt(num_mpi_ranks):
     test_name = "gmc_cooling_rt"
-    get_cooling_tables()
+    test_dir = "test/gmc_cooling_rt"
+    get_cooling_tables(test_dir)
     build_and_run_test(test_name, num_mpi_ranks)
     if not path.isfile("test/gmc_cooling_rt/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
 
-    test_stats = compute_test_statistic("test/gmc_cooling_rt/output/snapshot_010.hdf5", plot=True)
-    benchmark_stats = compute_test_statistic("gmc_cooling_rt_exact.hdf5")
+    test_stats = compute_test_statistic(test_dir + "/output/snapshot_010.hdf5", plot=True)
+    benchmark_stats = compute_test_statistic(test_dir + "/gmc_cooling_rt_exact.hdf5")
     assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))

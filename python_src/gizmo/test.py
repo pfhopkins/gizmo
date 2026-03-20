@@ -48,13 +48,13 @@ def run_test(test_name: str, num_mpi_ranks: int = 1):  # , num_openmp_threads: i
     system(f"mpirun -np {num_mpi_ranks} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 
-def get_cooling_tables():
+def get_cooling_tables(test_directory="."):
     """Downloads spcool_tables.tar.gz and copies TREECOOL to test directory"""
 
     url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
-    urlretrieve(url, "./spcool_tables.tgz")
-    system("tar -xvf spcool_tables.tgz")
-    system("cp cooling/TREECOOL .")
+    urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
+    system(f"tar -xvf {test_directory}/spcool_tables.tgz {test_directory}/; rm spcool_tables.tgz")
+    system(f"cp cooling/TREECOOL {test_directory}")
 
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):

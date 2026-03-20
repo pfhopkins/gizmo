@@ -9,7 +9,7 @@
 
 %----  Relevant files (filenames and directories)
 InitCondFile  gmc_cooling_rt_ics
-OutputDir     test/gmc_cooling_rt/output
+OutputDir     output
 
 %---- File formats (input and output)
 ICFormat    3  % 1=unformatted (gadget) binary, 3=hdf5, 4=cluster
