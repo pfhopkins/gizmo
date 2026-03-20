@@ -4,7 +4,8 @@
 name: pytest
 
 on:
-  [pull_request]
+  pull_request:
+    branches: ["starforge_dev"]
 
 jobs:
   build:
