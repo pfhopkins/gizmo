@@ -231,10 +231,12 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;
     double UV_flux_min_pix = 0.324e-2/NPIX / fac_flux2habing;
+    double LW_flux_min_pix = 0.1 * UV_flux_min_pix; /* LW floor ~ 10% of FUV floor (typical stellar spectrum) */
     for(i = 0; i < NPIX; i++) {
         CellP[target].UV_flux[i] = DMAX(CellP[target].UV_flux[i], UV_flux_min_pix);
+        CellP[target].LW_flux[i] = DMAX(CellP[target].LW_flux[i], LW_flux_min_pix);
         UV_flux_tot += CellP[target].UV_flux[i];
-        LW_flux_tot += CellP[target].LW_flux[i]; /* LW has no floor — can be zero in pristine regions */
+        LW_flux_tot += CellP[target].LW_flux[i];
     }
 
     double G0_tot = UV_flux_tot * fac_flux2habing * All.G0;

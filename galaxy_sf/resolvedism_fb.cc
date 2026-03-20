@@ -214,6 +214,13 @@ void resolvedism_determine_SNe(void)
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
             P[i].Mstar = 0;
 #endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            P[i].UV_luminosity = 0;
+            P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+            P[i].Lyman_photons_per_sec = 0;
+#endif
+#endif
             P[i].SNe_ThisTimeStep = -1; /* mark as done, no explosion */
 #ifdef GALSF_RESOLVEDISM_BH_PROMOTION
             /* Promote to Type 5 sink (stellar-mass BH) */
@@ -1251,9 +1258,16 @@ void resolvedism_inject_sn_energy(void)
         }
 #endif
 
-        /* Zero out stellar mass to prevent re-trigger */
+        /* Zero out stellar mass and luminosity to prevent re-trigger and stale inf values */
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
         P[i].MstarSampleIMF[0] = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+        P[i].UV_luminosity = 0;
+        P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+        P[i].Lyman_photons_per_sec = 0;
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
         P[i].Mstar = 0;
