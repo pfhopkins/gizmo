@@ -38,6 +38,11 @@ G_cgs     = 6.674e-8          # cm^3 g^-1 s^-2
 
 E_FUV_lo, E_FUV_hi = 6.0, 11.2    # eV
 E_LW_lo,  E_LW_hi  = 11.2, 13.6   # eV
+# Ionizing bands (for M1 RT)
+E_H0_lo,  E_H0_hi  = 13.6, 24.6   # eV  (H ionization)
+E_He0_lo, E_He0_hi = 24.6, 54.4   # eV  (He0 ionization)
+E_He1_lo, E_He1_hi = 54.4, 70.0   # eV  (He+ ionization)
+E_He2_lo            = 70.0         # eV  (He++ / soft X-ray, to infinity)
 
 TRACKED_ELEMENTS = [
     'H', 'He', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si',
@@ -231,12 +236,23 @@ def _planck_energy(x):
     return x**3 / (np.exp(x) - 1.0) if x < 500 else 0.0
 
 def build_planck_lut(N_T=2000):
-    """Pre-compute Planck integrals on a fine log(T) grid."""
+    """Pre-compute Planck integrals on a fine log(T) grid.
+
+    Returns: (log_T, Qion_per_L, FUV_frac, LW_frac,
+              ion_tot_frac, H0_frac, He0_frac, He1_frac, He2_frac)
+    All *_frac arrays are L_band / L_bol (dimensionless).
+    Qion_per_L is photons/s per erg/s of bolometric luminosity.
+    """
     log_T = np.linspace(3.0, 5.7, N_T)  # 1000 K to 500,000 K
     T = 10**log_T
     Qion_per_L = np.zeros(N_T)
     FUV_frac   = np.zeros(N_T)
     LW_frac    = np.zeros(N_T)
+    ion_tot_frac = np.zeros(N_T)  # > 13.6 eV
+    H0_frac    = np.zeros(N_T)    # 13.6-24.6 eV
+    He0_frac   = np.zeros(N_T)    # 24.6-54.4 eV
+    He1_frac   = np.zeros(N_T)    # 54.4-70 eV
+    He2_frac   = np.zeros(N_T)    # > 70 eV
 
     print("  Building Planck integral LUT...", flush=True)
     for i in range(N_T):
@@ -245,23 +261,50 @@ def build_planck_lut(N_T=2000):
         x_fuv_hi = E_FUV_hi * eV_to_erg / kT
         x_lw_lo  = E_LW_lo  * eV_to_erg / kT
         x_lw_hi  = E_LW_hi  * eV_to_erg / kT
+        x_h0_lo  = E_H0_lo  * eV_to_erg / kT
+        x_h0_hi  = E_H0_hi  * eV_to_erg / kT
+        x_he0_lo = E_He0_lo * eV_to_erg / kT
+        x_he0_hi = E_He0_hi * eV_to_erg / kT
+        x_he1_lo = E_He1_lo * eV_to_erg / kT
+        x_he1_hi = E_He1_hi * eV_to_erg / kT
+        x_he2_lo = E_He2_lo * eV_to_erg / kT
 
         I_Q = I_F = I_L = 0.0
+        I_ion_tot = I_H0 = I_He0 = I_He1 = I_He2 = 0.0
+
+        # Photon integral for Q_ion (> 13.6 eV)
         if x_lw_hi < 200:
             I_Q, _ = quad(_planck_photon, x_lw_hi, np.inf, limit=200)
+        # Energy integrals for FUV, LW
         if x_fuv_lo < 200:
             I_F, _ = quad(_planck_energy, x_fuv_lo, min(x_fuv_hi, 500), limit=200)
         if x_lw_lo < 200:
             I_L, _ = quad(_planck_energy, x_lw_lo, min(x_lw_hi, 500), limit=200)
+        # Energy integrals for ionizing sub-bands
+        if x_h0_lo < 200:
+            I_H0, _ = quad(_planck_energy, x_h0_lo, min(x_h0_hi, 500), limit=200)
+        if x_he0_lo < 200:
+            I_He0, _ = quad(_planck_energy, x_he0_lo, min(x_he0_hi, 500), limit=200)
+        if x_he1_lo < 200:
+            I_He1, _ = quad(_planck_energy, x_he1_lo, min(x_he1_hi, 500), limit=200)
+        if x_he2_lo < 200:
+            I_He2, _ = quad(_planck_energy, x_he2_lo, np.inf, limit=200)
+        I_ion_tot = I_H0 + I_He0 + I_He1 + I_He2
 
         inv_sT4 = 1.0 / (sigma_sb * T[i]**4)
         Qion_per_L[i] = inv_sT4 * (2*np.pi/c_light**2) * (kT/h_planck)**3 * I_Q
         epref = inv_sT4 * (2*np.pi*h_planck/c_light**2) * (kT/h_planck)**4
-        FUV_frac[i] = epref * I_F
-        LW_frac[i]  = epref * I_L
+        FUV_frac[i]     = epref * I_F
+        LW_frac[i]      = epref * I_L
+        ion_tot_frac[i]  = epref * I_ion_tot
+        H0_frac[i]      = epref * I_H0
+        He0_frac[i]     = epref * I_He0
+        He1_frac[i]     = epref * I_He1
+        He2_frac[i]     = epref * I_He2
 
     print("  Done.", flush=True)
-    return log_T, Qion_per_L, FUV_frac, LW_frac
+    return (log_T, Qion_per_L, FUV_frac, LW_frac,
+            ion_tot_frac, H0_frac, He0_frac, He1_frac, He2_frac)
 
 PLANCK_LUT = None  # filled lazily
 
@@ -272,13 +315,25 @@ def get_planck_lut():
     return PLANCK_LUT
 
 def compute_radiation_from_lut(logTeff_arr, logL_arr):
-    """Vectorized radiation computation using Planck LUT."""
-    log_T, Qp, Fp, Lp = get_planck_lut()
+    """Vectorized radiation computation using Planck LUT.
+
+    Returns: (Q_ion, L_FUV, L_LW, L_ion_tot, L_H0, L_He0, L_He1, L_He2)
+    Q_ion in photons/s, all L_* in erg/s.
+    """
+    (log_T, Qp, Fp, Lp,
+     ion_tot_p, H0p, He0p, He1p, He2p) = get_planck_lut()
     L_erg = 10**logL_arr * L_sun
     q = np.interp(logTeff_arr, log_T, Qp, left=0, right=0)
     f = np.interp(logTeff_arr, log_T, Fp, left=0, right=0)
     l = np.interp(logTeff_arr, log_T, Lp, left=0, right=0)
-    return L_erg * q, L_erg * f, L_erg * l
+    i_tot = np.interp(logTeff_arr, log_T, ion_tot_p, left=0, right=0)
+    i_h0  = np.interp(logTeff_arr, log_T, H0p,  left=0, right=0)
+    i_he0 = np.interp(logTeff_arr, log_T, He0p, left=0, right=0)
+    i_he1 = np.interp(logTeff_arr, log_T, He1p, left=0, right=0)
+    i_he2 = np.interp(logTeff_arr, log_T, He2p, left=0, right=0)
+    return (L_erg * q, L_erg * f, L_erg * l,
+            L_erg * i_tot, L_erg * i_h0, L_erg * i_he0,
+            L_erg * i_he1, L_erg * i_he2)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -400,7 +455,8 @@ def parsec_track_to_common(filepath):
     R_cm = 10**d['LOG_R']     # PARSEC LOG_R = log(R/cm)
     R_Rsun = R_cm / R_sun
 
-    Q_ion, L_FUV, L_LW = compute_radiation_from_lut(d['LOG_TE'], logL)
+    (Q_ion, L_FUV, L_LW,
+     L_ion_tot, L_H0, L_He0, L_He1, L_He2) = compute_radiation_from_lut(d['LOG_TE'], logL)
     L_bol = 10**logL * L_sun
     v_wind = compute_v_wind(Teff, d['MASS'], R_Rsun)
 
@@ -438,6 +494,8 @@ def parsec_track_to_common(filepath):
         'M_current': d['MASS'],
         'log_Mdot': d['LOG_RAT'],
         'Q_ion': Q_ion, 'L_FUV': L_FUV, 'L_LW': L_LW, 'L_bol': L_bol,
+        'L_ion_tot': L_ion_tot, 'L_H0': L_H0, 'L_He0': L_He0,
+        'L_He1': L_He1, 'L_He2': L_He2,
         'v_wind': v_wind,
         'surface': surface,
         'M_CO_core': M_CO_core,
@@ -481,7 +539,8 @@ def boost_track_to_common(filepath):
     log_Mdot = data[:, 5]      # log(Msun/yr)
 
     logTeff = np.log10(np.maximum(Teff, 1.0))
-    Q_ion, L_FUV, L_LW = compute_radiation_from_lut(logTeff, logL)
+    (Q_ion, L_FUV, L_LW,
+     L_ion_tot, L_H0, L_He0, L_He1, L_He2) = compute_radiation_from_lut(logTeff, logL)
     L_bol = 10**logL * L_sun
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun)
 
@@ -527,6 +586,8 @@ def boost_track_to_common(filepath):
         'M_current': M_cur,
         'log_Mdot': log_Mdot,
         'Q_ion': Q_ion, 'L_FUV': L_FUV, 'L_LW': L_LW, 'L_bol': L_bol,
+        'L_ion_tot': L_ion_tot, 'L_H0': L_H0, 'L_He0': L_He0,
+        'L_He1': L_He1, 'L_He2': L_He2,
         'v_wind': v_wind,
         'surface': surface,
         'M_CO_core': M_CO_core,
@@ -590,7 +651,8 @@ def mist_track_to_common(filepath):
     Teff = 10**logTeff_arr
     R_Rsun_lin = 10**logR_Rsun
 
-    Q_ion, L_FUV, L_LW = compute_radiation_from_lut(logTeff_arr, logL)
+    (Q_ion, L_FUV, L_LW,
+     L_ion_tot, L_H0, L_He0, L_He1, L_He2) = compute_radiation_from_lut(logTeff_arr, logL)
     L_bol = 10**logL * L_sun
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun_lin)
 
@@ -628,6 +690,8 @@ def mist_track_to_common(filepath):
         'M_current': M_cur,
         'log_Mdot': log_Mdot,
         'Q_ion': Q_ion, 'L_FUV': L_FUV, 'L_LW': L_LW, 'L_bol': L_bol,
+        'L_ion_tot': L_ion_tot, 'L_H0': L_H0, 'L_He0': L_He0,
+        'L_He1': L_He1, 'L_He2': L_He2,
         'v_wind': v_wind,
         'surface': surface,
         'M_CO_core': M_CO_core,
@@ -720,7 +784,8 @@ def parsec2_vms_track_to_common(filepath):
 
     Teff = 10**logTeff_arr
 
-    Q_ion, L_FUV, L_LW = compute_radiation_from_lut(logTeff_arr, logL)
+    (Q_ion, L_FUV, L_LW,
+     L_ion_tot, L_H0, L_He0, L_He1, L_He2) = compute_radiation_from_lut(logTeff_arr, logL)
     L_bol = 10**logL * L_sun
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun)
 
@@ -790,6 +855,8 @@ def parsec2_vms_track_to_common(filepath):
         'M_current': M_cur,
         'log_Mdot': log_Mdot,
         'Q_ion': Q_ion, 'L_FUV': L_FUV, 'L_LW': L_LW, 'L_bol': L_bol,
+        'L_ion_tot': L_ion_tot, 'L_H0': L_H0, 'L_He0': L_He0,
+        'L_He1': L_He1, 'L_He2': L_He2,
         'v_wind': v_wind,
         'surface': surface,
         'M_CO_core': M_CO_core,
@@ -834,7 +901,8 @@ def resample_onto_age_grid(track, log_age_grid):
         result[key] = interp
 
     # Radiation: store as log, floor when dead
-    for key in ['Q_ion', 'L_FUV', 'L_LW', 'L_bol']:
+    for key in ['Q_ion', 'L_FUV', 'L_LW', 'L_bol',
+                'L_ion_tot', 'L_H0', 'L_He0', 'L_He1', 'L_He2']:
         vals = track[key][mask]
         log_vals = np.where(vals > 0, np.log10(vals), LOG_FLOOR)
         interp = np.interp(log_age_grid, log_age_track, log_vals, left=log_vals[0], right=LOG_FLOOR)
@@ -947,7 +1015,8 @@ def _resample_track_onto_tau_grid(track, tau_grid):
         result[key] = np.interp(tau_grid, tau_track, vals, left=vals[0], right=vals[-1])
 
     # Radiation: store as log
-    for key in ['Q_ion', 'L_FUV', 'L_LW', 'L_bol']:
+    for key in ['Q_ion', 'L_FUV', 'L_LW', 'L_bol',
+                'L_ion_tot', 'L_H0', 'L_He0', 'L_He1', 'L_He2']:
         vals = track[key][mask]
         log_vals = np.where(vals > 0, np.log10(vals), LOG_FLOOR)
         result['log_' + key] = np.interp(tau_grid, tau_track, log_vals,
@@ -1023,7 +1092,9 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
 
     # Log-scale quantities
     for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot',
-                'log_Q_ion', 'log_L_FUV', 'log_L_LW', 'log_L_bol']:
+                'log_Q_ion', 'log_L_FUV', 'log_L_LW', 'log_L_bol',
+                'log_L_ion_tot', 'log_L_H0', 'log_L_He0',
+                'log_L_He1', 'log_L_He2']:
         lo, hi = r_lo[key], r_hi[key]
         alive = (lo > LOG_FLOOR + 1) & (hi > LOG_FLOOR + 1)
         val = np.full_like(lo, LOG_FLOOR)
@@ -1087,7 +1158,9 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
 
     # Resample log-scale quantities onto log_age_grid
     for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot',
-                'log_Q_ion', 'log_L_FUV', 'log_L_LW', 'log_L_bol']:
+                'log_Q_ion', 'log_L_FUV', 'log_L_LW', 'log_L_bol',
+                'log_L_ion_tot', 'log_L_H0', 'log_L_He0',
+                'log_L_He1', 'log_L_He2']:
         vals = interp[key][valid]
         resampled = np.interp(log_age_grid, log_age_phys, vals, left=vals[0], right=LOG_FLOOR)
         resampled[log_age_grid > log_lifetime] = LOG_FLOOR
@@ -1154,7 +1227,9 @@ def _interpolate_two_tracks(r_lo, r_hi, f):
     New code uses _interpolate_two_tracks_tau for mass interpolation."""
     result = {}
     for key in ['logL', 'logTeff', 'logR_cm', 'log_Mdot',
-                'log_Q_ion', 'log_L_FUV', 'log_L_LW', 'log_L_bol']:
+                'log_Q_ion', 'log_L_FUV', 'log_L_LW', 'log_L_bol',
+                'log_L_ion_tot', 'log_L_H0', 'log_L_He0',
+                'log_L_He1', 'log_L_He2']:
         lo, hi = r_lo[key], r_hi[key]
         alive = (lo > LOG_FLOOR + 1) & (hi > LOG_FLOOR + 1)
         interp = np.full_like(lo, LOG_FLOOR)
@@ -2350,6 +2425,11 @@ def build_all(base_dir, output_file):
     log_L_FUV = np.full(shape, LOG_FLOOR)
     log_L_LW  = np.full(shape, LOG_FLOOR)
     log_L_bol = np.full(shape, LOG_FLOOR)
+    log_L_ion_tot = np.full(shape, LOG_FLOOR)
+    log_L_ion_H0  = np.full(shape, LOG_FLOOR)
+    log_L_ion_He0 = np.full(shape, LOG_FLOOR)
+    log_L_ion_He1 = np.full(shape, LOG_FLOOR)
+    log_L_ion_He2 = np.full(shape, LOG_FLOOR)
     logR_cm   = np.full(shape, LOG_FLOOR)
     logL      = np.full(shape, LOG_FLOOR)
     logTeff   = np.full(shape, LOG_FLOOR)
@@ -2430,6 +2510,11 @@ def build_all(base_dir, output_file):
             log_L_FUV[iz, im] = result['log_L_FUV']
             log_L_LW[iz, im]  = result['log_L_LW']
             log_L_bol[iz, im] = result['log_L_bol']
+            log_L_ion_tot[iz, im] = result['log_L_ion_tot']
+            log_L_ion_H0[iz, im]  = result['log_L_H0']
+            log_L_ion_He0[iz, im] = result['log_L_He0']
+            log_L_ion_He1[iz, im] = result['log_L_He1']
+            log_L_ion_He2[iz, im] = result['log_L_He2']
             logR_cm[iz, im]   = result['logR_cm']
             logL[iz, im]      = result['logL']
             logTeff[iz, im]   = result['logTeff']
@@ -2538,6 +2623,11 @@ def build_all(base_dir, output_file):
             ('log_L_LW',    log_L_LW,   'log10(erg/s), 11.2-13.6 eV, Lyman-Werner'),
             ('log_L_FUV_total', log_L_FUV_total, 'log10(erg/s), 6.0-13.6 eV, total FUV'),
             ('log_L_bol',   log_L_bol,  'log10(erg/s), bolometric, for radiation pressure'),
+            ('log_L_ion_tot', log_L_ion_tot, 'log10(erg/s), E > 13.6 eV, total ionizing'),
+            ('log_L_ion_H0',  log_L_ion_H0,  'log10(erg/s), 13.6-24.6 eV, H ionizing'),
+            ('log_L_ion_He0', log_L_ion_He0, 'log10(erg/s), 24.6-54.4 eV, He0 ionizing'),
+            ('log_L_ion_He1', log_L_ion_He1, 'log10(erg/s), 54.4-70.0 eV, He+ ionizing'),
+            ('log_L_ion_He2', log_L_ion_He2, 'log10(erg/s), > 70.0 eV, He++ / soft X-ray'),
             ('logL',        logL,       'log10(L/L_sun)'),
             ('logTeff',     logTeff,    'log10(T_eff / K)'),
             ('logR_cm',     logR_cm,    'log10(R / cm)'),
@@ -2656,7 +2746,7 @@ def build_all(base_dir, output_file):
         f.attrs['mass_stitch_p2_lo'] = MASS_STITCH_P2_LO
         f.attrs['mass_stitch_boost_lo'] = MASS_STITCH_BOOST_LO
         f.attrs['mass_stitch_boost_hi'] = MASS_STITCH_BOOST_HI
-        f.attrs['band_edges_eV'] = [6.0, 11.2, 13.6]
+        f.attrs['band_edges_eV'] = [6.0, 11.2, 13.6, 24.6, 54.4, 70.0]
         f.attrs['v_wind_prescription'] = 'Lamers+1995: 2.6*v_esc (T>21kK), 1.3*v_esc (10-21kK), 0.7*v_esc (cool)'
         f.attrs['E_ECSN_erg'] = 1e50       # weaker: degenerate O/Ne/Mg core
         f.attrs['E_CCSN_erg'] = 1e51       # canonical core-collapse
