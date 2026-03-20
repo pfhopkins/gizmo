@@ -1323,20 +1323,23 @@ ISOTOPE_TO_ELEMENT_CL = {
 ISOTOPE_TO_ELEMENT_KAR = {
     'p': 'H', 'd': 'H',
     'he3': 'He', 'he4': 'He',
-    'c12': 'C', 'c13': 'C',
+    'c12': 'C', 'c13': 'C', 'c14': 'C',
     'n13': 'N', 'n14': 'N', 'n15': 'N',
-    'o16': 'O', 'o17': 'O', 'o18': 'O',
-    'f19': 'F',
-    'ne20': 'Ne', 'ne21': 'Ne', 'ne22': 'Ne',
-    'na23': 'Na',
-    'mg24': 'Mg', 'mg25': 'Mg', 'mg26': 'Mg',
-    'al26': 'Al', 'al27': 'Al',
-    'si28': 'Si', 'si29': 'Si', 'si30': 'Si',
-    's32': 'S', 's33': 'S', 's34': 'S',
+    'o14': 'O', 'o15': 'O', 'o16': 'O', 'o17': 'O', 'o18': 'O', 'o19': 'O',
+    'f17': 'F', 'f18': 'F', 'f19': 'F', 'f20': 'F',
+    'ne19': 'Ne', 'ne20': 'Ne', 'ne21': 'Ne', 'ne22': 'Ne', 'ne23': 'Ne',
+    'na21': 'Na', 'na22': 'Na', 'na23': 'Na', 'na24': 'Na',
+    'mg23': 'Mg', 'mg24': 'Mg', 'mg25': 'Mg', 'mg26': 'Mg', 'mg27': 'Mg',
+    'al*6': 'Al', 'al-6': 'Al', 'al25': 'Al', 'al26': 'Al', 'al27': 'Al', 'al28': 'Al',
+    'si27': 'Si', 'si28': 'Si', 'si29': 'Si', 'si30': 'Si', 'si31': 'Si', 'si32': 'Si', 'si33': 'Si',
+    'p29': 'P', 'p30': 'P', 'p31': 'P', 'p32': 'P', 'p33': 'P', 'p34': 'P',
+    's32': 'S', 's33': 'S', 's34': 'S', 's35': 'S',
     'ca40': 'Ca', 'ca42': 'Ca', 'ca43': 'Ca', 'ca44': 'Ca',
     'ti46': 'Ti', 'ti48': 'Ti',
-    'fe54': 'Fe', 'fe56': 'Fe', 'fe57': 'Fe', 'fe58': 'Fe',
-    'ni56': 'Fe',
+    'fe54': 'Fe', 'fe55': 'Fe', 'fe56': 'Fe', 'fe57': 'Fe', 'fe58': 'Fe',
+    'fe59': 'Fe', 'fe60': 'Fe', 'fe61': 'Fe',
+    'co59': 'Co', 'co60': 'Co', 'co61': 'Co',
+    'ni56': 'Fe', 'ni58': 'Ni', 'ni59': 'Ni', 'ni60': 'Ni', 'ni61': 'Ni', 'ni62': 'Ni',
 }
 
 
@@ -1405,11 +1408,16 @@ def load_karakas_yields(kar_dir):
     return elem_yields, wd_masses
 
 
-# K&L 2016 element name → our tracked element mapping
+# K&L 2016: map (element_name, atomic_number) → our tracked element
+# 'p' appears twice in KL16: Z=1 (hydrogen) and Z=15 (phosphorus)
 KL16_ELEM_MAP = {
-    'p': 'H', 'he': 'He', 'c': 'C', 'n': 'N', 'o': 'O', 'f': 'F',
-    'ne': 'Ne', 'na': 'Na', 'mg': 'Mg', 'al': 'Al', 'si': 'Si',
-    's': 'S', 'ca': 'Ca', 'ti': 'Ti', 'fe': 'Fe',
+    ('p', 1): 'H', ('he', 2): 'He', ('c', 6): 'C', ('n', 7): 'N',
+    ('o', 8): 'O', ('f', 9): 'F', ('ne', 10): 'Ne', ('na', 11): 'Na',
+    ('mg', 12): 'Mg', ('al', 13): 'Al', ('si', 14): 'Si', ('p', 15): 'P',
+    ('s', 16): 'S', ('cl', 17): 'Cl', ('ar', 18): 'Ar', ('k', 19): 'K',
+    ('ca', 20): 'Ca', ('sc', 21): 'Sc', ('ti', 22): 'Ti', ('v', 23): 'V',
+    ('cr', 24): 'Cr', ('mn', 25): 'Mn', ('fe', 26): 'Fe', ('co', 27): 'Co',
+    ('ni', 28): 'Ni', ('cu', 29): 'Cu', ('zn', 30): 'Zn',
 }
 
 
@@ -1471,7 +1479,9 @@ def load_kl2016_yields(kl_dir):
                 while i < len(lines) and not lines[i].startswith('#'):
                     parts = lines[i].split()
                     if len(parts) >= 7:
-                        elems[parts[0].lower()] = float(parts[6])
+                        # Key by (element_name, atomic_number) to distinguish
+                        # p/1 (hydrogen) from p/15 (phosphorus)
+                        elems[(parts[0].lower(), int(parts[1]))] = float(parts[6])
                     i += 1
                 models.append({
                     'M_init': M_init, 'Z': Z, 'Y': Y, 'M_mix': M_mix,
@@ -1497,10 +1507,10 @@ def load_kl2016_yields(kl_dir):
             M_exp = mod['M_expelled']
             wd_masses[(Z, M)] = mod['M_final']
 
-            for kl_el, our_el in KL16_ELEM_MAP.items():
+            for (kl_name, kl_Z), our_el in KL16_ELEM_MAP.items():
                 if our_el not in TRACKED_ELEMENTS:
                     continue
-                mass_expelled = mod['elems'].get(kl_el, 0.0)
+                mass_expelled = mod['elems'].get((kl_name, kl_Z), 0.0)
                 # Initial mass fraction (solar-scaled)
                 if our_el == 'H':
                     X_init = X_H
@@ -2099,6 +2109,18 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 ratios[elem] = 1.0
         nugrid_z_scale[Z_ng] = ratios
 
+    # NuGrid absolute net yields at solar Z for 12 Msun (fallback for
+    # elements not in Limongi+2025).  NuGrid "yields" are total ejected,
+    # so convert to net:  net = total - X_init * M_ej
+    nugrid_solar_12 = nugrid.get((NUGRID_REF_Z, 12.0), {})
+    nugrid_12_Mej = 12.0 - nugrid_solar_12.get('Mfinal', 12.0)
+    nugrid_net_solar = {}
+    for elem in TRACKED_ELEMENTS:
+        total = nugrid_solar_12.get('yields', {}).get(elem, 0.0)
+        x_init = X_init_solar.get(elem, 0.0)
+        nugrid_net_solar[elem] = total - x_init * nugrid_12_Mej
+    lim25_elements = set(lim25_yields.keys())  # elements Limongi provides
+
     N_Z, N_M = len(Z_grid), len(M_grid)
     yields = np.zeros((N_Z, N_M, N_ELEM))
     wind_yields = np.zeros((N_Z, N_M, N_ELEM))
@@ -2160,12 +2182,15 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                 M_ej = M - rem_mass[iz, im]
 
                 # Base yields from Limongi+2025 (total ejected at solar Z)
+                # For elements not in Limongi, use NuGrid M=12 absolute yields
                 for ie, elem in enumerate(TRACKED_ELEMENTS):
-                    if elem not in lim25_yields:
-                        yields[iz, im, ie] = 0  # element not in Limongi data
-                        continue
-                    y_total = np.interp(M, lim25_masses, lim25_yields[elem])
-                    y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej
+                    if elem in lim25_elements:
+                        # Limongi+2025: interpolate in mass, convert total→net
+                        y_total = np.interp(M, lim25_masses, lim25_yields[elem])
+                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej
+                    else:
+                        # NuGrid M=12 fallback: scale net yield by ejecta ratio
+                        y_net = nugrid_net_solar.get(elem, 0.0) * (M_ej / max(nugrid_12_Mej, 0.1))
 
                     # Z-scaling from NuGrid for non-solar metallicities
                     if Z_ng is not None and abs(log_Z - np.log10(0.014)) > 0.15:
