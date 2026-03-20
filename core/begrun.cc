@@ -772,6 +772,12 @@ void open_outputfiles(void)
       fprintf(FdWINDinfo,"%s Per-wind-injection diagnostic log [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
       fprintf(FdWINDinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) id  (6) M_init[Msun]  (7) dM_wind[Msun]  (8) dp_wind[g*cm/s]  (9) Z_wind[Msun]  (10) timebin\n",prefix_char);
   }
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "ENERGYinfo.txt");
+  if(!(FdENERGYinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdENERGYinfo,"%s Energy conservation log [GALSF_RESOLVEDISM_FB + CHEMCOOL]. Columns:\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   (1) time  (2) M_gas[Msun]  (3) M_star[Msun]  (4) M_total[Msun]  (5) E_therm[erg]  (6) E_kin[erg]  (7) E_pot[erg]  (8) E_total[erg]  (9) E_cool_cumul[erg]  (10) E_fb_cumul[erg]  (11) M_fb_returned[Msun]\n",prefix_char);
+  }
 #endif
 #ifdef GALSF_RESOLVEDISM
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SFinfo.txt");

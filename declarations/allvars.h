@@ -318,6 +318,7 @@ extern FILE *FdSNinfo;     /*!< file handle for SNinfo.txt per-SN diagnostic log
 extern FILE *FdAGBinfo;    /*!< file handle for AGBinfo.txt per-AGB-death diagnostic log */
 extern FILE *FdFeedbackBudget; /*!< file handle for FeedbackBudget.txt conservation log */
 extern FILE *FdWINDinfo;   /*!< file handle for WINDinfo.txt per-wind-injection log */
+extern FILE *FdENERGYinfo; /*!< file handle for ENERGYinfo.txt energy conservation log */
 #endif
 #ifdef GALSF_RESOLVEDISM
 extern FILE *FdSFinfo;     /*!< file handle for SFinfo.txt per-SF-event diagnostic log */

@@ -1298,7 +1298,7 @@ void resolvedism_inject_sn_energy(void)
             MPI_Gatherv(wind_log_tb,    n_wind_logged, MPI_INT,       aw_tb, wrc, wdp, MPI_INT,       0, MPI_COMM_WORLD);
             if(ThisTask == 0) {
                 for(i = 0; i < n_wind_total_log; i++)
-                    fprintf(FdWINDinfo, "%12.6f  %10.6f %10.6f %10.6f  %10lld  %8.3f  %10.4f  %12.4e  %10.4f  %3d\n",
+                    fprintf(FdWINDinfo, "%12.6f  %10.6f %10.6f %10.6f  %10lld  %8.3f  %10.4f  %12.4e  %12.4e  %3d\n",
                         All.Time, aw_x[i], aw_y[i], aw_z[i], aw_id[i], aw_ms[i], aw_dm[i], aw_dp[i], aw_zw[i], aw_tb[i]);
                 fflush(FdWINDinfo);
                 myfree(aw_tb); myfree(aw_id); myfree(aw_zw); myfree(aw_dp); myfree(aw_dm);

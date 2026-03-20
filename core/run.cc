@@ -1114,13 +1114,21 @@ void energy_statistics(void)
     if(ThisTask == 0) {
       double M_gas = SysState.MassComp[0], M_star = SysState.MassComp[4];
       double M_total = M_gas + M_star + SysState.MassComp[1] + SysState.MassComp[2] + SysState.MassComp[3] + SysState.MassComp[5];
-      double E_therm_gas = SysState.EnergyIntComp[0];
-      double E_kin_gas = SysState.EnergyKinComp[0];
+      double E_therm = SysState.EnergyInt;
+      double E_kin = SysState.EnergyKin;
+      double E_pot = SysState.EnergyPot;
+      double E_total = E_therm + E_kin + E_pot;
       double cool_erg = cool_glob * UNIT_ENERGY_IN_CGS;
-      printf("BUDGET t=%.6g  M_gas=%.6g M_star=%.6g M_tot=%.6g  E_therm=%.6g E_kin=%.6g  E_cool_cum=%.4e[erg]  E_fb_cum=%.4e[erg]  M_fb_ret=%.4g[Msun]\n",
-        All.Time, M_gas, M_star, M_total, E_therm_gas, E_kin_gas, cool_erg, CumulFeedbackEnergy, CumulFeedbackMass);
-      printf("BUDGET_Z t=%.6g  Z_gas=[%.4e,%.4e]", All.Time, Zmin_gas, Zmax_gas);
-      if(M_star > 0) printf("  Z_star=[%.4e,%.4e]", Zmin_star, Zmax_star);
+      double fb_erg = CumulFeedbackEnergy;
+      printf("BUDGET t=%.16g  M_gas=%.16g M_star=%.16g M_tot=%.16g  E_therm=%.16g E_kin=%.16g E_pot=%.16g E_tot=%.16g  E_cool_cum=%.16e[erg]  E_fb_cum=%.16e[erg]  M_fb_ret=%.16g[Msun]\n",
+        All.Time, M_gas, M_star, M_total, E_therm, E_kin, E_pot, E_total, cool_erg, fb_erg, CumulFeedbackMass);
+      fprintf(FdENERGYinfo, "%12.6f  %14.6e %14.6e %14.6e  %14.6e %14.6e %14.6e %14.6e  %14.6e  %14.6e  %14.6e\n",
+        All.Time, M_gas*UNIT_MASS_IN_SOLAR, M_star*UNIT_MASS_IN_SOLAR, M_total*UNIT_MASS_IN_SOLAR,
+        E_therm*UNIT_ENERGY_IN_CGS, E_kin*UNIT_ENERGY_IN_CGS, E_pot*UNIT_ENERGY_IN_CGS, E_total*UNIT_ENERGY_IN_CGS,
+        cool_erg, fb_erg, CumulFeedbackMass);
+      fflush(FdENERGYinfo);
+      printf("BUDGET_Z t=%.16g  Z_gas=[%.16e,%.16e]", All.Time, Zmin_gas, Zmax_gas);
+      if(M_star > 0) printf("  Z_star=[%.16e,%.16e]", Zmin_star, Zmax_star);
       else printf("  Z_star=n/a");
       printf("\n");
     }
