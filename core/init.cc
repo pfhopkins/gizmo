@@ -421,29 +421,32 @@ void init(void)
 
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         if(RestartFlag == 0) {
-            /* Initialize per-element mass fractions (ElementAbundance[15]: H,He,C,N,O,F,Ne,Na,Mg,Al,Si,S,Ca,Ti,Fe).
-               Solar proto-solar mass fractions from Asplund+ 2009 Table 1 (proto-solar column).
-               FIRE-tracked elements use values from SolarAbundances[] above; F,Na,Al,Ti from Asplund directly. */
-            static const double solar_elem[15] = {
-                0.7154,   /* H  = 1 - Y - Z */
-                0.2703,   /* He (proto-solar Y) */
-                2.53e-3,  /* C  (8.47) */
-                7.41e-4,  /* N  (7.87) */
-                6.13e-3,  /* O  (8.73) */
-                4.90e-7,  /* F  (4.56) */
-                1.34e-3,  /* Ne (8.09) */
-                3.28e-5,  /* Na (6.30) */
-                7.57e-4,  /* Mg (7.54) */
-                5.69e-5,  /* Al (6.47) */
-                7.12e-4,  /* Si (7.53) */
-                3.31e-4,  /* S  (7.16) */
-                6.87e-5,  /* Ca (6.33) */
-                2.72e-6,  /* Ti (4.93) */
-                1.38e-3   /* Fe (7.47) */
+            /* Initialize per-element mass fractions (27 elements: H through Zn).
+               Solar proto-solar mass fractions from Asplund+ 2009.
+               In isotope mode (40 species), first 27 slots are elements, rest zeroed
+               — isotope splitting done at first feedback event or from IC file. */
+            static const double solar_elem[27] = {
+                0.7381,   /*  0: H   */    0.2485,   /*  1: He  */
+                2.36e-3,  /*  2: C   */    6.91e-4,  /*  3: N   */
+                5.72e-3,  /*  4: O   */    3.26e-7,  /*  5: F   */
+                1.25e-3,  /*  6: Ne  */    2.98e-5,  /*  7: Na  */
+                5.91e-4,  /*  8: Mg  */    5.57e-5,  /*  9: Al  */
+                6.65e-4,  /* 10: Si  */    5.16e-6,  /* 11: P   */
+                3.10e-4,  /* 12: S   */    3.15e-6,  /* 13: Cl  */
+                7.37e-5,  /* 14: Ar  */    2.93e-6,  /* 15: K   */
+                6.44e-5,  /* 16: Ca  */    3.48e-8,  /* 17: Sc  */
+                3.59e-6,  /* 18: Ti  */    2.30e-7,  /* 19: V   */
+                1.37e-5,  /* 20: Cr  */    9.17e-6,  /* 21: Mn  */
+                1.17e-3,  /* 22: Fe  */    3.30e-6,  /* 23: Co  */
+                6.99e-5,  /* 24: Ni  */    7.20e-7,  /* 25: Cu  */
+                1.67e-6   /* 26: Zn  */
             };
             double Zfrac = All.InitMetallicityinSolar; /* fraction of solar metallicity */
             double Zmetal = 0;
-            for(j = 2; j < 15; j++) {P[i].ElementAbundance[j] = solar_elem[j] * Zfrac; Zmetal += P[i].ElementAbundance[j];}
+            /* zero all slots first (covers isotope mode extra slots) */
+            for(j = 0; j < NUM_RESOLVEDISM_ELEMENTS; j++) P[i].ElementAbundance[j] = 0;
+            /* metals (indices 2-26): scaled to requested metallicity */
+            for(j = 2; j < 27; j++) {P[i].ElementAbundance[j] = solar_elem[j] * Zfrac; Zmetal += P[i].ElementAbundance[j];}
             /* He: primordial (1-X_prim) + enrichment scaled to solar */
             P[i].ElementAbundance[1] = (1. - HYDROGEN_MASSFRAC) + (solar_elem[1] - (1. - HYDROGEN_MASSFRAC)) * Zfrac;
             /* H: remainder */

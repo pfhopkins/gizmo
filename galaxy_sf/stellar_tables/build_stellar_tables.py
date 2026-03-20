@@ -39,16 +39,46 @@ G_cgs     = 6.674e-8          # cm^3 g^-1 s^-2
 E_FUV_lo, E_FUV_hi = 6.0, 11.2    # eV
 E_LW_lo,  E_LW_hi  = 11.2, 13.6   # eV
 
-TRACKED_ELEMENTS = ['H', 'He', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si', 'S', 'Ca', 'Ti', 'Fe']
-N_ELEM = len(TRACKED_ELEMENTS)
+TRACKED_ELEMENTS = [
+    'H', 'He', 'C', 'N', 'O', 'F', 'Ne', 'Na', 'Mg', 'Al', 'Si',
+    'P', 'S', 'Cl', 'Ar', 'K', 'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn',
+    'Fe', 'Co', 'Ni', 'Cu', 'Zn'
+]
+N_ELEM = len(TRACKED_ELEMENTS)  # 27 elements
+
+# Full isotope list matching PARSEC2 columns (for isotope-tracking mode)
+TRACKED_ISOTOPES = [
+    'H', 'He3', 'He4', 'Li7', 'Be7', 'C12', 'C13', 'N14', 'N15',
+    'O16', 'O17', 'O18', 'F19', 'Ne20', 'Ne21', 'Ne22', 'Na23',
+    'Mg24', 'Mg25', 'Mg26', 'Al26', 'Al27', 'Si28', 'Si29',
+    'P', 'S', 'Cl', 'Ar', 'K', 'Ca', 'Sc', 'Ti', 'V', 'Cr', 'Mn',
+    'Fe', 'Co', 'Ni', 'Cu', 'Zn'
+]
+N_ISOTOPES = len(TRACKED_ISOTOPES)  # 40 isotopes
+
+# Mapping: isotope -> element (for summing isotopes into elements)
+ISOTOPE_TO_ELEMENT = {
+    'H': 'H', 'He3': 'He', 'He4': 'He', 'Li7': 'H', 'Be7': 'H',  # Li,Be -> H (trace, fragile)
+    'C12': 'C', 'C13': 'C', 'N14': 'N', 'N15': 'N',
+    'O16': 'O', 'O17': 'O', 'O18': 'O', 'F19': 'F',
+    'Ne20': 'Ne', 'Ne21': 'Ne', 'Ne22': 'Ne', 'Na23': 'Na',
+    'Mg24': 'Mg', 'Mg25': 'Mg', 'Mg26': 'Mg', 'Al26': 'Al', 'Al27': 'Al',
+    'Si28': 'Si', 'Si29': 'Si',
+    'P': 'P', 'S': 'S', 'Cl': 'Cl', 'Ar': 'Ar', 'K': 'K', 'Ca': 'Ca',
+    'Sc': 'Sc', 'Ti': 'Ti', 'V': 'V', 'Cr': 'Cr', 'Mn': 'Mn',
+    'Fe': 'Fe', 'Co': 'Co', 'Ni': 'Ni', 'Cu': 'Cu', 'Zn': 'Zn',
+}
 
 # Solar mass fractions (Asplund+ 2009) for scaling initial abundances
 Z_SOLAR = 0.0134
-SOLAR_MASS_FRAC = {
+SOLAR_MASS_FRAC = {  # Asplund+ 2009 proto-solar mass fractions
     'H': 0.7381, 'He': 0.2485, 'C': 2.36e-3, 'N': 6.91e-4, 'O': 5.72e-3,
     'F': 3.26e-7, 'Ne': 1.25e-3, 'Na': 2.98e-5, 'Mg': 5.91e-4,
-    'Al': 5.57e-5, 'Si': 6.65e-4, 'S': 3.10e-4, 'Ca': 6.44e-5,
-    'Ti': 3.59e-6, 'Fe': 1.17e-3,
+    'Al': 5.57e-5, 'Si': 6.65e-4, 'P': 5.16e-6, 'S': 3.10e-4,
+    'Cl': 3.15e-6, 'Ar': 7.37e-5, 'K': 2.93e-6, 'Ca': 6.44e-5,
+    'Sc': 3.48e-8, 'Ti': 3.59e-6, 'V': 2.30e-7, 'Cr': 1.37e-5,
+    'Mn': 9.17e-6, 'Fe': 1.17e-3, 'Co': 3.30e-6, 'Ni': 6.99e-5,
+    'Cu': 7.20e-7, 'Zn': 1.67e-6,
 }
 # Metal fractions relative to Z (for scaling to arbitrary Z)
 SOLAR_METAL_FRAC = {e: SOLAR_MASS_FRAC[e] / Z_SOLAR for e in TRACKED_ELEMENTS
@@ -1540,7 +1570,10 @@ def load_parsec2_ejecta(ejecta_dir):
     ELEM_COLS_P2 = {
         'H': [7], 'He': [8, 9], 'C': [12, 13], 'N': [14, 15], 'O': [16, 17, 18],
         'F': [19], 'Ne': [20, 21, 22], 'Na': [23], 'Mg': [24, 25, 26],
-        'Al': [27, 28], 'Si': [29, 30], 'S': [32], 'Ca': [36], 'Ti': [38], 'Fe': [42],
+        'Al': [27, 28], 'Si': [29, 30], 'P': [31], 'S': [32], 'Cl': [33],
+        'Ar': [34], 'K': [35], 'Ca': [36], 'Sc': [37], 'Ti': [38], 'V': [39],
+        'Cr': [40], 'Mn': [41], 'Fe': [42], 'Co': [43], 'Ni': [44],
+        'Cu': [45], 'Zn': [46],
     }
     # Map PARSEC v2 SN type strings to our remnant type codes
     # CCSN→2(NS), FSN→3(BH), PPISN→4, PISN→5, DBH→6(BH), NOT→0(WD)
@@ -1568,8 +1601,27 @@ def load_parsec2_ejecta(ejecta_dir):
                 yields[elem] = sum(float(parts[c]) for c in cols)
             # Ni56 → Fe (radioactive decay)
             yields['Fe'] += float(parts[44])  # col 44 = NI
+            # Per-isotope yields (1:1 with PARSEC2 columns)
+            ISOTOPE_COLS_P2 = {
+                'H': 7, 'He3': 8, 'He4': 9, 'Li7': 10, 'Be7': 11,
+                'C12': 12, 'C13': 13, 'N14': 14, 'N15': 15,
+                'O16': 16, 'O17': 17, 'O18': 18, 'F19': 19,
+                'Ne20': 20, 'Ne21': 21, 'Ne22': 22, 'Na23': 23,
+                'Mg24': 24, 'Mg25': 25, 'Mg26': 26, 'Al26': 27, 'Al27': 28,
+                'Si28': 29, 'Si29': 30, 'P': 31, 'S': 32, 'Cl': 33,
+                'Ar': 34, 'K': 35, 'Ca': 36, 'Sc': 37, 'Ti': 38, 'V': 39,
+                'Cr': 40, 'Mn': 41, 'Fe': 42, 'Co': 43, 'Ni': 44,
+                'Cu': 45, 'Zn': 46,
+            }
+            iso_yields = {}
+            for iso, col in ISOTOPE_COLS_P2.items():
+                iso_yields[iso] = float(parts[col])
+            # Note: for isotope mode, Ni stays as Ni (stable ⁵⁸Ni,⁶⁰Ni,⁶²Ni).
+            # The ⁵⁶Ni→⁵⁶Fe decay is already handled in element-summed yields above.
+            # In isotope mode, users can post-process the Ni→Fe decay as needed.
             data[(Z, M_init)] = {
                 'yields': yields,
+                'iso_yields': iso_yields,
                 'M_fin': float(parts[1]),
                 'M_HE': float(parts[2]),
                 'M_CO': float(parts[3]),
@@ -1592,7 +1644,10 @@ def load_parsec2_wind_ejecta(ejecta_dir):
     ELEM_COLS_WIND = {
         'H': [4], 'He': [5, 6], 'C': [9, 10], 'N': [11, 12], 'O': [13, 14, 15],
         'F': [16], 'Ne': [17, 18, 19], 'Na': [20], 'Mg': [21, 22, 23],
-        'Al': [24, 25], 'Si': [26, 27], 'S': [29], 'Ca': [33], 'Ti': [35], 'Fe': [39],
+        'Al': [24, 25], 'Si': [26, 27], 'P': [28], 'S': [29], 'Cl': [30],
+        'Ar': [31], 'K': [32], 'Ca': [33], 'Sc': [34], 'Ti': [35], 'V': [36],
+        'Cr': [37], 'Mn': [38], 'Fe': [39], 'Co': [40], 'Ni': [41],
+        'Cu': [42], 'Zn': [43],
     }
 
     data = {}
@@ -1818,18 +1873,30 @@ def get_type_ia_yields():
         'H':  0.0,
         'He': 0.0,
         'C':  0.0486,
-        'N':  0.0,
+        'N':  1.2e-6,   # trace
         'O':  0.143,
-        'F':  0.0,
+        'F':  4.0e-10,  # negligible
         'Ne': 0.00429,
-        'Na': 5e-5,     # trace, W7 model
+        'Na': 5e-5,
         'Mg': 0.00885,
-        'Al': 9e-4,     # W7 model
+        'Al': 9e-4,
         'Si': 0.156,
+        'P':  3.1e-4,   # W7 model
         'S':  0.0864,
+        'Cl': 1.3e-4,   # W7 model
+        'Ar': 0.0150,   # W7 model
+        'K':  6.3e-5,   # W7 model
         'Ca': 0.0126,
-        'Ti': 3.6e-4,   # W7 model
+        'Sc': 1.7e-7,   # trace
+        'Ti': 3.6e-4,
+        'V':  4.7e-5,   # W7 model
+        'Cr': 0.00876,  # W7 model (significant iron-peak)
+        'Mn': 0.00763,  # W7 model (significant iron-peak)
         'Fe': 0.744,    # includes 56Ni → 56Fe decay
+        'Co': 7.9e-4,   # W7 model
+        'Ni': 0.0622,   # stable 58Ni+60Ni (W7 model, significant!)
+        'Cu': 2.6e-6,   # trace
+        'Zn': 1.6e-5,   # W7 model
     }
 
 TYPE_IA_DTD = {
@@ -2094,6 +2161,9 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
 
                 # Base yields from Limongi+2025 (total ejected at solar Z)
                 for ie, elem in enumerate(TRACKED_ELEMENTS):
+                    if elem not in lim25_yields:
+                        yields[iz, im, ie] = 0  # element not in Limongi data
+                        continue
                     y_total = np.interp(M, lim25_masses, lim25_yields[elem])
                     y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej
 

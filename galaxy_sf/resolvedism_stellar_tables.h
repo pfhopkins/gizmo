@@ -6,13 +6,32 @@
 #define STBL_NZ    15
 #define STBL_NM    110
 #define STBL_NAGE  512
-#define STBL_NELEM 15
+#define STBL_NELEM 27     /* element-summed yields in the table */
+#define STBL_NISO  40     /* isotope-resolved yields in the table */
 
-/* Element index mapping (matches HDF5 'elements' dataset order) */
+/* Element index mapping (matches HDF5 'elements' dataset order).
+ * Table stores 27 elements + 40 isotopes. Code evolves NUM_RESOLVEDISM_ELEMENTS. */
 enum StellarElement {
-    ELEM_H  = 0, ELEM_He = 1, ELEM_C  = 2, ELEM_N  = 3, ELEM_O  = 4,
-    ELEM_F  = 5, ELEM_Ne = 6, ELEM_Na = 7, ELEM_Mg = 8, ELEM_Al = 9,
-    ELEM_Si = 10, ELEM_S = 11, ELEM_Ca = 12, ELEM_Ti = 13, ELEM_Fe = 14
+    ELEM_H  = 0,  ELEM_He = 1,  ELEM_C  = 2,  ELEM_N  = 3,  ELEM_O  = 4,
+    ELEM_F  = 5,  ELEM_Ne = 6,  ELEM_Na = 7,  ELEM_Mg = 8,  ELEM_Al = 9,
+    ELEM_Si = 10, ELEM_P  = 11, ELEM_S  = 12, ELEM_Cl = 13, ELEM_Ar = 14,
+    ELEM_K  = 15, ELEM_Ca = 16, ELEM_Sc = 17, ELEM_Ti = 18, ELEM_V  = 19,
+    ELEM_Cr = 20, ELEM_Mn = 21, ELEM_Fe = 22, ELEM_Co = 23, ELEM_Ni = 24,
+    ELEM_Cu = 25, ELEM_Zn = 26
+};
+
+/* Isotope index mapping (matches HDF5 'isotopes' dataset order) */
+enum StellarIsotope {
+    ISO_H   = 0,  ISO_He3 = 1,  ISO_He4 = 2,  ISO_Li7 = 3,  ISO_Be7 = 4,
+    ISO_C12 = 5,  ISO_C13 = 6,  ISO_N14 = 7,  ISO_N15 = 8,
+    ISO_O16 = 9,  ISO_O17 = 10, ISO_O18 = 11, ISO_F19 = 12,
+    ISO_Ne20= 13, ISO_Ne21= 14, ISO_Ne22= 15, ISO_Na23= 16,
+    ISO_Mg24= 17, ISO_Mg25= 18, ISO_Mg26= 19, ISO_Al26= 20, ISO_Al27= 21,
+    ISO_Si28= 22, ISO_Si29= 23,
+    ISO_P   = 24, ISO_S   = 25, ISO_Cl  = 26, ISO_Ar  = 27, ISO_K   = 28,
+    ISO_Ca  = 29, ISO_Sc  = 30, ISO_Ti  = 31, ISO_V   = 32, ISO_Cr  = 33,
+    ISO_Mn  = 34, ISO_Fe  = 35, ISO_Co  = 36, ISO_Ni  = 37, ISO_Cu  = 38,
+    ISO_Zn  = 39
 };
 
 /* Remnant type codes (matches HDF5 'remnant_type' dataset) */

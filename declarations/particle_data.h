@@ -120,7 +120,7 @@ extern ALIGN(32) struct particle_data
     MyFloat BirthMetallicity;             /*!< total metallicity Z at birth, for table lookups */
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    MyFloat ElementAbundance[NUM_RESOLVEDISM_ELEMENTS]; /*!< per-element mass fractions: H,He,C,N,O,F,Ne,Na,Mg,Al,Si,S,Ca,Ti,Fe */
+    MyFloat ElementAbundance[NUM_RESOLVEDISM_ELEMENTS]; /*!< per-species mass fractions: 27 elements (H-Zn) or 40 isotopes */
 #endif
 #ifdef GALSF_RESOLVEDISM_WINDS
     MyFloat WindMassAccum;       /*!< accumulated wind mass since last injection [Msun] */

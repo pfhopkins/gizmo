@@ -189,7 +189,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         COOLR.Zmass[8]  = P[target].ElementAbundance[ELEM_Ne];  /* Ne */
         COOLR.Zmass[9]  = P[target].ElementAbundance[ELEM_S];   /* S  */
         COOLR.Zmass[10] = P[target].ElementAbundance[ELEM_Ca];  /* Ca */
-        COOLR.Zmass[11] = 0; /* unused slot */
+        COOLR.Zmass[11] = P[target].ElementAbundance[ELEM_Zn];  /* Zn */
 #endif
     }
 #else

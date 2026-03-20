@@ -1240,7 +1240,11 @@
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-#define NUM_RESOLVEDISM_ELEMENTS 15
+#ifdef GALSF_RESOLVEDISM_METALS_ISOTOPES  /* 40 individual isotopes from stellar tables */
+#define NUM_RESOLVEDISM_ELEMENTS 40
+#else
+#define NUM_RESOLVEDISM_ELEMENTS 27  /* 27 elements: H through Zn */
+#endif
 #ifndef GALSF_RESOLVEDISM_STELLAR_TABLES
 #define GALSF_RESOLVEDISM_STELLAR_TABLES
 #endif

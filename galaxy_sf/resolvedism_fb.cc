@@ -751,10 +751,12 @@ void particle2in_resolvedismFB(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         else {
             /* Scale metals by total Z, assuming solar ratios */
             double Z_birth = DMAX(P[i].BirthMetallicity, 1e-10);
-            /* Rough solar mass fractions for metals (Z_sun = 0.014) */
-            double solar_frac[STBL_NELEM] = {0.7381, 0.2485, 2.36e-3, 6.91e-4, 5.73e-3,
-                3.70e-7, 1.25e-3, 3.34e-5, 7.08e-4, 5.67e-5,
-                6.65e-4, 3.10e-4, 6.44e-5, 3.63e-6, 1.29e-3};
+            /* Solar proto-solar mass fractions (Asplund+ 2009), 27 elements H-Zn */
+            double solar_frac[STBL_NELEM] = {
+                0.7381, 0.2485, 2.36e-3, 6.91e-4, 5.72e-3, 3.26e-7, 1.25e-3,
+                2.98e-5, 5.91e-4, 5.57e-5, 6.65e-4, 5.16e-6, 3.10e-4, 3.15e-6,
+                7.37e-5, 2.93e-6, 6.44e-5, 3.48e-8, 3.59e-6, 2.30e-7, 1.37e-5,
+                9.17e-6, 1.17e-3, 3.30e-6, 6.99e-5, 7.20e-7, 1.67e-6};
             X_birth = solar_frac[k] * (Z_birth / 0.014);
         }
 #endif
