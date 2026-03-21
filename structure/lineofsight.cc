@@ -66,7 +66,7 @@ struct line_of_sight
 
 struct line_of_sight_particles
 {
-  MyFloat Pos[3];
+  Vec3<MyFloat> Pos;
   MyFloat KernelRadius;
   MyFloat Vz;
   MyFloat Utherm;
@@ -163,9 +163,7 @@ void find_particles_and_save_them(int num)
 
 	  if(r2 < P[n].KernelRadius * P[n].KernelRadius)
 	    {
-	      for(k = 0; k < 3; k++)
-		particles[count_local].Pos[k] = P[n].Pos[k];
-
+	      particles[count_local].Pos = P[n].Pos;
 	      particles[count_local].KernelRadius = P[n].KernelRadius;
 	      particles[count_local].Vz = P[n].Vel[Los->zaxis];
 	      particles[count_local].Utherm = CellP[n].InternalEnergyPred;

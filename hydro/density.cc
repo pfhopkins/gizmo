@@ -25,7 +25,7 @@
 
 struct kernel_density /*! defines a number of useful variables we will use below */
 {
-  Vec3<double> dp; double dv[3],r, wk, dwk, hinv, hinv3, hinv4, mj_wk, mj_dwk_r;
+  Vec3<double> dp; Vec3<double> dv; double r, wk, dwk, hinv, hinv3, hinv4, mj_wk, mj_dwk_r;
 };
 
 
@@ -109,11 +109,11 @@ int density_isactive(int n)
 /*! this structure defines the variables that need to be sent -from- the 'searching' element */
 static struct INPUT_STRUCT_NAME
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-  MyFloat Accel[3];
+  Vec3<MyFloat> Accel;
 #endif
-  MyFloat Vel[3];
+  Vec3<MyFloat> Vel;
   MyFloat KernelRadius;
 #ifdef GALSF_SUBGRID_WINDS
   MyFloat DelayTime;
@@ -129,10 +129,10 @@ void hydrokerneldensity_particle2in(struct INPUT_STRUCT_NAME *in, int i, int loo
     int k;
     in->Type = P[i].Type;
     in->KernelRadius = P[i].KernelRadius;
-    for(k=0;k<3;k++) {in->Pos[k] = P[i].Pos[k];}
-    for(k=0;k<3;k++) {if(P[i].Type==0) {in->Vel[k]=CellP[i].VelPred[k];} else {in->Vel[k]=P[i].Vel[k];}}
+    in->Pos = P[i].Pos;
+    if(P[i].Type==0) {in->Vel=CellP[i].VelPred;} else {in->Vel=P[i].Vel;}
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-    if(P[i].Type == 0) {for(k=0;k<3;k++) {in->Accel[k] = All.cf_a2inv*P[i].GravAccel[k] + CellP[i].HydroAccel[k];}} // PHYSICAL units //
+    if(P[i].Type == 0) {in->Accel = All.cf_a2inv * P[i].GravAccel + CellP[i].HydroAccel;} // PHYSICAL units //
 #endif
 #ifdef GALSF_SUBGRID_WINDS
     if(P[i].Type==0) {in->DelayTime = CellP[i].DelayTime;} else {in->DelayTime=0;}
@@ -147,9 +147,9 @@ static struct OUTPUT_STRUCT_NAME
     MyDouble DrkernNgb;
     MyDouble Particle_DivVel;
     SymmetricTensor2<MyDouble> NV_T;
-    MyDouble NV_T_face_weights[3]; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
+    Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-    MyDouble ParticleVel[3];
+    Vec3<MyDouble> ParticleVel;
 #endif
 #ifdef HYDRO_SPH
     MyDouble DrkernHydroSumFactor;
@@ -165,7 +165,7 @@ static struct OUTPUT_STRUCT_NAME
     MyFloat NV_A[3][3];
 #endif
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    MyFloat GradRho[3];
+    Vec3<MyFloat> GradRho;
 #endif
 #if defined(SINK_PARTICLES)
     int Sink_TimeBinGasNeighbor;
@@ -174,12 +174,12 @@ static struct OUTPUT_STRUCT_NAME
 #endif
 #endif
 #if defined(TURB_DRIVING) || defined(GRAIN_FLUID)
-    MyDouble GasVel[3];
+    Vec3<MyDouble> GasVel;
 #endif
 #if defined(GRAIN_FLUID)
     MyDouble Gas_InternalEnergy;
 #if defined(GRAIN_LORENTZFORCE)
-    MyDouble Gas_B[3];
+    Vec3<MyDouble> Gas_B;
 #endif
 #endif
 }
@@ -197,10 +197,10 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
     {
         ASSIGN_ADD(CellP[i].Density, out->Rho, mode);
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-        for(k=0;k<3;k++) ASSIGN_ADD(CellP[i].ParticleVel[k], out->ParticleVel[k],   mode);
+        ASSIGN_ADD(CellP[i].ParticleVel, out->ParticleVel, mode);
 #endif
         for(k=0;k<6;k++) {ASSIGN_ADD(CellP[i].NV_T.data[k], out->NV_T.data[k], mode);}
-        for(k=0;k<3;k++) {ASSIGN_ADD(CellP[i].NV_T_face_weights[k], out->NV_T_face_weights[k], mode);}
+        ASSIGN_ADD(CellP[i].NV_T_face_weights, out->NV_T_face_weights, mode);
 
 #ifdef HYDRO_SPH
         ASSIGN_ADD(CellP[i].DrkernHydroSumFactor, out->DrkernHydroSumFactor, mode);
@@ -209,7 +209,7 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
         ASSIGN_ADD(CellP[i].EgyWtDensity,   out->EgyRho,   mode);
 #endif
 #if defined(TURB_DRIVING)
-        for(k = 0; k < 3; k++) {ASSIGN_ADD(CellP[i].SmoothedVel[k], out->GasVel[k], mode);}
+        ASSIGN_ADD(CellP[i].SmoothedVel, out->GasVel, mode);
 #endif
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
         for(k = 0; k < 3; k++)
@@ -226,16 +226,16 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
     {
         ASSIGN_ADD(P[i].Gas_Density, out->Rho, mode);
         ASSIGN_ADD(P[i].Gas_InternalEnergy, out->Gas_InternalEnergy, mode);
-        for(k = 0; k<3; k++) {ASSIGN_ADD(P[i].Gas_Velocity[k], out->GasVel[k], mode);}
+        ASSIGN_ADD(P[i].Gas_Velocity, out->GasVel, mode);
 #if defined(GRAIN_LORENTZFORCE)
-        for(k = 0; k<3; k++) {ASSIGN_ADD(P[i].Gas_B[k], out->Gas_B[k], mode);}
+        ASSIGN_ADD(P[i].Gas_B, out->Gas_B, mode);
 #endif
     }
 #endif
 
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
     ASSIGN_ADD(P[i].DensityAroundParticle, out->Rho, mode);
-    for(k = 0; k<3; k++) {ASSIGN_ADD(P[i].GradRho[k], out->GradRho[k], mode);}
+    ASSIGN_ADD(P[i].GradRho, out->GradRho, mode);
 #endif
 
 #if defined(RT_SOURCE_INJECTION)
@@ -274,7 +274,7 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
     if(mode == 0) {startnode = All.MaxPart; /* root node */} else {startnode = DATAGET_NAME[target].NodeList[0]; startnode = Nodes[startnode].u.d.nextnode;    /* open it */}
     while(startnode >= 0) {
         while(startnode >= 0) {
-            numngb_inbox = ngb_treefind_variable_threads(local.Pos, local.KernelRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
+            numngb_inbox = ngb_treefind_variable_threads(local.Pos.data_ptr(), local.KernelRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
             if(numngb_inbox < 0) {return -2;}
             for(n = 0; n < numngb_inbox; n++)
             {
@@ -283,9 +283,7 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 if(CellP[j].DelayTime > 0) {if(local.DelayTime <= 0) {continue;}}
 #endif
                 if(P[j].Mass <= 0) continue;
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
-                kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
-                kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
                 r2 = kernel.dp.norm_sq();
                 if(r2 < h2) /* this loop is only considering particles inside local.KernelRadius, i.e. seen-by-main */
@@ -299,7 +297,7 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     out.Ngb += kernel.wk;
                     out.Rho += kernel.mj_wk;
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-                    if(local.Type == 0 && kernel.r==0) {int kv; for(kv=0;kv<3;kv++) {out.ParticleVel[kv] += kernel.mj_wk * CellP[j].VelPred[kv];}} // just the self-contribution //
+                    if(local.Type == 0 && kernel.r==0) {out.ParticleVel += kernel.mj_wk * CellP[j].VelPred;} // just the self-contribution //
 #endif
 #if defined(RT_SOURCE_INJECTION)
 #if defined(RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION)
@@ -323,26 +321,17 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                         {
                             wk = kernel.wk; /* MAKE SURE THIS MATCHES CHOICE IN GRADIENTS.c! */
                             /* the weights for the MLS tensor used for gradient estimation */
-                            out.NV_T[0][0] +=  wk * kernel.dp[0] * kernel.dp[0];
-                            out.NV_T[0][1] +=  wk * kernel.dp[0] * kernel.dp[1];
-                            out.NV_T[0][2] +=  wk * kernel.dp[0] * kernel.dp[2];
-                            out.NV_T[1][1] +=  wk * kernel.dp[1] * kernel.dp[1];
-                            out.NV_T[1][2] +=  wk * kernel.dp[1] * kernel.dp[2];
-                            out.NV_T[2][2] +=  wk * kernel.dp[2] * kernel.dp[2];
+                            out.NV_T += wk * outer_product(kernel.dp);
                             /* weighted first moments, used for face area estimation */
-                            out.NV_T_face_weights[0] += wk * kernel.dp[0];
-                            out.NV_T_face_weights[1] += wk * kernel.dp[1];
-                            out.NV_T_face_weights[2] += wk * kernel.dp[2];
+                            out.NV_T_face_weights += wk * kernel.dp;
                         }
-                        kernel.dv[0] = local.Vel[0] - CellP[j].VelPred[0];
-                        kernel.dv[1] = local.Vel[1] - CellP[j].VelPred[1];
-                        kernel.dv[2] = local.Vel[2] - CellP[j].VelPred[2];
+                        kernel.dv = local.Vel - CellP[j].VelPred;
                         NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,kernel.dv,1); /* wrap velocities for shearing boxes if needed */
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
                         // do neighbor contribution to smoothed particle velocity here, after wrap, so can account for shearing boxes correctly //
-                        {int kv; for(kv=0;kv<3;kv++) {out.ParticleVel[kv] += kernel.mj_wk * (local.Vel[kv] - kernel.dv[kv]);}}
+                        out.ParticleVel += kernel.mj_wk * (local.Vel - kernel.dv);
 #endif
-                        out.Particle_DivVel -= kernel.dwk * (kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2]) / kernel.r;
+                        out.Particle_DivVel -= kernel.dwk * dot(kernel.dp, kernel.dv) / kernel.r;
                         /* this is the -particle- divv estimator, which determines how KernelRadius will evolve (particle drift) */
 
                         density_evaluate_extra_physics_gas(&local, &out, &kernel, j);
@@ -369,13 +358,9 @@ void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct 
         if((1 << local->Type) & (GRAIN_PTYPES))
         {
             out->Gas_InternalEnergy += kernel->mj_wk * CellP[j].InternalEnergyPred;
-            out->GasVel[0] += kernel->mj_wk * (local->Vel[0]-kernel->dv[0]);
-            out->GasVel[1] += kernel->mj_wk * (local->Vel[1]-kernel->dv[1]);
-            out->GasVel[2] += kernel->mj_wk * (local->Vel[2]-kernel->dv[2]);
+            out->GasVel += kernel->mj_wk * (local->Vel - kernel->dv);
 #if defined(GRAIN_LORENTZFORCE)
-            out->Gas_B[0] += kernel->wk * CellP[j].BPred[0];
-            out->Gas_B[1] += kernel->wk * CellP[j].BPred[1];
-            out->Gas_B[2] += kernel->wk * CellP[j].BPred[2];
+            out->Gas_B += kernel->wk * CellP[j].BPred;
 #endif
         }
 #endif
@@ -409,9 +394,7 @@ void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct 
     } else { /* local.Type == 0 */
 
 #if defined(TURB_DRIVING)
-        out->GasVel[0] += kernel->mj_wk * (local->Vel[0]-kernel->dv[0]);
-        out->GasVel[1] += kernel->mj_wk * (local->Vel[1]-kernel->dv[1]);
-        out->GasVel[2] += kernel->mj_wk * (local->Vel[2]-kernel->dv[2]);
+        out->GasVel += kernel->mj_wk * (local->Vel - kernel->dv);
 #endif
 
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
@@ -444,9 +427,7 @@ void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct 
      just need a quick-and-dirty, single-pass approximation for the gradients (the error from
      using this as opposed to the higher-order gradient estimators is small compared to the
      Sobolev approximation): use only for -non-gas- particles */
-    out->GradRho[0] += kernel->mj_dwk_r * kernel->dp[0];
-    out->GradRho[1] += kernel->mj_dwk_r * kernel->dp[1];
-    out->GradRho[2] += kernel->mj_dwk_r * kernel->dp[2];
+    out->GradRho += kernel->mj_dwk_r * kernel->dp;
 #endif
 
 }
@@ -966,11 +947,9 @@ void density(void)
 #if defined(TURB_DRIVING)
                     if(CellP[i].Density > 0)
                     {
-                        CellP[i].SmoothedVel[0] /= CellP[i].Density;
-                        CellP[i].SmoothedVel[1] /= CellP[i].Density;
-                        CellP[i].SmoothedVel[2] /= CellP[i].Density;
+                        CellP[i].SmoothedVel /= CellP[i].Density;
                     } else {
-                        CellP[i].SmoothedVel[0] = CellP[i].SmoothedVel[1] = CellP[i].SmoothedVel[2] = 0;
+                        CellP[i].SmoothedVel = {};
                     }
 #endif
                 }
@@ -1019,7 +998,7 @@ void density(void)
                     P[i].Gas_InternalEnergy = 0;
                     for(k = 0; k<3; k++) {P[i].Gas_Velocity[k] = 0;}
 #if defined(GRAIN_LORENTZFORCE)
-                    for(k = 0; k<3; k++) {P[i].Gas_B[k] = 0;}
+                    P[i].Gas_B = {};
 #endif
                 }
             }
@@ -1067,11 +1046,11 @@ void density(void)
 #include "../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
 
 /* define structures to use below */
-struct INPUT_STRUCT_NAME {MyDouble Pos[3], KernelRadius, Volume_0; int NodeList[NODELISTLENGTH];} *DATAIN_NAME, *DATAGET_NAME;
+struct INPUT_STRUCT_NAME {Vec3<MyDouble> Pos; MyDouble KernelRadius, Volume_0; int NodeList[NODELISTLENGTH];} *DATAIN_NAME, *DATAGET_NAME;
 
 /* define properties to be sent to nodes */
 void particle2in_cellcorrections(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
-{in->Volume_0=CellP[i].Volume_0; in->KernelRadius=P[i].KernelRadius; int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}}
+{in->Volume_0=CellP[i].Volume_0; in->KernelRadius=P[i].KernelRadius; in->Pos=P[i].Pos;}
 
 /* define output structure to use below */
 struct OUTPUT_STRUCT_NAME {MyFloat Volume_1;} *DATARESULT_NAME, *DATAOUT_NAME;
@@ -1093,7 +1072,7 @@ int cellcorrections_evaluate(int target, int mode, int *exportflag, int *exportn
             for(n=0; n<numngb_inbox; n++)
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
-                Vec3<double> dp{local.Pos[0]-P[j].Pos[0], local.Pos[1]-P[j].Pos[1], local.Pos[2]-P[j].Pos[2]};
+                Vec3<double> dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(dp[0],dp[1],dp[2],1); // find the closest image in the given box size  //
                 double r2 = dp.norm_sq(); // distance
                 if(r2 >= P[j].KernelRadius*P[j].KernelRadius) {continue;} // need to be inside of 'j's kernel search

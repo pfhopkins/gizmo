@@ -27,7 +27,7 @@
  */
 static struct densdata_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyFloat KernelRadius;
   int NodeList[NODELISTLENGTH];
 }
@@ -152,9 +152,7 @@ void subfind_density(int j_in)
 	    {
 	      place = DataIndexTable[j].Index;
 
-	      DensDataIn[j].Pos[0] = P[place].Pos[0];
-	      DensDataIn[j].Pos[1] = P[place].Pos[1];
-	      DensDataIn[j].Pos[2] = P[place].Pos[2];
+	      DensDataIn[j].Pos = P[place].Pos;
 	      DensDataIn[j].KernelRadius = P[place].DM_KernelRadius;
 
 	      memcpy(DensDataIn[j].NodeList,
@@ -390,12 +388,12 @@ int subfind_density_evaluate(int target, int mode, int *nexport, int *nsend_loca
 
   if(mode == 0)
     {
-      pos = P[target].Pos;
+      pos = P[target].Pos.data_ptr();
       h = P[target].DM_KernelRadius;
     }
   else
     {
-      pos = DensDataGet[target].Pos;
+      pos = DensDataGet[target].Pos.data_ptr();
       h = DensDataGet[target].KernelRadius;
     }
 

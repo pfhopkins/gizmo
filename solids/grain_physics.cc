@@ -269,7 +269,7 @@ void apply_grain_dragforce(void)
 /* this structure defines the variables that need to be sent -from- the 'searching' element */
 struct INPUT_STRUCT_NAME
 {
-    int NodeList[NODELISTLENGTH]; MyDouble Pos[3], KernelRadius; /* these must always be defined */
+    int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; MyDouble KernelRadius; /* these must always be defined */
 #if defined(GRAIN_BACKREACTION)
     double Grain_DeltaMomentum[3], Gas_Density, Grain_AccelTimeMin;
 #endif
@@ -279,7 +279,7 @@ struct INPUT_STRUCT_NAME
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {   /* "i" is the particle from which data will be assigned, to structure "in" */
-    int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];} /* good example - always needed */
+    int k; in->Pos=P[i].Pos; /* good example - always needed */
     in->KernelRadius = P[i].KernelRadius; /* also always needed for search (can change the radius "P[i].KernelRadius" but in->KernelRadius must be defined */
 #if defined(GRAIN_BACKREACTION)
     for(k=0;k<3;k++) {in->Grain_DeltaMomentum[k]=P[i].Grain_DeltaMomentum[k];}
@@ -322,8 +322,8 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].KernelRadius <= 0)) {continue;} /* make sure neighbor is valid */
-                int k; double dp[3]; for(k=0;k<3;k++) {dp[k]=local.Pos[k]-P[j].Pos[k];} /* position offset */
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2=dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2]; /* box-wrap appropriately and calculate distance */
+                int k; Vec3<double> dp=local.Pos-P[j].Pos; /* position offset */
+                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2=dp.norm_sq(); /* box-wrap appropriately and calculate distance */
 #ifdef BOX_BND_PARTICLES
                 if(P[j].ID > 0) {r2 = -1;} /* ignore frozen boundary particles */
 #endif
@@ -434,12 +434,12 @@ void calculate_interact_kick(double dV[3], double kick[3], double m)
 
 /* this structure defines the variables that need to be sent -from- the 'searching' element */
 struct INPUT_STRUCT_NAME {
-    int NodeList[NODELISTLENGTH], Type; MyDouble Mass, KernelRadius, Pos[3], Vel[3], Grain_Size, Grain_Abs_Coeff[N_RT_FREQ_BINS]; /* these must always be defined */
+    int NodeList[NODELISTLENGTH], Type; MyDouble Mass, KernelRadius; Vec3<MyDouble> Pos, Vel; MyDouble Grain_Size, Grain_Abs_Coeff[N_RT_FREQ_BINS]; /* these must always be defined */
 } *DATAIN_NAME, *DATAGET_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
 
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration) {   /* "i" is the particle from which data will be assigned, to structure "in" */
-    in->Type=P[i].Type; in->Mass=P[i].Mass; in->KernelRadius=P[i].KernelRadius; int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->Vel[k]=P[i].Vel[k];}
+    in->Type=P[i].Type; in->Mass=P[i].Mass; in->KernelRadius=P[i].KernelRadius; int k; in->Pos=P[i].Pos; in->Vel=P[i].Vel;
     if((1 << P[i].Type) & (GRAIN_PTYPES))
     {
         in->Grain_Size=P[i].Grain_Size; int k_freq;
@@ -488,8 +488,8 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].KernelRadius <= 0)) {continue;} /* make sure neighbor is valid */
-                int k,k_freq; double dp[3],h_to_use; for(k=0;k<3;k++) {dp[k]=local.Pos[k]-P[j].Pos[k];} /* position offset */
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2=dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2]; /* box-wrap appropriately and calculate distance */
+                int k,k_freq; double h_to_use; Vec3<double> dp=local.Pos-P[j].Pos; /* position offset */
+                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2=dp.norm_sq(); /* box-wrap appropriately and calculate distance */
                 if(local.Type == 0) {h_to_use = P[j].KernelRadius;} else {h_to_use = local.KernelRadius;}
                 if((r2>0)&&(r2<h_to_use*h_to_use)) /* only keep elements inside search radius */
                 {

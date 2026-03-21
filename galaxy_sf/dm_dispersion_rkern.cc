@@ -37,7 +37,7 @@
 /* this structure defines the variables that need to be sent -from- the 'searching' element */
 static struct INPUT_STRUCT_NAME
 {
-    MyDouble Pos[3];
+    Vec3<MyDouble> Pos;
     MyFloat KernelRadiusDM;
     int NodeList[NODELISTLENGTH];
 }
@@ -46,7 +46,7 @@ static struct INPUT_STRUCT_NAME
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 void disp_particle2in_density(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
-    int k; for(k=0;k<3;k++) {in->Pos[k] = P[i].Pos[k];}
+    in->Pos = P[i].Pos;
     in->KernelRadiusDM = CellP[i].KernelRadiusDM;
 }
 

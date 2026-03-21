@@ -38,7 +38,7 @@ struct kernel_DiffFilter {
 #include "../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
 
 struct INPUT_STRUCT_NAME {
-    MyDouble Pos[3];
+    Vec3<MyDouble> Pos;
     MyFloat Mass;
     MyFloat KernelRadius;
     MyDouble Density;
@@ -46,12 +46,12 @@ struct INPUT_STRUCT_NAME {
 #ifdef GALSF_SUBGRID_WINDS
     MyFloat DelayTime;
 #endif
-    MyDouble VelPred[3];
+    Vec3<MyDouble> VelPred;
 }
 *DATAIN_NAME, *DATAGET_NAME;
 
 static inline void particle2in_DiffFilter(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration) {
-    int k; for(k = 0; k < 3; k++) {in->Pos[k] = P[i].Pos[k]; in->VelPred[k] = CellP[i].VelPred[k];}
+    in->Pos = P[i].Pos; in->VelPred = CellP[i].VelPred;
     in->Density = CellP[i].Density;
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = DMAX(0,P[i].Mass);
@@ -139,7 +139,7 @@ int DiffFilter_evaluate(int target, int mode, int *exportflag, int *exportnodeco
                 kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
-                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /*  now find the closest image in the given box size  */
+                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
                 r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
                 double mean_weight = 0.5 * (local.Density + CellP[j].Density) / (local.Density * CellP[j].Density);
                 double h_j = P[j].KernelRadius;

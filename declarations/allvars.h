@@ -1002,8 +1002,8 @@ extern struct gravdata_in
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
     MyFloat Min_Sink_OrbitalTime;   /*!<orbital time for binary */
-    MyDouble comp_dx[3];        /*!< position of binary companion */
-    MyDouble comp_dv[3];        /*!< velocity of binary companion */
+    Vec3<MyDouble> comp_dx;        /*!< position of binary companion */
+    Vec3<MyDouble> comp_dv;        /*!< velocity of binary companion */
     MyDouble comp_Mass;         /*!< mass of binary companion */
     int is_in_a_binary;
 #endif
@@ -1065,22 +1065,22 @@ extern struct gravdata_out
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-    MyDouble GravJerk[3];
+    Vec3<MyDouble> GravJerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
     MyFloat Min_Distance_to_Sink;
-    MyFloat Min_xyz_to_Sink[3];
+    Vec3<MyFloat> Min_xyz_to_Sink;
 #ifdef SPECIAL_POINT_MOTION
-    MyFloat vel_of_nearest_special[3];
-    MyFloat acc_of_nearest_special[3];
+    Vec3<MyFloat> vel_of_nearest_special;
+    Vec3<MyFloat> acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
     MyFloat Min_Sink_OrbitalTime; //orbital time for binary
-    MyDouble comp_dx[3]; //position of binary companion
-    MyDouble comp_dv[3]; //velocity of binary companion
+    Vec3<MyDouble> comp_dx; //position of binary companion
+    Vec3<MyDouble> comp_dv; //velocity of binary companion
     MyDouble comp_Mass; //mass of binary companion
     int is_in_a_binary; // 1 if star is in a binary, 0 otherwise
 #endif
@@ -1373,7 +1373,7 @@ enum siofields
 /* Tree Node structure (note, the ALIGN(32) directive will effectively pad the structure size to a multiple of 32 bytes) */
 extern ALIGN(32) struct NODE
 {
-  MyFloat center[3];		/*!< geometrical center of node */
+  Vec3<MyFloat> center;		/*!< geometrical center of node */
   MyFloat len;			/*!< sidelength of treenode */
 
   union
@@ -1381,7 +1381,7 @@ extern ALIGN(32) struct NODE
     int suns[8];		/*!< temporary pointers to daughter nodes */
     struct
     {
-      MyFloat s[3];		/*!< center of mass of node */
+      Vec3<MyFloat> s;		/*!< center of mass of node */
       MyFloat mass;		/*!< mass of node */
       unsigned int bitflags;	/*!< flags certain node properties */
       int sibling;		/*!< this gives the next node in the walk in case the current node can be used */
@@ -1407,9 +1407,12 @@ extern ALIGN(32) struct NODE
 #endif
 #endif
 
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Vec3<MyFloat> rt_source_lum_s; /*!< luminosity-weighted position of RT sources in the node */
+#endif
 #ifdef SINK_PHOTONMOMENTUM
     MyFloat sink_lum;		    /*!< luminosity of BHs in the node */
-    MyFloat sink_lum_grad[3];	/*!< gradient vector for gas around sink (for angular dependence) */
+    Vec3<MyFloat> sink_lum_grad;	/*!< gradient vector for gas around sink (for angular dependence) */
 #endif
     
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1418,12 +1421,12 @@ extern ALIGN(32) struct NODE
 
 #ifdef SINK_CALC_DISTANCES
   MyFloat sink_mass;      /*!< holds the sink mass in the node.  Used for calculating tree based dist to closest sink */
-  MyFloat sink_pos[3];    /*!< holds the mass-weighted position of the the actual sink particles within the node */
+  Vec3<MyFloat> sink_pos;    /*!< holds the mass-weighted position of the the actual sink particles within the node */
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-    MyFloat sink_vel[3];    /*!< holds the mass-weighted avg. velocity of sink particles in the node */
+    Vec3<MyFloat> sink_vel;    /*!< holds the mass-weighted avg. velocity of sink particles in the node */
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    MyFloat sink_acc[3]; /*!< holds the mass-weighted avg. acceleration of sink particles in the node */
+    Vec3<MyFloat> sink_acc; /*!< holds the mass-weighted avg. acceleration of sink particles in the node */
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
   int N_SINK;             /*!< holds the number of sink particles in the node. Used for refinement/search criteria */
@@ -1438,7 +1441,7 @@ extern ALIGN(32) struct NODE
     SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-  MyFloat s_dm[3];
+  Vec3<MyFloat> s_dm;
   MyFloat mass_dm;
 #endif
 }
@@ -1448,16 +1451,16 @@ extern ALIGN(32) struct NODE
 
 extern struct extNODE
 {
-  MyDouble dp[3];
+  Vec3<MyDouble> dp;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MyDouble rt_source_lum_dp[3];
-    MyFloat rt_source_lum_vs[3];
+    Vec3<MyDouble> rt_source_lum_dp;
+    Vec3<MyFloat> rt_source_lum_vs;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-  MyDouble dp_dm[3];
-  MyFloat vs_dm[3];
+  Vec3<MyDouble> dp_dm;
+  Vec3<MyFloat> vs_dm;
 #endif
-  MyFloat vs[3];
+  Vec3<MyFloat> vs;
   MyFloat vmax;
   MyFloat hmax;			/*!< maximum gas kernel length in node. Only used for gas particles */
   MyFloat divVmax;

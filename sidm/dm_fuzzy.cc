@@ -299,7 +299,7 @@ struct kernel_DMGrad {double dp[3],r,wk_i, wk_j, dwk_i, dwk_j,h_i;};
 /* this structure defines the variables that need to be sent -from- the 'searching' element */
 struct INPUT_STRUCT_NAME
 {
-    MyDouble Pos[3], AGS_KernelRadius;
+    Vec3<MyDouble> Pos; MyDouble AGS_KernelRadius;
     struct Quantities_for_Gradients_DM GQuant;
     int NodeList[NODELISTLENGTH], Type;
 }
@@ -308,7 +308,7 @@ struct INPUT_STRUCT_NAME
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 static inline void particle2in_DMGrad(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
-    in->Pos[0] = P[i].Pos[0]; in->Pos[1] = P[i].Pos[1]; in->Pos[2] = P[i].Pos[2];
+    in->Pos = P[i].Pos;
     in->AGS_KernelRadius = P[i].AGS_KernelRadius;
     in->Type = P[i].Type;
     in->GQuant.AGS_Density = P[i].AGS_Density;
@@ -405,7 +405,7 @@ int DMGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
     {
         while(startnode >= 0)
         {
-            numngb_inbox = ngb_treefind_variable_threads_targeted(local.Pos, local.AGS_KernelRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist, AGS_kernel_shared_BITFLAG);
+            numngb_inbox = ngb_treefind_variable_threads_targeted(local.Pos.data_ptr(), local.AGS_KernelRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist, AGS_kernel_shared_BITFLAG);
             if(numngb_inbox < 0) {return -2;} /* no neighbors! */
             for(n = 0; n < numngb_inbox; n++) /* neighbor loop */
             {
@@ -413,7 +413,7 @@ int DMGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
                 if((P[j].Mass <= 0)||(P[j].AGS_Density <= 0)) {continue;} /* make sure neighbor is valid */
                 /* calculate position relative to target */
                 kernel.dp[0] = local.Pos[0] - P[j].Pos[0]; kernel.dp[1] = local.Pos[1] - P[j].Pos[1]; kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
-                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /*  now find the closest image in the given box size  */
+                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
                 r2 = kernel.dp[0]*kernel.dp[0] + kernel.dp[1]*kernel.dp[1] + kernel.dp[2]*kernel.dp[2];
                 if((r2 <= 0) || (r2 >= h2_i)) continue;
                 /* calculate kernel quantities needed below */

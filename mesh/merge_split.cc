@@ -448,7 +448,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     double d_r = 0.25 * KERNEL_CORE_SIZE*P[i].KernelRadius; // needs to be epsilon*KernelRadius where epsilon<<1, to maintain stability //
     Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
     NEAREST_XYZ(dp[0],dp[1],dp[2],1);
-    double r_near = sqrt(dp.norm_sq());
+    double r_near = dp.norm();
     d_r = DMIN(d_r , 0.35 * r_near); // use a 'buffer' to limit to some multiple of the distance to the nearest particle //
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); d_r = 0.39685*dx_eff; // this allows a larger split in order to reduce artefacts in more aggressive splits, at the expense of more diffusion of the original mass //

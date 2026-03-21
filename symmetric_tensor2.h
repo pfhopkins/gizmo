@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include "vec3.h"
 
 // Rank-2 symmetric 3x3 tensor templated on element type.
 // Stores 6 unique elements (xx, xy, xz, yy, yz, zz).
@@ -63,3 +64,12 @@ inline SymmetricTensor2<T> operator*(T s, SymmetricTensor2<T> t) noexcept { t *=
 
 template<typename T>
 inline SymmetricTensor2<T> operator*(SymmetricTensor2<T> t, T s) noexcept { t *= s; return t; }
+
+// Symmetric outer product v ⊗ v
+// Storage order matches flat_index: data[0]=xx, [1]=xy, [2]=yy, [3]=xz, [4]=yz, [5]=zz
+template<typename T>
+inline SymmetricTensor2<T> outer_product(const Vec3<T>& v) noexcept {
+    return { v[0]*v[0], v[0]*v[1], v[1]*v[1],
+                        v[0]*v[2], v[1]*v[2],
+                                   v[2]*v[2] };
+}

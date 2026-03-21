@@ -101,7 +101,7 @@ struct kernel_GasGrad
 
 struct GasGraddata_in
 {
-    MyDouble Pos[3];
+    Vec3<MyDouble> Pos;
     MyFloat Mass;
     MyFloat KernelRadius;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -231,7 +231,7 @@ static inline void out2particle_GasGrad_iter(struct GasGraddata_out_iter *out, i
 static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gradient_iteration)
 {
     int k;
-    for(k = 0; k < 3; k++) {in->Pos[k] = P[i].Pos[k];}
+    in->Pos = P[i].Pos;
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = P[i].Mass;
     if(in->Mass < 0) {in->Mass = 0;}
@@ -1445,9 +1445,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 if(GasGrad_isactive(j)==0) continue;
                 swap_to_j = 0;
                 
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
-                kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
-                kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /*  now find the closest image in the given box size  */
                 r2 = kernel.dp.norm_sq();
                 double h_j = P[j].KernelRadius;

@@ -219,7 +219,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
                         for(k=0;k<3;k++) {out.Sink_SurroundingGasCOM[k] += wt*dP[k];}
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) || defined(SINK_RETURN_BFLUX)
-                        u=sqrt(dP.norm_sq())/DMAX(h_i, P[j].KernelRadius); if(u<1) {kernel_main(u,1., 1.,&wk,&dwk,-1);} else {wk=dwk=0;} // spline weighting function for conserved quantity return
+                        u=dP.norm()/DMAX(h_i, P[j].KernelRadius); if(u<1) {kernel_main(u,1., 1.,&wk,&dwk,-1);} else {wk=dwk=0;} // spline weighting function for conserved quantity return
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) /* We need a normalization factor for angular momentum feedback so we will go over all the neighbours */
                         double r2j=dP.norm_sq(), Lrj=dot(local.Sink_Specific_AngMom,dP);
@@ -229,7 +229,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
                         out.kernel_norm_topass_in_swallowloop += wk;
 #endif                  
 #if (SINK_GRAVACCRETION == 8)
-                        u=sqrt(dP.norm_sq())/h_i; if(u<1) {kernel_main(u,hinv3,hinv3*hinv,&wk,&dwk,-1);} else {wk=dwk=0;}
+                        u=dP.norm()/h_i; if(u<1) {kernel_main(u,hinv3,hinv3*hinv,&wk,&dwk,-1);} else {wk=dwk=0;}
                         double rj=u*h_i*All.cf_atime; double csj=Get_Gas_effective_soundspeed_i(j);
                         double vdotrj=-dot(dP,dv);
                         double vr_mdot = 4*M_PI * wt*(wk*All.cf_a3inv) * rj*vdotrj;
@@ -262,7 +262,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
 #endif                        
                       
                     {
-                        double r2=dP.norm_sq(), vrel=sqrt(dv.norm_sq()) / All.cf_atime;
+                        double r2=dP.norm_sq(), vrel=dv.norm() / All.cf_atime;
                         double dr_code = sqrt(r2);
 #if defined(MAGNETIC) && defined(GRAIN_LORENTZFORCE) /* need to project grain velocities, shouldn't include gyro motion */
                         if((1<<P[j].Type) & GRAIN_PTYPES) {double bmag2=0; double vrel_dot=0; for(k=0;k<3;k++) {vrel_dot+=dv[k]*P[j].Gas_B[k]; bmag2+=P[j].Gas_B[k]*P[j].Gas_B[k];}

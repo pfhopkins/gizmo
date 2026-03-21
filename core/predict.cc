@@ -438,7 +438,7 @@ double Get_DtB_FaceArea_Limiter(int i)
     double dt_entr = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
     Vec3<double> dB = CellP[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
-    double dBmag = sqrt(dB.norm_sq()), Bmag = sqrt(CellP[i].BPred.norm_sq());
+    double dBmag = dB.norm(), Bmag = CellP[i].BPred.norm();
     /* also make sure to check the actual pressure, since if P>>B, we will need to allow larger changes in B per timestep */
     double P_BV_units = sqrt(2.*CellP[i].Pressure*All.cf_a3inv)*P[i].Mass/CellP[i].Density / All.cf_a2inv;
     /* the above should be in CODE Bcode*Vol_code units! */

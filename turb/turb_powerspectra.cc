@@ -55,7 +55,7 @@ void powerspec_turb_calc_and_bin_spectrum(fftw_plan plan, fftw_real *field, int 
 
 static struct data_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyFloat KernelRadius;
   int NodeList[NODELISTLENGTH];
 }
@@ -1075,13 +1075,13 @@ int powerspec_turb_find_nearest_evaluate(int target, int mode, int *nexport, int
   int startnode, numngb_inbox;
   double h, r2max;
   double dx, dy, dz, r2;
-  MyDouble pos[3];
+  Vec3<MyDouble> pos;
 
   if(mode == 0)
     {
       int xx = target / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
       int yy = (target - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
-      int zz = (target - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - yy * TURB_DRIVING_SPECTRUMGRID); 
+      int zz = (target - xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID - yy * TURB_DRIVING_SPECTRUMGRID);
       xx += slabstart_x;
 
         double x = (xx + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_X;
@@ -1095,9 +1095,7 @@ int powerspec_turb_find_nearest_evaluate(int target, int mode, int *nexport, int
     }
   else
     {
-      pos[0] = DataGet[target].Pos[0];
-      pos[1] = DataGet[target].Pos[1];
-      pos[2] = DataGet[target].Pos[2];
+      pos = DataGet[target].Pos;
       h = DataGet[target].KernelRadius;
     }
 

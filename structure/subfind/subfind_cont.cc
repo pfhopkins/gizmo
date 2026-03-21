@@ -27,7 +27,7 @@
  */
 static struct contamdata_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyFloat R200;
   int NodeList[NODELISTLENGTH];
 }
@@ -129,7 +129,7 @@ void subfind_contamination(void)
 
 	  ContamIn[j].Pos[0] = Group[place].Pos[0];
 	  ContamIn[j].Pos[1] = Group[place].Pos[1];
-	  ContamIn[j].Pos[2] = Group[place].Pos[2];
+	  ContamIn[j].Pos[2] = Group[place].Pos[2]; // Group[].Pos is raw array
 	  ContamIn[j].R200 = Group[place].SubHaloProps_vsDelta[0].R200;
 
 	  memcpy(ContamIn[j].NodeList,
@@ -228,12 +228,12 @@ int subfind_contamination_evaluate(int target, int mode, int *nexport, int *nsen
 
   if(mode == 0)
     {
-      pos = Group[target].Pos;
+      pos = Group[target].Pos;  // Group[].Pos is raw array
       h = Group[target].SubHaloProps_vsDelta[0].R200;
     }
   else
     {
-      pos = ContamGet[target].Pos;
+      pos = ContamGet[target].Pos.data_ptr();
       h = ContamGet[target].R200;
     }
 

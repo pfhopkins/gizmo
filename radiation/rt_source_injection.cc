@@ -32,7 +32,7 @@
 /*! Structure for communication during the kernel computation. Holds data that is sent to other processors  */
 static struct INPUT_STRUCT_NAME
 {
-    MyDouble Pos[3]; MyFloat KernelRadius, KernelSum_Around_RT_Source, Luminosity[N_RT_FREQ_BINS], Vel[3];
+    Vec3<MyDouble> Pos; MyFloat KernelRadius, KernelSum_Around_RT_Source, Luminosity[N_RT_FREQ_BINS]; Vec3<MyFloat> Vel;
     int NodeList[NODELISTLENGTH];
 #if defined(RT_REPROCESS_INJECTED_PHOTONS) && defined(RT_CHEM_PHOTOION)
     MyDouble Dt;
@@ -45,7 +45,7 @@ static struct INPUT_STRUCT_NAME
 void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k;
-    {int k; for(k=0; k<3; k++) {in->Pos[k] = P[i].Pos[k];}}
+    in->Pos = P[i].Pos;
     in->KernelRadius = P[i].KernelRadius;
     //if(P[i].Type==0) {in->KernelSum_Around_RT_Source = CellP[i].Density;} else {in->KernelSum_Around_RT_Source = P[i].DensityAroundParticle;}
     in->KernelSum_Around_RT_Source = P[i].KernelSum_Around_RT_Source;
@@ -159,9 +159,9 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if(P[j].Type != 0) {continue;} // require a gas particle //
                 if(P[j].Mass <= 0) {continue;} // require the particle has mass //
-                double dp[3]; for(k=0; k<3; k++) {dp[k] = local.Pos[k] - P[j].Pos[k];}
+                Vec3<double> dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(dp[0],dp[1],dp[2],1); /* find the closest image in the given box size  */
-                double r2=0, r, wk; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}
+                double r2 = dp.norm_sq(), r, wk;
                 if(r2<=0) {continue;} // same particle //
 #ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
                 if((All.TimeStep > 0) && (r2>=h2) && (r2 >= P[j].KernelRadius*P[j].KernelRadius)) {continue;} // outside kernel //
