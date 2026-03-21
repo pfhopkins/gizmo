@@ -99,7 +99,7 @@ void reconstruct_timebins(void)
 
 void drift_particle(int i, integertime time1)
 {
-    int j; double dt_drift; integertime time0 = P[i].Ti_current;
+    int j __attribute__((unused)); double dt_drift; integertime time0 = P[i].Ti_current;
     if(time1 < time0)
     {
         printf("i=%d time0=%lld time1=%lld\n", i, (long long)time0, (long long)time1);
@@ -111,29 +111,22 @@ void drift_particle(int i, integertime time1)
         
 #if !defined(FREEZE_HYDRO)
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    if(P[i].Type==0) {advect_mesh_point(i,dt_drift);} else {for(j=0;j<3;j++) {P[i].Pos[j] += P[i].Vel[j] * dt_drift;}}
+    if(P[i].Type==0) {advect_mesh_point(i,dt_drift);} else {P[i].Pos += P[i].Vel * dt_drift;}
 #elif (SINGLE_STAR_TIMESTEPPING > 0)
-    double fewbody_drift_dx[3], fewbody_kick_dv[3]; // if super-timestepping, the updates above account for COM motion of the binary; now we account for the internal motion
-    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) ) 
+    Vec3<double> fewbody_drift_dx, fewbody_kick_dv; // if super-timestepping, the updates above account for COM motion of the binary; now we account for the internal motion
+    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) )
     {
-        double COM_Vel[3]; //center of mass velocity
-        for(j=0;j<3;j++) 
-        {
-            COM_Vel[j] = P[i].Vel[j] + P[i].comp_dv[j] * P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass); //center of mass velocity
-            P[i].Pos[j] += COM_Vel[j] * dt_drift; //center of mass drift
-        }
-        odeint_super_timestep(i, dt_drift, fewbody_kick_dv, fewbody_drift_dx, 1); // do_fewbody_drift
-        for(j=0;j<3;j++)
-        {
-            P[i].GravAccel[j] = P[i].COM_GravAccel[j]; //Overwrite the acceleration with center of mass value
-            P[i].Pos[j] += fewbody_drift_dx[j]; //Keplerian evolution
-            P[i].Vel[j] += fewbody_kick_dv[j]; //move on binary.orbit
-        }
+        Vec3<double> COM_Vel = P[i].Vel + P[i].comp_dv * (P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass)); //center of mass velocity
+        P[i].Pos += COM_Vel * dt_drift; //center of mass drift
+        odeint_super_timestep(i, dt_drift, fewbody_kick_dv.data_ptr(), fewbody_drift_dx.data_ptr(), 1); // do_fewbody_drift
+        P[i].GravAccel = P[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
+        P[i].Pos += fewbody_drift_dx; //Keplerian evolution
+        P[i].Vel += fewbody_kick_dv; //move on binary.orbit
     } else {
-       for(j=0;j<3;j++) {P[i].Pos[j] += P[i].Vel[j] * dt_drift;}
+       P[i].Pos += P[i].Vel * dt_drift;
     }
 #else
-    for(j=0;j<3;j++) {P[i].Pos[j] += P[i].Vel[j] * dt_drift;}
+    P[i].Pos += P[i].Vel * dt_drift;
 #endif
 #endif // FREEZE_HYDRO clause
 #if (NUMDIMS==1)
@@ -147,7 +140,7 @@ void drift_particle(int i, integertime time1)
     double a_fac = return_timestep_dilation_factor(i,0);
     if(a_fac > 1.) {
         double cfac = dt_drift * (1. - 1./a_fac);
-        for(j=0;j<3;j++) {P[i].Pos[j] += P[i].vel_of_nearest_special[j]*cfac;} /* add back in the mean drift of the surrounding stuff to dilate only the local dynamics */
+        P[i].Pos += P[i].vel_of_nearest_special * cfac; /* add back in the mean drift of the surrounding stuff to dilate only the local dynamics */
     }
 #endif
 
@@ -190,19 +183,19 @@ void drift_particle(int i, integertime time1)
             
 #ifdef PMGRID
             dt_gravkick_pm = get_gravkick_factor(time0, time1, -1, 0);
-            for(j = 0; j < 3; j++) {CellP[i].VelPred[j] += (P[i].GravAccel[j]*dt_gravkick + P[i].GravPM[j]*dt_gravkick_pm) + (CellP[i].HydroAccel[j] * dt_hydrokick)*All.cf_atime;} /* make sure v is in code units */
+            CellP[i].VelPred += P[i].GravAccel*dt_gravkick + P[i].GravPM*dt_gravkick_pm + CellP[i].HydroAccel*(dt_hydrokick*All.cf_atime); /* make sure v is in code units */
 #else
-            for(j = 0; j < 3; j++) {CellP[i].VelPred[j] += (P[i].GravAccel[j]) * dt_gravkick + (CellP[i].HydroAccel[j] * dt_hydrokick)*All.cf_atime;} /* make sure v is in code units */
+            CellP[i].VelPred += P[i].GravAccel * dt_gravkick + CellP[i].HydroAccel * (dt_hydrokick*All.cf_atime); /* make sure v is in code units */
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-	        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {for(j=0;j<3;j++) {CellP[i].VelPred[j] += fewbody_kick_dv[j];}}
+	        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {CellP[i].VelPred += Vec3<double>{fewbody_kick_dv[0], fewbody_kick_dv[1], fewbody_kick_dv[2]};}
 #endif	    
             
 #if defined(TURB_DRIVING)
-            for(j = 0; j < 3; j++) {CellP[i].VelPred[j] += CellP[i].TurbAccel[j] * dt_gravkick;}
+            CellP[i].VelPred += CellP[i].TurbAccel * dt_gravkick;
 #endif
 #ifdef RT_RAD_PRESSURE_OUTPUT
-            for(j = 0; j < 3; j++) {CellP[i].VelPred[j] += CellP[i].Rad_Accel[j] * All.cf_atime * dt_hydrokick;}
+            CellP[i].VelPred += CellP[i].Rad_Accel * (All.cf_atime * dt_hydrokick);
 #endif
             
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -443,15 +436,9 @@ double Get_DtB_FaceArea_Limiter(int i)
 #else
     /* define some variables */
     double dt_entr = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
-    int j; double dB[3],dBmag=0,Bmag=0;
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
-    for(j=0;j<3;j++)
-    {
-        dB[j] = CellP[i].DtB[j] * dt_entr / All.cf_atime; /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
-        dBmag += dB[j]*dB[j];
-        Bmag += CellP[i].BPred[j]*CellP[i].BPred[j];
-    }
-    dBmag = sqrt(dBmag); Bmag = sqrt(Bmag);
+    Vec3<double> dB = CellP[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
+    double dBmag = sqrt(dB.norm_sq()), Bmag = sqrt(CellP[i].BPred.norm_sq());
     /* also make sure to check the actual pressure, since if P>>B, we will need to allow larger changes in B per timestep */
     double P_BV_units = sqrt(2.*CellP[i].Pressure*All.cf_a3inv)*P[i].Mass/CellP[i].Density / All.cf_a2inv;
     /* the above should be in CODE Bcode*Vol_code units! */
@@ -562,23 +549,21 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
     in which case we have to convert back and forth. */
 void advect_mesh_point(int i, double dt)
 {
-    int k;
-
 #if (HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3) // cylindrical or spherical coordinates
     // define the location relative to the origin (needed in these coordinate systems)
-    double dp[3], dp_offset[3]={0}; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];} // assume center is at coordinate origin
+    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // assume center is at coordinate origin
 #if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // unless we use a special anchor, to define the center
-    for(k=0;k<3;k++) {dp_offset[k] = -P[i].Min_xyz_to_Sink[k] + P[i].Pos[k];}
+    dp_offset = P[i].Pos - P[i].Min_xyz_to_Sink;
 #elif defined(BOX_PERIODIC) // or if periodic, the box mid-point is instead the center
 #if (NUMDIMS==1)
     dp_offset[0] = -boxHalf_X;
 #elif (NUMDIMS==2)
     dp_offset[0] = -boxHalf_X; dp_offset[1] = -boxHalf_Y;
 #else
-    dp_offset[0] = -boxHalf_X; dp_offset[1] = -boxHalf_Y; dp_offset[2] = -boxHalf_Z;
+    dp_offset = Vec3<double>{-boxHalf_X, -boxHalf_Y, -boxHalf_Z};
 #endif
 #endif
-    for(k=0;k<3;k++) {dp[k] += dp_offset[k];}
+    dp += dp_offset;
 #if (HYDRO_FIX_MESH_MOTION == 2) // cylindrical
     double r2=dp[0]*dp[0]+dp[1]*dp[1], r=sqrt(r2), c0=dp[0]/r, s0=dp[1]/r, z=dp[2]; // get r, sin/cos theta, z
     double vr=c0*CellP[i].ParticleVel[0] + s0*CellP[i].ParticleVel[1], vt=s0*CellP[i].ParticleVel[0] - c0*CellP[i].ParticleVel[1], vz=CellP[i].ParticleVel[2]; // velocities in these directions
@@ -589,8 +574,8 @@ void advect_mesh_point(int i, double dt)
     CellP[i].ParticleVel[2] = vz;
     return;
 #elif (HYDRO_FIX_MESH_MOTION == 3) // spherical
-    double v[3],r2=0; for(k=0;k<3;k++) {r2+=dp[k]*dp[k]; v[k]=CellP[i].ParticleVel[k];} // assume center is at coordinate origin
-    double r=sqrt(r2), rxy=sqrt(dp[0]*dp[0]+dp[1]*dp[1]), vr=(dp[0]*v[0] + dp[1]*v[1] + dp[2]*v[2])/r; // updated r is easy
+    Vec3<double> v = CellP[i].ParticleVel; double r2=dp.norm_sq(); // assume center is at coordinate origin
+    double r=sqrt(r2), rxy=sqrt(dp[0]*dp[0]+dp[1]*dp[1]), vr=dot(dp,v)/r; // updated r is easy
     double ct = 1./sqrt(1.+dp[1]*dp[1]/(dp[0]*dp[0])), st = (dp[1]/dp[0])*ct; // cos and sin theta
     double cp = sqrt(1.-dp[2]*dp[2]/(r*r)), sp = dp[2]/r; // cos and sin phi
     double t_dot = (v[0]*dp[1]-v[1]*dp[0])/(rxy*rxy), p_dot = (dp[2]*(dp[0]*v[0]+dp[1]*v[1])-rxy*rxy*v[2])/(r*r*rxy); // theta, phi derivatives
@@ -603,12 +588,12 @@ void advect_mesh_point(int i, double dt)
     return;
 #endif
     // ok now have the updated x/y/z positions relative to the origin, convert these back to the simulation coordinate frame
-    for(k=0;k<3;k++) {P[i].Pos[k] = dp[k] - dp_offset[k];}
+    P[i].Pos = dp - dp_offset;
 #endif // ok done with cylindrical/spherical coordinates
     
     
     // ok anything else ('normal' coordinates), does down here
-    for(k=0;k<3;k++) {P[i].Pos[k] += CellP[i].ParticleVel[k] * dt;} // for standard grid velocities, this is trivial //
+    P[i].Pos += CellP[i].ParticleVel * dt; // for standard grid velocities, this is trivial //
     return;
 }
 

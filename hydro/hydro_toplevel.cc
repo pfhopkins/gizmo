@@ -120,7 +120,7 @@ struct Conserved_var_Riemann
 
 struct kernel_hydra
 {
-    double dp[3];
+    Vec3<double> dp;
     double r, vsig, sound_i, sound_j;
     double dv[3], vdotr2;
     double wk_i, wk_j, dwk_i, dwk_j;
@@ -160,10 +160,10 @@ struct kernel_hydra
 struct INPUT_STRUCT_NAME
 {
     /* basic hydro variables */
-    MyDouble Pos[3];
-    MyFloat Vel[3];
+    Vec3<MyDouble> Pos;
+    Vec3<MyFloat> Vel;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    MyFloat ParticleVel[3];
+    Vec3<MyFloat> ParticleVel;
 #endif
     MyFloat KernelRadius;
     MyFloat Mass;
@@ -183,26 +183,26 @@ struct INPUT_STRUCT_NAME
     /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */
     struct
     {
-        MyDouble Density[3];
-        MyDouble Pressure[3];
+        Vec3<MyDouble> Density;
+        Vec3<MyDouble> Pressure;
         MyDouble Velocity[3][3];
 #ifdef MAGNETIC
         MyDouble B[3][3];
 #ifdef DIVBCLEANING_DEDNER
-        MyDouble Phi[3];
+        Vec3<MyDouble> Phi;
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        MyDouble Metallicity[NUM_METAL_SPECIES][3];
+        Vec3<MyDouble> Metallicity[NUM_METAL_SPECIES];
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
-        MyDouble InternalEnergy[3];
+        Vec3<MyDouble> InternalEnergy;
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-        MyDouble SoundSpeed[3];
+        Vec3<MyDouble> SoundSpeed;
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
-        MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
+        Vec3<MyDouble> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #endif
     } Gradients;
     MyDouble NV_T[3][3];
@@ -230,7 +230,7 @@ struct INPUT_STRUCT_NAME
     MyDouble ET[N_RT_FREQ_BINS][6];
 #endif
 #ifdef RT_EVOLVE_FLUX
-    MyDouble Rad_Flux[N_RT_FREQ_BINS][3];
+    Vec3<MyDouble> Rad_Flux[N_RT_FREQ_BINS];
 #endif
 #ifdef RT_INFRARED
     MyDouble Radiation_Temperature;
@@ -260,7 +260,7 @@ struct INPUT_STRUCT_NAME
 #endif
     
 #ifdef MAGNETIC
-    MyFloat BPred[3];
+    Vec3<MyFloat> BPred;
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
     MyFloat Balpha;
 #endif
@@ -272,7 +272,7 @@ struct INPUT_STRUCT_NAME
 #ifdef COSMIC_RAY_FLUID
     MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
     MyDouble CosmicRayDiffusionCoeff[N_CR_PARTICLE_BINS];
-    MyDouble CosmicRayFlux[N_CR_PARTICLE_BINS][3];
+    Vec3<MyDouble> CosmicRayFlux[N_CR_PARTICLE_BINS];
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
     MyDouble CosmicRayAlfvenEnergy[N_CR_PARTICLE_BINS][2];
 #endif
@@ -377,14 +377,11 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k;
-    for(k = 0; k < 3; k++)
-    {
-        in->Pos[k] = P[i].Pos[k];
-        in->Vel[k] = CellP[i].VelPred[k];
+    in->Pos = P[i].Pos;
+    in->Vel = CellP[i].VelPred;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        in->ParticleVel[k] = CellP[i].ParticleVel[k];
+    in->ParticleVel = CellP[i].ParticleVel;
 #endif
-    }
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = P[i].Mass;
     in->Density = CellP[i].Density;
@@ -421,30 +418,27 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     
     
     /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */
-    for(k=0;k<3;k++)
-    {
-        in->Gradients.Density[k] = CellP[i].Gradients.Density[k];
-        in->Gradients.Pressure[k] = CellP[i].Gradients.Pressure[k];
-        for(j=0;j<3;j++) {in->Gradients.Velocity[j][k] = CellP[i].Gradients.Velocity[j][k];}
+    in->Gradients.Density = CellP[i].Gradients.Density;
+    in->Gradients.Pressure = CellP[i].Gradients.Pressure;
+    for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->Gradients.Velocity[j][k] = CellP[i].Gradients.Velocity[j][k];}}
 #ifdef MAGNETIC
-        for(j=0;j<3;j++) {in->Gradients.B[j][k] = CellP[i].Gradients.B[j][k];}
+    for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->Gradients.B[j][k] = CellP[i].Gradients.B[j][k];}}
 #ifdef DIVBCLEANING_DEDNER
-        in->Gradients.Phi[k] = CellP[i].Gradients.Phi[k];
+    in->Gradients.Phi = CellP[i].Gradients.Phi;
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        for(j=0;j<NUM_METAL_SPECIES;j++) {in->Gradients.Metallicity[j][k] = CellP[i].Gradients.Metallicity[j][k];}
+    for(j=0;j<NUM_METAL_SPECIES;j++) {in->Gradients.Metallicity[j] = CellP[i].Gradients.Metallicity[j];}
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
-        in->Gradients.InternalEnergy[k] = CellP[i].Gradients.InternalEnergy[k];
+    in->Gradients.InternalEnergy = CellP[i].Gradients.InternalEnergy;
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-        in->Gradients.SoundSpeed[k] = CellP[i].Gradients.SoundSpeed[k];
+    in->Gradients.SoundSpeed = CellP[i].Gradients.SoundSpeed;
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
-        for(j=0;j<N_RT_FREQ_BINS;j++) {in->Gradients.Rad_E_gamma_ET[j][k] = CellP[i].Gradients.Rad_E_gamma_ET[j][k];}
+    for(j=0;j<N_RT_FREQ_BINS;j++) {in->Gradients.Rad_E_gamma_ET[j] = CellP[i].Gradients.Rad_E_gamma_ET[j];}
 #endif
-    }
     
 #ifdef RT_SOLVER_EXPLICIT
     for(k=0;k<N_RT_FREQ_BINS;k++)
@@ -456,7 +450,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
         {int k_dir; for(k_dir=0;k_dir<6;k_dir++) in->ET[k][k_dir] = CellP[i].ET[k][k_dir];}
 #endif
 #ifdef RT_EVOLVE_FLUX
-        {int k_dir; for(k_dir=0;k_dir<3;k_dir++) in->Rad_Flux[k][k_dir] = CellP[i].Rad_Flux_Pred[k][k_dir];}
+        in->Rad_Flux[k] = CellP[i].Rad_Flux_Pred[k];
 #endif
 #if defined(RT_EVOLVE_INTENSITIES)
         {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {in->Rad_Intensity_Pred[k][k_dir] = CellP[i].Rad_Intensity_Pred[k][k_dir];}}
@@ -513,7 +507,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     {
         in->CosmicRayPressure[j] = Get_Gas_CosmicRayPressure(i,j);
         in->CosmicRayDiffusionCoeff[j] = CellP[i].CosmicRayDiffusionCoeff[j];
-        for(k=0;k<3;k++) {in->CosmicRayFlux[j][k] = CellP[i].CosmicRayFluxPred[j][k];}
+        in->CosmicRayFlux[j] = CellP[i].CosmicRayFluxPred[j];
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
         for(k=0;k<2;k++) {in->CosmicRayAlfvenEnergy[j][k] = CellP[i].CosmicRayAlfvenEnergyPred[j][k];}
 #endif

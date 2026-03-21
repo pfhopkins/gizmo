@@ -26,18 +26,18 @@
 /* this structure defines the variables that need to be sent -from- the 'searching' element */
 struct INPUT_STRUCT_NAME
 {
-    int NodeList[NODELISTLENGTH]; MyDouble Pos[3]; MyFloat Vel[3], KernelRadius; MyIDType ID;
+    int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; Vec3<MyFloat> Vel; MyFloat KernelRadius; MyIDType ID;
 #if defined(SINK_GRAVCAPTURE_GAS) || (SINK_GRAVACCRETION == 8)
     MyDouble Mass;
 #endif
 #if defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     MyFloat SinkRadius;
-#endif  
+#endif
 #if (ADAPTIVE_GRAVSOFT_FORALL & 32)
     MyFloat AGS_KernelRadius;
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS)
-    MyFloat Sink_Specific_AngMom[3];
+    Vec3<MyFloat> Sink_Specific_AngMom;
 #endif
 }
 *DATAIN_NAME, *DATAGET_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
@@ -45,7 +45,7 @@ struct INPUT_STRUCT_NAME
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
-    int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->Vel[k]=P[i].Vel[k];} /* good example - always needed */
+    in->Pos=P[i].Pos; in->Vel=P[i].Vel; /* good example - always needed */
     in->KernelRadius = P[i].KernelRadius; in->ID = P[i].ID;
 #if defined(SINK_GRAVCAPTURE_GAS) || (SINK_GRAVACCRETION == 8)
     in->Mass = P[i].Mass;
@@ -57,8 +57,8 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->AGS_KernelRadius = ForceSoftening_KernelRadius(i);
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS)
-    for(k=0;k<3;k++) {in->Sink_Specific_AngMom[k]=P[i].Sink_Specific_AngMom[k];}
-#endif  
+    in->Sink_Specific_AngMom = P[i].Sink_Specific_AngMom;
+#endif
 }
 
 
@@ -183,7 +183,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
                 if( (P[j].Mass > 0) && (P[j].Type != 5) && (P[j].ID != local.ID) )
                 {
                     double wt = P[j].Mass;
-                    double dP[3], dv[3]; for(k=0;k<3;k++) {dP[k]=P[j].Pos[k]-local.Pos[k]; dv[k]=P[j].Vel[k]-local.Vel[k];}
+                    Vec3<double> dP = P[j].Pos - local.Pos; Vec3<double> dv = P[j].Vel - local.Vel;
                     NEAREST_XYZ(dP[0],dP[1],dP[2],-1); /*  find the closest image in the given box size  */
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv,-1); /* wrap velocities for shearing boxes if needed */
 
@@ -217,23 +217,21 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
 #endif
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
                         for(k=0;k<3;k++) {out.Sink_SurroundingGasCOM[k] += wt*dP[k];}
-#endif                        
+#endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) || defined(SINK_RETURN_BFLUX)
-                        u=0; for(k=0;k<3;k++) {u+=dP[k]*dP[k];}
-                        u=sqrt(u)/DMAX(h_i, P[j].KernelRadius); if(u<1) {kernel_main(u,1., 1.,&wk,&dwk,-1);} else {wk=dwk=0;} // spline weighting function for conserved quantity return
-#endif                        
+                        u=sqrt(dP.norm_sq())/DMAX(h_i, P[j].KernelRadius); if(u<1) {kernel_main(u,1., 1.,&wk,&dwk,-1);} else {wk=dwk=0;} // spline weighting function for conserved quantity return
+#endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) /* We need a normalization factor for angular momentum feedback so we will go over all the neighbours */
-                        double r2j=dP[0]*dP[0]+dP[1]*dP[1]+dP[2]*dP[2], Lrj=local.Sink_Specific_AngMom[0]*dP[0]+local.Sink_Specific_AngMom[1]*dP[1]+local.Sink_Specific_AngMom[2]*dP[2];
+                        double r2j=dP.norm_sq(), Lrj=dot(local.Sink_Specific_AngMom,dP);
                         for(k=0;k<3;k++) {out.angmom_prepass_sum_for_passback[k] += wk * wt*(local.Sink_Specific_AngMom[k]*r2j - dP[k]*Lrj);} // this is now kernel-weighted so that the kicks fall off smoothly as r approaches H
 #endif
 #if defined(SINK_RETURN_BFLUX)                        
                         out.kernel_norm_topass_in_swallowloop += wk;
 #endif                  
 #if (SINK_GRAVACCRETION == 8)
-                        u=0; for(k=0;k<3;k++) {u+=dP[k]*dP[k];}
-                        u=sqrt(u)/h_i; if(u<1) {kernel_main(u,hinv3,hinv3*hinv,&wk,&dwk,-1);} else {wk=dwk=0;}
+                        u=sqrt(dP.norm_sq())/h_i; if(u<1) {kernel_main(u,hinv3,hinv3*hinv,&wk,&dwk,-1);} else {wk=dwk=0;}
                         double rj=u*h_i*All.cf_atime; double csj=Get_Gas_effective_soundspeed_i(j);
-                        double vdotrj=0; for(k=0;k<3;k++) {vdotrj+=-dP[k]*dv[k];}
+                        double vdotrj=-dot(dP,dv);
                         double vr_mdot = 4*M_PI * wt*(wk*All.cf_a3inv) * rj*vdotrj;
                         if(rj < SinkParticle_GravityKernelRadius*All.cf_atime)
                         {
@@ -264,18 +262,18 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
 #endif                        
                       
                     {
-                        double vrel=0, r2=0; for(k=0;k<3;k++) {vrel+=dv[k]*dv[k]; r2+=dP[k]*dP[k];}
-                        double dr_code = sqrt(r2); vrel = sqrt(vrel) / All.cf_atime;
+                        double r2=dP.norm_sq(), vrel=sqrt(dv.norm_sq()) / All.cf_atime;
+                        double dr_code = sqrt(r2);
 #if defined(MAGNETIC) && defined(GRAIN_LORENTZFORCE) /* need to project grain velocities, shouldn't include gyro motion */
-                        if((1<<P[j].Type) & GRAIN_PTYPES) {vrel=0; double bmag2=0; for(k=0;k<3;k++) {vrel+=dv[k]*P[j].Gas_B[k]; bmag2+=P[j].Gas_B[k]*P[j].Gas_B[k];}
-                            vrel = (fabs(vrel)/sqrt(bmag2)) / All.cf_atime;}
+                        if((1<<P[j].Type) & GRAIN_PTYPES) {double bmag2=0; double vrel_dot=0; for(k=0;k<3;k++) {vrel_dot+=dv[k]*P[j].Gas_B[k]; bmag2+=P[j].Gas_B[k]*P[j].Gas_B[k];}
+                            vrel = (fabs(vrel_dot)/sqrt(bmag2)) / All.cf_atime;}
 #endif
                         double vbound = sink_vesc(j, local.Mass, dr_code, ags_h_i);
                         if(vrel < vbound) { /* bound */
                             double local_sink_radius = SinkParticle_GravityKernelRadius;
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
                             local_sink_radius = local.SinkRadius;
-                            double spec_mom=0; for(k=0;k<3;k++) {spec_mom += dv[k]*dP[k];} // delta_x.delta_v
+                            double spec_mom=dot(dv,dP); // delta_x.delta_v
                             spec_mom = (r2*vrel*vrel - spec_mom*spec_mom*All.cf_a2inv);  // specific angular momentum^2 = r^2(delta_v)^2 - (delta_v.delta_x)^2;
                             if(spec_mom < All.G * (local.Mass + P[j].Mass) * local_sink_radius) // check Bate 1995 angular momentum criterion (in addition to bounded-ness)
 #endif
@@ -331,7 +329,7 @@ void sink_environment_loop(void)
 /* this structure defines the variables that need to be sent -from- the 'searching' element */
 struct INPUT_STRUCT_NAME
 {
-    int NodeList[NODELISTLENGTH]; MyDouble Pos[3]; MyFloat Vel[3], KernelRadius, Jgas_in_Kernel[3], Jstar_in_Kernel[3];
+    int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; Vec3<MyFloat> Vel; MyFloat KernelRadius, Jgas_in_Kernel[3], Jstar_in_Kernel[3];
 }
 *DATAIN_NAME, *DATAGET_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
 
@@ -339,7 +337,7 @@ struct INPUT_STRUCT_NAME
 static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k, j_tempinfo = P[i].IndexMapToTempStruc; in->KernelRadius = P[i].KernelRadius; /* link to the location in the shared structure where this is stored */
-    for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->Vel[k]=P[i].Vel[k];} /* good example - always needed */
+    in->Pos=P[i].Pos; in->Vel=P[i].Vel; /* good example - always needed */
     for(k=0;k<3;k++) {in->Jgas_in_Kernel[k]=SinkTempInfo[j_tempinfo].Jgas_in_Kernel[k]; in->Jstar_in_Kernel[k]=SinkTempInfo[j_tempinfo].Jstar_in_Kernel[k];}
 }
 
@@ -373,7 +371,7 @@ int sink_environment_second_evaluate(int target, int mode, int *exportflag, int 
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].KernelRadius <= 0)||(P[j].Type == 5)) {continue;} /* make sure neighbor is valid */
-                int k; double dP[3], dv[3]; for(k=0;k<3;k++) {dP[k]=P[j].Pos[k]-local.Pos[k]; dv[k]=P[j].Vel[k]-local.Vel[k];} /* position offset */
+                int k; Vec3<double> dP = P[j].Pos - local.Pos; Vec3<double> dv = P[j].Vel - local.Vel; /* position offset */
                 NEAREST_XYZ(dP[0],dP[1],dP[2],-1);
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv,-1); /* wrap velocities for shearing boxes if needed */
                 double J_tmp[3]; J_tmp[0]=dP[1]*dv[2]-dP[2]*dv[1]; J_tmp[1]=dP[2]*dv[0]-dP[0]*dv[2]; J_tmp[2]=dP[0]*dv[1]-dP[1]*dv[0]; /* just need direction not magnitude */

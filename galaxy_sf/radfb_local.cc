@@ -87,8 +87,8 @@ void radiation_pressure_winds_consolidated(void)
 #endif
                                 if((P[j].Mass>0) && (CellP[j].Density>0))
                                 {
-                                    double dp[3],r2=0; for(k=0;k<3;k++) {dp[k]=P[j].Pos[k]-P[i].Pos[k];}
-                                    NEAREST_XYZ(dp[0],dp[1],dp[2],1); for(k=0;k<3;k++) {r2+=dp[k]*dp[k];} /* find the closest image in the given box size */
+                                    Vec3<double> dp = P[j].Pos - P[i].Pos;
+                                    NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
                                     if(r2>=h*h || r2<=0) {continue;}
                                     double h_eff_j = Get_Particle_Size(j); wt_sum += h_eff_j*h_eff_j; // weight factor for neighbors
                                 } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */
@@ -114,8 +114,8 @@ void radiation_pressure_winds_consolidated(void)
 #endif
                             if((P[j].Mass>0) && (CellP[j].Density>0))
                             {
-                                double dp[3],r2=0; for(k=0;k<3;k++) {dp[k]=P[j].Pos[k]-P[i].Pos[k];}
-                                NEAREST_XYZ(dp[0],dp[1],dp[2],1); for(k=0;k<3;k++) {r2+=dp[k]*dp[k];} /* find the closest image in the given box size */
+                                Vec3<double> dp = P[j].Pos - P[i].Pos;
+                                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
                                 if(r2>=h*h || r2<=0) {continue;}
                                 double h_eff_i = DMIN(h, Get_Particle_Size(i)), h_eff_j = Get_Particle_Size(j);
                                 r2 += MIN_REAL_NUMBER + (h_eff_i/5.)*(h_eff_i/5.); // just a small number to prevent errors on near-overlaps

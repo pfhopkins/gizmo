@@ -21,7 +21,7 @@ void compute_global_quantities_of_system(void)
   int i, j, n;
   struct state_of_system sys;
   double a1, a2, a3;
-  double entr = 0, egyspec, vel[3];
+  double entr = 0, egyspec; Vec3<double> vel;
   double dt_entr, dt_gravkick, dt_hydrokick;
 
   if(All.ComovingIntegrationOn)
@@ -52,19 +52,16 @@ void compute_global_quantities_of_system(void)
         dt_entr = dt_hydrokick = (All.Ti_Current - (P[i].Ti_begstep + dt_integerstep / 2)) * UNIT_INTEGERTIME_IN_PHYSICAL(i);
         dt_gravkick = get_gravkick_factor((P[i].Ti_begstep + dt_integerstep / 2), All.Ti_Current, i, 0);
 
-        for(j = 0; j < 3; j++)
-        {
-            vel[j] = P[i].Vel[j] + P[i].GravAccel[j] * dt_gravkick;
-            if(P[i].Type == 0) {vel[j] += CellP[i].HydroAccel[j] * dt_hydrokick * All.cf_atime;} /* convert from physical to code vel */
-        }
+        vel = P[i].Vel + P[i].GravAccel * dt_gravkick;
+        if(P[i].Type == 0) {vel += CellP[i].HydroAccel * (dt_hydrokick * All.cf_atime);} /* convert from physical to code vel */
         if(P[i].Type == 0) {entr = DMAX(0.1*CellP[i].InternalEnergy, CellP[i].InternalEnergy + CellP[i].DtInternalEnergy * dt_entr);}
-        
+
 #ifdef PMGRID
         double dt_gravkick_pm = get_gravkick_factor((All.PM_Ti_begstep + All.PM_Ti_endstep) / 2, All.Ti_Current, -1, 0);
-        for(j = 0; j < 3; j++) {vel[j] += P[i].GravPM[j] * dt_gravkick_pm;}
+        vel += P[i].GravPM * dt_gravkick_pm;
 #endif
         
-        sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]) / a2;
+        sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * vel.norm_sq() / a2;
         if(P[i].Type == 0) {egyspec = entr; sys.EnergyIntComp[0] += P[i].Mass * egyspec;}
         
         for(j = 0; j < 3; j++)

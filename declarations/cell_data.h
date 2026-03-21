@@ -7,8 +7,8 @@ extern struct gas_cell_data
     MyDouble MassTrue;              /*!< true particle mass ('mass' now is -predicted- mass */
     MyDouble dMass;                 /*!< change in particle masses from hydro step (conserved variable) */
     MyDouble DtMass;                /*!< rate-of-change of particle masses (for drifting) */
-    MyDouble GravWorkTerm[3];       /*!< correction term needed for hydro mass flux in gravity */
-    MyDouble ParticleVel[3];        /*!< actual velocity of the mesh-generating points */
+    Vec3<MyDouble> GravWorkTerm;    /*!< correction term needed for hydro mass flux in gravity */
+    Vec3<MyDouble> ParticleVel;     /*!< actual velocity of the mesh-generating points */
 #endif
     
     MyDouble Pressure;              /*!< current pressure */
@@ -16,8 +16,8 @@ extern struct gas_cell_data
     MyDouble InternalEnergyPred;    /*!< predicted value of the specific internal energy at the current time */
     MyDouble DtInternalEnergy;      /*!< rate of change of specific internal energy */
     
-    MyDouble VelPred[3];            /*!< predicted gas cell velocity at the current time */
-    MyDouble HydroAccel[3];         /*!< acceleration due to hydrodynamical force (for drifting) */
+    Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
+    Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
     
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
@@ -38,14 +38,14 @@ extern struct gas_cell_data
 #endif
     
 #ifdef MAGNETIC
-    MyDouble Face_Area[3];          /*!< vector sum of effective areas of 'faces'; this is used to check closure for meshless methods */
-    MyDouble BPred[3];              /*!< current magnetic field strength */
-    MyDouble BField_prerefinement[3]; /*!< safety variable that stores the B-field before a refinement-type operation to allow it to be more conservatively reset correctly after the (de)refinement completes */
-    MyDouble B[3];                  /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
-    MyDouble DtB[3];                /*!< time derivative of B-field (of -conserved- B-field) */
+    Vec3<MyDouble> Face_Area;       /*!< vector sum of effective areas of 'faces'; this is used to check closure for meshless methods */
+    Vec3<MyDouble> BPred;           /*!< current magnetic field strength */
+    Vec3<MyDouble> BField_prerefinement; /*!< safety variable that stores the B-field before a refinement-type operation to allow it to be more conservatively reset correctly after the (de)refinement completes */
+    Vec3<MyDouble> B;               /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
+    Vec3<MyDouble> DtB;             /*!< time derivative of B-field (of -conserved- B-field) */
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
 #ifdef DIVBCLEANING_DEDNER
-    MyDouble DtB_PhiCorr[3];        /*!< correction forces for mid-face update to phi-field */
+    Vec3<MyDouble> DtB_PhiCorr;     /*!< correction forces for mid-face update to phi-field */
     MyDouble PhiPred;               /*!< current value of Phi */
     MyDouble Phi;                   /*!< scalar field for Dedner divergence cleaning */
     MyDouble DtPhi;                 /*!< time derivative of Phi-field */
@@ -74,8 +74,8 @@ extern struct gas_cell_data
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
     MyDouble Sink_CR_Energy_Available_For_Injection;     /*!< Energy reservoir from CRs */
 #endif
-    MyFloat CosmicRayFlux[N_CR_PARTICLE_BINS][3];       /*!< CR flux vector [explicitly evolved] - conserved-variable */
-    MyFloat CosmicRayFluxPred[N_CR_PARTICLE_BINS][3];   /*!< CR flux vector [explicitly evolved] - conserved-variable */
+    Vec3<MyFloat> CosmicRayFlux[N_CR_PARTICLE_BINS];       /*!< CR flux vector [explicitly evolved] - conserved-variable */
+    Vec3<MyFloat> CosmicRayFluxPred[N_CR_PARTICLE_BINS];   /*!< CR flux vector [explicitly evolved] - conserved-variable */
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
     MyFloat CosmicRayAlfvenEnergy[N_CR_PARTICLE_BINS][2];       /*!< forward and backward-traveling Alfven wave-packet energies */
     MyFloat CosmicRayAlfvenEnergyPred[N_CR_PARTICLE_BINS][2];   /*!< drifted forward and backward-traveling Alfven wave-packet energies */
@@ -100,33 +100,33 @@ extern struct gas_cell_data
     /* matrix of the primitive variable gradients: rho, P, vx, vy, vz, B, phi */
     struct
     {
-        MyDouble Density[3];
-        MyDouble Pressure[3];
+        Vec3<MyDouble> Density;
+        Vec3<MyDouble> Pressure;
         MyDouble Velocity[3][3];
 #ifdef MAGNETIC
         MyDouble B[3][3];
 #ifdef DIVBCLEANING_DEDNER
-        MyDouble Phi[3];
+        Vec3<MyDouble> Phi;
 #endif
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-        MyDouble SoundSpeed[3];
+        Vec3<MyDouble> SoundSpeed;
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
-        MyDouble InternalEnergy[3];
+        Vec3<MyDouble> InternalEnergy;
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        MyDouble Metallicity[NUM_METAL_SPECIES][3];
+        Vec3<MyDouble> Metallicity[NUM_METAL_SPECIES];
 #endif
 #ifdef COSMIC_RAY_FLUID
-        MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS][3];
+        Vec3<MyDouble> CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-        MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
+        Vec3<MyDouble> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #endif
     } Gradients;
     SymmetricTensor2<MyDouble> NV_T; /*!< holds the tensor used for gradient estimation */
-    MyDouble NV_T_face_weights[3]; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
+    Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
     MyDouble ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */
     MyDouble FaceClosureError;      /*!< dimensionless measure of face closure */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
@@ -155,7 +155,7 @@ extern struct gas_cell_data
     
 #if defined(SINK_WIND_SPAWN_SET_BFIELD_POLTOR)
     MyDouble IniDen;
-    MyDouble IniB[3];
+    Vec3<MyDouble> IniB;
 #endif
     
 #ifdef CHIMES_STELLAR_FLUXES
@@ -175,8 +175,8 @@ extern struct gas_cell_data
     
     
 #if defined(TURB_DRIVING) || defined(OUTPUT_VORTICITY)
-    MyFloat Vorticity[3];
-    MyFloat SmoothedVel[3];
+    Vec3<MyFloat> Vorticity;
+    Vec3<MyFloat> SmoothedVel;
 #endif
     
 #if defined(SINK_THERMALFEEDBACK)
@@ -224,7 +224,7 @@ extern struct gas_cell_data
     MyDouble DuDt_drive;
     MyDouble EgyDiss;
     MyDouble EgyDrive;
-    MyDouble TurbAccel[3];
+    Vec3<MyDouble> TurbAccel;
 #endif
     
 #ifdef TURB_DIFFUSION
@@ -290,9 +290,9 @@ extern struct gas_cell_data
     MyFloat Dt_Rad_Intensity[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS]; /*!< time derivative of intensities */
 #endif
 #ifdef RT_EVOLVE_FLUX
-    MyFloat Rad_Flux[N_RT_FREQ_BINS][3];    /*!< photon energy flux density (energy/time/area), for methods which track this explicitly (e.g. M1) */
-    MyFloat Rad_Flux_Pred[N_RT_FREQ_BINS][3];/*!< predicted photon energy flux density for drift operations (needed for adaptive timestepping) */
-    MyFloat Dt_Rad_Flux[N_RT_FREQ_BINS][3]; /*!< time derivative of photon energy flux density */
+    Vec3<MyFloat> Rad_Flux[N_RT_FREQ_BINS];    /*!< photon energy flux density (energy/time/area), for methods which track this explicitly (e.g. M1) */
+    Vec3<MyFloat> Rad_Flux_Pred[N_RT_FREQ_BINS];/*!< predicted photon energy flux density for drift operations (needed for adaptive timestepping) */
+    Vec3<MyFloat> Dt_Rad_Flux[N_RT_FREQ_BINS]; /*!< time derivative of photon energy flux density */
 #else
 #define Rad_Flux_Pred Rad_Flux
 #endif
@@ -332,12 +332,12 @@ extern struct gas_cell_data
 #define Rad_E_gamma_Pred Rad_E_gamma
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX) && !defined(RT_EVOLVE_FLUX)
-    MyFloat Rad_Flux[N_RT_FREQ_BINS][3];
+    Vec3<MyFloat> Rad_Flux[N_RT_FREQ_BINS];
 #define Rad_Flux_Pred Rad_Flux
 #endif
     
 #ifdef RT_RAD_PRESSURE_OUTPUT
-    MyFloat Rad_Accel[3];
+    Vec3<MyFloat> Rad_Accel;
 #endif
     
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -399,8 +399,8 @@ extern struct gas_cell_data
 #ifdef TURB_DIFF_DYNAMIC
     MyDouble VelShear_bar[3][3];
     MyDouble MagShear_bar;
-    MyDouble Velocity_bar[3];
-    MyDouble Velocity_hat[3];
+    Vec3<MyDouble> Velocity_bar;
+    Vec3<MyDouble> Velocity_hat;
     MyFloat FilterWidth_bar;
     MyFloat MaxDistance_for_grad;
     MyDouble Norm_hat;

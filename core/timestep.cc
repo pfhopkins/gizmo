@@ -301,7 +301,7 @@ integertime get_timestep(int p,		/*!< particle index */
 	    if(0.03*P[p].COM_dt_tidal>dt_bin) {P[p].SuperTimestepFlag=2;
 	    } // external timestep is appropriately larger than 'internal' timestep, so use super-timestepping routine
 #else // to be more aggressive, use the instantaneous orbital timescale, ie. freefall time from the CURRENT orbital separation. This lets us super step an orbit on the close passages, even when it is affected by tides at apopase
-	    double dr = sqrt(P[p].comp_dx[0]*P[p].comp_dx[0] + P[p].comp_dx[1]*P[p].comp_dx[1] + P[p].comp_dx[2]*P[p].comp_dx[2]);
+	    double dr = P[p].comp_dx.norm();
 	    double dt_bin = sqrt(dr*dr*dr / (All.G * (P[p].Mass + P[p].comp_Mass)));
         if(0.005*P[p].COM_dt_tidal>dt_bin) {P[p].SuperTimestepFlag=2;} // external timestep is appropriately larger than 'internal' timestep, so use super-timestepping routine [constant here stricter for more aggressive routine]
 #endif
@@ -311,25 +311,25 @@ integertime get_timestep(int p,		/*!< particle index */
     
     
 #if defined(SPECIAL_POINT_MOTION)
-    {int k;
+    {
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
         if(P[p].Type != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
 #endif
-        for(k=0;k<3;k++) {
-            double acc = All.cf_a2inv * P[p].GravAccel[k];
+        {
+            Vec3<double> acc = P[p].GravAccel * All.cf_a2inv;
 #ifdef PMGRID
-            acc += All.cf_a2inv * P[p].GravPM[k];
+            acc += P[p].GravPM * All.cf_a2inv;
 #endif
             if(P[p].Type==0) {
-                acc += CellP[p].HydroAccel[k];
+                acc += CellP[p].HydroAccel;
 #ifdef TURB_DRIVING
-                acc += CellP[p].TurbAccel[k];
+                acc += CellP[p].TurbAccel;
 #endif
 #ifdef RT_RAD_PRESSURE_OUTPUT
-                acc += CellP[p].Rad_Accel[k];
+                acc += CellP[p].Rad_Accel;
 #endif
             }
-            P[p].Acc_Total_PrevStep[k] = acc;
+            P[p].Acc_Total_PrevStep = acc;
         }
     }
 #endif
@@ -448,8 +448,7 @@ integertime get_timestep(int p,		/*!< particle index */
     	if(P[p].is_in_a_binary && (P[p].SuperTimestepFlag >= 2)) //binary candidate or a confirmed binary
 	    {    // First we need to construct the same 2-body timescale as above, but from the binary parameters. If this is longer than the above, there is another star that is requiring us to
 	         // take a short timestep, so we better not super-timestep otherwise we risk messing up that star's integration. But if it is consistent with the above, then we can safely super-timestep
-	        double Mtot=P[p].comp_Mass+P[p].Mass, dr=0,dv=0,dv_dot_dx=0, binary_dt_2body=0;
-	        for(k=0;k<3;k++) {dr+=P[p].comp_dx[k]*P[p].comp_dx[k]; dv+=P[p].comp_dv[k]*P[p].comp_dv[k]; dv_dot_dx+=P[p].comp_dx[k]*P[p].comp_dv[k];}
+	        double Mtot=P[p].comp_Mass+P[p].Mass, dr=P[p].comp_dx.norm_sq(), dv=P[p].comp_dv.norm_sq(), dv_dot_dx=dot(P[p].comp_dx,P[p].comp_dv), binary_dt_2body=0;
             double r_effective = KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * ForceSoftening_KernelRadius(p); // plummer-equivalent softening
 	        dr += r_effective*r_effective; // add in quadrature for simple softening estimate
             dr=sqrt(dr); if(dv>0) {dv=sqrt(dv);} else {dv=0;}
@@ -504,9 +503,9 @@ integertime get_timestep(int p,		/*!< particle index */
     if((1 << P[p].Type) & (GRAIN_PTYPES))
     {
         csnd = convert_internalenergy_soundspeed2(p, P[p].Gas_InternalEnergy);
-        int k; for(k=0;k<3;k++) {csnd += (P[p].Gas_Velocity[k]-P[p].Vel[k])*(P[p].Gas_Velocity[k]-P[p].Vel[k]);}
+        csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
 #if defined(GRAIN_LORENTZFORCE)
-        for(k=0;k<3;k++) {csnd += P[p].Gas_B[k]*P[p].Gas_B[k] / (2.0 * P[p].Gas_Density);}
+        csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density);
 #endif
         csnd = sqrt(csnd);
         double L_particle = Get_Particle_Size(p);
@@ -515,7 +514,7 @@ integertime get_timestep(int p,		/*!< particle index */
         if(6.*P[p].Grain_AccelTimeMin < dt_courant) {dt_courant = 6.*P[p].Grain_AccelTimeMin;}
 #endif
 #if defined(GRAIN_LORENTZFORCE) && defined(GRAIN_RDI_TESTPROBLEM)
-        if(All.Grain_Charge_Parameter != 0) {double bmag=0; for(k=0;k<3;k++) {bmag += P[p].Gas_B[k]*P[p].Gas_B[k];}
+        if(All.Grain_Charge_Parameter != 0) {double bmag = P[p].Gas_B.norm_sq();
             if(bmag>0) {double dt_gyro = 1. / ((All.Grain_Charge_Parameter*sqrt(1.)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS))) * DMIN(100.,pow(All.Grain_Size_Max/P[p].Grain_Size,2)) * sqrt(bmag)); if(dt_gyro>0 && dt_gyro<dt_courant) {dt_courant=dt_gyro;}}} /* this gives t_Lorentz in code units; sqrt[1] reflects expected unity mean density definition, hard-coded for rdi testproblem options here */
 #endif
 #ifdef PIC_MHD
@@ -526,7 +525,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef PIC_MHD_NEW_RSOL_METHOD
             lorentz_units *= PIC_SPEEDOFLIGHT_REDUCTION; // the rsol enters by slowing down the forces here, acts as a unit shift for time
 #endif
-            double beta2=0,B2=0; for(k=0;k<3;k++) {double b=P[p].Gas_B[k]*All.cf_a2inv, v=P[p].Vel[k]/(All.cf_atime*reduced_C); B2+=b*b; beta2+=v*v;} /* get magnitude and unit vector for B, and vector beta [-true- beta here] */
+            double B2=(P[p].Gas_B * All.cf_a2inv).norm_sq(), beta2=(P[p].Vel * (1.0/(All.cf_atime*reduced_C))).norm_sq(); /* get magnitude and unit vector for B, and vector beta [-true- beta here] */
             double gamma_lorentz = 1./sqrt(DMAX(1.-DMAX(DMIN(beta2,1.),0.),MIN_REAL_NUMBER)); // calculate lorentz factor (with safety factors included to prevent accidental nan here //
             double dt_courant_pic = 0.5 / ((charge_to_mass_ratio_dimensionless/gamma_lorentz) * sqrt(B2) * lorentz_units); /* dt = 0.5/omega_gyro*/
             if(dt_courant_pic < dt_courant) dt_courant = dt_courant_pic;
@@ -690,7 +689,7 @@ integertime get_timestep(int p,		/*!< particle index */
                 int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++)
                 {
 #if defined(RT_SOLVER_EXPLICIT) // explicit solver -- need diffusion timestep //
-                    double gradETmag=0; for(k=0;k<3;k++) {gradETmag += CellP[p].Gradients.Rad_E_gamma_ET[kf][k]*CellP[p].Gradients.Rad_E_gamma_ET[kf][k];}
+                    double gradETmag = CellP[p].Gradients.Rad_E_gamma_ET[kf].norm_sq();
                     double L_ETgrad_inv = sqrt(gradETmag) / (1.e-37 + CellP[p].Rad_E_gamma[kf] * CellP[p].Density/P[p].Mass);
                     double L_RT_diffusion = DMIN(L_particle , 1./(3.*L_ETgrad_inv)) * All.cf_atime;
                     double dt_rt_diffusion = dt_prefac_diffusion * L_RT_diffusion*L_RT_diffusion / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf));
@@ -714,7 +713,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 #endif // explicit-solver check
 #if defined(RT_RAD_PRESSURE_FORCES) // -regardless- of if using an explicit solver, here the acceleration isn't saved to Rad_Accel so we calculate that timestep constraint
-                    double gradErad=0; for(k=0;k<3;k++) {gradErad+=CellP[p].Gradients.Rad_E_gamma_ET[kf][k]*CellP[p].Gradients.Rad_E_gamma_ET[kf][k];}
+                    double gradErad = CellP[p].Gradients.Rad_E_gamma_ET[kf].norm_sq();
                     double radacc = return_flux_limiter(p,kf) * (sqrt(gradErad) / CellP[p].Density) / All.cf_atime; // radiation acceleration for a timestep criterion
                     if(gradErad > 0 && radacc > 0)
                     {
@@ -901,11 +900,12 @@ integertime get_timestep(int p,		/*!< particle index */
         if(dt > 0)
         {
             double p_target = 0.2; // desired maximum probability per timestep
-            double dV[3]; for(k=0;k<3;k++) {dV[k]=P[p].AGS_vsig*All.cf_atime/sqrt(3.);} // convert signal vel to velocity dispersion for estimating rates
+            double vsig_fac = P[p].AGS_vsig*All.cf_atime/sqrt(3.);
+            Vec3<double> dV = {vsig_fac, vsig_fac, vsig_fac}; // convert signal vel to velocity dispersion for estimating rates
 #ifdef GRAIN_COLLISIONS
-            double p_dt = prob_of_grain_interaction(return_grain_cross_section_per_unit_mass(p),P[p].Mass,0.,P[p].AGS_KernelRadius,dV,dt,p); // probability of interacting with another grain super-particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
+            double p_dt = prob_of_grain_interaction(return_grain_cross_section_per_unit_mass(p),P[p].Mass,0.,P[p].AGS_KernelRadius,dV.data_ptr(),dt,p); // probability of interacting with another grain super-particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
 #else
-            double p_dt = prob_of_interaction(P[p].Mass,0.,P[p].AGS_KernelRadius,dV,dt); // probability of interacting with another DM particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
+            double p_dt = prob_of_interaction(P[p].Mass,0.,P[p].AGS_KernelRadius,dV.data_ptr(),dt); // probability of interacting with another DM particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
 #endif
             if(p_dt > p_target) {dt *= p_target / p_dt;}
         }

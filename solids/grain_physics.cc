@@ -50,11 +50,10 @@ void apply_grain_dragforce(void)
 #endif
 #endif
 #if defined(GRAIN_BACKREACTION)
-            for(k=0;k<3;k++) {P[i].Grain_DeltaMomentum[k]=0;} /* reset momentum to couple back to gas (or else would diverge) */
+            P[i].Grain_DeltaMomentum = {}; /* reset momentum to couple back to gas (or else would diverge) */
 #endif
             double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
-            double vgas_mag = 0.0; for(k=0;k<3;k++) {vgas_mag+=(P[i].Gas_Velocity[k]-P[i].Vel[k])*(P[i].Gas_Velocity[k]-P[i].Vel[k]);}
-            vgas_mag = sqrt(vgas_mag) / All.cf_atime; /* convert to physical units */
+            double vgas_mag = sqrt((P[i].Gas_Velocity - P[i].Vel).norm_sq()) / All.cf_atime; /* convert to physical units */
             int grain_subtype = 1; /* default assumption about particulate sub-type for operations below */
 #if defined(PIC_MHD)
             grain_subtype = P[i].MHD_PIC_SubType;

@@ -145,6 +145,7 @@ int ngb_treefind_variable_threads_targeted(MyDouble searchcenter[3], MyFloat rke
 int ngb_treefind_pairs_threads_targeted(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
                                            int mode, int *exportflag, int *exportnodecount, int *exportindex,
                                            int *ngblist, int TARGET_BITMASK);
+inline int ngb_treefind_pairs_threads_targeted(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int TARGET_BITMASK) { return ngb_treefind_pairs_threads_targeted(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist, TARGET_BITMASK); }
 
 
 
@@ -529,6 +530,7 @@ void st_turbdrive_calc_phases(void);
 double st_return_driving_scale(void);
 #endif
 double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target);
+inline double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target) { return evaluate_NH_from_GradRho(const_cast<MyFloat*>(gradrho.data), rkern, rho, numngb_ndim, include_h, target); }
 double evaluate_time_since_t_initial_in_Gyr(double t_initial);
 
 #ifdef GALSF
@@ -949,7 +951,9 @@ void subtract_companion_gravity(int i);
 void hydro_gradient_calc(void);
 int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int gradient_iteration);
 void construct_gradient(double *grad, int i);
+inline void construct_gradient(Vec3<double>& grad, int i) { construct_gradient(grad.data, i); }
 void local_slopelimiter(double *grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen);
+inline void local_slopelimiter(Vec3<double>& grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen) { local_slopelimiter(grad.data, valmax, valmin, alim, h, shoot_tol, pos_preserve, d_max, val_cen); }
 
 #ifdef TURB_DIFF_DYNAMIC
 void dynamic_diff_vel_calc(void);

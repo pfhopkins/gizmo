@@ -467,7 +467,7 @@ void gravity_tree(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
         if(!needs_new_treeforce(i)) { // if we don't yet need a new tree pass, just update GravAccel according to the jerk term, increment the counter, and go to the next particle           
-            for(j=0; j<3; j++) {P[i].GravAccel[j] += dt * P[i].GravJerk[j] * All.cf_a2inv;} // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
+            P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
             continue;
         } else {
@@ -475,9 +475,9 @@ void gravity_tree(void)
         }
 #endif
         /* before anything: multiply by G for correct units [be sure operations above/below are aware of this!] */
-        for(j=0;j<3;j++) {P[i].GravAccel[j] *= All.G;}        
+        P[i].GravAccel *= All.G;
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-        for(j=0;j<3;j++) {P[i].COM_GravAccel[j] *= All.G;}
+        P[i].COM_GravAccel *= All.G;
 #endif
 
 #ifdef EVALPOTENTIAL
@@ -497,8 +497,8 @@ void gravity_tree(void)
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
         if(P[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
         {
-            for(j=0;j<3;j++) {P[i].vel_of_nearest_special[j] /= P[i].weight_sum_for_special_point_smoothing;}
-            for(j=0;j<3;j++) {P[i].acc_of_nearest_special[j] /= P[i].weight_sum_for_special_point_smoothing;}
+            P[i].vel_of_nearest_special /= P[i].weight_sum_for_special_point_smoothing;
+            P[i].acc_of_nearest_special /= P[i].weight_sum_for_special_point_smoothing;
             /* now reset the local values for this to actually match these, recalling the special particle in this module is just a tracer element */
             double dtime_phys = (All.Time - P[i].Time_Of_Last_SmoothedVelUpdate) / All.cf_hubble_a; /* want to convert to physical units */
             if(dtime_phys > 0) {
@@ -526,7 +526,7 @@ void gravity_tree(void)
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* final operations to compute the tidal tensor and related quantities */
         P[i].tidal_tensorps *= All.G; /* give this the proper units */
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        for(j=0;j<3;j++) {P[i].GravJerk[j] *= All.G;} /* units */
+        P[i].GravJerk *= All.G; /* units */
 #endif
 #if defined(PMGRID) && !defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
         P[i].tidal_tensorps += P[i].tidal_tensorpsPM; /* add the long-range (pm-grid) contribution; but make sure to do this after the unit multiplication by G above, since the PM term already has G built into it */
@@ -546,14 +546,15 @@ void gravity_tree(void)
         if(P[i].Type==0) {CellP[i].SubGrid_CosmicRayEnergyDensity *= cr_get_source_shieldfac(i);}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX) /* multiply by volume to use standard 'finite volume-like' quantity as elsewhere in-code */
-        if(P[i].Type==0) {int kf,k2; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k2=0;k2<3;k2++) {CellP[i].Rad_Flux[kf][k2] *= P[i].Mass/(CellP[i].Density*All.cf_a3inv);}}} // convert to standard finite-volume-like units //
+        if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_Flux[kf] *= P[i].Mass/(CellP[i].Density*All.cf_a3inv);}} // convert to standard finite-volume-like units //
 #if !defined(RT_DISABLE_RAD_PRESSURE) // if we save the fluxes, we didnt apply forces on-the-spot, which means we appky them here //
         if((P[i].Type==0) && (P[i].Mass>0))
         {
-            int k,kfreq; double vol_inv=CellP[i].Density*All.cf_a3inv/P[i].Mass, radacc[3]={0}, h_i=Get_Particle_Size(i)*All.cf_atime, sigma_eff_i=P[i].Mass/(h_i*h_i);
+            int kfreq; double vol_inv=CellP[i].Density*All.cf_a3inv/P[i].Mass, h_i=Get_Particle_Size(i)*All.cf_atime, sigma_eff_i=P[i].Mass/(h_i*h_i);
+            Vec3<double> radacc={};
             for(kfreq=0; kfreq<N_RT_FREQ_BINS; kfreq++)
             {
-                double f_slab=1, erad_i=0, vel_i[3]={0}, vdot_h[3]={0}, flux_i[3]={0}, flux_mag2=MIN_REAL_NUMBER, vdotflux=0, kappa_rad=rt_kappa(i,kfreq), tau_eff=kappa_rad*sigma_eff_i; if(tau_eff > 1.e-4) {f_slab = (1.-exp(-tau_eff)) / tau_eff;} // account for optically thick local 'slabs' self-shielding themselves
+                double f_slab=1, erad_i=0, kappa_rad=rt_kappa(i,kfreq), tau_eff=kappa_rad*sigma_eff_i; if(tau_eff > 1.e-4) {f_slab = (1.-exp(-tau_eff)) / tau_eff;} // account for optically thick local 'slabs' self-shielding themselves
                 double acc_norm = kappa_rad * f_slab / C_LIGHT_CODE_REDUCED(i); // pre-factor for radiation pressure acceleration
 #if defined(RT_LEBRON)
                 acc_norm *= All.PhotonMomentum_Coupled_Fraction; // allow user to arbitrarily increase/decrease strength of RP forces for testing
@@ -561,14 +562,16 @@ void gravity_tree(void)
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
                 erad_i = CellP[i].Rad_E_gamma_Pred[kfreq]*vol_inv; // if can, include the O[v/c] terms
 #endif
-                for(k=0;k<3;k++) {flux_i[k]=CellP[i].Rad_Flux_Pred[kfreq][k]*vol_inv; flux_mag2+=flux_i[k]*flux_i[k]; vel_i[k]=CellP[i].VelPred[k]/All.cf_atime; vdotflux+=vel_i[k]*flux_i[k];} // initialize a bunch of variables we will need
-                for(k=0;k<3;k++) {vdot_h[k] = erad_i * (vel_i[k] + vdotflux*flux_i[k]/flux_mag2);} // calculate volume integral of scattering coefficient t_inv * (gas_vel . [e_rad*I + P_rad_tensor]), which gives an additional time-derivative term. this is the P term //
-                for(k=0;k<3;k++) {radacc[k] += acc_norm * (flux_i[k] - vdot_h[k]);} // note these 'vdoth' terms shouldn't be included in FLD, since its really assuming the entire right-hand-side of the flux equation reaches equilibrium with the pressure tensor, which gives the expression in rt_utilities
+                Vec3<double> flux_i = CellP[i].Rad_Flux_Pred[kfreq] * vol_inv;
+                Vec3<double> vel_i = CellP[i].VelPred * (1.0/All.cf_atime);
+                double flux_mag2 = flux_i.norm_sq() + MIN_REAL_NUMBER, vdotflux = dot(vel_i, flux_i); // initialize a bunch of variables we will need
+                Vec3<double> vdot_h = (vel_i + flux_i * (vdotflux/flux_mag2)) * erad_i; // calculate volume integral of scattering coefficient t_inv * (gas_vel . [e_rad*I + P_rad_tensor]), which gives an additional time-derivative term. this is the P term //
+                radacc += (flux_i - vdot_h) * acc_norm; // note these 'vdoth' terms shouldn't be included in FLD, since its really assuming the entire right-hand-side of the flux equation reaches equilibrium with the pressure tensor, which gives the expression in rt_utilities
             }
 #if defined(RT_RAD_PRESSURE_OUTPUT)
-            for(k=0;k<3;k++) {CellP[i].Rad_Accel[k] = radacc[k];} // here units are the same as hydroaccel, so no extra comoving units 
+            CellP[i].Rad_Accel = radacc; // here units are the same as hydroaccel, so no extra comoving units
 #else
-            for(k=0;k<3;k++) {P[i].GravAccel[k] += radacc[k] / All.cf_a2inv;} // convert into our code units for GravAccel, which are comoving gm/r^2 units //
+            P[i].GravAccel += radacc * (1.0/All.cf_a2inv); // convert into our code units for GravAccel, which are comoving gm/r^2 units //
 #endif
         }
 #endif
@@ -586,10 +589,10 @@ void gravity_tree(void)
 #endif
 
 #if !defined(BOX_PERIODIC) && !defined(PMGRID) /* some factors here in case we are trying to do comoving simulations in a non-periodic box (special use cases) */
-        if(All.ComovingIntegrationOn) {for(j=0;j<3;j++) {P[i].GravAccel[j] += 0.5*All.OmegaMatter *All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * P[i].Pos[j];}}
-        if(All.ComovingIntegrationOn==0) {for(j=0;j<3;j++) {P[i].GravAccel[j] += All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * P[i].Pos[j];}}
+        if(All.ComovingIntegrationOn) {P[i].GravAccel += P[i].Pos * (0.5*All.OmegaMatter*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits);}
+        if(All.ComovingIntegrationOn==0) {P[i].GravAccel += P[i].Pos * (All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits);}
 #ifdef EVALPOTENTIAL
-        if(All.ComovingIntegrationOn) {for(j=0;j<3;j++) {P[i].Potential -= 0.5*All.OmegaMatter *All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * P[i].Pos[j]*P[i].Pos[j];}}
+        if(All.ComovingIntegrationOn) {P[i].Potential -= 0.5*All.OmegaMatter*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * P[i].Pos.norm_sq();}
 #endif
 #endif
 

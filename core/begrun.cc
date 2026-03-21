@@ -447,7 +447,7 @@ void begrun(void)
     single_star_SN_init_directions();
 #endif
 #ifdef RT_RAD_PRESSURE_OUTPUT
-    {int i; for(i=0;i<NumPart;i++) {int k; for(k=0;k<3;k++) {CellP[i].Rad_Accel[k]=0;}}}
+    {int i; for(i=0;i<NumPart;i++) {CellP[i].Rad_Accel = {};}}
 #endif
 #ifdef RADTRANSFER
 #if defined(RT_EVOLVE_INTENSITIES)

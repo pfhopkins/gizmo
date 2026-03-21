@@ -90,7 +90,7 @@ void dynamic_diff_vel_calc_initial_operations_preloop(void)
             CellP[i].h_turb = Get_Particle_Size(i); // All.cf_atime unnecessary, will multiply later
             CellP[i].FilterWidth_bar = 0;
             CellP[i].MaxDistance_for_grad = 0;
-            int k; for (k = 0; k < 3; k++) {CellP[i].Velocity_bar[k] = CellP[i].VelPred[k] / All.TurbDynamicDiffSmoothing;}
+            CellP[i].Velocity_bar = CellP[i].VelPred / All.TurbDynamicDiffSmoothing;
         }
     }
 }

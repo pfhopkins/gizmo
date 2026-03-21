@@ -96,7 +96,7 @@ struct Quantities_for_Gradients
 
 struct kernel_GasGrad
 {
-    double dp[3],r,wk_i, wk_j, dwk_i, dwk_j,h_i;
+    Vec3<double> dp; double r,wk_i, wk_j, dwk_i, dwk_j,h_i;
 };
 
 struct GasGraddata_in
@@ -579,7 +579,7 @@ void hydro_gradient_calc(void)
             memset(&GasGradDataPasser[i], 0, sizeof(struct temporary_data_topass));
 #ifdef HYDRO_SPH
 #ifdef MAGNETIC
-            for(k = 0; k < 3; k++) {CellP[i].DtB[k] = 0;}
+            CellP[i].DtB = {};
 #endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].divB = 0;
@@ -590,47 +590,42 @@ void hydro_gradient_calc(void)
 #endif
 #ifdef TURB_DIFF_DYNAMIC
             /* NEED Velocity_bar CORRECT HERE */
-            for (k = 0; k < 3; k++) {
-                CellP[i].Velocity_bar[k] *= All.TurbDynamicDiffSmoothing;
-                CellP[i].Velocity_hat[k] = CellP[i].Velocity_bar[k] * smoothInv;
-            }
+            CellP[i].Velocity_bar *= All.TurbDynamicDiffSmoothing;
+            CellP[i].Velocity_hat = CellP[i].Velocity_bar * smoothInv;
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
             P[i].AGS_zeta = 0;
 #endif
 
             /* and zero out the gradients structure itself */
-            for(k=0;k<3;k++)
-            {
-                CellP[i].Gradients.Density[k] = 0;
-                CellP[i].Gradients.Pressure[k] = 0;
-                for(k2=0;k2<3;k2++) {CellP[i].Gradients.Velocity[k2][k] = 0;}
+            CellP[i].Gradients.Density = {};
+            CellP[i].Gradients.Pressure = {};
+            for(k2=0;k2<3;k2++) {for(k=0;k<3;k++) {CellP[i].Gradients.Velocity[k2][k] = 0;}}
 #ifdef DOGRAD_INTERNAL_ENERGY
-                CellP[i].Gradients.InternalEnergy[k] = 0;
+            CellP[i].Gradients.InternalEnergy = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
-                for(k2=0;k2<N_CR_PARTICLE_BINS;k2++) {CellP[i].Gradients.CosmicRayPressure[k2][k] = 0;}
+            for(k2=0;k2<N_CR_PARTICLE_BINS;k2++) {CellP[i].Gradients.CosmicRayPressure[k2] = {};}
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-                CellP[i].Gradients.SoundSpeed[k] = 0;
+            CellP[i].Gradients.SoundSpeed = {};
 #endif
 #ifdef MAGNETIC
 #ifndef MHD_CONSTRAINED_GRADIENT
-                for(k2=0;k2<3;k2++) {CellP[i].Gradients.B[k2][k] = 0;}
+            for(k2=0;k2<3;k2++) {for(k=0;k<3;k++) {CellP[i].Gradients.B[k2][k] = 0;}}
 #else
-                CellP[i].Face_Area[k] = 0;
+            CellP[i].Face_Area = {};
 #endif
 #if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
-                CellP[i].Gradients.Phi[k] = 0;
+            CellP[i].Gradients.Phi = {};
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-                for(k2=0;k2<NUM_METAL_SPECIES;k2++) {CellP[i].Gradients.Metallicity[k2][k] = 0;}
+            for(k2=0;k2<NUM_METAL_SPECIES;k2++) {CellP[i].Gradients.Metallicity[k2] = {};}
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-                for(k2=0;k2<N_RT_FREQ_BINS;k2++) {CellP[i].Gradients.Rad_E_gamma_ET[k2][k] = 0;}
+            for(k2=0;k2<N_RT_FREQ_BINS;k2++) {CellP[i].Gradients.Rad_E_gamma_ET[k2] = {};}
 #endif
-            }
         }
 
 
@@ -882,8 +877,7 @@ void hydro_gradient_calc(void)
                 for(k=0;k<3;k++) {construct_gradient(CellP[i].Gradients.B[k],i);}
                 /* slope limit it */
                 double v_tmp = P[i].Mass / CellP[i].Density;
-                double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime/ CellP[i].Pressure*v_tmp*v_tmp) +
-                                    CellP[i].BPred[0]*CellP[i].BPred[0]+CellP[i].BPred[1]*CellP[i].BPred[1]+CellP[i].BPred[2]*CellP[i].BPred[2]);
+                double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime/ CellP[i].Pressure*v_tmp*v_tmp) + CellP[i].BPred.norm_sq());
                 double tmp = 3.0e3 * fabs(CellP[i].divB) * P[i].KernelRadius / tmp_d;
                 double alim; alim = 1. + DMIN(1.,tmp*tmp);
 #if (MHD_CONSTRAINED_GRADIENT <= 1)
@@ -1041,7 +1035,7 @@ void hydro_gradient_calc(void)
             /* now the gradients are calculated: below are simply useful operations on the results */
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
             /* this is here because for the models of sink growth and self-shielding of stars, we need to calculate GradRho: we don't bother doing it in density.c if we're already calculating it here! but note, this is the -un-limited- gradient here */
-            for(k=0;k<3;k++) {P[i].GradRho[k] = CellP[i].Gradients.Density[k];}
+            P[i].GradRho = CellP[i].Gradients.Density;
 #endif
 
 #if defined(TURB_DRIVING) || defined(OUTPUT_VORTICITY)
@@ -1069,7 +1063,7 @@ void hydro_gradient_calc(void)
 #ifdef MAGNETIC
             if(CellP[i].Density > 0)
             {
-                for(k=0;k<3;k++) {CellP[i].DtB[k] *= P[i].DrkernNgbFactor * P[i].Mass / (CellP[i].Density * CellP[i].Density) / All.cf_atime;} // induction equation (convert from Bcode*vcode/rcode to Bphy/tphys) //
+                CellP[i].DtB *= P[i].DrkernNgbFactor * P[i].Mass / (CellP[i].Density * CellP[i].Density) / All.cf_atime; // induction equation (convert from Bcode*vcode/rcode to Bphy/tphys) //
 #ifdef DIVBCLEANING_DEDNER
                 /* full correct form of D(phi)/Dt = -ch*ch*div.dot.B - phi/tau - (1/2)*phi*div.dot.v */ /* PFH: here's the div.dot.B term: make sure div.dot.B def'n matches appropriate grad_phi conjugate pair: recommend direct diff div.dot.B */
                 CellP[i].divB *= P[i].DrkernNgbFactor * P[i].Mass / (CellP[i].Density * CellP[i].Density);
@@ -1081,11 +1075,11 @@ void hydro_gradient_calc(void)
                     CellP[i].DtPhi = -tmp_ded * tmp_ded * All.DivBcleanHyperbolicSigma * CellP[i].divB * CellP[i].Density*All.cf_a3inv; // mass-based phi-flux
                     // phiphi above now has units of [Bcode]*[vcode]^2/[rcode]=(Bcode*vcode)*vcode/rcode; needs to have units of [Phicode]*[vcode]/[rcode] so [PhiGrad]=[Phicode]/[rcode] = [DtB] = [Bcode]*[vcode]/[rcode] IFF [Phicode]=[Bcode]*[vcode]; this also makes the above self-consistent //
                     // (implicitly, this gives the correct evolution in comoving, adiabatic coordinates where the sound speed is the relevant speed at which the 'damping wave' propagates. another choice (provided everything else is self-consistent) is fine, it just makes different assumptions about the relevant 'desired' timescale for damping wave propagation in the expanding box) //
-                } else {CellP[i].DtPhi=0; CellP[i].divB=0; for(k=0;k<3;k++) {CellP[i].DtB[k] = 0;}}
+                } else {CellP[i].DtPhi=0; CellP[i].divB=0; CellP[i].DtB = {};}
                 CellP[i].divB = 0.0; /* now we re-zero it, since a -different- divB definition must be used in hydro to subtract the tensile terms */
 #endif
             } else {
-                for(k=0;k<3;k++) {CellP[i].DtB[k] = 0;}
+                CellP[i].DtB = {};
 #ifdef DIVBCLEANING_DEDNER
                 CellP[i].divB = 0; CellP[i].DtPhi = 0;
 #endif
@@ -1139,7 +1133,7 @@ void hydro_gradient_calc(void)
                     double lambda = 1;
                     if(CellP[i].Rad_E_gamma_Pred[k_freq] > 0) /* can compute gradient length scale */
                     {
-                        double R_ET = sqrt(CellP[i].Gradients.Rad_E_gamma_ET[k_freq][0] * CellP[i].Gradients.Rad_E_gamma_ET[k_freq][0] + CellP[i].Gradients.Rad_E_gamma_ET[k_freq][1] * CellP[i].Gradients.Rad_E_gamma_ET[k_freq][1] + CellP[i].Gradients.Rad_E_gamma_ET[k_freq][2] * CellP[i].Gradients.Rad_E_gamma_ET[k_freq][2]) / (MIN_REAL_NUMBER + CellP[i].Rad_E_gamma_Pred[k_freq] * CellP[i].Density/(MIN_REAL_NUMBER+P[i].Mass));
+                        double R_ET = CellP[i].Gradients.Rad_E_gamma_ET[k_freq].norm() / (MIN_REAL_NUMBER + CellP[i].Rad_E_gamma_Pred[k_freq] * CellP[i].Density/(MIN_REAL_NUMBER+P[i].Mass));
                         R_ET = 3.*DMAX(R_ET , 1.e-6/Get_Particle_Size(i)) / (1.e-55 + All.cf_atime*CellP[i].Rad_Kappa[k_freq]*(CellP[i].Density*All.cf_a3inv)); // limit to be > 0, divide by kappa-rho to get desired dimensionless ratio
                         lambda = DMIN(1., DMAX( 3.*(2. + R_ET) / (6. + 3.*R_ET + R_ET*R_ET), MIN_REAL_NUMBER )); // slope-limiter
 #ifdef RT_OTVET         /* note that the OTVET eddington tensor is close to the correct value for the optically-thin limit. for the diffusion limit
@@ -1156,7 +1150,7 @@ void hydro_gradient_calc(void)
 #endif // ifdef fluxlimiter
 
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && !defined(RT_OTVET)
-                    eddington_tensor_dot_vector(CellP[i].ET[k_freq],GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq],CellP[i].Gradients.Rad_E_gamma_ET[k_freq]); /* set the output gradient grad.(D*Prad) = D.(grad Prad), i.e. move the tensor outside the gradient. while not strictly self-consistent, this is more stable, and correct at the level of the ad-hoc M1 or OTVET closure, b/c otherwise M1 introduces unphysical behaviors from the gradients of the tensor where the ad-hoc closure relation causes changes to D [see e.g. Hopkins 'Anisotropic Diffusion in Mesh-Free Numerical Magnetohydrodynamics' Fig 8 and associated discussion]. Also works for FLD trivially. */
+                    eddington_tensor_dot_vector(CellP[i].ET[k_freq],GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq],CellP[i].Gradients.Rad_E_gamma_ET[k_freq].data_ptr()); /* set the output gradient grad.(D*Prad) = D.(grad Prad), i.e. move the tensor outside the gradient. while not strictly self-consistent, this is more stable, and correct at the level of the ad-hoc M1 or OTVET closure, b/c otherwise M1 introduces unphysical behaviors from the gradients of the tensor where the ad-hoc closure relation causes changes to D [see e.g. Hopkins 'Anisotropic Diffusion in Mesh-Free Numerical Magnetohydrodynamics' Fig 8 and associated discussion]. Also works for FLD trivially. */
 #endif
 #if defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION) /* yet another hack for this problem to get the boundaries to play nicely once dust evacuated -- this is a bit redundant with other hacks, but here for safety */
                     if(CellP[i].Interpolated_Opacity[0] < 1.e-3 * All.Dust_to_Gas_Mass_Ratio*0.75*All.Grain_Q_at_MaxGrainSize/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS))) {double gmax=-1; if(P[i].GravAccel[GRAV_DIRECTION_RDI] < gmax) {P[i].GravAccel[GRAV_DIRECTION_RDI]=gmax;}} // the interpolated opacity here should be in code units by default
@@ -1455,7 +1449,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /*  now find the closest image in the given box size  */
-                r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 double h_j = P[j].KernelRadius;
 #if !defined(HYDRO_SPH) && !defined(KERNEL_CRK_FACES)
                 if(r2 <= 0) continue;
