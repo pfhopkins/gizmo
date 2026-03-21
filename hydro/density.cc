@@ -199,7 +199,7 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
         for(k=0;k<3;k++) ASSIGN_ADD(CellP[i].ParticleVel[k], out->ParticleVel[k],   mode);
 #endif
-        for(k=0;k<3;k++) {for(j=0;j<3;j++) {ASSIGN_ADD(CellP[i].NV_T[k][j], out->NV_T[k][j], mode);}}
+        for(k=0;k<3;k++) {for(j=k;j<3;j++) {ASSIGN_ADD(CellP[i].NV_T[k][j], out->NV_T[k][j], mode);}}
         for(k=0;k<3;k++) {ASSIGN_ADD(CellP[i].NV_T_face_weights[k], out->NV_T_face_weights[k], mode);}
 
 #ifdef HYDRO_SPH
