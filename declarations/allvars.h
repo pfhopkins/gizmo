@@ -1058,9 +1058,9 @@ extern struct gravdata_out
     MyDouble Potential;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<MyDouble> tidal_tensorps;
+    SymmetricTensor2<MyFloat> tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    MyDouble tidal_zeta;
+    MyFloat tidal_zeta;
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
@@ -1087,7 +1087,7 @@ extern struct gravdata_out
     MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
     MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-    SymmetricTensor2<MyDouble> COM_tidal_tensorps; //tidal tensor evaluated at the center of mass without contribution from the companion
+    SymmetricTensor2<MyFloat> COM_tidal_tensorps; //tidal tensor evaluated at the center of mass without contribution from the companion
     MyDouble COM_GravAccel[3]; //gravitational acceleration evaluated at the center of mass without contribution from the companion
     int COM_calc_flag; //flag that tells whether this was only a rerun to get the acceleration ad the tidal tenor at the center of mass of a binary
     int SuperTimestepFlag; // 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise

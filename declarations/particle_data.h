@@ -48,14 +48,14 @@ extern ALIGN(32) struct particle_data
 #endif
 #if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || (defined(SINGLE_STAR_TIMESTEPPING) && (SINGLE_STAR_TIMESTEPPING > 0)) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #define COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<double> tidal_tensorps;            /*!< tidal tensor (=second derivatives of grav. potential) */
+    SymmetricTensor2<MyFloat> tidal_tensorps;            /*!< tidal tensor (=second derivatives of grav. potential) */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    double tidal_tensor_mag_prev;                       /*!< saved frobenius norm of the tidal tensor, from the previous timestep >*/
-    SymmetricTensor2<double> tidal_tensorps_prevstep;   /*!< save the entire tensor if this is active >*/
-    double tidal_zeta;                                  /*!< also need to calculate an analog of the ags zeta variable here >*/
+    MyFloat tidal_tensor_mag_prev;                       /*!< saved frobenius norm of the tidal tensor, from the previous timestep >*/
+    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;   /*!< save the entire tensor if this is active >*/
+    MyFloat tidal_zeta;                                  /*!< also need to calculate an analog of the ags zeta variable here >*/
 #endif
 #ifdef PMGRID
-    SymmetricTensor2<double> tidal_tensorpsPM;          /*!< for TreePM simulations, long range tidal field */
+    SymmetricTensor2<MyFloat> tidal_tensorpsPM;          /*!< for TreePM simulations, long range tidal field */
 #endif
 #endif
     

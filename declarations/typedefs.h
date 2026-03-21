@@ -17,7 +17,7 @@ typedef unsigned long long peano1D;
 
 
 typedef unsigned long long MyIDType;
-typedef double  MyFloat;
+typedef double   MyFloat;
 typedef double  MyDouble;
 
 #ifdef OUTPUT_IN_DOUBLEPRECISION
