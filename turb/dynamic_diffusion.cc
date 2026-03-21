@@ -46,7 +46,7 @@ struct kernel_DynamicDiff {
 };
 
 struct DynamicDiffdata_in {
-    MyDouble Pos[3];
+    Vec3<MyDouble> Pos;
     MyFloat Mass;
     MyFloat KernelRadius;
     MyDouble Density;
@@ -55,8 +55,8 @@ struct DynamicDiffdata_in {
     MyDouble VelShear_bar[3][3];
     MyDouble TD_DynDiffCoeff;
     MyDouble MagShear_bar;
-    MyDouble Velocity_bar[3];
-    MyDouble Velocity_hat[3];
+    Vec3<MyDouble> Velocity_bar;
+    Vec3<MyDouble> Velocity_hat;
     MyDouble Norm_hat;
     MyDouble Dynamic_numerator;
     MyDouble Dynamic_denominator;
@@ -108,11 +108,10 @@ static struct temporary_data_dyndiff {
 
 static inline void particle2in_DynamicDiff(struct DynamicDiffdata_in *in, int i, int dynamic_iteration) {
     int k, v;
+    in->Pos = P[i].Pos;
+    in->Velocity_bar = CellP[i].Velocity_bar;
+    in->Velocity_hat = CellP[i].Velocity_hat;
     for (k = 0; k < 3; k++) {
-        in->Pos[k] = P[i].Pos[k];
-        in->Velocity_bar[k] = CellP[i].Velocity_bar[k];
-        in->Velocity_hat[k] = CellP[i].Velocity_hat[k];
-
         for (v = 0; v < 3; v++) {
             in->VelShear_bar[k][v] = CellP[i].VelShear_bar[k][v];
         }
@@ -787,7 +786,7 @@ int DynamicDiff_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
-                NEAREST_XYZ(kernel.dp[0], kernel.dp[1], kernel.dp[2], 1); /*  now find the closest image in the given box size  */
+                NEAREST_XYZ(kernel.dp[0], kernel.dp[1], kernel.dp[2], 1);
                 r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
                 double h_j = All.TurbDynamicDiffFac * P[j].KernelRadius;
                 double h_avg = 0.5 * (kernel.h_i + h_j);

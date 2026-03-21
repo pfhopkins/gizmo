@@ -99,6 +99,7 @@ int ngb_treefind_pairs_targeted(MyDouble searchcenter[3], MyFloat rkern, int tar
                                    int *nexport, int *nsend_local, int TARGET_BITMASK);
 int ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode, int mode,
 			  int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
+inline int ngb_treefind_variable_threads(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist) { return ngb_treefind_variable_threads(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist); }
 
 #endif
 

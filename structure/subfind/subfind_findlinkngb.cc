@@ -23,7 +23,7 @@
  */
 static struct linkngbdata_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyFloat DM_KernelRadius;
   int NodeList[NODELISTLENGTH];
 }
@@ -121,9 +121,7 @@ void subfind_find_linkngb(void)
 	    {
 	      place = DataIndexTable[j].Index;
 
-	      LinkngbDataIn[j].Pos[0] = P[place].Pos[0];
-	      LinkngbDataIn[j].Pos[1] = P[place].Pos[1];
-	      LinkngbDataIn[j].Pos[2] = P[place].Pos[2];
+	      LinkngbDataIn[j].Pos = P[place].Pos;
 	      LinkngbDataIn[j].DM_KernelRadius = P[place].DM_KernelRadius;
 
 	      memcpy(LinkngbDataIn[j].NodeList,
@@ -311,12 +309,12 @@ int subfind_linkngb_evaluate(int target, int mode, int *nexport, int *nsend_loca
 
   if(mode == 0)
     {
-      pos = P[target].Pos;
+      pos = P[target].Pos.data_ptr();
       h = P[target].DM_KernelRadius;
     }
   else
     {
-      pos = LinkngbDataGet[target].Pos;
+      pos = LinkngbDataGet[target].Pos.data_ptr();
       h = LinkngbDataGet[target].DM_KernelRadius;
     }
 

@@ -39,7 +39,7 @@ group_properties *Group;
 
 static struct fofdata_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyFloat KernelRadius;
   MyIDType MinID;
   MyIDType MinIDTask;
@@ -461,9 +461,7 @@ void fof_find_groups(void)
 	    {
 	      place = DataIndexTable[j].Index;
 
-	      FoFDataIn[j].Pos[0] = P[place].Pos[0];
-	      FoFDataIn[j].Pos[1] = P[place].Pos[1];
-	      FoFDataIn[j].Pos[2] = P[place].Pos[2];
+	      FoFDataIn[j].Pos = P[place].Pos;
 	      FoFDataIn[j].MinID = MinID[Head[place]];
 	      FoFDataIn[j].MinIDTask = MinIDTask[Head[place]];
 
@@ -592,9 +590,9 @@ int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend
   links = 0;
 
   if(mode == 0 || mode == -1)
-    pos = P[target].Pos;
+    pos = P[target].Pos.data_ptr();
   else
-    pos = FoFDataGet[target].Pos;
+    pos = FoFDataGet[target].Pos.data_ptr();
 
   if(mode == 0 || mode == -1)
     {
@@ -1497,9 +1495,7 @@ void fof_find_nearest_dmparticle(void)
 	    {
 	      place = DataIndexTable[j].Index;
 
-	      FoFDataIn[j].Pos[0] = P[place].Pos[0];
-	      FoFDataIn[j].Pos[1] = P[place].Pos[1];
-	      FoFDataIn[j].Pos[2] = P[place].Pos[2];
+	      FoFDataIn[j].Pos = P[place].Pos;
 	      FoFDataIn[j].KernelRadius = fof_nearest_rkern[place];
 
 	      memcpy(FoFDataIn[j].NodeList,
@@ -1640,12 +1636,12 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
 
   if(mode == 0)
     {
-      pos = P[target].Pos;
+      pos = P[target].Pos.data_ptr();
       h = fof_nearest_rkern[target];
     }
   else
     {
-      pos = FoFDataGet[target].Pos;
+      pos = FoFDataGet[target].Pos.data_ptr();
       h = FoFDataGet[target].KernelRadius;
     }
 

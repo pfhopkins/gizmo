@@ -28,7 +28,7 @@ void force_update_tree(void)
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         force_kick_node(i, P[i].dp);    /* kick the parent nodes with this momentum difference, also updated maximum velocity, softening and soundspeed, if needed */
-        for(j = 0; j < 3; j++) {P[i].dp[j] = 0;}
+        P[i].dp = {};
     }
     force_finish_kick_nodes();
     myfree(DomainList);
@@ -40,26 +40,12 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 {
   int j, no; MyFloat v, vmax;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MyFloat rt_source_lum_dp[3];
+    Vec3<MyDouble> rt_source_lum_dp;
+    {double lum[N_RT_FREQ_BINS]; int active_check = rt_get_source_luminosity(i,-1,lum); rt_source_lum_dp = active_check ? dp : Vec3<MyDouble>{};}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-  MyFloat dp_dm[3];
+    Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
 #endif
-
-  for(j = 0; j < 3; j++)
-    {
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        double lum[N_RT_FREQ_BINS];
-        int active_check = rt_get_source_luminosity(i,-1,lum);
-        if(active_check) {rt_source_lum_dp[j]=dp[j];} else {rt_source_lum_dp[j]=0;}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-      if(P[i].Type != 0)
-	dp_dm[j] = dp[j];
-      else
-	dp_dm[j] = 0;
-#endif
-    }
 
   for(j = 0, vmax = 0; j < 3; j++)
     if((v = fabs(P[i].Vel[j])) > vmax)
@@ -71,16 +57,13 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
     {
       force_drift_node(no, All.Ti_Current);
 
-      for(j = 0; j < 3; j++)
-	{
-        Extnodes[no].dp[j] += dp[j];
+        Extnodes[no].dp += dp;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Extnodes[no].rt_source_lum_dp[j] += rt_source_lum_dp[j];
+        Extnodes[no].rt_source_lum_dp += rt_source_lum_dp;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        Extnodes[no].dp_dm[j] += dp_dm[j];
+        Extnodes[no].dp_dm += dp_dm;
 #endif
-	}
 
       if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
 
@@ -218,16 +201,19 @@ void force_finish_kick_nodes(void)
 	{
 	  force_drift_node(no, All.Ti_Current);
 
-	  for(j = 0; j < 3; j++)
-	    {
-	      Extnodes[no].dp[j] += domainDp_all[3 * i + j];
+	  Extnodes[no].dp[0] += domainDp_all[3 * i + 0];
+	  Extnodes[no].dp[1] += domainDp_all[3 * i + 1];
+	  Extnodes[no].dp[2] += domainDp_all[3 * i + 2];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-            Extnodes[no].rt_source_lum_dp[j] += domainDp_stellarlum_all[3 * i + j];
+          Extnodes[no].rt_source_lum_dp[0] += domainDp_stellarlum_all[3 * i + 0];
+          Extnodes[no].rt_source_lum_dp[1] += domainDp_stellarlum_all[3 * i + 1];
+          Extnodes[no].rt_source_lum_dp[2] += domainDp_stellarlum_all[3 * i + 2];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-	      Extnodes[no].dp_dm[j] += domainDp_dm_all[3 * i + j];
+	  Extnodes[no].dp_dm[0] += domainDp_dm_all[3 * i + 0];
+	  Extnodes[no].dp_dm[1] += domainDp_dm_all[3 * i + 1];
+	  Extnodes[no].dp_dm[2] += domainDp_dm_all[3 * i + 2];
 #endif
-	    }
 
 	  if(Extnodes[no].vmax < domainVmax_all[i])
 	    Extnodes[no].vmax = domainVmax_all[i];
@@ -297,36 +283,32 @@ void force_drift_node(int no, integertime time1)
       if(Nodes[no].mass_dm) {fac_dm = 1 / Nodes[no].mass_dm;} else {fac_dm = 0;}
 #endif
 
-      for(j = 0; j < 3; j++)
-	{
-	  Extnodes[no].vs[j] += fac * (Extnodes[no].dp[j]);
-	  Extnodes[no].dp[j] = 0;
+      Extnodes[no].vs += fac * Extnodes[no].dp;
+      Extnodes[no].dp = {};
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Extnodes[no].rt_source_lum_vs[j] += fac_stellar_lum * (Extnodes[no].rt_source_lum_dp[j]);
-        Extnodes[no].rt_source_lum_dp[j] = 0;
+      Extnodes[no].rt_source_lum_vs += fac_stellar_lum * Extnodes[no].rt_source_lum_dp;
+      Extnodes[no].rt_source_lum_dp = {};
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-	  Extnodes[no].vs_dm[j] += fac_dm * (Extnodes[no].dp_dm[j]);
-	  Extnodes[no].dp_dm[j] = 0;
+      Extnodes[no].vs_dm += fac_dm * Extnodes[no].dp_dm;
+      Extnodes[no].dp_dm = {};
 #endif
-
-	}
       Nodes[no].u.d.bitflags &= (~(1 << BITFLAG_NODEHASBEENKICKED));
     }
 
     dt_drift = dt_drift_hmax = get_drift_factor(Nodes[no].Ti_current, time1, no, 1);
     
 
-    for(j = 0; j < 3; j++) {Nodes[no].u.d.s[j] += Extnodes[no].vs[j] * dt_drift;}
+    Nodes[no].u.d.s += Extnodes[no].vs * dt_drift;
   Nodes[no].len += 2 * Extnodes[no].vmax * dt_drift;
 
 #ifdef DM_SCALARFIELD_SCREENING
-    for(j = 0; j < 3; j++) {Nodes[no].s_dm[j] += Extnodes[no].vs_dm[j] * dt_drift;}
+    Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;
 #endif
 
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    for(j = 0; j < 3; j++) {Nodes[no].rt_source_lum_s[j] += Extnodes[no].rt_source_lum_vs[j] * dt_drift;}
+    Nodes[no].rt_source_lum_s += Extnodes[no].rt_source_lum_vs * dt_drift;
 #endif
 
     if(Extnodes[no].hmax > 0) {Extnodes[no].hmax *= exp(DMAX(-1.,DMIN(1.,Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));}

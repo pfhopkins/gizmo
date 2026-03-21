@@ -31,7 +31,7 @@
 
 struct twopointdata_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyFloat Rs;
   int NodeList[NODELISTLENGTH];
 }
@@ -102,7 +102,7 @@ void twopoint(void)
         for(j = 0; j < nexport; j++)
         {
           place = DataIndexTable[j].Index;
-          for(k = 0; k < 3; k++) {TwoPointDataIn[j].Pos[k] = P[place].Pos[k];}
+          TwoPointDataIn[j].Pos = P[place].Pos;
           TwoPointDataIn[j].Rs = RsList[place];
           memcpy(TwoPointDataIn[j].NodeList, DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
         }
@@ -176,13 +176,13 @@ int twopoint_count_local(int target, int mode, int *nexport, int *nsend_local)
 
   if(mode == 0)
     {
-      pos = P[target].Pos;
+      pos = P[target].Pos.data_ptr();
       rs = RsList[target];
       memcpy(Count_bak, Count, sizeof(long long) * BINS_TP);
     }
   else
     {
-      pos = TwoPointDataGet[target].Pos;
+      pos = TwoPointDataGet[target].Pos.data_ptr();
       rs = TwoPointDataGet[target].Rs;
     }
 

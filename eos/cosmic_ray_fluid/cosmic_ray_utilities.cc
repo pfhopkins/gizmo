@@ -795,7 +795,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
 
         flux = (mode==0) ? CellP[i].CosmicRayFlux[k_CRegy] : CellP[i].CosmicRayFluxPred[k_CRegy];
 #ifdef MAGNETIC // do projection onto field lines
-        double fluxmag=sqrt(flux.norm_sq()), fluxdot=dot(flux, B0);
+        double fluxmag=flux.norm(), fluxdot=dot(flux, B0);
         if(fluxdot<0) {fluxmag*=-1;} // points down-field
         // before acting on the 'stiff' sub-system, account for the 'extra' advection term that accounts for 'twisting' of B: note more careful derivation shows this is sub-leading order in v/c, should not be included here
         //double fac_bv=0; for(k=0;k<3;k++) {fac_bv += All.cf_a2inv * bhat[k] * (bhat[0]*CellP[i].Gradients.Velocity[k][0] + bhat[1]*CellP[i].Gradients.Velocity[k][1] + bhat[2]*CellP[i].Gradients.Velocity[k][2]);}

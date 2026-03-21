@@ -32,12 +32,12 @@ struct Subfind_DensityOtherPropsEval_data_out *Subfind_DensityOtherPropsEval_Dat
 */
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
 /*! first define a short structure needed to pass in the group info here */
-static struct Subfind_DensityOtherPropsEval_data_in {MyDouble Pos[3]; MyOutputFloat R200; int NodeList[NODELISTLENGTH]; /* all needed for any version */} *Subfind_DensityOtherPropsEval_DataIn, *Subfind_DensityOtherPropsEval_DataGet;
+static struct Subfind_DensityOtherPropsEval_data_in {Vec3<MyDouble> Pos; MyOutputFloat R200; int NodeList[NODELISTLENGTH]; /* all needed for any version */} *Subfind_DensityOtherPropsEval_DataIn, *Subfind_DensityOtherPropsEval_DataGet;
 /*! now the main routine */
 int Subfind_DensityOtherProps_evaluate(int target, int mode, int *nexport, int *nsend_local)
 {
     int ngb,n,j,k,startnode,listindex=0; double *subhalo_pos, Hsearch; struct Subfind_DensityOtherPropsEval_data_out out; memset(&out, 0, sizeof(struct Subfind_DensityOtherPropsEval_data_out));
-    if(mode == 0) {subhalo_pos=Group[target].Pos; Hsearch=R200[target];} else {subhalo_pos=Subfind_DensityOtherPropsEval_DataGet[target].Pos; Hsearch=Subfind_DensityOtherPropsEval_DataGet[target].R200;}
+    if(mode == 0) {subhalo_pos=Group[target].Pos; Hsearch=R200[target];} else {subhalo_pos=Subfind_DensityOtherPropsEval_DataGet[target].Pos.data_ptr(); Hsearch=Subfind_DensityOtherPropsEval_DataGet[target].R200;}
     if(mode == 0) {startnode = All.MaxPart;} else {startnode = Subfind_DensityOtherPropsEval_DataGet[target].NodeList[0]; startnode = Nodes[startnode].u.d.nextnode;}
     while(startnode >= 0) {while(startnode >= 0) {
       ngb = ngb_treefind_variable_targeted(subhalo_pos, Hsearch, target, &startnode, mode, nexport, nsend_local, 63);

@@ -79,13 +79,13 @@ int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary)
 
 struct kernel_density 
 {
-    double dp[3],dv[3],r, wk, dwk, hinv, hinv3, hinv4; /*! Structure for communication during the density computation. Holds data that is sent to other processors */
+    Vec3<double> dp,dv; double r, wk, dwk, hinv, hinv3, hinv4; /*! Structure for communication during the density computation. Holds data that is sent to other processors */
 };
 
 static struct INPUT_STRUCT_NAME
 {
-  MyDouble Pos[3];
-  MyFloat Vel[3];
+  Vec3<MyDouble> Pos;
+  Vec3<MyFloat> Vel;
   MyFloat AGS_KernelRadius;
   int NodeList[NODELISTLENGTH];
   int Type;
@@ -95,7 +95,7 @@ static struct INPUT_STRUCT_NAME
 void ags_particle2in_density(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration);
 void ags_particle2in_density(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
-    int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->Vel[k]=P[i].Vel[k];}
+    in->Pos=P[i].Pos; in->Vel=P[i].Vel;
     in->AGS_KernelRadius = P[i].AGS_KernelRadius;
     in->Type = P[i].Type;
 }
@@ -176,11 +176,9 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if(P[j].Mass <= 0) continue;
                 
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
-                kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
-                kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); // find the closest image in the given box size
-                r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 if(r2 < h2)
                 {
                     kernel.r = sqrt(r2);
@@ -193,18 +191,10 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
 
                     if(kernel.r > 0)
                     {
-                        if(P[j].Type==0)
-                        {
-                            kernel.dv[0] = local.Vel[0] - CellP[j].VelPred[0];
-                            kernel.dv[1] = local.Vel[1] - CellP[j].VelPred[1];
-                            kernel.dv[2] = local.Vel[2] - CellP[j].VelPred[2];
-                        } else {
-                            kernel.dv[0] = local.Vel[0] - P[j].Vel[0];
-                            kernel.dv[1] = local.Vel[1] - P[j].Vel[1];
-                            kernel.dv[2] = local.Vel[2] - P[j].Vel[2];
-                        }
+                        if(P[j].Type==0) {kernel.dv = local.Vel - CellP[j].VelPred;}
+                        else {kernel.dv = local.Vel - P[j].Vel;}
                         NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,kernel.dv,1); /* wrap velocities for shearing boxes if needed */
-                        double v_dot_r = kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2];
+                        double v_dot_r = dot(kernel.dp, kernel.dv);
                         if(v_dot_r > 0) {v_dot_r *= 0.333333;} // receding elements don't signal strong change in forces in the same manner as approaching/converging particles
                         double vsig = 0.5 * fabs( fac_mu * v_dot_r / kernel.r );
                         short int TimeBin_j = P[j].TimeBin; if(TimeBin_j < 0) {TimeBin_j = -TimeBin_j - 1;} // need to make sure we correct for the fact that TimeBin is used as a 'switch' here to determine if a particle is active for iteration, otherwise this gives nonsense!
@@ -223,7 +213,7 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
                                 NeedToWakeupParticles_local = 1;
                         }
 #endif
-                        out.Particle_DivVel -= kernel.dwk * (kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2]) / kernel.r;
+                        out.Particle_DivVel -= kernel.dwk * dot(kernel.dp, kernel.dv) / kernel.r;
                         /* this is the -particle- divv estimator, which determines how KernelRadius will evolve */
                         
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
@@ -715,7 +705,7 @@ double do_cbe_nvt_inversion_for_faces(int i)
 
 struct kernel_AGSForce
 {
-    double dp[3], dv[3], r, wk_i, wk_j, dwk_i, dwk_j, h_i, hinv_i, hinv3_i, hinv4_i, h_j, hinv_j, hinv3_j, hinv4_j;
+    Vec3<double> dp, dv; double r, wk_i, wk_j, dwk_i, dwk_j, h_i, hinv_i, hinv3_i, hinv4_i, h_j, hinv_j, hinv3_j, hinv4_j;
 };
 
 /* structure for variables needed in evaluation sub-routines which must be passed from particles (sent to other processors) */
@@ -723,8 +713,8 @@ struct INPUT_STRUCT_NAME
 {
     double Mass;
     double AGS_KernelRadius;
-    double Pos[3];
-    double Vel[3];
+    Vec3<double> Pos;
+    Vec3<double> Vel;
     int NodeList[NODELISTLENGTH];
     int Type;
     double dtime;
@@ -760,8 +750,8 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->Type = P[i].Type;
     in->dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
     int k,k2; k=0; k2=0;
-    for(k=0;k<3;k++) {in->Pos[k] = P[i].Pos[k];}
-    for(k=0;k<3;k++) {in->Vel[k] = P[i].Vel[k];}
+    in->Pos = P[i].Pos;
+    in->Vel = P[i].Vel;
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
     in->V_i = get_particle_volume_ags(i);
     for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {in->NV_T[k][k2] = P[i].NV_T[k][k2];}}
@@ -886,9 +876,9 @@ int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecoun
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].AGS_KernelRadius <= 0)) continue; /* make sure neighbor is valid */
                 /* calculate position relative to target */
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0]; kernel.dp[1] = local.Pos[1] - P[j].Pos[1]; kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /*  now find the closest image in the given box size  */
-                r2 = kernel.dp[0]*kernel.dp[0] + kernel.dp[1]*kernel.dp[1] + kernel.dp[2]*kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 if(r2 <= 0) continue;
                 kernel.r = sqrt(r2);
                 kernel.h_j = P[j].AGS_KernelRadius;

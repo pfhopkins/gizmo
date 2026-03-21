@@ -36,7 +36,7 @@ static double **ZVec, **XVec, **QVec, **DVec, **Residue, **Diag, **Diag2;
 static struct rt_cg_data_in
 {
     int NodeList[NODELISTLENGTH];
-    MyDouble Pos[3];
+    Vec3<MyDouble> Pos;
     MyFloat Mass;
     MyFloat Density;
     MyFloat KernelRadius;
@@ -68,7 +68,7 @@ void *rt_diffusion_cg_evaluate_secondary(void *p, double **matrixmult_in, double
 void particle2in_rt_cg(struct rt_cg_data_in *in, int i)
 {
     int k;
-    for(k=0; k<3; k++) {in->Pos[k] = P[i].Pos[k];}
+    in->Pos = P[i].Pos;
     int kET; for(k=0;k<N_RT_FREQ_BINS;k++) for(kET=0; kET<6; kET++) {in->ET[k][kET] = CellP[i].ET[k][kET];}
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = P[i].Mass;
@@ -436,9 +436,9 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if(P[j].Type != 0) continue; // require a gas particle //
                 if(P[j].Mass <= 0) continue; // require the particle has mass //
-                double dp[3]; for(k=0; k<3; k++) {dp[k] = local.Pos[k] - P[j].Pos[k];}
+                Vec3<double> dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(dp[0],dp[1],dp[2],1); /* find the closest image in the given box size */
-                double r2=0; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}
+                double r2 = dp.norm_sq();
                 if(r2<=0) continue; // same particle //
                 if((r2>h2)||(r2>P[j].KernelRadius*P[j].KernelRadius)) continue; // outside kernel //
                 // calculate kernel quantities //

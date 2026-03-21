@@ -170,7 +170,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     nfree = All.MaxPart;        /* index of first free node */
     nfreep = &Nodes[nfree];    /* select first node */
     nfreep->len = DomainLen;
-    for(j = 0; j < 3; j++) {nfreep->center[j] = DomainCenter[j];}
+    nfreep->center = {(MyFloat)DomainCenter[0], (MyFloat)DomainCenter[1], (MyFloat)DomainCenter[2]};
     for(j = 0; j < 8; j++) {nfreep->u.suns[j] = -1;}
     numnodes = 1;
     nfreep++;
@@ -428,11 +428,12 @@ void force_insert_pseudo_particles(void)
 void force_update_node_recursive(int no, int sib, int father)
 {
     int j, jj, k, p, pp, nextsib, suns[8], count_particles, multiple_flag;
-    MyFloat hmax, vmax, v, divVmax, divVel, s[3], vs[3], mass;
+    MyFloat hmax, vmax, v, divVmax, divVel, mass;
+    Vec3<MyFloat> s, vs;
     struct particle_data *pa;
     
 #ifdef DM_SCALARFIELD_SCREENING
-    MyFloat s_dm[3], vs_dm[3], mass_dm;
+    Vec3<MyFloat> s_dm, vs_dm; MyFloat mass_dm;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     double cr_injection = 0;
@@ -445,12 +446,11 @@ void force_update_node_recursive(int no, int sib, int father)
     for(j=0;j<N_RT_FREQ_BINS;j++) {stellar_lum[j]=0;}
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MyFloat rt_source_lum_s[3];
-    MyFloat rt_source_lum_vs[3];
+    Vec3<MyFloat> rt_source_lum_s, rt_source_lum_vs;
 #endif
-    
+
     MyFloat maxsoft;
-    
+
     if(no >= All.MaxPart && no < All.MaxPart + MaxNodes)    /* internal node */
     {
         for(j = 0; j < 8; j++)
@@ -480,17 +480,15 @@ void force_update_node_recursive(int no, int sib, int father)
         for(j=0;j<N_RT_FREQ_BINS;j++) {stellar_lum[j]=0;}
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        rt_source_lum_s[0] = rt_source_lum_vs[0] = 0;
-        rt_source_lum_s[1] = rt_source_lum_vs[1] = 0;
-        rt_source_lum_s[2] = rt_source_lum_vs[2] = 0;
+        rt_source_lum_s = rt_source_lum_vs = {};
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        MyFloat sink_lum,sink_lum_grad[3]; sink_lum=sink_lum_grad[0]=sink_lum_grad[1]=sink_lum_grad[2]=0;
+        MyFloat sink_lum = 0; Vec3<MyFloat> sink_lum_grad = {};
 #endif
 #ifdef SINK_CALC_DISTANCES
-        MyFloat sink_mass=0, sink_pos_times_mass[3]={0,0,0};   /* position of each sink particle in the node times its mass; divide by total mass at the end to get COM */
+        MyFloat sink_mass=0; Vec3<MyFloat> sink_pos_times_mass = {};   /* position of each sink particle in the node times its mass; divide by total mass at the end to get COM */
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-        MyFloat sink_mom[3] = {0,0,0}, sink_force[3] = {0,0,0}; int N_SINK = 0;
+        Vec3<MyFloat> sink_mom = {}, sink_force = {}; int N_SINK = 0;
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
         MyFloat max_feedback_vel=0;
 #endif
@@ -501,17 +499,10 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         mass_dm = 0;
-        s_dm[0] = vs_dm[0] = 0;
-        s_dm[1] = vs_dm[1] = 0;
-        s_dm[2] = vs_dm[2] = 0;
+        s_dm = vs_dm = {};
 #endif
         mass = 0;
-        s[0] = 0;
-        s[1] = 0;
-        s[2] = 0;
-        vs[0] = 0;
-        vs[1] = 0;
-        vs[2] = 0;
+        s = vs = {};
         hmax = 0;
         vmax = 0;
         divVmax = 0;
@@ -546,12 +537,8 @@ void force_update_node_recursive(int no, int sib, int father)
                     else
                     {
                         mass += (Nodes[p].u.d.mass);
-                        s[0] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[0]);
-                        s[1] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[1]);
-                        s[2] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[2]);
-                        vs[0] += (Nodes[p].u.d.mass * Extnodes[p].vs[0]);
-                        vs[1] += (Nodes[p].u.d.mass * Extnodes[p].vs[1]);
-                        vs[2] += (Nodes[p].u.d.mass * Extnodes[p].vs[2]);
+                        s += Nodes[p].u.d.mass * Nodes[p].u.d.s;
+                        vs += Nodes[p].u.d.mass * Extnodes[p].vs;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                         gasmass += Nodes[p].gasmass;
 #endif
@@ -570,32 +557,20 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                         double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += (Nodes[p].stellar_lum[k]);}
-                        rt_source_lum_s[0] += (l_tot * Nodes[p].rt_source_lum_s[0]);
-                        rt_source_lum_s[1] += (l_tot * Nodes[p].rt_source_lum_s[1]);
-                        rt_source_lum_s[2] += (l_tot * Nodes[p].rt_source_lum_s[2]);
-                        rt_source_lum_vs[0] += (l_tot * Extnodes[p].rt_source_lum_vs[0]);
-                        rt_source_lum_vs[1] += (l_tot * Extnodes[p].rt_source_lum_vs[1]);
-                        rt_source_lum_vs[2] += (l_tot * Extnodes[p].rt_source_lum_vs[2]);
+                        rt_source_lum_s += l_tot * Nodes[p].rt_source_lum_s;
+                        rt_source_lum_vs += l_tot * Extnodes[p].rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                         sink_lum += Nodes[p].sink_lum;
-                        sink_lum_grad[0] += Nodes[p].sink_lum * Nodes[p].sink_lum_grad[0];
-                        sink_lum_grad[1] += Nodes[p].sink_lum * Nodes[p].sink_lum_grad[1];
-                        sink_lum_grad[2] += Nodes[p].sink_lum * Nodes[p].sink_lum_grad[2];
+                        sink_lum_grad += Nodes[p].sink_lum * Nodes[p].sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
                         sink_mass += Nodes[p].sink_mass;
-                        sink_pos_times_mass[0] += Nodes[p].sink_pos[0] * Nodes[p].sink_mass;
-                        sink_pos_times_mass[1] += Nodes[p].sink_pos[1] * Nodes[p].sink_mass;
-                        sink_pos_times_mass[2] += Nodes[p].sink_pos[2] * Nodes[p].sink_mass;
+                        sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-                        sink_mom[0] += Nodes[p].sink_vel[0] * Nodes[p].sink_mass;
-                        sink_mom[1] += Nodes[p].sink_vel[1] * Nodes[p].sink_mass;
-                        sink_mom[2] += Nodes[p].sink_vel[2] * Nodes[p].sink_mass;
+                        sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
-                        sink_force[0] += Nodes[p].sink_acc[0] * Nodes[p].sink_mass;
-                        sink_force[1] += Nodes[p].sink_acc[1] * Nodes[p].sink_mass;
-                        sink_force[2] += Nodes[p].sink_acc[2] * Nodes[p].sink_mass;
+                        sink_force += Nodes[p].sink_mass * Nodes[p].sink_acc;
 #endif
                         N_SINK += Nodes[p].N_SINK;
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -608,12 +583,8 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
                         mass_dm += (Nodes[p].mass_dm);
-                        s_dm[0] += (Nodes[p].mass_dm * Nodes[p].s_dm[0]);
-                        s_dm[1] += (Nodes[p].mass_dm * Nodes[p].s_dm[1]);
-                        s_dm[2] += (Nodes[p].mass_dm * Nodes[p].s_dm[2]);
-                        vs_dm[0] += (Nodes[p].mass_dm * Extnodes[p].vs_dm[0]);
-                        vs_dm[1] += (Nodes[p].mass_dm * Extnodes[p].vs_dm[1]);
-                        vs_dm[2] += (Nodes[p].mass_dm * Extnodes[p].vs_dm[2]);
+                        s_dm += Nodes[p].mass_dm * Nodes[p].s_dm;
+                        vs_dm += Nodes[p].mass_dm * Extnodes[p].vs_dm;
 #endif
                         if(Nodes[p].u.d.mass > 0) {count_particles += Nodes[p].N_part;} // we're saving the number of particles in the node, so simply add it
                         if(Extnodes[p].hmax > hmax) {hmax = Extnodes[p].hmax;}
@@ -632,12 +603,8 @@ void force_update_node_recursive(int no, int sib, int father)
                     pa = &P[p];
                     
                     mass += (pa->Mass);
-                    s[0] += (pa->Mass * pa->Pos[0]);
-                    s[1] += (pa->Mass * pa->Pos[1]);
-                    s[2] += (pa->Mass * pa->Pos[2]);
-                    vs[0] += (pa->Mass * pa->Vel[0]);
-                    vs[1] += (pa->Mass * pa->Vel[1]);
-                    vs[2] += (pa->Mass * pa->Vel[2]);
+                    s += pa->Mass * pa->Pos;
+                    vs += pa->Mass * pa->Vel;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     if(pa->Type == 0) gasmass += pa->Mass;
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
@@ -667,12 +634,8 @@ void force_update_node_recursive(int no, int sib, int father)
                         }
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-                        rt_source_lum_s[0] += (l_sum * pa->Pos[0]);
-                        rt_source_lum_s[1] += (l_sum * pa->Pos[1]);
-                        rt_source_lum_s[2] += (l_sum * pa->Pos[2]);
-                        rt_source_lum_vs[0] += (l_sum * pa->Vel[0]);
-                        rt_source_lum_vs[1] += (l_sum * pa->Vel[1]);
-                        rt_source_lum_vs[2] += (l_sum * pa->Vel[2]);
+                        rt_source_lum_s += l_sum * pa->Pos;
+                        rt_source_lum_vs += l_sum * pa->Vel;
 #endif
                     }
 #endif
@@ -698,21 +661,15 @@ void force_update_node_recursive(int no, int sib, int father)
                     if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
                     {
                         sink_mass += pa->Mass;    /* actual value is not used for distances */
-                        sink_pos_times_mass[0] += pa->Pos[0] * pa->Mass;  /* positition times mass; divide by total mass later */
-                        sink_pos_times_mass[1] += pa->Pos[1] * pa->Mass;
-                        sink_pos_times_mass[2] += pa->Pos[2] * pa->Mass;
+                        sink_pos_times_mass += pa->Mass * pa->Pos;  /* positition times mass; divide by total mass later */
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
                         N_SINK += 1;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-                        sink_mom[0] += pa->Vel[0] * pa->Mass;
-                        sink_mom[1] += pa->Vel[1] * pa->Mass;
-                        sink_mom[2] += pa->Vel[2] * pa->Mass;
+                        sink_mom += pa->Mass * pa->Vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-                        sink_force[0] += pa->Acc_Total_PrevStep[0] * pa->Mass;
-                        sink_force[1] += pa->Acc_Total_PrevStep[1] * pa->Mass;
-                        sink_force[2] += pa->Acc_Total_PrevStep[2] * pa->Mass;
+                        sink_force += pa->Mass * pa->Acc_Total_PrevStep;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
                         max_feedback_vel = DMAX(pa->MaxFeedbackVel, max_feedback_vel);
@@ -728,12 +685,8 @@ void force_update_node_recursive(int no, int sib, int father)
                     if(pa->Type != 0)
                     {
                         mass_dm += (pa->Mass);
-                        s_dm[0] += (pa->Mass * pa->Pos[0]);
-                        s_dm[1] += (pa->Mass * pa->Pos[1]);
-                        s_dm[2] += (pa->Mass * pa->Pos[2]);
-                        vs_dm[0] += (pa->Mass * pa->Vel[0]);
-                        vs_dm[1] += (pa->Mass * pa->Vel[1]);
-                        vs_dm[2] += (pa->Mass * pa->Vel[2]);
+                        s_dm += pa->Mass * pa->Pos;
+                        vs_dm += pa->Mass * pa->Vel;
                     }
 #endif
                     if(pa->Type == 0)
@@ -759,79 +712,53 @@ void force_update_node_recursive(int no, int sib, int father)
         
         if(mass)
         {
-            s[0] /= mass;
-            s[1] /= mass;
-            s[2] /= mass;
-            vs[0] /= mass;
-            vs[1] /= mass;
-            vs[2] /= mass;
+            s /= mass;
+            vs /= mass;
         }
         else
         {
-            s[0] = Nodes[no].center[0];
-            s[1] = Nodes[no].center[1];
-            s[2] = Nodes[no].center[2];
-            vs[0] = 0;
-            vs[1] = 0;
-            vs[2] = 0;
+            s = Nodes[no].center;
+            vs = {};
         }
-        
+
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += stellar_lum[k];}
         if(l_tot)
         {
-            rt_source_lum_s[0] /= l_tot;
-            rt_source_lum_s[1] /= l_tot;
-            rt_source_lum_s[2] /= l_tot;
-            rt_source_lum_vs[0] /= l_tot;
-            rt_source_lum_vs[1] /= l_tot;
-            rt_source_lum_vs[2] /= l_tot;
+            rt_source_lum_s /= l_tot;
+            rt_source_lum_vs /= l_tot;
         }
         else
         {
-            rt_source_lum_s[0] = Nodes[no].center[0];
-            rt_source_lum_s[1] = Nodes[no].center[1];
-            rt_source_lum_s[2] = Nodes[no].center[2];
-            rt_source_lum_vs[0] = 0;
-            rt_source_lum_vs[1] = 0;
-            rt_source_lum_vs[2] = 0;
+            rt_source_lum_s = Nodes[no].center;
+            rt_source_lum_vs = {};
         }
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         if(sink_lum)
         {
-            sink_lum_grad[0] /= sink_lum; sink_lum_grad[1] /= sink_lum; sink_lum_grad[2] /= sink_lum;
+            sink_lum_grad /= sink_lum;
         } else {
-            sink_lum_grad[0]=sink_lum_grad[1]=0; sink_lum_grad[2]=1;
+            sink_lum_grad = {0, 0, 1};
         }
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         if(mass_dm)
         {
-            s_dm[0] /= mass_dm;
-            s_dm[1] /= mass_dm;
-            s_dm[2] /= mass_dm;
-            vs_dm[0] /= mass_dm;
-            vs_dm[1] /= mass_dm;
-            vs_dm[2] /= mass_dm;
+            s_dm /= mass_dm;
+            vs_dm /= mass_dm;
         }
         else
         {
-            s_dm[0] = Nodes[no].center[0];
-            s_dm[1] = Nodes[no].center[1];
-            s_dm[2] = Nodes[no].center[2];
-            vs_dm[0] = 0;
-            vs_dm[1] = 0;
-            vs_dm[2] = 0;
+            s_dm = Nodes[no].center;
+            vs_dm = {};
         }
 #endif
         
         
         Nodes[no].Ti_current = All.Ti_Current;
         Nodes[no].u.d.mass = mass;
-        Nodes[no].u.d.s[0] = s[0];
-        Nodes[no].u.d.s[1] = s[1];
-        Nodes[no].u.d.s[2] = s[2];
+        Nodes[no].u.d.s = s;
         Nodes[no].GravCost = 0;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         Nodes[no].gasmass = gasmass;
@@ -850,21 +777,13 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Nodes[no].rt_source_lum_s[0] = rt_source_lum_s[0];
-        Nodes[no].rt_source_lum_s[1] = rt_source_lum_s[1];
-        Nodes[no].rt_source_lum_s[2] = rt_source_lum_s[2];
-        Extnodes[no].rt_source_lum_vs[0] = rt_source_lum_vs[0];
-        Extnodes[no].rt_source_lum_vs[1] = rt_source_lum_vs[1];
-        Extnodes[no].rt_source_lum_vs[2] = rt_source_lum_vs[2];
-        Extnodes[no].rt_source_lum_dp[0] = 0;
-        Extnodes[no].rt_source_lum_dp[1] = 0;
-        Extnodes[no].rt_source_lum_dp[2] = 0;
+        Nodes[no].rt_source_lum_s = rt_source_lum_s;
+        Extnodes[no].rt_source_lum_vs = rt_source_lum_vs;
+        Extnodes[no].rt_source_lum_dp = {};
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         Nodes[no].sink_lum = sink_lum;
-        Nodes[no].sink_lum_grad[0] = sink_lum_grad[0];
-        Nodes[no].sink_lum_grad[1] = sink_lum_grad[1];
-        Nodes[no].sink_lum_grad[2] = sink_lum_grad[2];
+        Nodes[no].sink_lum_grad = sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
         Nodes[no].sink_mass = sink_mass;
@@ -873,18 +792,12 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
         if(sink_mass > 0)
         {
-            Nodes[no].sink_pos[0] = sink_pos_times_mass[0] / sink_mass;  /* weighted position is sum(pos*mass)/sum(mass) */
-            Nodes[no].sink_pos[1] = sink_pos_times_mass[1] / sink_mass;
-            Nodes[no].sink_pos[2] = sink_pos_times_mass[2] / sink_mass;
+            Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;  /* weighted position is sum(pos*mass)/sum(mass) */
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-            Nodes[no].sink_vel[0] = sink_mom[0] / sink_mass;
-            Nodes[no].sink_vel[1] = sink_mom[1] / sink_mass;
-            Nodes[no].sink_vel[2] = sink_mom[2] / sink_mass;
+            Nodes[no].sink_vel = sink_mom / sink_mass;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-            Nodes[no].sink_acc[0] = sink_force[0] / sink_mass;
-            Nodes[no].sink_acc[1] = sink_force[1] / sink_mass;
-            Nodes[no].sink_acc[2] = sink_force[2] / sink_mass;
+            Nodes[no].sink_acc = sink_force / sink_mass;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
             Nodes[no].MaxFeedbackVel = max_feedback_vel;
@@ -895,29 +808,19 @@ void force_update_node_recursive(int no, int sib, int father)
         {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); int k; for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] = tidal_tensorps_prevstep.data[k] * inv_mass;}}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        Nodes[no].s_dm[0] = s_dm[0];
-        Nodes[no].s_dm[1] = s_dm[1];
-        Nodes[no].s_dm[2] = s_dm[2];
+        Nodes[no].s_dm = s_dm;
         Nodes[no].mass_dm = mass_dm;
-        Extnodes[no].vs_dm[0] = vs_dm[0];
-        Extnodes[no].vs_dm[1] = vs_dm[1];
-        Extnodes[no].vs_dm[2] = vs_dm[2];
-        Extnodes[no].dp_dm[0] = 0;
-        Extnodes[no].dp_dm[1] = 0;
-        Extnodes[no].dp_dm[2] = 0;
+        Extnodes[no].vs_dm = vs_dm;
+        Extnodes[no].dp_dm = {};
 #endif
         
         Extnodes[no].Ti_lastkicked = All.Ti_Current;
         Extnodes[no].Flag = GlobFlag;
-        Extnodes[no].vs[0] = vs[0];
-        Extnodes[no].vs[1] = vs[1];
-        Extnodes[no].vs[2] = vs[2];
+        Extnodes[no].vs = vs;
         Extnodes[no].hmax = hmax;
         Extnodes[no].vmax = vmax;
         Extnodes[no].divVmax = divVmax;
-        Extnodes[no].dp[0] = 0;
-        Extnodes[no].dp[1] = 0;
-        Extnodes[no].dp[2] = 0;
+        Extnodes[no].dp = {};
         
         Nodes[no].N_part = count_particles; /* save this value */
         if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);} else {multiple_flag = 0;} /* this flags that the node represents more than one particle */
@@ -953,8 +856,8 @@ void force_exchange_pseudodata(void)
     int *recvcounts, *recvoffset;
     struct DomainNODE
     {
-        MyFloat s[3];
-        MyFloat vs[3];
+        Vec3<MyFloat> s;
+        Vec3<MyFloat> vs;
         MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         MyFloat gasmass;
@@ -975,20 +878,20 @@ void force_exchange_pseudodata(void)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        MyFloat rt_source_lum_s[3];
-        MyFloat rt_source_lum_vs[3];
+        Vec3<MyFloat> rt_source_lum_s;
+        Vec3<MyFloat> rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        MyFloat sink_lum,sink_lum_grad[3];
+        MyFloat sink_lum; Vec3<MyFloat> sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass;
-        MyFloat sink_pos[3];
+        Vec3<MyFloat> sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
         int N_SINK;
-        MyFloat sink_vel[3];
+        Vec3<MyFloat> sink_vel;
 #ifdef SPECIAL_POINT_MOTION
-        MyFloat sink_acc[3];
+        Vec3<MyFloat> sink_acc;
 #endif
 #ifdef  SINGLE_STAR_FB_TIMESTEPLIMIT
         MyFloat MaxFeedbackVel;
@@ -999,8 +902,8 @@ void force_exchange_pseudodata(void)
         SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        MyFloat s_dm[3];
-        MyFloat vs_dm[3];
+        Vec3<MyFloat> s_dm;
+        Vec3<MyFloat> vs_dm;
         MyFloat mass_dm;
 #endif
         unsigned int bitflags;
@@ -1020,12 +923,8 @@ void force_exchange_pseudodata(void)
             no = DomainNodeIndex[i];
             
             /* read out the multipole moments from the local base cells */
-            DomainMoment[i].s[0] = Nodes[no].u.d.s[0];
-            DomainMoment[i].s[1] = Nodes[no].u.d.s[1];
-            DomainMoment[i].s[2] = Nodes[no].u.d.s[2];
-            DomainMoment[i].vs[0] = Extnodes[no].vs[0];
-            DomainMoment[i].vs[1] = Extnodes[no].vs[1];
-            DomainMoment[i].vs[2] = Extnodes[no].vs[2];
+            DomainMoment[i].s = Nodes[no].u.d.s;
+            DomainMoment[i].vs = Extnodes[no].vs;
             DomainMoment[i].mass = Nodes[no].u.d.mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             DomainMoment[i].gasmass = Nodes[no].gasmass;
@@ -1050,33 +949,21 @@ void force_exchange_pseudodata(void)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-            DomainMoment[i].rt_source_lum_s[0] = Nodes[no].rt_source_lum_s[0];
-            DomainMoment[i].rt_source_lum_s[1] = Nodes[no].rt_source_lum_s[1];
-            DomainMoment[i].rt_source_lum_s[2] = Nodes[no].rt_source_lum_s[2];
-            DomainMoment[i].rt_source_lum_vs[0] = Extnodes[no].rt_source_lum_vs[0];
-            DomainMoment[i].rt_source_lum_vs[1] = Extnodes[no].rt_source_lum_vs[1];
-            DomainMoment[i].rt_source_lum_vs[2] = Extnodes[no].rt_source_lum_vs[2];
+            DomainMoment[i].rt_source_lum_s = Nodes[no].rt_source_lum_s;
+            DomainMoment[i].rt_source_lum_vs = Extnodes[no].rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
             DomainMoment[i].sink_lum = Nodes[no].sink_lum;
-            DomainMoment[i].sink_lum_grad[0] = Nodes[no].sink_lum_grad[0];
-            DomainMoment[i].sink_lum_grad[1] = Nodes[no].sink_lum_grad[1];
-            DomainMoment[i].sink_lum_grad[2] = Nodes[no].sink_lum_grad[2];
+            DomainMoment[i].sink_lum_grad = Nodes[no].sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
             DomainMoment[i].sink_mass = Nodes[no].sink_mass;
-            DomainMoment[i].sink_pos[0] = Nodes[no].sink_pos[0];
-            DomainMoment[i].sink_pos[1] = Nodes[no].sink_pos[1];
-            DomainMoment[i].sink_pos[2] = Nodes[no].sink_pos[2];
+            DomainMoment[i].sink_pos = Nodes[no].sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-            DomainMoment[i].sink_vel[0] = Nodes[no].sink_vel[0];
-            DomainMoment[i].sink_vel[1] = Nodes[no].sink_vel[1];
-            DomainMoment[i].sink_vel[2] = Nodes[no].sink_vel[2];
+            DomainMoment[i].sink_vel = Nodes[no].sink_vel;
             DomainMoment[i].N_SINK = Nodes[no].N_SINK;
-#if defined(SPECIAL_POINT_MOTION)
-            DomainMoment[i].sink_acc[0] = Nodes[no].sink_acc[0];
-            DomainMoment[i].sink_acc[1] = Nodes[no].sink_acc[1];
-            DomainMoment[i].sink_acc[2] = Nodes[no].sink_acc[2];
+#ifdef SPECIAL_POINT_MOTION
+            DomainMoment[i].sink_acc = Nodes[no].sink_acc;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
             DomainMoment[i].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;
@@ -1087,16 +974,12 @@ void force_exchange_pseudodata(void)
             DomainMoment[i].tidal_tensorps_prevstep = Nodes[no].tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-            DomainMoment[i].s_dm[0] = Nodes[no].s_dm[0];
-            DomainMoment[i].s_dm[1] = Nodes[no].s_dm[1];
-            DomainMoment[i].s_dm[2] = Nodes[no].s_dm[2];
+            DomainMoment[i].s_dm = Nodes[no].s_dm;
             DomainMoment[i].mass_dm = Nodes[no].mass_dm;
-            DomainMoment[i].vs_dm[0] = Extnodes[no].vs_dm[0];
-            DomainMoment[i].vs_dm[1] = Extnodes[no].vs_dm[1];
-            DomainMoment[i].vs_dm[2] = Extnodes[no].vs_dm[2];
+            DomainMoment[i].vs_dm = Extnodes[no].vs_dm;
 #endif
         }
-    
+
     /* share the pseudo-particle data accross CPUs */
     recvcounts = (int *) mymalloc("recvcounts", sizeof(int) * NTask);
     recvoffset = (int *) mymalloc("recvoffset", sizeof(int) * NTask);
@@ -1124,12 +1007,8 @@ void force_exchange_pseudodata(void)
                 {
                     no = DomainNodeIndex[i];
                     
-                    Nodes[no].u.d.s[0] = DomainMoment[i].s[0];
-                    Nodes[no].u.d.s[1] = DomainMoment[i].s[1];
-                    Nodes[no].u.d.s[2] = DomainMoment[i].s[2];
-                    Extnodes[no].vs[0] = DomainMoment[i].vs[0];
-                    Extnodes[no].vs[1] = DomainMoment[i].vs[1];
-                    Extnodes[no].vs[2] = DomainMoment[i].vs[2];
+                    Nodes[no].u.d.s = DomainMoment[i].s;
+                    Extnodes[no].vs = DomainMoment[i].vs;
                     Nodes[no].u.d.mass = DomainMoment[i].mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     Nodes[no].gasmass = DomainMoment[i].gasmass;
@@ -1154,33 +1033,21 @@ void force_exchange_pseudodata(void)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-                    Nodes[no].rt_source_lum_s[0] = DomainMoment[i].rt_source_lum_s[0];
-                    Nodes[no].rt_source_lum_s[1] = DomainMoment[i].rt_source_lum_s[1];
-                    Nodes[no].rt_source_lum_s[2] = DomainMoment[i].rt_source_lum_s[2];
-                    Extnodes[no].rt_source_lum_vs[0] = DomainMoment[i].rt_source_lum_vs[0];
-                    Extnodes[no].rt_source_lum_vs[1] = DomainMoment[i].rt_source_lum_vs[1];
-                    Extnodes[no].rt_source_lum_vs[2] = DomainMoment[i].rt_source_lum_vs[2];
+                    Nodes[no].rt_source_lum_s = DomainMoment[i].rt_source_lum_s;
+                    Extnodes[no].rt_source_lum_vs = DomainMoment[i].rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                     Nodes[no].sink_lum = DomainMoment[i].sink_lum;
-                    Nodes[no].sink_lum_grad[0] = DomainMoment[i].sink_lum_grad[0];
-                    Nodes[no].sink_lum_grad[1] = DomainMoment[i].sink_lum_grad[1];
-                    Nodes[no].sink_lum_grad[2] = DomainMoment[i].sink_lum_grad[2];
+                    Nodes[no].sink_lum_grad = DomainMoment[i].sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
                     Nodes[no].sink_mass = DomainMoment[i].sink_mass;
-                    Nodes[no].sink_pos[0] = DomainMoment[i].sink_pos[0];
-                    Nodes[no].sink_pos[1] = DomainMoment[i].sink_pos[1];
-                    Nodes[no].sink_pos[2] = DomainMoment[i].sink_pos[2];
+                    Nodes[no].sink_pos = DomainMoment[i].sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-                    Nodes[no].sink_vel[0] = DomainMoment[i].sink_vel[0];
-                    Nodes[no].sink_vel[1] = DomainMoment[i].sink_vel[1];
-                    Nodes[no].sink_vel[2] = DomainMoment[i].sink_vel[2];
+                    Nodes[no].sink_vel = DomainMoment[i].sink_vel;
                     Nodes[no].N_SINK = DomainMoment[i].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
-                    Nodes[no].sink_acc[0] = DomainMoment[i].sink_acc[0];
-                    Nodes[no].sink_acc[1] = DomainMoment[i].sink_acc[1];
-                    Nodes[no].sink_acc[2] = DomainMoment[i].sink_acc[2];
+                    Nodes[no].sink_acc = DomainMoment[i].sink_acc;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
                     Nodes[no].MaxFeedbackVel = DomainMoment[i].MaxFeedbackVel;
@@ -1191,13 +1058,9 @@ void force_exchange_pseudodata(void)
                     Nodes[no].tidal_tensorps_prevstep = DomainMoment[i].tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-                    Nodes[no].s_dm[0] = DomainMoment[i].s_dm[0];
-                    Nodes[no].s_dm[1] = DomainMoment[i].s_dm[1];
-                    Nodes[no].s_dm[2] = DomainMoment[i].s_dm[2];
+                    Nodes[no].s_dm = DomainMoment[i].s_dm;
                     Nodes[no].mass_dm = DomainMoment[i].mass_dm;
-                    Extnodes[no].vs_dm[0] = DomainMoment[i].vs_dm[0];
-                    Extnodes[no].vs_dm[1] = DomainMoment[i].vs_dm[1];
-                    Extnodes[no].vs_dm[2] = DomainMoment[i].vs_dm[2];
+                    Extnodes[no].vs_dm = DomainMoment[i].vs_dm;
 #endif
                 }
     
@@ -1214,7 +1077,7 @@ void force_treeupdate_pseudos(int no)
     int j, p, count_particles, multiple_flag;
     MyFloat hmax, vmax;
     MyFloat divVmax;
-    MyFloat s[3], vs[3], mass;
+    Vec3<MyFloat> s, vs; MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyFloat gasmass = 0;
 #endif
@@ -1229,34 +1092,28 @@ void force_treeupdate_pseudos(int no)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MyFloat rt_source_lum_s[3];
-    MyFloat rt_source_lum_vs[3];
+    Vec3<MyFloat> rt_source_lum_s, rt_source_lum_vs;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    MyFloat s_dm[3], vs_dm[3], mass_dm;
+    Vec3<MyFloat> s_dm, vs_dm; MyFloat mass_dm;
 #endif
     
     MyFloat maxsoft;
     
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    rt_source_lum_s[0] = 0;
-    rt_source_lum_s[1] = 0;
-    rt_source_lum_s[2] = 0;
-    rt_source_lum_vs[0] = 0;
-    rt_source_lum_vs[1] = 0;
-    rt_source_lum_vs[2] = 0;
+    rt_source_lum_s = rt_source_lum_vs = {};
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    MyFloat sink_lum,sink_lum_grad[3]; sink_lum=sink_lum_grad[0]=sink_lum_grad[1]=sink_lum_grad[2]=0;
+    MyFloat sink_lum = 0; Vec3<MyFloat> sink_lum_grad = {};
 #endif
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass=0;
-    MyFloat sink_pos_times_mass[3]={0,0,0};
+    Vec3<MyFloat> sink_pos_times_mass = {};
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-    MyFloat sink_mom[3] = {0,0,0};
+    Vec3<MyFloat> sink_mom = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
-    MyFloat sink_force[3] = {0,0,0};
+    Vec3<MyFloat> sink_force = {};
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     MyFloat max_feedback_vel=0;
@@ -1268,17 +1125,10 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
     mass_dm = 0;
-    s_dm[0] = vs_dm[0] = 0;
-    s_dm[1] = vs_dm[1] = 0;
-    s_dm[2] = vs_dm[2] = 0;
+    s_dm = vs_dm = {};
 #endif
     mass = 0;
-    s[0] = 0;
-    s[1] = 0;
-    s[2] = 0;
-    vs[0] = 0;
-    vs[1] = 0;
-    vs[2] = 0;
+    s = vs = {};
     hmax = 0;
     vmax = 0;
     divVmax = 0;
@@ -1297,9 +1147,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass += Nodes[p].gasmass;
 #endif
-            s[0] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[0]);
-            s[1] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[1]);
-            s[2] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[2]);
+            s += Nodes[p].u.d.mass * Nodes[p].u.d.s;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
             cr_injection += Nodes[p].cr_injection;
 #endif
@@ -1315,33 +1163,21 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
             double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += (Nodes[p].stellar_lum[k]);}
-            rt_source_lum_s[0] += (l_tot * Nodes[p].rt_source_lum_s[0]);
-            rt_source_lum_s[1] += (l_tot * Nodes[p].rt_source_lum_s[1]);
-            rt_source_lum_s[2] += (l_tot * Nodes[p].rt_source_lum_s[2]);
-            rt_source_lum_vs[0] += (l_tot * Extnodes[p].rt_source_lum_vs[0]);
-            rt_source_lum_vs[1] += (l_tot * Extnodes[p].rt_source_lum_vs[1]);
-            rt_source_lum_vs[2] += (l_tot * Extnodes[p].rt_source_lum_vs[2]);
+            rt_source_lum_s += l_tot * Nodes[p].rt_source_lum_s;
+            rt_source_lum_vs += l_tot * Extnodes[p].rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
             sink_lum += Nodes[p].sink_lum;
-            sink_lum_grad[0] += Nodes[p].sink_lum * Nodes[p].sink_lum_grad[0];
-            sink_lum_grad[1] += Nodes[p].sink_lum * Nodes[p].sink_lum_grad[1];
-            sink_lum_grad[2] += Nodes[p].sink_lum * Nodes[p].sink_lum_grad[2];
+            sink_lum_grad += Nodes[p].sink_lum * Nodes[p].sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
             sink_mass += Nodes[p].sink_mass;
-            sink_pos_times_mass[0] += Nodes[p].sink_pos[0] * Nodes[p].sink_mass;
-            sink_pos_times_mass[1] += Nodes[p].sink_pos[1] * Nodes[p].sink_mass;
-            sink_pos_times_mass[2] += Nodes[p].sink_pos[2] * Nodes[p].sink_mass;
+            sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
             N_SINK += Nodes[p].N_SINK;
-            sink_mom[0] += Nodes[p].sink_vel[0] * Nodes[p].sink_mass;
-            sink_mom[1] += Nodes[p].sink_vel[1] * Nodes[p].sink_mass;
-            sink_mom[2] += Nodes[p].sink_vel[2] * Nodes[p].sink_mass;
+            sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
-            sink_force[0] += Nodes[p].sink_acc[0] * Nodes[p].sink_mass;
-            sink_force[1] += Nodes[p].sink_acc[1] * Nodes[p].sink_mass;
-            sink_force[2] += Nodes[p].sink_acc[2] * Nodes[p].sink_mass;
+            sink_force += Nodes[p].sink_mass * Nodes[p].sink_acc;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
             if(Nodes[p].sink_mass > 0) {max_feedback_vel = DMAX(max_feedback_vel, Nodes[p].MaxFeedbackVel);}
@@ -1353,16 +1189,10 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
             mass_dm += (Nodes[p].mass_dm);
-            s_dm[0] += (Nodes[p].mass_dm * Nodes[p].s_dm[0]);
-            s_dm[1] += (Nodes[p].mass_dm * Nodes[p].s_dm[1]);
-            s_dm[2] += (Nodes[p].mass_dm * Nodes[p].s_dm[2]);
-            vs_dm[0] += (Nodes[p].mass_dm * Extnodes[p].vs_dm[0]);
-            vs_dm[1] += (Nodes[p].mass_dm * Extnodes[p].vs_dm[1]);
-            vs_dm[2] += (Nodes[p].mass_dm * Extnodes[p].vs_dm[2]);
+            s_dm += Nodes[p].mass_dm * Nodes[p].s_dm;
+            vs_dm += Nodes[p].mass_dm * Extnodes[p].vs_dm;
 #endif
-            vs[0] += (Nodes[p].u.d.mass * Extnodes[p].vs[0]);
-            vs[1] += (Nodes[p].u.d.mass * Extnodes[p].vs[1]);
-            vs[2] += (Nodes[p].u.d.mass * Extnodes[p].vs[2]);
+            vs += Nodes[p].u.d.mass * Extnodes[p].vs;
             
             if(Extnodes[p].hmax > hmax) {hmax = Extnodes[p].hmax;}
             if(Extnodes[p].vmax > vmax) {vmax = Extnodes[p].vmax;}
@@ -1378,82 +1208,54 @@ void force_treeupdate_pseudos(int no)
     
     if(mass)
     {
-        s[0] /= mass;
-        s[1] /= mass;
-        s[2] /= mass;
-        vs[0] /= mass;
-        vs[1] /= mass;
-        vs[2] /= mass;
+        s /= mass;
+        vs /= mass;
     }
     else
     {
-        s[0] = Nodes[no].center[0];
-        s[1] = Nodes[no].center[1];
-        s[2] = Nodes[no].center[2];
-        vs[0] = 0;
-        vs[1] = 0;
-        vs[2] = 0;
+        s = Nodes[no].center;
+        vs = {};
     }
     
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     double l_tot=0; int kfreq; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {l_tot += stellar_lum[kfreq];}
     if(l_tot)
     {
-        rt_source_lum_s[0] /= l_tot;
-        rt_source_lum_s[1] /= l_tot;
-        rt_source_lum_s[2] /= l_tot;
-        rt_source_lum_vs[0] /= l_tot;
-        rt_source_lum_vs[1] /= l_tot;
-        rt_source_lum_vs[2] /= l_tot;
+        rt_source_lum_s /= l_tot;
+        rt_source_lum_vs /= l_tot;
     }
     else
     {
-        rt_source_lum_s[0] = Nodes[no].center[0];
-        rt_source_lum_s[1] = Nodes[no].center[1];
-        rt_source_lum_s[2] = Nodes[no].center[2];
-        rt_source_lum_vs[0] = 0;
-        rt_source_lum_vs[1] = 0;
-        rt_source_lum_vs[2] = 0;
+        rt_source_lum_s = Nodes[no].center;
+        rt_source_lum_vs = {};
     }
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     if(sink_lum)
     {
-        sink_lum_grad[0] /= sink_lum; sink_lum_grad[1] /= sink_lum; sink_lum_grad[2] /= sink_lum;
+        sink_lum_grad /= sink_lum;
     }
     else
     {
-        sink_lum_grad[0]=sink_lum_grad[1]=0; sink_lum_grad[2]=1;
+        sink_lum_grad = {0, 0, 1};
     }
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
     if(mass_dm)
     {
-        s_dm[0] /= mass_dm;
-        s_dm[1] /= mass_dm;
-        s_dm[2] /= mass_dm;
-        vs_dm[0] /= mass_dm;
-        vs_dm[1] /= mass_dm;
-        vs_dm[2] /= mass_dm;
+        s_dm /= mass_dm;
+        vs_dm /= mass_dm;
     }
     else
     {
-        s_dm[0] = Nodes[no].center[0];
-        s_dm[1] = Nodes[no].center[1];
-        s_dm[2] = Nodes[no].center[2];
-        vs_dm[0] = 0;
-        vs_dm[1] = 0;
-        vs_dm[2] = 0;
+        s_dm = Nodes[no].center;
+        vs_dm = {};
     }
 #endif
-    
-    
-    Nodes[no].u.d.s[0] = s[0];
-    Nodes[no].u.d.s[1] = s[1];
-    Nodes[no].u.d.s[2] = s[2];
-    Extnodes[no].vs[0] = vs[0];
-    Extnodes[no].vs[1] = vs[1];
-    Extnodes[no].vs[2] = vs[2];
+
+
+    Nodes[no].u.d.s = s;
+    Extnodes[no].vs = vs;
     Nodes[no].u.d.mass = mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Nodes[no].gasmass = gasmass;
@@ -1472,18 +1274,12 @@ void force_treeupdate_pseudos(int no)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    Nodes[no].rt_source_lum_s[0] = rt_source_lum_s[0];
-    Nodes[no].rt_source_lum_s[1] = rt_source_lum_s[1];
-    Nodes[no].rt_source_lum_s[2] = rt_source_lum_s[2];
-    Extnodes[no].rt_source_lum_vs[0] = rt_source_lum_vs[0];
-    Extnodes[no].rt_source_lum_vs[1] = rt_source_lum_vs[1];
-    Extnodes[no].rt_source_lum_vs[2] = rt_source_lum_vs[2];
+    Nodes[no].rt_source_lum_s = rt_source_lum_s;
+    Extnodes[no].rt_source_lum_vs = rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     Nodes[no].sink_lum = sink_lum;
-    Nodes[no].sink_lum_grad[0] = sink_lum_grad[0];
-    Nodes[no].sink_lum_grad[1] = sink_lum_grad[1];
-    Nodes[no].sink_lum_grad[2] = sink_lum_grad[2];
+    Nodes[no].sink_lum_grad = sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
     Nodes[no].sink_mass = sink_mass;
@@ -1492,17 +1288,11 @@ void force_treeupdate_pseudos(int no)
 #endif
     if(sink_mass > 0)
     {
-        Nodes[no].sink_pos[0] = sink_pos_times_mass[0] / sink_mass;
-        Nodes[no].sink_pos[1] = sink_pos_times_mass[1] / sink_mass;
-        Nodes[no].sink_pos[2] = sink_pos_times_mass[2] / sink_mass;
+        Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-        Nodes[no].sink_vel[0] = sink_mom[0] / sink_mass;
-        Nodes[no].sink_vel[1] = sink_mom[1] / sink_mass;
-        Nodes[no].sink_vel[2] = sink_mom[2] / sink_mass;
+        Nodes[no].sink_vel = sink_mom / sink_mass;
 #if defined(SPECIAL_POINT_MOTION)
-        Nodes[no].sink_acc[0] = sink_force[0] / sink_mass;
-        Nodes[no].sink_acc[1] = sink_force[1] / sink_mass;
-        Nodes[no].sink_acc[2] = sink_force[2] / sink_mass;
+        Nodes[no].sink_acc = sink_force / sink_mass;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
         Nodes[no].MaxFeedbackVel = max_feedback_vel;
@@ -1514,13 +1304,9 @@ void force_treeupdate_pseudos(int no)
     {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); int k; for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] = tidal_tensorps_prevstep.data[k] * inv_mass;}}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    Nodes[no].s_dm[0] = s_dm[0];
-    Nodes[no].s_dm[1] = s_dm[1];
-    Nodes[no].s_dm[2] = s_dm[2];
+    Nodes[no].s_dm = s_dm;
     Nodes[no].mass_dm = mass_dm;
-    Extnodes[no].vs_dm[0] = vs_dm[0];
-    Extnodes[no].vs_dm[1] = vs_dm[1];
-    Extnodes[no].vs_dm[2] = vs_dm[2];
+    Extnodes[no].vs_dm = vs_dm;
 #endif
     
     Extnodes[no].hmax = hmax;
@@ -1653,7 +1439,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double gasmass;
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-    double jerk[3] = {0,0,0};
+    Vec3<double> jerk = {};
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     double vel_x, vel_y, vel_z;
@@ -1706,16 +1492,16 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double Rad_Flux[N_RT_FREQ_BINS][3]; {int kf,k2; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k2=0;k2<3;k2++) {Rad_Flux[kf][k2]=0;}}}
 #endif
 #ifdef SINK_CALC_DISTANCES
-    double Min_Distance_to_Sink2=MAX_REAL_NUMBER, Min_xyz_to_Sink[3]={MAX_REAL_NUMBER,MAX_REAL_NUMBER,MAX_REAL_NUMBER};
+    double Min_Distance_to_Sink2=MAX_REAL_NUMBER; Vec3<double> Min_xyz_to_Sink = {MAX_REAL_NUMBER,MAX_REAL_NUMBER,MAX_REAL_NUMBER};
 #ifdef SPECIAL_POINT_MOTION
-    double vel_of_nearest_special[3]={0,0,0}, acc_of_nearest_special[3]={0,0,0};
+    Vec3<double> vel_of_nearest_special = {}, acc_of_nearest_special = {};
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     double weight_sum_for_special_point_smoothing = 0;
 #endif
 #endif
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
-    double Min_Sink_OrbitalTime=MAX_REAL_NUMBER, comp_dx[3], comp_dv[3], comp_Mass;
+    double Min_Sink_OrbitalTime=MAX_REAL_NUMBER, comp_Mass; Vec3<double> comp_dx, comp_dv;
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
     double Min_Sink_Approach_Time = MAX_REAL_NUMBER, Min_Sink_Freefall_time = MAX_REAL_NUMBER;
@@ -1877,8 +1663,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     {
                         int kx; double wt_special = weight_function_for_weighted_motion_smoothing(sqrt(r2),1);
                         weight_sum_for_special_point_smoothing += wt_special;
-                        for(kx=0;kx<3;kx++) {vel_of_nearest_special[kx] += wt_special * P[no].Vel[kx];}
-                        for(kx=0;kx<3;kx++) {acc_of_nearest_special[kx] += wt_special * P[no].Acc_Total_PrevStep[kx];}
+                        vel_of_nearest_special += wt_special * P[no].Vel;
+                        acc_of_nearest_special += wt_special * P[no].Acc_Total_PrevStep;
                     }
 #endif
                     if(P[no].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) /* found a BH particle in grav calc */
@@ -1889,11 +1675,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                             if(r2 < Min_Distance_to_Sink2)    /* is this the closest BH part I've found yet? */
                             {
                                 Min_Distance_to_Sink2 = r2;   /* if yes: adjust min bh dist */
-                                Min_xyz_to_Sink[0] = dx; Min_xyz_to_Sink[1] = dy; Min_xyz_to_Sink[2] = dz; /* remember, dx = x_SINK - myx */
+                                Min_xyz_to_Sink = {dx, dy, dz}; /* remember, dx = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
                                 int kx;
-                                for(kx=0;kx<3;kx++) {vel_of_nearest_special[kx] = P[no].Vel[kx];}
-                                for(kx=0;kx<3;kx++) {acc_of_nearest_special[kx] = P[no].Acc_Total_PrevStep[kx];}
+                                vel_of_nearest_special = P[no].Vel;
+                                acc_of_nearest_special = P[no].Acc_Total_PrevStep;
 #endif
                             }
 #ifdef SINGLE_STAR_TIMESTEPPING
@@ -2201,8 +1987,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 {
                     int kx; double wt_special = weight_function_for_weighted_motion_smoothing(sqrt(r2),1);
                     weight_sum_for_special_point_smoothing += wt_special;
-                    for(kx=0;kx<3;kx++) {vel_of_nearest_special[kx] = Extnodes[no].vs[kx];}
-                    for(kx=0;kx<3;kx++) {acc_of_nearest_special[kx] = 0;} /* no accel for now, that will be computed later, but keep this if needed */
+                    vel_of_nearest_special = Extnodes[no].vs;
+                    acc_of_nearest_special = {}; /* no accel for now, that will be computed later, but keep this if needed */
                 }
 #endif
                 if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
@@ -2218,8 +2004,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                             Min_Distance_to_Sink2 = sink_r2; Min_xyz_to_Sink[0] = sink_dx; Min_xyz_to_Sink[1] = sink_dy; Min_xyz_to_Sink[2] = sink_dz; /* remember, dx = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
                             int kx;
-                            for(kx=0;kx<3;kx++) {vel_of_nearest_special[kx] = nop->sink_vel[kx];}
-                            for(kx=0;kx<3;kx++) {acc_of_nearest_special[kx] = nop->sink_acc[kx];}
+                            vel_of_nearest_special = nop->sink_vel;
+                            acc_of_nearest_special = nop->sink_acc;
 #endif
                         }
 #ifdef SINGLE_STAR_TIMESTEPPING
@@ -2660,9 +2446,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     /* store result at the proper place */
     if(mode == 0)
     {
-        P[target].GravAccel[0] = acc_x;
-        P[target].GravAccel[1] = acc_y;
-        P[target].GravAccel[2] = acc_z;
+        P[target].GravAccel = {acc_x, acc_y, acc_z};
 #ifdef RT_USE_TREECOL_FOR_NH
         int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target].ColumnDensityBins[k] = treecol_angular_bins[k];
 #endif
@@ -2707,17 +2491,15 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        {int i1; for(i1 = 0; i1 < 3; i1++) {P[target].GravJerk[i1] = jerk[i1];}}
+        P[target].GravJerk = jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
         P[target].Min_Distance_to_Sink = sqrt( Min_Distance_to_Sink2 );
-        P[target].Min_xyz_to_Sink[0] = Min_xyz_to_Sink[0];   /* remember, dx = x_SINK - myx */
-        P[target].Min_xyz_to_Sink[1] = Min_xyz_to_Sink[1];
-        P[target].Min_xyz_to_Sink[2] = Min_xyz_to_Sink[2];
+        P[target].Min_xyz_to_Sink = Min_xyz_to_Sink;   /* remember, dx = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
-        {int k;
-            for(k=0;k<3;k++) {P[target].vel_of_nearest_special[k] = vel_of_nearest_special[k];}
-            for(k=0;k<3;k++) {P[target].acc_of_nearest_special[k] = acc_of_nearest_special[k];}
+        {
+            P[target].vel_of_nearest_special = vel_of_nearest_special;
+            P[target].acc_of_nearest_special = acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
             P[target].weight_sum_for_special_point_smoothing = weight_sum_for_special_point_smoothing; /* weighted sum needed */
 #endif
@@ -2728,7 +2510,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if (Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
         {
             P[target].is_in_a_binary=1; P[target].comp_Mass=comp_Mass; //mass of binary companion
-            int i1; for(i1=0;i1<3;i1++) {P[target].comp_dx[i1]=comp_dx[i1]; P[target].comp_dv[i1]=comp_dv[i1];}
+            P[target].comp_dx = comp_dx; P[target].comp_dv = comp_dv;
         }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
@@ -2786,17 +2568,15 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        {int i1; for(i1 = 0; i1 < 3; i1++) {GravDataResult[target].GravJerk[i1] = jerk[i1];}}
+        GravDataResult[target].GravJerk = jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
         GravDataResult[target].Min_Distance_to_Sink = sqrt( Min_Distance_to_Sink2 );
-        GravDataResult[target].Min_xyz_to_Sink[0] = Min_xyz_to_Sink[0];   /* remember, dx = x_SINK - myx */
-        GravDataResult[target].Min_xyz_to_Sink[1] = Min_xyz_to_Sink[1];
-        GravDataResult[target].Min_xyz_to_Sink[2] = Min_xyz_to_Sink[2];
+        GravDataResult[target].Min_xyz_to_Sink = Min_xyz_to_Sink;   /* remember, dx = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
-        {int k;
-            for(k=0;k<3;k++) {GravDataResult[target].vel_of_nearest_special[k] = vel_of_nearest_special[k];}
-            for(k=0;k<3;k++) {GravDataResult[target].acc_of_nearest_special[k] = acc_of_nearest_special[k];}
+        {
+            GravDataResult[target].vel_of_nearest_special = vel_of_nearest_special;
+            GravDataResult[target].acc_of_nearest_special = acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
             GravDataResult[target].weight_sum_for_special_point_smoothing = weight_sum_for_special_point_smoothing; /* weighted sum needed */
 #endif
@@ -2807,7 +2587,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if (Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
         {
             GravDataResult[target].is_in_a_binary = 1; GravDataResult[target].comp_Mass=comp_Mass; //mass of binary companion
-            int i1; for(i1=0;i1<3;i1++) {GravDataResult[target].comp_dx[i1]=comp_dx[i1]; GravDataResult[target].comp_dv[i1]=comp_dv[i1];}
+            GravDataResult[target].comp_dx = comp_dx; GravDataResult[target].comp_dv = comp_dv;
         }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
@@ -3154,9 +2934,7 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
     
     if(mode == 0)
     {
-        P[target].GravAccel[0] += acc_x;
-        P[target].GravAccel[1] += acc_y;
-        P[target].GravAccel[2] += acc_z;
+        P[target].GravAccel += {acc_x, acc_y, acc_z};
     }
     else
     {

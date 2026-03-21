@@ -22,7 +22,7 @@
  */
 static struct nearestdata_in
 {
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   MyIDType ID;
   MyFloat KernelRadius;
   MyFloat Density;
@@ -114,9 +114,7 @@ void subfind_find_nearesttwo(void)
 	{
 	  place = DataIndexTable[j].Index;
 
-	  NearestDataIn[j].Pos[0] = P[place].Pos[0];
-	  NearestDataIn[j].Pos[1] = P[place].Pos[1];
-	  NearestDataIn[j].Pos[2] = P[place].Pos[2];
+	  NearestDataIn[j].Pos = P[place].Pos;
 	  NearestDataIn[j].KernelRadius = P[place].DM_KernelRadius;
 	  NearestDataIn[j].ID = P[place].ID;
 	  NearestDataIn[j].Density = P[place].u.DM_Density;
@@ -282,7 +280,7 @@ int subfind_nearesttwo_evaluate(int target, int mode, int *nexport, int *nsend_l
     {
       ID = P[target].ID;
       density = P[target].u.DM_Density;
-      pos = P[target].Pos;
+      pos = P[target].Pos.data_ptr();
       h = P[target].DM_KernelRadius;
       count = NgbLoc[target].count;
       for(k = 0; k < count; k++)
@@ -295,7 +293,7 @@ int subfind_nearesttwo_evaluate(int target, int mode, int *nexport, int *nsend_l
     {
       ID = NearestDataGet[target].ID;
       density = NearestDataGet[target].Density;
-      pos = NearestDataGet[target].Pos;
+      pos = NearestDataGet[target].Pos.data_ptr();
       h = NearestDataGet[target].KernelRadius;
       count = NearestDataGet[target].Count;
       for(k = 0; k < count; k++)
