@@ -265,6 +265,9 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
             {
                 j = ngblist[n];
                 if(P[j].Type != 0) continue;
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                if(CellP[j].Ionized > 0) continue; /* ionized cells cannot be donor cells for IMF accretion */
+#endif
 
                 double Mass_j;
                 #pragma omp atomic read

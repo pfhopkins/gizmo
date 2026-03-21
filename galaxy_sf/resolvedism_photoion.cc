@@ -269,7 +269,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
             while(idx < n_collected && ngb_buf[idx].pixel == k)
             {
                 j = ngb_buf[idx].index;
-                if(CellP[j].Ionized == 1) {idx++; continue;} /* already ionized by another star — skip, don't spend photons */
+                if(CellP[j].Ionized == 2) {idx++; continue;} /* already ionized this step by another star — skip */
                 double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
                 double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
                 double recomb  = alpha_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
@@ -277,7 +277,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                 budget -= recomb;
                 consumed += recomb;
                 last_r = sqrt(ngb_buf[idx].dist2);
-                CellP[j].Ionized = 1;
+                CellP[j].Ionized = 2; /* mark as ionized THIS step (gizmo2017: both 0 and 1 -> 2) */
                 idx++;
                 if(budget < 10.0 * recomb) {front_found = 1; break;} /* ionization front reached */
             }
@@ -301,14 +301,18 @@ void resolvedism_photoionize(void)
 {
     int i, j;
 
-    /* Reset ionization flags for all gas cells */
-    for(j = 0; j < N_gas; j++) {
-        if(P[j].Type == 0) {
-#ifdef GALSF_RESOLVEDISM_PHOTOION
-            CellP[j].Ionized = 0;
-#endif
-        }
-    }
+    /* Ionization state tracking (following gizmo2017 photoionize.c):
+     *   Ionized=0 : not ionized
+     *   Ionized=1 : confirmed ionized (persists from previous step)
+     *   Ionized=2 : newly ionized THIS step (set by evaluate)
+     *
+     * No global reset here. The evaluate sets Ionized=2 for cells inside
+     * HII regions (if Ionized != 2, i.e. both 0 and 1 get re-marked).
+     * After the evaluate, the post-processing loop transitions:
+     *   1 -> 0  (was ionized previously but NOT re-ionized this step)
+     *   2 -> 1  (ionized this step, confirmed)
+     * This way Ionized=1 persists between steps for cells that remain
+     * inside an active star's HII region. */
 
     /* Pre-compute Lyman photon rates for active stars (for use by other routines) */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
@@ -436,12 +440,34 @@ void resolvedism_photoionize(void)
         }
     }
 
-    /* Wakeup newly ionized cells so they respond on the next timestep (matching gizmo2017) */
+    /* Post-evaluate ionization state transitions.
+     * Ionized=0: not ionized.  Ionized=1: confirmed (persists).  Ionized=2: set this step by evaluate.
+     * Transitions (sequential, order matters):
+     *   1 -> 0  (was ionized previously, not re-ionized this step: cleared)
+     *   2 -> 1  (ionized this step, confirmed; wake the cell) */
+    int sum_ionized = 0, n_woken = 0, n_cleared = 0;
     for(j = 0; j < N_gas; j++) {
-        if(P[j].Type == 0 && CellP[j].Ionized == 1) {
+        if(P[j].Type != 0) continue;
+        if(CellP[j].Ionized == 1) {
+            CellP[j].Ionized = 0;
+            n_cleared++;
+        }
+        if(CellP[j].Ionized == 2) {
+            CellP[j].Ionized = 1;
             P[j].wakeup = 1;
             NeedToWakeupParticles_local = 1;
+            n_woken++;
         }
+        if(CellP[j].Ionized == 1)
+            sum_ionized++;
+    }
+    {
+        int total_ionized = 0, total_woken = 0, total_cleared = 0;
+        MPI_Reduce(&sum_ionized, &total_ionized, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&n_woken, &total_woken, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&n_cleared, &total_cleared, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
+            printf("RESOLVEDISM PI: %d ionized, %d woken, %d cleared\n", total_ionized, total_woken, total_cleared);
     }
 
     /* Free in LIFO order */

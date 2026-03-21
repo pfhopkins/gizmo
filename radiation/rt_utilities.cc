@@ -326,6 +326,18 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum)
     double lifetime_yr = stellar_lifetime(logM, logZ);
     if(star_age_yr > lifetime_yr) return 0; /* dead star — no luminosity */
 
+    /* PMS feedback delay: stars younger than min(t_KH, t_ff) do not emit ionizing radiation */
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
+    if(P[i].FormationDensity > 0) {
+        double t_KH = 1.5e7 * pow(Mstar, -2.1); /* Kelvin-Helmholtz time [yr] */
+        double rho_form_cgs = P[i].FormationDensity * UNIT_DENSITY_IN_CGS;
+        double t_ff_yr = sqrt(3.0 * M_PI / (32.0 * GRAVITY_G_CGS * rho_form_cgs)) / SECONDS_PER_YEAR;
+        double delay = fmin(t_KH, t_ff_yr);
+        if(delay > 1.0e6) delay = 1.0e6; /* cap at 1 Myr */
+        if(star_age_yr < delay) return 0;
+    }
+#endif
+
     SET_ACTIVE_RT_CHECK();
 
 #if defined(RT_CHEM_PHOTOION)

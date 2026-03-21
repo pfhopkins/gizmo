@@ -518,6 +518,10 @@ extern struct global_data_all_processes
   double KetjuMinParticlesPerTask;       /*!< minimum particles per compute task for load balancing (default 10) */
 #endif
 
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM_FB) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+  double CosmicRay_SNeFraction;   /*!< fraction of SN energy injected as CRs (typically 0.1) */
+#endif
+
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
   double ArtCondConstant;

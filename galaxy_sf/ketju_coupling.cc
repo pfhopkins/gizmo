@@ -1475,14 +1475,14 @@ void ketju_open_output_file(void)
     if(RestartFlag == 0) {
         ketju_output_file = H5Fcreate(buf, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         /* create groups */
-        hid_t grp = H5Gcreate(ketju_output_file, "BHs", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        hid_t grp = H5Gcreate2(ketju_output_file, "BHs", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Gclose(grp);
         /* create extendable timestep dataset */
         hsize_t dims[1] = {0}, maxdims[1] = {H5S_UNLIMITED}, chunk[1] = {64};
         hid_t space = H5Screate_simple(1, dims, maxdims);
         hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
         H5Pset_chunk(dcpl, 1, chunk);
-        H5Dcreate(ketju_output_file, "timesteps", H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+        H5Dcreate2(ketju_output_file, "timesteps", H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
         H5Pclose(dcpl); H5Sclose(space);
         /* create extendable merger dataset */
         hid_t merger_type = H5Tcreate(H5T_COMPOUND, sizeof(ketju_merger_output));
@@ -1497,12 +1497,12 @@ void ketju_open_output_file(void)
         space = H5Screate_simple(1, dims, maxdims);
         dcpl = H5Pcreate(H5P_DATASET_CREATE);
         H5Pset_chunk(dcpl, 1, chunk);
-        H5Dcreate(ketju_output_file, "mergers", merger_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+        H5Dcreate2(ketju_output_file, "mergers", merger_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
         H5Pclose(dcpl); H5Sclose(space); H5Tclose(merger_type);
     } else {
         ketju_output_file = H5Fopen(buf, H5F_ACC_RDWR, H5P_DEFAULT);
         /* read current timestep index */
-        hid_t ds = H5Dopen(ketju_output_file, "timesteps", H5P_DEFAULT);
+        hid_t ds = H5Dopen2(ketju_output_file, "timesteps", H5P_DEFAULT);
         hid_t sp = H5Dget_space(ds);
         hsize_t dims[1]; H5Sget_simple_extent_dims(sp, dims, NULL);
         ketju_output_tstep_index = (int)dims[0];
@@ -1523,7 +1523,7 @@ void ketju_close_output_file(void)
 static void ketju_hdf5_append_double(const char *dset_name, double value)
 {
     if(ThisTask != 0 || ketju_output_file < 0) return;
-    hid_t ds = H5Dopen(ketju_output_file, dset_name, H5P_DEFAULT);
+    hid_t ds = H5Dopen2(ketju_output_file, dset_name, H5P_DEFAULT);
     hid_t sp = H5Dget_space(ds);
     hsize_t dims[1]; H5Sget_simple_extent_dims(sp, dims, NULL);
     hsize_t newdims[1] = {dims[0] + 1};
@@ -1540,7 +1540,7 @@ static void ketju_hdf5_append_double(const char *dset_name, double value)
 static void ketju_hdf5_write_merger(ketju_merger_output *merger)
 {
     if(ThisTask != 0 || ketju_output_file < 0) return;
-    hid_t ds = H5Dopen(ketju_output_file, "mergers", H5P_DEFAULT);
+    hid_t ds = H5Dopen2(ketju_output_file, "mergers", H5P_DEFAULT);
     hid_t sp = H5Dget_space(ds);
     hsize_t dims[1]; H5Sget_simple_extent_dims(sp, dims, NULL);
     hsize_t newdims[1] = {dims[0] + 1};

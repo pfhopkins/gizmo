@@ -201,6 +201,9 @@ double get_starformation_rate(int i, int mode)
 #endif
     if(All.ComovingIntegrationOn && CellP[i].Density < All.OverDensThresh) {flag=0;} /* below overdensity threshold required for SF */
     if(CellP[i].Density*All.cf_a3inv < All.PhysDensThresh) {flag=0;} /* below physical density threshold */
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+    if(CellP[i].Ionized > 0) {flag=0;} /* ionized cells in HII regions cannot form stars */
+#endif
 #if defined(GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED) && (GALSF_SFR_VIRIAL_SCALING <= 0)
     if(flag==0) {CellP[i].AlphaVirial_SF_TimeSmoothed=0;} /* for time-smoothed virial param, reset to nil if fall below threshold */
 #endif
