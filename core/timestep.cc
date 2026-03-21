@@ -411,10 +411,10 @@ integertime get_timestep(int p,		/*!< particle index */
     P[p].tidal_tensor_mag_prev = tidal_mag; // save it (overwriting previous value)
     {
         double tt2 = P[p].tidal_tensorps.frobenius_norm_sq();
-        double tracett = P[p].tidal_tensorps[0][0] + P[p].tidal_tensorps[1][1] + P[p].tidal_tensorps[2][2]; /* compute numbers needed below */
+        double tracett = P[p].tidal_tensorps.trace(); /* compute numbers needed below */
         double H_eff = ForceSoftening_KernelRadius(p); /* get value to calculate H we need to use in the equations below */
         if(tidal_mag > 0) {P[p].tidal_zeta *= -All.G*(H_eff-All.ForceSoftening[P[p].Type])/(2.*NUMDIMS*tt2 - 0 * 8.*M_PI*tracett*(All.G*P[p].Mass/pow(H_eff,NUMDIMS)));} else {P[p].tidal_zeta = 0;}
-        for(j=0;j<3;j++) {for(k=0;k<3;k++) {P[p].tidal_tensorps_prevstep[j][k]=P[p].tidal_zeta*P[p].tidal_tensorps[j][k];}} /* save for next iteration in gravtree */
+        P[p].tidal_tensorps_prevstep = P[p].tidal_zeta * P[p].tidal_tensorps; /* save for next iteration in gravtree */
     }
 #endif
 

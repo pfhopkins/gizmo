@@ -245,7 +245,7 @@ void gravity_tree(void)
                 GravDataIn[j].AGS_zeta = P[place].AGS_zeta;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-                for(k=0;k<3;k++) {int k2; for(k2=0;k2<3;k2++) {GravDataIn[j].tidal_tensorps_prevstep[k][k2]=P[place].tidal_tensorps_prevstep[k][k2];}}
+                GravDataIn[j].tidal_tensorps_prevstep=P[place].tidal_tensorps_prevstep;
 #endif
                 memcpy(GravDataIn[j].NodeList,DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
             }
@@ -419,7 +419,7 @@ void gravity_tree(void)
                 if(P[place].Type==0) {CellP[place].SubGrid_CosmicRayEnergyDensity += GravDataOut[j].SubGrid_CosmicRayEnergyDensity;}
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                {int i1tt,i2tt; for(i1tt=0;i1tt<3;i1tt++) {for(i2tt=i1tt;i2tt<3;i2tt++) {P[place].tidal_tensorps[i1tt][i2tt] += GravDataOut[j].tidal_tensorps[i1tt][i2tt];}}}
+                P[place].tidal_tensorps += GravDataOut[j].tidal_tensorps;
 #ifdef COMPUTE_JERK_IN_GRAVTREE
                 {int i1tt; for(i1tt=0; i1tt<3; i1tt++) P[place].GravJerk[i1tt] += GravDataOut[j].GravJerk[i1tt];}
 #endif
@@ -524,12 +524,12 @@ void gravity_tree(void)
 #endif
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* final operations to compute the tidal tensor and related quantities */
-        {int k; for(k=0;k<6;k++) {P[i].tidal_tensorps.data[k] *= All.G;}} /* give this the proper units */
+        P[i].tidal_tensorps *= All.G; /* give this the proper units */
 #ifdef COMPUTE_JERK_IN_GRAVTREE
         for(j=0;j<3;j++) {P[i].GravJerk[j] *= All.G;} /* units */
 #endif
 #if defined(PMGRID) && !defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
-        for(j=0;j<3;j++) {for(k=j;k<3;k++) {P[i].tidal_tensorps[j][k] += P[i].tidal_tensorpsPM[j][k];}} /* add the long-range (pm-grid) contribution; but make sure to do this after the unit multiplication by G above, since the PM term already has G built into it */
+        P[i].tidal_tensorps += P[i].tidal_tensorpsPM; /* add the long-range (pm-grid) contribution; but make sure to do this after the unit multiplication by G above, since the PM term already has G built into it */
 #endif
 #endif /* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE */
 

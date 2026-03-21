@@ -32,6 +32,21 @@ struct SymmetricTensor2 {
     Row operator[](int i) noexcept { return {*this, i}; }
     ConstRow operator[](int i) const noexcept { return {*this, i}; }
 
+    // Trace: sum of diagonal elements.
+    T trace() const noexcept { return data[0] + data[3] + data[5]; }
+
+    // Scalar multiply in-place.
+    SymmetricTensor2& operator*=(T s) noexcept {
+        for(int k = 0; k < 6; k++) { data[k] *= s; }
+        return *this;
+    }
+
+    // Element-wise addition in-place.
+    SymmetricTensor2& operator+=(const SymmetricTensor2& other) noexcept {
+        for(int k = 0; k < 6; k++) { data[k] += other.data[k]; }
+        return *this;
+    }
+
     // Squared Frobenius norm: sum of squares of all 9 entries (off-diagonal count twice).
     T frobenius_norm_sq() const noexcept {
         const T diag    = data[0]*data[0] + data[3]*data[3] + data[5]*data[5];
@@ -42,3 +57,9 @@ struct SymmetricTensor2 {
     // Frobenius norm: sqrt(sum of squares of all 9 entries).
     T frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
 };
+
+template<typename T>
+inline SymmetricTensor2<T> operator*(T s, SymmetricTensor2<T> t) noexcept { t *= s; return t; }
+
+template<typename T>
+inline SymmetricTensor2<T> operator*(SymmetricTensor2<T> t, T s) noexcept { t *= s; return t; }
