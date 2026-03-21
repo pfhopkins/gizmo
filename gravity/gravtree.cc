@@ -419,7 +419,7 @@ void gravity_tree(void)
                 if(P[place].Type==0) {CellP[place].SubGrid_CosmicRayEnergyDensity += GravDataOut[j].SubGrid_CosmicRayEnergyDensity;}
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                {int i1tt,i2tt; for(i1tt=0;i1tt<3;i1tt++) {for(i2tt=0;i2tt<3;i2tt++) {P[place].tidal_tensorps[i1tt][i2tt] += GravDataOut[j].tidal_tensorps[i1tt][i2tt];}}}
+                {int i1tt,i2tt; for(i1tt=0;i1tt<3;i1tt++) {for(i2tt=i1tt;i2tt<3;i2tt++) {P[place].tidal_tensorps[i1tt][i2tt] += GravDataOut[j].tidal_tensorps[i1tt][i2tt];}}}
 #ifdef COMPUTE_JERK_IN_GRAVTREE
                 {int i1tt; for(i1tt=0; i1tt<3; i1tt++) P[place].GravJerk[i1tt] += GravDataOut[j].GravJerk[i1tt];}
 #endif
@@ -524,12 +524,12 @@ void gravity_tree(void)
 #endif
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* final operations to compute the tidal tensor and related quantities */
-        for(j=0;j<3;j++) {int i2tt; for(i2tt=0;i2tt<3;i2tt++) {P[i].tidal_tensorps[j][i2tt] *= All.G;}} /* give this the proper units */
+        {int k; for(k=0;k<6;k++) {P[i].tidal_tensorps.data[k] *= All.G;}} /* give this the proper units */
 #ifdef COMPUTE_JERK_IN_GRAVTREE
         for(j=0;j<3;j++) {P[i].GravJerk[j] *= All.G;} /* units */
 #endif
 #if defined(PMGRID) && !defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
-        for(j=0;j<3;j++) {for(k=0;k<3;k++) {P[i].tidal_tensorps[j][k] += P[i].tidal_tensorpsPM[j][k];}} /* add the long-range (pm-grid) contribution; but make sure to do this after the unit multiplication by G above, since the PM term already has G built into it */
+        for(j=0;j<3;j++) {for(k=j;k<3;k++) {P[i].tidal_tensorps[j][k] += P[i].tidal_tensorpsPM[j][k];}} /* add the long-range (pm-grid) contribution; but make sure to do this after the unit multiplication by G above, since the PM term already has G built into it */
 #endif
 #endif /* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE */
 
