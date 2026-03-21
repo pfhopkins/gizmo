@@ -152,11 +152,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 dt_hydrostep = DMAX(dt_hydrostep_i , dt_hydrostep_j); // this is used for flux-limiting, so we always want to be more conservative and use the larger timestep //
                 double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1; // these, by default, won't do anything, but will be used below in final flux assignment
                 int j_is_active_for_fluxes = 0;
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
-                kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
-                kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /* find the closest image in the given box size  */
-                r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 kernel.h_j = P[j].KernelRadius;
 
                 /* force applied for all particles inside each-others kernels! */

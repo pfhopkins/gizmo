@@ -147,7 +147,7 @@ void do_dm_fuzzy_drift_kick(int i, double dt, int mode)
     if(mode==0)
     {
         // calculate various energies: quantum potential QP0, 'stored' numerical pressure NQ0, kinetic energy KE0
-        double dNQ=P[i].AGS_Dt_Numerical_QuantumPotential*dt, NQ0=P[i].AGS_Numerical_QuantumPotential, NQ1=NQ0+dNQ, KE0=0.5*P[i].Mass*(P[i].Vel[0]*P[i].Vel[0]+P[i].Vel[1]*P[i].Vel[1]+P[i].Vel[2]*P[i].Vel[2])*All.cf_a2inv;
+        double dNQ=P[i].AGS_Dt_Numerical_QuantumPotential*dt, NQ0=P[i].AGS_Numerical_QuantumPotential, NQ1=NQ0+dNQ, KE0=0.5*P[i].Mass*P[i].Vel.norm_sq()*All.cf_a2inv;
         double f00 = 0.5 * All.ScalarField_hbar_over_mass; // this encodes the coefficient with the mass of the particle: units vel*L = hbar / particle_mass
         double d2rho = P[i].AGS_Gradients2_Density[0][0] + P[i].AGS_Gradients2_Density[1][1] + P[i].AGS_Gradients2_Density[2][2]; // laplacian
         double drho2 = P[i].AGS_Gradients_Density[0]*P[i].AGS_Gradients_Density[0] + P[i].AGS_Gradients_Density[1]*P[i].AGS_Gradients_Density[1] + P[i].AGS_Gradients_Density[2]*P[i].AGS_Gradients_Density[2];
@@ -193,9 +193,9 @@ void do_dm_fuzzy_initialization(void)
     int i;
     for(i = 0; i < NumPart; i++)
     {
-        double volume = P[i].AGS_Density / P[i].Mass, psimag = sqrt(P[i].AGS_Density), phase = 0; int k=0;
+        double volume = P[i].AGS_Density / P[i].Mass, psimag = sqrt(P[i].AGS_Density), phase = 0;
         /* approximation for initial phase below is fine for slowly-varying k, otherwise not ideal */
-        for(k=0;k<3;k++) {phase += P[i].Pos[k] * P[i].Vel[k] / All.ScalarField_hbar_over_mass;}
+        phase = dot(P[i].Pos, P[i].Vel) / All.ScalarField_hbar_over_mass;
 
         P[i].AGS_Psi_Re = psimag * volume * cos(phase); /* remember, we evolve the volume-integrated value of psi */
         P[i].AGS_Psi_Im = psimag * volume * sin(phase);
@@ -308,16 +308,16 @@ struct INPUT_STRUCT_NAME
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 static inline void particle2in_DMGrad(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
-    int k; for(k=0;k<3;k++) {in->Pos[k] = P[i].Pos[k];}
+    in->Pos[0] = P[i].Pos[0]; in->Pos[1] = P[i].Pos[1]; in->Pos[2] = P[i].Pos[2];
     in->AGS_KernelRadius = P[i].AGS_KernelRadius;
     in->Type = P[i].Type;
     in->GQuant.AGS_Density = P[i].AGS_Density;
-    for(k=0;k<3;k++) {in->GQuant.AGS_Gradients_Density[k] = P[i].AGS_Gradients_Density[k];}
+    in->GQuant.AGS_Gradients_Density[0] = P[i].AGS_Gradients_Density[0]; in->GQuant.AGS_Gradients_Density[1] = P[i].AGS_Gradients_Density[1]; in->GQuant.AGS_Gradients_Density[2] = P[i].AGS_Gradients_Density[2];
 #if (DM_FUZZY > 0)
     in->GQuant.AGS_Psi_Re = P[i].AGS_Psi_Re_Pred * P[i].AGS_Density / P[i].Mass;
-    for(k=0;k<3;k++) {in->GQuant.AGS_Gradients_Psi_Re[k] = P[i].AGS_Gradients_Psi_Re[k];}
+    in->GQuant.AGS_Gradients_Psi_Re[0] = P[i].AGS_Gradients_Psi_Re[0]; in->GQuant.AGS_Gradients_Psi_Re[1] = P[i].AGS_Gradients_Psi_Re[1]; in->GQuant.AGS_Gradients_Psi_Re[2] = P[i].AGS_Gradients_Psi_Re[2];
     in->GQuant.AGS_Psi_Im = P[i].AGS_Psi_Im_Pred * P[i].AGS_Density / P[i].Mass;
-    for(k=0;k<3;k++) {in->GQuant.AGS_Gradients_Psi_Im[k] = P[i].AGS_Gradients_Psi_Im[k];}
+    in->GQuant.AGS_Gradients_Psi_Im[0] = P[i].AGS_Gradients_Psi_Im[0]; in->GQuant.AGS_Gradients_Psi_Im[1] = P[i].AGS_Gradients_Psi_Im[1]; in->GQuant.AGS_Gradients_Psi_Im[2] = P[i].AGS_Gradients_Psi_Im[2];
 #endif
 }
 

@@ -70,7 +70,7 @@ void add_analytic_gravitational_forces()
 void GravAccel_set_zeros_if_needed()
 {
 #if defined(SELFGRAVITY_OFF) || defined(RT_SELFGRAVITY_OFF) /* zero gravaccel [difference is that RT_SELFGRAVITY_OFF... option still computes everything above ]*/
-    int i; for(i=FirstActiveParticle; i>=0; i=NextActiveParticle[i]) {P[i].GravAccel[0]=P[i].GravAccel[1]=P[i].GravAccel[2]=0;}
+    int i; for(i=FirstActiveParticle; i>=0; i=NextActiveParticle[i]) {P[i].GravAccel = {};}
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     for(i=FirstActiveParticle; i>=0; i=NextActiveParticle[i]) {for(int k=0;k<6;k++) {P[i].tidal_tensorps.data[k]=0;}}
 #endif
@@ -161,16 +161,16 @@ void GravAccel_RayleighTaylorTest()
 /* static unit Plummer Sphere (assumes G=M=a=1) */
 void GravAccel_StaticPlummerSphere()
 {
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #endif
-        double r2, r; r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2]; r = sqrt(r2);
-        for(k=0;k<3;k++) {P[i].GravAccel[k] += -dp[k] / pow(r2 + 1, 1.5);}
+        double r2 = dp.norm_sq(), r = sqrt(r2);
+        P[i].GravAccel += dp * (-1.0 / pow(r2 + 1, 1.5));
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        double f=pow(1+r2, 1.5), f2=pow(1+r2, 2.5);
+        int k; double f=pow(1+r2, 1.5), f2=pow(1+r2, 2.5);
         for(k=0;k<3;k++) {P[i].tidal_tensorps[k][k]-=1/f; int j; for(j=k;j<3;j++) {P[i].tidal_tensorps[k][j]+=3*dp[k]*dp[j]/f2;}}
 #endif
     }
@@ -182,16 +182,16 @@ void GravAccel_StaticPlummerSphere()
 void GravAccel_StaticHernquist()
 {
     double HQ_Mtot=100, HQ_a=20; /* total mass and scale-length "a" [both in code units] */
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #endif
-        double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2), f = r+HQ_a, m = HQ_Mtot*(r/f)*(r/f);
-        for(k=0;k<3;k++) {P[i].GravAccel[k] += -All.G * m * dp[k]/(r2*r);}
+        double r2 = dp.norm_sq(), r = sqrt(r2), f = r+HQ_a, m = HQ_Mtot*(r/f)*(r/f);
+        P[i].GravAccel += dp * (-All.G * m / (r2*r));
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        double f0=All.G*HQ_Mtot, fa=f0*(2/f+1/r)/(r2*f*f), fxx=-f0/(r*f*f);
+        int k; double f0=All.G*HQ_Mtot, fa=f0*(2/f+1/r)/(r2*f*f), fxx=-f0/(r*f*f);
         for(k=0;k<3;k++) {P[i].tidal_tensorps[k][k]+=fxx; int j; for(j=k;j<3;j++) {P[i].tidal_tensorps[k][j]+=fa*dp[k]*dp[j];}}
 #endif
     }
@@ -203,15 +203,15 @@ void GravAccel_StaticHernquist()
 void GravAccel_StaticIsothermalSphere()
 {
     double ISO_Mmax=100, ISO_Rmax=200; /* total mass inside rmax, the maximum radius with mass (outside of which density=0, just set Rmax very large if you want an infinite SIS) */
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #endif
-        double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2);
+        double r2 = dp.norm_sq(), r = sqrt(r2);
         double m = ISO_Mmax; if(r < ISO_Rmax) {m *= r/ISO_Rmax;} /* mass enclosed ~r, until Rmax, where it cuts off and remains constant */
-        for(k=0;k<3;k++) {P[i].GravAccel[k] += -All.G * m * dp[k]/(r2*r);}
+        P[i].GravAccel += dp * (-All.G * m / (r2*r));
     }
 }
 
@@ -228,16 +228,17 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
     {
         for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
         {
-            double dp[3], r2=0, r, r_cut;
-            for(k=0;k<3;k++) {dp[k]=All.cf_atime*(P[i].Pos[k]-All.SpecialParticle_Position_ForRefinement[j][k]); r2+=dp[k]*dp[k];}
-            r = sqrt(r2);
+            double r2, r, r_cut;
+            double *ref=All.SpecialParticle_Position_ForRefinement[j];
+            Vec3<double> dp = (P[i].Pos - Vec3<double>{ref[0],ref[1],ref[2]}) * All.cf_atime;
+            r2=dp.norm_sq(); r=sqrt(r2);
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES <= 1)
             r_cut = 0.2 * All.HubbleParam;
             if(r > r_cut)
             {
                 double x = r/r_cut, tau = pow(All.cf_atime / 0.18437477681344028, -3.);
                 double m0 = 0.19*(pow(x,1.15)-1.)/(1.+pow(x/300.,0.8)) + (1.4e-8*tau)*(pow(x,3.)-1.);
-                for(k=0;k<3;k++) {P[i].GravAccel[k] += -All.G * (dp[k]/r) * (m0/(r*r)) * (1./All.cf_a2inv);}
+                P[i].GravAccel += dp * (-All.G * m0 / (r2*r * All.cf_a2inv));
                 if(r > 2.*r_cut) {P[i].Mass = 0;} // clip it
             }
 #else
@@ -254,7 +255,7 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
                 double rG = 2.*All.G*All.Mass_of_SpecialParticle[j]/(C_LIGHT_CODE*C_LIGHT_CODE); // define gravitational radius
                 double fac_0 = -All.G*All.Mass_of_SpecialParticle[j] / (r2*r * All.cf_a2inv); // define pre-factor (in appropriate code units) for gravitational acceleration
                 double x = r/rG - 1., fac = fac_0 * (1.+2.*x)/(x*x); // this is defined as the difference between the P.W. accel and the Keplerian accel, since the latter is already included
-                if(x > 0) {for(k=0;k<3;k++) {P[i].GravAccel[k] += fac * dp[k];}}
+                if(x > 0) {P[i].GravAccel += dp * fac;}
             }
 #endif
         }
@@ -267,13 +268,13 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
 void GravAccel_GMCTurbInit()
 {
 #ifdef STARFORGE_GMC_TURBINIT
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k] - 0.5*All.BoxSize;}
-        double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2);
+        Vec3<double> dp = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize};
+        double r2 = dp.norm_sq(), r = sqrt(r2);
         double M = 0.808 * All.TotN_gas * All.MeanGasParticleMass, R=All.BoxSize/10; // these are for the default settings of MakeCloud's uniform sphere IC, adjust for your problem!
         double menc = DMIN(M,M*pow(r/R,3)) + DMAX(0,3*M*log(r/R)); // uniform sphere plus a r^-3 surrounding halo with density matched at the sphere radius
-        for(k=0;k<3;k++) {P[i].GravAccel[k] += -All.G * STARFORGE_GMC_TURBINIT * menc * dp[k]/(r2*r);}
+        P[i].GravAccel += dp * (-All.G * STARFORGE_GMC_TURBINIT * menc / (r2*r));
     }
 #endif
 }
@@ -284,7 +285,7 @@ void GravAccel_FilamentTurbInit()
 #ifdef STARFORGE_FILAMENT_TURBINIT
     int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k] - 0.5*All.BoxSize;}
+        Vec3<double> dp = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize};
         double r = sqrt(dp[1]*dp[1]+dp[2]*dp[2]) + P[i].KernelRadius, lambda = r/STARFORGE_FILAMENT_RADIUS; //define cylindrical radius and lambda rescaled radius
         double R2 = STARFORGE_FILAMENT_RADIUS*STARFORGE_FILAMENT_RADIUS; //shorthand
         double num_scaling_factor = 2.0 ; //additional scaling found numerically to make the stirring run reproduce the right alpha and filament length (similarly determined numerical factor added to MakeCloud)
@@ -338,9 +339,9 @@ void GravAccel_GrowingDiskPotential()
     /* ok now we can assign actual accelerations */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #endif
         r2 = dp[0]*dp[0] + dp[1]*dp[1];
         Zterm = sqrt(z_disk*z_disk + dp[2]*dp[2]); /* sqrt((Zdisk^2 + dZ^2); appears several times  */
@@ -357,22 +358,22 @@ void GravAccel_GrowingDiskPotential()
 /* Keplerian forces (G=M=1): useful for orbit, MRI, planetary disk problems */
 void GravAccel_KeplerianOrbit()
 {
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #elif defined(BOX_PERIODIC)
         dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
 #endif
-        double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2);
-        for(k=0;k<3;k++) {P[i].GravAccel[k] -= dp[k] / (r2*r);}
+        double r2 = dp.norm_sq(), r = sqrt(r2);
+        P[i].GravAccel -= dp * (1.0 / (r2*r));
     }
 }
 
 
 
-/* Keplerian forces (G=M=1): this is a specific (bounded and softened) version 
+/* Keplerian forces (G=M=1): this is a specific (bounded and softened) version
  used just for the Keplerian disk test problem */
 void GravAccel_KeplerianTestProblem()
 {
@@ -410,18 +411,18 @@ void GravAccel_StaticNFW()
 {
     double NFW_M200=100, NFW_C=10; /* NFW mass inside R200 (in code units), and concentration =R200/Rs */
     double R200 = pow(NFW_M200*All.G/(100.*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits), 1./3.), Rs=R200/NFW_C; /* using R200 = R where mean density = 200x critical density, and Rs=R200/c200 */
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #elif defined(BOX_PERIODIC)
         dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
 #endif
-        double r2=dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r=sqrt(r2), x=r/Rs, cfac=log(1+NFW_C)-NFW_C/(1+NFW_C);
+        double r2=dp.norm_sq(), r=sqrt(r2), x=r/Rs, cfac=log(1+NFW_C)-NFW_C/(1+NFW_C);
         if(r>0) {
             double mfac = (log(1+x)-x/(1+x)) / (x*x); if(x<=0.04) {mfac=0.5-2.*x/3.+0.75*x*x;} /* expression works well for larger x, small-x leads to potential numerical errors */
-            for(k=0;k<3;k++) {P[i].GravAccel[k] += -All.G * mfac * NFW_M200/(cfac*Rs*Rs) * (dp[k]/r);}}
+            P[i].GravAccel += dp * (-All.G * mfac * NFW_M200 / (cfac*Rs*Rs*r));}
     } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) //
 }
 
@@ -431,17 +432,17 @@ void GravAccel_StaticNFW()
 void GravAccel_PaczynskiWiita()
 {
     double PACZYNSKI_WIITA_MASS = 1.0; // Mass to use for the Paczynski-Wiita analytic gravity pseudo-Newtonian potential (in solar masses)
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
-        double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+        Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #endif
-        double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2), r_g = 2*PACZYNSKI_WIITA_MASS;
+        double r2 = dp.norm_sq(), r = sqrt(r2), r_g = 2*PACZYNSKI_WIITA_MASS;
         if(r > r_g)
         {
             double q = PACZYNSKI_WIITA_MASS/((r - r_g)*(r - r_g));
-            for(k=0;k<3;k++) {P[i].GravAccel[k] -= q * P[i].Pos[k]/r;}
+            P[i].GravAccel -= P[i].Pos * (q/r);
         }
     }
 }
@@ -453,7 +454,7 @@ void apply_excision(void)
 {
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     /* we will excise -any- cells or particles which fall inside the force softening kernel of the central special particle */
-    int i,j,k; double excision_radius = All.ForceSoftening[3]; // ??? type_j?
+    int i,j; double excision_radius = All.ForceSoftening[3]; // ??? type_j?
     double excision_radius2 = excision_radius*excision_radius;
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
@@ -461,7 +462,7 @@ void apply_excision(void)
         for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
         {
             if(All.SpecialParticle_Position_ForRefinement[j][0] <= -1.e10) {continue;} /* no valid position to use */
-            double r2=0; for(k=0;k<3;k++) {double dp=P[i].Pos[k]-All.SpecialParticle_Position_ForRefinement[j][k]; r2+=dp*dp;}
+            double *ref2=All.SpecialParticle_Position_ForRefinement[j]; double r2=(P[i].Pos-Vec3<double>{ref2[0],ref2[1],ref2[2]}).norm_sq();
             if(r2 < excision_radius2)
             {
                 All.Mass_Accreted_By_SpecialParticle[j] += P[i].Mass;
@@ -476,15 +477,15 @@ void apply_excision(void)
     double excision_radius = EXCISION_ETA * pow(EXCISION_INIT_RADIUS*EXCISION_INIT_RADIUS*EXCISION_INIT_RADIUS +
                                                 3.*sqrt(2. * All.G * EXCISION_MASS) * pow(EXCISION_INIT_RADIUS, 3./2.) * All.Time +
                                                 9./2. * All.G * EXCISION_MASS * All.Time*All.Time, 1./3.);
-    int i,k; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if(P[i].Type == 0)
         {
-            double dp[3]; for(k=0;k<3;k++) {dp[k]=P[i].Pos[k];}
+            Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-            for(k=0;k<3;k++) {dp[k] = -P[i].Min_xyz_to_Sink[k];}
+            dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
 #endif
-            double r2 = dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2], r = sqrt(r2);
+            double r2 = dp.norm_sq(), r = sqrt(r2);
             if(r < excision_radius) {P[i].Mass = 0;}
         }
     }

@@ -174,7 +174,7 @@ endif
 # that the specific GSL and HDF5 versions are hardcoded here...
 ifeq ($(SYSTYPE),"MacBookCellar")
 CC       =  mpicc
-CXX      =  mpicxx -std=c++14
+CXX      =  mpicxx -std=c++17
 FC       =  $(CC) #mpifort  ## change this to "mpifort" for packages requiring linking secondary fortran code, currently -only- the helmholtz eos modules do this, so I leave it un-linked for now to save people the compiler headaches
 OPTIMIZE = -O1 -funroll-loops
 OPTIMIZE += -g -Wall # compiler warnings

@@ -45,7 +45,7 @@ static struct INPUT_STRUCT_NAME
 void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k;
-    for(k=0; k<3; k++) {in->Pos[k] = P[i].Pos[k];}
+    {int k; for(k=0; k<3; k++) {in->Pos[k] = P[i].Pos[k];}}
     in->KernelRadius = P[i].KernelRadius;
     //if(P[i].Type==0) {in->KernelSum_Around_RT_Source = CellP[i].Density;} else {in->KernelSum_Around_RT_Source = P[i].DensityAroundParticle;}
     in->KernelSum_Around_RT_Source = P[i].KernelSum_Around_RT_Source;
@@ -59,7 +59,7 @@ void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
     if(P[i].Type == 5) {dt = P[i].dt_since_last_gas_search;}
 #endif
 #if defined(RT_EVOLVE_FLUX)
-    for(k=0; k<3; k++) {if(P[i].Type==0) {in->Vel[k] = CellP[i].VelPred[k];} else {in->Vel[k] = P[i].Vel[k];}}
+    {int k; for(k=0; k<3; k++) {if(P[i].Type==0) {in->Vel[k] = CellP[i].VelPred[k];} else {in->Vel[k] = P[i].Vel[k];}}}
 #endif
 #endif
     for(k=0; k<N_RT_FREQ_BINS; k++) {if(P[i].Type==0 || active_check==0) {in->Luminosity[k]=0;} else {in->Luminosity[k] = lum[k] * dt;}}

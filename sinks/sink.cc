@@ -390,7 +390,7 @@ void set_sink_mdot(int i, int n, double dt)
         t_acc_disk = sqrt(reff*reff*reff * Gm_i); // dynamical time at radius "reff", essentially fastest-possible accretion time
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM) && defined(SINK_MDOT_FROM_ALPHAMODEL)
         reff = SinkParticle_GravityKernelRadius; Gm_i = 1./(All.G*P[n].Mass); // these need to be reset in case they are re-defined above
-        double j=0; for(k=0;k<3;k++) {j+=P[n].Sink_Specific_AngMom[k]*P[n].Sink_Specific_AngMom[k];}  // calculate magnitude of specific ang mom
+        double j = P[n].Sink_Specific_AngMom.norm_sq();  // calculate magnitude of specific ang mom
         j = sqrt(j) * (1. + 1./SINK_ALPHADISK_ACCRETION); // correction assuming a ratio of accretion disk to sink mass ~SINK_ALPHADISK_ACCRETION [max allowed], with the material in the sink having given its angular momentum to the sink [which is what should happen]
         t_acc_disk = 2.*M_PI*j*j*j*Gm_i*Gm_i / fabs(SINK_MDOT_FROM_ALPHAMODEL); // orbital time at circularization radius of the alpha-disk: SINK_MDOT_FROM_ALPHAMODEL is approximately equivalent to the 'alpha' parameter, setting how rapidly accretion occurs (=0.01 -> 100 orbits)
         if(SINK_MDOT_FROM_ALPHAMODEL>0) {t_acc_disk = 100. * t_acc_disk * (1 / (Gm_i * DMIN(reff, j*j*Gm_i))) / soundspeed2;} // Shakura-Sunyaev prescription with alpha=0.01, using minimum of sink and circularization radius
@@ -520,7 +520,8 @@ void set_sink_mdot(int i, int n, double dt)
 
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) /* pre-calculate some quantities for 'angular momentum feedback' here, these have to be based on the mdot estimator above */
     double jmag=0,lmag=0,mdot_eff=mdot,return_timescale,angmom_toreturn; SinkTempInfo[i].angmom_norm_topass_in_swallowloop=0;
-    for(k=0;k<3;k++) {jmag+=SinkTempInfo[i].angmom_prepass_sum_for_passback[k]*SinkTempInfo[i].angmom_prepass_sum_for_passback[k]; lmag+=P[n].Sink_Specific_AngMom[k]*P[n].Sink_Specific_AngMom[k];}
+    for(k=0;k<3;k++) {jmag+=SinkTempInfo[i].angmom_prepass_sum_for_passback[k]*SinkTempInfo[i].angmom_prepass_sum_for_passback[k];}
+    lmag = P[n].Sink_Specific_AngMom.norm_sq();
     lmag = P[n].Mass * sqrt(lmag); // this stores the magnitude of the _total_ angular momentum (mass * length * vel) internal to the sink
     return_timescale = P[n].Mass / mdot_eff; // rate of angular momentum return is (total angular momentum) / (return timescale) - here set to (total mass / mdot). Set this for your desired prescription.
     angmom_toreturn = lmag * DMIN(0.5, dt/return_timescale); // the actual angular momentum we will return this timestep (with a mild limiter so we don't dump it all at once)
@@ -707,7 +708,7 @@ void sink_final_operations(void)
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
                 dt = P[n].dt_since_last_gas_search;
 #endif
-                double dr_min=0; for(k=0;k<3;k++) {dr_min+=(P[n].Sink_PotentialMinimumOfNeighborsPos[k]-P[n].Pos[k])*(P[n].Sink_PotentialMinimumOfNeighborsPos[k]-P[n].Pos[k]);}
+                double dr_min = (P[n].Sink_PotentialMinimumOfNeighborsPos - P[n].Pos).norm_sq();
                 if(dr_min > 0 && dt > 0)
                 {
                     dr_min=sqrt(dr_min)*All.cf_atime; // offset to be covered
@@ -717,7 +718,7 @@ void sink_final_operations(void)
                     fac_sink_shift = dv_shift * dt / dr_min; // dimensionless shift factor
                     if(fac_sink_shift > 1.e-4) {fac_sink_shift = 1.-exp(-fac_sink_shift);} // make sure we can't overshoot by using this smooth interpolation function
                 }
-                for(k = 0; k < 3; k++) {P[n].Pos[k] += (P[n].Sink_PotentialMinimumOfNeighborsPos[k]-P[n].Pos[k]) * fac_sink_shift;}
+                P[n].Pos += (P[n].Sink_PotentialMinimumOfNeighborsPos - P[n].Pos) * fac_sink_shift;
             }
 #endif
 

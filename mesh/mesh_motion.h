@@ -45,7 +45,7 @@ void set_mesh_motion(int i)
 /* no mesh motion (simple but here anyways) */
 void MeshMotion_FixedGrid(int i)
 {
-    int k; for(k=0;k<3;k++) {CellP[i].ParticleVel[k]=0;}
+    CellP[i].ParticleVel = {};
 }
 
 
@@ -87,7 +87,7 @@ void MeshMotion_CircularOrbitExternalGravity(int i)
     dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y;
 #endif
     r2 = dp[0]*dp[0] + dp[1]*dp[1]; r = sqrt(r2);
-    a=0; for(k=0;k<3;k++) {a+=P[i].GravAccel[k]*P[i].GravAccel[k];}
+    a = P[i].GravAccel.norm_sq();
     if(a > 0)
     {
         Omega = sqrt(a/r); // orbital frequency
@@ -104,8 +104,8 @@ void MeshMotion_CircularOrbitExternalGravity(int i)
     routine below can trivially be modified to halt, at a certain point, if things become too dense) */
 void MeshMotion_FreeFallExternalGravity(int i)
 {
-    double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i); int k;
-    for(k=0;k<3;k++) {CellP[i].ParticleVel[k]+=P[i].GravAccel[k]*dt;}
+    double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+    CellP[i].ParticleVel += P[i].GravAccel * dt;
 }
 
 

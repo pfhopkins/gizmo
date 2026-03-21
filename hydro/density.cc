@@ -25,7 +25,7 @@
 
 struct kernel_density /*! defines a number of useful variables we will use below */
 {
-  double dp[3],dv[3],r, wk, dwk, hinv, hinv3, hinv4, mj_wk, mj_dwk_r;
+  Vec3<double> dp; double dv[3],r, wk, dwk, hinv, hinv3, hinv4, mj_wk, mj_dwk_r;
 };
 
 
@@ -287,7 +287,7 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
-                r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 if(r2 < h2) /* this loop is only considering particles inside local.KernelRadius, i.e. seen-by-main */
                 {
                     kernel.r = sqrt(r2);
@@ -904,9 +904,9 @@ void density(void)
                     set_mesh_motion(i); // use user-specified analytic function to define mesh motions //
 #elif ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
                     double eps_pvel = 0.3; // normalization for how much 'weight' to give to neighbors (unstable if >=0.5)
-                    {int k; for(k=0;k<3;k++) {CellP[i].ParticleVel[k] = (1.-eps_pvel)*CellP[i].VelPred[k] + eps_pvel*CellP[i].ParticleVel[k]/CellP[i].Density;}} // assign mixture velocity
+                    CellP[i].ParticleVel = CellP[i].VelPred * (1.-eps_pvel) + CellP[i].ParticleVel * (eps_pvel/CellP[i].Density); // assign mixture velocity
 #elif (HYDRO_FIX_MESH_MOTION==7)
-                    {int k; for(k=0;k<3;k++) {CellP[i].ParticleVel[k] = CellP[i].VelPred[k];}} // move with fluid
+                    CellP[i].ParticleVel = CellP[i].VelPred; // move with fluid
 #endif
 #endif
 
@@ -1033,17 +1033,16 @@ void density(void)
 #if defined(MAGNETIC)
             if(P[i].Type == 0) {
                 if(CellP[i].recent_refinement_flag == 1) {
-                    int k; for(k=0;k<3;k++) {
-                        CellP[i].BPred[k] = CellP[i].B[k] = CellP[i].BField_prerefinement[k] * P[i].Mass / CellP[i].Density; // reset B-fields to desired values given the conserved variable is VB, after refinement or de-refinement step
-                        CellP[i].BField_prerefinement[k] = 0; // reset this variable to null
-                    }}}
+                    CellP[i].BPred = CellP[i].B = CellP[i].BField_prerefinement * (P[i].Mass / CellP[i].Density); // reset B-fields to desired values given the conserved variable is VB, after refinement or de-refinement step
+                    CellP[i].BField_prerefinement = {}; // reset this variable to null
+                    }}
 #endif
             if(P[i].Type == 0) {CellP[i].recent_refinement_flag = 0;} // reset this flag after density re-computation
             
         } // density_isactive(i)
         
 #if defined(SINK_WIND_SPAWN_SET_BFIELD_POLTOR) /* re-assign magnetic fields after getting the correct density for newly-spawned cells when these options are enabled */
-        if(P[i].Type==0) {if(P[i].ID==All.SpawnedWindCellID && CellP[i].IniDen<0) {CellP[i].IniDen=CellP[i].Density; int k; for(k=0;k<3;k++) {CellP[i].BPred[k]=CellP[i].B[k]=CellP[i].IniB[k]*(All.UnitMagneticField_in_gauss/UNIT_B_IN_GAUSS)*(P[i].Mass/(All.cf_a2inv*CellP[i].Density));}}}
+        if(P[i].Type==0) {if(P[i].ID==All.SpawnedWindCellID && CellP[i].IniDen<0) {CellP[i].IniDen=CellP[i].Density; CellP[i].BPred=CellP[i].B=CellP[i].IniB*((All.UnitMagneticField_in_gauss/UNIT_B_IN_GAUSS)*(P[i].Mass/(All.cf_a2inv*CellP[i].Density)));}}
 #endif
         
     } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
@@ -1094,9 +1093,9 @@ int cellcorrections_evaluate(int target, int mode, int *exportflag, int *exportn
             for(n=0; n<numngb_inbox; n++)
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
-                double dp[3]; for(k=0;k<3;k++) {dp[k]=local.Pos[k]-P[j].Pos[k];}
+                Vec3<double> dp{local.Pos[0]-P[j].Pos[0], local.Pos[1]-P[j].Pos[1], local.Pos[2]-P[j].Pos[2]};
                 NEAREST_XYZ(dp[0],dp[1],dp[2],1); // find the closest image in the given box size  //
-                double r2=0; for(k=0;k<3;k++) {r2+=dp[k]*dp[k];} // distance
+                double r2 = dp.norm_sq(); // distance
                 if(r2 >= P[j].KernelRadius*P[j].KernelRadius) {continue;} // need to be inside of 'j's kernel search
                 double u,hinv,hinv3,hinv4,wk,dwk; kernel_hinv(P[j].KernelRadius, &hinv, &hinv3, &hinv4); u=sqrt(r2)*hinv; wk=0; dwk=0; // define kernel-needed variables
                 kernel_main(u, hinv3, hinv4, &wk, &dwk, -1); // calculate the normal kernel weight 'wk'

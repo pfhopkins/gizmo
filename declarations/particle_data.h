@@ -15,26 +15,26 @@ extern ALIGN(32) struct particle_data
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
     
-    ALIGN(32) MyDouble Pos[3];      /*!< particle position at its current time */
+    ALIGN(32) Vec3<MyDouble> Pos;   /*!< particle position at its current time */
     MyDouble Mass;                  /*!< particle mass */
-    
-    MyDouble Vel[3];                /*!< particle velocity at its current time */
-    MyDouble dp[3];
+
+    Vec3<MyDouble> Vel;             /*!< particle velocity at its current time */
+    Vec3<MyDouble> dp;
     MyFloat Particle_DivVel;        /*!< velocity divergence of neighbors (for predict step) */
     
-    MyDouble GravAccel[3];          /*!< particle acceleration due to gravity */
+    Vec3<MyDouble> GravAccel;       /*!< particle acceleration due to gravity */
 #ifdef PMGRID
-    MyFloat GravPM[3];                /*!< particle acceleration due to long-range PM gravity force */
+    Vec3<MyFloat> GravPM;           /*!< particle acceleration due to long-range PM gravity force */
 #endif
     MyFloat OldAcc;                    /*!< magnitude of old gravitational force. Used in relative opening criterion */
 #ifdef SPECIAL_POINT_MOTION
-    MyFloat Acc_Total_PrevStep[3];  /*!< old total acceleration on a given cell/particle */
+    Vec3<MyFloat> Acc_Total_PrevStep;  /*!< old total acceleration on a given cell/particle */
 #endif
 #ifdef HERMITE_INTEGRATION
-    MyFloat Hermite_OldAcc[3];
-    MyFloat OldPos[3];
-    MyFloat OldVel[3];
-    MyFloat OldJerk[3];
+    Vec3<MyFloat> Hermite_OldAcc;
+    Vec3<MyFloat> OldPos;
+    Vec3<MyFloat> OldVel;
+    Vec3<MyFloat> OldJerk;
     short int AccretedThisTimestep;     /*!< flag to decide whether to stick with the KDK step for stability reasons, e.g. when actively accreting */
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
@@ -68,7 +68,7 @@ extern ALIGN(32) struct particle_data
 #endif
     
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-    double GravJerk[3];
+    Vec3<double> GravJerk;
 #endif
     
 #ifdef GALSF
@@ -96,7 +96,7 @@ extern ALIGN(32) struct particle_data
     MyFloat DensityAroundParticle;         /*!< gas density in the neighborhood of the collisionless particle (evaluated from neighbors) */
 #endif
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) || defined(COOLING)
-    MyFloat GradRho[3];             /*!< gas density gradient evaluated simply from the neighboring particles, for collisionless centers */
+    Vec3<MyFloat> GradRho;          /*!< gas density gradient evaluated simply from the neighboring particles, for collisionless centers */
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     MyFloat ColumnDensityBins[RT_USE_TREECOL_FOR_NH];     /*!< angular bins for column density */
@@ -130,13 +130,13 @@ extern ALIGN(32) struct particle_data
     MyFloat Grain_Size;
     MyFloat Gas_Density;
     MyFloat Gas_InternalEnergy;
-    MyFloat Gas_Velocity[3];
+    Vec3<MyFloat> Gas_Velocity;
     MyFloat Grain_AccelTimeMin;
 #if defined(GRAIN_BACKREACTION)
-    MyFloat Grain_DeltaMomentum[3];
+    Vec3<MyFloat> Grain_DeltaMomentum;
 #endif
 #if defined(GRAIN_LORENTZFORCE)
-    MyFloat Gas_B[3];
+    Vec3<MyFloat> Gas_B;
 #endif
 #endif
 #if defined(PIC_MHD)
@@ -187,14 +187,14 @@ extern ALIGN(32) struct particle_data
     MyFloat Sink_AccretionDeficit; /* difference between continuously-accreted and discretely-accreted masses, needs to be evolved to ensure exact conservation with some modules */
 #endif
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM
-    MyFloat Sink_Specific_AngMom[3];
+    Vec3<MyFloat> Sink_Specific_AngMom;
 #endif
 #ifdef SINK_RETURN_BFLUX
-    MyDouble B[3];
+    Vec3<MyDouble> B;
 #endif
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
     MyFloat Mgas_in_Kernel;
-    MyFloat Jgas_in_Kernel[3];
+    Vec3<MyFloat> Jgas_in_Kernel;
 #endif
     MyFloat Sink_Mdot;
     int Sink_TimeBinGasNeighbor;
@@ -202,7 +202,7 @@ extern ALIGN(32) struct particle_data
     MyFloat Sink_dr_to_NearestGasNeighbor;
 #endif
 #ifdef SINK_REPOSITION_ON_POTMIN
-    MyFloat Sink_PotentialMinimumOfNeighborsPos[3];
+    Vec3<MyFloat> Sink_PotentialMinimumOfNeighborsPos;
     MyFloat Sink_PotentialMinimumOfNeighbors;
 #endif
 #endif  /* if defined(SINK_PARTICLES) */
@@ -213,18 +213,18 @@ extern ALIGN(32) struct particle_data
     
 #ifdef SINK_CALC_DISTANCES
     MyFloat Min_Distance_to_Sink;
-    MyFloat Min_xyz_to_Sink[3];
+    Vec3<MyFloat> Min_xyz_to_Sink;
 #ifdef SPECIAL_POINT_MOTION
-    MyFloat vel_of_nearest_special[3];
-    MyFloat acc_of_nearest_special[3];
+    Vec3<MyFloat> vel_of_nearest_special;
+    Vec3<MyFloat> acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
 #if defined(SINGLE_STAR_FIND_BINARIES) || (SINGLE_STAR_TIMESTEPPING > 0)
     MyDouble Min_Sink_OrbitalTime; //orbital time for binary
-    MyDouble comp_dx[3]; //position offset of binary companion - this will be evolved in the Kepler solution while we use the Pos attribute to track the binary COM
-    MyDouble comp_dv[3]; //velocity offset of binary companion - this will be evolved in the Kepler solution while we use the Vel attribute to track the binary COM velocity
+    Vec3<MyDouble> comp_dx; //position offset of binary companion - this will be evolved in the Kepler solution while we use the Pos attribute to track the binary COM
+    Vec3<MyDouble> comp_dv; //velocity offset of binary companion - this will be evolved in the Kepler solution while we use the Vel attribute to track the binary COM velocity
     MyDouble comp_Mass; //mass of binary companion
     int is_in_a_binary; // flag whether star is in a binary or not
 #endif
@@ -234,7 +234,7 @@ extern ALIGN(32) struct particle_data
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     int SuperTimestepFlag; // >=2 if allowed to super-timestep (increases with each drift/kick), 1 if a candidate for super-timestepping, 0 otherwise
     MyDouble COM_dt_tidal; //timescale from tidal tensor evaluated at the center of mass without contribution from the companion
-    MyDouble COM_GravAccel[3]; //gravitational acceleration evaluated at the center of mass without contribution from the companion
+    Vec3<MyDouble> COM_GravAccel; //gravitational acceleration evaluated at the center of mass without contribution from the companion
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     MyFloat MaxFeedbackVel; // maximum signal velocity of any feedback mechanism emanating from the star
@@ -324,7 +324,7 @@ extern ALIGN(32) struct particle_data
     
 #ifdef DM_FUZZY
     MyFloat AGS_Density;                /*!< density calculated corresponding to AGS routine (over interacting DM neighbors) */
-    MyFloat AGS_Gradients_Density[3];   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */
+    Vec3<MyFloat> AGS_Gradients_Density;   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */
     MyFloat AGS_Gradients2_Density[3][3];   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */
     MyFloat AGS_Numerical_QuantumPotential; /*!< additional potential terms 'generated' by un-resolved compression [numerical diffusivity] */
     MyFloat AGS_Dt_Numerical_QuantumPotential; /*!< time derivative of the above */
@@ -332,12 +332,12 @@ extern ALIGN(32) struct particle_data
     MyFloat AGS_Psi_Re;
     MyFloat AGS_Psi_Re_Pred;
     MyFloat AGS_Dt_Psi_Re;
-    MyFloat AGS_Gradients_Psi_Re[3];
+    Vec3<MyFloat> AGS_Gradients_Psi_Re;
     MyFloat AGS_Gradients2_Psi_Re[3][3];
     MyFloat AGS_Psi_Im;
     MyFloat AGS_Psi_Im_Pred;
     MyFloat AGS_Dt_Psi_Im;
-    MyFloat AGS_Gradients_Psi_Im[3];
+    Vec3<MyFloat> AGS_Gradients_Psi_Im;
     MyFloat AGS_Gradients2_Psi_Im[3][3];
     MyFloat AGS_Dt_Psi_Mass;
 #endif

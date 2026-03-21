@@ -36,7 +36,7 @@ void force_update_tree(void)
 }
 
 
-void force_kick_node(int i, MyDouble * dp)
+void force_kick_node(int i, Vec3<MyDouble>& dp)
 {
   int j, no; MyFloat v, vmax;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS

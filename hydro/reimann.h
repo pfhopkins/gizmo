@@ -114,6 +114,7 @@ int iterative_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Rieman
                               double v_line_L, double v_line_R, double cs_L, double cs_R);
 void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloat Grad_Q_j[3],
                              double distance_from_i[3], double distance_from_j[3], double *Q_L, double *Q_R, int mode);
+inline void reconstruct_face_states(double Q_i, const Vec3<MyDouble>& Grad_Q_i, double Q_j, const Vec3<MyDouble>& Grad_Q_j, double distance_from_i[3], double distance_from_j[3], double *Q_L, double *Q_R, int mode) { reconstruct_face_states(Q_i, const_cast<MyDouble*>(Grad_Q_i.data), Q_j, const_cast<MyDouble*>(Grad_Q_j.data), distance_from_i, distance_from_j, Q_L, Q_R, mode); }
 #ifdef MAGNETIC
 void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double press_tot_limiter);
 void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, double n_unit[3], struct rotation_matrix *rot_matrix);

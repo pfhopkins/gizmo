@@ -182,7 +182,7 @@ void init(void)
     for(i = 0; i < NumPart; i++) {for(j = 0; j < GRAVCOSTLEVELS; j++) {P[i].GravCost[j] = 0;}}
 
     if(All.ComovingIntegrationOn)	/*  change to new velocity variable */
-        {for(i=0;i<NumPart;i++) {for(j=0;j<3;j++) {P[i].Vel[j] *= sqrt(All.Time)*All.Time;}}}
+        {for(i=0;i<NumPart;i++) {P[i].Vel *= sqrt(All.Time)*All.Time;}}
 
 #ifdef DM_SIDM
     init_self_interactions();
@@ -214,7 +214,7 @@ void init(void)
 
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {
-        for(j = 0; j < 3; j++) {P[i].GravAccel[j] = 0;}
+        P[i].GravAccel = {};
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}
@@ -233,7 +233,7 @@ void init(void)
         
 
 #ifdef PMGRID
-        for(j = 0; j < 3; j++) {P[i].GravPM[j] = 0;}
+        P[i].GravPM = {};
 #endif
         P[i].Ti_begstep = 0;
         P[i].Ti_current = (integertime)0;
@@ -517,11 +517,8 @@ void init(void)
     {
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
 
-        for(j = 0; j < 3; j++)
-        {
-            CellP[i].VelPred[j] = P[i].Vel[j];
-            CellP[i].HydroAccel[j] = 0;
-        }
+        CellP[i].VelPred = P[i].Vel;
+        CellP[i].HydroAccel = {};
 
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
@@ -534,7 +531,7 @@ void init(void)
         CellP[i].dMass = 0;
         CellP[i].DtMass = 0;
         CellP[i].MassTrue = P[i].Mass;
-        for(j=0;j<3;j++) CellP[i].GravWorkTerm[j] = 0;
+        CellP[i].GravWorkTerm = {};
 #endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
@@ -574,11 +571,11 @@ void init(void)
 #ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
         CellP[i].TD_DynDiffCoeff_error = 0;
 #endif
+        if (RestartFlag != 7) {
+            CellP[i].Velocity_bar = {};
+            CellP[i].Velocity_hat = {};
+        }
         for (u = 0; u < 3; u++) {
-            if (RestartFlag != 7) {
-                CellP[i].Velocity_bar[u] = 0;
-                CellP[i].Velocity_hat[u] = 0;
-            }
             for (v = 0; v < 3; v++) {
                 CellP[i].VelShear_bar[u][v] = 0;
             }
@@ -690,11 +687,8 @@ void init(void)
             CellP[i].B[2]=CellP[i].BPred[2] = All.BiniZ;
         }
 #endif /*MHD_B_SET_IN_PARAMS*/
-        for(j = 0; j < 3; j++)
-        {
-            CellP[i].BPred[j] *= a2_fac * gauss2gizmo;
-            CellP[i].B[j] = CellP[i].BPred[j];
-        }
+        CellP[i].BPred *= a2_fac * gauss2gizmo;
+        CellP[i].B = CellP[i].BPred;
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         CellP[i].Balpha = 0.0;
 #endif
@@ -825,25 +819,25 @@ void init(void)
     density();
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
-        int k=0;
+        int k __attribute__((unused)) = 0;
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
         CellP[i].recent_refinement_flag = 0; // always initialize to zero, no recent refinements
 
         // re-match the predicted and initial velocities and B-field values, just to be sure //
-        for(j=0;j<3;j++) CellP[i].VelPred[j]=P[i].Vel[j];
+        CellP[i].VelPred = P[i].Vel;
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION==0)
-        for(j=0;j<3;j++) {CellP[i].ParticleVel[j] = 0;} // set these to zero and forget them, for the rest of the run //
+        CellP[i].ParticleVel = {}; // set these to zero and forget them, for the rest of the run //
 #endif
 
 #ifdef MAGNETIC
-        for(j=0;j<3;j++) {CellP[i].B[j] = CellP[i].BPred[j] * P[i].Mass / CellP[i].Density;} // convert to the conserved unit V*B //
-        for(j=0;j<3;j++) {CellP[i].BPred[j]=CellP[i].B[j]; CellP[i].DtB[j]=0; CellP[i].BField_prerefinement[j]=0;}
+        CellP[i].B = CellP[i].BPred * (P[i].Mass / CellP[i].Density); // convert to the conserved unit V*B //
+        CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
         for(k=0;k<N_CR_PARTICLE_BINS;k++)
         {
             CellP[i].CosmicRayEnergyPred[k]=CellP[i].CosmicRayEnergy[k]; CellP[i].CosmicRayDiffusionCoeff[k]=0; CellP[i].DtCosmicRayEnergy[k]=0;
-            for(j=0;j<3;j++) {CellP[i].CosmicRayFlux[k][j]=0; CellP[i].CosmicRayFluxPred[k][j]=0;}
+            CellP[i].CosmicRayFlux[k] = {}; CellP[i].CosmicRayFluxPred[k] = {};
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
             for(j=0;j<2;j++) {CellP[i].CosmicRayAlfvenEnergy[k][j]=0; CellP[i].CosmicRayAlfvenEnergyPred[k][j]=0; CellP[i].DtCosmicRayAlfvenEnergy[k][j]=0;}
 #endif
@@ -865,7 +859,7 @@ void init(void)
         CellP[i].dMass = 0;
         CellP[i].DtMass = 0;
         CellP[i].MassTrue = P[i].Mass;
-        for(j=0;j<3;j++) CellP[i].GravWorkTerm[j] = 0;
+        CellP[i].GravWorkTerm = {};
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
         P[i].AGS_zeta = 0;
@@ -890,7 +884,7 @@ void init(void)
         {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_E_gamma[kf]=0;}}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-        {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(j=0;j<3;j++) {CellP[i].Rad_Flux[kf][j]=0;}}}
+        {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_Flux[kf] = {};}}
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
         CellP[i].SubGrid_CosmicRayEnergyDensity = 0;

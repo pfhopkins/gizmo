@@ -617,8 +617,8 @@ void rt_eddington_update_calculation(int j)
     for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
         n_flux_j[0]=n_flux_j[1]=n_flux_j[2]=0;
-        double flux_vol[3]; for(k=0;k<3;k++) {flux_vol[k] = CellP[j].Rad_Flux[k_freq][k] * V_j_inv;}
-        fmag_j = 0; for(k=0;k<3;k++) {fmag_j += flux_vol[k]*flux_vol[k];}
+        Vec3<double> flux_vol = CellP[j].Rad_Flux[k_freq] * V_j_inv;
+        fmag_j = flux_vol.norm_sq();
         if(fmag_j <= 0) {fmag_j=0;} else {fmag_j=sqrt(fmag_j); for(k=0;k<3;k++) {n_flux_j[k]=flux_vol[k]/fmag_j;}}
         double f_chifac = fmag_j / (MIN_REAL_NUMBER + C_LIGHT_CODE_REDUCED(j) * CellP[j].Rad_E_gamma[k_freq] * V_j_inv);
         if(f_chifac < 0) {f_chifac=0;}

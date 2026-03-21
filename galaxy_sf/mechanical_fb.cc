@@ -142,7 +142,7 @@ static struct temporary_mech_fb_data_tohold
 #include "../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
 
 // define kernel structure (purely for convenience, will hold variables below) //
-struct kernel_addFB {double dp[3], r, wk, dwk, hinv, hinv3, hinv4;};
+struct kernel_addFB {Vec3<double> dp; double r, wk, dwk, hinv, hinv3, hinv4;};
 
 struct OUTPUT_STRUCT_NAME
 {
@@ -154,7 +154,7 @@ struct OUTPUT_STRUCT_NAME
 void particle2in_addFB(struct addFB_evaluate_data_in_ *in, int i, int loop_iteration)
 {
     // pre-assign various values that will be used regardless of feedback physics //
-    int k; for(k=0;k<3;k++) {in->Pos[k] = P[i].Pos[k]; in->Vel[k] = P[i].Vel[k];}
+    int k; in->Pos = P[i].Pos; in->Vel = P[i].Vel;
     double heff = P[i].KernelRadius / P[i].NumNgb; in->V_i = heff*heff*heff; in->KernelRadius = P[i].KernelRadius;
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->yields[k]=0.0;}
@@ -244,15 +244,15 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 
                 // quick block of checks to make sure it's actually worth continuing!
                 if(Mass_j <= 0) continue; // require the particle has mass //
-                for(k=0; k<3; k++) {kernel.dp[k] = local.Pos[k] - P[j].Pos[k];}
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2], 1); // find the closest image in the given box size  //
-                r2=0; for(k=0;k<3;k++) {r2 += kernel.dp[k]*kernel.dp[k];}
+                r2 = kernel.dp.norm_sq();
                 if(r2<=0) {continue;} // same particle //
                 double h2j = P[j].KernelRadius * P[j].KernelRadius;
                 if((r2>h2)&&(r2>h2j)) {continue;} // outside kernel (in both 'directions') //
                 if(r2 > r2max_phys) {continue;} // outside long-range cutoff //
                 kernel.r = sqrt(r2); if(kernel.r <= 0) {continue;}
-                
+
                 // calculate kernel quantities //
                 #pragma omp atomic read
                 rho_j = CellP[j].Density;
@@ -401,8 +401,8 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 {
                     
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) /* inject cosmic rays */
-                double crdir[3]; for(k=0;k<3;k++) {crdir[k]=-kernel.dp[k]/kernel.r;}
-                inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir);
+                Vec3<double> crdir = kernel.dp * (-1./kernel.r);
+                inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr());
 #endif
                 /* inject the post-shock energy and momentum (convert to specific units as needed first) */
                 e_shock *= 1 / Mass_j;
@@ -573,15 +573,15 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 
                 // now consider a block of conditions we will use to evaluate whether its worth opening this loop at all //
                 if(Mass_j <= 0) {continue;} // require the particle has mass //
-                for(k=0; k<3; k++) {kernel.dp[k] = local.Pos[k] - P[j].Pos[k];}
+                kernel.dp = local.Pos - P[j].Pos;
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); // find the closest image in the given box size  //
-                r2=0; for(k=0;k<3;k++) {r2 += kernel.dp[k]*kernel.dp[k];}
+                r2 = kernel.dp.norm_sq();
                 if(r2<=0) {continue;} // same particle //
                 double h2j = P[j].KernelRadius * P[j].KernelRadius;
                 if((r2>h2)&&(r2>h2j)) {continue;} // outside kernel (in both 'directions') //
                 if(r2 > r2max_phys) {continue;} // outside long-range cutoff //
                 kernel.r = sqrt(r2); if(kernel.r <= 0) {continue;}
-                
+
                 // calculate kernel quantities //
 #pragma omp atomic read
                 rho_j = CellP[j].Density;
@@ -738,8 +738,8 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 if(couple_anything_but_scalar_mass_and_metals)
                 {
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-                    double crdir[3]; for(k=0;k<3;k++) {crdir[k]=-kernel.dp[k]/kernel.r;}
-                    inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir);
+                    Vec3<double> crdir = kernel.dp * (-1./kernel.r);
+                    inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr());
 #endif
                     /* inject momentum: account for ejecta being energy-conserving inside the cooling radius (or KernelRadius, if thats smaller) */
                     double mom_prefactor = All.cf_atime * momentum_to_couple_term_units / Mass_j; // divide by mass to make velocity units used below, include cosmological factor to correctly convert to comoving code units

@@ -63,6 +63,7 @@
 
 #include "typedefs.h"
 #include "../symmetric_tensor2.h"
+#include "../vec3.h"
 
 #ifdef CHIMES
 #include "../cooling/chimes/chimes_proto.h"
@@ -1124,7 +1125,7 @@ extern struct info_block
 /* this structure needs to be defined here, because routines for feedback event rates, etc, are shared among files */
 extern struct addFB_evaluate_data_in_
 {
-    MyDouble Pos[3], Vel[3], Msne, unit_mom_SNe;
+    Vec3<MyDouble> Pos, Vel; MyDouble Msne, unit_mom_SNe;
     MyFloat KernelRadius, V_i, SNe_v_ejecta;
 #ifdef GALSF_FB_MECHANICAL
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS];
