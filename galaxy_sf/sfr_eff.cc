@@ -261,8 +261,8 @@ double get_starformation_rate(int i, int mode)
     double alpha_vir = dv2abs / (8.*M_PI * All.G * CellP[i].Density * All.cf_a3inv); // coefficient comes from different density profiles, assuming a constant velocity gradient tensor: 22.6=constant-density cube, 8pi[approximate]=constant-density sphere, e.g. rho~exp(-r^n) n={4,8,16,32,64}->{17.1,22.1,24.1,24.9,25.1,25.15} [approaches uniform-density sphere as n->infinity]
 #if defined(GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED) /* compute and prepare to use our time-rolling average virial criterion */
     double dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i); /* the physical time-step */
-    double alpha_0=1./(1.+alpha_vir), dtau=DMIN(1.,DMAX(0.,exp(-(DMIN(DMAX(8.*dtime/tsfr,0.),20.))))); /* dimensionless units for below */
-    CellP[i].AlphaVirial_SF_TimeSmoothed = DMIN(DMAX(CellP[i].AlphaVirial_SF_TimeSmoothed * dtau + alpha_0 * (1.-dtau) , 1.e-10), 1.); /* update rolling time-averaged virial parameter */
+    double alpha_0=1./(1.+alpha_vir), dtau=std::clamp(exp(-std::clamp(8.*dtime/tsfr, 0., 20.)), 0., 1.); /* dimensionless units for below */
+    CellP[i].AlphaVirial_SF_TimeSmoothed = std::clamp(CellP[i].AlphaVirial_SF_TimeSmoothed * dtau + alpha_0 * (1.-dtau), 1.e-10, 1.); /* update rolling time-averaged virial parameter */
     alpha_vir = 1./CellP[i].AlphaVirial_SF_TimeSmoothed - 1.; /* use the rolling average below */
 #endif
     if(exceeds_force_softening_threshold) {alpha_vir /= 10.;} /* account for gravitational softening effects here, making this threshold less steep */
@@ -276,7 +276,7 @@ double get_starformation_rate(int i, int mode)
     rateOfSF *= exp(-1.4 * DMIN(DMIN(DMAX(sqrt(DMAX(MIN_REAL_NUMBER,alpha_vir)), 1.e-4), 1.e10),22.)); /* continuous cutoff of rateOfSF with increasing virial parameter as ~exp[-1.4*sqrt(alpha_vir)], following fitting function from Padoan 2012 [limit the values of sqrt(alpha_vir) here since we'll take an exponential so don't want a nan] */
 #endif
 #if (GALSF_SFR_VIRIAL_SCALING == 2)
-    Mach_eff_2 = DMIN(DMAX(1.e-5, Mach_eff_2/3.), 1.e4); if(!isfinite(Mach_eff_2)) {Mach_eff_2=1.e4;}
+    Mach_eff_2 = std::clamp(Mach_eff_2/3., 1.e-5, 1.e4); if(!isfinite(Mach_eff_2)) {Mach_eff_2=1.e4;}
     double S_ln=log(1.+Mach_eff_2/4.), S_crit=log(alpha_vir*(1.+2.*Mach_eff_2*Mach_eff_2/(1.+Mach_eff_2*Mach_eff_2))); // Mach_eff_2 is determined by the ratio of the kinetic to the thermal terms in the virial parameter, corrected to the 1D dispersion here
     rateOfSF *= 0.5 * exp(3.*S_ln/8.) * (1. + erf((S_ln-S_crit)/sqrt(2.*S_ln))); // multi-free-fall model, as in e.g. Federrath+Klessen 2012/2013 ApJ 761,156; 763,51 (similar to that implemented in e.g. Kretschmer+Teyssier 2020), based on the analytic models in Hopkins MNRAS 2013, 430 1653, with correct virial parameter [K+T used a definition which gives the wrong value for thermally-supported clouds]
 #endif
@@ -314,10 +314,10 @@ double get_starformation_rate(int i, int mode)
 #endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 64) /* check if Jeans mass is low enough for conceivable formation of 'stars' */
-    double cs_touse=cs_eff, MJ_crit=DMAX(DMIN(1.e6, 1.*P[i].Mass*UNIT_MASS_IN_SOLAR), 100.); /* for galaxy-scale SF, default to large ~1000 Msun threshold */
+    double cs_touse=cs_eff, MJ_crit=std::clamp(1.*P[i].Mass*UNIT_MASS_IN_SOLAR, 100., 1.e6); /* for galaxy-scale SF, default to large ~1000 Msun threshold */
     if(exceeds_force_softening_threshold) {MJ_crit = DMAX(1.e6 , 100.*P[i].Mass*UNIT_MASS_IN_SOLAR);}
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
-    if(cell_can_be_singlestar) {cs_touse=v_fast; MJ_crit=DMIN(1.e4, DMAX(1.e-3 , 100.*P[i].Mass*UNIT_MASS_IN_SOLAR));} /* for single-star formation use un-resolved Jeans mass criterion, with B+thermal pressure */
+    if(cell_can_be_singlestar) {cs_touse=v_fast; MJ_crit=std::clamp(100.*P[i].Mass*UNIT_MASS_IN_SOLAR, 1.e-3, 1.e4);} /* for single-star formation use un-resolved Jeans mass criterion, with B+thermal pressure */
 #endif
     double MJ_solar = 2.*pow(cs_touse*UNIT_VEL_IN_KMS/0.2,3)/sqrt(CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS / (HYDROGEN_MASSFRAC*1.0e3));
     if(MJ_solar > MJ_crit) {rateOfSF=0;} /* if too massive Jeans mass, go no further */

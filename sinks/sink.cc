@@ -714,7 +714,7 @@ void sink_final_operations(void)
                     dr_min=sqrt(dr_min)*All.cf_atime; // offset to be covered
                     // in general don't let the shift be more than 0.5 of the distance in a single timestep, but let it move at reasonable ~few km/s speeds minimum, and cap at the free-fall velocity //
                     double dv_shift = sqrt(DMAX(-2.*P[n].Sink_PotentialMinimumOfNeighbors/All.cf_atime , 0)); // free-fall velocity, in [physical] code units, capped zero
-                    dv_shift = DMAX(DMIN(dv_shift, dr_min/dt), 10./UNIT_VEL_IN_KMS); // set minimum at ~10 km/s, max at speed which 'jumps' full distance
+                    dv_shift = std::clamp(dv_shift, 10./UNIT_VEL_IN_KMS, dr_min/dt); // set minimum at ~10 km/s, max at speed which 'jumps' full distance
                     fac_sink_shift = dv_shift * dt / dr_min; // dimensionless shift factor
                     if(fac_sink_shift > 1.e-4) {fac_sink_shift = 1.-exp(-fac_sink_shift);} // make sure we can't overshoot by using this smooth interpolation function
                 }
