@@ -614,7 +614,7 @@ void dynamic_diff_calc(void) {
                         CellP[i].TD_DynDiffCoeff = 0;
                     }
 
-                    CellP[i].TD_DynDiffCoeff = std::clamp(CellP[i].TD_DynDiffCoeff, 0., All.TurbDynamicDiffMax);
+                    CellP[i].TD_DynDiffCoeff = DMIN(DMAX(0, CellP[i].TD_DynDiffCoeff), All.TurbDynamicDiffMax);
 
 #ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
                     double error[3][3], trace_error = 0, defaultError[3][3], trace_defaultError = 0, leonardTensorMag = 0;

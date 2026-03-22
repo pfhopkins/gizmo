@@ -559,7 +559,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
 #ifdef EOS_CARRIES_TEMPERATURE
     temp = CellP[target].Temperature * u / (CellP[target].InternalEnergy * UNIT_SPECEGY_IN_CGS);
 #endif
-    temp = std::clamp(temp, temp_min, temp_max);
+    temp = DMIN(DMAX(temp,temp_min),temp_max);
     const double tolerance = 1e-4;
     double dummy;
     int iter = 0, bisection = 0;
@@ -582,13 +582,13 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
         } // if not converging, switch to bisection
 	if(dT==0){break;}
         temp += dT;
-	temp = std::clamp(temp, temp_min, temp_max);
+	temp = DMAX(DMIN(temp,temp_max),temp_min);
         iter++;
     } while (fabs(du) > tolerance * u && iter < MAXITER);
     if (iter >= MAXITER) {
         PRINT_WARNING("Particle ID=%lld failed to converge in convert_u_to_temp. u=%g du=%g T=%g dT=%g\n", P[target].ID, u, du, temp, dT); endrun(91743);
     }
-    return std::clamp(temp, temp_min_0, temp_max_0);
+    return DMAX(DMIN(temp,temp_max_0),temp_min_0);
 }
 // elif defined(EOS_SUBSTELLAR_ISM)
 #else 
@@ -1014,7 +1014,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     Tdust = get_equilibrium_dust_temperature_estimate(target, shieldfac, T);
 #endif
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(SINGLE_STAR_FB_RT_HEATING)
-    Tdust = std::clamp(T_cmb_radeff, 10., 300.); // runs looking at colder clouds, use a colder default dust temp [floored at CMB temperature] //
+    Tdust = DMIN(DMAX(10., T_cmb_radeff),300.); // runs looking at colder clouds, use a colder default dust temp [floored at CMB temperature] //
 #endif
 #endif
 
@@ -1869,9 +1869,9 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     if(CellP[i].DelayTimeHII > 0) {CellP[i].MolecularMassFraction_perNeutralH=CellP[i].MolecularMassFraction=0; return;} // force gas flagged as in HII regions to have zero molecular fraction
 #endif
     if(temperature > 3.e5) {CellP[i].MolecularMassFraction_perNeutralH=CellP[i].MolecularMassFraction=0; return;} else {T=temperature;} // approximations below not designed for high temperatures, should simply give null
-    xH0 = std::clamp(nh0, 0., 1.); // get neutral fraction [given by call to this program]
+    xH0 = DMIN(DMAX(nh0, 0.),1.); // get neutral fraction [given by call to this program]
     if(xH0 <= MIN_REAL_NUMBER) {CellP[i].MolecularMassFraction_perNeutralH=CellP[i].MolecularMassFraction=0; return;} // no neutral gas, no molecules!
-    x_e = std::clamp(xn_e, 0., 2.); // get free electron ratio [number per H nucleon]
+    x_e = DMIN(DMAX(xn_e, 0.),2.); // get free electron ratio [number per H nucleon]
     double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i)*gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T), urad_from_uvb_in_G0=sqrt(shieldfac)*(gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
 #ifdef METALS
     f_dustgas_solar=(P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0); // this is only used for the dust-phase formation rates below, so just the dust term here
@@ -1888,7 +1888,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     urad_G0 = CellP[i].Rad_E_gamma[whichbin] * (CellP[i].Density*All.cf_a3inv/P[i].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
     urad_G0 += urad_from_uvb_in_G0; // include whatever is contributed from the meta-galactic background, fed into this routine
-    urad_G0 = std::clamp(urad_G0, 1.e-10, 1.e10); // limit values, because otherwise exponential self-shielding approximation easily artificially gives 0 incident field
+    urad_G0 = DMIN(DMAX( urad_G0 , 1.e-10 ) , 1.e10 ); // limit values, because otherwise exponential self-shielding approximation easily artificially gives 0 incident field
 #ifdef RT_INFRARED
     urad_G0 += rt_irband_egydensity_in_band(i,11.2,500.) * UNIT_EGY_DENSITY_IN_HABING; // add contribution from the adaptive band
 #endif
@@ -1909,9 +1909,9 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     /* evolve dot[nH2]/nH0 = d_dt[fH2[neutral]] = (1/nH0) * (a_Z*rho_dust*nHI [dust formation] + a_GP*nHI*ne [gas-phase formation] + b_3B*nHI*nHI*(nHI+nH2/8) [3-body collisional form] - b_H2HI*nHI*nH2 [collisional dissociation]
         - b_H2H2*nH2*nH2 [collisional mol-mol dissociation] - Gamma_H2^LW * nH2 [photodissociation] - Gamma_H2^+ [photoionization] - xi_H2*nH2 [CR ionization/dissociation] ) */
     double fH2=0, sqrt_T=sqrt(T), nH0=xH0*nH_cgs, EXPmax=90.; int iter=0; // define some variables for below, including neutral H number density, free electron number, etc.
-    double x_p = std::clamp(nhp, x_e/10., 2.); // get free H+ fraction [cap because irrelevant to below in very low regime //
+    double x_p = DMIN(DMAX(nhp , x_e/10.), 2.); // get free H+ fraction [cap because irrelevant to below in very low regime //
     /* use interpolation function from Glover & Abel 2008 [GA08], section 2.1.3, for interpolating between ground state (v=0) and LTE assumptions for states for collisional dissociation rates */
-    double XH=HYDROGEN_MASSFRAC, xH2_guess=XH*std::clamp(CellP[i].MolecularMassFraction, 0., 1.), xH_guess=DMAX(XH-xH2_guess,0), xHe_guess=nHe0+nHep+nHepp;
+    double XH=HYDROGEN_MASSFRAC, xH2_guess=XH*DMAX(DMIN(CellP[i].MolecularMassFraction,1.),0.), xH_guess=DMAX(XH-xH2_guess,0), xHe_guess=nHe0+nHep+nHepp;
     double logT4=log_T-4., ncr_H=pow(10.,3.0-0.416*logT4-0.327*logT4*logT4), ncr_H2=pow(10.,4.845-1.3*logT4+1.62*logT4*logT4), ncr_He=pow(10.,5.0792*(1.-1.23e-5*(T-2000.)));
     double ncrit = 1./(xH_guess/ncr_H + xH2_guess/ncr_H2 + xHe_guess/ncr_He), n_ncrit=nH_cgs/ncrit, f_v0_LTE=1./(1.+n_ncrit), f_LTE_v0 = 1.-f_v0_LTE;
 
@@ -2114,7 +2114,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
     } else { // IR term is not vanishingly small. we will assume the IR radiation temperature is equal to the local Tdust. lacking any direct evolution of that field, this is a good proxy, and exact in the locally-IR-optically-thick limit. in the locally-IR-thin limit it slightly under-estimates Tdust, but usually in that limit the other terms dominate anyways, so this is pretty safe //
         double T0=2.92, q=pow(T0*e_IR,0.25), y=(T_cmb*e_CMB + T_hiegy*e_HiEgy)/(T0*e_IR*q); if(y<=1) {Tdust_eqm=T0*q*(0.8+sqrt(0.04+0.1*y));} else {double y5=pow(y,0.2), y5_3=y5*y5*y5, y5_4=y5_3*y5; Tdust_eqm=T0*q*(1.+15.*y5_4+sqrt(1.+30.*y5_4+25.*y5_4*y5_4))/(20.*y5_3);} // this gives an extremely accurate and exactly-joined solution to the full quintic equation assuming T_rad_IR=T_dust
     }
-    return std::clamp(Tdust_eqm, 1., 2000.); // limit at sublimation temperature or some very low temp //
+    return DMAX(DMIN(Tdust_eqm , 2000.) , 1.); // limit at sublimation temperature or some very low temp //
 }
 
 
