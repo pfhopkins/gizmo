@@ -286,8 +286,15 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
             else
                 out.consumed_per_pixel[k] = consumed; /* report actual consumption only */
             out.front_radius[k] = last_r;
-            /* skip remaining cells in this pixel (beyond ionization front) */
-            while(idx < n_collected && ngb_buf[idx].pixel == k) idx++;
+            /* Cells beyond the ionization front: explicitly clear Ionized for cells
+             * this star can see but chose not to ionize (they've left the HII region).
+             * Only clear cells that have Ionized=1 (previously ionized, not re-confirmed).
+             * Don't touch Ionized=2 (ionized by another star this step). */
+            while(idx < n_collected && ngb_buf[idx].pixel == k) {
+                j = ngb_buf[idx].index;
+                if(CellP[j].Ionized == 1) CellP[j].Ionized = 0; /* beyond front: clear */
+                idx++;
+            }
         }
     }
 
@@ -442,16 +449,14 @@ void resolvedism_photoionize(void)
 
     /* Post-evaluate ionization state transitions.
      * Ionized=0: not ionized.  Ionized=1: confirmed (persists).  Ionized=2: set this step by evaluate.
-     * Transitions (sequential, order matters):
-     *   1 -> 0  (was ionized previously, not re-ionized this step: cleared)
-     *   2 -> 1  (ionized this step, confirmed; wake the cell) */
-    int sum_ionized = 0, n_woken = 0, n_cleared = 0;
+     * NO global 1->0 transition here. Cells around inactive stars keep Ionized=1
+     * (cooling floor maintains them at 10^4K). Clearing of stale cells happens
+     * ONLY in the evaluate: cells within an active star's search radius but beyond
+     * its ionization front get explicitly cleared to 0.
+     * Here we only transition 2->1 (confirm newly ionized) and wake them. */
+    int sum_ionized = 0, n_woken = 0;
     for(j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;
-        if(CellP[j].Ionized == 1) {
-            CellP[j].Ionized = 0;
-            n_cleared++;
-        }
         if(CellP[j].Ionized == 2) {
             CellP[j].Ionized = 1;
             P[j].wakeup = 1;
@@ -462,12 +467,11 @@ void resolvedism_photoionize(void)
             sum_ionized++;
     }
     {
-        int total_ionized = 0, total_woken = 0, total_cleared = 0;
+        int total_ionized = 0, total_woken = 0;
         MPI_Reduce(&sum_ionized, &total_ionized, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
         MPI_Reduce(&n_woken, &total_woken, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&n_cleared, &total_cleared, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
         if(ThisTask == 0)
-            printf("RESOLVEDISM PI: %d ionized, %d woken, %d cleared\n", total_ionized, total_woken, total_cleared);
+            printf("RESOLVEDISM PI: %d ionized, %d woken\n", total_ionized, total_woken);
     }
 
     /* Free in LIFO order */

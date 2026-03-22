@@ -1365,8 +1365,12 @@ void ketju_find_regions(void)
     }
 
     if(ThisTask == 0 && !ActiveRegions.empty()) {
-        printf("KETJU: Found %d region(s) from %d center(s)\n",
-               (int)ActiveRegions.size(), (int)centers.size());
+        printf("KETJU: Found %d region(s) from %d center(s) at t=%g\n",
+               (int)ActiveRegions.size(), (int)centers.size(), All.Time);
+        for(size_t r = 0; r < ActiveRegions.size(); r++) {
+            printf("KETJU:   region %d: %d particles, %d centers\n",
+                   (int)r, ActiveRegions[r].total_particle_count, (int)ActiveRegions[r].centers.size());
+        }
     }
 }
 
@@ -1409,6 +1413,16 @@ void ketju_run_integration(void)
 
     /* update cost estimates for next step's load balancing */
     update_region_costs();
+
+    if(ThisTask == 0 && !ActiveRegions.empty()) {
+        int total_mergers = 0;
+        for(size_t r = 0; r < ActiveRegions.size(); r++) {
+            if(ActiveRegions[r].integrator && ActiveRegions[r].integrator->num_mergers > 0)
+                total_mergers += ActiveRegions[r].integrator->num_mergers;
+        }
+        if(total_mergers > 0)
+            printf("KETJU: %d merger(s) this step\n", total_mergers);
+    }
 }
 
 void ketju_set_final_velocities(void)
