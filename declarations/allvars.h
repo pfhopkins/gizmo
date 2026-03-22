@@ -58,6 +58,7 @@
 #include "../system/tags.h"
 
 #include <assert.h>
+#include <algorithm>
 
 #include "macros.h"
 
@@ -988,11 +989,11 @@ extern struct data_nodelist
 extern struct gravdata_in
 {
     int Type;
-    MyFloat Pos[3];
+    Vec3<MyFloat> Pos;
     MyFloat Soft;
     MyFloat Mass;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-    MyFloat Vel[3];
+    Vec3<MyFloat> Vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
     MyFloat Sink_Mass;

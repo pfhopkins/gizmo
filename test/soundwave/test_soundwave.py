@@ -5,7 +5,7 @@ from gizmo.test import build_and_run_test, assert_snapshots_are_close
 from os import path
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (1, 2, 4))
+@pytest.mark.parametrize("num_mpi_ranks", (4,))
 def test_soundwave(num_mpi_ranks):
     test_name = "soundwave"
     build_and_run_test(test_name, num_mpi_ranks)

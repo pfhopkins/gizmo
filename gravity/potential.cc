@@ -27,7 +27,7 @@ void compute_potential(void)
     int i;
 #ifndef SELFGRAVITY_OFF
     int j, k, ret, recvTask, ndone, ndone_flag, dummy, ngrp, place, nexport, nimport;
-    double fac, r2; MPI_Status status;
+    double fac; MPI_Status status;
     if(All.ComovingIntegrationOn) {set_softenings();}
     
     PRINT_STATUS("Start computation of potential for all particles...");
@@ -78,7 +78,7 @@ void compute_potential(void)
         {
             place = DataIndexTable[j].Index;
             
-            for(k = 0; k < 3; k++) {GravDataIn[j].Pos[k] = P[place].Pos[k];}
+            GravDataIn[j].Pos = P[place].Pos;
             GravDataIn[j].Type = P[place].Type;
             GravDataIn[j].Soft = ForceSoftening_KernelRadius(place);
             GravDataIn[j].OldAcc = P[place].OldAcc;
@@ -190,7 +190,7 @@ void compute_potential(void)
 #ifndef BOX_PERIODIC
         fac = -0.5 * All.OmegaMatter * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits; /* special factor needed if running cosmological simulation in non-periodic box [special use cases] */
         for(i = 0; i < NumPart; i++) {
-            for(k = 0, r2 = 0; k < 3; k++) {r2 += P[i].Pos[k] * P[i].Pos[k];}
+            double r2 = P[i].Pos.norm_sq();
             P[i].Potential += fac * r2;
         }
 #endif
@@ -201,7 +201,7 @@ void compute_potential(void)
         if(fac != 0)
         {
             for(i = 0; i < NumPart; i++) {
-                for(k = 0, r2 = 0; k < 3; k++) {r2 += P[i].Pos[k] * P[i].Pos[k];}
+                double r2 = P[i].Pos.norm_sq();
                 P[i].Potential += fac * r2;
             }
         }

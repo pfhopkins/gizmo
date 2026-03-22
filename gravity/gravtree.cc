@@ -216,7 +216,7 @@ void gravity_tree(void)
                 place = DataIndexTable[j].Index;
 
                 /* assign values (input-function to pass in memory) */
-                for(k = 0; k < 3; k++) {GravDataIn[j].Pos[k] = P[place].Pos[k];}
+                GravDataIn[j].Pos = P[place].Pos;
                 GravDataIn[j].Type = P[place].Type;
                 GravDataIn[j].Soft = ForceSoftening_KernelRadius(place);
                 GravDataIn[j].OldAcc = P[place].OldAcc;
@@ -225,7 +225,7 @@ void gravity_tree(void)
                 if(P[place].Type==5) {GravDataIn[j].Sink_Mass = P[place].Sink_Mass;}
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                for(k = 0; k < 3; k++) {GravDataIn[j].Vel[k] = P[place].Vel[k];}
+                GravDataIn[j].Vel = P[place].Vel;
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
                 if(P[place].Type == 5)
@@ -233,7 +233,7 @@ void gravity_tree(void)
                     GravDataIn[j].Min_Sink_OrbitalTime = P[place].Min_Sink_OrbitalTime; //orbital time for binary
                     GravDataIn[j].comp_Mass = P[place].comp_Mass; //mass of binary companion
                     GravDataIn[j].is_in_a_binary = P[place].is_in_a_binary; // 1 if we're in a binary, 0 if not
-                    for(k=0;k<3;k++) {GravDataIn[j].comp_dx[k]=P[place].comp_dx[k]; GravDataIn[j].comp_dv[k]=P[place].comp_dv[k];}
+                    GravDataIn[j].comp_dx = P[place].comp_dx; GravDataIn[j].comp_dv = P[place].comp_dv;
                 }
                 else {P[place].is_in_a_binary=0; /* setting values to zero just to be sure */}
 #endif
@@ -483,7 +483,7 @@ void gravity_tree(void)
 #ifdef EVALPOTENTIAL
         P[i].Potential *= All.G;
 #ifdef BOX_PERIODIC
-        if(All.ComovingIntegrationOn) {P[i].Potential -= All.G * 2.8372975 * pow(P[i].Mass, 2.0 / 3) * pow(All.OmegaMatter * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);} else {if(All.OmegaLambda>0) {P[i].Potential -= 0.5*All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * (P[i].Pos[0]*P[i].Pos[0]+P[i].Pos[1]*P[i].Pos[1]+P[i].Pos[2]*P[i].Pos[2]);}}
+        if(All.ComovingIntegrationOn) {P[i].Potential -= All.G * 2.8372975 * pow(P[i].Mass, 2.0 / 3) * pow(All.OmegaMatter * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);} else {if(All.OmegaLambda>0) {P[i].Potential -= 0.5*All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * (P[i].Pos.norm_sq());}}
 #endif
 #ifdef PMGRID
         P[i].Potential += P[i].PM_Potential; /* add in long-range potential */

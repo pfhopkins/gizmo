@@ -1065,7 +1065,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         if(P[p].Type == 0)
         {
-            double aturb=0, arad=0, ahydro = sqrt(CellP[p].HydroAccel[0]*CellP[p].HydroAccel[0] + CellP[p].HydroAccel[1]*CellP[p].HydroAccel[1] + CellP[p].HydroAccel[2]*CellP[p].HydroAccel[2]);
+            double aturb=0, arad=0, ahydro = CellP[p].HydroAccel.norm();
 #ifdef TURB_DRIVING
             aturb = sqrt(CellP[p].TurbAccel[0]*CellP[p].TurbAccel[0] + CellP[p].TurbAccel[1]*CellP[p].TurbAccel[1] + CellP[p].TurbAccel[2]*CellP[p].TurbAccel[2]);
 #endif

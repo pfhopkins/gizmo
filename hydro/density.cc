@@ -993,10 +993,10 @@ void density(void)
                 if(P[i].Gas_Density > 0)
                 {
                     P[i].Gas_InternalEnergy /= P[i].Gas_Density;
-                    for(k = 0; k<3; k++) {P[i].Gas_Velocity[k] /= P[i].Gas_Density;}
+                    P[i].Gas_Velocity /= P[i].Gas_Density;
                 } else {
                     P[i].Gas_InternalEnergy = 0;
-                    for(k = 0; k<3; k++) {P[i].Gas_Velocity[k] = 0;}
+                    P[i].Gas_Velocity = {};
 #if defined(GRAIN_LORENTZFORCE)
                     P[i].Gas_B = {};
 #endif

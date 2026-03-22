@@ -174,15 +174,13 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 rinv = 1 / kernel.r;
                 /* we require a 'softener' to prevent numerical madness in interpolating functions */
                 rinv_soft = 1.0 / sqrt(r2 + 0.0001*kernel.h_i*kernel.h_i);
-                MyDouble VelPred_j[3]; for(k=0;k<3;k++) {VelPred_j[k]=CellP[j].VelPred[k];} // set the velocity of neighbor
+                Vec3<MyDouble> VelPred_j = CellP[j].VelPred; // set the velocity of neighbor
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,VelPred_j,-1); /* in a shearing box, wrap velocities for shearing boxes if needed [literally does nothing if not shearing box here] */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                MyDouble ParticleVel_j[3]; for(k=0;k<3;k++) {ParticleVel_j[k]=CellP[j].VelPred[k];} // set the com-element velocity of neighbor
+                Vec3<MyDouble> ParticleVel_j = CellP[j].VelPred; // set the com-element velocity of neighbor
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,ParticleVel_j,-1); /* wrap velocities for shearing boxes if needed */
 #endif
-                kernel.dv[0] = local.Vel[0] - VelPred_j[0];
-                kernel.dv[1] = local.Vel[1] - VelPred_j[1];
-                kernel.dv[2] = local.Vel[2] - VelPred_j[2];
+                kernel.dv = local.Vel - VelPred_j;
                 kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
                 double Particle_Size_j; Particle_Size_j = Get_Particle_Size(j) * All.cf_atime; /* physical units */
 
@@ -216,7 +214,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 kernel.vsig = magneticspeed_i + magneticspeed_j;
                 Bpro2_i /= kernel.b2_i; Bpro2_j /= kernel.b2_j;
 #endif
-                kernel.vdotr2 = kernel.dp[0] * kernel.dv[0] + kernel.dp[1] * kernel.dv[1] + kernel.dp[2] * kernel.dv[2];
+                kernel.vdotr2 = dot(kernel.dp, kernel.dv);
                 // hubble-flow correction: need in -code- units, hence extra a2 appearing here //
                 if(All.ComovingIntegrationOn) {kernel.vdotr2 += All.cf_hubble_a2 * r2;}
                 if(kernel.vdotr2 < 0)
@@ -228,7 +226,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                 }
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
-                double KE = kernel.dv[0]*kernel.dv[0] + kernel.dv[1]*kernel.dv[1] + kernel.dv[2]*kernel.dv[2];
+                double KE = kernel.dv.norm_sq();
                 if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
                 if(j_is_active_for_fluxes) {if(KE > CellP[j].MaxKineticEnergyNgb) CellP[j].MaxKineticEnergyNgb = KE;}
 #endif
