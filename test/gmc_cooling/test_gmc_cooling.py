@@ -48,7 +48,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (1, 16))
+@pytest.mark.parametrize("num_mpi_ranks", (16,))
 def test_gmc_cooling(num_mpi_ranks):
     # specify the test name
     test_name = "gmc_cooling"

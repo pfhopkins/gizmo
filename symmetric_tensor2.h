@@ -57,6 +57,13 @@ struct SymmetricTensor2 {
 
     // Frobenius norm: sqrt(sum of squares of all 9 entries).
     T frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
+
+    // Matrix-vector product: returns this * v.
+    Vec3<T> matvec(const Vec3<T>& v) const noexcept {
+        return Vec3<T>{data[flat_index(0,0)]*v[0] + data[flat_index(0,1)]*v[1] + data[flat_index(0,2)]*v[2],
+                       data[flat_index(1,0)]*v[0] + data[flat_index(1,1)]*v[1] + data[flat_index(1,2)]*v[2],
+                       data[flat_index(2,0)]*v[0] + data[flat_index(2,1)]*v[1] + data[flat_index(2,2)]*v[2]};
+    }
 };
 
 template<typename T>

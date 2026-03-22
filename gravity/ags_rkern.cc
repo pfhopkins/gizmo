@@ -786,10 +786,10 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
 struct OUTPUT_STRUCT_NAME
 {
 #if defined(DM_SIDM)
-    double sidm_kick[3], dtime_sidm; int si_count;
+    Vec3<double> sidm_kick; double dtime_sidm; int si_count;
 #endif
 #ifdef DM_FUZZY
-    double acc[3], AGS_Dt_Numerical_QuantumPotential;
+    Vec3<double> acc; double AGS_Dt_Numerical_QuantumPotential;
 #if (DM_FUZZY > 0)
     double AGS_Dt_Psi_Re, AGS_Dt_Psi_Im, AGS_Dt_Psi_Mass;
 #endif
@@ -809,12 +809,12 @@ static inline void OUTPUTFUNCTION_NAME(struct OUTPUT_STRUCT_NAME *out, int i, in
 {
     int k,k2; k=0; k2=0;
 #if defined(DM_SIDM)
-    for(k=0;k<3;k++) {P[i].Vel[k] += out->sidm_kick[k];}
+    P[i].Vel += out->sidm_kick;
     MIN_ADD(P[i].dtime_sidm, out->dtime_sidm, mode);
     P[i].NInteractions += out->si_count;
 #endif
 #ifdef DM_FUZZY
-    for(k=0;k<3;k++) {P[i].GravAccel[k] += out->acc[k];} // currently incompatible with hermite integrator -- need to update to Other_Accel
+    P[i].GravAccel += out->acc; // currently incompatible with hermite integrator -- need to update to Other_Accel
     ASSIGN_ADD_PRESET(P[i].AGS_Dt_Numerical_QuantumPotential,out->AGS_Dt_Numerical_QuantumPotential,mode);
 #if (DM_FUZZY > 0)
     ASSIGN_ADD_PRESET(P[i].AGS_Dt_Psi_Re,out->AGS_Dt_Psi_Re,mode);

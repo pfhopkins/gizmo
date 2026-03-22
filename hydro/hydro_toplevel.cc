@@ -122,7 +122,7 @@ struct kernel_hydra
 {
     Vec3<double> dp;
     double r, vsig, sound_i, sound_j;
-    double dv[3], vdotr2;
+    Vec3<double> dv; double vdotr2;
     double wk_i, wk_j, dwk_i, dwk_j;
     double h_i, h_j, dwk_ij, rho_ij_inv;
     double spec_egy_u_i;
