@@ -66,9 +66,9 @@ struct Quantities_for_Gradients
 {
     MyDouble Density;
     MyDouble Pressure;
-    MyDouble Velocity[3];
+    Vec3<MyDouble> Velocity;
 #ifdef MAGNETIC
-    MyDouble B[3];
+    Vec3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
     MyDouble Phi;
 #endif
@@ -273,7 +273,7 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
     {
         in->GQuant.Density = CellP[i].Density;
         in->GQuant.Pressure = CellP[i].Pressure;
-        for(k = 0; k < 3; k++) {in->GQuant.Velocity[k] = CellP[i].VelPred[k];}
+        in->GQuant.Velocity = CellP[i].VelPred;
 #ifdef TURB_DIFF_DYNAMIC
         for (k = 0; k < 3; k++) {in->GQuant.Velocity_bar[k] = CellP[i].Velocity_bar[k];}
 #endif
@@ -600,7 +600,7 @@ void hydro_gradient_calc(void)
             /* and zero out the gradients structure itself */
             CellP[i].Gradients.Density = {};
             CellP[i].Gradients.Pressure = {};
-            for(k2=0;k2<3;k2++) {for(k=0;k<3;k++) {CellP[i].Gradients.Velocity[k2][k] = 0;}}
+            for(k2=0;k2<3;k2++) {CellP[i].Gradients.Velocity[k2] = {};}
 #ifdef DOGRAD_INTERNAL_ENERGY
             CellP[i].Gradients.InternalEnergy = {};
 #endif
@@ -612,7 +612,7 @@ void hydro_gradient_calc(void)
 #endif
 #ifdef MAGNETIC
 #ifndef MHD_CONSTRAINED_GRADIENT
-            for(k2=0;k2<3;k2++) {for(k=0;k<3;k++) {CellP[i].Gradients.B[k2][k] = 0;}}
+            for(k2=0;k2<3;k2++) {CellP[i].Gradients.B[k2] = {};}
 #else
             CellP[i].Face_Area = {};
 #endif
@@ -893,15 +893,15 @@ void hydro_gradient_calc(void)
                 dbmax /= dbgrad;
                 for(k1=0;k1<3;k1++)
                 {
-                    double d_abs=0; for(k=0;k<3;k++) {d_abs += CellP[i].Gradients.B[k1][k]*CellP[i].Gradients.B[k1][k];}
+                    double d_abs = CellP[i].Gradients.B[k1].norm_sq();
                     if(d_abs > 0)
                     {
                         double cfac = 1 / (0.25 * P[i].KernelRadius * sqrt(d_abs));
                         cfac *= DMIN(fabs(GasGradDataPasser[i].Maxima.B[k1]) , fabs(GasGradDataPasser[i].Minima.B[k1]));
                         double c_eff = DMIN( cfac , DMAX(cfac/alim , dbmax) );
-                        if(c_eff < 1) {for(k=0;k<3;k++) {CellP[i].Gradients.B[k1][k] *= c_eff;}}
+                        if(c_eff < 1) {CellP[i].Gradients.B[k1] *= c_eff;}
                     } else {
-                        for(k=0;k<3;k++) {CellP[i].Gradients.B[k1][k]=0;}
+                        CellP[i].Gradients.B[k1] = {};
                     }
                 }
 #endif
@@ -1046,7 +1046,7 @@ void hydro_gradient_calc(void)
 
 #ifdef SPH_TP12_ARTIFICIAL_RESISTIVITY
             /* use the magnitude of the B-field gradients relative to kernel length to calculate artificial resistivity */
-            double GradBMag=0,BMag=0; for(k=0;k<3;k++) {for(j=0;j<3;j++) {GradBMag += CellP[i].Gradients.B[k][j]*CellP[i].Gradients.B[k][j];} BMag += Get_Gas_BField(i,k)*Get_Gas_BField(i,k);}
+            double GradBMag=0,BMag=0; for(k=0;k<3;k++) {GradBMag += CellP[i].Gradients.B[k].norm_sq(); BMag += Get_Gas_BField(i,k)*Get_Gas_BField(i,k);}
             CellP[i].Balpha = DMAX(DMIN(P[i].KernelRadius * sqrt(GradBMag/(BMag+1.0e-33)), 0.1 * All.ArtMagDispConst), 0.005);
 #endif
             
@@ -1109,11 +1109,11 @@ void hydro_gradient_calc(void)
             /* compute the traditional Balsara limiter (now that we have velocity gradients) */
             double divVel = All.cf_a2inv * fabs(CellP[i].Gradients.Velocity[0][0] + CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[2][2]);
             if(All.ComovingIntegrationOn) {divVel += 3*All.cf_hubble_a;} // hubble-flow correction added (physical units)
-            double CurlVel[3], MagCurl;
+            Vec3<double> CurlVel; double MagCurl;
             CurlVel[0] = CellP[i].Gradients.Velocity[1][2] - CellP[i].Gradients.Velocity[2][1];
             CurlVel[1] = CellP[i].Gradients.Velocity[2][0] - CellP[i].Gradients.Velocity[0][2];
             CurlVel[2] = CellP[i].Gradients.Velocity[0][1] - CellP[i].Gradients.Velocity[1][0];
-            MagCurl = All.cf_a2inv * sqrt(CurlVel[0]*CurlVel[0] + CurlVel[1]*CurlVel[1] + CurlVel[2]*CurlVel[2]);
+            MagCurl = All.cf_a2inv * CurlVel.norm();
             double fac_mu = 1 / ( All.cf_atime);
             CellP[i].alpha_limiter = divVel / (divVel + MagCurl + 0.0001 * Get_Gas_effective_soundspeed_i(i) / (Get_Particle_Size(i)) / fac_mu);
 #endif
@@ -1222,7 +1222,7 @@ void hydro_gradient_calc(void)
 #ifndef MHD_CONSTRAINED_GRADIENT
             double v_tmp = P[i].Mass / CellP[i].Density;
             double tmp_d = sqrt(1.0e-37 + (2. * All.cf_atime/ CellP[i].Pressure*v_tmp*v_tmp) +
-                                CellP[i].BPred[0]*CellP[i].BPred[0]+CellP[i].BPred[1]*CellP[i].BPred[1]+CellP[i].BPred[2]*CellP[i].BPred[2]);
+                                CellP[i].BPred.norm_sq());
             double q = fabs(CellP[i].divB) * P[i].KernelRadius / tmp_d, alim2 = a_limiter * (1. + q*q); if(alim2 > 0.5) alim2=0.5;
             stol_tmp = stol;
 #ifdef MHD_NON_IDEAL
@@ -1680,7 +1680,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     }
 #endif
 
-                    double dv[3]; for(k=0;k<3;k++) {dv[k] = CellP[j].VelPred[k] - local.GQuant.Velocity[k];}
+                    auto dv = CellP[j].VelPred - local.GQuant.Velocity;
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv,-1); /* wrap velocities for shearing boxes if needed */
                     for(k=0;k<3;k++) {
                         MINMAX_CHECK(dv[k],out.Minima.Velocity[k],out.Maxima.Velocity[k]);
@@ -1716,12 +1716,12 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     if(swap_to_j) {MINMAX_CHECK(-dc,GasGradDataPasser[j].Minima.SoundSpeed,GasGradDataPasser[j].Maxima.SoundSpeed);}
 #endif
 #ifdef MAGNETIC
-                    double Bj[3],dB[3];
+                    Vec3<double> Bj, dB;
+                    for(k=0;k<3;k++) {Bj[k] = Get_Gas_BField(j,k);}
+                    NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,Bj,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
+                    dB = Bj - local.GQuant.B;
                     for(k=0;k<3;k++)
                     {
-                        Bj[k] = Get_Gas_BField(j,k);
-                        NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,Bj,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
-                        dB[k] = Bj[k] - local.GQuant.B[k];
                         MINMAX_CHECK(dB[k],out.Minima.B[k],out.Maxima.B[k]);
                         if(swap_to_j) {MINMAX_CHECK(-dB[k],GasGradDataPasser[j].Minima.B[k],GasGradDataPasser[j].Maxima.B[k]);}
                     }
@@ -1779,16 +1779,17 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 #ifdef MAGNETIC
                     double mji_dwk_r = P[j].Mass * kernel.dwk_i / kernel.r;
                     double mij_dwk_r = local.Mass * kernel.dwk_j / kernel.r;
-                    for(k=0;k<3;k++)
                     {
-                        for(k2=0;k2<3;k2++)
+                        double B_dot_dp_i = dot(local.GQuant.B, kernel.dp) * mji_dwk_r;
+                        double B_dot_dp_j = dot(Bj, kernel.dp) * mij_dwk_r;
+                        for(k=0;k<3;k++)
                         {
-                            out.DtB[k] += local.GQuant.B[k2] * mji_dwk_r * kernel.dp[k2] * dv[k];
-                            if(swap_to_j) CellP[j].DtB[k] += Bj[k2] * mij_dwk_r * kernel.dp[k2] * dv[k];
+                            out.DtB[k] += B_dot_dp_i * dv[k];
+                            if(swap_to_j) CellP[j].DtB[k] += B_dot_dp_j * dv[k];
                         }
 #ifdef DIVBCLEANING_DEDNER
-                        out.divB += dB[k] * kernel.dp[k] * mji_dwk_r;
-                        if(swap_to_j) CellP[j].divB += dB[k] * kernel.dp[k] * mij_dwk_r;
+                        out.divB += dot(dB, kernel.dp) * mji_dwk_r;
+                        if(swap_to_j) CellP[j].divB += dot(dB, kernel.dp) * mij_dwk_r;
 #endif
                     }
 #endif
@@ -1823,7 +1824,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             out.Gradients[k].SoundSpeed += wk_xyz_i * dc;
 #endif
 #ifdef MAGNETIC
-                            for(k2=0;k2<3;k2++) {out.Gradients[k].B[k2] += wk_xyz_i * dB[k2];}
+                            out.Gradients[k].B += wk_xyz_i * dB;
 #if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
                             out.Gradients[k].Phi += wk_xyz_i * dphi;
 #endif

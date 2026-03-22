@@ -102,9 +102,9 @@ extern struct gas_cell_data
     {
         Vec3<MyDouble> Density;
         Vec3<MyDouble> Pressure;
-        MyDouble Velocity[3][3];
+        Vec3<MyDouble> Velocity[3];
 #ifdef MAGNETIC
-        MyDouble B[3][3];
+        Vec3<MyDouble> B[3];
 #ifdef DIVBCLEANING_DEDNER
         Vec3<MyDouble> Phi;
 #endif
