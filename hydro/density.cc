@@ -548,7 +548,7 @@ void density(void)
                     double closure_asymm=0; for(k1=0;k1<3;k1++) {closure_asymm += Face_Area_OneSided_Estimator_in[k1]*Face_Area_OneSided_Estimator_in[k1];}
                     double particle_inverse_volume = P[i].NumNgb / ( VOLUME_NORM_COEFF_FOR_NDIMS * pow(P[i].KernelRadius,NUMDIMS) );
                     closure_asymm = sqrt(closure_asymm) / (P[i].KernelRadius * particle_inverse_volume); // dimensionnless measure of asymmetry in kernel
-                    CellP[i].FaceClosureError = std::clamp(1.0259-2.52444*closure_asymm, 0.344301, 1.); // correction factor for 'missing' volume assuming a wendland C2 kernel and a sharp surface from Reinhardt & Stadel 2017 (arXiv:1701.08296)
+                    CellP[i].FaceClosureError = DMIN(DMAX(1.0259-2.52444*closure_asymm,0.344301),1.); // correction factor for 'missing' volume assuming a wendland C2 kernel and a sharp surface from Reinhardt & Stadel 2017 (arXiv:1701.08296)
 #else
                     CellP[i].FaceClosureError = dimless_face_leak / (2.*NUMDIMS*pow(dx_i,NUMDIMS-1));
 #endif

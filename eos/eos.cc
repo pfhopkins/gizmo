@@ -388,8 +388,8 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 #if (COOL_MOLECFRAC == 5) || (COOL_MOLECFRAC == 4) || (COOL_MOLECFRAC == 3) // here are some of the 'fancy' molecular fraction estimators which need various additional properties
     double T=1, nH_cgs=1, Z_Zsol=1, urad_G0=1, xH0=1, x_e=0; // initialize definitions of some variables used below to prevent compiler warnings
     if(temperature > 3.e5) {return 0;} else {T=temperature;} // approximations below not designed for high temperatures, should simply give null
-    xH0 = std::clamp(neutral_fraction, 0., 1.); // get neutral fraction [given by call to this program]
-    x_e = std::clamp(free_electron_ratio, 0., 2.); // get free electron ratio [number per H nucleon]
+    xH0 = DMIN(DMAX(neutral_fraction,0.),1.); // get neutral fraction [given by call to this program]
+    x_e = DMIN(DMAX(free_electron_ratio,0.),2.); // get free electron ratio [number per H nucleon]
     nH_cgs = CellP[i].Density*All.cf_a3inv * UNIT_DENSITY_IN_NHCGS; // get nH defined as number of nucleons per cm^3
     Z_Zsol=1; urad_G0=1; // initialize metal and radiation fields. will assume solar-Z and spatially-uniform Habing field for incident FUV radiation unless reset below.
 #ifdef METALS
@@ -407,7 +407,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
     urad_G0 = CellP[i].Rad_E_gamma[whichbin] * (CellP[i].Density*All.cf_a3inv/P[i].Mass) * UNIT_PRESSURE_IN_CGS / 3.9e-14; // convert to Habing field //
 #endif
     urad_G0 += urad_from_uvb_in_G0; // include whatever is contributed from the meta-galactic background, fed into this routine
-    urad_G0 = std::clamp(urad_G0, 1.e-10, 1.e10); // limit values, because otherwise exponential self-shielding approximation easily artificially gives 0 incident field
+    urad_G0 = DMIN(DMAX( urad_G0 , 1.e-10 ) , 1.e10 ); // limit values, because otherwise exponential self-shielding approximation easily artificially gives 0 incident field
 #endif
             
 #if (COOL_MOLECFRAC == 5) // ??? -- update to match noneqm fancier cooling functions --

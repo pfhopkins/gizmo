@@ -500,7 +500,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double massfrac_destro
                 key_num_atoms = All.ISMDustChem_SilicateNumberOfAtomsTable[key_elem];
                 key_elem = All.ISMDustChem_SilicateMetallicityFieldIndexTable[key_elem];
                 frac_of_max_sil = CellP[j].ISMDustChem_Dust_Species[0] / (P[j].Metallicity[key_elem] * All.ISMDustChem_EffectiveSilicateDustAtomicWeight/(key_num_atoms * key_mass));
-                incl_frac = std::clamp(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil, 0., GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC);
+                incl_frac = DMAX(DMIN(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil,GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC),0.);
                 CellP[j].ISMDustChem_Dust_Species[3] = (1.-incl_frac) * CellP[j].ISMDustChem_Dust_Metal[10];
                 CellP[j].ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES-1] = incl_frac * CellP[j].ISMDustChem_Dust_Metal[10];
             }
@@ -780,7 +780,7 @@ void update_dust_acc_and_sput(int i, double dtime_gyr)
                 key_num_atoms = All.ISMDustChem_SilicateNumberOfAtomsTable[key_elem];
                 key_elem = All.ISMDustChem_SilicateMetallicityFieldIndexTable[key_elem];
                 frac_of_max_sil = CellP[i].ISMDustChem_Dust_Species[0] / (P[i].Metallicity[key_elem] * All.ISMDustChem_EffectiveSilicateDustAtomicWeight/(key_num_atoms * key_mass));
-                incl_frac = std::clamp(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil, 0., GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC);
+                incl_frac = DMAX(DMIN(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil,GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC),0.);
                 CellP[i].ISMDustChem_Dust_Species[3] = (1.-incl_frac) * CellP[i].ISMDustChem_Dust_Metal[10];
                 CellP[i].ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES-1] = incl_frac * CellP[i].ISMDustChem_Dust_Metal[10];
             }
@@ -908,7 +908,7 @@ void update_dust_acc_and_sput(int i, double dtime_gyr)
                 key_num_atoms = All.ISMDustChem_SilicateNumberOfAtomsTable[key_elem];
                 key_elem = All.ISMDustChem_SilicateMetallicityFieldIndexTable[key_elem];
                 frac_of_max_sil = CellP[i].ISMDustChem_Dust_Species[0] / (P[i].Metallicity[key_elem] * All.ISMDustChem_EffectiveSilicateDustAtomicWeight/(key_num_atoms * key_mass));
-                incl_frac = std::clamp(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil, 0., GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC);
+                incl_frac = DMAX(DMIN(GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC*frac_of_max_sil,GALSF_ISMDUSTCHEM_VAR_IRON_INCL_FRAC),0.);
                 CellP[i].ISMDustChem_Dust_Species[3] = (1.-incl_frac) * CellP[i].ISMDustChem_Dust_Metal[10];
                 CellP[i].ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES-1] = incl_frac * CellP[i].ISMDustChem_Dust_Metal[10];
             }

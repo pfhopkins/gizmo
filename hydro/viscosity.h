@@ -131,7 +131,7 @@
         for(k_v=0;k_v<3;k_v++)
         {
 #ifdef MAGNETIC
-            double b_hll_eff = std::clamp(3.*bhat_dot_gradvhat*bhat_dot_gradvhat, 0.01, 1.);
+            double b_hll_eff = DMAX(DMIN(1. , 3.*bhat_dot_gradvhat*bhat_dot_gradvhat) , 0.01);
             double dv_visc = 3. * (B_interface[k_v]*Bi_proj - kernel.dp[k_v]/3.) * bhat_dot_gradvhat_direct * a_inv; // physical
             double thold_ptot_hll = 0.1 * exp(-2. * grad_v_mag * kernel.r / (1.e-30 + fabs(kernel.dv[k_v]))); // units ok
 #else

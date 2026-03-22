@@ -367,7 +367,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 #endif
 
     if(dtime_cgs <= 0) {return;} /* catch */
-    int k_CRegy; double f_ion=std::clamp(Get_Gas_Ionized_Fraction(target), 0., 1.);
+    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target),1.),0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC; /* some coefficients; a_hadronic is the default coefficient, b_coulomb_ion_per_GeV the default Coulomb+ionization (the two scale nearly-identically) normalization divided by GeV, b/c we need to divide the energy per CR  */
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
@@ -789,7 +789,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
         double flux_n_over_e_factor = omega_k_n / omega_k_e; // exact value
         if((flux_n_over_e_factor<0) || (!isfinite(flux_n_over_e_factor))) {flux_n_over_e_factor = flux_n_over_e_factor_approx;}
         double flux_n_over_e_factor_modulated = 1. + (flux_n_over_e_factor-1.) * frac_diff;
-        CellP[i].Flux_Number_to_Energy_Correction_Factor[k_CRegy] = std::clamp(flux_n_over_e_factor_modulated, 0.5, 2.0); // equilibrium streaming solution is alpha_mu->-alpha_v such that bin-centered is exact, so mean correction applies only to flux 'portion' of this
+        CellP[i].Flux_Number_to_Energy_Correction_Factor[k_CRegy] = DMAX(DMIN(flux_n_over_e_factor_modulated, 2.0), 0.5); // equilibrium streaming solution is alpha_mu->-alpha_v such that bin-centered is exact, so mean correction applies only to flux 'portion' of this
 #endif
         if(dt_f_m>0) {DtCosmicRayFlux += DtCosmicRayFlux * (rsol_correction_factor * v_Alfven * (GAMMA_COSMICRAY(k_CRegy) * eCR) / sqrt(dt_f_m));} // (tilde[c]/c) * v_a * (ecr+Pcr), in same direction as gradient wants to 'push' naturally [natural direction of F]
 
@@ -841,7 +841,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
             if(CR_check_if_bin_is_nonrelativistic(k_CRegy)) {xm_e = xm*xm; xp_e = xp*xp;} // extra power of p in energy equation accounted for here, all that's needed
             double N_min = eCR_tmp / (E_GeV * xp_e * (1.-1.e-4)); // even with arbitrarily large slopes we cannot exceed this limit: all CRs 'piled up' at highest energy
             double N_max = eCR_tmp / (E_GeV * xm_e * (1.+1.e-4)); // even with arbitrarily large slopes we cannot exceed this limit: all CRs 'piled up' at lowest energy
-            n_new = std::clamp(n_new, N_min, N_max); if((n_new<0) || (isnan(n_new))) {n_new=0;}
+            n_new = DMIN(DMAX(n_new,N_min),N_max); if((n_new<0) || (isnan(n_new))) {n_new=0;}
             CellP[i].CosmicRay_Number_in_Bin[k_CRegy] = n_new; // alright, updated CR number for evolution equations
         }
 #endif
@@ -914,7 +914,7 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
     double *Ucr, Ucr_tot=0; if(mode_driftkick==0) {Ucr=CellP[target].CosmicRayEnergy;} else {Ucr=CellP[target].CosmicRayEnergyPred;}
     int k; for(k=0;k<N_CR_PARTICLE_BINS;k++) {Ucr_tot+=Ucr[k];} // check total energy since some fluid cells can have no CRs
     if(Ucr_tot < MIN_REAL_NUMBER) {return;} // catch - nothing to do here //
-    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=std::clamp(Get_Gas_Ionized_Fraction(target), 0., 1.), b_muG=get_cell_Bfield_in_microGauss(target), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=get_cell_Urad_in_eVcm3(target);
+    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target),1.),0.), b_muG=get_cell_Bfield_in_microGauss(target), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=get_cell_Urad_in_eVcm3(target);
 
 #if defined(CRFLUID_ALT_REACCEL_ONLY_DIFFUSIVE)
     double vA=Get_Gas_Alfven_speed_i(target), vA_ion, vA_touse, kappa_max=0, kappa_i[N_CR_PARTICLE_BINS], delta_diffcoeff[N_CR_PARTICLE_BINS], reaccel_coeff[N_CR_PARTICLE_BINS]; vA_ion=vA/sqrt(f_ion); vA_touse=vA;
@@ -1006,7 +1006,7 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
             double x_m = log((R0[k-1] + MIN_REAL_NUMBER) / (R0[k] + MIN_REAL_NUMBER)), x_p = log((R0[k+1] + MIN_REAL_NUMBER) / (R0[k] + MIN_REAL_NUMBER));
             delta_diffcoeff[k] = (y_p * x_m*x_m - y_m * x_p*x_p) / (x_m * x_p * (x_m - x_p)); // second-order log-slope estimate
         }
-        double delta_limit=0.0315059; delta_diffcoeff[k] = std::clamp(delta_diffcoeff[k], delta_limit, 2.-delta_limit); // need to restrict delta value for the quasi-linear theory model below to make any sense (otherwise just gives unphysical answers because relevant integrals all diverge)
+        double delta_limit=0.0315059; delta_diffcoeff[k] = DMIN(DMAX(delta_diffcoeff[k], delta_limit),2.-delta_limit); // need to restrict delta value for the quasi-linear theory model below to make any sense (otherwise just gives unphysical answers because relevant integrals all diverge)
         double alpha_denom = delta_diffcoeff[k] * (4.-delta_diffcoeff[k]) * (4.-delta_diffcoeff[k]*delta_diffcoeff[k]); // quasi-linear isotropic turbulent-type assumption for coefficient relating Dpp and Dxx
         reaccel_coeff[k] = -delta_diffcoeff[k] * reaccel_coeff_0 / ((kappa_i[k] + MIN_REAL_NUMBER) * (alpha_denom + MIN_REAL_NUMBER)); // up to a factor of (R/R0)^(-delta) * (1 - slope_gamma/2), this gives the rate in 1/seconds of the effective momentum-space diffusion. note sign here: generally implies energy gain.
         if(fabs(reaccel_coeff[k]) > fabs(delta_diffcoeff[k]*adiabatic_coeff[k])) {reaccel_coeff[k] *= fabs(delta_diffcoeff[k]*adiabatic_coeff[k]) / fabs(reaccel_coeff[k]);}
@@ -1657,7 +1657,7 @@ double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k
 #else
     double kappa=CellP[target].CosmicRayDiffusionCoeff[k_CRegy], Lgrad_inv=CellP[target].Gradients.CosmicRayPressure[k_CRegy].norm_sq();
     Lgrad_inv = (sqrt(Lgrad_inv) / Get_Gas_CosmicRayPressure(target, k_CRegy)) / All.cf_atime;
-    double v_eff_cr = std::clamp(kappa*Lgrad_inv, CRFLUID_REDUCED_C_CODE(k_CRegy), C_LIGHT_CODE); // more complicated factor b/c transport not universally slowed-down
+    double v_eff_cr = DMIN(DMAX(CRFLUID_REDUCED_C_CODE(k_CRegy) , kappa*Lgrad_inv) , C_LIGHT_CODE); // more complicated factor b/c transport not universally slowed-down
 #endif
     ecrv=ecr*v_eff_cr; f=fluxmag2/(ecrv*ecrv); mu1_2=DMAX(0,DMIN(1,f));
     if(!isfinite(mu1_2) || fluxmag2 < MIN_REAL_NUMBER || ecrv < MIN_REAL_NUMBER || !isfinite(f) || f < MIN_REAL_NUMBER || !isfinite(ecrv) || !isfinite(fluxmag2)) {mu1_2=0;} else {if(isfinite(f) && f > 1) {mu1_2=1;}} // safety checks for initialization where may have 0's, etc.

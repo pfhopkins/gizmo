@@ -925,7 +925,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
     for(kf=0;kf<N_RT_FREQ_BINS;kf++)
     {
         int k,k_om; double rho=CellP[i].Density*All.cf_a3inv, ceff=C_LIGHT_CODE_REDUCED(i), ctrue=C_LIGHT_CODE, teq_inv=CellP[i].Rad_Kappa[kf]*rho*ceff, beta[3], f_a=rt_absorb_frac_albedo(i,kf), f_s=1.-f_a, b_dot_n[N_RT_INTENSITY_BINS]={0}, beta_2=0.;
-        int n_iter = 1 + (int)(std::clamp(dt_entr/teq_inv, 4., 1000.)); // number of iterations to subcycle everything below //
+        int n_iter = 1 + (int)(DMIN(DMAX(4. , dt_entr/teq_inv), 1000.)); // number of iterations to subcycle everything below //
         double dt=dt_entr/n_iter, tau=dt*teq_inv, i0[N_RT_INTENSITY_BINS]={0}, invfourpi=1./(4.*M_PI), J, b_dot_H, b2_dot_K; int i_iter;
         for(i_iter=0; i_iter<n_iter; i_iter++)
         {
@@ -1497,7 +1497,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
     Tmax = MAX_DUST_TEMP; // this is now a global variable
     /* First we come up with a reasonable guess for the dust temp based on available info */
 #ifdef RT_INFRARED
-    Tdust_guess = std::clamp(CellP[i].Dust_Temperature, 1., MAX_DUST_TEMP); // previous dust temperature should be a good guess
+    Tdust_guess = DMIN(DMAX(CellP[i].Dust_Temperature, 1.), MAX_DUST_TEMP); // previous dust temperature should be a good guess
 #else // case where we don't have a pre-computed dust temp, use asymptotic limits to get a good guess
     double Zfac = 1.0;
 #ifdef METALS
@@ -1567,7 +1567,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
     {
         dT_dustgas = T - Tdust;
         T_secant = Tdust - dEdt * (Tdust - T_old) / (dEdt - dEdt_old);
-        T_secant = std::clamp(T_secant, T_lower, T_upper);
+        T_secant = DMAX(DMIN(T_secant,T_upper),T_lower);
         dEdt_old = dEdt;
         dEdt = dust_dEdt(i,T,T_secant,dust_absorption_rate,fdustmet_init);
         fac = fabs(T_secant - Tdust)/(MIN_REAL_NUMBER+fabs(Tdust-T_old)); //fabs(dEdt)/(MIN_REAL_NUMBER+fabs(dEdt_old));

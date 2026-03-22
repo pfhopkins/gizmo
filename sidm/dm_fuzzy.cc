@@ -164,7 +164,7 @@ void do_dm_fuzzy_drift_kick(int i, double dt, int mode)
         P[i].AGS_Psi_Re += P[i].AGS_Dt_Psi_Re * dt;
         P[i].AGS_Psi_Im += P[i].AGS_Dt_Psi_Im * dt;
         double mass_old = P[i].Mass, dmass = P[i].AGS_Dt_Psi_Mass * dt, mass_new = mass_old + dmass;
-        dmass = std::clamp(dmass, -0.5*mass_old, 0.5*mass_old);
+        dmass = DMIN(DMAX(dmass,-0.5*mass_old),0.5*mass_old);
         mass_new = mass_old + dmass;
         double psimag_mass_new = (P[i].AGS_Psi_Re*P[i].AGS_Psi_Re + P[i].AGS_Psi_Im*P[i].AGS_Psi_Im) * vol_inv;
 #if (DM_FUZZY == 2)
@@ -180,7 +180,7 @@ void do_dm_fuzzy_drift_kick(int i, double dt, int mode)
         /* in drift mode, AGS_Density should automatically be drifted already by the predictor step, but not the other quantities here */
         P[i].AGS_Psi_Re_Pred += P[i].AGS_Dt_Psi_Re * dt;
         P[i].AGS_Psi_Im_Pred += P[i].AGS_Dt_Psi_Im * dt;
-        P[i].AGS_Density *= 1. + std::clamp(P[i].AGS_Dt_Psi_Mass*dt/P[i].Mass, -0.5, 0.5);
+        P[i].AGS_Density *= 1. + DMIN(DMAX(P[i].AGS_Dt_Psi_Mass*dt/P[i].Mass,-0.5),0.5);
     }
 #endif
 }
