@@ -1047,7 +1047,7 @@ void hydro_gradient_calc(void)
 #ifdef SPH_TP12_ARTIFICIAL_RESISTIVITY
             /* use the magnitude of the B-field gradients relative to kernel length to calculate artificial resistivity */
             double GradBMag=0,BMag=0; for(k=0;k<3;k++) {GradBMag += CellP[i].Gradients.B[k].norm_sq(); BMag += Get_Gas_BField(i,k)*Get_Gas_BField(i,k);}
-            CellP[i].Balpha = DMAX(DMIN(P[i].KernelRadius * sqrt(GradBMag/(BMag+1.0e-33)), 0.1 * All.ArtMagDispConst), 0.005);
+            CellP[i].Balpha = std::clamp(P[i].KernelRadius * sqrt(GradBMag/(BMag+1.0e-33)), 0.005, 0.1 * All.ArtMagDispConst);
 #endif
             
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)

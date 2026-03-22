@@ -730,7 +730,7 @@ double get_spawned_cell_launch_speed(int i)
     double mdot = P[i].Sink_Mdot / (P[i].Sink_Mass / (4.e7 / UNIT_TIME_IN_YR));
     double L_over_c = evaluate_sink_radiative_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i) * P[i].Sink_Mdot * C_LIGHT_CODE;
     double Pdot_rad = 0.;
-    if(mdot > 0.01) {Pdot_rad = L_over_c * DMIN(DMAX(mdot,1.),10.);}
+    if(mdot > 0.01) {Pdot_rad = L_over_c * std::clamp(mdot, 1., 10.);}
     double sigma_ROI = sqrt(All.G * P[i].Sink_Mass / P[i].Sink_ROI);
     double Pdot_turb = 3. * Mdot_wind * sigma_ROI;
     double Pdot_wind = Pdot_rad + Pdot_turb;

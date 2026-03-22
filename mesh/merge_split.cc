@@ -256,7 +256,7 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
     double r_pc = P[i].Min_Distance_to_Sink * All.cf_atime * UNIT_LENGTH_IN_PC;
     if(r_pc>0 && isfinite(r_pc) && r_pc<MAX_REAL_NUMBER) {
         double dx0_pc = 0.01*r_pc, dxmin_pc = 1., dxmax_pc = 1000. / All.cf_atime; // set min/max/median value desired
-        double dx = DMIN(DMAX(dx0_pc,dxmin_pc),dxmax_pc) / (All.cf_atime * UNIT_LENGTH_IN_PC); // set target dx in code units
+        double dx = std::clamp(dx0_pc, dxmin_pc, dxmax_pc) / (All.cf_atime * UNIT_LENGTH_IN_PC); // set target dx in code units
         double m_target = CellP[i].Density * dx*dx*dx; // equivalent cell mass
         ref_factor = DMIN( m_target/(All.MaxMassForParticleSplit/3.) , 1.); // return this target mass or unity
         return ref_factor;
@@ -451,7 +451,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     double r_near = dp.norm();
     d_r = DMIN(d_r , 0.35 * r_near); // use a 'buffer' to limit to some multiple of the distance to the nearest particle //
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); d_r = 0.39685*dx_eff; // this allows a larger split in order to reduce artefacts in more aggressive splits, at the expense of more diffusion of the original mass //
+    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius; dx_eff = std::clamp(dx_eff,0.1*dx_h,3.*dx_h); dx_h = r_near; dx_eff = std::clamp(dx_eff,0.1*dx_h,3.*dx_h); d_r = 0.39685*dx_eff; // this allows a larger split in order to reduce artefacts in more aggressive splits, at the expense of more diffusion of the original mass //
 #endif
     /*
     double r_near = sqrt(r2_nearest);

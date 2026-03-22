@@ -394,7 +394,7 @@ integertime get_timestep(int p,		/*!< particle index */
     {
         if((All.ComovingIntegrationOn)) // sort of a hack here, but acceptable in applications
         {
-            double h_min = All.ForceSoftening[P[p].Type], ags_h = DMIN(DMAX(P[p].KernelRadius, h_min), 10.*h_min);
+            double h_min = All.ForceSoftening[P[p].Type], ags_h = std::clamp(P[p].KernelRadius, h_min, 10.*h_min);
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
             ags_h = DMIN(DMAX(P[p].AGS_KernelRadius , DMAX(P[p].KernelRadius, h_min)) , DMAX(100.*h_min, 10.*P[p].AGS_KernelRadius));
 #endif
@@ -526,7 +526,7 @@ integertime get_timestep(int p,		/*!< particle index */
             lorentz_units *= PIC_SPEEDOFLIGHT_REDUCTION; // the rsol enters by slowing down the forces here, acts as a unit shift for time
 #endif
             double B2=(P[p].Gas_B * All.cf_a2inv).norm_sq(), beta2=(P[p].Vel * (1.0/(All.cf_atime*reduced_C))).norm_sq(); /* get magnitude and unit vector for B, and vector beta [-true- beta here] */
-            double gamma_lorentz = 1./sqrt(DMAX(1.-DMAX(DMIN(beta2,1.),0.),MIN_REAL_NUMBER)); // calculate lorentz factor (with safety factors included to prevent accidental nan here //
+            double gamma_lorentz = 1./sqrt(DMAX(1.-std::clamp(beta2, 0., 1.),MIN_REAL_NUMBER)); // calculate lorentz factor (with safety factors included to prevent accidental nan here //
             double dt_courant_pic = 0.5 / ((charge_to_mass_ratio_dimensionless/gamma_lorentz) * sqrt(B2) * lorentz_units); /* dt = 0.5/omega_gyro*/
             if(dt_courant_pic < dt_courant) dt_courant = dt_courant_pic;
         }

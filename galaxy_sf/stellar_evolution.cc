@@ -693,7 +693,7 @@ double Z_for_stellar_evol(int i)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && defined(COOL_METAL_LINES_BY_SPECIES)
     int i_Fe=10; Z_solar = P[i].Metallicity[i_Fe]/All.SolarAbundances[i_Fe]; // use Fe, specifically, for computing stellar properties, as its most relevant here. MAKE SURE this is set to the correct abundance in the list, to match Fe!
 #endif
-    return DMIN(DMAX(Z_solar,0.01),3.); // stellar evolution tables here are not arbitrarily extrapolable, so this is bounded //
+    return std::clamp(Z_solar, 0.01, 3.); // stellar evolution tables here are not arbitrarily extrapolable, so this is bounded //
 #else
     return 1; // metals not evolved, return unity
 #endif
@@ -712,7 +712,7 @@ void update_stellarnumber_and_timedistribofstarformation(void)
             {
                 double dt_remaining = P[i].TimeDistribOfStarFormation - dt_since_form_code; // time remaining to spawn
                 double dt_timestep = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i); // timestep being taken [code units]
-                double d_tau = DMAX(DMIN( dt_timestep , dt_remaining) , 0) / P[i].TimeDistribOfStarFormation; // effective step size in dimensionless units
+                double d_tau = std::clamp(dt_timestep, 0., dt_remaining) / P[i].TimeDistribOfStarFormation; // effective step size in dimensionless units
                 double f_highz=0.0115, f_m; f_m = f_highz; // 1/mass in solar per O-star number
 #ifdef FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT // SIMPLE_POPTHREE_MODEL
                 double f_lowz=2., zmin=-7, zmax=-5, z0=log10(P[i].Metallicity[0]/0.01 + 1.e-15);
