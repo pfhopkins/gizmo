@@ -176,7 +176,7 @@ ifeq ($(SYSTYPE),"MacBookCellar")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++11
 FC       =  $(CC) #mpifort  ## change this to "mpifort" for packages requiring linking secondary fortran code, currently -only- the helmholtz eos modules do this, so I leave it un-linked for now to save people the compiler headaches
-OPTIMIZE = -O1 -funroll-loops
+OPTIMIZE = -O3 -ffast-math -funroll-loops
 OPTIMIZE += -g -Wall # compiler warnings
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CXX     = mpic++
