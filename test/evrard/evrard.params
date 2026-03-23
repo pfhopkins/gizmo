@@ -1,0 +1,31 @@
+% Evrard adiabatic collapse test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        EOS_GAMMA=(5.0/3.0)
+%        ADAPTIVE_GRAVSOFT_FORGAS
+%
+InitCondFile                       evrard_ics
+OutputDir                          output
+PartAllocFactor                    5
+TimeMax                            0.8
+TimeBetSnapshot                    0.1
+MaxSizeTimestep                    0.001
+DesNumNgb                          40
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         3000
+GravityConstantInternal            1
+MaxHsml                            2000
+SofteningGas                       0.0001
+SofteningHalo                      0.07
+Softening_Type2                    0.003
+Softening_Type3                    0.003
+Softening_Type4                    0.003
+Softening_Type5                    0.003
+CourantFac                         0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1

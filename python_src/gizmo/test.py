@@ -1,11 +1,20 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
-from os import system, environ, path, chdir
+from os import system, environ, path, chdir, cpu_count
 from urllib.request import urlretrieve, HTTPError
 from shutil import move
 import pytest
 from matplotlib import pyplot as plt
 import h5py
+
+
+def default_mpi_ranks(max_ranks=None):
+    """Return the number of MPI ranks to use, defaulting to the available CPU count.
+    Optionally cap at max_ranks (useful for tests with very few particles)."""
+    n = cpu_count()
+    if max_ranks is not None:
+        n = min(n, max_ranks)
+    return n
 
 
 def build_gizmo_for_test(test_name: str):

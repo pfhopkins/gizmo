@@ -1,0 +1,27 @@
+% Orszag-Tang MHD vortex test (Hopkins & Raives 2016)
+%
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=2
+%        HYDRO_MESHLESS_FINITE_MASS
+%        MAGNETIC
+%        SELFGRAVITY_OFF
+%
+InitCondFile                       orszag_tang_ics
+OutputDir                          output
+TimeMax                            0.5
+BoxSize                            1
+TimeBetSnapshot                    0.1
+MaxSizeTimestep                    0.1
+DesNumNgb                          20
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         2000
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+DivBcleaningParabolicSigma         1.0
+DivBcleaningHyperbolicSigma        1.0
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
