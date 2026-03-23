@@ -2547,7 +2547,9 @@ void read_parameter_file(char *fname)
 #ifdef GALSF
     All.MaxNumNgbDeviation = All.DesNumNgb / 64.;
 #endif
+#if NUMDIMS==3    
     if(All.MaxNumNgbDeviation < 0.05) All.MaxNumNgbDeviation = 0.05;
+#endif    
 #ifdef EOS_ELASTIC
     All.MaxNumNgbDeviation /= 20.0;
 #endif

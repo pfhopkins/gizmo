@@ -14,12 +14,14 @@ TimeMax                            1.5
 BoxSize                            1
 TimeBetSnapshot                    0.1
 DesNumNgb                          4
-MaxNumNgbDeviation                 1e-2
+MaxNumNgbDeviation		   1e-6
 MaxMemSize                         1000
 % -- optional numerical parameters (requires additional Config flags)
 ErrTolIntAccuracy                  0.01
-CourantFac                         0.05
+CourantFac                         0.2
 MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
-
+ResubmitOn			   0
+ResubmitCommand			   none
+ErrTolTheta			   0.7
