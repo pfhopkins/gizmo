@@ -266,15 +266,8 @@ double rt_absorb_frac_albedo(int i, int k_freq)
 #ifdef RT_SOFT_XRAY /* opacity comes from H+He (Thompson) + metal ions -- assume 0 scattering from ions, 1 from Thompson */
     if(k_freq==RT_FREQ_BIN_SOFT_XRAY) {return 1.-0.5*(0. + DMIN(1.,0.35*fac/rt_kappa(i,k_freq)));}
 #endif
-#ifdef RT_INFRARED /* opacity comes from Thompson + dust -- assume 0.5/(1 + (Trad/725K)^(-2)) scattering from dust [Rayleigh, since we're in the long-wavelength limit by definition here], 1 from Thompson */
-    if(k_freq==RT_FREQ_BIN_INFRARED)
-    {
-        double fA_tmp = (1.-0.5/(1.+((725.*725.)/(1.+CellP[i].Radiation_Temperature*CellP[i].Radiation_Temperature)))); // rough interpolation depending on the radiation temperature: high Trad, this is 1/2, low Trad, gets closer to unity; need to revise for sublimated cases here */
-#ifdef COOLING
-		if(rt_kappa(i,k_freq)>0) {fA_tmp *= (1.-DMIN(1.,0.35*CellP[i].Ne*fac/rt_kappa(i,k_freq)));} else {return 1.0;} // the value should not matter if rt_kappa=0 // correct this for Klein-Nishina as well?
-#endif
-        return fA_tmp;
-    }
+#ifdef RT_INFRARED /* opacity comes from gas + dust -- we have a whole separate set of flags in the subroutine to separate the absorption vs scattering opacity, use those, for consistency and accuracy */
+    if(k_freq==RT_FREQ_BIN_INFRARED) {return rt_kappa_adaptive_IR_band(i,CellP[i].Dust_Temperature,CellP[i].Radiation_Temperature,-1,0) / (MIN_REAL_NUMBER + rt_kappa_adaptive_IR_band(i,CellP[i].Dust_Temperature,CellP[i].Radiation_Temperature,0,0));}
 #endif
 #endif
     
@@ -1562,7 +1555,7 @@ for dust, which we will root-find to determine the dust temperature.
 dust_absorption_rate must be passed as the dust photon absorption rate per unit volume in code units,
 correcting for the reduced speed of light if applicable.
 ******************************************************************************************************/
-double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate)
+double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init)
 {
     double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * CellP[i].Density * All.cf_a3inv / PROTONMASS_CGS;    /* hydrogen number dens in cgs units */
     double fac_emission = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS)*CellP[i].Density*All.cf_a3inv; // in code units
@@ -1577,7 +1570,9 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate)
     double tau = column * kappa_emission;
     dust_emission /= (1 + tau*tau); // e.g. Masunaha & Inutsuka 1999, Rafikov 2007
 #endif
-    return LambdaDust_fac * (T-Tdust) + dust_absorption_rate - dust_emission;
+    double fac_abs = 1.; /* this will rescale the estimated absorption by the new dust-to-gas ratio */
+    if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust) / fdustmet_init;}
+    return LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
 }
 
 #ifdef COOLING
@@ -1614,8 +1609,9 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
     if(T==0) {return Tdust_guess;} // if just calling for a rough estimate this is good enough
 
     Tdust = Tdust_guess;
-    int n_iter=0;    
-    dEdt_guess = dEdt = dust_dEdt(i,T,Tdust_guess,dust_absorption_rate);
+    int n_iter=0;
+    double fdustmet_init = return_dust_to_metals_ratio_vs_solar(i,Tdust); /* need this for reference but can't let it change over iterations */
+    dEdt_guess = dEdt = dust_dEdt(i,T,Tdust_guess,dust_absorption_rate,fdustmet_init);
     
     if(dEdt==0){return Tdust_guess;}
     /* bracketing the dust temperature */
@@ -1625,7 +1621,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
 	T_upper = DMIN(Tmax,Tdust), dEdt_upper = dEdt_guess; 
 	while(dEdt<0) {
 	    Tdust *= scalefac; 
-	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate); 
+	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init);
         if(dEdt==0){return Tdust;}
 	    scalefac *= 0.9; 
 	    n_iter++;
@@ -1636,7 +1632,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
 	scalefac = 1.1;
 	while(dEdt>0 && Tdust < Tmax) {
 	    Tdust *= scalefac; Tdust = DMIN(Tdust,Tmax);
-	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate); 
+	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init);
         if(dEdt==0){return Tdust;}
 	    scalefac *= 1.1; 
 	    n_iter++;
@@ -1647,7 +1643,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
     if(T_lower>=Tmax) {return Tmax;}
 
 #if (0) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES)  // PFH: still testing which option is better, but the new rootfind struggles here, in hyper-zoom-in runs when given dust close to max temperature (raising max temp resolves the failure to converge or Nan's but then jumps to very high solutions somewhat randomly, where it shouldnt. The old secant routine below appears stable and more robust in this particular instance for now.
-    #define ROOTFIND_FUNCTION(dTdust) dust_dEdt(i,T,T+dTdust,dust_absorption_rate); // here we want to converge on a relative tolerance for Tdust-Tgas
+    #define ROOTFIND_FUNCTION(dTdust) dust_dEdt(i,T,T+dTdust,dust_absorption_rate,fdustmet_init); // here we want to converge on a relative tolerance for Tdust-Tgas
     if(dEdt!=0)
     {
         double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T, ROOTFUNC_a = dEdt_lower, ROOTFUNC_b = dEdt_upper, ROOTFIND_REL_X_tol = 1e-6, ROOTFIND_ABS_X_tol=0.;
@@ -1665,7 +1661,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
         T_secant = Tdust - dEdt * (Tdust - T_old) / (dEdt - dEdt_old);
         T_secant = DMAX(DMIN(T_secant,T_upper),T_lower);
         dEdt_old = dEdt;
-        dEdt = dust_dEdt(i,T,T_secant,dust_absorption_rate);
+        dEdt = dust_dEdt(i,T,T_secant,dust_absorption_rate,fdustmet_init);
         fac = fabs(T_secant - Tdust)/(MIN_REAL_NUMBER+fabs(Tdust-T_old)); //fabs(dEdt)/(MIN_REAL_NUMBER+fabs(dEdt_old));
         if(fac < 0.5) { // accept the secant iteration if it is converging more rapidly
             T_old=Tdust;
@@ -1673,7 +1669,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
         } else { // if secant isn't working do bisection iteration instead; guaranteed to reduce the error
             T_old = Tdust;
             Tdust = sqrt(T_lower*T_upper);
-            dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate);
+            dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init);
             fac = 0.5;
         }
         if(dEdt>0) {T_lower=Tdust;} else {T_upper=Tdust;} // either way, update upper and lower bounds

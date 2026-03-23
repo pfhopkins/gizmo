@@ -250,6 +250,18 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
     ref_factor = DMIN(1.,sqrt(P[i].Min_Distance_to_Sink + 0.0001)); // this is an example of the kind of routine you could use to scale resolution with BH distance //
 #endif
  */
+
+#if 0 //defined(SINK_CALC_DISTANCES) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES) && !defined(SINGLE_STAR_SINK_DYNAMICS)
+    double r_pc = P[i].Min_Distance_to_Sink * All.cf_atime * UNIT_LENGTH_IN_PC;
+    if(r_pc>0 && isfinite(r_pc) && r_pc<MAX_REAL_NUMBER) {
+        double dx0_pc = 0.01*r_pc, dxmin_pc = 1., dxmax_pc = 1000. / All.cf_atime; // set min/max/median value desired
+        double dx = DMIN(DMAX(dx0_pc,dxmin_pc),dxmax_pc) / (All.cf_atime * UNIT_LENGTH_IN_PC); // set target dx in code units
+        double m_target = CellP[i].Density * dx*dx*dx; // equivalent cell mass
+        ref_factor = DMIN( m_target/(All.MaxMassForParticleSplit/3.) , 1.); // return this target mass or unity
+        return ref_factor;
+    }
+#endif
+
     return ref_factor;
 }
 
@@ -688,6 +700,20 @@ int merge_particles_ij(int i, int j)
     if(P[j].ID == All.SpawnedWindCellID) {P[j].ID = All.SpawnedWindCellID + 1;} /* offset this to avoid checks through code */
 #endif
     if(swap_ids) {P[j].ID=P[i].ID; P[j].ID_child_number=P[i].ID_child_number; P[j].ID_generation=P[i].ID_generation;} /* swap the ids so save the desired set */
+    
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+    if(P[i].Type==4 && P[j].Type==P[i].Type) /* identify a star-star merger, need to update the effective size -before- updating anything else */
+    {
+        double m_i=P[i].Mass, m_j=P[j].Mass, dr_i=P[i].StarParticleEffectiveSize*All.cf_atime, dr_j=P[j].StarParticleEffectiveSize*All.cf_atime, dr2_ij=0, dv2_ij=0, dp[3], dv[3];
+        for(k=0;k<3;k++) {dp[k]=(P[j].Pos[k]-P[i].Pos[k])*All.cf_atime; dr2_ij+=dp[k]*dp[k];} // ij position separation (physical units)
+        for(k=0;k<3;k++) {dv[k]=(P[j].Vel[k]-P[i].Vel[k])/All.cf_atime; dv2_ij+=dv[k]*dv[k];} // ij velocity separation (physical units)
+        double phi_prefac=2.01887, phi_tot=-All.G*(0.5*phi_prefac*m_i*m_i/dr_i + 0.5*phi_prefac*m_j*m_j/dr_j + m_i*m_j/sqrt(dr_i*dr_i + dr_j*dr_j + dr2_ij)); // estimate the total gravitational energy of the system here; the '0.5' in phi_prefac accounts for assuming each is virialized, so will sum such that only 1/2 of the potential adds to the total; note phi_prefac is the integral over the kernel functions. its pre-computed here for the cubic spline default choice with this module, but can in general be numerically computed from the kernel functions, though its not so important as long as you are consistent
+        double ke_sum = 0.5 * (m_i*m_j/(m_i+m_j)) * dv2_ij; // kinetic energy sum
+        double etot_new = DMIN(phi_tot + ke_sum , 0.5 * (-All.G*0.5*phi_prefac*(m_i*m_i/dr_i + m_j*m_j/dr_j))); // updated total energy -- don't let it get too close to zero or positive or this will give a bogus result for the final softening
+        double dr_new = -0.5 * All.G*phi_prefac*mtot*mtot / etot_new;  /* solve etot_new = -0.5*All.G*phi_prefac*m_sum*m_sum/dr_new */
+        P[j].StarParticleEffectiveSize = dr_new; // particle i will be zero'd out
+    }
+#endif
     
     // block for merging non-gas particles (much simpler, assume collisionless)
     if((P[i].Type>0)&&(P[j].Type>0))

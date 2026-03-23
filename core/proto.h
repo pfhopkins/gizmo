@@ -139,42 +139,10 @@ static inline int IMIN(int a, int b) { return (a < b) ? a : b; }
 static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMIN(a,b)) : ((b>=0) ? 0 : DMAX(a,b));}
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 static inline double MINMOD_G(double a, double b) {return a;}
-static inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(1+x*x));} /* Sigmoid ("turn-on") function (1 + x/(1+x^2))/2, interpolates between 0 as x->-infty and 1 as x->infty. Useful for cheaply doing smooth fits of e.g. EOS where different thermo processes turn on at certain temps */
 
-
-
-static inline double ForceSoftening_KernelRadius(int p)
-{
-#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
-    //if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass*UNIT_MASS_IN_SOLAR / (0.5*(All.MaxMassForParticleSplit/3.01+All.MinMassForParticleMerger/0.49)),0.333);} // alternative 'adaptive' version for constant-resolution runs
-    if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass*UNIT_MASS_IN_SOLAR / (GALSF_MERGER_STARCLUSTER_PARTICLES),0.333);}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return P[p].AGS_KernelRadius;}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(SELFGRAVITY_OFF) /* softening scale still appears in timestep criterion for problems without self-gravity, so set it adaptively */
-#ifdef ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT
-    if(P[p].Type == 0) {return DMIN(P[p].KernelRadius, ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime);}
-#else
-    if(P[p].Type == 0) {return P[p].KernelRadius;}
-#endif
-#endif
-#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    if(P[p].Type == 4) {return All.ForceSoftening[P[p].Type] * DMIN(100., DMAX(1., pow(P[p].Mass*UNIT_MASS_IN_SOLAR/100. , 0.33)));}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) /* still playing with criterion below, highly experimental for now */
-    if((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {if((P[p].tidal_tensor_mag_prev>0) && (All.Time>All.TimeBegin)) {return DMIN(1.e2*All.ForceSoftening[P[p].Type] , DMAX(All.ForceSoftening[P[p].Type] , All.ForceSoftening[P[p].Type] + 1.25 * pow( (All.DesNumNgb * All.G * P[p].Mass / P[p].tidal_tensor_mag_prev) , 1./3. )));} else {return 100.*All.ForceSoftening[P[p].Type];}}
-#endif
-    return All.ForceSoftening[P[p].Type];
-}
-
-/* Returns the Frobenius norm of the velocity gradient in physical units */
-static inline double velocity_gradient_norm(int i){
-    double dv2=0; int j,k; for(j=0;j<3;j++) {for(k=0;k<3;k++) {double vt = CellP[i].Gradients.Velocity[j][k]*All.cf_a2inv; /* physical velocity gradient */
-    if(All.ComovingIntegrationOn) {if(j==k) {vt += All.cf_hubble_a;}} /* add hubble-flow correction */
-    dv2 += vt*vt;}} // calculate magnitude of the velocity shear across cell from || grad -otimes- v ||^(1/2)
-    return sqrt(dv2);
-}
+double ForceSoftening_KernelRadius(int p);
+double sigmoid_sqrt(double x);
+double velocity_gradient_norm(int i);
 
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void);
@@ -846,7 +814,7 @@ void do_the_cooling_for_particle(int i);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T);
 double gas_dust_heating_coeff(int i, double T, double Tdust);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate);
-double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate);
+double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp);
