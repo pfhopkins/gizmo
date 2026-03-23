@@ -956,6 +956,9 @@ void force_exchange_pseudodata(void)
         MyFloat s[3];
         MyFloat vs[3];
         MyFloat mass;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        MyFloat gasmass;
+#endif
         MyFloat hmax;
         MyFloat vmax;
         MyFloat divVmax;
@@ -1024,6 +1027,9 @@ void force_exchange_pseudodata(void)
             DomainMoment[i].vs[1] = Extnodes[no].vs[1];
             DomainMoment[i].vs[2] = Extnodes[no].vs[2];
             DomainMoment[i].mass = Nodes[no].u.d.mass;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            DomainMoment[i].gasmass = Nodes[no].gasmass;
+#endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
             DomainMoment[i].vmax = Extnodes[no].vmax;
             DomainMoment[i].divVmax = Extnodes[no].divVmax;
@@ -1125,6 +1131,9 @@ void force_exchange_pseudodata(void)
                     Extnodes[no].vs[1] = DomainMoment[i].vs[1];
                     Extnodes[no].vs[2] = DomainMoment[i].vs[2];
                     Nodes[no].u.d.mass = DomainMoment[i].mass;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+                    Nodes[no].gasmass = DomainMoment[i].gasmass;
+#endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
                     Extnodes[no].vmax = DomainMoment[i].vmax;
                     Extnodes[no].divVmax = DomainMoment[i].divVmax;
@@ -1206,7 +1215,10 @@ void force_treeupdate_pseudos(int no)
     MyFloat hmax, vmax;
     MyFloat divVmax;
     MyFloat s[3], vs[3], mass;
-    
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    MyFloat gasmass = 0;
+#endif
+
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     double cr_injection = 0;
 #endif
@@ -1282,6 +1294,9 @@ void force_treeupdate_pseudos(int no)
             if(Nodes[p].u.d.bitflags & (1 << BITFLAG_INTERNAL_TOPLEVEL)) {force_treeupdate_pseudos(p);}
             
             mass += (Nodes[p].u.d.mass);
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            gasmass += Nodes[p].gasmass;
+#endif
             s[0] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[0]);
             s[1] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[1]);
             s[2] += (Nodes[p].u.d.mass * Nodes[p].u.d.s[2]);
@@ -1440,6 +1455,9 @@ void force_treeupdate_pseudos(int no)
     Extnodes[no].vs[1] = vs[1];
     Extnodes[no].vs[2] = vs[2];
     Nodes[no].u.d.mass = mass;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    Nodes[no].gasmass = gasmass;
+#endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     Nodes[no].cr_injection = cr_injection;
 #endif
