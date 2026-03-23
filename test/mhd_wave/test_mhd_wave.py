@@ -1,11 +1,11 @@
 """MHD linear wave propagation test (Hopkins & Raives 2015)"""
 
 import pytest
-from gizmo.test import build_and_run_test, assert_snapshots_are_close
+from gizmo.test import build_and_run_test, assert_snapshots_are_close, default_mpi_ranks
 from os import path
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (12,))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 def test_mhd_wave(num_mpi_ranks):
     test_name = "mhd_wave"
     build_and_run_test(test_name, num_mpi_ranks)
