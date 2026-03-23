@@ -650,9 +650,9 @@ void force_update_node_recursive(int no, int sib, int father)
                             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p);
                             sink_lum += BHLum;
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                            for(k=0;k<3;k++) {sink_lum_grad[k] += BHLum * pa->Sink_Specific_AngMom[k];}
+                            sink_lum_grad += pa->Sink_Specific_AngMom * BHLum;
 #else
-                            for(k=0;k<3;k++) {sink_lum_grad[k] += BHLum * pa->GradRho[k];}
+                            sink_lum_grad += pa->GradRho * BHLum;
 #endif
                         }
                     }

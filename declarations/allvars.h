@@ -1023,7 +1023,7 @@ extern struct gravdata_in
 
 extern struct gravdata_out
 {
-    MyDouble Acc[3];
+    Vec3<MyDouble> Acc;
 #ifdef RT_USE_TREECOL_FOR_NH
     MyDouble ColumnDensityBins[RT_USE_TREECOL_FOR_NH];
 #endif
