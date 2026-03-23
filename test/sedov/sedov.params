@@ -26,3 +26,4 @@ MaxSizeTimestep                    0.01
 ResubmitOn                         0
 ResubmitCommand                    none
 ErrTolTheta                        0.7
+TreeDomainUpdateFrequency          0.5
