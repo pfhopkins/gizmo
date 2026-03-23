@@ -8,7 +8,7 @@
 %-------------------------------------------------------------------------
 
 %----  Relevant files (filenames and directories)
-InitCondFile  shu1977
+InitCondFile  shu1977_ics
 OutputDir     output
 
 %---- File formats (input and output)
