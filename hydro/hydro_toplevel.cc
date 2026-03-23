@@ -301,7 +301,7 @@ struct INPUT_STRUCT_NAME
 /* --------------------------------------------------------------------------------- */
 struct OUTPUT_STRUCT_NAME
 {
-    MyDouble Acc[3];
+    Vec3<MyDouble> Acc;
     //MyDouble dMomentum[3]; //manifest-indiv-timestep-debug//
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
@@ -312,7 +312,7 @@ struct OUTPUT_STRUCT_NAME
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble DtMass;
     MyDouble dMass;
-    MyDouble GravWorkTerm[3];
+    Vec3<MyDouble> GravWorkTerm;
 #endif
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
@@ -328,7 +328,7 @@ struct OUTPUT_STRUCT_NAME
     MyFloat Dt_Rad_E_gamma[N_RT_FREQ_BINS];
 #endif
 #if defined(RT_EVOLVE_FLUX)
-    MyFloat Dt_Rad_Flux[N_RT_FREQ_BINS][3];
+    Vec3<MyFloat> Dt_Rad_Flux[N_RT_FREQ_BINS];
 #endif
 #if defined(RT_INFRARED)
     MyFloat Dt_Rad_E_gamma_T_weighted_IR;
@@ -339,14 +339,14 @@ struct OUTPUT_STRUCT_NAME
 #endif
 
 #if defined(MAGNETIC)
-    MyDouble Face_Area[3];
-    MyFloat DtB[3];
+    Vec3<MyDouble> Face_Area;
+    Vec3<MyFloat> DtB;
     MyFloat divB;
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
 #endif
-    MyFloat DtB_PhiCorr[3];
+    Vec3<MyFloat> DtB_PhiCorr;
 #endif
 #endif // MAGNETIC //
 
@@ -539,18 +539,14 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 {
     int k;
     /* these are zero-d out at beginning of hydro loop so should always be added */
-    for(k = 0; k < 3; k++)
-    {
-        CellP[i].HydroAccel[k] += out->Acc[k];
-        //CellP[i].dMomentum[k] += out->dMomentum[k]; //manifest-indiv-timestep-debug//
-    }
+    CellP[i].HydroAccel += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
     //CellP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtMass += out->DtMass;
     CellP[i].dMass += out->dMass;
-    for(k=0;k<3;k++) {CellP[i].GravWorkTerm[k] += out->GravWorkTerm[k];}
+    CellP[i].GravWorkTerm += out->GravWorkTerm;
 #endif
     if(CellP[i].MaxSignalVel < out->MaxSignalVel) {CellP[i].MaxSignalVel = out->MaxSignalVel;}
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
@@ -570,7 +566,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] += out->Dt_Rad_E_gamma[k];}
 #endif
 #if defined(RT_EVOLVE_FLUX)
-    for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Dt_Rad_Flux[k][k_dir] += out->Dt_Rad_Flux[k][k_dir];}}
+    for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] += out->Dt_Rad_Flux[k];}
 #endif
 #if defined(RT_INFRARED)
     CellP[i].Dt_Rad_E_gamma_T_weighted_IR += out->Dt_Rad_E_gamma_T_weighted_IR;
@@ -582,13 +578,13 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 
 #if defined(MAGNETIC)
     /* can't just do DtB += out-> DtB, because for some hydro methods, the induction equation is solved in the density loop; need to simply add it here */
-    for(k=0;k<3;k++) {CellP[i].DtB[k] += out->DtB[k]; CellP[i].Face_Area[k] += out->Face_Area[k];}
+    CellP[i].DtB += out->DtB; CellP[i].Face_Area += out->Face_Area;
     CellP[i].divB += out->divB;
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     CellP[i].DtPhi += out->DtPhi;
 #endif
-    for(k=0;k<3;k++) {CellP[i].DtB_PhiCorr[k] += out->DtB_PhiCorr[k];}
+    CellP[i].DtB_PhiCorr += out->DtB_PhiCorr;
 #endif // Dedner //
 #endif // MAGNETIC //
 
@@ -633,8 +629,7 @@ void hydro_final_operations_and_cleanup(void)
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* signal velocity needs to include rate of gas flow -over- the resolution element, which can be non-zero here */
-            double v2_p = CellP[i].MaxSignalVel*CellP[i].MaxSignalVel;
-            for(k=0;k<3;k++) {v2_p += (CellP[i].VelPred[k]-CellP[i].ParticleVel[k])*(CellP[i].VelPred[k]-CellP[i].ParticleVel[k]);}
+            double v2_p = CellP[i].MaxSignalVel*CellP[i].MaxSignalVel + (CellP[i].VelPred - CellP[i].ParticleVel).norm_sq();
             CellP[i].MaxSignalVel = sqrt(v2_p);
 #endif
 
@@ -724,7 +719,7 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].DtInternalEnergy += -Get_Gas_BField(i,k)*All.cf_a2inv * CellP[i].DtB[k];
             }
 #endif
-            for(k=0;k<3;k++) {CellP[i].DtB[k] *= magnorm_closure;}
+            CellP[i].DtB *= magnorm_closure;
 #endif
             CellP[i].DtInternalEnergy /= P[i].Mass;
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass) */
@@ -856,7 +851,7 @@ void hydro_final_operations_and_cleanup(void)
             /* if we have winds, we decouple particles briefly if delaytime>0 */
             if(CellP[i].DelayTime > 0)
             {
-                for(k = 0; k < 3; k++) {CellP[i].HydroAccel[k] = 0;}//CellP[i].dMomentum[k] = 0;
+                CellP[i].HydroAccel = {};
                 CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;
                 double windspeed = sqrt(2 * All.WindEnergyFraction * All.FactorSN * All.EgySpecSN / (1 - All.FactorSN) / All.WindEfficiency) * All.Time;
                 windspeed *= fac_mu;
@@ -873,19 +868,19 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                 CellP[i].DtMass = 0;
                 CellP[i].dMass = 0;
-                for(k = 0; k < 3; k++) CellP[i].GravWorkTerm[k] = 0;
+                CellP[i].GravWorkTerm = {};
 #endif
                 CellP[i].DtInternalEnergy = 0;//CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
-                for(k = 0; k < 3; k++) CellP[i].HydroAccel[k] = 0;//CellP[i].dMomentum[k] = 0;//manifest-indiv-timestep-debug//
+                CellP[i].HydroAccel = {};
 #ifdef MAGNETIC
-                for(k = 0; k < 3; k++) CellP[i].DtB[k] = 0;
+                CellP[i].DtB = {};
 #ifdef DIVBCLEANING_DEDNER
-                for(k = 0; k < 3; k++) CellP[i].DtB_PhiCorr[k] = 0;
+                CellP[i].DtB_PhiCorr = {};
                 CellP[i].DtPhi = 0;
 #endif
 #endif
 #ifdef SPH_BND_BFLD
-                for(k = 0; k < 3; k++) CellP[i].B[k] = 0;
+                CellP[i].B = {};
 #endif
             }
 #endif
@@ -927,9 +922,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
-            for(k=0;k<3;k++) {CellP[i].HydroAccel[k] = 0;} //CellP[i].dMomentum[k] = 0;//manifest-indiv-timestep-debug//
+            CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            CellP[i].DtMass = 0; CellP[i].dMass = 0; for(k=0;k<3;k++) CellP[i].GravWorkTerm[k] = 0;
+            CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
             for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] = 0;}
@@ -939,25 +934,25 @@ void hydro_force_initial_operations_preloop(void)
             for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] = 0;}
 #endif
 #if defined(RT_EVOLVE_FLUX)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Dt_Rad_Flux[k][k_dir] = 0;}}
+            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
 #endif
 #if defined(RT_INFRARED)
             CellP[i].Dt_Rad_E_gamma_T_weighted_IR = 0;
 #endif
 #if defined(RT_EVOLVE_FLUX)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Dt_Rad_Flux[k][k_dir] = 0;}}
+            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
 #endif
 #if defined(RT_EVOLVE_INTENSITIES)
             for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}}
 #endif
 #endif
 #ifdef MAGNETIC
-            CellP[i].divB = 0; for(k=0;k<3;k++) {CellP[i].Face_Area[k] = 0;}
+            CellP[i].divB = 0; CellP[i].Face_Area = {};
 #ifdef DIVBCLEANING_DEDNER
-            for(k=0;k<3;k++) {CellP[i].DtB_PhiCorr[k] = 0;}
+            CellP[i].DtB_PhiCorr = {};
 #endif
 #ifndef HYDRO_SPH
-            for(k=0;k<3;k++) {CellP[i].DtB[k] = 0;}
+            CellP[i].DtB = {};
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtPhi = 0;
 #endif

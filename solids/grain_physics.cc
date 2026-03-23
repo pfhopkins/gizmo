@@ -120,9 +120,9 @@ void apply_grain_dragforce(void)
                     lorentz_units *= (ELECTRONCHARGE_CGS/C_LIGHT_CGS) * UNIT_VEL_IN_CGS / UNIT_MASS_IN_CGS; // converts acceleration to cgs
                     lorentz_units /= UNIT_VEL_IN_CGS / UNIT_TIME_IN_CGS; // converts it to code-units acceleration
 
-                    double bhat[3], bmag=0, efield[3]={0}, efield_coeff=0, dv[3]; /* define unit vectors and B for evolving the lorentz force */
-                    for(k=0;k<3;k++) {bhat[k]=P[i].Gas_B[k]*All.cf_a2inv; bmag+=bhat[k]*bhat[k]; dv[k]=(P[i].Vel[k]-P[i].Gas_Velocity[k])/All.cf_atime;}
-                    if(bmag>0) {bmag=sqrt(bmag); for(k=0;k<3;k++) {bhat[k]/=bmag;}} else {bmag=0;}
+                    Vec3<double> bhat, efield={}; double bmag=0, efield_coeff=0; /* define unit vectors and B for evolving the lorentz force */
+                    bhat = P[i].Gas_B * All.cf_a2inv; bmag = bhat.norm_sq(); Vec3<double> dv = (P[i].Vel - P[i].Gas_Velocity) / All.cf_atime;
+                    if(bmag>0) {bmag=sqrt(bmag); bhat /= bmag;} else {bmag=0;}
                     double grain_charge_cinv = Z_grain / grain_mass * lorentz_units;
 #ifdef GRAIN_RDI_TESTPROBLEM
                     if(All.Grain_Charge_Parameter != 0) {grain_charge_cinv = -All.Grain_Charge_Parameter*sqrt(1.)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * pow(All.Grain_Size_Max/P[i].Grain_Size,2);} // set charge manually; this gives 1/t_Lorentz in code units: the sqrt[1] reflects the expected mean density of the box in code units [this is hard-coded for the RDI_testproblem set!] //
@@ -130,16 +130,14 @@ void apply_grain_dragforce(void)
 #endif
                     /* now apply the boris integrator */
                     double lorentz_coeff = (0.5*dt) * bmag * grain_charge_cinv; // dimensionless half-timestep term for boris integrator //
-                    double v_m[3]={0}, v_t[3]={0}, v_p[3]={0}, vcrosst[3]={0};
-                    for(k=0;k<3;k++) {v_m[k] = dv[k] + 0.5*efield_coeff*efield[k];} // half-step from E-field
-                    /* cross-product for rotation */
-                    vcrosst[0] = v_m[1]*bhat[2] - v_m[2]*bhat[1]; vcrosst[1] = v_m[2]*bhat[0] - v_m[0]*bhat[2]; vcrosst[2] = v_m[0]*bhat[1] - v_m[1]*bhat[0];
-                    double tL=1./(eps+0.5*bmag*fabs(grain_charge_cinv)), vgasXB_mag=0; for(k=0;k<3;k++) {vgasXB_mag+=vcrosst[k]*vcrosst[k];}
+                    Vec3<double> v_m = dv + efield * (0.5*efield_coeff); // half-step from E-field
+                    Vec3<double> vcrosst = cross(v_m, bhat); /* cross-product for rotation */
+                    double tL=1./(eps+0.5*bmag*fabs(grain_charge_cinv)), vgasXB_mag=vcrosst.norm_sq();
                     P[i].Grain_AccelTimeMin = DMIN(P[i].Grain_AccelTimeMin, DMAX(tL , sqrt(Get_Particle_Size(i)*All.cf_atime/(eps+sqrt(vgasXB_mag)/tL))));
-                    for(k=0;k<3;k++) {v_t[k] = v_m[k] + lorentz_coeff * vcrosst[k];} // first half-rotation
-                    vcrosst[0] = v_t[1]*bhat[2] - v_t[2]*bhat[1]; vcrosst[1] = v_t[2]*bhat[0] - v_t[0]*bhat[2]; vcrosst[2] = v_t[0]*bhat[1] - v_t[1]*bhat[0];
-                    for(k=0;k<3;k++) {v_p[k] = v_m[k] + (2.*lorentz_coeff/(1.+lorentz_coeff*lorentz_coeff)) * vcrosst[k];} // second half-rotation
-                    for(k=0;k<3;k++) {v_p[k] += 0.5*efield_coeff*efield[k];} // half-step from E-field
+                    Vec3<double> v_t = v_m + vcrosst * lorentz_coeff; // first half-rotation
+                    vcrosst = cross(v_t, bhat);
+                    Vec3<double> v_p = v_m + vcrosst * (2.*lorentz_coeff/(1.+lorentz_coeff*lorentz_coeff)); // second half-rotation
+                    v_p += efield * (0.5*efield_coeff); // half-step from E-field
                     /* calculate effective acceleration from discrete step in velocity */
                     for(k=0;k<3;k++) {external_forcing[k] += (v_p[k] - dv[k]) / dt;} // boris integrator
                 }

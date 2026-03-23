@@ -63,9 +63,7 @@
     {
         Face_Area_Norm = -(wt_i*V_i*kernel.dwk_i + wt_j*V_j*kernel.dwk_j) / kernel.r;
         Face_Area_Norm *= All.cf_atime*All.cf_atime; /* Face_Area_Norm has units of area, need to convert to physical */
-        Face_Area_Vec[0] = Face_Area_Norm * kernel.dp[0];
-        Face_Area_Vec[1] = Face_Area_Norm * kernel.dp[1];
-        Face_Area_Vec[2] = Face_Area_Norm * kernel.dp[2];
+        Face_Area_Vec = kernel.dp * Face_Area_Norm;
         Face_Area_Norm = Face_Area_Norm * Face_Area_Norm * r2;
     }
 
@@ -86,7 +84,7 @@
 /* check if face area exceeds maximum geometric allowed limit (can occur when particles with -very- different KernelRadius interact at the edge of the kernel, limited to geometric max to prevent numerical instability */
 #if (SLOPE_LIMITER_TOLERANCE == 0)
     double Amax = DMIN(Get_Particle_Expected_Area(Particle_Size_i) , Get_Particle_Expected_Area(Particle_Size_j)); // minimum of area "i" or area "j": this subroutine takes care of dimensionality, etc. note inputs are all in -physical- units here
-    if(Face_Area_Norm > Amax) {for(k=0;k<3;k++) {Face_Area_Vec[k] *= (Amax/Face_Area_Norm);} Face_Area_Norm = Amax;} /* set the face area to the maximum limit, and reset the face vector as well [ direction is preserved, just area changes] */
+    if(Face_Area_Norm > Amax) {Face_Area_Vec *= (Amax/Face_Area_Norm); Face_Area_Norm = Amax;} /* set the face area to the maximum limit, and reset the face vector as well [ direction is preserved, just area changes] */
 #endif
 
 

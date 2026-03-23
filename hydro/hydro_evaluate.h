@@ -40,7 +40,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
     double face_area_dot_vel;
     face_area_dot_vel = 0;
 #endif
-    double face_vel_i=0, face_vel_j=0, Face_Area_Norm=0, Face_Area_Vec[3];
+    double face_vel_i=0, face_vel_j=0, Face_Area_Norm=0; Vec3<double> Face_Area_Vec;
 
 #ifdef HYDRO_MESHLESS_FINITE_MASS
     double epsilon_entropic_eos_big, epsilon_entropic_eos_small;
@@ -292,7 +292,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 }
                 // SPH: use the sph 'effective areas' oriented along the lines between particles and direct-difference gradients
                 Face_Area_Norm = local.Mass * P[j].Mass * fabs(kernel.dwk_i+kernel.dwk_j) / (local.Density * CellP[j].Density) * All.cf_atime*All.cf_atime;
-                for(k=0;k<3;k++) {Face_Area_Vec[k] = Face_Area_Norm * kernel.dp[k]/kernel.r;}
+                Face_Area_Vec = kernel.dp * (Face_Area_Norm / kernel.r);
 #endif
 
 #ifdef MAGNETIC
@@ -375,8 +375,8 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 }
                  /* this gets subtracted here to ensure the exchange is exact */
                 out.DtMass += FluxCorrectionFactor_to_i * Fluxes.rho;
-                double gravwork[3]; gravwork[0]=Fluxes.rho*kernel.dp[0]; gravwork[1]=Fluxes.rho*kernel.dp[1]; gravwork[2]=Fluxes.rho*kernel.dp[2];
-                for(k=0;k<3;k++) {out.GravWorkTerm[k] += FluxCorrectionFactor_to_i * gravwork[k];}
+                Vec3<double> gravwork = kernel.dp * Fluxes.rho;
+                out.GravWorkTerm += gravwork * FluxCorrectionFactor_to_i;
 #ifdef METALS   /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
                 if(Fluxes.rho > 0) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
 #endif
@@ -385,7 +385,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
-                for(k=0;k<3;k++) {out.Face_Area[k] += Face_Area_Vec[k];}
+                out.Face_Area += Face_Area_Vec;
 #endif
 #ifndef FREEZE_HYDRO
                 for(k=0;k<3;k++) {out.DtB[k] += FluxCorrectionFactor_to_i * Fluxes.B[k];}
@@ -419,7 +419,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                     CellP[j].DtMass -= FluxCorrectionFactor_to_j * Fluxes.rho;
-                    for(k=0;k<3;k++) {CellP[j].GravWorkTerm[k] -= FluxCorrectionFactor_to_j * gravwork[k];}
+                    CellP[j].GravWorkTerm -= gravwork * FluxCorrectionFactor_to_j;
 #ifdef METALS       /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
                     if(Fluxes.rho < 0) {CellP[j].Dyield[k] = FluxCorrectionFactor_to_j * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
 #endif
@@ -428,7 +428,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * Fluxes.p;
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
-                    for(k=0;k<3;k++) {CellP[j].Face_Area[k] -= Face_Area_Vec[k];}
+                    CellP[j].Face_Area -= Face_Area_Vec;
 #endif
 #ifndef FREEZE_HYDRO
                     for(k=0;k<3;k++) {CellP[j].DtB[k] -= FluxCorrectionFactor_to_j * Fluxes.B[k];}

@@ -613,26 +613,24 @@ void spawn_sink_wind_feedback(void)
 }
 
 
-void get_random_orthonormal_basis(int seed, double *nx, double *ny, double *nz)
+void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz)
 {
     double phi, cos_theta, sin_theta, sin_phi, cos_phi;
     phi=2.*M_PI*get_random_number(seed+1+ThisTask), cos_theta=2.*(get_random_number(seed+3+2*ThisTask)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
     /* velocities (determined by wind velocity direction) */
-    nz[0]=sin_theta*cos_phi; nz[1]=sin_theta*sin_phi; nz[2]=cos_theta; // random z axis
+    nz = {sin_theta*cos_phi, sin_theta*sin_phi, cos_theta}; // random z axis
 
-    double dot_product=0, norm=0; int k;
+    double norm=0;
     while(norm==0){ // necessary in case ny is parallel to nz - believe it or not this happened once!
         phi=2.*M_PI*get_random_number(seed+4+ThisTask), cos_theta=2.*(get_random_number(seed+5+2*ThisTask)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
-        ny[0]=sin_theta*cos_phi; ny[1]=sin_theta*sin_phi; ny[2]=cos_theta; // random y axis, needs to have its z component deprojected
+        ny = {sin_theta*cos_phi, sin_theta*sin_phi, cos_theta}; // random y axis, needs to have its z component deprojected
         // do Gram-Schmidt to get an orthonormal basis
-        for(k=0; k<3; k++) {dot_product += ny[k] * nz[k];}
-        for(k=0; k<3; k++) {ny[k] -= dot_product * nz[k]; norm += ny[k]*ny[k];} // deproject component along z
+        ny -= nz * dot(ny, nz); // deproject component along z
+        norm = ny.norm_sq();
         if(norm==0) continue;
-        norm = 1./sqrt(norm); for(k=0; k<3; k++) {ny[k] *= norm;}
+        ny *= 1./sqrt(norm);
     }
-    nx[0] = ny[1]*nz[2] - ny[2]*nz[1];
-    nx[1] = ny[2]*nz[0] - ny[0]*nz[2];
-    nx[2] = ny[0]*nz[1] - ny[1]*nz[0];
+    nx = cross(ny, nz);
     return;
 }
 
@@ -645,19 +643,19 @@ void get_random_orthonormal_basis(int seed, double *nx, double *ny, double *nz)
 /*          is the axis                                                                                         */
 /* dir - shape (3,) array containing the direction - pass as an input to remember the previous direction        */
 
-void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, double *ny, double *nz, double *veldir, double *dpdir)
+void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir)
 {
     int k;
     if((mode != 3) && (num_spawned_this_call % 2)) { // every second particle is spawned in the opposite direction to the last, conserving momentum and COM
-        for(k=0; k<3;k++) {veldir[k] = -veldir[k]; dpdir[k]=-dpdir[k];}
+        veldir = -veldir; dpdir = -dpdir;
         return; // we're done
     }
-    double nx[3] = {ny[1]*nz[2] - ny[2]*nz[1], ny[2]*nz[0] - ny[0]*nz[2], ny[0]*nz[1] - ny[1]*nz[0]};
+    Vec3<double> nx = cross(ny, nz);
     // now do the actual direction based on the mode we're in
     double phi, cos_theta, sin_theta, sin_phi, cos_phi;
     if(mode==0){ // fully random
         phi=2.*M_PI*get_random_number(num_spawned_this_call+1+ThisTask), cos_theta=2.*(get_random_number(num_spawned_this_call+3+2*ThisTask)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
-        veldir[0]=sin_theta*cos_phi; veldir[1]=sin_theta*sin_phi; veldir[2]=cos_theta;dpdir[0]=veldir[0];dpdir[1]=veldir[1];dpdir[2]=veldir[2];
+        veldir = {sin_theta*cos_phi, sin_theta*sin_phi, cos_theta}; dpdir = veldir;
     } else if (mode==1){ // collimated according to a conical velocity field
         double theta0=0.01, thetamax=30.*(M_PI/180.); // "flattening parameter" and max opening angle of jet velocity distribution from Matzner & McKee 1999, sets the collimation of the jets
 #if !defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
@@ -666,25 +664,23 @@ void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, double
         double theta=atan(theta0*tan(get_random_number(num_spawned_this_call+7+5*ThisTask)*atan(sqrt(1+theta0*theta0)*tan(thetamax)/theta0))/sqrt(1+theta0*theta0)); // biased sampling to get collimation
         phi=2.*M_PI*get_random_number(num_spawned_this_call+1+ThisTask);
         cos_theta = cos(theta), sin_theta=sin(theta), sin_phi=sin(phi), cos_phi=cos(phi);
-        for(k=0;k<3;k++) {veldir[k] = sin_theta*cos_phi*nx[k] + sin_theta*sin_phi*ny[k] + cos_theta*nz[k]; dpdir[k]=veldir[k];} //converted from angular momentum relative to into standard coordinates
+        veldir = nx*(sin_theta*cos_phi) + ny*(sin_theta*sin_phi) + nz*cos_theta; dpdir = veldir; //converted from angular momentum relative to into standard coordinates
     }
 #if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
     else if (mode==2){ //random 3-axis isotropized - spawn along z axis, then y, then x
         if(((P[i].ID_generation-1) % 6) == 0) { // need to generate a brand new coordinate frame
             get_random_orthonormal_basis(P[i].ID_generation, nx, ny, nz);
-            for(k=0; k<3; k++) {veldir[k] = nz[k]; P[i].Wind_direction[k]=nx[k]; P[i].Wind_direction[k+3]=ny[k]; dpdir[k]=veldir[k];}
+            veldir = nz; for(k=0; k<3; k++) {P[i].Wind_direction[k]=nx[k]; P[i].Wind_direction[k+3]=ny[k];} dpdir = veldir;
         }
-        else if(((P[i].ID_generation-1) % 6) == 2) {for(k=0; k<3; k++) {veldir[k] = P[i].Wind_direction[k]; dpdir[k]=veldir[k];}}
-        else {for(k=0; k<3; k++) {veldir[k] = P[i].Wind_direction[k+3]; dpdir[k]=veldir[k];}}
+        else if(((P[i].ID_generation-1) % 6) == 2) {for(k=0; k<3; k++) {veldir[k] = P[i].Wind_direction[k];} dpdir = veldir;}
+        else {for(k=0; k<3; k++) {veldir[k] = P[i].Wind_direction[k+3];} dpdir = veldir;}
     }
 #endif
 #if (defined(SINGLE_STAR_FB_SNE) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)) || defined(SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT)
     else if (mode==3) { // spawn on a specific angular grid
         int dir_ind = num_spawned_this_call % SINGLE_STAR_FB_SNE_N_EJECTA;
-        for(k=0;k<3;k++) { //Particle positioned at one of the regular positions on the randomized coordinate system
-            veldir[k] = All.SN_Ejecta_Direction[dir_ind][0] * nx[k] + All.SN_Ejecta_Direction[dir_ind][1] * ny[k] + All.SN_Ejecta_Direction[dir_ind][2] * nz[k]; //use directions pre-computed to isotropically cover a sphere with SINGLE_STAR_FB_SNE_N_EJECTA particles
-            dpdir[k]=veldir[k];
-        }
+        veldir = nx*All.SN_Ejecta_Direction[dir_ind][0] + ny*All.SN_Ejecta_Direction[dir_ind][1] + nz*All.SN_Ejecta_Direction[dir_ind][2]; //use directions pre-computed to isotropically cover a sphere with SINGLE_STAR_FB_SNE_N_EJECTA particles
+        dpdir = veldir;
     }
 #endif
     return;
@@ -762,17 +758,17 @@ double get_spawned_cell_launch_speed(int i)
 
 
 #ifdef MAGNETIC
-void get_wind_spawn_magnetic_field(int j, int mode, double *ny, double *nz, double *dpdir, double d_r)
+void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& dpdir, double d_r)
 {
     int k; CellP[j].divB = 0; CellP[j].DtB = {};
 #ifdef DIVBCLEANING_DEDNER
     CellP[j].DtPhi = CellP[j].PhiPred = CellP[j].Phi = 0; CellP[j].DtB_PhiCorr = {};
 #endif
-    
+
     double volume_for_BtoVB = P[j].Mass / CellP[j].Density;
 #ifdef SINK_WIND_SPAWN_SET_BFIELD_POLTOR /* user manually sets the poloidal and toroidal components here */
-    double inj_scale=All.Sink_spawn_injectionradius/All.cf_atime, Bfield[3]={0}, nx[3]={ny[1]*nz[2]-ny[2]*nz[1], ny[2]*nz[0]-ny[0]*nz[2], ny[0]*nz[1]-ny[1]*nz[0]};
-    double cos_theta=nz[0]*dpdir[0]+nz[1]*dpdir[1]+nz[2]*dpdir[2], sin_theta=sqrt(1-cos_theta*cos_theta), cos_phi=(nx[0]*dpdir[0]+nx[1]*dpdir[1]+nx[2]*dpdir[2])/sin_theta, sin_phi=(ny[0]*dpdir[0]+ny[1]*dpdir[1]+ny[2]*dpdir[2])/sin_theta;
+    double inj_scale=All.Sink_spawn_injectionradius/All.cf_atime; Vec3<double> Bfield={}, nx=cross(ny,nz);
+    double cos_theta=dot(nz,dpdir), sin_theta=sqrt(1-cos_theta*cos_theta), cos_phi=dot(nx,dpdir)/sin_theta, sin_phi=dot(ny,dpdir)/sin_theta;
     /* initialize poloidal component, in the nx,ny,nz coordinate frame */
     Bfield[0]+= All.B_spawn_pol*d_r*cos_theta*d_r*sin_theta/inj_scale/inj_scale*cos_phi*exp(-1.0*d_r*d_r/inj_scale/inj_scale)/exp(-1.0);
     Bfield[1]+= All.B_spawn_pol*d_r*cos_theta*d_r*sin_theta/inj_scale/inj_scale*sin_phi*exp(-1.0*d_r*d_r/inj_scale/inj_scale)/exp(-1.0);
@@ -781,8 +777,8 @@ void get_wind_spawn_magnetic_field(int j, int mode, double *ny, double *nz, doub
     Bfield[0]+= -1*All.B_spawn_tor*(d_r/inj_scale)*sin_theta*sin_phi*exp(-1.0*d_r*d_r/inj_scale/inj_scale)/exp(-1.0);
     Bfield[1]+=    All.B_spawn_tor*(d_r/inj_scale)*sin_theta*cos_phi*exp(-1.0*d_r*d_r/inj_scale/inj_scale)/exp(-1.0);
     /* assign it back to the actual evolved B in the lab/simulation coordinate frame */
-    for(k=0;k<3;k++) {CellP[j].IniB[k] = Bfield[0]*nx[k] + Bfield[1]*ny[k] + Bfield[2]*nz[k]; CellP[j].DtB[k]=0;
-        CellP[j].BPred[k]=CellP[j].B[k]=CellP[j].IniB[k]*(All.UnitMagneticField_in_gauss/UNIT_B_IN_GAUSS)*(volume_for_BtoVB/All.cf_a2inv);}
+    CellP[j].IniB = nx*Bfield[0] + ny*Bfield[1] + nz*Bfield[2]; CellP[j].DtB = {};
+    CellP[j].BPred = CellP[j].B = CellP[j].IniB * ((All.UnitMagneticField_in_gauss/UNIT_B_IN_GAUSS)*(volume_for_BtoVB/All.cf_a2inv));
     
 #else /* set B-fields to be weak relative to local ISM values */
 
@@ -803,7 +799,7 @@ void get_wind_spawn_magnetic_field(int j, int mode, double *ny, double *nz, doub
     /* add magnetic flux here to 'Bmag' if desired */
     Bmag *= volume_for_BtoVB / All.cf_a2inv; // convert back to code units
     for(k=0;k<3;k++) {if(Bmag_0>0) {CellP[j].B[k]*=Bmag/sqrt(Bmag_0);} else {CellP[j].B[k]=Bmag;}} // assign if valid values
-    for(k=0;k<3;k++) {CellP[j].BPred[k]=CellP[j].B[k]; CellP[j].DtB[k]=0;} // set predicted = actual, derivative to null
+    CellP[j].BPred=CellP[j].B; CellP[j].DtB={}; // set predicted = actual, derivative to null
 #endif
     CellP[j].BField_prerefinement = CellP[j].B * (1.0 / volume_for_BtoVB); /* record the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed */
     CellP[j].BPred = CellP[j].B; /* set predicted/drifted equal to the value above */
@@ -894,7 +890,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     long bin, bin_0; for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin] > 0) break;} /* gives minimum active timebin of any particle */
     bin_0 = bin; int i0 = i; /* save minimum timebin, also save ID of sink particle for use below */
     bin = P[i0].TimeBin; /* make this particle active on the BH/star timestep */
-    double veldir[3], dpdir[3]; // velocity direction to spawn in - declare outside the loop so we remember it from the last iteration
+    Vec3<double> veldir, dpdir; // velocity direction to spawn in - declare outside the loop so we remember it from the last iteration
     int mode = 0; // 0 if doing totally random directions, 1 if collimated, 2 for 3-axis isotropized, and 3 if using an angular grid,  4 old collimatation script, position isotropic velicity coliminated within certain open angle (might be useful to still keep this option owing to the free open angle choice and better sampling the magnetic field geometry)
 #if defined(SINGLE_STAR_FB_JETS) || defined(JET_DIRECTION_FROM_KERNEL_AND_SINK) || defined(SINK_FB_COLLIMATED)
     mode = 1; // collimated mode
@@ -926,25 +922,25 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
 
     // based on the mode we're in, let's pick a fixed orthonormal basis that all spawned elements are aware of
-    double jz[3]={0,0,1},jy[3]={0,1,0},jx[3]={1,0,0};  /* set up a coordinate system [xyz if we don't have any other information */
+    Vec3<double> jz={0,0,1},jy={0,1,0},jx={1,0,0};  /* set up a coordinate system [xyz if we don't have any other information */
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM  /* use local angular momentum to estimate preferred directions/coordinates for spawning */
     if(mode==1){ // set up so that the z axis is the angular momentum vector
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK // Jgas stores total angmom in COM frame of sink-gas system; use this for direction
         double Jtot=P[i].Jgas_in_Kernel.norm_sq();
-        if(Jtot>0) {Jtot=1/sqrt(Jtot); for(k=0;k<3;k++) {jz[k]=P[i].Jgas_in_Kernel[k]*Jtot;}}
+        if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Jgas_in_Kernel * Jtot;}
 #else
         double Jtot=P[i].Sink_Specific_AngMom.norm_sq();
-        if(Jtot>0) {Jtot=1/sqrt(Jtot); for(k=0;k<3;k++) {jz[k]=P[i].Sink_Specific_AngMom[k]*Jtot;}}
+        if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Sink_Specific_AngMom * Jtot;}
 #endif
-        Jtot=jz[1]*jz[1]+jz[2]*jz[2]; if(Jtot>0) {Jtot=1/sqrt(Jtot); jy[0]=0; jy[1]=jz[2]*Jtot; jy[2]=-jz[1]*Jtot;} else {jy[0]=0; jy[1]=1; jy[2]=0;}
-        jx[0]=jz[1]*jy[2]-jz[2]*jy[1]; jx[1]=jz[2]*jy[0]-jz[0]*jy[2]; jx[2]=jz[0]*jy[1]-jz[1]*jy[0];
+        Jtot=jz[1]*jz[1]+jz[2]*jz[2]; if(Jtot>0) {Jtot=1/sqrt(Jtot); jy={0, jz[2]*Jtot, -jz[1]*Jtot};} else {jy={0, 1, 0};}
+        jx = cross(jz, jy);
     }
 #endif
     if(mode == 3){ // if doing an angular grid, need some fixed coordinates to orient it, but want to switch em up each time to avoid artifacts
         get_random_orthonormal_basis(P[i].ID_generation, jx, jy, jz);
     }
 #ifdef SINK_WIND_SPAWN_SET_JET_PRECESSION /* rotate the jet angle according to the explicitly-included precession parameters */
-    double degree = All.Sink_jet_precess_degree, period = All.Sink_jet_precess_period/UNIT_TIME_IN_GYR, new_dir[3];
+    double degree = All.Sink_jet_precess_degree, period = All.Sink_jet_precess_period/UNIT_TIME_IN_GYR; Vec3<double> new_dir;
     new_dir[0]= jx[0]*cos(degree/180.*M_PI)-jx[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jx[1]; new_dir[2]= jx[0]*sin(degree/180.*M_PI)+jx[2]*cos(degree/180.*M_PI);
     jx[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jx[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jx[2]= new_dir[2];
 
@@ -1119,7 +1115,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         
         // actually lay down position and velocities using coordinate basis
         get_wind_spawn_direction(i, j - (NumPart + num_already_spawned), mode, jy, jz, veldir, dpdir);
-        for(k=0;k<3;k++) {P[j].Pos[k]=P[i].Pos[k] + dpdir[k]*d_r; P[j].Vel[k]=P[i].Vel[k] + veldir[k]*v_magnitude_physical*All.cf_atime; CellP[j].VelPred[k]=P[j].Vel[k];} // convert to code (comoving) velocity units
+        P[j].Pos = P[i].Pos + dpdir*d_r; P[j].Vel = P[i].Vel + veldir*(v_magnitude_physical*All.cf_atime); CellP[j].VelPred = P[j].Vel; // convert to code (comoving) velocity units
 
         /* condition number, smoothing length, and density */
         CellP[j].ConditionNumber *= 100.0; /* boost the condition number to be conservative, so we don't trigger madness in the kernel */
@@ -1185,7 +1181,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
         CellP[j].Sink_CR_Energy_Available_For_Injection = dEcr;     /* store energy for later injection */
 #else
-        inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir); /* inject directly */
+        inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data); /* inject directly */
 #endif
 #endif
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */

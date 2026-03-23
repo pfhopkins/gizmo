@@ -274,7 +274,7 @@ void init(void)
 #endif
 #if defined(SINGLE_STAR_FB_WINDS)
             P[i].wind_mode = 0; // this will make single_star_wind_mdot reset it
-            double nx[3],ny[3],nz[3]; int kw; get_random_orthonormal_basis(P[i].ID,nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
+            Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(P[i].ID,nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
 #if defined(GALSF_FB_FIRE_RT_LOCALRP)
@@ -323,11 +323,11 @@ void init(void)
                     pow(P[i].Grain_Size/All.Grain_Size_Min,All.Grain_Size_Spectrum_Powerlaw) * log(All.Grain_Size_Max/All.Grain_Size_Min);}
 #ifdef GRAIN_RDI_TESTPROBLEM /* initialize various quantities for test problems from parameters set in the ICs */
                 P[i].Mass *= All.Dust_to_Gas_Mass_Ratio;
-                int k, non_gdir=1; double A[3]={0}, B[3]={0}, A_cross_B[3]={0}, amag, rho_gas_expected, cs_gas_expected, acc_ang=All.Vertical_Grain_Accel_Angle * M_PI/180., tS0, a0, ct=1, tau2=0, ct2=0, w0, agamma=9.*M_PI/128.; B[2]=1; if(GRAV_DIRECTION_RDI==1) {non_gdir=2;}
+                int k, non_gdir=1; Vec3<double> A={}, B={}, A_cross_B={}; double amag, rho_gas_expected, cs_gas_expected, acc_ang=All.Vertical_Grain_Accel_Angle * M_PI/180., tS0, a0, ct=1, tau2=0, ct2=0, w0, agamma=9.*M_PI/128.; B[2]=1; if(GRAV_DIRECTION_RDI==1) {non_gdir=2;}
                 rho_gas_expected = 1.*UNIT_DENSITY_IN_CGS, cs_gas_expected = 1.*UNIT_VEL_IN_CGS; /* guess for the gas density here [set custom for e.g. stratified problems */
                 tS0 = ((0.626657 * sqrt(GAMMA_DEFAULT) * P[i].Grain_Size * All.Grain_Internal_Density) / (rho_gas_expected * cs_gas_expected)) / UNIT_TIME_IN_CGS; /* stopping time [Epstein] for driftvel->0 [cgs->code units] */
                 A[GRAV_DIRECTION_RDI]=cos(acc_ang)*All.Vertical_Grain_Accel - All.Vertical_Gravity_Strength; A[0]=sin(acc_ang)*All.Vertical_Grain_Accel; /* define angles/direction of external acceleration */
-                amag=sqrt(A[0]*A[0]+A[1]*A[1]+A[2]*A[2]+MIN_REAL_NUMBER); A[0]/=amag; A[1]/=amag; A[2]/=amag;
+                amag=sqrt(A.norm_sq()+MIN_REAL_NUMBER); A /= amag;
                 a0 = (tS0 * amag / (1.+All.Dust_to_Gas_Mass_Ratio)) / (cs_gas_expected/UNIT_VEL_IN_CGS) ; /* acc * tS0 / (1+mu) -- we're assuming that the code unit velocity equals the sound speed, for simplicity here */
 #ifdef GRAIN_RDI_TESTPROBLEM_ACCEL_DEPENDS_ON_SIZE
                 a0 *= All.Grain_Size_Max / P[i].Grain_Size;
@@ -342,9 +342,9 @@ void init(void)
 #endif
                 w0=sqrt((sqrt(1.+4.*agamma*a0*a0)-1.)/(2.*agamma)); // exact solution if no Lorentz forces and Epstein drag //
 #ifdef GRAIN_LORENTZFORCE
-                double Bmag, tL_i=0, tau2_0=0, f_tau_guess2=0; B[0]=All.BiniX; B[1]=All.BiniY; B[2]=All.BiniZ; Bmag=sqrt(B[0]*B[0]+B[1]*B[1]+B[2]*B[2]); B[0]/=Bmag; B[1]/=Bmag; B[2]/=Bmag;
+                double Bmag, tL_i=0, tau2_0=0, f_tau_guess2=0; B = {All.BiniX, All.BiniY, All.BiniZ}; Bmag=B.norm(); B /= Bmag;
                 tL_i = (All.Grain_Charge_Parameter*sqrt(rho_gas_expected/UNIT_DENSITY_IN_CGS)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS))) * pow(All.Grain_Size_Max/P[i].Grain_Size,2) * Bmag; // 1/t_Lorentz in code units
-                ct=A[0]*B[0]+A[1]*B[1]+A[2]*B[2]; ct2=ct*ct; tau2_0=pow(tS0*tL_i,2); // variables for below //
+                ct=dot(A,B); ct2=ct*ct; tau2_0=pow(tS0*tL_i,2); // variables for below //
                 for(k=0;k<20;k++)
                 {
                    tau2 = tau2_0 / (1. + agamma*w0*w0); // guess tau [including velocity dependence] //
@@ -353,8 +353,8 @@ void init(void)
                 }
 #endif
                 w0 /= sqrt((1.+tau2)*(1.+tau2*ct2)); // ensures normalization to unity with convention below //
-                A_cross_B[0]=A[1]*B[2]-A[2]*B[1]; A_cross_B[1]=A[2]*B[0]-A[0]*B[2]; A_cross_B[2]=A[0]*B[1]-A[1]*B[0];
-                for(k=0;k<3;k++) {P[i].Vel[k] = w0 * (A[k] + sqrt(tau2)*A_cross_B[k] + tau2*ct*B[k]) * (cs_gas_expected/UNIT_VEL_IN_CGS);}
+                A_cross_B = cross(A, B);
+                P[i].Vel = (A + A_cross_B*sqrt(tau2) + B*(tau2*ct)) * (w0 * (cs_gas_expected/UNIT_VEL_IN_CGS));
 #ifdef BOX_SHEARING
                 // now add linearly the NHS drift solution for our shearing box setup
                 double v00 = -All.Pressure_Gradient_Accel / (2. * BOX_SHEARING_OMEGA_BOX_CENTER);
@@ -366,12 +366,12 @@ void init(void)
 #endif
 #endif // closes rdi_testproblem
             }
-            P[i].Gas_Density = P[i].Gas_InternalEnergy = P[i].Gas_Velocity[0]=P[i].Gas_Velocity[1]=P[i].Gas_Velocity[2]=0; P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;
+            P[i].Gas_Density = P[i].Gas_InternalEnergy = 0; P[i].Gas_Velocity = {}; P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;
 #if defined(GRAIN_BACKREACTION)
-            P[i].Grain_DeltaMomentum[0]=P[i].Grain_DeltaMomentum[1]=P[i].Grain_DeltaMomentum[2]=0;
+            P[i].Grain_DeltaMomentum = {};
 #endif
 #if defined(GRAIN_LORENTZFORCE)
-            P[i].Gas_B[0]=P[i].Gas_B[1]=P[i].Gas_B[2]=0;
+            P[i].Gas_B = {};
 #endif
         } // closes check on restartflag and particle type
 #endif // closes grain_fluid

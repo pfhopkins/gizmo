@@ -403,11 +403,11 @@ double INLINE_FUNC hubble_function_external(double a);
 
 void sink_accretion(void);
 #ifdef SINK_WIND_SPAWN
-void get_random_orthonormal_basis(int seed, double *nx, double *ny, double *nz);
-void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, double *ny, double *nz, double *veldir, double *dpdir);
+void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
+void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir);
 double get_spawned_cell_launch_speed(int i);
 #ifdef MAGNETIC
-void get_wind_spawn_magnetic_field(int j, int mode, double *ny, double *nz,  double *dpdir, double d_r);
+void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& dpdir, double d_r);
 #endif
 int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_already_spawned );
 void spawn_sink_wind_feedback(void);
@@ -871,6 +871,7 @@ int rt_get_lum_band_agn(int i, int mode, double *lum);
 int rt_get_lum_band_singlestar(int i, int mode, double *lum);
 void rt_define_effective_frequencies_in_bands(void);
 void eddington_tensor_dot_vector(double ET[6], double vec_in[3], double vec_out[3]);
+inline void eddington_tensor_dot_vector(double ET[6], const Vec3<double>& vec_in, double vec_out[3]) { eddington_tensor_dot_vector(ET, const_cast<double*>(vec_in.data), vec_out); }
 double return_flux_limiter(int target, int k_freq);
 double rt_kappa(int j, int k_freq);
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);

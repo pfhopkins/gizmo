@@ -335,7 +335,7 @@ void gravity_tree(void)
             for(j = 0; j < Nexport; j++)
             {
                 place = DataIndexTable[j].Index;
-                for(k=0;k<3;k++) {P[place].GravAccel[k] += GravDataOut[j].Acc[k];}
+                P[place].GravAccel += GravDataOut[j].Acc;
                 if(Ewald_iter > 0) continue; /* everything below is ONLY evaluated if we are in the first sub-loop, not the periodic correction, or else we will get un-allocated memory or un-physical values */
 
 #ifdef EVALPOTENTIAL
@@ -348,20 +348,20 @@ void gravity_tree(void)
                 if(GravDataOut[j].Min_Distance_to_Sink < P[place].Min_Distance_to_Sink)
                 {
                     P[place].Min_Distance_to_Sink = GravDataOut[j].Min_Distance_to_Sink;
-                    for(k=0;k<3;k++) {P[place].Min_xyz_to_Sink[k] = GravDataOut[j].Min_xyz_to_Sink[k];}
+                    P[place].Min_xyz_to_Sink = GravDataOut[j].Min_xyz_to_Sink;
 #ifdef SPECIAL_POINT_MOTION
                     if(P[place].Type != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
                     {
-                        for(k=0;k<3;k++) {P[place].vel_of_nearest_special[k] = GravDataOut[j].vel_of_nearest_special[k];}
-                        for(k=0;k<3;k++) {P[place].acc_of_nearest_special[k] = GravDataOut[j].acc_of_nearest_special[k];}
+                        P[place].vel_of_nearest_special = GravDataOut[j].vel_of_nearest_special;
+                        P[place].acc_of_nearest_special = GravDataOut[j].acc_of_nearest_special;
                     }
 #endif
                 }
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
                 if(P[place].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
                 {
-                    for(k=0;k<3;k++) {P[place].vel_of_nearest_special[k] += GravDataOut[j].vel_of_nearest_special[k];} /* this is the weighted sum of the velocity around that cell */
-                    for(k=0;k<3;k++) {P[place].acc_of_nearest_special[k] += GravDataOut[j].acc_of_nearest_special[k];} /* this is the weighted sum of the velocity around that cell */
+                    P[place].vel_of_nearest_special += GravDataOut[j].vel_of_nearest_special; /* this is the weighted sum of the velocity around that cell */
+                    P[place].acc_of_nearest_special += GravDataOut[j].acc_of_nearest_special; /* this is the weighted sum of the velocity around that cell */
                     P[place].weight_sum_for_special_point_smoothing += GravDataOut[j].weight_sum_for_special_point_smoothing; /* weighted sum needed */
                 }
 #endif
@@ -374,7 +374,7 @@ void gravity_tree(void)
                     P[place].Min_Sink_OrbitalTime = GravDataOut[j].Min_Sink_OrbitalTime;
                     P[place].comp_Mass = GravDataOut[j].comp_Mass;
                     P[place].is_in_a_binary = GravDataOut[j].is_in_a_binary;
-                    for(k=0;k<3;k++) {P[place].comp_dx[k]=GravDataOut[j].comp_dx[k]; P[place].comp_dv[k]=GravDataOut[j].comp_dv[k];}
+                    P[place].comp_dx=GravDataOut[j].comp_dx; P[place].comp_dv=GravDataOut[j].comp_dv;
                 }
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -830,7 +830,7 @@ void subtract_companion_gravity(int i)
 {
     /* Remove contribution to gravitational field and tidal tensor from the stars in the binary to the center of mass */
     double u, dr, fac, fac2, h, h_inv, h3_inv, u2; SymmetricTensor2<MyFloat> tidal_tensorps; int i1, i2;
-    dr = sqrt(P[i].comp_dx[0]*P[i].comp_dx[0] + P[i].comp_dx[1]*P[i].comp_dx[1] + P[i].comp_dx[2]*P[i].comp_dx[2]);
+    dr = P[i].comp_dx.norm();
     h = SinkParticle_GravityKernelRadius;  h_inv = 1.0 / h; h3_inv = h_inv*h_inv*h_inv; u = dr*h_inv; u2=u*u;
     fac = P[i].comp_Mass / (dr*dr*dr); fac2 = 3.0 * P[i].comp_Mass / (dr*dr*dr*dr*dr); /* no softening nonsense */
     if(dr < h) /* second derivatives needed -> calculate them from softened potential */
