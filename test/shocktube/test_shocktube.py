@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, run_test, download_test_files, default_mpi_ranks
+from gizmo.test import build_gizmo_for_test, run_test, download_test_files, default_mpi_ranks, clean_test_outputs
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -20,6 +20,7 @@ WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 def test_shocktube(num_mpi_ranks):
     test_name = "shocktube"
+    clean_test_outputs(test_name)
     build_gizmo_for_test(test_name)
     chdir(f"test/{test_name}/")
 
