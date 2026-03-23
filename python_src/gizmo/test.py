@@ -1,11 +1,26 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
-from os import system, environ, path, chdir, cpu_count
+from os import system, environ, path, chdir, cpu_count, remove
 from urllib.request import urlretrieve, HTTPError
-from shutil import move
+from shutil import move, rmtree
+from glob import glob
 import pytest
 from matplotlib import pyplot as plt
 import h5py
+
+
+def clean_test_outputs(test_name: str):
+    """Remove output directory, plot PNGs, and log files from a previous test run."""
+    test_dir = f"test/{test_name}"
+    output_dir = path.join(test_dir, "output")
+    if path.isdir(output_dir):
+        rmtree(output_dir)
+    for f in glob(path.join(test_dir, "*.png")):
+        remove(f)
+    for f in glob(path.join(test_dir, f"test_{test_name}.out")):
+        remove(f)
+    for f in glob(path.join(test_dir, f"test_{test_name}.err")):
+        remove(f)
 
 
 def default_mpi_ranks(max_ranks=None):
@@ -68,6 +83,7 @@ def get_cooling_tables(test_directory="."):
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
+    clean_test_outputs(test_name)
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = num_openmp_threads
     build_gizmo_for_test(test_name)

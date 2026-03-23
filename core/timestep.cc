@@ -387,7 +387,11 @@ integertime get_timestep(int p,		/*!< particle index */
         *aphys = ac;
         return flag;
     }
-    dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p) / ac);
+    {double h_for_accel_dt = KERNEL_CORE_SIZE * ForceSoftening_KernelRadius(p);
+#ifdef GRAIN_FLUID
+    if(((1 << P[p].Type) & (GRAIN_PTYPES)) && (h_for_accel_dt <= 0)) {h_for_accel_dt = Get_Particle_Size(p) * All.cf_atime;} /* for grain particles without gravity, use the inter-particle spacing as the characteristic length scale */
+#endif
+    dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * h_for_accel_dt / ac);}
 
 #if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL)
     if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
