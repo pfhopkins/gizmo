@@ -567,6 +567,17 @@ static void setup_integrator(KetjuRegion &reg)
             for(int t = 0; t < NTask; t++) { if(counts[t] > 0) compute_indices.push_back(t); }
         } else {
             for(int t = first; t <= last; t++) compute_indices.push_back(t);
+            /* ensure at least one affected task is in the compute group,
+             * otherwise scatter_results cannot broadcast extra_data correctly */
+            for(int t = 0; t < NTask; t++) {
+                if(counts[t] > 0) {
+                    bool already_in = false;
+                    for(size_t ci = 0; ci < compute_indices.size(); ci++) {
+                        if(compute_indices[ci] == t) { already_in = true; break; }
+                    }
+                    if(!already_in) { compute_indices.push_back(t); break; }
+                }
+            }
         }
         reg.compute_tasks.init(compute_indices, 1);
         reg.compute_tasks.set_common_root(reg.affected_tasks);
@@ -1127,8 +1138,11 @@ static void scatter_results(KetjuRegion &reg)
         }
     }
 
-    /* broadcast results to all affected tasks */
-    if(!reg.affected_tasks.is_root()) {
+    /* broadcast results to all affected tasks.
+     * extra_data was populated on compute_tasks (line 712). Ensure it is
+     * sized on all affected tasks before the broadcast — including the root,
+     * which may not be a compute member if the intersection was empty. */
+    if((int)reg.extra_data.size() < n) {
         reg.extra_data.resize(n);
     }
     MPI_Bcast(reg.extra_data.data(), n * sizeof(ketju_extra_data), MPI_BYTE,
