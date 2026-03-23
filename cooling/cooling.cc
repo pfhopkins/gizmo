@@ -236,10 +236,10 @@ void do_the_cooling_for_particle(int i)
                         int kv; // add leading-order relativistic corrections here, accounting for gas motion in the addition/subtraction to the flux
 #if defined(RT_EVOLVE_FLUX)
                         double corrfac = 0; if(Rad_E_gamma_before > 0 && CellP[i].Rad_E_gamma[k] > 0) {corrfac = CellP[i].Rad_E_gamma[k] / (MIN_REAL_NUMBER + Rad_E_gamma_before);}
-                        for(kv=0;kv<3;kv++) {if(corrfac > 0) {CellP[i].Rad_Flux[k][kv] *= corrfac; CellP[i].Rad_Flux_Pred[k][kv] *= corrfac;} else {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*CellP[i].VelPred[kv]/All.cf_atime * de_rad; CellP[i].Rad_Flux[k][kv] += fluxfac; CellP[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
+                        if(corrfac > 0) {CellP[i].Rad_Flux[k] *= corrfac; CellP[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*CellP[i].VelPred[kv]/All.cf_atime * de_rad; CellP[i].Rad_Flux[k][kv] += fluxfac; CellP[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
 #endif
                         double momfac = 1. - de_rad / (P[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
-                        for(kv=0;kv<3;kv++) {P[i].Vel[kv] *= momfac; CellP[i].VelPred[kv] *= momfac;}
+                        P[i].Vel *= momfac; CellP[i].VelPred *= momfac;
                     }
                 }
             }

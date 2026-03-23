@@ -61,21 +61,21 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
         
     // ok, the updates from [0] advection w gas, [1] fluxes, [2] adiabatic, [-] catastrophic (in cooling.c) are all set, just need exchange terms b/t CR and Alfven //
     double EPSILON_SMALL = 1.e-77; // want a very small number here
-    double bhat[3], Bmag=0, Bmag_Gauss, clight_code=C_LIGHT_CODE, Omega_gyro, eA[2], vA_code, vA2_c2, E_B, fac, flux_G, fac_Omega, flux[3], f_CR, f_CR_dot_B, cs_thermal, r_turb_driving, G_ion_neutral=0, G_turb_plus_linear_landau=0, G_nonlinear_landau_prefix=0;
+    Vec3<double> bhat, flux; double Bmag=0, Bmag_Gauss, clight_code=C_LIGHT_CODE, Omega_gyro, eA[2], vA_code, vA2_c2, E_B, fac, flux_G, fac_Omega, f_CR, f_CR_dot_B, cs_thermal, r_turb_driving, G_ion_neutral=0, G_turb_plus_linear_landau=0, G_nonlinear_landau_prefix=0;
     double ne=1, f_ion=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, rho_cgs=rho*UNIT_DENSITY_IN_CGS;
 #ifdef COOLING 
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp); // get thermodynamic properties
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
 #endif
-    for(k=0;k<3;k++) {if(mode==0) {bhat[k]=CellP[i].B[k];} else {bhat[k]=CellP[i].BPred[k];}} // grab whichever B field we need for our mode
+    for(k=0;k<3;k++) {bhat[k] = (mode==0) ? CellP[i].B[k] : CellP[i].BPred[k];} // grab whichever B field we need for our mode
     if(mode==0) {eCR=CellP[i].CosmicRayEnergy[k_CRegy]; u0=CellP[i].InternalEnergy;} else {eCR=CellP[i].CosmicRayEnergyPred[k_CRegy]; u0=CellP[i].InternalEnergyPred;} // initial energy
     if(u0<All.MinEgySpec) {u0=All.MinEgySpec;} // enforce the usual minimum thermal energy the code requires
     for(k=0;k<2;k++) {if(mode==0) {eA[k]=CellP[i].CosmicRayAlfvenEnergy[k_CRegy][k];} else {eA[k]=CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][k];}} // Alfven energy
-    if(mode==0) {for(k=0;k<3;k++) {flux[k]=CellP[i].CosmicRayFlux[k_CRegy][k];}} else {for(k=0;k<3;k++) {flux[k]=CellP[i].CosmicRayFluxPred[k_CRegy][k];}} // load flux
-    f_CR=0; f_CR_dot_B=0; for(k=0;k<3;k++) {f_CR+=flux[k]*flux[k]; f_CR_dot_B+=bhat[k]*flux[k];} // compute the magnitude of the flux density
-    f_CR=sqrt(f_CR); if(f_CR_dot_B<0) {f_CR*=-1;} // initialize the flux density variable from the previous timestep, appropriately signed with respect to the b-field
-    for(k=0;k<3;k++) {Bmag+=bhat[k]*bhat[k];} // compute magnitude
-    Bmag = sqrt(Bmag); for(k=0;k<3;k++) {bhat[k]/=(EPSILON_SMALL+Bmag);} // now it's bhat we have here
+    for(k=0;k<3;k++) {flux[k] = (mode==0) ? CellP[i].CosmicRayFlux[k_CRegy][k] : CellP[i].CosmicRayFluxPred[k_CRegy][k];} // load flux
+    f_CR = flux.norm(); f_CR_dot_B = dot(bhat, flux); // compute the magnitude of the flux density
+    if(f_CR_dot_B<0) {f_CR*=-1;} // initialize the flux density variable from the previous timestep, appropriately signed with respect to the b-field
+    Bmag = bhat.norm(); // compute magnitude
+    bhat /= (EPSILON_SMALL+Bmag); // now it's bhat we have here
     Bmag *= CellP[i].Density/P[i].Mass * All.cf_a2inv; // convert to actual B in physical units
     E_B = 0.5*Bmag*Bmag * (P[i].Mass/(CellP[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
     double Eth_0 = EPSILON_SMALL + 1.e-8 * P[i].Mass*u0; // set minimum magnetic energy relative to thermal (maximum plasma beta ~ 1e8) to prevent nasty divergences
@@ -89,7 +89,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     vA2_c2 = vA_code*vA_code / (clight_code*clight_code); // Alfven speed vs speed of light
     fac_Omega = (3.*M_PI/16.) * Omega_gyro * (1.+2.*vA2_c2); // factor which will be used heavily below
     /* for turbulent (anisotropic and linear landau) damping terms: need to know the turbulent driving scale: assume a cascade with a driving length equal to the pressure gradient scale length */
-    r_turb_driving = 0; for(k=0;k<3;k++) {r_turb_driving += CellP[i].Gradients.Pressure[k]*CellP[i].Gradients.Pressure[k];} // compute gradient magnitude
+    r_turb_driving = CellP[i].Gradients.Pressure.norm_sq(); // compute gradient magnitude
     r_turb_driving = DMAX( CellP[i].Pressure / (EPSILON_SMALL + sqrt(r_turb_driving)) , Get_Particle_Size(i) ) * All.cf_atime; // maximum of gradient scale length or resolution scale
     double k_turb = 1./r_turb_driving, k_L = Omega_gyro / clight_code;
     
@@ -137,7 +137,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     fmax = x_e*sqrt(ceff2_va2); if(!isfinite(x_f)) {x_f=0;} else {if(x_f>fmax) {x_f=fmax;} else {if(x_f<-fmax) {x_f=-fmax;}}} // check for flux maximum/minimum
 
     // calculate the dimensionless flux source term for the stiff part of the equations
-    flux_G=0; for(k=0;k<3;k++) {flux_G += bhat[k] * CellP[i].Gradients.CosmicRayPressure[k_CRegy][k];} // b.gradient[P] -- flux source term
+    flux_G = dot(bhat, CellP[i].Gradients.CosmicRayPressure[k_CRegy]); // b.gradient[P] -- flux source term
     double psifac = flux_G * (vA_code*t0) / (eCR/volume); // this gives the strength of the gradient source term, should remain fixed over stiff part of loop
 
     // calculate the wave-damping rates (again in appropriate dimensionless units)
@@ -336,7 +336,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     // assign the updated values back to the resolution elements, finally!
     if(mode==0) {CellP[i].CosmicRayEnergy[k_CRegy]=eCR;} else {CellP[i].CosmicRayEnergyPred[k_CRegy]=eCR;} // CR energy
     for(k=0;k<2;k++) {if(mode==0) {CellP[i].CosmicRayAlfvenEnergy[k_CRegy][k]=eA[k];} else {CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][k]=eA[k];}} // Alfven energy
-    if(mode==0) {for(k=0;k<3;k++) {CellP[i].CosmicRayFlux[k_CRegy][k]=f_CR*bhat[k];}} else {for(k=0;k<3;k++) {CellP[i].CosmicRayFluxPred[k_CRegy][k]=f_CR*bhat[k];}} // assign to flux vector
+    {Vec3<double> flux_out = bhat*f_CR; if(mode==0) {for(k=0;k<3;k++) {CellP[i].CosmicRayFlux[k_CRegy][k]=flux_out[k];}} else {for(k=0;k<3;k++) {CellP[i].CosmicRayFluxPred[k_CRegy][k]=flux_out[k];}}} // assign to flux vector
     if(mode==0) {CellP[i].InternalEnergy+=thermal_heating/P[i].Mass;} else {CellP[i].InternalEnergyPred+=thermal_heating/P[i].Mass;} // heating term from damping
     CellP[i].CosmicRayDiffusionCoeff[k_CRegy] = 1. / (fac_Omega*((eA[0]+eA[1])/E_B)/(clight_code*clight_code)); // effective diffusion coefficient in code units
 
