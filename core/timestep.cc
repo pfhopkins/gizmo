@@ -968,7 +968,7 @@ integertime get_timestep(int p,		/*!< particle index */
             dt_accr *= DMAX(0.1, All.Sink_accreted_fraction);
 #endif
 #else
-            dt_accr = 0.001 * DMIN(P[p].Sink_Mass, All.MaxMassForParticleSplit) / P[p].Sink_Mdot;
+            dt_accr = 0.1 * DMIN(P[p].Sink_Mass, All.MaxMassForParticleSplit) / P[p].Sink_Mdot;
 #endif
 #ifdef SINGLE_STAR_FB_JETS	    
             dt_accr = DMIN(dt_accr, target_mass_for_wind_spawning(p) / P[p].Sink_Mdot); 
