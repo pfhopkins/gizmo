@@ -223,7 +223,7 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
     {
         while(startnode >= 0)
         {
-            numngb_inbox = ngb_treefind_pairs_threads(local.Pos, local.SearchRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
+            numngb_inbox = ngb_treefind_variable_threads(local.Pos, local.SearchRadius, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
             if(numngb_inbox < 0) {return -2;}
             for(n = 0; n < numngb_inbox; n++)
             {

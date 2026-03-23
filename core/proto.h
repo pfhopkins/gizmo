@@ -761,6 +761,8 @@ int get_index(double search);
 #ifdef GALSF_RESOLVEDISM_FB
 void resolvedism_determine_SNe(void);
 void resolvedism_inject_sn_energy(void);
+void resolvedism_fb_thermal_calc(void);
+void resolvedism_fb_momentum_calc(int fb_loop_iteration);
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
 void resolvedism_photoionize(void);
