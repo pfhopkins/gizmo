@@ -9,7 +9,7 @@
 // Simple aggregate (no default constructor) so it is safe inside memset'd structs.
 template<typename T>
 struct SymmetricTensor2 {
-    // Storage: lower triangle, row-major: [0]=xx [1]=xy [2]=xz [3]=yy [4]=yz [5]=zz
+    // Storage: lower triangle, row-major: [0]=xx [1]=xy [2]=yy [3]=xz [4]=yz [5]=zz
     T data[6];
 
     static constexpr int flat_index(int i, int j) noexcept {
@@ -34,7 +34,7 @@ struct SymmetricTensor2 {
     ConstRow operator[](int i) const noexcept { return {*this, i}; }
 
     // Trace: sum of diagonal elements.
-    T trace() const noexcept { return data[0] + data[3] + data[5]; }
+    T trace() const noexcept { return data[0] + data[2] + data[5]; }
 
     // Scalar multiply in-place.
     SymmetricTensor2& operator*=(T s) noexcept {
@@ -50,8 +50,8 @@ struct SymmetricTensor2 {
 
     // Squared Frobenius norm: sum of squares of all 9 entries (off-diagonal count twice).
     T frobenius_norm_sq() const noexcept {
-        const T diag    = data[0]*data[0] + data[3]*data[3] + data[5]*data[5];
-        const T offdiag = data[1]*data[1] + data[2]*data[2] + data[4]*data[4];
+        const T diag    = data[0]*data[0] + data[2]*data[2] + data[5]*data[5];
+        const T offdiag = data[1]*data[1] + data[3]*data[3] + data[4]*data[4];
         return diag + T(2) * offdiag;
     }
 
