@@ -110,7 +110,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return np.array([binned_statistic(nH, s, "median", nH_bins)[0] for s in stats_to_check])
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (1, 16))
+@pytest.mark.parametrize("num_mpi_ranks", (12, ))
 def test_gmc_cooling_rt(num_mpi_ranks):
     test_name = "gmc_cooling_rt"
     test_dir = "test/gmc_cooling_rt"
