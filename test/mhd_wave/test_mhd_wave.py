@@ -18,7 +18,7 @@ def test_mhd_wave(num_mpi_ranks):
         outputdir + "/snapshot_000.hdf5",
         final_snap,
         fields_to_compare=("Density", "Velocities", "InternalEnergy", "MagneticField"),
-        rtol=1e-4,
+        rtol=1e-7,
         atol=1e-7,
         plot_1D=True,
     )
