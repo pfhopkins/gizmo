@@ -248,13 +248,8 @@ void set_sink_mdot(int i, int n, double dt)
         f_disk_for_accrate = mdisk_for_accrate / m_tmp_for_accrate;
 #else
         /* DAA: Jalt_in_Kernel is now the TOTAL angular momentum (need to subtract Jgas here) */
-        m_tmp_for_accrate = SinkTempInfo[i].Malt_in_Kernel; double j_tmp_for_accrate=0;
-        for(k=0;k<3;k++)
-        {
-            j_tmp_for_accrate += (SinkTempInfo[i].Jalt_in_Kernel[k] - SinkTempInfo[i].Jgas_in_Kernel[k]) *
-                              (SinkTempInfo[i].Jalt_in_Kernel[k] - SinkTempInfo[i].Jgas_in_Kernel[k]);
-        }
-        j_tmp_for_accrate=sqrt(j_tmp_for_accrate); /* jx,y,z, is independent of 'a_scale' b/c ~ m*r*v, vphys=v/a, rphys=r*a */
+        m_tmp_for_accrate = SinkTempInfo[i].Malt_in_Kernel;
+        double j_tmp_for_accrate = (SinkTempInfo[i].Jalt_in_Kernel - SinkTempInfo[i].Jgas_in_Kernel).norm(); /* jx,y,z, is independent of 'a_scale' b/c ~ m*r*v, vphys=v/a, rphys=r*a */
         fgas_for_accrate = SinkTempInfo[i].Mgas_in_Kernel / m_tmp_for_accrate;
 
         fac = m_tmp_for_accrate * rmax_for_accrate * sqrt(All.G*(m_tmp_for_accrate+sink_mass)/rmax_for_accrate); /* All.G is G in code (physical) units */
@@ -297,7 +292,7 @@ void set_sink_mdot(int i, int n, double dt)
             double Vc2_rmax = All.G * menc_all / rmax_for_accrate; // this is in physical units now
             mdot = 4.*M_PI * All.G*All.G * P[n].Sink_Mass*menc_all * (P[n].DensityAroundParticle*All.cf_a3inv) / pow(soundspeed2 + Vc2_rmax, 1.5);
 #if (SINK_GRAVACCRETION == 6) || (SINK_GRAVACCRETION == 7)
-            double bhvel2=0; for(k=0;k<3;k++) {bhvel2 += SinkTempInfo[i].Sink_SurroundingGasVel[k]*SinkTempInfo[i].Sink_SurroundingGasVel[k];}
+            double bhvel2 = SinkTempInfo[i].Sink_SurroundingGasVel.norm_sq();
             double veldisp2_eff = bhvel2/3. + soundspeed2, masscorrfac = pow( menc_all/(1.e-10*menc_all + P[n].Sink_Mass) , 0.25 );
             mdot = masscorrfac * 4.*M_PI * All.G*All.G * P[n].Sink_Mass*menc_all * (P[n].DensityAroundParticle*All.cf_a3inv) / pow(1.e-5*soundspeed2 + Vc2_rmax, 1.5);
             mdot /= 1 + sqrt(veldisp2_eff/Vc2_rmax) * DMIN( veldisp2_eff/Vc2_rmax , masscorrfac );
@@ -307,12 +302,12 @@ void set_sink_mdot(int i, int n, double dt)
 #endif
 #endif
 #if (SINK_GRAVACCRETION == 5) // use default torques estimator, but then allow gas to accrete as Bondi-Hoyle when its circularization radius is inside the BH radius of influence
-            double j_tmp_for_accrate=0,jcirc_crit=0; for(k=0;k<3;k++) {j_tmp_for_accrate+=SinkTempInfo[i].Jgas_in_Kernel[k]*SinkTempInfo[i].Jgas_in_Kernel[k];}
+            double j_tmp_for_accrate=SinkTempInfo[i].Jgas_in_Kernel.norm_sq(),jcirc_crit=0;
             j_tmp_for_accrate=sqrt(j_tmp_for_accrate); jcirc_crit = SinkTempInfo[i].Mgas_in_Kernel * rmax_for_accrate*rmax_for_accrate*omega_dyn;
             jcirc_crit *= pow(sink_mass/m_tmp_for_accrate,2./3.);
             if(j_tmp_for_accrate < jcirc_crit) /* circularization within BH-dominated region, Bondi accretion valid */
             {
-                double bhvel2=0; for(k=0;k<3;k++) {bhvel2 += SinkTempInfo[i].Sink_SurroundingGasVel[k]*SinkTempInfo[i].Sink_SurroundingGasVel[k];}
+                double bhvel2 = SinkTempInfo[i].Sink_SurroundingGasVel.norm_sq();
                 double rho = P[n].DensityAroundParticle*All.cf_a3inv; /* we want all quantities in physical units */
                 double vcs_fac = pow(soundspeed2+bhvel2, 1.5);
                 mdot = 4.*M_PI * All.G*All.G * P[n].Sink_Mass*P[n].Sink_Mass * rho / vcs_fac;
@@ -322,7 +317,7 @@ void set_sink_mdot(int i, int n, double dt)
             double hubber_mdot_from_vr_estimator=MIN_REAL_NUMBER, hubber_mdot_disk_estimator=MIN_REAL_NUMBER; /* our computed 'hubber_mdot_vr_estimator' is their estimate of the radial inflow time from a Bondi flow: but care is needed, for any non-Bondi flow this can give unphysical or negative answers, so we need to limit it and be very cautious using it */
             if(SinkTempInfo[i].hubber_mdot_vr_estimator > 0) { hubber_mdot_from_vr_estimator = SinkTempInfo[i].hubber_mdot_vr_estimator; }
             if(SinkTempInfo[i].hubber_mdot_disk_estimator > 0) { hubber_mdot_disk_estimator = 0.01 * SinkTempInfo[i].Mgas_in_Kernel / (sqrt(All.G * P[n].Mass) * SinkTempInfo[i].hubber_mdot_disk_estimator);}
-            double j_eff=0,m_eff=SinkTempInfo[i].Malt_in_Kernel; for(k=0;k<3;k++) {j_eff+=SinkTempInfo[i].Jalt_in_Kernel[k]*SinkTempInfo[i].Jalt_in_Kernel[k];}
+            double j_eff=SinkTempInfo[i].Jalt_in_Kernel.norm_sq(),m_eff=SinkTempInfo[i].Malt_in_Kernel;
             double facc_which_hubber_mdot = DMIN(1, 1.75*sqrt(j_eff)/(m_eff*sqrt(All.G*(m_eff+P[n].Mass)*rmax_for_accrate))); /* disk fraction estimator */
             mdot = DMAX( SinkTempInfo[i].hubber_mdot_bondi_limiter , pow(hubber_mdot_from_vr_estimator,1-facc_which_hubber_mdot)*pow(hubber_mdot_disk_estimator,facc_which_hubber_mdot));
 #endif
@@ -341,7 +336,7 @@ void set_sink_mdot(int i, int n, double dt)
 
 #if (SINK_GRAVACCRETION >= 9) && (SINK_GRAVACCRETION <= 11) /* heres where we calculate the Bondi accretion rate, if that's going to be used */
     double bhvel2 = 0, rho = P[n].DensityAroundParticle * All.cf_a3inv; /* we want all quantities in physical units */
-    for(k=0;k<3;k++) {bhvel2 += SinkTempInfo[i].Sink_SurroundingGasVel[k]*SinkTempInfo[i].Sink_SurroundingGasVel[k];}
+    bhvel2 = SinkTempInfo[i].Sink_SurroundingGasVel.norm_sq();
 #if (SINK_GRAVACCRETION == 10)
     bhvel2 = 0;
 #endif
@@ -520,7 +515,7 @@ void set_sink_mdot(int i, int n, double dt)
 
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) /* pre-calculate some quantities for 'angular momentum feedback' here, these have to be based on the mdot estimator above */
     double jmag=0,lmag=0,mdot_eff=mdot,return_timescale,angmom_toreturn; SinkTempInfo[i].angmom_norm_topass_in_swallowloop=0;
-    for(k=0;k<3;k++) {jmag+=SinkTempInfo[i].angmom_prepass_sum_for_passback[k]*SinkTempInfo[i].angmom_prepass_sum_for_passback[k];}
+    jmag = SinkTempInfo[i].angmom_prepass_sum_for_passback.norm_sq();
     lmag = P[n].Sink_Specific_AngMom.norm_sq();
     lmag = P[n].Mass * sqrt(lmag); // this stores the magnitude of the _total_ angular momentum (mass * length * vel) internal to the sink
     return_timescale = P[n].Mass / mdot_eff; // rate of angular momentum return is (total angular momentum) / (return timescale) - here set to (total mass / mdot). Set this for your desired prescription.
@@ -548,7 +543,7 @@ void set_sink_new_mass(int i, int n, double dt)
 #ifdef SINK_ALPHADISK_ACCRETION
     dm_acc_for_j = SinkTempInfo[i].mdot_reservoir * dt; m_tot_for_j = P[n].Sink_Mass + P[n].Sink_Mass_Reservoir;
 #endif
-    for(k=0;k<3;k++) {P[n].Sink_Specific_AngMom[k] = (m_tot_for_j*P[n].Sink_Specific_AngMom[k] + dm_acc_for_j*SinkTempInfo[i].Jgas_in_Kernel[k]/(MIN_REAL_NUMBER + SinkTempInfo[i].Mgas_in_Kernel)) / (m_tot_for_j + dm_acc_for_j);}
+    P[n].Sink_Specific_AngMom = (P[n].Sink_Specific_AngMom*m_tot_for_j + SinkTempInfo[i].Jgas_in_Kernel*(dm_acc_for_j/(MIN_REAL_NUMBER + SinkTempInfo[i].Mgas_in_Kernel))) / (m_tot_for_j + dm_acc_for_j);
 #endif
 
 /*  for SINK_WIND_SPAWN
@@ -580,12 +575,11 @@ void set_sink_new_mass(int i, int n, double dt)
 #endif
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
     double mtot = SinkTempInfo[i].Mgas_in_Kernel + P[n].Mass;
-    for(k=0; k<3; k++) { SinkTempInfo[i].Sink_SurroundingGasCOM[k] /= mtot;} // this now stores the COM of the sink-gas system, relative to the sink position
-    for(k=0; k<3; k++) {
-        // We need the angular momentum in the COM frame of the sink-gas system, so must apply the correction -r x p. This is negligible when MBH >> Mgas but important when Mgas > MBH, e.g. low-mass stars at modest mass resolution
-        SinkTempInfo[i].Jgas_in_Kernel[k] -= (SinkTempInfo[i].Mgas_in_Kernel/mtot) * SinkTempInfo[i].Mgas_in_Kernel * (SinkTempInfo[i].Sink_SurroundingGasCOM[(k+1)%3]*SinkTempInfo[i].Sink_SurroundingGasVel[(k+2)%3] - SinkTempInfo[i].Sink_SurroundingGasCOM[(k+2)%3]*SinkTempInfo[i].Sink_SurroundingGasVel[(k+1)%3]);
-        P[n].Jgas_in_Kernel[k] = SinkTempInfo[i].Jgas_in_Kernel[k] + P[n].Mass * P[n].Sink_Specific_AngMom[k]; // this stores the _total_ angular momentum (sink + gas) in the COM frame of the sink-gas system, including internal to the sink
-    }
+    SinkTempInfo[i].Sink_SurroundingGasCOM /= mtot; // this now stores the COM of the sink-gas system, relative to the sink position
+    // We need the angular momentum in the COM frame of the sink-gas system, so must apply the correction -r x p. This is negligible when MBH >> Mgas but important when Mgas > MBH, e.g. low-mass stars at modest mass resolution
+    double Mgas_over_mtot_sq = (SinkTempInfo[i].Mgas_in_Kernel/mtot) * SinkTempInfo[i].Mgas_in_Kernel;
+    SinkTempInfo[i].Jgas_in_Kernel -= cross(SinkTempInfo[i].Sink_SurroundingGasCOM, SinkTempInfo[i].Sink_SurroundingGasVel) * Mgas_over_mtot_sq;
+    P[n].Jgas_in_Kernel = SinkTempInfo[i].Jgas_in_Kernel + P[n].Sink_Specific_AngMom * P[n].Mass; // this stores the _total_ angular momentum (sink + gas) in the COM frame of the sink-gas system, including internal to the sink
     P[n].Mgas_in_Kernel=SinkTempInfo[i].Mgas_in_Kernel;
 #endif
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
@@ -616,7 +610,7 @@ void set_sink_drag(int i, int n, double dt)
 #ifdef SINK_ALPHADISK_ACCRETION
         sink_mass += P[n].Sink_Mass_Reservoir;
 #endif
-        double bhvel2_df=0; for(k=0;k<3;k++) {bhvel2_df += SinkTempInfo[i].DF_mean_vel[k]*SinkTempInfo[i].DF_mean_vel[k];}
+        double bhvel2_df = SinkTempInfo[i].DF_mean_vel.norm_sq();
         double fac, fac_friction;
         /* First term is approximation of the error function */
         fac = 8 * (M_PI - 3) / (3 * M_PI * (4. - M_PI));
@@ -646,7 +640,7 @@ void set_sink_drag(int i, int n, double dt)
             afac_vel = DMIN(dv_magnitude*UNIT_TIME_IN_MYR , DMAX( DMIN(DMAX(-2.*P[n].Sink_PotentialMinimumOfNeighbors/(P[n].KernelRadius*All.cf_atime*All.cf_atime), 0), 10.*dv_magnitude/dt), afac_vel)); // free-fall-acceleration [checked-to-zero], limited to multiple of actual vel difference in timestep
             fac_vel = afac_vel * dt / dv_magnitude; // rate at which de-celeration/damping occurs
             if(fac_vel > 1.e-4) {fac_vel = 1.-exp(-fac_vel);}
-            for(k = 0; k < 3; k++) {P[n].Vel[k] += SinkTempInfo[i].DF_mean_vel[k]*All.cf_atime * fac_vel;}
+            P[n].Vel += SinkTempInfo[i].DF_mean_vel * (All.cf_atime * fac_vel);
         }
     }
 #endif // repositioning algorithm active
@@ -660,10 +654,10 @@ void set_sink_long_range_rp(int i, int n) /* pre-set quantities needed for long-
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) && !defined(SINK_FOLLOW_ACCRETED_ANGMOM)
     /* use the gradrho vector as a surrogate to hold the orientation of the angular momentum if we aren't evolving it explicitly
      (this is done because the long-range radiation routines for the BH require the angular momentum vector for non-isotropic emission) */
-    P[n].GradRho[0]=P[n].GradRho[1]=0; P[n].GradRho[2]=1;
+    P[n].GradRho = {0, 0, 1};
     if(SinkTempInfo[i].Mgas_in_Kernel > 0) {
-        int k; double fac=0; for(k=0;k<3;k++) {fac += SinkTempInfo[i].Jgas_in_Kernel[k]*SinkTempInfo[i].Jgas_in_Kernel[k];}
-        if(fac>0) {for(k=0;k<3;k++) {P[n].GradRho[k] = SinkTempInfo[i].Jgas_in_Kernel[k]/sqrt(fac);}}}
+        double fac = SinkTempInfo[i].Jgas_in_Kernel.norm_sq();
+        if(fac>0) {double inv_norm = 1./sqrt(fac); for(int k=0;k<3;k++) {P[n].GradRho[k] = SinkTempInfo[i].Jgas_in_Kernel[k]*inv_norm;}}}
         /* now, the P[n].GradRho[k] field for the BH holds the orientation of the UNIT angular momentum vector
          NOTE it is important that HARD-WIRED into the code, this sink calculation comes after the density calculation
          but before the forcetree update and walk; otherwise, this won't be used correctly there */
@@ -746,22 +740,18 @@ void sink_final_operations(void)
             m_new = P[n].Mass + SinkTempInfo[i].accreted_Sink_Mass + SinkTempInfo[i].accreted_Sink_Mass_reservoir;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_MOMENTUM) && !defined(SINK_REPOSITION_ON_POTMIN)
-            for(k=0;k<3;k++) {
-                P[n].dp[k] += P[n].Vel[k]*(m_new - P[n].Mass) + SinkTempInfo[i].accreted_momentum[k];
-                P[n].Vel[k] = (P[n].Vel[k]*m_new+ SinkTempInfo[i].accreted_momentum[k]) / m_new;
-            }
+            P[n].dp += P[n].Vel*(m_new - P[n].Mass) + SinkTempInfo[i].accreted_momentum;
+            P[n].Vel = (P[n].Vel*m_new + SinkTempInfo[i].accreted_momentum) / m_new;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_COM) && !defined(SINK_REPOSITION_ON_POTMIN)
-            for(k=0;k<3;k++) {P[n].Pos[k] = (P[n].Pos[k]*m_new + SinkTempInfo[i].accreted_centerofmass[k]) / m_new;}
+            P[n].Pos = (P[n].Pos*m_new + SinkTempInfo[i].accreted_centerofmass) / m_new;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-            for(k=0;k<3;k++) {P[n].Sink_Specific_AngMom[k] = (P[n].Sink_Specific_AngMom[k]*P[n].Mass + SinkTempInfo[i].accreted_J[k]) / m_new;}
-            P[n].Sink_Specific_AngMom[0] -= (SinkTempInfo[i].accreted_centerofmass[1]*SinkTempInfo[i].accreted_momentum[2] - SinkTempInfo[i].accreted_centerofmass[2]*SinkTempInfo[i].accreted_momentum[1]) / (m_new*m_new);
-            P[n].Sink_Specific_AngMom[1] -= (SinkTempInfo[i].accreted_centerofmass[2]*SinkTempInfo[i].accreted_momentum[0] - SinkTempInfo[i].accreted_centerofmass[0]*SinkTempInfo[i].accreted_momentum[2]) / (m_new*m_new);
-            P[n].Sink_Specific_AngMom[2] -= (SinkTempInfo[i].accreted_centerofmass[0]*SinkTempInfo[i].accreted_momentum[1] - SinkTempInfo[i].accreted_centerofmass[1]*SinkTempInfo[i].accreted_momentum[0]) / (m_new*m_new);
+            P[n].Sink_Specific_AngMom = (P[n].Sink_Specific_AngMom*P[n].Mass + SinkTempInfo[i].accreted_J) / m_new;
+            P[n].Sink_Specific_AngMom -= cross(SinkTempInfo[i].accreted_centerofmass, SinkTempInfo[i].accreted_momentum) / (m_new*m_new);
 #endif
 #if defined(SINK_RETURN_BFLUX)
-            for(k=0;k<3;k++) {P[n].B[k] += SinkTempInfo[i].accreted_B[k];}
+            P[n].B += SinkTempInfo[i].accreted_B;
 #endif
             P[n].Mass += SinkTempInfo[i].accreted_Mass;
 #if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
@@ -802,7 +792,7 @@ void sink_final_operations(void)
 
 #if defined(SINGLE_STAR_TIMESTEPPING)
         /* save local effective signal velocity of gas for sink particle CFL-like timestep criterion */
-        P[n].Sink_SurroundingGasVel = 0; for(k=0; k<3; k++) {P[n].Sink_SurroundingGasVel += SinkTempInfo[i].Sink_SurroundingGasVel[k]*SinkTempInfo[i].Sink_SurroundingGasVel[k];}
+        P[n].Sink_SurroundingGasVel = SinkTempInfo[i].Sink_SurroundingGasVel.norm_sq();
         P[n].Sink_SurroundingGasVel += convert_internalenergy_soundspeed2(n,SinkTempInfo[i].Sink_SurroudingGasInternalEnergy);
         P[n].Sink_SurroundingGasVel = sqrt(P[n].Sink_SurroundingGasVel);
 #endif

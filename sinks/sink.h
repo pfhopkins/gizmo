@@ -19,9 +19,9 @@ extern struct sink_temp_particle_data       // sinkdata_topass
     MyFloat Mgas_in_Kernel;
     MyFloat Mstar_in_Kernel;
     MyFloat Malt_in_Kernel;
-    MyFloat Jgas_in_Kernel[3];
-    MyFloat Jstar_in_Kernel[3];
-    MyFloat Jalt_in_Kernel[3]; // mass/angular momentum for GAS/STAR/TOTAL components computed always now
+    Vec3<MyFloat> Jgas_in_Kernel;
+    Vec3<MyFloat> Jstar_in_Kernel;
+    Vec3<MyFloat> Jalt_in_Kernel; // mass/angular momentum for GAS/STAR/TOTAL components computed always now
     MyDouble accreted_Mass;
     MyDouble accreted_Sink_Mass;
     MyDouble accreted_Sink_Mass_reservoir;
@@ -48,34 +48,34 @@ extern struct sink_temp_particle_data       // sinkdata_topass
     MyFloat Sink_angle_weighted_kernel_sum;
 #endif
 #ifdef SINK_REPOSITION_ON_POTMIN
-    MyFloat DF_rms_vel, DF_mean_vel[3], DF_mmax_particles;
+    MyFloat DF_rms_vel; Vec3<MyFloat> DF_mean_vel; MyFloat DF_mmax_particles;
 #endif
 #if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
-    MyFloat Sink_SurroundingGasVel[3];
+    Vec3<MyFloat> Sink_SurroundingGasVel;
 #endif
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
-    MyFloat Sink_SurroundingGasCOM[3];
+    Vec3<MyFloat> Sink_SurroundingGasCOM;
 #endif
 #if (SINK_GRAVACCRETION == 8)
     MyFloat hubber_mdot_vr_estimator, hubber_mdot_disk_estimator, hubber_mdot_bondi_limiter;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
-    MyDouble accreted_momentum[3];        /*!< accreted linear momentum */
+    Vec3<MyDouble> accreted_momentum;        /*!< accreted linear momentum */
 #endif
 #if defined(SINK_RETURN_BFLUX)
-    MyDouble accreted_B[3]; 
+    Vec3<MyDouble> accreted_B;
 #endif    
 #if defined(SINK_FOLLOW_ACCRETED_COM)
-    MyDouble accreted_centerofmass[3];    /*!< accreted center-of-mass */
+    Vec3<MyDouble> accreted_centerofmass;    /*!< accreted center-of-mass */
 #endif    
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-    MyDouble accreted_J[3];               /*!< accreted angular momentum */
+    Vec3<MyDouble> accreted_J;               /*!< accreted angular momentum */
 #endif
 #if defined(SINK_GRAVCAPTURE_GAS)
     MyFloat mass_to_swallow_edd;        /*!< gives the mass we want to swallow that contributes to eddington */
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS)
-    MyFloat angmom_prepass_sum_for_passback[3]; /*!< Normalization term for angular momentum feedback kicks, see denominator of Eq 22 of Hubber 2013 */
+    Vec3<MyFloat> angmom_prepass_sum_for_passback; /*!< Normalization term for angular momentum feedback kicks, see denominator of Eq 22 of Hubber 2013 */
     MyFloat angmom_norm_topass_in_swallowloop;  /*!< corresponding scalar normalization calculated from the vector above */
 #endif
 #if defined(SINK_RETURN_BFLUX)
