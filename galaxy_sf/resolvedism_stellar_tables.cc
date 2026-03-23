@@ -397,7 +397,7 @@ void resolvedism_load_stellar_tables(void)
 
         /* --- Test 3: Surface abundances nonzero for all living stars (mid-grid, near lifetime boundary) --- */
         {
-            int nfail = 0; double worst_M3 = 0, worst_Z3 = 0, worst_age_frac = 0;
+            int nfail = 0;
             for(int im = 0; im < STBL_NM - 1; im++) {
                 double logM_mid = 0.5 * (StellarTbl.log_M[im] + StellarTbl.log_M[im+1]);
                 double M_mid = pow(10., logM_mid);
@@ -417,7 +417,7 @@ void resolvedism_load_stellar_tables(void)
                         if(Z_surf <= 0) {
                             nfail++;
                             if(nfail <= 3) printf("  WARNING: Z_surface=0 at %.0f%% lifetime for M=%.2f Z=%.4f\n", fracs[f]*100, M_mid, pow(10., logZ_t));
-                            worst_M3 = M_mid; worst_Z3 = pow(10., logZ_t); worst_age_frac = fracs[f];
+                            (void)M_mid; /* worst case already printed above */
                         }
                     }
                 }

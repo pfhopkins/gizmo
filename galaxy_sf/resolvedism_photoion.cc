@@ -15,6 +15,18 @@
  * HEALPix angular decomposition (NSIDE=1, 12 pixels). Each pixel gets
  * 1/12 of the ionizing photon budget and walks outward through cells.
  *
+ * Ionization state machine (following gizmo2017 photoionize.c):
+ *   Ionized=0 : not ionized
+ *   Ionized=1 : confirmed ionized (persists from previous step)
+ *   Ionized=2 : newly ionized THIS step (set by evaluate)
+ * Global reset each step: 1->0, then evaluate marks 2, then 2->1.
+ * This ensures dead/inactive stars' HII regions recombine naturally.
+ *
+ * Convergence tolerance (from gizmo2017): per-pixel budget walk stops
+ * when remaining budget < tolerance, where tolerance scales with a
+ * reference cell's recombination cost. This avoids chasing low-density
+ * halo gas that is already UV-background ionized.
+ *
  * Uses the code_block_xchange framework for MPI-parallel tree walks. */
 
 #ifdef GALSF_RESOLVEDISM_PHOTOION
@@ -23,12 +35,14 @@
 #define HEALPIX_NPIX  12
 #define MAX_PI_NGBS 4096
 
+/* case B recombination coefficient at T=10^4 K [cm^3/s] */
+#define PI_ALPHA_B 2.6e-13
+
 /* Stromgren radius: Rs = (3 S_ly / (4 pi alpha_B n_H^2))^(1/3) */
 static double compute_stromgren_radius_cgs(double S_ly, double nH_cgs)
 {
-    double alpha_B = 2.6e-13; /* case B recombination coefficient, cm^3/s */
     if(nH_cgs <= 0 || S_ly <= 0) return 0;
-    return pow(3.0 * S_ly / (4.0 * M_PI * alpha_B * nH_cgs * nH_cgs), 1.0/3.0);
+    return pow(3.0 * S_ly / (4.0 * M_PI * PI_ALPHA_B * nH_cgs * nH_cgs), 1.0/3.0);
 }
 
 /* Neighbor entry for collecting and sorting by HEALPix pixel then distance */
@@ -49,6 +63,11 @@ static int compare_pix_then_dist(const void *a, const void *b)
 static double *PISearchRadius = NULL;
 static double *PIPixelBudget = NULL;  /* per-star per-pixel remaining photon budget [NumPart * HEALPIX_NPIX] */
 static double *PIFrontRadius = NULL;  /* per-star per-pixel ionization front distance [code units, NumPart * HEALPIX_NPIX] */
+
+/* Convergence tolerance: per-pixel budget walk stops when remaining budget
+ * drops below this. Scaled to ~1000 reference cells' recombination cost
+ * (following gizmo2017). Computed once per step in resolvedism_photoionize(). */
+static double PITolerance = 0;
 
 /* Compute S_ly for a single star (used in particle2in and pre-processing) */
 static double compute_single_star_S_ly(int i)
@@ -122,7 +141,7 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
         in->budget_per_pixel[k] = (PIPixelBudget != NULL) ? PIPixelBudget[i * HEALPIX_NPIX + k] : ((in->S_ly > 0) ? in->S_ly / HEALPIX_NPIX : 0);
 
     /* Use stored search radius from iterative expansion if available,
-     * otherwise compute from 2x Stromgren radius estimate */
+     * otherwise compute from Stromgren radius estimate */
     if(PISearchRadius != NULL && PISearchRadius[i] > 0) {
         in->SearchRadius = PISearchRadius[i];
     } else {
@@ -250,9 +269,12 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
 
     /* Phase 3: Per-pixel ionization front walk.
      * budget_per_pixel carries remaining budget from mode 0 to mode 1,
-     * preventing double-counting of photons at domain boundaries. */
+     * preventing double-counting of photons at domain boundaries.
+     * Tolerance (from gizmo2017): stop when remaining budget is small
+     * relative to a reference cell's recombination cost. This prevents
+     * draining budget into low-density halo gas. */
     {
-        double alpha_B = 2.6e-13; /* case B recombination coefficient */
+        double tolerance_per_pixel = PITolerance / HEALPIX_NPIX;
         int idx = 0;
         for(k = 0; k < HEALPIX_NPIX; k++)
         {
@@ -272,29 +294,24 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                 if(CellP[j].Ionized == 2) {idx++; continue;} /* already ionized this step by another star — skip */
                 double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
                 double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
-                double recomb  = alpha_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
+                double recomb  = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
                                  * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
                 budget -= recomb;
                 consumed += recomb;
                 last_r = sqrt(ngb_buf[idx].dist2);
-                CellP[j].Ionized = 2; /* mark as ionized THIS step (gizmo2017: both 0 and 1 -> 2) */
+                CellP[j].Ionized = 2; /* mark as ionized THIS step */
                 idx++;
-                if(budget < 10.0 * recomb) {front_found = 1; break;} /* ionization front reached */
+                /* Ionization front found: either budget exhausted relative to
+                 * next cell cost, or remaining budget below tolerance */
+                if(budget < 10.0 * recomb || budget < tolerance_per_pixel) {front_found = 1; break;}
             }
             if(front_found)
                 out.consumed_per_pixel[k] = local.budget_per_pixel[k]; /* consume all: front found */
             else
                 out.consumed_per_pixel[k] = consumed; /* report actual consumption only */
             out.front_radius[k] = last_r;
-            /* Cells beyond the ionization front: explicitly clear Ionized for cells
-             * this star can see but chose not to ionize (they've left the HII region).
-             * Only clear cells that have Ionized=1 (previously ionized, not re-confirmed).
-             * Don't touch Ionized=2 (ionized by another star this step). */
-            while(idx < n_collected && ngb_buf[idx].pixel == k) {
-                j = ngb_buf[idx].index;
-                if(CellP[j].Ionized == 1) CellP[j].Ionized = 0; /* beyond front: clear */
-                idx++;
-            }
+            /* Skip remaining cells in this pixel beyond the front */
+            while(idx < n_collected && ngb_buf[idx].pixel == k) idx++;
         }
     }
 
@@ -308,18 +325,15 @@ void resolvedism_photoionize(void)
 {
     int i, j;
 
-    /* Ionization state tracking (following gizmo2017 photoionize.c):
-     *   Ionized=0 : not ionized
-     *   Ionized=1 : confirmed ionized (persists from previous step)
-     *   Ionized=2 : newly ionized THIS step (set by evaluate)
-     *
-     * No global reset here. The evaluate sets Ionized=2 for cells inside
-     * HII regions (if Ionized != 2, i.e. both 0 and 1 get re-marked).
-     * After the evaluate, the post-processing loop transitions:
-     *   1 -> 0  (was ionized previously but NOT re-ionized this step)
-     *   2 -> 1  (ionized this step, confirmed)
-     * This way Ionized=1 persists between steps for cells that remain
-     * inside an active star's HII region. */
+    /* === Global reset (gizmo2017 pattern) ===
+     * Clear all previously-ionized cells. The evaluate will re-mark cells
+     * inside active HII regions as Ionized=2. After the evaluate, we
+     * transition 2->1. Cells not re-ionized (dead/inactive stars) revert
+     * to Ionized=0 and recombine naturally via CHEMCOOL. */
+    for(j = 0; j < N_gas; j++) {
+        if(P[j].Type != 0) continue;
+        if(CellP[j].Ionized == 1) CellP[j].Ionized = 0;
+    }
 
     /* Pre-compute Lyman photon rates for active stars (for use by other routines) */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
@@ -328,6 +342,15 @@ void resolvedism_photoionize(void)
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
         P[i].Lyman_photons_per_sec = compute_single_star_S_ly(i);
 #endif
+    }
+
+    /* Compute convergence tolerance (gizmo2017 pattern):
+     * tolerance = alpha_B * 1000 * N_H_per_reference_cell
+     * where N_H = M_cell * X_H / m_p for the target cell mass.
+     * This is generous at low density, preventing over-ionization of halo gas. */
+    {
+        double M_ref_cgs = All.MassTable[0] * UNIT_MASS_IN_CGS; /* reference cell mass from IC */
+        PITolerance = PI_ALPHA_B * 1000.0 * (M_ref_cgs * HYDROGEN_MASSFRAC / PROTONMASS_CGS);
     }
 
     /* Allocate per-star arrays for iterative search radius adjustment */
@@ -351,7 +374,8 @@ void resolvedism_photoionize(void)
 
     /* Iterative xchange: expand search radius if any pixel's ionization front
      * extends beyond the current radius (budget remaining after all cells walked).
-     * The initial 2x Stromgren estimate is usually sufficient; iteration is a safety net. */
+     * Budget remaining below tolerance counts as converged (gizmo2017 pattern).
+     * The initial Stromgren estimate is usually sufficient; iteration is a safety net. */
     PRINT_STATUS(" ..photo-ionizing gas around single stars");
     int iter = 0, max_iter = 20;
     int incomplete_total;
@@ -362,15 +386,16 @@ void resolvedism_photoionize(void)
             #include "../system/code_block_xchange_perform_ops_demalloc.h"
         }
 
-        /* Check for stars whose search radius was too small (any pixel has remaining budget) */
+        /* Check for stars whose search radius was too small (any pixel has remaining budget > tolerance) */
         int incomplete_local = 0;
+        double tol_pix = PITolerance / HEALPIX_NPIX;
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
             if(P[i].Type != 4) continue;
             if(PISearchRadius[i] <= 0) continue;
-            int k; double budget_remaining = 0;
+            int k; int needs_expansion = 0;
             for(k = 0; k < HEALPIX_NPIX; k++)
-                if(PIPixelBudget[i * HEALPIX_NPIX + k] > 0) budget_remaining += PIPixelBudget[i * HEALPIX_NPIX + k];
-            if(budget_remaining > 0) {
+                if(PIPixelBudget[i * HEALPIX_NPIX + k] > tol_pix) {needs_expansion = 1; break;}
+            if(needs_expansion) {
                 double max_r = All.MaxPISearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime); /* physical kpc -> comoving code */
                 if(max_r > 0 && PISearchRadius[i] >= max_r) {continue;} /* hit cap, stop expanding */
                 PISearchRadius[i] *= 1.1; /* expand by 10% */
@@ -409,7 +434,7 @@ void resolvedism_photoionize(void)
     {
         int npi_local = 0;
         double local_rfront_min = MAX_REAL_NUMBER, local_rfront_max = 0;
-        double local_asym_max = 0; /* max asymmetry ratio (R_max_pix / R_min_pix) across all local stars */
+        double local_asym_max = 0;
         for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
             if(P[i].Type != 4) continue;
             if(PISearchRadius[i] <= 0) continue;
@@ -421,7 +446,7 @@ void resolvedism_photoionize(void)
                 if(rf > 0) {
                     npix_active++;
                     if(rf > star_rmax) star_rmax = rf;
-                    if(rf < star_rmin && rf > 0) star_rmin = rf; /* skip zero = no gas in that direction */
+                    if(rf < star_rmin && rf > 0) star_rmin = rf;
                 }
             }
             if(npix_active > 0) {
@@ -447,13 +472,10 @@ void resolvedism_photoionize(void)
         }
     }
 
-    /* Post-evaluate ionization state transitions.
-     * Ionized=0: not ionized.  Ionized=1: confirmed (persists).  Ionized=2: set this step by evaluate.
-     * NO global 1->0 transition here. Cells around inactive stars keep Ionized=1
-     * (cooling floor maintains them at 10^4K). Clearing of stale cells happens
-     * ONLY in the evaluate: cells within an active star's search radius but beyond
-     * its ionization front get explicitly cleared to 0.
-     * Here we only transition 2->1 (confirm newly ionized) and wake them. */
+    /* Post-evaluate ionization state transitions (gizmo2017 pattern):
+     * The global reset already cleared 1->0 at the top.
+     * Now transition 2->1 (confirm newly ionized) and wake them.
+     * Cells not re-ionized remain at 0 and recombine via CHEMCOOL. */
     int sum_ionized = 0, n_woken = 0;
     for(j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;
