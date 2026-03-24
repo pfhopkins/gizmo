@@ -179,7 +179,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     /* create a set of empty nodes corresponding to the top-level domain grid. We need to generate these nodes first to make sure that we have a
      * complete top-level tree which allows the easy insertion of the pseudo-particles at the right place */
     
-    force_create_empty_nodes(All.MaxPart, 0, 1, 0, 0, 0, &numnodes, &nfree);
+    if(force_create_empty_nodes(All.MaxPart, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
     /* if a high-resolution region in a global tree is used, we need to generate an additional set empty nodes to make sure that we have a complete top-level tree for the high-resolution inset */
     nfreep = &Nodes[nfree];
     parent = -1;            /* note: will not be used below before it is changed */
@@ -344,12 +344,12 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
  *  level in the tree, even when the particle population is so sparse that
  *  some of these nodes are actually empty.
  */
-void force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount,
+int force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount,
                               int *nextfree)
 {
     int i, j, k, n, sub, count;
     MyFloat lenhalf;
-    
+
     if(TopNodes[topnode].Daughter >= 0)
     {
         for(i = 0; i < 2; i++)
@@ -357,40 +357,46 @@ void force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z
                 for(k = 0; k < 2; k++)
                 {
                     sub = 7 & peano_hilbert_key((x << 1) + i, (y << 1) + j, (z << 1) + k, bits);
-                    
+
                     count = i + 2 * j + 4 * k;
-                    
+
                     Nodes[no].u.suns[count] = *nextfree;
-                    
+
                     lenhalf = 0.25 * Nodes[no].len;
                     Nodes[*nextfree].len = 0.5 * Nodes[no].len;
                     Nodes[*nextfree].center[0] = Nodes[no].center[0] + (2 * i - 1) * lenhalf;
                     Nodes[*nextfree].center[1] = Nodes[no].center[1] + (2 * j - 1) * lenhalf;
                     Nodes[*nextfree].center[2] = Nodes[no].center[2] + (2 * k - 1) * lenhalf;
-                    
+
                     for(n = 0; n < 8; n++)
                         Nodes[*nextfree].u.suns[n] = -1;
-                    
+
                     if(TopNodes[TopNodes[topnode].Daughter + sub].Daughter == -1)
                         DomainNodeIndex[TopNodes[TopNodes[topnode].Daughter + sub].Leaf] = *nextfree;
-                    
+
                     *nextfree = *nextfree + 1;
                     *nodecount = *nodecount + 1;
-                    
-                    if((*nodecount) >= MaxNodes || (*nodecount) >= MaxTopNodes)
+
+                    if((*nodecount) >= MaxNodes)
                     {
                         printf("task %d: maximum number MaxNodes=%d of tree-nodes reached."
                                "MaxTopNodes=%d NTopnodes=%d NTopleaves=%d nodecount=%d\n",
                                ThisTask, MaxNodes, MaxTopNodes, NTopnodes, NTopleaves, *nodecount);
                         printf("in create empty nodes\n");
-                        dump_particles();
-                        endrun(11);
+                        if(All.TreeAllocFactor > 5.0)
+                        {
+                            dump_particles();
+                            endrun(11);
+                        }
+                        return -1; /* signal to caller to retry with larger TreeAllocFactor */
                     }
-                    
-                    force_create_empty_nodes(*nextfree - 1, TopNodes[topnode].Daughter + sub,
-                                             bits + 1, 2 * x + i, 2 * y + j, 2 * z + k, nodecount, nextfree);
+
+                    if(force_create_empty_nodes(*nextfree - 1, TopNodes[topnode].Daughter + sub,
+                                             bits + 1, 2 * x + i, 2 * y + j, 2 * z + k, nodecount, nextfree) < 0)
+                        return -1;
                 }
     }
+    return 0;
 }
 
 

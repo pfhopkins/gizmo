@@ -25,4 +25,4 @@ ResubmitOn                         0
 ResubmitCommand                    none
 ErrTolTheta                        0.7
 TimeBetStatistics                  0.5
-%TreeAllocFactor                    5.0
+TreeAllocFactor                    5.0
