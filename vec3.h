@@ -23,7 +23,7 @@ struct Vec3 {
     Vec3& operator+=(const Vec3& o) noexcept { data[0]+=o.data[0]; data[1]+=o.data[1]; data[2]+=o.data[2]; return *this; }
     Vec3& operator-=(const Vec3& o) noexcept { data[0]-=o.data[0]; data[1]-=o.data[1]; data[2]-=o.data[2]; return *this; }
     Vec3& operator*=(T s) noexcept { data[0]*=s; data[1]*=s; data[2]*=s; return *this; }
-    Vec3& operator/=(T s) noexcept { data[0]/=s; data[1]/=s; data[2]/=s; return *this; }
+    Vec3& operator/=(T s) noexcept { T inv=T(1)/s; data[0]*=inv; data[1]*=inv; data[2]*=inv; return *this; }
 
     T norm_sq() const noexcept { return data[0]*data[0] + data[1]*data[1] + data[2]*data[2]; }
     T norm() const noexcept { return std::sqrt(norm_sq()); }

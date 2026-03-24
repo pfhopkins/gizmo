@@ -1,0 +1,16 @@
+InitCondFile                       soundwave_ics
+OutputDir                          output
+TimeMax                            0.001
+BoxSize                            1
+TimeBetSnapshot                    0.001
+DesNumNgb                          6
+MaxNumNgbDeviation                 1e-2
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
