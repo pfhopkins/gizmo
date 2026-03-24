@@ -63,9 +63,9 @@
 #include "macros.h"
 
 #include "typedefs.h"
-#include "../symmetric_tensor2.h"
-#include "../vec3.h"
-#include "../mat3.h"
+#include "../math_types/vec3.h"
+#include "../math_types/mat3.h"
+#include "../math_types/symmetric_tensor2.h"
 
 #ifdef CHIMES
 #include "../cooling/chimes/chimes_proto.h"
