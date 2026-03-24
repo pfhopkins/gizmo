@@ -233,9 +233,10 @@ ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
 CC       =   mpicxx
 endif
 FC      = mpifort
-OPTIMIZE =  -O2 -g -Wall
+OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=native -g -Wall
 GSL_INCL = -I$(GSL_BASE)/include
 GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
 FFTW_INCL= -I$(FFTW3_BASE)/include
 FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
 MPICHLIB =
