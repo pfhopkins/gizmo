@@ -140,6 +140,8 @@ struct KetjuRegion {
     KetjuTaskGroup affected_tasks;  /* tasks that hold particles in this region */
     KetjuTaskGroup compute_tasks;   /* tasks that run the integrator */
     region_compute_info compute_info;
+    std::vector<int> affected_sim_indices;       /* world ranks of affected tasks */
+    std::vector<int> particle_counts_on_affected; /* particle count per affected task */
 
     /* integrator state (only allocated on compute root) */
     struct ketju_system *integrator;
@@ -553,32 +555,19 @@ static void setup_integrator(KetjuRegion &reg)
         for(int t = 0; t < NTask; t++) { if(counts[t] > 0) affected_indices.push_back(t); }
         if(affected_indices.empty()) return;
         reg.affected_tasks.init(affected_indices, 0);
+        reg.affected_sim_indices = affected_indices;
+        reg.particle_counts_on_affected.resize(affected_indices.size());
+        for(size_t i = 0; i < affected_indices.size(); i++)
+            reg.particle_counts_on_affected[i] = counts[affected_indices[i]];
     }
 
-    /* create compute_tasks communicator from allocated task range.
-     * For now, use affected tasks as compute tasks (single-group mode).
-     * Phase B (cost-based scheduling) will set compute_info from the allocator. */
+    /* create compute_tasks communicator: contiguous range from cost-based allocator.
+     * Scatter uses MPI_Scatterv on affected_tasks, so compute/affected groups can
+     * safely differ — data is forwarded via Send/Recv between roots if needed. */
     {
         std::vector<int> compute_indices;
-        int first = reg.compute_info.first_task_index;
-        int last  = reg.compute_info.final_task_index;
-        if(first == 0 && last == 0) {
-            /* no allocation yet — use affected tasks as compute group */
-            for(int t = 0; t < NTask; t++) { if(counts[t] > 0) compute_indices.push_back(t); }
-        } else {
-            for(int t = first; t <= last; t++) compute_indices.push_back(t);
-            /* ensure at least one affected task is in the compute group,
-             * otherwise scatter_results cannot broadcast extra_data correctly */
-            for(int t = 0; t < NTask; t++) {
-                if(counts[t] > 0) {
-                    bool already_in = false;
-                    for(size_t ci = 0; ci < compute_indices.size(); ci++) {
-                        if(compute_indices[ci] == t) { already_in = true; break; }
-                    }
-                    if(!already_in) { compute_indices.push_back(t); break; }
-                }
-            }
-        }
+        for(int t = reg.compute_info.first_task_index; t <= reg.compute_info.final_task_index; t++)
+            compute_indices.push_back(t);
         reg.compute_tasks.init(compute_indices, 1);
         reg.compute_tasks.set_common_root(reg.affected_tasks);
     }
@@ -957,114 +946,152 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
  *  KETJU_MERGE_BH (Type 5+5, Type 5+4).
  * ============================================================ */
 
+/* Merger action descriptor — determined on affected root, broadcast to all affected tasks */
+struct ketju_merger_action {
+    MyIDType id_merged, id_survivor;
+    int type_merged, type_survivor;
+    int task_merged, task_survivor;
+    int idx_merged, idx_survivor;
+    double M_merged, M_survivor_old, M_survivor_new;
+};
+
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
 static void handle_mergers(KetjuRegion &reg,
                            const std::vector<double> &final_abs_pos,
                            const std::vector<double> &final_mass,
                            const std::vector<double> &original_mass)
 {
-    int n = reg.total_particle_count;
-    if(n < 2) return;
+    if(!reg.affected_tasks.is_member()) return;
 
-    /* scan for merged particles (mass <= 0 after integration) */
-    for(int i = 0; i < n; i++) {
-        if(final_mass[i] > 0) continue;
+    /* ---- Phase 1: affected root determines merger pairs ---- */
+    int n_mergers = 0;
+    std::vector<ketju_merger_action> actions;
 
-        int type_merged = reg.extra_data[i].Type;
+    if(reg.affected_tasks.is_root()) {
+        int n = reg.total_particle_count;
+        for(int i = 0; i < n; i++) {
+            if(final_mass[i] > 0) continue;
 
-        /* find nearest surviving particle — the actual merger partner */
-        int survivor = -1;
-        double min_dist2 = 1e60;
-        for(int j = 0; j < n; j++) {
-            if(j == i || final_mass[j] <= 0) continue;
-            double d2 = 0;
-            for(int k = 0; k < 3; k++) {
-                double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
-                d2 += dx * dx;
+            int type_merged = reg.extra_data[i].Type;
+
+            /* find nearest surviving particle */
+            int survivor = -1;
+            double min_dist2 = 1e60;
+            for(int j = 0; j < n; j++) {
+                if(j == i || final_mass[j] <= 0) continue;
+                double d2 = 0;
+                for(int k = 0; k < 3; k++) {
+                    double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
+                    d2 += dx * dx;
+                }
+                if(d2 < min_dist2) { min_dist2 = d2; survivor = j; }
             }
-            if(d2 < min_dist2) { min_dist2 = d2; survivor = j; }
-        }
-        if(survivor < 0) continue;
+            if(survivor < 0) continue;
 
-        int type_survivor = reg.extra_data[survivor].Type;
+            int type_survivor = reg.extra_data[survivor].Type;
 
-        /* check type-specific merger flags */
-        int merge_allowed = 0;
+            int merge_allowed = 0;
 #ifdef KETJU_MERGE_BH
-        if(type_merged == 5 || type_survivor == 5) merge_allowed = 1; /* any BH involvement */
+            if(type_merged == 5 || type_survivor == 5) merge_allowed = 1;
 #endif
 #ifdef KETJU_MERGE_STARS
-        if(type_merged == 4 && type_survivor == 4) merge_allowed = 1; /* both stars */
+            if(type_merged == 4 && type_survivor == 4) merge_allowed = 1;
 #endif
-        if(!merge_allowed) continue;
+            if(!merge_allowed) continue;
 
-        /* mass bookkeeping */
-        double M_merged = original_mass[i];
-        double M_survivor_old = original_mass[survivor];
-        double M_survivor_new = final_mass[survivor];
-        if(M_survivor_new <= 0 || M_merged <= 0) continue;
+            double M_merged = original_mass[i];
+            double M_survivor_old = original_mass[survivor];
+            double M_survivor_new = final_mass[survivor];
+            if(M_survivor_new <= 0 || M_merged <= 0) continue;
 
-        int task_merged = reg.extra_data[i].Task;
-        int task_survivor = reg.extra_data[survivor].Task;
-        int idx_merged = reg.extra_data[i].Index;
-        int idx_survivor = reg.extra_data[survivor].Index;
+            ketju_merger_action act;
+            act.id_merged      = reg.extra_data[i].ID;
+            act.id_survivor    = reg.extra_data[survivor].ID;
+            act.type_merged    = type_merged;
+            act.type_survivor  = type_survivor;
+            act.task_merged    = reg.extra_data[i].Task;
+            act.task_survivor  = reg.extra_data[survivor].Task;
+            act.idx_merged     = reg.extra_data[i].Index;
+            act.idx_survivor   = reg.extra_data[survivor].Index;
+            act.M_merged       = M_merged;
+            act.M_survivor_old = M_survivor_old;
+            act.M_survivor_new = M_survivor_new;
+            actions.push_back(act);
 
-        /* transfer metals: gather from merged particle, mix into survivor */
-        int n_metals = 0, n_elements = 0;
+            printf("KETJU MERGER: ID %llu (Type %d, M=%g) merged into ID %llu (Type %d, M=%g->%g)\n",
+                   (unsigned long long)act.id_merged, type_merged, M_merged,
+                   (unsigned long long)act.id_survivor, type_survivor,
+                   M_survivor_old, M_survivor_new);
+        }
+        n_mergers = actions.size();
+    }
+
+    /* ---- Phase 2: broadcast merger list to all affected tasks ---- */
+    MPI_Bcast(&n_mergers, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
+    if(n_mergers == 0) return;
+
+    if(!reg.affected_tasks.is_root()) actions.resize(n_mergers);
+    MPI_Bcast(actions.data(), n_mergers * sizeof(ketju_merger_action), MPI_BYTE,
+              reg.affected_tasks.root, reg.affected_tasks.comm);
+
+    /* ---- Phase 3: each task executes its local part ---- */
+    int n_metals = 0, n_elements = 0;
 #ifdef METALS
-        n_metals = NUM_METAL_SPECIES;
+    n_metals = NUM_METAL_SPECIES;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        n_elements = NUM_RESOLVEDISM_ELEMENTS;
+    n_elements = NUM_RESOLVEDISM_ELEMENTS;
 #endif
-        int buf_size = n_metals + n_elements;
+    int buf_size = n_metals + n_elements;
+
+    for(int m = 0; m < n_mergers; m++) {
+        ketju_merger_action &act = actions[m];
 
         if(buf_size > 0) {
             std::vector<double> merged_metals(buf_size, 0.0);
 
-            /* merged particle's task fills in its metals */
-            if(task_merged == ThisTask) {
+            if(act.task_merged == ThisTask) {
 #ifdef METALS
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
-                    merged_metals[k] = P[idx_merged].Metallicity[k];
+                    merged_metals[k] = P[act.idx_merged].Metallicity[k];
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                 for(int k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++)
-                    merged_metals[n_metals + k] = P[idx_merged].ElementAbundance[k];
+                    merged_metals[n_metals + k] = P[act.idx_merged].ElementAbundance[k];
 #endif
             }
 
-            /* broadcast metals from merged particle's task (collective — all tasks participate) */
-            MPI_Bcast(merged_metals.data(), buf_size, MPI_DOUBLE, task_merged, MPI_COMM_WORLD);
+            /* point-to-point transfer of metals */
+            if(act.task_merged == act.task_survivor) {
+                /* same task — no MPI needed */
+            } else {
+                if(act.task_merged == ThisTask)
+                    MPI_Send(merged_metals.data(), buf_size, MPI_DOUBLE,
+                             act.task_survivor, 997, MPI_COMM_WORLD);
+                if(act.task_survivor == ThisTask)
+                    MPI_Recv(merged_metals.data(), buf_size, MPI_DOUBLE,
+                             act.task_merged, 997, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
 
-            /* survivor's task applies mass-weighted mixing */
-            if(task_survivor == ThisTask) {
+            if(act.task_survivor == ThisTask) {
 #ifdef METALS
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
-                    P[idx_survivor].Metallicity[k] =
-                        (M_survivor_old * P[idx_survivor].Metallicity[k] +
-                         M_merged * merged_metals[k]) / M_survivor_new;
+                    P[act.idx_survivor].Metallicity[k] =
+                        (act.M_survivor_old * P[act.idx_survivor].Metallicity[k] +
+                         act.M_merged * merged_metals[k]) / act.M_survivor_new;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                 for(int k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++)
-                    P[idx_survivor].ElementAbundance[k] =
-                        (M_survivor_old * P[idx_survivor].ElementAbundance[k] +
-                         M_merged * merged_metals[n_metals + k]) / M_survivor_new;
+                    P[act.idx_survivor].ElementAbundance[k] =
+                        (act.M_survivor_old * P[act.idx_survivor].ElementAbundance[k] +
+                         act.M_merged * merged_metals[n_metals + k]) / act.M_survivor_new;
 #endif
             }
         }
 
-        /* mark merged particle for removal (cleaned up by rearrange_particle_sequence) */
-        if(task_merged == ThisTask) {
-            P[idx_merged].Mass = 0;
-        }
-
-        /* log the merger event (task 0 only, since all tasks have the same data) */
-        if(ThisTask == 0) {
-            printf("KETJU MERGER: ID %llu (Type %d, M=%g) merged into ID %llu (Type %d, M=%g->%g)\n",
-                   (unsigned long long)reg.extra_data[i].ID, type_merged, M_merged,
-                   (unsigned long long)reg.extra_data[survivor].ID, type_survivor,
-                   M_survivor_old, M_survivor_new);
+        /* mark merged particle for removal */
+        if(act.task_merged == ThisTask) {
+            P[act.idx_merged].Mass = 0;
         }
     }
 }
@@ -1089,6 +1116,34 @@ static void handle_mergers(KetjuRegion &reg,
  *  is swapped in after the drift by ketju_set_final_velocities().
  * ============================================================ */
 
+/* Per-particle data packed for MPI_Scatterv (one struct per particle) */
+struct ketju_scatter_particle {
+    MyIDType ID;
+    int Task;
+    int Index;
+    int Type;
+    double Mass;
+    double Pos[3];       /* absolute comoving position */
+    double Vel[3];       /* CoM-relative peculiar velocity */
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
+    double OriginalMass;
+#endif
+    short int is_dead_remnant;
+#ifdef SINK_PARTICLES
+    short int SinkSubType;
+    double Spin[3];      /* only meaningful for PN particles */
+    int is_pn;           /* 1 if this is a PN particle (index < n_pn) */
+#endif
+};
+
+/* comparison for sorting scatter particles by Task (for MPI_Scatterv) */
+static int scatter_particle_task_cmp(const void *a, const void *b)
+{
+    const ketju_scatter_particle *pa = (const ketju_scatter_particle *)a;
+    const ketju_scatter_particle *pb = (const ketju_scatter_particle *)b;
+    return (pa->Task > pb->Task) - (pa->Task < pb->Task);
+}
+
 static void scatter_results(KetjuRegion &reg)
 {
     int n = reg.total_particle_count;
@@ -1096,35 +1151,36 @@ static void scatter_results(KetjuRegion &reg)
     MPI_Bcast(&n, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
     if(n < 2) return;
 
-    /* prepare final positions (absolute) and velocities (CoM-relative) on compute root */
-    std::vector<double> final_abs_pos(3 * n), final_rel_vel(3 * n);
-    std::vector<double> final_mass(n);
-#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-    std::vector<double> original_mass(n);
-#endif
-#ifdef SINK_PARTICLES
-    int n_pn = 0;
-    std::vector<double> final_spin; /* only for PN particles */
-#endif
+    int n_aff = reg.affected_tasks.size;
+    std::vector<ketju_scatter_particle> scatter_buf;
+
+    /* ---- Phase 1: compute root packs results into scatter_buf ---- */
     if(reg.compute_tasks.is_root() && reg.integrator) {
         struct ketju_system_physical_state *ps = reg.integrator->physical_state;
-#ifdef SINK_PARTICLES
-        n_pn = reg.num_pn_particles;
-        final_spin.resize(3 * n_pn, 0.0);
-        for(int i = 0; i < n_pn; i++) {
-            for(int j = 0; j < 3; j++) final_spin[3*i + j] = ps->spin[i][j];
-        }
-#endif
+        scatter_buf.resize(n);
+
         for(int i = 0; i < n; i++) {
-            final_mass[i] = ps->mass[i];
+            ketju_scatter_particle &sp = scatter_buf[i];
+            sp.ID    = reg.extra_data[i].ID;
+            sp.Task  = reg.extra_data[i].Task;
+            sp.Index = reg.extra_data[i].Index;
+            sp.Type  = reg.extra_data[i].Type;
+            sp.Mass  = ps->mass[i];
+            sp.is_dead_remnant = reg.all_particles[i].is_dead_remnant;
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-            original_mass[i] = reg.all_particles[i].Mass;
+            sp.OriginalMass = reg.all_particles[i].Mass;
 #endif
             for(int j = 0; j < 3; j++) {
                 /* physical -> comoving: pos_comov = com_comov + pos_phys / a */
-                final_abs_pos[3*i + j] = reg.com_pos[j] + ps->pos[i][j] / All.cf_atime;
-                final_rel_vel[3*i + j] = ps->vel[i][j]; /* peculiar velocity, same in both frames */
+                sp.Pos[j] = reg.com_pos[j] + ps->pos[i][j] / All.cf_atime;
+                sp.Vel[j] = ps->vel[i][j]; /* peculiar velocity, same in both frames */
             }
+#ifdef SINK_PARTICLES
+            sp.SinkSubType = reg.extra_data[i].SinkSubType;
+            sp.is_pn = (i < reg.num_pn_particles) ? 1 : 0;
+            for(int j = 0; j < 3; j++)
+                sp.Spin[j] = (i < reg.num_pn_particles) ? ps->spin[i][j] : 0;
+#endif
         }
 
         /* log merger info from integrator */
@@ -1138,44 +1194,108 @@ static void scatter_results(KetjuRegion &reg)
         }
     }
 
-    /* broadcast results to all affected tasks.
-     * extra_data was populated on compute_tasks (line 712). Ensure it is
-     * sized on all affected tasks before the broadcast — including the root,
-     * which may not be a compute member if the intersection was empty. */
-    if((int)reg.extra_data.size() < n) {
-        reg.extra_data.resize(n);
+    /* ---- Phase 2: forward from compute root to affected root if they differ ---- */
+    if(reg.compute_tasks.root_sim != reg.affected_tasks.root_sim) {
+        if(ThisTask == reg.compute_tasks.root_sim) {
+            MPI_Send(scatter_buf.data(), n * sizeof(ketju_scatter_particle),
+                     MPI_BYTE, reg.affected_tasks.root_sim, 998, MPI_COMM_WORLD);
+        }
+        if(ThisTask == reg.affected_tasks.root_sim) {
+            scatter_buf.resize(n);
+            MPI_Recv(scatter_buf.data(), n * sizeof(ketju_scatter_particle),
+                     MPI_BYTE, reg.compute_tasks.root_sim, 998, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
     }
-    MPI_Bcast(reg.extra_data.data(), n * sizeof(ketju_extra_data), MPI_BYTE,
-              reg.affected_tasks.root, reg.affected_tasks.comm);
-    MPI_Bcast(final_abs_pos.data(), 3 * n, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
-    MPI_Bcast(final_rel_vel.data(), 3 * n, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
-    MPI_Bcast(final_mass.data(), n, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
+
+    /* ---- Phase 3: affected root sorts by Task, Scattervs to affected tasks ---- */
+
+    /* build map: world task -> affected rank */
+    std::unordered_map<int, int> task_to_aff_rank;
+    for(size_t i = 0; i < reg.affected_sim_indices.size(); i++)
+        task_to_aff_rank[reg.affected_sim_indices[i]] = (int)i;
+
+    std::vector<int> sendcounts(n_aff, 0);
+    std::vector<int> byte_sendcounts(n_aff, 0), byte_displs(n_aff, 0);
+
+    if(reg.affected_tasks.is_root()) {
+        /* sort particles by Task */
+        qsort(scatter_buf.data(), n, sizeof(ketju_scatter_particle), scatter_particle_task_cmp);
+
+        /* compute sendcounts per affected rank */
+        for(int i = 0; i < n; i++) {
+            auto it = task_to_aff_rank.find(scatter_buf[i].Task);
+            if(it != task_to_aff_rank.end())
+                sendcounts[it->second]++;
+        }
+        for(int t = 0; t < n_aff; t++) byte_sendcounts[t] = sendcounts[t] * sizeof(ketju_scatter_particle);
+        for(int t = 1; t < n_aff; t++) byte_displs[t] = byte_displs[t-1] + byte_sendcounts[t-1];
+    }
+
+    /* scatter sendcounts so each task knows how many particles it receives */
+    int my_count = 0;
+    MPI_Scatter(sendcounts.data(), 1, MPI_INT, &my_count, 1, MPI_INT,
+                reg.affected_tasks.root, reg.affected_tasks.comm);
+
+    /* scatter particle data */
+    std::vector<ketju_scatter_particle> my_particles(my_count);
+    MPI_Scatterv(scatter_buf.data(), byte_sendcounts.data(), byte_displs.data(), MPI_BYTE,
+                 my_particles.data(), my_count * sizeof(ketju_scatter_particle), MPI_BYTE,
+                 reg.affected_tasks.root, reg.affected_tasks.comm);
+
+    /* ---- Phase 4: each task applies velocity trick to its particles ---- */
+    /* also collect full particle data on affected root for stellar collision check + mergers */
+    std::vector<double> final_abs_pos, final_rel_vel, final_mass;
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-    MPI_Bcast(original_mass.data(), n, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
-#endif
-#ifdef SINK_PARTICLES
-    MPI_Bcast(&n_pn, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
-    if(!reg.affected_tasks.is_root()) final_spin.resize(3 * n_pn, 0.0);
-    if(n_pn > 0) MPI_Bcast(final_spin.data(), 3 * n_pn, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
+    std::vector<double> original_mass;
 #endif
 
-    /* apply velocity trick to local particles */
-    for(int i = 0; i < n; i++) {
-        if(reg.extra_data[i].Task != ThisTask) continue;
-        int idx = reg.extra_data[i].Index;
+    /* affected root keeps the sorted scatter_buf for collision/merger checks */
+    if(reg.affected_tasks.is_root()) {
+        final_abs_pos.resize(3 * n);
+        final_rel_vel.resize(3 * n);
+        final_mass.resize(n);
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
+        original_mass.resize(n);
+#endif
+        /* also rebuild extra_data and all_particles on root from scatter_buf for collision/merger code */
+        reg.extra_data.resize(n);
+        reg.all_particles.resize(n);
+        for(int i = 0; i < n; i++) {
+            final_abs_pos[3*i]   = scatter_buf[i].Pos[0];
+            final_abs_pos[3*i+1] = scatter_buf[i].Pos[1];
+            final_abs_pos[3*i+2] = scatter_buf[i].Pos[2];
+            final_rel_vel[3*i]   = scatter_buf[i].Vel[0];
+            final_rel_vel[3*i+1] = scatter_buf[i].Vel[1];
+            final_rel_vel[3*i+2] = scatter_buf[i].Vel[2];
+            final_mass[i] = scatter_buf[i].Mass;
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
+            original_mass[i] = scatter_buf[i].OriginalMass;
+#endif
+            reg.extra_data[i].ID    = scatter_buf[i].ID;
+            reg.extra_data[i].Task  = scatter_buf[i].Task;
+            reg.extra_data[i].Index = scatter_buf[i].Index;
+            reg.extra_data[i].Type  = scatter_buf[i].Type;
+            reg.all_particles[i].is_dead_remnant = scatter_buf[i].is_dead_remnant;
+            reg.all_particles[i].Mass = scatter_buf[i].Mass;
+        }
+    }
+
+    for(int i = 0; i < my_count; i++) {
+        ketju_scatter_particle &sp = my_particles[i];
+        int idx = sp.Index;
 
         /* sanity check */
-        if(P[idx].ID != reg.extra_data[i].ID) {
+        if(P[idx].ID != sp.ID) {
             printf("KETJU ERROR: particle index mismatch! ID %llu vs %llu on task %d\n",
-                   (unsigned long long)P[idx].ID, (unsigned long long)reg.extra_data[i].ID, ThisTask);
+                   (unsigned long long)P[idx].ID, (unsigned long long)sp.ID, ThisTask);
             endrun(667);
         }
 
         /* update mass */
-        P[idx].Mass = final_mass[i];
+        P[idx].Mass = sp.Mass;
 
         /* skip velocity trick for merged particles (mass=0, will be removed) */
-        if(final_mass[i] <= 0) {
+        if(sp.Mass <= 0) {
             P[idx].KetjuIntegrated = 1;
             continue;
         }
@@ -1186,80 +1306,90 @@ static void scatter_results(KetjuRegion &reg)
         if(dt_drift > 0) {
             for(int j = 0; j < 3; j++) {
                 /* desired final position = final_abs_pos + CoM displacement during drift */
-                double desired_pos = final_abs_pos[3*i + j] + reg.com_vel[j] * dt_drift;
+                double desired_pos = sp.Pos[j] + reg.com_vel[j] * dt_drift;
                 double delta_pos = desired_pos - P[idx].Pos[j];
 #ifdef BOX_PERIODIC
                 double box = (j == 0) ? boxSize_X : (j == 1) ? boxSize_Y : boxSize_Z;
                 if(box > 0) { while(delta_pos > 0.5 * box) delta_pos -= box; while(delta_pos < -0.5 * box) delta_pos += box; }
 #endif
                 P[idx].Vel[j] = delta_pos / dt_drift;
-                P[idx].KetjuFinalVel[j] = final_rel_vel[3*i + j] + reg.com_vel[j];
+                P[idx].KetjuFinalVel[j] = sp.Vel[j] + reg.com_vel[j];
             }
         } else {
             /* no drift — set position and velocity directly */
             for(int j = 0; j < 3; j++) {
-                P[idx].Pos[j] = final_abs_pos[3*i + j];
-                P[idx].Vel[j] = final_rel_vel[3*i + j] + reg.com_vel[j];
+                P[idx].Pos[j] = sp.Pos[j];
+                P[idx].Vel[j] = sp.Vel[j] + reg.com_vel[j];
                 P[idx].KetjuFinalVel[j] = P[idx].Vel[j];
             }
         }
 
 #ifdef SINK_PARTICLES
-        /* update spin for PN particles (first n_pn in integrator ordering) */
-        if(i < n_pn && P[idx].Type == 5) {
-            for(int j = 0; j < 3; j++) P[idx].KetjuSpin[j] = final_spin[3*i + j];
+        /* update spin for PN particles */
+        if(sp.is_pn && P[idx].Type == 5) {
+            for(int j = 0; j < 3; j++) P[idx].KetjuSpin[j] = sp.Spin[j];
         }
 #endif
         P[idx].KetjuIntegrated = 1;
     }
 
+    /* ---- Phase 5: stellar collision check ---- */
 #ifdef KETJU_MERGE_STARS
-    /* Stellar collision check: merge living Type 4 pairs closer than R1+R2 (physical radii from tables).
-     * Dead remnants (NS/BH) are point masses — skip collision check for those.
-     * Collect all stellar radii once upfront to avoid per-pair MPI broadcasts. */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     {
-        /* collect stellar radii for all living Type 4 particles */
-        std::vector<double> star_radius_cm(n, 0.0);
-        std::vector<double> local_radii(n, 0.0);
-        for(int i = 0; i < n; i++) {
-            if(reg.extra_data[i].Type != 4 || reg.all_particles[i].is_dead_remnant) continue;
-            if(reg.extra_data[i].Task == ThisTask) {
-                int idx = reg.extra_data[i].Index;
-                double logM = log10(DMAX(P[idx].MstarSampleIMF[0], 0.08));
-                double logZ = log10(DMAX(P[idx].BirthMetallicity, 1e-10));
-                double age_yr = evaluate_stellar_age_Gyr(idx) * 1e9;
-                double log_age = log10(DMAX(age_yr, 100.0));
-                local_radii[i] = pow(10., stellar_log_R_cm(logM, logZ, log_age));
-            }
+        /* Each task computes radii for its local Type 4 living stars, then Gatherv
+         * to affected root where the N² collision check runs. Results (mass updates
+         * from collisions) flow through handle_mergers which updates final_mass. */
+        std::vector<double> my_radii(my_count, 0.0);
+        for(int i = 0; i < my_count; i++) {
+            if(my_particles[i].Type != 4 || my_particles[i].is_dead_remnant) continue;
+            int idx = my_particles[i].Index;
+            double logM = log10(DMAX(P[idx].MstarSampleIMF[0], 0.08));
+            double logZ = log10(DMAX(P[idx].BirthMetallicity, 1e-10));
+            double age_yr = evaluate_stellar_age_Gyr(idx) * 1e9;
+            double log_age = log10(DMAX(age_yr, 100.0));
+            my_radii[i] = pow(10., stellar_log_R_cm(logM, logZ, log_age));
         }
-        /* single Allreduce to collect all radii (each task contributes its local particles, others are 0) */
-        MPI_Allreduce(local_radii.data(), star_radius_cm.data(), n, MPI_DOUBLE, MPI_SUM, reg.affected_tasks.comm);
 
-        for(int i = 0; i < n; i++) {
-            if(final_mass[i] <= 0 || reg.extra_data[i].Type != 4) continue;
-            if(star_radius_cm[i] <= 0) continue; /* dead remnant or failed lookup */
-            for(int j = i + 1; j < n; j++) {
-                if(final_mass[j] <= 0 || reg.extra_data[j].Type != 4) continue;
-                if(star_radius_cm[j] <= 0) continue;
-                double d2 = 0;
-                for(int k = 0; k < 3; k++) {
-                    double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
-                    d2 += dx * dx;
-                }
-                double sep_cm = sqrt(d2) * UNIT_LENGTH_IN_CGS * All.cf_atime;
-                if(sep_cm < star_radius_cm[i] + star_radius_cm[j]) {
-                    int victim = (final_mass[i] < final_mass[j]) ? i : j;
-                    int surv = (victim == i) ? j : i;
-                    final_mass[surv] += final_mass[victim];
-                    final_mass[victim] = 0;
-                    double Mi = original_mass[i] * UNIT_MASS_IN_SOLAR;
-                    double Mj = original_mass[j] * UNIT_MASS_IN_SOLAR;
-                    if(ThisTask == 0)
+        /* Gatherv radii to affected root (same ordering as Scatterv) */
+        std::vector<double> star_radius_cm;
+        std::vector<int> recv_counts(n_aff, 0), recv_displs(n_aff, 0);
+        MPI_Gather(&my_count, 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
+                   reg.affected_tasks.root, reg.affected_tasks.comm);
+        if(reg.affected_tasks.is_root()) {
+            for(int t = 1; t < n_aff; t++) recv_displs[t] = recv_displs[t-1] + recv_counts[t-1];
+            star_radius_cm.resize(n, 0.0);
+        }
+        MPI_Gatherv(my_radii.data(), my_count, MPI_DOUBLE,
+                     star_radius_cm.data(), recv_counts.data(), recv_displs.data(), MPI_DOUBLE,
+                     reg.affected_tasks.root, reg.affected_tasks.comm);
+
+        /* collision check on affected root (has full position/mass/radius arrays) */
+        if(reg.affected_tasks.is_root()) {
+            for(int i = 0; i < n; i++) {
+                if(final_mass[i] <= 0 || reg.extra_data[i].Type != 4) continue;
+                if(star_radius_cm[i] <= 0) continue;
+                for(int j = i + 1; j < n; j++) {
+                    if(final_mass[j] <= 0 || reg.extra_data[j].Type != 4) continue;
+                    if(star_radius_cm[j] <= 0) continue;
+                    double d2 = 0;
+                    for(int k = 0; k < 3; k++) {
+                        double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
+                        d2 += dx * dx;
+                    }
+                    double sep_cm = sqrt(d2) * UNIT_LENGTH_IN_CGS * All.cf_atime;
+                    if(sep_cm < star_radius_cm[i] + star_radius_cm[j]) {
+                        int victim = (final_mass[i] < final_mass[j]) ? i : j;
+                        int surv = (victim == i) ? j : i;
+                        final_mass[surv] += final_mass[victim];
+                        final_mass[victim] = 0;
+                        double Mi = original_mass[i] * UNIT_MASS_IN_SOLAR;
+                        double Mj = original_mass[j] * UNIT_MASS_IN_SOLAR;
                         printf("KETJU STELLAR COLLISION: ID %llu (%.1f Msun) + ID %llu (%.1f Msun) at sep=%.2e cm (R1+R2=%.2e cm)\n",
                             (unsigned long long)reg.extra_data[i].ID, Mi,
                             (unsigned long long)reg.extra_data[j].ID, Mj,
                             sep_cm, star_radius_cm[i] + star_radius_cm[j]);
+                    }
                 }
             }
         }
@@ -1267,6 +1397,8 @@ static void scatter_results(KetjuRegion &reg)
 #endif
 #endif
 
+    /* handle mergers (integrator mergers + stellar collisions) — merger decisions
+     * are made on affected root then broadcast to all affected tasks for execution */
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     handle_mergers(reg, final_abs_pos, final_mass, original_mass);
 #endif
