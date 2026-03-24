@@ -49,7 +49,7 @@ struct kernel_addthermalFB {Vec3<double> dp; double r, wk, dwk, hinv, hinv3, hin
 /* define structures to use below */
 struct INPUT_STRUCT_NAME
 {
-    Vec3<MyDouble> Pos; MyDouble KernelRadius, Msne, Esne, wt_sum;
+    MyDouble Pos[3], KernelRadius, Msne, Esne, wt_sum;
 #ifdef METALS
     MyDouble yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
 #endif
@@ -61,7 +61,7 @@ struct INPUT_STRUCT_NAME
 void particle2in_addthermalFB(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     if((P[i].SNe_ThisTimeStep<=0)||(P[i].DensityAroundParticle<=0)||(P[i].Mass<=0)) {in->Msne=0; return;} // trap for no sne
-    int k; in->KernelRadius=P[i].KernelRadius; in->wt_sum=P[i].DensityAroundParticle; in->Pos=P[i].Pos; // simple kernel-weighted deposition
+    int k; in->KernelRadius=P[i].KernelRadius; in->wt_sum=P[i].DensityAroundParticle; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];} // simple kernel-weighted deposition
     struct addFB_evaluate_data_in_ local; particle2in_addFB_fromstars(&local,i,0); // get feedback properties from generic routine //
     in->Msne = local.Msne; in->Esne = 0.5 * local.Msne * local.SNe_v_ejecta*local.SNe_v_ejecta; // assign mass and energy to be used below
 #ifdef METALS
@@ -149,9 +149,9 @@ int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnode
 #endif
 
                 if(Mass_j <= 0) {continue;} // require the particle has mass //
-                kernel.dp = local.Pos - P[j].Pos;
+                for(k=0; k<3; k++) {kernel.dp[k] = local.Pos[k] - P[j].Pos[k];}
                 NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); // find the closest image in the given box size  //
-                r2=kernel.dp.norm_sq();
+                r2 = kernel.dp.norm_sq();
                 if(r2<=0) {continue;} // same particle //
                 if(r2>=h2) {continue;} // outside kernel //
                 // calculate kernel quantities //

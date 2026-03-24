@@ -71,7 +71,7 @@
     Fluxes.v[0] += -hfc * kernel.dp[0]; /* momentum */
     Fluxes.v[1] += -hfc * kernel.dp[1];
     Fluxes.v[2] += -hfc * kernel.dp[2];
-    vi_dot_r = local.Vel[0]*kernel.dp[0] + local.Vel[1]*kernel.dp[1] + local.Vel[2]*kernel.dp[2];
+    vi_dot_r = dot(local.Vel, kernel.dp);
     Fluxes.p += hfc_egy * hfc_dwk_i * vdotr2_phys - hfc * vi_dot_r; /* total energy */
     
     
@@ -114,9 +114,7 @@
     /* --------------------------------------------------------------------------------- */
     /* ... magnetic acceleration (with correction/limiter term) ... */
     /* --------------------------------------------------------------------------------- */
-    double dBx = local.BPred[0] - BPred_j[0];
-    double dBy = local.BPred[1] - BPred_j[1];
-    double dBz = local.BPred[2] - BPred_j[2];
+    Vec3<double> dB = {local.BPred[0] - BPred_j[0], local.BPred[1] - BPred_j[1], local.BPred[2] - BPred_j[2]};
     int k1;
     for(k = 0; k < 3; k++)
     {
@@ -162,10 +160,8 @@
     double eta = 0.5 * (local.Balpha + CellP[j].Balpha) * vsigb * kernel.r;
     mf_dissInd *= eta;
     /* units are Bcode * vcode * rcode*rcode = vcode * Bphys*rphys^2 = a * vphys*Bphys*rphys^2 */
-    Fluxes.B[0] += mf_dissInd * dBx / All.cf_atime;
-    Fluxes.B[1] += mf_dissInd * dBy / All.cf_atime;
-    Fluxes.B[2] += mf_dissInd * dBz / All.cf_atime;
-    resistivity_heatflux = -0.5 * mf_dissInd * (dBx*dBx + dBy*dBy + dBz*dBz);
+    Fluxes.B += mf_dissInd / All.cf_atime * dB;
+    resistivity_heatflux = -0.5 * mf_dissInd * dB.norm_sq();
     /* units are Bc^2 * vc * rc^2 = (Pc/fac_magnetic_pressure) * vc * rc^2 = 1/fac_magnetic_pressure * mc * Pc/rhoc * vc/rc */
 #endif
 #endif /* end MAGNETIC */
@@ -228,5 +224,5 @@
     /* convert everything to PHYSICAL units! */
     /* --------------------------------------------------------------------------------- */
     Fluxes.p *= All.cf_a2inv;
-    for(k=0;k<3;k++) {Fluxes.v[k] *= 1./All.cf_atime;}
+    Fluxes.v *= 1./All.cf_atime;
 }

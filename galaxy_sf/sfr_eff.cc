@@ -600,7 +600,7 @@ void star_formation_parent_routine(void)
                             P[i_star].Sink_Dust_Mass = 0;
 #endif
 #ifdef SINK_RETURN_BFLUX
-                            P[i_star].B[0] = P[i_star].B[1] = P[i_star].B[2] = 0;
+                            P[i_star].B = {};
 #endif
                             TreeReconstructFlag = 1;
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
@@ -613,10 +613,10 @@ void star_formation_parent_routine(void)
                             P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
-                            P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx[0]=P[i_star].comp_dx[1]=P[i_star].comp_dx[2]=P[i_star].comp_dv[0]=P[i_star].comp_dv[1]=P[i_star].comp_dv[2]=P[i_star].is_in_a_binary = 0;
+                            P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx = {}; P[i_star].comp_dv = {}; P[i_star].is_in_a_binary = 0;
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-                            P[i_star].SuperTimestepFlag=P[i_star].COM_GravAccel[0]=P[i_star].COM_GravAccel[1]=P[i_star].COM_GravAccel[2]=P[i_star].comp_Mass=P[i_star].COM_dt_tidal=0;
+                            P[i_star].SuperTimestepFlag=0; P[i_star].COM_GravAccel = {}; P[i_star].comp_Mass=P[i_star].COM_dt_tidal=0;
 #endif
 #ifdef SINK_ALPHADISK_ACCRETION
                             P[i_star].Sink_Mass_Reservoir = DMAX(DMAX(0, P[i_star].Mass-P[i_star].Sink_Mass), All.SeedReservoirMass);
@@ -740,7 +740,7 @@ void star_formation_parent_routine(void)
 #if defined(GALSF_SUBGRID_WINDS)
 void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvtau_return[4])
 {
-    int j; double v,p,prob, norm, dir[3];
+    int j; double v,p,prob, norm; Vec3<double> dir = {};
 
 #if (GALSF_SUBGRID_WIND_SCALING == 0)
     /* this is the simple, old standard wind model, with constant velocity & loading with SFR */
@@ -812,25 +812,24 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
         double theta = acos(2 * get_random_number(P[i].ID + 3) - 1);
         double phi = 2 * M_PI * get_random_number(P[i].ID + 4);
         dir[0] = sin(theta) * cos(phi); dir[1] = sin(theta) * sin(phi); dir[2] = cos(theta);
-        if(get_random_number(P[i].ID + 5) < 0.5) {for(j=0;j<3;j++) dir[j]=-dir[j];}
+        if(get_random_number(P[i].ID + 5) < 0.5) {dir = -dir;}
 #endif
 #if (GALSF_WINDS_ORIENTATION==1) // polar wind (defined by accel.cross.vel)
-        dir[0] = P[i].GravAccel[1] * P[i].Vel[2] - P[i].GravAccel[2] * P[i].Vel[1];
-        dir[1] = P[i].GravAccel[2] * P[i].Vel[0] - P[i].GravAccel[0] * P[i].Vel[2];
-        dir[2] = P[i].GravAccel[0] * P[i].Vel[1] - P[i].GravAccel[1] * P[i].Vel[0];
-        if(get_random_number(P[i].ID + 5) < 0.5) {for(j=0;j<3;j++) dir[j]=-dir[j];}
+        dir = cross(P[i].GravAccel, P[i].Vel);
+        if(get_random_number(P[i].ID + 5) < 0.5) {dir = -dir;}
 #endif
 #if (GALSF_WINDS_ORIENTATION==2) // along density gradient //
-        for(j=0;j<3;j++) dir[j]=-P[i].GradRho[j];
+        dir = -P[i].GradRho;
 #endif
 
         // now actually do the kick for the wind //
-        for(j=0,norm=0;j<3;j++) norm+=dir[j]*dir[j];
-        if(norm>0) {norm=sqrt(norm);} else {dir[0]=dir[1]=0; dir[2]=norm=1;}
+        norm = dir.norm_sq();
+        if(norm>0) {norm=sqrt(norm);} else {dir = {0,0,1}; norm=1;}
+        dir /= norm;
+        P[i].Vel += v * All.cf_atime * dir;
         for(j = 0; j < 3; j++)
         {
-            P[i].Vel[j] += v * All.cf_atime * dir[j]/norm;
-            CellP[i].VelPred[j] += v * All.cf_atime * dir[j]/norm;
+            CellP[i].VelPred[j] += v * All.cf_atime * dir[j];
         }
         CellP[i].DelayTime = All.WindFreeTravelMaxTimeFactor / All.cf_hubble_a;
     } /* if(get_random_number(P[i].ID + 2) < prob) */

@@ -195,7 +195,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 for(k=0;k<N_RT_FREQ_BINS;k++) 
                 {
                     double dE=0; dE = wk * local.Luminosity[k]; int kv; kv=0;
-                    double dfluxes[3]; dfluxes[0]=dfluxes[1]=dfluxes[2]=0;
+                    Vec3<double> dfluxes = {};
 
 #if !defined(RT_INJECT_PHOTONS_DISCRETELY)
                     #pragma omp atomic
@@ -246,7 +246,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 
 #if defined(RT_EVOLVE_FLUX) && defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) /* when we use these flags, we add the 'full' optically-thin flux directly to the neighbor cells. a more general formulation allows these fluxes to build up self-consistently, since we don't know a-priori what these 'should' be */
                     double dflux = -dE * C_LIGHT_CODE_REDUCED(j) / r;
-                    for(kv=0;kv<3;kv++) {dfluxes[kv] += dflux*dp[kv];}
+                    dfluxes += dflux*dp;
 #endif
 
                     

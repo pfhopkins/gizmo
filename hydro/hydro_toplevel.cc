@@ -98,11 +98,11 @@ struct Conserved_var_Riemann
 {
     MyDouble rho;
     MyDouble p;
-    MyDouble v[3];
+    Vec3<MyDouble> v;
     MyDouble u;
     MyDouble cs;
 #ifdef MAGNETIC
-    MyDouble B[3];
+    Vec3<MyDouble> B;
     MyDouble B_normal_corrected;
 #ifdef DIVBCLEANING_DEDNER
     MyDouble phi;

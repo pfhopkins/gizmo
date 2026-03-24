@@ -54,7 +54,7 @@
 #endif
     } else {
         if((Face_Area_Norm<=0)||(isnan(Face_Area_Norm))) {PRINT_WARNING("PANIC! Face_Area_Norm=%g Mij=%g/%g wk_ij=%g/%g Vij=%g/%g dx/dy/dz=%g/%g/%g NVT=%g/%g/%g NVT_j=%g/%g/%g \n",Face_Area_Norm,local.Mass,P[j].Mass,kernel.wk_i,kernel.wk_j,V_i,V_j,kernel.dp[0],kernel.dp[1],kernel.dp[2],local.NV_T[0][0],local.NV_T[0][1],local.NV_T[0][2],CellP[j].NV_T[0][0],CellP[j].NV_T[0][1],CellP[j].NV_T[0][2]); fflush(stdout);}
-        double n_unit[3]; for(k=0;k<3;k++) {n_unit[k] = Face_Area_Vec[k] / Face_Area_Norm;} /* define useful unit vector for below */
+        Vec3<double> n_unit; for(k=0;k<3;k++) {n_unit[k] = Face_Area_Vec[k] / Face_Area_Norm;} /* define useful unit vector for below */
 
         /* --------------------------------------------------------------------------------- */
         /* extrapolate the conserved quantities to the interaction face between the particles */
@@ -229,7 +229,7 @@
 #endif
             if(dummy_pressure != 0) // if we had to shift the pressure zero-point, use this point to correct back to the (allowed) negative pressures //
             {
-                for(k=0;k<3;k++) {Riemann_out.Fluxes.v[k] -= dummy_pressure * n_unit[k];} /* total momentum flux */
+                Riemann_out.Fluxes.v -= dummy_pressure * n_unit; /* total momentum flux */
                 Riemann_out.Fluxes.p -= dummy_pressure * Riemann_out.S_M; // default: total energy flux = v_frame.dot.mom_flux. note this is in the frame here, will correct for frame motion below. //
             }
 
@@ -256,7 +256,7 @@
             Fluxes.rho = Face_Area_Norm * Riemann_out.Fluxes.rho;
 #endif
             Fluxes.p = Face_Area_Norm * Riemann_out.Fluxes.p; // this is really Dt of --total-- energy, need to subtract KE component for e */
-            for(k=0;k<3;k++) {Fluxes.v[k] = Face_Area_Norm * Riemann_out.Fluxes.v[k];} // momentum flux (need to divide by mass) //
+            Fluxes.v = Face_Area_Norm * Riemann_out.Fluxes.v; // momentum flux (need to divide by mass) //
 #if defined(COSMIC_RAY_FLUID) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
             /* here we simply assume that if there is mass flux, the cosmic ray fluid is advected -with the mass flux-, taking an
              implicit constant (zeroth-order) reconstruction of the CR energy density at the face (we could reconstruct the CR
@@ -276,7 +276,7 @@
             }
 #endif
 #ifdef MAGNETIC
-            for(k=0;k<3;k++) {Fluxes.B[k] = Face_Area_Norm * Riemann_out.Fluxes.B[k];} // magnetic flux (B*V) //
+            Fluxes.B = Face_Area_Norm * Riemann_out.Fluxes.B; // magnetic flux (B*V) //
             Fluxes.B_normal_corrected = -Riemann_out.B_normal_corrected * Face_Area_Norm;
 #if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
             //Fluxes.phi = Riemann_out.Fluxes.phi * Face_Area_Norm; // after testing, we now prefer the mass-based fluxes, now //
@@ -298,7 +298,7 @@
                 /* ok SM is small, we should use adiabatic equations instead */
 #ifdef MAGNETIC
                 // convert the face pressure P_M to a gas pressure alone (subtract the magnetic term) //
-                for(k=0;k<3;k++) {Riemann_out.P_M -= 0.5*Riemann_out.Face_B[k]*Riemann_out.Face_B[k];}
+                Riemann_out.P_M -= 0.5*Riemann_out.Face_B.norm_sq();
 #endif
                 int use_entropic_energy_equation = 1;
                 double facenorm_pm = Riemann_out.P_M * Face_Area_Norm;

@@ -150,23 +150,23 @@ void radiation_pressure_winds_consolidated(void)
                                     avg_taufac +=  (P[j].Mass*delta_v_imparted_rp) * (dv_imparted_multiplescattering / (dE_over_c / P[j].Mass));
 
                                     /* determine the direction of the kick */
-                                    double dir[3], norm=0;
+                                    Vec3<double> dir = {}; double norm=0;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
                                     delta_v_imparted_rp = dv_imparted_multiplescattering; // ir kick: directed along opacity gradient //
-                                    for(k=0;k<3;k++) {dir[k]=-P[j].GradRho[k]; norm+=dir[k]*dir[k];} // based on density gradient near star //
+                                    dir = -P[j].GradRho; norm = dir.norm_sq(); // based on density gradient near star //
 #else
-                                    if(dv_imparted_singlescattering > dv_imparted_multiplescattering) {for(k=0;k<3;k++) {dir[k]=dp[k]; norm+=dir[k]*dir[k];}} // if kick is primarily from uv, then orient directly //
-                                        else {for(k=0;k<3;k++) {dir[k]=-P[j].GradRho[k]; norm+=dir[k]*dir[k];}} // otherwise, along opacity gradient //
+                                    if(dv_imparted_singlescattering > dv_imparted_multiplescattering) {dir = dp; norm = dir.norm_sq();} // if kick is primarily from uv, then orient directly //
+                                        else {dir = -P[j].GradRho; norm = dir.norm_sq();} // otherwise, along opacity gradient //
 #endif
-                                    if(norm>0) {norm=sqrt(norm); for(k=0;k<3;k++) dir[k] /= norm;} else {dir[0]=0; dir[1]=0; dir[2]=1; norm=1;}
-                                    for(k=0;k<3;k++) {P[j].Vel[k] += delta_v_imparted_rp * All.cf_atime * dir[k]; CellP[j].VelPred[k] += delta_v_imparted_rp * All.cf_atime * dir[k];} /* apply the kick [put into comoving code units as oppropriate */
+                                    if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
+                                    P[j].Vel += delta_v_imparted_rp * All.cf_atime * dir; CellP[j].VelPred += delta_v_imparted_rp * All.cf_atime * dir; /* apply the kick [put into comoving code units as oppropriate */
 
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
                                     /* if we're not forcing the kick orientation, need to separately apply the UV kick */
                                     delta_v_imparted_rp = dv_imparted_singlescattering; // uv kick: directed from star //
-                                    norm=0; for(k=0;k<3;k++) {dir[k]=dp[k]; norm+=dir[k]*dir[k];}
-                                    if(norm>0) {norm=sqrt(norm); for(k=0;k<3;k++) {dir[k] /= norm;}} else {dir[0]=0; dir[1]=0; dir[2]=1; norm=1;}
-                                    for(k=0; k<3; k++) {P[j].Vel[k] += delta_v_imparted_rp * All.cf_atime * dir[k]; CellP[j].VelPred[k] += delta_v_imparted_rp * All.cf_atime * dir[k];} /* apply the kick */
+                                    dir = dp; norm = dir.norm_sq();
+                                    if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
+                                    P[j].Vel += delta_v_imparted_rp * All.cf_atime * dir; CellP[j].VelPred += delta_v_imparted_rp * All.cf_atime * dir; /* apply the kick */
 #endif
                                 } /* closes if(get_random_number(P[i].ID + 2) < prob) */
                             } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */
@@ -416,8 +416,8 @@ int do_the_local_ionization(int target, double dt, int source)
     // reset all of the HII-region chimes quantities to null
     for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {CellP[target].Chimes_fluxPhotIon_HII[k]=0; CellP[target].Chimes_G0_HII[k]=0;}
     // set the quantities desired for this age bin specifically: need a softened radius, for use here //
-    double dp[3],r2=0,stellar_mass=P[source].Mass*UNIT_MASS_IN_SOLAR; for(k=0;k<3;k++) {dp[k]=P[source].Pos[k]-P[target].Pos[k];}
-    NEAREST_XYZ(dp[0],dp[1],dp[2],1); for(k=0;k<3;k++) {dp[k]*=All.cf_atime*UNIT_LENGTH_IN_CGS; r2+=dp[k]*dp[k];} // separation in cgs
+    double stellar_mass=P[source].Mass*UNIT_MASS_IN_SOLAR; Vec3<double> dp = P[source].Pos - P[target].Pos;
+    NEAREST_XYZ(dp[0],dp[1],dp[2],1); dp *= All.cf_atime*UNIT_LENGTH_IN_CGS; double r2 = dp.norm_sq(); // separation in cgs
     double eps_cgs=KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER*ForceSoftening_KernelRadius(source)*All.cf_atime*UNIT_LENGTH_IN_CGS; // plummer equivalent softening
     r2+=eps_cgs*eps_cgs; // gravitational Softening (cgs units)
     CellP[target].Chimes_fluxPhotIon_HII[age_bin] = (1.0 - All.Chimes_f_esc_ion) * chimes_ion_luminosity(stellar_age_myr, stellar_mass) / r2; // cgs flux of H-ionising photons per second seen by the star particle

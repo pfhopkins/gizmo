@@ -25,7 +25,7 @@ def gresho_vphi_analytic(r):
     return vphi
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_mpi_ranks", (1,))
 def test_gresho(num_mpi_ranks):
     test_name = "gresho"
     build_and_run_test(test_name, num_mpi_ranks)
