@@ -335,6 +335,15 @@ void merge_and_split_particles(void)
 #endif
                             }
                         }
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+                        /* recall 'i' was already flagged to merge; for this module can get in a timestep trap when BH surrounded only by spawns, keep waking each other up and driving down; put a timestep 'escape' clause explicitly in here -- can tune timestep for different problems of course */
+                        if(P[i].Type==0 && P[j].Type==0) {
+                            if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {
+                                double dti = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i), dtj=GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+                                double dt0 = 1.e-7;
+                                if(dti<dt0 || dtj<dt0) {do_allow_merger = 1;}
+                            }}
+#endif
                         if(P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;} /* boost this enough to ensure the spawned element will never chosen if 'real' candidate exists */
 #endif
                         /* make sure we're not taking the same particle (and that its available to be merged into)! and that its the least-massive available candidate for merging onto */
