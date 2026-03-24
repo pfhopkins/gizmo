@@ -88,8 +88,12 @@ void resolvedism_determine_SNe(void)
         }
         P[i].M_current_old = M_new;
 
-        /* Check wind injection threshold: 1% of initial stellar mass */
-        if(P[i].WindMassAccum > 0.01 * Mstar) {
+        /* Check wind injection threshold: mass-dependent to prevent rapid-fire for massive stars.
+         * Low-mass (8 Msun): 1% = 0.08 Msun per dump. High-mass (300 Msun): ~15% = 45 Msun per dump.
+         * Linear interpolation: frac = 0.01 + 0.19 * (Mstar - 8) / (350 - 8), capped at 0.20 */
+        double wind_frac = 0.01 + 0.19 * DMAX(0, (Mstar - 8.0)) / (350.0 - 8.0);
+        if(wind_frac > 0.20) wind_frac = 0.20;
+        if(P[i].WindMassAccum > wind_frac * Mstar) {
             P[i].SNe_ThisTimeStep = 3; /* flag for wind injection */
             n_wind_local++;
         }
@@ -803,6 +807,17 @@ void resolvedism_inject_sn_energy(void)
             }
         }
         fflush(FdFeedbackBudget);
+        /* Print budget summary to stdout (domain decomp steps only) */
+        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {
+            const char *chname[5] = {"SN", "AGB", "wind", "radpres", "Ia"};
+            for(int ch = 0; ch < 5; ch++) {
+                if(glob_n[ch] > 0) {
+                    printf("RESOLVEDISM BUDGET: ch=%s n=%.0f M_inj=%.4f M_rem=%.4f E=%.2e dp=%.2e Z_inj=%.4f [Msun/erg/cgs] at t=%g\n",
+                        chname[ch], glob_n[ch], glob_Mi[ch], glob_Mr[ch], glob_E[ch], glob_dp[ch], glob_Z[ch], All.Time);
+                }
+            }
+            fflush(stdout);
+        }
         /* Radpressure summary (only on domain decomp steps) */
         if(glob_n[3] > 0 && All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {
             printf("RESOLVEDISM RADPRESSURE: %.0f active stars, dp_tot=%.3e [cgs] at t=%g\n",

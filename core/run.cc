@@ -166,6 +166,18 @@ void run(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
         resolvedism_determine_SNe(); // resolved ISM SN event flagging
+        {   int saved_wakeup = NeedToWakeupParticles_local;
+            NeedToWakeupParticles_local = 0;
+            resolvedism_inject_sn_energy(); // resolved ISM SN energy injection — must run before merge/split/rearrange to avoid stale active list
+            int fb_flag = NeedToWakeupParticles_local;
+            NeedToWakeupParticles_local = saved_wakeup;
+            int fb_recompute = 0;
+            MPI_Allreduce(&fb_flag, &fb_recompute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(fb_recompute > 0) {
+                if(ThisTask == 0) printf("RESOLVEDISM: Recomputing hydro for feedback-affected cells\n");
+                compute_hydro_densities_and_forces();
+            }
+        }
 #endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
@@ -352,20 +364,6 @@ void calculate_non_standard_physics(void)
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
-#ifdef GALSF_RESOLVEDISM_FB
-    {   int saved_wakeup = NeedToWakeupParticles_local; /* preserve hydro wakeup flag */
-        NeedToWakeupParticles_local = 0;
-        resolvedism_inject_sn_energy(); // resolved ISM SN energy injection
-        int fb_flag = NeedToWakeupParticles_local; /* did feedback set it? */
-        NeedToWakeupParticles_local = saved_wakeup; /* restore hydro wakeup flag */
-        int fb_recompute = 0;
-        MPI_Allreduce(&fb_flag, &fb_recompute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(fb_recompute > 0) {
-            if(ThisTask == 0) printf("RESOLVEDISM: Recomputing hydro for feedback-affected cells\n");
-            compute_hydro_densities_and_forces();
-        }
-    }
-#endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization
 #endif
@@ -1090,11 +1088,10 @@ void energy_statistics(void)
 #endif
 
 #if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
-  /* Conservation budget: mass and energy tracking */
+  /* Conservation budget: mass and energy tracking (only on domain decomp steps to avoid expense) */
+  if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
   {
-#ifndef OUTPUT_ADDITIONAL_RUNINFO
-    compute_global_quantities_of_system(); /* ensure SysState is populated */
-#endif
+    compute_global_quantities_of_system(); /* ensure SysState is populated for conservation budget */
     double cool_glob = 0;
     MPI_Reduce(&CumulCoolingEnergyLoss, &cool_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
