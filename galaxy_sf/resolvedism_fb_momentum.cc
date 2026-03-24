@@ -31,6 +31,8 @@ struct INPUT_STRUCT_NAME
     MyDouble Pos[3], KernelRadius, Mej, wt_sum;
     MyDouble WindMomentum;
     MyDouble MetalMass;
+    MyIDType StarID;
+    MyDouble StarMass; /* initial mass in Msun, for diagnostics */
     int fb_channel; /* 1=AGB, 2=wind */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
@@ -47,6 +49,8 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
     in->KernelRadius = P[i].KernelRadius;
     in->wt_sum = 0; in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
+    in->StarID = P[i].ID;
+    in->StarMass = P[i].MstarSampleIMF[0];
     in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
@@ -202,7 +206,7 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
     if(P[i].Mass > 0) {
         int k;
         for(k = 0; k < 3; k++) {
-            P[i].Vel[k] -= out->MomentumInjected[k] / P[i].Mass;
+            P[i].Vel[k] -= out->MomentumInjected[k] * All.cf_atime / P[i].Mass;
         }
     }
 }
@@ -346,16 +350,35 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 if(local.WindMomentum > 0) {
                     double dp_share = wk * local.WindMomentum;
                     double dM_wind = (local.Mej > 0) ? wk * local.Mej : 0;
+                    double dv_mag2 = 0;
                     for(k = 0; k < 3; k++) {
                         double dp_k = dp_share * (-kernel.dp[k] / kernel.r);
-                        double dv_k = dp_k / (Mass_j + dM_wind);
+                        double dv_k = dp_k * All.cf_atime / (Mass_j + dM_wind);
                         #pragma omp atomic
                         P[j].Vel[k] += dv_k;
                         #pragma omp atomic
                         CellP[j].VelPred[k] += dv_k;
                         #pragma omp atomic
-                        P[j].dp[k] += dp_k / All.cf_atime;
+                        P[j].dp[k] += dp_k * All.cf_atime;
                         out.MomentumInjected[k] += dp_k;
+                        dv_mag2 += dv_k * dv_k;
+                    }
+                    /* diagnostic: flag extreme kicks (>500 km/s in code velocity units) */
+                    {
+                        double dv_mag = sqrt(dv_mag2);
+                        double vk0, vk1, vk2;
+                        #pragma omp atomic read
+                        vk0 = P[j].Vel[0];
+                        #pragma omp atomic read
+                        vk1 = P[j].Vel[1];
+                        #pragma omp atomic read
+                        vk2 = P[j].Vel[2];
+                        double vmag = sqrt(vk0*vk0 + vk1*vk1 + vk2*vk2);
+                        if(dv_mag > 500.0 || vmag > 5000.0)
+                            printf("WIND_KICK_WARN: Task=%d star=%llu(%.1fMsun) -> cell=%llu dv=%.1f |v|=%.1f Nngb=%.2f rho=%.3e wk=%.4f r=%.4f ch=%d\n",
+                                ThisTask, (unsigned long long)local.StarID, local.StarMass,
+                                (unsigned long long)P[j].ID, dv_mag, vmag,
+                                P[j].NumNgb, CellP[j].Density, wk, kernel.r, local.fb_channel);
                     }
                     P[j].wakeup = 1;
                     NeedToWakeupParticles_local = 1;

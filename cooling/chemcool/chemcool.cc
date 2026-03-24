@@ -154,7 +154,8 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
     rho      = CellP[target].Density * All.cf_a3inv;
     timestep = dt;
-    divv     = CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2];
+    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
+    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
 
     /* Per-particle element abundances for cooling rates */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -226,7 +227,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double u_Habing = 5.29e-14; /* Habing field, in erg cm^-3 */
-    double fac_flux2habing = 1.0 / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)) / u_Habing;
+    double fac_flux2habing = All.cf_a2inv / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)) / u_Habing; /* cf_a2inv converts comoving r^2 from treecol to physical r^2 */
 
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;

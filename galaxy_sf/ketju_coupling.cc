@@ -707,10 +707,14 @@ static void setup_integrator(KetjuRegion &reg)
             for(int j = 0; j < 3; j++) {
                 /* comoving -> physical: pos_phys = (pos_comov - com_comov) * a */
                 ps->pos[i][j] = (reg.all_particles[i].Pos[j] - reg.com_pos[j]) * a;
-                /* GIZMO velocity is v_peculiar (physical) already in non-cosmo;
-                 * in cosmo mode, Vel stores v_code = v_peculiar, and Hubble flow
-                 * is handled by the drift factor. For MSTAR we need peculiar velocity. */
-                ps->vel[i][j] = (reg.all_particles[i].Vel[j] - reg.com_vel[j]);
+                /* GIZMO Vel stores canonical momentum p = a^2 * dx_comov/dt_phys.
+                 * Peculiar velocity = Vel / a. Physical velocity = v_pec + H*r_phys.
+                 * MSTAR needs physical velocity (includes Hubble flow).
+                 * In non-cosmo: a=1, Vel is already physical, H=0. */
+                double v_pec_rel = (reg.all_particles[i].Vel[j] - reg.com_vel[j]) / a;
+                ps->vel[i][j] = v_pec_rel;
+                if(All.ComovingIntegrationOn)
+                    ps->vel[i][j] += hubble_function(a) * ps->pos[i][j];
             }
             reg.extra_data[i].ID = reg.all_particles[i].ID;
             reg.extra_data[i].Task = reg.all_particles[i].Task;
@@ -1155,6 +1159,14 @@ static void scatter_results(KetjuRegion &reg)
     std::vector<ketju_scatter_particle> scatter_buf;
 
     /* ---- Phase 1: compute root packs results into scatter_buf ---- */
+    /* compute end-of-step scale factor for position/velocity back-conversion */
+    double a_end = All.cf_atime; /* 1 for non-cosmo */
+    double hubble_end = 0; /* H(a_end); 0 for non-cosmo */
+    if(All.ComovingIntegrationOn) {
+        a_end = All.cf_atime * exp(reg.ti_step * All.Timebase_interval);
+        hubble_end = hubble_function(a_end);
+    }
+
     if(reg.compute_tasks.is_root() && reg.integrator) {
         struct ketju_system_physical_state *ps = reg.integrator->physical_state;
         scatter_buf.resize(n);
@@ -1171,9 +1183,12 @@ static void scatter_results(KetjuRegion &reg)
             sp.OriginalMass = reg.all_particles[i].Mass;
 #endif
             for(int j = 0; j < 3; j++) {
-                /* physical -> comoving: pos_comov = com_comov + pos_phys / a */
-                sp.Pos[j] = reg.com_pos[j] + ps->pos[i][j] / All.cf_atime;
-                sp.Vel[j] = ps->vel[i][j]; /* peculiar velocity, same in both frames */
+                /* physical -> comoving: use a_end since positions are at end of step */
+                sp.Pos[j] = reg.com_pos[j] + ps->pos[i][j] / a_end;
+                /* physical velocity -> canonical momentum: remove Hubble flow, multiply by a_end.
+                 * sp.Vel stores CoM-relative canonical momentum (com_vel added later in velocity trick).
+                 * In non-cosmo: a_end=1, hubble_end=0, so sp.Vel = ps->vel (unchanged). */
+                sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
             }
 #ifdef SINK_PARTICLES
             sp.SinkSubType = reg.extra_data[i].SinkSubType;
@@ -1545,7 +1560,13 @@ void ketju_run_integration(void)
         /* convert to physical time for MSTAR integrator */
         double dt_physical;
         if(All.ComovingIntegrationOn) {
-            dt_physical = reg.ti_step * All.Timebase_interval / All.cf_hubble_a;
+            /* proper time integral: dt_phys = integral(da / (H*a)) from a_start to a_end.
+             * gravkick_factor = integral(dt/a), so dt_phys ≈ gravkick_factor * a_mid.
+             * This is exact to second order in da/a. */
+            integertime t0 = All.Ti_Current;
+            integertime t1 = t0 + reg.ti_step;
+            double a_mid = All.cf_atime * exp(0.5 * reg.ti_step * All.Timebase_interval);
+            dt_physical = get_gravkick_factor(t0, t1, -1, 0) * a_mid;
         } else {
             dt_physical = reg.ti_step * All.Timebase_interval;
         }

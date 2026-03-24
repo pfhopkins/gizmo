@@ -73,6 +73,7 @@ void run(void)
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
 
+
 #ifdef KETJU_REGULARIZATION
         ketju_find_regions();       /* detect chain regions around massive stars/BHs */
         ketju_run_integration();    /* subtract tree force, run MSTAR, apply velocity trick */
@@ -83,6 +84,7 @@ void run(void)
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
+
 
         output_log_messages();	/* write some info to log-files */
 
@@ -143,7 +145,9 @@ void run(void)
         }
 #endif
 
+
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
+
 
 #ifdef GALSF_SUBGRID_WINDS
 #if (GALSF_SUBGRID_WIND_SCALING==2)
@@ -166,6 +170,7 @@ void run(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
         resolvedism_determine_SNe(); // resolved ISM SN event flagging
+
         {   int saved_wakeup = NeedToWakeupParticles_local;
             NeedToWakeupParticles_local = 0;
             resolvedism_inject_sn_energy(); // resolved ISM SN energy injection — must run before merge/split/rearrange to avoid stale active list
@@ -178,12 +183,14 @@ void run(void)
                 compute_hydro_densities_and_forces();
             }
         }
+
 #endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+
         
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
@@ -195,7 +202,9 @@ void run(void)
         
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
 
+
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();

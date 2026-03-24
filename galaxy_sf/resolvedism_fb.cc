@@ -573,8 +573,10 @@ void resolvedism_inject_sn_energy(void)
                 wind_log_tb[n_wind_logged] = P[i].TimeBin;
                 n_wind_logged++;
             }
-            printf("RESOLVEDISM WIND: Task=%d ID=%llu M_init=%.2f dM=%.4f dp=%.3e\n",
-                ThisTask, (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0], dM_wind, dp_wind);
+            printf("RESOLVEDISM WIND: Task=%d ID=%llu M_init=%.2f M_cur=%.4f dM=%.4f dp=%.3e frac=%.3f bin=%d t=%.6f\n",
+                ThisTask, (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0],
+                P[i].Mass * UNIT_MASS_IN_SOLAR, dM_wind, dp_wind,
+                dM_wind / P[i].MstarSampleIMF[0], P[i].TimeBin, All.Time);
             P[i].WindMassAccum = 0;
             P[i].WindMomentumAccum = 0;
             P[i].SNe_ThisTimeStep = -1;
