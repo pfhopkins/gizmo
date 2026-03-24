@@ -15,9 +15,9 @@ DesNumNgb                          20
 MaxNumNgbDeviation                 0.1
 MaxMemSize                         1000
 ErrTolIntAccuracy                  0.001
-CourantFac                         0.025
+CourantFac                         0.1
 MaxRMSDisplacementFac              0.125
-MaxSizeTimestep                    5.0e-4
+MaxSizeTimestep                    1.0 
 ArtCondConstant                    0.25
 ViscosityAMin                      0.025
 ViscosityAMax                      2
