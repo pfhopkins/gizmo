@@ -49,7 +49,7 @@ void force_dynamic_update_node(int no, int mode, MyFloat *minbound, MyFloat *max
 void force_update_hmax(void);
 void force_update_hmax_of_node(int no, int mode);
 void force_finish_kick_nodes(void);
-void force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount, int *nextfree);
+int force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount, int *nextfree);
 void force_exchange_pseudodata(void);
 void force_insert_pseudo_particles(void);
 void force_add_element_to_tree(int igas, int istar);
