@@ -671,7 +671,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i)
     double eta_ohmic = eta_O*units_cgs_to_code, eta_hall = eta_H*units_cgs_to_code, eta_ad = x_neutral * eta_A*units_cgs_to_code;
 #ifdef MHD_NON_IDEAL_CORRECTIONTERMS /* account for unphysical or not internally self-consistent drift/slip speeds (PFH+Squire 24; arXiv:2405.06026) */
     double gradbmag2=0,gradbmag=0,btmp=0,L_B=MAX_REAL_NUMBER;
-    int j; for(k=0;k<3;k++) {for(j=0;j<3;j++) {btmp=CellP[i].Gradients.B[k][j]; gradbmag2+=btmp*btmp;}} // need to get magnitude of B gradient for below
+    gradbmag2 = CellP[i].Gradients.B.frobenius_norm_sq(); // need to get magnitude of B gradient for below
     if(gradbmag2>0) {gradbmag=sqrt(gradbmag2)*(All.cf_a2inv/All.cf_atime)*gizmo2gauss; L_B=(B_Gauss/gradbmag)*UNIT_LENGTH_IN_CGS;} // L_B is gradient length in cgs
     double xi_AbsZi_eff = (xe*beta_e + (xi+1.e-25)*beta_i + xg*fabs(Z_grain)*beta_g) / (beta_e + beta_i + beta_g); // weighted mean xi_qi to use
     double psi_n = (xe/(1.+beta_e) + xi/(1.+beta_i) + xg*fabs(Z_grain)/(1.+beta_g)) / (xe+xi+xg*fabs(Z_grain) + 1.e-20); // coupling parameter for weight of neutrals in effective speed

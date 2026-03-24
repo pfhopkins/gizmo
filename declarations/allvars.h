@@ -65,6 +65,7 @@
 #include "typedefs.h"
 #include "../symmetric_tensor2.h"
 #include "../vec3.h"
+#include "../mat3.h"
 
 #ifdef CHIMES
 #include "../cooling/chimes/chimes_proto.h"
@@ -108,6 +109,8 @@ extern MyDouble Shearing_Box_Pos_Offset;
 extern short int special_boundary_condition_xyz_def_reflect[3];
 extern short int special_boundary_condition_xyz_def_outflow[3];
 #endif
+
+template<typename T> inline void nearest_xyz(Vec3<T>& v, int sign=1) { NEAREST_XYZ(v[0], v[1], v[2], sign); }
 
 
 #ifdef CHIMES
@@ -1034,7 +1037,7 @@ extern struct gravdata_out
     MyDouble SubGrid_CosmicRayEnergyDensity;
 #endif
 #ifdef RT_OTVET
-    MyDouble ET[N_RT_FREQ_BINS][6];
+    SymmetricTensor2<MyDouble> ET[N_RT_FREQ_BINS];
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     MyDouble Rad_Flux_UV;

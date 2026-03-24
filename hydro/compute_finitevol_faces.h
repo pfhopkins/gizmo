@@ -16,15 +16,9 @@
     /* note the 'default' formulation from Lanson and Vila takes wt_i=V_i, wt_j=V_j; but this assumes negligible variation in h between particles;
      it is more accurate to use a centered wt (centered face area), which we get by linear interpolation, in extreme discontinuities of particle separation */
     if((fabs(V_i-V_j)/DMIN(V_i,V_j))/NUMDIMS > 1.25) {wt_i=wt_j=V_i*V_j*(kernel.wk_i+kernel.wk_j)/(V_i*kernel.wk_i+V_j*kernel.wk_j);} else {wt_i=V_i; wt_j=V_j;} //wt_i=wt_j = 2.*V_i*V_j / (V_i + V_j); // more conservatively, could use DMIN(V_i,V_j), but that is less accurate
-    double facenormal_dot_dp = 0;
-    for(k=0;k<3;k++)
-    {
-        Face_Area_Vec[k] = kernel.wk_i * wt_i * (local.NV_T[k][0]*kernel.dp[0] + local.NV_T[k][1]*kernel.dp[1] + local.NV_T[k][2]*kernel.dp[2])
-                         + kernel.wk_j * wt_j * (CellP[j].NV_T[k][0]*kernel.dp[0] + CellP[j].NV_T[k][1]*kernel.dp[1] + CellP[j].NV_T[k][2]*kernel.dp[2]);
-        Face_Area_Vec[k] *= All.cf_atime*All.cf_atime; /* Face_Area_Norm has units of area, need to convert to physical */
-        Face_Area_Norm += Face_Area_Vec[k]*Face_Area_Vec[k];
-        facenormal_dot_dp += Face_Area_Vec[k] * kernel.dp[k]; /* check that face points same direction as vector normal: should be true for positive-definite (well-conditioned) NV_T */
-    }
+    Face_Area_Vec = (kernel.wk_i * wt_i * local.NV_T.matvec(kernel.dp) + kernel.wk_j * wt_j * CellP[j].NV_T.matvec(kernel.dp)) * (All.cf_atime*All.cf_atime); /* Face_Area_Norm has units of area, need to convert to physical */
+    Face_Area_Norm = Face_Area_Vec.norm_sq();
+    double facenormal_dot_dp = dot(Face_Area_Vec, kernel.dp); /* check that face points same direction as vector normal: should be true for positive-definite (well-conditioned) NV_T */
 
 
 #if defined(KERNEL_CRK_FACES) /* well-tested at this point */

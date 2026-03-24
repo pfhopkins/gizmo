@@ -165,7 +165,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                 if(P[j].Mass > 0)
                 {
                     dpos = P[j].Pos - local.Pos; dvel = P[j].Vel - local.Vel;
-                    NEAREST_XYZ(dpos[0],dpos[1],dpos[2],-1); r2=dpos.norm_sq();
+                    nearest_xyz(dpos,-1); r2=dpos.norm_sq();
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dvel,-1); /* wrap velocities for shearing boxes if needed */
                     double heff_j = DMAX( P[j].KernelRadius , ForceSoftening_KernelRadius(j) );
                     if(r2 < h_i2 || r2 < heff_j*heff_j)

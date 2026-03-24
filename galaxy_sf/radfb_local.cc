@@ -88,7 +88,7 @@ void radiation_pressure_winds_consolidated(void)
                                 if((P[j].Mass>0) && (CellP[j].Density>0))
                                 {
                                     Vec3<double> dp = P[j].Pos - P[i].Pos;
-                                    NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
+                                    nearest_xyz(dp); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
                                     if(r2>=h*h || r2<=0) {continue;}
                                     double h_eff_j = Get_Particle_Size(j); wt_sum += h_eff_j*h_eff_j; // weight factor for neighbors
                                 } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */
@@ -115,7 +115,7 @@ void radiation_pressure_winds_consolidated(void)
                             if((P[j].Mass>0) && (CellP[j].Density>0))
                             {
                                 Vec3<double> dp = P[j].Pos - P[i].Pos;
-                                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
+                                nearest_xyz(dp); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
                                 if(r2>=h*h || r2<=0) {continue;}
                                 double h_eff_i = DMIN(h, Get_Particle_Size(i)), h_eff_j = Get_Particle_Size(j);
                                 r2 += MIN_REAL_NUMBER + (h_eff_i/5.)*(h_eff_i/5.); // just a small number to prevent errors on near-overlaps
@@ -417,7 +417,7 @@ int do_the_local_ionization(int target, double dt, int source)
     for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {CellP[target].Chimes_fluxPhotIon_HII[k]=0; CellP[target].Chimes_G0_HII[k]=0;}
     // set the quantities desired for this age bin specifically: need a softened radius, for use here //
     double stellar_mass=P[source].Mass*UNIT_MASS_IN_SOLAR; Vec3<double> dp = P[source].Pos - P[target].Pos;
-    NEAREST_XYZ(dp[0],dp[1],dp[2],1); dp *= All.cf_atime*UNIT_LENGTH_IN_CGS; double r2 = dp.norm_sq(); // separation in cgs
+    nearest_xyz(dp); dp *= All.cf_atime*UNIT_LENGTH_IN_CGS; double r2 = dp.norm_sq(); // separation in cgs
     double eps_cgs=KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER*ForceSoftening_KernelRadius(source)*All.cf_atime*UNIT_LENGTH_IN_CGS; // plummer equivalent softening
     r2+=eps_cgs*eps_cgs; // gravitational Softening (cgs units)
     CellP[target].Chimes_fluxPhotIon_HII[age_bin] = (1.0 - All.Chimes_f_esc_ion) * chimes_ion_luminosity(stellar_age_myr, stellar_mass) / r2; // cgs flux of H-ionising photons per second seen by the star particle

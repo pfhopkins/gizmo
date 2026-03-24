@@ -786,7 +786,7 @@ int DynamicDiff_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
-                NEAREST_XYZ(kernel.dp[0], kernel.dp[1], kernel.dp[2], 1);
+                nearest_xyz(kernel.dp);
                 r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
                 double h_j = All.TurbDynamicDiffFac * P[j].KernelRadius;
                 double h_avg = 0.5 * (kernel.h_i + h_j);

@@ -321,7 +321,7 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].KernelRadius <= 0)) {continue;} /* make sure neighbor is valid */
                 int k; Vec3<double> dp=local.Pos-P[j].Pos; /* position offset */
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2=dp.norm_sq(); /* box-wrap appropriately and calculate distance */
+                nearest_xyz(dp); double r2=dp.norm_sq(); /* box-wrap appropriately and calculate distance */
 #ifdef BOX_BND_PARTICLES
                 if(P[j].ID > 0) {r2 = -1;} /* ignore frozen boundary particles */
 #endif
@@ -487,7 +487,7 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].KernelRadius <= 0)) {continue;} /* make sure neighbor is valid */
                 int k,k_freq; double h_to_use; Vec3<double> dp=local.Pos-P[j].Pos; /* position offset */
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); double r2=dp.norm_sq(); /* box-wrap appropriately and calculate distance */
+                nearest_xyz(dp); double r2=dp.norm_sq(); /* box-wrap appropriately and calculate distance */
                 if(local.Type == 0) {h_to_use = P[j].KernelRadius;} else {h_to_use = local.KernelRadius;}
                 if((r2>0)&&(r2<h_to_use*h_to_use)) /* only keep elements inside search radius */
                 {
@@ -514,7 +514,7 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
                             f_kappa_abs = 0.5; // rt_absorb_frac_albedo(i,k_freq); -- this is set to 1/2 anyways but would require extra passing, ignore for now //
 #if defined(RT_EVOLVE_FLUX) || (defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX) && defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY))
                             erad_i = CellP[j].Rad_E_gamma_Pred[k_freq];
-                            eddington_tensor_dot_vector(CellP[j].ET[k_freq],vel_i,vdot_h); for(k=0;k<3;k++) {vdot_h[k] = erad_i * (vel_i[k] + vdot_h[k]);} // calculate volume integral of scattering coefficient t_inv * (gas_vel . [e_rad*I + P_rad_tensor]), which gives an additional time-derivative term. this is the P term //
+                            {Vec3<double> v_i{vel_i[0],vel_i[1],vel_i[2]}; Vec3<double> vdh = erad_i * (v_i + CellP[j].ET[k_freq].matvec(v_i)); vdot_h[0]=vdh[0]; vdot_h[1]=vdh[1]; vdot_h[2]=vdh[2];} // P_rad term + eI term //
                             for(k=0;k<3;k++) {flux_i[k]=CellP[j].Rad_Flux_Pred[k_freq][k]; flux_mag+=flux_i[k]*flux_i[k];}
                             if(flux_mag>0 && isfinite(flux_mag)) {flux_mag=sqrt(flux_mag);} else {flux_mag=MIN_REAL_NUMBER; flux_i[0]=flux_i[1]=0; flux_i[2]=flux_mag;}
 #elif (defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION))

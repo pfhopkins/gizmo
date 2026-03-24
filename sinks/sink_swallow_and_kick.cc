@@ -226,7 +226,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                 
                 Vec3<double> dpos = P[j].Pos - local.Pos;
                 Vec3<double> dvel{Vel_j[0]-local.Vel[0], Vel_j[1]-local.Vel[1], Vel_j[2]-local.Vel[2]};
-                NEAREST_XYZ(dpos[0],dpos[1],dpos[2],-1); /*  find the closest image in the given box size  */
+                nearest_xyz(dpos,-1); /*  find the closest image in the given box size  */
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dvel,-1); /* wrap velocities for shearing boxes if needed */
                 double r2 = dpos.norm_sq();
 

@@ -630,45 +630,24 @@ void rt_eddington_update_calculation(int j)
         double chi_j = (3.+4.*f_chifac*f_chifac) / (5. + 2.*sqrt(4. - 3.*f_chifac*f_chifac));
         double chifac_iso_j = 0.5 * (1.-chi_j);
         double chifac_n_j = 0.5 * (3.*chi_j-1.);
-        for(k=0;k<6;k++)
-        {
-            CellP[j].ET[k_freq][k] = 0;
-            if(k<3)
-            {
-                CellP[j].ET[k_freq][k] = chifac_iso_j + chifac_n_j * n_flux_j[k]*n_flux_j[k];
-            } else {
-                if(k==3) {CellP[j].ET[k_freq][k] = chifac_n_j * n_flux_j[0]*n_flux_j[1];} // recall, for ET: 0=xx,1=yy,2=zz,3=xy,4=yz,5=xz
-                if(k==4) {CellP[j].ET[k_freq][k] = chifac_n_j * n_flux_j[1]*n_flux_j[2];}
-                if(k==5) {CellP[j].ET[k_freq][k] = chifac_n_j * n_flux_j[0]*n_flux_j[2];}
-            }
-        }
+        for(k=0;k<3;k++) for(int k2=k;k2<3;k2++) {CellP[j].ET[k_freq][k][k2] = chifac_n_j * n_flux_j[k]*n_flux_j[k2];}
+        CellP[j].ET[k_freq][0][0] += chifac_iso_j; CellP[j].ET[k_freq][1][1] += chifac_iso_j; CellP[j].ET[k_freq][2][2] += chifac_iso_j;
     }
     return;
 #endif
 #ifdef RT_FLUXLIMITEDDIFFUSION
     /* always assume the isotropic eddington tensor */
-    int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[j].ET[k_freq][0]=CellP[j].ET[k_freq][1]=CellP[j].ET[k_freq][2]=1./3.; CellP[j].ET[k_freq][3]=CellP[j].ET[k_freq][4]=CellP[j].ET[k_freq][5]=0;}
+    int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[j].ET[k_freq].set_isotropic(1./3.);}
     return;
 #endif
-    
+
     /* if nothing is set, default to guess the isotropic eddington tensor */
-    {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[j].ET[k_freq][0]=CellP[j].ET[k_freq][1]=CellP[j].ET[k_freq][2]=1./3.; CellP[j].ET[k_freq][3]=CellP[j].ET[k_freq][4]=CellP[j].ET[k_freq][5]=0;}}
+    {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[j].ET[k_freq].set_isotropic(1./3.);}}
     return;
 }
 
 
-/***********************************************************************************************************/
-/*! simple subroutine to compute the dot product of the symmetric Eddington tensor ET=D with a
-    vector v=vec_in, returning u=vec_out as u=D.v. Here u[0,1,2]=u[x,y,z], and
-    D[0]=xx,D[1]=yy,D[2]=zz,D[3]=xy,D[4]=yz,D[5]=xz components of ET following our convention */
-/***********************************************************************************************************/
-void eddington_tensor_dot_vector(double ET[6], double vec_in[3], double vec_out[3])
-{
-    vec_out[0] = vec_in[0]*ET[0] + vec_in[1]*ET[3] + vec_in[2]*ET[5];
-    vec_out[1] = vec_in[0]*ET[3] + vec_in[1]*ET[1] + vec_in[2]*ET[4];
-    vec_out[2] = vec_in[0]*ET[5] + vec_in[1]*ET[4] + vec_in[2]*ET[2];
-    return;
-}
+/* eddington_tensor_dot_vector: now replaced by SymmetricTensor2::matvec() */
 
 
 
@@ -741,8 +720,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             dt_e_gamma_band = CellP[i].Dt_Rad_E_gamma[kf];
 #endif
 #ifdef RT_COMOVING
-            double ET_dotdot_GradVcom = CellP[i].ET[kf][0]*CellP[i].Gradients.Velocity[0][0] + CellP[i].ET[kf][1]*CellP[i].Gradients.Velocity[1][1] + CellP[i].ET[kf][2]*CellP[i].Gradients.Velocity[2][2]
-                + CellP[i].ET[kf][3]*(CellP[i].Gradients.Velocity[0][1]+CellP[i].Gradients.Velocity[1][0]) + CellP[i].ET[kf][4]*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2]) + CellP[i].ET[kf][5]*(CellP[i].Gradients.Velocity[0][2]+CellP[i].Gradients.Velocity[2][0]);
+            double ET_dotdot_GradVcom = CellP[i].ET[kf].double_contract(CellP[i].Gradients.Velocity);
             double VolP_dotdot_GradV = e0 * ET_dotdot_GradVcom * All.cf_a2inv; // convert to physical units and multiply by radiation energy density to get into appropriate units
             dt_e_gamma_band += (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * (-VolP_dotdot_GradV); // account for RSOL term here as usual
 #endif
@@ -880,8 +858,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             int k_dir; double f_mag=0, E_rad_forflux=0, vdot_h[3]={0}, vel_i[3]={0}, DeltaFluxEff[3]={0}, rho=CellP[i].Density*All.cf_a3inv; E_rad_forflux=0.5*(e0+ef); // use energy density averaged over this update for the operation below
             for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {vel_i[k_dir]=RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*P[i].Vel[k_dir]/All.cf_atime;} else {vel_i[k_dir]=RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*CellP[i].VelPred[k_dir]/All.cf_atime;}} // need gas velocity at this time [effective v - note RSOL terms]
             double teqm_inv = CellP[i].Rad_Kappa[kf] * rho * C_LIGHT_CODE_REDUCED(i) + MIN_REAL_NUMBER; // physical code units of 1/time, defines characteristic timescale for coming to equilibrium flux. see notes for CR second-order module for details. //
-            eddington_tensor_dot_vector(CellP[i].ET[kf], vel_i, vdot_h); // calculate volume integral of scattering coefficient t_inv * (gas_vel . [e_rad*I + P_rad_tensor]), which gives an additional time-derivative term. this is the P term //
-            for(k_dir=0;k_dir<3;k_dir++) {vdot_h[k_dir] = E_rad_forflux * (vel_i[k_dir] + vdot_h[k_dir]);} // and this is the eI term, multiply both by radiation energy to use in this step //
+            {Vec3<double> v_i{vel_i[0],vel_i[1],vel_i[2]}; Vec3<double> vdh = E_rad_forflux * (v_i + CellP[i].ET[kf].matvec(v_i)); vdot_h[0]=vdh[0]; vdot_h[1]=vdh[1]; vdot_h[2]=vdh[2];} // calculate P_rad term and eI term, multiply by radiation energy //
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR // definitely favor this for greater accuracy and reduced noise //
             for(k_dir=0;k_dir<3;k_dir++) {DeltaFluxEff[k_dir] -= (P[i].Mass/rho) * (C_LIGHT_CODE_REDUCED(i)*C_LIGHT_CODE_REDUCED(i)/teqm_inv) * CellP[i].Gradients.Rad_E_gamma_ET[kf][k_dir]*All.cf_a3inv/All.cf_atime;} // here we compute the nabla.pressure_gradient_tensor term from gradients directly, and use this in the next step after multiplying the flux equation by (tilde[c]^2/dt_eqm_inv) and working in dimensionless time units
 #else
@@ -1107,7 +1084,7 @@ void rt_set_simple_inits(int RestartFlag)
 #if !defined(OUTPUT_EDDINGTON_TENSOR)
                 flag_to_reset_values_on_startup_et = 1;
 #endif
-                if(flag_to_reset_values_on_startup_et) {CellP[i].ET[k][0]=CellP[i].ET[k][1]=CellP[i].ET[k][2]=1./3.; CellP[i].ET[k][3]=CellP[i].ET[k][4]=CellP[i].ET[k][5]=0;}
+                if(flag_to_reset_values_on_startup_et) {CellP[i].ET[k].set_isotropic(1./3.);}
                 CellP[i].Rad_Je[k] = 0;
 #ifdef RT_FLUXLIMITER
                 CellP[i].Rad_Flux_Limiter[k] = 1;

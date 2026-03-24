@@ -446,7 +446,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_EDDINGTON_TENSOR:
 #if defined(RADTRANSFER) && defined(OUTPUT_EDDINGTON_TENSOR)
             for(n = 0; n < pc; n++) {
-                for(k=0;k<6;k++) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[offset + n].ET[kf][k] = fp[N_RT_FREQ_BINS*k + kf];}}
+                for(k=0;k<6;k++) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[offset + n].ET[kf].data[k] = fp[N_RT_FREQ_BINS*k + kf];}}
                 fp += 6*N_RT_FREQ_BINS;
             }
 #endif

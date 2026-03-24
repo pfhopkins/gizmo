@@ -185,9 +185,9 @@ struct INPUT_STRUCT_NAME
     {
         Vec3<MyDouble> Density;
         Vec3<MyDouble> Pressure;
-        Vec3<MyDouble> Velocity[3];
+        Mat3<MyDouble> Velocity;
 #ifdef MAGNETIC
-        Vec3<MyDouble> B[3];
+        Mat3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
         Vec3<MyDouble> Phi;
 #endif
@@ -205,7 +205,7 @@ struct INPUT_STRUCT_NAME
         Vec3<MyDouble> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #endif
     } Gradients;
-    MyDouble NV_T[3][3];
+    SymmetricTensor2<MyDouble> NV_T;
     
 #if defined(KERNEL_CRK_FACES)
     MyFloat Tensor_CRK_Face_Corrections[16];
@@ -227,7 +227,7 @@ struct INPUT_STRUCT_NAME
     MyDouble Rad_Kappa[N_RT_FREQ_BINS];
     MyDouble RT_DiffusionCoeff[N_RT_FREQ_BINS];
 #if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-    MyDouble ET[N_RT_FREQ_BINS][6];
+    SymmetricTensor2<MyDouble> ET[N_RT_FREQ_BINS];
 #endif
 #ifdef RT_EVOLVE_FLUX
     Vec3<MyDouble> Rad_Flux[N_RT_FREQ_BINS];
@@ -413,16 +413,15 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     for(k=0;k<16;k++) {in->Tensor_CRK_Face_Corrections[k] = CellP[i].Tensor_CRK_Face_Corrections[k];}
 #endif
     
+    in->NV_T = CellP[i].NV_T;
+
     int j;
-    for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->NV_T[j][k] = CellP[i].NV_T[j][k];}}
-    
-    
     /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */
     in->Gradients.Density = CellP[i].Gradients.Density;
     in->Gradients.Pressure = CellP[i].Gradients.Pressure;
-    for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->Gradients.Velocity[j][k] = CellP[i].Gradients.Velocity[j][k];}}
+    in->Gradients.Velocity = CellP[i].Gradients.Velocity;
 #ifdef MAGNETIC
-    for(j=0;j<3;j++) {for(k=0;k<3;k++) {in->Gradients.B[j][k] = CellP[i].Gradients.B[j][k];}}
+    in->Gradients.B = CellP[i].Gradients.B;
 #ifdef DIVBCLEANING_DEDNER
     in->Gradients.Phi = CellP[i].Gradients.Phi;
 #endif
@@ -447,7 +446,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
         in->Rad_Kappa[k] = CellP[i].Rad_Kappa[k];
         in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k);
 #if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-        {int k_dir; for(k_dir=0;k_dir<6;k_dir++) in->ET[k][k_dir] = CellP[i].ET[k][k_dir];}
+        in->ET[k] = CellP[i].ET[k];
 #endif
 #ifdef RT_EVOLVE_FLUX
         in->Rad_Flux[k] = CellP[i].Rad_Flux_Pred[k];
@@ -740,8 +739,7 @@ void hydro_final_operations_and_cleanup(void)
                 double vol_inv = CellP[i].Density*All.cf_a3inv/P[i].Mass, f_kappa_abs = rt_absorb_frac_albedo(i,kfreq), vel_i[3]={0}, vdot_h[3]={0}, vdot_D[3]={0}, flux_i[3]={0}, flux_mag=0, erad_i=0, flux_corr=0, work_band=0, radacc_thisband[3]={0}, rmag=0;
                 erad_i = CellP[i].Rad_E_gamma_Pred[kfreq]*vol_inv; // radiation energy density, needed below
                 for(k=0;k<3;k++) {flux_i[k]=CellP[i].Rad_Flux_Pred[kfreq][k]*vol_inv; vel_i[k]=(C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE)*CellP[i].VelPred[k]/All.cf_atime; flux_mag+=flux_i[k]*flux_i[k];}
-                eddington_tensor_dot_vector(CellP[i].ET[kfreq],vel_i,vdot_D); // note these 'vdoth' terms shouldn't be included in FLD, since its really assuming the entire right-hand-side of the flux equation reaches equilibrium with the pressure tensor, which gives the expression in rt_utilities
-                for(k=0;k<3;k++) {vdot_h[k] = (RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*C_LIGHT_CODE/C_LIGHT_CODE_REDUCED(i)) * erad_i * (vel_i[k] + vdot_D[k]);} // calculate volume integral of scattering coefficient t_inv * (gas_vel . [e_rad*I + P_rad_tensor]), which gives an additional time-derivative term. this is the P term //
+                {Vec3<double> v_i{vel_i[0],vel_i[1],vel_i[2]}; Vec3<double> vdh = (RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*C_LIGHT_CODE/C_LIGHT_CODE_REDUCED(i)) * erad_i * (v_i + CellP[i].ET[kfreq].matvec(v_i)); vdot_h[0]=vdh[0]; vdot_h[1]=vdh[1]; vdot_h[2]=vdh[2];} // P_rad term + eI term //
                 double flux_thin = erad_i * C_LIGHT_CODE_REDUCED(i); if(flux_mag>0) {flux_mag=sqrt(flux_mag);} else {flux_mag=1.e-20*flux_thin;}
                 if(flux_mag > 0) {flux_corr = DMIN(1., flux_thin/flux_mag); // restrict flux here (b/c drifted can exceed physical b/c of integration errors
 #if defined(RT_ENABLE_R15_GRADIENTFIX)
