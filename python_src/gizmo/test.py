@@ -69,7 +69,7 @@ def download_test_files(test_name: str):
 def run_test(test_name: str, num_mpi_ranks: int = 1):  # , num_openmp_threads: int=0):
     """Runs the test"""
     paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
+    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 
 def get_cooling_tables(test_directory="."):
