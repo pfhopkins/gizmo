@@ -68,7 +68,7 @@ void subfind_density(int j_in)
 
   /* allocate buffers to arrange communication */
 
-  Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
+  Ngblist.resize(NumPart);
   Dist2list = (double *) mymalloc("Dist2list", NumPart * sizeof(double));
 
   All.BunchSize =
@@ -363,7 +363,7 @@ void subfind_density(int j_in)
   myfree(DataIndexTable);
 
   myfree(Dist2list);
-  myfree(Ngblist);
+  
 }
 
 

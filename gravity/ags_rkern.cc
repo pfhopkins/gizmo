@@ -254,7 +254,7 @@ void ags_density(void)
     Left = (MyFloat *) mymalloc("Left", NumPart * sizeof(MyFloat));
     Right = (MyFloat *) mymalloc("Right", NumPart * sizeof(MyFloat));
     /* initialize anything we need to about the active particles before their loop */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+    for (int i : ActiveParticleList) {
         if(ags_density_isactive(i)) {
             Left[i] = Right[i] = 0; AGS_Prev[i] = P[i].AGS_KernelRadius; P[i].AGS_vsig = 0;
 #ifdef WAKEUP
@@ -271,7 +271,7 @@ void ags_density(void)
 
       /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
-        for(i = FirstActiveParticle, npleft = 0; i >= 0; i = NextActiveParticle[i])
+        npleft = 0; for (int i : ActiveParticleList)
         {
             if(ags_density_isactive(i))
             {
@@ -502,7 +502,7 @@ void ags_density(void)
                 else
                     P[i].TimeBin = -P[i].TimeBin - 1;	/* Mark as inactive */
             } //  if(ags_density_isactive(i))
-        } // for(i = FirstActiveParticle, npleft = 0; i >= 0; i = NextActiveParticle[i])
+        } // npleft = 0; for (int i : ActiveParticleList)
         
         tend = my_second();
         timecomp += timediff(tstart, tend);
@@ -521,13 +521,13 @@ void ags_density(void)
     myfree(Right); myfree(Left);
     
     /* mark as active again */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(P[i].TimeBin < 0) {P[i].TimeBin = -P[i].TimeBin - 1;}
     }
 
     /* now that we are DONE iterating to find rkern, we can do the REAL final operations on the results */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(ags_density_isactive(i))
         {
@@ -928,18 +928,18 @@ void AGSForce_calc(void)
     PRINT_STATUS(" ..entering AGS-Force calculation [as hydro loop for non-gas elements]\n");
     /* before doing any operations, need to zero the appropriate memory so we can correctly do pair-wise operations */
 #if defined(DM_SIDM)
-    {int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {P[i].dtime_sidm = 10.*GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);}}
+    {int i; for (int i : ActiveParticleList) {P[i].dtime_sidm = 10.*GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);}}
 #endif
 #ifdef CBE_INTEGRATOR
     /* need to zero values for active particles (which will be re-calculated) before they are added below */
-    //for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {int k1,k2; for(k1=0;k1<CBE_INTEGRATOR_NBASIS;k1++) {for(k2=0;k2<CBE_INTEGRATOR_NMOMENTS;k2++) {P[i].CBE_basis_moments_dt[k1][k2] = 0;}}}
+    //for (int i : ActiveParticleList) {int k1,k2; for(k1=0;k1<CBE_INTEGRATOR_NBASIS;k1++) {for(k2=0;k2<CBE_INTEGRATOR_NMOMENTS;k2++) {P[i].CBE_basis_moments_dt[k1][k2] = 0;}}}
 #endif
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
     /* do final operations on results: these are operations that can be done after the complete set of iterations */
 #ifdef CBE_INTEGRATOR
-        for(i=FirstActiveParticle; i>=0; i=NextActiveParticle[i]) {do_postgravity_cbe_calcs(i);} // do any final post-tree-walk calcs from the CBE integrator here //
+        for (int i : ActiveParticleList) {do_postgravity_cbe_calcs(i);} // do any final post-tree-walk calcs from the CBE integrator here //
 #endif
     /* collect timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);

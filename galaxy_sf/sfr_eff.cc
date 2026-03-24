@@ -414,7 +414,7 @@ void star_formation_parent_routine(void)
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
     for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
 
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if((P[i].Type == 0)&&(P[i].Mass>0))
         {
@@ -536,10 +536,7 @@ void star_formation_parent_routine(void)
                             endrun(8888);
                         }
                         P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
-                        NextActiveParticle[i_star] = FirstActiveParticle; // add the new star particle to the linked list
-                        FirstActiveParticle = i_star;
-                        ActiveParticleList[ActiveParticleNumber] = i_star;
-                        ActiveParticleNumber++;
+                        ActiveParticleList.push_back(i_star);
                         NumForceUpdate++;
                         TimeBinCount[P[i_star].TimeBin]++;
                         PrevInTimeBin[i_star] = i;

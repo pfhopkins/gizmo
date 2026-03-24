@@ -655,7 +655,7 @@ double powerspec_turb_obtain_fields(void)
 
   /* allocate buffers to arrange communication */
 
-  Ngblist = (int *) mymalloc("Ngblist", Ncount * sizeof(int));
+  Ngblist.resize(Ncount);
 
     size_t MyBufferSize = All.BufferSize;
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
@@ -890,7 +890,7 @@ double powerspec_turb_obtain_fields(void)
 
   myfree(DataNodeList);
   myfree(DataIndexTable);
-  myfree(Ngblist);
+  
 
   myfree(powerspec_turb_nearest_rkern);
   myfree(powerspec_turb_nearest_distance);

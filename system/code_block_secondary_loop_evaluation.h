@@ -8,7 +8,7 @@
 printf("Cannot compile the secondary sub-loop without EVALUATION_CALL defined. Exiting. \n"); fflush(stdout); exit(995534);
 #endif
 int j, dummy, *ngblist, thread_id = *(int *) p;
-ngblist = Ngblist + thread_id * NumPart;
+ngblist = Ngblist.data() + thread_id * NumPart;
 while(1)
 {
 #ifdef _OPENMP

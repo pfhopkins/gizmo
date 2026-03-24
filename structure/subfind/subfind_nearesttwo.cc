@@ -53,7 +53,7 @@ void subfind_find_nearesttwo(void)
 
   /* allocate buffers to arrange communication */
 
-  Ngblist = (int *) mymalloc("Ngblist", NumPartGroup * sizeof(int));
+  Ngblist.resize(NumPartGroup);
   Dist2list = (double *) mymalloc("Dist2list", NumPartGroup * sizeof(double));
 
   All.BunchSize =
@@ -253,7 +253,7 @@ void subfind_find_nearesttwo(void)
   myfree(DataIndexTable);
 
   myfree(Dist2list);
-  myfree(Ngblist);
+  
 }
 
 

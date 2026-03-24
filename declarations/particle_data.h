@@ -325,7 +325,7 @@ extern ALIGN(32) struct particle_data
 #ifdef DM_FUZZY
     MyFloat AGS_Density;                /*!< density calculated corresponding to AGS routine (over interacting DM neighbors) */
     Vec3<MyFloat> AGS_Gradients_Density;   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */
-    MyFloat AGS_Gradients2_Density[3][3];   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */
+    Mat3<MyFloat> AGS_Gradients2_Density;   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */
     MyFloat AGS_Numerical_QuantumPotential; /*!< additional potential terms 'generated' by un-resolved compression [numerical diffusivity] */
     MyFloat AGS_Dt_Numerical_QuantumPotential; /*!< time derivative of the above */
 #if (DM_FUZZY > 0)
@@ -333,17 +333,17 @@ extern ALIGN(32) struct particle_data
     MyFloat AGS_Psi_Re_Pred;
     MyFloat AGS_Dt_Psi_Re;
     Vec3<MyFloat> AGS_Gradients_Psi_Re;
-    MyFloat AGS_Gradients2_Psi_Re[3][3];
+    Mat3<MyFloat> AGS_Gradients2_Psi_Re;
     MyFloat AGS_Psi_Im;
     MyFloat AGS_Psi_Im_Pred;
     MyFloat AGS_Dt_Psi_Im;
     Vec3<MyFloat> AGS_Gradients_Psi_Im;
-    MyFloat AGS_Gradients2_Psi_Im[3][3];
+    Mat3<MyFloat> AGS_Gradients2_Psi_Im;
     MyFloat AGS_Dt_Psi_Mass;
 #endif
 #endif
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    MyDouble NV_T[3][3];                                           /*!< holds the tensor used for gradient estimation */
+    Mat3<MyDouble> NV_T;                                           /*!< holds the tensor used for gradient estimation */
 #endif
 #ifdef CBE_INTEGRATOR
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];         /* moments per basis function */
@@ -355,3 +355,4 @@ extern ALIGN(32) struct particle_data
 }
 *P,                /*!< holds particle data on local processor */
 *DomainPartBuf;        /*!< buffer for particle data used in domain decomposition */
+

@@ -121,7 +121,7 @@ void disp_density(void)
     Left = (MyFloat *) mymalloc("Left", NumPart * sizeof(MyFloat));
     Right = (MyFloat *) mymalloc("Right", NumPart * sizeof(MyFloat));
     /* initialize anything we need to about the active particles before their loop */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {if(disp_density_isactive(i)) {CellP[i].NumNgbDM = 0; Left[i] = Right[i] = 0;}}
+    for (int i : ActiveParticleList) {if(disp_density_isactive(i)) {CellP[i].NumNgbDM = 0; Left[i] = Right[i] = 0;}}
     
     /* allocate buffers to arrange communication */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
@@ -132,7 +132,7 @@ void disp_density(void)
 
         /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
-        for(i = FirstActiveParticle, npleft = 0; i >= 0; i = NextActiveParticle[i])
+        npleft = 0; for (int i : ActiveParticleList)
         {
             if(disp_density_isactive(i))
             {
@@ -206,7 +206,7 @@ void disp_density(void)
                 }
                 else {P[i].TimeBin = -P[i].TimeBin - 1;}	/* Mark as inactive */
             } //  if(disp_density_isactive(i))
-        } // for(i = FirstActiveParticle, npleft = 0; i >= 0; i = NextActiveParticle[i])
+        } // npleft = 0; for (int i : ActiveParticleList)
 
         tend = my_second();
         timecomp += timediff(tstart, tend);
@@ -225,13 +225,13 @@ void disp_density(void)
     myfree(Right); myfree(Left);
 
     /* mark as active again */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(P[i].TimeBin < 0) {P[i].TimeBin = -P[i].TimeBin - 1;}
     }
     
     /* now that we are DONE iterating to find rkern, we can do the REAL final operations on the results */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(disp_density_isactive(i))
         {

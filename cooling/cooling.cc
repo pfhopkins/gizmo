@@ -55,36 +55,27 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
-    /* Determine indices of active particles. */
-    int N_active=0, i, j, *active_indices; active_indices = (int *) malloc(N_gas * sizeof(int));
-    for (i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    /* Determine indices of active gas particles eligible for cooling. */
+    std::vector<int> cool_indices;
+    cool_indices.reserve(ActiveParticleList.size());
+    for (int i : ActiveParticleList)
     {
-        if(P[i].Type != 0) {continue;}
-        if(P[i].Mass <= 0) {continue;}
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
 #ifdef GALSF_EFFECTIVE_EQS
         if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {continue;} /* no cooling for effective-eos star-forming particles */
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
         if(CellP[i].DelayTimeCoolingSNe > 0) {continue;} /* no cooling for particles marked in delayed cooling */
 #endif
-        active_indices[N_active] = i;
-        N_active++;
-	}
-
-#ifdef _OPENMP
-#pragma omp parallel private(i, j)
-#endif
-    { /* open parallel block */
-#ifdef _OPENMP
-#pragma omp for schedule(dynamic)
-#endif
-    for(j=0;j<N_active;j++)
-    {
-        i=active_indices[j]; /* actual particle index */
-        do_the_cooling_for_particle(i); /* do the actual cooling */
+        cool_indices.push_back(i);
     }
-    } /* close parallel block */
-    free(active_indices); /* free memory */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for(int i : cool_indices)
+    {
+        do_the_cooling_for_particle(i);
+    }
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
@@ -126,15 +117,11 @@ void do_the_cooling_for_particle(int i)
         /* do some prep operations on the hydro-step determined heating/cooling rates before passing to the cooling subroutine */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
-        double grav_acc;
-        for(k = 0; k < 3; k++)
-        {
-            grav_acc = All.cf_a2inv * P[i].GravAccel[k];
+        Vec3<MyDouble> grav_acc = All.cf_a2inv * P[i].GravAccel;
 #ifdef PMGRID
-            grav_acc += All.cf_a2inv * P[i].GravPM[k];
+        grav_acc += All.cf_a2inv * P[i].GravPM;
 #endif
-            DtInternalEnergyEffCGS -= CellP[i].GravWorkTerm[k] * All.cf_atime * grav_acc;
-        }
+        DtInternalEnergyEffCGS -= All.cf_atime * dot(CellP[i].GravWorkTerm, grav_acc);
 #endif
         /* limit the magnitude of the hydro dtinternalenergy */
         if(DtInternalEnergyEffCGS < 0) {
@@ -1817,7 +1804,7 @@ double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long ind
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
 void selfshield_local_incident_uv_flux(void)
 {   /* include local self-shielding with the following */
-    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for (int i : ActiveParticleList)
     {
         if(P[i].Type==0)
         {

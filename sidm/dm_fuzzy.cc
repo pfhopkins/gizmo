@@ -472,7 +472,7 @@ void DMGrad_gradient_calc(void)
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
     PRINT_STATUS(" ..calculating higher-order gradients for DM density field\n");
     /* initialize data, if needed */
-    if(All.Time==All.TimeBegin) {int i; for(i=FirstActiveParticle; i>=0; i=NextActiveParticle[i]) {P[i].AGS_Numerical_QuantumPotential=0;}}
+    if(All.Time==All.TimeBegin) {int i; for (int i : ActiveParticleList) {P[i].AGS_Numerical_QuantumPotential=0;}}
 
     /* allocate memory shared across all loops */
     DMGradDataPasser = (struct temporary_dmgradients_data_topass *) mymalloc("DMGradDataPasser",NumPart * sizeof(struct temporary_dmgradients_data_topass));
@@ -485,7 +485,7 @@ void DMGrad_gradient_calc(void)
 
         /* do post-loop operations on the results */
         int i;
-        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+        for (int i : ActiveParticleList)
         {
             if(loop_iteration <= 0)
             {

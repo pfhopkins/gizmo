@@ -214,14 +214,14 @@ void rt_diffusion_cg_matrix_multiply(double **matrixmult_in, double **matrixmult
     long long n_exported = 0;
     long long NTaskTimesNumPart;
     NTaskTimesNumPart = maxThreads * NumPart;
-    Ngblist = (int *) mymalloc("Ngblist", NTaskTimesNumPart * sizeof(int));
+    Ngblist.resize(NTaskTimesNumPart);
     size_t MyBufferSize = All.BufferSize;
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct rt_cg_data_in) + sizeof(struct rt_cg_data_out) + sizemax(sizeof(struct rt_cg_data_in),sizeof(struct rt_cg_data_out))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     
-    NextParticle = FirstActiveParticle;	/* begin with this index */
+    NextParticle = 0;	/* begin with this index */
     memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
     BufferCollisionFlag = 0; /* set to zero before operations begin */
     do
@@ -249,24 +249,25 @@ void rt_diffusion_cg_matrix_multiply(double **matrixmult_in, double **matrixmult
             int processed_particles = 0;
             int first_unprocessedparticle = -1;
             NextParticle = save_NextParticle; /* figure out where we are */
-            while(NextParticle >= 0)
+            while(NextParticle < (int)ActiveParticleList.size())
             {
                 if(NextParticle == last_nextparticle) {break;}
+                int pindex = ActiveParticleList[NextParticle];
 #ifndef _OPENMP
-                if(ProcessedFlag[NextParticle] != 1) {break;}
+                if(ProcessedFlag[pindex] != 1) {break;}
 #else
-                if(ProcessedFlag[NextParticle] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                if(ProcessedFlag[NextParticle] == 1)
+                if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
+                if(ProcessedFlag[pindex] == 1)
 #endif
                 {
                     processed_particles++;
-                    ProcessedFlag[NextParticle] = 2;
+                    ProcessedFlag[pindex] = 2;
                 }
-                NextParticle = NextActiveParticle[NextParticle];
+                NextParticle++;
             }
 #ifdef _OPENMP
             if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-            if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle > -1) {
+            if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
                 BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
             else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
 #endif
@@ -352,7 +353,7 @@ void rt_diffusion_cg_matrix_multiply(double **matrixmult_in, double **matrixmult
 #endif
             rt_diffusion_cg_evaluate_secondary(&mainthreadid, matrixmult_in, matrixmult_out, matrixmult_sum);
         }
-        if(NextParticle < 0) {ndone_flag = 1;} else {ndone_flag = 0;}
+        if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         /* get the result */
         for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
@@ -389,7 +390,7 @@ void rt_diffusion_cg_matrix_multiply(double **matrixmult_in, double **matrixmult
     /* free memory */
     myfree(DataNodeList);
     myfree(DataIndexTable);
-    myfree(Ngblist);
+    
 
     
     /* do final operations on results */

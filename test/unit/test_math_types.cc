@@ -472,4 +472,46 @@ TEST_CASE("SymmetricTensor2 vs Mat3: matvec agrees for symmetric matrix") {
     CHECK_CLOSE(rs[2], rm[2], EPS);
 }
 
+// ---- Mat3 det and invert ----
+
+TEST_CASE("Mat3: det of identity is 1") {
+    Mat3<double> I = {{{1,0,0},{0,1,0},{0,0,1}}};
+    CHECK_CLOSE(I.det(), 1.0, EPS);
+}
+
+TEST_CASE("Mat3: det of known matrix") {
+    Mat3<double> A = {{{1,2,3},{0,4,5},{1,0,6}}};
+    // det = 1*(4*6-5*0) - 2*(0*6-5*1) + 3*(0*0-4*1) = 24+10-12 = 22
+    CHECK_CLOSE(A.det(), 22.0, EPS);
+}
+
+TEST_CASE("Mat3: invert of identity is identity") {
+    Mat3<double> I = {{{1,0,0},{0,1,0},{0,0,1}}};
+    Mat3<double> Iinv;
+    double d = I.invert(Iinv);
+    CHECK_CLOSE(d, 1.0, EPS);
+    for(int i=0;i<3;i++) for(int j=0;j<3;j++)
+        CHECK_CLOSE(Iinv[i][j], (i==j ? 1.0 : 0.0), EPS);
+}
+
+TEST_CASE("Mat3: A * A^{-1} = I") {
+    Mat3<double> A = {{{1,2,3},{0,4,5},{1,0,6}}};
+    Mat3<double> Ainv;
+    double d = A.invert(Ainv);
+    CHECK(d != 0.0);
+    // multiply A * Ainv, check it's identity
+    for(int i=0;i<3;i++) for(int j=0;j<3;j++) {
+        double sum = 0;
+        for(int k=0;k<3;k++) sum += A[i][k]*Ainv[k][j];
+        CHECK_CLOSE(sum, (i==j ? 1.0 : 0.0), 1e-12);
+    }
+}
+
+TEST_CASE("Mat3: invert of singular matrix returns 0") {
+    Mat3<double> S = {{{1,2,3},{2,4,6},{1,1,1}}}; // row 1 = 2*row 0
+    Mat3<double> Sinv;
+    double d = S.invert(Sinv);
+    CHECK_CLOSE(d, 0.0, EPS);
+}
+
 TEST_MAIN()

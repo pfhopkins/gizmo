@@ -50,7 +50,7 @@ void determine_where_SNe_occur(void)
     double mpi_npossible,mpi_nhosttotal,mpi_ntotal,mpi_ptotal,mpi_dtmean,mpi_rmean;
     mpi_npossible=mpi_nhosttotal=mpi_ntotal=mpi_ptotal=mpi_dtmean=mpi_rmean=0;
     // loop over particles //
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         P[i].SNe_ThisTimeStep=0;
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -96,7 +96,7 @@ void determine_where_SNe_occur(void)
 #endif
         if(P[i].SNe_ThisTimeStep>0) {ntotal+=P[i].SNe_ThisTimeStep; nhosttotal++;}
         dtmean += dt;
-    } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) //
+    } // for (int i : ActiveParticleList) //
 
     MPI_Reduce(&dtmean, &mpi_dtmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&rmean, &mpi_rmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);

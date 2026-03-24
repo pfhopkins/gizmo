@@ -50,7 +50,7 @@ void subfind_find_linkngb(void)
   if(ThisTask == 0) {printf("Start find_linkngb (%d particles on task=%d)\n", NumPartGroup, ThisTask);}
 
   /* allocate buffers to arrange communication */
-  Ngblist = (int *) mymalloc("Ngblist", NumPartGroup * sizeof(int));
+  Ngblist.resize(NumPartGroup);
   Dist2list = (double *) mymalloc("Dist2list", NumPartGroup * sizeof(double));
 
   All.BunchSize = (long) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
@@ -289,7 +289,7 @@ void subfind_find_linkngb(void)
   myfree(DataIndexTable);
 
   myfree(Dist2list);
-  myfree(Ngblist);
+  
 }
 
 

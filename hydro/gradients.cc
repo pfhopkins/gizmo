@@ -559,12 +559,12 @@ void hydro_gradient_calc(void)
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct GasGraddata_in) + sizeof(struct GasGraddata_out) +
                                                              sizemax(sizeof(struct GasGraddata_in),sizeof(struct GasGraddata_out))));
-    Ngblist = (int *) mymalloc("Ngblist", NTaskTimesNumPart * sizeof(int));
+    Ngblist.resize(NTaskTimesNumPart);
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
 
     /* before doing any operations, need to zero the appropriate memory so we can correctly do pair-wise operations */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
         if(P[i].Type==0)
         {
             int k2;
@@ -627,7 +627,7 @@ void hydro_gradient_calc(void)
     for(gradient_iteration = 0; gradient_iteration < NUMBER_OF_GRADIENT_ITERATIONS; gradient_iteration++)
     {
         // need to zero things used in the iteration (anything appearing in out2particle_GasGrad_iter)
-        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+        for (int i : ActiveParticleList)
             if(P[i].Type==0)
             {
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -639,7 +639,7 @@ void hydro_gradient_calc(void)
             }
 
         // now we actually begin the main gradient loop //
-        NextParticle = FirstActiveParticle;	/* begin with this index */
+        NextParticle = 0;	/* begin with this index into ActiveParticleList */
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
         BufferCollisionFlag = 0; /* set to zero before operations begin */
         do
@@ -665,24 +665,25 @@ void hydro_gradient_calc(void)
                 int processed_particles = 0;
                 int first_unprocessedparticle = -1;
                 NextParticle = save_NextParticle; /* figure out where we are */
-                while(NextParticle >= 0)
+                while(NextParticle < (int)ActiveParticleList.size())
                 {
                     if(NextParticle == last_nextparticle) {break;}
+                    int pindex = ActiveParticleList[NextParticle];
 #ifndef _OPENMP
-                    if(ProcessedFlag[NextParticle] != 1) {break;}
+                    if(ProcessedFlag[pindex] != 1) {break;}
 #else
-                    if(ProcessedFlag[NextParticle] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                    if(ProcessedFlag[NextParticle] == 1)
+                    if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
+                    if(ProcessedFlag[pindex] == 1)
 #endif
                     {
                         processed_particles++;
-                        ProcessedFlag[NextParticle] = 2;
+                        ProcessedFlag[pindex] = 2;
                     }
-                    NextParticle = NextActiveParticle[NextParticle];
+                    NextParticle++;
                 }
 #ifdef _OPENMP
                 if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle > -1) {
+                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
                     BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
                 else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
 #endif
@@ -843,7 +844,7 @@ void hydro_gradient_calc(void)
             if(gradient_iteration==0) {myfree(GasGradDataOut);} else {myfree(GasGradDataOut_iter);} /* free the structures used to receive results, weve used it */
             myfree(GasGradDataIn); /* free the structures used to prepare our initial export data, we're done here! */
 
-            if(NextParticle < 0) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
+            if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
             tend = my_second(); timewait2 += timediff(tstart, tend);
@@ -853,7 +854,7 @@ void hydro_gradient_calc(void)
 
         /* here, we insert intermediate operations on the results, from the iterations we have completed */
 #ifdef MHD_CONSTRAINED_GRADIENT
-        for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+        for (int i : ActiveParticleList)
             if(P[i].Type == 0)
             {
                 CellP[i].FlagForConstrainedGradients = 1;
@@ -985,11 +986,11 @@ void hydro_gradient_calc(void)
 
     myfree(DataNodeList);
     myfree(DataIndexTable);
-    myfree(Ngblist);
+    
 
 
     /* do final operations on results: these are operations that can be done after the complete set of iterations */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
         if(P[i].Type == 0)
         {
             /* now we can properly calculate (second-order accurate) gradients of hydrodynamic quantities from this loop */

@@ -693,7 +693,7 @@ void sink_final_operations(void)
 #endif
 
 #ifdef SINK_REPOSITION_ON_POTMIN
-    for(n = FirstActiveParticle; n >= 0; n = NextActiveParticle[n])
+    for (int n : ActiveParticleList)
         if(sink_isactive(n))
             if(P[n].Sink_PotentialMinimumOfNeighbors < 0.5 * SINK_MINPOTVALUE_INIT)
             {

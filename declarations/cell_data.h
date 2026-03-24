@@ -239,8 +239,8 @@ extern struct gas_cell_data
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
     MyFloat NV_DivVel;                /*!< quantities specific to the Cullen & Dehnen viscosity switch */
     MyFloat NV_dt_DivVel;
-    MyFloat NV_A[3][3];
-    MyFloat NV_D[3][3];
+    Mat3<MyFloat> NV_A;
+    Mat3<MyFloat> NV_D;
     MyFloat NV_trSSt;
     MyFloat alpha;
 #endif
@@ -362,9 +362,9 @@ extern struct gas_cell_data
     int CompositionType;                  /* define the composition of the material */
 #endif
 #ifdef EOS_ELASTIC
-    MyDouble Elastic_Stress_Tensor[3][3]; /* deviatoric stress tensor */
-    MyDouble Elastic_Stress_Tensor_Pred[3][3];
-    MyDouble Dt_Elastic_Stress_Tensor[3][3];
+    Mat3<MyDouble> Elastic_Stress_Tensor; /* deviatoric stress tensor */
+    Mat3<MyDouble> Elastic_Stress_Tensor_Pred;
+    Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
 #endif
 #endif
     
@@ -397,7 +397,7 @@ extern struct gas_cell_data
 #endif
     
 #ifdef TURB_DIFF_DYNAMIC
-    MyDouble VelShear_bar[3][3];
+    Mat3<MyDouble> VelShear_bar;
     MyDouble MagShear_bar;
     Vec3<MyDouble> Velocity_bar;
     Vec3<MyDouble> Velocity_hat;
@@ -415,4 +415,5 @@ extern struct gas_cell_data
 }
 *CellP,                /*!< holds gas cell data on local processor */
 *DomainGasBuf;            /*!< buffer for gas cell data in domain decomposition */
+
 

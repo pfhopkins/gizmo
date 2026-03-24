@@ -107,7 +107,7 @@ void Subfind_DensityOtherProps_Loop(void)
     double t0, t1, t2, t3, rguess, overdensity, Deltas[SUBFIND_ADDIO_NUMOVERDEN], z;
 
     /* allocate buffers to arrange communication */
-    Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
+    Ngblist.resize(NumPart);
     Left = (MyFloat *) mymalloc("Left", sizeof(MyFloat) * Ngroups);
     Right = (MyFloat *) mymalloc("Right", sizeof(MyFloat) * Ngroups);
     R200 = (MyOutputFloat *) mymalloc("R200", sizeof(MyOutputFloat) * Ngroups);
@@ -477,7 +477,7 @@ void Subfind_DensityOtherProps_Loop(void)
   myfree(Right);
   myfree(Left);
 
-  myfree(Ngblist);
+  
 }
 
 

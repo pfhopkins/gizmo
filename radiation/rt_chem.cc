@@ -155,7 +155,7 @@ void rt_update_chemistry(void)
     fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
     c_light_codeunits = C_LIGHT_CODE;
     
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
         if(P[i].Type == 0)
         {
             dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
@@ -252,7 +252,7 @@ void rt_update_chemistry(void)
     fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
     c_light_codeunits = C_LIGHT_CODE;
     
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
         if(P[i].Type == 0)
         {
             /* get the photo-ionization rates*/

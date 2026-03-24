@@ -40,17 +40,10 @@ void allocate_memory(void)
   ProcessedFlag = (unsigned char *) mymalloc("ProcessedFlag", bytes = All.MaxPart * sizeof(unsigned char));
   bytes_tot += bytes;
 
-  NextActiveParticle = (int *) mymalloc("NextActiveParticle", bytes = All.MaxPart * sizeof(int));
-  bytes_tot += bytes;
+  ActiveParticleList.reserve(All.MaxPart);
 
-  ActiveParticleList = (int *) mymalloc("ActiveParticleList", bytes = All.MaxPart * sizeof(int));
-  bytes_tot += bytes;
-
-  NextInTimeBin = (int *) mymalloc("NextInTimeBin", bytes = All.MaxPart * sizeof(int));
-  bytes_tot += bytes;
-
-  PrevInTimeBin = (int *) mymalloc("PrevInTimeBin", bytes = All.MaxPart * sizeof(int));
-  bytes_tot += bytes;
+  NextInTimeBin.resize(All.MaxPart);
+  PrevInTimeBin.resize(All.MaxPart);
 
 
   if(All.MaxPart > 0)

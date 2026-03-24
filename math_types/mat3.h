@@ -37,6 +37,35 @@ struct Mat3 {
         return Vec3<T>{ row[2][1] - row[1][2], row[0][2] - row[2][0], row[1][0] - row[0][1] };
     }
 
+    // Determinant of the matrix.
+    T det() const noexcept {
+        return row[0][0] * (row[1][1] * row[2][2] - row[1][2] * row[2][1])
+             - row[0][1] * (row[1][0] * row[2][2] - row[1][2] * row[2][0])
+             + row[0][2] * (row[1][0] * row[2][1] - row[1][1] * row[2][0]);
+    }
+
+    // Invert the matrix, writing the result into `inv`.
+    // Returns the determinant. If the matrix is singular (det==0 or NaN),
+    // `inv` is zeroed and 0 is returned.
+    T invert(Mat3& inv) const noexcept {
+        T d = det();
+        if(d == T(0) || d != d) { // d != d catches NaN
+            inv = Mat3{};
+            return T(0);
+        }
+        T inv_d = T(1) / d;
+        inv[0][0] = (row[1][1] * row[2][2] - row[1][2] * row[2][1]) * inv_d;
+        inv[0][1] = (row[0][2] * row[2][1] - row[0][1] * row[2][2]) * inv_d;
+        inv[0][2] = (row[0][1] * row[1][2] - row[0][2] * row[1][1]) * inv_d;
+        inv[1][0] = (row[1][2] * row[2][0] - row[1][0] * row[2][2]) * inv_d;
+        inv[1][1] = (row[0][0] * row[2][2] - row[0][2] * row[2][0]) * inv_d;
+        inv[1][2] = (row[0][2] * row[1][0] - row[0][0] * row[1][2]) * inv_d;
+        inv[2][0] = (row[1][0] * row[2][1] - row[1][1] * row[2][0]) * inv_d;
+        inv[2][1] = (row[0][1] * row[2][0] - row[0][0] * row[2][1]) * inv_d;
+        inv[2][2] = (row[0][0] * row[1][1] - row[0][1] * row[1][0]) * inv_d;
+        return d;
+    }
+
     Mat3& operator+=(const Mat3& o) noexcept { row[0]+=o.row[0]; row[1]+=o.row[1]; row[2]+=o.row[2]; return *this; }
     Mat3& operator-=(const Mat3& o) noexcept { row[0]-=o.row[0]; row[1]-=o.row[1]; row[2]-=o.row[2]; return *this; }
     Mat3& operator*=(T s) noexcept { row[0]*=s; row[1]*=s; row[2]*=s; return *this; }

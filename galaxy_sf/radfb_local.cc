@@ -21,12 +21,12 @@ void radiation_pressure_winds_consolidated(void)
     age_threshold_in_gyr = 1.0e10; // for the single-star problems, or updated algorithm [where it adds little expense], we want to include everything, for completeness //
 #endif
     if(All.RP_Local_Momentum_Renormalization<=0) return;
-    Ngblist = (int *) mymalloc("Ngblist",NumPart * sizeof(int));
+    Ngblist.resize(NumPart);
     PRINT_STATUS("Local Radiation-Pressure acceleration calculation");
     MyDouble *pos; int N_MAX_KERNEL,N_MIN_KERNEL,MAXITER_FB,NITER,startnode,dummy,numngb_inbox,i,j,k,n;
     double h,wt_sum,delta_v_imparted_rp=0,total_n_wind=0,total_mom_wind=0,total_prob_kick=0,avg_v_kick=0,avg_taufac=0;
 
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if((P[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[i].Type == 2)||(P[i].Type==3))))
         {
@@ -175,8 +175,8 @@ void radiation_pressure_winds_consolidated(void)
                 } // // within loop
             } // star age, mass check:: (star_age < 0.1) && (P[i].Mass > 0) && (P[i].DensityAroundParticle > 0)
         } // particle type check::  if((P[i].Type == 4)....
-    } // main particle loop for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
-    myfree(Ngblist);
+    } // main particle loop for (int i : ActiveParticleList)
+    
 
     double totMPI_n_wind=0,totMPI_mom_wind=0,totMPI_avg_v=0,totMPI_avg_taufac=0,totMPI_prob_kick=0;
     MPI_Reduce(&total_n_wind, &totMPI_n_wind, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -224,10 +224,10 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
     double total_N_ionizing_part=0,total_Ndot_ionizing=0,total_m_ionized=0,total_N_ionized=0,avg_RHII=0,mionizable=0,mionized=0,mion_actual=0;
     double RHII,RHIIMAX,R_search,rnearest,stellum,prob,rho_j,prandom,m_available,m_effective,RHII_initial,RHIImultiplier;
     double uion; uion = HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); /* assume fully-ionized gas with gamma=5/3; this is a global variable below */
-    Ngblist = (int *) mymalloc("Ngblist",NumPart * sizeof(int));
+    Ngblist.resize(NumPart);
     MAX_N_ITERATIONS_HIIFB = 5; NITER_HIIFB = 0;
 
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
 #ifdef SINK_HII_HEATING
         if((P[i].Type == 5)||(((P[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[i].Type == 2)||(P[i].Type==3))))))
@@ -383,8 +383,8 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
                 if(mion_actual>0) {total_m_ionized += mion_actual;}
             } // if(prandom < 2.0*mionizable/P[j].Mass)
         } // if((P[i].Type == 4)||(P[i].Type == 2)||(P[i].Type == 3))
-    } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
-    myfree(Ngblist);
+    } // for (int i : ActiveParticleList)
+    
 
     double totMPI_N_ionizing_part=0,totMPI_Ndot_ionizing=0,totMPI_m_ionized=0,totMPI_avg_RHII=0,totMPI_N_ionized=0;
     MPI_Reduce(&total_N_ionizing_part, &totMPI_N_ionizing_part, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);

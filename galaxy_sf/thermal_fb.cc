@@ -28,12 +28,12 @@
 void determine_where_addthermalFB_events_occur(void)
 {
     int i; double check = 0;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(P[i].Type != 4) {continue;}
         if(P[i].Mass <= 0) {continue;}
         check += mechanical_fb_calculate_eventrates(i,1); // this should do the calculation and add to number of SNe as needed //
-    } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) //
+    } // for (int i : ActiveParticleList) //
 }
 
 struct kernel_addthermalFB {Vec3<double> dp; double r, wk, dwk, hinv, hinv3, hinv4;};

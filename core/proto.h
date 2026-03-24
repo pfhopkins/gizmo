@@ -56,6 +56,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest);
 double gamma_eos(int i);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
+double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
 double matrix_invert_ndims(double T[3][3], double Tinv[3][3]);
 #ifdef HERMITE_INTEGRATION
 int eligible_for_hermite(int i);

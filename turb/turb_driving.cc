@@ -328,7 +328,7 @@ void add_turb_accel()
 {
     set_turb_ampl();
     int i, m; double acc[3], fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(P[i].Type == 0)
         {
@@ -371,7 +371,7 @@ void do_turb_driving_step_first_half(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
     int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         ti_step = GET_PARTICLE_INTEGERTIME(i); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
@@ -392,7 +392,7 @@ void do_turb_driving_step_second_half(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
     int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         ti_step = GET_PARTICLE_INTEGERTIME(i); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);

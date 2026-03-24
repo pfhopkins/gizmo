@@ -79,7 +79,8 @@ void reconstruct_timebins(void)
     
     make_list_of_active_particles();
     
-    for(i = FirstActiveParticle, NumForceUpdate = 0; i >= 0; i = NextActiveParticle[i])
+    NumForceUpdate = 0;
+    for (int i : ActiveParticleList)
     {
         NumForceUpdate++;
         if(i >= NumPart)

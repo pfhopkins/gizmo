@@ -461,7 +461,7 @@ void density(void)
 #endif
     
     /* initialize anything we need to about the active particles before their loop */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+    for (int i : ActiveParticleList) {
         if(density_isactive(i)) {
             Left[i] = Right[i] = 0;
 #ifdef SINK_PARTICLES
@@ -493,7 +493,7 @@ void density(void)
 
         /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
-        for(i = FirstActiveParticle, npleft = 0; i >= 0; i = NextActiveParticle[i])
+        npleft = 0; for (int i : ActiveParticleList)
         {
             desnumngb = All.DesNumNgb; desnumngbdev = All.MaxNumNgbDeviation;
             /* in the initial timestep and iteration, use a much more strict tolerance for the neighbor number */
@@ -841,7 +841,7 @@ void density(void)
                 }
                 else {P[i].TimeBin = -P[i].TimeBin - 1;}	/* Mark as inactive */
             } //  if(density_isactive(i))
-        } // for(i = FirstActiveParticle, npleft = 0; i >= 0; i = NextActiveParticle[i])
+        } // npleft = 0; for (int i : ActiveParticleList)
 
         tend = my_second();
         timecomp += timediff(tstart, tend);
@@ -860,7 +860,7 @@ void density(void)
     myfree(Right); myfree(Left);
 
     /* mark as active again */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(P[i].TimeBin < 0) {P[i].TimeBin = -P[i].TimeBin - 1;}
     }
@@ -871,7 +871,7 @@ void density(void)
      won't save much b/c the real cost is in the neighbor loop for each particle, but it's something )
      -- also, some results (for example, viscosity suppression below) should not be calculated unless
      the quantities are 'stabilized' at their final values -- */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(density_isactive(i))
         {
@@ -1024,7 +1024,7 @@ void density(void)
         if(P[i].Type==0) {if(P[i].ID==All.SpawnedWindCellID && CellP[i].IniDen<0) {CellP[i].IniDen=CellP[i].Density; CellP[i].BPred=CellP[i].B=CellP[i].IniB*((All.UnitMagneticField_in_gauss/UNIT_B_IN_GAUSS)*(P[i].Mass/(All.cf_a2inv*CellP[i].Density)));}}
 #endif
         
-    } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    } // for (int i : ActiveParticleList)
 
     /* collect some timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
@@ -1090,7 +1090,7 @@ int cellcorrections_evaluate(int target, int mode, int *exportflag, int *exportn
 /* final operations for after the updates are computed */
 void cellcorrections_final_operations_and_cleanup(void)
 {
-    int i; for(i=FirstActiveParticle; i>=0; i=NextActiveParticle[i]) { /* check all active elements */
+    int i; for (int i : ActiveParticleList) { /* check all active elements */
         CONDITIONFUNCTION_FOR_EVALUATION /* ensures only the ones which met our criteria above are actually treated here */
         {
             if(CellP[i].Volume_1 > 0) {CellP[i].Density = P[i].Mass / CellP[i].Volume_1;} else {CellP[i].Volume_1 = CellP[i].Volume_0;} // set the updated density. other variables that need volumes will all scale off this, so we can rely on it to inform everything else [if bad value here, revert to the 0th-order volume quadrature]

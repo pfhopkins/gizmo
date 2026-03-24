@@ -35,7 +35,7 @@ void apply_grain_dragforce(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
     int i, k; PRINT_STATUS("Beginning particulate/grain/PIC force evaluation.");
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) /* loop over active particles */
+    for (int i : ActiveParticleList) /* loop over active particles */
     {
         if(!((1 << P[i].Type) & (GRAIN_PTYPES))) {P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;} /* for active elements, set this large to re-set below */
 #ifdef BOX_BND_PARTICLES
