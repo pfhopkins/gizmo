@@ -355,7 +355,7 @@ void fof_find_groups(void)
 
   /* allocate buffers to arrange communication */
 
-  Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
+  Ngblist.resize(NumPart);
 
     size_t MyBufferSize = All.BufferSize;
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
@@ -574,7 +574,7 @@ void fof_find_groups(void)
 
   myfree(DataNodeList);
   myfree(DataIndexTable);
-  myfree(Ngblist);
+  
 
 PRINT_STATUS("Local groups found.");
 }
@@ -1437,7 +1437,7 @@ void fof_find_nearest_dmparticle(void)
 
   /* allocate buffers to arrange communication */
 
-  Ngblist = (int *) mymalloc("Ngblist", NumPart * sizeof(int));
+  Ngblist.resize(NumPart);
 
     size_t MyBufferSize = All.BufferSize;
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
@@ -1616,7 +1616,7 @@ void fof_find_nearest_dmparticle(void)
 
   myfree(DataNodeList);
   myfree(DataIndexTable);
-  myfree(Ngblist);
+  
 
   myfree(fof_nearest_rkern);
   myfree(fof_nearest_distance);

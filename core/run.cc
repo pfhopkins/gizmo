@@ -311,7 +311,7 @@ void calculate_non_standard_physics(void)
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
-    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]){if(P[i].Type == 5 && P[i].do_gas_search_this_timestep){P[i].dt_since_last_gas_search = 0;}}
+    int i; for (int i : ActiveParticleList){if(P[i].Type == 5 && P[i].do_gas_search_this_timestep){P[i].dt_since_last_gas_search = 0;}}
 #endif
 
 }
@@ -468,28 +468,17 @@ void find_next_sync_point_and_drift(void)
 
 void make_list_of_active_particles(void)
 {
-    int i, n, prev;
-    /* make a link list with the particles in the active time bins */
-    FirstActiveParticle = -1;
-    ActiveParticleNumber = 0;
-
-    for(n = 0, prev = -1; n < TIMEBINS; n++)
+    ActiveParticleList.clear();
+    for(int n = 0; n < TIMEBINS; n++)
     {
         if(TimeBinActive[n])
         {
-            for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i])
+            for(int i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i])
             {
-                if(P[i].Mass <= 0) {continue;}
-                if(prev == -1) {FirstActiveParticle = i;}
-                if(prev >= 0) {NextActiveParticle[prev] = i;}
-                prev = i;
-                ActiveParticleList[ActiveParticleNumber] = i;
-                ActiveParticleNumber++;
+                if(P[i].Mass > 0) {ActiveParticleList.push_back(i);}
             }
         }
     }
-
-    if(prev >= 0) {NextActiveParticle[prev] = -1;}
 }
 
 

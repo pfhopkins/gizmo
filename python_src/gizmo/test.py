@@ -99,10 +99,9 @@ def assert_snapshots_are_close(
     fields_to_compare: tuple = ("Density", "Velocities", "InternalEnergy"),
     rtol: float = 1e-2,
     atol: float = 0,
-    plot_1D=False,
 ):
     """Test-assert that the specified gas data fields in two snapshots are within specified tolerance"""
-    fields_to_read = ("ParticleIDs", "Coordinates") + fields_to_compare
+    fields_to_read = ("ParticleIDs",) + fields_to_compare
 
     datafields = {snapshot1: {}, snapshot2: {}}
     for s in snapshot1, snapshot2:
@@ -115,12 +114,33 @@ def assert_snapshots_are_close(
             datafields[s][f] = datafields[s][f][id_order]
 
     for f in fields_to_compare:
-        if plot_1D:
-            plt.plot(datafields[snapshot1]["Coordinates"][:, 0], datafields[snapshot1][f], ".", label="Initial")
-            plt.plot(datafields[snapshot2]["Coordinates"][:, 0], datafields[snapshot2][f], ".", label="Final")
-            plt.legend()
-            plt.ylabel(f)
-            plt.xlabel("x")
-            plt.savefig(f"{f}.png")
-            plt.close()
         pytest.approx((datafields[snapshot1][f], datafields[snapshot2][f]), rel=rtol, abs=atol)
+
+
+def plot_1D_snapshot_comparison(
+    snapshot1: str,
+    snapshot2: str,
+    fields_to_plot: tuple = ("Density", "Velocities", "InternalEnergy"),
+    output_dir: str = ".",
+):
+    """Plot 1D comparison of gas data fields between two snapshots, sorted by particle ID."""
+    fields_to_read = ("ParticleIDs", "Coordinates") + fields_to_plot
+
+    datafields = {snapshot1: {}, snapshot2: {}}
+    for s in snapshot1, snapshot2:
+        with h5py.File(s, "r") as F:
+            for f in fields_to_read:
+                datafields[s][f] = F["PartType0/" + f][:]
+
+        id_order = datafields[s]["ParticleIDs"].argsort()
+        for f in fields_to_read:
+            datafields[s][f] = datafields[s][f][id_order]
+
+    for f in fields_to_plot:
+        plt.plot(datafields[snapshot1]["Coordinates"][:, 0], datafields[snapshot1][f], ".", label="Initial")
+        plt.plot(datafields[snapshot2]["Coordinates"][:, 0], datafields[snapshot2][f], ".", label="Final")
+        plt.legend()
+        plt.ylabel(f)
+        plt.xlabel("x")
+        plt.savefig(path.join(output_dir, f"{f}.png"))
+        plt.close()

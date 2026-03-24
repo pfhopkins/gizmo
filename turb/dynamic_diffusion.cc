@@ -207,13 +207,13 @@ void dynamic_diff_calc(void) {
     CPU_Step[CPU_DYNDIFFMISC] += measure_time();
     t0 = my_second();
     
-    Ngblist = (int *) mymalloc("Ngblist", NTaskTimesNumPart * sizeof(int));
+    Ngblist.resize(NTaskTimesNumPart);
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     PRINT_STATUS(" ..begin initializing smoothed quantities.");
 
     /* Because of smoothing operation, we don't zero these out, they get set to their current value */
-    for (i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+    for (int i : ActiveParticleList) {
         if (P[i].Type == 0) {
             memset(&DynamicDiffDataPasser[i], 0, sizeof(struct temporary_data_dyndiff));
 
@@ -243,7 +243,7 @@ void dynamic_diff_calc(void) {
     /* prepare to do the requisite number of sweeps over the particle distribution */
     for (dynamic_iteration = 0; dynamic_iteration < (All.TurbDynamicDiffIterations + 1); dynamic_iteration++) {      
         // now we actually begin the main gradient loop //
-        NextParticle = FirstActiveParticle;	/* begin with this index */
+        NextParticle = 0;	/* begin with this index */
         PRINT_STATUS(" ..first loop over active particles (iter = %d)", dynamic_iteration);
 
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
@@ -282,24 +282,25 @@ void dynamic_diff_calc(void) {
                 int processed_particles = 0;
                 int first_unprocessedparticle = -1;
                 NextParticle = save_NextParticle; /* figure out where we are */
-                while(NextParticle >= 0)
+                while(NextParticle < (int)ActiveParticleList.size())
                 {
                     if(NextParticle == last_nextparticle) {break;}
+                    int pindex = ActiveParticleList[NextParticle];
 #ifndef _OPENMP
-                    if(ProcessedFlag[NextParticle] != 1) {break;}
+                    if(ProcessedFlag[pindex] != 1) {break;}
 #else
-                    if(ProcessedFlag[NextParticle] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                    if(ProcessedFlag[NextParticle] == 1)
+                    if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
+                    if(ProcessedFlag[pindex] == 1)
 #endif
                     {
                         processed_particles++;
-                        ProcessedFlag[NextParticle] = 2;
+                        ProcessedFlag[pindex] = 2;
                     }
-                    NextParticle = NextActiveParticle[NextParticle];
+                    NextParticle++;
                 }
 #ifdef _OPENMP
                 if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle > -1) {
+                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
                     BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
                 else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
 #endif
@@ -420,7 +421,7 @@ void dynamic_diff_calc(void) {
             tend = my_second();
             timecomp2 += timediff(tstart, tend);
             
-            if (NextParticle < 0) {
+            if (NextParticle >= (int)ActiveParticleList.size()) {
                 ndone_flag = 1;
             }
             else {
@@ -491,7 +492,7 @@ void dynamic_diff_calc(void) {
         /* The first two iterations were solely to calculate the hat quantities */ 
         { 
             /* Now that we have finished preliminaries, need to do the coefficient calculation */
-            for (i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+            for (int i : ActiveParticleList) {
                 if (P[i].Type == 0) {
 #ifdef GALSF_SUBGRID_WINDS
                     if (CellP[i].DelayTime > 0) continue; /* Leave C_s alone for wind particles */
@@ -686,7 +687,7 @@ void dynamic_diff_calc(void) {
     
     myfree(DataNodeList);
     myfree(DataIndexTable);
-    myfree(Ngblist);
+    
     myfree(DynamicDiffDataPasser);
  
     /* collect some timing information */
@@ -917,12 +918,12 @@ void *DynamicDiff_evaluate_primary(void *p, int dynamic_iteration) {
 #pragma omp critical(_nexportdd_)
 #endif
         {
-            if (BufferFullFlag != 0 || NextParticle < 0) {
+            if (BufferFullFlag != 0 || NextParticle >= (int)ActiveParticleList.size()) {
                 exitFlag = 1;
             }
             else {
-                i = NextParticle;
-                NextParticle = NextActiveParticle[NextParticle];
+                i = ActiveParticleList[NextParticle];
+                NextParticle++;
             }
         }
 

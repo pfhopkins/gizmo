@@ -280,7 +280,7 @@ void merge_and_split_particles(void)
 
     int target_for_merger,dummy=0,numngb_inbox,startnode,i,j,n; double threshold_val;
     int n_particles_merged,n_particles_split,n_particles_gas_split,MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;
-    Ngblist = (int *) mymalloc("Ngblist",NumPart * sizeof(int));
+    Ngblist.resize(NumPart);
     Gas_split=0; n_particles_merged=0; n_particles_split=0; n_particles_gas_split=0; MPI_n_particles_merged=0; MPI_n_particles_split=0; MPI_n_particles_gas_split=0;
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
 
@@ -400,7 +400,7 @@ void merge_and_split_particles(void)
     do_box_wrapping();
 #endif
     myfree(Ptmp);
-    myfree(Ngblist);
+    
     MPI_Allreduce(&n_particles_merged, &MPI_n_particles_merged, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&n_particles_gas_split, &MPI_n_particles_gas_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);

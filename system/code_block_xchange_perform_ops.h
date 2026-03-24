@@ -2,7 +2,7 @@
 be copy-pasted and can be generically optimized in a single place */
 {
     int j, k, ndone=0, ndone_flag=0, recvTask, place, save_NextParticle; long long n_exported = 0; double tstart, tend, tstart_loop; /* define some variables used only below */
-    NextParticle = FirstActiveParticle;    /* begin the main loop; start with this index */
+    NextParticle = 0;    /* begin the main loop; start with this index into ActiveParticleList */
     tstart_loop = my_second();
     memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
     BufferCollisionFlag = 0; /* set to zero before operations begin */
@@ -28,34 +28,36 @@ be copy-pasted and can be generically optimized in a single place */
             int processed_particles = 0;
             int first_unprocessedparticle = -1;
             NextParticle = save_NextParticle; /* figure out where we are */
-            while(NextParticle >= 0)
+            while(NextParticle < (int)ActiveParticleList.size())
             {
                 if(NextParticle == last_nextparticle) {break;}
+                int pindex = ActiveParticleList[NextParticle];
 #ifndef _OPENMP
-                if(ProcessedFlag[NextParticle] != 1) {break;}
+                if(ProcessedFlag[pindex] != 1) {break;}
 #else
-                if(ProcessedFlag[NextParticle] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                if(ProcessedFlag[NextParticle] == 1)
+                if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
+                if(ProcessedFlag[pindex] == 1)
 #endif
                 {
                     processed_particles++;
-                    ProcessedFlag[NextParticle] = 2;
+                    ProcessedFlag[pindex] = 2;
                 }
-                NextParticle = NextActiveParticle[NextParticle];
+                NextParticle++;
             }
 #ifdef _OPENMP
             if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-            if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle > -1) {
+            if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
                 BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
             else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
 #endif
             if(processed_particles <= 0 && NextParticle == save_NextParticle) // this is still sometimes being triggered with OPENMP, but not without, when it shouldn't. some OPENMP error still needs to be debugged
             {
-                PRINT_WARNING("NextParticle == save_NextParticle condition (the buffer appears too small to hold a single particle): NextParticle=%d save_NextParticle=%d last_nextparticle=%d ProcessedFlag[NextParticle]=%d NextActiveParticle[NextParticle]=%d NumPart=%d N_gas=%d NTaskTimesNumPart=%llu maxThreads=%d All.BunchSize=%ld All.BufferSize=%llu Nexport=%ld ndone=%d ndone_flag=%d NTask=%d",NextParticle,save_NextParticle,last_nextparticle,ProcessedFlag[NextParticle],NextActiveParticle[NextParticle],NumPart,N_gas,(unsigned long long)NTaskTimesNumPart,maxThreads,All.BunchSize,(unsigned long long)All.BufferSize,Nexport,ndone,ndone_flag,NTask);
-                if(NextParticle >= 0) {PRINT_WARNING("This is a live particle: NextParticle=%d ID=%llu Mass=%g Type=%d",NextParticle,(unsigned long long)P[NextParticle].ID,P[NextParticle].Mass,P[NextParticle].Type);}
+                int pindex_dbg = (NextParticle < (int)ActiveParticleList.size()) ? ActiveParticleList[NextParticle] : -1;
+                PRINT_WARNING("NextParticle == save_NextParticle condition (the buffer appears too small to hold a single particle): NextParticle=%d save_NextParticle=%d last_nextparticle=%d ProcessedFlag=%d NumPart=%d N_gas=%d NTaskTimesNumPart=%llu maxThreads=%d All.BunchSize=%ld All.BufferSize=%llu Nexport=%ld ndone=%d ndone_flag=%d NTask=%d",NextParticle,save_NextParticle,last_nextparticle,(pindex_dbg>=0 ? (int)ProcessedFlag[pindex_dbg] : -1),NumPart,N_gas,(unsigned long long)NTaskTimesNumPart,maxThreads,All.BunchSize,(unsigned long long)All.BufferSize,Nexport,ndone,ndone_flag,NTask);
+                if(pindex_dbg >= 0) {PRINT_WARNING("This is a live particle: pindex=%d ID=%llu Mass=%g Type=%d",pindex_dbg,(unsigned long long)P[pindex_dbg].ID,P[pindex_dbg].Mass,P[pindex_dbg].Type);}
                 endrun(113312);
             } /* in this case, the buffer is too small to process even a single particle */
-            
+
             int new_export = 0; /* actually calculate exports [so we can tell other tasks] */
             for(j = 0, k = 0; j < Nexport; j++)
             {
@@ -108,7 +110,7 @@ be copy-pasted and can be generically optimized in a single place */
                 }
                 size_t space_needed = Nimport * sizeof(struct INPUT_STRUCT_NAME) + Nimport * sizeof(struct OUTPUT_STRUCT_NAME) + 16384; /* extra bitflag is a padding, to avoid overflows */
                 if(space_needed > FreeBytes) {flag = 1;}
-                
+
                 MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
                 if(flagall) {N_chunks_for_import /= 2;} else {break;}
             } while(N_chunks_for_import > 0);
@@ -135,7 +137,7 @@ be copy-pasted and can be generically optimized in a single place */
                 }
             }
             tend = my_second(); timecomm += timediff(tstart, tend);
-            
+
             /* now do the particles that were sent to us */
             tstart = my_second(); NextJ = 0;
 #ifdef _OPENMP
@@ -152,7 +154,7 @@ be copy-pasted and can be generically optimized in a single place */
             tend = my_second(); timecomp += timediff(tstart, tend); tstart = my_second();
             MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
             tend = my_second(); timewait += timediff(tstart, tend);
-            
+
             tstart = my_second(); Nimport = 0;
             for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
             {
@@ -170,7 +172,7 @@ be copy-pasted and can be generically optimized in a single place */
             }
             tend = my_second(); timecomm += timediff(tstart, tend);
             myfree(DATARESULT_NAME); myfree(DATAGET_NAME); /* free the structures used to send data back to tasks, its sent */
-            
+
         } /* close the sub-chunking loop: for(ngrp_initial = 1; ngrp_initial < (1 << PTask); ngrp_initial += N_chunks_for_import) */
 
         /* we have all our results back from the elements we exported: add the result to the local elements */
@@ -182,14 +184,13 @@ be copy-pasted and can be generically optimized in a single place */
         }
         tend = my_second(); timecomp += timediff(tstart, tend);
         myfree(DATAOUT_NAME); myfree(DATAIN_NAME); /* free the structures used to prepare our initial export data, we're done here! */
-        
-        if(NextParticle < 0) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
+
+        if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
         tstart = my_second();
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
         tend = my_second(); timewait += timediff(tstart, tend);
     }
     while(ndone < NTask);
     timeall += timediff(tstart_loop, my_second());
-    
-} /* closes clause, so variables don't 'leak' */
 
+} /* closes clause, so variables don't 'leak' */

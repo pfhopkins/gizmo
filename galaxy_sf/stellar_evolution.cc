@@ -703,7 +703,7 @@ double Z_for_stellar_evol(int i)
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
 void update_stellarnumber_and_timedistribofstarformation(void)
 {
-    int i; for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    int i; for (int i : ActiveParticleList)
     {
         if(P[i].Type == 4 && P[i].Mass > 0)
         {

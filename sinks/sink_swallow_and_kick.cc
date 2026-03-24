@@ -556,7 +556,7 @@ void spawn_sink_wind_feedback(void)
         }
 
     /* don't loop or go forward if there are no gas particles in the domain, or the code will crash */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         long nmax = (int)(0.99*All.MaxPart); if(All.MaxPart-20 < nmax) nmax=All.MaxPart-20; int ptype_can_spawn = 0; if(P[i].Type == 5) {ptype_can_spawn = 1;}
 #ifdef SNE_NONSINK_SPAWN
@@ -1008,8 +1008,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 
         /* now we need to make sure everything is correctly placed in timebins for the tree */
         P[j].TimeBin = bin; // get the timebin, and put this particle into the appropriate timebin
-        NextActiveParticle[j] = FirstActiveParticle; FirstActiveParticle = j;
-        ActiveParticleList[ActiveParticleNumber] = j; ActiveParticleNumber++;
+        ActiveParticleList.push_back(j);
         NumForceUpdate++;
         TimeBinCount[bin]++; TimeBinCountGas[bin]++; PrevInTimeBin[j] = i0; /* likewise add it to the counters that register how many particles are in each timebin */
         NextInTimeBin[j] = NextInTimeBin[i0]; if(NextInTimeBin[i0] >= 0) {PrevInTimeBin[NextInTimeBin[i0]] = j;} NextInTimeBin[i0] = j; if(LastInTimeBin[bin] == i0) {LastInTimeBin[bin] = j;}

@@ -13,7 +13,7 @@ printf("Cannot compile the primary sub-loop without both CONDITION_FOR_EVALUATIO
 /* variable assignment */
 int i, j, *exportflag, *exportnodecount, *exportindex, *ngblist, thread_id = *(int *) p;
 /* define the pointers needed for each thread to speak back regarding what needs processing */
-ngblist = Ngblist + thread_id * NumPart;
+ngblist = Ngblist.data() + thread_id * NumPart;
 exportflag = Exportflag + thread_id * NTask;
 exportnodecount = Exportnodecount + thread_id * NTask;
 exportindex = Exportindex + thread_id * NTask;
@@ -30,14 +30,14 @@ while(1)
 #pragma omp critical(_nextlistprimblox_)
 #endif
     {
-        if(BufferFullFlag != 0 || NextParticle < 0)
+        if(BufferFullFlag != 0 || NextParticle >= (int)ActiveParticleList.size())
         {
             exitFlag = 1;
         }
         else
         {
-            i = NextParticle;
-            NextParticle = NextActiveParticle[NextParticle];
+            i = ActiveParticleList[NextParticle];
+            NextParticle++;
         }
     }
     if(exitFlag) {break;}

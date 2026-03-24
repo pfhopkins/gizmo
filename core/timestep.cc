@@ -77,7 +77,8 @@ void find_timesteps(void)
 
 #if defined(FORCE_EQUAL_TIMESTEPS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     ti_max = 0;
-    for(i = FirstActiveParticle, ti_min = TIMEBASE; i >= 0; i = NextActiveParticle[i])
+    ti_min = TIMEBASE;
+    for (int i : ActiveParticleList)
     {
 #if defined(FORCE_EQUAL_TIMESTEPS)
         ti_step = get_timestep(i, &aphys, 0);
@@ -108,7 +109,7 @@ void find_timesteps(void)
 
 
     /* Now assign new timesteps  */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
 #ifdef FORCE_EQUAL_TIMESTEPS
         ti_step = ti_min_glob;

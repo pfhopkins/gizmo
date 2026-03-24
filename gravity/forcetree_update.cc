@@ -25,7 +25,7 @@ void force_update_tree(void)
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree");
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         force_kick_node(i, P[i].dp);    /* kick the parent nodes with this momentum difference, also updated maximum velocity, softening and soundspeed, if needed */
         P[i].dp = {};
@@ -336,7 +336,7 @@ void force_update_hmax(void)
   DomainNumChanged = 0;
   DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
 
-  for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+  for (int i : ActiveParticleList)
   {
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     if(P[i].Mass > 0)
@@ -376,7 +376,7 @@ void force_update_hmax(void)
             no = Nodes[no].u.d.father;
         }
       }
-  } // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+  } // for (int i : ActiveParticleList)
 
   /* share the hmax-data of the pseudo-particles accross CPUs */
 

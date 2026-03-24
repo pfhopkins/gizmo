@@ -41,7 +41,7 @@ void do_first_halfstep_kick(void)
     {
         if((TimeBinActive[P[i].TimeBin]) || (P[i].Type==0)) /* active OR gas, need to check each timestep to ensure manifest conservation */
 #else
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) /* 'full' kick for active particles */
+    for (int i : ActiveParticleList) /* 'full' kick for active particles */
     {	    
 #endif
         {
@@ -74,7 +74,7 @@ void do_second_halfstep_kick(void)
     {
         if((TimeBinActive[P[i].TimeBin]) || (P[i].Type==0)) /* active OR gas, need to check each timestep to ensure manifest conservation */
 #else
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) /* 'full' kick for active particles */
+    for (int i : ActiveParticleList) /* 'full' kick for active particles */
     {
 #endif
         {
@@ -119,7 +119,7 @@ int eligible_for_hermite(int i)
 void do_hermite_prediction(void)
 {
     int i; integertime ti_step, tstart=0, tend=0;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+    for (int i : ActiveParticleList) {
 	if(eligible_for_hermite(i)) { /* check if we're actually eligible */
 	    if(P[i].Mass > 0) { /* skip massless particles scheduled for deletion */
 		ti_step = GET_PARTICLE_INTEGERTIME(i);
@@ -136,13 +136,13 @@ void do_hermite_prediction(void)
 #endif
             P[i].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/3)) * (dt_grav/2)) * dt_grav;
             P[i].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/2)) * dt_grav;
-		}}} // for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) 
+		}}} // for (int i : ActiveParticleList) 
 }
 
 void do_hermite_correction(void) // corrector step
 {
     int i; integertime ti_step, tstart=0, tend=0;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i]) {
+    for (int i : ActiveParticleList) {
 	if(eligible_for_hermite(i)){
                 if(P[i].Mass > 0) {
                     ti_step = GET_PARTICLE_INTEGERTIME(i);
@@ -159,7 +159,7 @@ void do_hermite_correction(void) // corrector step
                         P[i].OldVel += P[i].GravPM * dt_grav_pm;
                     }
 #endif
-		}}} //     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+		}}} //     for (int i : ActiveParticleList)
 }
 #endif // HERMITE_INTEGRATION
 

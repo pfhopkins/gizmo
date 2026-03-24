@@ -620,7 +620,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 void hydro_final_operations_and_cleanup(void)
 {
     int i,k;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
         {
@@ -912,7 +912,7 @@ void hydro_force_initial_operations_preloop(void)
 
     /* need to zero out all numbers that can be set -EITHER- by an active particle in the domain, or by one of the neighbors we will get sent */
     int i, k;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
         if(P[i].Type==0)
         {
             CellP[i].MaxSignalVel = MIN_REAL_NUMBER;

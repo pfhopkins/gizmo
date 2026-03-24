@@ -131,7 +131,7 @@ void gravity_tree(void)
     /* begin main communication and tree-walk loop. note the ewald-iter terms here allow for multiple iterations for periodic-tree corrections if needed */
     for(Ewald_iter = 0; Ewald_iter <= ewald_max; Ewald_iter++)
     {
-        NextParticle = FirstActiveParticle;	/* begin with this index */
+        NextParticle = 0;	/* begin with this index */
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
         BufferCollisionFlag = 0; /* set to zero before operations begin */
         do /* primary point-element loop */
@@ -158,24 +158,25 @@ void gravity_tree(void)
                 int processed_particles = 0;
                 int first_unprocessedparticle = -1;
                 NextParticle = save_NextParticle; /* figure out where we are */
-                while(NextParticle >= 0)
+                while(NextParticle < (int)ActiveParticleList.size())
                 {
                     if(NextParticle == last_nextparticle) {break;}
+                    int pindex = ActiveParticleList[NextParticle];
 #ifndef _OPENMP
-                    if(ProcessedFlag[NextParticle] != 1) {break;}
+                    if(ProcessedFlag[pindex] != 1) {break;}
 #else
-                    if(ProcessedFlag[NextParticle] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                    if(ProcessedFlag[NextParticle] == 1)
+                    if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
+                    if(ProcessedFlag[pindex] == 1)
 #endif
                     {
                         processed_particles++;
-                        ProcessedFlag[NextParticle] = 2;
+                        ProcessedFlag[pindex] = 2;
                     }
-                    NextParticle = NextActiveParticle[NextParticle];
+                    NextParticle++;
                 }
 #ifdef _OPENMP
                 if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle > -1) {
+                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
                     BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
                 else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
 #endif
@@ -431,7 +432,7 @@ void gravity_tree(void)
             tend = my_second(); timetree1 += timediff(tstart, tend);
             myfree(GravDataOut); myfree(GravDataIn);
 
-            if(NextParticle < 0) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
+            if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
             tend = my_second(); timewait2 += timediff(tstart, tend);
@@ -459,7 +460,7 @@ void gravity_tree(void)
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
     if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS) {if(!(All.Ti_Current == 0 && RestartFlag == 0)) {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}}} else {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}} /* This will switch to the relative opening criterion for the following force computations */
 #endif
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
 #ifdef HERMITE_INTEGRATION
         if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
@@ -668,8 +669,8 @@ void *gravity_primary_loop(void *p)
 #pragma omp critical(_nextlistgravprim_)
 #endif
         {
-        if(BufferFullFlag != 0 || NextParticle < 0) {exitFlag=1;}
-            else {i=NextParticle; NextParticle=NextActiveParticle[NextParticle];}
+        if(BufferFullFlag != 0 || NextParticle >= (int)ActiveParticleList.size()) {exitFlag=1;}
+            else {i=ActiveParticleList[NextParticle]; NextParticle++;}
         }
         if(exitFlag) {break;}
         if(ProcessedFlag[i]) {continue;}

@@ -27,7 +27,7 @@ void sink_start(void)
 
     /* count the num BHs on this task */
     N_active_loc_Sink=0;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(sink_isactive(i))
         {
@@ -47,7 +47,7 @@ void sink_start(void)
     memset( &SinkTempInfo[0], 0, N_active_loc_Sink * sizeof(struct sink_temp_particle_data) );
 
     Nbh=0;
-    for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
+    for (int i : ActiveParticleList)
     {
         if(sink_isactive(i))
         {

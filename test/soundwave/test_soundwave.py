@@ -1,7 +1,7 @@
 """GMC cooling and chemistry test"""
 
 import pytest
-from gizmo.test import build_and_run_test, assert_snapshots_are_close, default_mpi_ranks
+from gizmo.test import build_and_run_test, assert_snapshots_are_close, plot_1D_snapshot_comparison, default_mpi_ranks
 from os import path
 
 
@@ -14,4 +14,6 @@ def test_soundwave(num_mpi_ranks):
     if not path.isfile(final_snap):
         raise (RuntimeError("GIZMO did not run successfully."))
 
-    assert_snapshots_are_close(outputdir + "/snapshot_000.hdf5", final_snap, rtol=1e-5, atol=1e-8, plot_1D=True)
+    initial_snap = outputdir + "/snapshot_000.hdf5"
+    assert_snapshots_are_close(initial_snap, final_snap, rtol=1e-5, atol=1e-8)
+    plot_1D_snapshot_comparison(initial_snap, final_snap, output_dir=f"test/{test_name}")

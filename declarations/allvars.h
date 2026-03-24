@@ -59,6 +59,8 @@
 
 #include <assert.h>
 #include <algorithm>
+#include <type_traits>
+#include <vector>
 
 #include "macros.h"
 
@@ -142,18 +144,15 @@ extern struct Chimes_depletion_data_structure *ChimesDepletionData;
 #endif // CHIMES_METAL_DEPLETION
 
 
-extern int FirstActiveParticle;
-extern int *NextActiveParticle;
-extern int *ActiveParticleList;
-extern int ActiveParticleNumber;
+extern std::vector<int> ActiveParticleList;
 extern unsigned char *ProcessedFlag;
 extern int TimeBinCount[TIMEBINS];
 extern int TimeBinCountGas[TIMEBINS];
 extern int TimeBinActive[TIMEBINS];
 extern int FirstInTimeBin[TIMEBINS];
 extern int LastInTimeBin[TIMEBINS];
-extern int *NextInTimeBin;
-extern int *PrevInTimeBin;
+extern std::vector<int> NextInTimeBin;
+extern std::vector<int> PrevInTimeBin;
 #ifdef GALSF
 extern double TimeBinSfr[TIMEBINS];
 #endif
@@ -220,7 +219,7 @@ extern int Stars_converted;	/*!< current number of star particles in gas particl
 #endif
 
 extern double TimeOfLastTreeConstruction;	/*!< holds what it says */
-extern int *Ngblist;		/*!< Buffer to hold indices of neighbours retrieved by the neighbour search routines */
+extern std::vector<int> Ngblist;		/*!< Buffer to hold indices of neighbours retrieved by the neighbour search routines */
 extern double *R2ngblist;
 extern double DomainCorner[3], DomainCenter[3], DomainLen, DomainFac;
 extern int *DomainStartList, *DomainEndList;
@@ -944,6 +943,8 @@ All;
 #include "particle_data.h"
 #include "cell_data.h"
 
+static_assert(std::is_trivially_copyable<particle_data>::value, "particle_data must be trivially copyable for MPI");
+static_assert(std::is_trivially_copyable<gas_cell_data>::value, "gas_cell_data must be trivially copyable for MPI");
 
 
 
