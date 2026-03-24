@@ -158,9 +158,8 @@
             cmag = dot(Face_Area_Vec, hlle_wtfac_f*flux_i + (1.-hlle_wtfac_f)*flux_j); /* remember, our 'flux' variable is a volume-integral [all physical units here] */
 
             /* now compute the 'flux source term' - divergence of the radiation pressure tensor */
-            double ET_dot_Face_i[3]={0}, ET_dot_Face_j[3]={0};
-            eddington_tensor_dot_vector(local.ET[k_freq],Face_Area_Vec,ET_dot_Face_i); /* compute face dotted into eddington tensors for both sides */
-            eddington_tensor_dot_vector(CellP[j].ET[k_freq],Face_Area_Vec,ET_dot_Face_j); /* compute face dotted into eddington tensors for both sides */
+            Vec3<double> ET_dot_Face_i = local.ET[k_freq].matvec(Face_Area_Vec); /* compute face dotted into eddington tensors for both sides */
+            Vec3<double> ET_dot_Face_j = CellP[j].ET[k_freq].matvec(Face_Area_Vec);
 #ifdef RT_ENHANCED_NUMERICAL_DIFFUSION
             cmag_flux += (c_light_eff*c_light_eff * 0.5*(scalar_i + scalar_j)/3.) * Face_Area_Vec;
 #else

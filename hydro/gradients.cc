@@ -78,7 +78,7 @@ struct Quantities_for_Gradients
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
-    MyFloat Rad_E_gamma_ET[N_RT_FREQ_BINS][6];
+    SymmetricTensor2<MyFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
     MyDouble InternalEnergy;
@@ -106,7 +106,7 @@ struct GasGraddata_in
     MyFloat KernelRadius;
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble ConditionNumber;
-    MyDouble NV_T[3][3];
+    SymmetricTensor2<MyDouble> NV_T;
     MyFloat BGrad[3][3];
 #ifdef MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV
     MyFloat PhiGrad[3];
@@ -247,14 +247,11 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
 #ifdef MHD_CONSTRAINED_GRADIENT
     in->ConditionNumber = CellP[i].ConditionNumber;
     if(gradient_iteration > 0) {if(CellP[i].FlagForConstrainedGradients <= 0) {in->Mass = 0;}}
+    in->NV_T = CellP[i].NV_T;
     int j;
     for(j=0;j<3;j++)
     {
-        for(k=0;k<3;k++)
-        {
-            in->BGrad[j][k] = CellP[i].Gradients.B[j][k];
-            in->NV_T[j][k] = CellP[i].NV_T[j][k];
-        }
+        for(k=0;k<3;k++) {in->BGrad[j][k] = CellP[i].Gradients.B[j][k];}
 #ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
         in->PhiGrad[j] = CellP[i].Gradients.Phi[j];
 #endif
@@ -290,7 +287,7 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
         for(k = 0; k < N_RT_FREQ_BINS; k++)
         {
         	in->GQuant.Rad_E_gamma[k] = CellP[i].Rad_E_gamma_Pred[k];
-        	int k_et; for(k_et = 0; k_et < 6; k_et++) {in->GQuant.Rad_E_gamma_ET[k][k_et] = CellP[i].ET[k][k_et];}
+        	in->GQuant.Rad_E_gamma_ET[k] = CellP[i].ET[k];
         }
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -480,15 +477,12 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
         	{
         		int k_xyz; for(k_xyz=0;k_xyz<3;k_xyz++)
         		{
-        			int j_xyz,i_xyz,k_et_loop[3]; // recall, for ET: 0=xx,1=yy,2=zz,3=xy,4=yz,5=xz
-					if(k_xyz==0) {k_et_loop[0]=0; k_et_loop[1]=3; k_et_loop[2]=5;}
-					if(k_xyz==1) {k_et_loop[0]=3; k_et_loop[1]=1; k_et_loop[2]=4;}
-					if(k_xyz==2) {k_et_loop[0]=5; k_et_loop[1]=4; k_et_loop[2]=2;}
+        			int j_xyz,i_xyz;
         			for(j_xyz=0;j_xyz<3;j_xyz++)
         			{
         				for(i_xyz=0;i_xyz<3;i_xyz++)
         				{
-        					CellP[i].Gradients.Rad_E_gamma_ET[k_freq][k_xyz] += CellP[i].NV_T[j_xyz][i_xyz] * out->Gradients[i_xyz].Rad_E_gamma_ET[k_freq][k_et_loop[j_xyz]];
+        					CellP[i].Gradients.Rad_E_gamma_ET[k_freq][k_xyz] += CellP[i].NV_T[j_xyz][i_xyz] * out->Gradients[i_xyz].Rad_E_gamma_ET[k_freq][k_xyz][j_xyz];
 						}
         			}
         		}
@@ -528,18 +522,16 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
 }
 
 
-void construct_gradient(double *grad, int i)
+void construct_gradient(Vec3<MyDouble>& grad, int i)
 {
     /* check if the matrix is well-conditioned: otherwise we will use the 'standard SPH-like' derivative estimation */
     if(SHOULD_I_USE_SPH_GRADIENTS(CellP[i].ConditionNumber))
     {
         /* the condition number was bad, so we used SPH-like gradients */
-        if(CellP[i].Density > 0) {int k; for(k=0;k<3;k++) {grad[k] *= P[i].DrkernNgbFactor / CellP[i].Density;}}
+        if(CellP[i].Density > 0) {grad *= P[i].DrkernNgbFactor / CellP[i].Density;}
     } else {
         /* ok, the condition number was good so we used the matrix-like gradient estimator */
-        int k; double v_tmp[3];
-        for(k=0;k<3;k++) {v_tmp[k] = grad[k];}
-        for(k=0;k<3;k++) {grad[k] = CellP[i].NV_T[k][0]*v_tmp[0] + CellP[i].NV_T[k][1]*v_tmp[1] + CellP[i].NV_T[k][2]*v_tmp[2];}
+        grad = CellP[i].NV_T.matvec(grad);
     }
 }
 
@@ -600,7 +592,7 @@ void hydro_gradient_calc(void)
             /* and zero out the gradients structure itself */
             CellP[i].Gradients.Density = {};
             CellP[i].Gradients.Pressure = {};
-            for(k2=0;k2<3;k2++) {CellP[i].Gradients.Velocity[k2] = {};}
+            CellP[i].Gradients.Velocity = {};
 #ifdef DOGRAD_INTERNAL_ENERGY
             CellP[i].Gradients.InternalEnergy = {};
 #endif
@@ -612,7 +604,7 @@ void hydro_gradient_calc(void)
 #endif
 #ifdef MAGNETIC
 #ifndef MHD_CONSTRAINED_GRADIENT
-            for(k2=0;k2<3;k2++) {CellP[i].Gradients.B[k2] = {};}
+            CellP[i].Gradients.B = {};
 #else
             CellP[i].Face_Area = {};
 #endif
@@ -1039,9 +1031,7 @@ void hydro_gradient_calc(void)
 #endif
 
 #if defined(TURB_DRIVING) || defined(OUTPUT_VORTICITY)
-            CellP[i].Vorticity[0] = CellP[i].Gradients.Velocity[1][2] - CellP[i].Gradients.Velocity[2][1];
-            CellP[i].Vorticity[1] = CellP[i].Gradients.Velocity[2][0] - CellP[i].Gradients.Velocity[0][2];
-            CellP[i].Vorticity[2] = CellP[i].Gradients.Velocity[0][1] - CellP[i].Gradients.Velocity[1][0];
+            CellP[i].Vorticity = CellP[i].Gradients.Velocity.curl();
 #endif
 
 #ifdef SPH_TP12_ARTIFICIAL_RESISTIVITY
@@ -1107,12 +1097,10 @@ void hydro_gradient_calc(void)
             CellP[i].alpha_limiter = DMAX(NV_limiter,All.ViscosityAMin/CellP[i].alpha);
 #else
             /* compute the traditional Balsara limiter (now that we have velocity gradients) */
-            double divVel = All.cf_a2inv * fabs(CellP[i].Gradients.Velocity[0][0] + CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[2][2]);
+            double divVel = All.cf_a2inv * fabs(CellP[i].Gradients.Velocity.trace());
             if(All.ComovingIntegrationOn) {divVel += 3*All.cf_hubble_a;} // hubble-flow correction added (physical units)
             Vec3<double> CurlVel; double MagCurl;
-            CurlVel[0] = CellP[i].Gradients.Velocity[1][2] - CellP[i].Gradients.Velocity[2][1];
-            CurlVel[1] = CellP[i].Gradients.Velocity[2][0] - CellP[i].Gradients.Velocity[0][2];
-            CurlVel[2] = CellP[i].Gradients.Velocity[0][1] - CellP[i].Gradients.Velocity[1][0];
+            CurlVel = CellP[i].Gradients.Velocity.curl();
             MagCurl = All.cf_a2inv * CurlVel.norm();
             double fac_mu = 1 / ( All.cf_atime);
             CellP[i].alpha_limiter = divVel / (divVel + MagCurl + 0.0001 * Get_Gas_effective_soundspeed_i(i) / (Get_Particle_Size(i)) / fac_mu);
@@ -1142,7 +1130,7 @@ void hydro_gradient_calc(void)
                         double chi=DMAX(1./3.,DMIN(1.,(3.+4.*lambda*lambda)/(5.+2.*sqrt(4.-3.*lambda*lambda)))), chifac_iso=3.*(1-chi)/2., chifac_ot=(3.*chi-1.)/2.;
                         for(k=0;k<3;k++) {CellP[i].Gradients.Rad_E_gamma_ET[k_freq][k] = chifac_ot*CellP[i].Gradients.Rad_E_gamma_ET[k_freq][k] + chifac_iso/3.*GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq][k];}
 #ifdef RT_DIFFUSION_CG
-                        for(k=0;k<6;k++) {CellP[i].ET[k_freq][k] *= chifac_ot; if(k<3) {CellP[i].ET[k_freq][k] += chifac_iso/3.;}} // diagonal components // (this only makes sense if ET is freq-dependent) [note this will cause instability in the explicit methods; only use for CG where ET is explicitly called and this is done only on global timesteps]
+                        CellP[i].ET[k_freq] *= chifac_ot; CellP[i].ET[k_freq][0][0] += chifac_iso/3.; CellP[i].ET[k_freq][1][1] += chifac_iso/3.; CellP[i].ET[k_freq][2][2] += chifac_iso/3.; // (this only makes sense if ET is freq-dependent) [note this will cause instability in the explicit methods; only use for CG where ET is explicitly called and this is done only on global timesteps]
 #endif
 #endif // ifdef otvet
                     }
@@ -1150,7 +1138,8 @@ void hydro_gradient_calc(void)
 #endif // ifdef fluxlimiter
 
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && !defined(RT_OTVET)
-                    eddington_tensor_dot_vector(CellP[i].ET[k_freq],GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq],CellP[i].Gradients.Rad_E_gamma_ET[k_freq].data_ptr()); /* set the output gradient grad.(D*Prad) = D.(grad Prad), i.e. move the tensor outside the gradient. while not strictly self-consistent, this is more stable, and correct at the level of the ad-hoc M1 or OTVET closure, b/c otherwise M1 introduces unphysical behaviors from the gradients of the tensor where the ad-hoc closure relation causes changes to D [see e.g. Hopkins 'Anisotropic Diffusion in Mesh-Free Numerical Magnetohydrodynamics' Fig 8 and associated discussion]. Also works for FLD trivially. */
+                    {Vec3<MyDouble> g{GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq][0], GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq][1], GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq][2]};
+                    CellP[i].Gradients.Rad_E_gamma_ET[k_freq] = CellP[i].ET[k_freq].matvec(g);} /* set the output gradient grad.(D*Prad) = D.(grad Prad) */
 #endif
 #if defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION) /* yet another hack for this problem to get the boundaries to play nicely once dust evacuated -- this is a bit redundant with other hacks, but here for safety */
                     if(CellP[i].Interpolated_Opacity[0] < 1.e-3 * All.Dust_to_Gas_Mass_Ratio*0.75*All.Grain_Q_at_MaxGrainSize/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS))) {double gmax=-1; if(P[i].GravAccel[GRAV_DIRECTION_RDI] < gmax) {P[i].GravAccel[GRAV_DIRECTION_RDI]=gmax;}} // the interpolated opacity here should be in code units by default
@@ -1446,7 +1435,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 swap_to_j = 0;
                 
                 kernel.dp = local.Pos - P[j].Pos;
-                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /*  now find the closest image in the given box size  */
+                nearest_xyz(kernel.dp); /*  now find the closest image in the given box size  */
                 r2 = kernel.dp.norm_sq();
                 double h_j = P[j].KernelRadius;
 #if !defined(HYDRO_SPH) && !defined(KERNEL_CRK_FACES)
@@ -1741,12 +1730,12 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     }
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-                    double dnET[N_RT_FREQ_BINS][6];
+                    SymmetricTensor2<double> dnET[N_RT_FREQ_BINS];
                     double dn[N_RT_FREQ_BINS];
                     double V_i_inv = 1/V_i, V_j_inv = CellP[j].Density/P[j].Mass;
                     for(k = 0; k < N_RT_FREQ_BINS; k++)
                     {
-                        int k_dE; for(k_dE=0;k_dE<6;k_dE++) {dnET[k][k_dE] = CellP[j].Rad_E_gamma_Pred[k]*CellP[j].ET[k][k_dE]*V_j_inv - local.GQuant.Rad_E_gamma[k]*local.GQuant.Rad_E_gamma_ET[k][k_dE]*V_i_inv;}
+                        dnET[k] = (CellP[j].Rad_E_gamma_Pred[k]*V_j_inv) * CellP[j].ET[k] - (local.GQuant.Rad_E_gamma[k]*V_i_inv) * local.GQuant.Rad_E_gamma_ET[k];
                         dn[k] = CellP[j].Rad_E_gamma_Pred[k]*V_j_inv - local.GQuant.Rad_E_gamma[k]*V_i_inv;
                         MINMAX_CHECK(dn[k],out.Minima.Rad_E_gamma[k],out.Maxima.Rad_E_gamma[k]);
                         if(swap_to_j) {MINMAX_CHECK(-dn[k],GasGradDataPasser[j].Minima.Rad_E_gamma[k],GasGradDataPasser[j].Maxima.Rad_E_gamma[k]);}
@@ -1836,7 +1825,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             for(k2=0;k2<N_RT_FREQ_BINS;k2++)
                             {
                             	out.Gradients[k].Rad_E_gamma[k2] += wk_xyz_i * dn[k2];
-                            	int k_et; for(k_et=0;k_et<6;k_et++) out.Gradients[k].Rad_E_gamma_ET[k2][k_et] += wk_xyz_i * dnET[k2][k_et];
+                            	out.Gradients[k].Rad_E_gamma_ET[k2] += wk_xyz_i * dnET[k2];
                             }
 #endif
                         }
@@ -1882,15 +1871,12 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             {
                             	GasGradDataPasser[j].Gradients_Rad_E_gamma[k2][k] += wk_xyz_j * dn[k2];
 								/* below we have the gradient dotted into the Eddington tensor (more complicated than a scalar gradient, but should recover full anisotropy */
-								int k_freq=k2,k_xyz,j_xyz,i_xyz=k,k_et_loop[3]; // recall, for ET: 0=xx,1=yy,2=zz,3=xy,4=yz,5=xz
+								int k_freq=k2,k_xyz,j_xyz,i_xyz=k;
 								for(k_xyz=0;k_xyz<3;k_xyz++)
 								{
-									if(k_xyz==0) {k_et_loop[0]=0; k_et_loop[1]=3; k_et_loop[2]=5;}
-									if(k_xyz==1) {k_et_loop[0]=3; k_et_loop[1]=1; k_et_loop[2]=4;}
-									if(k_xyz==2) {k_et_loop[0]=5; k_et_loop[1]=4; k_et_loop[2]=2;}
 									for(j_xyz=0;j_xyz<3;j_xyz++)
 									{
-										CellP[j].Gradients.Rad_E_gamma_ET[k_freq][k_xyz] += CellP[j].NV_T[j_xyz][i_xyz] * wk_xyz_j * dnET[k_freq][k_et_loop[j_xyz]];
+										CellP[j].Gradients.Rad_E_gamma_ET[k_freq][k_xyz] += CellP[j].NV_T[j_xyz][i_xyz] * wk_xyz_j * dnET[k_freq][k_xyz][j_xyz];
 									}
 								}
                             }

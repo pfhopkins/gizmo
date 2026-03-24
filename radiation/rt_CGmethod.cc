@@ -40,7 +40,7 @@ static struct rt_cg_data_in
     MyFloat Mass;
     MyFloat Density;
     MyFloat KernelRadius;
-    MyFloat ET[N_RT_FREQ_BINS][6];
+    SymmetricTensor2<MyFloat> ET[N_RT_FREQ_BINS];
     MyDouble RT_DiffusionCoeff[N_RT_FREQ_BINS];
     //MyDouble Lambda[N_RT_FREQ_BINS];
 }
@@ -69,7 +69,7 @@ void particle2in_rt_cg(struct rt_cg_data_in *in, int i)
 {
     int k;
     in->Pos = P[i].Pos;
-    int kET; for(k=0;k<N_RT_FREQ_BINS;k++) for(kET=0; kET<6; kET++) {in->ET[k][kET] = CellP[i].ET[k][kET];}
+    for(k=0;k<N_RT_FREQ_BINS;k++) {in->ET[k] = CellP[i].ET[k];}
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = P[i].Mass;
     in->Density = CellP[i].Density;
@@ -437,7 +437,7 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
                 if(P[j].Type != 0) continue; // require a gas particle //
                 if(P[j].Mass <= 0) continue; // require the particle has mass //
                 Vec3<double> dp = local.Pos - P[j].Pos;
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); /* find the closest image in the given box size */
+                nearest_xyz(dp); /* find the closest image in the given box size */
                 double r2 = dp.norm_sq();
                 if(r2<=0) continue; // same particle //
                 if((r2>h2)||(r2>P[j].KernelRadius*P[j].KernelRadius)) continue; // outside kernel //
@@ -459,10 +459,8 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
                     for(k=0;k<N_RT_FREQ_BINS;k++)
                     {
                 
-                        double ET_ij[6];
-                        int kET; for(kET=0;kET<6;kET++) {ET_ij[kET] = 0.5 * (local.ET[k][kET] + CellP[j].ET[k][kET]);}
-                        double tensor = (ET_ij[0]*dp[0]*dp[0] + ET_ij[1]*dp[1]*dp[1] + ET_ij[2]*dp[2]*dp[2]
-                                         + 2.*ET_ij[3]*dp[0]*dp[1] + 2.*ET_ij[4]*dp[1]*dp[2] + 2.*ET_ij[5]*dp[2]*dp[0]) / r2;
+                        SymmetricTensor2<double> ET_ij; for(int kk=0;kk<6;kk++) {ET_ij.data[kk] = 0.5 * (local.ET[k].data[kk] + CellP[j].ET[k].data[kk]);}
+                        double tensor = dot(dp, ET_ij.matvec(dp)) / r2;
                         double kappa_ij = 0.5*(local.RT_DiffusionCoeff[k] + rt_diffusion_coefficient(j,k));
                         double fac = tensor_norm * tensor * kappa_ij;
                         out.matrixmult_out[k] -= fac * matrixmult_in[k][j];

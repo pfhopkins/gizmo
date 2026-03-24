@@ -139,7 +139,7 @@ int DiffFilter_evaluate(int target, int mode, int *exportflag, int *exportnodeco
                 kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
                 kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
                 kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
-                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
+                nearest_xyz(kernel.dp);
                 r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
                 double mean_weight = 0.5 * (local.Density + CellP[j].Density) / (local.Density * CellP[j].Density);
                 double h_j = P[j].KernelRadius;

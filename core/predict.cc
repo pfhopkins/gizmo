@@ -503,8 +503,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
         }
         vsig1 = DMAX(vsig1, vsig2);
         vsig2 = 0.0;
-        for(int j=0;j<3;j++) {vsig2 += CellP[i_particle_id].Gradients.Velocity[j].norm_sq();}
-        vsig2 = sqrt(vsig2);
+        vsig2 = CellP[i_particle_id].Gradients.Velocity.frobenius_norm();
         vsig2 = 3.0 * h_eff * DMAX( vsig2, fabs(P[i_particle_id].Particle_DivVel)) / All.cf_atime;
         double prefac_fastest = 0.1;
         double prefac_tinv = 0.5;

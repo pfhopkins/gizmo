@@ -184,7 +184,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
                 {
                     double wt = P[j].Mass;
                     Vec3<double> dP = P[j].Pos - local.Pos; Vec3<double> dv = P[j].Vel - local.Vel;
-                    NEAREST_XYZ(dP[0],dP[1],dP[2],-1); /*  find the closest image in the given box size  */
+                    nearest_xyz(dP,-1); /*  find the closest image in the given box size  */
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv,-1); /* wrap velocities for shearing boxes if needed */
 
 #ifdef SINK_REPOSITION_ON_POTMIN
@@ -372,7 +372,7 @@ int sink_environment_second_evaluate(int target, int mode, int *exportflag, int 
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].KernelRadius <= 0)||(P[j].Type == 5)) {continue;} /* make sure neighbor is valid */
                 int k; Vec3<double> dP = P[j].Pos - local.Pos; Vec3<double> dv = P[j].Vel - local.Vel; /* position offset */
-                NEAREST_XYZ(dP[0],dP[1],dP[2],-1);
+                nearest_xyz(dP,-1);
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv,-1); /* wrap velocities for shearing boxes if needed */
                 double J_tmp[3]; J_tmp[0]=dP[1]*dv[2]-dP[2]*dv[1]; J_tmp[1]=dP[2]*dv[0]-dP[0]*dv[2]; J_tmp[2]=dP[0]*dv[1]-dP[1]*dv[0]; /* just need direction not magnitude */
                 if(P[j].Type==0) {if(J_tmp[0]*local.Jgas_in_Kernel[0] + J_tmp[1]*local.Jgas_in_Kernel[1] + J_tmp[2]*local.Jgas_in_Kernel[2] < 0) {out.MgasBulge_in_Kernel += 2*P[j].Mass;}} /* DAA: assume the bulge component contains as many particles with positive azimuthal velocities as with negative azimuthal velocities relative to the angular momentum vector */

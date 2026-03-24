@@ -284,7 +284,7 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 #endif
                 if(P[j].Mass <= 0) continue;
                 kernel.dp = local.Pos - P[j].Pos;
-                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1);
+                nearest_xyz(kernel.dp);
                 r2 = kernel.dp.norm_sq();
                 if(r2 < h2) /* this loop is only considering particles inside local.KernelRadius, i.e. seen-by-main */
                 {
@@ -1073,7 +1073,7 @@ int cellcorrections_evaluate(int target, int mode, int *exportflag, int *exportn
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 Vec3<double> dp = local.Pos - P[j].Pos;
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); // find the closest image in the given box size  //
+                nearest_xyz(dp); // find the closest image in the given box size  //
                 double r2 = dp.norm_sq(); // distance
                 if(r2 >= P[j].KernelRadius*P[j].KernelRadius) {continue;} // need to be inside of 'j's kernel search
                 double u,hinv,hinv3,hinv4,wk,dwk; kernel_hinv(P[j].KernelRadius, &hinv, &hinv3, &hinv4); u=sqrt(r2)*hinv; wk=0; dwk=0; // define kernel-needed variables

@@ -153,7 +153,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1; // these, by default, won't do anything, but will be used below in final flux assignment
                 int j_is_active_for_fluxes = 0;
                 kernel.dp = local.Pos - P[j].Pos;
-                NEAREST_XYZ(kernel.dp[0],kernel.dp[1],kernel.dp[2],1); /* find the closest image in the given box size  */
+                nearest_xyz(kernel.dp); /* find the closest image in the given box size  */
                 r2 = kernel.dp.norm_sq();
                 kernel.h_j = P[j].KernelRadius;
 

@@ -102,9 +102,9 @@ extern struct gas_cell_data
     {
         Vec3<MyDouble> Density;
         Vec3<MyDouble> Pressure;
-        Vec3<MyDouble> Velocity[3];
+        Mat3<MyDouble> Velocity;
 #ifdef MAGNETIC
-        Vec3<MyDouble> B[3];
+        Mat3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
         Vec3<MyDouble> Phi;
 #endif
@@ -274,7 +274,7 @@ extern struct gas_cell_data
     
     
 #if defined(RADTRANSFER)
-    MyFloat ET[N_RT_FREQ_BINS][6];          /*!< eddington tensor - symmetric -> only 6 elements needed: this is dimensionless by our definition */
+    SymmetricTensor2<MyFloat> ET[N_RT_FREQ_BINS]; /*!< eddington tensor - symmetric -> only 6 elements needed: this is dimensionless by our definition */
     MyFloat Rad_Je[N_RT_FREQ_BINS];         /*!< emissivity (includes sources like stars, as well as gas): units=Rad_E_gamma/time  */
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];    /*!< photon energy (integral of dRad_E_gamma/dvol*dVol) associated with particle [for simple frequency bins, equivalent to photon number] */
     MyFloat Rad_Kappa[N_RT_FREQ_BINS];      /*!< opacity [physical units ~ length^2 / mass]  */

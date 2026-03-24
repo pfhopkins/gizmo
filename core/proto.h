@@ -870,8 +870,6 @@ int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum);
 int rt_get_lum_band_agn(int i, int mode, double *lum);
 int rt_get_lum_band_singlestar(int i, int mode, double *lum);
 void rt_define_effective_frequencies_in_bands(void);
-void eddington_tensor_dot_vector(double ET[6], double vec_in[3], double vec_out[3]);
-inline void eddington_tensor_dot_vector(double ET[6], const Vec3<double>& vec_in, double vec_out[3]) { eddington_tensor_dot_vector(ET, const_cast<double*>(vec_in.data), vec_out); }
 double return_flux_limiter(int target, int k_freq);
 double rt_kappa(int j, int k_freq);
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
@@ -952,8 +950,8 @@ void subtract_companion_gravity(int i);
 
 void hydro_gradient_calc(void);
 int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int gradient_iteration);
-void construct_gradient(double *grad, int i);
-inline void construct_gradient(Vec3<double>& grad, int i) { construct_gradient(grad.data, i); }
+void construct_gradient(Vec3<MyDouble>& grad, int i);
+inline void construct_gradient(double *grad, int i) { Vec3<MyDouble> v{grad[0],grad[1],grad[2]}; construct_gradient(v,i); grad[0]=v[0]; grad[1]=v[1]; grad[2]=v[2]; }
 void local_slopelimiter(double *grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen);
 inline void local_slopelimiter(Vec3<double>& grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen) { local_slopelimiter(grad.data, valmax, valmin, alim, h, shoot_tol, pos_preserve, d_max, val_cen); }
 

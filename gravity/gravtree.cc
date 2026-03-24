@@ -390,7 +390,7 @@ void gravity_tree(void)
                 P[place].MencInRcrit += GravDataOut[j].MencInRcrit;
 #endif
 #ifdef RT_OTVET
-                if(P[place].Type==0) {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) for(k=0;k<6;k++) CellP[place].ET[k_freq][k] += GravDataOut[j].ET[k_freq][k];}
+                if(P[place].Type==0) {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[place].ET[k_freq] += GravDataOut[j].ET[k_freq];}}
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
                 if(P[place].Type==0) {CellP[place].Rad_Flux_UV += GravDataOut[j].Rad_Flux_UV;}
@@ -536,8 +536,8 @@ void gravity_tree(void)
 #if defined(RT_OTVET) /* normalize the Eddington tensors we just calculated by walking the tree (normalize to trace=1) */
         if(P[i].Type == 0) {
             int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
-            {double trace = CellP[i].ET[k_freq][0] + CellP[i].ET[k_freq][1] + CellP[i].ET[k_freq][2];
-                if(!isnan(trace) && (trace>0)) {for(k=0;k<6;k++) {CellP[i].ET[k_freq][k]/=trace;}} else {CellP[i].ET[k_freq][0]=CellP[i].ET[k_freq][1]=CellP[i].ET[k_freq][2]=1./3.; CellP[i].ET[k_freq][3]=CellP[i].ET[k_freq][4]=CellP[i].ET[k_freq][5]=0;}}}
+            {double trace = CellP[i].ET[k_freq].trace();
+                if(!isnan(trace) && (trace>0)) {CellP[i].ET[k_freq] /= trace;} else {CellP[i].ET[k_freq].set_isotropic(1./3.);}}}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) /* normalize to energy density with C, and multiply by volume to use standard 'finite volume-like' quantity as elsewhere in-code */
         if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_E_gamma[kf] *= P[i].Mass/(CellP[i].Density*All.cf_a3inv * C_LIGHT_CODE_REDUCED(i));}}

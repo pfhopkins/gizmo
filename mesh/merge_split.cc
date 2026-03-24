@@ -364,7 +364,7 @@ void merge_and_split_particles(void)
                         /* make sure we're not taking the same particle */
                         if((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0) && (Ptmp[j].flag == 0)) {
                             Vec3<double> dp = P[i].Pos - P[j].Pos;
-                            NEAREST_XYZ(dp[0],dp[1],dp[2],1);
+                            nearest_xyz(dp);
                             double r2 = dp.norm_sq();
                             if(r2<threshold_val) {threshold_val=r2; target_for_merger=j;} // position-based //
                         }
@@ -447,7 +447,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
     double d_r = 0.25 * KERNEL_CORE_SIZE*P[i].KernelRadius; // needs to be epsilon*KernelRadius where epsilon<<1, to maintain stability //
     Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
-    NEAREST_XYZ(dp[0],dp[1],dp[2],1);
+    nearest_xyz(dp);
     double r_near = dp.norm();
     d_r = DMIN(d_r , 0.35 * r_near); // use a 'buffer' to limit to some multiple of the distance to the nearest particle //
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
@@ -711,7 +711,7 @@ int merge_particles_ij(int i, int j)
     if((P[i].Type>0)&&(P[j].Type>0))
     {
         Vec3<double> dp = P[j].Pos - P[i].Pos;
-        NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
+        nearest_xyz(dp,-1);
         Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
         Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
         P[j].Pos = P[i].Pos + dp * wt_j; // center-of-mass conserving //
@@ -789,7 +789,7 @@ int merge_particles_ij(int i, int j)
     /* for periodic boxes, we need to (arbitrarily) pick one position as our coordinate center. we pick i. then everything defined in
         position differences relative to i. the final position will be appropriately box-wrapped after these operations are completed */
     Vec3<double> dp = P[j].Pos - P[i].Pos;
-    NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
+    nearest_xyz(dp,-1);
     Vec3<double> pos_new = P[i].Pos + dp * wt_j;
     Vec3<double> dr_j = (P[i].Pos + dp - pos_new) * All.cf_atime; // displacement of j relative to new pos (physical)
     Vec3<double> dr_i = (P[i].Pos - pos_new) * All.cf_atime;       // displacement of i relative to new pos (physical)
@@ -856,10 +856,10 @@ int merge_particles_ij(int i, int j)
 
     // below, we need to take care of additional physics //
 #if defined(RADTRANSFER)
+    int k_dir;
     for(k=0;k<N_RT_FREQ_BINS;k++)
     {
-        int k_dir;
-        for(k_dir=0;k_dir<6;k_dir++) CellP[j].ET[k][k_dir] = wt_j*CellP[j].ET[k][k_dir] + wt_i*CellP[i].ET[k][k_dir];
+        CellP[j].ET[k] = wt_j * CellP[j].ET[k] + wt_i * CellP[i].ET[k];
         CellP[j].Rad_E_gamma[k] = CellP[j].Rad_E_gamma[k] + CellP[i].Rad_E_gamma[k]; /* this is a photon number, so its conserved (we simply add) */
 #if defined(RT_EVOLVE_ENERGY)
         CellP[j].Rad_E_gamma_Pred[k] = CellP[j].Rad_E_gamma_Pred[k] + CellP[i].Rad_E_gamma_Pred[k];
@@ -1177,7 +1177,7 @@ double evaluate_starstar_merger_for_starcluster_particle_pair(int i, int j)
         
         // consider separation and relative velocities
         int k; Vec3<double> dp = P[j].Pos - P[i].Pos; // calculate separation
-        NEAREST_XYZ(dp[0],dp[1],dp[2],-1); // correct for box appropriately
+        nearest_xyz(dp,-1); // correct for box appropriately
         double r2 = dp.norm_sq(); // squared position difference
         
         double eps_i = ForceSoftening_KernelRadius(i), eps_j = ForceSoftening_KernelRadius(j), eps_ij = DMAX(eps_i,eps_j);

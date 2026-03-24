@@ -160,7 +160,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                 if(P[j].Type != 0) {continue;} // require a gas particle //
                 if(P[j].Mass <= 0) {continue;} // require the particle has mass //
                 Vec3<double> dp = local.Pos - P[j].Pos;
-                NEAREST_XYZ(dp[0],dp[1],dp[2],1); /* find the closest image in the given box size  */
+                nearest_xyz(dp); /* find the closest image in the given box size  */
                 double r2 = dp.norm_sq(), r, wk;
                 if(r2<=0) {continue;} // same particle //
 #ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION

@@ -1470,7 +1470,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
     double dx_stellarlum=0, dy_stellarlum=0, dz_stellarlum=0; int valid_gas_particle_for_rt = 0;
 #ifdef RT_OTVET
-    double RT_ET[N_RT_FREQ_BINS][6]={{0}};
+    SymmetricTensor2<double> RT_ET[N_RT_FREQ_BINS]={};
 #endif
 #endif
 #ifdef SINK_PHOTONMOMENTUM
@@ -2353,12 +2353,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         {
                             fac_otvet_sum = mass_stellarlum[kf_rt];
                             fac_otvet_sum *= fac_rt / (1.e-37 + r); // units are not important, since ET will be dimensionless, but final ET should scale as ~luminosity/r^2
-                            RT_ET[kf_rt][0] += dx_stellarlum * dx_stellarlum * fac_otvet_sum;
-                            RT_ET[kf_rt][1] += dy_stellarlum * dy_stellarlum * fac_otvet_sum;
-                            RT_ET[kf_rt][2] += dz_stellarlum * dz_stellarlum * fac_otvet_sum;
-                            RT_ET[kf_rt][3] += dx_stellarlum * dy_stellarlum * fac_otvet_sum;
-                            RT_ET[kf_rt][4] += dy_stellarlum * dz_stellarlum * fac_otvet_sum;
-                            RT_ET[kf_rt][5] += dz_stellarlum * dx_stellarlum * fac_otvet_sum;
+                            Vec3<double> d_sl{dx_stellarlum, dy_stellarlum, dz_stellarlum};
+                            RT_ET[kf_rt] += fac_otvet_sum * outer_product(d_sl);
                         }
                     }
                     
@@ -2454,7 +2450,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         P[target].TreeMass = tree_mass;
 #endif
 #ifdef RT_OTVET
-        if(valid_gas_particle_for_rt) {int k,k_et; for(k=0;k<N_RT_FREQ_BINS;k++) for(k_et=0;k_et<6;k_et++) {CellP[target].ET[k][k_et] = RT_ET[k][k_et];}} else {if(P[target].Type==0) {int k,k_et; for(k=0;k<N_RT_FREQ_BINS;k++) for(k_et=0;k_et<6;k_et++) {CellP[target].ET[k][k_et]=0;}}}
+        if(valid_gas_particle_for_rt) {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[target].ET[k] = RT_ET[k];}} else {if(P[target].Type==0) {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[target].ET[k] = {};}}}
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
         if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_UV = incident_flux_uv;}
@@ -2534,7 +2530,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         {int k; for(k=0;k<RT_USE_TREECOL_FOR_NH;k++) GravDataResult[target].ColumnDensityBins[k] = treecol_angular_bins[k];}
 #endif
 #ifdef RT_OTVET
-        {int k,k_et; for(k=0;k<N_RT_FREQ_BINS;k++) for(k_et=0;k_et<6;k_et++) {GravDataResult[target].ET[k][k_et] = RT_ET[k][k_et];}}
+        {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {GravDataResult[target].ET[k] = RT_ET[k];}}
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
         GravDataResult[target].Rad_Flux_UV = incident_flux_uv;
