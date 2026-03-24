@@ -297,7 +297,7 @@ void pmforce_periodic(int mode, int *typelist)
 	      pos = pp;
 	    }
 	  else
-	    pos = P[i].Pos;
+	    pos = P[i].Pos.data_ptr();
 
 	  slab_x = (int) (to_slab_fac * pos[0]);
 	  slab_y = (int) (to_slab_fac * pos[1]);
@@ -419,7 +419,7 @@ void pmforce_periodic(int mode, int *typelist)
 	      pos = pp;
 	    }
 	  else
-	    pos = P[pindex].Pos;
+	    pos = P[pindex].Pos.data_ptr();
 
 	  slab_x = (int) (to_slab_fac * pos[0]);
 	  slab_y = (int) (to_slab_fac * pos[1]);

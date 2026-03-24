@@ -1022,10 +1022,10 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 
 
 #ifdef SINGLE_STAR_TIMESTEPPING
-void kepler_timestep(int i, double dt, double kick_dv[3], double drift_dx[3], int mode);
-void odeint_super_timestep(int i, double dt_super, double kick_dv[3], double drift_dx[3], int mode);
+void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
+void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
 double gravfac(double r, double mass);
 double gravfac2(double r, double mass);
-void grav_accel_jerk(double mass, double dx[3], double dv[3], double accel[3], double jerk[3]);
+void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
 double eccentric_anomaly(double mean_anomaly, double ecc);
 #endif

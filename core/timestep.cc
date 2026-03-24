@@ -587,14 +587,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef MHD_NON_IDEAL
             {
                 double b_grad = 0, b_mag = 0;
-                int k; for(k=0;k<3;k++)
+                for(int k=0;k<3;k++)
                 {
-                    int k2;
-                    for(k2=0;k2<3;k2++)
-                    {
-                        double tmp_grad = CellP[p].Gradients.B[k][k2];
-                        b_grad += tmp_grad * tmp_grad;
-                    }
+                    b_grad += CellP[p].Gradients.B[k].norm_sq();
                     double tmp_grad = Get_Gas_BField(p,k);
                     b_mag += tmp_grad * tmp_grad;
                 }
@@ -766,13 +761,12 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef VISCOSITY
             {
-                int kv1,kv2; double dv_mag=0,v_mag=1.0e-33;
-                for(kv1=0;kv1<3;kv1++) {v_mag+=P[p].Vel[kv1]*P[p].Vel[kv1];}
+                int kv1; double dv_mag=0,v_mag=1.0e-33;
+                v_mag += P[p].Vel.norm_sq();
                 double dv_mag_all = 0.0;
                 for(kv1=0;kv1<3;kv1++)
                 {
-                    double dvmag_tmp = 0;
-                    for(kv2=0;kv2<3;kv2++) {dvmag_tmp+=CellP[p].Gradients.Velocity[kv1][kv2]*CellP[p].Gradients.Velocity[kv1][kv2];}
+                    double dvmag_tmp = CellP[p].Gradients.Velocity[kv1].norm_sq();
                     dv_mag += dvmag_tmp /DMAX(P[p].Vel[kv1]*P[p].Vel[kv1],0.01*v_mag);
                     dv_mag_all += dvmag_tmp;
                 }
@@ -1063,18 +1057,18 @@ integertime get_timestep(int p,		/*!< particle index */
     if((dt < All.MinSizeTimestep)||(((integertime) (dt / All.Timebase_interval)) <= 1))
     {
         PRINT_WARNING("Timestep wants to be below the limit `MinSizeTimestep'");
-        double agrav_pm=0, agrav = sqrt(P[p].GravAccel[0]*P[p].GravAccel[0] + P[p].GravAccel[1]*P[p].GravAccel[1] + P[p].GravAccel[2]*P[p].GravAccel[2]) * All.cf_a2inv;
+        double agrav_pm=0, agrav = P[p].GravAccel.norm() * All.cf_a2inv;
 #ifdef PMGRID
-        agrav_pm = sqrt(P[p].GravPM[0]*P[p].GravPM[0] + P[p].GravPM[1]*P[p].GravPM[1] + P[p].GravPM[2]*P[p].GravPM[2]) * All.cf_a2inv;
+        agrav_pm = P[p].GravPM.norm() * All.cf_a2inv;
 #endif
         if(P[p].Type == 0)
         {
             double aturb=0, arad=0, ahydro = CellP[p].HydroAccel.norm();
 #ifdef TURB_DRIVING
-            aturb = sqrt(CellP[p].TurbAccel[0]*CellP[p].TurbAccel[0] + CellP[p].TurbAccel[1]*CellP[p].TurbAccel[1] + CellP[p].TurbAccel[2]*CellP[p].TurbAccel[2]);
+            aturb = CellP[p].TurbAccel.norm();
 #endif
 #ifdef RT_RAD_PRESSURE_OUTPUT
-            arad = sqrt(CellP[p].Rad_Accel[0]*CellP[p].Rad_Accel[0] + CellP[p].Rad_Accel[1]*CellP[p].Rad_Accel[1] + CellP[p].Rad_Accel[2]*CellP[p].Rad_Accel[2]);
+            arad = CellP[p].Rad_Accel.norm();
 #endif
             PRINT_WARNING("\n Cell-ID=%llu  dt_desired=%g dt_Courant=%g dt_Accel=%g\n accel_tot=%g accel_gravTree=%g accel_gravPM=%g accel_hydro=%g accel_rad=%g accel_turb=%g Pos_xyz=(%g|%g|%g) Vel_xyz=(%g|%g|%g)\n KernelRadius=%g Density=%g InternalEnergy=%g dtInternalEnergy=%g divV=%g Pressure=%g Cs_Eff=%g vAlfven=%g f_ion=%g\n csnd_for_signalspeed=%g eps_forcesoftening=%g mass=%g type=%d condition_number=%g Nngb=%g\n NVT=%.17g/%.17g/%.17g %.17g/%.17g/%.17g %.17g/%.17g/%.17g\n",
                           (unsigned long long) P[p].ID, dt, dt_courant*All.cf_hubble_a, sqrt(2*All.ErrTolIntAccuracy*All.cf_atime*ForceSoftening_KernelRadius(p) / ac)*All.cf_hubble_a,
@@ -1148,7 +1142,7 @@ void find_dt_displacement_constraint(double hfac /*!<  should be  a^2*H(a)  */ )
         {
             if(P[i].Mass > 0)
             {
-                double v2 = P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2];
+                double v2 = P[i].Vel.norm_sq();
                 if(v2 > 0 && isfinite(v2)) {
                     count[P[i].Type]++;
                     if(P[i].Type == 0) {v[P[i].Type] += P[i].Mass * v2;} else {v[P[i].Type] += v2;} /* for gas use a weighted average to deal with extreme cell-mass difference situations */

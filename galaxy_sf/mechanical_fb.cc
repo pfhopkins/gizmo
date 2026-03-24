@@ -401,7 +401,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 {
                     
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) /* inject cosmic rays */
-                Vec3<double> crdir = kernel.dp * (-1./kernel.r);
+                Vec3<double> crdir = -kernel.dp / kernel.r;
                 inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr());
 #endif
                 /* inject the post-shock energy and momentum (convert to specific units as needed first) */
@@ -581,7 +581,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 if((r2>h2)&&(r2>h2j)) {continue;} // outside kernel (in both 'directions') //
                 if(r2 > r2max_phys) {continue;} // outside long-range cutoff //
                 kernel.r = sqrt(r2); if(kernel.r <= 0) {continue;}
-
+                
                 // calculate kernel quantities //
 #pragma omp atomic read
                 rho_j = CellP[j].Density;
@@ -738,7 +738,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 if(couple_anything_but_scalar_mass_and_metals)
                 {
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-                    Vec3<double> crdir = kernel.dp * (-1./kernel.r);
+                    Vec3<double> crdir = -kernel.dp / kernel.r;
                     inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr());
 #endif
                     /* inject momentum: account for ejecta being energy-conserving inside the cooling radius (or KernelRadius, if thats smaller) */

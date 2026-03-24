@@ -327,7 +327,7 @@ void set_turb_ampl(void)
 void add_turb_accel()
 {
     set_turb_ampl();
-    int i, j, m; double acc[3], fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
+    int i, m; double acc[3], fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if(P[i].Type == 0)
@@ -356,9 +356,9 @@ void add_turb_accel()
 #if (NUMDIMS > 2)
                 acc[2] = fz;
 #endif
-                for(j=0; j<3; j++) {CellP[i].TurbAccel[j] = acc[j];}
+                CellP[i].TurbAccel = {acc[0], acc[1], acc[2]};
             } else {
-                CellP[i].TurbAccel[0] = CellP[i].TurbAccel[1] = CellP[i].TurbAccel[2]=0;
+                CellP[i].TurbAccel = {};
             }
         }
     }
@@ -370,16 +370,16 @@ void add_turb_accel()
 void do_turb_driving_step_first_half(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i, j; integertime ti_step, tstart, tend; double dvel[3], dt_gravkick;
+    int i; integertime ti_step, tstart, tend; double dt_gravkick;
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         ti_step = GET_PARTICLE_INTEGERTIME(i); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
         if(P[i].Type == 0)
         {
-            double vtmp[3], ekin0 = 0.5 * P[i].Mass * (P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2]);
-            for(j=0;j<3;j++) {dvel[j] = CellP[i].TurbAccel[j] * dt_gravkick; vtmp[j] = P[i].Vel[j] + dvel[j];}
-            double ekin1 = 0.5 * P[i].Mass * (vtmp[0]*vtmp[0]+vtmp[1]*vtmp[1]+vtmp[2]*vtmp[2]);
+            double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
+            Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
+            double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
             CellP[i].EgyDrive += ekin1 - ekin0;
         }
     }
@@ -391,16 +391,16 @@ void do_turb_driving_step_first_half(void)
 void do_turb_driving_step_second_half(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i, j; integertime ti_step, tstart, tend; double dvel[3], dt_gravkick;
+    int i; integertime ti_step, tstart, tend; double dt_gravkick;
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         ti_step = GET_PARTICLE_INTEGERTIME(i); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
         if(P[i].Type == 0)
         {
-            double vtmp[3], ekin0 = 0.5 * P[i].Mass * (P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2]);
-            for(j=0;j<3;j++) {dvel[j] = CellP[i].TurbAccel[j] * dt_gravkick; vtmp[j] = P[i].Vel[j] + dvel[j];}
-            double ekin1 = 0.5 * P[i].Mass * (vtmp[0]*vtmp[0]+vtmp[1]*vtmp[1]+vtmp[2]*vtmp[2]);
+            double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
+            Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
+            double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
             CellP[i].EgyDrive += ekin1 - ekin0;
         }
     }
@@ -419,7 +419,7 @@ void log_turb_temp(void)
         {
             dudt_drive += P[i].Mass * CellP[i].DuDt_drive;
             dudt_diss += P[i].Mass * CellP[i].DuDt_diss;
-            ekin += 0.5 * P[i].Mass * (P[i].Vel[0] * P[i].Vel[0] + P[i].Vel[1] * P[i].Vel[1] + P[i].Vel[2] * P[i].Vel[2]);
+            ekin += 0.5 * P[i].Mass * P[i].Vel.norm_sq();
             ethermal += P[i].Mass * CellP[i].InternalEnergy;
             mass += P[i].Mass;
         }

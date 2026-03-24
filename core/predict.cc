@@ -118,7 +118,7 @@ void drift_particle(int i, integertime time1)
     {
         Vec3<double> COM_Vel = P[i].Vel + P[i].comp_dv * (P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass)); //center of mass velocity
         P[i].Pos += COM_Vel * dt_drift; //center of mass drift
-        odeint_super_timestep(i, dt_drift, fewbody_kick_dv.data_ptr(), fewbody_drift_dx.data_ptr(), 1); // do_fewbody_drift
+        odeint_super_timestep(i, dt_drift, fewbody_kick_dv, fewbody_drift_dx, 1); // do_fewbody_drift
         P[i].GravAccel = P[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
         P[i].Pos += fewbody_drift_dx; //Keplerian evolution
         P[i].Vel += fewbody_kick_dv; //move on binary.orbit
@@ -258,9 +258,8 @@ void move_particles(integertime time1)
 void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_entr)
 {
 #ifdef MAGNETIC
-    int kB;
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
-    for(kB=0;kB<3;kB++) {CellP[i].BPred[kB] += CellP[i].DtB[kB] * dt_entr * BphysVolphys_to_BcodeVolCode;} // fluxes are always physical, convert to code units //
+    CellP[i].BPred += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi fluxes (otherwise coefficient is 1)
     double dtphi_code = (PhiphysVolphys_to_PhicodeVolCode) * CellP[i].DtPhi;
@@ -272,7 +271,7 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
     }
 #endif
 #ifdef MHD_ALTERNATIVE_LEAPFROG_SCHEME
-    for(kB=0;kB<3;kB++) {CellP[i].B[kB]=CellP[i].BPred[kB];}
+    CellP[i].B = CellP[i].BPred;
 #ifdef DIVBCLEANING_DEDNER
     CellP[i].Phi=CellP[i].PhiPred;
 #endif
@@ -504,8 +503,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
         }
         vsig1 = DMAX(vsig1, vsig2);
         vsig2 = 0.0;
-        int j,k;
-        for(j=0;j<3;j++) for(k=0;k<3;k++) {vsig2 += CellP[i_particle_id].Gradients.Velocity[j][k]*CellP[i_particle_id].Gradients.Velocity[j][k];}
+        for(int j=0;j<3;j++) {vsig2 += CellP[i_particle_id].Gradients.Velocity[j].norm_sq();}
         vsig2 = sqrt(vsig2);
         vsig2 = 3.0 * h_eff * DMAX( vsig2, fabs(P[i_particle_id].Particle_DivVel)) / All.cf_atime;
         double prefac_fastest = 0.1;

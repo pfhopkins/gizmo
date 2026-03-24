@@ -716,8 +716,8 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i)
 #endif
     double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i); cs_therm=Get_Gas_thermal_soundspeed_i(i); vf_lim = cs;
 #ifdef MAGNETIC
-    double bhat[3]={0},bmag=0,double_dot_dv=0; for(k=0;k<3;k++) {bhat[k]=Get_Gas_BField(i,k); bmag+=bhat[k]*bhat[k];}
-    if(bmag>0) {bmag = sqrt(bmag); for(k=0;k<3;k++) {bhat[k]/=bmag;}}
+    Vec3<double> bhat={}; double bmag=0,double_dot_dv=0; for(k=0;k<3;k++) {bhat[k]=Get_Gas_BField(i,k);}
+    bmag=bhat.norm_sq(); if(bmag>0) {bmag = sqrt(bmag); bhat/=bmag;}
     beta_i = bmag*bmag  * All.cf_a3inv / (All.cf_atime * rho * cs_therm * cs_therm);
     vf_lim *= DMIN(1.e4 , sqrt(1.+beta_i));
 #endif

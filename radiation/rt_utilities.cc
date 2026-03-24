@@ -613,13 +613,13 @@ void rt_eddington_update_calculation(int j)
 #endif
 #if defined(RT_M1) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     /* calculate the eddington tensor with the M1 closure */
-    int k_freq, k; double n_flux_j[3], fmag_j, V_j_inv = CellP[j].Density / P[j].Mass;
+    int k_freq, k; double fmag_j, V_j_inv = CellP[j].Density / P[j].Mass; Vec3<double> n_flux_j;
     for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
-        n_flux_j[0]=n_flux_j[1]=n_flux_j[2]=0;
+        n_flux_j = {};
         Vec3<double> flux_vol = CellP[j].Rad_Flux[k_freq] * V_j_inv;
         fmag_j = flux_vol.norm_sq();
-        if(fmag_j <= 0) {fmag_j=0;} else {fmag_j=sqrt(fmag_j); for(k=0;k<3;k++) {n_flux_j[k]=flux_vol[k]/fmag_j;}}
+        if(fmag_j <= 0) {fmag_j=0;} else {fmag_j=sqrt(fmag_j); n_flux_j = flux_vol/fmag_j;}
         double f_chifac = fmag_j / (MIN_REAL_NUMBER + C_LIGHT_CODE_REDUCED(j) * CellP[j].Rad_E_gamma[k_freq] * V_j_inv);
         if(f_chifac < 0) {f_chifac=0;}
         if(fmag_j <= 0) {f_chifac = 0;}
@@ -924,17 +924,17 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
     if(dt_entr > 0) { // none of this is worth doing if we don't have a finite timestep here
     for(kf=0;kf<N_RT_FREQ_BINS;kf++)
     {
-        int k,k_om; double rho=CellP[i].Density*All.cf_a3inv, ceff=C_LIGHT_CODE_REDUCED(i), ctrue=C_LIGHT_CODE, teq_inv=CellP[i].Rad_Kappa[kf]*rho*ceff, beta[3], f_a=rt_absorb_frac_albedo(i,kf), f_s=1.-f_a, b_dot_n[N_RT_INTENSITY_BINS]={0}, beta_2=0.;
+        int k,k_om; double rho=CellP[i].Density*All.cf_a3inv, ceff=C_LIGHT_CODE_REDUCED(i), ctrue=C_LIGHT_CODE, teq_inv=CellP[i].Rad_Kappa[kf]*rho*ceff, f_a=rt_absorb_frac_albedo(i,kf), f_s=1.-f_a, b_dot_n[N_RT_INTENSITY_BINS]={0}, beta_2=0.; Vec3<double> beta;
         int n_iter = 1 + (int)(DMIN(DMAX(4. , dt_entr/teq_inv), 1000.)); // number of iterations to subcycle everything below //
         double dt=dt_entr/n_iter, tau=dt*teq_inv, i0[N_RT_INTENSITY_BINS]={0}, invfourpi=1./(4.*M_PI), J, b_dot_H, b2_dot_K; int i_iter;
         for(i_iter=0; i_iter<n_iter; i_iter++)
         {
-            double egy_0=0,flux_0[3]={0},egy_f=0,flux_f[3]={0}; // compute total change over sub-cycle, to update gas properties
+            double egy_0=0, egy_f=0; Vec3<double> flux_0={}, flux_f={}; // compute total change over sub-cycle, to update gas properties
             // load all the gas and intensity properties we need [all can change on the subcycle so some re-computing here]
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if(mode==0) {i0[k_om] = RT_INTENSITY_BINS_DOMEGA*CellP[i].Rad_Intensity[kf][k_om];} else {i0[k_om] = RT_INTENSITY_BINS_DOMEGA*CellP[i].Rad_Intensity_Pred[kf][k_om];}}
             for(k=0;k<3;k++) {if(mode==0) {beta[k]=P[i].Vel[k]/(All.cf_atime*ctrue);} else {beta[k]=CellP[i].VelPred[k]/(All.cf_atime*ctrue);}} // need gas velocity at this time; with equations written this way, the 'beta' term is the -true- beta, so we have to use the true SOL
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {b_dot_n[k_om]=0; for(k=0;k<3;k++) {b_dot_n[k_om]+=All.Rad_Intensity_Direction[k_om][k]*beta[k];}}
-            beta_2=0; for(k=0;k<3;k++) {beta_2+=beta[k]*beta[k];}
+            beta_2 = beta.norm_sq();
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_0+=i0[k_om]; for(k=0;k<3;k++) {flux_0[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
             J=0,b_dot_H=0,b2_dot_K=0; for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {J+=i0[k_om]*invfourpi; b_dot_H+=b_dot_n[k_om]*i0[k_om]*invfourpi; b2_dot_K+=b_dot_n[k_om]*b_dot_n[k_om]*i0[k_om]*invfourpi;}
 
@@ -958,14 +958,14 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
 
             // ok -now- calculate the net change in momentum and energy, for updating the gas quantities
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_f+=i0[k_om]; for(k=0;k<3;k++) {flux_f[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
-            double dv_gas[3]={0}, ke_gas_0=0, ke_gas_f=0, v0g=0, u0=0;
-            for(k=0;k<3;k++) {dv_gas[k] = -(flux_f[k]-flux_0[k])/(ceff*P[i].Mass); v0g=ctrue*beta[k]; ke_gas_0+=(v0g*v0g); ke_gas_f+=(v0g+dv_gas[k])*(v0g+dv_gas[k]);} // note everything is volume-integrated, accounted for above, and we defined flux for convience without the c, so just one power of c here.
+            Vec3<double> dv_gas = -(flux_f-flux_0)/(ceff*P[i].Mass); double ke_gas_0=0, ke_gas_f=0, v0g=0, u0=0;
+            for(k=0;k<3;k++) {v0g=ctrue*beta[k]; ke_gas_0+=(v0g*v0g); ke_gas_f+=(v0g+dv_gas[k])*(v0g+dv_gas[k]);} // note everything is volume-integrated, accounted for above, and we defined flux for convience without the c, so just one power of c here.
             double d_ke_gas = 0.5*(ke_gas_f - ke_gas_0)*P[i].Mass, de_gas=-(ctrue/ceff)*(egy_f-egy_0), de_gas_internal=(de_gas-d_ke_gas)/P[i].Mass; // note ctrue/ceff factor here, accounting for rsol difference in gas heating/cooling rates vs RHD
             if(mode==0) {u0=CellP[i].InternalEnergy;} else {u0=CellP[i].InternalEnergyPred;} // for updating gas internal energy (work terms, after subtracting kinetic energy changes)
             if(de_gas_internal<=-0.9*u0) {de_gas_internal = DMIN(de_gas_internal/(1.-de_gas_internal/u0), -0.9*u0);} // just a catch to avoid negative energies (will break energy conservation if you are slamming into it, however!
             
             // assign everything back to the appropriate variables after update
-            for(k=0;k<3;k++) {if(mode==0) {P[i].Vel[k] += dv_gas[k]*All.cf_atime;} else {CellP[i].VelPred[k] += dv_gas[k]*All.cf_atime;}} // update gas velocities (radiation pressure forces here)
+            if(mode==0) {P[i].Vel += dv_gas*All.cf_atime;} else {CellP[i].VelPred += dv_gas*All.cf_atime;} // update gas velocities (radiation pressure forces here)
             if(mode==0) {CellP[i].InternalEnergy += de_gas_internal;} else {CellP[i].InternalEnergyPred += de_gas_internal;} // update gas internal energy (work terms, after subtracting kinetic energy changes)
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if(mode==0) {CellP[i].Rad_Intensity[kf][k_om] = i0[k_om]/RT_INTENSITY_BINS_DOMEGA;} else {CellP[i].Rad_Intensity_Pred[kf][k_om] = i0[k_om]/RT_INTENSITY_BINS_DOMEGA;}} // update intensities (all of the above)
             CellP[i].Rad_E_gamma[kf]=egy_f; // set this every time this subroutine is called, so it is accessible everywhere else //
@@ -1133,10 +1133,10 @@ void rt_set_simple_inits(int RestartFlag)
                 if(flag_to_reset_values_on_startup_flux) {
                     for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Rad_Flux_Pred[k][k_dir] = 0;}
                 } else {
-                    for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Rad_Flux_Pred[k][k_dir] *= P[i].Mass/(CellP[i].Density*All.cf_a3inv);} // need to correct the units here before using
+                    CellP[i].Rad_Flux_Pred[k] *= P[i].Mass/(CellP[i].Density*All.cf_a3inv); // need to correct the units here before using
                 }
-                for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Rad_Flux[k][k_dir] = CellP[i].Rad_Flux_Pred[k][k_dir];}
-                for(k_dir=0;k_dir<3;k_dir++) {CellP[i].Dt_Rad_Flux[k][k_dir] = 0;}
+                CellP[i].Rad_Flux[k] = CellP[i].Rad_Flux_Pred[k];
+                CellP[i].Dt_Rad_Flux[k] = {};
 #endif
 #ifdef RT_EVOLVE_INTENSITIES
                 int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Rad_Intensity_Pred[k][k_dir] = CellP[i].Rad_Intensity[k][k_dir] = MIN_REAL_NUMBER; CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}

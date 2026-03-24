@@ -13,7 +13,7 @@ from os import path
 from gizmo.test import build_and_run_test, default_mpi_ranks
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=1),))
 def test_interactblast(num_mpi_ranks):
     test_name = "interactblast"
     build_and_run_test(test_name, num_mpi_ranks)

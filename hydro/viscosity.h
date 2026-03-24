@@ -17,11 +17,11 @@
     {
         int k_v;
         double a_inv = 1 / All.cf_atime;
-        double v_interface[3];
-        double cmag[3];
+        Vec3<double> v_interface;
+        Vec3<double> cmag;
         double wt_i,wt_j;
         wt_i = wt_j = 0.5;
-        for(k=0;k<3;k++) {v_interface[k] = (wt_i*local.Vel[k] + wt_j*VelPred_j[k]) * a_inv;} // physical units //
+        v_interface = (wt_i*local.Vel + wt_j*VelPred_j) * a_inv; // physical units //
         
         // use a geometric average, since we want to weight the smaller of the two coefficients //
         double eta = 0.5 * (local.Eta_ShearViscosity + CellP[j].Eta_ShearViscosity);
@@ -36,12 +36,8 @@
         
 #ifdef MAGNETIC
         /* should use the solution in the appropriate face of the Riemann problem for interface values */
-        double B_interface[3],B_interface_mag2=0;
-        for(k=0;k<3;k++)
-        {
-            B_interface[k] = bhat[k] * bhat_mag;
-            B_interface_mag2 += B_interface[k]*B_interface[k];
-        }
+        Vec3<double> B_interface = {bhat[0] * bhat_mag, bhat[1] * bhat_mag, bhat[2] * bhat_mag};
+        double B_interface_mag2 = B_interface.norm_sq();
         double bhat_dot_gradvhat = 1;
         double bhat_dot_gradvhat_direct = 1;
         double grad_v_mag = 0;
@@ -52,7 +48,7 @@
             do_non_mhd = 0;
             double rhs = 0, rhs_direct = 0;
             double one_third = 1./3. * B_interface_mag2;
-            Bi_proj = (kernel.dp[0]*B_interface[0]+kernel.dp[1]*B_interface[1]+kernel.dp[2]*B_interface[2]) / B_interface_mag2;
+            Bi_proj = dot(kernel.dp, B_interface) / B_interface_mag2;
             for(k_v=0;k_v<3;k_v++)
             {
                 double tmp;
@@ -79,12 +75,12 @@
             bhat_dot_gradvhat = rhs / grad_v_mag; // physical (dimensionless)
             bhat_dot_gradvhat_direct = 3.*rinv*rinv * (rhs_direct / B_interface_mag2); // units vcode/rcode
             /* ok now just multipy the scalar contraction of the B tensor and shear tensor to get the fluxes */
-            for(k_v=0;k_v<3;k_v++) {cmag[k_v] *= 3.*eta*rhs;} // units vcode/rcode
+            cmag *= 3.*eta*rhs; // units vcode/rcode
         }
 #endif
         
         /* standard Navier-Stokes equations: viscosity is decomposed into the shear and bulk viscosity terms */
-        double cmag_dir[3];
+        Vec3<double> cmag_dir;
         if(do_non_mhd==1)
         {
             double divv_i=0,divv_j=0;
@@ -110,7 +106,7 @@
             cmag[1] = Pxy*Face_Area_Vec[0] + Pyy*Face_Area_Vec[1] + Pyz*Face_Area_Vec[2];
             cmag[2] = Pxz*Face_Area_Vec[0] + Pyz*Face_Area_Vec[1] + Pzz*Face_Area_Vec[2];
             
-            double dv_dir = (zeta-eta*2./3.)*(kernel.dv[0]*kernel.dp[0]+kernel.dv[1]*kernel.dp[1]+kernel.dv[2]*kernel.dp[2]);
+            double dv_dir = (zeta-eta*2./3.) * dot(kernel.dv, kernel.dp);
             double Pxx_direct = eta*2.*kernel.dv[0]*kernel.dp[0] + dv_dir;
             double Pyy_direct = eta*2.*kernel.dv[1]*kernel.dp[1] + dv_dir;
             double Pzz_direct = eta*2.*kernel.dv[2]*kernel.dp[2] + dv_dir;
@@ -126,7 +122,7 @@
         double rho_i = local.Density*All.cf_a3inv, rho_j = CellP[j].Density*All.cf_a3inv, rho_ij=0.5*(rho_i+rho_j);
 
         /* convert to physical units */
-        for(k_v=0;k_v<3;k_v++) {cmag[k_v] *= All.cf_a2inv;}
+        cmag *= All.cf_a2inv;
         
         for(k_v=0;k_v<3;k_v++)
         {
@@ -142,9 +138,7 @@
             /* obtain HLL correction terms for Reimann problem solution */
             double hll_tmp = rho_ij * HLL_correction(dv_visc,-dv_visc,rho_ij,viscous_wt_physical); // physical
             double fluxlimiter_absnorm = -DMAX(eta,zeta) * sqrt(b_hll_eff) * Face_Area_Norm * dv_visc*rinv*a_inv; // physical
-            double ptot = DMIN(local.Mass,P[j].Mass)*sqrt(kernel.dv[0]*kernel.dv[0]+
-                                                          kernel.dv[1]*kernel.dv[1]+
-                                                          kernel.dv[2]*kernel.dv[2]) / (1.e-37 + dt_hydrostep) * a_inv; // physical
+            double ptot = DMIN(local.Mass,P[j].Mass)*kernel.dv.norm() / (1.e-37 + dt_hydrostep) * a_inv; // physical
             double thold_hll = 0.1*ptot;
             if(fabs(hll_tmp) > thold_hll) {hll_tmp *= thold_hll/fabs(hll_tmp);}
             hll_tmp *= b_hll_eff;
@@ -166,33 +160,33 @@
 #endif
         }
         
-        double v_dot_dv=0; for(k=0;k<3;k++) {v_dot_dv += kernel.dv[k] * cmag[k] * a_inv;} // physical
+        double v_dot_dv = dot(kernel.dv, cmag) * a_inv; // physical
         if(v_dot_dv>0)
         {
-            for(k=0;k<3;k++) {cmag[k] = 0;}
+            cmag = {};
         } else {
-            double KE_com=0; for(k=0;k<3;k++) {KE_com += kernel.dv[k]*kernel.dv[k] * All.cf_a2inv;} // physical
+            double KE_com = kernel.dv.norm_sq() * All.cf_a2inv; // physical
             KE_com *= 0.25 * (local.Mass + P[j].Mass);
             double dKE_q = fabs(v_dot_dv) * dt_hydrostep / (1.e-40 + KE_com);
             double threshold_tmp = 1.0;
             double lim_corr=1; if(dKE_q > threshold_tmp) {lim_corr = threshold_tmp/dKE_q;}
-            for(k=0;k<3;k++) {cmag[k] *= lim_corr;}
+            cmag *= lim_corr;
         }
         
         
         /* now add a flux-limiter to prevent overshoot (even when the directions are correct) */
-        double cmag_E = cmag[0]*v_interface[0] + cmag[1]*v_interface[1] + cmag[2]*v_interface[2];
+        double cmag_E = dot(cmag, v_interface);
         if(dt_hydrostep > 0)
         {
-            double cmag_lim = 0.25 * (local.Mass + P[j].Mass) * (v_interface[0]*v_interface[0]+v_interface[1]*v_interface[1]+v_interface[2]*v_interface[2]) / dt_hydrostep;
+            double cmag_lim = 0.25 * (local.Mass + P[j].Mass) * v_interface.norm_sq() / dt_hydrostep;
             if(fabs(cmag_E) > cmag_lim)
             {
                 double corr_visc = cmag_lim / fabs(cmag_E);
-                cmag[0]*=corr_visc; cmag[1]*=corr_visc; cmag[2]*=corr_visc; cmag_E*=corr_visc;
+                cmag *= corr_visc; cmag_E*=corr_visc;
             }
         }
         /* ok now we can finally add this to the numerical fluxes */
-        for(k=0;k<3;k++) {Fluxes.v[k] += cmag[k];}
+        Fluxes.v += cmag;
         Fluxes.p += cmag_E;
         
     } // close check that kappa and particle masses are positive

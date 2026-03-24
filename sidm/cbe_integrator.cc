@@ -30,7 +30,7 @@ void do_cbe_initialization(void)
     {
         for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {P[i].CBE_basis_moments_dt[j][k]=0;}} // no time derivatives //
         double v2=0, v0=0;
-        for(k=0;k<3;k++) {v2+=P[i].Vel[k]*P[i].Vel[k];}
+        v2 = P[i].Vel.norm_sq();
         if(v2>0) {v0=sqrt(v2);} else {v0=1.e-10;}
         for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
         {
@@ -90,7 +90,8 @@ if(j > 1)
 void do_cbe_drift_kick(int i, double dt)
 {
     int j, k;
-    double moment[CBE_INTEGRATOR_NMOMENTS]={0}, dmoment[CBE_INTEGRATOR_NMOMENTS]={0}, minv=1./P[i].Mass, v0[3]={0};
+    double moment[CBE_INTEGRATOR_NMOMENTS]={0}, dmoment[CBE_INTEGRATOR_NMOMENTS]={0}, minv=1./P[i].Mass;
+    Vec3<double> v0 = {};
     // evaluate total fluxes //
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {
@@ -101,7 +102,7 @@ void do_cbe_drift_kick(int i, double dt)
         }
     }
     // define the current velocity, force-sync update to match it //
-    for(k=0;k<3;k++) {v0[k] = P[i].Vel[k] / All.cf_atime;} // physical units //
+    v0 = P[i].Vel / All.cf_atime; // physical units //
     double biggest_dm = 1.e10;
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {
@@ -267,12 +268,8 @@ void do_postgravity_cbe_calcs(int i)
     int j,k; double dmom_tot[CBE_INTEGRATOR_NMOMENTS]={0}, m_inv = 1./P[i].Mass;
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {dmom_tot[k] += P[i].CBE_basis_moments_dt[j][k];}} // total change for each moment
     /* total momentum flux will be transferred */
-    double dv0[3];
-    for(k=0;k<3;k++)
-    {
-        dv0[k] = m_inv * dmom_tot[k+1]; // total acceleration
-        P[i].GravAccel[k] += dv0[k] / All.cf_a2inv; // write as gravitational acceleration, convert to cosmological units // currently incompatible with hermite integrator -- need to update to Other_Accel
-    }
+    Vec3<double> dv0 = {m_inv * dmom_tot[1], m_inv * dmom_tot[2], m_inv * dmom_tot[3]}; // total acceleration
+    P[i].GravAccel += dv0 / All.cf_a2inv; // write as gravitational acceleration, convert to cosmological units // currently incompatible with hermite integrator -- need to update to Other_Accel
     // now need to add that shift back into the momentum-change terms //
     for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
     {

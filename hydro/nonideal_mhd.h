@@ -13,7 +13,7 @@
  *   non-cosmological simulations. Be sure to check carefully to convert to physical units for any cosmological run[s].
  */
 /* --------------------------------------------------------------------------------- */
-double bflux_from_nonideal_effects[3]={0};
+Vec3<double> bflux_from_nonideal_effects={};
 if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
 {
     // set the effective scalar coefficients //
@@ -31,8 +31,8 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
     if(eta_max > MIN_REAL_NUMBER)
     {
         // define the current J //
-        double J_current[3], d_scalar[3], rinv2 = rinv*rinv;
-        double J_direct[3]={0}, Jmag=0, grad_dot_x_ij[3]={0};
+        Vec3<double> J_current, d_scalar; double rinv2 = rinv*rinv;
+        Vec3<double> J_direct={}, grad_dot_x_ij={};
         for(k=0;k<3;k++) {d_scalar[k] = local.BPred[k] - BPred_j[k];}
         for(k=0;k<3;k++)
         {
@@ -46,26 +46,21 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
             // calculate the 'direct' J needed for stabilizing numerical diffusion terms //
             J_direct[k] = rinv2*(kernel.dp[k_xyz_A]*d_scalar[k_xyz_B]-kernel.dp[k_xyz_B]*d_scalar[k_xyz_A]);
             if(J_current[k]*J_direct[k] < 0) {if(fabs(J_direct[k]) > 5.*fabs(J_current[k])) {J_current[k] = 0.0;}}
-            Jmag += J_current[k]*J_current[k];
             for(k2=0;k2<3;k2++) {grad_dot_x_ij[k] += 0.5*(local.Gradients.B[k][k2]+CellP[j].Gradients.B[k][k2]) * kernel.dp[k2];}
         }
+        double Jmag = J_current.norm_sq();
         
         // calculate the actual fluxes : need term = -[eta_O*(J) + eta_A*(-(Jxbhat)xbhat) + (-|eta_H|)*(Jxbhat)], assuming we're passed |eta| (=eta for eta_O,eta_A, but =-eta for eta_H) //
-        double b_flux[3]={0}, JcrossB[3], JcrossBcrossB[3];
-        JcrossB[0] = (bhat[2]*J_current[1]-bhat[1]*J_current[2]); // this is Jxbhat
-        JcrossB[1] = (bhat[0]*J_current[2]-bhat[2]*J_current[0]);
-        JcrossB[2] = (bhat[1]*J_current[0]-bhat[0]*J_current[1]);
-        JcrossBcrossB[0] = (bhat[2]*JcrossB[1]-bhat[1]*JcrossB[2]); // this is (Jxbhat)x(bhat)
-        JcrossBcrossB[1] = (bhat[0]*JcrossB[2]-bhat[2]*JcrossB[0]);
-        JcrossBcrossB[2] = (bhat[1]*JcrossB[0]-bhat[0]*JcrossB[1]);
-        if(fabs(eta_ohmic)>0) {for(k=0;k<3;k++) {b_flux[k] += -eta_ohmic * J_current[k];}} // ohmic ~ J
-        if(fabs(eta_ad)>0) {for(k=0;k<3;k++) {b_flux[k] += eta_ad * JcrossBcrossB[k];}} // a.d. ~ (JxB)xB
-        if(fabs(eta_hall)>0) {for(k=0;k<3;k++) {b_flux[k] += -eta_hall * JcrossB[k];}} // hall ~ (JxB)
+        Vec3<double> b_flux={};
+        Vec3<double> bhat_v = {bhat[0], bhat[1], bhat[2]};
+        Vec3<double> JcrossB = cross(J_current, bhat_v); // this is Jxbhat
+        Vec3<double> JcrossBcrossB = cross(JcrossB, bhat_v); // this is (Jxbhat)x(bhat)
+        if(fabs(eta_ohmic)>0) {b_flux += -eta_ohmic * J_current;} // ohmic ~ J
+        if(fabs(eta_ad)>0) {b_flux += eta_ad * JcrossBcrossB;} // a.d. ~ (JxB)xB
+        if(fabs(eta_hall)>0) {b_flux += -eta_hall * JcrossB;} // hall ~ (JxB)
         
         // calculate dB/dt = Area.cross.flux //
-        bflux_from_nonideal_effects[0] = Face_Area_Vec[1]*b_flux[2] - Face_Area_Vec[2]*b_flux[1];
-        bflux_from_nonideal_effects[1] = Face_Area_Vec[2]*b_flux[0] - Face_Area_Vec[0]*b_flux[2];
-        bflux_from_nonideal_effects[2] = Face_Area_Vec[0]*b_flux[1] - Face_Area_Vec[1]*b_flux[0];
+        bflux_from_nonideal_effects = cross(Face_Area_Vec, b_flux);
         
         // ok now construct the numerical fluxes based on the numerical diffusion coefficients and the direct-difference values between elements
         double eta_0 = v_hll * kernel.r * All.cf_atime; // standard numerical diffusivity needed for stabilizing fluxes
@@ -73,25 +68,18 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
         if(fabs(eta_ohmic)>0) {q=eta_0/fabs(eta_ohmic); eta_ohmic_0=eta_0*(0.2 + q)/(0.2 + q + q*q);}
         if(fabs(eta_ad)>0) {q=eta_0/fabs(eta_ad); eta_ad_0=eta_0*(0.2 + q)/(0.2 + q + q*q);}
         if(fabs(eta_hall)>0) {q=eta_0/fabs(eta_hall); eta_hall_0=eta_0*(0.2 + q)/(0.2 + q + q*q); if(eta_hall<0) {eta_hall_0*=-1;}} // since signed, less clear if numerical term should be signed also, or mono-sign here //
-        double b_flux_direct[3]={0}, JcrossB_direct[3], JcrossBcrossB_direct[3], db_direct[3];
-        JcrossB_direct[0] = (bhat[2]*J_direct[1]-bhat[1]*J_direct[2]);
-        JcrossB_direct[1] = (bhat[0]*J_direct[2]-bhat[2]*J_direct[0]);
-        JcrossB_direct[2] = (bhat[1]*J_direct[0]-bhat[0]*J_direct[1]);
-        JcrossBcrossB_direct[0] = (bhat[2]*JcrossB_direct[1]-bhat[1]*JcrossB_direct[2]);
-        JcrossBcrossB_direct[1] = (bhat[0]*JcrossB_direct[2]-bhat[2]*JcrossB_direct[0]);
-        JcrossBcrossB_direct[2] = (bhat[1]*JcrossB_direct[0]-bhat[0]*JcrossB_direct[1]);
-        if(fabs(eta_ohmic_0)>0) {for(k=0;k<3;k++) {b_flux_direct[k] += -eta_ohmic_0 * J_direct[k];}}
-        if(fabs(eta_ad_0)>0) {for(k=0;k<3;k++) {b_flux_direct[k] += eta_ad_0 * JcrossBcrossB_direct[k];}}
-        if(fabs(eta_hall_0)>0) {for(k=0;k<3;k++) {b_flux_direct[k] += -eta_hall_0 * JcrossB_direct[k];}}
-        db_direct[0] = Face_Area_Vec[1]*b_flux_direct[2] - Face_Area_Vec[2]*b_flux_direct[1];
-        db_direct[1] = Face_Area_Vec[2]*b_flux_direct[0] - Face_Area_Vec[0]*b_flux_direct[2];
-        db_direct[2] = Face_Area_Vec[0]*b_flux_direct[1] - Face_Area_Vec[1]*b_flux_direct[0];
+        Vec3<double> b_flux_direct={}, db_direct;
+        Vec3<double> JcrossB_direct = cross(J_direct, bhat_v);
+        Vec3<double> JcrossBcrossB_direct = cross(JcrossB_direct, bhat_v);
+        if(fabs(eta_ohmic_0)>0) {b_flux_direct += -eta_ohmic_0 * J_direct;}
+        if(fabs(eta_ad_0)>0) {b_flux_direct += eta_ad_0 * JcrossBcrossB_direct;}
+        if(fabs(eta_hall_0)>0) {b_flux_direct += -eta_hall_0 * JcrossB_direct;}
+        db_direct = cross(Face_Area_Vec, b_flux_direct);
 
-        double db_dot_direct_diff=0, db_direct_diff[3]={0}, F_ddiff_prefac = -Face_Area_Norm * rinv * DMAX(eta_ohmic, fabs(eta_hall)+eta_ad);
-        for(k=0;k<3;k++) {db_direct_diff[k] = F_ddiff_prefac * d_scalar[k];} // direct differential for face pointing along dp //
+        double db_dot_direct_diff=0, F_ddiff_prefac = -Face_Area_Norm * rinv * DMAX(eta_ohmic, fabs(eta_hall)+eta_ad);
+        Vec3<double> db_direct_diff = F_ddiff_prefac * d_scalar; // direct differential for face pointing along dp //
         
-        double bfluxmag = 0;
-        for(k=0;k<3;k++) {bfluxmag += bflux_from_nonideal_effects[k]*bflux_from_nonideal_effects[k];}
+        double bfluxmag = bflux_from_nonideal_effects.norm_sq();
         bfluxmag /= (1.e-37 + Jmag * eta_max*eta_max * Face_Area_Norm*Face_Area_Norm);
         
         for(k=0;k<3;k++)
@@ -113,11 +101,11 @@ if((local.Mass > 0) && (P[j].Mass > 0) && (dt_hydrostep > 0))
 
         // check if projection along direct diffusion direction produces explicitly anti-diffusive behavior, and if so, subtract that term from the flux update //
         if(db_dot_direct_diff < 0) {
-            double db_direct_diff_mag2=0; for(k=0;k<3;k++) {db_direct_diff_mag2 += db_direct_diff[k]*db_direct_diff[k];}
-            for(k=0;k<3;k++) {bflux_from_nonideal_effects[k] -= db_dot_direct_diff * db_direct_diff[k] / db_direct_diff_mag2;}
+            double db_direct_diff_mag2 = db_direct_diff.norm_sq();
+            bflux_from_nonideal_effects -= (db_dot_direct_diff / db_direct_diff_mag2) * db_direct_diff;
         }
         
         // -now- we can finally add this to the numerical fluxes //
-        for(k=0;k<3;k++) {Fluxes.B[k] += bflux_from_nonideal_effects[k];}
+        Fluxes.B += bflux_from_nonideal_effects;
     }
 }
