@@ -17,7 +17,7 @@ from gizmo.test import build_gizmo_for_test, run_test, download_test_files, defa
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=1),))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=4),))
 def test_shocktube(num_mpi_ranks):
     test_name = "shocktube"
     clean_test_outputs(test_name)

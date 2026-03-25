@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 from os import path
+from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks
 
 
@@ -40,13 +41,15 @@ def test_orszag_tang(num_mpi_ranks):
     E_init = compute_total_energy(init_snap)
     E_final = compute_total_energy(final_snap)
 
-    # Plot density at final time
+    # Plot density at final time using Meshoid slice interpolation
     with h5py.File(final_snap, "r") as F:
         coords = F["PartType0/Coordinates"][:]
         rho = F["PartType0/Density"][:]
+    M = Meshoid(coords, boxsize=1.)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z",center=np.array([0.5,0.5,0.5]),size=1.,order=1)
 
     plt.figure(figsize=(6, 6))
-    plt.scatter(coords[:, 0], coords[:, 1], c=np.log10(rho), s=0.1, cmap="viridis")
+    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[coords[:,0].min(), coords[:,0].max(), coords[:,1].min(), coords[:,1].max()])
     plt.colorbar(label="log10(Density)")
     plt.xlabel("x")
     plt.ylabel("y")

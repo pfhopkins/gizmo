@@ -1,0 +1,25 @@
+% Square advection test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=2
+%        BOX_PERIODIC
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(1.4)
+%
+InitCondFile                       square_ics
+OutputDir                          output
+TimeMax                            10
+BoxSize                            1
+TimeBetSnapshot                    2.5
+DesNumNgb                          12
+CourantFac                         0.1
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+MaxSizeTimestep                    0.05
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
