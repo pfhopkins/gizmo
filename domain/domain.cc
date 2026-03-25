@@ -109,6 +109,8 @@ static long long totpartcount;
 static int UseAllParticles;
 static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviving between domain decompositions, used by lightweight repartition */
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
+static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
+#define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 
 /*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
  *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure. */
@@ -261,6 +263,8 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     {peano_hilbert_order();}
     CPU_Step[CPU_PEANO] += measure_time();
 
+  LightRepartitionCount = 0; /* reset counter: top tree is fresh */
+
   /* save keys persistently for potential lightweight repartition */
   if(PersistentKeySize < All.MaxPart) {
       if(PersistentKey) {free(PersistentKey);}
@@ -287,8 +291,10 @@ void domain_Decomposition_light(int UseAllTimeBins)
 {
     int i, no; size_t bytes; double t0, t1;
 
-    /* fall back to full decomposition if persistent state is not available */
-    if(!PersistentKey || !domain_allocated_flag) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
+    /* fall back to full decomposition if persistent state is not available, or if
+       too many consecutive lightweight repartitions have occurred (top tree may be stale) */
+    if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
+    LightRepartitionCount++;
 
     rearrange_particle_sequence();
     UseAllParticles = UseAllTimeBins;
