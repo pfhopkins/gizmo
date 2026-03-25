@@ -37,12 +37,16 @@ void add_analytic_gravitational_forces()
 
     /* now add the appropriate [if any] analytic gravitational forces */
 #ifdef GRAVITY_ANALYTIC
-    //GravAccel_RayleighTaylorTest();     // uniform vertical force for Rayleigh-Taylor-type tests
+#ifdef GRAVITY_TESTPROBLEM_RT
+    GravAccel_RayleighTaylorTest();     // uniform vertical force for Rayleigh-Taylor-type tests
+#endif
     //GravAccel_StaticPlummerSphere();    // plummer sphere
     //GravAccel_StaticHernquist();        // hernquist-profile sphere
     //GravAccel_StaticIsothermalSphere(); // singular (but finite) isothermal sphere
     //GravAccel_KeplerianOrbit();         // keplerian disk (2D or 3D)
-    //GravAccel_KeplerianTestProblem();   // keplerian disk with special boundaries for test problem
+#ifdef GRAVITY_TESTPROBLEM_KEPLERIAN
+    GravAccel_KeplerianTestProblem();   // keplerian disk with special boundaries for test problem
+#endif
     //GravAccel_GrowingDiskPotential();   // time-dependent (adiabatically growing) disk
     //GravAccel_StaticNFW();              // NFW profile sphere
     //GravAccel_PaczynskiWiita();         // Paczynski-Wiita pseudo-Newtonian potential

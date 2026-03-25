@@ -6,7 +6,7 @@ from os import path
 from gizmo.test import build_and_run_test
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (12,))
+@pytest.mark.parametrize("num_mpi_ranks", (16,))
 def test_shu1977(num_mpi_ranks):
     test_name = "shu1977"
     build_and_run_test(test_name, num_mpi_ranks)

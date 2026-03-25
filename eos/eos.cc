@@ -100,8 +100,13 @@ void set_eos_pressure(int i)
     press = calculate_eos_tillotson(i); soundspeed = CellP[i].SoundSpeed; /* done in subroutine, save for below */
 #endif
     
+#ifdef EOS_MHD_CORE_BAROTROPIC
+    press = 0.04*CellP[i].Density*sqrt(1.+pow(CellP[i].Density/1.47705e8 ,4./3.)); /* special barotropic EOS for core collapse test (Hopkins 2015) */
+#endif
 #ifdef EOS_ENFORCE_ADIABAT
     press = EOS_ENFORCE_ADIABAT * pow(CellP[i].Density, gamma_eos_index);
+#endif
+#if defined(EOS_ENFORCE_ADIABAT) || defined(EOS_MHD_CORE_BAROTROPIC)
 #ifdef TURB_DRIVING
     CellP[i].EgyDiss += (CellP[i].InternalEnergy - press / (CellP[i].Density * (gamma_eos_index-1.))); /* save the change in energy imprinted by this enforced equation of state here */
 #endif
