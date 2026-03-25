@@ -441,6 +441,10 @@ void init(void)
 #if (SINGLE_STAR_SINK_FORMATION & 8)
         P[i].Sink_Ngb_Flag = 0;
 #endif
+#ifdef SINGLE_STAR_FB_TIMESTEP_LIMIT
+ // start with a large value (> plausible values v_ejecta or v_wind) as a conservative choice when starting up a simulation with an active feedback-emmiting star - this will get updated to a more reasonable value once the particle walks the gravity tree, but need this to ensure the first timestep is stable.
+        P[i].MaxFeedbackVel = 1e4 / UNIT_VEL_IN_KMS;
+#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
 	    P[i].Min_Sink_Approach_Time = P[i].Min_Sink_Freefall_time = MAX_REAL_NUMBER;
 #if (SINGLE_STAR_TIMESTEPPING > 0)

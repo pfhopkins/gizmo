@@ -880,6 +880,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode);
 #ifdef RT_SOURCE_INJECTION
 void rt_source_injection(void);
 #endif
+MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
 
 #ifdef RADTRANSFER
 void rt_set_simple_inits(int RestartFlag);
