@@ -421,6 +421,10 @@ static void msort_peano_with_tmp(struct peano_hilbert_data *b, size_t n, struct 
   msort_peano_with_tmp(b1, n1, t);
   msort_peano_with_tmp(b2, n2, t);
 
+  /* if the last element of the left half <= first element of right half, already sorted — skip merge */
+  if(b1[n1-1].key <= b2[0].key)
+    {return;}
+
   tmp = t;
 
   while(n1 > 0 && n2 > 0)
