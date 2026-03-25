@@ -11,6 +11,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
+from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 
 
@@ -25,19 +26,23 @@ def test_ring_collision(num_mpi_ranks):
     if len(snaps) < 2:
         raise RuntimeError("GIZMO did not run successfully.")
 
-    # Plot each snapshot
+    # Plot each snapshot using Meshoid slice interpolation
     for snap in snaps:
         with h5py.File(snap, "r") as F:
             pos = F["PartType0/Coordinates"][:]
             rho = F["PartType0/Density"][:]
             t = F["Header"].attrs["Time"]
+        center = np.array([pos[:, 0].mean(), pos[:, 1].mean(), pos[:, 2].mean() if pos.shape[1] > 2 else 0.])
+        size = max(pos[:, 0].max() - pos[:, 0].min(), pos[:, 1].max() - pos[:, 1].min()) * 1.1
+        M = Meshoid(pos)
+        rho_slice = M.Slice(rho, res=1024, plane="z", center=center, size=size, order=1)
         plt.figure(figsize=(6, 6))
-        plt.scatter(pos[:, 0], pos[:, 1], c=rho, s=1, cmap="viridis")
+        extent = [center[0] - size/2, center[0] + size/2, center[1] - size/2, center[1] + size/2]
+        plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=extent)
         plt.colorbar(label="Density")
         plt.xlabel("x")
         plt.ylabel("y")
         plt.title(f"Ring Collision t={t:.0f}")
-        plt.axis("equal")
         plt.savefig(f"test/{test_name}/snapshot_t{t:.0f}.png", dpi=150)
         plt.close()
 

@@ -12,6 +12,7 @@ import h5py
 import glob
 from os import path, chdir
 from urllib.request import urlretrieve
+from meshoid import Meshoid
 from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs
 
 
@@ -46,9 +47,12 @@ def test_rt(num_mpi_ranks):
         mass_f = F["PartType0/Masses"][:]
         pos_f = F["PartType0/Coordinates"][:]
 
-    # Plot final density
+    # Plot final density using Meshoid slice interpolation
+    # BoxSize=0.5, BOX_LONG_X=1, BOX_LONG_Y=2 -> box is 0.5 x 1.0
+    M = Meshoid(pos_f, boxsize=0.5)
+    rho_slice = M.Slice(rho_f, res=512, plane="z", center=np.array([0.25, 0.5, 0.25]), size=0.5, order=1)
     plt.figure(figsize=(4, 8))
-    plt.scatter(pos_f[:, 0], pos_f[:, 1], c=rho_f, s=0.1, cmap="viridis")
+    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 0.5, 0, 1.0])
     plt.colorbar(label="Density")
     plt.xlabel("x")
     plt.ylabel("y")

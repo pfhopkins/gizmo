@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
+from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 
 
@@ -33,23 +34,23 @@ def test_kh_wengen(num_mpi_ranks):
         mass_f = F["PartType0/Masses"][:]
         pos_f = F["PartType0/Coordinates"][:]
 
-    # Plot a slice through the midplane (z ~ BoxSize_z/2)
-    boxsize_z = 8 * 2  # BOX_LONG_Z=2, BoxSize=8
-    zmid = boxsize_z / 2.0
-    dz = boxsize_z * 0.05
-    midplane = np.abs(pos_f[:, 2] - zmid) < dz
-    if np.sum(midplane) > 100:
-        plt.figure(figsize=(8, 8))
-        plt.scatter(
-            pos_f[midplane, 0], pos_f[midplane, 1],
-            c=rho_f[midplane], s=0.1, cmap="viridis"
-        )
-        plt.colorbar(label="Density")
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title("KH Wengen - Density (midplane slice)")
-        plt.savefig(f"test/{test_name}/Density_slice.png", dpi=150)
-        plt.close()
+    # Plot a slice through the midplane using Meshoid slice interpolation
+    # BoxSize=8, BOX_LONG_X=32, BOX_LONG_Y=32, BOX_LONG_Z=2 -> box is 256 x 256 x 16
+    boxsize = 8.
+    box_x = boxsize * 32
+    box_y = boxsize * 32
+    box_z = boxsize * 2
+    M = Meshoid(pos_f, boxsize=boxsize)
+    center = np.array([box_x / 2, box_y / 2, box_z / 2])
+    rho_slice = M.Slice(rho_f, res=1024, plane="z", center=center, size=box_x, order=1)
+    plt.figure(figsize=(8, 8))
+    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, box_x, 0, box_y])
+    plt.colorbar(label="Density")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.title("KH Wengen - Density (midplane slice)")
+    plt.savefig(f"test/{test_name}/Density_slice.png", dpi=150)
+    plt.close()
 
     # Mass conservation
     mass_err = abs(mass_f.sum() - mass0.sum()) / mass0.sum()

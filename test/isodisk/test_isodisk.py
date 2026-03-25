@@ -11,6 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 import glob
 from os import path, chdir
+from meshoid import Meshoid
 from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables
 
 
@@ -44,16 +45,13 @@ def test_isodisk(num_mpi_ranks):
 
     center = boxsize / 2.0
 
-    # Plot face-on view of the disk
+    # Plot face-on view of the disk using Meshoid slice interpolation
+    M = Meshoid(pos_f, boxsize=boxsize)
+    disk_center = np.array([center, center, center])
+    rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=disk_center, size=60., order=1)
     plt.figure(figsize=(6, 6))
-    r_xy = np.sqrt((pos_f[:, 0] - center) ** 2 + (pos_f[:, 1] - center) ** 2)
-    disk = (r_xy < 30) & (np.abs(pos_f[:, 2] - center) < 5)
-    if np.sum(disk) > 100:
-        plt.scatter(
-            pos_f[disk, 0] - center, pos_f[disk, 1] - center,
-            c=np.log10(rho_f[disk]), s=0.1, cmap="inferno"
-        )
-        plt.colorbar(label="log10(Density)")
+    plt.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-30, 30, -30, 30])
+    plt.colorbar(label="log10(Density)")
     plt.xlabel("x (kpc)")
     plt.ylabel("y (kpc)")
     plt.title("Isolated Disk - Face-on")
