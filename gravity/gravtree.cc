@@ -68,7 +68,23 @@ void gravity_tree(void)
         force_treebuild(NumPart, NULL);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
         TreeReconstructFlag = 0;
+        TreeMomentsStaleFlag = 0;
         PRINT_STATUS(" ..Tree construction done.");
+    }
+
+    /* refresh tree moments if stale (e.g. after star formation or sink mass change).
+       This must run before ANY gravity evaluation including Hermite calls, since
+       stale moments produce wrong forces. Much cheaper than a full treebuild. */
+    {
+        int TreeMomentsStaleFlag_global;
+        MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(TreeMomentsStaleFlag_global)
+        {
+            CPU_Step[CPU_MISC] += measure_time();
+            force_refresh_node_moments();
+            CPU_Step[CPU_TREEBUILD] += measure_time();
+            TreeMomentsStaleFlag = 0;
+        }
     }
 
     CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second();

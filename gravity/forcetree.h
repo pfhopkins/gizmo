@@ -29,7 +29,7 @@
 #define BITFLAG_INSIDE_LINKINGLENGTH       9
 
 void force_update_tree(void);
-
+void force_refresh_node_moments(void);
 
 void force_flag_localnodes(void);
 

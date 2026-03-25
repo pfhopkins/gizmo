@@ -3767,3 +3767,281 @@ void ewald_force(int iii, int jjj, int kkk, double x[3], double force[3])
             }
 }
 #endif // #ifdef BOX_PERIODIC //
+
+
+/*! Refresh tree node moments without rebuilding the tree structure. Uses bottom-up accumulation
+ *  via Father[] pointers instead of u.suns[] (which are destroyed after the initial tree build
+ *  since they share a union with u.d). Nodes are processed from high to low index, which gives
+ *  bottom-up order since children are always allocated with higher indices than parents.
+ *  Use this when particle properties (mass, type, luminosity) have changed but particles haven't
+ *  moved, e.g. after star formation or sink SN events. */
+void force_refresh_node_moments(void)
+{
+    int i, k, no;
+    PRINT_STATUS("Refreshing tree node moments (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
+
+    /* Step 1: zero all node moment fields (preserving structural fields: nextnode, sibling, father) */
+    for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
+    {
+        unsigned int saved_bitflags = Nodes[no].u.d.bitflags; /* preserve topology flags (TOPLEVEL etc) */
+        Nodes[no].u.d.mass = 0;
+        Nodes[no].u.d.s = {};
+        Nodes[no].GravCost = 0;
+        Nodes[no].Ti_current = All.Ti_Current;
+        Nodes[no].N_part = 0;
+        Nodes[no].maxsoft = 0;
+        Nodes[no].u.d.bitflags = saved_bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT) | (1 << BITFLAG_INTERNAL_TOPLEVEL));
+        Extnodes[no].vs = {};
+        Extnodes[no].hmax = 0;
+        Extnodes[no].vmax = 0;
+        Extnodes[no].divVmax = 0;
+        Extnodes[no].dp = {};
+        Extnodes[no].Ti_lastkicked = All.Ti_Current;
+        Extnodes[no].Flag = GlobFlag;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        Nodes[no].gasmass = 0;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        Nodes[no].cr_injection = 0;
+#endif
+#ifdef RT_USE_GRAVTREE
+        for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k]=0;}
+#ifdef CHIMES_STELLAR_FLUXES
+        for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k]=0; Nodes[no].chimes_stellar_lum_ion[k]=0;}
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Nodes[no].rt_source_lum_s = {};
+        Extnodes[no].rt_source_lum_vs = {};
+        Extnodes[no].rt_source_lum_dp = {};
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        Nodes[no].sink_lum = 0;
+        Nodes[no].sink_lum_grad = {};
+#endif
+#ifdef SINK_CALC_DISTANCES
+        Nodes[no].sink_mass = 0;
+        Nodes[no].sink_pos = {};
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+        Nodes[no].sink_vel = {};
+        Nodes[no].N_SINK = 0;
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+        Nodes[no].MaxFeedbackVel = 0;
+#endif
+#endif
+#ifdef SPECIAL_POINT_MOTION
+        Nodes[no].sink_acc = {};
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        Nodes[no].tidal_tensorps_prevstep = {};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        Nodes[no].mass_dm = 0;
+        Nodes[no].s_dm = {};
+        Extnodes[no].vs_dm = {};
+        Extnodes[no].dp_dm = {};
+#endif
+    }
+
+    /* Step 2: accumulate particle contributions into their immediate parent nodes.
+       Store s as mass-weighted position sum (NOT center of mass yet) for propagation. */
+    for(i = 0; i < NumPart; i++)
+    {
+        no = Father[i];
+        if(no < 0) {continue;}
+        struct particle_data *pa = &P[i];
+
+        Nodes[no].u.d.mass += pa->Mass;
+        Nodes[no].u.d.s += pa->Mass * pa->Pos;
+        Extnodes[no].vs += pa->Mass * pa->Vel;
+        Nodes[no].N_part++;
+
+        MyFloat v, vmax_p = 0;
+        for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax_p) {vmax_p = v;}}
+        if(vmax_p > Extnodes[no].vmax) {Extnodes[no].vmax = vmax_p;}
+
+        double soft_p = ForceSoftening_KernelRadius(i);
+        if(soft_p > Nodes[no].maxsoft) {Nodes[no].maxsoft = soft_p;}
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        if(pa->Type == 5) {if(P[i].KernelRadius > Nodes[no].maxsoft) {Nodes[no].maxsoft = P[i].KernelRadius;}}
+#endif
+
+        if(pa->Type == 0)
+        {
+            double htmp = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
+            if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
+            if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
+        }
+
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        if(pa->Type == 0) {Nodes[no].gasmass += pa->Mass;}
+#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
+        if(pa->Type == 5) {Nodes[no].gasmass += P[i].Sink_Mass_Reservoir;}
+#endif
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        Nodes[no].cr_injection += cr_get_source_injection_rate(i);
+#endif
+#ifdef RT_USE_GRAVTREE
+        {double lum[N_RT_FREQ_BINS];
+#ifdef CHIMES_STELLAR_FLUXES
+        double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
+        int active_check = rt_get_source_luminosity_chimes(i,1,lum,chimes_lum_G0,chimes_lum_ion);
+#else
+        int active_check = rt_get_source_luminosity(i,1,lum);
+#endif
+        if(active_check) {
+            double l_sum = 0;
+            for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] += lum[k]; l_sum += lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+            for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k] += chimes_lum_G0[k]; Nodes[no].chimes_stellar_lum_ion[k] += chimes_lum_ion[k];}
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+            Nodes[no].rt_source_lum_s += l_sum * pa->Pos;
+            Extnodes[no].rt_source_lum_vs += l_sum * pa->Vel;
+#endif
+        }}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(pa->Type == 5 && pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0) {
+            double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
+            Nodes[no].sink_lum += BHLum;
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+            Nodes[no].sink_lum_grad += pa->Sink_Specific_AngMom * BHLum;
+#else
+            Nodes[no].sink_lum_grad += pa->GradRho * BHLum;
+#endif
+        }
+#endif
+#ifdef SINK_CALC_DISTANCES
+        if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {
+            Nodes[no].sink_mass += pa->Mass;
+            Nodes[no].sink_pos += pa->Mass * pa->Pos; /* store as mass-weighted sum, normalize later */
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+            Nodes[no].N_SINK += 1;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+            Nodes[no].sink_vel += pa->Mass * pa->Vel; /* mass-weighted, normalize later */
+#endif
+#ifdef SPECIAL_POINT_MOTION
+            Nodes[no].sink_acc += pa->Mass * pa->Acc_Total_PrevStep;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+            if(pa->MaxFeedbackVel > Nodes[no].MaxFeedbackVel) {Nodes[no].MaxFeedbackVel = pa->MaxFeedbackVel;}
+#endif
+        }
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        {for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] += pa->Mass * pa->tidal_tensorps_prevstep.data[k];}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        if(pa->Type != 0) {Nodes[no].mass_dm += pa->Mass; Nodes[no].s_dm += pa->Mass * pa->Pos; Extnodes[no].vs_dm += pa->Mass * pa->Vel;}
+#endif
+    }
+
+    /* Step 3: propagate node moments bottom-up. Children have higher indices than parents,
+       so iterating in reverse order processes children before parents. At this stage s, vs,
+       sink_pos, sink_vel, etc. are stored as mass-weighted sums (not yet normalized). */
+    for(no = All.MaxPart + Numnodestree - 1; no >= All.MaxPart; no--)
+    {
+        int father = Nodes[no].u.d.father;
+        if(father < All.MaxPart || father >= All.MaxPart + Numnodestree) {continue;} /* root or invalid */
+
+        Nodes[father].u.d.mass += Nodes[no].u.d.mass;
+        Nodes[father].u.d.s += Nodes[no].u.d.s; /* still mass-weighted position sum */
+        Extnodes[father].vs += Extnodes[no].vs;
+        Nodes[father].N_part += Nodes[no].N_part;
+        if(Extnodes[no].hmax > Extnodes[father].hmax) {Extnodes[father].hmax = Extnodes[no].hmax;}
+        if(Extnodes[no].vmax > Extnodes[father].vmax) {Extnodes[father].vmax = Extnodes[no].vmax;}
+        if(Extnodes[no].divVmax > Extnodes[father].divVmax) {Extnodes[father].divVmax = Extnodes[no].divVmax;}
+        if(Nodes[no].maxsoft > Nodes[father].maxsoft) {Nodes[father].maxsoft = Nodes[no].maxsoft;}
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        Nodes[father].gasmass += Nodes[no].gasmass;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        Nodes[father].cr_injection += Nodes[no].cr_injection;
+#endif
+#ifdef RT_USE_GRAVTREE
+        for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[father].stellar_lum[k] += Nodes[no].stellar_lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+        for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[father].chimes_stellar_lum_G0[k] += Nodes[no].chimes_stellar_lum_G0[k]; Nodes[father].chimes_stellar_lum_ion[k] += Nodes[no].chimes_stellar_lum_ion[k];}
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Nodes[father].rt_source_lum_s += Nodes[no].rt_source_lum_s;
+        Extnodes[father].rt_source_lum_vs += Extnodes[no].rt_source_lum_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        Nodes[father].sink_lum += Nodes[no].sink_lum;
+        Nodes[father].sink_lum_grad += Nodes[no].sink_lum * Nodes[no].sink_lum_grad; /* still lum-weighted sum */
+#endif
+#ifdef SINK_CALC_DISTANCES
+        Nodes[father].sink_mass += Nodes[no].sink_mass;
+        Nodes[father].sink_pos += Nodes[no].sink_mass * Nodes[no].sink_pos; /* propagate mass-weighted sum */
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+        Nodes[father].N_SINK += Nodes[no].N_SINK;
+        Nodes[father].sink_vel += Nodes[no].sink_mass * Nodes[no].sink_vel;
+#endif
+#ifdef SPECIAL_POINT_MOTION
+        Nodes[father].sink_acc += Nodes[no].sink_mass * Nodes[no].sink_acc;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+        if(Nodes[no].sink_mass > 0 && Nodes[no].MaxFeedbackVel > Nodes[father].MaxFeedbackVel) {Nodes[father].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;}
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        {for(k=0;k<6;k++) {Nodes[father].tidal_tensorps_prevstep.data[k] += Nodes[no].tidal_tensorps_prevstep.data[k];}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        Nodes[father].mass_dm += Nodes[no].mass_dm;
+        Nodes[father].s_dm += Nodes[no].s_dm;
+        Extnodes[father].vs_dm += Extnodes[no].vs_dm;
+#endif
+    }
+
+    /* Step 4: normalize mass-weighted sums to get actual COM, velocities, etc. */
+    for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
+    {
+        MyFloat mass = Nodes[no].u.d.mass;
+        if(mass > 0) {
+            Nodes[no].u.d.s /= mass;
+            Extnodes[no].vs /= mass;
+        } else {
+            Nodes[no].u.d.s = Nodes[no].center;
+            Extnodes[no].vs = {};
+        }
+        if(Nodes[no].N_part > 1) {Nodes[no].u.d.bitflags |= (1 << BITFLAG_MULTIPLEPARTICLES);} else {Nodes[no].u.d.bitflags &= ~(1 << BITFLAG_MULTIPLEPARTICLES);}
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        {double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += Nodes[no].stellar_lum[k];}
+        if(l_tot > 0) {Nodes[no].rt_source_lum_s /= l_tot; Extnodes[no].rt_source_lum_vs /= l_tot;}
+        else {Nodes[no].rt_source_lum_s = Nodes[no].center; Extnodes[no].rt_source_lum_vs = {};}}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(Nodes[no].sink_lum > 0) {Nodes[no].sink_lum_grad /= Nodes[no].sink_lum;} else {Nodes[no].sink_lum_grad = {0,0,1};}
+#endif
+#ifdef SINK_CALC_DISTANCES
+        if(Nodes[no].sink_mass > 0) {
+            Nodes[no].sink_pos /= Nodes[no].sink_mass;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+            Nodes[no].sink_vel /= Nodes[no].sink_mass;
+#endif
+#ifdef SPECIAL_POINT_MOTION
+            Nodes[no].sink_acc /= Nodes[no].sink_mass;
+#endif
+        }
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        if(mass > 0) {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] *= inv_mass;}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        if(Nodes[no].mass_dm > 0) {Nodes[no].s_dm /= Nodes[no].mass_dm; Extnodes[no].vs_dm /= Nodes[no].mass_dm;} else {Nodes[no].s_dm = Nodes[no].center; Extnodes[no].vs_dm = {};}
+#endif
+    }
+
+    /* Step 5: sync pseudo-particle data across MPI ranks */
+    force_exchange_pseudodata();
+    force_treeupdate_pseudos(All.MaxPart);
+
+    PRINT_STATUS(" ..tree node moments refreshed.");
+}

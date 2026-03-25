@@ -599,7 +599,7 @@ void star_formation_parent_routine(void)
 #ifdef SINK_RETURN_BFLUX
                             P[i_star].B = {};
 #endif
-                            TreeReconstructFlag = 1;
+                            TreeMomentsStaleFlag = 1; /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
                             P[i_star].SinkRadius = ForceSoftening_KernelRadius(i);
                             double cs = 0.2 / UNIT_VEL_IN_KMS;

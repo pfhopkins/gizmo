@@ -842,7 +842,7 @@ void sink_final_operations(void)
                 P[n].Sink_Mass = DMAX(0, m_relic); // zero out mass if nothing is left-over
             }
             if(P[n].Sink_Mass <= m_relic) {
-                TreeReconstructFlag = 1; //rebuild the tree after the SN finished
+                TreeMomentsStaleFlag = 1; /* sink mass changed: refresh moments, tree structure maintained by MAINTAIN_TREE_IN_REARRANGE */
                 Max_Unspawned_MassUnits_fromSink = DMAX(2, Max_Unspawned_MassUnits_fromSink); // a high enough number to ensure that we do spawn winds
             }
         }
