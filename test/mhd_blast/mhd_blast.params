@@ -1,0 +1,28 @@
+% MHD blast wave test (Hopkins & Raives 2016)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=2
+%        EOS_GAMMA=(5.0/3.0)
+%        MAGNETIC
+%        SELFGRAVITY_OFF
+%
+InitCondFile                       mhd_blast_ics
+OutputDir                          output
+TimeMax                            0.2
+BoxSize                            1
+TimeBetSnapshot                    0.05
+DesNumNgb                          20
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+MaxSizeTimestep                    0.01
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+DivBcleaningParabolicSigma         0.1
+DivBcleaningHyperbolicSigma        1.0

@@ -1,0 +1,40 @@
+% Ring collision elastic/solid body test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=2
+%        SELFGRAVITY_OFF
+%        EOS_TILLOTSON
+%        EOS_ELASTIC
+%        KERNEL_FUNCTION=6
+%
+InitCondFile                       ring_collision_ics
+OutputDir                          output
+TimeMax                            100
+TimeBetSnapshot                    25
+MaxSizeTimestep                    0.1
+DesNumNgb                          32
+Tillotson_EOS_params_a             0
+Tillotson_EOS_params_b             0
+Tillotson_EOS_params_u_0           1e+20
+Tillotson_EOS_params_rho_0         1
+Tillotson_EOS_params_A             1
+Tillotson_EOS_params_B             0
+Tillotson_EOS_params_u_s           1e+20
+Tillotson_EOS_params_u_s_prime     1e+20
+Tillotson_EOS_params_alpha         0
+Tillotson_EOS_params_beta          0
+Tillotson_EOS_params_mu            0.22
+Tillotson_EOS_params_Y0            1e+20
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitVelocity_in_cm_per_s            1
+UnitLength_in_cm                   1
+UnitMass_in_g                      1

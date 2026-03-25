@@ -1,0 +1,26 @@
+% Kelvin-Helmholtz instability - McNally et al. setup (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=2
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(5.0/3.0)
+%        KERNEL_FUNCTION=5
+%
+InitCondFile                       kh_mcnally_2d_ics
+OutputDir                          output
+TimeMax                            2
+BoxSize                            1
+TimeBetSnapshot                    0.5
+MaxSizeTimestep                    0.02
+DesNumNgb                          40
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.1
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
