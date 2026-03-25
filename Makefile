@@ -170,9 +170,11 @@ OPT     += #
 endif
 
 #----------------------------------------------------------------------------------------------
+# Environment for building GIZMO on a macbook with libraries installed via homebrew. But note
+# that the specific GSL and HDF5 versions are hardcoded here...
 ifeq ($(SYSTYPE),"MacBookCellar")
 CC       =  mpicc
-CXX      =  mpiccxx
+CXX      =  mpicxx -std=c++11
 FC       =  $(CC) #mpifort  ## change this to "mpifort" for packages requiring linking secondary fortran code, currently -only- the helmholtz eos modules do this, so I leave it un-linked for now to save people the compiler headaches
 OPTIMIZE = -O1 -funroll-loops
 OPTIMIZE += -g -Wall # compiler warnings
@@ -187,18 +189,18 @@ GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include #-I$(PORTINCLUDE)
 GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib #-L$(PORTLIB)
 FFTW_INCL= -I/usr/local/include
 FFTW_LIBS= -L/usr/local/lib
-HDF5INCL = -I/opt/homebrew/Cellar/hdf5/1.14.3_1/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
-HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/1.14.3_1/lib -lhdf5 -lz  #-L$(PORTLIB)
+HDF5INCL = -I/opt/homebrew/Cellar/hdf5/1.14.6/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
+HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/1.14.6/lib -lhdf5 -lz  #-L$(PORTLIB)
 MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION #
 endif
 
 #----------------------------
-ifeq ($(SYSTYPE),"PopOS")
+ifeq ($(SYSTYPE),"github-ubuntu")
 CC       =  mpicc
-CXX      =  mpiccxx
+CXX      =  mpicxx
 FC       =  $(CC)
-OPTIMIZE = -g -fcommon -O1 -ffast-math -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
+OPTIMIZE = -g -fcommon -O1 -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
 OPTIMIZE += -ftree-loop-distribute-patterns -fvect-cost-model -ftree-partial-pre   ## optimizations for gcc compilers (2/2)
 OPTIMIZE += -g -Wall # compiler warnings
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
@@ -221,6 +223,24 @@ HDF5LIB  = -L/usr/lib/x86_64-linux-gnu/hdf5/openmpi/ -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION
 ## to get required packages: sudo apt install libhdf5-openmpi-dev libgsl-dev libopenmpi-dev
+endif
+
+#----------------------------
+# Should work on any Flatiron institute linux cluster environment: rusty, popeye and linux workstations
+ifeq ($(SYSTYPE),"RUSTY")
+CC       =   mpicc
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC      = mpifort
+OPTIMIZE =  -O2 -g -Wall
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
 
@@ -296,7 +316,8 @@ SINK_OBJS = sinks/sink.o \
 RHD_OBJS =  radiation/rt_utilities.o \
 			radiation/rt_CGmethod.o \
 			radiation/rt_source_injection.o \
-			radiation/rt_chem.o 
+			radiation/rt_chem.o \
+			radiation/rt_dust_opacity.o 
 
 FOF_OBJS =	structure/fof.o \
 			structure/subfind/subfind.o \
