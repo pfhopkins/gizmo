@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
+from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 
 
@@ -34,9 +35,11 @@ def test_kh_mcnally_2d(num_mpi_ranks):
         mass_f = F["PartType0/Masses"][:]
         pos_f = F["PartType0/Coordinates"][:]
 
-    # Plot final density
+    # Plot final density using Meshoid slice interpolation
+    M = Meshoid(pos_f, boxsize=1.)
+    rho_slice = M.Slice(rho_f, res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=1)
     plt.figure(figsize=(6, 6))
-    plt.scatter(pos_f[:, 0], pos_f[:, 1], c=rho_f, s=0.1, cmap="viridis")
+    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 1, 0, 1])
     plt.colorbar(label="Density")
     plt.xlabel("x")
     plt.ylabel("y")

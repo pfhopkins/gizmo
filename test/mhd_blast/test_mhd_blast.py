@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
+from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 
 
@@ -33,9 +34,11 @@ def test_mhd_blast(num_mpi_ranks):
         B = F["PartType0/MagneticField"][:]
         boxsize = F["Header"].attrs["BoxSize"]
 
-    # Plot density
+    # Plot density using Meshoid slice interpolation
+    M = Meshoid(pos, boxsize=1.)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=1)
     plt.figure(figsize=(6, 6))
-    plt.scatter(pos[:, 0], pos[:, 1], c=np.log10(rho), s=0.1, cmap="inferno")
+    plt.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[0, 1, 0, 1])
     plt.colorbar(label="log10(Density)")
     plt.xlabel("x")
     plt.ylabel("y")

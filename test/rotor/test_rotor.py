@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
+from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 
 
@@ -37,17 +38,21 @@ def test_rotor(num_mpi_ranks):
         rho_f = F["PartType0/Density"][:]
         B_f = F["PartType0/MagneticField"][:]
 
-    # Plot final state
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    axes[0].scatter(pos_f[:, 0], pos_f[:, 1], c=np.log10(rho_f), s=0.1, cmap="inferno")
-    axes[0].set_title("log10(Density)")
+    # Plot final state using Meshoid slice interpolation
+    M = Meshoid(pos_f, boxsize=boxsize)
+    center = np.array([boxsize/2, boxsize/2, boxsize/2])
     Bmag = np.sqrt(np.sum(B_f**2, axis=1))
-    axes[1].scatter(pos_f[:, 0], pos_f[:, 1], c=Bmag, s=0.1, cmap="viridis")
+    rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=center, size=boxsize, order=1)
+    B_slice = M.Slice(Bmag, res=1024, plane="z", center=center, size=boxsize, order=1)
+    extent = [0, boxsize, 0, boxsize]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    axes[0].imshow(rho_slice.T, origin="lower", cmap="inferno", extent=extent)
+    axes[0].set_title("log10(Density)")
+    axes[1].imshow(B_slice.T, origin="lower", cmap="viridis", extent=extent)
     axes[1].set_title("|B|")
     for ax in axes:
         ax.set_xlabel("x")
         ax.set_ylabel("y")
-        ax.set_aspect("equal")
     plt.tight_layout()
     plt.savefig(f"test/{test_name}/Rotor_2D.png", dpi=150)
     plt.close()
