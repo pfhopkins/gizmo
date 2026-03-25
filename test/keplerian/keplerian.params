@@ -1,0 +1,27 @@
+% Keplerian disk test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=2
+%        SELFGRAVITY_OFF
+%        GRAVITY_ANALYTIC
+%        GRAVITY_TESTPROBLEM_KEPLERIAN
+%        EOS_GAMMA=(7.0/5.0)
+%        ENERGY_ENTROPY_SWITCH_IS_ACTIVE
+%
+InitCondFile                       keplerian_ics
+OutputDir                          output
+TimeMax                            10
+BoxSize                            8
+TimeBetSnapshot                    2.5
+MaxSizeTimestep                    0.1
+DesNumNgb                          20
+ErrTolIntAccuracy                  0.002
+CourantFac                         0.025
+MaxRMSDisplacementFac              0.125
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none

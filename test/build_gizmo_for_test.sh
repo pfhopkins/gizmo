@@ -3,4 +3,4 @@
 rm GIZMO
 rm test/*/GIZMO
 cp test/$TEST_NAME/Config.sh . # retrieve the config file
-make
+make clean && make -j8
