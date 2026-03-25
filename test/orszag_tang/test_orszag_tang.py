@@ -45,9 +45,7 @@ def test_orszag_tang(num_mpi_ranks):
     with h5py.File(final_snap, "r") as F:
         coords = F["PartType0/Coordinates"][:]
         rho = F["PartType0/Density"][:]
-        hsml = F["PartType0/SmoothingLength"][:]
-
-    M = Meshoid(coords, kernel_radius=hsml,boxsize=1.)
+    M = Meshoid(coords, boxsize=1.)
     rho_slice = M.Slice(np.log10(rho), res=256, plane="z",center=np.array([0.5,0.5,0.5]),size=1.)
 
     plt.figure(figsize=(6, 6))

@@ -25,3 +25,8 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
 MaxNumNgbDeviation		   1e-6
+ErrTolTheta                        0.7
+ResubmitOn                         0
+ResubmitCommand                    none
+DivBcleaningParabolicSigma         0.1
+DivBcleaningHyperbolicSigma        1.0

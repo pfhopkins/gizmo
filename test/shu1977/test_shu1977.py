@@ -9,7 +9,7 @@ from gizmo.test import build_and_run_test
 @pytest.mark.parametrize("num_mpi_ranks", (4,))
 def test_shu1977(num_mpi_ranks):
     test_name = "shu1977"
-    build_and_run_test(test_name, num_mpi_ranks, timeout=300)
+    build_and_run_test(test_name, num_mpi_ranks)
 
     final_snap = f"test/{test_name}/output/snapshot_001.hdf5"
     if not path.isfile(final_snap):
