@@ -1,0 +1,30 @@
+% Blob test - wind-cloud interaction (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_LONG_X=1
+%        BOX_LONG_Y=1
+%        BOX_LONG_Z=3
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(5.0/3.0)
+%
+InitCondFile                       blob_ics
+OutputDir                          output
+TimeMax                            2
+BoxSize                            2000
+TimeBetSnapshot                    0.5
+DesNumNgb                          32
+UnitLength_in_cm                   3.085678e+21
+UnitMass_in_g                      1.989e+43
+UnitVelocity_in_cm_per_s           100000
+MaxSizeTimestep                    0.02
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         3000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none

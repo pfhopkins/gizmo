@@ -1,0 +1,43 @@
+% Magneto-rotational instability test (Hopkins & Raives 2016)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SHEARING=1
+%        BOX_SHEARING_Q=(3./2.)
+%        BOX_SPATIAL_DIMENSION=2
+%        EOS_GAMMA=(1.000001)
+%        MAGNETIC
+%        SELFGRAVITY_OFF
+%
+InitCondFile                       mri_ics
+OutputDir                          output
+TimeMax                            20
+BoxSize                            1
+TimeBetSnapshot                    5
+DesNumNgb                          20
+GravityConstantInternal            1
+SofteningGas                       0.05
+Softening_Type1                    0
+Softening_Type2                    0
+Softening_Type3                    0
+Softening_Type4                    0
+Softening_Type5                    0
+SofteningGasMaxPhys                0.05
+Softening_Type1_MaxPhysLimit       0
+Softening_Type2_MaxPhysLimit       0
+Softening_Type3_MaxPhysLimit       0
+Softening_Type4_MaxPhysLimit       0
+Softening_Type5_MaxPhysLimit       0
+MaxSizeTimestep                    0.1
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+DivBcleaningParabolicSigma         0.1
+DivBcleaningHyperbolicSigma        1.0
