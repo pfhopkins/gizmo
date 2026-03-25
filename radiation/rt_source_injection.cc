@@ -216,6 +216,8 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                         P[j].Vel[kv] += dv_tmp;
                         #pragma omp atomic
                         CellP[j].VelPred[kv] += dv_tmp;
+                        #pragma omp atomic
+                        P[j].dp[kv] += dv_tmp * P[j].Mass;
                     } // applies direction and converts to code units
 #endif
 #endif

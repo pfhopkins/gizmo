@@ -338,6 +338,8 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
                         P[j].Vel[k] += dv; // add the velocity (checking for thread safety in doing so!)
                         #pragma omp atomic
                         CellP[j].VelPred[k] += dv; // add the velocity (checking for thread safety in doing so!)
+                        #pragma omp atomic
+                        P[j].dp[k] += dv * P[j].Mass; // track momentum change for tree node update
                     }
                     
                     double taccel_min_prev = 0, taccel_min_new = 0;

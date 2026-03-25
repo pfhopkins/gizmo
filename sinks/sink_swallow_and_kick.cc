@@ -1098,6 +1098,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP[j].MassTrue = P[j].Mass;
 #endif
+        P[i].dp -= P[j].Mass * P[i].Vel; /* track momentum change from mass loss for tree node update */
         P[i].Mass -= P[j].Mass; /* make sure the operation is mass conserving! */
         P[i].unspawned_wind_mass -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass */
 

@@ -318,6 +318,7 @@ void do_box_wrapping(void)
                 if(j==0)
                 {
                     P[i].Vel[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;
+                    P[i].dp[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset * P[i].Mass;
                     if(P[i].Type==0)
                     {
                         CellP[i].VelPred[BOX_SHEARING_PHI_COORDINATE] -= Shearing_Box_Vel_Offset;
@@ -340,6 +341,7 @@ void do_box_wrapping(void)
                 if(j==0)
                 {
                     P[i].Vel[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset;
+                    P[i].dp[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset * P[i].Mass;
                     if(P[i].Type==0)
                     {
                         CellP[i].VelPred[BOX_SHEARING_PHI_COORDINATE] += Shearing_Box_Vel_Offset;

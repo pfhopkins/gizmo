@@ -816,7 +816,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
                     {
                         double radacc_eff = radacc[kx] * rmag; // re-normalize according to the criterion above
                         work_band += vel_i[kx] * radacc_eff * P[i].Mass; // PdV work done by photons [absorbed ones are fully-destroyed, so their loss of energy and momentum is already accounted for by their deletion in this limit //
-                        if(mode==0) {P[i].Vel[kx] += radacc_eff * All.cf_atime;} else {CellP[i].VelPred[kx] += radacc_eff * All.cf_atime;}
+                        if(mode==0) {double dv_rt=radacc_eff*All.cf_atime; P[i].Vel[kx]+=dv_rt; P[i].dp[kx]+=dv_rt*P[i].Mass;} else {CellP[i].VelPred[kx] += radacc_eff * All.cf_atime;}
                     }
                     double d_egy_rad = (2.*f_kappa_abs-1.)*work_band , d_egy_int = -2.*f_kappa_abs*work_band * (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED(i)); // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
                     if(mode==0) {CellP[i].InternalEnergy += d_egy_int;} else {CellP[i].InternalEnergyPred += d_egy_int;}
@@ -942,7 +942,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             if(de_gas_internal<=-0.9*u0) {de_gas_internal = DMIN(de_gas_internal/(1.-de_gas_internal/u0), -0.9*u0);} // just a catch to avoid negative energies (will break energy conservation if you are slamming into it, however!
             
             // assign everything back to the appropriate variables after update
-            if(mode==0) {P[i].Vel += dv_gas*All.cf_atime;} else {CellP[i].VelPred += dv_gas*All.cf_atime;} // update gas velocities (radiation pressure forces here)
+            if(mode==0) {auto dv_kick=dv_gas*All.cf_atime; P[i].Vel+=dv_kick; P[i].dp+=dv_kick*P[i].Mass;} else {CellP[i].VelPred += dv_gas*All.cf_atime;} // update gas velocities (radiation pressure forces here)
             if(mode==0) {CellP[i].InternalEnergy += de_gas_internal;} else {CellP[i].InternalEnergyPred += de_gas_internal;} // update gas internal energy (work terms, after subtracting kinetic energy changes)
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if(mode==0) {CellP[i].Rad_Intensity[kf][k_om] = i0[k_om]/RT_INTENSITY_BINS_DOMEGA;} else {CellP[i].Rad_Intensity_Pred[kf][k_om] = i0[k_om]/RT_INTENSITY_BINS_DOMEGA;}} // update intensities (all of the above)
             CellP[i].Rad_E_gamma[kf]=egy_f; // set this every time this subroutine is called, so it is accessible everywhere else //
@@ -952,7 +952,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
 #else
     double mom_fac = 1. - RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i) * total_erad_emission_minus_absorption / (P[i].Mass * C_LIGHT_CODE_REDUCED(i)*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission, which is isotropic in the fluid frame but anisotropic in the lab frame. this effect is only important in actually semi-relativistic problems so we use "real" C here, not a RSOL, and match the corresponding term above in the radiation flux equation (if that is evolved explicitly). careful checking-through gives the single termm here, not both
     if(fabs(mom_fac - 1) > 0.1) {printf("WARNING: Large radiation backreaction for cell %d (mom_fac=%g), check the RT solver stability if this is not a relativistic problem.\n",i,mom_fac);}
-    {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {P[i].Vel[k_dir] *= mom_fac;} else {CellP[i].VelPred[k_dir] *= mom_fac;}}}
+    {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {P[i].dp[k_dir]+=P[i].Vel[k_dir]*(mom_fac-1.)*P[i].Mass; P[i].Vel[k_dir]*=mom_fac;} else {CellP[i].VelPred[k_dir] *= mom_fac;}}}
 #endif
 
     if(mode > 0) {rt_eddington_update_calculation(i);} /* update the eddington tensor (if we calculate it) as well */
