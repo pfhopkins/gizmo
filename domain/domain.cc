@@ -81,6 +81,23 @@ static struct peano_hilbert_data
 static void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
 static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count, double cost, double gascost);
 
+/*! Walk the top tree to find the leaf node for a given Peano-Hilbert key, using bitwise operations instead of 128-bit division */
+static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *tNodes)
+{
+    int no = 0;
+    peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
+    int shift = 3 * (BITS_PER_DIMENSION - 1);
+    while(tNodes[no].Daughter >= 0)
+    {
+        no = tNodes[no].Daughter + (int)((key & mask) >> shift);
+        mask >>= 3;
+        shift -= 3;
+    }
+    return tNodes[no].Leaf;
+}
+
+static float *particle_total_cost;  /*!< cached per-particle total work cost: (1+multiplier)*costfactor */
+static float *particle_costfactor;  /*!< cached per-particle base cost factor (for gas work accounting) */
 static float *domainWork;	/*!< a table that gives the total "work" due to the particles stored by each processor */
 static float *domainWorkGas;	/*!< a table that gives the total "work" due to the particles stored by each processor */
 static int *domainCount;	/*!< a table that gives the total number of particles held by each processor */
@@ -90,6 +107,8 @@ static int maxLoad, maxLoadgas;
 static double totgravcost, gravcost, totgascost, gascost;
 static long long totpartcount;
 static int UseAllParticles;
+static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviving between domain decompositions, used by lightweight repartition */
+static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 
 /*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
  *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure. */
@@ -242,6 +261,14 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     {peano_hilbert_order();}
     CPU_Step[CPU_PEANO] += measure_time();
 
+  /* save keys persistently for potential lightweight repartition */
+  if(PersistentKeySize < All.MaxPart) {
+      if(PersistentKey) {free(PersistentKey);}
+      PersistentKey = (peanokey *) malloc(All.MaxPart * sizeof(peanokey));
+      PersistentKeySize = All.MaxPart;
+  }
+  memcpy(PersistentKey, Key, NumPart * sizeof(peanokey));
+
   myfree(Key);
   memmove(TopNodes + NTopnodes, DomainTask, NTopnodes * sizeof(int));
   TopNodes = (struct topnode_data *) myrealloc(TopNodes, bytes = (NTopnodes * sizeof(struct topnode_data) + NTopnodes * sizeof(int)));
@@ -249,6 +276,174 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   DomainTask = (int *) (TopNodes + NTopnodes);
   force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
   reconstruct_timebins();
+}
+
+
+/*! Lightweight domain repartition: reuses the existing top-tree structure and Peano-Hilbert keys,
+ *  only recomputing particle costs, re-splitting, and exchanging particles that changed domain.
+ *  Skips: key computation, sorting, top-tree building/combining, and PH reorder.
+ *  This is O(N) instead of O(N log N) and avoids expensive MPI tree combination. */
+void domain_Decomposition_light(int UseAllTimeBins)
+{
+    int i, no; size_t bytes; double t0, t1;
+
+    /* fall back to full decomposition if persistent state is not available */
+    if(!PersistentKey || !domain_allocated_flag) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
+
+    rearrange_particle_sequence();
+    UseAllParticles = UseAllTimeBins;
+
+    for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
+
+#ifdef BOX_PERIODIC
+    do_box_wrapping();
+#endif
+
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
+
+    /* we take the closest cost factor */
+    int diff, highest_bin_to_include;
+    if(UseAllParticles) {highest_bin_to_include = All.HighestOccupiedTimeBin;} else {highest_bin_to_include = All.HighestActiveTimeBin;}
+    for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - highest_bin_to_include); i < GRAVCOSTLEVELS; i++)
+        {if(diff > abs(All.LevelToTimeBin[i] - highest_bin_to_include)) {TakeLevel = i; diff = abs(All.LevelToTimeBin[i] - highest_bin_to_include);}}
+
+    PRINT_STATUS("Domain decomposition (lightweight)... LevelToTimeBin[TakeLevel=%d]=%d", TakeLevel, All.LevelToTimeBin[TakeLevel]);
+    t0 = my_second();
+
+    /* free force tree but keep domain structures (TopNodes, DomainTask) */
+    force_treefree();
+
+    TreeReconstructFlag = 1;
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    All.NumForcesSinceLastDomainDecomp = 0;
+#endif
+
+    int multipledomains = MULTIPLEDOMAINS;
+
+    /* recompute keys for particles that may have drifted across cell boundaries */
+    Key = PersistentKey; /* reuse persistent key storage directly */
+    for(i = 0; i < NumPart; i++)
+    {
+        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+        Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+    }
+
+    /* temporarily reconstruct the local topNodes from the persistent TopNodes for domain_sumCost.
+       We need the local_topnode_data format with Daughter/Leaf/StartKey/Size fields. */
+    topNodes = (struct local_topnode_data *) mymalloc("topNodes_light", NTopnodes * sizeof(struct local_topnode_data));
+    for(i = 0; i < NTopnodes; i++)
+    {
+        topNodes[i].StartKey = TopNodes[i].StartKey;
+        topNodes[i].Size = TopNodes[i].Size;
+        topNodes[i].Daughter = TopNodes[i].Daughter;
+        topNodes[i].Leaf = TopNodes[i].Leaf;
+    }
+
+    /* recompute per-particle costs */
+    for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
+    particle_total_cost = (float *) mymalloc("particle_total_cost", NumPart * sizeof(float));
+    particle_costfactor = (float *) mymalloc("particle_costfactor", NumPart * sizeof(float));
+    for(i = 0, gravcost = gascost = 0; i < NumPart; i++)
+    {
+        NtypeLocal[P[i].Type]++;
+        double wt_0 = domain_particle_costfactor(i);
+        double wt_mult = domain_particle_cost_multiplier(i);
+        particle_costfactor[i] = (float)wt_0;
+        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0);
+        gravcost += particle_total_cost[i];
+        if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_0;}}
+    }
+    sumup_large_ints(6, NtypeLocal, Ntype);
+    for(i = 0, totpartcount = 0; i < 6; i++) {totpartcount += Ntype[i];}
+    MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+    /* allocate work/count arrays */
+    domainWork = (float *) mymalloc("domainWork", NTopnodes * sizeof(float));
+    domainWorkGas = (float *) mymalloc("domainWorkGas", NTopnodes * sizeof(float));
+    domainCount = (int *) mymalloc("domainCount", NTopnodes * sizeof(int));
+    domainCountGas = (int *) mymalloc("domainCountGas", NTopnodes * sizeof(int));
+
+    /* recompute costs per top-tree leaf */
+    domain_sumCost();
+
+    /* free cost caches (LIFO: domainCountGas is on top, but we need them for the split below,
+       so free cost arrays first since they sit below domainWork on the stack) */
+    /* Actually cost arrays are above domainWork... let's just keep them all alive until the end. */
+
+    /* allocate list arrays for the split/assignment */
+    toGo = (int *) mymalloc("toGo", NTask * sizeof(int));
+    toGoGas = (int *) mymalloc("toGoGas", NTask * sizeof(int));
+    toGet = (int *) mymalloc("toGet", NTask * sizeof(int));
+    toGetGas = (int *) mymalloc("toGetGas", NTask * sizeof(int));
+    list_NumPart = (int *) mymalloc("list_NumPart", NTask * sizeof(int));
+    list_N_gas = (int *) mymalloc("list_N_gas", NTask * sizeof(int));
+    list_load = (int *) mymalloc("list_load", NTask * sizeof(int));
+    list_loadgas = (int *) mymalloc("list_loadgas", NTask * sizeof(int));
+    list_work = (double *) mymalloc("list_work", NTask * sizeof(double));
+    list_workgas = (double *) mymalloc("list_workgas", NTask * sizeof(double));
+
+    maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+    maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+
+    /* re-split and re-assign */
+    domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
+    domain_assign_load_or_work_balanced(1, multipledomains);
+
+    int status = domain_check_memory_bound(multipledomains);
+    if(status != 0)
+    {
+        domain_findSplit_load_balanced(multipledomains * NTask, NTopleaves);
+        domain_assign_load_or_work_balanced(0, multipledomains);
+        status = domain_check_memory_bound(multipledomains);
+        if(status != 0) {if(ThisTask == 0) {printf("Lightweight repartition: memory bound violated.\n");}}
+    }
+
+    /* flag particles that need to move */
+    for(i = 0; i < NumPart; i++)
+    {
+        no = domain_toptree_leaf(Key[i], topNodes);
+        int task = DomainTask[no];
+        if(task != ThisTask) {P[i].Type |= 32;}
+    }
+
+    /* exchange particles */
+    int ret; size_t exchange_limit;
+    do
+    {
+        exchange_limit = FreeBytes - NTask * (24 * sizeof(int) + 16 * sizeof(MPI_Request));
+        if(exchange_limit <= 0) {endrun(1223);}
+        ret = domain_countToGo(exchange_limit);
+        domain_exchange();
+    }
+    while(ret > 0);
+
+    /* free everything in LIFO order */
+    myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
+    myfree(list_N_gas); myfree(list_NumPart);
+    myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
+    myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
+    myfree(particle_costfactor); myfree(particle_total_cost);
+    myfree(topNodes);
+
+    t1 = my_second();
+    PRINT_STATUS(" ..lightweight domain repartition done. (took %g sec)", timediff(t0, t1));
+    CPU_Step[CPU_DOMAIN] += measure_time();
+
+    /* update persistent keys for moved particles */
+    for(i = 0; i < NumPart; i++)
+    {
+        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+        PersistentKey[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+    }
+    Key = NULL; /* no longer valid as a mymalloc pointer */
+
+    force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+    reconstruct_timebins();
 }
 
 
@@ -378,6 +573,12 @@ int domain_decompose(void)
 
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
 
+    /* compute and cache per-particle costs once, reused in domain_check_for_local_refine and domain_sumCost.
+       particle_total_cost: unweighted cost used for top-tree refinement (preserves spatial structure).
+       For domain_sumCost, we apply timestep frequency weighting there to balance sub-step work
+       without distorting the tree refinement. */
+    particle_total_cost = (float *) mymalloc("particle_total_cost", NumPart * sizeof(float));
+    particle_costfactor = (float *) mymalloc("particle_costfactor", NumPart * sizeof(float));
     for(i = 0, gravcost = gascost = 0; i < NumPart; i++)
     {
 #ifdef SUBFIND
@@ -386,8 +587,9 @@ int domain_decompose(void)
         NtypeLocal[P[i].Type]++;
         double wt_0 = domain_particle_costfactor(i);
         double wt_mult = domain_particle_cost_multiplier(i);
-        gravcost += (1 + wt_mult) * wt_0;
-        //if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_mult;}}
+        particle_costfactor[i] = (float)wt_0;
+        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0);
+        gravcost += particle_total_cost[i];
         if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_0;}}
     }
     /* because Ntype[] is of type `long long', we cannot do a simple MPI_Allreduce() to sum the total particle numbers */
@@ -400,7 +602,8 @@ int domain_decompose(void)
 
     /* determine global dimensions of domain grid */
     domain_findExtent();
-    if(domain_determineTopTree()) {return 1;}
+    if(domain_determineTopTree()) {myfree(particle_costfactor); myfree(particle_total_cost); return 1;}
+    myfree(particle_costfactor); myfree(particle_total_cost);
 
     /* find the split of the domain grid */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
@@ -453,9 +656,7 @@ int domain_decompose(void)
       if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
 #endif
 
-      no = 0;
-      while(topNodes[no].Daughter >= 0) {no = topNodes[no].Daughter + (Key[i] - topNodes[no].StartKey) / (topNodes[no].Size / 8);}
-      no = topNodes[no].Leaf;
+      no = domain_toptree_leaf(Key[i], topNodes);
       int task = DomainTask[no];
       if(task != ThisTask) {P[i].Type |= 32;}
     }
@@ -634,23 +835,7 @@ void domain_exchange(void)
 	{
 	  P[n].Type &= 15; /* clear 16 and 32 */
 
-	  no = 0;
-
-      /* new code - not clear if strictly necessary or just optimization */
-      /*
-       peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
-       int shift     = 3 * (BITS_PER_DIMENSION - 1);
-       while(topNodes[no].Daughter >= 0)
-       {
-       no = topNodes[no].Daughter + (int)((Key[n] & mask) >> shift);
-       mask >>= 3;
-       shift -= 3;
-       }
-       */
-      /* old code */
-	  while(topNodes[no].Daughter >= 0) {no = topNodes[no].Daughter + (Key[n] - topNodes[no].StartKey) / (topNodes[no].Size / 8);}
-
-	  no = topNodes[no].Leaf;
+	  no = domain_toptree_leaf(Key[n], topNodes);
 
 	  target = DomainTask[no];
 
@@ -1239,10 +1424,8 @@ int domain_countToGo(size_t nlimit)
 #endif
         if(P[n].Type & 32)
         {
-            no = 0;
-            while(topNodes[no].Daughter >= 0) {no = topNodes[no].Daughter + (Key[n] - topNodes[no].StartKey) / (topNodes[no].Size / 8);}
-            no = topNodes[no].Leaf;
-            
+            no = domain_toptree_leaf(Key[n], topNodes);
+
             if(DomainTask[no] != ThisTask)
             {
                 toGo[DomainTask[no]] += 1;
@@ -1397,11 +1580,7 @@ int domain_countToGo(size_t nlimit)
                     {
                         P[n].Type &= (15 + 32);    /* clear 16 */
                         
-                        no = 0;
-                        
-                        while(topNodes[no].Daughter >= 0) {no = topNodes[no].Daughter + (Key[n] - topNodes[no].StartKey) / (topNodes[no].Size / 8);}
-                        
-                        no = topNodes[no].Leaf;
+                        no = domain_toptree_leaf(Key[n], topNodes);
                         target = DomainTask[no];
                         
                         if((P[n].Type & 15) == 0)
@@ -1521,7 +1700,7 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
 			if(j >= 7) {break;}
 		      }
 
-		  topNodes[sub].Cost += (1 + domain_particle_cost_multiplier(mp[p].index)) * domain_particle_costfactor(mp[p].index);
+		  topNodes[sub].Cost += particle_total_cost[mp[p].index];
 		  topNodes[sub].Count++;
 		}
 
@@ -1914,31 +2093,33 @@ void domain_sumCost(void)
       if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
 
-      no = 0;
+      no = domain_toptree_leaf(Key[n], topNodes);
 
-        /* new code - doesn't seem to be strictly necessary here */
-        /*
-        peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
-        int shift     = 3 * (BITS_PER_DIMENSION - 1);
-        while(topNodes[no].Daughter >= 0)
-        {
-            no = topNodes[no].Daughter + (int)((Key[n] & mask) >> shift);
-            mask >>= 3;
-            shift -= 3;
-        }
-        */
-        
-        /* old code */
-        while(topNodes[no].Daughter >= 0) {no = topNodes[no].Daughter + (Key[n] - topNodes[no].StartKey) / (topNodes[no].Size >> 3);}
-        
-      no = topNodes[no].Leaf;
-      double wt_0 = domain_particle_costfactor(n);
-      double wt_mult = domain_particle_cost_multiplier(n);
-      local_domainWork[no] += (1 + wt_mult) * wt_0;
+#ifdef DOMAIN_TIMESTEP_FREQUENCY_WEIGHTING
+      /* EXPERIMENTAL: weight domain work by timestep activation frequency. Particles on shorter
+         timebins are active more often per top-level step; weighting by sqrt(2^dbin) biases the
+         domain split to spread short-timebin work across ranks. This can significantly improve
+         load balance on sub-steps for problems with large timestep dynamic range (e.g. 1.5x
+         speedup on noh), but may hurt spatial locality for self-gravitating problems where dense
+         cores need to stay on the same rank for efficient tree walks. Use with caution and benchmark. */
+      float freq_weight = 1.0f;
+      if(All.HighestOccupiedTimeBin > P[n].TimeBin) {
+          int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin;
+          if(dbin > 30) {dbin = 30;}
+          freq_weight = (float)sqrt((double)(1 << dbin));
+      }
+      local_domainWork[no] += particle_total_cost[n] * freq_weight;
       local_domainCount[no] += 1;
       if(P[n].Type == 0) {
-          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {local_domainWorkGas[no] += wt_0;}
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {local_domainWorkGas[no] += particle_costfactor[n] * freq_weight;}
           local_domainCountGas[no] += 1;}
+#else
+      local_domainWork[no] += particle_total_cost[n];
+      local_domainCount[no] += 1;
+      if(P[n].Type == 0) {
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {local_domainWorkGas[no] += particle_costfactor[n];}
+          local_domainCountGas[no] += 1;}
+#endif
     }
 
   MPI_Allreduce(local_domainWork, domainWork, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
@@ -2139,6 +2320,10 @@ static void msort_domain_with_tmp(struct peano_hilbert_data *b, size_t n, struct
 
   msort_domain_with_tmp(b1, n1, t);
   msort_domain_with_tmp(b2, n2, t);
+
+  /* if the last element of the left half <= first element of right half, already sorted — skip merge */
+  if(b1[n1-1].key <= b2[0].key)
+    {return;}
 
   tmp = t;
 
