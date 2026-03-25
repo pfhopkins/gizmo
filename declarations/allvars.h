@@ -197,6 +197,7 @@ extern size_t HighMark_run,  HighMark_domain, HighMark_gravtree, HighMark_pmperi
 extern size_t HighMark_turbpower;
 #endif
 extern int TreeReconstructFlag;
+extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 extern int GlobFlag;
 extern char DumpFlag;
 #ifdef WAKEUP
