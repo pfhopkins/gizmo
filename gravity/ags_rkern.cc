@@ -809,7 +809,7 @@ static inline void OUTPUTFUNCTION_NAME(struct OUTPUT_STRUCT_NAME *out, int i, in
 {
     int k,k2; k=0; k2=0;
 #if defined(DM_SIDM)
-    P[i].Vel += out->sidm_kick;
+    P[i].Vel += out->sidm_kick; P[i].dp += out->sidm_kick * P[i].Mass;
     MIN_ADD(P[i].dtime_sidm, out->dtime_sidm, mode);
     P[i].NInteractions += out->si_count;
 #endif

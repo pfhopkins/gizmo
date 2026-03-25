@@ -25,9 +25,12 @@
 #endif
             double kick[3]; calculate_interact_kick(kernel.dv, kick, m_si);
             int k; for(k=0;k<3;k++) {
+                double dv_sidm = (local.Mass/m_si)*kick[k];
                 out.sidm_kick[k] -= (P[j].Mass/m_si)*kick[k];
                 #pragma omp atomic
-                P[j].Vel[k] += (local.Mass/m_si)*kick[k]; // this variable is modified here so need to do this carefully here to ensure we don't multiply-write at the same time
+                P[j].Vel[k] += dv_sidm; // this variable is modified here so need to do this carefully here to ensure we don't multiply-write at the same time
+                #pragma omp atomic
+                P[j].dp[k] += dv_sidm * P[j].Mass;
             }
             out.si_count++;
             #pragma omp atomic

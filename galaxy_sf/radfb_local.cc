@@ -159,14 +159,14 @@ void radiation_pressure_winds_consolidated(void)
                                         else {dir = -P[j].GradRho; norm = dir.norm_sq();} // otherwise, along opacity gradient //
 #endif
                                     if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
-                                    P[j].Vel += delta_v_imparted_rp * All.cf_atime * dir; CellP[j].VelPred += delta_v_imparted_rp * All.cf_atime * dir; /* apply the kick [put into comoving code units as oppropriate */
+                                    {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass;} /* apply the kick [put into comoving code units as oppropriate */
 
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
                                     /* if we're not forcing the kick orientation, need to separately apply the UV kick */
                                     delta_v_imparted_rp = dv_imparted_singlescattering; // uv kick: directed from star //
                                     dir = dp; norm = dir.norm_sq();
                                     if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
-                                    P[j].Vel += delta_v_imparted_rp * All.cf_atime * dir; CellP[j].VelPred += delta_v_imparted_rp * All.cf_atime * dir; /* apply the kick */
+                                    {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass;} /* apply the kick */
 #endif
                                 } /* closes if(get_random_number(P[i].ID + 2) < prob) */
                             } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */

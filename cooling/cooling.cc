@@ -226,7 +226,7 @@ void do_the_cooling_for_particle(int i)
                         if(corrfac > 0) {CellP[i].Rad_Flux[k] *= corrfac; CellP[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*CellP[i].VelPred[kv]/All.cf_atime * de_rad; CellP[i].Rad_Flux[k][kv] += fluxfac; CellP[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
 #endif
                         double momfac = 1. - de_rad / (P[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
-                        P[i].Vel *= momfac; CellP[i].VelPred *= momfac;
+                        P[i].dp += P[i].Vel * ((momfac - 1.) * P[i].Mass); P[i].Vel *= momfac; CellP[i].VelPred *= momfac;
                     }
                 }
             }

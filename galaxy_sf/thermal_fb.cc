@@ -78,7 +78,7 @@ struct OUTPUT_STRUCT_NAME
 
 void out2particle_addthermalFB(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
-    if(P[i].Mass > 0) {P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;}}
+    if(P[i].Mass > 0) {P[i].dp -= out->M_coupled * P[i].Vel; P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;}}
 }
 
 
@@ -203,7 +203,7 @@ int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnode
                 }
                 for(k=0;k<3;k++) {
                     #pragma omp atomic
-                    P[j].dp[k] *= Mass_j / Mass_j_0; // discrete momentum change -- no velocity change so just rescale by the mass
+                    P[j].dp[k] += (Mass_j - Mass_j_0) * P[j].Vel[k]; // momentum change from mass gain at constant velocity
                 }
                 #pragma omp atomic
                 CellP[j].InternalEnergy += InternalEnergy_j - InternalEnergy_j_0; // delta-update

@@ -640,7 +640,7 @@ void set_sink_drag(int i, int n, double dt)
             afac_vel = DMIN(dv_magnitude*UNIT_TIME_IN_MYR , DMAX( DMIN(DMAX(-2.*P[n].Sink_PotentialMinimumOfNeighbors/(P[n].KernelRadius*All.cf_atime*All.cf_atime), 0), 10.*dv_magnitude/dt), afac_vel)); // free-fall-acceleration [checked-to-zero], limited to multiple of actual vel difference in timestep
             fac_vel = afac_vel * dt / dv_magnitude; // rate at which de-celeration/damping occurs
             if(fac_vel > 1.e-4) {fac_vel = 1.-exp(-fac_vel);}
-            P[n].Vel += SinkTempInfo[i].DF_mean_vel * (All.cf_atime * fac_vel);
+            {auto dv_df = SinkTempInfo[i].DF_mean_vel * (All.cf_atime * fac_vel); P[n].dp += dv_df * P[n].Mass; P[n].Vel += dv_df;}
         }
     }
 #endif // repositioning algorithm active
@@ -742,6 +742,8 @@ void sink_final_operations(void)
 #if defined(SINK_FOLLOW_ACCRETED_MOMENTUM) && !defined(SINK_REPOSITION_ON_POTMIN)
             P[n].dp += P[n].Vel*(m_new - P[n].Mass) + SinkTempInfo[i].accreted_momentum;
             P[n].Vel = (P[n].Vel*m_new + SinkTempInfo[i].accreted_momentum) / m_new;
+#else
+            P[n].dp += P[n].Vel*(m_new - P[n].Mass); /* track momentum change from mass gain even without SINK_FOLLOW_ACCRETED_MOMENTUM */
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_COM) && !defined(SINK_REPOSITION_ON_POTMIN)
             P[n].Pos = (P[n].Pos*m_new + SinkTempInfo[i].accreted_centerofmass) / m_new;
@@ -787,7 +789,7 @@ void sink_final_operations(void)
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
         if(All.SinkRadiativeEfficiency > 0 && All.SinkRadiativeEfficiency < 1 && P[n].ProtoStellarStage != 7) {radiation_loss = 0;} // negligible radiation loss term unless the object is actually a compact relic
 #endif
-        P[n].Mass -= radiation_loss; P[n].Sink_Mass -= radiation_loss;
+        P[n].dp -= P[n].Vel * radiation_loss; P[n].Mass -= radiation_loss; P[n].Sink_Mass -= radiation_loss;
 
 
 #if defined(SINGLE_STAR_TIMESTEPPING)
