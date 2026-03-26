@@ -10,11 +10,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, assert_final_time
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, assert_final_time, default_omp_threads
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_zeldovich_mhd(num_mpi_ranks, num_omp_threads):
     test_name = "zeldovich_mhd"
     clean_test_outputs(test_name)

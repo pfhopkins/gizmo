@@ -11,11 +11,11 @@ from matplotlib import pyplot as plt
 import h5py
 import glob
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar, assert_final_time
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar, assert_final_time, default_omp_threads
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_kh_wengen(num_mpi_ranks, num_omp_threads):
     test_name = "kh_wengen"
     clean_test_outputs(test_name)

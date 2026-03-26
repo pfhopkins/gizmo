@@ -10,11 +10,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 from os import path
-from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks
+from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_toth(num_mpi_ranks, num_omp_threads):
     test_name = "toth"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
