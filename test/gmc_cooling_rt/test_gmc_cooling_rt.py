@@ -111,11 +111,12 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (12,))
-def test_gmc_cooling_rt(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads):
     test_name = "gmc_cooling_rt"
     test_dir = "test/gmc_cooling_rt"
     get_cooling_tables(test_dir)
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
     if not path.isfile("test/gmc_cooling_rt/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
     assert_final_time("test/gmc_cooling_rt/output/snapshot_010.hdf5", test_name)

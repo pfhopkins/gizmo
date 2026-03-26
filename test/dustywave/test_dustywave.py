@@ -13,17 +13,18 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, assert_final_time
+from gizmo.test import build_gizmo_for_test, download_test_files, run_test, clean_test_outputs, assert_final_time, default_mpi_ranks
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=2),))
-def test_dustywave(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_dustywave(num_mpi_ranks, num_omp_threads):
     test_name = "dustywave"
     clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name)
+    build_gizmo_for_test(test_name, num_omp_threads)
     chdir(f"test/{test_name}/")
 
     # Download ICs (standard name) and exact solution (non-standard name)
@@ -31,7 +32,7 @@ def test_dustywave(num_mpi_ranks):
     if not path.isfile("dustwave_exact.txt"):
         urlretrieve(WEBSITE + "dustwave_exact.txt", "dustwave_exact.txt")
 
-    run_test(test_name, num_mpi_ranks)
+    run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
     outputdir = f"test/{test_name}/output"

@@ -49,7 +49,8 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (12,))
-def test_gmc_cooling(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
     # specify the test name
     test_name = "gmc_cooling"
     test_directory = "test/gmc_cooling"
@@ -58,7 +59,7 @@ def test_gmc_cooling(num_mpi_ranks):
     get_cooling_tables(test_directory)
 
     # build GIZMO and run the test
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     # Check that the specific required output file exists:
     if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):

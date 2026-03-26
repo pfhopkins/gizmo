@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <algorithm>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -404,56 +405,36 @@ static int roty_table[8] = { 0, 1, 1, 2, 2, 3, 3, 0 };
 static int sense_table[8] = { -1, -1, -1, +1, +1, -1, -1, -1 };
 
 
-static void msort_peano_with_tmp(struct peano_hilbert_data *b, size_t n, struct peano_hilbert_data *t)
+static void parallel_sort_phdata_peano(struct peano_hilbert_data *arr, size_t n)
 {
-  struct peano_hilbert_data *tmp;
-  struct peano_hilbert_data *b1, *b2;
-  size_t n1, n2;
-
-  if(n <= 1)
-    return;
-
-  n1 = n / 2;
-  n2 = n - n1;
-  b1 = b;
-  b2 = b + n1;
-
-  msort_peano_with_tmp(b1, n1, t);
-  msort_peano_with_tmp(b2, n2, t);
-
-  /* if the last element of the left half <= first element of right half, already sorted — skip merge */
-  if(b1[n1-1].key <= b2[0].key)
-    {return;}
-
-  tmp = t;
-
-  while(n1 > 0 && n2 > 0)
-    {
-      if(b1->key <= b2->key)
-	{
-	  --n1;
-	  *tmp++ = *b1++;
-	}
-      else
-	{
-	  --n2;
-	  *tmp++ = *b2++;
-	}
-    }
-
-  if(n1 > 0)
-    memcpy(tmp, b1, n1 * sizeof(struct peano_hilbert_data));
-  memcpy(b, t, (n - n2) * sizeof(struct peano_hilbert_data));
+  auto cmp = [](const peano_hilbert_data &a, const peano_hilbert_data &b) { return a.key < b.key; };
+  const size_t CUTOFF = 10000;
+  if(n <= CUTOFF) { std::sort(arr, arr + n, cmp); return; }
+  size_t mid = n / 2;
+#ifdef _OPENMP
+  #pragma omp task shared(arr) if(n > CUTOFF)
+#endif
+  parallel_sort_phdata_peano(arr, mid);
+#ifdef _OPENMP
+  #pragma omp task shared(arr) if(n > CUTOFF)
+#endif
+  parallel_sort_phdata_peano(arr + mid, n - mid);
+#ifdef _OPENMP
+  #pragma omp taskwait
+#endif
+  std::inplace_merge(arr, arr + mid, arr + n, cmp);
 }
 
-void mysort_peano(void *b, size_t n, size_t s, int (*cmp) (const void *, const void *))
+void mysort_peano(void *b, size_t n, size_t s, int (*cmp_fn) (const void *, const void *))
 {
-  const size_t size = n * s;
-
-  struct peano_hilbert_data *tmp =
-    (struct peano_hilbert_data *) mymalloc("struct peano_hilbert_data *tmp", size);
-
-  msort_peano_with_tmp((struct peano_hilbert_data *) b, n, tmp);
-
-  myfree(tmp);
+  struct peano_hilbert_data *arr = (struct peano_hilbert_data *)b;
+#ifdef _OPENMP
+  #pragma omp parallel
+  {
+    #pragma omp single
+    parallel_sort_phdata_peano(arr, n);
+  }
+#else
+  parallel_sort_phdata_peano(arr, n);
+#endif
 }

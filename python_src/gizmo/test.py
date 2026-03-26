@@ -43,10 +43,15 @@ def default_mpi_ranks(max_ranks=None):
     return n
 
 
-def build_gizmo_for_test(test_name: str):
-    """Sets environment variables and runs a script for building gizmo for a given test"""
-    environ["TEST_NAME"] = test_name
-    system("bash test/build_gizmo_for_test.sh")
+def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0):
+    """Sets environment variables and runs a script for building gizmo for a given test.
+    If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building."""
+    system("rm -f GIZMO test/*/GIZMO")
+    system(f"cp test/{test_name}/Config.sh .")
+    if num_openmp_threads > 0:
+        with open("Config.sh", "a") as f:
+            f.write(f"\nOPENMP={num_openmp_threads}\n")
+    system("make clean && make -j8")
     if not path.isfile("GIZMO"):
         raise FileNotFoundError("Did not successfully build GIZMO")
     move("GIZMO", f"test/{test_name}/GIZMO")
@@ -77,8 +82,10 @@ def download_test_files(test_name: str):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
-def run_test(test_name: str, num_mpi_ranks: int = 1):  # , num_openmp_threads: int=0):
-    """Runs the test"""
+def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
+    """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run."""
+    if num_openmp_threads > 0:
+        environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
     paramsfile = f"{test_name}.params"
     system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
@@ -95,12 +102,10 @@ def get_cooling_tables(test_directory="."):
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
     clean_test_outputs(test_name)
-    if num_openmp_threads > 0:
-        environ["OMP_NUM_THREADS"] = num_openmp_threads
-    build_gizmo_for_test(test_name)
+    build_gizmo_for_test(test_name, num_openmp_threads)
     chdir(f"test/{test_name}/")
     download_test_files(test_name)
-    run_test(test_name, num_mpi_ranks)
+    run_test(test_name, num_mpi_ranks, num_openmp_threads)
     chdir("../../")
 
 

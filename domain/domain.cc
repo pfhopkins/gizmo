@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-
+#include <algorithm>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -1894,28 +1894,41 @@ int domain_determineTopTree(void)
 
   mp = (struct peano_hilbert_data *) mymalloc("mp", sizeof(struct peano_hilbert_data) * NumPart);
 
+  /* Compute Peano-Hilbert keys for all particles */
+#ifdef SUBFIND
+  /* With SUBFIND, some particles may be skipped, so compute keys in parallel then compact */
+  #ifdef _OPENMP
+  #pragma omp parallel for schedule(static)
+  #endif
+  for(i = 0; i < NumPart; i++)
+    {
+      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+      Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+    }
   for(i = 0, count = 0; i < NumPart; i++)
     {
-#ifdef SUBFIND
       if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
-#endif
-
-        /* new code */
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        mp[count].key = Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
-        
-      /* old code
-      mp[count].key = Key[i] = peano_hilbert_key((int) ((P[i].Pos[0] - DomainCorner[0]) * DomainFac),
-						 (int) ((P[i].Pos[1] - DomainCorner[1]) * DomainFac),
-						 (int) ((P[i].Pos[2] - DomainCorner[2]) * DomainFac),
-						 BITS_PER_DIMENSION);
-       */
-
+      mp[count].key = Key[i];
       mp[count].index = i;
       count++;
     }
+#else
+  /* Without SUBFIND, count == i always, so the loop is embarrassingly parallel */
+  #ifdef _OPENMP
+  #pragma omp parallel for schedule(static)
+  #endif
+  for(i = 0; i < NumPart; i++)
+    {
+      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+      mp[i].key = Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      mp[i].index = i;
+    }
+  count = NumPart;
+#endif
 
 #ifdef SUBFIND
   if(GrNr >= 0 && count != NumPartGroup)
@@ -2093,21 +2106,64 @@ void domain_sumCost(void)
 
     PRINT_STATUS(" ..NTopleaves= %d  NTopnodes=%d (space for %d)", NTopleaves, NTopnodes, MaxTopNodes);
 
+#ifdef _OPENMP
+  #pragma omp parallel
+  {
+    float *my_domainWork = (float *) calloc(NTopleaves, sizeof(float));
+    float *my_domainWorkGas = (float *) calloc(NTopleaves, sizeof(float));
+    int *my_domainCount = (int *) calloc(NTopleaves, sizeof(int));
+    int *my_domainCountGas = (int *) calloc(NTopleaves, sizeof(int));
+
+    #pragma omp for schedule(static)
+    for(n = 0; n < NumPart; n++)
+      {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
+#endif
+        no = domain_toptree_leaf(Key[n], topNodes);
+#ifdef DOMAIN_TIMESTEP_FREQUENCY_WEIGHTING
+        float freq_weight = 1.0f;
+        if(All.HighestOccupiedTimeBin > P[n].TimeBin) {
+            int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin;
+            if(dbin > 30) {dbin = 30;}
+            freq_weight = (float)sqrt((double)(1 << dbin));
+        }
+        my_domainWork[no] += particle_total_cost[n] * freq_weight;
+        my_domainCount[no] += 1;
+        if(P[n].Type == 0) {
+            if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {my_domainWorkGas[no] += particle_costfactor[n] * freq_weight;}
+            my_domainCountGas[no] += 1;}
+#else
+        my_domainWork[no] += particle_total_cost[n];
+        my_domainCount[no] += 1;
+        if(P[n].Type == 0) {
+            if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {my_domainWorkGas[no] += particle_costfactor[n];}
+            my_domainCountGas[no] += 1;}
+#endif
+      }
+
+    #pragma omp critical
+    {
+      for(i = 0; i < NTopleaves; i++) {
+        local_domainWork[i] += my_domainWork[i];
+        local_domainWorkGas[i] += my_domainWorkGas[i];
+        local_domainCount[i] += my_domainCount[i];
+        local_domainCountGas[i] += my_domainCountGas[i];
+      }
+    }
+    free(my_domainWork);
+    free(my_domainWorkGas);
+    free(my_domainCount);
+    free(my_domainCountGas);
+  }
+#else
   for(n = 0; n < NumPart; n++)
     {
 #ifdef SUBFIND
       if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
-
       no = domain_toptree_leaf(Key[n], topNodes);
-
 #ifdef DOMAIN_TIMESTEP_FREQUENCY_WEIGHTING
-      /* EXPERIMENTAL: weight domain work by timestep activation frequency. Particles on shorter
-         timebins are active more often per top-level step; weighting by sqrt(2^dbin) biases the
-         domain split to spread short-timebin work across ranks. This can significantly improve
-         load balance on sub-steps for problems with large timestep dynamic range (e.g. 1.5x
-         speedup on noh), but may hurt spatial locality for self-gravitating problems where dense
-         cores need to stay on the same rank for efficient tree walks. Use with caution and benchmark. */
       float freq_weight = 1.0f;
       if(All.HighestOccupiedTimeBin > P[n].TimeBin) {
           int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin;
@@ -2127,6 +2183,7 @@ void domain_sumCost(void)
           local_domainCountGas[no] += 1;}
 #endif
     }
+#endif
 
   MPI_Allreduce(local_domainWork, domainWork, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(local_domainWorkGas, domainWorkGas, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
@@ -2310,57 +2367,36 @@ void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_da
 
 
 
-static void msort_domain_with_tmp(struct peano_hilbert_data *b, size_t n, struct peano_hilbert_data *t)
+static void parallel_sort_phdata_domain(struct peano_hilbert_data *arr, size_t n)
 {
-  struct peano_hilbert_data *tmp;
-  struct peano_hilbert_data *b1, *b2;
-  size_t n1, n2;
-
-  if(n <= 1)
-    {return;}
-
-  n1 = n / 2;
-  n2 = n - n1;
-  b1 = b;
-  b2 = b + n1;
-
-  msort_domain_with_tmp(b1, n1, t);
-  msort_domain_with_tmp(b2, n2, t);
-
-  /* if the last element of the left half <= first element of right half, already sorted — skip merge */
-  if(b1[n1-1].key <= b2[0].key)
-    {return;}
-
-  tmp = t;
-
-  while(n1 > 0 && n2 > 0)
-    {
-      if(b1->key <= b2->key)
-	{
-	  --n1;
-	  *tmp++ = *b1++;
-	}
-      else
-	{
-	  --n2;
-	  *tmp++ = *b2++;
-	}
-    }
-
-  if(n1 > 0)
-    {memcpy(tmp, b1, n1 * sizeof(struct peano_hilbert_data));}
-
-  memcpy(b, t, (n - n2) * sizeof(struct peano_hilbert_data));
+  auto cmp = [](const peano_hilbert_data &a, const peano_hilbert_data &b) { return a.key < b.key; };
+  const size_t CUTOFF = 10000;
+  if(n <= CUTOFF) { std::sort(arr, arr + n, cmp); return; }
+  size_t mid = n / 2;
+#ifdef _OPENMP
+  #pragma omp task shared(arr) if(n > CUTOFF)
+#endif
+  parallel_sort_phdata_domain(arr, mid);
+#ifdef _OPENMP
+  #pragma omp task shared(arr) if(n > CUTOFF)
+#endif
+  parallel_sort_phdata_domain(arr + mid, n - mid);
+#ifdef _OPENMP
+  #pragma omp taskwait
+#endif
+  std::inplace_merge(arr, arr + mid, arr + n, cmp);
 }
 
 void mysort_domain(void *b, size_t n, size_t s)
 {
-  const size_t size = n * s;
-  struct peano_hilbert_data *tmp;
-
-  tmp = (struct peano_hilbert_data *) mymalloc("tmp", size);
-
-  msort_domain_with_tmp((struct peano_hilbert_data *) b, n, tmp);
-
-  myfree(tmp);
+  struct peano_hilbert_data *arr = (struct peano_hilbert_data *)b;
+#ifdef _OPENMP
+  #pragma omp parallel
+  {
+    #pragma omp single
+    parallel_sort_phdata_domain(arr, n);
+  }
+#else
+  parallel_sort_phdata_domain(arr, n);
+#endif
 }
