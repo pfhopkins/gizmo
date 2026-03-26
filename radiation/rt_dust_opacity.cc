@@ -68,13 +68,17 @@ MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust) {
     MyFloat logT = log10(Trad);
 
     int Tdust_idx;
-    for (Tdust_idx = 0; Tdust_idx < N_TDUST + 1; Tdust_idx++) {
+    for (Tdust_idx = 0; Tdust_idx < N_TDUST; Tdust_idx++) {
         if (Tdust < Tdust_zones[Tdust_idx]) {
             break;
         }
     }
-    if (Tdust_idx == N_TDUST + 1) { // Tdust is hot so dust is sublimated; return smol value
-        return MIN_REAL_NUMBER;
+    if (Tdust_idx >= N_TDUST) { // Tdust exceeds table max
+#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) || (defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE)) || defined(RT_INFRARED) || (defined(COOL_LOW_TEMPERATURES) && !defined(SINGLE_STAR_SINK_DYNAMICS))
+        Tdust_idx = N_TDUST-1; // Tdust is hot but we have explicit grain model and need IR opacity to calculate dust-to-gas ratios, so return max table value
+#else 
+        return MIN_REAL_NUMBER; // Tdust is hot so dust is sublimated; return smol value
+#endif
     }
 
     if (logT >= logTmax) {
