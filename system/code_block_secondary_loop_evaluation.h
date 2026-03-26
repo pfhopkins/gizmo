@@ -9,17 +9,26 @@ printf("Cannot compile the secondary sub-loop without EVALUATION_CALL defined. E
 #endif
 int j, dummy, *ngblist, thread_id = *(int *) p;
 ngblist = Ngblist.data() + thread_id * NumPart;
+#ifndef SECONDARY_LOOP_BATCH_SIZE
+#define SECONDARY_LOOP_BATCH_SIZE 8
+#endif
 while(1)
 {
+    int jstart, jend;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistsecblox_)
 #endif
     {
-        j = NextJ;
-        NextJ++;
+        jstart = NextJ;
+        jend = NextJ + SECONDARY_LOOP_BATCH_SIZE;
+        if(jend > Nimport) {jend = Nimport;}
+        NextJ = jend;
     }
-    if(j >= Nimport) {break;}
-    EVALUATION_CALL
+    if(jstart >= Nimport) {break;}
+    for(j = jstart; j < jend; j++)
+    {
+        EVALUATION_CALL
+    }
 }
 /* loop completed successfully */
 return NULL;
