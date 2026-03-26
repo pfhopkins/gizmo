@@ -7,7 +7,7 @@ import h5py
 import glob
 from os import path
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time
+from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_omp_threads
 
 
 def plot_shu1977_density_slice(coords, rho, boxsize, output_dir="."):
@@ -27,8 +27,8 @@ def plot_shu1977_density_slice(coords, rho, boxsize, output_dir="."):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (16,))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_mpi_ranks", (8,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_shu1977(num_mpi_ranks, num_omp_threads):
     test_name = "shu1977"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)

@@ -310,7 +310,7 @@ void do_box_wrapping(void)
     boxsize[0] = boxSize_X;
     boxsize[1] = boxSize_Y;
     boxsize[2] = boxSize_Z;
-
+    
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) private(j)
 #endif

@@ -1,6 +1,6 @@
 """GMC cooling and chemistry test"""
 
-from gizmo.test import build_and_run_test, get_cooling_tables, assert_final_time
+from gizmo.test import build_and_run_test, get_cooling_tables, assert_final_time, default_omp_threads
 from os import path
 from matplotlib import pyplot as plt
 import h5py
@@ -48,8 +48,8 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (12,))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_mpi_ranks", (6,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
     # specify the test name
     test_name = "gmc_cooling"
