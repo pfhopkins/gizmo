@@ -6,7 +6,18 @@ from shutil import move, rmtree
 from glob import glob
 import pytest
 from matplotlib import pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
+
+
+def flush_colorbar(mappable, ax=None, label=None, **kwargs):
+    """Add a colorbar that is flush with the axes and lines up with its edges."""
+    if ax is None:
+        ax = mappable.axes
+    fig = ax.get_figure()
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    return fig.colorbar(mappable, cax=cax, label=label, **kwargs)
 
 
 def clean_test_outputs(test_name: str):

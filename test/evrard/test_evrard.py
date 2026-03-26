@@ -12,7 +12,8 @@ from scipy.stats import binned_statistic
 from matplotlib import pyplot as plt
 import h5py
 from os import path
-from gizmo.test import build_and_run_test, default_mpi_ranks
+from meshoid import Meshoid
+from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -57,6 +58,19 @@ def test_evrard(num_mpi_ranks):
     # Interpolate exact solution to bin centers
     rho_exact_interp = interp1d(r_exact, rho_exact, bounds_error=False, fill_value="extrapolate")(r_centers)
     vr_exact_interp = interp1d(r_exact, vr_exact, bounds_error=False, fill_value="extrapolate")(r_centers)
+
+    # Plot density slice
+    M = Meshoid(coords)
+    center = np.average(coords, axis=0)
+    rho_slice = M.Slice(np.log10(rho_sim), res=1024, plane="z", center=center, size=1., order=1)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-0.5, 0.5, -0.5, 0.5])
+    flush_colorbar(im, ax=ax, label="log10(Density)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title("Evrard Collapse - Density Slice")
+    fig.savefig(f"test/{test_name}/Density_2D.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # Plot comparison
     for label, binned, exact_vals, log in [

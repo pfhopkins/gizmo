@@ -1,9 +1,13 @@
 """Shu (1977) singular isothermal sphere collapse test: checks that exactly one sink particle forms."""
 
 import pytest
+import numpy as np
+from matplotlib import pyplot as plt
 import h5py
+import glob
 from os import path
-from gizmo.test import build_and_run_test
+from meshoid import Meshoid
+from gizmo.test import build_and_run_test, flush_colorbar
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (16,))
@@ -19,3 +23,22 @@ def test_shu1977(num_mpi_ranks):
         num_sinks = f["Header"].attrs["NumPart_ThisFile"][5]
 
     assert num_sinks == 1, f"Expected exactly 1 PartType5 particle, got {num_sinks}"
+
+    # Plot density slice of gas around the sink
+    with h5py.File(final_snap, "r") as F:
+        coords = F["PartType0/Coordinates"][:]
+        rho = F["PartType0/Density"][:]
+        boxsize = F["Header"].attrs["BoxSize"]
+    center = np.average(coords, axis=0)
+    size = boxsize * 0.5
+    M = Meshoid(coords, boxsize=boxsize)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=size, order=1)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    half = size / 2
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-half, half, -half, half])
+    flush_colorbar(im, ax=ax, label="log10(Density)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title("Shu 1977 Collapse - Density Slice")
+    fig.savefig(f"test/{test_name}/Density_2D.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
