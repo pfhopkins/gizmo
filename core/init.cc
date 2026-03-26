@@ -160,7 +160,7 @@ void init(void)
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     for(i = 0; i < SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM; i++)
     {
-        All.SpecialParticle_Position_ForRefinement[i][0]=All.SpecialParticle_Position_ForRefinement[i][1]=All.SpecialParticle_Position_ForRefinement[i][2]=0;
+        All.SpecialParticle_Position_ForRefinement[i] = {};
         All.Mass_Accreted_By_SpecialParticle[i]=0; All.Mass_of_SpecialParticle[i]=0;
     }
 #endif
@@ -846,9 +846,9 @@ void init(void)
 #if defined(EOS_ELASTIC)
         if(RestartFlag != 1)
         {
-            for(k=0;k<3;k++) {for(j=0;j<3;j++) {CellP[i].Dt_Elastic_Stress_Tensor[j][k] = CellP[i].Elastic_Stress_Tensor_Pred[j][k] = CellP[i].Elastic_Stress_Tensor[j][k] = 0;}}
+            CellP[i].Dt_Elastic_Stress_Tensor = CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor = {};
         } else {
-            for(k=0;k<3;k++) {for(j=0;j<3;j++) {CellP[i].Elastic_Stress_Tensor_Pred[j][k] = CellP[i].Elastic_Stress_Tensor[j][k]; CellP[i].Dt_Elastic_Stress_Tensor[j][k] = 0;}}
+            CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
         }
 #endif
         CellP[i].DtInternalEnergy = 0;

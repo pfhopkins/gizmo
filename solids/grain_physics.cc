@@ -139,7 +139,7 @@ void apply_grain_dragforce(void)
                     Vec3<double> v_p = v_m + vcrosst * (2.*lorentz_coeff/(1.+lorentz_coeff*lorentz_coeff)); // second half-rotation
                     v_p += efield * (0.5*efield_coeff); // half-step from E-field
                     /* calculate effective acceleration from discrete step in velocity */
-                    for(k=0;k<3;k++) {external_forcing[k] += (v_p[k] - dv[k]) / dt;} // boris integrator
+                    Vec3<double> ef_update = (v_p - dv) / dt; for(k=0;k<3;k++) {external_forcing[k] += ef_update[k];} // boris integrator
                 }
 #endif
 
@@ -186,45 +186,34 @@ void apply_grain_dragforce(void)
 #ifdef PIC_MHD_NEW_RSOL_METHOD
                 lorentz_units *= PIC_SPEEDOFLIGHT_REDUCTION; /* the rsol enters by slowing down the forces here, acts as a unit shift for time */
 #endif
-                double efield[3], bhat[3]={0}, Bmag=0, beta_true_gas[3]; /* define unit vectors and B for evolving the lorentz force */
-                for(k=0;k<3;k++) {
-                    bhat[k]=P[i].Gas_B[k]*All.cf_a2inv;
-                    Bmag+=bhat[k]*bhat[k];
-                    beta_true_gas[k]=P[i].Gas_Velocity[k]/(All.cf_atime*C_LIGHT_CODE);} /* get magnitude and unit vector for B, and vector beta [-true- beta here] */
-                if(Bmag>0) {
-                    Bmag=sqrt(Bmag);
-                    for(k=0;k<3;k++) {bhat[k]/=Bmag;}}
+                Vec3<double> bhat={}; double Bmag=0; /* define unit vectors and B for evolving the lorentz force */
+                bhat = P[i].Gas_B * All.cf_a2inv;
+                Bmag = bhat.norm_sq();
+                Vec3<double> beta_true_gas = P[i].Gas_Velocity / (All.cf_atime*C_LIGHT_CODE); /* vector beta [-true- beta here] */
+                if(Bmag>0) {Bmag=sqrt(Bmag); bhat /= Bmag;}
                 else {Bmag=0;} /* take it correctly assuming its non-zero */
                 double Bmag_cgs = Bmag * UNIT_B_IN_GAUSS; /* convert to cgs */
                 double efield_coeff = (0.5*dt_cgs) * (charge_to_mass_ratio_dimensionless * ELECTRONCHARGE_CGS/PROTONMASS_CGS) * Bmag_cgs * lorentz_units; /* dimensionless half-timestep term for boris integrator */
-                efield[0] = -beta_true_gas[1]*bhat[2] + beta_true_gas[2]*bhat[1]; /* E = -(ugas/c) cross B used here */
-                efield[1] = -beta_true_gas[2]*bhat[0] + beta_true_gas[0]*bhat[2];
-                efield[2] = -beta_true_gas[0]*bhat[1] + beta_true_gas[1]*bhat[0]; /* efield term, but with magnitude of B factored out for units above */
-                double betagamma_0[3],beta_true_cr_0[3],beta_true_cr_f[3],beta2_true_cr=0;
-                for(k=0;k<3;k++) {
-                    beta_true_cr_0[k]=P[i].Vel[k]/(All.cf_atime*reduced_C);
-                    beta2_true_cr+=beta_true_cr_0[k]*beta_true_cr_0[k];} /* magnitude of velocity [this is reduced from c] */
+                Vec3<double> efield = cross(beta_true_gas, bhat) * (-1.0); /* E = -(ugas/c) cross B, but with magnitude of B factored out for units above */
+                Vec3<double> beta_true_cr_0 = P[i].Vel / (All.cf_atime*reduced_C);
+                double beta2_true_cr = beta_true_cr_0.norm_sq(); /* magnitude of velocity [this is reduced from c] */
                 if(beta2_true_cr >= 1) {PRINT_WARNING("VELOCITY HAS EXCEEDED THE SPEED OF LIGHT. BAD.");} /* check against reduced c */
-                double gamma_0=1/sqrt(1-beta2_true_cr); for(k=0;k<3;k++) {betagamma_0[k]=beta_true_cr_0[k]*gamma_0;} /* calculate true gamma, convert to the momentum term ~gamma*beta (this times mc is true scalar momentum) */
+                double gamma_0=1/sqrt(1-beta2_true_cr);
+                Vec3<double> betagamma_0 = beta_true_cr_0 * gamma_0; /* calculate true gamma, convert to the momentum term ~gamma*beta (this times mc is true scalar momentum) */
 
                 /* now apply the boris integrator */
-                double betagamma_m[3]={0}, betagamma_t[3]={0}, betagamma_p[3]={0}, beta_b_crosst[3]={0};
-                for(k=0;k<3;k++) {betagamma_m[k] = betagamma_0[k] + efield_coeff*efield[k];} /* first half-step from E-field */
+                Vec3<double> betagamma_m = betagamma_0 + efield * efield_coeff; /* first half-step from E-field */
                 /* for the integrator, we want to write the equation of motion as dudt = u cross Q. currently have d[beta_gamma]dtau = lorentz_coeff_0 * beta cross bhat, [with lorentz_coeff_0 = efield_coeff identical from above]
                     so need to multiply RHS by gamma/gamma -> d[beta_gamma]dtau = (lorentz_coeff_0/gamma)* (beta_gamma cross bhat) = lorentz_coeff_tau * (beta_gamma cross bhat).
                     use 1/sqrt[1+|beta_gamma|^2] = 1/gamma, to convert this appropriately */
-                double lorentz_coeff_tau = efield_coeff / sqrt(1+betagamma_m[0]*betagamma_m[0]+betagamma_m[1]*betagamma_m[1]+betagamma_m[2]*betagamma_m[2]); /* lorentz factor at this mid-point jump (recall betagamma_m is a 'beta~v/c' here) is needed to correct the factor for the B-field term */
-                beta_b_crosst[0] = betagamma_m[1]*bhat[2] - betagamma_m[2]*bhat[1];
-                beta_b_crosst[1] = betagamma_m[2]*bhat[0] - betagamma_m[0]*bhat[2];
-                beta_b_crosst[2] = betagamma_m[0]*bhat[1] - betagamma_m[1]*bhat[0]; /* cross-product for rotation */
-                for(k=0;k<3;k++) {betagamma_t[k] = betagamma_m[k] + lorentz_coeff_tau * beta_b_crosst[k];} /* first half-rotation [generates the intermediate state we need for this integrator] */
-                beta_b_crosst[0] = betagamma_t[1]*bhat[2] - betagamma_t[2]*bhat[1];
-                beta_b_crosst[1] = betagamma_t[2]*bhat[0] - betagamma_t[0]*bhat[2];
-                beta_b_crosst[2] = betagamma_t[0]*bhat[1] - betagamma_t[1]*bhat[0];
-                for(k=0;k<3;k++) {betagamma_p[k] = betagamma_m[k] + (2.*lorentz_coeff_tau/(1.+lorentz_coeff_tau*lorentz_coeff_tau)) * beta_b_crosst[k];} /* second half-rotation */
-                for(k=0;k<3;k++) {betagamma_p[k] += efield_coeff*efield[k];} /* second half-step from E-field. betagamma_p now contains the final scalar momentum in dimensionless units, i.e. gamma*beta. so this divided by gamma gives final beta */
-                double betagamma2_p=betagamma_p[0]*betagamma_p[0]+betagamma_p[1]*betagamma_p[1]+betagamma_p[2]*betagamma_p[2], gamma_f=sqrt(1+betagamma2_p); /* this converts from betagamma to just gamma */
-                for(k=0;k<3;k++) {beta_true_cr_f[k]=betagamma_p[k]/gamma_f;} /* convert back to a velocity 'beta_true_cr_f' which is always <= 1 - this is now the 'effective' velocity with which CRs will propagate */
+                double lorentz_coeff_tau = efield_coeff / sqrt(1+betagamma_m.norm_sq()); /* lorentz factor at this mid-point jump (recall betagamma_m is a 'beta~v/c' here) is needed to correct the factor for the B-field term */
+                Vec3<double> beta_b_crosst = cross(betagamma_m, bhat); /* cross-product for rotation */
+                Vec3<double> betagamma_t = betagamma_m + beta_b_crosst * lorentz_coeff_tau; /* first half-rotation [generates the intermediate state we need for this integrator] */
+                beta_b_crosst = cross(betagamma_t, bhat);
+                Vec3<double> betagamma_p = betagamma_m + beta_b_crosst * (2.*lorentz_coeff_tau/(1.+lorentz_coeff_tau*lorentz_coeff_tau)); /* second half-rotation */
+                betagamma_p += efield * efield_coeff; /* second half-step from E-field. betagamma_p now contains the final scalar momentum in dimensionless units, i.e. gamma*beta. so this divided by gamma gives final beta */
+                double betagamma2_p=betagamma_p.norm_sq(), gamma_f=sqrt(1+betagamma2_p); /* this converts from betagamma to just gamma */
+                Vec3<double> beta_true_cr_f = betagamma_p / gamma_f; /* convert back to a velocity 'beta_true_cr_f' which is always <= 1 - this is now the 'effective' velocity with which CRs will propagate */
 
                 for(k=0;k<3;k++)
                 {
@@ -269,7 +258,7 @@ struct INPUT_STRUCT_NAME
 {
     int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; MyDouble KernelRadius; /* these must always be defined */
 #if defined(GRAIN_BACKREACTION)
-    double Grain_DeltaMomentum[3], Gas_Density, Grain_AccelTimeMin;
+    Vec3<double> Grain_DeltaMomentum; double Gas_Density, Grain_AccelTimeMin;
 #endif
 }
 *DATAIN_NAME, *DATAGET_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
@@ -277,10 +266,10 @@ struct INPUT_STRUCT_NAME
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {   /* "i" is the particle from which data will be assigned, to structure "in" */
-    int k; in->Pos=P[i].Pos; /* good example - always needed */
+    in->Pos=P[i].Pos; /* good example - always needed */
     in->KernelRadius = P[i].KernelRadius; /* also always needed for search (can change the radius "P[i].KernelRadius" but in->KernelRadius must be defined */
 #if defined(GRAIN_BACKREACTION)
-    for(k=0;k<3;k++) {in->Grain_DeltaMomentum[k]=P[i].Grain_DeltaMomentum[k];}
+    in->Grain_DeltaMomentum = P[i].Grain_DeltaMomentum;
     in->Gas_Density = P[i].Gas_Density;
     in->Grain_AccelTimeMin = P[i].Grain_AccelTimeMin;
 #endif
@@ -454,7 +443,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
 
 /* this structure defines the variables that need to be sent -back to- the 'searching' element */
 struct OUTPUT_STRUCT_NAME { /* define variables below as e.g. "double X;" */
-    MyDouble Interpolated_Radiation_Acceleration[3]; /* flux values to return to grains */
+    Vec3<MyDouble> Interpolated_Radiation_Acceleration; /* flux values to return to grains */
     MyDouble Interpolated_Opacity[N_RT_FREQ_BINS]; /* opacity values interpolated to gas positions */
     MyDouble InterpolatedGeometricDustCrossSection; /* geometric opacity (no wavelength dependence) interpolated to gas positions */
 } *DATARESULT_NAME, *DATAOUT_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
@@ -464,7 +453,7 @@ static inline void OUTPUTFUNCTION_NAME(struct OUTPUT_STRUCT_NAME *out, int i, in
     int k,k_freq;
     if(P[i].Type==0) {ASSIGN_ADD(CellP[i].InterpolatedGeometricDustCrossSection,out->InterpolatedGeometricDustCrossSection,mode);
         for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {ASSIGN_ADD(CellP[i].Interpolated_Opacity[k_freq],out->Interpolated_Opacity[k_freq],mode);}}
-    if((1 << P[i].Type) & (GRAIN_PTYPES)) {for(k=0;k<3;k++) {P[i].GravAccel[k] += out->Interpolated_Radiation_Acceleration[k]/All.cf_a2inv;}} /* this simply adds to the 'gravitational' acceleration for kicks */ // currently incompatible with hermite integrator -- need to update to Other_Accel
+    if((1 << P[i].Type) & (GRAIN_PTYPES)) {P[i].GravAccel += out->Interpolated_Radiation_Acceleration/All.cf_a2inv;} /* this simply adds to the 'gravitational' acceleration for kicks */ // currently incompatible with hermite integrator -- need to update to Other_Accel
 }
 
 /* this subroutine does the actual neighbor-element calculations (this is the 'core' of the loop, essentially) */
@@ -534,7 +523,7 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
                                 dtEgamma_work_done += (2.*f_kappa_abs-1.) * radacc[k] * vel_i[k] * local.Mass; // PdV work done by photons [absorbed ones are fully-destroyed, so their loss of energy and momentum is already accounted for by their deletion in this limit -- note that we have to be careful about the RSOL factors here! //
                             }
                         }
-                        for(k=0;k<3;k++) {out.Interpolated_Radiation_Acceleration[k] += radacc[k];} /* prepare to send back to grain */
+                        for(int kk=0;kk<3;kk++) {out.Interpolated_Radiation_Acceleration[kk] += radacc[kk];} /* prepare to send back to grain */
                     }
                 }
             } // numngb_inbox loop

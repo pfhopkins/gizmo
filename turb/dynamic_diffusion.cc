@@ -42,7 +42,7 @@ struct Quantities_for_Smooth_Gradients {
 };
 
 struct kernel_DynamicDiff {
-    double dp[3], r, wk_i, wk_j, dwk_i, dwk_j, h_i;
+    Vec3<double> dp; double r, wk_i, wk_j, dwk_i, dwk_j, h_i;
 };
 
 struct DynamicDiffdata_in {
@@ -533,7 +533,7 @@ void dynamic_diff_calc(void) {
                         }
 
                         /* Slope-limit the VelShear_hat tensor */
-                        double shearfac_max = 0.5 * sqrt(CellP[i].Velocity_hat[0] * CellP[i].Velocity_hat[0] + CellP[i].Velocity_hat[1] * CellP[i].Velocity_hat[1]+CellP[i].Velocity_hat[2] * CellP[i].Velocity_hat[2]) / CellP[i].h_turb;
+                        double shearfac_max = 0.5 * sqrt(CellP[i].Velocity_hat.norm_sq()) / CellP[i].h_turb;
 
                         for (k = 0; k < 3; k++) {
                             for (v = 0; v < 3; v++) {
@@ -784,11 +784,9 @@ int DynamicDiff_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 if (P[j].Mass <= 0) continue;
                 if (CellP[j].Density <= 0) continue;
                 
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0];
-                kernel.dp[1] = local.Pos[1] - P[j].Pos[1];
-                kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 nearest_xyz(kernel.dp);
-                r2 = kernel.dp[0] * kernel.dp[0] + kernel.dp[1] * kernel.dp[1] + kernel.dp[2] * kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 double h_j = All.TurbDynamicDiffFac * P[j].KernelRadius;
                 double h_avg = 0.5 * (kernel.h_i + h_j);
                 double mean_weight = 0.5 * (CellP[j].Norm_hat + local.Norm_hat) / (local.Norm_hat * CellP[j].Norm_hat);
@@ -806,7 +804,7 @@ int DynamicDiff_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double weight_i = kernel.wk_i * V_j;
                 if (dynamic_iteration == 0) {
                     /* Need to calculate the filtered velocity gradient for the filtered shear */
-                    double dv_hat[3]; for (k=0;k<3;k++) {dv_hat[k] = CellP[j].Velocity_hat[k] - local.Velocity_hat[k];}
+                    Vec3<double> dv_hat = CellP[j].Velocity_hat - local.Velocity_hat;
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv_hat,-1); /* wrap velocities for shearing boxes if needed */
                     for (k=0;k<3;k++) {MINMAX_CHECK(dv_hat[k], out.Minima.Velocity_hat[k], out.Maxima.Velocity_hat[k]);}
 

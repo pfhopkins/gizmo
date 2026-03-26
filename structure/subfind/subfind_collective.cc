@@ -143,7 +143,8 @@ void subfind_process_group_collectively(int num)
 {
     long long p; int len, len_non_gas, LocalNonGasLen, totgrouplen1, totgrouplen2, ncand, parent, totcand, nremaining; len_non_gas=0;
     int max_loc_length, max_length, count, countall, *countlist, *offset, i, j, k, nr, grindex = 0, nsubs, subnr, count_leaves, tot_count_leaves, TaskID;
-    double SubMass, SubPos[3], SubVel[3], SubCM[3], SubVelDisp, SubVmax, SubVmaxRad, SubSpin[3], SubHalfMass, SubMassTab[6];
+    double SubMass, SubVelDisp, SubVmax, SubVmaxRad, SubHalfMass, SubMassTab[6];
+    Vec3<double> SubPos, SubVel, SubCM, SubSpin;
     struct cand_dat *tmp_candidates = 0; MyIDType SubMostBoundID; double t0, t1, tt0, tt1;
     
     if(ThisTask == 0) {printf("\ncollectively doing halo %d, num=%d\n", GrNr, num);}
@@ -599,8 +600,8 @@ void subfind_process_group_collectively(int num)
                 }
                 MPI_Barrier(MPI_COMM_WORLD);
                 tt0 = my_second();
-                subfind_col_determine_sub_halo_properties(ud, LocalLen, &SubMass, &SubPos[0], &SubVel[0], &SubCM[0], &SubVelDisp,
-                                                          &SubVmax, &SubVmaxRad, &SubSpin[0], &SubMostBoundID, &SubHalfMass, &SubMassTab[0]);
+                subfind_col_determine_sub_halo_properties(ud, LocalLen, &SubMass, &SubPos, &SubVel, &SubCM, &SubVelDisp,
+                                                          &SubVmax, &SubVmaxRad, &SubSpin, &SubMostBoundID, &SubHalfMass, &SubMassTab[0]);
                 tt1 = my_second();
                 
                 if(ThisTask == 0 && timediff(tt0, tt1) > 10.0)
@@ -626,13 +627,10 @@ void subfind_process_group_collectively(int num)
                     SubGroup[Nsubgroups].SubVmax = SubVmax;
                     SubGroup[Nsubgroups].SubVmaxRad = SubVmaxRad;
                     SubGroup[Nsubgroups].SubHalfMass = SubHalfMass;
-                    for(j = 0; j < 3; j++)
-                    {
-                        SubGroup[Nsubgroups].Pos[j] = SubPos[j];
-                        SubGroup[Nsubgroups].Vel[j] = SubVel[j];
-                        SubGroup[Nsubgroups].CM[j] = SubCM[j];
-                        SubGroup[Nsubgroups].Spin[j] = SubSpin[j];
-                    }
+                    SubGroup[Nsubgroups].Pos = SubPos;
+                    SubGroup[Nsubgroups].Vel = SubVel;
+                    SubGroup[Nsubgroups].CM = SubCM;
+                    SubGroup[Nsubgroups].Spin = SubSpin;
                     for(j = 0; j < 6; j++) {SubGroup[Nsubgroups].MassTab[j] = SubMassTab[j];}
                     Nsubgroups++;
                 }
@@ -934,7 +932,8 @@ int subfind_col_unbind(struct unbind_data *d, int num, int *num_non_gas)
   int i, j, p, part_index, minindex, task;
   int unbound, totunbound, numleft, mincpu;
   int *npart, *offset, *nbu_count, count_bound_unbound, phaseflag;
-  double s[3], dx[3], v[3], dv[3], sloc[3], vloc[3], pos[3];
+  Vec3<double> s, v, sloc, vloc, pos;
+  Vec3<double> dx_vec, dv_vec;
   double vel_to_phys, H_of_a, atime;
   MyFloat minpot, *potlist;
   double boxsize;
@@ -1005,28 +1004,25 @@ int subfind_col_unbind(struct unbind_data *d, int num, int *num_non_gas)
 
 	  if(ThisTask == mincpu)
 	    {
-	      for(j = 0; j < 3; j++)
-		pos[j] = P[minindex].Pos[j];
+	      pos = P[minindex].Pos;
 	    }
 
-	  MPI_Bcast(&pos[0], 3, MPI_DOUBLE, mincpu, MPI_COMM_WORLD);
+	  MPI_Bcast(pos.data_ptr(), 3, MPI_DOUBLE, mincpu, MPI_COMM_WORLD);
 	  /* pos[] now holds the position of minimum potential */
 	  /* we take that as the center */
 	}
 
       /* let's get bulk velocity and the center-of-mass */
 
-      for(j = 0; j < 3; j++)
-	sloc[j] = vloc[j] = 0;
+      sloc = {}; vloc = {};
 
       for(i = 0, massloc = 0; i < num; i++)
 	{
 	  part_index = d[i].index;
 
-     
-        double dp[3]; for(j=0;j<3;j++) {dp[j]=P[part_index].Pos[j]-pos[j];}
-        NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
-        
+        Vec3<double> dp = P[part_index].Pos - pos;
+        nearest_xyz(dp,-1);
+
 	  for(j = 0; j < 3; j++)
 	    {
 	      sloc[j] += P[part_index].Mass * dp[j];
@@ -1035,22 +1031,21 @@ int subfind_col_unbind(struct unbind_data *d, int num, int *num_non_gas)
 	  massloc += P[part_index].Mass;
 	}
 
-      MPI_Allreduce(sloc, s, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-      MPI_Allreduce(vloc, v, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(sloc.data_ptr(), s.data_ptr(), 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+      MPI_Allreduce(vloc.data_ptr(), v.data_ptr(), 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
       MPI_Allreduce(&massloc, &mass, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-      for(j = 0; j < 3; j++)
-	{
-	  s[j] /= mass;		/* center of mass */
-	  v[j] /= mass;
-
-	  s[j] += pos[j];
+      s /= mass;		/* center of mass */
+      v /= mass;
+      s += pos;
 
 #ifdef BOX_PERIODIC
+      for(j = 0; j < 3; j++)
+	{
 	  while(s[j] < 0) {s[j] += boxsize;}
 	  while(s[j] >= boxsize) {s[j] -= boxsize;}
-#endif
 	}
+#endif
 
       bnd_energy = (double *)mymalloc("bnd_energy", num * sizeof(double));
 
@@ -1058,18 +1053,18 @@ int subfind_col_unbind(struct unbind_data *d, int num, int *num_non_gas)
 	{
 	  part_index = d[i].index;
 
-        double dp[3]; for(j=0;j<3;j++) {dp[j]=P[part_index].Pos[j]-s[j];}
-        NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
+        Vec3<double> dp = P[part_index].Pos - s;
+        nearest_xyz(dp,-1);
 
 	  for(j = 0; j < 3; j++)
 	    {
-	      dv[j] = vel_to_phys * (P[part_index].Vel[j] - v[j]);
-            dx[j] = dp[j] * atime;
-	      dv[j] += H_of_a * dx[j];
+	      dv_vec[j] = vel_to_phys * (P[part_index].Vel[j] - v[j]);
+            dx_vec[j] = dp[j] * atime;
+	      dv_vec[j] += H_of_a * dx_vec[j];
 	    }
 
 	  P[part_index].v.DM_BindingEnergy =
-	    P[part_index].u.DM_Potential + 0.5 * (dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
+	    P[part_index].u.DM_Potential + 0.5 * dv_vec.norm_sq();
 
 #ifdef FOF_DENSITY_SPLIT_TYPES
 	  if(P[part_index].Type == 0) P[part_index].v.DM_BindingEnergy += P[part_index].w.int_energy;

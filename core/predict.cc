@@ -189,7 +189,7 @@ void drift_particle(int i, integertime time1)
             CellP[i].VelPred += P[i].GravAccel * dt_gravkick + CellP[i].HydroAccel * (dt_hydrokick*All.cf_atime); /* make sure v is in code units */
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-	        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {CellP[i].VelPred += Vec3<double>{fewbody_kick_dv[0], fewbody_kick_dv[1], fewbody_kick_dv[2]};}
+	        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {CellP[i].VelPred += fewbody_kick_dv;}
 #endif	    
             
 #if defined(TURB_DRIVING)
@@ -499,9 +499,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
         {
             vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i_particle_id)*Get_Gas_effective_soundspeed_i(i_particle_id) +
                  (1. / All.cf_atime) *
-                 (Get_Gas_BField(i_particle_id,0)*Get_Gas_BField(i_particle_id,0) +
-                  Get_Gas_BField(i_particle_id,1)*Get_Gas_BField(i_particle_id,1) +
-                  Get_Gas_BField(i_particle_id,2)*Get_Gas_BField(i_particle_id,2) +
+                 (Get_Gas_BField(i_particle_id).norm_sq() +
                   phi_B_eff*phi_B_eff) / CellP[i_particle_id].Density );
         }
         vsig1 = DMAX(vsig1, vsig2);

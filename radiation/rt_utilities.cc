@@ -551,8 +551,8 @@ double c_light_RSL_reductionfactor_local(int i)
     int j,k; double rmin=MAX_REAL_NUMBER, r=0;
     for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
     {
-        double dp[3]={0},r2=0; for(k=0;k<3;k++) {dp[k] = All.cf_atime*(P[i].Pos[k] - All.SpecialParticle_Position_ForRefinement[j][k]); r2 += dp[k]*dp[k];}
-        r=sqrt(r2); if(r<rmin) {rmin=r;}
+        Vec3<double> dp = All.cf_atime * (P[i].Pos - All.SpecialParticle_Position_ForRefinement[j]);
+        r=dp.norm(); if(r<rmin) {rmin=r;}
     }
     r = rmin * UNIT_LENGTH_IN_PC; if(r < 1.e-10 || isnan(r) || isfinite(r)==0) {r = 1.e-10;}
     return 0.002 + 1./(1. + sqrt(r / 0.01)); /* arbitrary function for now to apply */
@@ -909,7 +909,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             double egy_0=0, egy_f=0; Vec3<double> flux_0={}, flux_f={}; // compute total change over sub-cycle, to update gas properties
             // load all the gas and intensity properties we need [all can change on the subcycle so some re-computing here]
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if(mode==0) {i0[k_om] = RT_INTENSITY_BINS_DOMEGA*CellP[i].Rad_Intensity[kf][k_om];} else {i0[k_om] = RT_INTENSITY_BINS_DOMEGA*CellP[i].Rad_Intensity_Pred[kf][k_om];}}
-            for(k=0;k<3;k++) {if(mode==0) {beta[k]=P[i].Vel[k]/(All.cf_atime*ctrue);} else {beta[k]=CellP[i].VelPred[k]/(All.cf_atime*ctrue);}} // need gas velocity at this time; with equations written this way, the 'beta' term is the -true- beta, so we have to use the true SOL
+            if(mode==0) {beta=P[i].Vel/(All.cf_atime*ctrue);} else {beta=CellP[i].VelPred/(All.cf_atime*ctrue);} // need gas velocity at this time; with equations written this way, the 'beta' term is the -true- beta, so we have to use the true SOL
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {b_dot_n[k_om]=0; for(k=0;k<3;k++) {b_dot_n[k_om]+=All.Rad_Intensity_Direction[k_om][k]*beta[k];}}
             beta_2 = beta.norm_sq();
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_0+=i0[k_om]; for(k=0;k<3;k++) {flux_0[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
@@ -936,7 +936,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
             // ok -now- calculate the net change in momentum and energy, for updating the gas quantities
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_f+=i0[k_om]; for(k=0;k<3;k++) {flux_f[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
             Vec3<double> dv_gas = -(flux_f-flux_0)/(ceff*P[i].Mass); double ke_gas_0=0, ke_gas_f=0, v0g=0, u0=0;
-            for(k=0;k<3;k++) {v0g=ctrue*beta[k]; ke_gas_0+=(v0g*v0g); ke_gas_f+=(v0g+dv_gas[k])*(v0g+dv_gas[k]);} // note everything is volume-integrated, accounted for above, and we defined flux for convience without the c, so just one power of c here.
+            {Vec3<double> v0_gas = ctrue*beta; ke_gas_0 = v0_gas.norm_sq(); ke_gas_f = (v0_gas+dv_gas).norm_sq();} // note everything is volume-integrated, accounted for above, and we defined flux for convience without the c, so just one power of c here.
             double d_ke_gas = 0.5*(ke_gas_f - ke_gas_0)*P[i].Mass, de_gas=-(ctrue/ceff)*(egy_f-egy_0), de_gas_internal=(de_gas-d_ke_gas)/P[i].Mass; // note ctrue/ceff factor here, accounting for rsol difference in gas heating/cooling rates vs RHD
             if(mode==0) {u0=CellP[i].InternalEnergy;} else {u0=CellP[i].InternalEnergyPred;} // for updating gas internal energy (work terms, after subtracting kinetic energy changes)
             if(de_gas_internal<=-0.9*u0) {de_gas_internal = DMIN(de_gas_internal/(1.-de_gas_internal/u0), -0.9*u0);} // just a catch to avoid negative energies (will break energy conservation if you are slamming into it, however!

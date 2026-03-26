@@ -195,10 +195,12 @@ double sink_fb_angleweight(double sink_lum_input, MyFloat sink_angle[3], double 
     return sink_lum_input;
 #endif
     if(sink_lum_input <= 0) return 0;
-    double r2 = dx*dx+dy*dy+dz*dz; if(r2 <= 0) return 0;
+    Vec3<double> d{dx, dy, dz};
+    double r2 = d.norm_sq(); if(r2 <= 0) return 0;
     if(r2*UNIT_LENGTH_IN_PC*UNIT_LENGTH_IN_PC*All.cf_atime*All.cf_atime < 1) return 0; /* no force at < 1pc */
 #if defined(SINK_FB_COLLIMATED)
-    double cos_theta = fabs((dx*sink_angle[0] + dy*sink_angle[1] + dz*sink_angle[2])/sqrt(r2*(sink_angle[0]*sink_angle[0]+sink_angle[1]*sink_angle[1]+sink_angle[2]*sink_angle[2]))); if(!isfinite(cos_theta)) {cos_theta=1;}
+    Vec3<double> sa{(double)sink_angle[0], (double)sink_angle[1], (double)sink_angle[2]};
+    double cos_theta = fabs(dot(d, sa)/sqrt(r2*sa.norm_sq())); if(!isfinite(cos_theta)) {cos_theta=1;}
     double wt_normalized = 0.0847655*exp(4.5*cos_theta*cos_theta); // ~exp(-x^2/2*hR^2), normalized appropriately to give the correct total flux, for hR~0.3
     return sink_lum_input * wt_normalized; // ~exp(-x^2/2*hR^2), normalized appropriately to give the correct total flux, for hR~0.3
 #endif
@@ -657,7 +659,7 @@ void set_sink_long_range_rp(int i, int n) /* pre-set quantities needed for long-
     P[n].GradRho = {0, 0, 1};
     if(SinkTempInfo[i].Mgas_in_Kernel > 0) {
         double fac = SinkTempInfo[i].Jgas_in_Kernel.norm_sq();
-        if(fac>0) {double inv_norm = 1./sqrt(fac); for(int k=0;k<3;k++) {P[n].GradRho[k] = SinkTempInfo[i].Jgas_in_Kernel[k]*inv_norm;}}}
+        if(fac>0) {P[n].GradRho = SinkTempInfo[i].Jgas_in_Kernel * (1./sqrt(fac));}}}
         /* now, the P[n].GradRho[k] field for the BH holds the orientation of the UNIT angular momentum vector
          NOTE it is important that HARD-WIRED into the code, this sink calculation comes after the density calculation
          but before the forcetree update and walk; otherwise, this won't be used correctly there */

@@ -64,21 +64,17 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
             dv2abs_tot += vt*vt;
         }
     }
-    double acc=0,vel=0;
-    for(k=0;k<3;k++)
-    {
-        double acc_tmp = P[i].GravAccel[k];
+    Vec3<MyDouble> acc_vec = P[i].GravAccel;
 #ifdef PMGRID
-        acc_tmp += P[i].GravPM[k];
+    acc_vec += P[i].GravPM;
 #endif
-        acc_tmp *= All.cf_a2inv;
-        acc += acc_tmp * acc_tmp;
-        vel += CellP[i].VelPred[k]*CellP[i].VelPred[k];
-    }
+    acc_vec *= All.cf_a2inv;
+    double acc = acc_vec.norm_sq();
+    double vel = CellP[i].VelPred.norm_sq();
     double b_mag = 0;
 #ifdef MAGNETIC
     double gizmo2gauss_2 = UNIT_B_IN_GAUSS*UNIT_B_IN_GAUSS;
-    for(k=0;k<3;k++) {b_mag += Get_Gas_BField(i,k)*Get_Gas_BField(i,k) * gizmo2gauss_2;}
+    b_mag = Get_Gas_BField(i).norm_sq() * gizmo2gauss_2;
 #endif
     double rad_flux_uv = 1;
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -646,9 +642,9 @@ void star_formation_parent_routine(void)
 #ifdef OUTPUT_SINK_FORMATION_PROPS //save the at-formation properties of sink particles
                             double NH = evaluate_NH_from_GradRho(P[i].GradRho,P[i].KernelRadius,CellP[i].Density,P[i].NumNgb,1,i);
                             double dv2_abs = 0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
-                            MyDouble tempB[3]={0,0,0};
+                            Vec3<MyDouble> tempB={};
 #ifdef MAGNETIC
-                            {int kB; for(kB=0;kB<3;kB++) {tempB[kB]=Get_Gas_BField(i,kB);}} // use particle magnetic field
+                            tempB = Get_Gas_BField(i); // use particle magnetic field
 #endif
                             dv2_abs = ((1./2.)*((CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1])*(CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1]) // squared norm of the trace-free symmetric [shear] component of the velocity gradient tensor //
                                                 + (CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2])*(CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2]) + (CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])) +

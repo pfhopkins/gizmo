@@ -898,7 +898,7 @@ extern struct global_data_all_processes
 #endif
     
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
-    double SpecialParticle_Position_ForRefinement[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM][3];
+    Vec3<double> SpecialParticle_Position_ForRefinement[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];
     double Mass_Accreted_By_SpecialParticle[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];
     double Mass_of_SpecialParticle[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];
 #endif
@@ -1049,7 +1049,7 @@ extern struct gravdata_out
     MyDouble Rad_E_gamma[N_RT_FREQ_BINS];
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-    MyDouble Rad_Flux[N_RT_FREQ_BINS][3];
+    Vec3<MyDouble> Rad_Flux[N_RT_FREQ_BINS];
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
     double Chimes_G0[CHIMES_LOCAL_UV_NBINS];

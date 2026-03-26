@@ -818,7 +818,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) (Get_Gas_BField(pindex,k) * All.cf_a2inv * gizmo2gauss);}
+                    {Vec3<double> Btmp = Get_Gas_BField(pindex) * All.cf_a2inv * gizmo2gauss; for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) Btmp[k];}}
                     fp += 3;
                     n++;
                 }
