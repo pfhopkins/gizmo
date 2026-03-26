@@ -13,7 +13,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 from os import path
-from gizmo.test import build_and_run_test, assert_final_time
+from gizmo.test import build_and_run_test, assert_final_time, default_omp_threads
 
 
 def gresho_vphi_analytic(r):
@@ -26,7 +26,7 @@ def gresho_vphi_analytic(r):
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_gresho(num_mpi_ranks, num_omp_threads):
     test_name = "gresho"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)

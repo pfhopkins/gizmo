@@ -34,13 +34,18 @@ def clean_test_outputs(test_name: str):
         remove(f)
 
 
+def default_omp_threads():
+    """Return the default number of OpenMP threads for tests."""
+    return 2
+
+
 def default_mpi_ranks(max_ranks=None):
-    """Return the number of MPI ranks to use, defaulting to the available CPU count.
-    Optionally cap at max_ranks (useful for tests with very few particles)."""
-    n = cpu_count()
+    """Return the number of MPI ranks to use, defaulting to half the available CPU count
+    (to leave room for OpenMP threads). Optionally cap at max_ranks."""
+    n = cpu_count() // 2
     if max_ranks is not None:
         n = min(n, max_ranks)
-    return n
+    return max(n, 1)
 
 
 def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0):
