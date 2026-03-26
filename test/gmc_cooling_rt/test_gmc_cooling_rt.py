@@ -1,7 +1,7 @@
 """GMC cooling and chemistry test"""
 
 import pytest
-from gizmo.test import build_and_run_test, get_cooling_tables
+from gizmo.test import build_and_run_test, get_cooling_tables, assert_final_time
 from os import path
 from matplotlib import pyplot as plt
 import h5py
@@ -118,6 +118,7 @@ def test_gmc_cooling_rt(num_mpi_ranks):
     build_and_run_test(test_name, num_mpi_ranks)
     if not path.isfile("test/gmc_cooling_rt/output/snapshot_010.hdf5"):
         raise (RuntimeError("GIZMO did not run successfully."))
+    assert_final_time("test/gmc_cooling_rt/output/snapshot_010.hdf5", test_name)
 
     test_stats = compute_test_statistic(test_dir + "/output/snapshot_010.hdf5", plot=True)
     benchmark_stats = compute_test_statistic(test_dir + "/gmc_cooling_rt_exact.hdf5")

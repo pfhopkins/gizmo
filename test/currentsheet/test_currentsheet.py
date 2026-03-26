@@ -10,7 +10,7 @@ import h5py
 import glob
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs
+from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, assert_final_time
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -35,6 +35,7 @@ def test_currentsheet(num_mpi_ranks):
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError("GIZMO did not run successfully.")
+    assert_final_time(snaps[-1], test_name)
 
     # Load initial and final snapshots
     with h5py.File(snaps[0], "r") as F:

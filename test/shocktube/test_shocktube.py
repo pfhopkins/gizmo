@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, run_test, download_test_files, default_mpi_ranks, clean_test_outputs
+from gizmo.test import build_gizmo_for_test, run_test, download_test_files, default_mpi_ranks, clean_test_outputs, assert_final_time
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -36,6 +36,7 @@ def test_shocktube(num_mpi_ranks):
     final_snap = outputdir + "/snapshot_010.hdf5"
     if not path.isfile(final_snap):
         raise RuntimeError("GIZMO did not run successfully.")
+    assert_final_time(final_snap, test_name)
 
     # Load simulation data
     with h5py.File(final_snap, "r") as F:

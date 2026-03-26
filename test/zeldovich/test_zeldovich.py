@@ -13,7 +13,7 @@ from scipy.stats import binned_statistic
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, assert_final_time
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -28,6 +28,7 @@ def test_zeldovich(num_mpi_ranks):
     if not snaps:
         raise RuntimeError("GIZMO did not run successfully.")
     final_snap = snaps[-1]
+    assert_final_time(final_snap, test_name)
 
     # Load simulation data
     with h5py.File(final_snap, "r") as F:

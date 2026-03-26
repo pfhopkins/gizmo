@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
 from os import path
-from gizmo.test import build_and_run_test, default_mpi_ranks
+from gizmo.test import build_and_run_test, default_mpi_ranks, assert_final_time
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=4),))
@@ -22,6 +22,7 @@ def test_interactblast(num_mpi_ranks):
     final_snap = outputdir + "/snapshot_010.hdf5"
     if not path.isfile(final_snap):
         raise RuntimeError("GIZMO did not run successfully.")
+    assert_final_time(final_snap, test_name)
 
     # Load simulation data
     with h5py.File(final_snap, "r") as F:

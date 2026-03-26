@@ -1,7 +1,7 @@
 """MHD linear wave propagation test (Hopkins & Raives 2015)"""
 
 import pytest
-from gizmo.test import build_and_run_test, assert_snapshots_are_close, plot_1D_snapshot_comparison, default_mpi_ranks
+from gizmo.test import build_and_run_test, assert_snapshots_are_close, plot_1D_snapshot_comparison, default_mpi_ranks, assert_final_time
 from os import path
 
 
@@ -13,6 +13,7 @@ def test_mhd_wave(num_mpi_ranks):
     final_snap = outputdir + "/snapshot_010.hdf5"
     if not path.isfile(final_snap):
         raise (RuntimeError("GIZMO did not run successfully."))
+    assert_final_time(final_snap, test_name)
 
     initial_snap = outputdir + "/snapshot_000.hdf5"
     fields = ("Density", "Velocities", "InternalEnergy", "MagneticField")

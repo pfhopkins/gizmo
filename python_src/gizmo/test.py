@@ -104,6 +104,32 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     chdir("../../")
 
 
+def parse_params(params_file: str) -> dict:
+    """Parse a GIZMO parameter file and return a dict of key-value pairs."""
+    params = {}
+    with open(params_file) as f:
+        for line in f:
+            line = line.split("%")[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                params[parts[0]] = parts[1]
+    return params
+
+
+def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
+    """Assert that the snapshot time matches TimeMax from the test's parameter file."""
+    params_file = f"test/{test_name}/{test_name}.params"
+    params = parse_params(params_file)
+    time_max = float(params["TimeMax"])
+    with h5py.File(snapshot_file, "r") as F:
+        time = float(F["Header"].attrs["Time"])
+    assert abs(time - time_max) < rtol * abs(time_max), (
+        f"Snapshot time {time} does not match TimeMax {time_max} (rtol={rtol})"
+    )
+
+
 def assert_snapshots_are_close(
     snapshot1: str,
     snapshot2: str,
