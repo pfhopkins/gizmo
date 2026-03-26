@@ -16,16 +16,17 @@ from gizmo.test import build_gizmo_for_test, download_test_files, run_test, defa
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-def test_isodisk(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_isodisk(num_mpi_ranks, num_omp_threads):
     test_name = "isodisk"
     clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name)
+    build_gizmo_for_test(test_name, num_omp_threads)
     chdir(f"test/{test_name}/")
 
     download_test_files(test_name)
     get_cooling_tables()
 
-    run_test(test_name, num_mpi_ranks)
+    run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
     outputdir = f"test/{test_name}/output"

@@ -1,14 +1,20 @@
 """GMC cooling and chemistry test"""
 
 import pytest
-from gizmo.test import build_and_run_test, assert_snapshots_are_close, plot_1D_snapshot_comparison, default_mpi_ranks, assert_final_time
+from gizmo.test import (
+    build_and_run_test,
+    assert_snapshots_are_close,
+    plot_1D_snapshot_comparison,
+    default_mpi_ranks,
+    assert_final_time,
+)
 from os import path
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-def test_soundwave(num_mpi_ranks):
+@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(16, 0), (1, 16), (4, 4)])
+def test_soundwave(num_mpi_ranks, num_omp_threads):
     test_name = "soundwave"
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
     outputdir = f"test/{test_name}/output"
     final_snap = outputdir + "/snapshot_015.hdf5"
     if not path.isfile(final_snap):

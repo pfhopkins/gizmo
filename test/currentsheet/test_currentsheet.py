@@ -17,10 +17,11 @@ WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=8),))
-def test_currentsheet(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_currentsheet(num_mpi_ranks, num_omp_threads):
     test_name = "currentsheet"
     clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name)
+    build_gizmo_for_test(test_name, num_omp_threads)
     chdir(f"test/{test_name}/")
 
     # Download ICs (non-standard name)
@@ -28,7 +29,7 @@ def test_currentsheet(num_mpi_ranks):
     if not path.isfile(ic_file):
         urlretrieve(WEBSITE + ic_file, ic_file)
 
-    run_test(test_name, num_mpi_ranks)
+    run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
     outputdir = f"test/{test_name}/output"

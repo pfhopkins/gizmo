@@ -28,9 +28,10 @@ def plot_shu1977_density_slice(coords, rho, boxsize, output_dir="."):
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (16,))
-def test_shu1977(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_shu1977(num_mpi_ranks, num_omp_threads):
     test_name = "shu1977"
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     final_snap = f"test/{test_name}/output/snapshot_001.hdf5"
     if not path.isfile(final_snap):

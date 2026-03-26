@@ -1,14 +1,15 @@
 """MHD linear wave propagation test (Hopkins & Raives 2015)"""
 
 import pytest
-from gizmo.test import build_and_run_test, assert_snapshots_are_close, plot_1D_snapshot_comparison, default_mpi_ranks, assert_final_time
+from gizmo.test import build_and_run_test, assert_snapshots_are_close, plot_1D_snapshot_comparison, assert_final_time, default_mpi_ranks
 from os import path
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(4),))
-def test_mhd_wave(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_mhd_wave(num_mpi_ranks, num_omp_threads):
     test_name = "mhd_wave"
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
     outputdir = f"test/{test_name}/output"
     final_snap = outputdir + "/snapshot_010.hdf5"
     if not path.isfile(final_snap):

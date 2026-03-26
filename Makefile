@@ -183,6 +183,10 @@ CXX     = mpic++
 CHIMESINCL = -I/usr/local/include/sundials
 CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
 endif
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
+OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
+endif
 MKL_INCL = #
 MKL_LIBS = #
 GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include #-I$(PORTINCLUDE)

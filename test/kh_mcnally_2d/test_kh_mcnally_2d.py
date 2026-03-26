@@ -15,10 +15,11 @@ from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-def test_kh_mcnally_2d(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_kh_mcnally_2d(num_mpi_ranks, num_omp_threads):
     test_name = "kh_mcnally_2d"
     clean_test_outputs(test_name)
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     outputdir = f"test/{test_name}/output"
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))

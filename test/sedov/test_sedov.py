@@ -31,10 +31,10 @@ def plot_sedov_density_slice(coords, rho, output_dir="."):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-def test_sedov(num_mpi_ranks):
+@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(16, 0), (1, 16), (4, 4)])
+def test_sedov(num_mpi_ranks, num_omp_threads):
     test_name = "sedov"
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     outputdir = f"test/{test_name}/output"
     final_snap = outputdir + "/snapshot_010.hdf5"

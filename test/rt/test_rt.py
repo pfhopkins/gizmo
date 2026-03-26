@@ -20,17 +20,18 @@ WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-def test_rt(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_rt(num_mpi_ranks, num_omp_threads):
     test_name = "rt"
     clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name)
+    build_gizmo_for_test(test_name, num_omp_threads)
     chdir(f"test/{test_name}/")
 
     # Download ICs (non-standard name on site: rt_ics.hdf5, but params references rt_ics)
     if not path.isfile("rt_ics.hdf5"):
         urlretrieve(WEBSITE + "rt_ics.hdf5", "rt_ics.hdf5")
 
-    run_test(test_name, num_mpi_ranks)
+    run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
     outputdir = f"test/{test_name}/output"

@@ -10,13 +10,14 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 from os import path
-from gizmo.test import build_and_run_test, default_mpi_ranks, assert_final_time
+from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-def test_briowu(num_mpi_ranks):
+@pytest.mark.parametrize("num_omp_threads", (0,))
+def test_briowu(num_mpi_ranks, num_omp_threads):
     test_name = "briowu"
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     outputdir = f"test/{test_name}/output"
     final_snap = outputdir + "/snapshot_002.hdf5"
