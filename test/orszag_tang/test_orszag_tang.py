@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks
+from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -48,13 +48,13 @@ def test_orszag_tang(num_mpi_ranks):
     M = Meshoid(coords, boxsize=1.)
     rho_slice = M.Slice(np.log10(rho), res=1024, plane="z",center=np.array([0.5,0.5,0.5]),size=1.,order=1)
 
-    plt.figure(figsize=(6, 6))
-    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[coords[:,0].min(), coords[:,0].max(), coords[:,1].min(), coords[:,1].max()])
-    plt.colorbar(label="log10(Density)")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.savefig(f"test/{test_name}/Density_2D.png", dpi=150)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(6, 6))
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[coords[:,0].min(), coords[:,0].max(), coords[:,1].min(), coords[:,1].max()])
+    flush_colorbar(im, ax=ax, label="log10(Density)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    fig.savefig(f"test/{test_name}/Density_2D.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # Energy should be conserved to within ~10% (shock dissipation is expected)
     dE = abs(E_final - E_init) / abs(E_init)

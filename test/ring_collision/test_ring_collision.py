@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 import h5py
 import glob
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -36,15 +36,15 @@ def test_ring_collision(num_mpi_ranks):
         size = max(pos[:, 0].max() - pos[:, 0].min(), pos[:, 1].max() - pos[:, 1].min()) * 1.1
         M = Meshoid(pos)
         rho_slice = M.Slice(rho, res=1024, plane="z", center=center, size=size, order=1)
-        plt.figure(figsize=(6, 6))
+        fig, ax = plt.subplots(figsize=(6, 6))
         extent = [center[0] - size/2, center[0] + size/2, center[1] - size/2, center[1] + size/2]
-        plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=extent)
-        plt.colorbar(label="Density")
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title(f"Ring Collision t={t:.0f}")
-        plt.savefig(f"test/{test_name}/snapshot_t{t:.0f}.png", dpi=150)
-        plt.close()
+        im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=extent)
+        flush_colorbar(im, ax=ax, label="Density")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title(f"Ring Collision t={t:.0f}")
+        fig.savefig(f"test/{test_name}/snapshot_t{t:.0f}.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
 
     # Load initial and final snapshots
     with h5py.File(snaps[0], "r") as F:

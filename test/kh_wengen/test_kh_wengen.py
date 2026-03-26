@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 import glob
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -43,14 +43,14 @@ def test_kh_wengen(num_mpi_ranks):
     M = Meshoid(pos_f, boxsize=boxsize)
     center = np.array([box_x / 2, box_y / 2, box_z / 2])
     rho_slice = M.Slice(rho_f, res=1024, plane="z", center=center, size=box_x, order=1)
-    plt.figure(figsize=(8, 8))
-    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, box_x, 0, box_y])
-    plt.colorbar(label="Density")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title("KH Wengen - Density (midplane slice)")
-    plt.savefig(f"test/{test_name}/Density_slice.png", dpi=150)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(8, 8))
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, box_x, 0, box_y])
+    flush_colorbar(im, ax=ax, label="Density")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title("KH Wengen - Density (midplane slice)")
+    fig.savefig(f"test/{test_name}/Density_slice.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # Mass conservation
     mass_err = abs(mass_f.sum() - mass0.sum()) / mass0.sum()

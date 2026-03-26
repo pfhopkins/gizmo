@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 import h5py
 import glob
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -38,14 +38,14 @@ def test_square(num_mpi_ranks):
     # Plot final density using Meshoid slice interpolation
     M = Meshoid(pos_f, boxsize=1.)
     rho_slice = M.Slice(rho_f, res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=1)
-    plt.figure(figsize=(6, 6))
-    plt.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 1, 0, 1])
-    plt.colorbar(label="Density")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title("Square Advection - Final Density")
-    plt.savefig(f"test/{test_name}/Density_2D.png", dpi=150)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(6, 6))
+    im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 1, 0, 1])
+    flush_colorbar(im, ax=ax, label="Density")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title("Square Advection - Final Density")
+    fig.savefig(f"test/{test_name}/Density_2D.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
     # Sort both by particle ID for comparison
     order0 = ids0.argsort()
