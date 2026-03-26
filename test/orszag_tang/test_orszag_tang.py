@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar
+from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -24,6 +24,7 @@ def test_orszag_tang(num_mpi_ranks):
     init_snap = outputdir + "/snapshot_000.hdf5"
     if not path.isfile(final_snap):
         raise RuntimeError("GIZMO did not run successfully.")
+    assert_final_time(final_snap, test_name)
 
     def compute_total_energy(snapfile):
         with h5py.File(snapfile, "r") as F:

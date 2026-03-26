@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 import h5py
 import glob
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, flush_colorbar, assert_final_time
 
 
 def plot_mhd_blast_density_slice(coords, rho, output_dir="."):
@@ -38,6 +38,7 @@ def test_mhd_blast(num_mpi_ranks):
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError("GIZMO did not run successfully.")
+    assert_final_time(snaps[-1], test_name)
 
     # Load final snapshot
     with h5py.File(snaps[-1], "r") as F:
