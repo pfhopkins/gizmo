@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks
+from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads
 
 
 def plot_noh_density_slice(coords, rho, output_dir="."):
@@ -34,7 +34,7 @@ def plot_noh_density_slice(coords, rho, output_dir="."):
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_noh(num_mpi_ranks, num_omp_threads):
     test_name = "noh"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)

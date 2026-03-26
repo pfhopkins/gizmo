@@ -11,14 +11,14 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, run_test, download_test_files, clean_test_outputs, assert_final_time, default_mpi_ranks
+from gizmo.test import build_gizmo_for_test, run_test, download_test_files, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=4),))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_shocktube(num_mpi_ranks, num_omp_threads):
     test_name = "shocktube"
     clean_test_outputs(test_name)

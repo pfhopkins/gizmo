@@ -13,11 +13,11 @@ from scipy.stats import binned_statistic
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from gizmo.test import build_and_run_test, clean_test_outputs, assert_final_time, default_mpi_ranks
+from gizmo.test import build_and_run_test, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (0,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_zeldovich(num_mpi_ranks, num_omp_threads):
     test_name = "zeldovich"
     clean_test_outputs(test_name)
