@@ -1631,7 +1631,7 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
   int j, n, index, listindex = 0;
   int startnode, numngb_inbox;
   double h, r2max;
-  double dx, dy, dz, r2;
+  double r2;
   MyDouble *pos;
 
   if(mode == 0)
@@ -1668,11 +1668,9 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
 	  for(n = 0; n < numngb_inbox; n++)
 	    {
             j = Ngblist[n];
-            dx = pos[0] - P[j].Pos[0];
-            dy = pos[1] - P[j].Pos[1];
-            dz = pos[2] - P[j].Pos[2];
-            NEAREST_XYZ(dx,dy,dz,1);
-            r2 = dx * dx + dy * dy + dz * dz;
+            Vec3<double> dr = {pos[0] - P[j].Pos[0], pos[1] - P[j].Pos[1], pos[2] - P[j].Pos[2]};
+            nearest_xyz(dr, 1);
+            r2 = dr.norm_sq();
             if(r2 < r2max && r2 < h * h)
 		{
 		  index = j;

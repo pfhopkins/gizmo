@@ -430,7 +430,7 @@ void gravity_tree(void)
                 if(P[place].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[place].Rad_E_gamma[kf] += GravDataOut[j].Rad_E_gamma[kf];}}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                if(P[place].Type==0) {int kf,k2; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k2=0;k2<3;k2++) {CellP[place].Rad_Flux[kf][k2] += GravDataOut[j].Rad_Flux[kf][k2];}}}
+                if(P[place].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[place].Rad_Flux[kf] += GravDataOut[j].Rad_Flux[kf];}}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                 if(P[place].Type==0) {CellP[place].SubGrid_CosmicRayEnergyDensity += GravDataOut[j].SubGrid_CosmicRayEnergyDensity;}
@@ -519,21 +519,20 @@ void gravity_tree(void)
             /* now reset the local values for this to actually match these, recalling the special particle in this module is just a tracer element */
             double dtime_phys = (All.Time - P[i].Time_Of_Last_SmoothedVelUpdate) / All.cf_hubble_a; /* want to convert to physical units */
             if(dtime_phys > 0) {
-                for(j=0;j<3;j++) {
-                    P[i].Acc_Total_PrevStep[k] = (((P[i].vel_of_nearest_special[j] - P[i].Vel[j]) / All.cf_atime) / dtime_phys) / All.cf_a2inv; /* converting to cosmological units here */
-                    P[i].Vel[j] = P[i].vel_of_nearest_special[j];
-                }}
+                P[i].Acc_Total_PrevStep = (P[i].vel_of_nearest_special - P[i].Vel) / (All.cf_atime * dtime_phys * All.cf_a2inv); /* converting to cosmological units here */
+                P[i].Vel = P[i].vel_of_nearest_special;
+            }
         }
 #endif
 
         /* calculate 'old acceleration' for use in the relative tree-opening criterion */
         if(!(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0)) /* to prevent that we overwrite OldAcc in the first evaluation for 2lpt ICs */
             {
-                ax=P[i].GravAccel[0]; ay=P[i].GravAccel[1]; az=P[i].GravAccel[2];
+                auto accel = P[i].GravAccel;
 #ifdef PMGRID
-                ax+=P[i].GravPM[0]; ay+=P[i].GravPM[1]; az+=P[i].GravPM[2];
+                accel += P[i].GravPM;
 #endif
-                P[i].OldAcc = sqrt(ax * ax + ay * ay + az * az) / All.G; /* convert back to the non-G units for convenience to match units in loops assumed */
+                P[i].OldAcc = accel.norm() / All.G; /* convert back to the non-G units for convenience to match units in loops assumed */
             }
 
 #if (SINGLE_STAR_TIMESTEPPING > 0) /* Subtract component of force from companion if in binary, because we will operator-split this */
@@ -855,15 +854,11 @@ void subtract_companion_gravity(int i)
 	    fac = P[i].comp_Mass * kernel_gravity(u, h_inv, h3_inv, 1);
         fac2 = P[i].comp_Mass * kernel_gravity(u, h_inv, h3_inv, 2);
     }
-    for(i1=0;i1<3;i1++) {P[i].COM_GravAccel[i1] = P[i].GravAccel[i1] - P[i].comp_dx[i1] * fac * All.G;} /* this assumes the 'G' has been put into the units for the grav accel */
+    P[i].COM_GravAccel = P[i].GravAccel - P[i].comp_dx * (fac * All.G); /* this assumes the 'G' has been put into the units for the grav accel */
 
     /* Adjusting tidal tensor according to terms above */
-    tidal_tensorps[0][0] = P[i].tidal_tensorps[0][0] - (-fac + P[i].comp_dx[0] * P[i].comp_dx[0] * fac2);
-    tidal_tensorps[0][1] = P[i].tidal_tensorps[0][1] - (P[i].comp_dx[0] * P[i].comp_dx[1] * fac2);
-    tidal_tensorps[0][2] = P[i].tidal_tensorps[0][2] - (P[i].comp_dx[0] * P[i].comp_dx[2] * fac2);
-    tidal_tensorps[1][1] = P[i].tidal_tensorps[1][1] - (-fac + P[i].comp_dx[1] * P[i].comp_dx[1] * fac2);
-    tidal_tensorps[1][2] = P[i].tidal_tensorps[1][2] - (P[i].comp_dx[1] * P[i].comp_dx[2] * fac2);
-    tidal_tensorps[2][2] = P[i].tidal_tensorps[2][2] - (-fac + P[i].comp_dx[2] * P[i].comp_dx[2] * fac2);
+    tidal_tensorps = P[i].tidal_tensorps - fac2 * outer_product(P[i].comp_dx);
+    tidal_tensorps[0][0] += fac; tidal_tensorps[1][1] += fac; tidal_tensorps[2][2] += fac;
 
 #ifdef SINK_OUTPUT_MOREINFO
     printf("Corrected center of mass acceleration %g %g %g tidal tensor diagonal elements %g %g %g \n", P[i].COM_GravAccel[0], P[i].COM_GravAccel[1], P[i].COM_GravAccel[2], tidal_tensorps[0][0],tidal_tensorps[1][1],tidal_tensorps[2][2]);

@@ -45,7 +45,8 @@ int subfind_process_group_serial(int gr, int Offs)
   int i, j, k, p, len, subnr, totlen, ss, ngbs, ndiff, N, head = 0, head_attach, count_cand, len_non_gas;
   int listofdifferent[2], count, prev;
   int ngb_index, part_index, nsubs, rank;
-  double SubMass, SubPos[3], SubVel[3], SubCM[3], SubVelDisp, SubVmax, SubVmaxRad, SubSpin[3], SubHalfMass, SubMassTab[6];
+  double SubMass, SubVelDisp, SubVmax, SubVmaxRad, SubHalfMass, SubMassTab[6];
+  Vec3<double> SubPos, SubVel, SubCM, SubSpin;
   MyIDType SubMostBoundID;
   static struct unbind_data *ud;
 
@@ -338,8 +339,8 @@ int subfind_process_group_serial(int gr, int Offs)
 
 
       subfind_determine_sub_halo_properties(ud, len, &SubMass,
-					    &SubPos[0], &SubVel[0], &SubCM[0], &SubVelDisp, &SubVmax,
-					    &SubVmaxRad, &SubSpin[0], &SubMostBoundID, &SubHalfMass,
+					    &SubPos, &SubVel, &SubCM, &SubVelDisp, &SubVmax,
+					    &SubVmaxRad, &SubSpin, &SubMostBoundID, &SubHalfMass,
 					    &SubMassTab[0]);
 
       if(Nsubgroups >= MaxNsubgroups)
@@ -347,8 +348,7 @@ int subfind_process_group_serial(int gr, int Offs)
 
       if(subnr == 0)
 	{
-	  for(j = 0; j < 3; j++)
-	    Group[gr].Pos[j] = SubPos[j];
+	  for(j = 0; j < 3; j++) Group[gr].Pos[j] = SubPos[j];
 	}
 
       SubGroup[Nsubgroups].Len = len;
@@ -366,13 +366,10 @@ int subfind_process_group_serial(int gr, int Offs)
       SubGroup[Nsubgroups].SubVmaxRad = SubVmaxRad;
       SubGroup[Nsubgroups].SubHalfMass = SubHalfMass;
 
-      for(j = 0; j < 3; j++)
-	{
-	  SubGroup[Nsubgroups].Pos[j] = SubPos[j];
-	  SubGroup[Nsubgroups].CM[j] = SubCM[j];
-	  SubGroup[Nsubgroups].Vel[j] = SubVel[j];
-	  SubGroup[Nsubgroups].Spin[j] = SubSpin[j];
-	}
+      SubGroup[Nsubgroups].Pos = SubPos;
+      SubGroup[Nsubgroups].CM = SubCM;
+      SubGroup[Nsubgroups].Vel = SubVel;
+      SubGroup[Nsubgroups].Spin = SubSpin;
 
       for(j = 0; j < 6; j++) SubGroup[Nsubgroups].MassTab[j] = SubMassTab[j];
 
@@ -406,7 +403,8 @@ int subfind_unbind(struct unbind_data *ud, int len, int *len_non_gas)
 {
   double *bnd_energy, energy_limit, weakly_bound_limit = 0;
   int i, j, p, minindex, unbound, phaseflag;
-  double s[3], dx[3], v[3], dv[3], pos[3];
+  Vec3<double> s, v, pos;
+  Vec3<double> dx_vec, dv_vec;
   double vel_to_phys, H_of_a, atime, pot, minpot = 0;
   double boxsize;
   double TotMass;
@@ -455,7 +453,7 @@ int subfind_unbind(struct unbind_data *ud, int len, int *len_non_gas)
             }
 	    }
 
-	  for(j = 0; j < 3; j++) {pos[j] = P[minindex].Pos[j];}	/* position of minimum potential */
+	  pos = P[minindex].Pos;	/* position of minimum potential */
 	}
       else
 	{
@@ -480,53 +478,43 @@ int subfind_unbind(struct unbind_data *ud, int len, int *len_non_gas)
 
       /* let's get bulk velocity and the center-of-mass */
 
-      v[0] = v[1] = v[2] = 0;
-      s[0] = s[1] = s[2] = 0;
+      v = {}; s = {};
 
       for(i = 0, TotMass = 0; i < len; i++)
 	{
 	  p = ud[i].index;
 
-        double dp[3]; for(j=0;j<3;j++) {dp[j]=P[p].Pos[j]-pos[j];}
-        NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
-      for(j = 0; j < 3; j++)
-        {
-          s[j] += P[p].Mass * dp[j];
-	      v[j] += P[p].Mass * P[p].Vel[j];
-	    }
+        Vec3<double> dp = P[p].Pos - pos;
+        nearest_xyz(dp,-1);
+      s += P[p].Mass * dp;
+	      v += P[p].Mass * P[p].Vel;
 	  TotMass += P[p].Mass;
 	}
 
-      for(j = 0; j < 3; j++)
-	{
-	  v[j] /= TotMass;
-	  s[j] /= TotMass;	/* center-of-mass */
-
-	  s[j] += pos[j];
+      v /= TotMass;
+      s /= TotMass;	/* center-of-mass */
+      s += pos;
 
 #ifdef BOX_PERIODIC
+      for(j = 0; j < 3; j++)
+	{
 	  while(s[j] < 0) {s[j] += boxsize;}
 	  while(s[j] >= boxsize) {s[j] -= boxsize;}
-#endif
 	}
+#endif
 
       for(i = 0; i < len; i++)
 	{
 	  p = ud[i].index;
 
         
-          double dp[3]; for(j=0;j<3;j++) {dp[j]=P[p].Pos[j]-s[j];}
-          NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
+          Vec3<double> dp = P[p].Pos - s;
+          nearest_xyz(dp,-1);
 
-        for(j = 0; j < 3; j++)
-          {
-            dv[j] = vel_to_phys * (P[p].Vel[j] - v[j]);
-              dx[j] = dp[j] * atime;
-            dv[j] += H_of_a * dx[j];
-          }
+        dx_vec = dp * atime;
+        dv_vec = vel_to_phys * (P[p].Vel - v) + H_of_a * dx_vec;
 
-
-	  P[p].v.DM_BindingEnergy = P[p].u.DM_Potential + 0.5 * (dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
+	  P[p].v.DM_BindingEnergy = P[p].u.DM_Potential + 0.5 * dv_vec.norm_sq();
 
 #ifdef FOF_DENSITY_SPLIT_TYPES
 	  if(P[p].Type == 0) {P[p].v.DM_BindingEnergy += P[p].w.int_energy;}
@@ -603,13 +591,16 @@ int subfind_compare_grp_particles(const void *a, const void *b)
 }
 
 void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, double *totmass,
-					   double *pos, double *vel, double *cm, double *veldisp,
-					   double *vmax, double *vmaxrad, double *spin,
+					   Vec3<double> *pos, Vec3<double> *vel, Vec3<double> *cm, double *veldisp,
+					   double *vmax, double *vmaxrad, Vec3<double> *spin,
 					   MyIDType * mostboundid, double *halfmassrad, double *mass_tab)
 {
   int i, j, p, num_use, i_use;
-  double s[3], v[3], max, vel_to_phys, H_of_a, atime, minpot;
-  double lx, ly, lz, dv[3], dx[3], disp, rr_tmp, disp_tmp;
+  Vec3<double> s = {}, v = {};
+  double max, vel_to_phys, H_of_a, atime, minpot;
+  Vec3<double> l_vec, dv_vec, dx_vec;
+  Vec3<double> pos_v;
+  double disp, rr_tmp, disp_tmp;
   double boxsize, ddxx;
   sort_r2list *rr_list = 0;
   int minindex;
@@ -660,11 +651,10 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
   if(minindex == -1)
     endrun(875412);
 
-  for(j = 0; j < 3; j++)
-    pos[j] = P[minindex].Pos[j];
+  pos_v = P[minindex].Pos;
+  *pos = pos_v;
 
-
-  /* pos[] now holds the position of minimum potential */
+  /* pos_v now holds the position of minimum potential */
   /* we take it that as the center */
 
 
@@ -690,8 +680,7 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
   /* let's get bulk velocity and the center-of-mass */
   /* here we still can take all particles */
 
-  for(j = 0; j < 3; j++)
-    s[j] = v[j] = 0;
+  s = {}; v = {};
 
   for(j = 0; j < 6; j++)
     mass_tab[j] = 0;
@@ -699,13 +688,10 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
   for(i = 0, mass = 0; i < num; i++)
     {
       p = d[i].index;
-          double dp[3]; for(j=0;j<3;j++) {dp[j]=P[p].Pos[j]-pos[j];}
-          NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
-        for(j = 0; j < 3; j++)
-          {
-            s[j] += P[p].Mass * dp[j];
-	  v[j] += P[p].Mass * P[p].Vel[j];
-	}
+          Vec3<double> dp = P[p].Pos - pos_v;
+          nearest_xyz(dp,-1);
+      s += P[p].Mass * dp;
+	  v += P[p].Mass * P[p].Vel;
       mass += P[p].Mass;
 
       mass_tab[P[p].Type] += P[p].Mass;
@@ -713,28 +699,25 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
 
   *totmass = mass;
 
-  for(j = 0; j < 3; j++)
-    {
-      s[j] /= mass;		/* center of mass */
-      v[j] /= mass;
+  s /= mass;		/* center of mass */
+  v /= mass;
 
-      vel[j] = vel_to_phys * v[j];
-    }
+  *vel = vel_to_phys * v;
 
-  for(j = 0; j < 3; j++)
-    {
-      s[j] += pos[j];
+  s += pos_v;
 
 #ifdef BOX_PERIODIC
+  for(j = 0; j < 3; j++)
+    {
       while(s[j] < 0) {s[j] += boxsize;}
       while(s[j] >= boxsize) {s[j] -= boxsize;}
+    }
 #endif
 
-      cm[j] = s[j];
-    }
+  *cm = s;
 
 
-  disp = lx = ly = lz = 0;
+  disp = 0; l_vec = {0,0,0};
 
   /* Here we have to perform only on the dm particles for consistency */
   mass = 0;
@@ -750,22 +733,16 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
     {
       p = d[i].index;
 
-          double dp_s[3], dp_p[3]; for(j=0;j<3;j++) {dp_s[j]=P[p].Pos[j]-s[j]; dp_p[j]=P[p].Pos[j]-pos[j];}
-          NEAREST_XYZ(dp_s[0],dp_s[1],dp_s[2],-1); NEAREST_XYZ(dp_p[0],dp_p[1],dp_p[2],-1);
+          Vec3<double> dp_s = P[p].Pos - s;
+          Vec3<double> dp_p = P[p].Pos - pos_v;
+          nearest_xyz(dp_s,-1); nearest_xyz(dp_p,-1);
 
-      for(j = 0, rr_tmp = 0, disp_tmp = 0; j < 3; j++)
-	{
-	  dx[j] = atime * dp_s[j];
-	  dv[j] = vel_to_phys * (P[p].Vel[j] - v[j]);
-	  dv[j] += H_of_a * dx[j];
+      dx_vec = atime * dp_s;
+      dv_vec = vel_to_phys * (P[p].Vel - v) + H_of_a * dx_vec;
+      disp_tmp = P[p].Mass * dv_vec.norm_sq();
+      /* for rotation curve computation, take minimum of potential as center */
+      rr_tmp = (atime * dp_p).norm();
 
-	  disp_tmp += P[p].Mass * dv[j] * dv[j];
-	  /* for rotation curve computation, take minimum of potential as center */
-	  ddxx = atime * dp_p[j];
-	  rr_tmp += ddxx * ddxx;
-	}
-
-      rr_tmp = sqrt(rr_tmp);
 #ifdef FOF_DENSITY_SPLIT_TYPES
       if(P[p].Type >= 1 && P[p].Type <= 3)  /*-- only for dm part --*/
 #endif
@@ -774,9 +751,7 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
 	  rr_list[i_use].r = rr_tmp;
 	  disp += disp_tmp;
 	  mass += P[p].Mass;
-	  lx += P[p].Mass * (dx[1] * dv[2] - dx[2] * dv[1]);
-	  ly += P[p].Mass * (dx[2] * dv[0] - dx[0] * dv[2]);
-	  lz += P[p].Mass * (dx[0] * dv[1] - dx[1] * dv[0]);
+	  l_vec += P[p].Mass * cross(dx_vec, dv_vec);
 
 	  i_use++;
 	}
@@ -789,14 +764,12 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
     {
       *veldisp = sqrt(disp / (3 * mass));	/* convert to 1d velocity dispersion */
 
-      spin[0] = lx / mass;
-      spin[1] = ly / mass;
-      spin[2] = lz / mass;
+      *spin = l_vec / mass;
 
       qsort(rr_list, num_use, sizeof(sort_r2list), subfind_compare_dist_rotcurve);
 
-/*--- Here we still have to fix for individual masses, 
-        maybe we even want the total mass for this ? 
+/*--- Here we still have to fix for individual masses,
+        maybe we even want the total mass for this ?
         Note however that even within multi mass DM simulation
         the DM mass within a clean halo should be the same ... ------*/
       *halfmassrad = rr_list[num_use / 2].r;
@@ -819,21 +792,24 @@ void subfind_determine_sub_halo_properties(struct unbind_data *d, int num, doubl
       myfree(rr_list);
     }
   else
-    *veldisp = *halfmassrad = *vmax = *vmaxrad = spin[0] = spin[1] = spin[2] = 0;
+    { *veldisp = *halfmassrad = *vmax = *vmaxrad = 0; *spin = {}; }
 
 }
 
 
 void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, double *totmass,
-					       double *pos, double *vel, double *cm, double *veldisp,
-					       double *vmax, double *vmaxrad, double *spin,
+					       Vec3<double> *pos, Vec3<double> *vel, Vec3<double> *cm, double *veldisp,
+					       double *vmax, double *vmaxrad, Vec3<double> *spin,
 					       MyIDType * mostboundid, double *halfmassrad, double *mass_tab)
 {
   int i, j, part_index, *npart, numtot, nhalf, offset, num_use, i_use;
   MyIDType mbid;
-  double s[3], sloc[3], v[3], vloc[3], max, vel_to_phys, H_of_a, atime;
-  double lx, ly, lz, dv[3], dx[3], disp;
-  double loclx, locly, loclz, locdisp;
+  Vec3<double> s = {}, sloc = {}, v = {}, vloc = {};
+  double max, vel_to_phys, H_of_a, atime;
+  Vec3<double> l_vec, locl_vec, dv_vec, dx_vec;
+  Vec3<double> pos_v;
+  double disp;
+  double locdisp;
   double boxsize, ddxx;
   sort_r2list *loc_rr_list;
   int minindex, mincpu;
@@ -905,16 +881,15 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
 
   if(ThisTask == mincpu)
     {
-      for(j = 0; j < 3; j++)
-	s[j] = P[minindex].Pos[j];
+      s = P[minindex].Pos;
     }
 
-  MPI_Bcast(&s[0], 3, MPI_DOUBLE, mincpu, MPI_COMM_WORLD);
+  MPI_Bcast(s.data_ptr(), 3, MPI_DOUBLE, mincpu, MPI_COMM_WORLD);
 
-  /* s[] now holds the position of minimum potential */
+  /* s now holds the position of minimum potential */
   /* we take that as the center */
-  for(j = 0; j < 3; j++)
-    pos[j] = s[j];
+  pos_v = s;
+  *pos = pos_v;
 
 
   /* the ID of the most bound particle, we take the minimum binding energy */
@@ -954,8 +929,7 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
 
   /* let's get bulk velocity and the center-of-mass */
 
-  for(j = 0; j < 3; j++)
-    sloc[j] = vloc[j] = 0;
+  sloc = {}; vloc = {};
 
   for(j = 0; j < 6; j++)
     mass_tab_loc[j] = 0;
@@ -964,44 +938,41 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
     {
       part_index = d[i].index;
 
-        double dp[3]; for(j=0;j<3;j++) {dp[j]=P[part_index].Pos[j]-pos[j];}
-        NEAREST_XYZ(dp[0],dp[1],dp[2],-1);
-      for(j = 0; j < 3; j++)
-        {
-          sloc[j] += P[part_index].Mass * dp[j];
-	  vloc[j] += P[part_index].Mass * P[part_index].Vel[j];
-	}
+        Vec3<double> dp = P[part_index].Pos - pos_v;
+        nearest_xyz(dp,-1);
+      sloc += P[part_index].Mass * dp;
+	  vloc += P[part_index].Mass * P[part_index].Vel;
       massloc += P[part_index].Mass;
 
       mass_tab_loc[P[part_index].Type] += P[part_index].Mass;
     }
 
-  MPI_Allreduce(sloc, s, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  MPI_Allreduce(vloc, v, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(sloc.data_ptr(), s.data_ptr(), 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(vloc.data_ptr(), v.data_ptr(), 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(&massloc, &mass, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(mass_tab_loc, mass_tab, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
   *totmass = mass;
 
-  for(j = 0; j < 3; j++)
-    {
-      s[j] /= mass;		/* center of mass */
-      v[j] /= mass;
+  s /= mass;		/* center of mass */
+  v /= mass;
 
-      vel[j] = vel_to_phys * v[j];
+  *vel = vel_to_phys * v;
 
-      s[j] += pos[j];
+  s += pos_v;
 
 #ifdef BOX_PERIODIC
+  for(j = 0; j < 3; j++)
+    {
       while(s[j] < 0) {s[j] += boxsize;}
       while(s[j] >= boxsize) {s[j] -= boxsize;}
+    }
 #endif
 
-      cm[j] = s[j];
-    }
+  *cm = s;
 
 
-  locdisp = loclx = locly = loclz = 0;
+  locdisp = 0; locl_vec = {0,0,0};
 
 
   /* Here we have to perform only on the dm particles for consistency */
@@ -1017,22 +988,15 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
     {
       part_index = d[i].index;
 
-        double dp_s[3], dp_p[3]; for(j=0;j<3;j++) {dp_s[j]=P[part_index].Pos[j]-s[j]; dp_p[j]=P[part_index].Pos[j]-pos[j];}
-        NEAREST_XYZ(dp_s[0],dp_s[1],dp_s[2],-1); NEAREST_XYZ(dp_p[0],dp_p[1],dp_p[2],-1);
+        Vec3<double> dp_s = P[part_index].Pos - s;
+        Vec3<double> dp_p = P[part_index].Pos - pos_v;
+        nearest_xyz(dp_s,-1); nearest_xyz(dp_p,-1);
 
-      for(j = 0, rr_tmp = 0, disp_tmp = 0; j < 3; j++)
-	{
-	  dx[j] = atime * dp_s[j];
-	  dv[j] = vel_to_phys * (P[part_index].Vel[j] - v[j]);
-	  dv[j] += H_of_a * dx[j];
-
-	  disp_tmp += P[part_index].Mass * dv[j] * dv[j];
-	  /* for rotation curve computation, take minimum of potential as center */
-	  ddxx = atime * dp_p[j];
-	  rr_tmp += ddxx * ddxx;
-	}
-
-      rr_tmp = sqrt(rr_tmp);
+      dx_vec = atime * dp_s;
+      dv_vec = vel_to_phys * (P[part_index].Vel - v) + H_of_a * dx_vec;
+      disp_tmp = P[part_index].Mass * dv_vec.norm_sq();
+      /* for rotation curve computation, take minimum of potential as center */
+      rr_tmp = (atime * dp_p).norm();
 
 #ifdef FOF_DENSITY_SPLIT_TYPES
       if(P[part_index].Type >= 1 && P[part_index].Type <= 3)  /*-- only for dm part --*/
@@ -1041,9 +1005,7 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
 	  locdisp += disp_tmp;
 	  massloc += P[part_index].Mass;
 
-	  loclx += P[part_index].Mass * (dx[1] * dv[2] - dx[2] * dv[1]);
-	  locly += P[part_index].Mass * (dx[2] * dv[0] - dx[0] * dv[2]);
-	  loclz += P[part_index].Mass * (dx[0] * dv[1] - dx[1] * dv[0]);
+	  locl_vec += P[part_index].Mass * cross(dx_vec, dv_vec);
 
 	  loc_rr_list[i_use].mass = P[part_index].Mass;
 	  loc_rr_list[i_use].r = rr_tmp;
@@ -1055,9 +1017,7 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
   if(i_use != num_use)
     endrun(664321);
 
-  MPI_Allreduce(&loclx, &lx, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  MPI_Allreduce(&locly, &ly, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  MPI_Allreduce(&loclz, &lz, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(locl_vec.data_ptr(), l_vec.data_ptr(), 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(&locdisp, &disp, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(&massloc, &mass, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
@@ -1072,9 +1032,7 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
     {
       *veldisp = sqrt(disp / (3 * mass));	/* convert to 1d velocity dispersion */
 
-      spin[0] = lx / mass;
-      spin[1] = ly / mass;
-      spin[2] = lz / mass;
+      *spin = l_vec / mass;
 
       parallel_sort(loc_rr_list, num_use, sizeof(sort_r2list), subfind_compare_dist_rotcurve);
 
@@ -1097,7 +1055,7 @@ void subfind_col_determine_sub_halo_properties(struct unbind_data *d, int num, d
       MPI_Bcast(halfmassrad, 1, MPI_DOUBLE, mincpu, MPI_COMM_WORLD);
     }
   else
-    *veldisp = *halfmassrad = spin[0] = spin[1] = spin[2] = 0;
+    { *veldisp = *halfmassrad = 0; *spin = {}; }
 
   /* compute cumulative mass */
 

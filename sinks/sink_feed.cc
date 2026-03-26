@@ -71,7 +71,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
     in->Jgas_in_Kernel = P[i].Sink_Specific_AngMom;
 #else
-    for(k=0;k<3;k++) {in->Jgas_in_Kernel[k] = SinkTempInfo[j_tempinfo].Jgas_in_Kernel[k];}
+    in->Jgas_in_Kernel = SinkTempInfo[j_tempinfo].Jgas_in_Kernel;
 #endif
 #endif
 #if defined(SINK_GRAVCAPTURE_GAS)
@@ -93,7 +93,7 @@ struct OUTPUT_STRUCT_NAME
     double Sink_angle_weighted_kernel_sum;
 #endif
 #ifdef SINK_REPOSITION_ON_POTMIN
-    double Sink_PotentialMinimumOfNeighbors, Sink_PotentialMinimumOfNeighborsPos[3];
+    double Sink_PotentialMinimumOfNeighbors; Vec3<double> Sink_PotentialMinimumOfNeighborsPos;
 #endif
 }
 *DATARESULT_NAME, *DATAOUT_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
@@ -107,8 +107,8 @@ static inline void OUTPUTFUNCTION_NAME(struct OUTPUT_STRUCT_NAME *out, int i, in
     ASSIGN_ADD_PRESET(SinkTempInfo[target].Sink_angle_weighted_kernel_sum, out->Sink_angle_weighted_kernel_sum, mode);
 #endif
 #ifdef SINK_REPOSITION_ON_POTMIN
-    if(mode==0) {P[i].Sink_PotentialMinimumOfNeighbors=out->Sink_PotentialMinimumOfNeighbors; for(k=0;k<3;k++) {P[i].Sink_PotentialMinimumOfNeighborsPos[k]=out->Sink_PotentialMinimumOfNeighborsPos[k];}
-        } else {if(out->Sink_PotentialMinimumOfNeighbors < P[i].Sink_PotentialMinimumOfNeighbors) {P[i].Sink_PotentialMinimumOfNeighbors=out->Sink_PotentialMinimumOfNeighbors; for(k=0;k<3;k++) {P[i].Sink_PotentialMinimumOfNeighborsPos[k]=out->Sink_PotentialMinimumOfNeighborsPos[k];}}}
+    if(mode==0) {P[i].Sink_PotentialMinimumOfNeighbors=out->Sink_PotentialMinimumOfNeighbors; P[i].Sink_PotentialMinimumOfNeighborsPos=out->Sink_PotentialMinimumOfNeighborsPos;
+        } else {if(out->Sink_PotentialMinimumOfNeighbors < P[i].Sink_PotentialMinimumOfNeighbors) {P[i].Sink_PotentialMinimumOfNeighbors=out->Sink_PotentialMinimumOfNeighbors; P[i].Sink_PotentialMinimumOfNeighborsPos=out->Sink_PotentialMinimumOfNeighborsPos;}}
 #endif
 }
 
@@ -132,7 +132,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
     ags_h_i = local.AGS_KernelRadius;
 #endif
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
-    double J_dir[3]; for(k=0;k<3;k++) {J_dir[k] = local.Jgas_in_Kernel[k];}
+    Vec3<double> J_dir = local.Jgas_in_Kernel;
 #endif
 #if defined(SINK_GRAVCAPTURE_GAS) && defined(SINK_ENFORCE_EDDINGTON_LIMIT) && !defined(SINK_ALPHADISK_ACCRETION)
     double meddington = sink_eddington_mdot(local.Sink_Mass), medd_max_accretable = All.SinkEddingtonFactor * meddington * local.Dt, eddington_factor = local.mass_to_swallow_edd / medd_max_accretable;   /* if <1 no problem, if >1, need to not set some swallowIDs */
@@ -147,8 +147,8 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
     f_accreted = All.Sink_accreted_fraction; if((All.SinkFeedbackFactor > 0) && (All.SinkFeedbackFactor != 1.)) {f_accreted /= All.SinkFeedbackFactor;} else {if(All.Sink_outflow_velocity > 0) {f_accreted = 1./(1. + fabs(1.*SINK_WIND_KICK)*All.SinkRadiativeEfficiency*C_LIGHT_CODE/(All.Sink_outflow_velocity));}}
 #endif
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
-    double norm=0; for(k=0;k<3;k++) {norm+=J_dir[k]*J_dir[k];}
-    if(norm>0) {norm=1/sqrt(norm); for(k=0;k<3;k++) {J_dir[k]*=norm;}} else {J_dir[0]=J_dir[1]=0; J_dir[2]=1;}
+    double norm = J_dir.norm_sq();
+    if(norm>0) {J_dir *= 1./sqrt(norm);} else {J_dir = {0, 0, 1};}
 #endif
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
     sink_radius = local.SinkRadius;
@@ -173,8 +173,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                         vrel=dvel.norm_sq();
                         r=sqrt(r2); vrel=sqrt(vrel)/All.cf_atime;  /* relative velocity in physical units. do this once and use below */
 #if defined(MAGNETIC) && defined(GRAIN_LORENTZFORCE) /* need to project grain velocities, shouldn't include gyro motion */
-                        if((1<<P[j].Type) & GRAIN_PTYPES) {vrel=0; double bmag2=0; for(k=0;k<3;k++) {vrel+=dvel[k]*P[j].Gas_B[k]; bmag2+=P[j].Gas_B[k]*P[j].Gas_B[k];}
-                            vrel = (fabs(vrel)/sqrt(bmag2)) / All.cf_atime;}
+                        if((1<<P[j].Type) & GRAIN_PTYPES) {Vec3<double> B_vec = P[j].Gas_B; vrel = (fabs(dot(dvel, B_vec))/sqrt(B_vec.norm_sq())) / All.cf_atime;}
 #endif
                         vesc=sink_vesc(j, local.Mass, r, ags_h_i);
                         
@@ -195,7 +194,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                         if(potential_function < out.Sink_PotentialMinimumOfNeighbors)
                         if( (P[j].Type != 0) && (P[j].Type != 5) )   // allow stars or dark matter but exclude gas, it's too messy! also exclude BHs, since we don't want to over-merge them
                         {
-                            out.Sink_PotentialMinimumOfNeighbors=potential_function; for(k=0;k<3;k++) {out.Sink_PotentialMinimumOfNeighborsPos[k] = P[j].Pos[k];}
+                            out.Sink_PotentialMinimumOfNeighbors=potential_function; out.Sink_PotentialMinimumOfNeighborsPos = P[j].Pos;
                         }
 #endif
 			
@@ -326,7 +325,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) /* calculate the angle-weighting for the photon momentum */
                             if((local.Dt>0)&&(r>0)&&(SwallowID_j==0)&&(P[j].Mass>0)&&(P[j].Type==0))
                             { /* cos_theta with respect to disk of BH is given by dot product of r and Jgas */
-                                norm=0; for(k=0;k<3;k++) {norm+=(dpos[k]/r)*J_dir[k];}
+                                norm = dot(dpos/r, J_dir);
                                 out.Sink_angle_weighted_kernel_sum += sink_fb_angleweight_localcoupling(j,norm,r,h_i);
                             }
 #endif

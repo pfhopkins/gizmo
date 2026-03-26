@@ -289,9 +289,8 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 #endif
                             if(P[j].Type == 0 && P[j].Mass > 0)
                             {
-                                double dx=pos[0]-P[j].Pos[0], dy=pos[1]-P[j].Pos[1], dz=pos[2]-P[j].Pos[2];
-                                NEAREST_XYZ(dx,dy,dz,1); /*  now find the closest image in the given box size */
-                                double r2 = dx * dx + dy * dy + dz * dz;
+                                Vec3<double> dr = pos - P[j].Pos; nearest_xyz(dr,1); /*  now find the closest image in the given box size */
+                                double r2 = dr.norm_sq();
                                 if(r2 > RHII_2) {continue;}
                                 double r=sqrt(r2), u=0;
                                 /* check whether the particle is already ionized */
@@ -349,7 +348,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
                             already_ionized = do_the_local_ionization(j,dt,i);
                             total_N_ionized += 1;
                             mion_actual += P[j].Mass;
-                            double dx=pos[0]-P[j].Pos[0],dy=pos[1]-P[j].Pos[1],dz=pos[2]-P[j].Pos[2],r2; NEAREST_XYZ(dx,dy,dz,1); r2=dx*dx+dy*dy+dz*dz;
+                            Vec3<double> dr = pos - P[j].Pos; nearest_xyz(dr,1); double r2 = dr.norm_sq();
                             avg_RHII += P[j].Mass*sqrt(r2)*All.cf_atime*UNIT_LENGTH_IN_KPC;
                         }
                         mionized += prob*m_effective;

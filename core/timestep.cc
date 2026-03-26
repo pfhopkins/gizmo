@@ -56,7 +56,7 @@ void find_timesteps(void)
             if(P[i].Type==0)
             {
                 double vsig2 = 0.5  * fabs(CellP[i].MaxSignalVel); // in v_phys units //
-                double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i)*Get_Gas_effective_soundspeed_i(i) + fac_magnetic_pressure * (Get_Gas_BField(i,0)*Get_Gas_BField(i,0)+Get_Gas_BField(i,1)*Get_Gas_BField(i,1)+Get_Gas_BField(i,2)*Get_Gas_BField(i,2)) / CellP[i].Density );
+                double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i)*Get_Gas_effective_soundspeed_i(i) + fac_magnetic_pressure * Get_Gas_BField(i).norm_sq() / CellP[i].Density );
                 double vsig0 = DMAX(vsig1,vsig2);
 
                 if(vsig0 > fastwavespeed) fastwavespeed = vsig0; // physical unit
@@ -238,7 +238,7 @@ void find_timesteps(void)
     for(k=0;k<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;k++)
     {
         if(xyz_global[k][0] > -1.e10) { // this indicates that the special particle was active on one task
-            All.SpecialParticle_Position_ForRefinement[k][0] = xyz_global[k][0]; All.SpecialParticle_Position_ForRefinement[k][1] = xyz_global[k][1]; All.SpecialParticle_Position_ForRefinement[k][2] = xyz_global[k][2]; // variable was updated, update global variable as needed
+            All.SpecialParticle_Position_ForRefinement[k] = {xyz_global[k][0], xyz_global[k][1], xyz_global[k][2]}; // variable was updated, update global variable as needed
             if(special_particle_active_with_this_index[k]>=0) {P[special_particle_active_with_this_index[k]].Mass += mass_to_sum_global[k]; special_particle_mass_local[k] += mass_to_sum_global[k];} // the special particle lives here with this id, so we can update it with this mass
             All.Mass_Accreted_By_SpecialParticle[k] = 0; // reset this variable on all processors because we have added it now to the special particle, to conserve mass properly
         }
@@ -591,8 +591,7 @@ integertime get_timestep(int p,		/*!< particle index */
                 for(int k=0;k<3;k++)
                 {
                     b_grad += CellP[p].Gradients.B[k].norm_sq();
-                    double tmp_grad = Get_Gas_BField(p,k);
-                    b_mag += tmp_grad * tmp_grad;
+                    b_mag += Get_Gas_BField(p,k) * Get_Gas_BField(p,k);
                 }
                 double L_cond_inv = MIN_REAL_NUMBER + sqrt(b_grad / (MIN_REAL_NUMBER + b_mag));
                 double L_cond = DMAX(0.5*L_particle , DMIN(L_particle , 1./(L_cond_inv + 1./L_particle))) * All.cf_atime;
@@ -809,9 +808,7 @@ integertime get_timestep(int p,		/*!< particle index */
             double fac_magnetic_pressure = 1. / All.cf_atime;
             double phi_b_units = Get_Gas_PhiField(p) / ( All.cf_atime * CellP[p].MaxSignalVel);
             double vsig1 =  sqrt( Get_Gas_effective_soundspeed_i(p)*Get_Gas_effective_soundspeed_i(p) +
-                    fac_magnetic_pressure * (Get_Gas_BField(p,0)*Get_Gas_BField(p,0) +
-                                             Get_Gas_BField(p,1)*Get_Gas_BField(p,1)+
-                                             Get_Gas_BField(p,2)*Get_Gas_BField(p,2) +
+                    fac_magnetic_pressure * (Get_Gas_BField(p).norm_sq() +
                                              phi_b_units*phi_b_units) / CellP[p].Density );
 
             dt_courant = 0.8 * All.CourantFac * (All.cf_atime*L_particle) / vsig1; // 2.0 factor may be added (PFH) //

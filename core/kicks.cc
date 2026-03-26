@@ -449,7 +449,7 @@ void set_predicted_quantities_for_extra_physics(int i)
 #endif
 
 #ifdef EOS_ELASTIC
-        for(k=0;k<3;k++) {for(kf=0;kf<3;kf++) {CellP[i].Elastic_Stress_Tensor_Pred[k][kf]=CellP[i].Elastic_Stress_Tensor[k][kf];}}
+        CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor;
 #endif
         
         set_eos_pressure(i);
@@ -472,9 +472,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     {
         /* now we're going to check for physically reasonable phi values */
         double cs_phys = Get_Gas_effective_soundspeed_i(i);
-        double b_phys = 0.0;
-        for(j = 0; j < 3; j++) {b_phys += Get_Gas_BField(i,j)*Get_Gas_BField(i,j);}
-        b_phys = sqrt(b_phys)*All.cf_a2inv;
+        double b_phys = sqrt(Get_Gas_BField(i).norm_sq())*All.cf_a2inv;
         double vsig1 = sqrt(cs_phys*cs_phys + b_phys*b_phys/(CellP[i].Density*All.cf_a3inv));
         double vsig2 = 0.5 * fabs(CellP[i].MaxSignalVel);
         double vsig_max = DMAX( DMAX(vsig1,vsig2) , All.FastestWaveSpeed );

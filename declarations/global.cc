@@ -214,12 +214,12 @@ double return_timestep_dilation_factor(int i, int mode)
     int j, k; double rmin = MAX_REAL_NUMBER, r=0, a=1;
     for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
     {
-        double p0[3]={0}, dp[3]={0}, r2=0, pos_i[3];
-        for(k=0;k<3;k++) {p0[k] = All.SpecialParticle_Position_ForRefinement[j][k];}
-        if(mode==0) {for(k=0;k<3;k++) {pos_i[k]=P[i].Pos[k];}} /* the reference index refers to a real particle */
-            else {for(k=0;k<3;k++) {pos_i[k]=Nodes[i].u.d.s[k];}} /* the reference index refers to a node or pseudo-particle */
-        for(k=0;k<3;k++) {dp[k] = All.cf_atime*(pos_i[k] - p0[k]); r2 += dp[k]*dp[k];}
-        r = sqrt(r2); if(r < rmin) {rmin = r;}
+        Vec3<double> p0 = All.SpecialParticle_Position_ForRefinement[j];
+        Vec3<double> pos_i;
+        if(mode==0) {pos_i = P[i].Pos;} /* the reference index refers to a real particle */
+            else {pos_i = Nodes[i].u.d.s;} /* the reference index refers to a node or pseudo-particle */
+        Vec3<double> dp = All.cf_atime * (pos_i - p0);
+        r = dp.norm(); if(r < rmin) {rmin = r;}
     }
     r = rmin;
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)

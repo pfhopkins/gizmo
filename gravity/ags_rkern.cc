@@ -723,10 +723,10 @@ struct INPUT_STRUCT_NAME
     double V_i;
 #endif
 #if defined(DM_FUZZY)
-    double AGS_Gradients_Density[3], AGS_Gradients2_Density[3][3], AGS_Numerical_QuantumPotential;
+    Vec3<double> AGS_Gradients_Density; double AGS_Gradients2_Density[3][3], AGS_Numerical_QuantumPotential;
 #if (DM_FUZZY > 0)
-    double AGS_Psi_Re, AGS_Gradients_Psi_Re[3], AGS_Gradients2_Psi_Re[3][3];
-    double AGS_Psi_Im, AGS_Gradients_Psi_Im[3], AGS_Gradients2_Psi_Im[3][3];
+    double AGS_Psi_Re; Vec3<double> AGS_Gradients_Psi_Re; double AGS_Gradients2_Psi_Re[3][3];
+    double AGS_Psi_Im; Vec3<double> AGS_Gradients_Psi_Im; double AGS_Gradients2_Psi_Im[3][3];
 #endif
 #endif
 #if defined(CBE_INTEGRATOR)
@@ -757,15 +757,15 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {in->NV_T[k][k2] = P[i].NV_T[k][k2];}}
 #endif
 #if defined(DM_FUZZY)
-    for(k=0;k<3;k++) {in->AGS_Gradients_Density[k] = P[i].AGS_Gradients_Density[k];}
+    in->AGS_Gradients_Density = P[i].AGS_Gradients_Density;
     for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {in->AGS_Gradients2_Density[k][k2] = P[i].AGS_Gradients2_Density[k][k2];}}
     in->AGS_Numerical_QuantumPotential = P[i].AGS_Numerical_QuantumPotential;
 #if (DM_FUZZY > 0)
     in->AGS_Psi_Re = P[i].AGS_Psi_Re_Pred * P[i].AGS_Density / P[i].Mass;
-    for(k=0;k<3;k++) {in->AGS_Gradients_Psi_Re[k] = P[i].AGS_Gradients_Psi_Re[k];}
+    in->AGS_Gradients_Psi_Re = P[i].AGS_Gradients_Psi_Re;
     for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {in->AGS_Gradients2_Psi_Re[k][k2] = P[i].AGS_Gradients2_Psi_Re[k][k2];}}
     in->AGS_Psi_Im = P[i].AGS_Psi_Im_Pred * P[i].AGS_Density / P[i].Mass;
-    for(k=0;k<3;k++) {in->AGS_Gradients_Psi_Im[k] = P[i].AGS_Gradients_Psi_Im[k];}
+    in->AGS_Gradients_Psi_Im = P[i].AGS_Gradients_Psi_Im;
     for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {in->AGS_Gradients2_Psi_Im[k][k2] = P[i].AGS_Gradients2_Psi_Im[k][k2];}}
 #endif
 #endif

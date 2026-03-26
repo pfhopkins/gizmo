@@ -133,8 +133,7 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
         int j; double r2=0,r2min=MAX_REAL_NUMBER;
         for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
         {
-            double *ref = All.SpecialParticle_Position_ForRefinement[j];
-            r2 = (P[i].Pos - Vec3<double>{ref[0],ref[1],ref[2]}).norm_sq() * All.cf_atime * All.cf_atime;
+            r2 = (P[i].Pos - All.SpecialParticle_Position_ForRefinement[j]).norm_sq() * All.cf_atime * All.cf_atime;
             if(r2<r2min) {r2min=r2;}
         }
         r2 = r2min; // want minimum distance to nearest refinement center

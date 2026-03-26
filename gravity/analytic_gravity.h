@@ -169,7 +169,7 @@ void GravAccel_StaticPlummerSphere()
     {
         Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #endif
         double r2 = dp.norm_sq(), r = sqrt(r2);
         P[i].GravAccel += dp * (-1.0 / pow(r2 + 1, 1.5));
@@ -190,7 +190,7 @@ void GravAccel_StaticHernquist()
     {
         Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #endif
         double r2 = dp.norm_sq(), r = sqrt(r2), f = r+HQ_a, m = HQ_Mtot*(r/f)*(r/f);
         P[i].GravAccel += dp * (-All.G * m / (r2*r));
@@ -211,7 +211,7 @@ void GravAccel_StaticIsothermalSphere()
     {
         Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #endif
         double r2 = dp.norm_sq(), r = sqrt(r2);
         double m = ISO_Mmax; if(r < ISO_Rmax) {m *= r/ISO_Rmax;} /* mass enclosed ~r, until Rmax, where it cuts off and remains constant */
@@ -233,8 +233,7 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
         for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
         {
             double r2, r, r_cut;
-            double *ref=All.SpecialParticle_Position_ForRefinement[j];
-            Vec3<double> dp = (P[i].Pos - Vec3<double>{ref[0],ref[1],ref[2]}) * All.cf_atime;
+            Vec3<double> dp = (P[i].Pos - All.SpecialParticle_Position_ForRefinement[j]) * All.cf_atime;
             r2=dp.norm_sq(); r=sqrt(r2);
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES <= 1)
             r_cut = 0.2 * All.HubbleParam;
@@ -345,7 +344,7 @@ void GravAccel_GrowingDiskPotential()
     {
         Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #endif
         r2 = dp[0]*dp[0] + dp[1]*dp[1];
         Zterm = sqrt(z_disk*z_disk + dp[2]*dp[2]); /* sqrt((Zdisk^2 + dZ^2); appears several times  */
@@ -366,7 +365,7 @@ void GravAccel_KeplerianOrbit()
     {
         Vec3<double> dp = P[i].Pos;
 #if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #elif defined(BOX_PERIODIC)
         dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
 #endif
@@ -419,7 +418,7 @@ void GravAccel_StaticNFW()
     {
         Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #elif defined(BOX_PERIODIC)
         dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
 #endif
@@ -440,7 +439,7 @@ void GravAccel_PaczynskiWiita()
     {
         Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-        dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+        dp = -P[i].Min_xyz_to_Sink;
 #endif
         double r2 = dp.norm_sq(), r = sqrt(r2), r_g = 2*PACZYNSKI_WIITA_MASS;
         if(r > r_g)
@@ -466,7 +465,7 @@ void apply_excision(void)
         for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
         {
             if(All.SpecialParticle_Position_ForRefinement[j][0] <= -1.e10) {continue;} /* no valid position to use */
-            double *ref2=All.SpecialParticle_Position_ForRefinement[j]; double r2=(P[i].Pos-Vec3<double>{ref2[0],ref2[1],ref2[2]}).norm_sq();
+            double r2=(P[i].Pos-All.SpecialParticle_Position_ForRefinement[j]).norm_sq();
             if(r2 < excision_radius2)
             {
                 All.Mass_Accreted_By_SpecialParticle[j] += P[i].Mass;
@@ -487,7 +486,7 @@ void apply_excision(void)
         {
             Vec3<double> dp = P[i].Pos;
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
-            dp = -Vec3<double>(P[i].Min_xyz_to_Sink);
+            dp = -P[i].Min_xyz_to_Sink;
 #endif
             double r2 = dp.norm_sq(), r = sqrt(r2);
             if(r < excision_radius) {P[i].Mass = 0;}

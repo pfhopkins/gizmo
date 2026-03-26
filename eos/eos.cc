@@ -269,7 +269,7 @@ double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i)
 double Get_Gas_Alfven_speed_i(int i)
 {
 #if defined(MAGNETIC)
-    int k; double bmag=0; for(k=0;k<3;k++) {bmag+=Get_Gas_BField(i,k)*All.cf_a2inv * Get_Gas_BField(i,k)*All.cf_a2inv;}
+    double bmag = (Get_Gas_BField(i) * All.cf_a2inv).norm_sq();
     if(bmag > 0) {return sqrt(bmag / (MIN_REAL_NUMBER + CellP[i].Density*All.cf_a3inv));}
 #endif
     return 0;
@@ -293,13 +293,23 @@ double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component)
     return 0;
 }
 
+/* Vec3 overload: return the full B-field vector (comoving units) */
+Vec3<double> Get_Gas_BField(int i_particle_id)
+{
+#if defined(MAGNETIC)
+    double fac = CellP[i_particle_id].Density / P[i_particle_id].Mass;
+    return CellP[i_particle_id].BPred * fac;
+#endif
+    return {};
+}
+
 
 /* handy function that just returns the B-field magnitude in microGauss, physical units. purely here to save us time re-writing this */
 double get_cell_Bfield_in_microGauss(int i)
 {
     double Bmag=0;
 #ifdef MAGNETIC
-    int k; for(k=0;k<3;k++) {double B=Get_Gas_BField(i,k)*All.cf_a2inv; Bmag+=B*B;} // actual B-field in code units
+    Bmag = (Get_Gas_BField(i) * All.cf_a2inv).norm_sq(); // actual B-field in code units
 #else
     Bmag=2.*CellP[i].Pressure*All.cf_a3inv; // assume equipartition
 #endif
@@ -639,7 +649,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i)
 #endif
     // now define more variables we will need below //
     double gizmo2gauss = UNIT_B_IN_GAUSS; // convert to B-field to gauss (units)
-    double B_Gauss = 0; int k; for(k=0;k<3;k++) {B_Gauss += Get_Gas_BField(i,k)*Get_Gas_BField(i,k);} // get magnitude of B //
+    double B_Gauss = Get_Gas_BField(i).norm_sq(); // get magnitude of B //
     if(B_Gauss<=0) {B_Gauss=0;} else {B_Gauss = sqrt(B_Gauss) * All.cf_a2inv * gizmo2gauss;} // B-field magnitude in Gauss
     double xe = n_elec / n_eff;
     double xi = n_ion / n_eff;
@@ -721,7 +731,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i)
 #endif
     double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i); cs_therm=Get_Gas_thermal_soundspeed_i(i); vf_lim = cs;
 #ifdef MAGNETIC
-    Vec3<double> bhat={}; double bmag=0,double_dot_dv=0; for(k=0;k<3;k++) {bhat[k]=Get_Gas_BField(i,k);}
+    Vec3<double> bhat = Get_Gas_BField(i); double bmag=0,double_dot_dv=0;
     bmag=bhat.norm_sq(); if(bmag>0) {bmag = sqrt(bmag); bhat/=bmag;}
     beta_i = bmag*bmag  * All.cf_a3inv / (All.cf_atime * rho * cs_therm * cs_therm);
     vf_lim *= DMIN(1.e4 , sqrt(1.+beta_i));

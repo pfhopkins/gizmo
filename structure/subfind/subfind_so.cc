@@ -44,11 +44,11 @@ int Subfind_DensityOtherProps_evaluate(int target, int mode, int *nexport, int *
       if(ngb < 0) {return -2;}
       for(n = 0; n < ngb; n++)
         { j = Ngblist[n];
-            double dp[3]; for(k=0;k<3;k++) {dp[k]=P[j].Pos[k]-subhalo_pos[k];} NEAREST_XYZ(dp[0],dp[1],dp[2],-1); double r2=dp[0]*dp[0]+dp[1]*dp[1]+dp[2]*dp[2]; if(r2>Hsearch*Hsearch) continue; /* position offset */
+            Vec3<double> dr; for(k=0;k<3;k++) {dr[k]=P[j].Pos[k]-subhalo_pos[k];} nearest_xyz(dr,-1); double r2=dr.norm_sq(); if(r2>Hsearch*Hsearch) continue; /* position offset */
             out.M200+=P[j].Mass;
             
 #ifdef SUBFIND_ADDIO_VELDISP
-            for(k=0;k<3;k++) {double dv=P[j].Vel[k]/All.cf_atime+All.cf_hubble_a*All.cf_atime*dp[k]; out.V200[k]+=P[j].Mass*dv; out.Disp200+=P[j].Mass*dv*dv;}
+            for(k=0;k<3;k++) {double dv=P[j].Vel[k]/All.cf_atime+All.cf_hubble_a*All.cf_atime*dr[k]; out.V200[k]+=P[j].Mass*dv; out.Disp200+=P[j].Mass*dv*dv;}
 #endif
 #ifdef SUBFIND_ADDIO_BARYONS
             if(P[j].Type==0)

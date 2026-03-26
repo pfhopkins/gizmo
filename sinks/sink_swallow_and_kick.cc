@@ -35,7 +35,7 @@ struct INPUT_STRUCT_NAME
 {
     int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; Vec3<MyFloat> Vel; MyFloat KernelRadius, Mass, Sink_Mass, Dt, Mdot; MyIDType ID, ID_child_number, ID_generation;
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) || defined(SINK_WIND_KICK)
-    MyFloat Jgas_in_Kernel[3];
+    Vec3<MyFloat> Jgas_in_Kernel;
 #endif
 #ifdef SINK_ALPHADISK_ACCRETION
     MyFloat Sink_Mass_Reservoir;
@@ -47,7 +47,7 @@ struct INPUT_STRUCT_NAME
     Vec3<MyFloat> Sink_Specific_AngMom; MyFloat angmom_norm_topass_in_swallowloop;
 #endif
 #if defined(SINK_RETURN_BFLUX)
-    MyFloat B[3];
+    Vec3<MyFloat> B;
     MyFloat kernel_norm_topass_in_swallowloop;
 #endif
 #ifdef SINGLE_STAR_FB_LOCAL_RP
@@ -64,9 +64,9 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->KernelRadius = P[i].KernelRadius; in->Mass = P[i].Mass; in->Sink_Mass = P[i].Sink_Mass; in->ID = P[i].ID; in->ID_child_number=P[i].ID_child_number; in->ID_generation=P[i].ID_generation; in->Mdot = P[i].Sink_Mdot;
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) || defined(SINK_WIND_KICK)
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-    in->Jgas_in_Kernel[0]=P[i].Sink_Specific_AngMom[0]; in->Jgas_in_Kernel[1]=P[i].Sink_Specific_AngMom[1]; in->Jgas_in_Kernel[2]=P[i].Sink_Specific_AngMom[2];
+    in->Jgas_in_Kernel = P[i].Sink_Specific_AngMom;
 #else
-    in->Jgas_in_Kernel[0]=SinkTempInfo[j_tempinfo].Jgas_in_Kernel[0]; in->Jgas_in_Kernel[1]=SinkTempInfo[j_tempinfo].Jgas_in_Kernel[1]; in->Jgas_in_Kernel[2]=SinkTempInfo[j_tempinfo].Jgas_in_Kernel[2];
+    in->Jgas_in_Kernel = SinkTempInfo[j_tempinfo].Jgas_in_Kernel;
 #endif
 #endif
 #ifdef SINK_ALPHADISK_ACCRETION
@@ -84,7 +84,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->angmom_norm_topass_in_swallowloop = SinkTempInfo[j_tempinfo].angmom_norm_topass_in_swallowloop;
 #endif
 #if defined(SINK_RETURN_BFLUX)
-    in->B[0]=P[i].B[0]; in->B[1]=P[i].B[1]; in->B[2]=P[i].B[2];
+    in->B = P[i].B;
     in->kernel_norm_topass_in_swallowloop = SinkTempInfo[j_tempinfo].kernel_norm_topass_in_swallowloop;
 #endif
 #ifdef SINGLE_STAR_FB_LOCAL_RP
@@ -109,17 +109,17 @@ struct OUTPUT_STRUCT_NAME
     MyDouble accreted_photon_energy;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
-    MyDouble accreted_momentum[3];
+    Vec3<MyDouble> accreted_momentum;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_COM)
-    MyDouble accreted_centerofmass[3];
+    Vec3<MyDouble> accreted_centerofmass;
 #endif
 #if defined(SINK_RETURN_BFLUX)
-    MyDouble accreted_B[3];
+    Vec3<MyDouble> accreted_B;
 //    MyDouble accreted_Phi;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-    MyDouble accreted_J[3];
+    Vec3<MyDouble> accreted_J;
 #endif
 #ifdef SINK_COUNTPROGS
     int Sink_CountProgs;
@@ -148,16 +148,16 @@ static inline void OUTPUTFUNCTION_NAME(struct OUTPUT_STRUCT_NAME *out, int i, in
     ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_photon_energy, out->accreted_photon_energy, mode);
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
-    for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_momentum[k], out->accreted_momentum[k], mode);}
+    ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_momentum, out->accreted_momentum, mode);
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_COM)
-    for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_centerofmass[k], out->accreted_centerofmass[k], mode);}
+    ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_centerofmass, out->accreted_centerofmass, mode);
 #endif
 #if defined(SINK_RETURN_BFLUX)
-    for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_B[k], out->accreted_B[k], mode);}
+    ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_B, out->accreted_B, mode);
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-    for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_J[k], out->accreted_J[k], mode);}
+    ASSIGN_ADD_PRESET(SinkTempInfo[target].accreted_J, out->accreted_J, mode);
 #endif
 #ifdef SINK_COUNTPROGS
     P[i].Sink_CountProgs += out->Sink_CountProgs;
@@ -239,13 +239,10 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
 #if defined(SINK_RETURN_ANGMOM_TO_GAS) /* this should go here [right before the loop that accretes it back onto the BH] */
                 if(P[j].Type == 0)
                 {
-                    double dlv[3]; dlv[0]=local.Sink_Specific_AngMom[1]*dpos[2]-local.Sink_Specific_AngMom[2]*dpos[1]; dlv[1]=local.Sink_Specific_AngMom[2]*dpos[0]-local.Sink_Specific_AngMom[0]*dpos[2]; dlv[2]=local.Sink_Specific_AngMom[0]*dpos[1]-local.Sink_Specific_AngMom[1]*dpos[0];
-                    for(k=0;k<3;k++) {
-                        dlv[k] *= wk * local.angmom_norm_topass_in_swallowloop;
-                        Vel_j[k] += dlv[k];
-                        out.accreted_momentum[k]-=Mass_j*dlv[k];
-                    }
-                    out.accreted_J[0]-=Mass_j*(dpos[1]*dlv[2] - dpos[2]*dlv[1]); out.accreted_J[1]-=Mass_j*(dpos[2]*dlv[0] - dpos[0]*dlv[2]); out.accreted_J[2]-=Mass_j*(dpos[0]*dlv[1] - dpos[1]*dlv[0]);
+                    Vec3<double> dlv = cross(local.Sink_Specific_AngMom, dpos) * (wk * local.angmom_norm_topass_in_swallowloop);
+                    for(k=0;k<3;k++) {Vel_j[k] += dlv[k];}
+                    out.accreted_momentum -= Mass_j * dlv;
+                    out.accreted_J -= Mass_j * cross(dpos, dlv);
                 }
 #endif
 #if defined(SINK_RETURN_BFLUX) // do a kernel-weighted redistribution of the magnetic flux in the sink into surrounding particles
@@ -298,19 +295,17 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
 		            }
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
-                    for(k=0;k<3;k++) {out.accreted_momentum[k] += ( mcount_for_conserve * dvel[k]);}
+                    out.accreted_momentum += mcount_for_conserve * dvel;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_COM)
-                    for(k=0;k<3;k++) {out.accreted_centerofmass[k] += (mcount_for_conserve * dpos[k]);}
+                    out.accreted_centerofmass += mcount_for_conserve * dpos;
 #endif
 #ifdef SINK_RETURN_BFLUX
-                    for(k=0;k<3;k++) {out.accreted_B[k] += (CellP[j].BPred[k]);}
+                    out.accreted_B += CellP[j].BPred;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                    out.accreted_J[0] += (mcount_for_conserve * ( dpos[1]*dvel[2] - dpos[2]*dvel[1] ));
-                    out.accreted_J[1] += (mcount_for_conserve * ( dpos[2]*dvel[0] - dpos[0]*dvel[2] ));
-                    out.accreted_J[2] += (mcount_for_conserve * ( dpos[0]*dvel[1] - dpos[1]*dvel[0] ));
-                    if(P[j].Type == 5) {for(k=0;k<3;k++) {out.accreted_J[k] += (mcount_for_conserve * P[j].Sink_Specific_AngMom[k]);}}
+                    out.accreted_J += mcount_for_conserve * cross(dpos, dvel);
+                    if(P[j].Type == 5) {out.accreted_J += mcount_for_conserve * P[j].Sink_Specific_AngMom;}
 #endif
 
                     
@@ -406,15 +401,15 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         double Mass_initial = Mass_j; // save this for possible IO below
                         Mass_j *= (1-f_accreted);
 #ifdef SINK_WIND_KICK     /* BAL kicking operations. NOTE: we have two separate BAL wind models, particle kicking and smooth wind model. This is where we do the particle kicking BAL model. This should also work when there is alpha-disk. */
-                        double v_kick=All.Sink_outflow_velocity, dir[3]={dpos[0],dpos[1],dpos[2]}; // DAA: default direction is radially outwards
+                        double v_kick=All.Sink_outflow_velocity; Vec3<double> dir={dpos[0],dpos[1],dpos[2]}; // DAA: default direction is radially outwards
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
                         double dEcr = All.Sink_CosmicRay_Injection_Efficiency * Mass_j * (All.Sink_accreted_fraction/(1.-All.Sink_accreted_fraction)) * C_LIGHT_CODE*C_LIGHT_CODE;
-                        inject_cosmic_rays(dEcr,All.Sink_outflow_velocity,5,j,dir);
+                        inject_cosmic_rays(dEcr,All.Sink_outflow_velocity,5,j,dir.data_ptr());
 #endif
 #if (SINK_WIND_KICK < 0)  /* DAA: along polar axis defined by angular momentum within Kernel (we could add finite opening angle) work out the geometry w/r to the plane of the disk */
-                        if(dot(Vec3<double>{dir[0],dir[1],dir[2]},J_dir) > 0){dir[0]=J_dir[0];dir[1]=J_dir[1];dir[2]=J_dir[2];} else {dir[0]=-J_dir[0];dir[1]=-J_dir[1];dir[2]=-J_dir[2];}
+                        if(dot(dir,J_dir) > 0){dir=J_dir;} else {dir=-J_dir;}
 #endif
-                        for(k=0,norm=0;k<3;k++) {norm+=dir[k]*dir[k];} if(norm<=0) {dir[0]=0;dir[1]=0;dir[2]=1;norm=1;} else {norm=sqrt(norm); dir[0]/=norm;dir[1]/=norm;dir[2]/=norm;}
+                        norm=dir.norm_sq(); if(norm<=0) {dir={0,0,1};norm=1;} else {norm=sqrt(norm); dir/=norm;}
                         for(k=0;k<3;k++) {Vel_j[k]+=v_kick*All.cf_atime*dir[k];}
 #ifdef GALSF_SUBGRID_WINDS // if sub-grid galactic winds are decoupled from the hydro, we decouple the sink kick winds as well
                         #pragma omp atomic write
@@ -428,9 +423,9 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic
                         N_gas_swallowed++;
 #ifdef OUTPUT_SINK_ACCRETION_HIST
-                        MyDouble tempB[3]={0,0,0};
+                        Vec3<MyDouble> tempB={};
 #ifdef MAGNETIC
-                        for(k=0;k<3;k++) {tempB[k]=Get_Gas_BField(j,k);} //use particle magnetic field
+                        tempB = Get_Gas_BField(j); //use particle magnetic field
 #endif
                         fprintf(FdSinkSwallowDetails,"%.16g %llu %llu %llu %g %2.16g %2.16g %2.16g %llu %llu %llu %g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g\n", All.Time, (unsigned long long)local.ID,(unsigned long long)local.ID_child_number,(unsigned long long)local.ID_generation,local.Mass,local.Pos[0],local.Pos[1],local.Pos[2],  (unsigned long long)P[j].ID, (unsigned long long)P[j].ID_child_number, (unsigned long long)P[j].ID_generation, Mass_initial, (P[j].Pos[0]-local.Pos[0]),(P[j].Pos[1]-local.Pos[1]),(P[j].Pos[2]-local.Pos[2]), (Vel_j[0]-local.Vel[0]),(Vel_j[1]-local.Vel[1]),(Vel_j[2]-local.Vel[2]), CellP[j].InternalEnergy, tempB[0], tempB[1], tempB[2], CellP[j].Density); fflush(FdSinkSwallowDetails);
 #endif
@@ -444,11 +439,11 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                 /* now, do any other feedback "kick" operations (which used the previous loops to calculate weights) */
                 if(mom>0 && local.Dt>0 && OriginallyMarkedSwallowID==0 && P[j].SwallowID==0 && Mass_j>0 && P[j].Type==0) // particles NOT being swallowed!
                 {
-                    double r=dpos.norm_sq(); double dir[3]={dpos[0],dpos[1],dpos[2]}; // should be away from BH
+                    double r=dpos.norm_sq(); Vec3<double> dir={dpos[0],dpos[1],dpos[2]}; // should be away from BH
                     if(r>0)
                     {
-                        r=sqrt(r); dir[0]/=r; dir[1]/=r; dir[2]/=r; /* cos_theta with respect to disk of sink is given by dot product of r and Jgas */
-                        norm=dot(Vec3<double>{dir[0],dir[1],dir[2]},J_dir);
+                        r=sqrt(r); dir/=r; /* cos_theta with respect to disk of sink is given by dot product of r and Jgas */
+                        norm=dot(dir,J_dir);
                         mom_wt = sink_fb_angleweight_localcoupling(j,norm,r,h_i) / local.Sink_angle_weighted_kernel_sum;
                         if(local.Sink_angle_weighted_kernel_sum<=0) {mom_wt=0;}
 #ifdef SINK_PHOTONMOMENTUM /* inject radiation pressure: add initial L/c optical/UV coupling to the gas at the dust sublimation radius */
@@ -783,7 +778,7 @@ void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<doubl
 #else /* set B-fields to be weak relative to local ISM values */
 
     double Bmag=0, Bmag_0=0;
-    for(k=0;k<3;k++) {double B=CellP[j].B[k]*All.cf_a2inv/volume_for_BtoVB; Bmag+=B*B; Bmag_0+=CellP[j].B[k]*CellP[j].B[k];} // get actual Bfield
+    {auto Bphys = CellP[j].B * (All.cf_a2inv/volume_for_BtoVB); Bmag = Bphys.norm_sq(); Bmag_0 = CellP[j].B.norm_sq();} // get actual Bfield
     double Bmag_low_rel_to_progenitor = 1.e-10 * sqrt(Bmag); // set to some extremely low value relative to cloned element
     double u_internal_new_cell = All.Sink_outflow_temperature / (  0.59 * (5./3.-1.) * U_TO_TEMP_UNITS ); // internal energy of new wind cell
     double Bmag_low_rel_to_pressure = 1.e-3 * sqrt(2.*CellP[j].Density*All.cf_a3inv * u_internal_new_cell); // set to beta = 1e6

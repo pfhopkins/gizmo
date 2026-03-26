@@ -371,6 +371,7 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
 double yhelium(int target);
 double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0);
 double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component);
+Vec3<double> Get_Gas_BField(int i_particle_id);
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i);
 #ifdef DIVBCLEANING_DEDNER
@@ -1002,16 +1003,16 @@ double do_cbe_nvt_inversion_for_faces(int i);
 void do_dm_fuzzy_initialization(void);
 void do_dm_fuzzy_drift_kick(int pindex, double dt_entr, int mode);
 void DMGrad_gradient_calc(void);
-void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double prev_a, double dv[3],
+void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double prev_a, Vec3<double>& dv,
                                   double GradRho_L[3], double GradRho_R[3],
                                   double GradRho2_L[3][3], double GradRho2_R[3][3],
                                   double rho_L, double rho_R, double dv_Right_minus_Left,
-                                  double Area[3], double fluxes[3], double AGS_Numerical_QuantumPotential_L, double AGS_Numerical_QuantumPotential_R, double *dt_egy_Numerical_QuantumPotential);
-void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double prev_a, double dp[3], double dv[3],
+                                  Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential_L, double AGS_Numerical_QuantumPotential_R, double *dt_egy_Numerical_QuantumPotential);
+void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double prev_a, Vec3<double>& dp, Vec3<double>& dv,
                                   double GradRho_L[3], double GradRho_R[3],
                                   double GradRho2_L[3][3], double GradRho2_R[3][3],
                                   double rho_L, double rho_R, double dv_Right_minus_Left,
-                                  double Area[3], double fluxes[3], double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential);
+                                  Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential);
 void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, double dq_R_0[3], double q_L, double dq_L_0[3], double dx[3]);
 void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
                                          double q_R, double dq_R[3], double d2q_R[3][3],

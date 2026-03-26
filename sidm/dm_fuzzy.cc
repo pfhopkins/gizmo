@@ -23,14 +23,16 @@
 
 
 
-void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double prev_a, double dv[3],
+void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double prev_a, Vec3<double>& dv,
                                   double GradRho_L[3], double GradRho_R[3],
                                   double GradRho2_L[3][3], double GradRho2_R[3][3],
                                   double rho_L, double rho_R, double dv_Right_minus_Left,
-                                  double Area[3], double fluxes[3], double AGS_Numerical_QuantumPotential_L, double AGS_Numerical_QuantumPotential_R, double *dt_egy_Numerical_QuantumPotential)
+                                  Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential_L, double AGS_Numerical_QuantumPotential_R, double *dt_egy_Numerical_QuantumPotential)
 {
     double f00 = 0.5 * All.ScalarField_hbar_over_mass; f00*=f00; // this encodes the coefficient with the mass of the particle: units vel*L = hbar / particle_mass
-    double gamma_eff=5./3., PL_dot_A[3]={0}, PR_dot_A[3]={0}, PL_dot_AA=0, PR_dot_AA=0, Face_Area_Norm=0, rSi=1./(rho_L+rho_R), QL=0, QR=0; int m,k;
+    double gamma_eff=5./3., PL_dot_AA=0, PR_dot_AA=0, rSi=1./(rho_L+rho_R), QL=0, QR=0; int m,k;
+    Vec3<double> PL_dot_A={0,0,0}, PR_dot_A={0,0,0};
+    double Face_Area_Norm = Area.norm_sq();
     for(m=0;m<3;m++) {QL+=GradRho2_L[m][m] - 0.5*GradRho_L[m]*GradRho_L[m]/rho_L; QR+=GradRho2_R[m][m] - 0.5*GradRho_R[m]*GradRho_R[m]/rho_R;} // compute the quantum potential (multiplied by rho to be an energy density to match units of PN)
     double PN_L=(gamma_eff-1.)*(AGS_Numerical_QuantumPotential_L-f00*QL), PN_R=(gamma_eff-1.)*(AGS_Numerical_QuantumPotential_R-f00*QR); PN_L=DMAX(PN_L,0); PN_R=DMAX(PN_R,0); // compute actual scalar-pressure terms and limit to be positive definite
     for(m=0;m<3;m++)
@@ -40,39 +42,38 @@ void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double prev_a, double
             PL_dot_A[m] += Area[k] * f00*(GradRho_L[m]*GradRho_L[k]/rho_L - GradRho2_L[m][k]); // convert grad^2_rho ~ rho/L^2 from code units to physical [should already all be physical here]
             PR_dot_A[m] += Area[k] * f00*(GradRho_R[m]*GradRho_R[k]/rho_R - GradRho2_R[m][k]); // convert grad^2_rho ~ rho/L^2 from code units to physical [should already all be physical here]
         }
-        Face_Area_Norm += Area[m]*Area[m]; PL_dot_AA += PL_dot_A[m]*Area[m]; PR_dot_AA += PR_dot_A[m]*Area[m]; // compute area and normal scalar component of pressure tensor
         fluxes[m] = (rho_L*(PR_dot_A[m]+PN_R*Area[m]) + rho_R*(PL_dot_A[m]+PN_L*Area[m])) * rSi; // term needed for Pstar-dot-A
     }
+    PL_dot_AA = dot(PL_dot_A, Area); PR_dot_AA = dot(PR_dot_A, Area); // compute normal scalar component of pressure tensor
     PL_dot_AA /= Face_Area_Norm; PR_dot_AA /= Face_Area_Norm; Face_Area_Norm=sqrt(Face_Area_Norm); // define projected normal pressure components
     double PL_norm = PL_dot_AA + PN_L, PR_norm = PR_dot_AA + PN_L, cs_L = gamma_eff*PL_norm/rho_L, cs_R = gamma_eff*PR_norm/rho_R, cs=DMAX(cs_L,cs_R), ceff=cs; // get projected components, plus pure pressure, to sound speed as defined for adiabatic perturb here
     if(dv_Right_minus_Left < 0) {ceff+=fabs(dv_Right_minus_Left);} // this is the necessary upwind step for approaching cells
-    for(m=0;m<3;m++) {fluxes[m]-=rho_L*rho_R*rSi*ceff*dv_Right_minus_Left*Area[m];} // numerical HLLC flux in star frame from upwinding appropriately
+    fluxes -= rho_L*rho_R*rSi*ceff*dv_Right_minus_Left*Area; // numerical HLLC flux in star frame from upwinding appropriately
     double S_M = ((PL_norm-PR_norm)/ceff + 0.5*(rho_R-rho_L)*dv_Right_minus_Left)*rSi; // contact wave speed (oriented in Area[m] direction)
-    *dt_egy_Numerical_QuantumPotential=0; for(m=0;m<3;m++) {*dt_egy_Numerical_QuantumPotential += fluxes[m]*(S_M*Area[m]/Face_Area_Norm - 0.5*dv[m]);} // numerical flux for energy
+    *dt_egy_Numerical_QuantumPotential = dot(fluxes, S_M*Area/Face_Area_Norm - 0.5*dv); // numerical flux for energy
     return;
 }
 
 
 
-void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double prev_a, double dp[3], double dv[3],
+void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double prev_a, Vec3<double>& dp, Vec3<double>& dv,
                                   double GradRho_L[3], double GradRho_R[3],
                                   double GradRho2_L[3][3], double GradRho2_R[3][3],
                                   double rho_L, double rho_R, double dv_Right_minus_Left,
-                                  double Area[3], double fluxes[3], double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential)
+                                  Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential)
 {
     if(dt <= 0) return; // no timestep, no flux
     int m,n;
     double f00 = 0.5 * All.ScalarField_hbar_over_mass; // this encodes the coefficient with the mass of the particle: units vel*L = hbar / particle_mass
     // (0.5=1/2, pre-factor from dimensionless equations; 591569 = hbar/eV in cm^2/s; add mass in eV, and put in code units
-    double f2 = f00*f00, rhoL_i=1./rho_L, rhoR_i=1./rho_R, r2=0, rSi=1./(rho_L+rho_R); *dt_egy_Numerical_QuantumPotential=0;
-    for(m=0;m<3;m++) {r2+=dp[m]*dp[m]; fluxes[m]=0;} /* zero fluxes and calculate separation */
+    double f2 = f00*f00, rhoL_i=1./rho_L, rhoR_i=1./rho_R, rSi=1./(rho_L+rho_R); *dt_egy_Numerical_QuantumPotential=0;
+    double r2 = dp.norm_sq(); fluxes = {0,0,0}; /* zero fluxes and calculate separation */
     if(r2 <= 0) return; // same element
     double r=sqrt(r2), wavespeed=2.*f00*(M_PI/r); // approximate k = 2pi/lambda = 2pi/(2*dr) as the maximum k the code will allow locally */
     /* note that the QPT admits waves parallel to k, with wavespeed omega = pm 2*f00*k, so include these for HLLC solution */
     if(dv_Right_minus_Left > wavespeed) return; // elements are receding super-sonically, no way to communicate pressure //
 
-    double fluxmag=0, Face_Area_Norm=0; for(m=0;m<3;m++) {Face_Area_Norm+=Area[m]*Area[m];}
-    Face_Area_Norm=sqrt(Face_Area_Norm);
+    double Face_Area_Norm = sqrt(Area.norm_sq());
 
     for(m=0;m<3;m++)
     {
@@ -86,11 +87,10 @@ void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double
             fluxes[m] += Area[n] * P_star; /* momentum flux into direction 'm' given by Area.Pressure */
             // sign convention here: -Area[m] * (positive definite) => repulsive force, +Area[m] => attractive
         }
-        fluxmag += fluxes[m]*fluxes[m];
     }
-    fluxmag = sqrt(fluxmag);
+    double fluxmag = fluxes.norm();
     double fluxmax = 100. * Face_Area_Norm * f2 * 0.5*(rho_L+rho_R) / (r*r); // limiter to prevent crazy values where derivatives are ill-posed (e.g. discontinuities)
-    if(fluxmag > fluxmax) {for(m=0;m<3;m++) {fluxes[m] *= fluxmax/fluxmag;}}
+    if(fluxmag > fluxmax) {fluxes *= fluxmax/fluxmag;}
 
     for(m=0;m<3;m++)
     {
@@ -99,7 +99,7 @@ void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double
         *dt_egy_Numerical_QuantumPotential -= 0.5*ftmp*dv[m]; // PdV work from this pressure term //
         fluxes[m] += ftmp; // add numerical 'pressure' stored from previous timesteps //
     }
-    fluxmag=0; for(m=0;m<3;m++) {fluxmag += fluxes[m]*fluxes[m];} if(fluxmag > 0) {fluxmag = sqrt(fluxmag);} else {fluxmag = 0;}
+    fluxmag = fluxes.norm();
 
     /* now we have to introduce the numerical diffusivity (the up-wind mixing part from the Reimann problem);
      this can have one of a couple forms, but the most accurate and stable appears to be the traditional HLLC form which we use by default below */
@@ -123,8 +123,7 @@ void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double
         k_eff = DMIN(DMAX(k_gtan , DMAX(DMAX((3.+HLLwt)*DMAX(k_d1,k_g1), (2.+HLLwt)*k_g2)  , (1.5+HLLwt)*k_g3)) , 1./r);
         if(isnan(k_eff)) {k_eff=0;} // trap
         double Pstar = (-dv_Right_minus_Left)*(f00*k_eff + (-dv_Right_minus_Left))*rho_L*rho_R*rSi; // HLLC diffusive term
-        fluxmag = 0; for(m=0;m<3;m++) {fluxmag += fluxes[m]*fluxes[m];}
-        fluxmag = sqrt(fluxmag);
+        fluxmag = fluxes.norm();
         for(m=0;m<3;m++)
         {
             double f_dir = Area[m]*Pstar, fmax = 0.5 * m0 * fabs(dv[m]) / dt; // assume the face points along the line between particles (very similar, but slightly more stable/diffusive if faces are highly-irregular)
@@ -227,9 +226,8 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 
 void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, double dq_R_0[3], double q_L, double dq_L_0[3], double dx[3])
 {
-    int k;
-    double dq_L=0; for(k=0;k<3;k++) {dq_L += 0.5*dx[k]*dq_L_0[k];}
-    double dq_R=0; for(k=0;k<3;k++) {dq_R -= 0.5*dx[k]*dq_R_0[k];}
+    double dq_L=0; for(int k=0;k<3;k++) {dq_L += 0.5*dx[k]*dq_L_0[k];}
+    double dq_R=0; for(int k=0;k<3;k++) {dq_R -= 0.5*dx[k]*dq_R_0[k];}
     double q0=q_L, u_L=0, u_R=0; q_L-=q0; q_R-=q0;
     //double qmid = 0.5*q_R;
 
@@ -285,7 +283,7 @@ static struct temporary_dmgradients_data_topass
 }
 *DMGradDataPasser;
 
-struct kernel_DMGrad {double dp[3],r,wk_i, wk_j, dwk_i, dwk_j,h_i;};
+struct kernel_DMGrad {Vec3<double> dp; double r,wk_i, wk_j, dwk_i, dwk_j,h_i;};
 
 
 
@@ -312,12 +310,12 @@ static inline void particle2in_DMGrad(struct INPUT_STRUCT_NAME *in, int i, int l
     in->AGS_KernelRadius = P[i].AGS_KernelRadius;
     in->Type = P[i].Type;
     in->GQuant.AGS_Density = P[i].AGS_Density;
-    in->GQuant.AGS_Gradients_Density[0] = P[i].AGS_Gradients_Density[0]; in->GQuant.AGS_Gradients_Density[1] = P[i].AGS_Gradients_Density[1]; in->GQuant.AGS_Gradients_Density[2] = P[i].AGS_Gradients_Density[2];
+    for(int k=0;k<3;k++) {in->GQuant.AGS_Gradients_Density[k] = P[i].AGS_Gradients_Density[k];}
 #if (DM_FUZZY > 0)
     in->GQuant.AGS_Psi_Re = P[i].AGS_Psi_Re_Pred * P[i].AGS_Density / P[i].Mass;
-    in->GQuant.AGS_Gradients_Psi_Re[0] = P[i].AGS_Gradients_Psi_Re[0]; in->GQuant.AGS_Gradients_Psi_Re[1] = P[i].AGS_Gradients_Psi_Re[1]; in->GQuant.AGS_Gradients_Psi_Re[2] = P[i].AGS_Gradients_Psi_Re[2];
+    for(int k=0;k<3;k++) {in->GQuant.AGS_Gradients_Psi_Re[k] = P[i].AGS_Gradients_Psi_Re[k];}
     in->GQuant.AGS_Psi_Im = P[i].AGS_Psi_Im_Pred * P[i].AGS_Density / P[i].Mass;
-    in->GQuant.AGS_Gradients_Psi_Im[0] = P[i].AGS_Gradients_Psi_Im[0]; in->GQuant.AGS_Gradients_Psi_Im[1] = P[i].AGS_Gradients_Psi_Im[1]; in->GQuant.AGS_Gradients_Psi_Im[2] = P[i].AGS_Gradients_Psi_Im[2];
+    for(int k=0;k<3;k++) {in->GQuant.AGS_Gradients_Psi_Im[k] = P[i].AGS_Gradients_Psi_Im[k];}
 #endif
 }
 
@@ -370,9 +368,8 @@ void construct_gradient_DMGrad(double *grad, int i);
 void construct_gradient_DMGrad(double *grad, int i)
 {
     /* use the NV_T matrix-based gradient estimator */
-    int k; double v_tmp[3];
-    for(k=0;k<3;k++) {v_tmp[k] = grad[k];}
-    for(k=0;k<3;k++) {grad[k] = P[i].NV_T[k][0]*v_tmp[0] + P[i].NV_T[k][1]*v_tmp[1] + P[i].NV_T[k][2]*v_tmp[2];}
+    double v_tmp[3] = {grad[0], grad[1], grad[2]};
+    for(int k=0;k<3;k++) {grad[k] = P[i].NV_T[k][0]*v_tmp[0] + P[i].NV_T[k][1]*v_tmp[1] + P[i].NV_T[k][2]*v_tmp[2];}
 }
 
 
@@ -412,9 +409,9 @@ int DMGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].AGS_Density <= 0)) {continue;} /* make sure neighbor is valid */
                 /* calculate position relative to target */
-                kernel.dp[0] = local.Pos[0] - P[j].Pos[0]; kernel.dp[1] = local.Pos[1] - P[j].Pos[1]; kernel.dp[2] = local.Pos[2] - P[j].Pos[2];
+                kernel.dp = local.Pos - P[j].Pos;
                 nearest_xyz(kernel.dp);
-                r2 = kernel.dp[0]*kernel.dp[0] + kernel.dp[1]*kernel.dp[1] + kernel.dp[2]*kernel.dp[2];
+                r2 = kernel.dp.norm_sq();
                 if((r2 <= 0) || (r2 >= h2_i)) continue;
                 /* calculate kernel quantities needed below */
                 kernel.r = sqrt(r2); u = kernel.r * hinv;
