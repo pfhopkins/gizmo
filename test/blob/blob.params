@@ -23,7 +23,7 @@ CourantFac                         0.2
 MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
-MaxMemSize                         3000
+MaxMemSize                         60000
 ErrTolTheta                        0.7
 MaxNumNgbDeviation                 0.1
 ResubmitOn                         0
