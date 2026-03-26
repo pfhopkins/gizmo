@@ -51,6 +51,9 @@ void find_timesteps(void)
         double fastwavespeed = 0.0;
         double fastwavedecay = 0.0;
         double fac_magnetic_pressure = 1. / All.cf_atime;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) reduction(max:fastwavespeed,fastwavedecay)
+#endif
         for(i=0;i<NumPart;i++)
         {
             if(P[i].Type==0)

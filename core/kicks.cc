@@ -35,14 +35,17 @@ void do_first_halfstep_kick(void)
         apply_long_range_kick(tstart, tend);
     }
 #endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME    
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#endif
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* as currently written with some revisions to MFV methods, should only update on active timesteps */
     for(i = 0; i < NumPart; i++)
     {
         if((TimeBinActive[P[i].TimeBin]) || (P[i].Type==0)) /* active OR gas, need to check each timestep to ensure manifest conservation */
 #else
     for (int i : ActiveParticleList) /* 'full' kick for active particles */
-    {	    
+    {
 #endif
         {
             if(P[i].Mass > 0)
@@ -68,6 +71,9 @@ void do_second_halfstep_kick(void)
         tend = tstart + ti_step / 2;
         apply_long_range_kick(tstart, tend);
     }
+#endif
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     for(i = 0; i < NumPart; i++)
@@ -119,6 +125,9 @@ int eligible_for_hermite(int i)
 void do_hermite_prediction(void)
 {
     int i; integertime ti_step, tstart=0, tend=0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#endif
     for (int i : ActiveParticleList) {
 	if(eligible_for_hermite(i)) { /* check if we're actually eligible */
 	    if(P[i].Mass > 0) { /* skip massless particles scheduled for deletion */
@@ -136,12 +145,15 @@ void do_hermite_prediction(void)
 #endif
             P[i].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/3)) * (dt_grav/2)) * dt_grav;
             P[i].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/2)) * dt_grav;
-		}}} // for (int i : ActiveParticleList) 
+		}}} // for (int i : ActiveParticleList)
 }
 
 void do_hermite_correction(void) // corrector step
 {
     int i; integertime ti_step, tstart=0, tend=0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#endif
     for (int i : ActiveParticleList) {
 	if(eligible_for_hermite(i)){
                 if(P[i].Mass > 0) {
@@ -169,6 +181,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 {
     int i;
     double dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
     for(i = 0; i < NumPart; i++)
     {
         if(P[i].Mass > 0)

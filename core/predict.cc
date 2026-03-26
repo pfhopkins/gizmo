@@ -249,7 +249,11 @@ void drift_particle(int i, integertime time1)
 
 void move_particles(integertime time1)
 {
-    int i; for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
+    int i;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
 }
 
 
@@ -306,7 +310,10 @@ void do_box_wrapping(void)
     boxsize[0] = boxSize_X;
     boxsize[1] = boxSize_Y;
     boxsize[2] = boxSize_Z;
-    
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) private(j)
+#endif
     for(i = 0; i < NumPart; i++)
     {
         for(j = 0; j < 3; j++)
