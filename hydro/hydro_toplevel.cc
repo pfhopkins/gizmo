@@ -290,6 +290,9 @@ struct INPUT_STRUCT_NAME
     MyFloat Elastic_Stress_Tensor[3][3];
 #endif
     
+#ifdef WAKEUP
+    int TimeBin;
+#endif
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -524,6 +527,10 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 
 #ifdef GALSF_SUBGRID_WINDS
     in->DelayTime = CellP[i].DelayTime;
+#endif
+
+#ifdef WAKEUP
+    in->TimeBin = P[i].TimeBin;
 #endif
 
 }

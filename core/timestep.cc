@@ -1280,6 +1280,9 @@ void process_wake_ups(void)
 
     MPI_Allreduce(&NeedToWakeupParticles_local, &NeedToWakeupParticles, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process processes wakeups then they all should, just in case a woke particle gets swapped to another process before we get here
 
+    int wakeup_bin_offset = 0;
+    while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;
+
     if(NeedToWakeupParticles){
 	for(i = 0; i < NumPart; i++)
 	{
@@ -1291,7 +1294,16 @@ void process_wake_ups(void)
 	    binold = P[i].TimeBin;
 	    if(TimeBinActive[binold]) {continue;}
 
-	    bin = max_time_bin_active < binold ? max_time_bin_active : binold;
+	    if(P[i].wakeup > 0) {
+		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
+		int waker_bin = P[i].wakeup - 1;
+		bin = IMAX(0, waker_bin - wakeup_bin_offset);
+	    } else {
+		/* generic wakeup (sinks, merge, etc.): use highest active bin */
+		bin = max_time_bin_active;
+	    }
+	    if(bin > max_time_bin_active) {bin = max_time_bin_active;} /* must be active at next kick */
+	    if(bin >= binold) {bin = binold;} /* don't increase timestep */
 
 	    if(bin != binold)
 	    {
