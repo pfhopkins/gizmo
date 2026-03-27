@@ -168,7 +168,7 @@ void do_hermite_correction(void) // corrector step
                     if(All.PM_Ti_endstep == All.Ti_Current)	/* need to do long-range kick */
                     {
                         double dt_grav_pm = get_gravkick_factor(All.PM_Ti_begstep + (All.PM_Ti_endstep - All.PM_Ti_begstep)/2, All.PM_Ti_endstep, i, 0);
-                        P[i].OldVel += P[i].GravPM * dt_grav_pm;
+                        P[i].Vel += P[i].GravPM * dt_grav_pm;
                     }
 #endif
 		}}} //     for (int i : ActiveParticleList)
