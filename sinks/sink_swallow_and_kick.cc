@@ -1010,7 +1010,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         P[j].Ti_begstep = All.Ti_Current; P[j].Ti_current = All.Ti_Current;
 #ifdef WAKEUP /* note - you basically MUST have this flag on for this routine to work at all -- */
         P[j].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
-        P[j].wakeup = 1;
+        P[j].wakeup = -1;
         NeedToWakeupParticles_local = 1;
 #endif
         /* this is a giant pile of variables to zero out. dont need everything here because we cloned a valid particle, but handy anyways */
