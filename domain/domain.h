@@ -27,6 +27,7 @@ void domain_findSplit_balanced(int cpustart, int ncpu, int first, int last);
 void domain_free(void);
 void domain_shiftSplit(void);
 void domain_sumCost(void);
+void domain_update_adaptive_weights(void);
 int domain_topsplit(int node, peanokey startkey);
 int domain_topsplit_local(int node, peanokey startkey, int mode);
 int domain_topsplit_special(void);
