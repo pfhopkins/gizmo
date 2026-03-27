@@ -1,0 +1,32 @@
+% Dusty wave test (Hopkins & Lee 2016)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=1
+%        EOS_GAMMA=(5./3.)
+%        EOS_ENFORCE_ADIABAT=(3./5.)
+%        SELFGRAVITY_OFF
+%        GRAIN_FLUID
+%        GRAIN_BACKREACTION
+%
+InitCondFile                       dustywave_ics
+OutputDir                          output
+TimeMax                            2.5
+BoxSize                            1
+TimeBetSnapshot                    0.1
+DesNumNgb                          4
+MaxNumNgbDeviation                 1e-6
+MaxMemSize                         1000
+Grain_Internal_Density             1
+Grain_Size_Min                     1.23608
+Grain_Size_Max                     1.23608
+Grain_Size_Spectrum_Powerlaw       0.5
+MaxSizeTimestep                    0.01
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7

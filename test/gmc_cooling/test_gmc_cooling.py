@@ -1,7 +1,7 @@
 """GMC cooling and chemistry test"""
 
-from gizmo.test import build_and_run_test, get_cooling_tables
-from os import path
+from gizmo.test import build_and_run_test, get_cooling_tables, assert_final_time, default_omp_threads, default_mpi_ranks, get_final_snapshot
+
 from matplotlib import pyplot as plt
 import h5py
 from astropy import units as u, constants as c
@@ -48,8 +48,9 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (1, 16))
-def test_gmc_cooling(num_mpi_ranks):
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
     # specify the test name
     test_name = "gmc_cooling"
     test_directory = "test/gmc_cooling"
@@ -58,11 +59,11 @@ def test_gmc_cooling(num_mpi_ranks):
     get_cooling_tables(test_directory)
 
     # build GIZMO and run the test
-    build_and_run_test(test_name, num_mpi_ranks)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
-    # Check that the specific required output file exists:
-    if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):
-        raise (RuntimeError("GIZMO did not run successfully."))
+    # Check that the simulation produced output and the final time is correct
+    final_snap = get_final_snapshot(test_name)
+    assert_final_time(final_snap, test_name)
 
     # Compute a test statistic from the output
     test_stats = compute_test_statistic("test/gmc_cooling/output/snapshot_010.hdf5", plot=True)
@@ -71,4 +72,4 @@ def test_gmc_cooling(num_mpi_ranks):
     benchmark_stats = compute_test_statistic("test/gmc_cooling/gmc_cooling_exact.hdf5")
 
     # check that the test and benchmark agree within 10%
-    assert np.all(np.isclose(test_stats, benchmark_stats, rtol=0.1))
+    assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
