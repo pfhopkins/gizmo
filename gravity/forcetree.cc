@@ -671,14 +671,14 @@ void force_update_node_recursive(int no, int sib, int father)
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
                         N_SINK += 1;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
                         sink_mom += pa->Mass * pa->Vel;
-#endif
-#if defined(SPECIAL_POINT_MOTION)
+#ifdef SPECIAL_POINT_MOTION
                         sink_force += pa->Mass * pa->Acc_Total_PrevStep;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
                         max_feedback_vel = DMAX(pa->MaxFeedbackVel, max_feedback_vel);
+#endif
 #endif
                     }
 #endif
@@ -1626,7 +1626,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #pragma omp critical(_particledriftforce_)
 #endif
                     {
-                        drift_particle(no, ti_Current);
+                        if(P[no].Ti_current != ti_Current) {drift_particle(no, ti_Current);}
                     }
                 }
                 dr = P[no].Pos - pos;
@@ -1849,10 +1849,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #pragma omp critical(_nodedriftforce_)
 #endif
                     {
-                        force_drift_node(no, ti_Current);
+                        if(nop->Ti_current != ti_Current) {force_drift_node(no, ti_Current);}
                     }
                 }
-                
+
                 dr = nop->u.d.s - pos;
                 nearest_xyz(dr,-1);
                 r2 = dr.norm_sq();
@@ -2665,10 +2665,10 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
 #pragma omp critical(_particledriftewald_)
 #endif
                     {
-                        drift_particle(no, All.Ti_Current);
+                        if(P[no].Ti_current != All.Ti_Current) {drift_particle(no, All.Ti_Current);}
                     }
                 }
-                
+
                 dr = P[no].Pos - pos;
                 mass = P[no].Mass;
             }
@@ -2742,10 +2742,10 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
 #pragma omp critical(_nodedriftewald_)
 #endif
                     {
-                        force_drift_node(no, All.Ti_Current);
+                        if(nop->Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
                     }
                 }
-                
+
                 mass = nop->u.d.mass;
                 dr = nop->u.d.s - pos;
             }
@@ -3897,7 +3897,7 @@ void force_refresh_node_moments(void)
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
             Nodes[no].N_SINK += 1;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
             Nodes[no].sink_vel += pa->Mass * pa->Vel; /* mass-weighted, normalize later */
 #endif
 #ifdef SPECIAL_POINT_MOTION
@@ -3950,17 +3950,17 @@ void force_refresh_node_moments(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         Nodes[father].sink_lum += Nodes[no].sink_lum;
-        Nodes[father].sink_lum_grad += Nodes[no].sink_lum * Nodes[no].sink_lum_grad; /* still lum-weighted sum */
+        Nodes[father].sink_lum_grad += Nodes[no].sink_lum_grad; /* still lum-weighted sum */
 #endif
 #ifdef SINK_CALC_DISTANCES
         Nodes[father].sink_mass += Nodes[no].sink_mass;
-        Nodes[father].sink_pos += Nodes[no].sink_mass * Nodes[no].sink_pos; /* propagate mass-weighted sum */
+        Nodes[father].sink_pos += Nodes[no].sink_pos; /* propagate mass-weighted sum */
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
         Nodes[father].N_SINK += Nodes[no].N_SINK;
-        Nodes[father].sink_vel += Nodes[no].sink_mass * Nodes[no].sink_vel;
+        Nodes[father].sink_vel += Nodes[no].sink_vel;
 #endif
 #ifdef SPECIAL_POINT_MOTION
-        Nodes[father].sink_acc += Nodes[no].sink_mass * Nodes[no].sink_acc;
+        Nodes[father].sink_acc += Nodes[no].sink_acc;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
         if(Nodes[no].sink_mass > 0 && Nodes[no].MaxFeedbackVel > Nodes[father].MaxFeedbackVel) {Nodes[father].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;}
