@@ -5,7 +5,7 @@
 %        SELFGRAVITY_OFF
 %        EOS_GAMMA=(5.0/3.0)
 %
-InitCondFile                       sedov_singlepart_ics
+InitCondFile                       sedov_ics
 OutputDir                          output
 TimeMax                            0.03
 BoxSize                            6

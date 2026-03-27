@@ -238,6 +238,9 @@ CC       =   mpicxx
 endif
 FC      = mpifort
 OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=native -g -Wall
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
 GSL_INCL = -I$(GSL_BASE)/include
 GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
 FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
