@@ -1,7 +1,7 @@
 """GMC cooling and chemistry test"""
 
-from gizmo.test import build_and_run_test, get_cooling_tables, assert_final_time, default_omp_threads, default_mpi_ranks
-from os import path
+from gizmo.test import build_and_run_test, get_cooling_tables, assert_final_time, default_omp_threads, default_mpi_ranks, get_final_snapshot
+
 from matplotlib import pyplot as plt
 import h5py
 from astropy import units as u, constants as c
@@ -61,10 +61,9 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
     # build GIZMO and run the test
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
-    # Check that the specific required output file exists:
-    if not path.isfile("test/gmc_cooling/output/snapshot_010.hdf5"):
-        raise (RuntimeError("GIZMO did not run successfully."))
-    assert_final_time("test/gmc_cooling/output/snapshot_010.hdf5", test_name)
+    # Check that the simulation produced output and the final time is correct
+    final_snap = get_final_snapshot(test_name)
+    assert_final_time(final_snap, test_name)
 
     # Compute a test statistic from the output
     test_stats = compute_test_statistic("test/gmc_cooling/output/snapshot_010.hdf5", plot=True)

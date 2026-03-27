@@ -9,9 +9,9 @@ import pytest
 import numpy as np
 from matplotlib import pyplot as plt
 import h5py
-from os import path
+
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads
+from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -21,10 +21,8 @@ def test_orszag_tang(num_mpi_ranks, num_omp_threads):
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     outputdir = f"test/{test_name}/output"
-    final_snap = outputdir + "/snapshot_005.hdf5"
+    final_snap = get_final_snapshot(test_name)
     init_snap = outputdir + "/snapshot_000.hdf5"
-    if not path.isfile(final_snap):
-        raise RuntimeError("GIZMO did not run successfully.")
     assert_final_time(final_snap, test_name)
 
     def compute_total_energy(snapfile):

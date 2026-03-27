@@ -10,9 +10,16 @@ from scipy.interpolate import interp1d
 from scipy.stats import binned_statistic
 from matplotlib import pyplot as plt
 import h5py
-from os import path
+
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time
+from gizmo.test import (
+    build_and_run_test,
+    default_mpi_ranks,
+    flush_colorbar,
+    assert_final_time,
+    get_final_snapshot,
+    default_omp_threads,
+)
 
 
 def plot_sedov_density_slice(coords, rho, output_dir="."):
@@ -20,7 +27,7 @@ def plot_sedov_density_slice(coords, rho, output_dir="."):
     box_center = 3.0
     M = Meshoid(coords)
     center = np.array([box_center, box_center, box_center])
-    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=4., order=1)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=4.0, order=1)
     fig, ax = plt.subplots(figsize=(6, 6))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-2, 2, -2, 2])
     flush_colorbar(im, ax=ax, label="log10(Density)")
@@ -31,15 +38,16 @@ def plot_sedov_density_slice(coords, rho, output_dir="."):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(16, 0), (1, 16), (4, 4)])
+@pytest.mark.parametrize(
+    "num_mpi_ranks,num_omp_threads",
+    [(default_mpi_ranks(), default_omp_threads())],
+)
 def test_sedov(num_mpi_ranks, num_omp_threads):
     test_name = "sedov"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
     outputdir = f"test/{test_name}/output"
-    final_snap = outputdir + "/snapshot_010.hdf5"
-    if not path.isfile(final_snap):
-        raise RuntimeError("GIZMO did not run successfully.")
+    final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 
     # Load simulation data
