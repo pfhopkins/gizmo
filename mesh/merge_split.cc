@@ -1259,7 +1259,11 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
     if(All.Time <= All.TimeBegin) {return 0;} // don't allow on first timestep
     if(P[i].Type != 4) {return 0;} // only stars
     if(P[i].Mass*UNIT_MASS_IN_SOLAR > 1.e6) {return 0;} // stop merging beyond a certain point, only want to downgrade the resolution so much
-    if(evaluate_stellar_age_Gyr(i) < 0.05) {return 0;} // sufficiently old (don't want to do this for extremely young stars as messes up feedback and early dynamics)
+    double dt_gyr = evaluate_stellar_age_Gyr(i), dt_threshold_gyr = 0.05;
+#ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
+    dt_gyr -= P[i].TimeDistribOfStarFormation*UNIT_TIME_IN_GYR; // want to be sure we're this far past the last possible star that formed
+#endif
+    if(dt_gyr < dt_threshold_gyr) {return 0;} // sufficiently old (don't want to do this for extremely young stars as messes up feedback and early dynamics)
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION // need to figure out if the new version of this makes sense
     double r_NGB = 1.25 * pow((All.DesNumNgb*All.G*P[i].Mass)/P[i].tidal_tensor_mag_prev , 1./3.); // kernel size enclosing some target neighbor number in a constant-density medium
     if(r_NGB > 0.5*ForceSoftening_KernelRadius(i)) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
