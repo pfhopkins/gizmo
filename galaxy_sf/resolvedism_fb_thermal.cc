@@ -28,6 +28,7 @@ struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], KernelRadius, Esne, Mej, wt_sum;
     MyDouble MetalMass;
+    MyDouble Ngb; /* number of neighbors in SN kernel (from update_weights) */
     int fb_channel; /* 0=SN, 3=Ia */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
@@ -42,8 +43,9 @@ struct INPUT_STRUCT_NAME
 void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
-    in->KernelRadius = P[i].KernelRadius;
+    in->KernelRadius = P[i].HsmlSN;  /* use dedicated SN kernel radius from update_weights */
     in->wt_sum = 0; in->Esne = 0; in->Mej = 0; in->MetalMass = 0;
+    in->Ngb = P[i].NumNgbSN;         /* neighbor count from SN kernel search */
     in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
@@ -52,10 +54,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     for(k=0; k<NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = 0;
 #endif
     if(P[i].Mass <= 0) return;
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    in->wt_sum = P[i].DensityAroundParticle;
-    if(P[i].DensityAroundParticle <= 0) return;
-#endif
+    if(P[i].HsmlSN <= 0 || P[i].NumNgbSN <= 0) return;
 
     /* ---- Type Ia ---- */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
@@ -214,20 +213,38 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 if(u<1) {kernel_main(u, kernel.hinv3, kernel.hinv4, &kernel.wk, &kernel.dwk, 0);} else {kernel.wk=kernel.dwk=0;}
                 if((kernel.wk <= 0)||(isnan(kernel.wk))) {continue;}
 
-                double wk = Mass_j * kernel.wk / local.wt_sum;
+                /* gizmo2017 weight formula: f(u) * NORM_COEFF / (hinv3 * Ngb)
+                 * kernel.wk = f(u) (unnormalized kernel shape from kernel_main mode 0)
+                 * NORM_COEFF = 4*pi/3 (kernel volume normalization, same as gizmo2017 allvars.h for 3D) */
+                double NORM_COEFF_3D = 4.0 * M_PI / 3.0;
+                double weight = (local.Ngb > 0) ? kernel.wk * NORM_COEFF_3D / (kernel.hinv3 * local.Ngb) : 0;
+                double energy = local.Esne * weight; /* total energy into this cell [code units] */
+                double wk = weight; /* also used for mass/metal distribution below */
 
-                /* ---- Thermal energy injection ---- */
-                if(local.Esne > 0) {
+                /* ---- Thermal energy injection (gizmo2017 pattern) ---- */
+                if(local.Esne > 0 && energy > 0) {
 #ifdef COSMIC_RAY_FLUID
                     double cr_frac = All.CosmicRay_SNeFraction;
-                    double dE = wk * local.Esne * (1.0 - cr_frac) / Mass_j;
+                    double dE = energy * (1.0 - cr_frac) / Mass_j;
 #else
-                    double dE = wk * local.Esne / Mass_j;
+                    double dE = energy / Mass_j;
 #endif
                     #pragma omp atomic
                     CellP[j].InternalEnergy += dE;
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += dE;
+                    /* update pressure immediately after energy injection (gizmo2017 line 601).
+                     * Inline for thread safety: P = (gamma-1) * u * rho */
+                    {
+                        double u_pred, rho_j;
+                        #pragma omp atomic read
+                        u_pred = CellP[j].InternalEnergyPred;
+                        #pragma omp atomic read
+                        rho_j = CellP[j].Density;
+                        double press_new = (GAMMA_DEFAULT - 1.0) * u_pred * rho_j;
+                        #pragma omp atomic write
+                        CellP[j].Pressure = press_new;
+                    }
                     P[j].wakeup = 1;
                     NeedToWakeupParticles_local = 1;
 #ifdef COSMIC_RAY_FLUID

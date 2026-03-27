@@ -450,6 +450,7 @@ OBJS    += galaxy_sf/stellar_properties_resolvedism.o
 OBJS    += galaxy_sf/resolvedism_fb.o
 OBJS    += galaxy_sf/resolvedism_fb_thermal.o
 OBJS    += galaxy_sf/resolvedism_fb_momentum.o
+OBJS    += galaxy_sf/resolvedism_fb_update_weights.o
 OBJS    += galaxy_sf/resolvedism_photoion.o
 endif
 
