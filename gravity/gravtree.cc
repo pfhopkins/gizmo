@@ -476,8 +476,12 @@ void gravity_tree(void)
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
     if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS) {if(!(All.Ti_Current == 0 && RestartFlag == 0)) {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}}} else {if(All.TypeOfOpeningCriterion == 1) {All.ErrTolTheta = 0;}} /* This will switch to the relative opening criterion for the following force computations */
 #endif
-    for (int i : ActiveParticleList)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
     {
+        int i = ActiveParticleList[ii];
 #ifdef HERMITE_INTEGRATION
         if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
 #endif      
@@ -677,40 +681,58 @@ void *gravity_primary_loop(void *p)
 #ifdef _OPENMP
     if(BufferCollisionFlag && thread_id) {return NULL;} /* force to serial for this subloop if threads simultaneously cross the Nexport bunchsize threshold */
 #endif
+#ifndef GRAVITY_PRIMARY_LOOP_BATCH_SIZE
+#define GRAVITY_PRIMARY_LOOP_BATCH_SIZE 8
+#endif
     while(1)
     {
-        int exitFlag = 0;
+        int batch[GRAVITY_PRIMARY_LOOP_BATCH_SIZE], batch_count = 0;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistgravprim_)
 #endif
         {
-        if(BufferFullFlag != 0 || NextParticle >= (int)ActiveParticleList.size()) {exitFlag=1;}
-            else {i=ActiveParticleList[NextParticle]; NextParticle++;}
+            while(batch_count < GRAVITY_PRIMARY_LOOP_BATCH_SIZE && BufferFullFlag == 0 && NextParticle < (int)ActiveParticleList.size())
+            {
+                int idx = ActiveParticleList[NextParticle]; NextParticle++;
+                if(!ProcessedFlag[idx]) {batch[batch_count++] = idx;}
+            }
         }
-        if(exitFlag) {break;}
-        if(ProcessedFlag[i]) {continue;}
-
+        if(batch_count == 0) {break;}
+        int buffer_full = 0;
+        for(int b = 0; b < batch_count; b++)
+        {
+            i = batch[b];
 #ifdef HERMITE_INTEGRATION /* if we are in the Hermite extra loops and a particle is not flagged for this, simply mark it done and move on */
-        if(HermiteOnlyFlag && !eligible_for_hermite(i)) {ProcessedFlag[i]=1; continue;}
+            if(HermiteOnlyFlag && !eligible_for_hermite(i)) {ProcessedFlag[i]=1; continue;}
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
-        if(!needs_new_treeforce(i)) {ProcessedFlag[i]=1; continue;}
-#endif                
+            if(!needs_new_treeforce(i)) {ProcessedFlag[i]=1; continue;}
+#endif
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-        if(Ewald_iter)
-        {
-            ret = force_treeevaluate_ewald_correction(i, 0, exportflag, exportnodecount, exportindex);
-            if(ret >= 0) {Ewaldcount += ret; /* note: ewaldcount may be slightly incorrect for multiple threads if buffer gets filled up */} else {break; /* export buffer has filled up */}
-        }
-        else
+            if(Ewald_iter)
+            {
+                ret = force_treeevaluate_ewald_correction(i, 0, exportflag, exportnodecount, exportindex);
+                if(ret >= 0) {
+#ifdef _OPENMP
+#pragma omp atomic
 #endif
-        {
-            ret = force_treeevaluate(i, 0, exportflag, exportnodecount, exportindex);
-            if(ret < 0) {break;} /* export buffer has filled up */
-            Costtotal += ret;
+                    Ewaldcount += ret;
+                } else {buffer_full = 1; break;}
+            }
+            else
+#endif
+            {
+                ret = force_treeevaluate(i, 0, exportflag, exportnodecount, exportindex);
+                if(ret < 0) {buffer_full = 1; break;}
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+                Costtotal += ret;
+            }
+            ProcessedFlag[i] = 1;
         }
-        ProcessedFlag[i] = 1;	/* particle successfully finished */
+        if(buffer_full) {break;}
     } // while loop
     return NULL;
 }
@@ -719,28 +741,47 @@ void *gravity_primary_loop(void *p)
 void *gravity_secondary_loop(void *p)
 {
     int j, nodesinlist, dummy, ret;
+#ifndef GRAVITY_SECONDARY_LOOP_BATCH_SIZE
+#define GRAVITY_SECONDARY_LOOP_BATCH_SIZE 8
+#endif
     while(1)
     {
+        int batch[GRAVITY_SECONDARY_LOOP_BATCH_SIZE], batch_count = 0;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistgravsec_)
 #endif
         {
-            j = NextJ;
-            NextJ++;
+            while(batch_count < GRAVITY_SECONDARY_LOOP_BATCH_SIZE && NextJ < Nimport)
+            {
+                batch[batch_count++] = NextJ; NextJ++;
+            }
         }
-        if(j >= Nimport) {break;}
-
+        if(batch_count == 0) {break;}
+        for(int b = 0; b < batch_count; b++)
+        {
+            j = batch[b];
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-        if(Ewald_iter)
-        {
-            int cost = force_treeevaluate_ewald_correction(j, 1, &dummy, &dummy, &dummy);
-            Ewaldcount += cost;
-        }
-        else
+            if(Ewald_iter)
+            {
+                int cost = force_treeevaluate_ewald_correction(j, 1, &dummy, &dummy, &dummy);
+#ifdef _OPENMP
+#pragma omp atomic
 #endif
-        {
-            ret = force_treeevaluate(j, 1, &nodesinlist, &dummy, &dummy);
-            N_nodesinlist += nodesinlist; Costtotal += ret;
+                Ewaldcount += cost;
+            }
+            else
+#endif
+            {
+                ret = force_treeevaluate(j, 1, &nodesinlist, &dummy, &dummy);
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+                N_nodesinlist += nodesinlist;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+                Costtotal += ret;
+            }
         }
     }
     return NULL;
