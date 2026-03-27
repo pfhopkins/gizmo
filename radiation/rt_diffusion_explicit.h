@@ -134,12 +134,30 @@
 
 
     int k_freq; double Fluxes_Rad_Flux[N_RT_FREQ_BINS][3], V_i_phys = V_i / All.cf_a3inv, V_j_phys = V_j / All.cf_a3inv;
+#ifdef RT_M1_SECONDORDER
+    /* face distances for second-order reconstruction: face lies at midpoint, s_star_ij=0 */
+    double dist_rt_i[3], dist_rt_j[3];
+    for(k=0;k<3;k++) {dist_rt_i[k] = -0.5*kernel.dp[k]; dist_rt_j[k] = 0.5*kernel.dp[k];}
+#endif
     for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
         Fluxes_Rad_E_gamma[k_freq] = 0;
         Fluxes_Rad_Flux[k_freq][0]=Fluxes_Rad_Flux[k_freq][1]=Fluxes_Rad_Flux[k_freq][2]=0;
         double scalar_i = local.Rad_E_gamma[k_freq] / V_i_phys; // volumetric photon number density in this frequency bin (E_phys/L_phys^3)//
         double scalar_j = CellP[j].Rad_E_gamma_Pred[k_freq] / V_j_phys;
+#ifdef RT_M1_SECONDORDER
+        /* reconstruct energy density at face using gradient; grad is d(E/V_code)/dx_code, scale by cf_a3inv for physical */
+        {
+            MyFloat grad_E_i[3], grad_E_j[3];
+            for(k=0;k<3;k++) {
+                grad_E_i[k] = (MyFloat)(local.Gradients.Rad_E_gamma_Grad[k_freq][k] * All.cf_a3inv);
+                grad_E_j[k] = (MyFloat)(CellP[j].Gradients.Rad_E_gamma_Grad[k_freq][k] * All.cf_a3inv);
+            }
+            double scalar_i_face, scalar_j_face;
+            reconstruct_face_states(scalar_i, grad_E_i, scalar_j, grad_E_j, dist_rt_i, dist_rt_j, &scalar_j_face, &scalar_i_face, 1);
+            scalar_i = scalar_i_face; scalar_j = scalar_j_face;
+        }
+#endif
         if((scalar_i+scalar_j>0)&&(local.Mass>0)&&(P[j].Mass>0)&&(dt_hydrostep>0)&&(Face_Area_Norm>0))
         {
             double d_scalar = scalar_i - scalar_j;
@@ -149,8 +167,23 @@
             /* calculate the eigenvalues for the HLLE flux-weighting */
             for(k=0;k<3;k++)
             {
-                flux_i[k] = local.Rad_Flux[k_freq][k]/V_i_phys - rsol_corr*v_frame[k]*scalar_i;
-                flux_j[k] = CellP[j].Rad_Flux_Pred[k_freq][k]/V_j_phys - rsol_corr*v_frame[k]*scalar_j; // units (E_phys/[t_phys*L_phys^2]) [physical]. include advective flux terms here
+                double flux_i_raw = local.Rad_Flux[k_freq][k]/V_i_phys;
+                double flux_j_raw = CellP[j].Rad_Flux_Pred[k_freq][k]/V_j_phys;
+#ifdef RT_M1_SECONDORDER
+                /* reconstruct each flux component at the face; grad is d(F_k/V_code)/dx_code, scale by cf_a3inv */
+                {
+                    MyFloat grad_F_i[3], grad_F_j[3];
+                    int k3; for(k3=0;k3<3;k3++) {
+                        grad_F_i[k3] = (MyFloat)(local.Gradients.Rad_Flux_Grad[k_freq][k][k3] * All.cf_a3inv);
+                        grad_F_j[k3] = (MyFloat)(CellP[j].Gradients.Rad_Flux_Grad[k_freq][k][k3] * All.cf_a3inv);
+                    }
+                    double flux_i_face, flux_j_face;
+                    reconstruct_face_states(flux_i_raw, grad_F_i, flux_j_raw, grad_F_j, dist_rt_i, dist_rt_j, &flux_j_face, &flux_i_face, 1);
+                    flux_i_raw = flux_i_face; flux_j_raw = flux_j_face;
+                }
+#endif
+                flux_i[k] = flux_i_raw - rsol_corr*v_frame[k]*scalar_i;
+                flux_j[k] = flux_j_raw - rsol_corr*v_frame[k]*scalar_j; // units (E_phys/[t_phys*L_phys^2]) [physical]. include advective flux terms here
                 double grad = 0.5*(flux_i[k] + flux_j[k]);
                 grad_norm += grad*grad;
                 face_dot_flux += Face_Area_Vec[k] * grad; /* remember, our 'flux' variable is a volume-integral */
@@ -193,10 +226,12 @@
             q = 0.5 * c_hll * (kernel.r * All.cf_atime) / fabs(MIN_REAL_NUMBER + kappa_ij); q = (0.2 + q) / (0.2 + q + q*q);
             renormerFAC = DMIN(1.,fabs(cos_theta_face_flux*cos_theta_face_flux * q * hll_corr));
 
+#ifndef RT_M1_SECONDORDER /* with RT_M1_SECONDORDER, scalar_i/j are already face-reconstructed so this correction is redundant */
             double scalar_jr=scalar_j, scalar_ir=scalar_i, d_scalar_hll=d_scalar, d_scalar_ij=0;
             for(k=0;k<3;k++) {scalar_jr+=0.5*kernel.dp[k]*local.Gradients.Rad_E_gamma_ET[k_freq][k]*All.cf_a3inv; scalar_ir-=0.5*kernel.dp[k]*CellP[j].Gradients.Rad_E_gamma_ET[k_freq][k]*All.cf_a3inv;}
             d_scalar_ij=scalar_ir-scalar_jr; if((d_scalar_ij*d_scalar>0)&&(fabs(d_scalar_ij)<fabs(d_scalar))) {d_scalar_hll=d_scalar_ij;}
             d_scalar = d_scalar_hll;
+#endif
 #endif
 
             /* flux-limiter to ensure flow is always down the local gradient [no 'uphill' flow] */
