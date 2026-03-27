@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 import h5py
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, download_test_files, run_test, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads
+from gizmo.test import build_gizmo_for_test, download_test_files, run_test, clean_test_outputs, assert_final_time, get_final_snapshot, default_mpi_ranks, default_omp_threads
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -38,10 +38,9 @@ def test_dustywave(num_mpi_ranks, num_omp_threads):
     outputdir = f"test/{test_name}/output"
     # t=1.2 corresponds to snapshot 12 (TimeBetSnapshot=0.1)
     snap_file = outputdir + "/snapshot_012.hdf5"
-    final_snap = outputdir + "/snapshot_025.hdf5"
     if not path.isfile(snap_file):
         raise RuntimeError("GIZMO did not run successfully.")
-    assert_final_time(final_snap, test_name)
+    assert_final_time(get_final_snapshot(test_name), test_name)
 
     # Load simulation data - gas is PartType0, dust is PartType3
     with h5py.File(snap_file, "r") as F:

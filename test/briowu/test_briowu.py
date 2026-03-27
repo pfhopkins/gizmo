@@ -9,8 +9,8 @@ import pytest
 import numpy as np
 from matplotlib import pyplot as plt
 import h5py
-from os import path
-from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads
+
+from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -19,10 +19,7 @@ def test_briowu(num_mpi_ranks, num_omp_threads):
     test_name = "briowu"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
-    outputdir = f"test/{test_name}/output"
-    final_snap = outputdir + "/snapshot_002.hdf5"
-    if not path.isfile(final_snap):
-        raise RuntimeError("GIZMO did not run successfully.")
+    final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 
     # Load simulation data

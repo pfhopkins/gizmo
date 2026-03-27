@@ -12,8 +12,8 @@ import pytest
 import numpy as np
 from matplotlib import pyplot as plt
 import h5py
-from os import path
-from gizmo.test import build_and_run_test, assert_final_time, default_omp_threads, default_mpi_ranks
+
+from gizmo.test import build_and_run_test, assert_final_time, default_omp_threads, default_mpi_ranks, get_final_snapshot
 
 
 def gresho_vphi_analytic(r):
@@ -31,10 +31,7 @@ def test_gresho(num_mpi_ranks, num_omp_threads):
     test_name = "gresho"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
-    outputdir = f"test/{test_name}/output"
-    final_snap = outputdir + "/snapshot_006.hdf5"
-    if not path.isfile(final_snap):
-        raise RuntimeError("GIZMO did not run successfully.")
+    final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 
     # Load simulation data

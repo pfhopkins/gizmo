@@ -128,6 +128,14 @@ def parse_params(params_file: str) -> dict:
     return params
 
 
+def get_final_snapshot(test_name: str) -> str:
+    """Return the path to the last snapshot produced by a test."""
+    snaps = sorted(glob(f"test/{test_name}/output/snapshot_*.hdf5"))
+    if not snaps:
+        raise RuntimeError(f"No snapshots found for test {test_name}")
+    return snaps[-1]
+
+
 def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
     """Assert that the snapshot time matches TimeMax from the test's parameter file."""
     params_file = f"test/{test_name}/{test_name}.params"
