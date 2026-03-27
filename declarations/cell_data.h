@@ -124,6 +124,10 @@ extern struct gas_cell_data
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
         MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
 #endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+        MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
+        MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
+#endif
     } Gradients;
     MyDouble NV_T[3][3];        /*!< holds the tensor used for gradient estimation */
     MyDouble ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */

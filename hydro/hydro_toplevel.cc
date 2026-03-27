@@ -204,6 +204,10 @@ struct INPUT_STRUCT_NAME
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
         MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
 #endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+        MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
+        MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
+#endif
     } Gradients;
     MyDouble NV_T[3][3];
     
@@ -443,6 +447,12 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
         for(j=0;j<N_RT_FREQ_BINS;j++) {in->Gradients.Rad_E_gamma_ET[j][k] = CellP[i].Gradients.Rad_E_gamma_ET[j][k];}
+#endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+        for(j=0;j<N_RT_FREQ_BINS;j++) {
+            in->Gradients.Rad_E_gamma_Grad[j][k] = CellP[i].Gradients.Rad_E_gamma_Grad[j][k];
+            int j_d; for(j_d=0;j_d<3;j_d++) {in->Gradients.Rad_Flux_Grad[j][j_d][k] = CellP[i].Gradients.Rad_Flux_Grad[j][j_d][k];}
+        }
 #endif
     }
     
