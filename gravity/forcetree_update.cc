@@ -9,7 +9,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
-#ifdef _OPENMP
+#ifdef OPENMP_TREE_UPDATE
 /* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
 static inline void atomic_max_double(double* addr, double val) {
     uint64_t val_bits; memcpy(&val_bits, &val, sizeof(double));
@@ -42,7 +42,7 @@ void force_update_tree(void)
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */
 
-#ifdef _OPENMP
+#ifdef OPENMP_TREE_UPDATE
     /* Phase 1: drift all ancestor nodes to Ti_Current (serial — force_drift_node has complex read-modify-write) */
     for (int i : ActiveParticleList)
     {
@@ -94,11 +94,11 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 
   while(no >= 0)
     {
-#ifndef _OPENMP
+#ifndef OPENMP_TREE_UPDATE
       force_drift_node(no, All.Ti_Current);
 #endif
 
-#ifdef _OPENMP
+#ifdef OPENMP_TREE_UPDATE
       for(int k = 0; k < 3; k++) {
           #pragma omp atomic
           Extnodes[no].dp[k] += dp[k];
@@ -408,7 +408,7 @@ void force_update_hmax(void)
   DomainNumChanged = 0;
   DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
 
-#ifdef _OPENMP
+#ifdef OPENMP_TREE_UPDATE
   /* Phase 1: drift all ancestor nodes (serial — force_drift_node is not thread-safe) */
   for (int i : ActiveParticleList)
   {
