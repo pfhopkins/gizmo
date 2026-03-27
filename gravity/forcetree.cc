@@ -1843,7 +1843,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         continue;
                     }
                 }
-                if(nop->Ti_current != ti_Current)
+                if(nop->Ti_current != ti_Current) // add this so that threads arriving here after the the node has been drifted do not have to enter critical at all!
                 {
 #ifdef _OPENMP
 #pragma omp critical(_nodedriftforce_)
