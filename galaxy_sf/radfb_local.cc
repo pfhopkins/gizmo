@@ -433,7 +433,7 @@ int do_the_local_ionization(int target, double dt, int source)
     double Theat_star = 1.38 * 3.2, Z_sol = 1.; // typical IMF-averaged temp of ionizing star=32,000 K, with effective ionization temperature parameter psi=1.38 (temp of ionized e's in units of stellar temp). Then metallicity in solar units.
 #ifdef METALS
     Z_sol = P[target].Metallicity[0]/All.SolarAbundances[0]; // set metallicity
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE) && !defined(HII_TURNOFF)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) 
     Z_sol = (P[target].Metallicity[4]-CellP[target].ISMDustChem_Dust_Metal[4])/All.SolarAbundances[4]; // cooling for HII equilibrium depends predominantly on gas-phase O so need to account for any locked up in dust
 #endif
 #endif

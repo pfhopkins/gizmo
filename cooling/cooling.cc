@@ -1044,7 +1044,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
         {
             /* cooling rates tabulated for each species from Wiersma, Schaye, & Smith tables (2008) */
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(METALLINECOOLING_TURNOFF)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z); //* nHcgs*nHcgs;
 #else
             LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z_all); //* nHcgs*nHcgs;
@@ -1090,9 +1090,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(COOL_METAL_LINES_BY_SPECIES) && ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
             double column = evaluate_NH_from_GradRho(CellP[target].Gradients.Density,P[target].KernelRadius,CellP[target].Density,P[target].NumNgb,1,target) * UNIT_SURFDEN_IN_CGS; // converts to cgs            
             double Z_C = DMAX(1.e-6, Z[2]/All.SolarAbundances[2]), sqrt_T=sqrt(T), ncrit_CO=1.9e4*sqrt_T, Sigma_crit_CO=3.0e-5*T/Z_C, T3=T/1.e3, EXPmax=90.; // carbon abundance (relative to solar and 1/2 factor for original assumed 0.5 depletion), critical density and column
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE) && !defined(LOWTEMP_TURNOFF)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE) 
             Z_C = DMAX(1.e-6, Z[2]/(0.5*All.SolarAbundances[2])); // gas-phase carbon abundance (relative to solar/2, usual assumption implicitly)
-#elif defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(GALSF_ISMDUSTCHEM_PASSIVE) || defined(LOWTEMP_TURNOFF))
+#elif defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_PASSIVE)
             Z_C = DMAX(1.e-6, Z_all[2]/All.SolarAbundances[2]);
 #endif
             // TODO: can now get detailed C+, C, O, and CO abundances from SIMPLE_STEADYSTATE_CHEMISTRY routines, and compute the explicit cooling terms for slightly more accurate cooling here
@@ -1133,7 +1133,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
             LambdaMol *= truncation_factor; // cutoff factor from above for where the tabulated rates take over at high temperatures
             LambdaDust = gas_dust_heating_coeff(target,T,Tdust) * (T-Tdust);// Note our sign convention is such that positive lambda = gas cooling
-#if !defined(GALSF_ISMDUSTCHEM_MODEL) || (defined(GALSF_ISMDUSTCHEM_PASSIVE) || defined(RADIATIONTRANSPORT_TURNOFF))
+#if !defined(GALSF_ISMDUSTCHEM_MODEL) || defined(GALSF_ISMDUSTCHEM_PASSIVE)
             if(T>3.e5) {double dx=(T-3.e5)/2.e5; LambdaDust *= exp(-DMIN(dx*dx,40.));} /* needs to truncate at high temperatures b/c of dust destruction (in some modules we solve for this explicitly - in that case can protect this more explicitly, but here, we will make a simple approximation, otherwise we run into problems. note this is not sublimation generally, but sputtering, that causes the destruction */
 #endif
             LambdaDust *= truncation_factor; // cutoff factor from above for where the tabulated rates take over at high temperatures
@@ -1218,9 +1218,6 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             if(photoelec > 0)
             {
                 LambdaPElec = -1.3e-24 * photoelec / nHcgs * (P[target].Metallicity[0]/All.SolarAbundances[0]) * return_dust_to_metals_ratio_vs_solar(target,0); // negative sign for lambda b/c heating
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(PHOTOELECTRIC_TURNOFF)
-                LambdaPElec = -1.3e-24 * photoelec / nHcgs * (P[target].Metallicity[0]/All.SolarAbundances[0]); // assume D/Z ratio vs solar is 1
-#endif
                 double x_photoelec = photoelec * sqrt(T) / (0.5 * (1.0e-12+n_elec) * nHcgs);
                 LambdaPElec *= 0.049/(1+pow(x_photoelec/1925.,0.73)) + 0.037*pow(T/1.0e4,0.7)/(1+x_photoelec/5000.);
 #if defined(OUTPUT_COOLRATE_DETAIL)
@@ -1896,9 +1893,6 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i)*gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T), urad_from_uvb_in_G0=sqrt(shieldfac)*(gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
 #ifdef METALS
     f_dustgas_solar=(P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0); // this is only used for the dust-phase formation rates below, so just the dust term here
-#if defined(MOLECULARFRACTION_TURNOFF)
-    f_dustgas_solar=(P[i].Metallicity[0]/All.SolarAbundances[0]); // Assume D/Z ratio vs solar is 1
-#endif
 #endif
     /* get incident radiation field from whatever module we are using to track it */
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -1928,8 +1922,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     double x00 = surface_density_local / surface_density_H2_0, x01 = x00 / (sqrt(1. + 3.*dv_turb*dv_turb/(v_thermal_rms*v_thermal_rms)) * sqrt(2.)*v_thermal_rms), y_ss, x_ss_1, x_ss_sqrt, fH2_tmp, fH2_max, fH2_min, Q_max, Q_min, Q_initial; // variable needed below. note the x01 term corrects following Gnedin+Draine 2014 for the velocity gradient at the sonic scale, assuming a Burgers-type spectrum [their Eq. 3]
     double b_time_Mach = 0.5 * dv_turb / (v_thermal_rms/sqrt(3.)); // cs_thermal for molecular [=rms v_thermal / sqrt(3)], dv_turb to full inside dx, assume "b" prefactor for compressive-to-solenoidal ratio corresponding to the 'natural mix' = 0.5. could further multiply by 1.58 if really needed to by extended dvturb to 2h = H, and vthermal from molecular to atomic for the generating field, but not as well-justified
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-    // dust evolution model uses local mach number/clumping factors for numerous calculations
-    CellP[i].ISMDustChem_MachNumber = dv_turb / (v_thermal_rms/sqrt(3.));
+    CellP[i].ISMDustChem_MachNumber = dv_turb / (v_thermal_rms/sqrt(3.)); // dust evolution model uses local mach number/clumping factors for numerous calculations
 #endif
     double clumping_factor = 1. + b_time_Mach*b_time_Mach; // this is the exact clumping factor for a standard lognormal PDF with S=ln[1+b^2 Mach^2] //
     double clumping_factor_3 = clumping_factor*clumping_factor*clumping_factor; // clumping factor N for <rho^n>/<rho>^n = clumping factor^(N*(N-1)/2) //
@@ -2199,9 +2192,6 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
     if(target >= 0) {zeta_cr = Get_CosmicRayIonizationRate_cgs(target);} // convert to ionization rate, using models as in Cummings et al. 2016
 #ifdef METALS
     if(target>=0) {f_dustgas=0.5*P[target].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(target,0) + 1.e-15;} // constant dust-to-metals ratio [floor purely numerical here, needed to avoid a spurious divergence below]
-#if defined(FREEELECTRON_TURNOFF)
-    if(target>=0) {f_dustgas=0.5*P[target].Metallicity[0] + 1.e-15;} // Assume dust-to-metals ratio vs solar is 1
-#endif
 #ifdef COOL_METAL_LINES_BY_SPECIES
     if(target>=0) {n_ion_max = (All.SolarAbundances[6]/24.3)/XH;} // limit, to avoid over-ionization at low metallicities
 #endif
