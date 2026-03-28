@@ -318,6 +318,10 @@ extern ALIGN(32) struct particle_data
     short int wakeup;                     /*!< flag to wake up particle */
 #endif
     
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+    MyFloat StarParticleEffectiveSize;   /*!< effective 'size' of a star particle at formation */
+#endif
+    
 #ifdef DM_FUZZY
     MyFloat AGS_Density;                /*!< density calculated corresponding to AGS routine (over interacting DM neighbors) */
     MyFloat AGS_Gradients_Density[3];   /*!< density gradient calculated corresponding to AGS routine (over interacting DM neighbors) */

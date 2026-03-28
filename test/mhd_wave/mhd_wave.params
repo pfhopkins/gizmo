@@ -1,0 +1,32 @@
+% Example compile-time options:
+%  (HYDRO_MESHLESS_FINITE_MASS is optional, replace with your
+%   choice of hydro/mhd options)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=1
+%        EOS_GAMMA=(5.0/3.0)
+%        MAGNETIC
+%        SELFGRAVITY_OFF
+%
+%
+InitCondFile                       mhd_wave_ics
+OutputDir                          output
+TimeMax                            0.5
+BoxSize                            1
+TimeBetSnapshot                    0.05
+MaxSizeTimestep                    0.1
+DesNumNgb                          4
+MaxMemSize                         1000
+% -- optional numerical parameters (requires additional Config flags)
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxNumNgbDeviation		   1e-6
+ErrTolTheta                        0.7
+DivBcleaningParabolicSigma         0.2
+DivBcleaningHyperbolicSigma        1.0
+ResubmitOn                         0
+ResubmitCommand                    none

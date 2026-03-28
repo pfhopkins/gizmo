@@ -34,6 +34,41 @@
  * Mike Grudic has also made major revisions to code the Hermitian calculations and binary timestepping.
  */
 
+
+/* function to return the value of the force softening for a given cell/particle, depending on the physics and numerical options */
+double ForceSoftening_KernelRadius(int p)
+{
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+    if(P[p].Type == 4) {return P[p].StarParticleEffectiveSize;} // this variable is defined in force softening terms
+    //if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass / (0.5*(All.MaxMassForParticleSplit/3.01+All.MinMassForParticleMerger/0.49)),0.333);} // alternative 'adaptive' version for constant-resolution runs
+    //if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass*UNIT_MASS_IN_SOLAR / (GALSF_MERGER_STARCLUSTER_PARTICLES),0.333);}
+#endif
+    
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    if((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return P[p].AGS_KernelRadius;}
+#endif
+
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(SELFGRAVITY_OFF) /* softening scale still appears in timestep criterion for problems without self-gravity, so set it adaptively */
+#ifdef ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT
+    if(P[p].Type == 0) {return DMIN(P[p].KernelRadius, ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime);}
+#else
+    if(P[p].Type == 0) {return P[p].KernelRadius;}
+#endif
+#endif
+
+#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+    if(P[p].Type == 4) {return All.ForceSoftening[P[p].Type] * DMIN(100., DMAX(1., pow(P[p].Mass*UNIT_MASS_IN_SOLAR/100. , 0.33)));}
+#endif
+
+#if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) /* still playing with criterion below, highly experimental for now */
+    if((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {if((P[p].tidal_tensor_mag_prev>0) && (All.Time>All.TimeBegin)) {return DMIN(1.e2*All.ForceSoftening[P[p].Type] , DMAX(All.ForceSoftening[P[p].Type] , All.ForceSoftening[P[p].Type] + 1.25 * pow( (All.DesNumNgb * All.G * P[p].Mass / P[p].tidal_tensor_mag_prev) , 1./3. )));} else {return 100.*All.ForceSoftening[P[p].Type];}}
+#endif
+
+    return All.ForceSoftening[P[p].Type]; // this is the default if nothing was active above
+}
+
+
+
 /*! auxiliary variable used to set-up non-recursive walk */
 static int last;
 

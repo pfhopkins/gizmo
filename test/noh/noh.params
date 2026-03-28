@@ -1,0 +1,25 @@
+% Noh implosion test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(5.0/3.0)
+%
+InitCondFile                       noh_ics
+OutputDir                          output
+TimeMax                            1
+BoxSize                            6
+TimeBetSnapshot                    0.1
+DesNumNgb                          60
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         5000
+CourantFac                         0.1
+MaxSizeTimestep                    0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+TreeDomainUpdateFrequency          0.5

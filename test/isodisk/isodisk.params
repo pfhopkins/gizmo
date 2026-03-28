@@ -1,0 +1,42 @@
+% Isolated disk galaxy test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        PMGRID=64
+%        ADAPTIVE_GRAVSOFT_FORGAS
+%        COOLING
+%
+InitCondFile                       isodisk_ics
+OutputDir                          output
+TimeMax                            0.5
+BoxSize                            200
+TimeBetSnapshot                    0.1
+MaxSizeTimestep                    0.005
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+UnitLength_in_cm                   3.085678e+21
+UnitMass_in_g                      1.989e+43
+UnitVelocity_in_cm_per_s           100000
+SofteningGas                       0.001
+Softening_Type1                    0.05
+Softening_Type2                    0.1
+Softening_Type3                    0.1
+Softening_Type4                    0.001
+Softening_Type5                    0
+SofteningGasMaxPhys                0.001
+Softening_Type1_MaxPhysLimit       0.05
+Softening_Type2_MaxPhysLimit       0.1
+Softening_Type3_MaxPhysLimit       0.1
+Softening_Type4_MaxPhysLimit       0.001
+Softening_Type5_MaxPhysLimit       0
+MinGasTemp                         10
+InitGasTemp                        1e4
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+TimeBetStatistics                  0.5
+MaxMemSize                         3000
+ResubmitOn                         0
+ResubmitCommand                    none

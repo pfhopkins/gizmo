@@ -197,16 +197,16 @@ void do_the_cooling_for_particle(int i)
         {
             int k_donor = rt_get_donation_target_bin(k); /* this is used to indicate whether in the rad drift-kick loop, absorption is immediately re-radiated or not, ie. whether or not we should account for it here */
             double tau = fabs(rt_absorption_rate(i,k) * dtime), f_abs = 1.-exp(-tau); if(tau<0.01) {f_abs=tau*(1.-tau/2.);} /* fraction of energy absorbed in the timestep */
-            double absorpted_rad_energy = DMIN(SphP[i].Rad_E_gamma[k],SphP[i].Rad_E_gamma_Pred[k]) * f_abs; /* estimate energy from the band that is absorbed in this timestep */
+            double absorpted_rad_energy = DMIN(CellP[i].Rad_E_gamma[k],CellP[i].Rad_E_gamma_Pred[k]) * f_abs; /* estimate energy from the band that is absorbed in this timestep */
 #ifdef RT_INFRARED
             if(k==RT_FREQ_BIN_INFRARED) {
                 k_donor = -1; /* we use this below to indicate radiation which hasn't been re-radiated, which is handled in a special way for the adaptive bin here [which by default re-emits to itself], so set this here */
-                double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,SphP[i].Dust_Temperature,SphP[i].Radiation_Temperature,-1,-1) / (rt_kappa_adaptive_IR_band(i,SphP[i].Dust_Temperature,SphP[i].Radiation_Temperature,0,0) + MIN_REAL_NUMBER); /* want the opacity from gas absorption as a fraction of total, because this is -not- assumed to re-radiate immediately in the drift/kick routine */
+                double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,CellP[i].Dust_Temperature,CellP[i].Radiation_Temperature,-1,-1) / (rt_kappa_adaptive_IR_band(i,CellP[i].Dust_Temperature,CellP[i].Radiation_Temperature,0,0) + MIN_REAL_NUMBER); /* want the opacity from gas absorption as a fraction of total, because this is -not- assumed to re-radiate immediately in the drift/kick routine */
                 absorpted_rad_energy *= opacity_fraction_from_gas_absorption;
             }
 #endif
             if(k_donor >= 0) {continue;} /* re-emitted immediately, ignore */
-            de_u_radabs += fabs(total_absorption_rate); /* sum up absorbed photon energy */
+            de_u_radabs += fabs(absorpted_rad_energy); /* sum up absorbed photon energy */
         }
         de_u_work += de_u_radabs; /* add this to the energy reservoir represented by the work function */
         double de_u_touse = de_u - de_u_work; /* this is the actual difference between the implicit hydro work+absorption term and the total term, i.e. a corrected de_u_rad, which we use below */
