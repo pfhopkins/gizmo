@@ -189,7 +189,7 @@ double sink_fb_angleweight_localcoupling(int j, double cos_theta, double r, doub
 
 /* function below is used for long-range sink particle radiation fields -- used only in the forcetree routines (where they
     rely this for things like the long-range radiation pressure and compton heating) */
-double sink_fb_angleweight(double sink_lum_input, MyFloat sink_angle[3], double dx, double dy, double dz)
+double sink_fb_angleweight(double sink_lum_input, Vec3<double>& sink_angle, double dx, double dy, double dz)
 {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     return sink_lum_input;

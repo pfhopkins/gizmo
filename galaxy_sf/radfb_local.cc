@@ -23,7 +23,7 @@ void radiation_pressure_winds_consolidated(void)
     if(All.RP_Local_Momentum_Renormalization<=0) return;
     Ngblist.resize(NumPart);
     PRINT_STATUS("Local Radiation-Pressure acceleration calculation");
-    MyDouble *pos; int N_MAX_KERNEL,N_MIN_KERNEL,MAXITER_FB,NITER,startnode,dummy,numngb_inbox,i,j,k,n;
+    Vec3<double> pos={}; int N_MAX_KERNEL,N_MIN_KERNEL,MAXITER_FB,NITER,startnode,dummy,numngb_inbox,i,j,k,n;
     double h,wt_sum,delta_v_imparted_rp=0,total_n_wind=0,total_mom_wind=0,total_prob_kick=0,avg_v_kick=0,avg_taufac=0;
 
     for (int i : ActiveParticleList)
@@ -220,7 +220,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
     if(All.HIIRegion_fLum_Coupled<=0) {return;}
     if(All.Time<=0) {return;}
     PRINT_STATUS("Local HII-Region photo-heating/ionization calculation");
-    MyDouble *pos; MyFloat h_i, dt, rho; int startnode, numngb, j, n, i, NITER_HIIFB, MAX_N_ITERATIONS_HIIFB, jnearest,already_ionized,do_ionize,dummy;
+    Vec3<double> pos={}; MyFloat h_i, dt, rho; int startnode, numngb, j, n, i, NITER_HIIFB, MAX_N_ITERATIONS_HIIFB, jnearest,already_ionized,do_ionize,dummy;
     double total_N_ionizing_part=0,total_Ndot_ionizing=0,total_m_ionized=0,total_N_ionized=0,avg_RHII=0,mionizable=0,mionized=0,mion_actual=0;
     double RHII,RHIIMAX,R_search,rnearest,stellum,prob,rho_j,prandom,m_available,m_effective,RHII_initial,RHIImultiplier;
     double uion; uion = HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); /* assume fully-ionized gas with gamma=5/3; this is a global variable below */
