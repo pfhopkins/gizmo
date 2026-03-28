@@ -337,11 +337,11 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #include "../turb/chimes_turbulent_ion_diffusion.h"
 #endif
 
-#ifdef COSMIC_RAY_FLUID
+#if defined(COSMIC_RAY_FLUID) && !defined(TRANSPORT_SUBCYCLE)
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
 #endif
 
-#ifdef RT_SOLVER_EXPLICIT
+#if defined(RT_SOLVER_EXPLICIT) && !defined(TRANSPORT_SUBCYCLE)
 #if defined(RT_EVOLVE_INTENSITIES)
 #include "../radiation/rt_direct_ray_transport.h"
 #else

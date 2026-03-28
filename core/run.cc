@@ -282,6 +282,34 @@ void calculate_non_standard_physics(void)
         if(All.ComovingIntegrationOn) {All.TimeNextOnTheFlyFoF *= All.TimeBetOnTheFlyFoF;} else {All.TimeNextOnTheFlyFoF += All.TimeBetOnTheFlyFoF;}}
 #endif
 
+#ifdef TRANSPORT_SUBCYCLE
+    /* --- compute the global number of transport subcycles --- */
+    {
+        double min_transport_dt_local = MAX_REAL_NUMBER, max_hydro_dt_local = 0;
+        for(int idx : ActiveParticleList) {
+            if(P[idx].Type != 0 || P[idx].Mass <= 0) continue;
+            double hydro_dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(idx);
+            min_transport_dt_local = DMIN(min_transport_dt_local, CellP[idx].Transport_Dt_Subcycle);
+            max_hydro_dt_local = DMAX(max_hydro_dt_local, hydro_dt);
+        }
+        double min_transport_dt_global, max_hydro_dt_global;
+        MPI_Allreduce(&min_transport_dt_local, &min_transport_dt_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&max_hydro_dt_local, &max_hydro_dt_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        All.Transport_Subcycle_N = 1;
+        if(min_transport_dt_global > 0 && min_transport_dt_global < MAX_REAL_NUMBER && max_hydro_dt_global > min_transport_dt_global)
+            All.Transport_Subcycle_N = IMIN((int)ceil(max_hydro_dt_global / min_transport_dt_global), TRANSPORT_SUBCYCLE);
+        All.Transport_Subcycle_dt_fraction = 1.0 / (double)All.Transport_Subcycle_N;
+        if(ThisTask == 0 && All.Transport_Subcycle_N > 1)
+            printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
+                   All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
+    }
+    /* --- build face geometry cache and pack transport state --- */
+    transport_subcycle_build_cache();
+    transport_subcycle_pack_state();
+
+    for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
+#endif // TRANSPORT_SUBCYCLE
+
 #ifdef RADTRANSFER
     CPU_Step[CPU_MISC] += measure_time();
 #if defined(RT_SOURCE_INJECTION)
@@ -305,7 +333,25 @@ void calculate_non_standard_physics(void)
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
-#ifdef COOLING	/* radiative cooling and chemistry  */
+#ifdef TRANSPORT_SUBCYCLE
+    /* --- recompute transport fluxes and apply sub-step kick --- */
+    transport_subcycle_exchange_fluxes();
+    transport_subcycle_kick();
+    if(All.Transport_Subcycle_N > 1) {transport_subcycle_halo_exchange();}
+#endif
+
+#if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
+    cooling_parent_routine();
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
+
+#ifdef TRANSPORT_SUBCYCLE
+    } /* end transport subcycle loop */
+    transport_subcycle_unpack_state();
+    transport_subcycle_free_cache();
+#endif
+
+#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
