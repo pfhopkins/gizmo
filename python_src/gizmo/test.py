@@ -1,17 +1,62 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
-from os import system, environ, path, chdir
+from os import system, environ, path, chdir, cpu_count, remove
 from urllib.request import urlretrieve, HTTPError
-from shutil import move
+from shutil import move, rmtree
+from glob import glob
 import pytest
 from matplotlib import pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
 
 
-def build_gizmo_for_test(test_name: str):
-    """Sets environment variables and runs a script for building gizmo for a given test"""
-    environ["TEST_NAME"] = test_name
-    system("bash test/build_gizmo_for_test.sh")
+def flush_colorbar(mappable, ax=None, label=None, **kwargs):
+    """Add a colorbar that is flush with the axes and lines up with its edges."""
+    if ax is None:
+        ax = mappable.axes
+    fig = ax.get_figure()
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    return fig.colorbar(mappable, cax=cax, label=label, **kwargs)
+
+
+def clean_test_outputs(test_name: str):
+    """Remove output directory, plot PNGs, and log files from a previous test run."""
+    test_dir = f"test/{test_name}"
+    output_dir = path.join(test_dir, "output")
+    if path.isdir(output_dir):
+        rmtree(output_dir)
+    for f in glob(path.join(test_dir, "*.png")):
+        remove(f)
+    for f in glob(path.join(test_dir, f"test_{test_name}.out")):
+        remove(f)
+    for f in glob(path.join(test_dir, f"test_{test_name}.err")):
+        remove(f)
+
+
+def default_omp_threads():
+    """Return the default number of OpenMP threads for tests."""
+    return 2
+
+
+def default_mpi_ranks(max_ranks=None):
+    """Return the number of MPI ranks to use, defaulting to half the available CPU count
+    (to leave room for OpenMP threads). Optionally cap at max_ranks."""
+    n = cpu_count() // 2
+    if max_ranks is not None:
+        n = min(n, max_ranks)
+    return max(n, 1)
+
+
+def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0):
+    """Sets environment variables and runs a script for building gizmo for a given test.
+    If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building."""
+    system("rm -f GIZMO test/*/GIZMO")
+    system(f"cp test/{test_name}/Config.sh .")
+    if num_openmp_threads > 0:
+        with open("Config.sh", "a") as f:
+            f.write(f"\nOPENMP={num_openmp_threads}\n")
+    system("make clean && make -j8")
     if not path.isfile("GIZMO"):
         raise FileNotFoundError("Did not successfully build GIZMO")
     move("GIZMO", f"test/{test_name}/GIZMO")
@@ -42,10 +87,12 @@ def download_test_files(test_name: str):
         raise (FileNotFoundError(f"Could not find ICs and params for test {test_name}"))
 
 
-def run_test(test_name: str, num_mpi_ranks: int = 1):  # , num_openmp_threads: int=0):
-    """Runs the test"""
+def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
+    """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run."""
+    if num_openmp_threads > 0:
+        environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
     paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
+    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 
 def get_cooling_tables(test_directory="."):
@@ -59,13 +106,46 @@ def get_cooling_tables(test_directory="."):
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
-    if num_openmp_threads > 0:
-        environ["OMP_NUM_THREADS"] = num_openmp_threads
-    build_gizmo_for_test(test_name)
+    clean_test_outputs(test_name)
+    build_gizmo_for_test(test_name, num_openmp_threads)
     chdir(f"test/{test_name}/")
     download_test_files(test_name)
-    run_test(test_name, num_mpi_ranks)
+    run_test(test_name, num_mpi_ranks, num_openmp_threads)
     chdir("../../")
+
+
+def parse_params(params_file: str) -> dict:
+    """Parse a GIZMO parameter file and return a dict of key-value pairs."""
+    params = {}
+    with open(params_file) as f:
+        for line in f:
+            line = line.split("%")[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                params[parts[0]] = parts[1]
+    return params
+
+
+def get_final_snapshot(test_name: str) -> str:
+    """Return the path to the last snapshot produced by a test."""
+    snaps = sorted(glob(f"test/{test_name}/output/snapshot_*.hdf5"))
+    if not snaps:
+        raise RuntimeError(f"No snapshots found for test {test_name}")
+    return snaps[-1]
+
+
+def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
+    """Assert that the snapshot time matches TimeMax from the test's parameter file."""
+    params_file = f"test/{test_name}/{test_name}.params"
+    params = parse_params(params_file)
+    time_max = float(params["TimeMax"])
+    with h5py.File(snapshot_file, "r") as F:
+        time = float(F["Header"].attrs["Time"])
+    assert abs(time - time_max) < rtol * abs(time_max), (
+        f"Snapshot time {time} does not match TimeMax {time_max} (rtol={rtol})"
+    )
 
 
 def assert_snapshots_are_close(
@@ -74,10 +154,9 @@ def assert_snapshots_are_close(
     fields_to_compare: tuple = ("Density", "Velocities", "InternalEnergy"),
     rtol: float = 1e-2,
     atol: float = 0,
-    plot_1D=False,
 ):
     """Test-assert that the specified gas data fields in two snapshots are within specified tolerance"""
-    fields_to_read = ("ParticleIDs", "Coordinates") + fields_to_compare
+    fields_to_read = ("ParticleIDs",) + fields_to_compare
 
     datafields = {snapshot1: {}, snapshot2: {}}
     for s in snapshot1, snapshot2:
@@ -90,12 +169,33 @@ def assert_snapshots_are_close(
             datafields[s][f] = datafields[s][f][id_order]
 
     for f in fields_to_compare:
-        if plot_1D:
-            plt.plot(datafields[snapshot1]["Coordinates"][:, 0], datafields[snapshot1][f], ".", label="Initial")
-            plt.plot(datafields[snapshot2]["Coordinates"][:, 0], datafields[snapshot2][f], ".", label="Final")
-            plt.legend()
-            plt.ylabel(f)
-            plt.xlabel("x")
-            plt.savefig(f"{f}.png")
-            plt.close()
         pytest.approx((datafields[snapshot1][f], datafields[snapshot2][f]), rel=rtol, abs=atol)
+
+
+def plot_1D_snapshot_comparison(
+    snapshot1: str,
+    snapshot2: str,
+    fields_to_plot: tuple = ("Density", "Velocities", "InternalEnergy"),
+    output_dir: str = ".",
+):
+    """Plot 1D comparison of gas data fields between two snapshots, sorted by particle ID."""
+    fields_to_read = ("ParticleIDs", "Coordinates") + fields_to_plot
+
+    datafields = {snapshot1: {}, snapshot2: {}}
+    for s in snapshot1, snapshot2:
+        with h5py.File(s, "r") as F:
+            for f in fields_to_read:
+                datafields[s][f] = F["PartType0/" + f][:]
+
+        id_order = datafields[s]["ParticleIDs"].argsort()
+        for f in fields_to_read:
+            datafields[s][f] = datafields[s][f][id_order]
+
+    for f in fields_to_plot:
+        plt.plot(datafields[snapshot1]["Coordinates"][:, 0], datafields[snapshot1][f], ".", label="Initial")
+        plt.plot(datafields[snapshot2]["Coordinates"][:, 0], datafields[snapshot2][f], ".", label="Final")
+        plt.legend()
+        plt.ylabel(f)
+        plt.xlabel("x")
+        plt.savefig(path.join(output_dir, f"{f}.png"))
+        plt.close()

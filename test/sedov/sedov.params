@@ -1,0 +1,29 @@
+% Sedov-Taylor blast wave test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(5.0/3.0)
+%
+InitCondFile                       sedov_ics
+OutputDir                          output
+TimeMax                            0.03
+BoxSize                            6
+TimeBetSnapshot                    0.003
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         5000
+UnitLength_in_cm                   3.085678e+21
+UnitMass_in_g                      1.989e+43
+UnitVelocity_in_cm_per_s           100000
+MinGasTemp                         10
+ErrTolIntAccuracy                  0.002
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.0015
+TimeBetStatistics                  0.001
+MaxSizeTimestep                    0.01
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+TreeDomainUpdateFrequency          0.5
