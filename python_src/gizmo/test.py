@@ -48,14 +48,19 @@ def default_mpi_ranks(max_ranks=None):
     return max(n, 1)
 
 
-def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0):
+def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
     """Sets environment variables and runs a script for building gizmo for a given test.
-    If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building."""
+    If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building.
+    extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",))."""
     system("rm -f GIZMO test/*/GIZMO")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
         with open("Config.sh", "a") as f:
             f.write(f"\nOPENMP={num_openmp_threads}\n")
+    if extra_config_flags:
+        with open("Config.sh", "a") as f:
+            for flag in extra_config_flags:
+                f.write(f"\n{flag}\n")
     system("make clean && make -j8")
     if not path.isfile("GIZMO"):
         raise FileNotFoundError("Did not successfully build GIZMO")
@@ -104,10 +109,10 @@ def get_cooling_tables(test_directory="."):
     system(f"cp cooling/TREECOOL {test_directory}")
 
 
-def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
+def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
     clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name, num_openmp_threads)
+    build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     chdir(f"test/{test_name}/")
     download_test_files(test_name)
     run_test(test_name, num_mpi_ranks, num_openmp_threads)
