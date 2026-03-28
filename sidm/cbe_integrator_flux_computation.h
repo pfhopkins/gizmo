@@ -147,7 +147,7 @@
 #ifdef WAKEUP
         if(!(TimeBinActive[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {if(vsig > WAKEUP*P[j].AGS_vsig) {
             #pragma omp atomic write
-            P[j].wakeup = 1;
+            P[j].wakeup = -1;
             #pragma omp atomic write
             NeedToWakeupParticles_local = 1;
         }}
