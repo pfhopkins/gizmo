@@ -204,6 +204,10 @@ struct INPUT_STRUCT_NAME
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
         MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
 #endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+        MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
+        MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
+#endif
     } Gradients;
     MyDouble NV_T[3][3];
     
@@ -290,6 +294,9 @@ struct INPUT_STRUCT_NAME
     MyFloat Elastic_Stress_Tensor[3][3];
 #endif
     
+#ifdef WAKEUP
+    int TimeBin;
+#endif
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -306,6 +313,9 @@ struct OUTPUT_STRUCT_NAME
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
     MyFloat MaxSignalVel;
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+    MyFloat MaxShockMachNumber;
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyFloat MaxKineticEnergyNgb;
 #endif
@@ -444,6 +454,12 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
         for(j=0;j<N_RT_FREQ_BINS;j++) {in->Gradients.Rad_E_gamma_ET[j][k] = CellP[i].Gradients.Rad_E_gamma_ET[j][k];}
 #endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+        for(j=0;j<N_RT_FREQ_BINS;j++) {
+            in->Gradients.Rad_E_gamma_Grad[j][k] = CellP[i].Gradients.Rad_E_gamma_Grad[j][k];
+            int j_d; for(j_d=0;j_d<3;j_d++) {in->Gradients.Rad_Flux_Grad[j][j_d][k] = CellP[i].Gradients.Rad_Flux_Grad[j][j_d][k];}
+        }
+#endif
     }
     
 #ifdef RT_SOLVER_EXPLICIT
@@ -470,7 +486,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k);}
+    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0);}
 #endif
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
     {int k_offset = NUM_METAL_SPECIES;
@@ -547,6 +563,10 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->DelayTime = CellP[i].DelayTime;
 #endif
 
+#ifdef WAKEUP
+    in->TimeBin = P[i].TimeBin;
+#endif
+
 }
 
 
@@ -573,6 +593,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     for(k=0;k<3;k++) {CellP[i].GravWorkTerm[k] += out->GravWorkTerm[k];}
 #endif
     if(CellP[i].MaxSignalVel < out->MaxSignalVel) {CellP[i].MaxSignalVel = out->MaxSignalVel;}
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+    if(CellP[i].ShockMachNumber < out->MaxShockMachNumber) {CellP[i].ShockMachNumber = out->MaxShockMachNumber;}
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     if(CellP[i].MaxKineticEnergyNgb < out->MaxKineticEnergyNgb) {CellP[i].MaxKineticEnergyNgb = out->MaxKineticEnergyNgb;}
 #endif
@@ -813,6 +836,19 @@ void hydro_final_operations_and_cleanup(void)
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
             for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
             for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = DMAX(CellP[i].ISMDustChem_Dust_Species[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Species[k]);}
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            // For grain size bins we track the total mass and number and not a scalar mass fraction, so convert back to total values
+            for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+                int l;
+                double new_bin_mass, new_bin_number, old_bin_mass;
+                for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
+                    new_bin_number = DMAX(CellP[i].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)], 0.01*CellP[i].ISMDustChem_Dust_NumberInBin[k][l]);
+                    old_bin_mass = get_ISMDustChemEvo_bin_mass(i,k,l);
+                    new_bin_mass = DMAX(old_bin_mass + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)] * UNIT_MASS_IN_CGS, 0.01*old_bin_mass);
+                    update_ISMDustChemEvo_bin_number_and_slope(i,k,l,new_bin_number,new_bin_mass);
+                }
+            }
+#endif
 #endif
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
             {int k_offset = NUM_METAL_SPECIES;
@@ -957,6 +993,9 @@ void hydro_force_initial_operations_preloop(void)
         if(P[i].Type==0)
         {
             CellP[i].MaxSignalVel = MIN_REAL_NUMBER;
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+            CellP[i].ShockMachNumber = 0;
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif

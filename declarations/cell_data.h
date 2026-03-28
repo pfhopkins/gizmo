@@ -28,13 +28,31 @@ extern struct gas_cell_data
     MyDouble Volume_1;              /*!< 1st-order cell volume for mesh-free (MFM/MFV-type) reconstruction at 1st-order volume quadrature */
 #endif
     
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#ifdef OUTPUT_MACH_NUMBER
+    MyDouble ISMDustChem_MachNumber;               /*!< mach number used for sub-resolution density enhancements from turbulence */
+#endif
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+    MyFloat ShockMachNumber;  /*!< estimated local shock Mach number from pairwise Riemann problem */
+#endif
+#ifdef GALSF_ISMDUSTCHEM_MODEL
     MyDouble ISMDustChem_Dust_Source[NUM_ISMDUSTCHEM_SOURCES];  /*!< amount of dust from each source of dust creation. 0=gas-dust accretion, 1=Sne Ia, 2=SNe II, 3=AGB */
     MyDouble ISMDustChem_Dust_Metal[NUM_ISMDUSTCHEM_ELEMENTS];  /*!< metallicity (species-by-species) of dust */
+#if (GALSF_ISMDUSTCHEM_MODEL & 2)
     MyDouble ISMDustChem_Dust_Species[NUM_ISMDUSTCHEM_SPECIES]; /*!< metallicity of dust species types. 0=silicates, 1=carbon, 2=SiC, 3=free-flying iron, (optional) 4=oxygen reservoir, (optional) 5=iron inclusions in silicates */
+#endif
     MyDouble ISMDustChem_DelayTimeSNeSputtering;       /*!< delay time for thermal sputtering due to recent SNe, used to not double count dust destruction with thermal sputtering */
+#if (!defined(RADTRANSFER) && !defined(RT_INFRARED)) && (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
+    MyFloat Dust_Temperature;
+#endif
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
+    MyDouble ISMDustChem_Dust_NumberInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
+    MyDouble ISMDustChem_Dust_SlopeInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
+    MyDouble ISMDustChem_Coag_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
+    MyDouble ISMDustChem_Shat_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
+#else
     MyDouble ISMDustChem_C_in_CO;                      /*!< C metallicity locked in CO */
     MyDouble ISMDustChem_MassFractionInDenseMolecular; /*!< mass fraction of gas in dense MC phase */
+#endif
 #endif
     
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -127,6 +145,10 @@ extern struct gas_cell_data
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
         MyDouble Rad_E_gamma_ET[N_RT_FREQ_BINS][3];
+#endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+        MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
+        MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
     } Gradients;
     MyDouble NV_T[3][3];        /*!< holds the tensor used for gradient estimation */
@@ -412,6 +434,10 @@ extern struct gas_cell_data
     MyFloat NetHeatingRateQ;
     MyFloat HydroHeatingRate;
     MyFloat MetalCoolingRate;
+    MyFloat PElecHeatingRate;
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING)
+    MyFloat DustCoolingRate;
+#endif
 #endif
     
 #if defined(COOLING) && defined(COOL_GRACKLE)

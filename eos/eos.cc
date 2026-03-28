@@ -344,7 +344,7 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
     double Z_scaled = P[i].Metallicity[0]/All.SolarAbundances[0]; // metallicity of the particle in solar
     return (kappa_interp_geo_cgs / kappa_solar_geo_cgs) / (Z_scaled); // will be multiplied by metallicity to convert later
 #endif
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
     if(P[i].Metallicity[0]>0) {return (CellP[i].ISMDustChem_Dust_Metal[0]/P[i].Metallicity[0])/0.5;} else {return 0;} // use total amount of dust from 'live' dust evolution models
 #endif
 #if defined(RT_INFRARED)

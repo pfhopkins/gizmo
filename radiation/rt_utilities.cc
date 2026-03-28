@@ -195,6 +195,20 @@ double rt_kappa(int i, int k_freq)
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     /* three-band (UV, OPTICAL, IR) approximate spectra for stars as used in the FIRE (Hopkins et al.) models. mean opacities here come from integrating over the Hopkins 2004 (Pei 1992) opacities versus wavelength for the large bands here, using a luminosity-weighted mean stellar spectrum from the same starburst99 models used to compute the stellar feedback */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    // Use either MW (FIRE-3 default) or SMC (FIRE-2 default) opacities depending on the evolved local dust population composition
+    // If silicate mass / carbonaceous mass >= 5 use SMC opacities, else MW opacities.
+    double sil_to_C = 0;
+    if (CellP[i].ISMDustChem_Dust_Metal[0]>0 && CellP[i].ISMDustChem_Dust_Species[1]>0)
+    {sil_to_C = (CellP[i].ISMDustChem_Dust_Metal[0] - CellP[i].ISMDustChem_Dust_Species[1])/CellP[i].ISMDustChem_Dust_Species[1];} // Everything that isn't carbonaceous dust is silicates for our purpose
+    else {sil_to_C = 100;}
+    if (sil_to_C >= 5)
+    {
+        if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 1800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/neutral H opacities. effective wavelength here is at something like ~0.2 micron, but spans a broad range from ~0.09-0.36 microns.
+        if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. see O-NIR band notes below, effective wavelength here is ~R-band (0.36-3.4 micron is the rough range of the effective band)
+        if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 10*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. this is updated to integrate through the 2007+ Draine+Li MW-like dust models, for a typical M101-like disk SED. slightly higher for e.g. M82-like with warmer dust. note this is a broad band, from ~3-300 micron, so contributions both from old-star direct IR emission and dust re-emission (warm and cold), which is why this is a bit higher than you would get for pure cold-dust re-emission.  
+    }  
+#endif
     if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/neutral H opacities. effective wavelength here is at something like ~0.2 micron, but spans a broad range from ~0.09-0.36 microns.
     if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. see O-NIR band notes below, effective wavelength here is ~R-band (0.36-3.4 micron is the rough range of the effective band)
     if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 6.5*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. this is updated to integrate through the 2007+ Draine+Li MW-like dust models, for a typical M101-like disk SED. slightly higher for e.g. M82-like with warmer dust. note this is a broad band, from ~3-300 micron, so contributions both from old-star direct IR emission and dust re-emission (warm and cold), which is why this is a bit higher than you would get for pure cold-dust re-emission.
@@ -1099,7 +1113,7 @@ void rt_apply_boundary_conditions(int i)
 #ifdef RT_INFRARED
             if(k==RT_FREQ_BIN_INFRARED) {
                 CellP[i].Radiation_Temperature = background_isrf_cmb_Teff();
-                CellP[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);
+                CellP[i].Dust_Temperature = DMIN(All.InitRadiationTemp,100.);
             }
 #endif
         }
@@ -1134,7 +1148,7 @@ void get_background_isrf_urad(int i, double *urad){
 double background_isrf_cmb_Teff(){
     // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
     // Necessary because current IR band treatment lumps both radiation fields together
-    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = DMIN(All.InitGasTemp,100.);
+    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = DMIN(All.InitRadiationTemp,100.);
     double fac_TCMB= 1.+All.RadiationBackgroundRedshift, fac_uCMB = pow(fac_TCMB,4);
     double urad_CMB_CGS_eV = fac_uCMB * 0.262, Trad_CMB = 2.73 * fac_TCMB;
     return (urad_ISRF_CGS_eV * Trad_ISRF + urad_CMB_CGS_eV * Trad_CMB) / (urad_ISRF_CGS_eV + urad_CMB_CGS_eV); // weighting by SED energy
@@ -1163,7 +1177,7 @@ void rt_set_simple_inits(int RestartFlag)
         {
             int k;
 #ifdef RT_INFRARED
-            if(flag_to_reset_values_on_startup) {CellP[i].Radiation_Temperature = CellP[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);} //get_min_allowed_dustIRrad_temperature(); // in K, floor = CMB temperature or 10K
+            if(flag_to_reset_values_on_startup) {CellP[i].Radiation_Temperature = CellP[i].Dust_Temperature = DMIN(All.InitRadiationTemp,100.);} //get_min_allowed_dustIRrad_temperature(); // in K, floor = CMB temperature or 10K
 #ifdef RT_ISRF_BACKGROUND
             if(flag_to_reset_values_on_startup) {CellP[i].Radiation_Temperature = background_isrf_cmb_Teff();} //CellP[i].Dust_Temperature;
 #endif
@@ -1207,7 +1221,7 @@ void rt_set_simple_inits(int RestartFlag)
 
 #ifdef RT_INFRARED
                 if(flag_to_reset_values_on_startup && k==RT_FREQ_BIN_INFRARED) { // only initialize the IR energy if starting a new run, otherwise use what's in the snapshot
-                    CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] = (4.*5.67e-5 / C_LIGHT_CGS) * pow(DMIN(All.InitGasTemp,100.),4.) / UNIT_PRESSURE_IN_CGS * P[i].Mass / (CellP[i].Density*All.cf_a3inv);
+                    CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] = (4.*5.67e-5 / C_LIGHT_CGS) * pow(DMIN(All.InitRadiationTemp,100.),4.) / UNIT_PRESSURE_IN_CGS * P[i].Mass / (CellP[i].Density*All.cf_a3inv);
                 }
 #endif
 #ifdef RT_ISRF_BACKGROUND
@@ -1812,7 +1826,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
 
     if(dust_or_gas_opacity_only_flag >= 0) // dust opacities
     {
-#ifdef RT_INFRARED // use fancy detailed fit with composition varying by dust temperature
+        // use fancy detailed fit with composition varying by dust temperature
         /* opacities are from tables of Semenov et al 2003; we use their 'standard'
          model, for each -dust- temperature range (which gives a different dust composition,
          hence different wavelength-dependent specific opacity). We then integrate to
@@ -1824,29 +1838,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
          the deviations from the fit functions are much smaller than the deviations owing
          to different grain composition choices (porous/non, composite/non, 5-layer/aggregated/etc)
          in Semenov et al's paper */
-        
-#if defined(RT_INFRARED) || defined(COOL_LOW_TEMPERATURES)
-        T_dust_opacitytable = DMIN(T_dust , 1499.9); // limit to <1500 so always use opacities for 'capped' value at 1500 below, but don't ignore, because we're assuming the dust destruction above 1500K is accounted for in the self-consistent calculation of the dust-to-metals ratio, NOT in the opacities here //
-#endif
-        if(T_dust_opacitytable < 160.) // Tdust < 160 K (all dust constituents present)
-        {
-            kappa = exp(0.72819004 + 0.75142468*x - 0.07225763*x*x - 0.01159257*x*x*x + 0.00249064*x*x*x*x);
-        } else if(T_dust_opacitytable < 275.) { // 160 < Tdust < 275 (no ice present)
-            kappa = exp(0.16658241 + 0.70072926*x - 0.04230367*x*x - 0.01133852*x*x*x + 0.0021335*x*x*x*x);
-        } else if(T_dust_opacitytable < 425.) { // 275 < Tdust < 425 (no ice or volatile organics present)
-            kappa = exp(0.03583845 + 0.68374146*x - 0.03791989*x*x - 0.01135789*x*x*x + 0.00212918*x*x*x*x);
-        } else if(T_dust_opacitytable < 680.) { // 425 < Tdust < 680 (silicates, iron, & troilite present)
-            kappa = exp(-0.76576135 + 0.57053532*x - 0.0122809*x*x - 0.01037311*x*x*x + 0.00197672*x*x*x*x);
-        } else if(T_dust_opacitytable <= MAX_DUST_TEMP) { // 680 < Tdust < 1500 (silicates & iron present)
-            kappa = exp(-2.23863222 + 0.81223269*x + 0.08010633*x*x + 0.00862152*x*x*x - 0.00271909*x*x*x*x);
-        } else {
-            kappa = MIN_REAL_NUMBER; // here this following the hottest composition; we assume dust is absent above MAX_DUST_TEMP, but that's handled in the dust-to-gas mass ratio subroutine; this needs an opacity to calculate what the dust temperature -would- be in this limit; but actually shouldn't be able to hit this given the catches above for that limit
-        }
-        if(dx_excess > 0) {kappa *= exp(0.57*dx_excess);} // assumes kappa scales linearly with temperature (1/lambda) above maximum in fit; pretty good approximation //
-    	kappa = DMIN(1.e-3 * Trad * Trad, kappa); // ensure that we extrapolate to low temperatures with a beta=2 law, like in the S03 paper fiducial model
-#else
-        kappa = DMIN(1.e-3 * Trad * Trad, 5.); // beta=2 law capped at 5 cm^2/g, rough approximation of Semenov model neglecting jumps in composition
-#endif
+        kappa = dust_planck_mean_opacity(Trad, T_dust_opacitytable);
 #ifdef RADTRANSFER
         if((do_emission_absorption_scattering_opacity==1) || (do_emission_absorption_scattering_opacity==-1)) {
             kappa *= (1.-0.5/(1.+((725.*725.)/(1.+Trad*Trad)))); /* rough interpolation for dust depending on the radiation temperature: high Trad, this is 1/2, low Trad, gets closer to unity */

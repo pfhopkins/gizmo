@@ -1,0 +1,25 @@
+% Sod shock tube test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=1
+%        BOX_PERIODIC
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(1.4)
+%
+InitCondFile                       shocktube_ics_emass
+OutputDir                          output
+TimeMax                            5
+BoxSize                            80
+TimeBetSnapshot                    0.5
+MaxSizeTimestep                    0.001
+DesNumNgb                          4
+MaxNumNgbDeviation                 1e-6
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.0025
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.125
+TimeBetStatistics                  0.5
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001

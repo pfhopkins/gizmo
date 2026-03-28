@@ -536,8 +536,7 @@
 #EOS_ENFORCE_ADIABAT=(1.0)         # if set, this forces gas to lie -exactly- along the adiabat P=EOS_ENFORCE_ADIABAT*(rho^GAMMA)
 #HYDRO_REPLACE_RIEMANN_KT          # replaces the hydro Riemann solver (HLLC) with a Kurganov-Tadmor flux derived in Panuelos, Wadsley, and Kevlahan, 2019. works with MFM/MFV/fixed-grid methods [-without- MHD active, but other modules are fine]. more diffusive, but smoother, and more stable convergence results
 #SLOPE_LIMITER_TOLERANCE=1         # sets the slope-limiters used. higher=more aggressive (less diffusive, but less stable). 1=default. 0=conservative. use on problems where sharp density contrasts in poor particle arrangement may cause errors. 2=use the original GIZMO paper (more aggressive) slope-limiters. more accurate for smooth problems, but these can introduce numerical instability in problems with poorly-resolved large noise or density contrasts (e.g. multi-phase, self-gravitating flows)
-#ENERGY_ENTROPY_SWITCH_IS_ACTIVE   # enable energy-entropy switch as described in GIZMO methods paper. This can greatly improve performance on some problems where the
-                                   # the flow is very cold and highly super-sonic. it can cause problems in multi-phase flows with strong cooling, though, and is not compatible with non-barytropic equations of state
+#ENERGY_ENTROPY_SWITCH_IS_ACTIVE   # enable energy-entropy switch as described in GIZMO methods paper. This can greatly improve performance on some problems where the the flow is very cold and highly super-sonic. it can cause problems in multi-phase flows with strong cooling, though, and is not compatible with non-barytropic equations of state
 #FORCE_ENTROPIC_EOS_BELOW=(0.01)   # set (manually) the alternative energy-entropy switch which is enabled by default in MFM/MFV: if relative velocities are below this threshold, it uses the entropic EOS
 #HYDRO_KERNEL_SURFACE_VOLCORR      # attempt to correct SPH/MFM/MFV cell volumes for free-surface effects, using the estimated boundary correction for the Wendland C2 kernel (works with others but most accurate for this) based on asymmetry of neighbors within kernel, as calibrated in Reinhardt & Stadel 2017 (arXiv:1701.08296), see e.g. their Fig 3
 #DISABLE_SURFACE_VOLCORR           # disables HYDRO_KERNEL_SURFACE_VOLCORR if it would be set by default (e.g. if EOS_ELASTIC is enabled)
@@ -615,6 +614,7 @@
 #GRAIN_RDI_TESTPROBLEM             # top-level flag to enable a variety of test problem behaviors, customized for the idealized studies of dust dynamics in Moseley et al 2019MNRAS.489..325M, Seligman et al 2019MNRAS.485.3991S, Steinwandel et al arXiv:2111.09335, Ji et al arXiv:2112.00752, Hopkins et al 2020MNRAS.496.2123H and arXiv:2107.04608, Squire et al 2022MNRAS.510..110S. Cite these if used.
 #GRAIN_RDI_TESTPROBLEM_ACCEL_DEPENDS_ON_SIZE    # Make the idealized external grain acceleration grain size-dependent; equivalent to assuming an absorption efficiency Q=1. Cite GRAIN_RDI_TESTPROBLEM papers.
 #GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION # Enables idealized radiation injection by a source population designed to set up outflow test problems with live radiation-hydrodynamics as in Hopkins et al., arXiv:2107.04608. Cite that paper if this module is used.
+#IO_DUST_NOT_IN_ICFILE              # special flag needed if restarting from a snapshot (flag=2) with no dust. Will set dust species via params arguments and assume an MRN size distribution, if GALSF_ISMDUSTCHEM_MODEL is active 
 # --------------------
 # ----- MPI & Parallel-FFTW De-Bugging
 #DOUBLEPRECISION_FFTW               # FFTW in double precision to match libraries
@@ -651,13 +651,16 @@
 ####################################################################################################-
 
 ############################################################################################################################-
-#------------------ ISM Dust Chemical Evolution Models (follow growth and destruction of different grain types)
-#----------------- Users of any of these modules should cite Choban et al., 2022 for the methods/implementation in GIZMO and FIRE
+#------------------ ISM Dust Chemical Evolution Models (follow growth, destruction, and size evolution of different grain types)
+#----------------- Users of any of these modules should cite Choban et al., 2022/25 for the methods/implementation in GIZMO and FIRE
 ############################################################################################################################-
-#GALSF_ISMDUSTCHEM_MODEL=(2+4+8) #- enable live dust evolution model (must select either elemental or species or other model codes as well)
-                                 #- model = 1: "dust by element" dust evolution model based off Bekki(2013)/McKinnon+(2016). Track generalized silicates and carbonaceous dust.
-                                 #- model = 2: "dust by species" dust evolution model based off Zhukovska+(2008/2016/2018). Tracks silicates (set composition), carbonaceous, SiC, and metallic iron dust along with optional iron nanoparticles and/or O reservoir dust species.
-                                 #- model = 4: additional metallic iron dust nano-particles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018)
-                                 #- model = 8: additional oxygen bearing dust species which is a simple match to observations of MW oxygen depletion since they cannot be explained with purely silicate dust
-#GALSF_ISMDUSTCHEM_PASSIVE       #- decouples dust evolution from dust physics, chemisty, and feedback. Dust will evolve passively, with any physics or chemistry involving dust using constant, preset values (typically D/Z=0.4) 
+#GALSF_ISMDUSTCHEM_MODEL=(2+4+8)    #- enable live dust evolution model (must select either elemental or species or other model codes as well)
+                                    #- model = 1: "dust by element" dust evolution model based off Bekki(2013)/McKinnon+(2016). Track generalized silicates and carbonaceous dust.
+                                    #- model = 2: "dust by species" dust evolution model based off Zhukovska+(2008/2016/2018). Tracks silicates (set composition), carbonaceous, SiC, and metallic iron dust along with optional iron nanoparticles and/or O reservoir dust species.
+                                    #- model = 4: additional metallic iron dust nano-particles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018)
+                                    #- model = 8: additional oxygen bearing dust species which is a simple match to observations of MW oxygen depletion since they cannot be explained with purely silicate dust
+                                    #- model = 16: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates (set composition), carbonaceous, and metallic iron
+                                    #- model = 32: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates w/ extra O and Fe (set composition) and carbonaceous
+#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16  #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
 ############################################################################################################################-
+

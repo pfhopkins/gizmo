@@ -218,7 +218,7 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         if(wakeup_condition) // do the wakeup
                         {
                                 #pragma omp atomic write
-                                P[j].wakeup = 1;
+                                P[j].wakeup = -1;
                                 #pragma omp atomic write
                                 NeedToWakeupParticles_local = 1;
                         }

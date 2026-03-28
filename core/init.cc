@@ -212,6 +212,9 @@ void init(void)
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
 #endif
 #endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    Initialize_ISMDustChem_Global_Variables();
+#endif
 #endif
 
 
@@ -455,7 +458,7 @@ void init(void)
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-        Initialize_ISMDustChem_Variables(i);
+    if (P[i].Type == 0) {Initialize_ISMDustChem_Particle_Variables(i);}
 #endif
 
 #ifdef CHIMES
@@ -504,6 +507,10 @@ void init(void)
 #ifdef SINK_PARTICLES
 #if (SINGLE_STAR_SINK_FORMATION & 8)
         P[i].Sink_Ngb_Flag = 0;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEP_LIMIT
+ // start with a large value (> plausible values v_ejecta or v_wind) as a conservative choice when starting up a simulation with an active feedback-emmiting star - this will get updated to a more reasonable value once the particle walks the gravity tree, but need this to ensure the first timestep is stable.
+        P[i].MaxFeedbackVel = 1e4 / UNIT_VEL_IN_KMS;
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
 	    P[i].Min_Sink_Approach_Time = P[i].Min_Sink_Freefall_time = MAX_REAL_NUMBER;
