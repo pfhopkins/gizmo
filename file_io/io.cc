@@ -625,6 +625,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
         break;
 
+        case IO_SHOCKMACHNUM:    /* local shock Mach number from pairwise Riemann problem */
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].ShockMachNumber;
+                    n++;
+                }
+#endif
+        break;
+
         case IO_DUSTCHEMGRAINBINNUMBERS:    /* number of grains for each grain size bin for each dust species */
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; pindex++)
@@ -2076,6 +2087,15 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+            case IO_SHOCKMACHNUM:
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
         case IO_DUSTCHEMGRAINBINNUMBERS:
         case IO_DUSTCHEMGRAINBINMASS:
         case IO_DUSTCHEMGRAINBINSLOPES:
@@ -2366,6 +2386,12 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+        case IO_SHOCKMACHNUM:
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            values = 1;
+#endif
+            break;
+
         case IO_DUSTCHEMGRAINBINNUMBERS:
         case IO_DUSTCHEMGRAINBINSLOPES:
         case IO_DUSTCHEMGRAINBINMASS:
@@ -2558,6 +2584,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DUSTCHEMSPECIESMET:
         case IO_ISMDUSTCHEMMOL:
         case IO_MACHNUM:
+        case IO_SHOCKMACHNUM:
         case IO_DUSTCHEMGRAINBINNUMBERS:
         case IO_DUSTCHEMGRAINBINSLOPES:
         case IO_DUSTCHEMGRAINBINMASS:
@@ -2788,7 +2815,13 @@ int blockpresent(enum iofields blocknr)
 #if defined(OUTPUT_MACH_NUMBER)
             return 1;
 #endif
-            break; 
+            break;
+
+        case IO_SHOCKMACHNUM:
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            return 1;
+#endif
+            break;
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES_REDUCED_OUTPUT)
@@ -3399,6 +3432,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_MACHNUM:
             strncpy(label, "MACH", 4);
             break;
+        case IO_SHOCKMACHNUM:
+            strncpy(label, "SMAC", 4);
+            break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strncpy(label, "DBNU", 4);
             break;
@@ -3829,6 +3865,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_MACHNUM:
             strcpy(buf, "MachNumber");
+            break;
+        case IO_SHOCKMACHNUM:
+            strcpy(buf, "ShockMachNumber");
             break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strcpy(buf, "DustBinNumbers");

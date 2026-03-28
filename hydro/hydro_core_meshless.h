@@ -331,6 +331,44 @@
             }
 #endif // closes adiabatic flow face correction check //
 
+#if defined(OUTPUT_SHOCK_MACH_NUMBER) && !defined(EOS_GENERAL)
+        /* -----------------------------------------------------------------------
+         * Shock detection via pairwise Riemann states (MFM/MFV methods only).
+         * Uses the Rankine-Hugoniot relation: M^2 = [(gamma+1)*pjump + (gamma-1)] / (2*gamma)
+         * where pjump = P_M / P_upstream. Upstream = lower-pressure (pre-shock) side.
+         * Riemann_vec.R comes from particle i (local); Riemann_vec.L from particle j.
+         * Note: Riemann_vec.L/R.p are in comoving code units while Riemann_out.P_M is
+         * physical, so face pressures are converted to physical units before computing pjump.
+         * Only active for converging flow (dv_face < 0) with a valid supersonic pressure jump.
+         * ----------------------------------------------------------------------- */
+        {
+            double dv_face_phys = face_vel_i - face_vel_j; /* negative = converging flow along face normal */
+            if(dv_face_phys < 0 && Riemann_out.P_M > 0) {
+                double cf_a3inv_fac = (All.ComovingIntegrationOn) ? All.cf_a3inv : 1.0;
+                double P_L_phys = Riemann_vec.L.p * cf_a3inv_fac; /* face-reconstructed pressure from j */
+                double P_R_phys = Riemann_vec.R.p * cf_a3inv_fac; /* face-reconstructed pressure from i */
+                if(P_L_phys > 0 && P_R_phys > 0) {
+                    /* upstream = lower-pressure side (pre-shock gas) */
+                    double P_up = (P_L_phys <= P_R_phys) ? P_L_phys : P_R_phys;
+                    double cs_up = (P_L_phys <= P_R_phys) ? kernel.sound_j : kernel.sound_i;
+                    if(cs_up > 0) {
+                        double pjump = Riemann_out.P_M / P_up;
+                        if(pjump > 1.0) {
+                            /* Rankine-Hugoniot normal Mach number */
+                            double gamma_eos = GAMMA_DEFAULT;
+                            double mach2_RH = ((gamma_eos + 1.0) * pjump + (gamma_eos - 1.0)) / (2.0 * gamma_eos);
+                            double mach_RH = (mach2_RH > 1.0) ? sqrt(mach2_RH) : 1.0;
+                            if(mach_RH > 1.0) {
+                                if(mach_RH > out.MaxShockMachNumber) {out.MaxShockMachNumber = (MyFloat)mach_RH;}
+                                if(j_is_active_for_fluxes && mach_RH > CellP[j].ShockMachNumber) {CellP[j].ShockMachNumber = (MyFloat)mach_RH;}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+#endif /* OUTPUT_SHOCK_MACH_NUMBER && !EOS_GENERAL */
+
         } else {
             /* nothing but bad riemann solutions found! */
             memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
