@@ -676,7 +676,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
 #endif
 #ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
-        P[i].wakeup = 1; P[j].wakeup = 1; NeedToWakeupParticles_local = 1;
+        P[i].wakeup = -1; P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
 #endif
 
     } // closes special operations required only of gas particles
@@ -816,7 +816,7 @@ int merge_particles_ij(int i, int j)
     if(P[i].TimeBin < P[j].TimeBin)
     {
 #ifdef WAKEUP
-        P[j].wakeup = 1; NeedToWakeupParticles_local = 1;
+        P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
 #endif
     }
     double dm_i=0,dm_j=0,de_i=0,de_j=0,dp_i[3],dp_j[3],dm_ij,de_ij,dp_ij[3];
