@@ -90,6 +90,9 @@ void cooling_parent_routine(void)
 void do_the_cooling_for_particle(int i)
 {
     double unew, dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i), ne_in, ne_out;
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    if(All.Transport_Subcycle_dt_fraction < 1.0) {dtime *= All.Transport_Subcycle_dt_fraction;}
+#endif
 
     if((dtime>0)&&(P[i].Mass>0)&&(P[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {

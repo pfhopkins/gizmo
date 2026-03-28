@@ -327,6 +327,9 @@ extern struct gas_cell_data
 #endif
 #endif // end of chem-photoion
 #endif // end of radtransfer
+#ifdef TRANSPORT_SUBCYCLE
+    MyFloat Transport_Dt_Subcycle;  /*!< transport-limited timestep, stored separately when subcycling (not folded into hydro dt) */
+#endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) && !defined(RADTRANSFER)
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
 #define Rad_E_gamma_Pred Rad_E_gamma

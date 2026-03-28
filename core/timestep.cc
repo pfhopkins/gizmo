@@ -292,6 +292,9 @@ integertime get_timestep(int p,		/*!< particle index */
 {
     double ax, ay, az, ac, csnd = 0, dt = All.MaxSizeTimestep, dt_courant = 0, dt_divv = 0;
     integertime ti_step; int k; k=0;
+#ifdef TRANSPORT_SUBCYCLE
+    if(P[p].Type == 0) {CellP[p].Transport_Dt_Subcycle = MAX_REAL_NUMBER;}
+#endif
 
 #ifdef IO_GRADUAL_SNAPSHOT_RESTART // if on the first timestep of a snapshot restart, start at the lowest allowed timestep to minimize any transient effects
     if(RestartFlag == 2 && All.Ti_Current == 0) {return 2;}
@@ -675,7 +678,13 @@ integertime get_timestep(int p,		/*!< particle index */
                         double dt_courant_CR = 0.4 * (L_particle*All.cf_atime) / cr_m1_speed;
                         dt_conduction = dt_courant_CR; // per TK, strictly enforce this timestep //
                     }
-                    if(dt_conduction < dt) dt = dt_conduction; // normal explicit time-step
+                    if(dt_conduction < dt) {
+#ifdef TRANSPORT_SUBCYCLE
+                        CellP[p].Transport_Dt_Subcycle = DMIN(CellP[p].Transport_Dt_Subcycle, dt_conduction);
+#else
+                        dt = dt_conduction; // normal explicit time-step
+#endif
+                    }
 #endif
                 }
             }
@@ -757,7 +766,13 @@ integertime get_timestep(int p,		/*!< particle index */
                 if(dt_recombination < dt_rad) {dt_rad = dt_recombination;}
 #endif
 
-                if(dt_rad < dt) dt = dt_rad; // set the actual radiation timestep!
+                if(dt_rad < dt) {
+#ifdef TRANSPORT_SUBCYCLE
+                    CellP[p].Transport_Dt_Subcycle = DMIN(CellP[p].Transport_Dt_Subcycle, dt_rad);
+#else
+                    dt = dt_rad; // set the actual radiation timestep!
+#endif
+                }
             }
 #endif // RADTRANSFER
             
