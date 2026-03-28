@@ -602,7 +602,7 @@ void pm_setup_nonperiodic_kernel(void)
 }
 
 #ifdef PM_PLACEHIGHRESREGION
-int pmforce_is_particle_high_res(int type, MyDouble * Pos)
+int pmforce_is_particle_high_res(int type,  Vec3<double>& Pos)
 {
 #ifndef SPECIAL_GAS_TREATMENT_IN_HIGHRESREGION
   /* standard treatment */
