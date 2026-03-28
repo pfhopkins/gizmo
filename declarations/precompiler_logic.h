@@ -1074,7 +1074,7 @@
 
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* define some global and other useful variables for dust chemistry modules which also utilize the metals info above */
-#if defined(COOLING)
+#if defined(COOLING) && !defined(GALSF_ISMDUSTCHEM_PASSIVE) && !defined(HIGHTTEMP_TURNOFF)
 #define GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING // optional, can turn off
 #endif
 #ifndef OUTPUT_MOLECULAR_FRACTION
