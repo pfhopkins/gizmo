@@ -582,7 +582,7 @@ void get_SNe_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double *
 #endif
     // just a catch to prevent un-physical yields, need to do this here before handing them off to other routines which may use the yields (currently just the dust routines)
     for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=DMIN(1.,DMAX(0.,yields[k]));}
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(SNEDUST_TURNOFF)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
     ISMDustChem_get_SNe_dust_yields(yields,i,t_gyr,SNeIaFlag,*Msne); // get dust yields
 #endif
 }
@@ -672,7 +672,7 @@ void get_wind_yields(double *yields, int i)
         yields[0]=0.0; for(k=2;k<=NUM_LIVE_SPECIES_FOR_COOLTABLES;k++) {yields[0]+=yields[k];}
 #endif
     } else {yields[0]=0.032; for(k=1;k<NUM_METAL_SPECIES;k++) {yields[k]=0.0;}} /* if <10 species, adopt toy model for simple enrichment [not using extended networks] */
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(AGBDUST_TURNOFF)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
     // just a catch to prevent un-physical yields, need to do this here before handing them off to other routines which may use the yields (currently just the dust routines)
     for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=DMIN(1.,DMAX(0.,yields[k]));}    
     ISMDustChem_get_wind_dust_yields(yields,i); // get dust yields
