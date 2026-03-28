@@ -501,9 +501,6 @@ void resolvedism_inject_sn_energy(void)
     /* ---- Pass 0: Momentum injection (wind + AGB) — before SN so final winds fire first ---- */
     resolvedism_fb_momentum_calc(0);
 
-    /* ---- Find SN injection kernel (update_weights equivalent from gizmo2017) ---- */
-    resolvedism_update_sn_weights();
-
     /* ---- Pass 1: Thermal injection (SN + Type Ia) ---- */
     resolvedism_fb_thermal_calc();
 

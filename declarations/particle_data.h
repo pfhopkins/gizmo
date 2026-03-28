@@ -145,10 +145,6 @@ extern ALIGN(32) struct particle_data
 #endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL) || defined(GALSF_RESOLVEDISM_FB)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
-#ifdef GALSF_RESOLVEDISM_FB
-    MyFloat HsmlSN;    /* SN injection kernel radius (from dedicated neighbor search, like gizmo2017 update_weights) */
-    MyFloat NumNgbSN;  /* number of neighbors within HsmlSN */
-#endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     MyFloat MassReturn_ThisTimeStep; /* gas return from stellar winds */
 #ifdef GALSF_FB_FIRE_RPROCESS
