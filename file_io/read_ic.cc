@@ -295,11 +295,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             // Need to check whether the number of grain size bins is the same as the snapshot. If not zero extra bins for now and recalcuate them later in the code
             for(n = 0; n < pc; n++) {
-#if defined(IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT)
-                int nmax=IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT;
-#else
                 int nmax=NUM_ISMDUSTCHEM_SIZE_BINS;
-#endif
                 for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
                     int kf;
                     for(kf=0;kf<nmax;kf++) { // normal read-in
@@ -318,11 +314,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             for(n = 0; n < pc; n++) {
                 // Check whether the desired number of grain size bins is the same as the snapshot. 
                 // If not zero extra bins for now and recalcuate them later in the code.
-#if defined(IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT)
-                int nmax=IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT;
-#else
                 int nmax=NUM_ISMDUSTCHEM_SIZE_BINS;
-#endif
                 // The code outputs the bin mass but does not track it directly, instead tracking the bin slope
                 // which depends on the bin number, mass, and bin edges. Bin mass is temporarily stored in 
                 // the slope field and then the slope is recalculated in Initialize_ISMDustChemEvo_Particle_Variables()
@@ -1071,10 +1063,6 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
 #endif
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT) /* Deal with different number of grain size bins in snapshot */
-            if(RestartFlag==2 && (blocknr==IO_DUSTCHEMGRAINBINNUMBERS || blocknr==IO_DUSTCHEMGRAINBINMASS || blocknr==IO_DUSTCHEMGRAINBINSLOPES || blocknr==IO_DUSTCHEM_COAG_MASSRATE || blocknr==IO_DUSTCHEM_SHAT_MASSRATE) && All.ICFormat==3) {bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES * IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT) * sizeof(MyInputFloat);}
-#endif
-
             size_t MyBufferSize = All.BufferSize;
             blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
             npart = get_particles_in_block(blocknr, &typelist[0]);
@@ -1153,9 +1141,6 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
                                         if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {dims[1] = header.flag_metals;}
 #endif
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT) /* Deal with different number of grain size bins in snapshot */
-                                        if(RestartFlag==2 && (blocknr==IO_DUSTCHEMGRAINBINNUMBERS || blocknr==IO_DUSTCHEMGRAINBINMASS || blocknr==IO_DUSTCHEMGRAINBINSLOPES || blocknr==IO_DUSTCHEM_COAG_MASSRATE || blocknr==IO_DUSTCHEM_SHAT_MASSRATE) && All.ICFormat==3) {dims[1] = (NUM_ISMDUSTCHEM_SPECIES * IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT);}
-#endif
                                         if(dims[1] == 1) {rank = 1;} else {rank = 2;}
                                         hdf5_dataspace_in_file = H5Screate_simple(rank, dims, NULL);
 
@@ -1172,9 +1157,6 @@ void read_file(char *fname, int readTask, int lastTask)
 #endif
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
                                         if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {count[1] = header.flag_metals;}
-#endif
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT) /* Deal with different number of grain size bins in snapshot */
-                                        if(RestartFlag==2 && (blocknr==IO_DUSTCHEMGRAINBINNUMBERS || blocknr==IO_DUSTCHEMGRAINBINMASS || blocknr==IO_DUSTCHEMGRAINBINSLOPES || blocknr==IO_DUSTCHEM_COAG_MASSRATE || blocknr==IO_DUSTCHEM_SHAT_MASSRATE) && All.ICFormat==3) {count[1] = (NUM_ISMDUSTCHEM_SPECIES * IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT);}
 #endif
                                         pcsum += pc;
 

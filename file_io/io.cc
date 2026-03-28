@@ -643,7 +643,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         break;
         
         case IO_DUSTCHEMGRAINBINSLOPES:    /* slopes for each grain size bin for each dust species */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(OUTPUT_GRAIN_BIN_SLOPES)
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -677,7 +677,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         break;
 
 case IO_DUSTCHEM_COAG_MASSRATE:    /* coagulation rate for each grain size bin for each dust species */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(OUTPUT_SHATCOAG_MASSRATE)
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -693,7 +693,7 @@ case IO_DUSTCHEM_COAG_MASSRATE:    /* coagulation rate for each grain size bin f
 #endif
 
 case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin for each dust species */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(OUTPUT_SHATCOAG_MASSRATE)
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -2772,14 +2772,14 @@ int blockpresent(enum iofields blocknr)
             break;
 
             case IO_DUSTCHEMGRAINBINSLOPES:
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(OUTPUT_GRAIN_BIN_SLOPES)
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 
             return 1;
 #endif
             break;      
 
             case IO_DUSTCHEM_COAG_MASSRATE:
             case IO_DUSTCHEM_SHAT_MASSRATE:
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && defined(OUTPUT_SHATCOAG_MASSRATE)
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             return 1;
 #endif
             break;   
@@ -4926,10 +4926,6 @@ void write_header_attributes_in_hdf5(hid_t handle)
     hdf5_attribute = H5Acreate(handle, "Silicates_Element_Number", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.ISMDustChem_SilicateNumberOfAtomsTable);
     H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
-#ifdef GALSF_ISMDUSTCHEM_PASSIVE
-    {int holder=1; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_PassiveDustEvolution", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
-    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &holder); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}    
-#endif
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     {int holder=NUM_ISMDUSTCHEM_SIZE_BINS; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_Num_Grain_Size_Bins", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
         H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &holder); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
