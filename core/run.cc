@@ -127,8 +127,11 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
+#ifdef TRANSPORT_SUBCYCLE
+        transport_subcycle_build_cache(); /* prepare thread-local face buffers before hydro force caches faces */
+#endif
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
-        
+
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
         {
@@ -303,8 +306,7 @@ void calculate_non_standard_physics(void)
             printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
                    All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
     }
-    /* --- build face geometry cache and pack transport state --- */
-    transport_subcycle_build_cache();
+    /* --- collect cached faces from hydro force pass into global cache --- */
     transport_subcycle_pack_state();
 
     for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
@@ -313,18 +315,26 @@ void calculate_non_standard_physics(void)
 #ifdef RADTRANSFER
     CPU_Step[CPU_MISC] += measure_time();
 #if defined(RT_SOURCE_INJECTION)
-    int flag; flag=1;
+#ifdef TRANSPORT_SUBCYCLE
+    if(transport_sub == 0) /* source injection only on first sub-step */
+#endif
+    {
+        int flag; flag=1;
 #if !defined(RT_INJECT_PHOTONS_DISCRETELY)
-    flag = Flag_FullStep; /* for continous injection, requires all sources and gas be active synchronously or else 2x-counts */
+        flag = Flag_FullStep; /* for continous injection, requires all sources and gas be active synchronously or else 2x-counts */
 #endif
 #if !defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION)
-    if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
+        if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
 #endif
+    }
 #endif
 #if defined(RT_DIFFUSION_CG) /* use the CG method to solve the RT diffusion equation implicitly for all particles; do only on full timesteps, requires synchronous timestepping right now */
     if(Flag_FullStep) {All.Radiation_Ti_endstep = All.Ti_Current; rt_diffusion_cg_solve(); All.Radiation_Ti_begstep = All.Radiation_Ti_endstep;}
 #endif
 #if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
+#ifdef TRANSPORT_SUBCYCLE
+    if(transport_sub == 0) /* chemistry update only on first sub-step (cooling handles it on subsequent sub-steps if TRANSPORT_SUBCYCLE_COOLING) */
+#endif
     rt_update_chemistry(); /* chemistry updated at sub-stepping as well */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(Flag_FullStep) {rt_write_chemistry_stats();}
@@ -334,10 +344,9 @@ void calculate_non_standard_physics(void)
 #endif // RADTRANSFER block
 
 #ifdef TRANSPORT_SUBCYCLE
-    /* --- recompute transport fluxes and apply sub-step kick --- */
-    transport_subcycle_exchange_fluxes();
+    /* --- recompute transport fluxes (sub-step 0 uses rates from hydro pass) and apply kick --- */
+    if(transport_sub > 0) {transport_subcycle_exchange_fluxes();}
     transport_subcycle_kick();
-    if(All.Transport_Subcycle_N > 1) {transport_subcycle_halo_exchange();}
 #endif
 
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
