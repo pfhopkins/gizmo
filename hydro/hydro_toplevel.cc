@@ -313,6 +313,9 @@ struct OUTPUT_STRUCT_NAME
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
     MyFloat MaxSignalVel;
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+    MyFloat MaxShockMachNumber;
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyFloat MaxKineticEnergyNgb;
 #endif
@@ -576,6 +579,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     for(k=0;k<3;k++) {CellP[i].GravWorkTerm[k] += out->GravWorkTerm[k];}
 #endif
     if(CellP[i].MaxSignalVel < out->MaxSignalVel) {CellP[i].MaxSignalVel = out->MaxSignalVel;}
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+    if(CellP[i].ShockMachNumber < out->MaxShockMachNumber) {CellP[i].ShockMachNumber = out->MaxShockMachNumber;}
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     if(CellP[i].MaxKineticEnergyNgb < out->MaxKineticEnergyNgb) {CellP[i].MaxKineticEnergyNgb = out->MaxKineticEnergyNgb;}
 #endif
@@ -959,6 +965,9 @@ void hydro_force_initial_operations_preloop(void)
         if(P[i].Type==0)
         {
             CellP[i].MaxSignalVel = MIN_REAL_NUMBER;
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+            CellP[i].ShockMachNumber = 0;
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
