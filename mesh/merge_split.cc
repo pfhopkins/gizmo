@@ -454,15 +454,18 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     k=0;
     phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
     cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
-    double d_r = 0.25 * KERNEL_CORE_SIZE*P[i].KernelRadius; // needs to be epsilon*KernelRadius where epsilon<<1, to maintain stability //
-    double dp[3], r_near=0; for(k = 0; k < 3; k++) {dp[k] =P[i].Pos[k] - P[i_nearest].Pos[k];}
+    double dp[3], r_near=0; for(k = 0; k < 3; k++) {dp[k] = P[i].Pos[k] - P[i_nearest].Pos[k];}
     NEAREST_XYZ(dp[0],dp[1],dp[2],1);
     for(k = 0; k < 3; k++) {r_near += dp[k]*dp[k];}
     r_near = sqrt(r_near);
-    d_r = DMIN(d_r , 0.35 * r_near); // use a 'buffer' to limit to some multiple of the distance to the nearest particle //
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); d_r = 0.39685*dx_eff; // this allows a larger split in order to reduce artefacts in more aggressive splits, at the expense of more diffusion of the original mass //
-#endif
+    /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
+       placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
+       while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
+    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius;
+    dx_eff = DMAX(DMIN(dx_eff, 3.*dx_h), 0.1*dx_h); // clamp to reasonable range relative to kernel radius
+    dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff, 3.*dx_h), 0.1*dx_h); // clamp to reasonable range relative to nearest-neighbor distance
+    double d_r = pow(0.5, (NUMDIMS + 1.) / (double)NUMDIMS) * dx_eff; // 2^{-(NDIMS+1)/NDIMS} * dx_eff
+    d_r = DMIN(d_r, 0.4 * r_near); // keep displacement well within nearest-neighbor distance
     /*
     double r_near = sqrt(r2_nearest);
     double rkern = Get_Particle_Size(i);
@@ -651,9 +654,25 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
             double qq = get_random_number(63432*k + 84*i + 99*j + 358453 + 84537*ThisTask);
             if(qq < 0.5) {norm *= -1.;} // randomly decide which direction along principle axis to orient split (since this is arbitrary, this helps prevent accidental collisions)
             for(k=0;k<NUMDIMS;k++) {dp[k] *= norm;}
+            /* project dp onto the isodensity plane (perpendicular to grad_rho): placing daughters on the same
+               isodensity surface eliminates the leading O(d . grad_rho) density mismatch between the two daughters,
+               which is first-order in d and dominates over the second-order neighbor perturbation the NV_T direction minimizes */
+            {
+                double grad_rho[3]={0}, grad_rho_norm=0;
+                for(k=0;k<NUMDIMS;k++) {grad_rho[k]=CellP[i].Gradients.Density[k]; grad_rho_norm+=grad_rho[k]*grad_rho[k];}
+                grad_rho_norm = sqrt(grad_rho_norm);
+                if(grad_rho_norm > 0 && CellP[i].Density > 0) {
+                    double relative_gradient = grad_rho_norm * Get_Particle_Size(i) / CellP[i].Density; // dimensionless: |grad_rho|*dx/rho
+                    if(relative_gradient > 0.1) { // non-trivial gradient: project dp onto isodensity plane
+                        double dot=0; for(k=0;k<NUMDIMS;k++) {dot += dp[k] * grad_rho[k] / grad_rho_norm;}
+                        double dp_perp[3]={0}, perp_norm=0;
+                        for(k=0;k<NUMDIMS;k++) {dp_perp[k] = dp[k] - dot*(grad_rho[k]/grad_rho_norm); perp_norm += dp_perp[k]*dp_perp[k];}
+                        perp_norm = sqrt(perp_norm);
+                        if(perp_norm > 0.1) {for(k=0;k<NUMDIMS;k++) {dp[k] = dp_perp[k] / perp_norm;}} // adopt projected direction; else dp near-parallel to grad_rho, fall through to NV_T direction
+                    }
+                }
+            }
             dx=d_r*dp[0]; dy=d_r*dp[1]; dz=d_r*dp[2];
-            /* rotate to 90-degree offset from above orientation, if using the density gradient, to get uniform sampling (otherwise get 'ridges' along sampled axis) */
-            //if(dp[2]==1) {dx=d_r; dy=0; dz=0;} else {double dr2d = sqrt(dp[1]*dp[1] + dp[0]*dp[0]); dx = -d_r*dp[1]/dr2d; dy = d_r*dp[0]/dr2d; dz = d_r*dp[2];}
         }
 #endif
 #ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
@@ -1290,18 +1309,15 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION // need to figure out if the new version of this makes sense
     double r_NGB = 1.25 * pow((All.DesNumNgb*All.G*P[i].Mass)/P[i].tidal_tensor_mag_prev , 1./3.); // kernel size enclosing some target neighbor number in a constant-density medium
     if(r_NGB > 0.5*ForceSoftening_KernelRadius(i)) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
-#else
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+#elif defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     double h_i=ForceSoftening_KernelRadius(i), tidal_mag=0., fac_self=-P[i].Mass*kernel_gravity(0.,1.,1.,1)/(h_i*h_i*h_i); int k,j; // get what's needed for tidal tensor computation
-    //for(k=0;k<3;k++) {for(j=0;j<3;j++) {double ttkj=P[i].tidal_tensorps[k][j]; if(j==k) {ttkj+=fac_self;} // compute tidal tensor including self-contribution
-    //    tidal_mag+=ttkj*ttkj;}} // want the frobenius norm
     for(k=0;k<3;k++) {tidal_mag -= P[i].tidal_tensorps[k][k];} // want the trace, actually, and in general this -shouldn't- include the self-contribution
     if(tidal_mag > 0) {
-        //tidal_mag = sqrt(tidal_mag); // squared norm. note this is in code units
         double ngb_dist = 1.25 * pow( (All.DesNumNgb * All.G * P[i].Mass / tidal_mag) , 1./3. ); // distance to the N'th nearest-neighbor
         if(ngb_dist > h_i) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
     }
-#endif
+#else
+    if(GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i)*UNIT_TIME_IN_GYR*1000. > 0.01) {return 0;} // if the particle is taking a very long timestep, it's probably in a very low-density region, so don't allow it to merge (this is a crude proxy for the local density, but it's very fast to check and works well in practice) 
 #endif
     return 1; // allow this particle to -consider- the possibility of a merger
 }
