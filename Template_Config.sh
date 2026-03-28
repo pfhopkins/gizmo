@@ -629,6 +629,9 @@
                                     #- model = 8: additional oxygen bearing dust species which is a simple match to observations of MW oxygen depletion since they cannot be explained with purely silicate dust
                                     #- model = 16: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates (set composition), carbonaceous, and metallic iron
                                     #- model = 32: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates w/ extra O and Fe (set composition) and carbonaceous
-#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16  #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
+#GALSF_ISMDUSTCHEM_PASSIVE          #- decouples dust evolution from dust physics, chemisty, and feedback. Dust will evolve passively, with any physics or chemistry involving dust using constant, preset values (typically D/Z=0.4) 
+# Options for grain size evolution model
+#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16     #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
+#DUSTPHOTODESTRUCTION_TURNON # Not included in fiducial model
 ############################################################################################################################-
 
