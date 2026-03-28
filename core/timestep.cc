@@ -681,6 +681,8 @@ integertime get_timestep(int p,		/*!< particle index */
                     if(dt_conduction < dt) {
 #ifdef TRANSPORT_SUBCYCLE
                         CellP[p].Transport_Dt_Subcycle = DMIN(CellP[p].Transport_Dt_Subcycle, dt_conduction);
+                        double dt_max_hydro = TRANSPORT_SUBCYCLE * dt_conduction;
+                        if(dt_max_hydro < dt) {dt = dt_max_hydro;}
 #else
                         dt = dt_conduction; // normal explicit time-step
 #endif
@@ -740,7 +742,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(RT_M1) || defined(RT_LOCALRAYGRID)
                 dt_courant = All.CourantFac * (L_particle*All.cf_atime) / C_LIGHT_CODE_REDUCED(p); /* courant-type criterion, using the reduced speed of light */
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
-                dt_courant = 0.4 * (L_particle*All.cf_atime) / C_LIGHT_CODE_REDUCED(p); /* hacked here for starforge, where mike's experimentation suggests we can get away with a slightly larger courant factor. remains experimental. courant-type criterion, using the reduced speed of light - here we hardcode the most aggressive possible Courant factor as an optimization */
+                //dt_courant = 0.4 * (L_particle*All.cf_atime) / C_LIGHT_CODE_REDUCED(p); /* hacked here for starforge, where mike's experimentation suggests we can get away with a slightly larger courant factor. remains experimental. courant-type criterion, using the reduced speed of light - here we hardcode the most aggressive possible Courant factor as an optimization */
 #ifdef SINK_WIND_SPAWN
                 if((CellP[p].MaxSignalVel > 0.5*C_LIGHT_CODE_REDUCED(p)) || (P[p].ID == All.SpawnedWindCellID && P[p].Type == 0)) {dt_courant *= 0.5}; // be more careful if this is a jet cell or there are transluminal velocities
 #endif
@@ -769,6 +771,9 @@ integertime get_timestep(int p,		/*!< particle index */
                 if(dt_rad < dt) {
 #ifdef TRANSPORT_SUBCYCLE
                     CellP[p].Transport_Dt_Subcycle = DMIN(CellP[p].Transport_Dt_Subcycle, dt_rad);
+                    /* limit hydro dt so the subcycle cap is never exceeded, while allowing subcycling speedup */
+                    double dt_max_hydro = (TRANSPORT_SUBCYCLE - 0.5) * dt_rad; /* -0.5 safety margin for rounding */
+                    if(dt_max_hydro < dt) {dt = dt_max_hydro;}
 #else
                     dt = dt_rad; // set the actual radiation timestep!
 #endif
@@ -1107,6 +1112,7 @@ integertime get_timestep(int p,		/*!< particle index */
         dt = All.MinSizeTimestep;
     }
 
+    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
     ti_step = (integertime) (dt / All.Timebase_interval);
 #ifndef STOP_WHEN_BELOW_MINTIMESTEP
     if(ti_step<=1) ti_step=2;

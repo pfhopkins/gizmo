@@ -8,6 +8,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef TRANSPORT_SUBCYCLE
+#include "../core/transport_subcycle.h"
+#endif
 
 /*! \file hydro_toplevel.c
  *  \brief This contains the "primary" hydro loop, where the hydro fluxes are computed.
