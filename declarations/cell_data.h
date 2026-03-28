@@ -31,6 +31,9 @@ extern struct gas_cell_data
 #ifdef OUTPUT_MACH_NUMBER
     MyDouble ISMDustChem_MachNumber;               /*!< mach number used for sub-resolution density enhancements from turbulence */
 #endif
+#ifdef OUTPUT_SHOCK_MACH_NUMBER
+    MyFloat ShockMachNumber;  /*!< estimated local shock Mach number from pairwise Riemann problem */
+#endif
 #ifdef GALSF_ISMDUSTCHEM_MODEL
     MyDouble ISMDustChem_Dust_Source[NUM_ISMDUSTCHEM_SOURCES];  /*!< amount of dust from each source of dust creation. 0=gas-dust accretion, 1=Sne Ia, 2=SNe II, 3=AGB */
     MyDouble ISMDustChem_Dust_Metal[NUM_ISMDUSTCHEM_ELEMENTS];  /*!< metallicity (species-by-species) of dust */

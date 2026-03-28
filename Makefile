@@ -103,7 +103,7 @@ FINCL =
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Frontera")
 CC       =  mpicc
-CXX      =  mpicxx -std=c++11
+CXX      =  mpicxx -std=c++17
 FC       =  mpif90 -nofor_main
 OPTIMIZE = -ggdb -O2 -xCORE-AVX2 -Wno-unknown-pragmas -Wall -Wno-format-security -qopenmp
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
