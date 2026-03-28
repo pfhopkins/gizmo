@@ -228,6 +228,16 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     CellP[j].InternalEnergy += dE;
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += dE;
+                    /* update pressure immediately after energy injection (gizmo2017 pattern) */
+                    {
+                        double u_pred, rho_j;
+                        #pragma omp atomic read
+                        u_pred = CellP[j].InternalEnergyPred;
+                        #pragma omp atomic read
+                        rho_j = CellP[j].Density;
+                        #pragma omp atomic write
+                        CellP[j].Pressure = (GAMMA_DEFAULT - 1.0) * u_pred * rho_j;
+                    }
                     P[j].wakeup = 1;
                     NeedToWakeupParticles_local = 1;
 #ifdef COSMIC_RAY_FLUID
