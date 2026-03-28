@@ -994,15 +994,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 
 #ifdef COOL_METAL_LINES_BY_SPECIES
     double Z[NUM_METAL_SPECIES] = {0.}; // gas-phase metallicity
-    double Z_all[NUM_METAL_SPECIES] = {0.}; // total (gas + dust) metallicity
     if(target>=0)
     {
         int k; 
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE)
-        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {
-            Z[k] = DMAX(0.,P[target].Metallicity[k]-CellP[target].ISMDustChem_Dust_Metal[k]);
-            Z_all[k] = P[target].Metallicity[k];
-        }
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {Z[k] = DMAX(0.,P[target].Metallicity[k]-CellP[target].ISMDustChem_Dust_Metal[k]);}
 #else
         for(k=0;k<NUM_METAL_SPECIES;k++) {Z[k] = P[target].Metallicity[k];}
 #endif
@@ -1044,11 +1040,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
         {
             /* cooling rates tabulated for each species from Wiersma, Schaye, & Smith tables (2008) */
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
             LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z); //* nHcgs*nHcgs;
-#else
-            LambdaMetal = GetCoolingRateWSpecies(nHcgs, logT, Z_all); //* nHcgs*nHcgs;
-#endif
             /* tables normalized so ne*ni/(nH*nH) included already, so just multiply by nH^2 */
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
@@ -1090,10 +1082,8 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(COOL_METAL_LINES_BY_SPECIES) && ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
             double column = evaluate_NH_from_GradRho(CellP[target].Gradients.Density,P[target].KernelRadius,CellP[target].Density,P[target].NumNgb,1,target) * UNIT_SURFDEN_IN_CGS; // converts to cgs            
             double Z_C = DMAX(1.e-6, Z[2]/All.SolarAbundances[2]), sqrt_T=sqrt(T), ncrit_CO=1.9e4*sqrt_T, Sigma_crit_CO=3.0e-5*T/Z_C, T3=T/1.e3, EXPmax=90.; // carbon abundance (relative to solar and 1/2 factor for original assumed 0.5 depletion), critical density and column
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE) 
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             Z_C = DMAX(1.e-6, Z[2]/(0.5*All.SolarAbundances[2])); // gas-phase carbon abundance (relative to solar/2, usual assumption implicitly)
-#elif defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_PASSIVE)
-            Z_C = DMAX(1.e-6, Z_all[2]/All.SolarAbundances[2]);
 #endif
             // TODO: can now get detailed C+, C, O, and CO abundances from SIMPLE_STEADYSTATE_CHEMISTRY routines, and compute the explicit cooling terms for slightly more accurate cooling here
 // #ifdef SIMPLE_STEADYSTATE_CHEMISTRY            
@@ -1133,7 +1123,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
             LambdaMol *= truncation_factor; // cutoff factor from above for where the tabulated rates take over at high temperatures
             LambdaDust = gas_dust_heating_coeff(target,T,Tdust) * (T-Tdust);// Note our sign convention is such that positive lambda = gas cooling
-#if !defined(GALSF_ISMDUSTCHEM_MODEL) || defined(GALSF_ISMDUSTCHEM_PASSIVE)
+#if !defined(GALSF_ISMDUSTCHEM_MODEL)
             if(T>3.e5) {double dx=(T-3.e5)/2.e5; LambdaDust *= exp(-DMIN(dx*dx,40.));} /* needs to truncate at high temperatures b/c of dust destruction (in some modules we solve for this explicitly - in that case can protect this more explicitly, but here, we will make a simple approximation, otherwise we run into problems. note this is not sublimation generally, but sputtering, that causes the destruction */
 #endif
             LambdaDust *= truncation_factor; // cutoff factor from above for where the tabulated rates take over at high temperatures
