@@ -1,0 +1,28 @@
+% Gresho vortex test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=2
+%        SELFGRAVITY_OFF
+%        EOS_GAMMA=(1.4)
+%
+InitCondFile                       gresho_ics
+OutputDir                          output
+TimeMax                            3
+BoxSize                            1
+TimeBetSnapshot                    0.5
+DesNumNgb                          20
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.001
+CourantFac                         0.1
+MaxRMSDisplacementFac              0.125
+MaxSizeTimestep                    1.0 
+ArtCondConstant                    0.25
+ViscosityAMin                      0.025
+ViscosityAMax                      2
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5

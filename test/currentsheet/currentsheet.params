@@ -1,0 +1,27 @@
+% Current sheet reconnection test (Hopkins & Raives 2016)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=2
+%        MAGNETIC
+%        SELFGRAVITY_OFF
+%
+InitCondFile                       currentsheet_A0pt1_b0pt1_ics
+OutputDir                          output
+TimeMax                            0.1
+BoxSize                            1
+TimeBetSnapshot                    0.01
+MaxSizeTimestep                    1e-05
+DesNumNgb                          16
+CourantFac                         0.1
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+DivBcleaningParabolicSigma         0.1
+DivBcleaningHyperbolicSigma        1.0
