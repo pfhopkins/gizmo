@@ -204,7 +204,6 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
         CellP[i].ISMDustChem_MachNumber = 0;
         if(All.Initial_ISMDustChem_Depletion > 0 && CellP[i].ISMDustChem_Dust_Metal[0] > 0)
         {
-#if !defined(INIT_DUST_SIZES_LOGNORM)      
             // Assume MRN powerlaw size distribution      
             double powerlaw = -3.5; 
             for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
@@ -220,109 +219,19 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
                     update_ISMDustChemEvo_bin_number_and_slope(i,j,k,number_in_bin,mass_in_bin);
                 }
             }
-#else
-            // Assume initial mass distribution per logarithmic grain size (a^4*dn/da) is log-normal
-            double a0=0.1E-4, sigma = 0.6;
-            for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-                double bulk_dens, dust_atomic_weight;
-                ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[j], &dust_atomic_weight, &bulk_dens);
-                double C_norm = (CellP[i].ISMDustChem_Dust_Species[j]*P[i].Mass*UNIT_MASS_IN_CGS)*(3*a0*exp(-(sigma*sigma)/2.))/(pow(2.,5./2.)*pow(M_PI,3./2.)*sigma*bulk_dens);
-                // Step through grain size bins setting grain number and mass to fit inital distribution
-                for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
-                    double alower = All.ISMDustChem_GrainBinEdges[k], aupper = All.ISMDustChem_GrainBinEdges[k+1];
-                    double mass_in_bin, number_in_bin;
-                    number_in_bin = (C_norm*exp(8*sigma*sigma)*sqrt(M_PI/2)*sigma/(pow(a0,4))) * (erf((4*sigma*sigma+log(aupper/a0))/(sqrt(2)*sigma))-erf((4*sigma*sigma+log(alower/a0))/(sqrt(2)*sigma)));
-                    mass_in_bin = (C_norm*pow(2*M_PI,3./2.)*bulk_dens*sigma*exp(sigma*sigma/2)/(3*a0)) * (erf((sigma*sigma+log(aupper/a0))/(sqrt(2)*sigma))-erf((sigma*sigma+log(alower/a0))/(sqrt(2)*sigma)));
-                    // Deal with rounding errors for effectively empty bins
-                    if (number_in_bin<=0 || mass_in_bin<=0) {number_in_bin=0;mass_in_bin=0;}
-                    update_ISMDustChemEvo_bin_number_and_slope(i,j,k,number_in_bin,mass_in_bin);
-                }
-            }
-#endif
         }
         else
         {
             for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {CellP[i].ISMDustChem_Dust_NumberInBin[j][k]=0;CellP[i].ISMDustChem_Dust_SlopeInBin[j][k]=0;}}
         }
-
-#if defined(OUTPUT_SHATCOAG_MASSRATE)
         for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
             for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
                 CellP[i].ISMDustChem_Shat_dMdt[j][k] = 0;
                 CellP[i].ISMDustChem_Coag_dMdt[j][k] = 0;
             }
         }
-#endif
     }
-#if defined(IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT) && !defined(IO_DUST_NOT_IN_ICFILE)
-    // If we are restarting from a snapshot with a different number of dust grain size bins, recalculate the new bin numbers and slopes
-    if(RestartFlag == 2) {
-        double old_bin_number[IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT], old_bin_mass[IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT], old_bin_slope[IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT];
-        double old_bin_edges[IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT+1], old_bin_centers[IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT];
-        double old_bin_size = pow(10,log10(All.ISMDustChem_Grain_Size_Max/All.ISMDustChem_Grain_Size_Min)/IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT);
-        for(j=0;j<IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT+1;j++) {old_bin_edges[j] = pow(old_bin_size,j)*All.ISMDustChem_Grain_Size_Min;}
-        for(j=0;j<IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT;j++) {old_bin_centers[j] = (old_bin_edges[j+1]+old_bin_edges[j])/2.;}
-
-        // Calcuate the bin numbers and slopes loaded from the snapshot
-        // Note the bin masses have been temporarily saved in bin slope field during snapshot IO
-        for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-            double bulk_dens, dust_atomic_weight;
-            ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[j], &dust_atomic_weight, &bulk_dens);
-            for(k=0;k<IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT;k++) {
-                old_bin_number[k] = CellP[i].ISMDustChem_Dust_NumberInBin[j][k];
-                old_bin_mass[k] = CellP[i].ISMDustChem_Dust_SlopeInBin[j][k];
-                if (old_bin_number[k]>0 && old_bin_mass[k]>0) {
-                    double alower = old_bin_edges[k], aupper = old_bin_edges[k+1], acenter=old_bin_centers[k];
-                    old_bin_slope[k] = (3*old_bin_mass[k]/(4*M_PI*bulk_dens)-old_bin_number[k]/(4*(aupper-alower))*(pow(aupper,4)-pow(alower,4))) / ((pow(aupper,5)-pow(alower,5))/5-acenter/4*(pow(aupper,4)-pow(alower,4)));
-
-                    // Check for slope limiting
-                    double lower_edge, upper_edge;
-                    lower_edge = old_bin_number[k] / (aupper-alower) + old_bin_slope[k] * (alower-acenter);
-                    upper_edge = old_bin_number[k] / (aupper-alower) + old_bin_slope[k] * (aupper-acenter);
-                    // Large slopes can cause negative values at bin edges which are unphysical, so correct if needed.
-                    if (lower_edge < 0 || upper_edge < 0) {
-                        // To fix, conserve the mass of the bin but change the slope and number of grains so the 
-                        // grain size distribution is zero (to machine accuracy) at the edge
-                        if (lower_edge < 0) {
-                            old_bin_number[k] = 15*(alower-acenter)* old_bin_mass[k]/(M_PI*bulk_dens*(alower-aupper)*(pow(alower,3)+2*pow(alower,2)*aupper+3*alower*pow(aupper,2)+4*pow(aupper,3)));
-                            old_bin_slope[k] = 15* old_bin_mass[k]/(M_PI*bulk_dens*(pow(alower,5)-5*alower*pow(aupper,4)+4*pow(aupper,5)));
-                        }
-                        else if (upper_edge < 0) {
-                            old_bin_number[k] = 15*(acenter-aupper)* old_bin_mass[k]/(M_PI*bulk_dens*(alower-aupper)*(4*pow(alower,3)+3*pow(alower,2)*aupper+2*alower*pow(aupper,2)+pow(aupper,3)));
-                            old_bin_slope[k] = -15* old_bin_mass[k]/(M_PI*bulk_dens*(4*pow(alower,5)-5*aupper*pow(alower,4)+pow(aupper,5)));
-                        }
-                    }    
-                }
-                else {old_bin_slope[k]=0;}
-            }
-            // Now step through the new bins and determine the number and mass in each bin from the old values
-            double ak_lower, ak_upper, ak_center, al_lower, al_upper;
-            double aint_lower, aint_upper;
-            double new_bin_number[NUM_ISMDUSTCHEM_SIZE_BINS]={0}, new_bin_mass[NUM_ISMDUSTCHEM_SIZE_BINS]={0};
-            // Walk through each old bin and determine grain number and mass for new bins lying within the old bin
-            for(k=0;k<IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT;k++) {
-                ak_lower = old_bin_edges[k]; ak_upper = old_bin_edges[k+1]; ak_center = old_bin_centers[k];
-                for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
-                    al_lower = All.ISMDustChem_GrainBinEdges[l]; al_upper = All.ISMDustChem_GrainBinEdges[l+1];
-                    // New bin is entirely within old bin
-                    if (al_lower >= ak_lower && al_upper <= ak_upper) {aint_lower = al_lower; aint_upper = al_upper;}
-                    // New bin is only partially in old bin on bottom edge
-                    else if (al_lower < ak_lower && al_upper > ak_lower) {aint_lower = ak_lower; aint_upper = al_upper;}
-                    // New bin is only partially in old bin on top edge
-                    else if (al_lower < ak_upper && al_upper > ak_upper) {aint_lower = al_lower; aint_upper = ak_upper;}
-                    // New bin is not in old bin so nothing to do
-                    else {continue;}
-                    new_bin_number[l] += old_bin_number[k]*(aint_upper-aint_lower)/(ak_upper-ak_lower) + old_bin_slope[k]*((aint_upper*aint_upper - aint_lower*aint_lower)/2. - ak_center*(aint_upper-aint_lower));
-                    new_bin_mass[l] += 4*M_PI*bulk_dens/3*((old_bin_number[k]/(4*(ak_upper-ak_lower))-old_bin_slope[k]*ak_center/4)*(pow(aint_upper,4)-pow(aint_lower,4))+old_bin_slope[k]/5*(pow(aint_upper,5)-pow(aint_lower,5)));
-                }
-            }
-            // Update final bin numbers and slopes given total number and mass in each new bin
-            for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
-                update_ISMDustChemEvo_bin_number_and_slope(i,j,k,new_bin_number[k],new_bin_mass[k]);
-            }
-        }
-    }
-#elif !defined(IO_DUST_NOT_IN_ICFILE)
+#if !defined(IO_DUST_NOT_IN_ICFILE)
     // Simulations track the number and slope and not the mass of dust in each bin, but only the mass and number are
     // saved in the snapshot. Need to recalculate the slope from the number and mass in each bin here
     if(RestartFlag == 2) {
@@ -334,14 +243,12 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
                 update_ISMDustChemEvo_bin_number_and_slope(i,j,k,bin_number,bin_mass);
             }
         }
-#if defined(OUTPUT_SHATCOAG_MASSRATE)
         for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
             for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
                 CellP[i].ISMDustChem_Shat_dMdt[j][k] = 0;
                 CellP[i].ISMDustChem_Coag_dMdt[j][k] = 0;
             }
         }
-#endif
     }
 #endif
 }
@@ -920,7 +827,6 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
 {
     // If SNe events happened need to first destroy the appropriate amount of dust if there is any dust
     int k,l,spec_indx;
-#if !defined(DUSTSNEDEST
 #if ((GALSF_ISMDUSTCHEM_MODEL & 16)  || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
     // Mass is injected before this function in the feedback routine so this check will fail if we don't make a temporary mass change
     // For evolving grain sizes the fraction of dust destroyed depends on the initial grain size distribution
@@ -1012,7 +918,6 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
         }
     }
 #endif // GALSF_ISMDUSTCHEM_MODEL & 16 || GALSF_ISMDUSTCHEM_MODEL & 32
-#endif // SNE DUST DEST TURNOFF
     // Inject newly created dust from star
     int skip_injection = 1;
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME 
@@ -1225,7 +1130,6 @@ void update_dense_molecular_fields(int i, double temp, double rho, double nh0, d
 
 void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
 {
-#if !defined(DUSTACCRETION_TURNOFF)   
     int j,k,spec_indx;
     double dF; // change in fraction of element condensed into dust
     double growth_timescale, t_ref, T_ref, avg_grain_radius;
@@ -1316,11 +1220,7 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
             // Note this an effective clumping factor which accounts for the turn off of accretion past a maximum density.
             // nH_max is set either by the typical C to CO critical density for carbonaceous dust or density at which
             // molecules freeze-out onto dust for all other species. 
-#ifdef EFFECTIVE_CLUMPING_TURNOFF
-            eff_clump_factor = 1+(0.5*CellP[i].ISMDustChem_MachNumber)*(0.5*CellP[i].ISMDustChem_MachNumber);
-#else
             eff_clump_factor = exp(sigma_squared)/2*erfc((3*sigma_squared/2 - log(nH_max/nHcgs))/(sqrt(2*sigma_squared)));
-#endif
             // need all the constituent elements for the given dust species to grow
             if (key_elem != -1) {
                 key_depl = CellP[i].ISMDustChem_Dust_Metal[key_elem]/P[i].Metallicity[key_elem];
@@ -1329,15 +1229,11 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
 
                 // calculate Coulomb enhancement for each grain size bin
                 for (j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {
-#ifdef COULOMB_ENHANCEMENT_TURNOFF
-                    Coulomb_enhancement[j] = 1;
-#else
                     // simple scaling function between expected Coulomb enhancement of small and large grains
                     // from Weingartner & Draine 2001
                     if (All.ISMDustChem_GrainBinCenters[j] <= a_min) {Coulomb_enhancement[j] = D_small;}
                     else if (All.ISMDustChem_GrainBinCenters[j] <= a_mid) {Coulomb_enhancement[j] = ((D_large-D_small)/log10(a_mid/a_min)) * log10(All.ISMDustChem_GrainBinCenters[j]/a_min) + D_small;}
                     else {Coulomb_enhancement[j] = D_large;}
-#endif
                 }
 
                 // Check if we need to subcycle the timesteps by limiting the grain size change by the smallest grain size bin
@@ -1486,7 +1382,6 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
 #endif
     }  // if (temp <= 300)
 #endif // species model
-#endif // turnoff dust accretion
 }
 
 
@@ -1694,14 +1589,11 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // Calculate turbulence driven grain velocities for each bin following prescription in Hirashita & Chen (2023)
         // Note we use the rms nH
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
-#ifdef GALSF_ISMDUSTCHEM_SUPERSONIC_GRAIN_VELOCITY
             // Assuming supersonic turbulence for determing grain velocities
             // This is typically ~1 dex lower than assuming Kolmogorov turbulence and ultimately supresses shattering and sometimes enhancing coagulation
             vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.066E5*(Mach/3)*(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.5)*(bulk_dens/3.5); // cm/s
-#else
             // Assuming Kolmogorov turbulence for determing grain velocities
-            vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.32E5*(Mach/3)*pow(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4,0.5)*pow((temp/sqrt(clumping_factor))/100,0.25)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.25)*pow(bulk_dens/3.5,0.5); // cm/s
-#endif
+            //vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.32E5*(Mach/3)*pow(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4,0.5)*pow((temp/sqrt(clumping_factor))/100,0.25)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.25)*pow(bulk_dens/3.5,0.5); // cm/s
         }
 
         // Calculate relative velocities between grain bins given random impact angle 
@@ -1790,12 +1682,10 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                 // Note change in Vcell due to coagulation density enhancement only applied to coagulation mass change
                 total_mlost = (mlost_coag+mlost_shat)*M_PI*miavg; // units of g/s cm^3
                 total_mgained = (mgained_coag+mgained_shat)*M_PI; // units of g/s cm^3
-#if defined(OUTPUT_SHATCOAG_MASSRATE)
                 if (k_cycle==0) {
                     CellP[i].ISMDustChem_Shat_dMdt[k][bin_i] = (mgained_shat-mlost_shat)*clumping_factor/Vcell; // g/s
                     CellP[i].ISMDustChem_Coag_dMdt[k][bin_i] = (mgained_coag-mlost_coag)*clumping_factor/Vcell; // g/s
                 }
-#endif
                 dM[bin_i] = (total_mgained-total_mlost)*clumping_factor/Vcell*dt_subcycle*1E9*SECONDS_PER_YEAR; // grams
                 // Keep track of the net mass and number grains moved out of bins for time step subcycling check
                 if (k_cycle==0) {
