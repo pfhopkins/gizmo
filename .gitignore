@@ -1,0 +1,5 @@
+*.o
+GIZMO
+GIZMO_config.h
+compile_time_info.cc
+Config.sh

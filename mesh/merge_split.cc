@@ -620,6 +620,18 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
 #endif
 
+#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+        int l;
+        double total_bin_num, total_bin_mass;
+        for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+            for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
+                total_bin_num = mass_of_new_particle * CellP[i].ISMDustChem_Dust_NumberInBin[k][l]; /* dust grain number conserving */
+                total_bin_mass = mass_of_new_particle * get_ISMDustChemEvo_bin_mass(i,k,l); /* dust grain mass conserving */
+                update_ISMDustChemEvo_bin_number_and_slope(j,k,l,total_bin_num,total_bin_mass); /* update new particle */
+                update_ISMDustChemEvo_bin_number_and_slope(i,k,l,total_bin_num,total_bin_mass); /* update old particle */
+            }
+        }
+#endif
         /* use a better particle shift based on the moment of inertia tensor to place new particles in the direction which is less well-sampled */
 #if (NUMDIMS > 1)        
         double norm=0, dp[3]; int m; dp[0]=dp[1]=dp[2]=0;
@@ -947,6 +959,17 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[j].ISMDustChem_Dust_Species[k] = wt_j*CellP[j].ISMDustChem_Dust_Species[k] + wt_i*CellP[i].ISMDustChem_Dust_Species[k];} /* dust species-mass conserving */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+    int l;
+    double total_bin_num, total_bin_mass;
+    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+        for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
+            total_bin_num = CellP[j].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].ISMDustChem_Dust_NumberInBin[k][l]; /* dust grain bin number conserving */
+            total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l) + get_ISMDustChemEvo_bin_mass(i,k,l); /* dust grain bin mass conserving */
+            update_ISMDustChemEvo_bin_number_and_slope(j,k,l,total_bin_num,total_bin_mass);
+        }
+    }
+#endif
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
