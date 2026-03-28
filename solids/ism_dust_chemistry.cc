@@ -476,7 +476,6 @@ double Lambda_Dust_HighTemperature_Gas_ISM(int target, double T, double n_elec)
 /* routine to give yields for dust for different types of SNe (Ia & II) followed in-code */
 void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double Msne)
 {
-#if !defined(SNEDUST_TURNOFF)
     double dust_yields[NUM_ISMDUSTCHEM_ELEMENTS]={0}, species_yields[NUM_ISMDUSTCHEM_SPECIES]={0}; double SNeIa_age = 0.03753; int j,k,spec_indx,source_key=1;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
     SNeIa_age =  0.044;
@@ -543,14 +542,12 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
     ISMDustChemEvo_get_SNe_dust_grain_size_yields(yields,i,SNeIaFlag,Msne); // get dust grain size/mass yields
 #endif
-#endif // SNE TURNOFF
 }
 
 
 /* routine to give the dust yields for AGB winds (currently no dust yield assumed for stars younger than AGB age from continuous mass-loss, i.e. O/B winds) */
 void ISMDustChem_get_wind_dust_yields(double *yields, int i)
 {
-#if !defined(AGBDUST_TURNOFF)
     double dust_yields[NUM_ISMDUSTCHEM_ELEMENTS]={0}, species_yields[NUM_ISMDUSTCHEM_SPECIES]={0}; int j,k,spec_indx,source_key=3;
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES]=0;} // initialize yields to null
     double transition_age = 0.03753, star_age = evaluate_stellar_age_Gyr(i); // Assume AGB dust production stars at SNe II to SNe Ia transition. This limits AGB stars with mass < ~8 solar masses
@@ -636,7 +633,6 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i)
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
     ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,P[i].Mass*P[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields
 #endif
-#endif // AGB TURNOFF
 }
 
 
@@ -924,7 +920,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
 {
     // If SNe events happened need to first destroy the appropriate amount of dust if there is any dust
     int k,l,spec_indx;
-#if !defined(DUSTSNEDEST_TURNOFF)
+#if !defined(DUSTSNEDEST
 #if ((GALSF_ISMDUSTCHEM_MODEL & 16)  || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
     // Mass is injected before this function in the feedback routine so this check will fail if we don't make a temporary mass change
     // For evolving grain sizes the fraction of dust destroyed depends on the initial grain size distribution
@@ -1497,7 +1493,6 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho)
 // Update dust grains due to thermal sputtering. This primarily depends on the local gas temperature and density.
 void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho)
 {       
-#if !defined(DUSTSPUTTERING_TURNOFF)
     // Sputtering timescales are negligable for cool gas
     if (temp>1E4) {
         int k,j,spec_indx;
@@ -1637,13 +1632,12 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho)
         for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = dust_yields[k];}
 #endif // dust species model w/ size evo
     } // temperature cutoff
-#endif // SPUTTERING TURNOFF
 }
 
 
 void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp, double rho)
 {
-#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && (!defined(DUSTSHATTERING_TURNOFF) || !defined(DUSTCOAGULATION_TURNOFF))
+#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 
     // Gas cell volume (cm^-3), relative velocity between colliding grains (cm/s), mass of shattered grains (g), i, j, k grain velocities (cm/s), mach factor for grain velocities, cos theta for angle of impact between two grains
     double Vcell, vikrel, vkjrel, mshat, vgri, vgrk, vgrj, Mach=CellP[i].ISMDustChem_MachNumber, cos_imp_angle, b_time_Mach, clumping_factor;
@@ -1665,7 +1659,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
     clumping_factor = 1+b_time_Mach*b_time_Mach;
     Vcell = (P[i].Mass*UNIT_MASS_IN_CGS)/rho; // cm^3
 
-#if !defined(COAGULATION_DENSE_GAS_ENHANCEMENT_TURNOFF)
     // Coagulation is efficient in dense MC gas (nH~10^4) which is beyond typical FIRE resolutions.
     // To overcome this we artificially enhance the density of cool gas, using the same temperature
     // cutoff as accretion, a power law density enhancement factor depending on the density, and an 
@@ -1681,7 +1674,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // Need to curtail Mach number for grain velocities to be below coagulation threshold
         Mach=1; 
     }
-#endif
     gsl_rng *random_generator_fordust; /* generate uniform random number for grain impact angle */
     random_generator_fordust = gsl_rng_alloc(gsl_rng_ranlxd1); 
     gsl_rng_set(random_generator_fordust, P[i].ID + 11 + All.NumCurrentTiStep);
@@ -1743,23 +1735,18 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                     mk = 4/3*M_PI*bulk_dens*akcenter*akcenter*akcenter;
 
                     vikrel = vrel[bin_i][bin_k];
-#if !defined(DUSTSHATTERING_TURNOFF)
                     // Mass lost from bin i due to shattering collisions with grains in bin k
                     if (vikrel > vshat) {mlost_shat += All.ISMDustChem_ShatteringScaling * vikrel * shattering_coagulation_polynomial(i, k, bin_i, bin_k);}
-#endif
-#if !defined(DUSTCOAGULATION_TURNOFF)
                     vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)); // cm/s
                     if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                     // Mass lost from bin i due to coagulating collisions with grains in bin k
                     if (vikrel <= vcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * shattering_coagulation_polynomial(i, k, bin_i, bin_k);}
-#endif
                     for (bin_j=0;bin_j<NUM_ISMDUSTCHEM_SIZE_BINS;bin_j++) {
                         ajcenter=All.ISMDustChem_GrainBinCenters[bin_j];
                         mj = 4/3*M_PI*bulk_dens*ajcenter*ajcenter*ajcenter; // Typical mass of grains in bin j
                         vkjrel = vrel[bin_k][bin_j];
 
                         // Calculate the mass of grains injected into bin i
-#if !defined(DUSTSHATTERING_TURNOFF)
                         // Mass gained in bin i due to shattering collisions between grains in bin k and bin j producing fragments
                         if (vkjrel > vshat) {
                             Eimp = 0.5*(mk*mj/(mk+mj))*vkjrel*vkjrel; // impact energy betwen grains
@@ -1789,8 +1776,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                             }
                             mgained_shat += All.ISMDustChem_ShatteringScaling * vkjrel * mkj_shat * shattering_coagulation_polynomial(i, k, bin_k, bin_j);
                         }
-#endif
-#if !defined(DUSTCOAGULATION_TURNOFF)
                         vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((akcenter*akcenter*akcenter + ajcenter*ajcenter*ajcenter)/pow(akcenter+ajcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(akcenter*ajcenter/(akcenter + ajcenter),5./6.)*sqrt(bulk_dens)); // cm/s
                         if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                         // Mass gained in bin i due to coagulating collisions between grains in bin k and bin j producing aggregate grains
@@ -1800,7 +1785,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                             else {mkj_coag = 0;}
                             mgained_coag += All.ISMDustChem_CoagulationScaling * (vkjrel) * mkj_coag * shattering_coagulation_polynomial(i, k, bin_k, bin_j);
                         }
-#endif
                     }
                 }
                 // Note change in Vcell due to coagulation density enhancement only applied to coagulation mass change
