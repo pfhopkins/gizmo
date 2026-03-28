@@ -148,6 +148,21 @@ void compute_global_quantities_of_system(void)
 }
 
 
+/* Sigmoid ("turn-on") function (1 + x/(1+x^2))/2, interpolates between 0 as x->-infty and 1 as x->infty. Useful for cheaply doing smooth fits of e.g. EOS where different thermo processes turn on at certain temps */
+double sigmoid_sqrt(double x)
+{
+    return 0.5*(1 + x/sqrt(1+x*x));
+}
+
+/* Returns the Frobenius norm of the velocity gradient in physical units */
+double velocity_gradient_norm(int i)
+{
+    double dv2=0; int j,k; for(j=0;j<3;j++) {for(k=0;k<3;k++) {double vt = CellP[i].Gradients.Velocity[j][k]*All.cf_a2inv; /* physical velocity gradient */
+        if(All.ComovingIntegrationOn) {if(j==k) {vt += All.cf_hubble_a;}} /* add hubble-flow correction */
+        dv2 += vt*vt;}} // calculate magnitude of the velocity shear across cell from || grad -otimes- v ||^(1/2)
+    return sqrt(dv2);
+}
+
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 int is_particle_a_special_zoom_target(int i)
@@ -220,3 +235,4 @@ double return_timestep_dilation_factor(int i, int mode)
     return 1. / a;
 #endif
 }
+

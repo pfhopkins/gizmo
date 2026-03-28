@@ -1,0 +1,30 @@
+% Rayleigh-Taylor instability test (Hopkins 2015)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_BND_PARTICLES
+%        BOX_LONG_X=1
+%        BOX_LONG_Y=2
+%        BOX_SPATIAL_DIMENSION=2
+%        EOS_GAMMA=(1.4)
+%        SELFGRAVITY_OFF
+%        GRAVITY_ANALYTIC
+%        GRAVITY_TESTPROBLEM_RT
+%
+InitCondFile                       rt_ics
+OutputDir                          output
+TimeMax                            10
+BoxSize                            0.5
+TimeBetSnapshot                    1
+MaxSizeTimestep                    0.1
+DesNumNgb                          20
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none

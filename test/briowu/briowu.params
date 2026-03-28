@@ -1,0 +1,31 @@
+% Brio & Wu MHD shock tube test (Hopkins & Raives 2016)
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_LONG_X=16
+%        BOX_LONG_Y=1
+%        BOX_LONG_Z=1
+%        BOX_SPATIAL_DIMENSION=2
+%        EOS_GAMMA=(2.0)
+%        MAGNETIC
+%        SELFGRAVITY_OFF
+%
+InitCondFile                       briowu_ics
+OutputDir                          output
+TimeMax                            0.2
+BoxSize                            0.25
+TimeBetSnapshot                    0.1
+MaxSizeTimestep                    0.04
+DesNumNgb                          20
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         2000
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+DivBcleaningParabolicSigma         1.0
+DivBcleaningHyperbolicSigma        1.0
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
