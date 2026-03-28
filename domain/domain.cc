@@ -126,29 +126,50 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     int i, ret, retsum, diff, highest_bin_to_include; size_t bytes, all_bytes; double t0, t1;
     
     /* call first -before- a merge-split, to be sure particles are in the correct order in the tree */
-    // TO: we don't have to call this before merge_and_split particles() 
-    // Actually we shouldn't because there are tree-walks in merge_and_split_particles(). 
-    //rearrange_particle_sequence(); 
+    // TO: we don't have to call this before merge_and_split particles()
+    // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
+    //rearrange_particle_sequence();
+    double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
     }
+    t_mergesplit = timediff(t_drift_start, my_second());
+    double t_tmp = my_second();
     rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;
-    
+
+    t_tmp = my_second();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 256)
+#endif
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
-    
+    t_drift_loop = timediff(t_tmp, my_second());
+
+    t_tmp = my_second();
     force_treefree();
     domain_free();
-    
+    t_treefree = timediff(t_tmp, my_second());
+
     if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}
-    
+
 #ifdef BOX_PERIODIC
+    t_tmp = my_second();
     do_box_wrapping();		/* map the particles back onto the box */
+    t_boxwrap = timediff(t_tmp, my_second());
 #endif
-    
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time(); // sync everything after merge-split and rearrange //
+
+    t_tmp = my_second();
+    MPI_Barrier(MPI_COMM_WORLD);
+    t_barrier = timediff(t_tmp, my_second());
+    double t_drift_total = timediff(t_drift_start, my_second());
+    CPU_Step[CPU_DRIFT] += t_drift_total;
+    if(ThisTask == 0) {
+        printf("  domain_Decomp drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f treefree=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
+               t_mergesplit, t_rearrange, t_drift_loop, t_treefree, t_boxwrap, t_barrier, t_drift_total);
+    }
     
     TreeReconstructFlag = 1;	/* ensures that new tree will be constructed */
 #ifdef SINGLE_STAR_SINK_DYNAMICS
@@ -303,16 +324,33 @@ void domain_Decomposition_light(int UseAllTimeBins)
     if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
     LightRepartitionCount++;
 
+    double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     rearrange_particle_sequence();
+    t_light_rearrange = timediff(t_light_start, my_second());
     UseAllParticles = UseAllTimeBins;
 
+    double t_tmp2 = my_second();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 256)
+#endif
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
+    t_light_drift = timediff(t_tmp2, my_second());
 
 #ifdef BOX_PERIODIC
+    t_tmp2 = my_second();
     do_box_wrapping();
+    t_light_boxwrap = timediff(t_tmp2, my_second());
 #endif
 
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
+    t_tmp2 = my_second();
+    MPI_Barrier(MPI_COMM_WORLD);
+    t_light_barrier = timediff(t_tmp2, my_second());
+    double t_light_total = timediff(t_light_start, my_second());
+    CPU_Step[CPU_DRIFT] += t_light_total;
+    if(ThisTask == 0) {
+        printf("  domain_light drift breakdown: rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
+               t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
+    }
 
     /* we take the closest cost factor */
     int diff, highest_bin_to_include;
@@ -913,15 +951,15 @@ void domain_exchange(void)
 	    {
 	      partBuf[offset_gas[target] + count_gas[target]] = P[n];
 	      keyBuf[offset_gas[target] + count_gas[target]] = Key[n];
-#ifdef CHIMES 
+#ifdef CHIMES
 	      for(i = 0; i < ChimesGlobalVars.totalNumberOfSpecies; i++) {gasAbundancesBuf[((offset_gas[target] + count_gas[target]) * ChimesGlobalVars.totalNumberOfSpecies) + i] = ChimesGasVars[n].abundances[i];}
-	      free_gas_abundances_memory(&(ChimesGasVars[n]), &ChimesGlobalVars); 
-	      ChimesGasVars[n].abundances = NULL; 
-	      ChimesGasVars[n].isotropic_photon_density = NULL; 
-	      ChimesGasVars[n].G0_parameter = NULL; 
-	      ChimesGasVars[n].H2_dissocJ = NULL; 
+	      free_gas_abundances_memory(&(ChimesGasVars[n]), &ChimesGlobalVars);
+	      ChimesGasVars[n].abundances = NULL;
+	      ChimesGasVars[n].isotropic_photon_density = NULL;
+	      ChimesGasVars[n].G0_parameter = NULL;
+	      ChimesGasVars[n].H2_dissocJ = NULL;
 	      gasChimesBuf[offset_gas[target] + count_gas[target]] = ChimesGasVars[n];
-#endif 
+#endif
 	      gasBuf[offset_gas[target] + count_gas[target]] = CellP[n];
 	      count_gas[target]++;
 	    }
@@ -939,22 +977,22 @@ void domain_exchange(void)
 	      CellP[n] = CellP[N_gas - 1];
 	      Key[n] = Key[N_gas - 1];
 
-#ifdef CHIMES 
+#ifdef CHIMES
 	      if (n < N_gas - 1)
 		{
 		  for(abunIndex = 0; abunIndex < ChimesGlobalVars.totalNumberOfSpecies; abunIndex++)
 		    {tempAbundanceArray[abunIndex] = ChimesGasVars[N_gas - 1].abundances[abunIndex];}
-		  free_gas_abundances_memory(&(ChimesGasVars[N_gas - 1]), &ChimesGlobalVars); 
-		  ChimesGasVars[N_gas - 1].abundances = NULL; 
-		  ChimesGasVars[N_gas - 1].isotropic_photon_density = NULL; 
-		  ChimesGasVars[N_gas - 1].G0_parameter = NULL; 
-		  ChimesGasVars[N_gas - 1].H2_dissocJ = NULL; 
-		  ChimesGasVars[n] = ChimesGasVars[N_gas - 1]; 
-		  allocate_gas_abundances_memory(&(ChimesGasVars[n]), &ChimesGlobalVars); 
+		  free_gas_abundances_memory(&(ChimesGasVars[N_gas - 1]), &ChimesGlobalVars);
+		  ChimesGasVars[N_gas - 1].abundances = NULL;
+		  ChimesGasVars[N_gas - 1].isotropic_photon_density = NULL;
+		  ChimesGasVars[N_gas - 1].G0_parameter = NULL;
+		  ChimesGasVars[N_gas - 1].H2_dissocJ = NULL;
+		  ChimesGasVars[n] = ChimesGasVars[N_gas - 1];
+		  allocate_gas_abundances_memory(&(ChimesGasVars[n]), &ChimesGlobalVars);
 		  for (abunIndex = 0; abunIndex < ChimesGlobalVars.totalNumberOfSpecies; abunIndex++)
 		    {ChimesGasVars[n].abundances[abunIndex] = tempAbundanceArray[abunIndex];}
 		}
-#endif 
+#endif
 
 	      P[N_gas - 1] = P[NumPart - 1];
 	      Key[N_gas - 1] = Key[NumPart - 1];
