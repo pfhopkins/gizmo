@@ -148,6 +148,37 @@ Grain_InteractionVelocityScale   0     % velocity [code units]: if>0, cross-sect
 Grain_DissipationFactor          0     % 0=elastic, 1=pure dissipative (fractional dissipation of kinetic energy in event)
 Grain_KickPerCollision           0     % velocity 'kick' [code units] per collision (this^2=specific energy/mass released)
 
+%------------------------------------------------------------
+%------------------ Dust Evolution --------------------------
+%------------------------------------------------------------
+
+%---- initialize dust depletion of gas in simulation (for GALSF_ISMDUSTCHEM_MODEL)
+Initial_ISMDustChem_Depletion                0.       % initial silicate dust depletion (fraction of Si locked in dust and Fe if using the iron nanoparticles option)
+Initial_ISMDustChem_SiltoCarbRatio           0.       % initial silicate to carbonaceous dust mass ratio (MW value ~2)
+
+%---- Dust Grain Size Distribution Evolution (for GALSF_ISMDUSTCHEM_MODEL+GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+UnitGrainNumber                 1E50   % 1E50. Code unit is 1E50 for number of grains in size bins. Set this to a high value to fit in float datatype.
+UnitGrainLength_in_cm           1E-4   % 1 micron. Code unit is 1 micron for grain sizes. Only used for grain bin slopes.
+ISMDustChem_Grain_Size_Min      1e-7   % minimum grain size in cm (default 1 nm)
+ISMDustChem_Grain_Size_Max      1E-4   % maximum grain size in cm (default 1 micron)
+
+%---- set dust evolution scaling parameters
+SNeIIDustScaling                 1.0   % scaling factor for efficiency of SNe II dust production (1 = default model parameter, note this will be limited to a total efficiency of 100%)
+SNeIaDustScaling                 1.0   % scaling factor for efficiency of SNe Ia dust production (1 = default model parameter, note this will be limited to a total efficiency of 100%)
+AGBDustScaling                   1.0   % scaling factor for efficiency of AGB dust production (1 = default model parameter, note this will be limited to a total efficiency of 100%)
+DustAccretionScaling             1.0   % scaling factor for gas-dust accretion rate (1 = default model parameter)
+ThermalSputteringScaling         1.0   % scaling factor for thermal sputtering rate (1 = default model parameter)
+SNeGasClearedOfDustScaling       1.0   % scaling factor the total mass of gas cleared of dust per SNe (1 = default model parameter)
+AccretionTcutoffScaling          1.0   % scaling factor for gas-dust accretion temperature cutoff (1 = default model parameter)
+%---- grain size evolution scaling parameters
+SNeShatteringScaling             1.0   % scaling factor for efficiency of dust shattering in SNRs
+SNeSputteringScaling             1.0   % scaling factor for efficiency of dust sputtering in SNRs
+GrainShatteringScaling           1.0   % scaling factor for grain-grain shattering rate
+GrainCoagulationScaling          1.0   % scaling factor for grain-grain coagulation rate
+VCoagScaling                     1.0   % scaling factor for coagulation velocity
+CoagDensityEnhancementScaling    1.0   % scaling factor for the density enhancement used in dense gas to account for coagulation
+GrainVelocityScaling             1.0   % scaling factor for grain velocities. Note this affects relative grain velocities which determine if shattering/coagulation occurs and their relative rates 
+PhotodestructionScaling          1.0   % scaling factor for photodestruction rate in HII regions
 
 %-------------------------------------------------------------------------
 %------------------ Star, Black Hole, and Galaxy Formation ---------------
@@ -159,9 +190,6 @@ SfEffPerFreeFall             1.0     %  SFR/(Mgas/tfreefall) for gas which meets
 %---- initialize metallicity+ages of gas+stars in simulation (for GALSF or metal-dependent COOLING)
 InitMetallicity              1e-5   % initial gas+stellar metallicity [for all pre-existing elements] (in solar) [Default=0]
 InitStellarAge               1      % initial mean age (in Gyr; for pre-existing stars in sim ICs) [Default=10]
-%---- initialize dust depletion of gas in simulation (for GALSF_ISMDUSTCHEM_MODEL)
-Initial_ISMDustChem_Depletion                 0.       % initial silicate dust depletion (fraction of Si locked in dust and Fe if using the iron nanoparticles option)
-Initial_ISMDustChem_SiltoCarbRatio           0.       % initial silicate to carbonaceous dust mass ratio (MW value ~2)
 
 
 %---- sub-grid (Springel+Hernquist/GADGET/AREPO) "effective equation of state"

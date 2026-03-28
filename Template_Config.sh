@@ -618,13 +618,46 @@
 ####################################################################################################-
 
 ############################################################################################################################-
-#------------------ ISM Dust Chemical Evolution Models (follow growth and destruction of different grain types)
-#----------------- Users of any of these modules should cite Choban et al., 2022 for the methods/implementation in GIZMO and FIRE
+#------------------ ISM Dust Chemical Evolution Models (follow growth, destruction, and size evolution of different grain types)
+#----------------- Users of any of these modules should cite Choban et al., 2022/25 for the methods/implementation in GIZMO and FIRE
 ############################################################################################################################-
-#GALSF_ISMDUSTCHEM_MODEL=(2+4+8) #- enable live dust evolution model (must select either elemental or species or other model codes as well)
-                                 #- model = 1: "dust by element" dust evolution model based off Bekki(2013)/McKinnon+(2016). Track generalized silicates and carbonaceous dust.
-                                 #- model = 2: "dust by species" dust evolution model based off Zhukovska+(2008/2016/2018). Tracks silicates (set composition), carbonaceous, SiC, and metallic iron dust along with optional iron nanoparticles and/or O reservoir dust species.
-                                 #- model = 4: additional metallic iron dust nano-particles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018)
-                                 #- model = 8: additional oxygen bearing dust species which is a simple match to observations of MW oxygen depletion since they cannot be explained with purely silicate dust
-#GALSF_ISMDUSTCHEM_PASSIVE       #- decouples dust evolution from dust physics, chemisty, and feedback. Dust will evolve passively, with any physics or chemistry involving dust using constant, preset values (typically D/Z=0.4) 
+#GALSF_ISMDUSTCHEM_MODEL=(2+4+8)    #- enable live dust evolution model (must select either elemental or species or other model codes as well)
+                                    #- model = 1: "dust by element" dust evolution model based off Bekki(2013)/McKinnon+(2016). Track generalized silicates and carbonaceous dust.
+                                    #- model = 2: "dust by species" dust evolution model based off Zhukovska+(2008/2016/2018). Tracks silicates (set composition), carbonaceous, SiC, and metallic iron dust along with optional iron nanoparticles and/or O reservoir dust species.
+                                    #- model = 4: additional metallic iron dust nano-particles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018)
+                                    #- model = 8: additional oxygen bearing dust species which is a simple match to observations of MW oxygen depletion since they cannot be explained with purely silicate dust
+                                    #- model = 16: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates (set composition), carbonaceous, and metallic iron
+                                    #- model = 32: modified "dust by species" model to be used with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. Tracks size evolution of silicates w/ extra O and Fe (set composition) and carbonaceous
+#GALSF_ISMDUSTCHEM_PASSIVE          #- decouples dust evolution from dust physics, chemisty, and feedback. Dust will evolve passively, with any physics or chemistry involving dust using constant, preset values (typically D/Z=0.4) 
+# Options for grain size evolution model
+#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16     #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 2 + (16 or 32) only)
+#IO_GRAINSIZEEVO_BINS_IN_SNAPSHOT=2 # Allows you to restart from a snapshot with a SMALLER number of grain size bins only. Set to the number of bins in the snapshot.
+#IO_DUST_NOT_IN_ICFILE     # special flag needed if restarting from a snapshot (flag=2) with no dust. Will set dust species via params arguments and assume an MRN size distrubtion
+#INIT_DUST_SIZES_LOGNORM # flag if the initalized dust population has a lognormal size distribution. Otherwise power-law MRN is assumed.
+# Extra output options
+#OUTPUT_GRAIN_BIN_SLOPES # Outputs the slopes of each grain size bin in addition to the total number and mass.
+#OUTPUT_SHATCOAG_MASSRATE # Outputs the mass transfer rate from shattering and coagulation processes in each grain size bin.
+#GALSF_ISMDUSTCHEM_SUPERSONIC_GRAIN_VELOCITY # Assumes supersonic turbulence for determining grain velocities. Default is Kolmogorov.
+# Flags to turn off certain dust processes
+#COAGULATION_DENSE_GAS_ENHANCEMENT_TURNOFF # Turnoff enhancement of gas density for sub-resolved coagulation. 
+#AGBDUST_TURNOFF
+#SNEDUST_TURNOFF
+#DUSTDIFFUSION_TURNOFF
+#DUSTSPUTTERING_TURNOFF
+#DUSTACCRETION_TURNOFF
+#COULOMB_ENHANCEMENT_TURNOFF
+#DUSTSNEDEST_TURNOFF
+#DUSTCOAGULATION_TURNOFF
+#DUSTSHATTERING_TURNOFF
+#DUSTPHOTODESTRUCTION_TURNON # Not included in fiducial model
+# Options below are for testing the integration of dust evolution with all the dust physics included in FIRE
+#PHOTOELECTRIC_TURNOFF
+#MOLECULARFRACTION_TURNOFF
+#RADIATIONTRANSPORT_TURNOFF # This will also affect the dust temperature calculations in FIRE-3 since these are determined from rad transport and the optically thick heating which uses rt kappa
+#METALLINECOOLING_TURNOFF
+#LOWTEMP_TURNOFF
+#FREEELECTRON_TURNOFF
+#HII_TURNOFF
+#HIGHTTEMP_TURNOFF
 ############################################################################################################################-
+
