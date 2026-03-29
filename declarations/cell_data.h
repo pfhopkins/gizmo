@@ -329,6 +329,12 @@ extern struct gas_cell_data
 #endif // end of radtransfer
 #ifdef TRANSPORT_SUBCYCLE
     MyFloat Transport_Dt_Subcycle;  /*!< transport-limited timestep, stored separately when subcycling (not folded into hydro dt) */
+#if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_EVOLVE_ENERGY)
+    MyFloat Dt_Rad_E_gamma_Work[N_RT_FREQ_BINS]; /*!< saved rad pressure work contribution to Dt_Rad_E_gamma, added back each sub-step */
+#endif
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    MyFloat Dt_Transport_Subcycle_Saved; /*!< saved DtInternalEnergy (code units) before cooling, restored each sub-step */
+#endif
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) && !defined(RADTRANSFER)
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];

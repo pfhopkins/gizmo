@@ -543,7 +543,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
 
 #ifdef RADTRANSFER
-#ifndef TRANSPORT_SUBCYCLE
+#ifndef TRANSPORT_SUBCYCLE  /* when subcycling, RT kicks are handled in the subcycle loop */
     rt_update_driftkick(i,dt_entr,0);
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
@@ -553,7 +553,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
     }}
 #endif
-#endif
+#endif // RADTRANSFER
 
 #ifdef EOS_ELASTIC
     elastic_body_update_driftkick(i,dt_entr,0);

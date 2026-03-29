@@ -8,9 +8,6 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef TRANSPORT_SUBCYCLE
-#include "../core/transport_subcycle.h"
-#endif
 
 /*! \file hydro_toplevel.c
  *  \brief This contains the "primary" hydro loop, where the hydro fluxes are computed.
@@ -766,6 +763,9 @@ void hydro_final_operations_and_cleanup(void)
                 f_kappa_abs = 0;
 #endif
                 CellP[i].Dt_Rad_E_gamma[kfreq] += (2.*f_kappa_abs-1.)*work_band; // loss/gain term for the radiation field itself
+#ifdef TRANSPORT_SUBCYCLE
+                CellP[i].Dt_Rad_E_gamma_Work[kfreq] += (2.*f_kappa_abs-1.)*work_band; // save work term separately for subcycle restoration
+#endif
                 CellP[i].DtInternalEnergy -= (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED(i)) * 2.*f_kappa_abs*work_band / P[i].Mass; // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
             }
             /* now actually set the frequency-integrated cell values as needed */
@@ -936,6 +936,9 @@ void hydro_force_initial_operations_preloop(void)
 #if defined(RT_SOLVER_EXPLICIT)
 #if defined(RT_EVOLVE_ENERGY)
             for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] = 0;}
+#ifdef TRANSPORT_SUBCYCLE
+            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma_Work[k] = 0;}
+#endif
 #endif
 #if defined(RT_EVOLVE_FLUX)
             for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}

@@ -20,13 +20,13 @@ def flush_colorbar(mappable, ax=None, label=None, **kwargs):
     return fig.colorbar(mappable, cax=cax, label=label, **kwargs)
 
 
-def clean_test_outputs(test_name: str):
+def clean_test_outputs(test_name: str, extra_flags=None):
     """Remove output directory, plot PNGs, and log files from a previous test run."""
     test_dir = f"test/{test_name}"
     output_dir = path.join(test_dir, "output")
     if path.isdir(output_dir):
         rmtree(output_dir)
-    for f in glob(path.join(test_dir, "*.png")):
+    for f in glob(path.join(test_dir, "*".join(extra_flags) + "*.png")):
         remove(f)
     for f in glob(path.join(test_dir, f"test_{test_name}.out")):
         remove(f)
@@ -97,7 +97,9 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
     paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
+    system(
+        f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err"
+    )
 
 
 def get_cooling_tables(test_directory="."):
@@ -109,9 +111,11 @@ def get_cooling_tables(test_directory="."):
     system(f"cp cooling/TREECOOL {test_directory}")
 
 
-def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
+def build_and_run_test(
+    test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()
+):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
-    clean_test_outputs(test_name)
+    clean_test_outputs(test_name, extra_flags=extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     chdir(f"test/{test_name}/")
     download_test_files(test_name)
@@ -148,9 +152,9 @@ def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6):
     time_max = float(params["TimeMax"])
     with h5py.File(snapshot_file, "r") as F:
         time = float(F["Header"].attrs["Time"])
-    assert abs(time - time_max) < rtol * abs(time_max), (
-        f"Snapshot time {time} does not match TimeMax {time_max} (rtol={rtol})"
-    )
+    assert abs(time - time_max) < rtol * abs(
+        time_max
+    ), f"Snapshot time {time} does not match TimeMax {time_max} (rtol={rtol})"
 
 
 def assert_snapshots_are_close(
