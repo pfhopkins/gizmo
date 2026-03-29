@@ -127,9 +127,6 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
-#ifdef TRANSPORT_SUBCYCLE
-        transport_subcycle_build_cache(); /* prepare thread-local face buffers before hydro force caches faces */
-#endif
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
@@ -306,9 +303,6 @@ void calculate_non_standard_physics(void)
             printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
                    All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
     }
-    /* --- collect cached faces from hydro force pass into global cache --- */
-    transport_subcycle_pack_state();
-
     for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
 #endif // TRANSPORT_SUBCYCLE
 
@@ -345,19 +339,41 @@ void calculate_non_standard_physics(void)
 
 #ifdef TRANSPORT_SUBCYCLE
     /* --- recompute transport fluxes (sub-step 0 uses rates from hydro pass) and apply kick --- */
+    /* recompute transport fluxes (sub-step 0 uses rates from hydro pass, sub-steps 1+ recompute via MPI) */
     if(transport_sub > 0) {transport_subcycle_exchange_fluxes();}
     transport_subcycle_kick();
 #endif
 
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
-    cooling_parent_routine();
+    /* save DtInternalEnergy before cooling (it gets overwritten with CGS-converted value inside cooling).
+       Restore the original code-units value before each sub-step so the CGS conversion isn't applied twice. */
+    {
+#ifndef COOLING_OPERATOR_SPLIT
+        for(int idx : ActiveParticleList) {
+            if(P[idx].Type == 0 && P[idx].Mass > 0)
+                CellP[idx].Dt_Transport_Subcycle_Saved = CellP[idx].DtInternalEnergy;
+        }
+#endif
+        cooling_parent_routine();
+#ifndef COOLING_OPERATOR_SPLIT
+        for(int idx : ActiveParticleList) {
+            if(P[idx].Type == 0 && P[idx].Mass > 0)
+                CellP[idx].DtInternalEnergy = CellP[idx].Dt_Transport_Subcycle_Saved;
+        }
+#endif
+    }
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
-    transport_subcycle_unpack_state();
-    transport_subcycle_free_cache();
+#if defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    /* zero DtInternalEnergy after the subcycle loop — the hydro work has been fully applied across all sub-steps */
+    for(int idx : ActiveParticleList) {
+        if(P[idx].Type == 0 && P[idx].Mass > 0 && CellP[idx].CoolingIsOperatorSplitThisTimestep==0)
+            CellP[idx].DtInternalEnergy = 0;
+    }
+#endif
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)

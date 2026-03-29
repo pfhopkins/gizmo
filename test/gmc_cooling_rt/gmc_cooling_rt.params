@@ -239,7 +239,7 @@ TabulatedCosmologyFile    CosmoTbl  % table with cosmological parameters
 ErrTolTheta                  0.5    % 0.7=standard
 ErrTolForceAcc               0.0025 % 0.0025=standard
 ErrTolIntAccuracy        0.01  % <0.02
-CourantFac               0.2    % <0.20
+CourantFac               0.4
 MaxRMSDisplacementFac    0.125  % <0.25
 MaxNumNgbDeviation      0.05    % <<DesNumNgb (values<1 are fine)
 AGS_MaxNumNgbDeviation  0.10  % tolerance in Nngb (make larger than gas)

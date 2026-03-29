@@ -349,22 +349,6 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 #endif
 
-#ifdef TRANSPORT_SUBCYCLE
-                /* cache face geometry for transport subcycling — only for local evaluations (mode=0) */
-                if(mode == 0) {
-                    TransportFace tface;
-                    tface.i = target; tface.j = j;
-                    tface.Face_Area_Vec = Face_Area_Vec;
-                    tface.Face_Area_Norm = Face_Area_Norm;
-                    tface.face_vel_i = face_vel_i; tface.face_vel_j = face_vel_j;
-                    tface.V_i = V_i; tface.V_j = V_j;
-                    tface.Particle_Size_i = Particle_Size_i; tface.Particle_Size_j = Particle_Size_j;
-                    tface.dp = kernel.dp; tface.r = kernel.r;
-                    tface.vsig = kernel.vsig;
-                    tface.dt_hydrostep = dt_hydrostep;
-                    transport_subcycle_cache_face(tface);
-                }
-#endif
 
                 /* --------------------------------------------------------------------------------- */
                 /* now we will actually assign the hydro variables for the evolution step */
