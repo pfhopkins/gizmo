@@ -613,7 +613,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
     double mean_molecular_weight = 2.38; // molecular H2, +He with solar mass fractions and metals
     double a_grain_micron = 0.1, f_dustgas = 0.01; // effective size of grains that matter at these densities
     double m_ion = 24.3; // Mg dominates ions in dense gas [where this is relevant]; this is ion mass in units of proton mass
-    double zeta_cr = Get_CosmicRayIonizationRate_cgs(i); // cosmic ray ionization rate (fixed as constant for non-CR runs)
+    double zeta_cr = Get_CosmicRayIonizationRate_cgs(i, P, CellP); // cosmic ray ionization rate (fixed as constant for non-CR runs)
 #ifdef COOLING
     double T_eff_atomic = 1.23 * (5./3.-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; /* we'll use this to make a quick approximation to the actual mean molecular weight here */
     double nH_cgs = cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, T_transition=DMIN(8000.,nH_cgs), f_mol=1./(1. + T_eff_atomic*T_eff_atomic/(T_transition*T_transition));

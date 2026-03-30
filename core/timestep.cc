@@ -616,10 +616,10 @@ integertime get_timestep(int p,		/*!< particle index */
             int k_CRegy;
             for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
             {
-                if(Get_Gas_CosmicRayPressure(p,k_CRegy) > 1.0e-20)
+                if(Get_Gas_CosmicRayPressure(p,k_CRegy, P, CellP) > 1.0e-20)
                 {
                     int explicit_timestep_on, cr_diffusion_opt = 1;
-                    double CRPressureGradScaleLength = Get_CosmicRayGradientLength(p,k_CRegy);
+                    double CRPressureGradScaleLength = Get_CosmicRayGradientLength(p,k_CRegy, P, CellP);
                     double L_cr_weak; L_cr_weak = CRPressureGradScaleLength;
                     double kappa_cr_eff = fabs(CellP[p].CosmicRayDiffusionCoeff[k_CRegy]);
                     kappa_cr_eff *= cosmicrayfluid_rsol_corrfac(k_CRegy); // account for RSOL factor as it actually appears in the flux eqn in code units with this RSOL form

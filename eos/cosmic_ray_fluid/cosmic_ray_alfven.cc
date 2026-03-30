@@ -19,14 +19,14 @@
     (which just appears as a source term in the e_A equations) */
 
 /* routine to do the drift/kick operations for CRs: mode=0 is kick, mode=1 is drift */
-double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
+double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int k_CRegy;
     if(dt_entr <= 0) {return 0;} // no update
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
         
-    int k; double eCR, u0; k=0; if(mode==0) {eCR=CellP[i].CosmicRayEnergy[k_CRegy]; u0=CellP[i].InternalEnergy;} else {eCR=CellP[i].CosmicRayEnergyPred[k_CRegy]; u0=CellP[i].InternalEnergyPred;} // initial energy
+    int k; double eCR, u0; k=0; if(mode==0) {eCR=cell[i].CosmicRayEnergy[k_CRegy]; u0=cell[i].InternalEnergy;} else {eCR=cell[i].CosmicRayEnergyPred[k_CRegy]; u0=cell[i].InternalEnergyPred;} // initial energy
     if(u0<All.MinEgySpec) {u0=All.MinEgySpec;} // enforced throughout code
     if(eCR < 0) {eCR=0;} // limit to physical values
 
@@ -35,25 +35,25 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     for(q_whichupdate=0; q_whichupdate<q_N_updates; q_whichupdate++)
     {
         // first update the CR energies from fluxes. since this is positive-definite, some additional care is needed //
-        double dCR_dt = CellP[i].DtCosmicRayEnergy[k_CRegy], gamma_eff = GAMMA_COSMICRAY(k_CRegy), eCR_tmp = eCR;
-        if(q_whichupdate>0) {dCR_dt=CellP[i].DtCosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1]; gamma_eff=(3./2.); if(mode==0) {eCR_tmp=CellP[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1];} else {eCR_tmp=CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1];}}
+        double dCR_dt = cell[i].DtCosmicRayEnergy[k_CRegy], gamma_eff = GAMMA_COSMICRAY(k_CRegy), eCR_tmp = eCR;
+        if(q_whichupdate>0) {dCR_dt=cell[i].DtCosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1]; gamma_eff=(3./2.); if(mode==0) {eCR_tmp=cell[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1];} else {eCR_tmp=cell[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1];}}
         double dCR = dCR_dt*dt_entr, dCRmax = 1.e10*(eCR_tmp+MIN_REAL_NUMBER);
         if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
         if(dCR < -eCR_tmp) {dCR=-eCR_tmp;} // don't allow it to go negative
 	    double eCR_00 = eCR_tmp; eCR_tmp += dCR; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
-        if(q_whichupdate==0) {if(mode==0) {CellP[i].CosmicRayEnergy[k_CRegy]=eCR_tmp;} else {CellP[i].CosmicRayEnergyPred[k_CRegy]=eCR_tmp;}} // updated energy
-        if(q_whichupdate>0) {if(mode==0) {CellP[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1]=eCR_tmp;} else {CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1]=eCR_tmp;}} // updated energy
+        if(q_whichupdate==0) {if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy]=eCR_tmp;} else {cell[i].CosmicRayEnergyPred[k_CRegy]=eCR_tmp;}} // updated energy
+        if(q_whichupdate>0) {if(mode==0) {cell[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1]=eCR_tmp;} else {cell[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1]=eCR_tmp;}} // updated energy
         // now need to account for the adiabatic heating/cooling of the 'fluid', here, with gamma=gamma_eff //
-        double eCR_0 = eCR_tmp, d_div = (-(gamma_eff-1.) * CellP[i].Face_DivVel_ForAdOps*All.cf_a2inv) * dt_entr;
+        double eCR_0 = eCR_tmp, d_div = (-(gamma_eff-1.) * cell[i].Face_DivVel_ForAdOps*All.cf_a2inv) * dt_entr;
         if(All.ComovingIntegrationOn) {d_div += (-3.*(gamma_eff-1.) * All.cf_hubble_a) * dt_entr;} /* adiabatic term from Hubble expansion (needed for cosmological integrations */
-        double dCR_div = DMIN(eCR_tmp*d_div , 0.5*u0*P[i].Mass); // limit so don't take away all the gas internal energy [to negative values]
+        double dCR_div = DMIN(eCR_tmp*d_div , 0.5*u0*pp[i].Mass); // limit so don't take away all the gas internal energy [to negative values]
         if(dCR_div + eCR_tmp < 0) {dCR_div = -eCR_tmp;} // check against energy going negative
         eCR_tmp += dCR_div; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
         dCR_div = eCR_tmp - eCR_0; // actual change that is going to be applied
-        if(dCR_div < -0.5*P[i].Mass*u0) {dCR_div=-0.5*P[i].Mass*u0;} // before re-coupling, ensure this will not cause negative energies
+        if(dCR_div < -0.5*pp[i].Mass*u0) {dCR_div=-0.5*pp[i].Mass*u0;} // before re-coupling, ensure this will not cause negative energies
         if(dCR_div < -0.9*eCR_00) {dCR_div=-0.9*eCR_00;} // before re-coupling, ensure this will not cause negative energies 
-        if(q_whichupdate==0) {if(mode==0) {CellP[i].CosmicRayEnergy[k_CRegy] += dCR_div; CellP[i].InternalEnergy -= dCR_div/P[i].Mass;} else {CellP[i].CosmicRayEnergyPred[k_CRegy] += dCR_div; CellP[i].InternalEnergyPred -= dCR_div/P[i].Mass;}}
-        if(q_whichupdate>0) {if(mode==0) {CellP[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1] += dCR_div; CellP[i].InternalEnergy -= dCR_div/P[i].Mass;} else {CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1] += dCR_div; CellP[i].InternalEnergyPred -= dCR_div/P[i].Mass;}}
+        if(q_whichupdate==0) {if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy] += dCR_div; cell[i].InternalEnergy -= dCR_div/pp[i].Mass;} else {cell[i].CosmicRayEnergyPred[k_CRegy] += dCR_div; cell[i].InternalEnergyPred -= dCR_div/pp[i].Mass;}}
+        if(q_whichupdate>0) {if(mode==0) {cell[i].CosmicRayAlfvenEnergy[k_CRegy][q_whichupdate-1] += dCR_div; cell[i].InternalEnergy -= dCR_div/pp[i].Mass;} else {cell[i].CosmicRayAlfvenEnergyPred[k_CRegy][q_whichupdate-1] += dCR_div; cell[i].InternalEnergyPred -= dCR_div/pp[i].Mass;}}
     }
 
     int target_bin_centering_for_CR_quantities = i; // if this = i, evaluate quantities like R_GV at the CR-energy weighted mean of the bin, if =-1, evaluate them at the bin center instead: important for some subtle effects especially if using numerical derivatives for correction terms
@@ -62,39 +62,39 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     // ok, the updates from [0] advection w gas, [1] fluxes, [2] adiabatic, [-] catastrophic (in cooling.c) are all set, just need exchange terms b/t CR and Alfven //
     double EPSILON_SMALL = 1.e-77; // want a very small number here
     Vec3<double> bhat, flux; double Bmag=0, Bmag_Gauss, clight_code=C_LIGHT_CODE, Omega_gyro, eA[2], vA_code, vA2_c2, E_B, fac, flux_G, fac_Omega, f_CR, f_CR_dot_B, cs_thermal, r_turb_driving, G_ion_neutral=0, G_turb_plus_linear_landau=0, G_nonlinear_landau_prefix=0;
-    double ne=1, f_ion=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, rho_cgs=rho*UNIT_DENSITY_IN_CGS;
+    double ne=1, f_ion=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs=rho*UNIT_DENSITY_IN_CGS;
 #ifdef COOLING 
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); // get thermodynamic properties
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
 #endif
-    for(k=0;k<3;k++) {bhat[k] = (mode==0) ? CellP[i].B[k] : CellP[i].BPred[k];} // grab whichever B field we need for our mode
-    if(mode==0) {eCR=CellP[i].CosmicRayEnergy[k_CRegy]; u0=CellP[i].InternalEnergy;} else {eCR=CellP[i].CosmicRayEnergyPred[k_CRegy]; u0=CellP[i].InternalEnergyPred;} // initial energy
+    for(k=0;k<3;k++) {bhat[k] = (mode==0) ? cell[i].B[k] : cell[i].BPred[k];} // grab whichever B field we need for our mode
+    if(mode==0) {eCR=cell[i].CosmicRayEnergy[k_CRegy]; u0=cell[i].InternalEnergy;} else {eCR=cell[i].CosmicRayEnergyPred[k_CRegy]; u0=cell[i].InternalEnergyPred;} // initial energy
     if(u0<All.MinEgySpec) {u0=All.MinEgySpec;} // enforce the usual minimum thermal energy the code requires
-    for(k=0;k<2;k++) {if(mode==0) {eA[k]=CellP[i].CosmicRayAlfvenEnergy[k_CRegy][k];} else {eA[k]=CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][k];}} // Alfven energy
-    for(k=0;k<3;k++) {flux[k] = (mode==0) ? CellP[i].CosmicRayFlux[k_CRegy][k] : CellP[i].CosmicRayFluxPred[k_CRegy][k];} // load flux
+    for(k=0;k<2;k++) {if(mode==0) {eA[k]=cell[i].CosmicRayAlfvenEnergy[k_CRegy][k];} else {eA[k]=cell[i].CosmicRayAlfvenEnergyPred[k_CRegy][k];}} // Alfven energy
+    for(k=0;k<3;k++) {flux[k] = (mode==0) ? cell[i].CosmicRayFlux[k_CRegy][k] : cell[i].CosmicRayFluxPred[k_CRegy][k];} // load flux
     f_CR = flux.norm(); f_CR_dot_B = dot(bhat, flux); // compute the magnitude of the flux density
     if(f_CR_dot_B<0) {f_CR*=-1;} // initialize the flux density variable from the previous timestep, appropriately signed with respect to the b-field
     Bmag = bhat.norm(); // compute magnitude
     bhat /= (EPSILON_SMALL+Bmag); // now it's bhat we have here
-    Bmag *= CellP[i].Density/P[i].Mass * All.cf_a2inv; // convert to actual B in physical units
-    E_B = 0.5*Bmag*Bmag * (P[i].Mass/(CellP[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
-    double Eth_0 = EPSILON_SMALL + 1.e-8 * P[i].Mass*u0; // set minimum magnetic energy relative to thermal (maximum plasma beta ~ 1e8) to prevent nasty divergences
-    if(E_B < Eth_0) {Bmag = sqrt(2.*Eth_0/((P[i].Mass/(CellP[i].Density*All.cf_a3inv))));} // enforce this maximum beta for purposes of "B" to insert below 
-    E_B = 0.5*Bmag*Bmag * (P[i].Mass/(CellP[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
+    Bmag *= cell[i].Density/pp[i].Mass * All.cf_a2inv; // convert to actual B in physical units
+    E_B = 0.5*Bmag*Bmag * (pp[i].Mass/(cell[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
+    double Eth_0 = EPSILON_SMALL + 1.e-8 * pp[i].Mass*u0; // set minimum magnetic energy relative to thermal (maximum plasma beta ~ 1e8) to prevent nasty divergences
+    if(E_B < Eth_0) {Bmag = sqrt(2.*Eth_0/((pp[i].Mass/(cell[i].Density*All.cf_a3inv))));} // enforce this maximum beta for purposes of "B" to insert below 
+    E_B = 0.5*Bmag*Bmag * (pp[i].Mass/(cell[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
     Bmag_Gauss = Bmag * UNIT_B_IN_GAUSS; // turn it into Gauss
     Omega_gyro = (8987.34 * Bmag_Gauss * (Z_charge_CR/E_CRs_Gev)) * UNIT_TIME_IN_CGS; // gyro frequency of the CR population we're evolving, converted to physical code units //
-    double vA_noion = Get_Gas_Alfven_speed_i(i, P, CellP); // Alfven speed in code units [recall B units such that there is no 4pi here]
-    vA_code = Get_Gas_ion_Alfven_speed_i(i); // include ionization appropriately for small-scale modes
-    cs_thermal = sqrt(convert_internalenergy_soundspeed2(i, u0, P, CellP)); // thermal sound speed at appropriate drift-time [in code units, physical]
+    double vA_noion = Get_Gas_Alfven_speed_i(i, pp, cell); // Alfven speed in code units [recall B units such that there is no 4pi here]
+    vA_code = Get_Gas_ion_Alfven_speed_i(i, pp, cell); // include ionization appropriately for small-scale modes
+    cs_thermal = sqrt(convert_internalenergy_soundspeed2(i, u0, pp, cell)); // thermal sound speed at appropriate drift-time [in code units, physical]
     vA2_c2 = vA_code*vA_code / (clight_code*clight_code); // Alfven speed vs speed of light
     fac_Omega = (3.*M_PI/16.) * Omega_gyro * (1.+2.*vA2_c2); // factor which will be used heavily below
     /* for turbulent (anisotropic and linear landau) damping terms: need to know the turbulent driving scale: assume a cascade with a driving length equal to the pressure gradient scale length */
-    r_turb_driving = CellP[i].Gradients.Pressure.norm_sq(); // compute gradient magnitude
-    r_turb_driving = DMAX( CellP[i].Pressure / (EPSILON_SMALL + sqrt(r_turb_driving)) , Get_Particle_Size(i) ) * All.cf_atime; // maximum of gradient scale length or resolution scale
+    r_turb_driving = cell[i].Gradients.Pressure.norm_sq(); // compute gradient magnitude
+    r_turb_driving = DMAX( cell[i].Pressure / (EPSILON_SMALL + sqrt(r_turb_driving)) , Get_Particle_Size(i) ) * All.cf_atime; // maximum of gradient scale length or resolution scale
     double k_turb = 1./r_turb_driving, k_L = Omega_gyro / clight_code;
     
     // before acting on the 'stiff' sub-system, account for the 'extra' advection term that accounts for 'twisting' of B:
-    fac=0; for(k=0;k<3;k++) {fac += All.cf_a2inv * bhat[k] * (bhat[0]*CellP[i].Gradients.Velocity[k][0] + bhat[1]*CellP[i].Gradients.Velocity[k][1] + bhat[2]*CellP[i].Gradients.Velocity[k][2]);}
+    fac=0; for(k=0;k<3;k++) {fac += All.cf_a2inv * bhat[k] * (bhat[0]*cell[i].Gradients.Velocity[k][0] + bhat[1]*cell[i].Gradients.Velocity[k][1] + bhat[2]*cell[i].Gradients.Velocity[k][2]);}
     if(All.ComovingIntegrationOn) {fac += All.cf_hubble_a;} // adds cosmological/hubble flow term here [not included in peculiar velocity gradient]
     fac *= -dt_entr; if(!isfinite(fac)) {fac=0;} else {if(fac>2.) {fac=2.;} else {if(fac<-2.) {fac=-2.;}}} // limit factor for change here, should be small given Courant factor
     f_CR *= exp(fac); // update flux term accordingly, before next step //
@@ -104,12 +104,12 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     eA[0]=DMAX(eA[0],0); eA[1]=DMAX(eA[1],0); eCR=DMAX(eCR,0); // enforce non-negative energies 
     double Min_Egy=0, e_tot=0, e_tot_new=0, fmax=0; e_tot = eCR + eA[0] + eA[1] + EPSILON_SMALL; // sum total energy, enforce positive-definite: will use this to ensure total energy conservation when enforcing minima below
     { 
-        double h=Get_Particle_Size(i)*All.cf_atime; int k2; for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {Min_Egy+=CellP[i].Gradients.B[k][k2]*CellP[i].Gradients.B[k][k2];}}
+        double h=Get_Particle_Size(i)*All.cf_atime; int k2; for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {Min_Egy+=cell[i].Gradients.B[k][k2]*cell[i].Gradients.B[k][k2];}}
         Min_Egy=h*sqrt(Min_Egy/9.)*All.cf_a2inv; Min_Egy=DMIN(Min_Egy,Bmag); r_turb_driving=DMAX(h,r_turb_driving); Min_Egy=DMIN(Min_Egy,Bmag*pow(h/r_turb_driving,1./3.)); Min_Egy=Min_Egy*pow(DMIN(clight_code/Omega_gyro,DMIN(h,r_turb_driving))/h,1./3.); // Min_Egy is now magnetic field extrap to r_gyro
-        Min_Egy = 0.5 * (Min_Egy*Min_Egy) * P[i].Mass/(CellP[i].Density*All.cf_a3inv); // magnetic energy at this scale, from the above //
+        Min_Egy = 0.5 * (Min_Egy*Min_Egy) * pp[i].Mass/(cell[i].Density*All.cf_a3inv); // magnetic energy at this scale, from the above //
         double epsilon = 1.e-15; Min_Egy *= epsilon; // minimum energy is a tiny fraction of B at the dissipation scale
         if(Min_Egy <= 0 || !isfinite(Min_Egy)) {Min_Egy = 1.e-15*eCR;} // if this minimum-energy calculation failed, enforce a tiny fraction of the CR energy
-        if(Min_Egy <= 0 || !isfinite(Min_Egy)) {Min_Egy = 1.e-15*P[i].Mass*u0;} // if this minimum-energy calculation failed, enforce a tiny fraction of the thermal energy
+        if(Min_Egy <= 0 || !isfinite(Min_Egy)) {Min_Egy = 1.e-15*pp[i].Mass*u0;} // if this minimum-energy calculation failed, enforce a tiny fraction of the thermal energy
         if(Min_Egy <= 0) {Min_Egy = EPSILON_SMALL;} // if this still failed, simply enforce a tiny positive-definite value
     }
     eCR=DMAX(eCR,Min_Egy); eA[0]=DMAX(eA[0],Min_Egy); eA[1]=DMAX(eA[1],Min_Egy); // enforce
@@ -120,8 +120,8 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
 
     // first define some convenient units and dimensionless quantities, and enforce limits on values of input quantities
     double cr_speed = CRFLUID_REDUCED_C_CODE(k_CRegy);
-    double eCR_0 = 1.e-6*(E_B + P[i].Mass*u0) + eCR + eA[0] + eA[1] + fabs(f_CR/cr_speed); // this can be anything, just need a normalization for the characteristic energy scale of the problem //
-    double ceff2_va2=(cr_speed*cr_speed)/(vA_code*vA_code), t0=1./(fac_Omega*(eCR_0/E_B)*vA2_c2), gammCR=GAMMA_COSMICRAY(k_CRegy), f_unit=vA_code*eCR_0, volume=P[i].Mass/(CellP[i].Density*All.cf_a3inv); // factors used below , and for units
+    double eCR_0 = 1.e-6*(E_B + pp[i].Mass*u0) + eCR + eA[0] + eA[1] + fabs(f_CR/cr_speed); // this can be anything, just need a normalization for the characteristic energy scale of the problem //
+    double ceff2_va2=(cr_speed*cr_speed)/(vA_code*vA_code), t0=1./(fac_Omega*(eCR_0/E_B)*vA2_c2), gammCR=GAMMA_COSMICRAY(k_CRegy), f_unit=vA_code*eCR_0, volume=pp[i].Mass/(cell[i].Density*All.cf_a3inv); // factors used below , and for units
     double x_e=eCR/eCR_0, x_f=f_CR/f_unit, x_up=eA[0]/eCR_0, x_um=eA[1]/eCR_0, dtau=dt_entr/t0; e_tot/=eCR_0; Min_Egy/=eCR_0; // initial values in relevant units
     Min_Egy=DMAX(DMIN(Min_Egy,DMIN(x_e,DMIN(x_up,x_um))),EPSILON_SMALL); if(!isfinite(Min_Egy)) {Min_Egy=EPSILON_SMALL;} // enforce positive-definite-ness
     // we can more robustly define a minimum and maximum e_A by reference to a minimum and maximum 'effective diffusivity' over which it is physically meaningful, and numerically possible to evolve them
@@ -137,7 +137,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     fmax = x_e*sqrt(ceff2_va2); if(!isfinite(x_f)) {x_f=0;} else {if(x_f>fmax) {x_f=fmax;} else {if(x_f<-fmax) {x_f=-fmax;}}} // check for flux maximum/minimum
 
     // calculate the dimensionless flux source term for the stiff part of the equations
-    flux_G = dot(bhat, CellP[i].Gradients.CosmicRayPressure[k_CRegy]); // b.gradient[P] -- flux source term
+    flux_G = dot(bhat, cell[i].Gradients.CosmicRayPressure[k_CRegy]); // b.gradient[P] -- flux source term
     double psifac = flux_G * (vA_code*t0) / (eCR/volume); // this gives the strength of the gradient source term, should remain fixed over stiff part of loop
 
     // calculate the wave-damping rates (again in appropriate dimensionless units)
@@ -147,10 +147,10 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     int i1,i2; double v2_t=0,dv2_t=0,b2_t=0,db2_t=0,x_LL,M_A,h0,fturb_multiplier=1; // factor which will represent which cascade model we are going to use
     for(i1=0;i1<3;i1++)
     {
-        v2_t += CellP[i].VelPred[i1]*CellP[i].VelPred[i1];
-        for(i2=0;i2<3;i2++) {dv2_t += CellP[i].Gradients.Velocity[i1][i2]*CellP[i].Gradients.Velocity[i1][i2]; db2_t += CellP[i].Gradients.B[i1][i2]*CellP[i].Gradients.B[i1][i2];}
+        v2_t += cell[i].VelPred[i1]*cell[i].VelPred[i1];
+        for(i2=0;i2<3;i2++) {dv2_t += cell[i].Gradients.Velocity[i1][i2]*cell[i].Gradients.Velocity[i1][i2]; db2_t += cell[i].Gradients.B[i1][i2]*cell[i].Gradients.B[i1][i2];}
     }
-    b2_t = Get_Gas_BField(i, P, CellP).norm_sq();
+    b2_t = Get_Gas_BField(i, pp, cell).norm_sq();
     v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime; h0=Get_Particle_Size(i)*All.cf_atime; // physical units
     M_A = h0*(EPSILON_SMALL + dv2_t) / (EPSILON_SMALL + vA_noion); M_A = DMAX(M_A , h0*(EPSILON_SMALL + db2_t) / (EPSILON_SMALL + b2_t)); M_A = DMAX( EPSILON_SMALL , M_A ); // proper calculation of the local Alfven Mach number
     x_LL = clight_code / (Omega_gyro * h0); x_LL=DMAX(x_LL,EPSILON_SMALL); k_turb = 1./h0; // scale at which turbulence is being measured here //
@@ -335,11 +335,11 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     eCR=eCR_0*x_e; eA[0]=eCR_0*x_up; eA[1]=eCR_0*x_um; f_CR=f_unit*x_f; Min_Egy*=eCR_0; xkappa_min*=eCR_0; xkappa_max*=eCR_0; // re-assign dimensional quantities
 
     // assign the updated values back to the resolution elements, finally!
-    if(mode==0) {CellP[i].CosmicRayEnergy[k_CRegy]=eCR;} else {CellP[i].CosmicRayEnergyPred[k_CRegy]=eCR;} // CR energy
-    for(k=0;k<2;k++) {if(mode==0) {CellP[i].CosmicRayAlfvenEnergy[k_CRegy][k]=eA[k];} else {CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][k]=eA[k];}} // Alfven energy
-    {Vec3<double> flux_out = bhat*f_CR; if(mode==0) {for(k=0;k<3;k++) {CellP[i].CosmicRayFlux[k_CRegy][k]=flux_out[k];}} else {for(k=0;k<3;k++) {CellP[i].CosmicRayFluxPred[k_CRegy][k]=flux_out[k];}}} // assign to flux vector
-    if(mode==0) {CellP[i].InternalEnergy+=thermal_heating/P[i].Mass;} else {CellP[i].InternalEnergyPred+=thermal_heating/P[i].Mass;} // heating term from damping
-    CellP[i].CosmicRayDiffusionCoeff[k_CRegy] = 1. / (fac_Omega*((eA[0]+eA[1])/E_B)/(clight_code*clight_code)); // effective diffusion coefficient in code units
+    if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy]=eCR;} else {cell[i].CosmicRayEnergyPred[k_CRegy]=eCR;} // CR energy
+    for(k=0;k<2;k++) {if(mode==0) {cell[i].CosmicRayAlfvenEnergy[k_CRegy][k]=eA[k];} else {cell[i].CosmicRayAlfvenEnergyPred[k_CRegy][k]=eA[k];}} // Alfven energy
+    {Vec3<double> flux_out = bhat*f_CR; if(mode==0) {for(k=0;k<3;k++) {cell[i].CosmicRayFlux[k_CRegy][k]=flux_out[k];}} else {for(k=0;k<3;k++) {cell[i].CosmicRayFluxPred[k_CRegy][k]=flux_out[k];}}} // assign to flux vector
+    if(mode==0) {cell[i].InternalEnergy+=thermal_heating/pp[i].Mass;} else {cell[i].InternalEnergyPred+=thermal_heating/pp[i].Mass;} // heating term from damping
+    cell[i].CosmicRayDiffusionCoeff[k_CRegy] = 1. / (fac_Omega*((eA[0]+eA[1])/E_B)/(clight_code*clight_code)); // effective diffusion coefficient in code units
 
         
     } // complete loop over CR bins

@@ -618,7 +618,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                    cr_injection += cr_get_source_injection_rate(p);
+                    cr_injection += cr_get_source_injection_rate(p, P, CellP);
 #endif
 #ifdef RT_USE_GRAVTREE
                     double lum[N_RT_FREQ_BINS];
@@ -1723,7 +1723,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif // SINK_CALC_DISTANCES
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                    cr_injection = cr_get_source_injection_rate(no);
+                    cr_injection = cr_get_source_injection_rate(no, P, CellP);
 #endif
 
 #ifdef RT_USE_GRAVTREE
@@ -3857,7 +3857,7 @@ void force_refresh_node_moments(void)
 #endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-        Nodes[no].cr_injection += cr_get_source_injection_rate(i);
+        Nodes[no].cr_injection += cr_get_source_injection_rate(i, P, CellP);
 #endif
 #ifdef RT_USE_GRAVTREE
         {double lum[N_RT_FREQ_BINS];

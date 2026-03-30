@@ -16,13 +16,13 @@ and references therein.
 MyFloat photoionization_rate_C(int i, MyFloat shieldfac)
 {
     MyFloat G0 = get_FUV_G0(i, shieldfac, 1, P, CellP); // mode 1 accounts for dust-, self-, and H2 cross-shielding
-    return 3.43e-10 * G0 + 520 * CellP[i].MolecularMassFraction * Get_CosmicRayIonizationRate_cgs(i);
+    return 3.43e-10 * G0 + 520 * CellP[i].MolecularMassFraction * Get_CosmicRayIonizationRate_cgs(i, P, CellP);
 }
 
 /* direct cosmic ray ionization rate of C */
 MyFloat cosmic_ray_ionization_rate_C(int i)
 {
-    return 3.85 * Get_CosmicRayIonizationRate_cgs(i);
+    return 3.85 * Get_CosmicRayIonizationRate_cgs(i, P, CellP);
 }
 
 /* Total ionization rate*/
@@ -118,7 +118,7 @@ MyFloat f_Oplus(MyFloat nHp)
 /* Fraction of C atoms in CO: Kim 2023 Eq 25 */
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp)
 {
-    MyFloat xi_cr16 = Get_CosmicRayIonizationRate_cgs(i) / 1e-16, Zd = P[i].Metallicity[0] / All.SolarAbundances[0];
+    MyFloat xi_cr16 = Get_CosmicRayIonizationRate_cgs(i, P, CellP) / 1e-16, Zd = P[i].Metallicity[0] / All.SolarAbundances[0];
     MyFloat G0 = get_FUV_G0(i, shieldfac, 0, P, CellP);
     MyFloat n_COcrit = pow(4e3 * Zd / (xi_cr16 * xi_cr16), cbrt(G0)) * (50 * xi_cr16 / pow(Zd, 1.4));
     MyFloat nHcgs = nH_CGS(i);
@@ -140,7 +140,7 @@ MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp){
 
 /* Contribution of molecular ions to electron abundance */
 MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp){
-    MyFloat zeta_cr = Get_CosmicRayIonizationRate_cgs(i);
+    MyFloat zeta_cr = Get_CosmicRayIonizationRate_cgs(i, P, CellP);
     MyFloat beta_recomb = 3e-6 / sqrt(DMAX(All.MinGasTemp, temp)); // Fromang, Terquem & Balbus 2002 eq. 9
     MyFloat xe= sqrt(zeta_cr / (beta_recomb * DMAX(1e2, nH_CGS(i))));
     return sqrt(zeta_cr / (beta_recomb * DMAX(1e2, nH_CGS(i)))); // Armitage 2010 eq. 24
