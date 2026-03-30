@@ -58,7 +58,7 @@ double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double soundspeed, press=0, gamma_eos_index = gamma_eos(i, pp, cell); soundspeed=0; /* get effective adiabatic index */
-    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * Get_Gas_density_for_energy_i(i, pp, cell); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
+    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
 #if (defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)) || defined(EOS_SUBSTELLAR_ISM) // will do temperature here
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
@@ -74,7 +74,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
 
 #ifdef EOS_SUBSTELLAR_ISM
-    press = Get_Gas_density_for_energy_i(i, pp, cell) * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
+    press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
 #endif
     
 #ifdef GALSF_EFFECTIVE_EQS /* modify pressure to 'interpolate' between effective EOS and isothermal, with the Springel & Hernquist 2003 'effective' EOS */
@@ -97,7 +97,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
     
 #ifdef EOS_TILLOTSON
-    press = calculate_eos_tillotson(i, pp, cell); soundspeed = cell[i].SoundSpeed; /* done in subroutine, save for below */
+    press = cell[i].calculate_tillotson_eos(); soundspeed = cell[i].SoundSpeed; /* done in subroutine, save for below */
 #endif
     
 #ifdef EOS_MHD_CORE_BAROTROPIC
@@ -114,7 +114,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
     
 #ifdef EOS_GMC_BAROTROPIC // barytropic EOS calibrated to Masunaga & Inutsuka 2000, eq. 4 in Federrath 2014 Apj 790. Reasonable over the range of densitites relevant to some small-scale star formation problems
-    gamma_eos_index=7./5.; double rho=Get_Gas_density_for_energy_i(i, pp, cell), nH_cgs=rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS;
+    gamma_eos_index=7./5.; double rho=cell[i].density_for_energy(), nH_cgs=rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS;
     if(nH_cgs > 2.30181e16) {gamma_eos_index=5./3.;} /* dissociates to atomic if dense enough (hot) */
     if (nH_cgs < 1.49468e8) {press = 6.60677e-16 * nH_cgs;} // isothermal below ~10^8 cm^-3 (adiabatic gamma=5/3 for soundspeed, etc, but this assumes effective eos from cooling, etc
     else if (nH_cgs < 2.30181e11) {press = 1.00585e-16 * pow(nH_cgs, 1.1);} // 'transition' region
@@ -155,7 +155,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     int k_freq; double gamma_rad=4./3., fluxlim=1; double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
     if(pp[i].Mass>0 && cell[i].Density>0) {for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
-        press += (gamma_rad-1.) * return_flux_limiter(i,k_freq, P, CellP) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / pp[i].Mass;
+        press += (gamma_rad-1.) * CellP[i].flux_limiter(k_freq) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / pp[i].Mass;
         soundspeed2 += gamma_rad*(gamma_rad-1.) * cell[i].Rad_E_gamma_Pred[k_freq] / pp[i].Mass;
     }}
     soundspeed = sqrt(soundspeed2);
@@ -177,7 +177,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
     
 #ifdef EOS_GENERAL /* need to be sure soundspeed variable is set: if not defined above, set it to the default which is given by the effective gamma */
-    if(soundspeed == 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / Get_Gas_density_for_energy_i(i, pp, cell));} else {cell[i].SoundSpeed = soundspeed;}
+    if(soundspeed == 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / cell[i].density_for_energy());} else {cell[i].SoundSpeed = soundspeed;}
 #endif
 
     /* Finally, set the pressure as advertised */
@@ -222,20 +222,6 @@ double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data
 }
 #endif
 
-/* trivial function to check if particle falls below the minimum allowed temperature */
-void check_particle_for_temperature_minimum(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    cell[i].enforce_temperature_floor();
-}
-
-
-
-double INLINE_FUNC Get_Gas_density_for_energy_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    return cell[i].density_for_energy();
-}
-
-
 /* calculate the 'total' effective sound speed in a given element [including e.g. cosmic ray pressure and other forms of pressure, if present] */
 double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
@@ -243,7 +229,7 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *p
     return cell[i].SoundSpeed;
 #else
     /* if nothing above triggers, then we resort to good old-fashioned ideal gas */
-    return sqrt(gamma_eos(i, pp, cell) * cell[i].Pressure / Get_Gas_density_for_energy_i(i, pp, cell));
+    return sqrt(gamma_eos(i, pp, cell) * cell[i].Pressure / cell[i].density_for_energy());
 #endif
 }
 

@@ -92,7 +92,7 @@
             double cmag_adv=0, fluxlim_ij=1, v_Area_dot_rt = dot(v_frame, Face_Area_Vec), v_Fluid_dot_rt = dot(0.5*(local.Vel+VelPred_j)/All.cf_atime, Face_Area_Vec);
             double scalar_ij_phys = 2.*scalar_i*scalar_j/(scalar_i+scalar_j) * All.cf_a3inv; // use harmonic mean here, to weight lower value
 #ifdef RT_FLUXLIMITER
-            double fluxlim_j = return_flux_limiter(j,k_freq, P, CellP);
+            double fluxlim_j = CellP[j].flux_limiter(k_freq);
             double fluxlim_i = local.RT_DiffusionCoeff[k_freq] * local.Density * local.Rad_Kappa[k_freq] / c_light_eff; /* figure this out by what we've passed to save an extra variable being sent, here */
             fluxlim_ij = 0.5 * (fluxlim_i+fluxlim_j);
 #endif

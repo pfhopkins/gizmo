@@ -130,7 +130,6 @@ static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMI
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 static inline double MINMOD_G(double a, double b) {return a;}
 
-static inline double nH_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell) {return HYDROGEN_MASSFRAC * cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;}
 static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)
     return C_LIGHT_CODE;
@@ -168,7 +167,6 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
 #endif
 
-void check_particle_for_temperature_minimum(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double get_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -176,7 +174,6 @@ double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data
 double return_user_desired_target_density(int i);
 double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
-double calculate_eos_tillotson(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void tillotson_eos_init(void);
 #endif
 
@@ -305,7 +302,6 @@ void kinetic_evaluate(int target, int mode);
 int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend_local);
 
 double INLINE_FUNC Get_Particle_Size(int i);
-double INLINE_FUNC Get_Gas_density_for_energy_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double INLINE_FUNC Get_Particle_Expected_Area(double h);
 double get_cell_Bfield_in_microGauss(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -912,7 +908,6 @@ int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct parti
 int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_define_effective_frequencies_in_bands(void);
-double return_flux_limiter(int target, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
 double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);

@@ -50,12 +50,6 @@ void tillotson_eos_init(void)
 }
 
 
-/* routine to calculate the pressure and sound speed from the Tillotson equation-of-state for solids */
-double calculate_eos_tillotson(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    return cell[i].calculate_tillotson_eos();
-}
-
 #endif
 
 

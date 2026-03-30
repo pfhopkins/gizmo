@@ -612,7 +612,7 @@ double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct ga
 /***********************************************************************************************************/
 double rt_diffusion_coefficient(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    return return_flux_limiter(i,k_freq, pp, cell) * C_LIGHT_CODE_REDUCED(i) / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
+    return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED(i) / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
 }
 
 
@@ -667,15 +667,6 @@ void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas
 
 
 /***********************************************************************************************************/
-/*! return the value of the flux-limiter function, as needed */
-/***********************************************************************************************************/
-double return_flux_limiter(int target, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    return cell[target].flux_limiter(k_freq);
-}
-
-
-
 /***********************************************************************************************************/
 /*
   routine which does the drift/kick operations on radiation quantities. separated here because we use a non-trivial
@@ -810,7 +801,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                 double slabfac_rp=1; if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kf)==0) {slabfac_rp=slab_averaging_function(f_kappa_abs*cell[i].Rad_Kappa[kf]*Sigma_particle) * slab_averaging_function(f_kappa_abs*cell[i].Rad_Kappa[kf]*abs_per_kappa_dt);} // reduction factor for absorption over dt
                 int kx; for(kx=0;kx<3;kx++)
                 {
-                    radacc[kx] = -dt_entr * slabfac_rp * return_flux_limiter(i,kf, pp, cell) * (cell[i].Gradients.Rad_E_gamma_ET[kf][kx] / cell[i].Density) / All.cf_atime; // naive radiation-pressure calc for FLD methods [physical units]
+                    radacc[kx] = -dt_entr * slabfac_rp * cell[i].flux_limiter(kf) * (cell[i].Gradients.Rad_E_gamma_ET[kf][kx] / cell[i].Density) / All.cf_atime; // naive radiation-pressure calc for FLD methods [physical units]
                     rmag += radacc[kx]*radacc[kx]; // compute magnitude
                     if(mode==0) {vel_i[kx]=(C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE)*pp[i].Vel[kx]/All.cf_atime;} else {vel_i[kx]=(C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE)*cell[i].VelPred[kx]/All.cf_atime;} // [for comoving] note this is the 'effective' u appearing in the RHD equations for an RSOL, care needed with these factors!
                 }

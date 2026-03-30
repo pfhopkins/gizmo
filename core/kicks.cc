@@ -227,7 +227,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 P[i].Vel[j] = (mass_old*P[i].Vel[j] + dp[j]*All.cf_atime) / mass_new; // call after tabulating dP[j] //
             } // kick for gas internal energy/entropy
             e_old += d_inc * CellP[i].dInternalEnergy; // for(j = 0; j< 3; j++) e_old -= 0.5*mass_new * (P[i].Vel[j]/All.cf_atime)*(P[i].Vel[j]/All.cf_atime); // increment of total (thermal+kinetic) energy; subtract off the new kinetic energy //
-            CellP[i].InternalEnergy = e_old / mass_new; check_particle_for_temperature_minimum(i, P, CellP); // obtain the new internal energy per unit mass, check floor // */
+            CellP[i].InternalEnergy = e_old / mass_new; CellP[i].enforce_temperature_floor(); // obtain the new internal energy per unit mass, check floor // */
              
             // at the end of this kick, need to re-zero the dInternalEnergy, and other conserved-variable gas/fluid quantities set in the hydro loop, to avoid double-counting them
             if(mode==0) {CellP[i].dMass=0;} /* CellP[i].dInternalEnergy=0; CellP[i].dMomentum[0]=CellP[i].dMomentum[1]=CellP[i].dMomentum[2]=0; */
@@ -339,7 +339,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #else
             if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
 #endif
-            check_particle_for_temperature_minimum(i, P, CellP); /* if we've fallen below the minimum temperature, force the 'floor' */
+            CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
         }
         
         /* now, kick for non-gas/fluid quantities (accounting for momentum conservation if masses are changing) */
