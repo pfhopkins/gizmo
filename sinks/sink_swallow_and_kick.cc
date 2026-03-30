@@ -467,11 +467,11 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         if(Mass_j_0_n > 0)
                         {
                             #pragma omp atomic
-                            P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime]
+                            P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime] if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
                         }
                     } else {
                         #pragma omp atomic write
-                        P[j].Mass = 0; // make sure the mass is -actually- zero'd here
+                        P[j].Mass = 0; // make sure the mass is -actually- zero'd here if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
                     }
                     
                     for(k=0;k<3;k++) {
@@ -819,7 +819,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             if(P[i].Sink_Mass <= m_relic) { // last batch to be spawned
                 n_particles_split = SINGLE_STAR_FB_SNE_N_EJECTA; // we are going to spawn a bunch of low mass particles to take the last bit of mass away
                 printf("Spawning last SN ejecta of star %llu with %g mass and %d particles \n",(unsigned long long) P[i].ID,total_mass_in_winds,n_particles_split);
-                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c)
+                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c) if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
 #ifdef SINK_ALPHADISK_ACCRETION
                 P[i].Sink_Mass_Reservoir = 0; // just to be safe
 #endif
@@ -1089,12 +1089,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         if(mass_of_new_particle >= 0.5*P[i].Sink_Formation_Mass) {P[j].ID = All.SpawnedWindCellID + 1;} // this just has the nominal mass resolution, so no special treatment - this avoids the P[i].ID == All.SpawnedWindCellID checks throughout the code
 #endif
         P[j].ID_child_number = P[i].ID_child_number + P[i].ID_generation; P[i].ID_generation++; P[j].ID_generation = P[i].ID; // this allows us to track spawned particles by giving them unique sub-IDs. Remember we MUST NEVER alter an existing particle ID OR ID_child_number!
-        P[j].Mass = mass_of_new_particle; /* assign masses to both particles (so they sum correctly) */
+        P[j].Mass = mass_of_new_particle; /* assign masses to both particles (so they sum correctly) */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP[j].MassTrue = P[j].Mass;
 #endif
         P[i].dp -= P[j].Mass * P[i].Vel; /* track momentum change from mass loss for tree node update */
-        P[i].Mass -= P[j].Mass; /* make sure the operation is mass conserving! */
+        P[i].Mass -= P[j].Mass; /* make sure the operation is mass conserving! */ if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
         P[i].unspawned_wind_mass -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass */
 
 #if defined(METALS) && (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) || defined(SNE_NONSINK_SPAWN) || (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))

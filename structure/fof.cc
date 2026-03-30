@@ -1810,6 +1810,7 @@ void fof_make_sink_particles(void)
 #endif
                 endrun(7772);
         
+        P[import_indices[n]].Mass = CellP[import_indices[n]].Mass; /* sync mass before type conversion */
         P[import_indices[n]].Type = 5;    /* make it a sink particle particle */
 #ifdef GALSF
         P[import_indices[n]].StellarAge = All.Time; /* reset formation time to match BH formation */

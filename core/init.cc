@@ -530,6 +530,7 @@ void init(void)
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
 #endif
+        CellP[i].Mass = P[i].Mass;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP[i].dMass = 0;
         CellP[i].DtMass = 0;
@@ -858,6 +859,7 @@ void init(void)
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
         CellP[i].CoolingIsOperatorSplitThisTimestep = 1; /* default to more conservative split */
 #endif
+        CellP[i].Mass = P[i].Mass;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP[i].dMass = 0;
         CellP[i].DtMass = 0;
