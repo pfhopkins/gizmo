@@ -145,8 +145,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         if(DtInternalEnergyEffCGS < 0) {
             double qfac = DMIN(0,DMAX(DMAX(-0.9, exp(DtInternalEnergyEffCGS*dtime/cell[i].InternalEnergy)-1.), All.MinEgySpec/cell[i].InternalEnergy-1.)); // equivalent to saying this wouldn't lower internal energy to below 10% in one timestep
             DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , qfac*cell[i].InternalEnergy/dtime );
-            double u_gamma_minus_1 = (gamma_eos(i, pp, cell)-1.) * cell[i].InternalEnergy, rho = cell[i].Density*All.cf_a3inv, pressure_thermalonly = u_gamma_minus_1 * rho;
-            double vA = Get_Gas_Alfven_speed_i(i, pp, cell), pressure_total = 0.5*vA*vA*rho + cell[i].Pressure*All.cf_a3inv;
+            double u_gamma_minus_1 = (cell[i].gamma_eos_value()-1.) * cell[i].InternalEnergy, rho = cell[i].Density*All.cf_a3inv, pressure_thermalonly = u_gamma_minus_1 * rho;
+            double vA = cell[i].Alfven_speed(), pressure_total = 0.5*vA*vA*rho + cell[i].Pressure*All.cf_a3inv;
             if(pressure_thermalonly < 0.05*pressure_total) {
                 double DtInternalEnergyPdV = - u_gamma_minus_1 * (pp[i].Particle_DivVel*All.cf_a2inv); /* change from expansion in PdV term */
                 DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , DMIN(DtInternalEnergyPdV, 0)); /* limit to PdV expansion change in limit where the thermal energy is small compared to the total */
@@ -329,7 +329,7 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     chimes_network(&(ChimesGasVars[target]), &ChimesGlobalVars);
 
     // Compute updated internal energy
-    u = (double) ChimesGasVars[target].temperature * BOLTZMANN_CGS / ((gamma_eos(target, pp, cell)-1) * PROTONMASS_CGS * calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars));
+    u = (double) ChimesGasVars[target].temperature * BOLTZMANN_CGS / ((cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars));
     u /= UNIT_SPECEGY_IN_CGS;  // code units
 
 #ifdef CHIMES_TURB_DIFF_IONS 
@@ -485,7 +485,7 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 /* This function converts thermal energy to temperature, using the mean molecular weight computed from the non-equilibrium CHIMES abundances. */
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
-  return u * (gamma_eos(target, pp, cell)-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
+  return u * (cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
 }
 // CHIMES
 #elif  defined(EOS_SUBSTELLAR_ISM)
@@ -606,9 +606,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
     double temp, temp_old, temp_old_old = 0, temp_new, prefac_fun_old, prefac_fun, fac, err_old, err_new, T_bracket_errneg = 0, T_bracket_errpos = 0, T_bracket_min = 0, T_bracket_max = 1.e20, bracket_sign = 0, Lambda_filler = 0; // double max = 0;
     double u_input = u, rho_input = rho, temp_guess;
     double T_0 = u * PROTONMASS_CGS / BOLTZMANN_CGS; // this is the dimensional temperature, which since u is fixed is -frozen- in this calculation: we can work dimensionlessly below
-    temp_guess = (gamma_eos(target, pp, cell)-1) * T_0; // begin assuming mu ~ 1
+    temp_guess = (cell[target].gamma_eos_value()-1) * T_0; // begin assuming mu ~ 1
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp_guess, rho, nH0_guess, ne_guess, 0., target, pp, cell); // get mu with that temp
-    prefac_fun = (gamma_eos(target, pp, cell)-1) * (*mu_guess); // dimensionless pre-factor determining the temperature
+    prefac_fun = (cell[target].gamma_eos_value()-1) * (*mu_guess); // dimensionless pre-factor determining the temperature
     err_new = prefac_fun - temp_guess / T_0; // define initial error from this iteration
     if(err_new < 0) {T_bracket_errneg = temp_guess;} else {T_bracket_errpos = temp_guess;}
     temp = prefac_fun * T_0; // re-calculate temp with the new mu
@@ -620,7 +620,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
         prefac_fun_old = prefac_fun;
         err_old = err_new; // error from previous timestep
         find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, &Lambda_filler, &Lambda_filler, &Lambda_filler, &Lambda_filler, pp, cell); // all the thermo variables for this T
-        prefac_fun = (gamma_eos(target, pp, cell)-1) * (*mu_guess); // new value of the dimensionless pre-factor we need to solve
+        prefac_fun = (cell[target].gamma_eos_value()-1) * (*mu_guess); // new value of the dimensionless pre-factor we need to solve
         temp_old = temp; // guess for T we just used
         temp_new = prefac_fun * T_0; // updated temp using the new values from the iteration of find_abundances_and_rates above
         err_new = (temp_new - temp_old) / T_0; // new error
@@ -2293,7 +2293,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 #ifdef MAGNETIC /* include sychrotron losses as well as long as we're here, since these scale more or less identically just using the magnetic instead of radiation energy */
     if(target >= 0)
     {
-        double b_muG = get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, T_rad_background_at_emission = get_background_radiation_temperature_for_emission_corrections(target, cell);
+        double b_muG = cell[target].Bfield_microGauss(), U_mag_ev=0.0248342*b_muG*b_muG, T_rad_background_at_emission = get_background_radiation_temperature_for_emission_corrections(target, cell);
         Lambda += compton_prefac_eV * U_mag_ev * (T-T_rad_background_at_emission); // synchrotron losses proportional to temperature (non-relativistic here), as inverse compton, just here without needing to worry about "T-T_eff", as if T_eff->0
     }
 #endif
