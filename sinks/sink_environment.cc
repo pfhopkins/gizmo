@@ -226,7 +226,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
 #endif                  
 #if (SINK_GRAVACCRETION == 8)
                         u=dP.norm()/h_i; if(u<1) {kernel_main(u,hinv3,hinv3*hinv,&wk,&dwk,-1);} else {wk=dwk=0;}
-                        double rj=u*h_i*All.cf_atime; double csj=Get_Gas_effective_soundspeed_i(j, P, CellP);
+                        double rj=u*h_i*All.cf_atime; double csj=Get_Gas_effective_soundspeed_i(j, CellP);
                         double vdotrj=-dot(dP,dv);
                         double vr_mdot = 4*M_PI * wt*(wk*All.cf_a3inv) * rj*vdotrj;
                         if(rj < SinkParticle_GravityKernelRadius*All.cf_atime)

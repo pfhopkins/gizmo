@@ -178,7 +178,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
 
 /* calculate the 'total' effective sound speed in a given element [including e.g. cosmic ray pressure and other forms of pressure, if present] */
-double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
+double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct gas_cell_data *cell)
 {
 #ifdef EOS_GENERAL
     return cell[i].SoundSpeed;
@@ -192,7 +192,7 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *p
 /* calculate the thermal sound speed (using just the InternalEnergy variable) in a given element */
 /* calculate the Alfven speed in a given element */
 /* calculate the fast MHD wave speed in a given element */
-double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
+double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct gas_cell_data *cell)
 {
     double cs = cell[i].thermal_soundspeed(), vA = cell[i].Alfven_speed();
     return sqrt(cs*cs + vA*vA);    
@@ -207,7 +207,7 @@ double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp,
 /* handy function that just returns the B-field magnitude in microGauss, physical units. purely here to save us time re-writing this */
 /* returns the conversion factor to go -approximately- (for really quick estimation) in code units, from internal energy to soundspeed */
 /* returns the ionized fraction of gas, meant as a reference for runs outside of the cooling routine which include cooling+other physics */
-double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell)
+double Get_Gas_Ionized_Fraction(int i, struct gas_cell_data *cell)
 {
 #ifdef COOLING
 #ifdef CHIMES 
@@ -610,7 +610,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
 #if defined(COOLING) /* get the ionized fraction. NOTE we CANNOT call 'ThermalProperties' or functions like 'Get_Ionized_Fraction' here in gradients.c, as we have not done self-shielding steps yet and most modules will yield unphysical answers! */
     ion_frac = cell[i].Ne / (1. + 2.*yhelium(i, pp)); /* quick estimator. this is actually what we need for conduction since its the free electrons conducting, and we want number relative to fully-ionized gas */
 #endif
-    double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i, pp, cell); cs_therm=cell[i].thermal_soundspeed(); vf_lim = cs;
+    double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i, cell); cs_therm=cell[i].thermal_soundspeed(); vf_lim = cs;
 #ifdef MAGNETIC
     Vec3<double> bhat = cell[i].Bfield(); double bmag=0,double_dot_dv=0;
     bmag=bhat.norm_sq(); if(bmag>0) {bmag = sqrt(bmag); bhat/=bmag;}
@@ -676,7 +676,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
 
 
 #ifdef TURB_DIFFUSION
-void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell)
+void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct gas_cell_data *cell)
 {
     /* estimate local turbulent diffusion coefficient from velocity gradients using Smagorinsky mixing model:
      we do this after slope-limiting to prevent the estimated velocity gradients from being unphysically large */

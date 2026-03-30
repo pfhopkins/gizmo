@@ -84,7 +84,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     Bmag_Gauss = Bmag * UNIT_B_IN_GAUSS; // turn it into Gauss
     Omega_gyro = (8987.34 * Bmag_Gauss * (Z_charge_CR/E_CRs_Gev)) * UNIT_TIME_IN_CGS; // gyro frequency of the CR population we're evolving, converted to physical code units //
     double vA_noion = cell[i].Alfven_speed(); // Alfven speed in code units [recall B units such that there is no 4pi here]
-    vA_code = Get_Gas_ion_Alfven_speed_i(i, pp, cell); // include ionization appropriately for small-scale modes
+    vA_code = Get_Gas_ion_Alfven_speed_i(i, cell); // include ionization appropriately for small-scale modes
     cs_thermal = sqrt(cell[i].soundspeed2_from_u(u0)); // thermal sound speed at appropriate drift-time [in code units, physical]
     vA2_c2 = vA_code*vA_code / (clight_code*clight_code); // Alfven speed vs speed of light
     fac_Omega = (3.*M_PI/16.) * Omega_gyro * (1.+2.*vA2_c2); // factor which will be used heavily below

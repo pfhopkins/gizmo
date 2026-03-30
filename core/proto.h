@@ -81,7 +81,7 @@ double get_turb_pot(double x, double y, double z);
 void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef TURB_DIFFUSION
-void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
+void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct gas_cell_data *cell);
 #endif
 
 void   sub_turb_move_perturbers(double t0, double t1);
@@ -299,7 +299,7 @@ int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend
 
 double INLINE_FUNC Get_Particle_Size(int i);
 double INLINE_FUNC Get_Particle_Expected_Area(double h);
-double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double Get_Gas_Ionized_Fraction(int i, struct gas_cell_data *cell);
 double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
@@ -310,11 +310,11 @@ double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp,
 double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_cooling_and_gas_heating(int target, double n_elec, double nH_cgs, double dtime_cgs, int mode);
 double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target);
-double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
-void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct particle_data *pp, struct gas_cell_data *cell);
+double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
+void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
 double return_CRbin_M1speed(int k_CRegy);
 double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
-double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag);
 double diffusion_coefficient_constant(int target, int k_CRegy);
 double diffusion_coefficient_extrinsic_turbulence(int mode, int target, int k_CRegy, double M_A, double L_scale, double b_muG, double vA_noion, double rho_cgs, double temperature, double cs_thermal, double nh0, double nHe0, double f_ion);
@@ -358,8 +358,8 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON)
 double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 #endif
-double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
-double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct gas_cell_data *cell);
 double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
@@ -739,7 +739,7 @@ double cr_get_source_shieldfac(int i);
 
 
 #ifdef CHIMES
-double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
+double chimes_convert_u_to_temp(double u, double rho, int target, struct gas_cell_data *cell);
 void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_gizmo_exit(void);
 #ifdef COOL_METAL_LINES_BY_SPECIES
@@ -795,17 +795,17 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, char *ion_name, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct gas_cell_data *cell);
+MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell);
+MyFloat cosmic_ray_ionization_rate_C(int i, struct gas_cell_data *cell);
+MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell);
 int ion_name_to_index(char *ion_name);
 double get_starformation_rate(int i, int mode);
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double cloudmass_fraction, double rateOfSF);
@@ -899,8 +899,8 @@ double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_dat
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
 double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_diffusion_coefficient(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell);
+void rt_eddington_update_calculation(int j, struct gas_cell_data *cell);
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef RT_SOURCE_INJECTION

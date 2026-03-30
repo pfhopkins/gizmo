@@ -64,7 +64,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
 double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
-double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
+double chimes_convert_u_to_temp(double u, double rho, int target, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
@@ -483,7 +483,7 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 
 #ifdef CHIMES
 /* This function converts thermal energy to temperature, using the mean molecular weight computed from the non-equilibrium CHIMES abundances. */
-double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell)
+double chimes_convert_u_to_temp(double u, double rho, int target, struct gas_cell_data *cell)
 {
   return u * (cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
 }
@@ -737,9 +737,9 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         if(logT < 2) {*ne_guess = 1.e-10;}
     }
     /* CAFG: this is the density that we should use for UV background threshold */
-    double local_gammamultiplier = return_local_gammamultiplier(target, pp, cell); // account for local UVB terms in some expressions below
+    double local_gammamultiplier = return_local_gammamultiplier(target, cell); // account for local UVB terms in some expressions below
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
-    if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, pp, cell);} // if < 0, that's a key to tell us this needs to be recalculated
+    if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, cell);} // if < 0, that's a key to tell us this needs to be recalculated
     n_elec = *ne_guess; if(!isfinite(n_elec)) {n_elec=1;}
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.; /* more initialized quantities */
@@ -890,7 +890,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
 	    n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);        
         n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
-	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
+	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, cell);
 #endif        
 #endif       
 	
@@ -1012,8 +1012,8 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         int k; for(k=0;k<NUM_METAL_SPECIES;k++) {Z[k]=All.SolarAbundances[k];}
     }
 #endif
-    double local_gammamultiplier = return_local_gammamultiplier(target, pp, cell);
-    shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, pp, cell);
+    double local_gammamultiplier = return_local_gammamultiplier(target, cell);
+    shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, cell);
     
 #if defined(COOL_LOW_TEMPERATURES)
     double Tdust = 30.; /* set variables needed for dust heating/cooling. if dust cooling not calculated, default to 0 */
@@ -1034,7 +1034,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         /* get ionization states for H and He with associated ionization, collision, recombination, and free-free heating/cooling */
         Lambda += find_abundances_and_rates(logT, rho, target, shieldfac, 1, &n_elec, &nH0, &nHp, &nHe0, &nHep, &nHepp, &mu, &LambdaExc, &LambdaIon, &LambdaRec, &LambdaFF, pp, cell); /* adds all of these to our running total for cooling */
         *n_elec_eval = n_elec; /* save this value for the output cycle */
-        LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, pp, cell); /* note this can have either sign: heating or cooling */
+        LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
         
 #ifdef COOL_METAL_LINES_BY_SPECIES
@@ -1232,7 +1232,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         *n_elec_eval = n_elec; /* save this value for the output cycle */
 
         LambdaFF = 1.42e-27 * sqrt(T) * (1.1 + 0.34 * exp(-(5.5 - logT) * (5.5 - logT) / 3)) * (nHp + 4 * nHepp) * n_elec * (1. + sqrt(T/0.4e10)); // free-free (with simplified relativistic correction)
-        LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, pp, cell); // Compton
+        LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); // Compton
         Lambda = LambdaFF + DMAX(LambdaCompton,0);
     }
 
@@ -1886,7 +1886,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     xH0 = DMIN(DMAX(nh0, 0.),1.); // get neutral fraction [given by call to this program]
     if(xH0 <= MIN_REAL_NUMBER) {cell[i].MolecularMassFraction_perNeutralH=cell[i].MolecularMassFraction=0; return;} // no neutral gas, no molecules!
     x_e = DMIN(DMAX(xn_e, 0.),2.); // get free electron ratio [number per H nucleon]
-    double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i, pp, cell)*gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T, pp, cell), urad_from_uvb_in_G0=sqrt(shieldfac)*(gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
+    double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i, cell)*gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T, cell), urad_from_uvb_in_G0=sqrt(shieldfac)*(gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
 #ifdef METALS
     f_dustgas_solar=(pp[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // this is only used for the dust-phase formation rates below, so just the dust term here
 #endif
@@ -2221,7 +2221,7 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
 /* this function evaluates Compton heating+cooling rates and synchrotron cooling for thermal gas populations, accounting for the
     explicitly-evolved radiation field if it is evolved (otherwise assuming a standard background), and B-fields if they
     are evolved, as well as the proper relativistic or non-relativistic effects and two-temperature plasma effects. */
-double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct particle_data *pp, struct gas_cell_data *cell)
+double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct gas_cell_data *cell)
 {
     double Lambda = 0;
     double compton_prefac_eV = 2.16e-35 / nHcgs; // multiply field in eV/cm^3 by this and temperature difference to obtain rate
@@ -2363,7 +2363,7 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
 
 
 /* function to return the local multiplier relative to the UVB model to account in some local RHD models for local ionizing sources */
-double return_local_gammamultiplier(int target, struct particle_data *pp, struct gas_cell_data *cell)
+double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
 {
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
     if((target >= 0) && (gJH0 > 0))
@@ -2379,7 +2379,7 @@ double return_local_gammamultiplier(int target, struct particle_data *pp, struct
 
 
 /* function to attenuate the UVB to model self-shielding in optically-thin simulations */
-double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct particle_data *pp, struct gas_cell_data *cell)
+double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell)
 {
 #ifdef GALSF_EFFECTIVE_EQS
     return 1; // self-shielding is implicit in the sub-grid model already //
@@ -2412,7 +2412,7 @@ void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cel
   double H_mass_fraction = XH;
 #endif
 
-  ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, pp, cell);
+  ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, cell);
   ChimesGasVars[target].nH_tot = (ChimesFloat) (H_mass_fraction * rho_cgs / PROTONMASS_CGS);
   ChimesGasVars[target].ThermEvolOn = All.ChimesThermEvolOn;
 

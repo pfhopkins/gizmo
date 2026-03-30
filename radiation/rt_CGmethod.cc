@@ -73,7 +73,7 @@ void particle2in_rt_cg(struct rt_cg_data_in *in, int i)
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = P[i].Mass;
     in->Density = CellP[i].Density;
-    for(k=0; k<N_RT_FREQ_BINS; k++) in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k, P, CellP);
+    for(k=0; k<N_RT_FREQ_BINS; k++) in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k, CellP);
 }
 
 /* internal product of two vectors (for all gas particles) */
@@ -462,7 +462,7 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
                 
                         SymmetricTensor2<double> ET_ij; for(int kk=0;kk<6;kk++) {ET_ij.data[kk] = 0.5 * (local.ET[k].data[kk] + CellP[j].ET[k].data[kk]);}
                         double tensor = dot(dp, ET_ij.matvec(dp)) / r2;
-                        double kappa_ij = 0.5*(local.RT_DiffusionCoeff[k] + rt_diffusion_coefficient(j,k, P, CellP));
+                        double kappa_ij = 0.5*(local.RT_DiffusionCoeff[k] + rt_diffusion_coefficient(j,k, CellP));
                         double fac = tensor_norm * tensor * kappa_ij;
                         out.matrixmult_out[k] -= fac * matrixmult_in[k][j];
                         out.matrixmult_sum[k] += fac;
