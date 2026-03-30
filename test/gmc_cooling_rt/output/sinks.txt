@@ -1,0 +1,8 @@
+### Sink particle log-file [SINK_PARTICLES]. See User Guide for details. Columns represent: 
+###   (1) Simulation time [code units] 
+###   (2) Number of sink particles in the simulation 
+###   (3) Total mass [code units] of the sinks (using the sink central mass, not particle/reservoir masses) 
+###   (4) Total sink accretion rate [code units] (using sink central Mdot) 
+###   (5) Total sink accretion rate in solar masses per year 
+###   (6) Total sink particle dynamical mass in simulation [code units] 
+###   (7) Mean Eddington ratio of accretion onto all sinks 

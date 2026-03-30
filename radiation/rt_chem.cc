@@ -23,7 +23,7 @@ double rt_photoion_chem_return_temperature(int i, double internal_energy)
     return 1e4; // use a fixed temp if this special flag for numerical testing is enabled
 #endif
     double mol_wt = 4 / (1 + 3 * HYDROGEN_MASSFRAC + 4 * HYDROGEN_MASSFRAC * CellP[i].Ne);
-    return mol_wt * (GAMMA(i)-1) * internal_energy * U_TO_TEMP_UNITS;
+    return mol_wt * (gamma_eos(i)-1) * internal_energy * U_TO_TEMP_UNITS;
 }
 
 

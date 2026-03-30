@@ -1,0 +1,14 @@
+### Logfiles [1 per MPI task] for sink-formation events. See User Guide for details. Columns represent: 
+###   (1) Simulation time [code units] 
+###   (2) Particle ID becoming a sink 
+###   (3) Mass [code units] 
+###   (4,5,6) x,y,z Coordinates [code units] 
+###   (7,8,9) x,y,z Velocity [code units] 
+###   (10,11,12) x,y,z Magnetic field [code units] 
+###   (13) Specific internal energy [code units] 
+###   (14) Density [physical code units] 
+###   (15) Effective sound Speed [code units] 
+###   (16) Cell linear size [physical code units] 
+###   (17) Column density [physical code units of mass/area] integrated to infinity 
+###   (18) Turbulent velocity variance dv*dv [physical code units] from deviatoric shear tensor 
+###   (19) Minimum distance to nearest (other) sink [code units] 

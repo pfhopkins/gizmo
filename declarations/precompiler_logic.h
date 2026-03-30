@@ -654,12 +654,9 @@
 
 
 #if defined(EOS_GAMMA_VARIABLE)
-#define GAMMA(i) (gamma_eos(i)) /*! use an actual function! */
 #ifndef EOS_GENERAL
 #define EOS_GENERAL /*! needs to be on for this to work */
 #endif
-#else
-#define GAMMA(i) (EOS_GAMMA) /*! default to this being a universal constant */
 #endif
 #define GAMMA_DEFAULT (EOS_GAMMA)
 
@@ -690,11 +687,6 @@
 
 
 #define CRFLUID_REDUCED_C_CODE(k) (return_CRbin_M1speed(k)) // allow for bin-to-bin variations in RSOL
-#if defined(CRFLUID_ALT_RSOL_FORM)
-#define CosmicRayFluid_RSOL_Corrfac(k) (((CRFLUID_REDUCED_C_CODE(k))/(C_LIGHT_CODE))) // this needs to be defined after the code SOL for obvious reasons
-#else
-#define CosmicRayFluid_RSOL_Corrfac(k) (1.0) // this is always unity, macro is trivial
-#endif
 
 
 #ifndef FOF_PRIMARY_LINK_TYPES

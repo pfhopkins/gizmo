@@ -43,7 +43,7 @@ for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
         double c_hll = 0.5*fabs(face_vel_i-face_vel_j) + cr_m1_speed_touse; // physical
         double renormerFAC = cos_theta_face_flux*cos_theta_face_flux;
 #else
-        double kappa_ij = CosmicRayFluid_RSOL_Corrfac(k_CRegy) * 0.5 * (kappa_i+kappa_j); // physical, account for RSOL in effective diffusion speed
+        double kappa_ij = cosmicrayfluid_rsol_corrfac(k_CRegy) * 0.5 * (kappa_i+kappa_j); // physical, account for RSOL in effective diffusion speed
         double CRopticaldepth = DMIN(Particle_Size_i,Particle_Size_j)*cr_m1_speed_touse/kappa_ij;
         double reductionfactor = (4.+CRopticaldepth*(4.+3.*CRopticaldepth)) / (4.+CRopticaldepth*(4.+CRopticaldepth*(4.+3.*CRopticaldepth))); // this is just an excellent but simpler/faster approximation to SQRT[1-EXP[-x^2]]/x, which also deals better with small-x limits //
         double reducedcM1 = reductionfactor*cr_m1_speed_touse*sqrtthreeinv; //TK test: correct HLL according Jiang & Oh 2018
