@@ -71,7 +71,7 @@ alpha_gr: float
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, char *ion_name)
 {
     MyFloat psi = grain_charge_psi(i, temp, x_elec, shieldfac);
-    // MyFloat temp = get_temperature(i);
+    // MyFloat temp = get_temperature(i, P, CellP);
     int j = ion_name_to_index(ion_name);
 
     MyFloat C[NUM_RECOMB_TABLE_IONS][7] = {

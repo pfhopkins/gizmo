@@ -234,7 +234,7 @@ void drift_particle(int i, integertime time1)
 #endif
             drift_extra_physics(i, time0, time1, dt_entr);
 
-            set_eos_pressure(i);
+            set_eos_pressure(i, P, CellP);
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
@@ -504,9 +504,9 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
         double vsig1 = 0.0;
         if(CellP[i_particle_id].Density > 0)
         {
-            vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i_particle_id)*Get_Gas_effective_soundspeed_i(i_particle_id) +
+            vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i_particle_id, P, CellP)*Get_Gas_effective_soundspeed_i(i_particle_id, P, CellP) +
                  (1. / All.cf_atime) *
-                 (Get_Gas_BField(i_particle_id).norm_sq() +
+                 (Get_Gas_BField(i_particle_id, P, CellP).norm_sq() +
                   phi_B_eff*phi_B_eff) / CellP[i_particle_id].Density );
         }
         vsig1 = DMAX(vsig1, vsig2);

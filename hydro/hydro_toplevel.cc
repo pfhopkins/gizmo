@@ -397,7 +397,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->Density = CellP[i].Density;
     in->Pressure = CellP[i].Pressure;
     in->InternalEnergyPred = CellP[i].InternalEnergyPred;
-    in->SoundSpeed = Get_Gas_effective_soundspeed_i(i);
+    in->SoundSpeed = Get_Gas_effective_soundspeed_i(i, P, CellP);
     in->dt_hydrostep_i = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;
@@ -508,7 +508,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #endif
 
 #ifdef MAGNETIC
-    in->BPred = Get_Gas_BField(i);
+    in->BPred = Get_Gas_BField(i, P, CellP);
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
     in->Balpha = CellP[i].Balpha;
 #endif
@@ -661,7 +661,7 @@ void hydro_final_operations_and_cleanup(void)
 #if defined(MAGNETIC)
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             {
-                Vec3<double> Bi = Get_Gas_BField(i) * All.cf_a2inv;
+                Vec3<double> Bi = Get_Gas_BField(i, P, CellP) * All.cf_a2inv;
 #ifndef HYDRO_SPH
                 /* this part of the induction equation has to do with advection of div-B, it is not present in SPH */
                 CellP[i].DtB -= CellP[i].divB * (CellP[i].VelPred/All.cf_atime);
@@ -694,7 +694,7 @@ void hydro_final_operations_and_cleanup(void)
 
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
-                CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, Get_Gas_BField(i) * All.cf_a2inv);
+                CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, Get_Gas_BField(i, P, CellP) * All.cf_a2inv);
             }
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
@@ -734,7 +734,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
-            CellP[i].DtInternalEnergy -= dot(Get_Gas_BField(i) * All.cf_a2inv, CellP[i].DtB);
+            CellP[i].DtInternalEnergy -= dot(Get_Gas_BField(i, P, CellP) * All.cf_a2inv, CellP[i].DtB);
 #endif
             CellP[i].DtB *= magnorm_closure;
 #endif
@@ -745,7 +745,7 @@ void hydro_final_operations_and_cleanup(void)
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
 
             // need to explicitly include adiabatic correction from the hubble-flow (for drifting) here //
-            if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(gamma_eos(i)-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
+            if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(gamma_eos(i, P, CellP)-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
             // = du/dlna -3*(gamma-1)*u ; then dlna/dt = H(z) =  All.cf_hubble_a //
 
 
@@ -822,7 +822,7 @@ void hydro_final_operations_and_cleanup(void)
 #if (defined(COSMIC_RAY_FLUID) && !defined(COOLING_OPERATOR_SPLIT)) || defined(COSMIC_RAY_SUBGRID_LEBRON)
             /* with the spectrum model, we account here the adiabatic heating/cooling of the 'fluid', here, which was solved in the hydro solver but doesn't resolve which portion goes to CRs and which to internal energy, with gamma=GAMMA_COSMICRAY */
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-            double P_cr_spec = (1./3.)*CellP[i].SubGrid_CosmicRayEnergyDensity/CellP[i].Density, P_tot_spec = P_cr_spec + (2./3.)*CellP[i].InternalEnergyPred + (1./2.)*pow(Get_Gas_Alfven_speed_i(i),2); // just include CR+thermal+magnetic here
+            double P_cr_spec = (1./3.)*CellP[i].SubGrid_CosmicRayEnergyDensity/CellP[i].Density, P_tot_spec = P_cr_spec + (2./3.)*CellP[i].InternalEnergyPred + (1./2.)*pow(Get_Gas_Alfven_speed_i(i, P, CellP),2); // just include CR+thermal+magnetic here
             CellP[i].DtInternalEnergy *= (1.-P_cr_spec/P_tot_spec); /* approximate correction, valid to level here [more sophisticated correction can cause problems since the PdV energy isn't actually being taken -out- of the CR field, as it would be if followed explicitly] */
 #else
             double gamma_minus_eCR_tmp=0; for(k=0;k<N_CR_PARTICLE_BINS;k++) {gamma_minus_eCR_tmp+=(GAMMA_COSMICRAY(k)-1.)*CellP[i].CosmicRayEnergyPred[k];} // routine below only depends on the total CR energy, not bin-by-bin energies, when we do it this way here

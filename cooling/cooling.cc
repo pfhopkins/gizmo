@@ -100,7 +100,7 @@ void do_the_cooling_for_particle(int i)
 #else
         if(CellP[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             CellP[i].DelayTimeHII = 0; CellP[i].InternalEnergy *= 0.59/1.28; CellP[i].Ne = DMIN(CellP[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
-            CellP[i].InternalEnergyPred = CellP[i].InternalEnergy; set_eos_pressure(i);}
+            CellP[i].InternalEnergyPred = CellP[i].InternalEnergy; set_eos_pressure(i, P, CellP);}
 #endif
 #endif
         
@@ -127,8 +127,8 @@ void do_the_cooling_for_particle(int i)
         if(DtInternalEnergyEffCGS < 0) {
             double qfac = DMIN(0,DMAX(DMAX(-0.9, exp(DtInternalEnergyEffCGS*dtime/CellP[i].InternalEnergy)-1.), All.MinEgySpec/CellP[i].InternalEnergy-1.)); // equivalent to saying this wouldn't lower internal energy to below 10% in one timestep
             DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , qfac*CellP[i].InternalEnergy/dtime );
-            double u_gamma_minus_1 = (gamma_eos(i)-1.) * CellP[i].InternalEnergy, rho = CellP[i].Density*All.cf_a3inv, pressure_thermalonly = u_gamma_minus_1 * rho;
-            double vA = Get_Gas_Alfven_speed_i(i), pressure_total = 0.5*vA*vA*rho + CellP[i].Pressure*All.cf_a3inv;
+            double u_gamma_minus_1 = (gamma_eos(i, P, CellP)-1.) * CellP[i].InternalEnergy, rho = CellP[i].Density*All.cf_a3inv, pressure_thermalonly = u_gamma_minus_1 * rho;
+            double vA = Get_Gas_Alfven_speed_i(i, P, CellP), pressure_total = 0.5*vA*vA*rho + CellP[i].Pressure*All.cf_a3inv;
             if(pressure_thermalonly < 0.05*pressure_total) {
                 double DtInternalEnergyPdV = - u_gamma_minus_1 * (P[i].Particle_DivVel*All.cf_a2inv); /* change from expansion in PdV term */
                 DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , DMIN(DtInternalEnergyPdV, 0)); /* limit to PdV expansion change in limit where the thermal energy is small compared to the total */
@@ -153,7 +153,7 @@ void do_the_cooling_for_particle(int i)
         {
             if(unew<uion) {unew=uion; if(CellP[i].DtInternalEnergy<0) CellP[i].DtInternalEnergy=0;}
 #ifndef CHIMES
-            CellP[i].Ne = 1.0 + 2.0*yhelium(i); /* fully ionized. note that this gives Ne as free electron fraction per H */
+            CellP[i].Ne = 1.0 + 2.0*yhelium(i, P); /* fully ionized. note that this gives Ne as free electron fraction per H */
 #endif
         }
 #endif
@@ -240,7 +240,7 @@ void do_the_cooling_for_particle(int i)
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         CellP[i].InternalEnergy = unew;
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
-        set_eos_pressure(i);
+        set_eos_pressure(i, P, CellP);
 #ifndef COOLING_OPERATOR_SPLIT
         if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {CellP[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
 #endif
@@ -311,7 +311,7 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     chimes_network(&(ChimesGasVars[target]), &ChimesGlobalVars);
 
     // Compute updated internal energy
-    u = (double) ChimesGasVars[target].temperature * BOLTZMANN_CGS / ((gamma_eos(target)-1) * PROTONMASS_CGS * calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars));
+    u = (double) ChimesGasVars[target].temperature * BOLTZMANN_CGS / ((gamma_eos(target, P, CellP)-1) * PROTONMASS_CGS * calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars));
     u /= UNIT_SPECEGY_IN_CGS;  // code units
 
 #ifdef CHIMES_TURB_DIFF_IONS 
@@ -467,7 +467,7 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 /* This function converts thermal energy to temperature, using the mean molecular weight computed from the non-equilibrium CHIMES abundances. */
 double chimes_convert_u_to_temp(double u, double rho, int target)
 {
-  return u * (gamma_eos(target)-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
+  return u * (gamma_eos(target, P, CellP)-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
 }
 // CHIMES
 #elif  defined(EOS_SUBSTELLAR_ISM)
@@ -493,7 +493,7 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
     }
 #endif
     double urad_from_uvb_in_G0 = MIN_REAL_NUMBER;                                         // pass this eventually?
-    fmol = Get_Gas_Molecular_Mass_Fraction(target, temp, *nH0, *ne, urad_from_uvb_in_G0); /* use our simple subroutine to estimate this, ignoring UVB and with clumping factor=1 */
+    fmol = Get_Gas_Molecular_Mass_Fraction(target, temp, *nH0, *ne, urad_from_uvb_in_G0, P, CellP); /* use our simple subroutine to estimate this, ignoring UVB and with clumping factor=1 */
 
     /* For full generality, make arrays of species' mean energy, masses, and abundances. Indices: 0: H_2 1: H 2: He 3: e 4: metals */
     double E_i[NUM_SPECIES_IN_EOS] = {0}, cv_i[NUM_SPECIES_IN_EOS] = {0}, m_i[NUM_SPECIES_IN_EOS] = {0}, N_i[NUM_SPECIES_IN_EOS] = {0};
@@ -588,9 +588,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
     double temp, temp_old, temp_old_old = 0, temp_new, prefac_fun_old, prefac_fun, fac, err_old, err_new, T_bracket_errneg = 0, T_bracket_errpos = 0, T_bracket_min = 0, T_bracket_max = 1.e20, bracket_sign = 0, Lambda_filler = 0; // double max = 0;
     double u_input = u, rho_input = rho, temp_guess;
     double T_0 = u * PROTONMASS_CGS / BOLTZMANN_CGS; // this is the dimensional temperature, which since u is fixed is -frozen- in this calculation: we can work dimensionlessly below
-    temp_guess = (gamma_eos(target)-1) * T_0; // begin assuming mu ~ 1
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp_guess, rho, nH0_guess, ne_guess, 0., target); // get mu with that temp
-    prefac_fun = (gamma_eos(target)-1) * (*mu_guess); // dimensionless pre-factor determining the temperature
+    temp_guess = (gamma_eos(target, P, CellP)-1) * T_0; // begin assuming mu ~ 1
+    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp_guess, rho, nH0_guess, ne_guess, 0., target, P, CellP); // get mu with that temp
+    prefac_fun = (gamma_eos(target, P, CellP)-1) * (*mu_guess); // dimensionless pre-factor determining the temperature
     err_new = prefac_fun - temp_guess / T_0; // define initial error from this iteration
     if(err_new < 0) {T_bracket_errneg = temp_guess;} else {T_bracket_errpos = temp_guess;}
     temp = prefac_fun * T_0; // re-calculate temp with the new mu
@@ -602,7 +602,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
         prefac_fun_old = prefac_fun;
         err_old = err_new; // error from previous timestep
         find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, &Lambda_filler, &Lambda_filler, &Lambda_filler, &Lambda_filler); // all the thermo variables for this T
-        prefac_fun = (gamma_eos(target)-1) * (*mu_guess); // new value of the dimensionless pre-factor we need to solve
+        prefac_fun = (gamma_eos(target, P, CellP)-1) * (*mu_guess); // new value of the dimensionless pre-factor we need to solve
         temp_old = temp; // guess for T we just used
         temp_new = prefac_fun * T_0; // updated temp using the new values from the iteration of find_abundances_and_rates above
         err_new = (temp_new - temp_old) / T_0; // new error
@@ -684,16 +684,16 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 
     if(logT <= Tmin)		/* everything neutral */
     {
-        nH0 = 1.0; nHe0 = yhelium(target); nHp = 0; nHep = 0; nHepp = 0; n_elec = 1.e-22;
+        nH0 = 1.0; nHe0 = yhelium(target, P); nHp = 0; nHep = 0; nHepp = 0; n_elec = 1.e-22;
         *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
-        *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, 0, target);
+        *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, 0, target, P, CellP);
         return 0;
     }
     if(logT >= Tmax)		/* everything is ionized */
     {
-        nH0 = 0; nHe0 = 0; nHp = 1.0; nHep = 0; nHepp = yhelium(target); n_elec = nHp + 2.0 * nHepp;
+        nH0 = 0; nHe0 = 0; nHp = 1.0; nHep = 0; nHepp = yhelium(target, P); n_elec = nHp + 2.0 * nHepp;
         *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
-        *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, 1.e3, target);
+        *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, 1.e3, target, P, CellP);
         return 0;
     }
 
@@ -837,18 +837,18 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         {
             nHep = 0.0;
             nHepp = 0.0;
-            nHe0 = yhelium(target);
+            nHe0 = yhelium(target, P);
         }
         else
         {
-            nHep = yhelium(target) / (1.0 + (aHep + ad) / (geHe0 + gJHe0ne) + (geHep + gJHepne) / aHepp);	/* eqn (35) */
+            nHep = yhelium(target, P) / (1.0 + (aHep + ad) / (geHe0 + gJHe0ne) + (geHep + gJHepne) / aHepp);	/* eqn (35) */
             nHe0 = nHep * (aHep + ad) / (geHe0 + gJHe0ne);	/* eqn (36) */
             nHepp = nHep * (geHep + gJHepne) / aHepp;	/* eqn (37) */
         }
 #if defined(RT_CHEM_PHOTOION) && defined(RT_CHEM_PHOTOION_HE)
         if(target >= 0)
         {
-            double yHe = yhelium(target); // will use helium fraction below
+            double yHe = yhelium(target, P); // will use helium fraction below
             nHep = CellP[target].HeII + yHe * fac_noneq_cgs * (geHe0 + gJHe0ne) - CellP[target].HeIII * (fac_noneq_cgs*(geHe0 + gJHe0ne - aHepp) / (1.0 + fac_noneq_cgs*aHepp));
             nHep /= 1.0 + fac_noneq_cgs*(geHe0 + gJHe0ne + aHep + ad + geHep + gJHepne) + (fac_noneq_cgs*(geHe0 + gJHe0ne - aHepp) / (1.0 + fac_noneq_cgs*aHepp)) * fac_noneq_cgs*(geHep + gJHepne);
             if(nHep < 0) {nHep=0;} // check if this exceeded valid limits (can happen in 'overshoot' during iteration)
@@ -859,7 +859,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
             nHe0 = yHe - (nHep + nHepp); // remainder is neutral
         }
 #endif
-        if(!isfinite(n_elec)) {printf("target=%d niter=%d logT=%g n_elec/old=%g/%g nHp/nHep/nHepp=%g/%g/%g nHcgs=%g yHe=%g dt=%g shieldfac/local_gammamult=%g/%g aHp/aHep/aHepp=%g/%g/%g geH0/geHe0/geHep=%g/%g/%g gJH0ne/gJHe0ne/gJHepne=%g/%g/%g \n",target,niter,logT,n_elec,neold,nHp,nHep,nHepp,nHcgs,yhelium(target),dt,shieldfac,local_gammamultiplier,aHp,aHep,aHepp,geH0,geHe0,geHep,gJH0ne,gJHe0ne,gJHepne);}
+        if(!isfinite(n_elec)) {printf("target=%d niter=%d logT=%g n_elec/old=%g/%g nHp/nHep/nHepp=%g/%g/%g nHcgs=%g yHe=%g dt=%g shieldfac/local_gammamult=%g/%g aHp/aHep/aHepp=%g/%g/%g geH0/geHe0/geHep=%g/%g/%g gJH0ne/gJHe0ne/gJHepne=%g/%g/%g \n",target,niter,logT,n_elec,neold,nHp,nHep,nHepp,nHcgs,yhelium(target, P),dt,shieldfac,local_gammamultiplier,aHp,aHep,aHepp,geH0,geHe0,geHep,gJH0ne,gJHe0ne,gJHepne);}
 
         double error_old = fabs(n_elec - neold); // save the old error to compare with the new one, so we can check if we're converging
         neold = n_elec;
@@ -895,7 +895,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         double dneTHhold = DMAX(n_elec*0.01 , nenew_tolmin); // desired absolute tolerance for n_elec
         if(fabs(n_elec - neold) < dneTHhold) break;
 
-        if(niter > (MAXITER - 10)) {printf("n_elec= %g/%g/%g yh=%g nHcgs=%g niter=%d\n", n_elec,neold,nenew, yhelium(target), nHcgs, niter);}
+        if(niter > (MAXITER - 10)) {printf("n_elec= %g/%g/%g yh=%g nHcgs=%g niter=%d\n", n_elec,neold,nenew, yhelium(target, P), nHcgs, niter);}
     }
     while(niter < MAXITER);
 
@@ -905,11 +905,11 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     bHep = flow * BetaHep[j] + fhi * BetaHep[jp];
     bff = flow * Betaff[j] + fhi * Betaff[jp];
     *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec; /* write to send back */
-    *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(gJH0/2.29e-10), target);
+    *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(gJH0/2.29e-10), target, P, CellP);
     if(target >= 0) /* if this is a cell, update some of its thermodynamic stored quantities */
     {
 #if defined(OUTPUT_MOLECULAR_FRACTION)
-        CellP[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10));
+        CellP[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), P, CellP);
 #endif
     }
 
@@ -1089,7 +1089,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* in the above Lambda_Metals expression, the column density expression attempts to account for the optically-thick correction in a slab. this is largely redundant (not exactly, b/c this is specific for CO-type molecules) with our optically-thick cooling module already included below, so we will not double-count it here [coefficient set to zero]. But it's included so you can easily turn it back on, if desired, instead of using the module below. */
             double Lambda_H2_thick = (6.7e-19*exp(-DMIN(5.86/T3,EXPmax)) + 1.6e-18*exp(-DMIN(11.7/T3,EXPmax)) + 3.e-24*exp(-DMIN(0.51/T3,EXPmax)) + 9.5e-22*pow(T3,3.76)*exp(-DMIN(0.0022/(T3*T3*T3),EXPmax))/(1.+0.12*pow(T3,2.1))) / nHcgs; // super-critical H2-H cooling rate [per H2 molecule]
             double Lambda_HD_thin = ((1.555e-25 + 1.272e-26*pow(T,0.77))*exp(-DMIN(128./T,EXPmax)) + (2.406e-25 + 1.232e-26*pow(T,0.92))*exp(-DMIN(255./T,EXPmax))) * exp(-DMIN(T3*T3/25.,EXPmax)); // optically-thin HD cooling rate [assuming all D locked into HD at temperatures where this is relevant], per molecule
-            double f_molec = 0.5 * Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10)); // [0.5*f_molec for H2/HD cooling b/c cooling rates above are per molecule, not per nucleon]
+            double f_molec = 0.5 * Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), P, CellP); // [0.5*f_molec for H2/HD cooling b/c cooling rates above are per molecule, not per nucleon]
 
             double q = logT - 3., Y_Hefrac=DMAX(0.,DMIN(1.,Z[1])), X_Hfrac=DMAX(0.,DMIN(1.,1.-Y_Hefrac-Z[0])); // variable used below
             double Lambda_H2_thin = DMAX(nH0-2.*f_molec,0) * X_Hfrac * pow(10., DMAX(-103. + 97.59*logT - 48.05*logT*logT + 10.8*logT*logT*logT - 0.9032*logT*logT*logT*logT , -50.)); // sub-critical H2 cooling rate from H2-H collisions [per H2 molecule]; this from Galli & Palla 1998
@@ -1194,7 +1194,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             double photoelec = get_FUV_G0(target, shieldfac,0);
             if(photoelec > 0)
             {
-                LambdaPElec = -1.3e-24 * photoelec / nHcgs * (P[target].Metallicity[0]/All.SolarAbundances[0]) * return_dust_to_metals_ratio_vs_solar(target,0); // negative sign for lambda b/c heating
+                LambdaPElec = -1.3e-24 * photoelec / nHcgs * (P[target].Metallicity[0]/All.SolarAbundances[0]) * return_dust_to_metals_ratio_vs_solar(target,0, P, CellP); // negative sign for lambda b/c heating
                 double x_photoelec = photoelec * sqrt(T) / (0.5 * (1.0e-12+n_elec) * nHcgs);
                 LambdaPElec *= 0.049/(1+pow(x_photoelec/1925.,0.73)) + 0.037*pow(T/1.0e4,0.7)/(1+x_photoelec/5000.);
 #if defined(OUTPUT_COOLRATE_DETAIL)
@@ -1209,7 +1209,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     {
         /* at high T (fully ionized); only free-free and Compton cooling are present.  Assumes no heating. */
         Heat = LambdaExc = LambdaExcH0 = LambdaExcHep = LambdaIon = LambdaIonH0 = LambdaIonHe0 = LambdaIonHep = LambdaRec = LambdaRecHp = LambdaRecHep = LambdaRecHepp = LambdaRecHepd = 0;
-        nHp = 1.0; nHep = 0; nHepp = yhelium(target); n_elec = nHp + 2.0 * nHepp; /* very hot: H and He both fully ionized */
+        nHp = 1.0; nHep = 0; nHepp = yhelium(target, P); n_elec = nHp + 2.0 * nHepp; /* very hot: H and He both fully ionized */
         *n_elec_eval = n_elec; /* save this value for the output cycle */
 
         LambdaFF = 1.42e-27 * sqrt(T) * (1.1 + 0.34 * exp(-(5.5 - logT) * (5.5 - logT) / 3)) * (nHp + 4 * nHepp) * n_elec * (1. + sqrt(T/0.4e10)); // free-free (with simplified relativistic correction)
@@ -1333,7 +1333,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(target>=0) {CellP[target].NetHeatingRateQ = Q;}
 #endif
 #ifdef OUTPUT_MOLECULAR_FRACTION
-    if(target>=0) {CellP[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10));}
+    if(target>=0) {CellP[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), P, CellP);}
 #endif
 
 #ifndef COOLING_OPERATOR_SPLIT
@@ -1822,7 +1822,7 @@ void selfshield_local_incident_uv_flux(void)
                 double surfdensity = evaluate_NH_from_GradRho(P[i].GradRho,P[i].KernelRadius,CellP[i].Density,P[i].NumNgb,1,i); // in CGS
                 double tau_nuv = rt_kappa(i,RT_FREQ_BIN_FIRE_UV) * surfdensity; // optical depth: this part is attenuated by dust //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
-                tau_nuv *= (1.0e-3 + (P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0)); // if using older FIRE defaults, this was manually added instead of rolled into rt_kappa -- annoying but here for completeness //
+                tau_nuv *= (1.0e-3 + (P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0, P, CellP)); // if using older FIRE defaults, this was manually added instead of rolled into rt_kappa -- annoying but here for completeness //
 #endif
                 double tau_euv = 3.7e6 * surfdensity * UNIT_SURFDEN_IN_CGS; // optical depth: 912 angstrom kappa_euv: opacity from neutral gas //
                 CellP[i].Rad_Flux_UV *= exp(-DMIN(tau_nuv,90.)); // attenuate [important in newer modules depending on UV flux to fully-attenuate down to << 1e-6 in dense gas]
@@ -1869,7 +1869,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     x_e = DMIN(DMAX(xn_e, 0.),2.); // get free electron ratio [number per H nucleon]
     double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i)*gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T), urad_from_uvb_in_G0=sqrt(shieldfac)*(gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
 #ifdef METALS
-    f_dustgas_solar=(P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0); // this is only used for the dust-phase formation rates below, so just the dust term here
+    f_dustgas_solar=(P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0, P, CellP); // this is only used for the dust-phase formation rates below, so just the dust term here
 #endif
     /* get incident radiation field from whatever module we are using to track it */
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -2127,7 +2127,7 @@ double gas_dust_heating_coeff(int i, double T, double Tdust)
 #ifdef METALS
     if(i>=0) {Z_sol = P[i].Metallicity[0]/All.SolarAbundances[0];}
 #endif
-    double fdust = return_dust_to_metals_ratio_vs_solar(i,Tdust); // accounting for dust destruction; we avoid calling the function for this because it can create a circular dependency
+    double fdust = return_dust_to_metals_ratio_vs_solar(i,Tdust, P, CellP); // accounting for dust destruction; we avoid calling the function for this because it can create a circular dependency
     return 1.116e-32 * sqrt(T)*(1.-0.8*exp(-75./T)) * Z_sol * fdust;  // Meijerink & Spaans 2005; Hollenbach & McKee 1979,1989. Assumes 10 Angstrom minimum grain size.
 }
 
@@ -2168,7 +2168,7 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
     double zeta_cr=1.0e-17, f_dustgas=0.01, n_ion_max=4.1533e-5, XH=HYDROGEN_MASSFRAC; // cosmic ray ionization rate (fixed as constant for non-CR runs) and dust-to-gas ratio
     if(target >= 0) {zeta_cr = Get_CosmicRayIonizationRate_cgs(target);} // convert to ionization rate, using models as in Cummings et al. 2016
 #ifdef METALS
-    if(target>=0) {f_dustgas=0.5*P[target].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(target,0) + 1.e-15;} // constant dust-to-metals ratio [floor purely numerical here, needed to avoid a spurious divergence below]
+    if(target>=0) {f_dustgas=0.5*P[target].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(target,0, P, CellP) + 1.e-15;} // constant dust-to-metals ratio [floor purely numerical here, needed to avoid a spurious divergence below]
 #ifdef COOL_METAL_LINES_BY_SPECIES
     if(target>=0) {n_ion_max = (All.SolarAbundances[6]/24.3)/XH;} // limit, to avoid over-ionization at low metallicities
 #endif
@@ -2274,7 +2274,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 #ifdef MAGNETIC /* include sychrotron losses as well as long as we're here, since these scale more or less identically just using the magnetic instead of radiation energy */
     if(target >= 0)
     {
-        double b_muG = get_cell_Bfield_in_microGauss(target), U_mag_ev=0.0248342*b_muG*b_muG, T_rad_background_at_emission = get_background_radiation_temperature_for_emission_corrections(target);
+        double b_muG = get_cell_Bfield_in_microGauss(target, P, CellP), U_mag_ev=0.0248342*b_muG*b_muG, T_rad_background_at_emission = get_background_radiation_temperature_for_emission_corrections(target);
         Lambda += compton_prefac_eV * U_mag_ev * (T-T_rad_background_at_emission); // synchrotron losses proportional to temperature (non-relativistic here), as inverse compton, just here without needing to worry about "T-T_eff", as if T_eff->0
     }
 #endif
@@ -2327,15 +2327,15 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
     *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; *nHe0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeI]];
     *nHep_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeII]]; *nHepp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeIII]];
     double temp = ChimesGasVars[target].temperature;
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target);
+    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, P, CellP);
     return temp;
 #else
     if(target >= 0) {*ne_guess=CellP[target].Ne; *nH0_guess = DMAX(0,DMIN(1,1.-( *ne_guess / 1.2 )));} else {*ne_guess=1.; *nH0_guess=0.;}
     rho *= UNIT_DENSITY_IN_CGS; u *= UNIT_SPECEGY_IN_CGS;   /* convert to physical cgs units */
     double temp = convert_u_to_temp(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess);
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
-    if(target >= 0) {if(CellP[target].DelayTimeHII > 0) {CellP[target].Ne = 1.0 + 2.0*yhelium(target); *nH0_guess=0; nHe0_guess=0;}} /* fully ionized [if using older model] */
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target);
+    if(target >= 0) {if(CellP[target].DelayTimeHII > 0) {CellP[target].Ne = 1.0 + 2.0*yhelium(target, P); *nH0_guess=0; nHe0_guess=0;}} /* fully ionized [if using older model] */
+    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, P, CellP);
 #endif
     return temp;
 #endif

@@ -154,7 +154,7 @@ double rt_kappa(int i, int k_freq)
 #if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_PHOTOELECTRIC) || defined (GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_LYMAN_WERNER) || defined(RT_INFRARED) || defined(RT_FREEFREE)
     double fac = UNIT_SURFDEN_IN_CGS, Zfac, dust_to_metals_vs_standard, kappa_HHe; /* units */
     Zfac = 1.0; kappa_HHe=0.35; // assume solar metallicity, simple Thompson cross-section limit for various processes below
-    dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i,0); // many of the dust opacities below will need this as the dimensionless dust-to-metals ratio normalized to the canonical Solar value of ~1/2
+    dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i,0, P, CellP); // many of the dust opacities below will need this as the dimensionless dust-to-metals ratio normalized to the canonical Solar value of ~1/2
 #ifdef METALS
     if(i>=0) {Zfac = P[i].Metallicity[0]/All.SolarAbundances[0];}
 #endif
@@ -166,7 +166,7 @@ double rt_kappa(int i, int k_freq)
 #ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
     if(k_freq==RT_FREQ_BIN_FREEFREE)
     {
-        double T_eff=0.59*(gamma_eos(i)-1.)*U_TO_TEMP_UNITS*CellP[i].InternalEnergyPred, rho=CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+        double T_eff=0.59*(gamma_eos(i, P, CellP)-1.)*U_TO_TEMP_UNITS*CellP[i].InternalEnergyPred, rho=CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
         double kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
         return (0.35 + kappa_abs) * fac;
     }
@@ -275,7 +275,7 @@ double rt_absorb_frac_albedo(int i, int k_freq)
 #ifdef RT_FREEFREE
     if(k_freq==RT_FREQ_BIN_FREEFREE)
     {
-        double T_eff=0.59*(gamma_eos(i)-1.)*U_TO_TEMP_UNITS*CellP[i].InternalEnergyPred, rho=CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS, kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
+        double T_eff=0.59*(gamma_eos(i, P, CellP)-1.)*U_TO_TEMP_UNITS*CellP[i].InternalEnergyPred, rho=CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS, kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
         return kappa_abs / (0.35 + kappa_abs);
     }
 #endif
@@ -710,7 +710,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode)
     double IRBand_opacity_fraction_from_gas_absorption = 0; // needed below to know what fraction is immediately re-radiated or not
     double T_gas = CellP[i].Dust_Temperature;
 #ifdef COOLING
-    T_gas = get_temperature(i);
+    T_gas = get_temperature(i, P, CellP);
 #endif
 #endif
 
@@ -1217,7 +1217,7 @@ void rt_get_lum_gas(int target, double *je)
 {
 #ifdef RT_FREEFREE
     int k = RT_FREQ_BIN_FREEFREE;
-    double t_eff = 0.59 * (gamma_eos(target)-1.) * U_TO_TEMP_UNITS * CellP[target].InternalEnergyPred; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+    double t_eff = 0.59 * (gamma_eos(target, P, CellP)-1.) * U_TO_TEMP_UNITS * CellP[target].InternalEnergyPred; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
     je[k] = rt_absorb_frac_albedo(target,k) * rt_kappa(target,k) * P[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
 #endif
 }
@@ -1470,7 +1470,7 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
     dust_emission /= (1 + tau*tau); // e.g. Masunaha & Inutsuka 1999, Rafikov 2007
 #endif
     double fac_abs = 1.; /* this will rescale the estimated absorption by the new dust-to-gas ratio */
-    if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust) / fdustmet_init;}
+    if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust, P, CellP) / fdustmet_init;}
     return LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
 }
 
@@ -1509,7 +1509,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
 
     Tdust = Tdust_guess;
     int n_iter=0;
-    double fdustmet_init = return_dust_to_metals_ratio_vs_solar(i,Tdust); /* need this for reference but can't let it change over iterations */
+    double fdustmet_init = return_dust_to_metals_ratio_vs_solar(i, Tdust, P, CellP); /* need this for reference but can't let it change over iterations */
     dEdt_guess = dEdt = dust_dEdt(i,T,Tdust_guess,dust_absorption_rate,fdustmet_init);
     
     if(dEdt==0){return Tdust_guess;}
@@ -1704,7 +1704,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
     double fac=UNIT_SURFDEN_IN_CGS, x = 4.*log10(Trad) - 8., kappa=0, T_dust_opacitytable = T_dust; // needed for fitting functions to opacities (may come up with cheaper function later)
     double dx_excess=0; if(x > 7.) {dx_excess=x-7.; x=7.;} // cap for maximum temperatures at which fit-functions should be used //
     //if(x < -4.) {x=-4.;} // cap for minimum temperatures at which fit functions below should be used //
-    double Zfac = 1.0, dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i,T_dust); // avoid call to return_dust_to_metals_ratio_vs_solar to avert circular dependency
+    double Zfac = 1.0, dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i, T_dust, P, CellP); // avoid call to return_dust_to_metals_ratio_vs_solar to avert circular dependency
 #ifdef METALS
     if(i>=0) {Zfac = P[i].Metallicity[0]/All.SolarAbundances[0];}
 #endif
@@ -1744,7 +1744,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
 #endif
         double f_neutral_approx = DMAX(0., 1.-x_elec); /* approximate neutral fraction (good enough for us for what we need below) */
         double f_free_metals_approx = zmetals * DMAX(0, 1.-0.5*dust_to_metals_vs_standard); /* metal mass fraction times the free (not locked in dust abundance), assuming the default solar scaling is 1/2 */
-        double Tgas=1. + 0.59*(gamma_eos(i)-1.)*U_TO_TEMP_UNITS*CellP[i].InternalEnergyPred, rho_cgs = CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; /* crude estimate of gas temperature to use with scalings below, and gas density in cgs */
+        double Tgas=1. + 0.59*(gamma_eos(i, P, CellP)-1.)*U_TO_TEMP_UNITS*CellP[i].InternalEnergyPred, rho_cgs = CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; /* crude estimate of gas temperature to use with scalings below, and gas density in cgs */
         double k_electron = 0.4 * HYDROGEN_MASSFRAC * x_elec / ((1. + 2.7e11*rho_cgs/(Tgas*Tgas)) * (1. + pow(Trad/4.5e8, 0.86))); /* Thompson scattering (non-relativistic), scaling with free electron fraction [remembering that in our units, x_elec is n_e/n_H_nuclei, not scaled to total nuclear number]; includes corrections for partial degeneracy at low gas temperatures from Buchler et al. 1976, and Klein-Nishina terms at high radiation temperatures >1e9 */
         double k_molecular = 0.1 * (f_free_metals_approx + 3.e-9) * f_neutral_approx; /* molecular line opacities, which should only dominate at low-temperatures in the fits below, but are not really assumed to extrapolate to the very low densities we apply this to here; this works ok comparing e.g. Lenzuni, Chernoff & Salpeter 1991 ApJS 76 759L [opacities for metal free gases], using the 3e-9 to represent the H2 molecular opacity (really low, only here for completeness) */
 #if defined(COOL_MOLECFRAC_NONEQM)

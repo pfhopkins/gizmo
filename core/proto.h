@@ -53,7 +53,7 @@ int is_particle_a_special_zoom_target(int i);
 #endif
 int merge_particles_ij(int i, int j);
 int split_particle_i(int i, int n_particles_split, int i_nearest);
-double INLINE_FUNC gamma_eos(int i);
+double INLINE_FUNC gamma_eos(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
@@ -79,10 +79,10 @@ double get_disk_mass(double time);
 void growing_disk_init(void);
 
 double get_turb_pot(double x, double y, double z);
-void calculate_and_assign_nonideal_mhd_coefficients(int i);
-void calculate_and_assign_conduction_and_viscosity_coefficients(int i);
+void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
+void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef TURB_DIFFUSION
-void calculate_and_assign_turbulent_diffusion_coefficients(int i);
+void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 
 void   sub_turb_move_perturbers(double t0, double t1);
@@ -168,11 +168,11 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
 #endif
 
-void check_particle_for_temperature_minimum(int i);
-void set_eos_pressure(int i);
-double get_pressure(int i);
-double get_temperature(int i);
-double compute_temperature(int i);
+void check_particle_for_temperature_minimum(int i, struct particle_data *pp, struct gas_cell_data *cell);
+void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double get_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double return_user_desired_target_density(int i);
 double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
@@ -305,10 +305,10 @@ void kinetic_evaluate(int target, int mode);
 int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend_local);
 
 double INLINE_FUNC Get_Particle_Size(int i);
-double INLINE_FUNC Get_Gas_density_for_energy_i(int i);
+double INLINE_FUNC Get_Gas_density_for_energy_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double INLINE_FUNC Get_Particle_Expected_Area(double h);
-double get_cell_Bfield_in_microGauss(int i);
-double Get_Gas_Ionized_Fraction(int i);
+double get_cell_Bfield_in_microGauss(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode);
 double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i);
 double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs);
@@ -370,19 +370,19 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON)
 double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 #endif
-double INLINE_FUNC convert_internalenergy_soundspeed2(int i, double u);
-double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i);
-double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i);
-double INLINE_FUNC Get_Gas_Alfven_speed_i(int i);
-double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i);
-double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target);
+double INLINE_FUNC convert_internalenergy_soundspeed2(int i, double u, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void update_explicit_molecular_fraction(int i, double dtime_cgs);
 double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
-double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override);
-double INLINE_FUNC yhelium(int target);
-double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0);
-double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component);
-Vec3<double> Get_Gas_BField(int i_particle_id);
+double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC yhelium(int target, struct particle_data *pp);
+double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell);
+double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component, struct particle_data *pp, struct gas_cell_data *cell);
+Vec3<double> Get_Gas_BField(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i);
 #ifdef DIVBCLEANING_DEDNER

@@ -52,7 +52,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 #else
     metal_density = density * 0.02;
 #endif
-    gamma         = gamma_eos(target);
+    gamma         = gamma_eos(target, P, CellP);
     
 #if (COOL_GRACKLE_CHEMISTRY >  0) // non-tabular
     gr_float ne_density;

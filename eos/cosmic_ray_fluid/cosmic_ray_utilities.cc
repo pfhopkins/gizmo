@@ -373,7 +373,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 #endif
 
     if(dtime_cgs <= 0) {return;} /* catch */
-    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target),1.),0.);
+    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, P, CellP),1.),0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC; /* some coefficients; a_hadronic is the default coefficient, b_coulomb_ion_per_GeV the default Coulomb+ionization (the two scale nearly-identically) normalization divided by GeV, b/c we need to divide the energy per CR  */
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
@@ -392,7 +392,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
             double E_GeV=return_CRbin_kinetic_energy_in_GeV(target,k_CRegy), E_rest=0.000511, gamma=1.+E_GeV/E_rest;
             CR_coolrate += n_elec * nHcgs * 1.39e-16 * DMAX(log(2.*gamma)-0.33,0);
             /* synchrotron and inverse compton scale as dE/dt=(4/3)*sigma_Thompson*c*gamma_elec^2*(U_mag+U_rad), where U_mag and U_rad are the magnetic and radiation energy densities, respectively. Ignoring Klein-Nishina corrections here, as they are negligible at <40 GeV and only a ~15% correction up to ~1e5 GeV */
-            double b_muG = get_cell_Bfield_in_microGauss(target), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev = get_cell_Urad_in_eVcm3(target);
+            double b_muG = get_cell_Bfield_in_microGauss(target, P, CellP), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev = get_cell_Urad_in_eVcm3(target);
             CR_coolrate += 5.2e-20 * gamma * (U_mag_ev + U_rad_ev); // U_mag_ev=(B^2/8pi)/(eV/cm^(-3)), here; U_rad=U_rad/(eV/cm^-3) //
         }
         
@@ -420,7 +420,7 @@ double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_s
 #endif
     }
 #ifdef MAGNETIC
-    b2_t = Get_Gas_BField(i).norm_sq();
+    b2_t = Get_Gas_BField(i, P, CellP).norm_sq();
 #endif
     v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime;
     h0=Get_Particle_Size(i)*All.cf_atime; // physical units
@@ -465,9 +465,9 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i)
 #if (CRFLUID_DIFFUSION_MODEL > 0)
     double cs_thermal,M_A,L_scale,vA_code,vA_noion,gizmo2gauss,Omega_per_GeV_ifveqc,Bmag,unit_kappa_code,b_muG,E_B,f_ion,temperature,EPSILON_SMALL; int k; k=0;
     unit_kappa_code=UNIT_VEL_IN_CGS*UNIT_LENGTH_IN_CGS; gizmo2gauss=UNIT_B_IN_GAUSS; f_ion=1; temperature=0; EPSILON_SMALL=1.e-50;
-    Bmag=2.*CellP[i].Pressure*All.cf_a3inv; cs_thermal=sqrt(convert_internalenergy_soundspeed2(i,CellP[i].InternalEnergyPred)); /* quick thermal pressure properties (we'll assume beta=1 if MHD not enabled) */
+    Bmag=2.*CellP[i].Pressure*All.cf_a3inv; cs_thermal=sqrt(convert_internalenergy_soundspeed2(i, CellP[i].InternalEnergyPred, P, CellP)); /* quick thermal pressure properties (we'll assume beta=1 if MHD not enabled) */
 #ifdef MAGNETIC /* get actual B-field */
-    Vec3<double> B = Get_Gas_BField(i) * All.cf_a2inv; Bmag=B.norm_sq(); // B-field in code units (physical)
+    Vec3<double> B = Get_Gas_BField(i, P, CellP) * All.cf_a2inv; Bmag=B.norm_sq(); // B-field in code units (physical)
 #endif
     Bmag=sqrt(DMAX(Bmag,0)); b_muG=Bmag*gizmo2gauss/1.e-6; b_muG=sqrt(b_muG*b_muG + 1.e-6); vA_code=sqrt(Bmag*Bmag/(CellP[i].Density*All.cf_a3inv)); vA_noion=vA_code; E_B=0.5*Bmag*Bmag*(P[i].Mass/(CellP[i].Density*All.cf_a3inv));
     Omega_per_GeV_ifveqc=(0.00898734*b_muG) * UNIT_TIME_IN_CGS; /* B-field in units of physical microGauss; set a floor at nanoGauss level. convert to physical code units */
@@ -505,7 +505,7 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i)
         CR_kappa_streaming = GAMMA_COSMICRAY(k_CRegy) * CRPressureGradScaleLength * (v_streaming + (1./UNIT_VEL_IN_KMS)*(4.1*pow(MIN_REAL_NUMBER+ni_m3*T6,0.25)/pow(MIN_REAL_NUMBER+ecr_14*Lgradkpc,0.5) + 1.2*pow(MIN_REAL_NUMBER+dv2_10*ni_m3,0.75)/(MIN_REAL_NUMBER+ecr_14*sqrt(Lturbkpc)))); // convert to effective diffusivity
 #endif
 #if (CRFLUID_DIFFUSION_MODEL == 5) /* streaming at fast MHD wavespeed [just to see what it does] */
-        v_streaming = Get_Gas_Fast_MHD_wavespeed_i(i);
+        v_streaming = Get_Gas_Fast_MHD_wavespeed_i(i, P, CellP);
         CR_kappa_streaming = GAMMA_COSMICRAY(k_CRegy) * v_streaming * CRPressureGradScaleLength;
 #endif
 #if (CRFLUID_DIFFUSION_MODEL == 1) || (CRFLUID_DIFFUSION_MODEL == 2) || (CRFLUID_DIFFUSION_MODEL == 7) /* textbook extrinsic turbulence model: kappa~v_CR*r_gyro * B_bulk^2/(B_random[scale~r_gyro]^2) v_CR~c, r_gyro~p*c/(Z*e*B)~1e12 cm * RGV *(3 muG/B)  (RGV~1 is the magnetic rigidity). assuming a Kolmogorov spectrum */
@@ -618,7 +618,7 @@ double Get_CosmicRayGradientLength(int i, int k_CRegy)
     int k;
     double CRPressureGradMag = sqrt(1.e-46 + CellP[i].Gradients.CosmicRayPressure[k_CRegy].norm_sq()); // sqrt to make absolute value
 #ifdef MAGNETIC /* with anisotropic transport, we really want the -parallel- gradient scale-length, so need another factor here */
-    Vec3<double> Bvec_tmp = Get_Gas_BField(i); double B2_tot = Bvec_tmp.norm_sq(); CRPressureGradMag = dot(Bvec_tmp, CellP[i].Gradients.CosmicRayPressure[k_CRegy]); // note, this is signed!
+    Vec3<double> Bvec_tmp = Get_Gas_BField(i, P, CellP); double B2_tot = Bvec_tmp.norm_sq(); CRPressureGradMag = dot(Bvec_tmp, CellP[i].Gradients.CosmicRayPressure[k_CRegy]); // note, this is signed!
     CRPressureGradMag = sqrt((1.e-40 + CRPressureGradMag*CRPressureGradMag) / (1.e-46 + B2_tot)); // divide B-magnitude to get scalar magnitude, and take sqrt[(G.P)^2] to get absolute value
 #endif
     
@@ -923,10 +923,10 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
     double *Ucr, Ucr_tot=0; if(mode_driftkick==0) {Ucr=CellP[target].CosmicRayEnergy;} else {Ucr=CellP[target].CosmicRayEnergyPred;}
     int k; for(k=0;k<N_CR_PARTICLE_BINS;k++) {Ucr_tot+=Ucr[k];} // check total energy since some fluid cells can have no CRs
     if(Ucr_tot < MIN_REAL_NUMBER) {return;} // catch - nothing to do here //
-    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target),1.),0.), b_muG=get_cell_Bfield_in_microGauss(target), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=get_cell_Urad_in_eVcm3(target);
+    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, P, CellP),1.),0.), b_muG=get_cell_Bfield_in_microGauss(target, P, CellP), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=get_cell_Urad_in_eVcm3(target);
 
 #if defined(CRFLUID_ALT_REACCEL_ONLY_DIFFUSIVE)
-    double vA=Get_Gas_Alfven_speed_i(target), vA_ion, vA_touse, kappa_max=0, kappa_i[N_CR_PARTICLE_BINS], delta_diffcoeff[N_CR_PARTICLE_BINS], reaccel_coeff[N_CR_PARTICLE_BINS]; vA_ion=vA/sqrt(f_ion); vA_touse=vA;
+    double vA=Get_Gas_Alfven_speed_i(target, P, CellP), vA_ion, vA_touse, kappa_max=0, kappa_i[N_CR_PARTICLE_BINS], delta_diffcoeff[N_CR_PARTICLE_BINS], reaccel_coeff[N_CR_PARTICLE_BINS]; vA_ion=vA/sqrt(f_ion); vA_touse=vA;
     for(k=0;k<N_CR_PARTICLE_BINS;k++) {kappa_i[k] = CellP[target].CosmicRayDiffusionCoeff[k]; if(kappa_i[k]>kappa_max) {kappa_max=kappa_i[k];}} // will use diffusion coefficient below
     double reaccel_coeff_0 = 2. * vA_touse*vA_touse / UNIT_TIME_IN_CGS; // below we'll adopt the standard ansatz that the momentum-space diffusion coefficient is related to the spatial coefficient by the usual heuristic expression Dxx*Dpp = <dv^2>
     if(All.Time <= All.TimeBegin || kappa_max*UNIT_LENGTH_IN_CGS*UNIT_VEL_IN_CGS < 1.e25) {reaccel_coeff_0 = 0;} // make sure kappa is initialized and has a physically meaningful value where the prescription here makes sense, or else this will give nonsense values
@@ -938,7 +938,7 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
     if(All.ComovingIntegrationOn) {adiabatic_coeff_divv += (1./3.) * (3.*All.cf_hubble_a) / UNIT_TIME_IN_CGS;} // adiabatic term from Hubble expansion (needed for cosmological integrations. also converted to physical, cgs, and sign convention we use here.
     // here we calculate the anisotropic stress correction terms, as needed to properly evaluate the CR energy loss. note we don't need to do this for the 'post hydro' correction step since that is the correction for the isotropic pressure used in the Riemann problem; the additional terms here come entirely outside of that.
 #if defined(MAGNETIC)
-    Vec3<double> bhat = Get_Gas_BField(target) * All.cf_a2inv;
+    Vec3<double> bhat = Get_Gas_BField(target, P, CellP) * All.cf_a2inv;
     double Bmag2=bhat.norm_sq(); if(Bmag2>0) {bhat/=sqrt(Bmag2);}
     bbGv = dot(bhat, CellP[target].Gradients.Velocity.matvec(bhat)) * All.cf_a2inv / UNIT_TIME_IN_CGS; // bhat bhat : grad u -> needed to obtain double-dot-product appropriately
     bbGv = DMAX(-0.9/dtime_cgs, DMIN(0.9/dtime_cgs , bbGv)); // our timestep limiter should ensure this, but problem is it responds to the -previous- timestep, so we need to impose an additional check here to prevent a numerical divergence when/if the gradients are inaccurate
@@ -1635,7 +1635,7 @@ double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode)
     double fluxmag=0, Bmag=0, gradmag=0, Lgrad=0, veff=0, P0=Get_Gas_CosmicRayPressure(target,k_CRegy);
     Vec3<double> B_vec = CellP[target].CosmicRayFluxPred[k_CRegy]; /* default projection direction is flux itself */
 #ifdef MAGNETIC
-    B_vec = Get_Gas_BField(target);
+    B_vec = Get_Gas_BField(target, P, CellP);
 #endif
     Bmag = B_vec.norm_sq(); fluxmag = dot(Vec3<double>(CellP[target].CosmicRayFluxPred[k_CRegy]), B_vec); gradmag = dot(Vec3<double>(CellP[target].Gradients.CosmicRayPressure[k_CRegy]), B_vec);
     if(Bmag>0) {fluxmag=fabs(fluxmag)/sqrt(Bmag); gradmag=fabs(gradmag)/sqrt(Bmag);}
@@ -1719,10 +1719,10 @@ int return_CRbin_CR_species_ID(int k_CRegy)
 double Get_Gas_ion_Alfven_speed_i(int i)
 {
 #if !defined(MAGNETIC)
-    return Get_Gas_thermal_soundspeed_i(i); // if no B-fields, just assume Alfven speed equal to thermal sound speed
+    return Get_Gas_thermal_soundspeed_i(i, P, CellP); // if no B-fields, just assume Alfven speed equal to thermal sound speed
 #endif
-    double vA = Get_Gas_Alfven_speed_i(i); // normal ideal-MHD Alfven speed
-    double f_ion = Get_Gas_Ionized_Fraction(i);
+    double vA = Get_Gas_Alfven_speed_i(i, P, CellP); // normal ideal-MHD Alfven speed
+    double f_ion = Get_Gas_Ionized_Fraction(i, P, CellP);
     double mu_eff_ion = 1. + (24.305 - 1.)/(1. + pow(f_ion/1.e-3,2)); // -very- crude approximation to transition to heavy-ion dominance at very low ion fractions
     vA /= sqrt(1.e-15 + mu_eff_ion * f_ion); // Alfven speed of interest is that of the ions alone, not the ideal MHD Alfven speed [corrected for weight with crude approximation above - note that in grain-charge dominated regime, this becomes deeply ambiguous] //
     return vA;
@@ -1900,7 +1900,7 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
     if(All.ComovingIntegrationOn) {double divv_h=-dt_entr*(3.*All.cf_hubble_a); divv_p+=divv_h; divv_f+=divv_h;} // include hubble-flow terms
     double P_cr = gamma_minus_eCR_tmp * CellP[i].Density * All.cf_a3inv / P[i].Mass, P_tot = CellP[i].Pressure * All.cf_a3inv; // define the pressure from CRs and total pressure (physical units)
 #ifdef MAGNETIC
-    double B2 = (Get_Gas_BField(i) * All.cf_a2inv).norm_sq();
+    double B2 = (Get_Gas_BField(i, P, CellP) * All.cf_a2inv).norm_sq();
     P_tot += 0.5*B2; // add magnetic pressure [B^2/2], in physical code units, since it contributes to the PdV work but not included in 'pressure' total above
 #endif
     double fac_P = DMAX(0, DMIN(1, P_cr/(P_tot + 1.e-10*P_cr + MIN_REAL_NUMBER))); // fraction of total pressure from CRs

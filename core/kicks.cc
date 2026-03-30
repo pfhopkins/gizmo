@@ -227,7 +227,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 P[i].Vel[j] = (mass_old*P[i].Vel[j] + dp[j]*All.cf_atime) / mass_new; // call after tabulating dP[j] //
             } // kick for gas internal energy/entropy
             e_old += d_inc * CellP[i].dInternalEnergy; // for(j = 0; j< 3; j++) e_old -= 0.5*mass_new * (P[i].Vel[j]/All.cf_atime)*(P[i].Vel[j]/All.cf_atime); // increment of total (thermal+kinetic) energy; subtract off the new kinetic energy //
-            CellP[i].InternalEnergy = e_old / mass_new; check_particle_for_temperature_minimum(i); // obtain the new internal energy per unit mass, check floor // */
+            CellP[i].InternalEnergy = e_old / mass_new; check_particle_for_temperature_minimum(i, P, CellP); // obtain the new internal energy per unit mass, check floor // */
              
             // at the end of this kick, need to re-zero the dInternalEnergy, and other conserved-variable gas/fluid quantities set in the hydro loop, to avoid double-counting them
             if(mode==0) {CellP[i].dMass=0;} /* CellP[i].dInternalEnergy=0; CellP[i].dMomentum[0]=CellP[i].dMomentum[1]=CellP[i].dMomentum[2]=0; */
@@ -292,7 +292,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             //  both are not needed. we find slightly cleaner results on that test keeping the gravity and removing the KE switch
             
             // also check for flows which are totally dominated by the adiabatic component of their temperature evolution //
-            // double mach = fabs(CellP[i].MaxSignalVel/Get_Gas_effective_soundspeed_i(i) - 2.0); //
+            // double mach = fabs(CellP[i].MaxSignalVel/Get_Gas_effective_soundspeed_i(i, P, CellP) - 2.0); //
             // if(mach < 1.1) {do_entropy=1;} // (actually, this switch tends to do more harm than good!) //
             //do_entropy = 0; // seems unstable in tests like interacting blastwaves... //
             if(do_entropy)
@@ -305,7 +305,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 CellP[i].DtPhi = (1./3.) * (CellP[i].Phi*All.cf_a3inv) * P[i].Particle_DivVel*All.cf_a2inv; // cf_a3inv from mass-based phi-fluxes
 #endif
 #endif
-                if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(gamma_eos(i)-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
+                if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(gamma_eos(i, P, CellP)-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
                 dEnt = CellP[i].InternalEnergy + CellP[i].DtInternalEnergy * dt_hydrokick; /* gravity term not included here, as it makes this unstable */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                 CellP[i].dMass = CellP[i].DtMass = 0;
@@ -317,7 +317,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,P[i].Particle_DivVel*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
             if(CellP[i].FaceClosureError > 0) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
                 if(drho2>0 && CellP[i].Density_ExplicitInt>0 && CellP[i].Density>0) {
-                    double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=Get_Gas_effective_soundspeed_i(i); /* gradient scale length and sound speed */
+                    double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=Get_Gas_effective_soundspeed_i(i, P, CellP); /* gradient scale length and sound speed */
 #if defined(EOS_TILLOTSON)
                     cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
 #endif
@@ -339,7 +339,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #else
             if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
 #endif
-            check_particle_for_temperature_minimum(i); /* if we've fallen below the minimum temperature, force the 'floor' */
+            check_particle_for_temperature_minimum(i, P, CellP); /* if we've fallen below the minimum temperature, force the 'floor' */
         }
         
         /* now, kick for non-gas/fluid quantities (accounting for momentum conservation if masses are changing) */
@@ -467,7 +467,7 @@ void set_predicted_quantities_for_extra_physics(int i)
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor;
 #endif
         
-        set_eos_pressure(i);
+        set_eos_pressure(i, P, CellP);
     }
 }
 
@@ -486,8 +486,8 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     if(CellP[i].Density > 0)
     {
         /* now we're going to check for physically reasonable phi values */
-        double cs_phys = Get_Gas_effective_soundspeed_i(i);
-        double b_phys = sqrt(Get_Gas_BField(i).norm_sq())*All.cf_a2inv;
+        double cs_phys = Get_Gas_effective_soundspeed_i(i, P, CellP);
+        double b_phys = sqrt(Get_Gas_BField(i, P, CellP).norm_sq())*All.cf_a2inv;
         double vsig1 = sqrt(cs_phys*cs_phys + b_phys*b_phys/(CellP[i].Density*All.cf_a3inv));
         double vsig2 = 0.5 * fabs(CellP[i].MaxSignalVel);
         double vsig_max = DMAX( DMAX(vsig1,vsig2) , All.FastestWaveSpeed );

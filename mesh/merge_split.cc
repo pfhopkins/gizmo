@@ -61,7 +61,7 @@ int does_particle_need_to_be_merged(int i)
 #ifdef PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT
     if(P[i].Type==0)
     {
-        double lambda_J = Get_Gas_Fast_MHD_wavespeed_i(i) * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
+        double lambda_J = Get_Gas_Fast_MHD_wavespeed_i(i, P, CellP) * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
         if((lambda_J > 4. * PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * Get_Particle_Size(i)*All.cf_atime) && (P[i].Mass < All.MaxMassForParticleSplit)) {return 1;} // de-refine
     }
 #endif
@@ -104,7 +104,7 @@ int does_particle_need_to_be_split(int i)
 #ifdef PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT
     if(P[i].Type == 0)
     {
-        double lambda_J = Get_Gas_Fast_MHD_wavespeed_i(i) * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
+        double lambda_J = Get_Gas_Fast_MHD_wavespeed_i(i, P, CellP) * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
         if((lambda_J < PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * Get_Particle_Size(i)*All.cf_atime) && (P[i].Mass > 2*All.MinMassForParticleMerger)) {return 1;} // refine
     }
 #endif
@@ -326,11 +326,11 @@ void merge_and_split_particles(void)
                                 Vec3<MyDouble> dvel_tmp = P[i].Vel - P[j].Vel; double v2_tmp = dvel_tmp.norm_sq(); double vr_tmp = dot(dvel_tmp, P[i].Pos - P[j].Pos);
                                 if(vr_tmp > 0) {do_allow_merger = 0;}
                                 if(v2_tmp > 0) {v2_tmp=sqrt(v2_tmp*All.cf_a2inv);} else {v2_tmp=0;}
-                                if(v2_tmp >  DMIN(Get_Gas_effective_soundspeed_i(i),Get_Gas_effective_soundspeed_i(j))) {do_allow_merger = 0;}
+                                if(v2_tmp >  DMIN(Get_Gas_effective_soundspeed_i(i, P, CellP),Get_Gas_effective_soundspeed_i(j, P, CellP))) {do_allow_merger = 0;}
 #if !defined(SINK_RIAF_SUBEDDINGTON_MODEL) && !defined(SINGLE_STAR_SINK_DYNAMICS) /* if spawning a lot of these, don't want to restrict this so much */
                                 if(P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;} // wind particles can't intermerge
 #if !defined(SINGLE_STAR_FB_JETS) && !defined(SINGLE_STAR_FB_WINDS)
-                                if((v2_tmp > 0.25*All.Sink_outflow_velocity) && (v2_tmp > 0.9*Get_Gas_effective_soundspeed_i(j))) {do_allow_merger=0;}
+                                if((v2_tmp > 0.25*All.Sink_outflow_velocity) && (v2_tmp > 0.9*Get_Gas_effective_soundspeed_i(j, P, CellP))) {do_allow_merger=0;}
 #endif
 #endif
                             }
@@ -989,7 +989,7 @@ int merge_particles_ij(int i, int j)
     P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
-    set_eos_pressure(j);
+    set_eos_pressure(j, P, CellP);
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
     /* flag cells as having just undergone refinement/derefinement for other subroutines to be aware */
     CellP[j].recent_refinement_flag = CellP[i].recent_refinement_flag = 1;

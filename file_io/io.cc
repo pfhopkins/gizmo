@@ -508,7 +508,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    *fp++ = (MyOutputFloat) P[pindex].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(pindex,0);
+                    *fp++ = (MyOutputFloat) P[pindex].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(pindex,0, P, CellP);
                     n++;
                 }
 #endif
@@ -945,7 +945,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    {Vec3<double> Btmp = Get_Gas_BField(pindex) * All.cf_a2inv * gizmo2gauss; for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) Btmp[k];}}
+                    {Vec3<double> Btmp = Get_Gas_BField(pindex, P, CellP) * All.cf_a2inv * gizmo2gauss; for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) Btmp[k];}}
                     fp += 3;
                     n++;
                 }
