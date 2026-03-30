@@ -1218,7 +1218,7 @@ void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas
 #ifdef RT_FREEFREE
     int k = RT_FREQ_BIN_FREEFREE;
     double t_eff = 0.59 * (gamma_eos(target, pp, cell)-1.) * U_TO_TEMP_UNITS * cell[target].InternalEnergyPred; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
-    je[k] = rt_absorb_frac_albedo(target,k) * rt_kappa(target,k, pp, cell) * pp[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
+    je[k] = rt_absorb_frac_albedo(target, k, pp, cell) * rt_kappa(target,k, pp, cell) * pp[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
 #endif
 }
 
@@ -1669,7 +1669,7 @@ double chimes_ion_luminosity(double stellar_age, double stellar_mass) // age in 
 int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int value_to_return = 0;
-    value_to_return = rt_get_source_luminosity(i, mode, lum); // call routine as normal for all bands, before adding chimes-specific details
+    value_to_return = rt_get_source_luminosity(i, mode, lum, pp, cell); // call routine as normal for all bands, before adding chimes-specific details
     if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) )
     {
         int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=pp[i].Mass*UNIT_MASS_IN_SOLAR;

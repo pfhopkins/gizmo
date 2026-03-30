@@ -599,7 +599,7 @@ void gravity_tree(void)
 
 #ifdef RT_USE_TREECOL_FOR_NH  /* compute the effective column density that gives equivalent attenuation of a uniform background: -log(avg(exp(-tau)))/kappa */
         double attenuation=0, minimum_column=MAX_REAL_NUMBER; int kbin;
-        double kappa_photoelectric = 500. * DMAX(1e-4, (P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0)); // dust opacity in cgs
+        double kappa_photoelectric = 500. * DMAX(1e-4, (P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0, P, CellP)); // dust opacity in cgs
         for(kbin=0; kbin<RT_USE_TREECOL_FOR_NH; kbin++) {
 	      attenuation += exp(DMAX(-P[i].ColumnDensityBins[kbin] * UNIT_SURFDEN_IN_CGS * kappa_photoelectric,-100));
 	      minimum_column = DMIN(minimum_column,P[i].ColumnDensityBins[kbin]);

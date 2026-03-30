@@ -913,7 +913,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
                 CellP[j].ISMDustChem_Dust_Metal[10] += CellP[j].ISMDustChem_Dust_Species[incl_indx];
                 CellP[j].ISMDustChem_Dust_Metal[0] += CellP[j].ISMDustChem_Dust_Species[incl_indx];
                 // Update amount of free-flying iron and iron inclusions since some of the inclusions are released from silicate. Assume this leads to constant fraction of iron inclusions that scales with amount of silicate dust
-                ISMDustChem_update_iron_inclusions(j);
+                ISMDustChem_update_iron_inclusions(j, P, CellP);
             }
         }
     }

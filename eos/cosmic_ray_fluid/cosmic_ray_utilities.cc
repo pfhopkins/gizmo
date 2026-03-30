@@ -392,7 +392,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
             double E_GeV=return_CRbin_kinetic_energy_in_GeV(target,k_CRegy), E_rest=0.000511, gamma=1.+E_GeV/E_rest;
             CR_coolrate += n_elec * nHcgs * 1.39e-16 * DMAX(log(2.*gamma)-0.33,0);
             /* synchrotron and inverse compton scale as dE/dt=(4/3)*sigma_Thompson*c*gamma_elec^2*(U_mag+U_rad), where U_mag and U_rad are the magnetic and radiation energy densities, respectively. Ignoring Klein-Nishina corrections here, as they are negligible at <40 GeV and only a ~15% correction up to ~1e5 GeV */
-            double b_muG = get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev = get_cell_Urad_in_eVcm3(target);
+            double b_muG = get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev = get_cell_Urad_in_eVcm3(target, pp, cell);
             CR_coolrate += 5.2e-20 * gamma * (U_mag_ev + U_rad_ev); // U_mag_ev=(B^2/8pi)/(eV/cm^(-3)), here; U_rad=U_rad/(eV/cm^-3) //
         }
         
@@ -923,7 +923,7 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
     double *Ucr, Ucr_tot=0; if(mode_driftkick==0) {Ucr=cell[target].CosmicRayEnergy;} else {Ucr=cell[target].CosmicRayEnergyPred;}
     int k; for(k=0;k<N_CR_PARTICLE_BINS;k++) {Ucr_tot+=Ucr[k];} // check total energy since some fluid cells can have no CRs
     if(Ucr_tot < MIN_REAL_NUMBER) {return;} // catch - nothing to do here //
-    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.), b_muG=get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=get_cell_Urad_in_eVcm3(target);
+    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.), b_muG=get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=get_cell_Urad_in_eVcm3(target, pp, cell);
 
 #if defined(CRFLUID_ALT_REACCEL_ONLY_DIFFUSIVE)
     double vA=Get_Gas_Alfven_speed_i(target, pp, cell), vA_ion, vA_touse, kappa_max=0, kappa_i[N_CR_PARTICLE_BINS], delta_diffcoeff[N_CR_PARTICLE_BINS], reaccel_coeff[N_CR_PARTICLE_BINS]; vA_ion=vA/sqrt(f_ion); vA_touse=vA;

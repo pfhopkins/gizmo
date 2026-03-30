@@ -253,7 +253,7 @@ void restart(int modus)
                 {ChimesGasVars[partIndex].abundances[abunIndex] = gasAbundancesBuf[(partIndex * ChimesGlobalVars.totalNumberOfSpecies) + abunIndex];}
 
 #ifdef CHIMES_TURB_DIFF_IONS 
-		      chimes_update_turbulent_abundances(partIndex, 1); 
+		      chimes_update_turbulent_abundances(partIndex, 1, P, CellP); 
 #endif 
 		    }
 		}
