@@ -394,7 +394,7 @@ void init(void)
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    if (P[i].Type == 0) {Initialize_ISMDustChem_Particle_Variables(i);}
+    if (P[i].Type == 0) {Initialize_ISMDustChem_Particle_Variables(i, P, CellP);}
 #endif
 
 #ifdef CHIMES
