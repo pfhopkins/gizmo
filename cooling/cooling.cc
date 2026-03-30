@@ -246,7 +246,7 @@ void do_the_cooling_for_particle(int i)
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-        update_dust_acc_and_sput(i, dtime*UNIT_TIME_IN_MYR*0.001);
+        update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001);
 #endif
 
 #ifdef COOL_MOLECFRAC_NONEQM
@@ -980,16 +980,17 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     /* some blocks below to define useful variables before calculation of cooling rates: */
 
 #ifdef COOL_METAL_LINES_BY_SPECIES
-    double *Z;
+    double Z[NUM_METAL_SPECIES] = {0.}; // gas-phase metallicity
     if(target>=0)
     {
-        Z = P[target].Metallicity;
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE)
-        int k; for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {Z[k] = DMAX(0.,P[target].Metallicity[k]-CellP[target].ISMDustChem_Dust_Metal[k]);}
+        int k; 
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {Z[k] = DMAX(0.,P[target].Metallicity[k]-CellP[target].ISMDustChem_Dust_Metal[k]);}
+#else
+        for(k=0;k<NUM_METAL_SPECIES;k++) {Z[k] = P[target].Metallicity[k];}
 #endif
     } else { /* initialize dummy values here so the function doesn't crash, if called when there isn't a target particle */
-        int k; double Zsol[NUM_METAL_SPECIES]; for(k=0;k<NUM_METAL_SPECIES;k++) {Zsol[k]=All.SolarAbundances[k];}
-        Z = Zsol;
+        int k; for(k=0;k<NUM_METAL_SPECIES;k++) {Z[k]=All.SolarAbundances[k];}
     }
 #endif
     double local_gammamultiplier = return_local_gammamultiplier(target);
@@ -1045,7 +1046,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING)
-        Lambda += Lambda_Dust_HighTemperature_Gas_ISM(target,T,n_elec);
+        LambdaDust = Lambda_Dust_HighTemperature_Gas_ISM(target,T,n_elec);
+        Lambda += LambdaDust;
+#if defined(OUTPUT_COOLRATE_DETAIL)
+        if(target >= 0) {CellP[target].DustCoolingRate = LambdaDust;}
+#endif
 #endif
 
 #ifdef COOL_LOW_TEMPERATURES
@@ -1064,7 +1069,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(COOL_METAL_LINES_BY_SPECIES) && ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
             double column = evaluate_NH_from_GradRho(CellP[target].Gradients.Density,P[target].KernelRadius,CellP[target].Density,P[target].NumNgb,1,target) * UNIT_SURFDEN_IN_CGS; // converts to cgs            
             double Z_C = DMAX(1.e-6, Z[2]/All.SolarAbundances[2]), sqrt_T=sqrt(T), ncrit_CO=1.9e4*sqrt_T, Sigma_crit_CO=3.0e-5*T/Z_C, T3=T/1.e3, EXPmax=90.; // carbon abundance (relative to solar and 1/2 factor for original assumed 0.5 depletion), critical density and column
-#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_PASSIVE)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             Z_C = DMAX(1.e-6, Z[2]/(0.5*All.SolarAbundances[2])); // gas-phase carbon abundance (relative to solar/2, usual assumption implicitly)
 #endif
             // TODO: can now get detailed C+, C, O, and CO abundances from SIMPLE_STEADYSTATE_CHEMISTRY routines, and compute the explicit cooling terms for slightly more accurate cooling here
@@ -1105,7 +1110,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
             LambdaMol *= truncation_factor; // cutoff factor from above for where the tabulated rates take over at high temperatures
             LambdaDust = gas_dust_heating_coeff(target,T,Tdust) * (T-Tdust);// Note our sign convention is such that positive lambda = gas cooling
-#if !defined(GALSF_ISMDUSTCHEM_MODEL) || defined(GALSF_ISMDUSTCHEM_PASSIVE)
+#if !defined(GALSF_ISMDUSTCHEM_MODEL)
             if(T>3.e5) {double dx=(T-3.e5)/2.e5; LambdaDust *= exp(-DMIN(dx*dx,40.));} /* needs to truncate at high temperatures b/c of dust destruction (in some modules we solve for this explicitly - in that case can protect this more explicitly, but here, we will make a simple approximation, otherwise we run into problems. note this is not sublimation generally, but sputtering, that causes the destruction */
 #endif
             LambdaDust *= truncation_factor; // cutoff factor from above for where the tabulated rates take over at high temperatures
@@ -1192,6 +1197,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
                 LambdaPElec = -1.3e-24 * photoelec / nHcgs * (P[target].Metallicity[0]/All.SolarAbundances[0]) * return_dust_to_metals_ratio_vs_solar(target,0); // negative sign for lambda b/c heating
                 double x_photoelec = photoelec * sqrt(T) / (0.5 * (1.0e-12+n_elec) * nHcgs);
                 LambdaPElec *= 0.049/(1+pow(x_photoelec/1925.,0.73)) + 0.037*pow(T/1.0e4,0.7)/(1+x_photoelec/5000.);
+#if defined(OUTPUT_COOLRATE_DETAIL)
+                if(target >= 0) {CellP[target].PElecHeatingRate = -LambdaPElec;}
+#endif
                 Heat -= LambdaPElec;
             }
         }
@@ -1890,6 +1898,9 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs)
     double dv_turb=gradv*dx_cell*UNIT_VEL_IN_KMS; // delta-velocity across cell
     double x00 = surface_density_local / surface_density_H2_0, x01 = x00 / (sqrt(1. + 3.*dv_turb*dv_turb/(v_thermal_rms*v_thermal_rms)) * sqrt(2.)*v_thermal_rms), y_ss, x_ss_1, x_ss_sqrt, fH2_tmp, fH2_max, fH2_min, Q_max, Q_min, Q_initial; // variable needed below. note the x01 term corrects following Gnedin+Draine 2014 for the velocity gradient at the sonic scale, assuming a Burgers-type spectrum [their Eq. 3]
     double b_time_Mach = 0.5 * dv_turb / (v_thermal_rms/sqrt(3.)); // cs_thermal for molecular [=rms v_thermal / sqrt(3)], dv_turb to full inside dx, assume "b" prefactor for compressive-to-solenoidal ratio corresponding to the 'natural mix' = 0.5. could further multiply by 1.58 if really needed to by extended dvturb to 2h = H, and vthermal from molecular to atomic for the generating field, but not as well-justified
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+    CellP[i].ISMDustChem_MachNumber = dv_turb / (v_thermal_rms/sqrt(3.)); // dust evolution model uses local mach number/clumping factors for numerous calculations
+#endif
     double clumping_factor = 1. + b_time_Mach*b_time_Mach; // this is the exact clumping factor for a standard lognormal PDF with S=ln[1+b^2 Mach^2] //
     double clumping_factor_3 = clumping_factor*clumping_factor*clumping_factor; // clumping factor N for <rho^n>/<rho>^n = clumping factor^(N*(N-1)/2) //
     
@@ -2101,6 +2112,9 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
     } else { // IR term is not vanishingly small. we will assume the IR radiation temperature is equal to the local Tdust. lacking any direct evolution of that field, this is a good proxy, and exact in the locally-IR-optically-thick limit. in the locally-IR-thin limit it slightly under-estimates Tdust, but usually in that limit the other terms dominate anyways, so this is pretty safe //
         double T0=2.92, q=pow(T0*e_IR,0.25), y=(T_cmb*e_CMB + T_hiegy*e_HiEgy)/(T0*e_IR*q); if(y<=1) {Tdust_eqm=T0*q*(0.8+sqrt(0.04+0.1*y));} else {double y5=pow(y,0.2), y5_3=y5*y5*y5, y5_4=y5_3*y5; Tdust_eqm=T0*q*(1.+15.*y5_4+sqrt(1.+30.*y5_4+25.*y5_4*y5_4))/(20.*y5_3);} // this gives an extremely accurate and exactly-joined solution to the full quintic equation assuming T_rad_IR=T_dust
     }
+#if defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+    CellP[i].Dust_Temperature = DMAX(DMIN(Tdust_eqm , 2000.) , 1.);
+#endif
     return DMAX(DMIN(Tdust_eqm , 2000.) , 1.); // limit at sublimation temperature or some very low temp //
 }
 

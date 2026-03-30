@@ -1080,6 +1080,10 @@
 #if defined(COOLING)
 #define GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING // optional, can turn off
 #endif
+#ifndef OUTPUT_MOLECULAR_FRACTION
+#define OUTPUT_MOLECULAR_FRACTION // useful since we track dense molecular fraction
+#endif
+
 #define NUM_ISMDUSTCHEM_ELEMENTS (1+NUM_LIVE_SPECIES_FOR_COOLTABLES) // number of metal species evolved for dust
 #define NUM_ISMDUSTCHEM_SOURCES (4) // Sources of dust creation/growth 0=gas-dust accretion, 1=SNe Ia, 2=SNe II, 3=AGB outflows
 #if (GALSF_ISMDUSTCHEM_MODEL & 2)
@@ -1087,19 +1091,35 @@
 #define NUM_ISMDUSTCHEM_SPECIES 6 /* 0=silicates, 1=carbonaceous, 2=SiC, 3=free-flying iron, 4=O reservoir, 5=iron inclusions in silicates */
 #elif (GALSF_ISMDUSTCHEM_MODEL & 4) || (GALSF_ISMDUSTCHEM_MODEL & 8)
 #define NUM_ISMDUSTCHEM_SPECIES 5 /* 0=silicates, 1=carbonaceous, 2=SiC, 3=free-flying iron, 4=O reservoir or iron inclusions in silicates */
-#else
+#elif ((GALSF_ISMDUSTCHEM_MODEL & 16) || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#ifndef OUTPUT_MACH_NUMBER
+#define OUTPUT_MACH_NUMBER
+#endif
+#if (GALSF_ISMDUSTCHEM_MODEL & 16)
+#define NUM_ISMDUSTCHEM_SPECIES 3 /* 0=silicates, 1=carbonaceous, 3=metallic iron */
+#elif (GALSF_ISMDUSTCHEM_MODEL & 32)
+#define NUM_ISMDUSTCHEM_SPECIES 2 /* 0=silicates, 1=carbonaceous */
+#endif
+#define NUM_ISMDUSTCHEM_SIZE_BINS (GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#define UNIT_GRAIN_NUMBER      (All.UnitGrainNumber)
+#define UNIT_GRAIN_LENGTH      (All.UnitGrainLength_in_cm)
+#else 
 #define NUM_ISMDUSTCHEM_SPECIES 4 /* 0=silicates, 1=carbonaceous, 2=SiC, 3=free-flying iron */
 #endif
 #else
 #define NUM_ISMDUSTCHEM_SPECIES 0 /* no explicit dust species evolved */
 #endif
-#if (GALSF_ISMDUSTCHEM_MODEL & 4) // explicit iron nanoparticle model active
+#if (GALSF_ISMDUSTCHEM_MODEL & 4) || (GALSF_ISMDUSTCHEM_MODEL & 16) // explicit iron nanoparticle model active
 #define GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES 3 /* Assume only O, Mg, and Si in silicate structure while Fe is already present via iron inclusions */
 #else
 #define GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES 4 /* O, Mg, Si, and Fe needed to make silicates */
 #endif
 #undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
+#if ((GALSF_ISMDUSTCHEM_MODEL & 16) || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(2*NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS))
+#else
 #define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES)
+#endif
 #endif
 
 /* end of metals block */

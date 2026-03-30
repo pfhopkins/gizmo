@@ -79,6 +79,9 @@ struct Quantities_for_Gradients
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
     SymmetricTensor2<MyFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+    MyFloat Rad_Flux[N_RT_FREQ_BINS][3];
+#endif
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
     MyDouble InternalEnergy;
@@ -288,6 +291,9 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
         {
         	in->GQuant.Rad_E_gamma[k] = CellP[i].Rad_E_gamma_Pred[k];
         	in->GQuant.Rad_E_gamma_ET[k] = CellP[i].ET[k];
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            int k_d; for(k_d = 0; k_d < 3; k_d++) {in->GQuant.Rad_Flux[k][k_d] = CellP[i].Rad_Flux_Pred[k][k_d];}
+#endif
         }
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -469,6 +475,13 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
             MAX_ADD(GasGradDataPasser[i].Maxima.Rad_E_gamma[j],out->Maxima.Rad_E_gamma[j],mode);
             MIN_ADD(GasGradDataPasser[i].Minima.Rad_E_gamma[j],out->Minima.Rad_E_gamma[j],mode);
             for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(GasGradDataPasser[i].Gradients_Rad_E_gamma[j][k],out->Gradients[k].Rad_E_gamma[j],mode);}
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            {int k_d; for(k_d=0;k_d<3;k_d++) {
+                MAX_ADD(GasGradDataPasser[i].Maxima.Rad_Flux[j][k_d], out->Maxima.Rad_Flux[j][k_d], mode);
+                MIN_ADD(GasGradDataPasser[i].Minima.Rad_Flux[j][k_d], out->Minima.Rad_Flux[j][k_d], mode);
+                for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.Rad_Flux_Grad[j][k_d][k], out->Gradients[k].Rad_Flux[j][k_d], mode);}
+            }}
+#endif
         }
 		/* the gradient dotted into the Eddington tensor is more complicated: let's handle this below */
         {
@@ -615,6 +628,12 @@ void hydro_gradient_calc(void)
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
             for(k2=0;k2<N_RT_FREQ_BINS;k2++) {CellP[i].Gradients.Rad_E_gamma_ET[k2] = {};}
+#endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            for(k2=0;k2<N_RT_FREQ_BINS;k2++) {
+                int k3; for(k3=0;k3<3;k3++) {CellP[i].Gradients.Rad_E_gamma_Grad[k2][k3] = 0;}
+                int k4; for(k4=0;k4<3;k4++) {int k5; for(k5=0;k5<3;k5++) {CellP[i].Gradients.Rad_Flux_Grad[k2][k4][k5] = 0;}}
+            }
 #endif
         }
 
@@ -1021,6 +1040,9 @@ void hydro_gradient_calc(void)
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
             for(k=0;k<N_RT_FREQ_BINS;k++) {construct_gradient(GasGradDataPasser[i].Gradients_Rad_E_gamma[k],i);}
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            {int k_f; for(k_f=0;k_f<N_RT_FREQ_BINS;k_f++) {int k_d; for(k_d=0;k_d<3;k_d++) {construct_gradient(CellP[i].Gradients.Rad_Flux_Grad[k_f][k_d],i);}}}
+#endif
 #endif
 
             /* now the gradients are calculated: below are simply useful operations on the results */
@@ -1204,6 +1226,21 @@ void hydro_gradient_calc(void)
             {
                 local_slopelimiter(CellP[i].Gradients.Rad_E_gamma_ET[k1],GasGradDataPasser[i].Maxima.Rad_E_gamma[k1],GasGradDataPasser[i].Minima.Rad_E_gamma[k1],a_limiter,h_lim,stol, 1,d_max,CellP[i].Rad_E_gamma_Pred[k1]*CellP[i].Density/P[i].Mass);
                 local_slopelimiter(GasGradDataPasser[i].Gradients_Rad_E_gamma[k1],GasGradDataPasser[i].Maxima.Rad_E_gamma[k1],GasGradDataPasser[i].Minima.Rad_E_gamma[k1],a_limiter,h_lim,DMAX(stol,stol_diffusion), 1,d_max,CellP[i].Rad_E_gamma_Pred[k1]*CellP[i].Density/P[i].Mass);
+            }
+#endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            {
+                double V_i_inv_rt = CellP[i].Density / P[i].Mass;
+                for(k1=0;k1<N_RT_FREQ_BINS;k1++)
+                {
+                    double val_cen_e = CellP[i].Rad_E_gamma_Pred[k1] * V_i_inv_rt;
+                    local_slopelimiter(GasGradDataPasser[i].Gradients_Rad_E_gamma[k1],GasGradDataPasser[i].Maxima.Rad_E_gamma[k1],GasGradDataPasser[i].Minima.Rad_E_gamma[k1],a_limiter,h_lim,stol, 1,d_max,val_cen_e);
+                    for(k=0;k<3;k++) {CellP[i].Gradients.Rad_E_gamma_Grad[k1][k] = GasGradDataPasser[i].Gradients_Rad_E_gamma[k1][k];}
+                    int k_d; for(k_d=0;k_d<3;k_d++) {
+                        double val_cen_f = CellP[i].Rad_Flux_Pred[k1][k_d] * V_i_inv_rt;
+                        local_slopelimiter(CellP[i].Gradients.Rad_Flux_Grad[k1][k_d],GasGradDataPasser[i].Maxima.Rad_Flux[k1][k_d],GasGradDataPasser[i].Minima.Rad_Flux[k1][k_d],a_limiter,h_lim,stol, 0,d_max,val_cen_f);
+                    }
+                }
             }
 #endif
 #ifdef MAGNETIC
@@ -1730,6 +1767,16 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                         MINMAX_CHECK(dn[k],out.Minima.Rad_E_gamma[k],out.Maxima.Rad_E_gamma[k]);
                         if(swap_to_j) {MINMAX_CHECK(-dn[k],GasGradDataPasser[j].Minima.Rad_E_gamma[k],GasGradDataPasser[j].Maxima.Rad_E_gamma[k]);}
                     }
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+                    double dflux_rt[N_RT_FREQ_BINS][3];
+                    {int k_f; for(k_f=0;k_f<N_RT_FREQ_BINS;k_f++) {
+                        int k_d; for(k_d=0;k_d<3;k_d++) {
+                            dflux_rt[k_f][k_d] = CellP[j].Rad_Flux_Pred[k_f][k_d]*V_j_inv - local.GQuant.Rad_Flux[k_f][k_d]*V_i_inv;
+                            MINMAX_CHECK(dflux_rt[k_f][k_d], out.Minima.Rad_Flux[k_f][k_d], out.Maxima.Rad_Flux[k_f][k_d]);
+                            if(swap_to_j) {MINMAX_CHECK(-dflux_rt[k_f][k_d], GasGradDataPasser[j].Minima.Rad_Flux[k_f][k_d], GasGradDataPasser[j].Maxima.Rad_Flux[k_f][k_d]);}
+                        }
+                    }}
+#endif
 #endif
                     /* end of difference and slope-limiter (min/max) block */
                     /* ------------------------------------------------------------------------------------------------ */
@@ -1813,6 +1860,9 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             {
                             	out.Gradients[k].Rad_E_gamma[k2] += wk_xyz_i * dn[k2];
                             	out.Gradients[k].Rad_E_gamma_ET[k2] += wk_xyz_i * dnET[k2];
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+                                int k_d; for(k_d=0;k_d<3;k_d++) {out.Gradients[k].Rad_Flux[k2][k_d] += wk_xyz_i * dflux_rt[k2][k_d];}
+#endif
                             }
 #endif
                         }
@@ -1855,6 +1905,9 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                         for(k2=0;k2<N_RT_FREQ_BINS;k2++)
                         {
                             GasGradDataPasser[j].Gradients_Rad_E_gamma[k2] += wk_vec_j * dn[k2];
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+                            {int k_d; for(k_d=0;k_d<3;k_d++) {int k_c; for(k_c=0;k_c<3;k_c++) {CellP[j].Gradients.Rad_Flux_Grad[k2][k_d][k_c] += wk_vec_j[k_c] * dflux_rt[k2][k_d];}}}
+#endif
 							/* below we have the gradient dotted into the Eddington tensor (more complicated than a scalar gradient, but should recover full anisotropy */
 							int k_freq=k2,k_xyz,j_xyz;
 							for(k=0;k<3;k++)
