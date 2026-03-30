@@ -1097,7 +1097,7 @@ void update_dense_molecular_fields(int i, double temp, double rho, double nh0, d
     double surface_density = evaluate_NH_from_GradRho(P[i].GradRho,P[i].KernelRadius,CellP[i].Density,P[i].NumNgb,1,i) * UNIT_SURFDEN_IN_CGS; // converts to cgs
     // shielding length giving effective radius of gas particle
     double l_shield = surface_density / rho;
-    fH2 = Get_Gas_Molecular_Mass_Fraction(i, temp, nh0, ne, 0.);
+    fH2 = Get_Gas_Molecular_Mass_Fraction(i, temp, nh0, ne, 0., P, CellP);
     if (fH2 > 0)
     {
         double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;

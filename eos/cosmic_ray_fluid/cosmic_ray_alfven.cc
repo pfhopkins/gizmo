@@ -83,9 +83,9 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
     E_B = 0.5*Bmag*Bmag * (P[i].Mass/(CellP[i].Density*All.cf_a3inv)); // B-field energy (energy density times volume, for ratios with energies above)
     Bmag_Gauss = Bmag * UNIT_B_IN_GAUSS; // turn it into Gauss
     Omega_gyro = (8987.34 * Bmag_Gauss * (Z_charge_CR/E_CRs_Gev)) * UNIT_TIME_IN_CGS; // gyro frequency of the CR population we're evolving, converted to physical code units //
-    double vA_noion = Get_Gas_Alfven_speed_i(i); // Alfven speed in code units [recall B units such that there is no 4pi here]
+    double vA_noion = Get_Gas_Alfven_speed_i(i, P, CellP); // Alfven speed in code units [recall B units such that there is no 4pi here]
     vA_code = Get_Gas_ion_Alfven_speed_i(i); // include ionization appropriately for small-scale modes
-    cs_thermal = sqrt(convert_internalenergy_soundspeed2(i,u0)); // thermal sound speed at appropriate drift-time [in code units, physical]
+    cs_thermal = sqrt(convert_internalenergy_soundspeed2(i, u0, P, CellP)); // thermal sound speed at appropriate drift-time [in code units, physical]
     vA2_c2 = vA_code*vA_code / (clight_code*clight_code); // Alfven speed vs speed of light
     fac_Omega = (3.*M_PI/16.) * Omega_gyro * (1.+2.*vA2_c2); // factor which will be used heavily below
     /* for turbulent (anisotropic and linear landau) damping terms: need to know the turbulent driving scale: assume a cascade with a driving length equal to the pressure gradient scale length */
@@ -150,7 +150,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode)
         v2_t += CellP[i].VelPred[i1]*CellP[i].VelPred[i1];
         for(i2=0;i2<3;i2++) {dv2_t += CellP[i].Gradients.Velocity[i1][i2]*CellP[i].Gradients.Velocity[i1][i2]; db2_t += CellP[i].Gradients.B[i1][i2]*CellP[i].Gradients.B[i1][i2];}
     }
-    b2_t = Get_Gas_BField(i).norm_sq();
+    b2_t = Get_Gas_BField(i, P, CellP).norm_sq();
     v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime; h0=Get_Particle_Size(i)*All.cf_atime; // physical units
     M_A = h0*(EPSILON_SMALL + dv2_t) / (EPSILON_SMALL + vA_noion); M_A = DMAX(M_A , h0*(EPSILON_SMALL + db2_t) / (EPSILON_SMALL + b2_t)); M_A = DMAX( EPSILON_SMALL , M_A ); // proper calculation of the local Alfven Mach number
     x_LL = clight_code / (Omega_gyro * h0); x_LL=DMAX(x_LL,EPSILON_SMALL); k_turb = 1./h0; // scale at which turbulence is being measured here //

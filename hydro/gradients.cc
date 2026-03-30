@@ -303,7 +303,7 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
         for(k=0;k<N_CR_PARTICLE_BINS;k++) {in->GQuant.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(i,k);}
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-        in->GQuant.SoundSpeed = Get_Gas_effective_soundspeed_i(i);
+        in->GQuant.SoundSpeed = Get_Gas_effective_soundspeed_i(i, P, CellP);
 #endif
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
        in->NV_DivVel = CellP[i].NV_DivVel;
@@ -895,7 +895,7 @@ void hydro_gradient_calc(void)
                 double dh=0.25*P[i].KernelRadius; // need to be more aggressive with new wt_i,wt_j formalism
                 for(k=0;k<3;k++)
                 {
-                    double b0 = Get_Gas_BField(i,k);
+                    double b0 = Get_Gas_BField(i, k, P, CellP);
                     double dd = 2. * fabs(b0) * DMIN(fabs(GasGradDataPasser[i].Minima.B[k]) , fabs(GasGradDataPasser[i].Maxima.B[k]));
                     dbmax = DMIN(fabs(dbmax+dd),fabs(dbmax-dd));
                     for(k1=0;k1<3;k1++) {dbgrad += 2.*dh * fabs(b0*CellP[i].Gradients.B[k][k1]);}
@@ -931,7 +931,7 @@ void hydro_gradient_calc(void)
                     double h_eff = Get_Particle_Size(i);
                     for(k=0;k<3;k++)
                     {
-                        double grad_limiter_mag = Get_Gas_BField(i,k) / h_eff;
+                        double grad_limiter_mag = Get_Gas_BField(i, k, P, CellP) / h_eff;
                         dmag += grad_limiter_mag * grad_limiter_mag;
                         for(k1=0;k1<3;k1++)
                         {
@@ -1108,7 +1108,7 @@ void hydro_gradient_calc(void)
             if(All.ComovingIntegrationOn) {divVel_physical += 3*All.cf_hubble_a;} // hubble-flow correction added
             if(divVel_physical>=0.0) {NV_A = 0.0;}
             h_eff = Get_Particle_Size(i) * All.cf_atime / 0.5; // 'default' parameter choices are scaled for a cubic spline, but code will attempt to scale appropriately to other kernel choices //
-            cs_nv = Get_Gas_effective_soundspeed_i(i) ; // converts to physical velocity units //
+            cs_nv = Get_Gas_effective_soundspeed_i(i, P, CellP) ; // converts to physical velocity units //
             alphaloc = All.ViscosityAMax * h_eff*h_eff*NV_A / (0.36*cs_nv*cs_nv + h_eff*h_eff*NV_A);
             // 0.25 in front of vsig is the 'noise parameter' that determines the relative amplitude which will trigger the switch: that choice was quite large (requires approach velocity rate-of-change is super-sonic); better to use c_s (above), and 0.05-0.25 //
             // NV_A is physical 1/(time*time), but KernelRadius and vsig can be comoving, so need appropriate correction terms above //
@@ -1124,12 +1124,12 @@ void hydro_gradient_calc(void)
             CurlVel = CellP[i].Gradients.Velocity.curl();
             MagCurl = All.cf_a2inv * CurlVel.norm();
             double fac_mu = 1 / ( All.cf_atime);
-            CellP[i].alpha_limiter = divVel / (divVel + MagCurl + 0.0001 * Get_Gas_effective_soundspeed_i(i) / (Get_Particle_Size(i)) / fac_mu);
+            CellP[i].alpha_limiter = divVel / (divVel + MagCurl + 0.0001 * Get_Gas_effective_soundspeed_i(i, P, CellP) / (Get_Particle_Size(i)) / fac_mu);
 #endif
 #endif
 
-            calculate_and_assign_conduction_and_viscosity_coefficients(i);
-            calculate_and_assign_nonideal_mhd_coefficients(i);
+            calculate_and_assign_conduction_and_viscosity_coefficients(i, P, CellP);
+            calculate_and_assign_nonideal_mhd_coefficients(i, P, CellP);
             
 #ifdef RADTRANSFER
             {
@@ -1216,7 +1216,7 @@ void hydro_gradient_calc(void)
             local_slopelimiter(CellP[i].Gradients.InternalEnergy,GasGradDataPasser[i].Maxima.InternalEnergy,GasGradDataPasser[i].Minima.InternalEnergy,a_limiter,h_lim,stol_tmp, 1,d_max,CellP[i].InternalEnergyPred);
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-            local_slopelimiter(CellP[i].Gradients.SoundSpeed,GasGradDataPasser[i].Maxima.SoundSpeed,GasGradDataPasser[i].Minima.SoundSpeed,a_limiter,h_lim,stol, 1,d_max,Get_Gas_effective_soundspeed_i(i));
+            local_slopelimiter(CellP[i].Gradients.SoundSpeed,GasGradDataPasser[i].Maxima.SoundSpeed,GasGradDataPasser[i].Minima.SoundSpeed,a_limiter,h_lim,stol, 1,d_max,Get_Gas_effective_soundspeed_i(i, P, CellP));
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
             for(k1=0;k1<NUM_METAL_SPECIES;k1++) {local_slopelimiter(CellP[i].Gradients.Metallicity[k1],GasGradDataPasser[i].Maxima.Metallicity[k1],GasGradDataPasser[i].Minima.Metallicity[k1],a_limiter,h_lim,DMAX(stol,stol_diffusion), 1,d_max,P[i].Metallicity[k1]);}
@@ -1265,7 +1265,7 @@ void hydro_gradient_calc(void)
 #ifdef TURB_DIFF_DYNAMIC
             {int k1,k2; for(k1=0;k1<3;k1++) {for(k2=0;k2<3;k2++) {CellP[i].VelShear_bar[k1][k2] = 0.5 * (GasGradDataPasser[i].GradVelocity_bar[k1][k2] + GasGradDataPasser[i].GradVelocity_bar[k2][k1]);}}} // need to initialize this before sending to routine below
 #endif
-            calculate_and_assign_turbulent_diffusion_coefficients(i);
+            calculate_and_assign_turbulent_diffusion_coefficients(i, P, CellP);
 #endif
 
 
@@ -1279,7 +1279,7 @@ void hydro_gradient_calc(void)
             /* if the mesh motion is specified to be glass-generating, this is where we apply the appropriate mesh velocity */
             if(All.Time > 0)
             {
-                double cs_invelunits = Get_Gas_effective_soundspeed_i(i)  * All.cf_atime; // soundspeed, converted to units of code velocity
+                double cs_invelunits = Get_Gas_effective_soundspeed_i(i, P, CellP)  * All.cf_atime; // soundspeed, converted to units of code velocity
                 double L_i_code = Get_Particle_Size(i); // particle effective size (in code units)
                 Vec3<double> dvel = L_i_code*L_i_code*GasGradDataPasser[i].GlassAcc; double velnorm = dvel.norm(); // calculate quantities to use for glass
                 double dtx = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i); // need timestep for limiter below
@@ -1555,7 +1555,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     }
 
                     /* now use the gradients to construct the B_L,R states */
-                    double Bjk = Get_Gas_BField(j,k); //
+                    double Bjk = Get_Gas_BField(j, k, P, CellP); //
                     NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,Bjk,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
                     double db_c = 0.5 * dot(CellP[j].Gradients.B[k], kernel.dp);
                     double db_cR = -0.5 * (local.BGrad[k][0]*kernel.dp[0] + local.BGrad[k][1]*kernel.dp[1] + local.BGrad[k][2]*kernel.dp[2]);
@@ -1728,7 +1728,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     }
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-                    double dc = Get_Gas_effective_soundspeed_i(j) - local.GQuant.SoundSpeed;
+                    double dc = Get_Gas_effective_soundspeed_i(j, P, CellP) - local.GQuant.SoundSpeed;
                     MINMAX_CHECK(dc,out.Minima.SoundSpeed,out.Maxima.SoundSpeed);
                     if(swap_to_j) {MINMAX_CHECK(-dc,GasGradDataPasser[j].Minima.SoundSpeed,GasGradDataPasser[j].Maxima.SoundSpeed);}
 #endif

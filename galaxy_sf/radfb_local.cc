@@ -294,7 +294,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
                                 if(r2 > RHII_2) {continue;}
                                 double r=sqrt(r2), u=0;
                                 /* check whether the particle is already ionized */
-                                already_ionized = 0; rho_j = Get_Gas_density_for_energy_i(j);
+                                already_ionized = 0; rho_j = Get_Gas_density_for_energy_i(j, P, CellP);
                                 if(CellP[j].InternalEnergy<CellP[j].InternalEnergyPred) {u=CellP[j].InternalEnergy;} else {u=CellP[j].InternalEnergyPred;}
                                 if(CellP[j].DelayTimeHII > 0) {already_ionized=1;}
 #if !defined(CHIMES_HII_REGIONS)
@@ -446,7 +446,7 @@ int do_the_local_ionization(int target, double dt, int source)
     double flux_compactHII = DMAX(0.85*pow(n1000,1./3.) , 1) * 2.6e5*n1000; // set to typical value in HII region or minimum needed to maintain f_neutral < 1e-5-ish, whichever is larger
     CellP[target].Rad_Flux_UV += flux_compactHII; CellP[target].Rad_Flux_EUV += flux_compactHII;
 #endif
-    CellP[target].Ne = 1.0 + 2.0*yhelium(target); /* set the cell to fully ionized */
+    CellP[target].Ne = 1.0 + 2.0*yhelium(target, P); /* set the cell to fully ionized */
 
 #endif
 

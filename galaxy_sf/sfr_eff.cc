@@ -33,7 +33,7 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 {
 #ifdef GALSF_SFR_IMF_VARIATION
     double h = Get_Particle_Size(i) * All.cf_atime;
-    double cs = Get_Gas_effective_soundspeed_i(i) ; // actual sound speed in the simulation: might be unphysically high for SF conditions!
+    double cs = Get_Gas_effective_soundspeed_i(i, P, CellP) ; // actual sound speed in the simulation: might be unphysically high for SF conditions!
     cs = 0.2 / UNIT_VEL_IN_KMS; // set to a minimum cooling temperature, for the actual star-forming conditions. for now, just use a constant //
     double dv2_abs = 0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
     // squared norm of the trace-free symmetric [shear] component of the velocity gradient tensor //
@@ -74,7 +74,7 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
     double b_mag = 0;
 #ifdef MAGNETIC
     double gizmo2gauss_2 = UNIT_B_IN_GAUSS*UNIT_B_IN_GAUSS;
-    b_mag = Get_Gas_BField(i).norm_sq() * gizmo2gauss_2;
+    b_mag = Get_Gas_BField(i, P, CellP).norm_sq() * gizmo2gauss_2;
 #endif
     double rad_flux_uv = 1;
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -91,7 +91,7 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 #endif
     P[i_star].IMF_FormProps[1] = CellP[i].Density * All.cf_a3inv; // density
     P[i_star].IMF_FormProps[2] = CellP[i].InternalEnergyPred; // thermal internal energy (use to calculate temperature)
-    P[i_star].IMF_FormProps[3] = Get_Gas_effective_soundspeed_i(i) ; // sound speed (not trivially related to temperature if CRs, etc included)
+    P[i_star].IMF_FormProps[3] = Get_Gas_effective_soundspeed_i(i, P, CellP) ; // sound speed (not trivially related to temperature if CRs, etc included)
     P[i_star].IMF_FormProps[4] = sqrt(dv2_abs); // shear velocity gradient (norm of shear gradient tensor)
     P[i_star].IMF_FormProps[5] = h; // particle length/size (inter-particle spacing)
     P[i_star].IMF_FormProps[6] = NH; // local gas surface density (our usual estimator) in the cloud where the particle formed
@@ -227,7 +227,7 @@ double get_starformation_rate(int i, int mode)
 
     /* compute various velocity-gradient terms which are potentially used in the various criteria below */
     double dv2abs=0, dv2abs_0=0, divv=0, gradv[9]={0}, cs_eff=0, vA=0, v_fast=0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
-    cs_eff=Get_Gas_thermal_soundspeed_i(i); vA=Get_Gas_Alfven_speed_i(i); /* specifically get the -isothermal- soundspeed and Alfven speed  (since we're doing a local Jeans analysis using these terms) [dont include terms like radiation pressure or cosmic ray pressure in the relevant speeds here] */
+    cs_eff=Get_Gas_thermal_soundspeed_i(i, P, CellP); vA=Get_Gas_Alfven_speed_i(i, P, CellP); /* specifically get the -isothermal- soundspeed and Alfven speed  (since we're doing a local Jeans analysis using these terms) [dont include terms like radiation pressure or cosmic ray pressure in the relevant speeds here] */
     v_fast=sqrt(cs_eff*cs_eff + vA*vA); /* calculate fast magnetosonic speed for use below */
     for(j=0;j<3;j++) {
         for(k=0;k<3;k++) {
@@ -284,7 +284,7 @@ double get_starformation_rate(int i, int mode)
 #if (SINGLE_STAR_SINK_FORMATION & 256) /* scale SFR to fraction of 'molecular' gas in cell */
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred; // pull various known thermal properties, prepare to extract others //
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp); // get thermodynamic properties, like neutral fraction, temperature, etc, that we will use below //
-    rateOfSF *= Get_Gas_Molecular_Mass_Fraction(i, temperature, nh0, ne, 0.);
+    rateOfSF *= Get_Gas_Molecular_Mass_Fraction(i, temperature, nh0, ne, 0., P, CellP);
 #endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 2) /* restrict to convergent flows */
@@ -388,7 +388,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
     /* now update the thermal variables */
     CellP[i].InternalEnergy = (egyeff + (egycurrent - egyeff) * exp(-dtime / trelax));
     CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
-    set_eos_pressure(i);
+    set_eos_pressure(i, P, CellP);
     //CellP[i].dInternalEnergy = 0;
     CellP[i].DtInternalEnergy = 0; /* HERE, it's ok, b/c effective EOS is designed to model new pressure even under compressions,
                                  (since we're zero'ing the second-half-step from the hydro step) */
@@ -644,13 +644,13 @@ void star_formation_parent_routine(void)
                             double dv2_abs = 0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
                             Vec3<MyDouble> tempB={};
 #ifdef MAGNETIC
-                            tempB = Get_Gas_BField(i); // use particle magnetic field
+                            tempB = Get_Gas_BField(i, P, CellP); // use particle magnetic field
 #endif
                             dv2_abs = ((1./2.)*((CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1])*(CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1]) // squared norm of the trace-free symmetric [shear] component of the velocity gradient tensor //
                                                 + (CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2])*(CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2]) + (CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])) +
                                        (2./3.)*((CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[0][0] + CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[2][2]*CellP[i].Gradients.Velocity[2][2]) - (CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[2][2] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[2][2]))) * All.cf_a2inv*All.cf_a2inv;
                             // saves at formation sink properties in a table: 0:Time 1:ID 2:Mass 3-5:Position 6-8:Velocity 9-11:Magnetic field 12:Internal energy 13:Density 14:cs_effective 15:particle size 16:local surface density 17:local velocity dispersion 18: distance to closest BH
-                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, Get_Gas_effective_soundspeed_i(i) , Get_Particle_Size(i) * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
+                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, Get_Gas_effective_soundspeed_i(i, P, CellP) , Get_Particle_Size(i) * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
 #endif
                         }
 #endif // SINGLE_STAR_SINK_DYNAMICS
