@@ -39,7 +39,7 @@
             cmag = 0.0; double grad_dot_x_ij = 0.0; double Z_j = 0;
             if(k_species < NUM_METAL_SPECIES) {Z_j = P[j].Metallicity[k_species];}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-            if(k_species >= NUM_METAL_SPECIES) {Z_j = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k_species,0);}
+            if(k_species >= NUM_METAL_SPECIES) {Z_j = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k_species,0, P, CellP);}
 #endif
             d_scalar = local.Metallicity[k_species]-Z_j; // physical
             for(k=0;k<3;k++)

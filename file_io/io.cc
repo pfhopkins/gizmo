@@ -678,7 +678,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     int k1, k2;
                     for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
                         for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {     
-                            fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (get_ISMDustChemEvo_bin_mass(pindex, k1, k2) / UNIT_MASS_IN_CGS);
+                            fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (get_ISMDustChemEvo_bin_mass(pindex, k1, k2, CellP) / UNIT_MASS_IN_CGS);
                         }
                     }
                     fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);

@@ -317,7 +317,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
                 int nmax=NUM_ISMDUSTCHEM_SIZE_BINS;
                 // The code outputs the bin mass but does not track it directly, instead tracking the bin slope
                 // which depends on the bin number, mass, and bin edges. Bin mass is temporarily stored in 
-                // the slope field and then the slope is recalculated in Initialize_ISMDustChemEvo_Particle_Variables()
+                // the slope field and then the slope is recalculated in Initialize_ISMDustChemEvo_Particle_Variables(, P, CellP)
                 for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
                     int kf;
                     for(kf=0;kf<nmax;kf++) { // normal read-in
