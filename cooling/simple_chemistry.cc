@@ -15,7 +15,7 @@ and references therein.
 /* C photoionization rate based on local FUV flux and accounting for CR-generated LW-band photons, e.g. Gredel 1987 */
 MyFloat photoionization_rate_C(int i, MyFloat shieldfac)
 {
-    MyFloat G0 = get_FUV_G0(i, shieldfac, 1); // mode 1 accounts for dust-, self-, and H2 cross-shielding
+    MyFloat G0 = get_FUV_G0(i, shieldfac, 1, P, CellP); // mode 1 accounts for dust-, self-, and H2 cross-shielding
     return 3.43e-10 * G0 + 520 * CellP[i].MolecularMassFraction * Get_CosmicRayIonizationRate_cgs(i);
 }
 
@@ -35,7 +35,7 @@ MyFloat total_ionization_rate_C(int i, MyFloat shieldfac)
 MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac)
 {
     MyFloat ne = CellP[i].Density * All.cf_a3inv * HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS * x_elec;
-    MyFloat G0 = get_FUV_G0(i, shieldfac, 0);
+    MyFloat G0 = get_FUV_G0(i, shieldfac, 0, P, CellP);
     return G0 * sqrt(temp) / ne + 50; // add 50 to prevent from becoming too small in strongly shielded gas, following Kim 2023
 }
 
@@ -119,7 +119,7 @@ MyFloat f_Oplus(MyFloat nHp)
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp)
 {
     MyFloat xi_cr16 = Get_CosmicRayIonizationRate_cgs(i) / 1e-16, Zd = P[i].Metallicity[0] / All.SolarAbundances[0];
-    MyFloat G0 = get_FUV_G0(i, shieldfac, 0);
+    MyFloat G0 = get_FUV_G0(i, shieldfac, 0, P, CellP);
     MyFloat n_COcrit = pow(4e3 * Zd / (xi_cr16 * xi_cr16), cbrt(G0)) * (50 * xi_cr16 / pow(Zd, 1.4));
     MyFloat nHcgs = nH_CGS(i);
     MyFloat f_CO = 0.5 * CellP[i].MolecularMassFraction * (1 - DMAX(f_Cplus(i, temp, x_elec, shieldfac), f_Oplus(nHp))) / (1 + pow(n_COcrit / nHcgs, 2));

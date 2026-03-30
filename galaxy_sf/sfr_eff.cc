@@ -212,7 +212,7 @@ double get_starformation_rate(int i, int mode)
     double factorEVP = pow(CellP[i].Density * All.cf_a3inv / All.PhysDensThresh, -0.8) * All.FactorEVP; /* evaporation factor */
     double egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold; /* specific energy of hot [volume-filling] phase gas */
     double ne_in = CellP[i].Ne, ne_out = ne_in; /* free electron fraction */
-    double tcool = GetCoolingTime(egyhot, CellP[i].Density * All.cf_a3inv, ne_in, &ne_out, i); /* cooling time of two-phase mix */
+    double tcool = GetCoolingTime(egyhot, CellP[i].Density * All.cf_a3inv, ne_in, &ne_out, i, P, CellP); /* cooling time of two-phase mix */
     y = tsfr / tcool * egyhot / (All.FactorSN * All.EgySpecSN - (1 - All.FactorSN) * All.EgySpecCold); /* parameter */
     double cloudmass_fraction = (1 + 1 / (2 * y) - sqrt(1 / y + 1 / (4 * y * y))); /* quasi-equilibrium mass in cold phase */
     rateOfSF = (1 - All.FactorSN) * cloudmass_fraction * P[i].Mass / tsfr; /* SFR given by cold mass (less SNe-entrainment fraction) divided by tSFR */
@@ -283,7 +283,7 @@ double get_starformation_rate(int i, int mode)
 
 #if (SINGLE_STAR_SINK_FORMATION & 256) /* scale SFR to fraction of 'molecular' gas in cell */
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred; // pull various known thermal properties, prepare to extract others //
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp); // get thermodynamic properties, like neutral fraction, temperature, etc, that we will use below //
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties, like neutral fraction, temperature, etc, that we will use below //
     rateOfSF *= Get_Gas_Molecular_Mass_Fraction(i, temperature, nh0, ne, 0., P, CellP);
 #endif
 
@@ -378,7 +378,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
         egycurrent += CellP[i].Injected_Sink_Energy / P[i].Mass;
         if(egycurrent > egyeff)
         {
-            tcool = GetCoolingTime(egycurrent, CellP[i].Density * All.cf_a3inv, ne, &ne_out, i);
+            tcool = GetCoolingTime(egycurrent, CellP[i].Density * All.cf_a3inv, ne, &ne_out, i, P, CellP);
             if(tcool < trelax && tcool > 0) trelax = tcool;
         }
         CellP[i].Injected_Sink_Energy = 0;
@@ -859,7 +859,7 @@ void init_clouds(void)
 
       ne = 1.0;
       SetZeroIonization();
-      tcool = GetCoolingTime(egyhot, dens, ne, &ne_out, -1);
+      tcool = GetCoolingTime(egyhot, dens, ne, &ne_out, -1, P, CellP);
       coolrate = egyhot / tcool / dens;
       x = (egyhot - u4) / (egyhot - All.EgySpecCold);
 
@@ -882,7 +882,7 @@ void init_clouds(void)
 	  egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
 
 	  ne = 0.5;
-      tcool = GetCoolingTime(egyhot, dens, ne, &ne_out, -1);
+      tcool = GetCoolingTime(egyhot, dens, ne, &ne_out, -1, P, CellP);
 
 	  y = tsfr / tcool * egyhot / (All.FactorSN * All.EgySpecSN - (1 - All.FactorSN) * All.EgySpecCold);
 	  x = 1 + 1 / (2 * y) - sqrt(1 / y + 1 / (4 * y * y));
@@ -897,7 +897,7 @@ void init_clouds(void)
 	  egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold;
 
 	  ne = 0.5;
-      tcool = GetCoolingTime(egyhot, dens, ne, &ne_out, -1);
+      tcool = GetCoolingTime(egyhot, dens, ne, &ne_out, -1, P, CellP);
 
 	  y = tsfr / tcool * egyhot / (All.FactorSN * All.EgySpecSN - (1 - All.FactorSN) * All.EgySpecCold);
 	  x = 1 + 1 / (2 * y) - sqrt(1 / y + 1 / (4 * y * y));

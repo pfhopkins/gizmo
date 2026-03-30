@@ -1342,7 +1342,7 @@ double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoin
         double absrate_k = rt_absorption_rate(i, k) * dt; // this needs to be positive to sensible behavior here
         if(absrate_k > 0) {dust_absorption_nonIR += e_final * fabs(expm1(-absrate_k));}
     }
-    double alpha_gd = gas_dust_heating_coeff(i,Tgas,Tdust);
+    double alpha_gd = gas_dust_heating_coeff(i,Tgas,Tdust, P, CellP);
     double LambdaDust = alpha_gd * (Tgas-Tdust);
     double de_IR_dust = LambdaDust * lambda_to_dErad; // equates to *net* emission of radiation by dust (emission - absorption)
     double LambdaIR_gas = CellP[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED];
@@ -1439,7 +1439,7 @@ double rt_ir_lambdadust(int i, double T){
         #include "../system/bracketed_rootfind.h"
         Tdust = ROOTFIND_X_new+T;
     }
-    double LambdaDust = gas_dust_heating_coeff(i,T,Tdust) * (T-Tdust);
+    double LambdaDust = gas_dust_heating_coeff(i,T,Tdust, P, CellP) * (T-Tdust);
     CellP[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += LambdaDust;
     CellP[i].Dust_Temperature = Tdust;
     return LambdaDust;
@@ -1460,7 +1460,7 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
     double fac_emission = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS)*CellP[i].Density*All.cf_a3inv; // in code units
     double LambdaDust_fac = 0;
 #ifdef COOLING
-    if(T>0) {LambdaDust_fac = gas_dust_heating_coeff(i,T,Tdust) * nHcgs * nHcgs /(UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS);}
+    if(T>0) {LambdaDust_fac = gas_dust_heating_coeff(i,T,Tdust, P, CellP) * nHcgs * nHcgs /(UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS);}
 #endif    
     double kappa_emission = rt_kappa_adaptive_IR_band(i, Tdust, Tdust, 1, 1);
     double dust_emission = fac_emission * kappa_emission * pow(Tdust,4);
@@ -1499,7 +1499,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate)
     Tdust_guess = DMAX(Tdust_guess, sqrt(sqrt(dust_absorption_rate / (rho_c_arad_fac * (5.*UNIT_SURFDEN_IN_CGS) * Zfac)))); // account for how opacity tops out around 5 Z cm^2/g
 #ifdef COOLING // account for gas-dust coupling
     double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * CellP[i].Density * All.cf_a3inv / PROTONMASS_CGS;    /* hydrogen number dens in cgs units */
-    double LambdaDust_fac = gas_dust_heating_coeff(i,T,Tdust_guess) * nHcgs * nHcgs /(UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS);
+    double LambdaDust_fac = gas_dust_heating_coeff(i,T,Tdust_guess, P, CellP) * nHcgs * nHcgs /(UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS);
     double Tdust_coupled = T - rho_c_arad_fac * rt_kappa_adaptive_IR_band(i,T,T,1,0) * pow(T,4) / (LambdaDust_fac+MIN_REAL_NUMBER); // bound for the gas-dust coupled regime assuming T ~ Td
     Tdust_guess = DMAX(Tdust_coupled, Tdust_guess);
 #endif
@@ -1759,7 +1759,7 @@ double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emiss
         double x_Hp = CellP[i].HII, x_H0 = CellP[i].HI;
 #else
         double u_in=CellP[i].InternalEnergy, rho_in=CellP[i].Density*All.cf_a3inv, mu=1, ne=1, nHI=0, nHII=0, nHeI=1, nHeII=0, nHeIII=0;
-        double temp = ThermalProperties(u_in, rho_in, i, &mu, &ne, &nHI, &nHII, &nHeI, &nHeII, &nHeIII);
+        double temp = ThermalProperties(u_in, rho_in, i, &mu, &ne, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, P, CellP);
         double x_Hp = nHII, x_H0 = nHI;
 #endif
         double x_Hminus = 4.e-10 * Tgas * x_elec * x_H0 / ((1. + x_Hp*300. + x_elec*1000.*(Tgas/1.3e4)*(Tgas/1.3e4)/(1.+(Tgas/1.3e4)*(Tgas/1.3e4)) + 4.e-17*1.) * (1. + Tgas/3.e4)); /* H- abundance: see series of equations in our non-equilbrium molecular solver (from e.g. Glover and Jappsen 2007 and other sources), with simple but accurate enough for our purposes replacements to make it quick to compute these to the needed accuracy for our purposes. note we need the free-electron fraction, neutral fraction, and free proton fraction. these denominator terms quantify differences from the idealized scaling assumed here, which assumes an idealized scaling of xH0~1~constant and near-vanishing xHp and x_e, for lower temperatures. last term assumes a constant photon-to-baryon ratio for scaling to different environments */
