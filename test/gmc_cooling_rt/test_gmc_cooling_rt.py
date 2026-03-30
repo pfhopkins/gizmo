@@ -118,8 +118,9 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False, extra_c
 
     nH_bins = np.logspace(1, 3, 10)
 
+    stat_names = ["T", "Tdust", "Trad", "urad_FUV", "urad_FIR", "xe"]
     stats_to_check = T, Tdust, Trad, urad_eV_cm3[:, 1], urad_eV_cm3[:, 4], xe
-    return np.array([binned_statistic(nH, s, "median", nH_bins)[0] for s in stats_to_check])
+    return {name: binned_statistic(nH, s, "median", nH_bins)[0] for name, s in zip(stat_names, stats_to_check)}
 
 
 _baseline_stats_cache = {}
@@ -156,4 +157,6 @@ def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
         benchmark_stats = _baseline_stats_cache.get("stats")
         if benchmark_stats is None:
             pytest.skip("baseline must run first")
-    assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
+    for name in test_stats:
+        assert test_stats[name] == pytest.approx(benchmark_stats[name], rel=0.1), \
+            f"{name}: max rel diff = {np.max(np.abs(test_stats[name] - benchmark_stats[name]) / np.abs(benchmark_stats[name] + 1e-300)):.3f}"
