@@ -457,7 +457,7 @@ void set_predicted_quantities_for_extra_physics(int i)
             CellP[i].Rad_Flux_Pred[kf] = CellP[i].Rad_Flux[kf];
 #endif
         }
-        rt_eddington_update_calculation(i);
+        rt_eddington_update_calculation(i, P, CellP);
 #endif
 #ifdef RT_EVOLVE_INTENSITIES
         for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k=0;k<N_RT_INTENSITY_BINS;k++) {CellP[i].Rad_Intensity_Pred[kf][k] = CellP[i].Rad_Intensity[kf][k];}}
@@ -541,7 +541,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
     
 #ifdef RADTRANSFER
-    rt_update_driftkick(i,dt_entr,0);
+    rt_update_driftkick(i,dt_entr,0, P, CellP);
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
     if(P[i].Pos[2] > DMIN(19., DMAX(1.1*All.Time*C_LIGHT_CODE_REDUCED(i), DMIN(18.*boxSize_X + (All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio - All.Vertical_Gravity_Strength)*All.Time*All.Time/2., 19.)))) {for(j=0;j<N_RT_FREQ_BINS;j++) {CellP[i].Rad_E_gamma[j]*=0.5; CellP[i].Rad_E_gamma_Pred[j]*=0.5;
 #ifdef RT_EVOLVE_FLUX

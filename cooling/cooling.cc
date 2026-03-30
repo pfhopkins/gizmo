@@ -183,7 +183,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
-        CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS , P, CellP);
+        CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS , pp, cell);
 #endif
         
 
@@ -201,12 +201,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         for(k=0;k<N_RT_FREQ_BINS;k++)
         {
             int k_donor = rt_get_donation_target_bin(k); /* this is used to indicate whether in the rad drift-kick loop, absorption is immediately re-radiated or not, ie. whether or not we should account for it here */
-            double tau = fabs(rt_absorption_rate(i,k) * dtime), f_abs = 1.-exp(-tau); if(tau<0.01) {f_abs=tau*(1.-tau/2.);} /* fraction of energy absorbed in the timestep */
+            double tau = fabs(rt_absorption_rate(i,k, pp, cell) * dtime), f_abs = 1.-exp(-tau); if(tau<0.01) {f_abs=tau*(1.-tau/2.);} /* fraction of energy absorbed in the timestep */
             double absorpted_rad_energy = DMIN(cell[i].Rad_E_gamma[k],cell[i].Rad_E_gamma_Pred[k]) * f_abs; /* estimate energy from the band that is absorbed in this timestep */
 #ifdef RT_INFRARED
             if(k==RT_FREQ_BIN_INFRARED) {
                 k_donor = -1; /* we use this below to indicate radiation which hasn't been re-radiated, which is handled in a special way for the adaptive bin here [which by default re-emits to itself], so set this here */
-                double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,-1,-1) / (rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,0,0) + MIN_REAL_NUMBER); /* want the opacity from gas absorption as a fraction of total, because this is -not- assumed to re-radiate immediately in the drift/kick routine */
+                double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,-1,-1, pp, cell) / (rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,0,0, pp, cell) + MIN_REAL_NUMBER); /* want the opacity from gas absorption as a fraction of total, because this is -not- assumed to re-radiate immediately in the drift/kick routine */
                 absorpted_rad_energy *= opacity_fraction_from_gas_absorption;
             }
 #endif
@@ -810,7 +810,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
                 {
                     double n_gamma_tot = rt_return_photon_number_density(target,k);
 #ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k]) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], pp, cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
                     double c_ne_time_n_photons_vol = c_light_ne * n_gamma_tot; // gives photon flux
                     double cross_section_ion, dummy, thold=1.0e20;
@@ -1164,7 +1164,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
                 {
                     double n_gamma_tot = rt_return_photon_number_density(target,k);
 #ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k]) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], pp, cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
                     double c_nH_time_n_photons_vol = c_light_nH * n_gamma_tot; // gives photon flux
                     double cross_section_ion, kappa_ion, dummy;
@@ -1197,7 +1197,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         }
 #endif
 
-        Heat += CR_gas_heating(target, n_elec, nH0, nHcgs, P, CellP); // CR hadronic+Coulomb+ionization heating //
+        Heat += CR_gas_heating(target, n_elec, nH0, nHcgs, pp, cell); // CR hadronic+Coulomb+ionization heating //
 #if defined(COOL_LOW_TEMPERATURES)
         if(LambdaMol<0) {Heat -= LambdaMol;} // Molecular line heating (Trad_mol_cooling_batch > Tgas) //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
@@ -1238,7 +1238,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 
 #if defined(RT_INFRARED)
     if(target >= 0) { /* attempt to account for gas-phase absorption self-opacity to cooling radiation here in limit where optically-thick regions are poorly resolved: only valid in some limits, so not really general here */
-        double gas_self_absorption_opacity = rt_kappa_adaptive_IR_band(target,T,T,-1,-1), surface_density_fromcenter = 0.5 * (cell[target].Density*All.cf_a3inv) * (Get_Particle_Size(target)*All.cf_atime);
+        double gas_self_absorption_opacity = rt_kappa_adaptive_IR_band(target,T,T,-1,-1, pp, cell), surface_density_fromcenter = 0.5 * (cell[target].Density*All.cf_a3inv) * (Get_Particle_Size(target)*All.cf_atime);
         double tau_self = gas_self_absorption_opacity * surface_density_fromcenter, fcorr = 1./(1.+tau_self*tau_self);
         Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
     }
@@ -1283,7 +1283,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
      the equations of gas+dust+radiation energy conservation with 0 dust heat capacity - note that Tdust is always in equilibrium in
      this system, and we should overwrite it with whatever we get here. */
 #ifdef RT_INFRARED
-    if(target >= 0) {LambdaDust = rt_ir_lambdadust(target, T);} /* This updates Dust_Temperature and Lambda_RadiativeCooling_toRHDBins */
+    if(target >= 0) {LambdaDust = rt_ir_lambdadust(target, T, pp, cell);} /* This updates Dust_Temperature and Lambda_RadiativeCooling_toRHDBins */
 #endif
     if(LambdaDust>0) {Lambda += LambdaDust;} /* add the -positive- Lambda-dust associated with cooling */
     if(LambdaDust<0) {Heat -= LambdaDust;} // Dust collisional heating (Tdust > Tgas) //
@@ -1329,7 +1329,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         double effective_area = 2.3 * PROTONMASS_CGS / surface_density; // since cooling rate is ultimately per-particle, need a particle-weight here
         double kappa_eff; // effective kappa, accounting for metal abundance, temperature, and density //
 	
-	    kappa_eff = rt_kappa_adaptive_IR_band(target,T,T,0,1) / UNIT_SURFDEN_IN_CGS; // will return simple opacity law kappa = 0.1cm^2/g (T/10K)^2, capped at 5 cm^2/g, in code units [convert to physical here]
+	    kappa_eff = rt_kappa_adaptive_IR_band(target,T,T,0,1, pp, cell) / UNIT_SURFDEN_IN_CGS; // will return simple opacity law kappa = 0.1cm^2/g (T/10K)^2, capped at 5 cm^2/g, in code units [convert to physical here]
         if(kappa_eff < 0.1) {kappa_eff=0.1;}
         if(T>1500.){
             /* this is an approximate result for high-temperature opacities, but provides a pretty good fit from 1.5e3 - 1.0e9 K */
@@ -1839,7 +1839,7 @@ void selfshield_local_incident_uv_flux(void)
             {
                 CellP[i].Rad_Flux_UV *= UNIT_FLUX_IN_CGS * 1276.19; CellP[i].Rad_Flux_EUV *= UNIT_FLUX_IN_CGS * 1276.19; // convert to Habing units (normalize strength to local MW field in this [narrow] band, so not the 'full' Habing flux)
                 double surfdensity = evaluate_NH_from_GradRho(P[i].GradRho,P[i].KernelRadius,CellP[i].Density,P[i].NumNgb,1,i); // in CGS
-                double tau_nuv = rt_kappa(i,RT_FREQ_BIN_FIRE_UV) * surfdensity; // optical depth: this part is attenuated by dust //
+                double tau_nuv = rt_kappa(i,RT_FREQ_BIN_FIRE_UV, P, CellP) * surfdensity; // optical depth: this part is attenuated by dust //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
                 tau_nuv *= (1.0e-3 + (P[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0, P, CellP)); // if using older FIRE defaults, this was manually added instead of rolled into rt_kappa -- annoying but here for completeness //
 #endif
@@ -1904,7 +1904,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     urad_G0 += urad_from_uvb_in_G0; // include whatever is contributed from the meta-galactic background, fed into this routine
     urad_G0 = DMIN(DMAX( urad_G0 , 1.e-10 ) , 1.e10 ); // limit values, because otherwise exponential self-shielding approximation easily artificially gives 0 incident field
 #ifdef RT_INFRARED
-    urad_G0 += rt_irband_egydensity_in_band(i,11.2,500.) * UNIT_EGY_DENSITY_IN_HABING; // add contribution from the adaptive band
+    urad_G0 += rt_irband_egydensity_in_band(i,11.2,500., pp, cell) * UNIT_EGY_DENSITY_IN_HABING; // add contribution from the adaptive band
 #endif
     // define a number of variables needed in the shielding module
     double dx_cell = Get_Particle_Size(i) * All.cf_atime; // cell size
@@ -1976,7 +1976,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     double G_LW = 3.3e-11 * urad_G0 * (1./2.); // photo-dissociation (+ionization); note we're assuming a spectral shape identical to the MW background mean, scaling by G0, 1/2 here is to account for nH2 = (1/2) * fH2 * nH because we will solve for fH2 as a mass fraction
     double xi_cr_H2 = (7.525e-16) * (1./2.); // CR dissociation (+ionization), 1/2 here is to account for nH2 = (1/2) * fH2 * nH because we will solve for fH2 as a mass fraction. Using value favored by Indriolo et al for dense GMCs.
 //#if defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON) || defined(RT_ISRF_BACKGROUND) // scale ionization+dissociation rates with local CR energy density
-    xi_cr_H2 = Get_CosmicRayIonizationRate_cgs(i, P, CellP) * (1./2.); // scales following Cummings et al. 2016 to 1.6e-17 per eV/cm^3 [this function now defined for everything; differs slightly from default assumed above but thats just being consistent about the baseline normalization here]
+    xi_cr_H2 = Get_CosmicRayIonizationRate_cgs(i, pp, cell) * (1./2.); // scales following Cummings et al. 2016 to 1.6e-17 per eV/cm^3 [this function now defined for everything; differs slightly from default assumed above but thats just being consistent about the baseline normalization here]
 //#endif
     // want to solve the implicit equation: f_f = f_0 + g[f_f]*dt, where g[f_f] = df_dt evaluated at f=f_f, so root-find: dt*g[f_f] + f_0-f_f = 0
     // can write this as a quadtratic: x_a*f^2 - x_b_0*f - xb_LW*f + x_c = 0, where xb_LW is a non-linear function of f accounting for the H2 self-shielding terms
@@ -2089,13 +2089,13 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) // we have information about individual radiation bands and their opacities; use these to compute dust absorption rate
 	for(int k=0;k<N_RT_FREQ_BINS;k++){
 	    if(RT_BAND_IS_IONIZING(k)) {continue;} // skip ionizing bands where the dust cross section is not accounted for
-	    absorption_rate += fac_abs * rt_kappa(i,k) * cell[i].Rad_E_gamma_Pred[k] * vol_inv;
+	    absorption_rate += fac_abs * rt_kappa(i,k, pp, cell) * cell[i].Rad_E_gamma_Pred[k] * vol_inv;
 	}
 #endif
-	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1); // CMB absorption; assume cloud is optically-thin to the CMB
+	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
 #if defined(RT_ISRF_BACKGROUND) // account for additional optical + IR radiation field with extinction
 	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i); // column density in code units
-	double kappa_IR = rt_kappa_adaptive_IR_band(i,20.,20.,0,1); // assume Trad=20 for IR dust opacity
+	double kappa_IR = rt_kappa_adaptive_IR_band(i,20.,20.,0,1, pp, cell); // assume Trad=20 for IR dust opacity
 	double Zfac = 1.;
 #ifdef METALS
 	Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];
@@ -2107,7 +2107,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 	absorption_rate += fac_abs * kappa_IR * ((-0.5*expm1(DMAX(-tau_opt,-100)) * e_HiEgy + e_IR)/UNIT_PRESSURE_IN_EV); // this assumes absorbed ONIR photons are reradiated into IR, factor of 0.5 assumes 1/2 of reradiated IR photons do not go deeper into the cloud
 #endif
 	// OK now we have our dust absorption rate, let's call the solver
-	double Tdust = rt_eqm_dust_temp(i, T, absorption_rate);
+	double Tdust = rt_eqm_dust_temp(i, T, absorption_rate, pp, cell);
 	return Tdust;
 #endif // SINGLE_STAR_SINK_DYNAMICS
 
@@ -2185,7 +2185,7 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
 {
     if(All.ComovingIntegrationOn) {double rhofac=density_cgs/(1000.*COSMIC_BARYON_DENSITY_CGS); if(rhofac<0.2) {return 0;}} // ignore these reactions in the IGM
     double zeta_cr=1.0e-17, f_dustgas=0.01, n_ion_max=4.1533e-5, XH=HYDROGEN_MASSFRAC; // cosmic ray ionization rate (fixed as constant for non-CR runs) and dust-to-gas ratio
-    if(target >= 0) {zeta_cr = Get_CosmicRayIonizationRate_cgs(target, P, CellP);} // convert to ionization rate, using models as in Cummings et al. 2016
+    if(target >= 0) {zeta_cr = Get_CosmicRayIonizationRate_cgs(target, pp, cell);} // convert to ionization rate, using models as in Cummings et al. 2016
 #ifdef METALS
     if(target>=0) {f_dustgas=0.5*pp[target].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(target,0, pp, cell) + 1.e-15;} // constant dust-to-metals ratio [floor purely numerical here, needed to avoid a spurious divergence below]
 #ifdef COOL_METAL_LINES_BY_SPECIES

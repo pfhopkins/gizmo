@@ -73,7 +73,7 @@ void particle2in_rt_cg(struct rt_cg_data_in *in, int i)
     in->KernelRadius = P[i].KernelRadius;
     in->Mass = P[i].Mass;
     in->Density = CellP[i].Density;
-    for(k=0; k<N_RT_FREQ_BINS; k++) in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k);
+    for(k=0; k<N_RT_FREQ_BINS; k++) in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k, P, CellP);
 }
 
 /* internal product of two vectors (for all gas particles) */
@@ -398,7 +398,7 @@ void rt_diffusion_cg_matrix_multiply(double **matrixmult_in, double **matrixmult
     for(i = 0; i < N_gas; i++)
         if(P[i].Type == 0) {
             for(k = 0; k < N_RT_FREQ_BINS; k++) {
-                double fac_i = dt * rt_absorption_rate(i,k); 
+                double fac_i = dt * rt_absorption_rate(i,k, P, CellP); 
                 if((1 + fac_i + matrixmult_sum[k][i]) < 0) {printf("1 + matrixmult_sum + rate= %g   matrixmult_sum=%g rate=%g i =%d\n", 1 + fac_i + matrixmult_sum[k][i], matrixmult_sum[k][i], fac_i, i); endrun(11111111);}
                 /* the "1" here accounts for the fact that we must start from the previous photon number (the matrix includes only the "dt" term); 
                     the fac_i term here accounts for sinks [here, the rate of photon absorption]; the in*sum part below accounts for the re-arrangement 
@@ -462,7 +462,7 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
                 
                         SymmetricTensor2<double> ET_ij; for(int kk=0;kk<6;kk++) {ET_ij.data[kk] = 0.5 * (local.ET[k].data[kk] + CellP[j].ET[k].data[kk]);}
                         double tensor = dot(dp, ET_ij.matvec(dp)) / r2;
-                        double kappa_ij = 0.5*(local.RT_DiffusionCoeff[k] + rt_diffusion_coefficient(j,k));
+                        double kappa_ij = 0.5*(local.RT_DiffusionCoeff[k] + rt_diffusion_coefficient(j,k, P, CellP));
                         double fac = tensor_norm * tensor * kappa_ij;
                         out.matrixmult_out[k] -= fac * matrixmult_in[k][j];
                         out.matrixmult_sum[k] += fac;

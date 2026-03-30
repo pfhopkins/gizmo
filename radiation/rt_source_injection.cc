@@ -51,7 +51,7 @@ void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
     in->KernelSum_Around_RT_Source = P[i].KernelSum_Around_RT_Source;
     /* luminosity is set to zero here for gas particles because their self-illumination is handled trivially in a single loop, earlier */
     double lum[N_RT_FREQ_BINS];
-    int active_check = rt_get_source_luminosity(i,0,lum);
+    int active_check = rt_get_source_luminosity(i,0,lum, P, CellP);
     double dt = 1; // make this do nothing unless flags below are set:
 #if defined(RT_INJECT_PHOTONS_DISCRETELY)
     dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i);
@@ -100,7 +100,7 @@ int rt_sourceinjection_active_check(int i)
     if(P[i].Type == 5 && !P[i].do_gas_search_this_timestep) return 0;
 #endif
     double lum[N_RT_FREQ_BINS];
-    return rt_get_source_luminosity(i,-1,lum);
+    return rt_get_source_luminosity(i,-1,lum, P, CellP);
 }
 
 
@@ -117,7 +117,7 @@ void rt_source_injection_initial_operations_preloop(void)
         if(P[j].Type==0) {
             double lum[N_RT_FREQ_BINS]; int k;
             for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection //
-            int active_check = rt_get_source_luminosity(j,0,lum);
+            int active_check = rt_get_source_luminosity(j,0,lum, P, CellP);
             /* here is where we would need to code some source luminosity for the gas */
             for(k=0;k<N_RT_FREQ_BINS;k++) if(active_check) {CellP[j].Rad_Je[k]=lum[k];}
         }

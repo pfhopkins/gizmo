@@ -80,7 +80,7 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
   int j, no; MyFloat v, vmax;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     Vec3<MyDouble> rt_source_lum_dp;
-    {double lum[N_RT_FREQ_BINS]; int active_check = rt_get_source_luminosity(i,-1,lum); rt_source_lum_dp = active_check ? dp : Vec3<MyDouble>{};}
+    {double lum[N_RT_FREQ_BINS]; int active_check = rt_get_source_luminosity(i,-1,lum, P, CellP); rt_source_lum_dp = active_check ? dp : Vec3<MyDouble>{};}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
     Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
