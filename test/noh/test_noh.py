@@ -22,7 +22,7 @@ def plot_noh_density_slice(coords, rho, output_dir="."):
     box_center = 3.0
     M = Meshoid(coords)
     center = np.array([box_center, box_center, box_center])
-    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=4., order=1)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=4., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-2, 2, -2, 2])
     flush_colorbar(im, ax=ax, label="log10(Density)")
