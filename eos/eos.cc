@@ -41,9 +41,6 @@ double return_user_desired_target_pressure(int i)
 Simple getter for the Pressure attribute - will calculate it on-the-fly if EOS quantities are not being cached
  */
 double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell) {
-#ifndef EOS_PRECOMPUTE
-    set_eos_pressure(i, pp, cell);
-#endif
     return cell[i].Pressure;
 }
 
@@ -60,18 +57,10 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     double soundspeed, press=0, gamma_eos_index = gamma_eos(i, pp, cell); soundspeed=0; /* get effective adiabatic index */
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
-#if (defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)) || defined(EOS_SUBSTELLAR_ISM) // will do temperature here
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
     temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties
-#endif
-#ifdef EOS_PRECOMPUTE
-#ifdef EOS_CARRIES_TEMPERATURE
     cell[i].Temperature = temp; // cache the tempature
-#endif
-#ifdef EOS_CARRIES_GAMMA
     cell[i].Gamma = gamma_eos(i, pp, cell); // cache the adiabatic index; this will reuse the pre-computed cell[i].Temperature assigned above
-#endif
-#endif
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
@@ -191,14 +180,12 @@ double INLINE_FUNC gamma_eos(int i, struct particle_data *pp, struct gas_cell_da
 {
 #if defined(COOL_MOLECFRAC_NONEQM)
     if(i >= 0) {
-        if(pp[i].Type==0) {
-            double fH = HYDROGEN_MASSFRAC, f = cell[i].MolecularMassFraction, xe = cell[i].Ne; // use the variables below to update the EOS as needed
-            double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.; // sum e-, H or p, He, which act monotomic, and molecular, by number
+        double fH = HYDROGEN_MASSFRAC, f = cell[i].MolecularMassFraction, xe = cell[i].Ne; // use the variables below to update the EOS as needed
+        double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.; // sum e-, H or p, He, which act monotomic, and molecular, by number
 #ifdef EOS_SUBSTELLAR_ISM
-            gamma_di = hydrogen_molecule_gamma(get_temperature(i, pp, cell));
+        gamma_di = hydrogen_molecule_gamma(cell[i].Temperature);
 #endif
-            return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.)); // weighted sum by number to compute effective EOS
-        }
+        return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.)); // weighted sum by number to compute effective EOS
     }
 #endif
     return GAMMA_DEFAULT; /* default to universal constant here */
@@ -207,10 +194,7 @@ double INLINE_FUNC gamma_eos(int i, struct particle_data *pp, struct gas_cell_da
 #ifdef COOLING
 /* Returns the temperature, either pre-computed or calling the routine to re-compute it*/
 double get_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell){
-#if defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)
-    if(All.Time > 0 || cell[i].Temperature > 0) {return cell[i].Temperature;}
-#endif
-    return compute_temperature(i, pp, cell);
+    return cell[i].Temperature;
 }
 
 

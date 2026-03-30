@@ -367,14 +367,11 @@ extern struct gas_cell_data
     MyFloat SubGrid_CosmicRayEnergyDensity;
 #endif
     
+    MyFloat Temperature;                  /* Temperature */
+    MyFloat Gamma;                        /* First adiabatic index */
+
 #ifdef EOS_GENERAL
     MyFloat SoundSpeed;                   /* Sound speed */
-#ifdef EOS_CARRIES_TEMPERATURE
-    MyFloat Temperature;                  /* Temperature */
-#endif
-#ifdef EOS_CARRIES_GAMMA
-    MyFloat Gamma;                        /* First adiabatic index */
-#endif
 #ifdef EOS_CARRIES_YE
     MyFloat Ye;                           /* Electron fraction */
 #endif
@@ -463,6 +460,43 @@ extern struct gas_cell_data
         return Rad_Flux_Limiter[k_freq];
 #endif
         return 1;
+    }
+
+    inline double pressure() const {return Pressure;} /*!< gas pressure */
+    inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
+
+    inline double gamma_eos_value() const { /*!< effective adiabatic index */
+#if defined(COOL_MOLECFRAC_NONEQM)
+        double fH = HYDROGEN_MASSFRAC, f = MolecularMassFraction, xe = Ne;
+        double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.;
+#ifdef EOS_SUBSTELLAR_ISM
+        gamma_di = hydrogen_molecule_gamma(Temperature);
+#endif
+        return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.));
+#endif
+        return GAMMA_DEFAULT;
+    }
+
+    inline double thermal_soundspeed() const { /*!< thermal sound speed */
+        return sqrt(gamma_eos_value() * (gamma_eos_value()-1.) * InternalEnergyPred);
+    }
+
+    inline double Alfven_speed() const { /*!< Alfven speed */
+#if defined(MAGNETIC)
+        double bmag = (Bfield() * All.cf_a2inv).norm_sq();
+        if(bmag > 0) {return sqrt(bmag / (MIN_REAL_NUMBER + Density*All.cf_a3inv));}
+#endif
+        return 0;
+    }
+
+    inline double Bfield_microGauss() const { /*!< B-field magnitude in microGauss */
+        double Bmag=0;
+#ifdef MAGNETIC
+        Bmag = (Bfield() * All.cf_a2inv).norm_sq();
+#else
+        Bmag = 2.*Pressure*All.cf_a3inv;
+#endif
+        return UNIT_B_IN_GAUSS * sqrt(DMAX(Bmag,0)) * 1.e6;
     }
 
     inline double Bfield_component(int k) const { /*!< B-field component k in code units (B*Vol = BPred * Density / Mass) */
