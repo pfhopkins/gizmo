@@ -332,6 +332,9 @@ extern struct gas_cell_data
 #if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_EVOLVE_ENERGY)
     MyFloat Dt_Rad_E_gamma_Work[N_RT_FREQ_BINS]; /*!< saved rad pressure work contribution to Dt_Rad_E_gamma, added back each sub-step */
 #endif
+#if defined(RT_INFRARED) && defined(COOLING)
+    MyFloat DtIE_IR_Subcycle; /*!< hydro-pass DtInternalEnergy, saved before subcycle loop to prevent IR heating accumulation */
+#endif
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     MyFloat Dt_Transport_Subcycle_Saved; /*!< saved DtInternalEnergy (code units) before cooling, restored each sub-step */
 #endif
