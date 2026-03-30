@@ -441,6 +441,57 @@ extern struct gas_cell_data
     /* ---- member functions for derived quantities ---- */
     inline double nHcgs() const {return HYDROGEN_MASSFRAC * Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;} /*!< hydrogen number density in cgs */
 
+    inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
+#ifdef HYDRO_PRESSURE_SPH
+        return EgyWtDensity;
+#endif
+        return Density;
+    }
+
+    inline void enforce_temperature_floor() { /*!< clamp internal energy to minimum temperature */
+        if(All.MinEgySpec) {
+            if(InternalEnergy < All.MinEgySpec) {
+                InternalEnergy = All.MinEgySpec;
+                DtInternalEnergy = 0;
+            }
+        }
+    }
+
+    inline double flux_limiter(int k_freq) const { /*!< radiation flux limiter for band k_freq */
+#ifdef RT_FLUXLIMITER
+        return Rad_Flux_Limiter[k_freq];
+#endif
+        return 1;
+    }
+
+#ifdef EOS_TILLOTSON
+    inline double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
+        int type = CompositionType;
+        double a=All.Tillotson_EOS_params[type][0], b=All.Tillotson_EOS_params[type][1],
+        u0=All.Tillotson_EOS_params[type][2], rho0=All.Tillotson_EOS_params[type][3],
+        A0=All.Tillotson_EOS_params[type][4], B0=All.Tillotson_EOS_params[type][5],
+        u_s=All.Tillotson_EOS_params[type][6], u_s_prime=All.Tillotson_EOS_params[type][7],
+        alpha=All.Tillotson_EOS_params[type][8], beta=All.Tillotson_EOS_params[type][9];
+        double rho=Density, u=InternalEnergyPred;
+        double eta=rho/rho0, mu=eta-1, u_u0eta2=1+u/(u0*eta*eta), p0=u*rho, z=1/eta-1, press=0, cs=0, press_min=1.e-10*u0*rho0;
+        double Pc = (a + b/u_u0eta2)*p0 + A0*mu + B0*mu*mu;
+        double c2c_rho = (1+a+b/u_u0eta2)*Pc + A0+B0*(eta*eta-1) + b*(u_u0eta2-1)*(2*p0-Pc)/(u_u0eta2*u_u0eta2);
+        double Pe = a*p0 + (b/u_u0eta2*p0 + A0*mu * exp(-beta*z)) * exp(-alpha*z*z);
+        double c2e_rho = (1+a+b/u_u0eta2*exp(-alpha*z*z))*Pe + A0*eta*(1+mu*(beta+2*alpha*z-eta)/(eta*eta))*exp(-beta*z-alpha*z*z)
+        + b*p0/(u_u0eta2*u_u0eta2*eta*eta)*(2*alpha*z*u_u0eta2*eta + (Pe/(u0*rho)-2*u/u0))*exp(-alpha*z*z);
+        double Px = (Pe*(u-u_s) + Pc*(u_s_prime - u)) / (u_s_prime - u_s);
+        double c2x_rho = (c2c_rho*(u-u_s) + c2e_rho*(u_s_prime - u)) / (u_s_prime - u_s);
+        if(u <= u_s) {press=Pc; cs=c2c_rho;} else {if(u >= u_s_prime) {press=Pe; cs=c2e_rho;} else {press=Px; cs=c2x_rho;}}
+        if(cs <= 0) {cs=press_min;}
+        SoundSpeed = cs/rho;
+#ifdef EOS_ELASTIC
+        SoundSpeed += All.Tillotson_EOS_params[CompositionType][10] / rho;
+#endif
+        SoundSpeed = sqrt(SoundSpeed);
+        return press;
+    }
+#endif
+
 }
 *CellP,                /*!< holds gas cell data on local processor */
 *DomainGasBuf;            /*!< buffer for gas cell data in domain decomposition */

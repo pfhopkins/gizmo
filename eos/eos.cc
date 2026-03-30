@@ -225,24 +225,14 @@ double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data
 /* trivial function to check if particle falls below the minimum allowed temperature */
 void check_particle_for_temperature_minimum(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    if(All.MinEgySpec)
-    {
-        if(cell[i].InternalEnergy < All.MinEgySpec)
-        {
-            cell[i].InternalEnergy = All.MinEgySpec;
-            cell[i].DtInternalEnergy = 0;
-        }
-    }
+    cell[i].enforce_temperature_floor();
 }
 
 
 
 double INLINE_FUNC Get_Gas_density_for_energy_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-#ifdef HYDRO_PRESSURE_SPH
-    return cell[i].EgyWtDensity;
-#endif
-    return cell[i].Density;
+    return cell[i].density_for_energy();
 }
 
 
