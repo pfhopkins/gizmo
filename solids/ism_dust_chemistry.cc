@@ -224,12 +224,6 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
         {
             for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {CellP[i].ISMDustChem_Dust_NumberInBin[j][k]=0;CellP[i].ISMDustChem_Dust_SlopeInBin[j][k]=0;}}
         }
-        for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-            for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
-                CellP[i].ISMDustChem_Shat_dMdt[j][k] = 0;
-                CellP[i].ISMDustChem_Coag_dMdt[j][k] = 0;
-            }
-        }
     }
 #if !defined(IO_DUST_NOT_IN_ICFILE)
     // Simulations track the number and slope and not the mass of dust in each bin, but only the mass and number are
@@ -241,12 +235,6 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
                 bin_number = CellP[i].ISMDustChem_Dust_NumberInBin[j][k];
                 bin_mass = CellP[i].ISMDustChem_Dust_SlopeInBin[j][k];
                 update_ISMDustChemEvo_bin_number_and_slope(i,j,k,bin_number,bin_mass);
-            }
-        }
-        for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
-            for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
-                CellP[i].ISMDustChem_Shat_dMdt[j][k] = 0;
-                CellP[i].ISMDustChem_Coag_dMdt[j][k] = 0;
             }
         }
     }
@@ -687,7 +675,7 @@ double cumulative_AGB_dust_returns(int dust_type, double star_age, double z)
 void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SNeIaFlag, double Msne)
 {
     int k,l;
-    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0};
+    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}};
     // Assume initial grain size distribution (dn/da) with (1) a log-normal distribution centered at large radii and (2) a power-law tail to smaller grain sizes following results from Kirchschlager et al. (2019, 2020) 
     double a0=0.1E-4, sigma=0.2, a_cut=0.1E-4, gamma=3.5, a_min=All.ISMDustChem_Grain_Size_Min; // center (cm) and standard deviation of log-normal distribution, intersect of the two distributions (cm), power for power law, and minimum size for power law (cm).
     double bulk_dens,dust_atomic_weight,C1_norm,C2_norm,high_edge,low_edge,bin_number,bin_mass; // grain mass density and normalization set to match total dust species mass returned
@@ -740,7 +728,7 @@ void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SN
 void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
 {
     int k,l;
-    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={0};
+    double number_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}}, mass_yields[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]={{0}};
     // Assume initial mass distribution per logarithmic grain size (a^4*dn/da) is log-normal
     double a0=0.1E-4, sigma=0.47; // center (cm) and standard deviation of log-normal distribution 
     double bulk_dens,dust_atomic_weight,C_norm,high_edge,low_edge; // grain mass density and normalization set to match total dust mass returned
@@ -1589,11 +1577,11 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // Calculate turbulence driven grain velocities for each bin following prescription in Hirashita & Chen (2023)
         // Note we use the rms nH
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
+            // Assuming Kolmogorov turbulence for determing grain velocities
+            vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.32E5*(Mach/3)*pow(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4,0.5)*pow((temp/sqrt(clumping_factor))/100,0.25)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.25)*pow(bulk_dens/3.5,0.5); // cm/s
             // Assuming supersonic turbulence for determing grain velocities
             // This is typically ~1 dex lower than assuming Kolmogorov turbulence and ultimately supresses shattering and sometimes enhancing coagulation
-            vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.066E5*(Mach/3)*(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.5)*(bulk_dens/3.5); // cm/s
-            // Assuming Kolmogorov turbulence for determing grain velocities
-            //vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.32E5*(Mach/3)*pow(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4,0.5)*pow((temp/sqrt(clumping_factor))/100,0.25)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.25)*pow(bulk_dens/3.5,0.5); // cm/s
+            //vgr[bin_i] = All.ISMDustChem_GrainVelocityScaling * 0.066E5*(Mach/3)*(All.ISMDustChem_GrainBinCenters[bin_i]/1E-4)*pow(sqrt(clumping_factor)*nH_cgs/1E3,-0.5)*(bulk_dens/3.5); // cm/s
         }
 
         // Calculate relative velocities between grain bins given random impact angle 
@@ -1682,10 +1670,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                 // Note change in Vcell due to coagulation density enhancement only applied to coagulation mass change
                 total_mlost = (mlost_coag+mlost_shat)*M_PI*miavg; // units of g/s cm^3
                 total_mgained = (mgained_coag+mgained_shat)*M_PI; // units of g/s cm^3
-                if (k_cycle==0) {
-                    CellP[i].ISMDustChem_Shat_dMdt[k][bin_i] = (mgained_shat-mlost_shat)*clumping_factor/Vcell; // g/s
-                    CellP[i].ISMDustChem_Coag_dMdt[k][bin_i] = (mgained_coag-mlost_coag)*clumping_factor/Vcell; // g/s
-                }
                 dM[bin_i] = (total_mgained-total_mlost)*clumping_factor/Vcell*dt_subcycle*1E9*SECONDS_PER_YEAR; // grams
                 // Keep track of the net mass and number grains moved out of bins for time step subcycling check
                 if (k_cycle==0) {
@@ -1724,6 +1708,8 @@ void update_dust_photodestruction(int i, double dtime_gyr)
 {
     // still in development so off by default
     // current implementation is too effective at destroying dust 
+    // going to rework this to inject destruction similar to SNe model. 
+    // Such as assume stromgren sphere and clear dust mass within said sphere.
 #if defined(DUSTPHOTODESTRUCTION_TURNON)
     // If gas has been recently photoionized then dust should also be destroyed via photodestruction
     // The delay time is zeroed after recombination so it serves as a useful tracker of HII regions

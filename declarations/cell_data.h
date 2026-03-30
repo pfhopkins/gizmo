@@ -47,8 +47,6 @@ extern struct gas_cell_data
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     MyDouble ISMDustChem_Dust_NumberInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
     MyDouble ISMDustChem_Dust_SlopeInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
-    MyDouble ISMDustChem_Coag_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
-    MyDouble ISMDustChem_Shat_dMdt[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS]; /*!< shattering mass rate for each dust species and size bin */
 #else
     MyDouble ISMDustChem_C_in_CO;                      /*!< C metallicity locked in CO */
     MyDouble ISMDustChem_MassFractionInDenseMolecular; /*!< mass fraction of gas in dense MC phase */

@@ -679,9 +679,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_DELAY_TIME_HII:
         case IO_CHIMES_FLUX_G0:
         case IO_CHIMES_FLUX_ION:
-        case IO_DUSTCHEMGRAINBINSLOPES:
-        case IO_DUSTCHEM_COAG_MASSRATE:
-        case IO_DUSTCHEM_SHAT_MASSRATE:
         case IO_MACHNUM:
             break;
 
@@ -1036,9 +1033,6 @@ void read_file(char *fname, int readTask, int lastTask)
             if(RestartFlag == 2 && blocknr == IO_MACHNUM) {continue;}
             if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINNUMBERS) {continue;}
             if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINMASS) {continue;}
-            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINSLOPES) {continue;}
-            if(RestartFlag == 2 && blocknr == IO_DUSTCHEM_COAG_MASSRATE) {continue;}
-            if(RestartFlag == 2 && blocknr == IO_DUSTCHEM_SHAT_MASSRATE) {continue;}
 #endif
 #endif
 #endif
