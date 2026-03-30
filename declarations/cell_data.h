@@ -437,7 +437,10 @@ extern struct gas_cell_data
     MyDouble TD_DynDiffCoeff_error_default;
 #endif
 #endif
-    
+
+    /* ---- member functions for derived quantities ---- */
+    inline double nHcgs() const {return HYDROGEN_MASSFRAC * Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;} /*!< hydrogen number density in cgs */
+
 }
 *CellP,                /*!< holds gas cell data on local processor */
 *DomainGasBuf;            /*!< buffer for gas cell data in domain decomposition */
