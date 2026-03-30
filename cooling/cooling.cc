@@ -887,10 +887,10 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 	    double temp = pow(10.,logT);
         n_elec += return_electron_fraction_from_heavy_ions(target, temp, rho, n_elec, pp, cell);
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
-        n_elec += return_electron_fraction_from_alkali(target, temp);
-	    n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac);        
-        n_elec += return_electron_fraction_from_Oplus(target, nHp);
-	    n_elec += return_electron_fraction_from_molecular_ions(target, temp);
+        n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
+	    n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);        
+        n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
+	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
 #endif        
 #endif       
 	
