@@ -49,13 +49,13 @@ void *GasGrad_evaluate_secondary(void *p, int gradient_iteration);
 
 
 /* function that tells us whether a given element should be active for gradient calculation*/
-int GasGrad_isactive(int i)
+int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    if(P[i].Type != 0) return 0;
-    if(P[i].Mass <= 0) return 0;
-    if(CellP[i].Density <= 0 || P[i].KernelRadius <= 0) return 0;
+    if(pp[i].Type != 0) return 0;
+    if(pp[i].Mass <= 0) return 0;
+    if(cell[i].Density <= 0 || pp[i].KernelRadius <= 0) return 0;
 #if defined(GALSF_SUBGRID_WINDS) && !defined(TURB_DIFF_DYNAMIC)
-    if(CellP[i].DelayTime > 0) return 0;
+    if(cell[i].DelayTime > 0) return 0;
 #endif
     return 1;
 }
@@ -1136,7 +1136,7 @@ void hydro_gradient_calc(void)
                 int k_freq; for(k_freq = 0; k_freq < N_RT_FREQ_BINS; k_freq++)
                 {
                     /* calculate the opacity */
-                    CellP[i].Rad_Kappa[k_freq] = rt_kappa(i,k_freq); // physical units //
+                    CellP[i].Rad_Kappa[k_freq] = rt_kappa(i,k_freq, P, CellP); // physical units //
 #if defined(RT_FLUXLIMITER) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
                     /* compute the flux-limiter for radiation transport: also convenient here to compute the relevant opacities for all particles */
                     double lambda = 1;
@@ -1466,7 +1466,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
             for(n = 0; n < numngb; n++)
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
-                if(GasGrad_isactive(j)==0) continue;
+                if(GasGrad_isactive(j, P, CellP)==0) continue;
                 swap_to_j = 0;
                 
                 kernel.dp = local.Pos - P[j].Pos;
@@ -1970,7 +1970,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 
 void *GasGrad_evaluate_primary(void *p, int gradient_iteration)
 {
-#define CONDITION_FOR_EVALUATION if(GasGrad_isactive(i))
+#define CONDITION_FOR_EVALUATION if(GasGrad_isactive(i, P, CellP))
 #define EVALUATION_CALL GasGrad_evaluate(i,0,exportflag,exportnodecount,exportindex,ngblist,gradient_iteration)
 #include "../system/code_block_primary_loop_evaluation.h"
 #undef CONDITION_FOR_EVALUATION

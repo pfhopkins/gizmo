@@ -625,9 +625,9 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef CHIMES_STELLAR_FLUXES
                     double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS];
                     double chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-                    int active_check = rt_get_source_luminosity_chimes(p,1,lum,chimes_lum_G0, chimes_lum_ion);
+                    int active_check = rt_get_source_luminosity_chimes(p,1,lum,chimes_lum_G0, chimes_lum_ion, P, CellP);
 #else
-                    int active_check = rt_get_source_luminosity(p,1,lum);
+                    int active_check = rt_get_source_luminosity(p,1,lum, P, CellP);
 #endif
                     if(active_check)
                     {
@@ -1591,7 +1591,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         double h_eff_phys = soft * pow(VOLUME_NORM_COEFF_FOR_NDIMS/All.DesNumNgb,1./NUMDIMS) * All.cf_atime; // convert from softening kernel extent to effective size, assuming 3D here, and convert to physical code units
         double sigma_particle =  pmass / (h_eff_phys*h_eff_phys); // quick estimate of effective surface density of the target, in physical code units
         double fac_stellum_0 = -All.PhotonMomentum_Coupled_Fraction / (4.*M_PI * C_LIGHT_CODE_REDUCED(-1) * sigma_particle * All.G); // this will be multiplied by L/r^2 below, giving acceleration, then extra G because code thinks this is gravity, so put extra G here. everything is in -physical- code units here //
-        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {fac_stellum[kf] = fac_stellum_0*(1 - exp(-rt_kappa(-1,kf)*sigma_particle));} // rt_kappa is in physical code units, so sigma_eff_abs should be also -- approximate surface-density through particle (for checking if we enter optically-thick limit)
+        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {fac_stellum[kf] = fac_stellum_0*(1 - exp(-rt_kappa(-1,kf, P, CellP)*sigma_particle));} // rt_kappa is in physical code units, so sigma_eff_abs should be also -- approximate surface-density through particle (for checking if we enter optically-thick limit)
     }
 #endif
 #endif
@@ -1733,9 +1733,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         double lum[N_RT_FREQ_BINS];
 #ifdef CHIMES_STELLAR_FLUXES
                         double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-                        int active_check = rt_get_source_luminosity_chimes(no,1,lum, chimes_lum_G0, chimes_lum_ion);
+                        int active_check = rt_get_source_luminosity_chimes(no,1,lum, chimes_lum_G0, chimes_lum_ion, P, CellP);
 #else
-                        int active_check = rt_get_source_luminosity(no,1,lum);
+                        int active_check = rt_get_source_luminosity(no,1,lum, P, CellP);
 #endif
                         int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(active_check) {mass_stellarlum[kf]=lum[kf];} else {mass_stellarlum[kf]=0;}}
 #ifdef CHIMES_STELLAR_FLUXES
@@ -3863,9 +3863,9 @@ void force_refresh_node_moments(void)
         {double lum[N_RT_FREQ_BINS];
 #ifdef CHIMES_STELLAR_FLUXES
         double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-        int active_check = rt_get_source_luminosity_chimes(i,1,lum,chimes_lum_G0,chimes_lum_ion);
+        int active_check = rt_get_source_luminosity_chimes(i,1,lum,chimes_lum_G0,chimes_lum_ion, P, CellP);
 #else
-        int active_check = rt_get_source_luminosity(i,1,lum);
+        int active_check = rt_get_source_luminosity(i,1,lum, P, CellP);
 #endif
         if(active_check) {
             double l_sum = 0;

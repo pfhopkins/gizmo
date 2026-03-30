@@ -155,7 +155,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     int k_freq; double gamma_rad=4./3., fluxlim=1; double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
     if(pp[i].Mass>0 && cell[i].Density>0) {for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
-        press += (gamma_rad-1.) * return_flux_limiter(i,k_freq) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / pp[i].Mass;
+        press += (gamma_rad-1.) * return_flux_limiter(i,k_freq, P, CellP) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / pp[i].Mass;
         soundspeed2 += gamma_rad*(gamma_rad-1.) * cell[i].Rad_E_gamma_Pred[k_freq] / pp[i].Mass;
     }}
     soundspeed = sqrt(soundspeed2);

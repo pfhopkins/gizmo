@@ -45,7 +45,7 @@ void radiation_pressure_winds_consolidated(void)
                 total_prob_kick += dE_over_c; // sum contributions
 
                 /* calculate some pre-amble properties */
-                double RtauMax = P[i].KernelRadius * (5. + 2.0 * rt_kappa(i,RT_FREQ_BIN_FIRE_UV) * P[i].KernelRadius*P[i].DensityAroundParticle*All.cf_a2inv); // guess search radius which is a few H, plus larger factor if optically thick //
+                double RtauMax = P[i].KernelRadius * (5. + 2.0 * rt_kappa(i,RT_FREQ_BIN_FIRE_UV, P, CellP) * P[i].KernelRadius*P[i].DensityAroundParticle*All.cf_a2inv); // guess search radius which is a few H, plus larger factor if optically thick //
                 RtauMax = DMAX( 1./(UNIT_LENGTH_IN_KPC*All.cf_atime) , DMIN( 10./(UNIT_LENGTH_IN_KPC*All.cf_atime) , RtauMax )); // restrict to 1-10 kpc here
                 
                 /* if kicks are stochastic, we don't want to waste time doing a neighbor search every timestep; it can be much faster to pre-estimate the kick probabilities */
@@ -57,7 +57,7 @@ void radiation_pressure_winds_consolidated(void)
                 double v_grav_guess; v_grav_guess = DMIN( 1.82*(65.748/UNIT_VEL_IN_KMS)*pow(1.+rho_phys*UNIT_DENSITY_IN_NHCGS,-0.25) , sqrt(All.G*(P[i].Mass + VOLUME_NORM_COEFF_FOR_NDIMS*rho_phys*h_phys*h_phys*h_phys)/h_phys) ); // don't want to 'under-kick' if there are small local characteristic velocities in the region of interest
                 delta_v_imparted_rp = v_wind_threshold; // always couple this 'discrete' kick, to avoid having to couple every single timestep for every single star particle
                 double dv_imparted_perpart_guess = (dE_over_c/P[i].Mass); // estimate of summed dv_imparted [in code units] from single-scattering: = momentum/mass of particle
-                double tau_IR_guess = rt_kappa(i,RT_FREQ_BIN_FIRE_IR) * rho_phys*h_phys; // guess of IR optical depth. everything in physical code units //
+                double tau_IR_guess = rt_kappa(i,RT_FREQ_BIN_FIRE_IR, P, CellP) * rho_phys*h_phys; // guess of IR optical depth. everything in physical code units //
                 dv_imparted_perpart_guess += (dE_over_c/P[i].Mass) * tau_IR_guess; // estimate of additional IR term [1+tau_IR]*L/c assumed here as coupling //
                 double prob = dv_imparted_perpart_guess / delta_v_imparted_rp; prob *= 2000.; // need to include a buffer for errors in the estimates above
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
@@ -126,7 +126,7 @@ void radiation_pressure_winds_consolidated(void)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
                                 /* estimate fraction of the available single-scattering RP that can actually be absorbed in the cell */
                                 double sigma_cell_to_total = (1./wk) * (P[j].Mass / (h_eff_j*All.cf_atime * h_eff_j*All.cf_atime)); // code units -- correct back to 'total' column through all neighbors, since thats what determines the total fraction that will be absorbed here //
-                                double tau_uv = rt_kappa(j,RT_FREQ_BIN_FIRE_UV) * sigma_cell_to_total, tau_op = rt_kappa(j,RT_FREQ_BIN_FIRE_OPT) * sigma_cell_to_total; // opacity in uv and optical bands
+                                double tau_uv = rt_kappa(j,RT_FREQ_BIN_FIRE_UV, P, CellP) * sigma_cell_to_total, tau_op = rt_kappa(j,RT_FREQ_BIN_FIRE_OPT) * sigma_cell_to_total; // opacity in uv and optical bands
                                 double frac_abs = f_lum_ion + (1.-f_lum_ion) * (1. - 0.5*(exp(-tau_uv) + exp(-tau_op))); // absorbed fraction in the actual cell
                                 dv_imparted_singlescattering *= frac_abs; // reduce the single-scattering flux by the fraction of that flux actually absorbed
                                 if(jet_momentum_tocouple > 0) {
@@ -134,7 +134,7 @@ void radiation_pressure_winds_consolidated(void)
                                     P[i].NewStar_Momentum_For_JetFeedback -= wk * jet_momentum_tocouple;} // remove it from the budget
 #endif
                                 /* velocity imparted by IR acceleration : = kappa*flux/c, flux scales as 1/r2 from source, kappa with metallicity */
-                                double kappa_ir_codeunits = rt_kappa(j,RT_FREQ_BIN_FIRE_IR); // opacity in code units
+                                double kappa_ir_codeunits = rt_kappa(j,RT_FREQ_BIN_FIRE_IR, P, CellP); // opacity in code units
                                 double dv_imparted_multiplescattering = All.RP_Local_Momentum_Renormalization * (dE_over_c / P[j].Mass) * kappa_ir_codeunits * (P[j].Mass/(4.*M_PI*r2*All.cf_atime*All.cf_atime));
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
                                 delta_v_imparted_rp = dv_imparted_multiplescattering + dv_imparted_singlescattering;

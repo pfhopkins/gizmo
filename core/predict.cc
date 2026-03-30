@@ -286,7 +286,7 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
     CosmicRay_Update_DriftKick(i,dt_entr,1, P, CellP);
 #endif
 #ifdef RADTRANSFER
-    rt_update_driftkick(i,dt_entr,1);
+    rt_update_driftkick(i,dt_entr,1, P, CellP);
 #endif
 #ifdef EOS_ELASTIC
     elastic_body_update_driftkick(i,dt_entr,1);
@@ -438,7 +438,7 @@ double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, do
 /* this function is needed to control volume fluxes of the normal components of B and phi in the 
     -bad- situation where the meshless method 'faces' do not properly close (usually means you are 
     using boundary conditions that you should not) */
-double Get_DtB_FaceArea_Limiter(int i)
+double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef HYDRO_SPH
     return 1;
@@ -446,16 +446,16 @@ double Get_DtB_FaceArea_Limiter(int i)
     /* define some variables */
     double dt_entr = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
-    Vec3<double> dB = CellP[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
-    double dBmag = dB.norm(), Bmag = CellP[i].BPred.norm();
+    Vec3<double> dB = cell[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
+    double dBmag = dB.norm(), Bmag = cell[i].BPred.norm();
     /* also make sure to check the actual pressure, since if P>>B, we will need to allow larger changes in B per timestep */
-    double P_BV_units = sqrt(2.*CellP[i].Pressure*All.cf_a3inv)*P[i].Mass/CellP[i].Density / All.cf_a2inv;
+    double P_BV_units = sqrt(2.*cell[i].Pressure*All.cf_a3inv)*pp[i].Mass/cell[i].Density / All.cf_a2inv;
     /* the above should be in CODE Bcode*Vol_code units! */
     double Bmag_max = DMAX(Bmag, DMIN( P_BV_units, 10.*Bmag ));
     /* now check how accurately the cell is 'closed': the face areas are ideally zero */
-    double area_sum = fabs(CellP[i].Face_Area[0])+fabs(CellP[i].Face_Area[1])+fabs(CellP[i].Face_Area[2]);
+    double area_sum = fabs(cell[i].Face_Area[0])+fabs(cell[i].Face_Area[1])+fabs(cell[i].Face_Area[2]);
     /* but this needs to be normalized to the 'expected' area given KernelRadius */
-    double area_norm = Get_Particle_Expected_Area(P[i].KernelRadius * All.cf_atime);
+    double area_norm = Get_Particle_Expected_Area(pp[i].KernelRadius * All.cf_atime);
     /* ok, with that in hand, define an error tolerance based on this */
     if(area_norm>0)
     {

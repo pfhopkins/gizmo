@@ -683,7 +683,7 @@ void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<d
 
 
 /* return desired cell launch speed for spawned cells, in physical (not comoving) units */
-double get_spawned_cell_launch_speed(int i)
+double get_spawned_cell_launch_speed(int i, struct particle_data *pp)
 {
     double v_magnitude = All.Sink_outflow_velocity; // velocity of the jet: default mode is to set this manually to a specific value in physical units
 
@@ -695,14 +695,14 @@ double get_spawned_cell_launch_speed(int i)
 #endif
     
 #ifdef SNE_NONSINK_SPAWN
-    if(P[i].Type == 4) {
+    if(pp[i].Type == 4) {
         double t_gyr = evaluate_stellar_age_Gyr(i); int SNeIaFlag=0; if(t_gyr > 0.03753) {SNeIaFlag=1;}; /* assume SNe before critical time are core-collapse, later are Ia */
         double Msne=10.5/UNIT_MASS_IN_SOLAR; if(SNeIaFlag) {Msne=1.4/UNIT_MASS_IN_SOLAR;} // average ejecta mass for single event (normalized to give total mass loss correctly)
         double SNeEgy = (1.0e51/UNIT_ENERGY_IN_CGS);
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-        if(SNeIaFlag==0) {double z_eff = P[i].Metallicity[10]/All.SolarAbundances[10]; if(z_eff < 1) {SNeEgy *= pow(z_eff + 1.e-5 , -0.12);}} // updated to use same metallicity used for stellar evolution, rather than total metallicity, if this derives from pre-explosion winds, etc, for consistency
+        if(SNeIaFlag==0) {double z_eff = pp[i].Metallicity[10]/All.SolarAbundances[10]; if(z_eff < 1) {SNeEgy *= pow(z_eff + 1.e-5 , -0.12);}} // updated to use same metallicity used for stellar evolution, rather than total metallicity, if this derives from pre-explosion winds, etc, for consistency
 #if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 1)
-        if(i>0) {double z0 = P[i].Metallicity[0]/All.SolarAbundances[0];
+        if(i>0) {double z0 = pp[i].Metallicity[0]/All.SolarAbundances[0];
 #if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 2)
             SNeEgy *= pow(z0/0.1 + 1.e-3 , -0.2);
 #else
@@ -716,19 +716,19 @@ double get_spawned_cell_launch_speed(int i)
 #endif
 
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-    double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot;
+    double Mdot_wind = pp[i].Sink_Mdot_ROI - pp[i].Sink_Mdot;
     if(Mdot_wind < 0) {return MIN_REAL_NUMBER;} // should be invalid
-    double mdot = P[i].Sink_Mdot / (P[i].Sink_Mass / (4.e7 / UNIT_TIME_IN_YR));
-    double L_over_c = evaluate_sink_radiative_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i) * P[i].Sink_Mdot * C_LIGHT_CODE;
+    double mdot = pp[i].Sink_Mdot / (pp[i].Sink_Mass / (4.e7 / UNIT_TIME_IN_YR));
+    double L_over_c = evaluate_sink_radiative_efficiency(pp[i].Sink_Mdot,pp[i].Sink_Mass,i) * pp[i].Sink_Mdot * C_LIGHT_CODE;
     double Pdot_rad = 0.;
     if(mdot > 0.01) {Pdot_rad = L_over_c * DMIN(DMAX(mdot,1.),10.);}
-    double sigma_ROI = sqrt(All.G * P[i].Sink_Mass / P[i].Sink_ROI);
+    double sigma_ROI = sqrt(All.G * pp[i].Sink_Mass / pp[i].Sink_ROI);
     double Pdot_turb = 3. * Mdot_wind * sigma_ROI;
     double Pdot_wind = Pdot_rad + Pdot_turb;
     v_magnitude = Pdot_wind / Mdot_wind; 
     /* // (older deprecated model here)
-    double MSINK_4 = P[i].Sink_Mass * UNIT_MASS_IN_SOLAR / 1.e4; // sink mass in 1e4 Msun to scale
-    double lambda_edd_eff = DMAX( P[i].Sink_Mdot / sink_eddington_mdot(P[i].Sink_Mass) , 1.e-10 ); // eddington ratio, with floor just to prevent unphysical behaviors
+    double MSINK_4 = pp[i].Sink_Mass * UNIT_MASS_IN_SOLAR / 1.e4; // sink mass in 1e4 Msun to scale
+    double lambda_edd_eff = DMAX( pp[i].Sink_Mdot / sink_eddington_mdot(pp[i].Sink_Mass) , 1.e-10 ); // eddington ratio, with floor just to prevent unphysical behaviors
     if(lambda_edd_eff > (SINK_RIAF_SUBEDDINGTON_MODEL))
     {
         double v_eff_esc_BLR = 270. * sqrt(sqrt(MSINK_4 / lambda_edd_eff)) / UNIT_VEL_IN_KMS; // escape velocity from BLR in km/s, using canonical RBLR ~ 20 light-days * (L_bol/1e45)^(1/2)-ish scaling
@@ -743,10 +743,10 @@ double get_spawned_cell_launch_speed(int i)
     v_magnitude = single_star_jet_velocity(i); // get velocity from our more detailed function
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(SINGLE_STAR_FB_WINDS)
-    if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode==1)) {v_magnitude = single_star_wind_velocity(i);} // only MS stars launch winds: get velocity from fancy model
+    if((pp[i].ProtoStellarStage == 5) && (pp[i].wind_mode==1)) {v_magnitude = single_star_wind_velocity(i);} // only MS stars launch winds: get velocity from fancy model
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(SINGLE_STAR_FB_SNE)
-    if(P[i].ProtoStellarStage == 6) {v_magnitude = single_star_SN_velocity(i);} // this star is about to go SNe: get velocity from fancy model
+    if(pp[i].ProtoStellarStage == 6) {v_magnitude = single_star_SN_velocity(i);} // this star is about to go SNe: get velocity from fancy model
 #endif
     return v_magnitude;
 }
@@ -949,7 +949,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     /* create the  new particles to be added to the end of the particle list :
         i is the sink particle tag, j is the new "spawed" particle's location, dummy_cell_i_to_clone is a dummy gas cell's tag to be used to init the wind particle */
     int mode_default = mode, mode_prev = mode;
-    double v_magnitude_physical_default = get_spawned_cell_launch_speed(i), v_magnitude_physical=v_magnitude_physical_default, v_magnitude_physical_prev=v_magnitude_physical; /* call subroutine for this velocity */
+    double v_magnitude_physical_default = get_spawned_cell_launch_speed(i, P), v_magnitude_physical=v_magnitude_physical_default, v_magnitude_physical_prev=v_magnitude_physical; /* call subroutine for this velocity */
     
     for(j = NumPart + num_already_spawned; j < NumPart + num_already_spawned + n_particles_split; j++)
     {   /* first, clone the 'dummy' particle so various fields are set appropriately */

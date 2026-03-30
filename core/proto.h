@@ -384,7 +384,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component, struct particle_data *pp, struct gas_cell_data *cell);
 Vec3<double> Get_Gas_BField(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef MAGNETIC
-double Get_DtB_FaceArea_Limiter(int i);
+double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef DIVBCLEANING_DEDNER
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id);
 double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id);
@@ -418,7 +418,7 @@ void sink_accretion(void);
 #ifdef SINK_WIND_SPAWN
 void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
 void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir);
-double get_spawned_cell_launch_speed(int i);
+double get_spawned_cell_launch_speed(int i, struct particle_data *pp);
 #ifdef MAGNETIC
 void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& dpdir, double d_r);
 #endif
@@ -492,7 +492,7 @@ void treat_outflowing_particles(void);
 void set_injection_accel(void);
 
 int density_isactive(int n);
-int GasGrad_isactive(int i);
+int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell);
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 void cellcorrections_calc(void);
@@ -685,8 +685,8 @@ void apply_grain_dragforce(void);
 #ifdef RT_INFRARED
 double get_min_allowed_dustIRrad_temperature(void);
 double get_rt_ir_lambdadust_effective(double T, double rho, double *nH0_guess, double *ne_guess, int target, int update_Tdust);
-double dust_dE_cooling(int i, double Tgas, double Tdust, double *Tdust_fixedpoint_1, double *Tdust_fixedpoint_2);
-double rt_ir_lambdadust(int i, double Tgas);
+double dust_dE_cooling(int i, double Tgas, double Tdust, double *Tdust_fixedpoint_1, double *Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_ir_lambdadust(int i, double Tgas, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
@@ -807,8 +807,8 @@ void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate);
-double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init);
+double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
+double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp);
@@ -904,22 +904,22 @@ void pm_setup_nonperiodic_kernel(void);
 #ifdef CHIMES_STELLAR_FLUXES
 double chimes_G0_luminosity(double stellar_age, double stellar_mass);
 double chimes_ion_luminosity(double stellar_age, double stellar_mass);
-int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion);
+int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
-int rt_get_source_luminosity(int i, int mode, double *lum);
+int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 int rt_get_donation_target_bin(int bin);
-int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum);
-int rt_get_lum_band_agn(int i, int mode, double *lum);
-int rt_get_lum_band_singlestar(int i, int mode, double *lum);
+int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_define_effective_frequencies_in_bands(void);
-double return_flux_limiter(int target, int k_freq);
-double rt_kappa(int j, int k_freq);
+double return_flux_limiter(int target, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
-double rt_absorb_frac_albedo(int j, int k_freq);
-double rt_absorption_rate(int i, int k_freq);
-double rt_diffusion_coefficient(int i, int k_freq);
-void rt_eddington_update_calculation(int j);
-void rt_update_driftkick(int i, double dt_entr, int mode);
+double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_diffusion_coefficient(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
+void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef RT_SOURCE_INJECTION
 void rt_source_injection(void);
@@ -931,16 +931,16 @@ void rt_set_simple_inits(int RestartFlag);
 #if defined(RT_EVOLVE_INTENSITIES)
 void rt_init_intensity_directions(void);
 #endif
-void rt_get_lum_gas(int target, double *je);
+void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef RT_ISRF_BACKGROUND
-void rt_apply_boundary_conditions(int i);
+void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void get_background_isrf_urad(int i, double *urad);
 double background_isrf_cmb_Teff(void);
 #endif
 double slab_averaging_function(double x);
 double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
-double stellar_lum_in_band(int i, double E_lower, double E_upper);
-double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper);
+double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
 
 #ifdef RT_DIFFUSION_CG
 void rt_diffusion_cg_solve(void);
@@ -955,7 +955,7 @@ void rt_write_chemistry_stats(void);
 #endif
 
 #endif
-double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag);
+double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell);
 
 
 void find_block(char *label,FILE *fd);

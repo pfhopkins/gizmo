@@ -128,7 +128,7 @@
 #define C_LIGHT_CODE            ((C_LIGHT_CGS/UNIT_VEL_IN_CGS)) /* pure convenience function, speed-of-light in code units */
 #endif
 #ifdef RT_SPEEDOFLIGHT_REDUCTION_VARIABLE_RSL
-#define C_LIGHT_CODE_REDUCED(i) (((c_light_RSL_reductionfactor_local(i))*(C_LIGHT_CODE))) /* reduced speed-of-light in code units, again here as a convenience function */
+#define C_LIGHT_CODE_REDUCED(i) (((c_light_RSL_reductionfactor_local(i, P, CellP))*(C_LIGHT_CODE))) /* reduced speed-of-light in code units, again here as a convenience function */
 #else
 #define C_LIGHT_CODE_REDUCED(i) (((RT_SPEEDOFLIGHT_REDUCTION)*(C_LIGHT_CODE))) /* reduced speed-of-light in code units, again here as a convenience function, but just returns constant */
 #endif

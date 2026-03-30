@@ -460,7 +460,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     {
         in->Rad_E_gamma[k] = CellP[i].Rad_E_gamma_Pred[k];
         in->Rad_Kappa[k] = CellP[i].Rad_Kappa[k];
-        in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k);
+        in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k, P, CellP);
 #if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
         in->ET[k] = CellP[i].ET[k];
 #endif
@@ -670,7 +670,7 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
             }
 
-            double magnorm_closure = Get_DtB_FaceArea_Limiter(i);
+            double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
 
 #if defined(DIVBCLEANING_DEDNER) && !defined(HYDRO_SPH)
             // ok now deal with the divB correction forces and damping fields //
@@ -754,7 +754,7 @@ void hydro_final_operations_and_cleanup(void)
             Vec3<double> radacc = {}; int kfreq;
             for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++)
             {
-                double vol_inv = CellP[i].Density*All.cf_a3inv/P[i].Mass, f_kappa_abs = rt_absorb_frac_albedo(i,kfreq), flux_mag=0, erad_i=0, flux_corr=0, work_band=0, rmag=0;
+                double vol_inv = CellP[i].Density*All.cf_a3inv/P[i].Mass, f_kappa_abs = rt_absorb_frac_albedo(i,kfreq, P, CellP), flux_mag=0, erad_i=0, flux_corr=0, work_band=0, rmag=0;
                 Vec3<double> vel_i = {}, vdot_h = {}, flux_i = {}, radacc_thisband = {};
                 erad_i = CellP[i].Rad_E_gamma_Pred[kfreq]*vol_inv; // radiation energy density, needed below
                 flux_i = CellP[i].Rad_Flux_Pred[kfreq] * vol_inv; vel_i = CellP[i].VelPred * ((C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE)/All.cf_atime); flux_mag = flux_i.norm_sq();
@@ -771,7 +771,7 @@ void hydro_final_operations_and_cleanup(void)
                 double slabfac_rp=1; if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kfreq)<=checker_int) {slabfac_rp=slab_averaging_function(f_kappa_abs*CellP[i].Rad_Kappa[kfreq]*Sigma_particle) * slab_averaging_function(f_kappa_abs*CellP[i].Rad_Kappa[kfreq]*abs_per_kappa_dt);} // reduction factor for absorption over dt
                 radacc_thisband = (slabfac_rp * (CellP[i].Rad_Kappa[kfreq]/C_LIGHT_CODE_REDUCED(i))) * (flux_corr * flux_i - vdot_h); rmag = radacc_thisband.norm_sq(); // acceleration term before accounting for the 'work' term, which is calculated separately in the absorption/emission loop
                 if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kfreq)<=checker_int && f_kappa_abs > MIN_REAL_NUMBER && rmag > MIN_REAL_NUMBER && dt > 0 && P[i].Mass > 0) { // bands that destroy photons upon absorption (e.g. ionization, dust absorption) should limit the imparted momentum to the total photon momentum available - the flux in the solver normally prevents this but this addresses some edge cases with e.g. pathological ICs, rapidly-varying kappa, etc.
-                    rmag=sqrt(rmag); double r_from_abs=f_kappa_abs*rmag, abs_dt=rt_absorption_rate(i,kfreq)*dt, dE_abs=erad_i*(1.-exp(-abs_dt)); if(abs_dt<0.01) {dE_abs=erad_i*abs_dt;}
+                    rmag=sqrt(rmag); double r_from_abs=f_kappa_abs*rmag, abs_dt=rt_absorption_rate(i,kfreq, P, CellP)*dt, dE_abs=erad_i*(1.-exp(-abs_dt)); if(abs_dt<0.01) {dE_abs=erad_i*abs_dt;}
                     double rmag_max_abs=dE_abs/(vol_inv*P[i].Mass*C_LIGHT_CODE_REDUCED(i)*dt); if(rmag_max_abs<r_from_abs) {double cfac=1.+(rmag_max_abs-r_from_abs)/rmag; if(cfac>0 && cfac<1) {radacc_thisband *= cfac;}}
                 }
                 radacc += radacc_thisband; work_band = dot(radacc_thisband, vel_i) * P[i].Mass; // PdV work done by photons [absorbed ones are fully-destroyed, so their loss of energy and momentum is already accounted for by their deletion in this limit -- note that we have to be careful about the RSOL factors here! //
@@ -790,7 +790,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifdef RT_RADPRESSURE_IN_HYDRO
             int kfreq; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {
-                double fac = (1./3.) * return_flux_limiter(i,kfreq) * CellP[i].Rad_E_gamma_Pred[kfreq] * P[i].Particle_DivVel*All.cf_a2inv * (1.-2.*rt_absorb_frac_albedo(i,kfreq));
+                double fac = (1./3.) * return_flux_limiter(i,kfreq, P, CellP) * CellP[i].Rad_E_gamma_Pred[kfreq] * P[i].Particle_DivVel*All.cf_a2inv * (1.-2.*rt_absorb_frac_albedo(i,kfreq));
                 CellP[i].Dt_Rad_E_gamma[kfreq] -= (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * fac; CellP[i].DtInternalEnergy += fac / P[i].Mass; /* exact energy conservation; for appropriate RSOL definitions - careful of terms here where beta arises */
             }
 #endif
