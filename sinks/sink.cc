@@ -112,8 +112,8 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
 
     /* if pair is a gas particle make sure to account for its pressure and internal energy */
     double cs=0; if(P[j].Type==0) {
-        double vA = Get_Gas_Alfven_speed_i(j, P, CellP);
-        if(fabs(gamma_eos(j, P, CellP)-1) < 0.1) {cs = sqrt(vA*vA + 3.*CellP[j].Pressure/CellP[j].Density);} // assume you're running gamma ~ 1 to hack an isothermal EOS, so we assume gamma=5/3 for boundedness calculation
+        double vA = CellP[j].Alfven_speed();
+        if(fabs(CellP[j].gamma_eos_value()-1) < 0.1) {cs = sqrt(vA*vA + 3.*CellP[j].Pressure/CellP[j].Density);} // assume you're running gamma ~ 1 to hack an isothermal EOS, so we assume gamma=5/3 for boundedness calculation
         else {cs = sqrt(vA*vA + 2.*CellP[j].InternalEnergy);} // effective speed [since what we really want is internal energy] to add to relative velocity to compare with escape speed for boundedness check
     } // use the fast MHD wavespeed to account for magnetic+thermal energy (but not e.g. cosmic ray), in allowing accretion //
 
@@ -216,7 +216,7 @@ double sink_fb_angleweight(double sink_lum_input, Vec3<double>& sink_angle, doub
 void set_sink_mdot(int i, int n, double dt)
 {
     double mdot=0; int k; k=0;
-    double soundspeed2; soundspeed2 = convert_internalenergy_soundspeed2(n, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, P, CellP);
+    double soundspeed2; soundspeed2 = CellP[n].soundspeed2_from_u(SinkTempInfo[i].Sink_SurroudingGasInternalEnergy);
 #ifdef SINK_GRAVACCRETION
     double m_tmp_for_accrate, mdisk_for_accrate, sink_mass, fac;
     double rmax_for_accrate,fgas_for_accrate,f_disk_for_accrate, f0_for_accrate;
@@ -797,7 +797,7 @@ void sink_final_operations(void)
 #if defined(SINGLE_STAR_TIMESTEPPING)
         /* save local effective signal velocity of gas for sink particle CFL-like timestep criterion */
         P[n].Sink_SurroundingGasVel = SinkTempInfo[i].Sink_SurroundingGasVel.norm_sq();
-        P[n].Sink_SurroundingGasVel += convert_internalenergy_soundspeed2(n, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, P, CellP);
+        P[n].Sink_SurroundingGasVel += CellP[n].soundspeed2_from_u(SinkTempInfo[i].Sink_SurroudingGasInternalEnergy);
         P[n].Sink_SurroundingGasVel = sqrt(P[n].Sink_SurroundingGasVel);
 #endif
 

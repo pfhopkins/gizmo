@@ -1,3 +1,8 @@
+/* forward declarations needed by member functions below */
+#ifdef EOS_SUBSTELLAR_ISM
+double hydrogen_molecule_gamma(double temp);
+#endif
+
 /* the following struture holds data that is stored for each fluid cell in addition to the collisionless variables. */
 extern struct gas_cell_data
 {
@@ -470,15 +475,18 @@ extern struct gas_cell_data
         double fH = HYDROGEN_MASSFRAC, f = MolecularMassFraction, xe = Ne;
         double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.;
 #ifdef EOS_SUBSTELLAR_ISM
-        gamma_di = hydrogen_molecule_gamma(Temperature);
+        gamma_di = hydrogen_molecule_gamma(Temperature); // declared in proto.h, defined in eos/hydrogen_molecule.cc
 #endif
         return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.));
 #endif
         return GAMMA_DEFAULT;
     }
 
+    inline double soundspeed2_from_u(double u) const { /*!< convert specific internal energy to soundspeed^2 */
+        double g = gamma_eos_value(); return g * (g-1.) * u;
+    }
     inline double thermal_soundspeed() const { /*!< thermal sound speed */
-        return sqrt(gamma_eos_value() * (gamma_eos_value()-1.) * InternalEnergyPred);
+        return sqrt(soundspeed2_from_u(InternalEnergyPred));
     }
 
     inline double Alfven_speed() const { /*!< Alfven speed */
@@ -496,7 +504,7 @@ extern struct gas_cell_data
 #else
         Bmag = 2.*Pressure*All.cf_a3inv;
 #endif
-        return UNIT_B_IN_GAUSS * sqrt(DMAX(Bmag,0)) * 1.e6;
+        return UNIT_B_IN_GAUSS * sqrt(std::max(Bmag,0.)) * 1.e6;
     }
 
     inline double Bfield_component(int k) const { /*!< B-field component k in code units (B*Vol = BPred * Density / Mass) */

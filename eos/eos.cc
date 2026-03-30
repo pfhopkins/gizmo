@@ -40,10 +40,6 @@ double return_user_desired_target_pressure(int i)
 /*!
 Simple getter for the Pressure attribute - will calculate it on-the-fly if EOS quantities are not being cached
  */
-double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell) {
-    return cell[i].Pressure;
-}
-
 /*!
     Updates the thermodynamic quantities determined by the current internal
     energy, density, and chemistry: pressure, and potentially adiabatic index
@@ -54,13 +50,13 @@ double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
     variable as well. */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    double soundspeed, press=0, gamma_eos_index = gamma_eos(i, pp, cell); soundspeed=0; /* get effective adiabatic index */
+    double soundspeed, press=0, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; /* get effective adiabatic index */
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
     temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties
     cell[i].Temperature = temp; // cache the tempature
-    cell[i].Gamma = gamma_eos(i, pp, cell); // cache the adiabatic index; this will reuse the pre-computed cell[i].Temperature assigned above
+    cell[i].Gamma = cell[i].gamma_eos_value(); // cache the adiabatic index; this will reuse the pre-computed cell[i].Temperature assigned above
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
@@ -176,34 +172,9 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 
 /*! this function allows the user to specify an arbitrarily complex adiabatic index. note that for pure adiabatic evolution, one can simply set the pressure to obey some barytropic equation-of-state and use EOS_GENERAL to tell the code to deal with it appropriately.
       but for more general functionality, we want this index here to be appropriately variable. */
-double INLINE_FUNC gamma_eos(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#if defined(COOL_MOLECFRAC_NONEQM)
-    if(i >= 0) {
-        double fH = HYDROGEN_MASSFRAC, f = cell[i].MolecularMassFraction, xe = cell[i].Ne; // use the variables below to update the EOS as needed
-        double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.; // sum e-, H or p, He, which act monotomic, and molecular, by number
-#ifdef EOS_SUBSTELLAR_ISM
-        gamma_di = hydrogen_molecule_gamma(cell[i].Temperature);
-#endif
-        return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.)); // weighted sum by number to compute effective EOS
-    }
-#endif
-    return GAMMA_DEFAULT; /* default to universal constant here */
-}
-
 #ifdef COOLING
 /* Returns the temperature, either pre-computed or calling the routine to re-compute it*/
-double get_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell){
-    return cell[i].Temperature;
-}
-
-
 /* Simple wrapper for calling ThermalProperties for temperature only - should only be called by get_temperature() above */
-double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell) {
-    double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
-    return temperature;
-}
 #endif
 
 /* calculate the 'total' effective sound speed in a given element [including e.g. cosmic ray pressure and other forms of pressure, if present] */
@@ -213,33 +184,17 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct particle_data *p
     return cell[i].SoundSpeed;
 #else
     /* if nothing above triggers, then we resort to good old-fashioned ideal gas */
-    return sqrt(gamma_eos(i, pp, cell) * cell[i].Pressure / cell[i].density_for_energy());
+    return sqrt(cell[i].gamma_eos_value() * cell[i].Pressure / cell[i].density_for_energy());
 #endif
 }
 
 
 /* calculate the thermal sound speed (using just the InternalEnergy variable) in a given element */
-double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    return sqrt(convert_internalenergy_soundspeed2(i, cell[i].InternalEnergyPred, P, CellP));
-}
-
-
 /* calculate the Alfven speed in a given element */
-double INLINE_FUNC Get_Gas_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#if defined(MAGNETIC)
-    double bmag = (cell[i].Bfield() * All.cf_a2inv).norm_sq();
-    if(bmag > 0) {return sqrt(bmag / (MIN_REAL_NUMBER + cell[i].Density*All.cf_a3inv));}
-#endif
-    return 0;
-}
-
-
 /* calculate the fast MHD wave speed in a given element */
 double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    double cs = Get_Gas_thermal_soundspeed_i(i, pp, cell), vA = Get_Gas_Alfven_speed_i(i, pp, cell);
+    double cs = cell[i].thermal_soundspeed(), vA = cell[i].Alfven_speed();
     return sqrt(cs*cs + vA*vA);    
 }
 
@@ -250,26 +205,7 @@ double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp,
 
 
 /* handy function that just returns the B-field magnitude in microGauss, physical units. purely here to save us time re-writing this */
-double get_cell_Bfield_in_microGauss(int i, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    double Bmag=0;
-#ifdef MAGNETIC
-    Bmag = (cell[i].Bfield() * All.cf_a2inv).norm_sq(); // actual B-field in code units
-#else
-    Bmag=2.*cell[i].Pressure*All.cf_a3inv; // assume equipartition
-#endif
-    return UNIT_B_IN_GAUSS * sqrt(DMAX(Bmag,0)) * 1.e6; // return B in microGauss
-}
-
-
 /* returns the conversion factor to go -approximately- (for really quick estimation) in code units, from internal energy to soundspeed */
-double INLINE_FUNC convert_internalenergy_soundspeed2(int i, double u, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    double gamma_eos_touse = gamma_eos(i, pp, cell);
-    return gamma_eos_touse * (gamma_eos_touse-1) * u;
-}
-
-
 /* returns the ionized fraction of gas, meant as a reference for runs outside of the cooling routine which include cooling+other physics */
 double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
@@ -567,7 +503,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
 #ifdef METALS
     f_dustgas = 0.5 * pp[i].Metallicity[0] * return_dust_to_metals_ratio_vs_solar(i,0, P, CellP); // appropriate dust-to-metals ratio
 #endif
-    double temperature = mean_molecular_weight * (gamma_eos(i, pp, cell)-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; // will use appropriate EOS to estimate temperature
+    double temperature = mean_molecular_weight * (cell[i].gamma_eos_value()-1.) * U_TO_TEMP_UNITS * cell[i].InternalEnergyPred; // will use appropriate EOS to estimate temperature
     // now everything should be fully-determined (given the inputs above and the known properties of the gas) //
     double m_neutral = mean_molecular_weight; // in units of the proton mass
     double ag01 = a_grain_micron/0.1, m_grain = 7.51e9 * ag01*ag01*ag01; // grain mass [internal density =3 g/cm^3]
@@ -674,7 +610,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
 #if defined(COOLING) /* get the ionized fraction. NOTE we CANNOT call 'ThermalProperties' or functions like 'Get_Ionized_Fraction' here in gradients.c, as we have not done self-shielding steps yet and most modules will yield unphysical answers! */
     ion_frac = cell[i].Ne / (1. + 2.*yhelium(i, pp)); /* quick estimator. this is actually what we need for conduction since its the free electrons conducting, and we want number relative to fully-ionized gas */
 #endif
-    double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i, pp, cell); cs_therm=Get_Gas_thermal_soundspeed_i(i, pp, cell); vf_lim = cs;
+    double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i, pp, cell); cs_therm=cell[i].thermal_soundspeed(); vf_lim = cs;
 #ifdef MAGNETIC
     Vec3<double> bhat = cell[i].Bfield(); double bmag=0,double_dot_dv=0;
     bmag=bhat.norm_sq(); if(bmag>0) {bmag = sqrt(bmag); bhat/=bmag;}

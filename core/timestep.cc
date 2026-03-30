@@ -510,7 +510,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef GRAIN_FLUID
     if((1 << P[p].Type) & (GRAIN_PTYPES))
     {
-        csnd = convert_internalenergy_soundspeed2(p, P[p].Gas_InternalEnergy, P, CellP);
+        csnd = CellP[p].soundspeed2_from_u(P[p].Gas_InternalEnergy);
         csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
 #if defined(GRAIN_LORENTZFORCE)
         csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density);
@@ -1075,7 +1075,7 @@ integertime get_timestep(int p,		/*!< particle index */
                           (unsigned long long) P[p].ID, dt, dt_courant*All.cf_hubble_a, sqrt(2*All.ErrTolIntAccuracy*All.cf_atime*ForceSoftening_KernelRadius(p) / ac)*All.cf_hubble_a,
                           ac, agrav, agrav_pm, ahydro, arad, aturb, P[p].Pos[0], P[p].Pos[1], P[p].Pos[2], P[p].Vel[0]/All.cf_atime, P[p].Vel[1]/All.cf_atime, P[p].Vel[2]/All.cf_atime,
                           P[p].KernelRadius*All.cf_atime, CellP[p].Density*All.cf_a3inv, CellP[p].InternalEnergy, CellP[p].DtInternalEnergy, P[p].Particle_DivVel*All.cf_a2inv,
-                          CellP[p].Pressure*All.cf_a3inv, Get_Gas_effective_soundspeed_i(p, P, CellP), Get_Gas_Alfven_speed_i(p, P, CellP), Get_Gas_Ionized_Fraction(p, P, CellP),
+                          CellP[p].Pressure*All.cf_a3inv, Get_Gas_effective_soundspeed_i(p, P, CellP), CellP[p].Alfven_speed(), Get_Gas_Ionized_Fraction(p, P, CellP),
                           csnd, ForceSoftening_KernelRadius(p)*All.cf_atime, P[p].Mass, P[p].Type, CellP[p].ConditionNumber, P[p].NumNgb,
                           CellP[p].NV_T[0][0],CellP[p].NV_T[0][1],CellP[p].NV_T[0][2],CellP[p].NV_T[1][0],CellP[p].NV_T[1][1],CellP[p].NV_T[1][2],CellP[p].NV_T[2][0],CellP[p].NV_T[2][1],CellP[p].NV_T[2][2]);
         }
