@@ -57,7 +57,7 @@ double get_pressure(int i) {
     variable as well. */
 void set_eos_pressure(int i)
 {
-    double soundspeed, press=0, gamma_eos_index = GAMMA(i); soundspeed=0; /* get effective adiabatic index */
+    double soundspeed, press=0, gamma_eos_index = gamma_eos(i); soundspeed=0; /* get effective adiabatic index */
     press = (gamma_eos_index-1) * CellP[i].InternalEnergyPred * Get_Gas_density_for_energy_i(i); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
 #if (defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)) || defined(EOS_SUBSTELLAR_ISM) // will do temperature here
@@ -187,7 +187,7 @@ void set_eos_pressure(int i)
 
 /*! this function allows the user to specify an arbitrarily complex adiabatic index. note that for pure adiabatic evolution, one can simply set the pressure to obey some barytropic equation-of-state and use EOS_GENERAL to tell the code to deal with it appropriately.
       but for more general functionality, we want this index here to be appropriately variable. */
-double gamma_eos(int i)
+double INLINE_FUNC gamma_eos(int i)
 {
 #if defined(COOL_MOLECFRAC_NONEQM)
     if(i >= 0) {
@@ -253,7 +253,7 @@ double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i)
     return CellP[i].SoundSpeed;
 #else
     /* if nothing above triggers, then we resort to good old-fashioned ideal gas */
-    return sqrt(GAMMA(i) * CellP[i].Pressure / Get_Gas_density_for_energy_i(i));
+    return sqrt(gamma_eos(i) * CellP[i].Pressure / Get_Gas_density_for_energy_i(i));
 #endif
 }
 
@@ -266,7 +266,7 @@ double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i)
 
 
 /* calculate the Alfven speed in a given element */
-double Get_Gas_Alfven_speed_i(int i)
+double INLINE_FUNC Get_Gas_Alfven_speed_i(int i)
 {
 #if defined(MAGNETIC)
     double bmag = (Get_Gas_BField(i) * All.cf_a2inv).norm_sq();
@@ -277,7 +277,7 @@ double Get_Gas_Alfven_speed_i(int i)
 
 
 /* calculate the fast MHD wave speed in a given element */
-double Get_Gas_Fast_MHD_wavespeed_i(int i)
+double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i)
 {
     double cs = Get_Gas_thermal_soundspeed_i(i), vA = Get_Gas_Alfven_speed_i(i);
     return sqrt(cs*cs + vA*vA);    
@@ -320,7 +320,7 @@ double get_cell_Bfield_in_microGauss(int i)
 /* returns the conversion factor to go -approximately- (for really quick estimation) in code units, from internal energy to soundspeed */
 double INLINE_FUNC convert_internalenergy_soundspeed2(int i, double u)
 {
-    double gamma_eos_touse = GAMMA(i);
+    double gamma_eos_touse = gamma_eos(i);
     return gamma_eos_touse * (gamma_eos_touse-1) * u;
 }
 
@@ -569,7 +569,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 
 
 /* return helium -number- fraction, not mass fraction */
-double yhelium(int target)
+double INLINE_FUNC yhelium(int target)
 {
 #ifdef COOL_METAL_LINES_BY_SPECIES
     if(target >= 0) {double ytmp=DMIN(0.5,P[target].Metallicity[1]); return 0.25*ytmp/(1.-ytmp);} else {return ((1.-HYDROGEN_MASSFRAC)/(4.*HYDROGEN_MASSFRAC));}
@@ -622,7 +622,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i)
 #ifdef METALS
     f_dustgas = 0.5 * P[i].Metallicity[0] * return_dust_to_metals_ratio_vs_solar(i,0); // appropriate dust-to-metals ratio
 #endif
-    double temperature = mean_molecular_weight * (GAMMA(i)-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergyPred; // will use appropriate EOS to estimate temperature
+    double temperature = mean_molecular_weight * (gamma_eos(i)-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergyPred; // will use appropriate EOS to estimate temperature
     // now everything should be fully-determined (given the inputs above and the known properties of the gas) //
     double m_neutral = mean_molecular_weight; // in units of the proton mass
     double ag01 = a_grain_micron/0.1, m_grain = 7.51e9 * ag01*ag01*ag01; // grain mass [internal density =3 g/cm^3]

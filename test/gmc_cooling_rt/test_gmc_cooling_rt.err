@@ -1,0 +1,475 @@
+cp: output/parameters-usedvalues: No such file or directory
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'NumPart_Total_HighWord'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'NumPart_Total_HighWord'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'NumPart_Total_HighWord'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'MassTable'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'MassTable'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'MassTable'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'NumFilesPerSnapshot'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'NumFilesPerSnapshot'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'NumFilesPerSnapshot'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'Flag_DoublePrecision'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'Flag_DoublePrecision'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'Flag_DoublePrecision'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'NumPart_Total_HighWord'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'NumPart_Total_HighWord'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'NumPart_Total_HighWord'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'MassTable'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'MassTable'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'MassTable'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'NumFilesPerSnapshot'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'NumFilesPerSnapshot'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'NumFilesPerSnapshot'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Adeprec.c line 202 in H5Aopen_name(): unable to open attribute
+    major: Attribute
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1200 in H5VL_attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 1167 in H5VL__attr_open(): attribute open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_attr.c line 164 in H5VL__native_attr_open(): unable to open attribute: 'Flag_DoublePrecision'
+    major: Attribute
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Aint.c line 562 in H5A__open(): unable to load attribute info from object header for attribute: 'Flag_DoublePrecision'
+    major: Attribute
+    minor: Can't open object
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Oattribute.c line 493 in H5O__attr_open_by_name(): can't locate attribute: 'Flag_DoublePrecision'
+    major: Attribute
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 1022 in H5Aread(): can't synchronously read data
+    major: Attribute
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 987 in H5A__read_api_common(): not an attribute
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5A.c line 2202 in H5Aclose(): not an attribute ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Ddeprec.c line 192 in H5Dopen1(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2090 in H5VL_dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2057 in H5VL__dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_dataset.c line 332 in H5VL__native_dataset_open(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Dint.c line 1475 in H5D__open_name(): not found
+    major: Dataset
+    minor: Object not found
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 424 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #006: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 846 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #007: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 618 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #008: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 381 in H5G__loc_find_cb(): object 'Temperature' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 1051 in H5Dread(): can't synchronously read data
+    major: Dataset
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 964 in H5D__read_api_common(): dset_id is not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 471 in H5Dclose(): not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Ddeprec.c line 192 in H5Dopen1(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2090 in H5VL_dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2057 in H5VL__dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_dataset.c line 332 in H5VL__native_dataset_open(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Dint.c line 1475 in H5D__open_name(): not found
+    major: Dataset
+    minor: Object not found
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 424 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #006: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 846 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #007: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 618 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #008: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 381 in H5G__loc_find_cb(): object 'Temperature' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 1051 in H5Dread(): can't synchronously read data
+    major: Dataset
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 964 in H5D__read_api_common(): dset_id is not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 471 in H5Dclose(): not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Ddeprec.c line 192 in H5Dopen1(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2090 in H5VL_dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2057 in H5VL__dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_dataset.c line 332 in H5VL__native_dataset_open(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Dint.c line 1475 in H5D__open_name(): not found
+    major: Dataset
+    minor: Object not found
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 424 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #006: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 846 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #007: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 618 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #008: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 381 in H5G__loc_find_cb(): object 'Temperature' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 1051 in H5Dread(): can't synchronously read data
+    major: Dataset
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 964 in H5D__read_api_common(): dset_id is not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 471 in H5Dclose(): not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Ddeprec.c line 192 in H5Dopen1(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2090 in H5VL_dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2057 in H5VL__dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_dataset.c line 332 in H5VL__native_dataset_open(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Dint.c line 1475 in H5D__open_name(): not found
+    major: Dataset
+    minor: Object not found
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 424 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #006: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 846 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #007: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 618 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #008: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 381 in H5G__loc_find_cb(): object 'Temperature' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 1051 in H5Dread(): can't synchronously read data
+    major: Dataset
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 964 in H5D__read_api_common(): dset_id is not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 471 in H5Dclose(): not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Ddeprec.c line 192 in H5Dopen1(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2090 in H5VL_dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLcallback.c line 2057 in H5VL__dataset_open(): dataset open failed
+    major: Virtual Object Layer
+    minor: Can't open object
+  #003: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLnative_dataset.c line 332 in H5VL__native_dataset_open(): unable to open dataset
+    major: Dataset
+    minor: Can't open object
+  #004: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Dint.c line 1475 in H5D__open_name(): not found
+    major: Dataset
+    minor: Object not found
+  #005: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 424 in H5G_loc_find(): can't find object
+    major: Symbol table
+    minor: Object not found
+  #006: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 846 in H5G_traverse(): internal path traversal failed
+    major: Symbol table
+    minor: Object not found
+  #007: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gtraverse.c line 618 in H5G__traverse_real(): traversal operator failed
+    major: Symbol table
+    minor: Callback failed
+  #008: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5Gloc.c line 381 in H5G__loc_find_cb(): object 'Temperature' doesn't exist
+    major: Symbol table
+    minor: Object not found
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 1051 in H5Dread(): can't synchronously read data
+    major: Dataset
+    minor: Read failed
+  #001: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 964 in H5D__read_api_common(): dset_id is not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+  #002: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5VLint.c line 1773 in H5VL_vol_object_verify(): identifier is not of specified type
+    major: Invalid arguments to routine
+    minor: Inappropriate type
+HDF5-DIAG: Error detected in HDF5 (2.1.1):
+  #000: /private/tmp/hdf5-20260324-43968-kbdsyg/hdf5-2.1.1/src/H5D.c line 471 in H5Dclose(): not a dataset ID
+    major: Invalid arguments to routine
+    minor: Inappropriate type

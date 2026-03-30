@@ -53,7 +53,7 @@ int is_particle_a_special_zoom_target(int i);
 #endif
 int merge_particles_ij(int i, int j);
 int split_particle_i(int i, int n_particles_split, int i_nearest);
-double gamma_eos(int i);
+double INLINE_FUNC gamma_eos(int i);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
@@ -129,6 +129,16 @@ static inline int IMIN(int a, int b) { return (a < b) ? a : b; }
 static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMIN(a,b)) : ((b>=0) ? 0 : DMAX(a,b));}
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 static inline double MINMOD_G(double a, double b) {return a;}
+
+static inline double nH_cgs(int i) {return HYDROGEN_MASSFRAC * CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;}
+static inline double c_light_code_reduced(int k_freq) {
+#if defined(RT_FLUXLIMITER)
+    return C_LIGHT_CODE;
+#else
+    return RT_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE;
+#endif
+}
+static inline double rsol_correction_factor_for_velocity_terms(int k_freq) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
 double ForceSoftening_KernelRadius(int p);
 double sigmoid_sqrt(double x);
@@ -313,6 +323,7 @@ double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, doubl
 double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy);
 void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir);
 double return_CRbin_M1speed(int k_CRegy);
+double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
 double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag);
 double diffusion_coefficient_constant(int target, int k_CRegy);
@@ -362,13 +373,13 @@ double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 double INLINE_FUNC convert_internalenergy_soundspeed2(int i, double u);
 double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i);
 double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i);
-double Get_Gas_Alfven_speed_i(int i);
-double Get_Gas_Fast_MHD_wavespeed_i(int i);
+double INLINE_FUNC Get_Gas_Alfven_speed_i(int i);
+double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i);
 double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target);
 void update_explicit_molecular_fraction(int i, double dtime_cgs);
 double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
 double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override);
-double yhelium(int target);
+double INLINE_FUNC yhelium(int target);
 double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0);
 double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component);
 Vec3<double> Get_Gas_BField(int i_particle_id);
