@@ -102,7 +102,7 @@ MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct p
     MyFloat k_dr = pow(temp, -1.5) * (6.346e-9 * exp(-12.17 / temp) + 9.793e-9 * exp(-73.8 / temp) + 1.634e-6 * exp(-15230 / temp)); // dielectronic recombination - Gong 2017 Table 1 Eq 17
     MyFloat k_gr = alpha_recomb_grain(i, temp, x_elec, shieldfac, "C+", pp, cell);
     MyFloat k_cplus_H2 = 2.31e-13 * pow(temp, -1.3) * exp(-23 / temp);
-    MyFloat nHcgs = nH_CGS(i);
+    MyFloat nHcgs = cell[i].nHcgs();
     MyFloat ne = nHcgs * x_elec;
     MyFloat nH2 = 0.5 * nHcgs * cell[i].MolecularMassFraction;
     MyFloat result = ionization_rate / (ionization_rate + k_gr * nHcgs + (k_rr + k_dr) * ne + k_cplus_H2 * nH2);
@@ -121,7 +121,7 @@ MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp
     MyFloat xi_cr16 = Get_CosmicRayIonizationRate_cgs(i, P, CellP) / 1e-16, Zd = pp[i].Metallicity[0] / All.SolarAbundances[0];
     MyFloat G0 = get_FUV_G0(i, shieldfac, 0, P, CellP);
     MyFloat n_COcrit = pow(4e3 * Zd / (xi_cr16 * xi_cr16), cbrt(G0)) * (50 * xi_cr16 / pow(Zd, 1.4));
-    MyFloat nHcgs = nH_CGS(i);
+    MyFloat nHcgs = cell[i].nHcgs();
     MyFloat f_CO = 0.5 * cell[i].MolecularMassFraction * (1 - DMAX(f_Cplus(i, temp, x_elec, shieldfac, pp, cell), f_Oplus(nHp))) / (1 + pow(n_COcrit / nHcgs, 2));
     return f_CO;
 }
@@ -142,8 +142,8 @@ MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp, struct particle_
 MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, struct gas_cell_data *cell){
     MyFloat zeta_cr = Get_CosmicRayIonizationRate_cgs(i, P, CellP);
     MyFloat beta_recomb = 3e-6 / sqrt(DMAX(All.MinGasTemp, temp)); // Fromang, Terquem & Balbus 2002 eq. 9
-    MyFloat xe= sqrt(zeta_cr / (beta_recomb * DMAX(1e2, nH_CGS(i))));
-    return sqrt(zeta_cr / (beta_recomb * DMAX(1e2, nH_CGS(i)))); // Armitage 2010 eq. 24
+    MyFloat xe= sqrt(zeta_cr / (beta_recomb * DMAX(1e2, cell[i].nHcgs())));
+    return sqrt(zeta_cr / (beta_recomb * DMAX(1e2, cell[i].nHcgs()))); // Armitage 2010 eq. 24
 }
 
 
@@ -160,7 +160,7 @@ MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particl
         return 0.; // negligible below critical temperature
     }
     MyFloat x_K =  1e-7 * pp[i].Metallicity[0]/All.SolarAbundances[0];
-    MyFloat xe = 6.47e-13 * sqrt(x_K/1e-7) * sqrt(sqrt(temp*temp*temp/1e9))  * sqrt(2.4e15 / nH_CGS(i)) * exp(-25188/temp)/1.15e-11; // low-ionization approximation
+    MyFloat xe = 6.47e-13 * sqrt(x_K/1e-7) * sqrt(sqrt(temp*temp*temp/1e9))  * sqrt(2.4e15 / cell[i].nHcgs()) * exp(-25188/temp)/1.15e-11; // low-ionization approximation
     xe = 1./(1/x_K + 1/xe); // smooth interpolant to limit to x_K
     return xe;
 }
