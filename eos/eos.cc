@@ -136,7 +136,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
     int k_CRegy; for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
-        press += Get_Gas_CosmicRayPressure(i, k_CRegy, pp, cell);
+        press += cell[i].CosmicRayPressure(k_CRegy);
         soundspeed2 += GAMMA_COSMICRAY(k_CRegy) * (GAMMA_COSMICRAY(k_CRegy)-1.) * cell[i].CosmicRayEnergyPred[k_CRegy] / pp[i].Mass;
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES // using effective gamma of the alfven component = 3/2
         press += (1.5-1) * cell[i].Density * (cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]);
@@ -245,7 +245,7 @@ double INLINE_FUNC Get_Gas_thermal_soundspeed_i(int i, struct particle_data *pp,
 double INLINE_FUNC Get_Gas_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(MAGNETIC)
-    double bmag = (Get_Gas_BField(i, pp, cell) * All.cf_a2inv).norm_sq();
+    double bmag = (cell[i].Bfield() * All.cf_a2inv).norm_sq();
     if(bmag > 0) {return sqrt(bmag / (MIN_REAL_NUMBER + cell[i].Density*All.cf_a3inv));}
 #endif
     return 0;
@@ -261,23 +261,8 @@ double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct particle_data *pp,
 
 
 /* calculate and return the actual B Field of a cell (in comoving units, so multiply by All.cf_a2inv to get physical) */
-double INLINE_FUNC Get_Gas_BField(int i_particle_id, int k_vector_component, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#if defined(MAGNETIC)
-    return cell[i_particle_id].BPred[k_vector_component] * cell[i_particle_id].Density / pp[i_particle_id].Mass;
-#endif
-    return 0;
-}
 
 /* Vec3 overload: return the full B-field vector (comoving units) */
-Vec3<double> Get_Gas_BField(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#if defined(MAGNETIC)
-    double fac = cell[i_particle_id].Density / pp[i_particle_id].Mass;
-    return cell[i_particle_id].BPred * fac;
-#endif
-    return {};
-}
 
 
 /* handy function that just returns the B-field magnitude in microGauss, physical units. purely here to save us time re-writing this */
@@ -285,7 +270,7 @@ double get_cell_Bfield_in_microGauss(int i, struct particle_data *pp, struct gas
 {
     double Bmag=0;
 #ifdef MAGNETIC
-    Bmag = (Get_Gas_BField(i, pp, cell) * All.cf_a2inv).norm_sq(); // actual B-field in code units
+    Bmag = (cell[i].Bfield() * All.cf_a2inv).norm_sq(); // actual B-field in code units
 #else
     Bmag=2.*cell[i].Pressure*All.cf_a3inv; // assume equipartition
 #endif
@@ -625,7 +610,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
 #endif
     // now define more variables we will need below //
     double gizmo2gauss = UNIT_B_IN_GAUSS; // convert to B-field to gauss (units)
-    double B_Gauss = Get_Gas_BField(i, pp, cell).norm_sq(); // get magnitude of B //
+    double B_Gauss = cell[i].Bfield().norm_sq(); // get magnitude of B //
     if(B_Gauss<=0) {B_Gauss=0;} else {B_Gauss = sqrt(B_Gauss) * All.cf_a2inv * gizmo2gauss;} // B-field magnitude in Gauss
     double xe = n_elec / n_eff;
     double xi = n_ion / n_eff;
@@ -707,7 +692,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
 #endif
     double vf_lim,cs,cs_therm; cs=Get_Gas_effective_soundspeed_i(i, pp, cell); cs_therm=Get_Gas_thermal_soundspeed_i(i, pp, cell); vf_lim = cs;
 #ifdef MAGNETIC
-    Vec3<double> bhat = Get_Gas_BField(i, pp, cell); double bmag=0,double_dot_dv=0;
+    Vec3<double> bhat = cell[i].Bfield(); double bmag=0,double_dot_dv=0;
     bmag=bhat.norm_sq(); if(bmag>0) {bmag = sqrt(bmag); bhat/=bmag;}
     beta_i = bmag*bmag  * All.cf_a3inv / (All.cf_atime * rho * cs_therm * cs_therm);
     vf_lim *= DMIN(1.e4 , sqrt(1.+beta_i));

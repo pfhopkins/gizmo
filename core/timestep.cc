@@ -59,7 +59,7 @@ void find_timesteps(void)
             if(P[i].Type==0)
             {
                 double vsig2 = 0.5  * fabs(CellP[i].MaxSignalVel); // in v_phys units //
-                double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i, P, CellP)*Get_Gas_effective_soundspeed_i(i, P, CellP) + fac_magnetic_pressure * Get_Gas_BField(i, P, CellP).norm_sq() / CellP[i].Density );
+                double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i, P, CellP)*Get_Gas_effective_soundspeed_i(i, P, CellP) + fac_magnetic_pressure * CellP[i].Bfield().norm_sq() / CellP[i].Density );
                 double vsig0 = DMAX(vsig1,vsig2);
 
                 if(vsig0 > fastwavespeed) fastwavespeed = vsig0; // physical unit
@@ -594,7 +594,7 @@ integertime get_timestep(int p,		/*!< particle index */
                 for(int k=0;k<3;k++)
                 {
                     b_grad += CellP[p].Gradients.B[k].norm_sq();
-                    b_mag += Get_Gas_BField(p, k, P, CellP) * Get_Gas_BField(p, k, P, CellP);
+                    b_mag += CellP[p].Bfield_component(k) * CellP[p].Bfield_component(k);
                 }
                 double L_cond_inv = MIN_REAL_NUMBER + sqrt(b_grad / (MIN_REAL_NUMBER + b_mag));
                 double L_cond = DMAX(0.5*L_particle , DMIN(L_particle , 1./(L_cond_inv + 1./L_particle))) * All.cf_atime;
@@ -616,7 +616,7 @@ integertime get_timestep(int p,		/*!< particle index */
             int k_CRegy;
             for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
             {
-                if(Get_Gas_CosmicRayPressure(p,k_CRegy, P, CellP) > 1.0e-20)
+                if(CellP[p].CosmicRayPressure(k_CRegy) > 1.0e-20)
                 {
                     int explicit_timestep_on, cr_diffusion_opt = 1;
                     double CRPressureGradScaleLength = Get_CosmicRayGradientLength(p,k_CRegy, P, CellP);
@@ -811,7 +811,7 @@ integertime get_timestep(int p,		/*!< particle index */
             double fac_magnetic_pressure = 1. / All.cf_atime;
             double phi_b_units = Get_Gas_PhiField(p) / ( All.cf_atime * CellP[p].MaxSignalVel);
             double vsig1 =  sqrt( Get_Gas_effective_soundspeed_i(p, P, CellP)*Get_Gas_effective_soundspeed_i(p, P, CellP) +
-                    fac_magnetic_pressure * (Get_Gas_BField(p, P, CellP).norm_sq() +
+                    fac_magnetic_pressure * (CellP[p].Bfield().norm_sq() +
                                              phi_b_units*phi_b_units) / CellP[p].Density );
 
             dt_courant = 0.8 * All.CourantFac * (All.cf_atime*L_particle) / vsig1; // 2.0 factor may be added (PFH) //

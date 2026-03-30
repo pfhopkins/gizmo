@@ -300,7 +300,7 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
         in->GQuant.InternalEnergy = CellP[i].InternalEnergyPred;
 #endif
 #ifdef COSMIC_RAY_FLUID
-        for(k=0;k<N_CR_PARTICLE_BINS;k++) {in->GQuant.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(i,k, P, CellP);}
+        for(k=0;k<N_CR_PARTICLE_BINS;k++) {in->GQuant.CosmicRayPressure[k] = CellP[i].CosmicRayPressure(k);}
 #endif
 #ifdef DOGRAD_SOUNDSPEED
         in->GQuant.SoundSpeed = Get_Gas_effective_soundspeed_i(i, P, CellP);
@@ -895,7 +895,7 @@ void hydro_gradient_calc(void)
                 double dh=0.25*P[i].KernelRadius; // need to be more aggressive with new wt_i,wt_j formalism
                 for(k=0;k<3;k++)
                 {
-                    double b0 = Get_Gas_BField(i, k, P, CellP);
+                    double b0 = CellP[i].Bfield_component(k);
                     double dd = 2. * fabs(b0) * DMIN(fabs(GasGradDataPasser[i].Minima.B[k]) , fabs(GasGradDataPasser[i].Maxima.B[k]));
                     dbmax = DMIN(fabs(dbmax+dd),fabs(dbmax-dd));
                     for(k1=0;k1<3;k1++) {dbgrad += 2.*dh * fabs(b0*CellP[i].Gradients.B[k][k1]);}
@@ -931,7 +931,7 @@ void hydro_gradient_calc(void)
                     double h_eff = Get_Particle_Size(i);
                     for(k=0;k<3;k++)
                     {
-                        double grad_limiter_mag = Get_Gas_BField(i, k, P, CellP) / h_eff;
+                        double grad_limiter_mag = CellP[i].Bfield_component(k) / h_eff;
                         dmag += grad_limiter_mag * grad_limiter_mag;
                         for(k1=0;k1<3;k1++)
                         {
@@ -1555,7 +1555,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     }
 
                     /* now use the gradients to construct the B_L,R states */
-                    double Bjk = Get_Gas_BField(j, k, P, CellP); //
+                    double Bjk = CellP[j].Bfield_component(k); //
                     NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,Bjk,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
                     double db_c = 0.5 * dot(CellP[j].Gradients.B[k], kernel.dp);
                     double db_cR = -0.5 * (local.BGrad[k][0]*kernel.dp[0] + local.BGrad[k][1]*kernel.dp[1] + local.BGrad[k][2]*kernel.dp[2]);
@@ -1722,7 +1722,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     double dpCR[N_CR_PARTICLE_BINS];
                     for(k=0;k<N_CR_PARTICLE_BINS;k++)
                     {
-                        dpCR[k] = Get_Gas_CosmicRayPressure(j,k, P, CellP) - local.GQuant.CosmicRayPressure[k];
+                        dpCR[k] = CellP[j].CosmicRayPressure(k) - local.GQuant.CosmicRayPressure[k];
                         MINMAX_CHECK(dpCR[k],out.Minima.CosmicRayPressure[k],out.Maxima.CosmicRayPressure[k]);
                         if(swap_to_j) {MINMAX_CHECK(-dpCR[k],GasGradDataPasser[j].Minima.CosmicRayPressure[k],GasGradDataPasser[j].Maxima.CosmicRayPressure[k]);}
                     }

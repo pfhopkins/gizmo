@@ -210,7 +210,7 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i, struct particle_data *p
                 double bulk_dens, dust_atomic_weight;
                 ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[j], &dust_atomic_weight, &bulk_dens);
                 // Determine normalization constant for grain size distribution given total mass of dust species
-                double C_norm = (cell[i].ISMDustChem_Dust_Species[j]*pp[i].Mass*UNIT_MASS_IN_CGS)*(12+3*powerlaw) / (4 * M_PI * bulk_dens * (pow(All.ISMDustChem_Grain_Size_Max,4+powerlaw)-pow(All.ISMDustChem_Grain_Size_Min,4+powerlaw)));
+                double C_norm = (cell[i].ISMDustChem_Dust_Species[j]*cell[i].Mass*UNIT_MASS_IN_CGS)*(12+3*powerlaw) / (4 * M_PI * bulk_dens * (pow(All.ISMDustChem_Grain_Size_Max,4+powerlaw)-pow(All.ISMDustChem_Grain_Size_Min,4+powerlaw)));
                 for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
                     double alower = All.ISMDustChem_GrainBinEdges[k], aupper = All.ISMDustChem_GrainBinEdges[k+1];
                     double mass_in_bin, number_in_bin;
@@ -538,7 +538,7 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct particle_dat
     yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]=species_yields[k];}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-    ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,pp[i].Mass*pp[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields
+    ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,cell[i].Mass*cell[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields
 #endif
 }
 
@@ -772,7 +772,7 @@ void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
 
 
 /* simple indexing routine to return the value we need when looping over yields and the like */
-double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, int k, double mass, struct particle_data *pp, struct gas_cell_data *cell)
+double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, int k, double mass, struct gas_cell_data *cell)
 {
     k -= NUM_METAL_SPECIES;
     if(k<NUM_ISMDUSTCHEM_ELEMENTS) {return cell[i].ISMDustChem_Dust_Metal[k];}
@@ -786,7 +786,7 @@ double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, in
         int j,m;
         // return number "fraction" of grains in bin
         // since diffusion and yields routines expect scalar mass fractions, divide by the particle mass and treat like a mass scalar
-        if (mass==0) {mass = pp[i].Mass;} // Providing the particle mass is only needed for FIRE-2 SNe loop since the particle mass is not thread safe to access
+        if (mass==0) {mass = cell[i].Mass;} // Providing the particle mass is only needed for FIRE-2 SNe loop since the particle mass is not thread safe to access
         if(k<NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS) {
             j = k / NUM_ISMDUSTCHEM_SIZE_BINS; m = k % NUM_ISMDUSTCHEM_SIZE_BINS;
             return cell[i].ISMDustChem_Dust_NumberInBin[j][m]/mass;
@@ -1076,7 +1076,7 @@ void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, st
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
         update_dust_shattering_and_coagulation(i,dtime_gyr,temp,rho, pp, cell);
 
-        update_dust_photodestruction(i,dtime_gyr, pp, cell);
+        update_dust_photodestruction(i,dtime_gyr, cell);
 #endif
     }
 }
@@ -1246,8 +1246,8 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho, str
                 if (dt_acc < dtime_gyr) {n_subcycle = IMIN(MAXIMUM_SUBCYCLE_STEPS,ceil(dtime_gyr/dt_acc)); dt_subcycle = dtime_gyr/n_subcycle;}
                 else {n_subcycle = 1; dt_subcycle = dtime_gyr;}
 
-                mass_limit = pp[i].Metallicity[key_elem] * dust_atomic_weight / (key_num_atoms * key_mass) * pp[i].Mass * UNIT_MASS_IN_CGS;
-                double init_species_mass = cell[i].ISMDustChem_Dust_Species[k]*pp[i].Mass*UNIT_MASS_IN_CGS, final_species_mass=0;
+                mass_limit = pp[i].Metallicity[key_elem] * dust_atomic_weight / (key_num_atoms * key_mass) * cell[i].Mass * UNIT_MASS_IN_CGS;
+                double init_species_mass = cell[i].ISMDustChem_Dust_Species[k]*cell[i].Mass*UNIT_MASS_IN_CGS, final_species_mass=0;
                 for (k_cycle=0;k_cycle<n_subcycle;k_cycle++) {
                     // Need to caculate the change in grain size for every time step since the key element abundance decreases as the dust grows
                     if (k_cycle !=0) {
@@ -1267,7 +1267,7 @@ void update_dust_accretion(int i, double dtime_gyr, double temp, double rho, str
                 }
                 // Get the final new species fractions
                 for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {species_yields[k] += get_ISMDustChemEvo_bin_mass(i,k,j, cell);}
-                species_yields[k] /= (pp[i].Mass * UNIT_MASS_IN_CGS); // Convert to mass fractions
+                species_yields[k] /= (cell[i].Mass * UNIT_MASS_IN_CGS); // Convert to mass fractions
             }
             else {
                 species_yields[k] = cell[i].ISMDustChem_Dust_Species[k];
@@ -1514,7 +1514,7 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho, st
                 }
             // Get the new species fractions
             for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {species_yields[k] += get_ISMDustChemEvo_bin_mass(i,k,j, cell);}
-            species_yields[k] /= (pp[i].Mass * UNIT_MASS_IN_CGS); // Convert to mass fraction
+            species_yields[k] /= (cell[i].Mass * UNIT_MASS_IN_CGS); // Convert to mass fraction
             }
         }
 
@@ -1552,7 +1552,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
     double enh_power=log10(COAGULATION_DENSITY_ENHANCEMENT * All.ISMDustChem_CoagDensityEnhancementScaling)/log10(nH_max/nH_min);
     b_time_Mach = 0.5*Mach;
     clumping_factor = 1+b_time_Mach*b_time_Mach;
-    Vcell = (pp[i].Mass*UNIT_MASS_IN_CGS)/rho; // cm^3
+    Vcell = (cell[i].Mass*UNIT_MASS_IN_CGS)/rho; // cm^3
 
     // Coagulation is efficient in dense MC gas (nH~10^4) which is beyond typical FIRE resolutions.
     // To overcome this we artificially enhance the density of cool gas, using the same temperature
@@ -1699,7 +1699,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
             // Determine if we need to subcycle timesteps if either the number or mass of grains moved out of bins is greater than epsilon_cycle fraction of the total in the particle
             if (k_cycle == 0) {
                 if (dMdt_moved == 0) {break;} // If no dust moved nothing to do here
-                tau_coll = SHAT_COAG_SUBCYCLE_PARAMETER * DMIN(fabs(cell[i].ISMDustChem_Dust_Species[k]*pp[i].Mass*UNIT_MASS_IN_CGS / dMdt_moved),fabs(total_N / dNdt_moved)); // Gyr
+                tau_coll = SHAT_COAG_SUBCYCLE_PARAMETER * DMIN(fabs(cell[i].ISMDustChem_Dust_Species[k]*cell[i].Mass*UNIT_MASS_IN_CGS / dMdt_moved),fabs(total_N / dNdt_moved)); // Gyr
                 // No sub cycling needed so we can finish
                 if (tau_coll > dtime_gyr) {
                     ISMDustChemEvo_update_bins_given_mass_change(i, k, dM, bulk_dens, cell);
@@ -1720,7 +1720,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
 }
 
 
-void update_dust_photodestruction(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell)
+void update_dust_photodestruction(int i, double dtime_gyr, struct gas_cell_data *cell)
 {
     // still in development so off by default
     // current implementation is too effective at destroying dust 
@@ -1761,7 +1761,7 @@ void update_dust_photodestruction(int i, double dtime_gyr, struct particle_data 
             }
             // Get the new species fractions
             for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {species_yields[k] += get_ISMDustChemEvo_bin_mass(i,k,j, cell);}
-            species_yields[k] /= (pp[i].Mass * UNIT_MASS_IN_CGS); // Convert to mass fraction
+            species_yields[k] /= (cell[i].Mass * UNIT_MASS_IN_CGS); // Convert to mass fraction
         }
         // Determine new dust element fractions and creation sources
         ISMDustChem_get_elem_yields_from_species_yields(dust_yields,species_yields); 
@@ -1801,7 +1801,7 @@ void ISMDustChemEvo_renormalize_dust_fields(int i, struct particle_data *pp, str
             total_spec_mass=0;
             for (j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {total_spec_mass+=get_ISMDustChemEvo_bin_mass(i,k,j, cell);}
             // Renorm each dust species mass
-            cell[i].ISMDustChem_Dust_Species[k] = total_spec_mass/(pp[i].Mass*UNIT_MASS_IN_CGS);
+            cell[i].ISMDustChem_Dust_Species[k] = total_spec_mass/(cell[i].Mass*UNIT_MASS_IN_CGS);
         }
 #endif            
         ISMDustChem_get_elem_yields_from_species_yields(dust_yields, cell[i].ISMDustChem_Dust_Species);
@@ -2219,7 +2219,7 @@ void ISMDustChemEvo_check_bins_after_update(int i, int update_process, double ma
     double percent_error = 0.001;
     double min_mass_frac = 1E-20; // Minimum mass fraction to consider for debugging. Very small values will always be prone to rounding errors
     double has_nan=0;
-    if (mass==0) {mass = pp[i].Mass;} // only needed for certain routines like SNe feedback/injection since particle mass changes are not thread-safe
+    if (mass==0) {mass = cell[i].Mass;} // only needed for certain routines like SNe feedback/injection since particle mass changes are not thread-safe
 
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
         total_bin_mass=0;

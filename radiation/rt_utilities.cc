@@ -52,7 +52,7 @@
 int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
-    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion
+    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion
     int active_check = 0; // default to inactive //
     
 #if defined(GALSF)
@@ -80,7 +80,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
 #if defined(RT_CHEM_PHOTOION) && !defined(GALSF) /* Hydrogen and Helium ionizing bands; this is an idealized test-problem version implementation */
     if(pp[i].Type==4)
     {
-        SET_ACTIVE_RT_CHECK(); double l_ion=All.IonizingLuminosityPerSolarMass_cgs * (pp[i].Mass * UNIT_MASS_IN_SOLAR) / UNIT_LUM_IN_CGS; // flux from star particles according to mass
+        SET_ACTIVE_RT_CHECK(); double l_ion=All.IonizingLuminosityPerSolarMass_cgs * (cell[i].Mass * UNIT_MASS_IN_SOLAR) / UNIT_LUM_IN_CGS; // flux from star particles according to mass
 #ifdef RT_ILIEV_TEST1
         l_ion = 5.0e48 * (13.6*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS; // 5e48 in ionizing photons per second -- constant for idealized test problem //
 #endif
@@ -104,7 +104,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
 #if (NUMDIMS == 3)
         A_base = boxSize_X * boxSize_Y;
 #endif
-        lum[RT_FREQ_BIN_GENERIC_USER_FREQ] = (pp[i].Mass/1.) * All.Vertical_Grain_Accel * C_LIGHT_CODE * ((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * A_base / (0.75*All.Grain_Q_at_MaxGrainSize); // special behavior for particular test of stratified boxes compared to explicit dust opacities
+        lum[RT_FREQ_BIN_GENERIC_USER_FREQ] = (cell[i].Mass/1.) * All.Vertical_Grain_Accel * C_LIGHT_CODE * ((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * A_base / (0.75*All.Grain_Q_at_MaxGrainSize); // special behavior for particular test of stratified boxes compared to explicit dust opacities
 #endif
     }
 #endif
@@ -292,10 +292,10 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
 int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(!((pp[i].Type == 4) || ((All.ComovingIntegrationOn==0)&&((pp[i].Type==2)||(pp[i].Type==3))))) {return 0;} // only star-type particles act in this subroutine //
-    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;}
+    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
     int active_check = 0; // default to inactive //
 #if defined(GALSF) /* basically none of these modules make sense without the GALSF module active */
-    double star_age = evaluate_stellar_age_Gyr(i), m_sol = pp[i].Mass * UNIT_MASS_IN_SOLAR;
+    double star_age = evaluate_stellar_age_Gyr(i), m_sol = cell[i].Mass * UNIT_MASS_IN_SOLAR;
     if((star_age<=0) || isnan(star_age)) {return 0;} // calculate stellar age, will be used below, and catch for bad values
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     if(star_age > 0.1) {return 0;} // old optimization, not really needed with how we do this now //
@@ -388,10 +388,10 @@ int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct parti
 int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(pp[i].Type != 5) {return 0;} // only go forward for BH-type particles
-    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;}
+    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
     int active_check = 0; // default to inactive //
 #if defined(SINK_PARTICLES)
-    double l_bol = sink_lum_bol(pp[i].Sink_Mdot,pp[i].Mass,i); if(l_bol <= 0) {return 0;} // no accretion luminosity -- no point in going further!
+    double l_bol = sink_lum_bol(pp[i].Sink_Mdot,cell[i].Mass,i); if(l_bol <= 0) {return 0;} // no accretion luminosity -- no point in going further!
     // corrections below follow  Shen, PFH, et al. 2020 to account for alpha-ox and template spectrum to get AGN set in different bands as a function of bolometric luminosity. functional form very similar to Hopkins, Richards, & Hernquist 2007, but updated values. //
     double lbol_lsun = l_bol * UNIT_LUM_IN_SOLAR, R_opt_xr; // luminosity in physical code units //
     double f_xr_0=0.0461795, R_xr_opt = pow(lbol_lsun/1.e10,0.026) / (0.0455713 + 0.140974*pow(lbol_lsun/1.e10,0.304)), Rfxr=R_xr_opt*f_xr_0; // x-ray to optical ratio normalized to its value at Lbol=1e13 solar
@@ -446,7 +446,7 @@ int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, 
 int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(pp[i].Type < 4) {return 0;} // only go forward with star or sink-type particles
-    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;}
+    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
     int active_check = 0, k; // default to inactive //
     
 #if defined(RT_INFRARED) /* special mid-through-far infrared band, which includes IR radiation temperature evolution */
@@ -688,7 +688,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     double E_abs_tot_toIR = 0;/* energy absorbed in other bands is transfered to IR, by default: track it here */
     double Rad_E_gamma_tot = 0; // dust temperature defined by total radiation energy density //
     {int j; for(j=0;j<N_RT_FREQ_BINS;j++) {Rad_E_gamma_tot += cell[i].Rad_E_gamma[j];}}
-    double a_rad_inverse=C_LIGHT_CGS/(4.*5.67e-5), vol_inv_phys=(cell[i].Density*All.cf_a3inv/pp[i].Mass), u_gamma = Rad_E_gamma_tot * vol_inv_phys * UNIT_PRESSURE_IN_CGS; // photon energy density in CGS //
+    double a_rad_inverse=C_LIGHT_CGS/(4.*5.67e-5), vol_inv_phys=(cell[i].Density*All.cf_a3inv/cell[i].Mass), u_gamma = Rad_E_gamma_tot * vol_inv_phys * UNIT_PRESSURE_IN_CGS; // photon energy density in CGS //
     double Dust_Temperature_4 = u_gamma * a_rad_inverse; // estimated effective temperature of local rad field in equilibrium with dust emission. note that for our definitions, rad energy density has its 'normal' value independent of RSOL, so Tdust should as well; emission -and- absorption are both lower by a factor of RSOL, but these cancel in the Tdust4 here //
 #if !defined(COOLING) // if cooling is active, don't reset this here, because it needs to include the gas coupling term which will be self-consistently calculated there
     cell[i].Dust_Temperature = sqrt(sqrt(Dust_Temperature_4)); // just set this to the local radiation equilibrium temperature
@@ -796,7 +796,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
             {
                 double radacc[3]={0}, rmag=0, vel_i[3], L_particle = Get_Particle_Size(i)*All.cf_atime; // particle effective size/slab thickness
-                double Sigma_particle = pp[i].Mass / (M_PI*L_particle*L_particle), abs_per_kappa_dt = C_LIGHT_CODE_REDUCED(i) * (cell[i].Density*All.cf_a3inv) * dt_entr; // effective surface density through particle & fractional absorption over timestep
+                double Sigma_particle = cell[i].Mass / (M_PI*L_particle*L_particle), abs_per_kappa_dt = C_LIGHT_CODE_REDUCED(i) * (cell[i].Density*All.cf_a3inv) * dt_entr; // effective surface density through particle & fractional absorption over timestep
                 double f_kappa_abs = rt_absorb_frac_albedo(i,kf, pp, cell); // get albedo, we'll need this below
                 double slabfac_rp=1; if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kf)==0) {slabfac_rp=slab_averaging_function(f_kappa_abs*cell[i].Rad_Kappa[kf]*Sigma_particle) * slab_averaging_function(f_kappa_abs*cell[i].Rad_Kappa[kf]*abs_per_kappa_dt);} // reduction factor for absorption over dt
                 int kx; for(kx=0;kx<3;kx++)
@@ -808,7 +808,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                 if(rmag > 0)
                 {
                     rmag = sqrt(rmag); for(kx=0;kx<3;kx++) {radacc[kx] /= rmag;} // normalize
-                    double rmag_max = de_abs / (pp[i].Mass * C_LIGHT_CODE_REDUCED(i) * (MIN_REAL_NUMBER + f_kappa_abs)); // limit magnitude to absorbed photon momentum
+                    double rmag_max = de_abs / (cell[i].Mass * C_LIGHT_CODE_REDUCED(i) * (MIN_REAL_NUMBER + f_kappa_abs)); // limit magnitude to absorbed photon momentum
                     if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kf)==0) {if(rmag > rmag_max) {rmag=rmag_max;}}
 #if defined(RT_ENABLE_R15_GRADIENTFIX)
                     rmag = rmag_max; // set to maximum (optically thin limit)
@@ -817,8 +817,8 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     for(kx=0;kx<3;kx++)
                     {
                         double radacc_eff = radacc[kx] * rmag; // re-normalize according to the criterion above
-                        work_band += vel_i[kx] * radacc_eff * pp[i].Mass; // PdV work done by photons [absorbed ones are fully-destroyed, so their loss of energy and momentum is already accounted for by their deletion in this limit //
-                        if(mode==0) {double dv_rt=radacc_eff*All.cf_atime; pp[i].Vel[kx]+=dv_rt; pp[i].dp[kx]+=dv_rt*pp[i].Mass;} else {cell[i].VelPred[kx] += radacc_eff * All.cf_atime;}
+                        work_band += vel_i[kx] * radacc_eff * cell[i].Mass; // PdV work done by photons [absorbed ones are fully-destroyed, so their loss of energy and momentum is already accounted for by their deletion in this limit //
+                        if(mode==0) {double dv_rt=radacc_eff*All.cf_atime; pp[i].Vel[kx]+=dv_rt; pp[i].dp[kx]+=dv_rt*cell[i].Mass;} else {cell[i].VelPred[kx] += radacc_eff * All.cf_atime;}
                     }
                     double d_egy_rad = (2.*f_kappa_abs-1.)*work_band , d_egy_int = -2.*f_kappa_abs*work_band * (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED(i)); // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
                     if(mode==0) {cell[i].InternalEnergy += d_egy_int;} else {cell[i].InternalEnergyPred += d_egy_int;}
@@ -837,7 +837,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(kf==RT_FREQ_BIN_INFRARED) {
 #ifdef COOLING
                 ef += de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption); /* update: assume a fraction de_abs * IRBand_opacity_fraction_from_gas_absorption is absorbed by the gas, which will not be instantly re-emitted here, but later in the cooling subroutines */
-                if(mode==0) {cell[i].DtInternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / ((MIN_REAL_NUMBER + dt_entr) * pp[i].Mass);} /* this fraction absorbed by gas goes into a heating rate which can be balanced implicitly in the cooling function later */
+                if(mode==0) {cell[i].DtInternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / ((MIN_REAL_NUMBER + dt_entr) * cell[i].Mass);} /* this fraction absorbed by gas goes into a heating rate which can be balanced implicitly in the cooling function later */
 #else
                 ef = e0 + total_de_dt * dt_entr; // previous version: assumes all self-absorption is re-emitted
 #endif
@@ -862,7 +862,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             double teqm_inv = cell[i].Rad_Kappa[kf] * rho * C_LIGHT_CODE_REDUCED(i) + MIN_REAL_NUMBER; // physical code units of 1/time, defines characteristic timescale for coming to equilibrium flux. see notes for CR second-order module for details. //
             {Vec3<double> v_i{vel_i[0],vel_i[1],vel_i[2]}; Vec3<double> vdh = E_rad_forflux * (v_i + cell[i].ET[kf].matvec(v_i)); vdot_h[0]=vdh[0]; vdot_h[1]=vdh[1]; vdot_h[2]=vdh[2];} // calculate P_rad term and eI term, multiply by radiation energy //
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR // definitely favor this for greater accuracy and reduced noise //
-            for(k_dir=0;k_dir<3;k_dir++) {DeltaFluxEff[k_dir] -= (pp[i].Mass/rho) * (C_LIGHT_CODE_REDUCED(i)*C_LIGHT_CODE_REDUCED(i)/teqm_inv) * cell[i].Gradients.Rad_E_gamma_ET[kf][k_dir]*All.cf_a3inv/All.cf_atime;} // here we compute the nabla.pressure_gradient_tensor term from gradients directly, and use this in the next step after multiplying the flux equation by (tilde[c]^2/dt_eqm_inv) and working in dimensionless time units
+            for(k_dir=0;k_dir<3;k_dir++) {DeltaFluxEff[k_dir] -= (cell[i].Mass/rho) * (C_LIGHT_CODE_REDUCED(i)*C_LIGHT_CODE_REDUCED(i)/teqm_inv) * cell[i].Gradients.Rad_E_gamma_ET[kf][k_dir]*All.cf_a3inv/All.cf_atime;} // here we compute the nabla.pressure_gradient_tensor term from gradients directly, and use this in the next step after multiplying the flux equation by (tilde[c]^2/dt_eqm_inv) and working in dimensionless time units
 #else
             for(k_dir=0;k_dir<3;k_dir++) {DeltaFluxEff[k_dir] += (cell[i].Dt_Rad_Flux[kf][k_dir]/teqm_inv);} // the nabla.pressure_gradient_tensor is computed in the finite-volume solver, here
 #endif
@@ -937,14 +937,14 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 
             // ok -now- calculate the net change in momentum and energy, for updating the gas quantities
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_f+=i0[k_om]; for(k=0;k<3;k++) {flux_f[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
-            Vec3<double> dv_gas = -(flux_f-flux_0)/(ceff*pp[i].Mass); double ke_gas_0=0, ke_gas_f=0, v0g=0, u0=0;
+            Vec3<double> dv_gas = -(flux_f-flux_0)/(ceff*cell[i].Mass); double ke_gas_0=0, ke_gas_f=0, v0g=0, u0=0;
             {Vec3<double> v0_gas = ctrue*beta; ke_gas_0 = v0_gas.norm_sq(); ke_gas_f = (v0_gas+dv_gas).norm_sq();} // note everything is volume-integrated, accounted for above, and we defined flux for convience without the c, so just one power of c here.
-            double d_ke_gas = 0.5*(ke_gas_f - ke_gas_0)*pp[i].Mass, de_gas=-(ctrue/ceff)*(egy_f-egy_0), de_gas_internal=(de_gas-d_ke_gas)/pp[i].Mass; // note ctrue/ceff factor here, accounting for rsol difference in gas heating/cooling rates vs RHD
+            double d_ke_gas = 0.5*(ke_gas_f - ke_gas_0)*cell[i].Mass, de_gas=-(ctrue/ceff)*(egy_f-egy_0), de_gas_internal=(de_gas-d_ke_gas)/cell[i].Mass; // note ctrue/ceff factor here, accounting for rsol difference in gas heating/cooling rates vs RHD
             if(mode==0) {u0=cell[i].InternalEnergy;} else {u0=cell[i].InternalEnergyPred;} // for updating gas internal energy (work terms, after subtracting kinetic energy changes)
             if(de_gas_internal<=-0.9*u0) {de_gas_internal = DMIN(de_gas_internal/(1.-de_gas_internal/u0), -0.9*u0);} // just a catch to avoid negative energies (will break energy conservation if you are slamming into it, however!
             
             // assign everything back to the appropriate variables after update
-            if(mode==0) {auto dv_kick=dv_gas*All.cf_atime; pp[i].Vel+=dv_kick; pp[i].dp+=dv_kick*pp[i].Mass;} else {cell[i].VelPred += dv_gas*All.cf_atime;} // update gas velocities (radiation pressure forces here)
+            if(mode==0) {auto dv_kick=dv_gas*All.cf_atime; pp[i].Vel+=dv_kick; pp[i].dp+=dv_kick*cell[i].Mass;} else {cell[i].VelPred += dv_gas*All.cf_atime;} // update gas velocities (radiation pressure forces here)
             if(mode==0) {cell[i].InternalEnergy += de_gas_internal;} else {cell[i].InternalEnergyPred += de_gas_internal;} // update gas internal energy (work terms, after subtracting kinetic energy changes)
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if(mode==0) {cell[i].Rad_Intensity[kf][k_om] = i0[k_om]/RT_INTENSITY_BINS_DOMEGA;} else {cell[i].Rad_Intensity_Pred[kf][k_om] = i0[k_om]/RT_INTENSITY_BINS_DOMEGA;}} // update intensities (all of the above)
             cell[i].Rad_E_gamma[kf]=egy_f; // set this every time this subroutine is called, so it is accessible everywhere else //
@@ -952,9 +952,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     } // loop over frequencies
     } // finite timestep requirement
 #else
-    double mom_fac = 1. - RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i) * total_erad_emission_minus_absorption / (pp[i].Mass * C_LIGHT_CODE_REDUCED(i)*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission, which is isotropic in the fluid frame but anisotropic in the lab frame. this effect is only important in actually semi-relativistic problems so we use "real" C here, not a RSOL, and match the corresponding term above in the radiation flux equation (if that is evolved explicitly). careful checking-through gives the single termm here, not both
+    double mom_fac = 1. - RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i) * total_erad_emission_minus_absorption / (cell[i].Mass * C_LIGHT_CODE_REDUCED(i)*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission, which is isotropic in the fluid frame but anisotropic in the lab frame. this effect is only important in actually semi-relativistic problems so we use "real" C here, not a RSOL, and match the corresponding term above in the radiation flux equation (if that is evolved explicitly). careful checking-through gives the single termm here, not both
     if(fabs(mom_fac - 1) > 0.1) {printf("WARNING: Large radiation backreaction for cell %d (mom_fac=%g), check the RT solver stability if this is not a relativistic problem.\n",i,mom_fac);}
-    {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {pp[i].dp[k_dir]+=pp[i].Vel[k_dir]*(mom_fac-1.)*pp[i].Mass; pp[i].Vel[k_dir]*=mom_fac;} else {cell[i].VelPred[k_dir] *= mom_fac;}}}
+    {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {pp[i].dp[k_dir]+=pp[i].Vel[k_dir]*(mom_fac-1.)*cell[i].Mass; pp[i].Vel[k_dir]*=mom_fac;} else {cell[i].VelPred[k_dir] *= mom_fac;}}}
 #endif
 
     if(mode > 0) {rt_eddington_update_calculation(i, pp, cell);} /* update the eddington tensor (if we calculate it) as well */
@@ -979,7 +979,7 @@ void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_ce
     {
         for(k = 0; k < N_RT_FREQ_BINS; k++)
         {
-            cell[i].Rad_E_gamma[k] = urad[k] * pp[i].Mass/(cell[i].Density * All.cf_a3inv);
+            cell[i].Rad_E_gamma[k] = urad[k] * cell[i].Mass/(cell[i].Density * All.cf_a3inv);
 #ifdef RT_EVOLVE_FLUX
             for(k_dir = 0; k_dir < 3; k_dir++){cell[i].Rad_Flux[k][k_dir] = 0;}
 #endif
@@ -1206,7 +1206,7 @@ void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas
 #ifdef RT_FREEFREE
     int k = RT_FREQ_BIN_FREEFREE;
     double t_eff = 0.59 * (gamma_eos(target, pp, cell)-1.) * U_TO_TEMP_UNITS * cell[target].InternalEnergyPred; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
-    je[k] = rt_absorb_frac_albedo(target, k, pp, cell) * rt_kappa(target,k, pp, cell) * pp[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
+    je[k] = rt_absorb_frac_albedo(target, k, pp, cell) * rt_kappa(target,k, pp, cell) * cell[target].Mass * ((4. * 5.67e-5) * t_eff*t_eff*t_eff*t_eff) / UNIT_FLUX_IN_CGS; // blackbody emissivity (Kirchoff's law): account for albedo [absorption opacity], and units //
 #endif
 }
 
@@ -1317,7 +1317,7 @@ dE - net dust heating (=0 for dust in equilibrium)
 double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
     double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
     double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * cell[i].Density * All.cf_a3inv / PROTONMASS_CGS;
-    double lambda_to_dErad = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nHcgs * nHcgs * (dt*UNIT_TIME_IN_CGS) / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * pp[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
+    double lambda_to_dErad = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nHcgs * nHcgs * (dt*UNIT_TIME_IN_CGS) / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
     
     double dust_absorption_nonIR = 0;
     for(int k=0; k < N_RT_FREQ_BINS; k++){
@@ -1337,7 +1337,7 @@ double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoin
     double de_IR_gas = LambdaIR_gas * lambda_to_dErad; // net emission by gas
     
     double kappa_dust_emission = rt_kappa_adaptive_IR_band(i, Tdust, Tdust, 1,1, pp, cell);
-    double fac_emission = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS)*pp[i].Mass*(C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE)*dt;
+    double fac_emission = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS)*cell[i].Mass*(C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE)*dt;
     double dust_emission = fac_emission*kappa_dust_emission*pow(Tdust,4); // *total* dust emission
     
     double T_IR_0 = cell[i].Radiation_Temperature;
@@ -1600,10 +1600,10 @@ double blackbody_lum_frac(double E_lower, double E_upper, double T_eff)
 }
 
 /* subroutine to return the photon energy density [in physical code units] in a given band range [i - index of star particle, E_lower - lower end of the energy band in eV, E_upper - upper end of the energy band in eV] */
-double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell)
+double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell)
 {
 #if defined(RT_INFRARED)
-    double u_gamma = cell[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] * (cell[i].Density*All.cf_a3inv/pp[i].Mass) * blackbody_lum_frac(E_lower, E_upper, cell[i].Radiation_Temperature);
+    double u_gamma = cell[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] * (cell[i].Density*All.cf_a3inv/cell[i].Mass) * blackbody_lum_frac(E_lower, E_upper, cell[i].Radiation_Temperature);
     if(!isfinite(u_gamma) || (u_gamma<0)) {u_gamma = 0;}
     return u_gamma;
 #else
@@ -1623,7 +1623,7 @@ double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particl
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2)
     double r_sol = pp[i].ProtoStellarRadius_inSolar, l_sol = pp[i].StarLuminosity_Solar;
 #elif defined(SINGLE_STAR_SINK_DYNAMICS) // use generic fits based on mass
-    double l_sol=sink_lum_bol(0,pp[i].Mass,i)*UNIT_LUM_IN_SOLAR, m_sol=pp[i].Mass*UNIT_MASS_IN_SOLAR, r_sol=pow(m_sol,0.738); // L/Lsun, M/Msun, R/Rsun
+    double l_sol=sink_lum_bol(0,cell[i].Mass,i)*UNIT_LUM_IN_SOLAR, m_sol=cell[i].Mass*UNIT_MASS_IN_SOLAR, r_sol=pow(m_sol,0.738); // L/Lsun, M/Msun, R/Rsun
 #else
     double l_sol=1., r_sol=1.; // nothing usefully defined for the above - default to solar-type stars //
 #endif
@@ -1658,9 +1658,9 @@ int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes
 {
     int value_to_return = 0;
     value_to_return = rt_get_source_luminosity(i, mode, lum, pp, cell); // call routine as normal for all bands, before adding chimes-specific details
-    if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) )
+    if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (cell[i].Mass>0) && (pp[i].KernelRadius>0) )
     {
-        int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=pp[i].Mass*UNIT_MASS_IN_SOLAR;
+        int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=cell[i].Mass*UNIT_MASS_IN_SOLAR;
         if(log_age_Myr < CHIMES_LOCAL_UV_AGE_LOW) {age_bin = 0;} else if (log_age_Myr < CHIMES_LOCAL_UV_AGE_MID) {age_bin = (int) floor(((log_age_Myr - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW) + 1);} else {
             age_bin = (int) floor((((log_age_Myr - CHIMES_LOCAL_UV_AGE_MID) / CHIMES_LOCAL_UV_DELTA_AGE_HI) + ((CHIMES_LOCAL_UV_AGE_MID - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW)) + 1);
             if (age_bin > CHIMES_LOCAL_UV_NBINS - 1) {age_bin = CHIMES_LOCAL_UV_NBINS - 1;}}

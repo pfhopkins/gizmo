@@ -302,7 +302,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 double Mass_Where_Dust_Shocked=0.; // mass fraction of gas cleared of dust from SNe
                 for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {
                     #pragma omp critical(_feedbackreturnyieldsFIRE2_)
-                    Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k, Mass_j_0, P, CellP); // load local scalar dust properties, note for grain size evolution this includes dust grain bin mass and number but they still work as scalars
+                    Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k, Mass_j_0, CellP); // load local scalar dust properties, note for grain size evolution this includes dust grain bin mass and number but they still work as scalars
                 }
 #endif
                 for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j_0[k] = Metallicity_j[k];} // save initial values to  use below
@@ -633,7 +633,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 double Mass_Where_Dust_Shocked=0.; // mass fraction of gas cleared of dust from SNe
                 for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {
 #pragma omp critical(_feedbackreturnyieldsFIRE3_)
-                    Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k,Mass_j_0, P, CellP); // load local scalar dust properties, note for grain size evolution this includes dust grain bin mass and number
+                    Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k,Mass_j_0, CellP); // load local scalar dust properties, note for grain size evolution this includes dust grain bin mass and number
                 } 
 #endif
                 for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j_0[k] = Metallicity_j[k];} // save initial values to  use below

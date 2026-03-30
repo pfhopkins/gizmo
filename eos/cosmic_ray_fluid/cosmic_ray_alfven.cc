@@ -150,7 +150,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         v2_t += cell[i].VelPred[i1]*cell[i].VelPred[i1];
         for(i2=0;i2<3;i2++) {dv2_t += cell[i].Gradients.Velocity[i1][i2]*cell[i].Gradients.Velocity[i1][i2]; db2_t += cell[i].Gradients.B[i1][i2]*cell[i].Gradients.B[i1][i2];}
     }
-    b2_t = Get_Gas_BField(i, pp, cell).norm_sq();
+    b2_t = cell[i].Bfield().norm_sq();
     v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime; h0=Get_Particle_Size(i)*All.cf_atime; // physical units
     M_A = h0*(EPSILON_SMALL + dv2_t) / (EPSILON_SMALL + vA_noion); M_A = DMAX(M_A , h0*(EPSILON_SMALL + db2_t) / (EPSILON_SMALL + b2_t)); M_A = DMAX( EPSILON_SMALL , M_A ); // proper calculation of the local Alfven Mach number
     x_LL = clight_code / (Omega_gyro * h0); x_LL=DMAX(x_LL,EPSILON_SMALL); k_turb = 1./h0; // scale at which turbulence is being measured here //
