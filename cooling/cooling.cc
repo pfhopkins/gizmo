@@ -183,7 +183,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
-        CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS );
+        CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS , P, CellP);
 #endif
         
 
@@ -1197,7 +1197,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         }
 #endif
 
-        Heat += CR_gas_heating(target, n_elec, nH0, nHcgs); // CR hadronic+Coulomb+ionization heating //
+        Heat += CR_gas_heating(target, n_elec, nH0, nHcgs, P, CellP); // CR hadronic+Coulomb+ionization heating //
 #if defined(COOL_LOW_TEMPERATURES)
         if(LambdaMol<0) {Heat -= LambdaMol;} // Molecular line heating (Trad_mol_cooling_batch > Tgas) //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
@@ -1976,7 +1976,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     double G_LW = 3.3e-11 * urad_G0 * (1./2.); // photo-dissociation (+ionization); note we're assuming a spectral shape identical to the MW background mean, scaling by G0, 1/2 here is to account for nH2 = (1/2) * fH2 * nH because we will solve for fH2 as a mass fraction
     double xi_cr_H2 = (7.525e-16) * (1./2.); // CR dissociation (+ionization), 1/2 here is to account for nH2 = (1/2) * fH2 * nH because we will solve for fH2 as a mass fraction. Using value favored by Indriolo et al for dense GMCs.
 //#if defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON) || defined(RT_ISRF_BACKGROUND) // scale ionization+dissociation rates with local CR energy density
-    xi_cr_H2 = Get_CosmicRayIonizationRate_cgs(i) * (1./2.); // scales following Cummings et al. 2016 to 1.6e-17 per eV/cm^3 [this function now defined for everything; differs slightly from default assumed above but thats just being consistent about the baseline normalization here]
+    xi_cr_H2 = Get_CosmicRayIonizationRate_cgs(i, P, CellP) * (1./2.); // scales following Cummings et al. 2016 to 1.6e-17 per eV/cm^3 [this function now defined for everything; differs slightly from default assumed above but thats just being consistent about the baseline normalization here]
 //#endif
     // want to solve the implicit equation: f_f = f_0 + g[f_f]*dt, where g[f_f] = df_dt evaluated at f=f_f, so root-find: dt*g[f_f] + f_0-f_f = 0
     // can write this as a quadtratic: x_a*f^2 - x_b_0*f - xb_LW*f + x_c = 0, where xb_LW is a non-linear function of f accounting for the H2 self-shielding terms
@@ -2185,7 +2185,7 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
 {
     if(All.ComovingIntegrationOn) {double rhofac=density_cgs/(1000.*COSMIC_BARYON_DENSITY_CGS); if(rhofac<0.2) {return 0;}} // ignore these reactions in the IGM
     double zeta_cr=1.0e-17, f_dustgas=0.01, n_ion_max=4.1533e-5, XH=HYDROGEN_MASSFRAC; // cosmic ray ionization rate (fixed as constant for non-CR runs) and dust-to-gas ratio
-    if(target >= 0) {zeta_cr = Get_CosmicRayIonizationRate_cgs(target);} // convert to ionization rate, using models as in Cummings et al. 2016
+    if(target >= 0) {zeta_cr = Get_CosmicRayIonizationRate_cgs(target, P, CellP);} // convert to ionization rate, using models as in Cummings et al. 2016
 #ifdef METALS
     if(target>=0) {f_dustgas=0.5*pp[target].Metallicity[0]*return_dust_to_metals_ratio_vs_solar(target,0, pp, cell) + 1.e-15;} // constant dust-to-metals ratio [floor purely numerical here, needed to avoid a spurious divergence below]
 #ifdef COOL_METAL_LINES_BY_SPECIES

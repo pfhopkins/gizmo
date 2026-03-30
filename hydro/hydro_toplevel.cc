@@ -520,7 +520,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #ifdef COSMIC_RAY_FLUID
     for(j=0;j<N_CR_PARTICLE_BINS;j++)
     {
-        in->CosmicRayPressure[j] = Get_Gas_CosmicRayPressure(i,j);
+        in->CosmicRayPressure[j] = Get_Gas_CosmicRayPressure(i,j, P, CellP);
         in->CosmicRayDiffusionCoeff[j] = CellP[i].CosmicRayDiffusionCoeff[j];
         in->CosmicRayFlux[j] = CellP[i].CosmicRayFluxPred[j];
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
@@ -826,7 +826,7 @@ void hydro_final_operations_and_cleanup(void)
             CellP[i].DtInternalEnergy *= (1.-P_cr_spec/P_tot_spec); /* approximate correction, valid to level here [more sophisticated correction can cause problems since the PdV energy isn't actually being taken -out- of the CR field, as it would be if followed explicitly] */
 #else
             double gamma_minus_eCR_tmp=0; for(k=0;k<N_CR_PARTICLE_BINS;k++) {gamma_minus_eCR_tmp+=(GAMMA_COSMICRAY(k)-1.)*CellP[i].CosmicRayEnergyPred[k];} // routine below only depends on the total CR energy, not bin-by-bin energies, when we do it this way here
-            double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt, gamma_minus_eCR_tmp, 1); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
+            double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt, gamma_minus_eCR_tmp, 1, P, CellP); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
             double u0=DMAX(CellP[i].InternalEnergyPred, All.MinEgySpec) , uf=DMAX(u0 - dCR_div/P[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
             CellP[i].DtInternalEnergy += (uf - u0) / (dt + MIN_REAL_NUMBER); // update gas quantities to be used in cooling function
 #endif
@@ -836,7 +836,7 @@ void hydro_final_operations_and_cleanup(void)
                 (note this is important; otherwise build up CR 'traps' where the gas piles up and cools but is entirely supported by CRs in outer disks) */
 #if !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) // handled in separate solver if explicitly evolving the relevant wave families
             for(k=0;k<N_CR_PARTICLE_BINS;k++) {
-                double streamfac = fabs(CR_get_streaming_loss_rate_coefficient(i,k));
+                double streamfac = fabs(CR_get_streaming_loss_rate_coefficient(i,k, P, CellP));
                 CellP[i].DtInternalEnergy += CellP[i].CosmicRayEnergyPred[k] * streamfac / P[i].Mass; // make sure to divide by mass here to get the correct units since DtInternalEnergy has been converted to specific energy units (while CR energies are absolute)
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
                 CellP[i].DtCosmicRayEnergy[k] -= cosmicrayfluid_rsol_corrfac(k) * CellP[i].CosmicRayEnergyPred[k] * streamfac; // in the multi-bin formalism, save this operation for the CR cooling ops since can involve bin-to-bin transfer of energy
@@ -845,13 +845,13 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #if defined(MAGNETIC) // only makes sense to include parallel correction below if all these terms enabled //
             /* 'residual' term from parallel scattering of CRs being not-necessarily-in-equilibrium with a two-moment form of the equations */
-            double vA_eff=Get_Gas_ion_Alfven_speed_i(i), vol_i=CellP[i].Density*All.cf_a3inv/P[i].Mass, Bmag=0; Vec3<double> bhat = CellP[i].BPred; // define some useful variables
+            double vA_eff=Get_Gas_ion_Alfven_speed_i(i, P, CellP), vol_i=CellP[i].Density*All.cf_a3inv/P[i].Mass, Bmag=0; Vec3<double> bhat = CellP[i].BPred; // define some useful variables
             Bmag = bhat.norm_sq(); // get direction vector for B-field needed below
             if(Bmag>0) {Bmag=sqrt(Bmag); bhat /= Bmag;} // make dimensionless
             if(Bmag>0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) {
                 int target_for_cr_betagamma = i; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = i, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
                 target_for_cr_betagamma = -1; // the correction terms depend on these being evaluated at their bin-centered locations
-                double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(i,k);
+                double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(i,k, P, CellP);
                 double grad_P_dot_B=0, F_dot_B=0, e0_cr=CellP[i].CosmicRayEnergyPred[k]*vol_i, p0_cr=(GAMMA_COSMICRAY(k)-1.)*e0_cr, vA_k=vA_eff*return_CRbin_nuplusminus_asymmetry(i,k), beta_fac=return_CRbin_beta_factor(target_for_cr_betagamma,k);
                 Vec3<double> gradpcr = CellP[i].Gradients.CosmicRayPressure[k] * (All.cf_a3inv/All.cf_atime);
                 grad_P_dot_B = dot(bhat, gradpcr); F_dot_B = dot(bhat, CellP[i].CosmicRayFluxPred[k]) * vol_i;

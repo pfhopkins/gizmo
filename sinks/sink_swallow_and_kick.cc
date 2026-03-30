@@ -404,7 +404,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         double v_kick=All.Sink_outflow_velocity; Vec3<double> dir={dpos[0],dpos[1],dpos[2]}; // DAA: default direction is radially outwards
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
                         double dEcr = All.Sink_CosmicRay_Injection_Efficiency * Mass_j * (All.Sink_accreted_fraction/(1.-All.Sink_accreted_fraction)) * C_LIGHT_CODE*C_LIGHT_CODE;
-                        inject_cosmic_rays(dEcr,All.Sink_outflow_velocity,5,j,dir.data_ptr());
+                        inject_cosmic_rays(dEcr,All.Sink_outflow_velocity,5,j,dir.data_ptr(), P, CellP);
 #endif
 #if (SINK_WIND_KICK < 0)  /* DAA: along polar axis defined by angular momentum within Kernel (we could add finite opening angle) work out the geometry w/r to the plane of the disk */
                         if(dot(dir,J_dir) > 0){dir=J_dir;} else {dir=-J_dir;}
@@ -1176,7 +1176,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
         CellP[j].Sink_CR_Energy_Available_For_Injection = dEcr;     /* store energy for later injection */
 #else
-        inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data); /* inject directly */
+        inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data, P, CellP); /* inject directly */
 #endif
 #endif
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */

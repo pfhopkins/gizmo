@@ -300,7 +300,7 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
         in->GQuant.InternalEnergy = CellP[i].InternalEnergyPred;
 #endif
 #ifdef COSMIC_RAY_FLUID
-        for(k=0;k<N_CR_PARTICLE_BINS;k++) {in->GQuant.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(i,k);}
+        for(k=0;k<N_CR_PARTICLE_BINS;k++) {in->GQuant.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(i,k, P, CellP);}
 #endif
 #ifdef DOGRAD_SOUNDSPEED
         in->GQuant.SoundSpeed = Get_Gas_effective_soundspeed_i(i, P, CellP);
@@ -1271,7 +1271,7 @@ void hydro_gradient_calc(void)
 
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) /* note that because of the way this depends on the gradient scale-length, we should calculate it -after- the slope-limiters are applied */
             for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].CosmicRayDiffusionCoeff[k]=0;}
-            if(CellP[i].Density > 0 && P[i].Mass > 0) {CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(i);}/* only assign diffusivities to 'valid' gas particles */
+            if(CellP[i].Density > 0 && P[i].Mass > 0) {CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(i, P, CellP);}/* only assign diffusivities to 'valid' gas particles */
 #endif
 
 
@@ -1722,7 +1722,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     double dpCR[N_CR_PARTICLE_BINS];
                     for(k=0;k<N_CR_PARTICLE_BINS;k++)
                     {
-                        dpCR[k] = Get_Gas_CosmicRayPressure(j,k) - local.GQuant.CosmicRayPressure[k];
+                        dpCR[k] = Get_Gas_CosmicRayPressure(j,k, P, CellP) - local.GQuant.CosmicRayPressure[k];
                         MINMAX_CHECK(dpCR[k],out.Minima.CosmicRayPressure[k],out.Maxima.CosmicRayPressure[k]);
                         if(swap_to_j) {MINMAX_CHECK(-dpCR[k],GasGradDataPasser[j].Minima.CosmicRayPressure[k],GasGradDataPasser[j].Maxima.CosmicRayPressure[k]);}
                     }

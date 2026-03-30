@@ -537,7 +537,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
     
 #ifdef COSMIC_RAY_FLUID
-    CosmicRay_Update_DriftKick(i,dt_entr,0);
+    CosmicRay_Update_DriftKick(i,dt_entr,0, P, CellP);
 #endif
     
 #ifdef RADTRANSFER
