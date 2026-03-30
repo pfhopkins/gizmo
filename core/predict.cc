@@ -506,7 +506,7 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
         {
             vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i_particle_id, P, CellP)*Get_Gas_effective_soundspeed_i(i_particle_id, P, CellP) +
                  (1. / All.cf_atime) *
-                 (Get_Gas_BField(i_particle_id, P, CellP).norm_sq() +
+                 (CellP[i_particle_id].Bfield().norm_sq() +
                   phi_B_eff*phi_B_eff) / CellP[i_particle_id].Density );
         }
         vsig1 = DMAX(vsig1, vsig2);

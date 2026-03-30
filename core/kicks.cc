@@ -487,7 +487,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     {
         /* now we're going to check for physically reasonable phi values */
         double cs_phys = Get_Gas_effective_soundspeed_i(i, P, CellP);
-        double b_phys = sqrt(Get_Gas_BField(i, P, CellP).norm_sq())*All.cf_a2inv;
+        double b_phys = sqrt(CellP[i].Bfield().norm_sq())*All.cf_a2inv;
         double vsig1 = sqrt(cs_phys*cs_phys + b_phys*b_phys/(CellP[i].Density*All.cf_a3inv));
         double vsig2 = 0.5 * fabs(CellP[i].MaxSignalVel);
         double vsig_max = DMAX( DMAX(vsig1,vsig2) , All.FastestWaveSpeed );

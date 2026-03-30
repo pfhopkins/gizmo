@@ -189,11 +189,11 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 kernel.sound_j = Get_Gas_effective_soundspeed_i(j, P, CellP);
                 kernel.vsig = kernel.sound_i + kernel.sound_j;
 #ifdef COSMIC_RAY_FLUID
-                double CosmicRayPressure_j[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {CosmicRayPressure_j[k] = Get_Gas_CosmicRayPressure(j,k, P, CellP);} /* compute this for use below */
+                double CosmicRayPressure_j[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {CosmicRayPressure_j[k] = CellP[j].CosmicRayPressure(k);} /* compute this for use below */
                 //double Streaming_Loss_Term = 0; // alternative evaluation of streaming+diffusion losses: still experimental //
 #endif
 #ifdef MAGNETIC
-                Vec3<double> BPred_j = Get_Gas_BField(j, P, CellP); /* defined j b-field in appropriate units for everything */
+                Vec3<double> BPred_j = CellP[j].Bfield(); /* defined j b-field in appropriate units for everything */
                 NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,BPred_j,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
 #ifdef DIVBCLEANING_DEDNER
                 double PhiPred_j = Get_Gas_PhiField(j); /* define j phi-field in appropriate units */

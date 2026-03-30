@@ -74,7 +74,7 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
     double b_mag = 0;
 #ifdef MAGNETIC
     double gizmo2gauss_2 = UNIT_B_IN_GAUSS*UNIT_B_IN_GAUSS;
-    b_mag = Get_Gas_BField(i, P, CellP).norm_sq() * gizmo2gauss_2;
+    b_mag = CellP[i].Bfield().norm_sq() * gizmo2gauss_2;
 #endif
     double rad_flux_uv = 1;
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -646,7 +646,7 @@ void star_formation_parent_routine(void)
                             double dv2_abs = 0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
                             Vec3<MyDouble> tempB={};
 #ifdef MAGNETIC
-                            tempB = Get_Gas_BField(i, P, CellP); // use particle magnetic field
+                            tempB = CellP[i].Bfield(); // use particle magnetic field
 #endif
                             dv2_abs = ((1./2.)*((CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1])*(CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1]) // squared norm of the trace-free symmetric [shear] component of the velocity gradient tensor //
                                                 + (CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2])*(CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2]) + (CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])) +

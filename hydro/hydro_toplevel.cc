@@ -479,7 +479,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, P, CellP);}
+    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, CellP);}
 #endif
 #endif
 
@@ -508,7 +508,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #endif
 
 #ifdef MAGNETIC
-    in->BPred = Get_Gas_BField(i, P, CellP);
+    in->BPred = CellP[i].Bfield();
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
     in->Balpha = CellP[i].Balpha;
 #endif
@@ -520,7 +520,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #ifdef COSMIC_RAY_FLUID
     for(j=0;j<N_CR_PARTICLE_BINS;j++)
     {
-        in->CosmicRayPressure[j] = Get_Gas_CosmicRayPressure(i,j, P, CellP);
+        in->CosmicRayPressure[j] = CellP[i].CosmicRayPressure(j);
         in->CosmicRayDiffusionCoeff[j] = CellP[i].CosmicRayDiffusionCoeff[j];
         in->CosmicRayFlux[j] = CellP[i].CosmicRayFluxPred[j];
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
@@ -661,7 +661,7 @@ void hydro_final_operations_and_cleanup(void)
 #if defined(MAGNETIC)
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             {
-                Vec3<double> Bi = Get_Gas_BField(i, P, CellP) * All.cf_a2inv;
+                Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
 #ifndef HYDRO_SPH
                 /* this part of the induction equation has to do with advection of div-B, it is not present in SPH */
                 CellP[i].DtB -= CellP[i].divB * (CellP[i].VelPred/All.cf_atime);
@@ -694,7 +694,7 @@ void hydro_final_operations_and_cleanup(void)
 
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
-                CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, Get_Gas_BField(i, P, CellP) * All.cf_a2inv);
+                CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
             }
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
@@ -734,7 +734,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
-            CellP[i].DtInternalEnergy -= dot(Get_Gas_BField(i, P, CellP) * All.cf_a2inv, CellP[i].DtB);
+            CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
             CellP[i].DtB *= magnorm_closure;
 #endif

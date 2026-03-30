@@ -109,7 +109,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 {
     double unew, dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i), ne_in, ne_out;
 
-    if((dtime>0)&&(pp[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
+    if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
@@ -178,7 +178,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 
 #if defined(SINK_THERMALFEEDBACK)
-        if(cell[i].Injected_Sink_Energy) {unew += cell[i].Injected_Sink_Energy / pp[i].Mass; cell[i].Injected_Sink_Energy = 0;}
+        if(cell[i].Injected_Sink_Energy) {unew += cell[i].Injected_Sink_Energy / cell[i].Mass; cell[i].Injected_Sink_Energy = 0;}
 #endif
 
 
@@ -189,8 +189,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 #if defined(RADTRANSFER) /* account for cooling radiation which should, according to our modules, come out in certain bands */
         double nHcgs = nH_CGS(i); /* hydrogen number dens in cgs units */
-        double ratefact = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * pp[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
-        double de_u = (unew - cell[i].InternalEnergy) * pp[i].Mass; /* change in the total internal energy of the gas cell [integrating over everything] */
+        double ratefact = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
+        double de_u = (unew - cell[i].InternalEnergy) * cell[i].Mass; /* change in the total internal energy of the gas cell [integrating over everything] */
         double de_rad_tot_final = 0, de_rad_tot = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {de_rad_tot += cell[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;} /* energy gained by gas needs to be subtracted from radiation. positive lambda means gas cooling (gas energy loss, so radiation energy gain, so positive here) */
         double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad; /* variables for below showing total change in gas energy from radiation, and placeholder for the hydro work term */
         de_u_work = (cell[i].DtInternalEnergy*(UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS)*(PROTONMASS_CGS/HYDROGEN_MASSFRAC)) / nHcgs * ratefact; /* account for hydro work going into the system as an energy source */
@@ -224,7 +224,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                 if(fabs(de_rad) > MIN_REAL_NUMBER)
                 {
                     double de_rad_min = DMIN(DMAX(-0.99*cell[i].Rad_E_gamma[k], -de_u_touse), 0); // don't let the radiation loss take all the radiation energy into negative, or more than the energy gained from cooling+heating
-                    double de_rad_max = DMAX(DMIN(10.*unew*pp[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
+                    double de_rad_max = DMAX(DMIN(10.*unew*cell[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
                     de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min); // limit de_rad appropriately
                     if(fabs(de_rad) > MIN_REAL_NUMBER)
                     {
@@ -243,8 +243,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                         double corrfac = 0; if(Rad_E_gamma_before > 0 && cell[i].Rad_E_gamma[k] > 0) {corrfac = cell[i].Rad_E_gamma[k] / (MIN_REAL_NUMBER + Rad_E_gamma_before);}
                         if(corrfac > 0) {cell[i].Rad_Flux[k] *= corrfac; cell[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*cell[i].VelPred[kv]/All.cf_atime * de_rad; cell[i].Rad_Flux[k][kv] += fluxfac; cell[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
 #endif
-                        double momfac = 1. - de_rad / (pp[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
-                        pp[i].dp += pp[i].Vel * ((momfac - 1.) * pp[i].Mass); pp[i].Vel *= momfac; cell[i].VelPred *= momfac;
+                        double momfac = 1. - de_rad / (cell[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
+                        pp[i].dp += pp[i].Vel * ((momfac - 1.) * cell[i].Mass); pp[i].Vel *= momfac; cell[i].VelPred *= momfac;
                     }
                 }
             }
@@ -283,7 +283,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
 #endif
 
-    } // closes if((dt>0)&&(pp[i].Mass>0)&&(pp[i].Type==0)) check
+    } // closes if((dt>0)&&(cell[i].Mass>0)&&(pp[i].Type==0)) check
 }
 
 
@@ -810,7 +810,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
                 {
                     double n_gamma_tot = rt_return_photon_number_density(target,k);
 #ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], pp, cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
                     double c_ne_time_n_photons_vol = c_light_ne * n_gamma_tot; // gives photon flux
                     double cross_section_ion, dummy, thold=1.0e20;
@@ -994,7 +994,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(logT <= Tmin) {logT = Tmin + 0.5 * deltaT;}	/* floor at Tmin */
     if(!isfinite(rho)) {return 0;}
     T = pow(10.0, logT);
-    T_cmb_radeff = get_background_radiation_temperature_for_emission_corrections(target, pp, cell); /* CMB temperature, used below */
+    T_cmb_radeff = get_background_radiation_temperature_for_emission_corrections(target, cell); /* CMB temperature, used below */
 
     /* some blocks below to define useful variables before calculation of cooling rates: */
 
@@ -1164,7 +1164,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
                 {
                     double n_gamma_tot = rt_return_photon_number_density(target,k);
 #ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], pp, cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
                     double c_nH_time_n_photons_vol = c_light_nH * n_gamma_tot; // gives photon flux
                     double cross_section_ion, kappa_ion, dummy;
@@ -1899,12 +1899,12 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
 #if !defined(RT_LYMAN_WERNER)
     whichbin = RT_FREQ_BIN_PHOTOELECTRIC; // use photo-electric bin as proxy (very close) if don't evolve LW explicitly
 #endif
-    urad_G0 = cell[i].Rad_E_gamma[whichbin] * (cell[i].Density*All.cf_a3inv/pp[i].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
+    urad_G0 = cell[i].Rad_E_gamma[whichbin] * (cell[i].Density*All.cf_a3inv/cell[i].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
     urad_G0 += urad_from_uvb_in_G0; // include whatever is contributed from the meta-galactic background, fed into this routine
     urad_G0 = DMIN(DMAX( urad_G0 , 1.e-10 ) , 1.e10 ); // limit values, because otherwise exponential self-shielding approximation easily artificially gives 0 incident field
 #ifdef RT_INFRARED
-    urad_G0 += rt_irband_egydensity_in_band(i,11.2,500., pp, cell) * UNIT_EGY_DENSITY_IN_HABING; // add contribution from the adaptive band
+    urad_G0 += rt_irband_egydensity_in_band(i,11.2,500., cell) * UNIT_EGY_DENSITY_IN_HABING; // add contribution from the adaptive band
 #endif
     // define a number of variables needed in the shielding module
     double dx_cell = Get_Particle_Size(i) * All.cf_atime; // cell size
@@ -2085,7 +2085,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
     if(i >= 0)
     {
 #ifdef SINGLE_STAR_SINK_DYNAMICS // treatment using direct dust temperature solver accounting for absorption and gas-dust coupling - want this when capturing the dynamics of dense collapsing cores
-	double absorption_rate=0, vol_inv = cell[i].Density * All.cf_a3inv / pp[i].Mass, fac_abs = C_LIGHT_CODE * cell[i].Density * All.cf_a3inv;
+	double absorption_rate=0, vol_inv = cell[i].Density * All.cf_a3inv / cell[i].Mass, fac_abs = C_LIGHT_CODE * cell[i].Density * All.cf_a3inv;
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) // we have information about individual radiation bands and their opacities; use these to compute dust absorption rate
 	for(int k=0;k<N_RT_FREQ_BINS;k++){
 	    if(RT_BAND_IS_IONIZING(k)) {continue;} // skip ionizing bands where the dust cross section is not accounted for
@@ -2112,7 +2112,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 #endif // SINGLE_STAR_SINK_DYNAMICS
 
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) // use actual explicitly-evolved radiation field, if possible
-        e_HiEgy=0; e_IR = 0; int k; double E_tot_to_evol_eVcgs = (cell[i].Density*All.cf_a3inv/pp[i].Mass) * UNIT_PRESSURE_IN_EV;
+        e_HiEgy=0; e_IR = 0; int k; double E_tot_to_evol_eVcgs = (cell[i].Density*All.cf_a3inv/cell[i].Mass) * UNIT_PRESSURE_IN_EV;
         for(k=0;k<N_RT_FREQ_BINS;k++) {e_HiEgy+=cell[i].Rad_E_gamma_Pred[k];}
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE)
         e_IR += cell[i].Rad_E_gamma_Pred[RT_FREQ_BIN_FIRE_IR]; // note IR
@@ -2164,7 +2164,7 @@ MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data
 #endif
     double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target) * UNIT_SURFDEN_IN_CGS; // converts to cgs    
 #ifdef RT_PHOTOELECTRIC
-    G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / pp[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
+    G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / cell[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
 #if defined(RT_ISRF_BACKGROUND) && (!defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))                                                                        // latter flag decides whether we do treecol/sobolev here to get the background intensity // add a constant assumed FUV background, for isolated ISM simulations that don't get FUV from local sources self-consistently    
     G0 += All.InterstellarRadiationFieldStrength * 1.7 * exp(-DMAX(pp[target].Metallicity[0] / All.SolarAbundances[0], 1e-4) * column * 500.);                 // RT_ISRF_BACKGROUND rescales the overal ISRF, factor of 1.7 gives Draine 1978 field in Habing units, extinction factor assumes the same FUV band-integrated dust opacity as RT module
@@ -2235,7 +2235,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) // use actual explicitly-evolved radiation field, if possible
     if(target >= 0)
     {
-        int k; double E_tot_to_evol_eVcgs = (cell[target].Density*All.cf_a3inv/pp[target].Mass) * UNIT_PRESSURE_IN_EV;
+        int k; double E_tot_to_evol_eVcgs = (cell[target].Density*All.cf_a3inv/cell[target].Mass) * UNIT_PRESSURE_IN_EV;
         for(k=0;k<N_RT_FREQ_BINS;k++)
         {
             double e_tmp = cell[target].Rad_E_gamma_Pred[k] * E_tot_to_evol_eVcgs, Teff = 0;
@@ -2293,7 +2293,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 #ifdef MAGNETIC /* include sychrotron losses as well as long as we're here, since these scale more or less identically just using the magnetic instead of radiation energy */
     if(target >= 0)
     {
-        double b_muG = get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, T_rad_background_at_emission = get_background_radiation_temperature_for_emission_corrections(target, pp, cell);
+        double b_muG = get_cell_Bfield_in_microGauss(target, pp, cell), U_mag_ev=0.0248342*b_muG*b_muG, T_rad_background_at_emission = get_background_radiation_temperature_for_emission_corrections(target, cell);
         Lambda += compton_prefac_eV * U_mag_ev * (T-T_rad_background_at_emission); // synchrotron losses proportional to temperature (non-relativistic here), as inverse compton, just here without needing to worry about "T-T_eff", as if T_eff->0
     }
 #endif
@@ -2315,7 +2315,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 
 
 /* this function defines an effective background radiation temperature for purposes of computing the emission corrections above */
-double get_background_radiation_temperature_for_emission_corrections(int target, struct particle_data *pp, struct gas_cell_data *cell)
+double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell)
 {
     double T_cmb = 2.73/All.cf_atime;
 #ifdef RT_ISRF_BACKGROUND
@@ -2328,7 +2328,7 @@ double get_background_radiation_temperature_for_emission_corrections(int target,
 #ifdef RT_ISRF_BACKGROUND
         if(!All.ComovingIntegrationOn) {e_tmp_CMB *= pow(1.+All.RadiationBackgroundRedshift,4);}
 #endif
-        double e_tot_to_evol_eVcgs = (cell[target].Density*All.cf_a3inv/pp[target].Mass) * UNIT_PRESSURE_IN_EV;
+        double e_tot_to_evol_eVcgs = (cell[target].Density*All.cf_a3inv/cell[target].Mass) * UNIT_PRESSURE_IN_EV;
         double e_tmp_IR = cell[target].Rad_E_gamma_Pred[RT_FREQ_BIN_INFRARED] * e_tot_to_evol_eVcgs, T_tmp_IR = cell[target].Radiation_Temperature;
         return (e_tmp_IR * T_tmp_IR + e_tmp_CMB * T_cmb) / (e_tmp_IR + e_tmp_CMB); // if evolving IR band, use sum of it plus cmb for background
     }
@@ -2557,7 +2557,7 @@ void chimes_update_element_abundances(int i, struct particle_data *pp, struct ga
 void chimes_update_turbulent_abundances(int i, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
   int k_species;
-  double NHtot = (1.0 - (pp[i].Metallicity[0] + pp[i].Metallicity[1])) * (pp[i].Mass * UNIT_MASS_IN_CGS) / PROTONMASS_CGS;
+  double NHtot = (1.0 - (pp[i].Metallicity[0] + pp[i].Metallicity[1])) * (cell[i].Mass * UNIT_MASS_IN_CGS) / PROTONMASS_CGS;
 
   if (mode == 0)
     {

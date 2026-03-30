@@ -465,6 +465,45 @@ extern struct gas_cell_data
         return 1;
     }
 
+    inline double Bfield_component(int k) const { /*!< B-field component k in code units (B*Vol = BPred * Density / Mass) */
+#if defined(MAGNETIC)
+        return BPred[k] * Density / Mass;
+#endif
+        return 0;
+    }
+
+    inline Vec3<double> Bfield() const { /*!< B-field vector in code units */
+#if defined(MAGNETIC)
+        double fac = Density / Mass;
+        return BPred * fac;
+#endif
+        return {};
+    }
+
+#ifdef COSMIC_RAY_FLUID
+    inline double CosmicRayPressure(int k_CRegy) const { /*!< CR pressure in bin k_CRegy */
+        if((Mass > 0) && (Density > 0) && (CosmicRayEnergyPred[k_CRegy] > 0)) {
+            return (GAMMA_COSMICRAY(k_CRegy)-1.) * (CosmicRayEnergyPred[k_CRegy] * Density) / Mass;
+        }
+        return 0;
+    }
+#endif
+
+    inline double Urad_eVcm3() const { /*!< radiation energy density in eV/cm^3 */
+        double erad = 0.26*All.cf_a3inv/All.cf_atime;
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+        int kfreq; double e_units = (Density*All.cf_a3inv/Mass) * UNIT_PRESSURE_IN_EV;
+        for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad+=Rad_E_gamma_Pred[kfreq]*e_units;}
+#else
+        double uRad_MW = 0.31 + 0.66, prefac_rad=1, rho_cgs=Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS;
+        if(All.ComovingIntegrationOn) {double rhofac = rho_cgs / (1000.*COSMIC_BARYON_DENSITY_CGS);
+            if(rhofac < 0.2) {prefac_rad=0;} else {if(rhofac > 200.) {prefac_rad=1;} else {prefac_rad=exp(-1./(rhofac*rhofac));}}}
+        prefac_rad *= rho_cgs/(0.01*PROTONMASS_CGS + rho_cgs);
+        erad += uRad_MW * prefac_rad;
+#endif
+        return erad;
+    }
+
 #ifdef EOS_TILLOTSON
     inline double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
         int type = CompositionType;
