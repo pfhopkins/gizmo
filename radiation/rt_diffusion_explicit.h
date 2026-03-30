@@ -30,7 +30,7 @@
     for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
         Fluxes_Rad_E_gamma[k_freq] = 0;
-        double kappa_ij = 0.5 * (local.RT_DiffusionCoeff[k_freq] + rt_diffusion_coefficient(j,k_freq, P, CellP)); // physical
+        double kappa_ij = 0.5 * (local.RT_DiffusionCoeff[k_freq] + rt_diffusion_coefficient(j,k_freq, CellP)); // physical
         if((kappa_ij>0)&&(local.Mass>0)&&(P[j].Mass>0))
         {
             double scalar_i = local.Rad_E_gamma[k_freq] / V_i; // volumetric photon number density in this frequency bin (1/code volume) //
@@ -163,7 +163,7 @@
             double d_scalar = scalar_i - scalar_j;
             double cmag=0., thold_hll;
             Vec3<double> cmag_flux = {}, flux_i = local.Rad_Flux[k_freq]/V_i_phys - rsol_corr*v_frame*scalar_i, flux_j = CellP[j].Rad_Flux_Pred[k_freq]/V_j_phys - rsol_corr*v_frame*scalar_j; // units (E_phys/[t_phys*L_phys^2]) [physical]. include advective flux terms here
-            double kappa_i = local.RT_DiffusionCoeff[k_freq], kappa_j = rt_diffusion_coefficient(j,k_freq, P, CellP), kappa_ij = 0.5*(kappa_i+kappa_j); // physical units
+            double kappa_i = local.RT_DiffusionCoeff[k_freq], kappa_j = rt_diffusion_coefficient(j,k_freq, CellP), kappa_ij = 0.5*(kappa_i+kappa_j); // physical units
 
             /* calculate the eigenvalues for the HLLE flux-weighting */
 #ifdef RT_M1_SECONDORDER

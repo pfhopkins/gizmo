@@ -292,7 +292,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             //  both are not needed. we find slightly cleaner results on that test keeping the gravity and removing the KE switch
             
             // also check for flows which are totally dominated by the adiabatic component of their temperature evolution //
-            // double mach = fabs(CellP[i].MaxSignalVel/Get_Gas_effective_soundspeed_i(i, P, CellP) - 2.0); //
+            // double mach = fabs(CellP[i].MaxSignalVel/Get_Gas_effective_soundspeed_i(i, CellP) - 2.0); //
             // if(mach < 1.1) {do_entropy=1;} // (actually, this switch tends to do more harm than good!) //
             //do_entropy = 0; // seems unstable in tests like interacting blastwaves... //
             if(do_entropy)
@@ -317,7 +317,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,P[i].Particle_DivVel*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
             if(CellP[i].FaceClosureError > 0) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
                 if(drho2>0 && CellP[i].Density_ExplicitInt>0 && CellP[i].Density>0) {
-                    double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=Get_Gas_effective_soundspeed_i(i, P, CellP); /* gradient scale length and sound speed */
+                    double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=Get_Gas_effective_soundspeed_i(i, CellP); /* gradient scale length and sound speed */
 #if defined(EOS_TILLOTSON)
                     cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
 #endif
@@ -457,7 +457,7 @@ void set_predicted_quantities_for_extra_physics(int i)
             CellP[i].Rad_Flux_Pred[kf] = CellP[i].Rad_Flux[kf];
 #endif
         }
-        rt_eddington_update_calculation(i, P, CellP);
+        rt_eddington_update_calculation(i, CellP);
 #endif
 #ifdef RT_EVOLVE_INTENSITIES
         for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k=0;k<N_RT_INTENSITY_BINS;k++) {CellP[i].Rad_Intensity_Pred[kf][k] = CellP[i].Rad_Intensity[kf][k];}}
@@ -486,7 +486,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     if(CellP[i].Density > 0)
     {
         /* now we're going to check for physically reasonable phi values */
-        double cs_phys = Get_Gas_effective_soundspeed_i(i, P, CellP);
+        double cs_phys = Get_Gas_effective_soundspeed_i(i, CellP);
         double b_phys = sqrt(CellP[i].Bfield().norm_sq())*All.cf_a2inv;
         double vsig1 = sqrt(cs_phys*cs_phys + b_phys*b_phys/(CellP[i].Density*All.cf_a3inv));
         double vsig2 = 0.5 * fabs(CellP[i].MaxSignalVel);

@@ -59,7 +59,7 @@ void find_timesteps(void)
             if(P[i].Type==0)
             {
                 double vsig2 = 0.5  * fabs(CellP[i].MaxSignalVel); // in v_phys units //
-                double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i, P, CellP)*Get_Gas_effective_soundspeed_i(i, P, CellP) + fac_magnetic_pressure * CellP[i].Bfield().norm_sq() / CellP[i].Density );
+                double vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i, CellP)*Get_Gas_effective_soundspeed_i(i, CellP) + fac_magnetic_pressure * CellP[i].Bfield().norm_sq() / CellP[i].Density );
                 double vsig0 = DMAX(vsig1,vsig2);
 
                 if(vsig0 > fastwavespeed) fastwavespeed = vsig0; // physical unit
@@ -694,7 +694,7 @@ integertime get_timestep(int p,		/*!< particle index */
                     double gradETmag = CellP[p].Gradients.Rad_E_gamma_ET[kf].norm_sq();
                     double L_ETgrad_inv = sqrt(gradETmag) / (1.e-37 + CellP[p].Rad_E_gamma[kf] * CellP[p].Density/P[p].Mass);
                     double L_RT_diffusion = DMIN(L_particle , 1./(3.*L_ETgrad_inv)) * All.cf_atime;
-                    double dt_rt_diffusion = dt_prefac_diffusion * L_RT_diffusion*L_RT_diffusion / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf, P, CellP));
+                    double dt_rt_diffusion = dt_prefac_diffusion * L_RT_diffusion*L_RT_diffusion / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf, CellP));
                     double dt_advective = dt_rt_diffusion * DMAX(1,DMAX(L_particle , 1/(MIN_REAL_NUMBER + L_ETgrad_inv))*All.cf_atime / L_RT_diffusion);
                     double dt_rt_work = All.CourantFac * DMIN( L_RT_diffusion / csnd , L_particle*All.cf_atime / ((2./3.)*sqrt(CellP[p].Rad_E_gamma[kf]/P[p].Mass)) ); /* time-step related to radiation work, radiation soundspeed, relevant in strongly-coupled limit */
 #ifdef RT_FLUXLIMITER /* if we are flux-limited, we can account for the flux limiter making the timestep advective */
@@ -739,7 +739,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(GALSF) && !defined(SINGLE_STAR_SINK_DYNAMICS) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) // custom hacks for FIRE-RT tests; can override CFL condition with diffusion timestep certain limits
                 int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++)
                 {
-                    double dt_rt_diffusion = dt_prefac_diffusion * (L_particle*All.cf_atime)*(L_particle*All.cf_atime) / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf, P, CellP));
+                    double dt_rt_diffusion = dt_prefac_diffusion * (L_particle*All.cf_atime)*(L_particle*All.cf_atime) / (MIN_REAL_NUMBER + rt_diffusion_coefficient(p,kf, CellP));
                     if((CellP[p].Rad_E_gamma[kf] <= MIN_REAL_NUMBER) || (CellP[p].Rad_E_gamma_Pred[kf] <= MIN_REAL_NUMBER) || (CellP[p].Rad_E_gamma[kf] < 1.e-5*P[p].Mass*CellP[p].InternalEnergy)) {dt_rt_diffusion = 1.e10 * dt;} /* ignore particles where the radiation energy density is negligible */
                     dt_rad = DMIN(dt_rad, dt_rt_diffusion);
                 }
@@ -810,7 +810,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(DIVBCLEANING_DEDNER)
             double fac_magnetic_pressure = 1. / All.cf_atime;
             double phi_b_units = Get_Gas_PhiField(p) / ( All.cf_atime * CellP[p].MaxSignalVel);
-            double vsig1 =  sqrt( Get_Gas_effective_soundspeed_i(p, P, CellP)*Get_Gas_effective_soundspeed_i(p, P, CellP) +
+            double vsig1 =  sqrt( Get_Gas_effective_soundspeed_i(p, CellP)*Get_Gas_effective_soundspeed_i(p, CellP) +
                     fac_magnetic_pressure * (CellP[p].Bfield().norm_sq() +
                                              phi_b_units*phi_b_units) / CellP[p].Density );
 
@@ -1075,7 +1075,7 @@ integertime get_timestep(int p,		/*!< particle index */
                           (unsigned long long) P[p].ID, dt, dt_courant*All.cf_hubble_a, sqrt(2*All.ErrTolIntAccuracy*All.cf_atime*ForceSoftening_KernelRadius(p) / ac)*All.cf_hubble_a,
                           ac, agrav, agrav_pm, ahydro, arad, aturb, P[p].Pos[0], P[p].Pos[1], P[p].Pos[2], P[p].Vel[0]/All.cf_atime, P[p].Vel[1]/All.cf_atime, P[p].Vel[2]/All.cf_atime,
                           P[p].KernelRadius*All.cf_atime, CellP[p].Density*All.cf_a3inv, CellP[p].InternalEnergy, CellP[p].DtInternalEnergy, P[p].Particle_DivVel*All.cf_a2inv,
-                          CellP[p].Pressure*All.cf_a3inv, Get_Gas_effective_soundspeed_i(p, P, CellP), CellP[p].Alfven_speed(), Get_Gas_Ionized_Fraction(p, P, CellP),
+                          CellP[p].Pressure*All.cf_a3inv, Get_Gas_effective_soundspeed_i(p, CellP), CellP[p].Alfven_speed(), Get_Gas_Ionized_Fraction(p, CellP),
                           csnd, ForceSoftening_KernelRadius(p)*All.cf_atime, P[p].Mass, P[p].Type, CellP[p].ConditionNumber, P[p].NumNgb,
                           CellP[p].NV_T[0][0],CellP[p].NV_T[0][1],CellP[p].NV_T[0][2],CellP[p].NV_T[1][0],CellP[p].NV_T[1][1],CellP[p].NV_T[1][2],CellP[p].NV_T[2][0],CellP[p].NV_T[2][1],CellP[p].NV_T[2][2]);
         }

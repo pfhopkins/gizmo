@@ -610,7 +610,7 @@ double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct ga
 /***********************************************************************************************************/
 /* returns the photon diffusion coefficient = fluxlimiter * speed_of_light[reduced] / (kappa_opacity * density)  [physical units] */
 /***********************************************************************************************************/
-double rt_diffusion_coefficient(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
+double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell)
 {
     return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED(i) / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
 }
@@ -620,7 +620,7 @@ double rt_diffusion_coefficient(int i, int k_freq, struct particle_data *pp, str
 /***********************************************************************************************************/
 /* calculate the eddington tensor according to the different closure option[s] adopted */
 /***********************************************************************************************************/
-void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell)
+void rt_eddington_update_calculation(int j, struct gas_cell_data *cell)
 {
 #ifdef RT_OTVET
     return; /* eddington tensor is calculated elsewhere [in the gravity subroutine]: don't mess with it here! */
@@ -957,7 +957,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {pp[i].dp[k_dir]+=pp[i].Vel[k_dir]*(mom_fac-1.)*cell[i].Mass; pp[i].Vel[k_dir]*=mom_fac;} else {cell[i].VelPred[k_dir] *= mom_fac;}}}
 #endif
 
-    if(mode > 0) {rt_eddington_update_calculation(i, pp, cell);} /* update the eddington tensor (if we calculate it) as well */
+    if(mode > 0) {rt_eddington_update_calculation(i, cell);} /* update the eddington tensor (if we calculate it) as well */
 
 #ifdef RT_ISRF_BACKGROUND
     if(mode==0) {rt_apply_boundary_conditions(i, pp, cell);} /* if we have any special boundary conditions (e.g. fixed ISRF at box edge) apply this here */

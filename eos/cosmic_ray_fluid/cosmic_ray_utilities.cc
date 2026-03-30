@@ -222,7 +222,7 @@ double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, doubl
 
 /* routine which gives diffusion coefficient as a function of energy for the 'constant diffusion coefficient' models:
     current default: -extremely- simple power-law, assuming diffusion coefficient increases with CR energy per unit charge as (E/Z)^(1/2) */
-double diffusion_coefficient_constant(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell)
+double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell)
 {
     double dimensionless_kappa_relative_to_GV_protons = 1;
 #if (N_CR_PARTICLE_BINS > 1)    /* insert physics here */
@@ -276,7 +276,7 @@ double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy,
 #endif
     bhat_dot_CR_Pgrad = dot(b0, p0); // dot product of bhat and CR pressure gradient, summed over relevant bins
     double beta=return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy), Omega_gyro=beta*(0.00898734*b_muG/R_CR_GV) * UNIT_TIME_IN_CGS, r_L=beta*C_LIGHT_CODE/Omega_gyro, kappa_0=r_L*beta*C_LIGHT_CODE; /* all in physical -code- units */
-    double x_LL = DMAX( r_L / L_scale, EPSILON_SMALL ), vA_code=Get_Gas_ion_Alfven_speed_i(target, pp, cell), k_turb=1./L_scale, k_L=1./r_L;
+    double x_LL = DMAX( r_L / L_scale, EPSILON_SMALL ), vA_code=Get_Gas_ion_Alfven_speed_i(target, cell), k_turb=1./L_scale, k_L=1./r_L;
 
     if(mode==1) {f_QLT = 100;} // multiplier to account for arbitrary deviation from QLT, applies to all damping mechanisms [100 = favored value in our study; or could use fcas = 100]
     fturb_multiplier = pow(M_A,3./2.); // multiplier to account for different turbulent cascade models (fcas = 1)
@@ -373,7 +373,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 #endif
 
     if(dtime_cgs <= 0) {return;} /* catch */
-    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);
+    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, cell),1.),0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC; /* some coefficients; a_hadronic is the default coefficient, b_coulomb_ion_per_GeV the default Coulomb+ionization (the two scale nearly-identically) normalization divided by GeV, b/c we need to divide the energy per CR  */
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
@@ -408,7 +408,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
                                                                                                                               
 
 /* utility to estimate -locally- (without multi-pass filtering) the local Alfven Mach number */
-double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct particle_data *pp, struct gas_cell_data *cell)
+double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell)
 {
     int i1,i2; double v2_t=0,dv2_t=0,b2_t=0,db2_t=0,M_A,h0,EPSILON_SMALL=1.e-50; // factor which will represent which cascade model we are going to use
     for(i1=0;i1<3;i1++)
@@ -501,11 +501,11 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #if (CRFLUID_DIFFUSION_MODEL == 4) /* Wiener et al. 2017 style pure-streaming but with larger streaming speeds and limited losses, using their scaling for assumption that turbulent+non-linear Landau only dominate damping */
         double ni_m3=f_ion*(rho_cgs/PROTONMASS_CGS)/1.e-3, T6=temperature/1.e6, Lturbkpc=L_scale*UNIT_LENGTH_IN_KPC, Lgradkpc=CRPressureGradScaleLength*UNIT_LENGTH_IN_KPC, h0_fac=0.1*Get_Particle_Size(i)*All.cf_atime*All.cf_a2inv*UNIT_VEL_IN_KMS, dv2_10=cell[i].Gradients.Velocity.frobenius_norm_sq()*h0_fac*h0_fac;
         double ecr_14 = cell[i].CosmicRayEnergyPred[k_CRegy] * (cell[i].Density*All.cf_a3inv/pp[i].Mass) * UNIT_PRESSURE_IN_CGS / 1.0e-14; // CR energy density in CGS units //
-        v_streaming = Get_Gas_ion_Alfven_speed_i(i, pp, cell);
+        v_streaming = Get_Gas_ion_Alfven_speed_i(i, cell);
         CR_kappa_streaming = GAMMA_COSMICRAY(k_CRegy) * CRPressureGradScaleLength * (v_streaming + (1./UNIT_VEL_IN_KMS)*(4.1*pow(MIN_REAL_NUMBER+ni_m3*T6,0.25)/pow(MIN_REAL_NUMBER+ecr_14*Lgradkpc,0.5) + 1.2*pow(MIN_REAL_NUMBER+dv2_10*ni_m3,0.75)/(MIN_REAL_NUMBER+ecr_14*sqrt(Lturbkpc)))); // convert to effective diffusivity
 #endif
 #if (CRFLUID_DIFFUSION_MODEL == 5) /* streaming at fast MHD wavespeed [just to see what it does] */
-        v_streaming = Get_Gas_Fast_MHD_wavespeed_i(i, pp, cell);
+        v_streaming = Get_Gas_Fast_MHD_wavespeed_i(i, cell);
         CR_kappa_streaming = GAMMA_COSMICRAY(k_CRegy) * v_streaming * CRPressureGradScaleLength;
 #endif
 #if (CRFLUID_DIFFUSION_MODEL == 1) || (CRFLUID_DIFFUSION_MODEL == 2) || (CRFLUID_DIFFUSION_MODEL == 7) /* textbook extrinsic turbulence model: kappa~v_CR*r_gyro * B_bulk^2/(B_random[scale~r_gyro]^2) v_CR~c, r_gyro~p*c/(Z*e*B)~1e12 cm * RGV *(3 muG/B)  (RGV~1 is the magnetic rigidity). assuming a Kolmogorov spectrum */
@@ -545,7 +545,7 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 
 
 /* utility routine which handles the numerically-necessary parts of the CR 'injection' for you; here 'injection_velocity' should be in physical (not comoving) units */
-void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct particle_data *pp, struct gas_cell_data *cell)
+void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell)
 {
     if(CR_energy_to_inject <= 0) {return;}
     double f_injected[N_CR_PARTICLE_BINS]; f_injected[0]=1; int k_CRegy;
@@ -555,7 +555,7 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
 #endif
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
-        double dEcr = evaluate_cr_transport_reductionfactor(target, k_CRegy, 0, pp, cell) * CR_energy_to_inject * f_injected[k_CRegy]; // normalized properly to sum to unity, and account for RSOL in injection rate [akin to RHD treatment]
+        double dEcr = evaluate_cr_transport_reductionfactor(target, k_CRegy, 0, cell) * CR_energy_to_inject * f_injected[k_CRegy]; // normalized properly to sum to unity, and account for RSOL in injection rate [akin to RHD treatment]
         if(dEcr <= 0) {continue;}
 #if defined(CRFLUID_EVOLVE_SPECTRUM) // update the evolved slopes with the injection spectrum slope: do a simple energy-weighted mean for the updated/mixed slope here
         double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy), egy_slopemode = 1, xm = CR_global_min_rigidity_in_bin[k_CRegy] / CR_global_rigidity_at_bin_center[k_CRegy], xp = CR_global_max_rigidity_in_bin[k_CRegy] / CR_global_rigidity_at_bin_center[k_CRegy], xm_e=xm, xp_e=xp; // values needed for bin injection parameters
@@ -563,9 +563,9 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
         double slope_inj = CR_energy_spectrum_injection_fraction(k_CRegy,source_type,injection_velocity,1,target); // spectral slope of injected CRs
 #if defined(CRFLUID_ALT_RSOL_FORM) && defined(CRFLUID_ALT_VARIABLE_RSOL) // want to correct injection slope if we're modulating injection with a variable Psi-type rsol function or variable-rsol
         if(k_CRegy>0) {int spec_0=return_CRbin_CR_species_ID(k_CRegy), spec_m=return_CRbin_CR_species_ID(k_CRegy-1), spec_p=-200; if(spec_m==spec_0) {
-            double rfac_0=evaluate_cr_transport_reductionfactor(target,k_CRegy,0, pp, cell), rfac_m=evaluate_cr_transport_reductionfactor(target,k_CRegy-1,0), rfac_p=rfac_0, R_0=CR_global_rigidity_at_bin_center[k_CRegy], R_m=CR_global_rigidity_at_bin_center[k_CRegy-1], R_p=R_0;
+            double rfac_0=evaluate_cr_transport_reductionfactor(target,k_CRegy,0, cell), rfac_m=evaluate_cr_transport_reductionfactor(target,k_CRegy-1,0), rfac_p=rfac_0, R_0=CR_global_rigidity_at_bin_center[k_CRegy], R_m=CR_global_rigidity_at_bin_center[k_CRegy-1], R_p=R_0;
             if(k_CRegy<N_CR_PARTICLE_BINS) {spec_p=return_CRbin_CR_species_ID(k_CRegy+1);}
-            if(spec_p==spec_0) {rfac_p=evaluate_cr_transport_reductionfactor(target,k_CRegy+1,0, pp, cell); R_p=CR_global_rigidity_at_bin_center[k_CRegy+1];
+            if(spec_p==spec_0) {rfac_p=evaluate_cr_transport_reductionfactor(target,k_CRegy+1,0, cell); R_p=CR_global_rigidity_at_bin_center[k_CRegy+1];
                 double xm=log(R_m/R_0),xp=log(R_p/R_0),qm=log(rfac_m/rfac_0),qp=log(rfac_p/rfac_0); slope_inj += (qm*xm + qp*xp) / (xm*xm + xp*xp);} else {slope_inj += log(rfac_0/rfac_m) / log(R_0/R_m);}}} // not clear if actually improves accuracy by substantial margin here, vs letting code self-adjust in next timestep
 #endif
         double gamma_one = slope_inj + 1., xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one); // variables below
@@ -698,17 +698,17 @@ double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy)
 
 
 /* return pre-factor for CR streaming losses, such that loss rate dE/dt = -E * streamfac */
-double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell)
+double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct gas_cell_data *cell)
 {
     double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(target), streamfac = 0;
     if((cell[target].CosmicRayEnergy[k_CRegy] <= MIN_REAL_NUMBER) || (cell[target].CosmicRayEnergy[k_CRegy] <= MIN_REAL_NUMBER) || (dt <= 0)) {return 0;}
-    double vA = Get_Gas_ion_Alfven_speed_i(target, pp, cell); /* define Alfven speed, which is what appears in the proper formulation here */
+    double vA = Get_Gas_ion_Alfven_speed_i(target, cell); /* define Alfven speed, which is what appears in the proper formulation here */
     double v_flux_eff=cell[target].CosmicRayFluxPred[k_CRegy].norm_sq(); int k; // need magnitude of flux vector
     if(v_flux_eff > 0) {v_flux_eff=sqrt(v_flux_eff) / (MIN_REAL_NUMBER + cell[target].CosmicRayEnergyPred[k_CRegy]);} else {v_flux_eff=0;} // effective speed of CRs = |F|/E
     int target_for_cr_gamma = target; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = target, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
     double gamma_0=return_CRbin_gamma_factor(target_for_cr_gamma,k_CRegy), gamma_fac=gamma_0/(gamma_0-1.), beta_fac=return_CRbin_beta_factor(target_for_cr_gamma,k_CRegy); // lorentz factor here, needed in next line, because the loss term here scales with -total- energy, not kinetic energy
     if(beta_fac<0.1) {gamma_fac=2./(beta_fac*beta_fac) -0.5 - 0.125*beta_fac*beta_fac;} // avoid accidental nan
-    streamfac = (vA * (beta_fac*beta_fac) / fabs(3.*cell[target].CosmicRayDiffusionCoeff[k_CRegy])) * ((gamma_fac) * return_CRbin_nuplusminus_asymmetry(target,k_CRegy) * v_flux_eff/cosmicrayfluid_rsol_corrfac(k_CRegy) - (3.*(GAMMA_COSMICRAY(k_CRegy)-1.) + (gamma_fac)) * vA * (2./3.) * return_cosmic_ray_anisotropic_closure_function_threechi(target,k_CRegy, pp, cell)); // this is (vA/[3kappa])*(F - 2*chifac*vA*(ecr+3*Pcr))/ecr, using the 'full F' [corrected back from rsol, b/c rsol correction moves outside this for loss terms]
+    streamfac = (vA * (beta_fac*beta_fac) / fabs(3.*cell[target].CosmicRayDiffusionCoeff[k_CRegy])) * ((gamma_fac) * return_CRbin_nuplusminus_asymmetry(target,k_CRegy) * v_flux_eff/cosmicrayfluid_rsol_corrfac(k_CRegy) - (3.*(GAMMA_COSMICRAY(k_CRegy)-1.) + (gamma_fac)) * vA * (2./3.) * return_cosmic_ray_anisotropic_closure_function_threechi(target,k_CRegy, cell)); // this is (vA/[3kappa])*(F - 2*chifac*vA*(ecr+3*Pcr))/ecr, using the 'full F' [corrected back from rsol, b/c rsol correction moves outside this for loss terms]
     double sfac_max = fabs(0.1 * cell[target].CosmicRayEnergy[k_CRegy] / (MIN_REAL_NUMBER + dt));
     if(fabs(streamfac) > sfac_max) {streamfac *= sfac_max / fabs(streamfac);}
     return streamfac; // probably want to limit to make sure above doesn't take on too extreme a value... also above, initially only had positive term since this removes energy from CRs when streaming super-Alfvenically, but when streaming sub-Alfvenically, could this become a source term with energy going into CRs? seems problematic if vA very high, but then scattering would work inefficiently... so plausible, but really need to be careful again about magnitude...
@@ -729,7 +729,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         if(u0<All.MinEgySpec) {u0=All.MinEgySpec;} // enforced throughout code
         if(eCR < 0) {eCR=0;} // limit to physical values
         double closure_f1, closure_f2; closure_f1=1, closure_f2=0; // prefactors for below
-        double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(i,k_CRegy, pp, cell); // 3*chi = 3*(1-<mu^2>)/2 closure function //
+        double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(i,k_CRegy, cell); // 3*chi = 3*(1-<mu^2>)/2 closure function //
         closure_f1 = 3.-2.*three_chi; closure_f2 = 1.-three_chi; // prefactors for both terms below //
 
         // this is the exact solution for the CR flux-update equation over a finite timestep dt: it needs to be solved this way [implicitly] as opposed to explicitly for dt because in the limit of dt_cr_dimless being large, the problem exactly approaches the diffusive solution
@@ -745,7 +745,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         bbGB = -dot(bhat, cell[i].Gradients.B.matvec(bhat)) / Bmag;
         DtCosmicRayFlux = fac_for_DtCosmicRayFlux * (closure_f1*DtCRDotBhat*B0/Bmag2 + closure_f2*P0_cr*bbGB);
 #endif
-        double v_Alfven = three_chi * Get_Gas_ion_Alfven_speed_i(i, pp, cell) * return_CRbin_nuplusminus_asymmetry(i,k_CRegy); /* define naive streaming and Alfven speeds */
+        double v_Alfven = three_chi * Get_Gas_ion_Alfven_speed_i(i, cell) * return_CRbin_nuplusminus_asymmetry(i,k_CRegy); /* define naive streaming and Alfven speeds */
         double dt_f_m=DtCosmicRayFlux.norm_sq();
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
         double flux_diff=sqrt(dt_f_m), flux_stream=fabs(rsol_correction_factor*v_Alfven*(GAMMA_COSMICRAY(k_CRegy)*eCR)); // estimate contribution to flux from both diffusive and streaming components
@@ -843,7 +843,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     if(cell[i].DtCREgyNewInjectionFromShocks > 0) /* now perform the actual CR injection using the rates estimated in the hydro solver */
     {
         Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
-        inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], pp, cell); /* inject the energy */
+        inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], cell); /* inject the energy */
         cell[i].DtCREgyNewInjectionFromShocks = 0; // reset to nil, we've successfully injected the energy
     }
 #endif
@@ -861,7 +861,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 #endif
         if((pp[i].ID != All.SpawnedWindCellID) || (vmag < ((double)(SINK_CR_INJECTION_AT_TERMINATION))*v_outflow_fast_forinjection)) {
             Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
-            inject_cosmic_rays(cell[i].Sink_CR_Energy_Available_For_Injection, v_outflow_fast_forinjection, 5, i, &dir[0], pp, cell); /* inject the energy */
+            inject_cosmic_rays(cell[i].Sink_CR_Energy_Available_For_Injection, v_outflow_fast_forinjection, 5, i, &dir[0], cell); /* inject the energy */
             cell[i].Sink_CR_Energy_Available_For_Injection = 0;  // reset its value to nil, now that it has been injected
         }
     }
@@ -895,7 +895,7 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
     double *Ucr, Ucr_tot=0; if(mode_driftkick==0) {Ucr=cell[target].CosmicRayEnergy;} else {Ucr=cell[target].CosmicRayEnergyPred;}
     int k; for(k=0;k<N_CR_PARTICLE_BINS;k++) {Ucr_tot+=Ucr[k];} // check total energy since some fluid cells can have no CRs
     if(Ucr_tot < MIN_REAL_NUMBER) {return;} // catch - nothing to do here //
-    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.), b_muG=cell[target].Bfield_microGauss(), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=cell[target].Urad_eVcm3();
+    double t=0, dt=0, bbGv=0, E_rest_e_GeV=0.000511, f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, cell),1.),0.), b_muG=cell[target].Bfield_microGauss(), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev=cell[target].Urad_eVcm3();
 
 #if defined(CRFLUID_ALT_REACCEL_ONLY_DIFFUSIVE)
     double vA=cell[target].Alfven_speed(), vA_ion, vA_touse, kappa_max=0, kappa_i[N_CR_PARTICLE_BINS], delta_diffcoeff[N_CR_PARTICLE_BINS], reaccel_coeff[N_CR_PARTICLE_BINS]; vA_ion=vA/sqrt(f_ion); vA_touse=vA;
@@ -941,13 +941,13 @@ void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, dou
         bin_slopes[k] = CR_return_slope_from_number_and_energy_in_bin(Ucr[k], ntot_evolved[k], E_GeV[k], k); // initialize slopes to use below from LUT, if not directly evolving them
         if(CR_species_ID_in_bin[k] < 0) {if(R0[k]<min_R_e) {min_R_e=R0[k];}} else {if(R0[k]<min_R_p) {min_R_p=R0[k];}} // record minimum rigidity to use in limits applied below
         if(CR_species_ID_in_bin[k] < 0) {if(R0[k]>max_R_e) {max_R_e=R0[k];}} else {if(R0[k]>max_R_p) {max_R_p=R0[k];}} // record minimum rigidity to use in limits applied below
-        double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(target,k, pp, cell); // get the closure function
+        double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(target,k, cell); // get the closure function
         adiabatic_coeff[k] = three_chi*adiabatic_coeff_divv + (1.-three_chi)*bbGv; // allows for energy+species-dependent CR anisotropy
         
         if(CR_species_ID_in_bin[k] < 0) {brems_coeff[k] = brems_coeff_0 * DMAX(log(2.*(1.+E_GeV[k]/E_rest_e_GeV))-0.33,0);} else {brems_coeff[k]=0;}
-        streaming_coeff[k] = CR_get_streaming_loss_rate_coefficient(target,k, pp, cell) / UNIT_TIME_IN_CGS;
+        streaming_coeff[k] = CR_get_streaming_loss_rate_coefficient(target,k, cell) / UNIT_TIME_IN_CGS;
 
-        M1SpeedCorrFac[k] = evaluate_cr_transport_reductionfactor(target, k, 1, pp, cell); /* implement PFH correction term, similar to RHD with RSOL, to account for RSOL in residence time for attenuation */
+        M1SpeedCorrFac[k] = evaluate_cr_transport_reductionfactor(target, k, 1, cell); /* implement PFH correction term, similar to RHD with RSOL, to account for RSOL in residence time for attenuation */
 
         // calculate the timestep limit from all possible bins, maximum step. note no constraint from hadronic here b/c cannot 'cross the bin'
         bin_centered_rate_coeff[k] = 0;
@@ -1498,14 +1498,14 @@ int CR_check_if_bin_is_nonrelativistic(int k_bin) // relativistic binflag: all e
 
 
 /* return number of CRs in bin, in our strange code units, where the 'number' has units of E_code / GeV. to convert to real number need to multiply by this but that can cause lots of overflow issues so we work with this unit */
-double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct particle_data *pp, struct gas_cell_data *cell)
+double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell)
 {
     return cell[target].CosmicRay_Number_in_Bin[k_bin];
 }
 
 
 /* return the CR bin spectral slope, depending on what we use as our evolved variable -- note this is the slope of the 1D CR distribution function, df/dp ~ p^alpha, so e.g. N_cr = integral[dp * df/dp] */
-double CR_return_spectral_slope_target(int target, int k_bin, struct particle_data *pp, struct gas_cell_data *cell)
+double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell)
 {
     //return cell[target].CosmicRay_PwrLaw_Slopes_in_Bin[k_bin]; // evolving slopes directly
     return CR_return_slope_from_number_and_energy_in_bin(cell[target].CosmicRayEnergy[k_bin], cell[target].CosmicRay_Number_in_Bin[k_bin], return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_bin), k_bin); // calculate if not evolving directly
@@ -1513,7 +1513,7 @@ double CR_return_spectral_slope_target(int target, int k_bin, struct particle_da
 
 
 /* return true number of CRs in bin, in actual units */
-double CR_return_true_number_in_bin(int target, int k_bin, struct particle_data *pp, struct gas_cell_data *cell)
+double CR_return_true_number_in_bin(int target, int k_bin, struct gas_cell_data *cell)
 {
     return CR_return_effective_number_in_bin_in_codeunits(target,k_bin) * UNIT_ENERGY_IN_CGS / (1.0e9*ELECTRONVOLT_IN_ERGS); // does the unit conversion from Ecode/GeV to dimensionless number
 }
@@ -1537,7 +1537,7 @@ double CR_get_number_in_bin_from_slope(int target, int k_bin, double energy, dou
 
 
 /* return mean kinetic energy per CR for CRs in bin */
-double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin, struct particle_data *pp, struct gas_cell_data *cell)
+double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin, struct gas_cell_data *cell)
 {
     double etot = cell[target].CosmicRayEnergyPred[k_bin]; // total energy in bin
     double ntot_GeV = CR_return_effective_number_in_bin_in_codeunits(target, k_bin); // total number in units of GeV
@@ -1546,7 +1546,7 @@ double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin, struct particl
 
 
 /* return mean rigidity in GV per CR for CRs in bin */
-double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct particle_data *pp, struct gas_cell_data *cell)
+double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell)
 {
     double slope = CR_return_spectral_slope_target(target, k_bin);
     double gamma_one = 1. + slope;
@@ -1598,7 +1598,7 @@ double return_CRbin_M1speed(int k_CRegy)
 
 
 /* estimate amount by which flux of CRs has been reduced relative to solution with c_reduced = c_true, for RSOL with M1 */
-double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct particle_data *pp, struct gas_cell_data *cell)
+double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell)
 {
 #if defined(CRFLUID_ALT_RSOL_FORM)
     return cosmicrayfluid_rsol_corrfac(k_CRegy); // uniform reduction factor for all terms
@@ -1627,7 +1627,7 @@ double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, 
 
 
 /*<! closure function needed for arbitrarily anisotropic CR distribution function, from Hopkins '21 */
-double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell)
+double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell)
 {
     double ecr,ecrv,f,mu1_2,mu2; ecr=cell[target].CosmicRayEnergyPred[k_CRegy];
     double fluxmag2 = cell[target].CosmicRayFluxPred[k_CRegy].norm_sq();
@@ -1688,13 +1688,13 @@ int return_CRbin_CR_species_ID(int k_CRegy)
 
 
 /* calculate the -ion- Alfven speed in a given element, relevant for very short-wavelength modes with frequency larger than the ion-neutral collision timescale (relevant for CRs in particular) */
-double Get_Gas_ion_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell)
+double Get_Gas_ion_Alfven_speed_i(int i, struct gas_cell_data *cell)
 {
 #if !defined(MAGNETIC)
     return cell[i].thermal_soundspeed(); // if no B-fields, just assume Alfven speed equal to thermal sound speed
 #endif
     double vA = cell[i].Alfven_speed(); // normal ideal-MHD Alfven speed
-    double f_ion = Get_Gas_Ionized_Fraction(i, pp, cell);
+    double f_ion = Get_Gas_Ionized_Fraction(i, cell);
     double mu_eff_ion = 1. + (24.305 - 1.)/(1. + pow(f_ion/1.e-3,2)); // -very- crude approximation to transition to heavy-ion dominance at very low ion fractions
     vA /= sqrt(1.e-15 + mu_eff_ion * f_ion); // Alfven speed of interest is that of the ions alone, not the ideal MHD Alfven speed [corrected for weight with crude approximation above - note that in grain-charge dominated regime, this becomes deeply ambiguous] //
     return vA;
@@ -1702,7 +1702,7 @@ double Get_Gas_ion_Alfven_speed_i(int i, struct particle_data *pp, struct gas_ce
 
 
 /* calculate |nu_+ - nu_-|/|nu_+ + nu_-|, i.e. the asymmetry between scattering by forward-vs-backward propagating waves. in SC limit, this is 1, in ET limit with fully-isotropic scattering, this is 0. relevant here because we want in principle to be able to interpolate between the two, and that's important in particular in the strong ion-neutral damping limit. */
-double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell)
+double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct gas_cell_data *cell)
 {
     return 1; // default to unity; basically always true with reasonable SC growth rates, even for extremely low ionization fractions //
 }

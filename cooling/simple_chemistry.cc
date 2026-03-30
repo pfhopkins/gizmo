@@ -13,26 +13,26 @@ and references therein.
 
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
 /* C photoionization rate based on local FUV flux and accounting for CR-generated LW-band photons, e.g. Gredel 1987 */
-MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
+MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell)
 {
     MyFloat G0 = get_FUV_G0(i, shieldfac, 1, P, CellP); // mode 1 accounts for dust-, self-, and H2 cross-shielding
     return 3.43e-10 * G0 + 520 * cell[i].MolecularMassFraction * Get_CosmicRayIonizationRate_cgs(i, P, CellP);
 }
 
 /* direct cosmic ray ionization rate of C */
-MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell)
+MyFloat cosmic_ray_ionization_rate_C(int i, struct gas_cell_data *cell)
 {
     return 3.85 * Get_CosmicRayIonizationRate_cgs(i, P, CellP);
 }
 
 /* Total ionization rate*/
-MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
+MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell)
 {
-    return photoionization_rate_C(i, shieldfac, pp, cell) + cosmic_ray_ionization_rate_C(i, pp, cell);
+    return photoionization_rate_C(i, shieldfac, cell) + cosmic_ray_ionization_rate_C(i, cell);
 }
 
 /* Grain charging parameter psi = G0 sqrt(T) / ne in cgs units */
-MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
+MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct gas_cell_data *cell)
 {
     MyFloat ne = cell[i].Density * All.cf_a3inv * HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS * x_elec;
     MyFloat G0 = get_FUV_G0(i, shieldfac, 0, P, CellP);
@@ -42,7 +42,7 @@ MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac,
 #define NUM_RECOMB_TABLE_IONS 12
 char *ion_names[NUM_RECOMB_TABLE_IONS] = {"H+", "He+", "C+", "Na+", "Mg+", "Si+", "S+", "K+", "Ca+", "Mn+", "Fe+", "Ca++"};
 
-int ion_name_to_index(char *ion_name, struct particle_data *pp, struct gas_cell_data *cell)
+int ion_name_to_index(char *ion_name, struct gas_cell_data *cell)
 {
     for (int i = 0; i < NUM_RECOMB_TABLE_IONS; i++)
     {
@@ -70,9 +70,9 @@ alpha_gr: float
 */
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, char *ion_name, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    MyFloat psi = grain_charge_psi(i, temp, x_elec, shieldfac, pp, cell);
+    MyFloat psi = grain_charge_psi(i, temp, x_elec, shieldfac, cell);
     // MyFloat temp = CellP[i].temperature();
-    int j = ion_name_to_index(ion_name, pp, cell);
+    int j = ion_name_to_index(ion_name, cell);
 
     MyFloat C[NUM_RECOMB_TABLE_IONS][7] = {
         {12.25, 8.074E-6, 1.378, 5.087E2, 1.586E-2, 0.4723, 1.102E-5}, // H+
@@ -96,7 +96,7 @@ MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfa
 /* Fraction of C atoms in C+ */
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    MyFloat ionization_rate = total_ionization_rate_C(i, shieldfac, pp, cell);
+    MyFloat ionization_rate = total_ionization_rate_C(i, shieldfac, cell);
     MyFloat alpha = sqrt(temp / 6.67e-3), beta = sqrt(temp / 1.943e6), gamma = 0.7849 + 0.1597 * exp(-49550 / temp);
     MyFloat k_rr = 2.995e-9 / (alpha * pow(1 + alpha, 1. - gamma) * pow(1 + beta, 1 + gamma));                                       // radiative recombination coefficient  - Gong 2017 Table 1 Eq 17
     MyFloat k_dr = pow(temp, -1.5) * (6.346e-9 * exp(-12.17 / temp) + 9.793e-9 * exp(-73.8 / temp) + 1.634e-6 * exp(-15230 / temp)); // dielectronic recombination - Gong 2017 Table 1 Eq 17
@@ -139,7 +139,7 @@ MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp, struct particle_
 }
 
 /* Contribution of molecular ions to electron abundance */
-MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell){
+MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, struct gas_cell_data *cell){
     MyFloat zeta_cr = Get_CosmicRayIonizationRate_cgs(i, P, CellP);
     MyFloat beta_recomb = 3e-6 / sqrt(DMAX(All.MinGasTemp, temp)); // Fromang, Terquem & Balbus 2002 eq. 9
     MyFloat xe= sqrt(zeta_cr / (beta_recomb * DMAX(1e2, nH_CGS(i))));
