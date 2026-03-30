@@ -64,7 +64,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
 double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
-double chimes_convert_u_to_temp(double u, double rho, int target, struct gas_cell_data *cell);
+double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
@@ -118,7 +118,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
-            cell[i].InternalEnergyPred = cell[i].InternalEnergy; set_eos_pressure(i, pp, cell);}
+            cell[i].InternalEnergyPred = cell[i].InternalEnergy; set_eos_pressure(i, cell);}
 #endif
 #endif
         
@@ -258,7 +258,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-        set_eos_pressure(i, pp, cell);
+        set_eos_pressure(i, cell);
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
 #endif
@@ -369,7 +369,7 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     else if(fabs(du_net_lower) < MIN_REAL_NUMBER || !isfinite(du_net_lower)) {u=u_lower;}
     else {
         if(!skip_rootfind){ // assuming we're not bouncing off the min temp
-            if((du_net_upper * du_net_lower >= 0) || isnan(du_net_lower) || isnan(du_net_upper)) {PRINT_WARNING("Could not bracket cooling solution. ID=%lld u_min=%g u=%g u_lower=%g u_upper=%g f_lower=%g f_upper=%g\n", (long long)pp[target].ID, u_min, u, u_lower,u_upper, du_net_lower, du_net_upper); endrun(10);}
+            if((du_net_upper * du_net_lower >= 0) || isnan(du_net_lower) || isnan(du_net_upper)) {PRINT_WARNING("Could not bracket cooling solution. ID=%lld u_min=%g u=%g u_lower=%g u_upper=%g f_lower=%g f_upper=%g\n", (long long)(long long)target /* particle index */, u_min, u, u_lower,u_upper, du_net_lower, du_net_upper); endrun(10);}
             
             /* core iteration to convergence */
             double ROOTFIND_X_a = u_upper-u_old, ROOTFIND_X_b = u_lower-u_old, ROOTFUNC_a = du_net_upper, ROOTFUNC_b = du_net_lower, ROOTFIND_REL_X_tol = 1e-2, ROOTFIND_ABS_X_tol = 1e-15 * u_old;
@@ -378,7 +378,7 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
             
             /* crash condition */
             if((ROOTFIND_ITER >= MAXITER) || isnan(u)) {
-                printf("failed to converge in DoCooling(, pp, cell): ROOTFIND_X_new=%g ROOTFIND_X_a=%g ROOTFIND_X_b=%g ROOTFIND_X_error=%g u_in=%g u_upper=%g u_lower=%g rho_in=%g dt=%g ne_in=%g ne_out=%g target=%d ID=%ld \n",ROOTFIND_X_new, ROOTFIND_X_a, ROOTFIND_X_b,  ROOTFIND_X_error, u_old, u_upper, u_lower, rho,dt,ne_guess,*ne_eval,target, (long)pp[target].ID); endrun(10);
+                printf("failed to converge in DoCooling(cell): ROOTFIND_X_new=%g ROOTFIND_X_a=%g ROOTFIND_X_b=%g ROOTFIND_X_error=%g u_in=%g u_upper=%g u_lower=%g rho_in=%g dt=%g ne_in=%g ne_out=%g target=%d ID=%ld \n",ROOTFIND_X_new, ROOTFIND_X_a, ROOTFIND_X_b,  ROOTFIND_X_error, u_old, u_upper, u_lower, rho,dt,ne_guess,*ne_eval,target, (long)(long long)target /* particle index */); endrun(10);
             }
             u = DMAX(u_min,u);
         } else {u = All.MinEgySpec;}
@@ -470,7 +470,7 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
         if(iter >= (MAXITER - 10)) {printf("->m= %g\n", m);}
     }
     while(fabs(dm / m) > 1.0e-6 && iter < MAXITER);
-    if(iter >= MAXITER) {printf("failed to converge in DoInstabilityCooling(, pp, cell): m_in=%g u_in=%g rho=%g dt=%g fac=%g ne_in=%g target=%d ID=%ld\n",m_old,u,rho,dt,fac,ne_guess,target,(long)pp[target].ID); endrun(11);}
+    if(iter >= MAXITER) {printf("failed to converge in DoInstabilityCooling(cell): m_in=%g u_in=%g rho=%g dt=%g fac=%g ne_in=%g target=%d ID=%ld\n",m_old,u,rho,dt,fac,ne_guess,target,(long)(long long)target /* particle index */); endrun(11);}
     return m;
 }
 
@@ -483,7 +483,7 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 
 #ifdef CHIMES
 /* This function converts thermal energy to temperature, using the mean molecular weight computed from the non-equilibrium CHIMES abundances. */
-double chimes_convert_u_to_temp(double u, double rho, int target, struct gas_cell_data *cell)
+double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
   return u * (cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
 }
@@ -591,7 +591,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
         iter++;
     } while (fabs(du) > tolerance * u && iter < MAXITER);
     if (iter >= MAXITER) {
-        PRINT_WARNING("Particle ID=%lld failed to converge in convert_u_to_temp. u=%g du=%g T=%g dT=%g\n", pp[target].ID, u, du, temp, dT); endrun(91743);
+        PRINT_WARNING("Particle ID=%lld failed to converge in convert_u_to_temp. u=%g du=%g T=%g dT=%g\n", (long long)target /* particle index */, u, du, temp, dT); endrun(91743);
     }
     return DMAX(DMIN(temp,temp_max_0),temp_min_0);
 }
@@ -675,7 +675,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
            ((fabs(temp - temp_old) > 0.01 * temp) && (temp > 200.) && (iter<100)) ||
            ((fabs(temp - temp_old) > 1.0e-3 * temp) && (temp > 200.) && (iter<10))) && iter < MAXITER);
 #endif
-    if(iter >= MAXITER) {printf("failed to converge in convert_u_to_temp(, pp, cell): u_input= %g rho_input=%g n_elec_input=%g target=%d ID=%ld\n", u_input, rho_input, *ne_guess, target, (long)pp[target].ID); endrun(12);}
+    if(iter >= MAXITER) {printf("failed to converge in convert_u_to_temp(cell): u_input= %g rho_input=%g n_elec_input=%g target=%d ID=%ld\n", u_input, rho_input, *ne_guess, target, (long)(long long)target /* particle index */); endrun(12);}
 
     if(temp<=0) temp=pow(10.0,Tmin);
     if(log10(temp)<Tmin) temp=pow(10.0,Tmin);
@@ -918,7 +918,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     }
     while(niter < MAXITER);
 
-    if(niter >= MAXITER) {printf("failed to converge in find_abundances_and_rates(, pp, cell): logT_input=%g  rho_input=%g  ne_input=%g target=%d ID=%ld shieldfac=%g cooling_return=%d", logT_input, rho_input, ne_input, target, (long)pp[target].ID, shieldfac, return_cooling_mode); endrun(13);}
+    if(niter >= MAXITER) {printf("failed to converge in find_abundances_and_rates(, pp, cell): logT_input=%g  rho_input=%g  ne_input=%g target=%d ID=%ld shieldfac=%g cooling_return=%d", logT_input, rho_input, ne_input, target, (long)(long long)target /* particle index */, shieldfac, return_cooling_mode); endrun(13);}
 
     bH0 = flow * BetaH0[j] + fhi * BetaH0[jp];
     bHep = flow * BetaHep[j] + fhi * BetaHep[jp];
@@ -2040,7 +2040,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
 	    double ROOTFIND_REL_X_tol=1e-3, ROOTFIND_ABS_X_tol=0;
         #include "../system/bracketed_rootfind.h"
 	    fH2 = ROOTFIND_X_new;
-	    if(ROOTFIND_ITER > MAXITER){PRINT_WARNING("WARNING: Particle %lld did not converge to desired H_2 abundance tolerance\n",(long long)pp[i].ID);}
+	    if(ROOTFIND_ITER > MAXITER){PRINT_WARNING("WARNING: Particle %lld did not converge to desired H_2 abundance tolerance\n",(long long)(long long)i /* particle index */);}
         } else { // must be at 0 or 1 within machine precision of solution but not bracketing - choose the closer bracketing value of 0 or 1
 	    if(fabs(ROOTFUNC_a) < fabs(ROOTFUNC_b)){fH2 = ROOTFIND_X_a;} else {fH2 = ROOTFIND_X_b;}
 	}
@@ -2412,7 +2412,7 @@ void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cel
   double H_mass_fraction = XH;
 #endif
 
-  ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, cell);
+  ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, pp, cell);
   ChimesGasVars[target].nH_tot = (ChimesFloat) (H_mass_fraction * rho_cgs / PROTONMASS_CGS);
   ChimesGasVars[target].ThermEvolOn = All.ChimesThermEvolOn;
 

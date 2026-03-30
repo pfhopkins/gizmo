@@ -48,7 +48,7 @@ Simple getter for the Pressure attribute - will calculate it on-the-fly if EOS q
     this subroutine needs to set the value of the 'press' variable (pressure), which you can see from the
     templates below can follow an arbitrary equation-of-state. for more general equations-of-state you want to specifically set the soundspeed
     variable as well. */
-void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
+void set_eos_pressure(int i, struct gas_cell_data *cell)
 {
     double soundspeed, press=0, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; /* get effective adiabatic index */
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
@@ -122,10 +122,10 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     int k_CRegy; for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
         press += cell[i].CosmicRayPressure(k_CRegy);
-        soundspeed2 += GAMMA_COSMICRAY(k_CRegy) * (GAMMA_COSMICRAY(k_CRegy)-1.) * cell[i].CosmicRayEnergyPred[k_CRegy] / pp[i].Mass;
+        soundspeed2 += GAMMA_COSMICRAY(k_CRegy) * (GAMMA_COSMICRAY(k_CRegy)-1.) * cell[i].CosmicRayEnergyPred[k_CRegy] / cell[i].Mass;
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES // using effective gamma of the alfven component = 3/2
         press += (1.5-1) * cell[i].Density * (cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]);
-        soundspeed2 += 1.5*(1.5-1)*(cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]) / pp[i].Mass;
+        soundspeed2 += 1.5*(1.5-1)*(cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]) / cell[i].Mass;
 #endif
     }
     soundspeed = sqrt(soundspeed2);
@@ -138,10 +138,10 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     
 #ifdef RT_RADPRESSURE_IN_HYDRO /* add radiation pressure in the Riemann problem directly */
     int k_freq; double gamma_rad=4./3., fluxlim=1; double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
-    if(pp[i].Mass>0 && cell[i].Density>0) {for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
+    if(cell[i].Mass>0 && cell[i].Density>0) {for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
-        press += (gamma_rad-1.) * CellP[i].flux_limiter(k_freq) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / pp[i].Mass;
-        soundspeed2 += gamma_rad*(gamma_rad-1.) * cell[i].Rad_E_gamma_Pred[k_freq] / pp[i].Mass;
+        press += (gamma_rad-1.) * CellP[i].flux_limiter(k_freq) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / cell[i].Mass;
+        soundspeed2 += gamma_rad*(gamma_rad-1.) * cell[i].Rad_E_gamma_Pred[k_freq] / cell[i].Mass;
     }}
     soundspeed = sqrt(soundspeed2);
 #endif

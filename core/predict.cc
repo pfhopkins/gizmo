@@ -234,7 +234,7 @@ void drift_particle(int i, integertime time1)
 #endif
             drift_extra_physics(i, time0, time1, dt_entr);
 
-            set_eos_pressure(i, P, CellP);
+            set_eos_pressure(i, CellP);
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */

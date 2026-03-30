@@ -166,7 +166,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
 #endif
 
-void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+void set_eos_pressure(int i, struct gas_cell_data *cell);
 double return_user_desired_target_density(int i);
 double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
@@ -739,7 +739,7 @@ double cr_get_source_shieldfac(int i);
 
 
 #ifdef CHIMES
-double chimes_convert_u_to_temp(double u, double rho, int target, struct gas_cell_data *cell);
+double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_gizmo_exit(void);
 #ifdef COOL_METAL_LINES_BY_SPECIES

@@ -388,7 +388,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
     /* now update the thermal variables */
     CellP[i].InternalEnergy = (egyeff + (egycurrent - egyeff) * exp(-dtime / trelax));
     CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
-    set_eos_pressure(i, P, CellP);
+    set_eos_pressure(i, CellP);
     //CellP[i].dInternalEnergy = 0;
     CellP[i].DtInternalEnergy = 0; /* HERE, it's ok, b/c effective EOS is designed to model new pressure even under compressions,
                                  (since we're zero'ing the second-half-step from the hydro step) */
