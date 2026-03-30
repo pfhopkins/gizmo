@@ -119,6 +119,96 @@ static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 
+#if (DOMAIN_TIMEBINS == 1)
+/* Per-timebin cost tracking for Gadget-4-style domain decomposition.
+   Instead of a single composite cost, we track gravity and hydro costs separately
+   for each occupied timebin, then balance all timebins simultaneously during
+   domain assignment. */
+static int NumTimeBinsToBeBalanced;
+static int ListOfTimeBinsToBeBalanced[TIMEBINS];
+static double GravCostPerListedTimeBin[TIMEBINS];
+static double GravCostNormFactors[TIMEBINS];
+static double HydroCostPerListedTimeBin[TIMEBINS];
+static double HydroCostNormFactors[TIMEBINS];
+static double NormFactorLoad, NormFactorLoadGas;
+static float *domainBinGravCost = NULL;  /* [NumTimeBinsToBeBalanced * NTopleaves] per-timebin gravity cost per leaf */
+static float *domainBinHydroCost = NULL; /* [NumTimeBinsToBeBalanced * NTopleaves] per-timebin hydro cost per leaf */
+
+/*! Determine which timebins need to be individually balanced and compute their
+ *  normalization factors. Follows Gadget-4's domain_init_sum_cost() and
+ *  domain_find_total_cost(). */
+void domain_init_timebin_costs(void)
+{
+    /* Determine which timebins to balance: all occupied timebins from
+       HighestOccupiedTimeBin down to the lowest with particles */
+    NumTimeBinsToBeBalanced = 0;
+    long long tot_count[TIMEBINS], tot_count_gas[TIMEBINS];
+    sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
+    sumup_large_ints(TIMEBINS, TimeBinCountGas, tot_count_gas);
+
+    /* Always include the highest active timebin */
+    ListOfTimeBinsToBeBalanced[0] = All.HighestActiveTimeBin;
+    NumTimeBinsToBeBalanced = 1;
+
+    /* Add all lower timebins that have particles, with exponentially increasing weight */
+    for(int i = All.HighestActiveTimeBin - 1; i >= 0; i--)
+    {
+        if(tot_count[i] > 0 || tot_count_gas[i] > 0)
+        {
+            ListOfTimeBinsToBeBalanced[NumTimeBinsToBeBalanced] = i;
+            NumTimeBinsToBeBalanced++;
+        }
+    }
+
+    /* Compute global per-timebin cost totals and normalization factors.
+       A particle on timebin b contributes to all listed timebins with bin >= b. */
+    for(int n = 0; n < NumTimeBinsToBeBalanced; n++)
+    {
+        GravCostPerListedTimeBin[n] = 0;
+        HydroCostPerListedTimeBin[n] = 0;
+    }
+
+    for(int i = 0; i < NumPart; i++)
+    {
+        double gc = (double)particle_total_cost[i];
+        if(gc <= 0) gc = 1.0;
+        for(int n = 0; n < NumTimeBinsToBeBalanced; n++)
+        {
+            int bin = ListOfTimeBinsToBeBalanced[n];
+            if(bin >= P[i].TimeBin)
+                GravCostPerListedTimeBin[n] += gc;
+            if(P[i].Type == 0 && bin >= P[i].TimeBin)
+                HydroCostPerListedTimeBin[n] += 1.0;
+        }
+    }
+
+    MPI_Allreduce(MPI_IN_PLACE, GravCostPerListedTimeBin, NumTimeBinsToBeBalanced, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, HydroCostPerListedTimeBin, NumTimeBinsToBeBalanced, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+    /* Normalization: each timebin's total cost normalizes to ~1, so all timebins
+       contribute equally to the composite cost used for tree splitting */
+    for(int n = 0; n < NumTimeBinsToBeBalanced; n++)
+    {
+        GravCostNormFactors[n] = (GravCostPerListedTimeBin[n] > 0) ? 1.0 / GravCostPerListedTimeBin[n] : 0.0;
+        HydroCostNormFactors[n] = (HydroCostPerListedTimeBin[n] > 0) ? 1.0 / HydroCostPerListedTimeBin[n] : 0.0;
+    }
+
+    /* Load normalization */
+    NormFactorLoad = (totpartcount > 0) ? 1.0 / (double)totpartcount : 0.0;
+    long long totgas = 0; for(int i = 0; i < 6; i++) {if(i == 0) totgas = Ntype[0];}
+    NormFactorLoadGas = (totgas > 0) ? 1.0 / (double)totgas : 0.0;
+
+    if(ThisTask == 0)
+    {
+        printf("DOMAIN_TIMEBINS: balancing %d timebins:", NumTimeBinsToBeBalanced);
+        for(int n = 0; n < NumTimeBinsToBeBalanced; n++)
+            printf(" [bin=%d grav=%.3g hydro=%.3g]", ListOfTimeBinsToBeBalanced[n],
+                   GravCostPerListedTimeBin[n], HydroCostPerListedTimeBin[n]);
+        printf("\n");
+    }
+}
+#endif /* DOMAIN_TIMEBINS == 1 */
+
 /*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
  *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure. */
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key)
@@ -411,6 +501,10 @@ void domain_Decomposition_light(int UseAllTimeBins)
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
+#if (DOMAIN_TIMEBINS == 1)
+    domain_init_timebin_costs();
+#endif
+
     /* allocate work/count arrays */
     domainWork = (float *) mymalloc("domainWork", NTopnodes * sizeof(float));
     domainWorkGas = (float *) mymalloc("domainWorkGas", NTopnodes * sizeof(float));
@@ -442,6 +536,11 @@ void domain_Decomposition_light(int UseAllTimeBins)
     /* re-split and re-assign */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
     domain_assign_load_or_work_balanced(1, multipledomains);
+
+#if (DOMAIN_TIMEBINS == 1)
+    if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
+    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
+#endif
 
     int status = domain_check_memory_bound(multipledomains);
     if(status != 0)
@@ -702,6 +801,10 @@ int domain_decompose(void)
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
+#if (DOMAIN_TIMEBINS == 1)
+    domain_init_timebin_costs(); /* compute per-timebin normalization before tree building / cost accumulation */
+#endif
+
     /* determine global dimensions of domain grid */
     domain_findExtent();
     if(domain_determineTopTree()) {myfree(particle_costfactor); myfree(particle_total_cost); return 1;}
@@ -710,6 +813,11 @@ int domain_decompose(void)
     /* find the split of the domain grid */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
     domain_assign_load_or_work_balanced(1,multipledomains);
+
+#if (DOMAIN_TIMEBINS == 1)
+    free(domainBinHydroCost); free(domainBinGravCost);
+    domainBinHydroCost = domainBinGravCost = NULL;
+#endif
 
     status = domain_check_memory_bound(multipledomains);
 
@@ -1226,6 +1334,10 @@ static struct domain_segments_data
   double load_activegas;
   double load_gas;         /* gas particle count for memory constraint */
   double normalized_load;
+#if (DOMAIN_TIMEBINS == 1)
+  double bin_GravCost[TIMEBINS];   /* per-timebin gravity cost for this segment */
+  double bin_HydroCost[TIMEBINS];  /* per-timebin hydro cost for this segment */
+#endif
 }
  *domainAssign;
 
@@ -1246,6 +1358,10 @@ struct tasklist_data
   double load_activegas;
   double load_gas;         /* gas particle count for memory constraint */
   int count;
+#if (DOMAIN_TIMEBINS == 1)
+  double bin_GravCost[TIMEBINS];   /* per-timebin gravity cost accumulated on this task */
+  double bin_HydroCost[TIMEBINS];  /* per-timebin hydro cost accumulated on this task */
+#endif
 }
  *tasklist;
 
@@ -1293,12 +1409,21 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       tasklist[ta].load_activegas = 0;
       tasklist[ta].load_gas = 0;
       tasklist[ta].count = 0;
+#if (DOMAIN_TIMEBINS == 1)
+      for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {tasklist[ta].bin_GravCost[k] = 0; tasklist[ta].bin_HydroCost[k] = 0;}
+#endif
     }
 
   tot_work = 0;
   tot_load = 0;
   tot_loadactivegas = 0;
   tot_loadgas = 0;
+
+#if (DOMAIN_TIMEBINS == 1)
+  /* Per-timebin cost totals for normalization during imbalance evaluation */
+  double tot_binGravCost[TIMEBINS], tot_binHydroCost[TIMEBINS];
+  for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {tot_binGravCost[k] = 0; tot_binHydroCost[k] = 0;}
+#endif
 
   for(n = 0; n < multipledomains * NTask; n++)
     {
@@ -1308,6 +1433,9 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       domainAssign[n].load = 0;
       domainAssign[n].load_activegas = 0;
       domainAssign[n].load_gas = 0;
+#if (DOMAIN_TIMEBINS == 1)
+      for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {domainAssign[n].bin_GravCost[k] = 0; domainAssign[n].bin_HydroCost[k] = 0;}
+#endif
 
       for(i = DomainStartList[n]; i <= DomainEndList[n]; i++)
 	{
@@ -1315,12 +1443,24 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 	  domainAssign[n].load += domainCount[i];
 	  domainAssign[n].load_activegas += domainWorkGas[i];
 	  domainAssign[n].load_gas += domainCountGas[i];
+#if (DOMAIN_TIMEBINS == 1)
+	  for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+	      domainAssign[n].bin_GravCost[k] += domainBinGravCost[k * NTopleaves + i];
+	      domainAssign[n].bin_HydroCost[k] += domainBinHydroCost[k * NTopleaves + i];
+	  }
+#endif
 	}
 
       tot_work += domainAssign[n].work;
       tot_load += domainAssign[n].load;
       tot_loadactivegas += domainAssign[n].load_activegas;
       tot_loadgas += domainAssign[n].load_gas;
+#if (DOMAIN_TIMEBINS == 1)
+      for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+          tot_binGravCost[k] += domainAssign[n].bin_GravCost[k];
+          tot_binHydroCost[k] += domainAssign[n].bin_HydroCost[k];
+      }
+#endif
     }
 
   for(n = 0; n < multipledomains * NTask; n++)
@@ -1392,6 +1532,16 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
             if(target_max_balance < target_load_balance) {target_max_balance = target_load_balance;}
             if(target_max_balance < target_load_activegas_balance) {target_max_balance = target_load_activegas_balance;}
             if(target_max_balance < target_load_gas_balance) {target_max_balance = target_load_gas_balance;}
+#if (DOMAIN_TIMEBINS == 1)
+            /* Also check per-timebin cost imbalance: the assignment must balance
+               each timebin individually, not just the composite cost */
+            for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+                double bg = (domainAssign[n].bin_GravCost[k] + tasklist[target].bin_GravCost[k]) / (tot_binGravCost[k] + 1.0e-30);
+                double bh = (domainAssign[n].bin_HydroCost[k] + tasklist[target].bin_HydroCost[k]) / (tot_binHydroCost[k] + 1.0e-30);
+                if(bg > target_max_balance) {target_max_balance = bg;}
+                if(bh > target_max_balance) {target_max_balance = bh;}
+            }
+#endif
         } else {
             target_max_balance = target_load_balance;
         }
@@ -1430,6 +1580,12 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       tasklist[target].load += domainAssign[n].load;
       tasklist[target].load_activegas += domainAssign[n].load_activegas;
       tasklist[target].load_gas += domainAssign[n].load_gas;
+#if (DOMAIN_TIMEBINS == 1)
+      for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+          tasklist[target].bin_GravCost[k] += domainAssign[n].bin_GravCost[k];
+          tasklist[target].bin_HydroCost[k] += domainAssign[n].bin_HydroCost[k];
+      }
+#endif
       tasklist[target].count++;
 
       /* now we need to remove the element 'target' from the queues and reinsert it */
@@ -1536,6 +1692,16 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
           if(max_frac_load > result) result = max_frac_load;
           if(max_frac_gas > result) result = max_frac_gas;
           if(max_frac_gasload > result) result = max_frac_gasload;
+#if (DOMAIN_TIMEBINS == 1)
+          for(int t = 0; t < NTask; t++) {
+              for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+                  double bg = tasklist[t].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30);
+                  double bh = tasklist[t].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30);
+                  if(bg > result) result = bg;
+                  if(bh > result) result = bh;
+              }
+          }
+#endif
           return result;
       };
 
@@ -1559,6 +1725,14 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
           tasklist[t2].load += domainAssign[s1].load - domainAssign[s2].load;
           tasklist[t2].load_activegas += domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
           tasklist[t2].load_gas += domainAssign[s1].load_gas - domainAssign[s2].load_gas;
+#if (DOMAIN_TIMEBINS == 1)
+          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+              tasklist[t1].bin_GravCost[k] += domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
+              tasklist[t1].bin_HydroCost[k] += domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
+              tasklist[t2].bin_GravCost[k] += domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
+              tasklist[t2].bin_HydroCost[k] += domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
+          }
+#endif
 
           double new_imbalance = compute_max_imbalance();
 
@@ -1578,6 +1752,14 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
               tasklist[t2].load -= domainAssign[s1].load - domainAssign[s2].load;
               tasklist[t2].load_activegas -= domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
               tasklist[t2].load_gas -= domainAssign[s1].load_gas - domainAssign[s2].load_gas;
+#if (DOMAIN_TIMEBINS == 1)
+              for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+                  tasklist[t1].bin_GravCost[k] -= domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
+                  tasklist[t1].bin_HydroCost[k] -= domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
+                  tasklist[t2].bin_GravCost[k] -= domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
+                  tasklist[t2].bin_HydroCost[k] -= domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
+              }
+#endif
           }
       }
       if(ThisTask == 0 && nswaps_accepted > 0) {
@@ -2332,6 +2514,15 @@ void domain_sumCost(void)
   local_domainCount = (int *) mymalloc("local_domainCount", NTopnodes * sizeof(int));
   local_domainCountGas = (int *) mymalloc("local_domainCountGas", NTopnodes * sizeof(int));
 
+#if (DOMAIN_TIMEBINS == 1)
+  /* Per-timebin cost arrays: use malloc (not mymalloc) because they must persist across
+     mymalloc stack frames until after domain_assign_load_or_work_balanced finishes */
+  int ntb = NumTimeBinsToBeBalanced;
+  if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
+  if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
+  domainBinGravCost = (float *) calloc(ntb * NTopnodes, sizeof(float));
+  domainBinHydroCost = (float *) calloc(ntb * NTopnodes, sizeof(float));
+#endif
 
   NTopleaves = 0;
   domain_walktoptree(0);
@@ -2343,15 +2534,60 @@ void domain_sumCost(void)
       local_domainCount[i] = 0;
       local_domainCountGas[i] = 0;
     }
+#if (DOMAIN_TIMEBINS == 1)
+  for(i = 0; i < ntb * NTopleaves; i++) {domainBinGravCost[i] = 0; domainBinHydroCost[i] = 0;}
+#endif
 
     PRINT_STATUS(" ..NTopleaves= %d  NTopnodes=%d (space for %d)", NTopleaves, NTopnodes, MaxTopNodes);
 
-  /* Per-timebin cost normalization (GADGET-4 approach): weight each particle's work cost
-     by its activation frequency relative to the top-level timestep. A particle on timebin b
-     is active 2^(HighestBin - b) times per top-level step, so its contribution to the total
-     work is proportionally higher. This improves load balance for simulations with large
-     timestep dynamic range (star formation, sinks, etc.) without the spatial locality concerns
-     of the old DOMAIN_TIMESTEP_FREQUENCY_WEIGHTING sqrt-based approach. */
+  /* Cost accumulation modes controlled by DOMAIN_TIMEBINS:
+     - undefined: unweighted (original GIZMO scheme)
+     - DOMAIN_TIMEBINS=0: frequency-weighted by 2^(HighestBin - particleBin)
+     - DOMAIN_TIMEBINS=1: per-timebin cost accumulation (Gadget-4 scheme),
+       with composite cost for tree splitting and separate per-timebin arrays for assignment */
+
+  /* Macro for the per-particle cost accumulation body, shared between OMP and serial paths */
+#if defined(DOMAIN_TIMEBINS) && (DOMAIN_TIMEBINS == 0)
+  #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
+    { float freq_weight = 1.0f; \
+      if(All.HighestOccupiedTimeBin > P[n].TimeBin) { \
+          int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin; \
+          if(dbin > 20) {dbin = 20;} \
+          freq_weight = (float)(1 << dbin); } \
+      wk[no] += particle_total_cost[n] * freq_weight; \
+      cnt[no] += 1; \
+      if(P[n].Type == 0) { \
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n] * freq_weight;} \
+          cntg[no] += 1;} }
+#elif defined(DOMAIN_TIMEBINS) && (DOMAIN_TIMEBINS == 1)
+  #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
+    { double gc = (double)particle_total_cost[n]; \
+      if(gc <= 0) gc = 1.0; \
+      float composite_cost = 0; \
+      for(int k_ = 0; k_ < ntb; k_++) { \
+          int bin_ = ListOfTimeBinsToBeBalanced[k_]; \
+          if(bin_ >= P[n].TimeBin) { \
+              float contrib = (float)(GravCostNormFactors[k_] * gc); \
+              composite_cost += contrib; \
+              my_binGravCost[k_ * NTopleaves + no] += contrib; } \
+          if(P[n].Type == 0 && bin_ >= P[n].TimeBin) { \
+              float hcontrib = (float)HydroCostNormFactors[k_]; \
+              composite_cost += hcontrib; \
+              my_binHydroCost[k_ * NTopleaves + no] += hcontrib; } } \
+      wk[no] += composite_cost; \
+      cnt[no] += 1; \
+      if(P[n].Type == 0) { \
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
+          cntg[no] += 1;} }
+#else
+  #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
+    { wk[no] += particle_total_cost[n]; \
+      cnt[no] += 1; \
+      if(P[n].Type == 0) { \
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
+          cntg[no] += 1;} }
+#endif
+
 #ifdef _OPENMP
   #pragma omp parallel
   {
@@ -2359,6 +2595,10 @@ void domain_sumCost(void)
     float *my_domainWorkGas = (float *) calloc(NTopleaves, sizeof(float));
     int *my_domainCount = (int *) calloc(NTopleaves, sizeof(int));
     int *my_domainCountGas = (int *) calloc(NTopleaves, sizeof(int));
+#if (DOMAIN_TIMEBINS == 1)
+    float *my_binGravCost = (float *) calloc(ntb * NTopleaves, sizeof(float));
+    float *my_binHydroCost = (float *) calloc(ntb * NTopleaves, sizeof(float));
+#endif
 
     #pragma omp for schedule(static)
     for(n = 0; n < NumPart; n++)
@@ -2367,17 +2607,7 @@ void domain_sumCost(void)
         if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
         no = domain_toptree_leaf(Key[n], topNodes);
-        float freq_weight = 1.0f;
-        if(All.HighestOccupiedTimeBin > P[n].TimeBin) {
-            int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin;
-            if(dbin > 20) {dbin = 20;} /* cap to avoid overflow: 2^20 ~ 10^6 */
-            freq_weight = (float)(1 << dbin);
-        }
-        my_domainWork[no] += particle_total_cost[n] * freq_weight;
-        my_domainCount[no] += 1;
-        if(P[n].Type == 0) {
-            if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {my_domainWorkGas[no] += particle_costfactor[n] * freq_weight;}
-            my_domainCountGas[no] += 1;}
+        DOMAIN_SUMCOST_PARTICLE_BODY(n, no, my_domainWork, my_domainWorkGas, my_domainCount, my_domainCountGas)
       }
 
     #pragma omp critical
@@ -2388,11 +2618,18 @@ void domain_sumCost(void)
         local_domainCount[i] += my_domainCount[i];
         local_domainCountGas[i] += my_domainCountGas[i];
       }
+#if (DOMAIN_TIMEBINS == 1)
+      for(i = 0; i < ntb * NTopleaves; i++) {
+        domainBinGravCost[i] += my_binGravCost[i];
+        domainBinHydroCost[i] += my_binHydroCost[i];
+      }
+#endif
     }
-    free(my_domainWork);
-    free(my_domainWorkGas);
-    free(my_domainCount);
-    free(my_domainCountGas);
+    free(my_domainWork); free(my_domainWorkGas);
+    free(my_domainCount); free(my_domainCountGas);
+#if (DOMAIN_TIMEBINS == 1)
+    free(my_binGravCost); free(my_binHydroCost);
+#endif
   }
 #else
   for(n = 0; n < NumPart; n++)
@@ -2401,24 +2638,27 @@ void domain_sumCost(void)
       if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
       no = domain_toptree_leaf(Key[n], topNodes);
-      float freq_weight = 1.0f;
-      if(All.HighestOccupiedTimeBin > P[n].TimeBin) {
-          int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin;
-          if(dbin > 20) {dbin = 20;}
-          freq_weight = (float)(1 << dbin);
-      }
-      local_domainWork[no] += particle_total_cost[n] * freq_weight;
-      local_domainCount[no] += 1;
-      if(P[n].Type == 0) {
-          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {local_domainWorkGas[no] += particle_costfactor[n] * freq_weight;}
-          local_domainCountGas[no] += 1;}
+#if (DOMAIN_TIMEBINS == 1)
+      /* In the serial path, my_binGravCost/my_binHydroCost are just the global arrays */
+      float *my_binGravCost = domainBinGravCost;
+      float *my_binHydroCost = domainBinHydroCost;
+#endif
+      DOMAIN_SUMCOST_PARTICLE_BODY(n, no, local_domainWork, local_domainWorkGas, local_domainCount, local_domainCountGas)
     }
 #endif
+#undef DOMAIN_SUMCOST_PARTICLE_BODY
 
   MPI_Allreduce(local_domainWork, domainWork, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(local_domainWorkGas, domainWorkGas, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(local_domainCount, domainCount, NTopleaves, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(local_domainCountGas, domainCountGas, NTopleaves, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+#if (DOMAIN_TIMEBINS == 1)
+  /* Allreduce per-timebin cost arrays in-place (they use malloc, not mymalloc) */
+  MPI_Allreduce(MPI_IN_PLACE, domainBinGravCost, ntb * NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(MPI_IN_PLACE, domainBinHydroCost, ntb * NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+#endif
+
   myfree(local_domainCountGas);
   myfree(local_domainCount);
   myfree(local_domainWorkGas);
