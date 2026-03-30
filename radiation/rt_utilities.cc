@@ -225,13 +225,13 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     double T_min = get_min_allowed_dustIRrad_temperature();
     if(k_freq==RT_FREQ_BIN_INFRARED)
     {
-        if(isnan(cell[i].Dust_Temperature)) {PRINT_WARNING("\n NaN dust temperature for cell-ID=%llu  \n", (unsigned long long) pp[i].ID); cell[i].Dust_Temperature = 1.e4;}
-        if(isnan(cell[i].Radiation_Temperature)) {PRINT_WARNING("\n NaN gas temperature for cell-ID=%llu  \n", (unsigned long long) pp[i].ID);}
+        if(isnan(cell[i].Dust_Temperature)) {PRINT_WARNING("\n NaN dust temperature for cell-ID=%llu  \n", (unsigned long long) (long long)i /* particle index */); cell[i].Dust_Temperature = 1.e4;}
+        if(isnan(cell[i].Radiation_Temperature)) {PRINT_WARNING("\n NaN gas temperature for cell-ID=%llu  \n", (unsigned long long) (long long)i /* particle index */);}
         if(cell[i].Dust_Temperature<=T_min) {cell[i].Dust_Temperature=T_min;} // reset baseline
         if(cell[i].Radiation_Temperature<=T_min) {cell[i].Radiation_Temperature=T_min;} // reset baseline
         double T_dust_em = cell[i].Dust_Temperature; // dust temperature in K //
         double Trad = cell[i].Radiation_Temperature; // radiation temperature in K //
-        if((Trad <= 0) || (T_dust_em<=0)) {PRINT_WARNING("\n Cell-ID=%llu  has T_rad=%g and T_dust=%g\n", (unsigned long long) pp[i].ID, Trad, T_dust_em);}
+        if((Trad <= 0) || (T_dust_em<=0)) {PRINT_WARNING("\n Cell-ID=%llu  has T_rad=%g and T_dust=%g\n", (unsigned long long) (long long)i /* particle index */, Trad, T_dust_em);}
         return rt_kappa_adaptive_IR_band(i,T_dust_em,Trad,0,0, pp, cell); // < 1500 K, dust is present; here first flag 0 uses the radiation temperature because we want to know the Planck-mean *absorption* opacity. Second flag 0 says to include both dust and gas opacities. In the subroutine, divide by fac because the function outputs in code units but we're working in CGS here.
         
     }
@@ -783,9 +783,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             
             double ef = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
 #ifdef RT_INFRARED
-            if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g Trad=%g Tdust=%g\n", (unsigned long long) pp[i].ID,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac,cell[i].Radiation_Temperature,cell[i].Dust_Temperature);}
+            if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g Trad=%g Tdust=%g\n", (unsigned long long) (long long)i /* particle index */,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac,cell[i].Radiation_Temperature,cell[i].Dust_Temperature);}
 #else
-            if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g\n", (unsigned long long) pp[i].ID,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac);}
+            if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g\n", (unsigned long long) (long long)i /* particle index */,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac);}
 #endif
             if(ef < 0) {ef=0;}
             double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
@@ -1418,7 +1418,7 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
     }     
     if(T_upper>=MAX_DUST_TEMP && dE_upper > 0) {cell[i].Dust_Temperature = MAX_DUST_TEMP; return 0;}
 
-    if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)pp[i].ID, T, T_lower,T_upper, dE_lower, dE_upper);}
+    if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)(long long)i /* particle index */, T, T_lower,T_upper, dE_lower, dE_upper);}
 
     if(dE!=0){  // root-solve for Tdust
         double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T;
@@ -1536,7 +1536,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
         double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T, ROOTFUNC_a = dEdt_lower, ROOTFUNC_b = dEdt_upper, ROOTFIND_REL_X_tol = 1e-6, ROOTFIND_ABS_X_tol=0.;
         #include "../system/bracketed_rootfind.h"
         Tdust = ROOTFIND_X_new + T;
-        if(ROOTFIND_ITER > MAXITER || isnan(Tdust)){PRINT_WARNING("WARNING: Particle %lld did not converge to desired Tdust tolerance (iter=%d, Tdust=%g, Tgas=%g)\n",(long long)pp[i].ID,ROOTFIND_ITER,Tdust,T);}
+        if(ROOTFIND_ITER > MAXITER || isnan(Tdust)){PRINT_WARNING("WARNING: Particle %lld did not converge to desired Tdust tolerance (iter=%d, Tdust=%g, Tgas=%g)\n",(long long)(long long)i /* particle index */,ROOTFIND_ITER,Tdust,T);}
     }
 #else
 
@@ -1562,7 +1562,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
         if(dEdt>0) {T_lower=Tdust;} else {T_upper=Tdust;} // either way, update upper and lower bounds
         n_iter++;
         if(n_iter > MAXITER-10) {
-            PRINT_WARNING("Warning: Dust temperature iteration converging slowly: ID=%lld iter=%d T=%g Tdust=%g Tdust_guess=%g T_upper=%g T_lower=%g dEdt=%g fac=%g.\n",(long long)pp[i].ID,n_iter,T,Tdust,Tdust_guess, T_upper, T_lower,dEdt, fac);
+            PRINT_WARNING("Warning: Dust temperature iteration converging slowly: ID=%lld iter=%d T=%g Tdust=%g Tdust_guess=%g T_upper=%g T_lower=%g dEdt=%g fac=%g.\n",(long long)(long long)i /* particle index */,n_iter,T,Tdust,Tdust_guess, T_upper, T_lower,dEdt, fac);
             if(n_iter > MAXITER){break;}
         }
     } while(fabs(dT_dustgas - (T-Tdust)) > 1.e-3 * fabs(T-Tdust)); // sufficient to converge dust cooling to 10^-3 tolerance, at this point uncertainties in dust properties will dominate the error budget
