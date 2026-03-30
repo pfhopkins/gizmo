@@ -130,7 +130,7 @@ void Initialize_ISMDustChem_Particle_Variables(int i)
         CellP[i].ISMDustChem_C_in_CO = CellP[i].ISMDustChem_MassFractionInDenseMolecular = 0.;
 #endif
         double temp_cutoff=1E5, ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred;
-        temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
+        temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
         if(All.Initial_ISMDustChem_Depletion > 0 && temp < temp_cutoff)
         {
             for(j=0;j<NUM_ISMDUSTCHEM_ELEMENTS;j++) {CellP[i].ISMDustChem_Dust_Metal[j] = 0.;}
@@ -1042,7 +1042,7 @@ void update_dust_processes(int i, double dtime_gyr)
     ISMDustChemEvo_renormalize_dust_fields(i);
 #endif
     int k; double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=CellP[i].Density*All.cf_a3inv, u0=CellP[i].InternalEnergyPred;
-    temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
+    temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
     rho*=UNIT_DENSITY_IN_CGS;
     
 #if !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 

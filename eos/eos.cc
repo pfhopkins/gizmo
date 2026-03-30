@@ -62,7 +62,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 
 #if (defined(EOS_PRECOMPUTE) && defined(EOS_CARRIES_TEMPERATURE)) || defined(EOS_SUBSTELLAR_ISM) // will do temperature here
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-    temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp); // get thermodynamic properties
+    temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties
 #endif
 #ifdef EOS_PRECOMPUTE
 #ifdef EOS_CARRIES_TEMPERATURE
@@ -217,7 +217,7 @@ double get_temperature(int i, struct particle_data *pp, struct gas_cell_data *ce
 /* Simple wrapper for calling ThermalProperties for temperature only - should only be called by get_temperature() above */
 double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data *cell) {
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
     return temperature;
 }
 #endif
@@ -333,7 +333,7 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
   return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; 
 #else 
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp); // get thermodynamic properties
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP); // get thermodynamic properties
     double f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
     if((!isfinite(f_ion)) || (f_ion<0)) {f_ion=0;}
     return f_ion;
@@ -369,7 +369,7 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
     return DMAX(fdust, 1.e-25); // floor at value too small to influence physical dust processes, just so dust temp root-finders have something finite and continuous to work with
 #endif
 #if defined(COOL_LOW_TEMPERATURES) && !defined(SINGLE_STAR_SINK_DYNAMICS) // skip this and assume fdust=1 if SINGLE_STAR_SINK_DYNAMICS on because it uses the fancy dust temp solver whose result depends implicitly on the dust fraction - if sublimation is important then we should be running full RT anyway
-    double Tdust = T_dust_manual_override; if(Tdust == 0) {Tdust = get_equilibrium_dust_temperature_estimate(i,0,0);} // call this iff the dust temp sent is nil
+    double Tdust = T_dust_manual_override; if(Tdust == 0) {Tdust = get_equilibrium_dust_temperature_estimate(i,0,0, P, CellP);} // call this iff the dust temp sent is nil
     if(Tdust >= 2000.) {return 1.e-4;} else {return exp(-pow(Tdust/1000.,3));} // this hit the maximum allowed temperature in the routine if it gets >2000; for lower temps, let it smoothly cut off
 #endif
     return 1; // default behavior
@@ -436,7 +436,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
     double f_dustgas_solar = 0.5*Z_Zsol*return_dust_to_metals_ratio_vs_solar(i,0); // dust-to-gas ratio locally
     double Tdust = 30.; // need to assume something about dust temperature for reaction rates below for dust-phase formation
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    Tdust = get_equilibrium_dust_temperature_estimate(i, 1, T);
+    Tdust = get_equilibrium_dust_temperature_estimate(i, 1, T, P, CellP);
 #endif
     double a_Z = 3.e-18*sqrt_T / ((1. +4.e-2*sqrt(T+Tdust) +2.e-3*T +8.e-6*T*T )*(1. +1.e4/exp(DMIN(EXPmax,600./Tdust)))) * f_dustgas_solar * nH_cgs * nH0 * clumping_factor; // dust surface formation (assuming dust-to-metals ratio is 0.5*(Z/solar)*dust-to-gas-relative-to-solar in all regions where this is significant), from Glover & Jappsen 2007
     //double a_GP = (1.833e-21 * pow(T,0.88)) * nH0 * n_e; // gas-phase formation [old form, from Nickerson et al., appears to be a significant typo in their expression compared to the sources from which they extracted it]

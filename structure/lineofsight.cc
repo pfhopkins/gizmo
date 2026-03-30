@@ -316,7 +316,7 @@ void add_along_lines_of_sight(void)
 
               utherm = DMAX(All.MinEgySpec, CellP[i].InternalEnergyPred);
               double mu_in = 1, nHe0, nHepp, nhp;
-              temp = ThermalProperties(utherm, CellP[n].Density * All.cf_a3inv, n, &mu_in, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
+              temp = ThermalProperties(utherm, CellP[n].Density * All.cf_a3inv, n, &mu_in, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
 
 		      /* do total gas */
 		      weight = P[n].Mass * wk;
