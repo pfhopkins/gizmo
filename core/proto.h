@@ -130,15 +130,15 @@ static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMI
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 static inline double MINMOD_G(double a, double b) {return a;}
 
-static inline double nH_cgs(int i) {return HYDROGEN_MASSFRAC * CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;}
-static inline double c_light_code_reduced(int k_freq) {
+static inline double nH_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell) {return HYDROGEN_MASSFRAC * cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;}
+static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)
     return C_LIGHT_CODE;
 #else
     return RT_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE;
 #endif
 }
-static inline double rsol_correction_factor_for_velocity_terms(int k_freq) {return RT_SPEEDOFLIGHT_REDUCTION;}
+static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
 double ForceSoftening_KernelRadius(int p);
 double sigmoid_sqrt(double x);
@@ -817,12 +817,12 @@ MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particl
 MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
-MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp);
-MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, char *ion_name);
-MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac);
-MyFloat total_ionization_rate_C(int i, MyFloat shieldfac);
-MyFloat cosmic_ray_ionization_rate_C(int i);
-MyFloat photoionization_rate_C(int i, MyFloat shieldfac);
+MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, char *ion_name, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 int ion_name_to_index(char *ion_name);
 double get_starformation_rate(int i, int mode);
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double cloudmass_fraction, double rateOfSF);
