@@ -1056,10 +1056,10 @@ void init(void)
 	      initialise_gas_abundances(&(ChimesGasVars[i]), &ChimesGlobalVars);
 
 #ifdef CHIMES_TURB_DIFF_IONS
-	      chimes_update_turbulent_abundances(i, 1);
+	      chimes_update_turbulent_abundances(i, 1, P, CellP);
 #endif
 
-	      chimes_update_gas_vars(i);
+	      chimes_update_gas_vars(i, P, CellP);
 
 	      // Evolve the chemistry for (1 / nH) Myr (limited to 1 Gyr) ten times at fixed temperature.
 	      ChimesGasVars[i].hydro_timestep = (ChimesFloat) DMIN(3.16e13 / ChimesGasVars[i].nH_tot, 3.16e16);
@@ -1069,7 +1069,7 @@ void init(void)
 
 
 #ifdef CHIMES_TURB_DIFF_IONS
-	      chimes_update_turbulent_abundances(i, 1);
+	      chimes_update_turbulent_abundances(i, 1, P, CellP);
 #endif
 	    }
 #ifdef _OPENMP

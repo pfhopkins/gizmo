@@ -42,7 +42,7 @@ Simple getter for the Pressure attribute - will calculate it on-the-fly if EOS q
  */
 double get_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell) {
 #ifndef EOS_PRECOMPUTE
-    set_eos_pressure(i);
+    set_eos_pressure(i, pp, cell);
 #endif
     return cell[i].Pressure;
 }
@@ -433,7 +433,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
     /* take eqm of dot[nH2] = a_H2*rho_dust*nHI [dust formation] + a_GP*nHI*ne [gas-phase formation] + b_3B*nHI*nHI*(nHI+nH2/8) [3-body collisional form] - b_H2HI*nHI*nH2 [collisional dissociation]
         - b_H2H2*nH2*nH2 [collisional mol-mol dissociation] - Gamma_H2^LW * nH2 [photodissociation] - Gamma_H2^+ [photoionization] - xi_H2*nH2 [CR ionization/dissociation] */
     double fH2=0, sqrt_T=sqrt(T), nH0=xH0*nH_cgs, n_e=x_e*nH_cgs, EXPmax=40., clumping_factor=1; // define some variables for below, including neutral H number density, free electron number, etc.
-    double f_dustgas_solar = 0.5*Z_Zsol*return_dust_to_metals_ratio_vs_solar(i,0); // dust-to-gas ratio locally
+    double f_dustgas_solar = 0.5*Z_Zsol*return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // dust-to-gas ratio locally
     double Tdust = 30.; // need to assume something about dust temperature for reaction rates below for dust-phase formation
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || defined(SINGLE_STAR_SINK_DYNAMICS)
     Tdust = get_equilibrium_dust_temperature_estimate(i, 1, T, P, CellP);

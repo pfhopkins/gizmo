@@ -513,7 +513,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
     	        allocate_gas_abundances_memory(&(ChimesGasVars[offset + n]), &ChimesGlobalVars);
 	            for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[offset + n].abundances[k] = (ChimesFloat) (*fp++);}
 #ifdef CHIMES_TURB_DIFF_IONS
-                chimes_update_turbulent_abundances(n, 1);
+                chimes_update_turbulent_abundances(n, 1, P, CellP);
 #endif
             }
 #endif

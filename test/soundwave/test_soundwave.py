@@ -12,7 +12,7 @@ from gizmo.test import (
 
 
 
-@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(16, 0), (1, 16), (4, 4)])
+@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(8, 0), (1, 8), (4, 2)])
 def test_soundwave(num_mpi_ranks, num_omp_threads):
     test_name = "soundwave"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
