@@ -251,6 +251,7 @@ FILE *FdENERGYinfo;		/*!< file handle for ENERGYinfo.txt energy conservation log
 #endif
 #ifdef GALSF_RESOLVEDISM
 FILE *FdSFinfo;			/*!< file handle for SFinfo.txt per-SF-event diagnostic log */
+FILE *FdIMFinfo;		/*!< file handle for IMFinfo.txt per-donor mass tracing log */
 #endif
 #ifdef GALSF_RESOLVEDISM
 FILE *FdSFRrism;

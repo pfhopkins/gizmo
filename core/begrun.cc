@@ -810,6 +810,12 @@ void open_outputfiles(void)
       fprintf(FdSFinfo,"%s Per-star formation log [GALSF_RESOLVEDISM]. Columns:\n",prefix_char);
       fprintf(FdSFinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) ID  (6) M_drawn[Msun]  (7) M_accreted[Msun]  (8) R_acc[kpc]  (9) Z_birth  (10) T[K]  (11) nH[cm-3]\n",prefix_char);
   }
+  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "IMFinfo.txt");
+  if(!(FdIMFinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+  else if(RestartFlag == 0) {
+      fprintf(FdIMFinfo,"%s Per-donor mass tracing log [GALSF_RESOLVEDISM_SAMPLE_IMF]. Columns:\n",prefix_char);
+      fprintf(FdIMFinfo,"%s   (1) time  (2) star_ID  (3) donor_gas_ID  (4) dM_accreted[Msun]\n",prefix_char);
+  }
 #endif
 
 #ifdef GALSF_RESOLVEDISM

@@ -159,7 +159,7 @@ FFTW_INCL= -I$(FFTW_HOME)/include
 FFTW_LIBS= -L$(FFTW_HOME)/lib
 HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
-MPICHLIB =
+MPICHLIB = -lstdc++
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ## modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
 endif

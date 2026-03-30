@@ -322,6 +322,7 @@ extern FILE *FdENERGYinfo; /*!< file handle for ENERGYinfo.txt energy conservati
 #endif
 #ifdef GALSF_RESOLVEDISM
 extern FILE *FdSFinfo;     /*!< file handle for SFinfo.txt per-SF-event diagnostic log */
+extern FILE *FdIMFinfo;    /*!< file handle for IMFinfo.txt per-donor mass tracing log */
 #endif
 #ifdef GALSF_RESOLVEDISM
 extern FILE *FdSFRrism;    /*!< file handle for sfr_rism.txt resolved ISM SFR log */

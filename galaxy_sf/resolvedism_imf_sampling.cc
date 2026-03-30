@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <gsl/gsl_rng.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -154,6 +155,10 @@ static double *IMF_ElemAccreted = NULL;  /* [NumPart * NUM_RESOLVEDISM_ELEMENTS]
 #endif
 /* Two-pass mode flag: 0 = count enclosed mass only (no removal), 1 = remove mass */
 static int IMF_AccretionMode = 0;
+/* Per-star donor tracking: accumulates (star_index, donor_ID, dM) entries during
+ * the removal pass. Logged to IMFinfo.txt after the accretion walk completes. */
+struct imf_donor_log_entry { int star_index; MyIDType donor_ID; double dM; };
+static std::vector<imf_donor_log_entry> IMF_DonorLog;
 
 
 #define CORE_FUNCTION_NAME resolvedismIMF_evaluate
@@ -178,6 +183,9 @@ void particle2in_resolvedismIMF(struct INPUT_STRUCT_NAME *in, int i, int loop_it
     in->f_acc = P[i].MstarSampleIMF[2]; /* set in assign_stellar_masses() pre-processing */
 }
 
+#define IMF_MAX_DONORS 128
+struct imf_donor_entry { MyIDType ID; MyFloat dM; };
+
 struct OUTPUT_STRUCT_NAME
 {
     MyFloat mass_accreted;
@@ -188,6 +196,8 @@ struct OUTPUT_STRUCT_NAME
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyFloat elem_accreted[NUM_RESOLVEDISM_ELEMENTS];
 #endif
+    int n_donors;
+    struct imf_donor_entry donors[IMF_MAX_DONORS];
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
@@ -206,6 +216,11 @@ void out2particle_resolvedismIMF(struct OUTPUT_STRUCT_NAME *out, int i, int mode
         for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++)
             IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k] += out->elem_accreted[k];
 #endif
+        /* donor logging — mode 0 is single-threaded, safe to push_back */
+        if(IMF_AccretionMode == 1) {
+            for(int d = 0; d < out->n_donors; d++)
+                IMF_DonorLog.push_back({i, out->donors[d].ID, (double)out->donors[d].dM});
+        }
     } else {
         #pragma omp atomic
         IMF_MassAccreted[i] += out->mass_accreted;
@@ -223,6 +238,14 @@ void out2particle_resolvedismIMF(struct OUTPUT_STRUCT_NAME *out, int i, int mode
             IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k] += out->elem_accreted[k];
         }
 #endif
+        /* donor logging — mode 1 may be threaded, use critical section */
+        if(IMF_AccretionMode == 1) {
+            #pragma omp critical (imf_donor_log)
+            {
+                for(int d = 0; d < out->n_donors; d++)
+                    IMF_DonorLog.push_back({i, out->donors[d].ID, (double)out->donors[d].dM});
+            }
+        }
     }
 }
 
@@ -380,6 +403,12 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
 #endif
                     out.mass_accreted += dM;
                     for(k=0;k<3;k++) out.mom_accreted[k] += dM * Vel_j[k];
+                    /* record donor for mass tracing */
+                    if(out.n_donors < IMF_MAX_DONORS) {
+                        out.donors[out.n_donors].ID = P[j].ID;
+                        out.donors[out.n_donors].dM = dM;
+                        out.n_donors++;
+                    }
                 }
             }
         }
@@ -426,6 +455,7 @@ void assign_stellar_masses(void)
 
     if(ThisTask == 0) printf("RESOLVEDISM IMF: accreting mass for %d new stars\n", nstars_total);
     PRINT_STATUS(" ..IMF accretion walk for single stars");
+    IMF_DonorLog.clear();
 
     /* Allocate accumulators (persist across iterations, zeroed each pass) */
     IMF_MassAccreted = (double *) mymalloc("IMF_MassAccreted", NumPart * sizeof(double));
@@ -684,6 +714,52 @@ void assign_stellar_masses(void)
                 myfree(displs); myfree(recvcounts);
             }
         }
+    }
+
+    /* Write donor log to IMFinfo.txt: one line per (star, donor) pair */
+    {
+        /* Convert star_index to star_ID and donor dM to solar masses */
+        int ndonors_local = (int)IMF_DonorLog.size();
+        long long *donor_star_id = (long long *)mymalloc("d_sid", DMAX(ndonors_local,1) * sizeof(long long));
+        long long *donor_gas_id = (long long *)mymalloc("d_gid", DMAX(ndonors_local,1) * sizeof(long long));
+        double *donor_dM = (double *)mymalloc("d_dM", DMAX(ndonors_local,1) * sizeof(double));
+        for(int d = 0; d < ndonors_local; d++) {
+            donor_star_id[d] = (long long)P[IMF_DonorLog[d].star_index].ID;
+            donor_gas_id[d] = (long long)IMF_DonorLog[d].donor_ID;
+            donor_dM[d] = IMF_DonorLog[d].dM * UNIT_MASS_IN_SOLAR;
+        }
+
+        int ndonors_total = 0;
+        MPI_Allreduce(&ndonors_local, &ndonors_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(ndonors_total > 0) {
+            int *rcounts = NULL, *rdispls = NULL;
+            long long *all_star_id = NULL, *all_gas_id = NULL;
+            double *all_dM = NULL;
+            if(ThisTask == 0) {
+                rcounts = (int *)mymalloc("d_rc", NTask * sizeof(int));
+                rdispls = (int *)mymalloc("d_rd", NTask * sizeof(int));
+            }
+            MPI_Gather(&ndonors_local, 1, MPI_INT, rcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                rdispls[0] = 0;
+                for(i = 1; i < NTask; i++) rdispls[i] = rdispls[i-1] + rcounts[i-1];
+                all_star_id = (long long *)mymalloc("d_as", ndonors_total * sizeof(long long));
+                all_gas_id = (long long *)mymalloc("d_ag", ndonors_total * sizeof(long long));
+                all_dM = (double *)mymalloc("d_am", ndonors_total * sizeof(double));
+            }
+            MPI_Gatherv(donor_star_id, ndonors_local, MPI_LONG_LONG, all_star_id, rcounts, rdispls, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(donor_gas_id, ndonors_local, MPI_LONG_LONG, all_gas_id, rcounts, rdispls, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+            MPI_Gatherv(donor_dM, ndonors_local, MPI_DOUBLE, all_dM, rcounts, rdispls, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                for(i = 0; i < ndonors_total; i++)
+                    fprintf(FdIMFinfo, "%12.6f %12lld %12lld %12.6e\n", All.Time, all_star_id[i], all_gas_id[i], all_dM[i]);
+                fflush(FdIMFinfo);
+                myfree(all_dM); myfree(all_gas_id); myfree(all_star_id);
+                myfree(rdispls); myfree(rcounts);
+            }
+        }
+        myfree(donor_dM); myfree(donor_gas_id); myfree(donor_star_id);
+        IMF_DonorLog.clear();
     }
 
     /* Free IMF logging buffers (LIFO) */
