@@ -294,7 +294,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
                                 if(r2 > RHII_2) {continue;}
                                 double r=sqrt(r2), u=0;
                                 /* check whether the particle is already ionized */
-                                already_ionized = 0; rho_j = Get_Gas_density_for_energy_i(j, P, CellP);
+                                already_ionized = 0; rho_j = CellP[j].density_for_energy();
                                 if(CellP[j].InternalEnergy<CellP[j].InternalEnergyPred) {u=CellP[j].InternalEnergy;} else {u=CellP[j].InternalEnergyPred;}
                                 if(CellP[j].DelayTimeHII > 0) {already_ionized=1;}
 #if !defined(CHIMES_HII_REGIONS)

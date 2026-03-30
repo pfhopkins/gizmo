@@ -716,7 +716,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif // explicit-solver check
 #if defined(RT_RAD_PRESSURE_FORCES) // -regardless- of if using an explicit solver, here the acceleration isn't saved to Rad_Accel so we calculate that timestep constraint
                     double gradErad = CellP[p].Gradients.Rad_E_gamma_ET[kf].norm_sq();
-                    double radacc = return_flux_limiter(p,kf, P, CellP) * (sqrt(gradErad) / CellP[p].Density) / All.cf_atime; // radiation acceleration for a timestep criterion
+                    double radacc = CellP[p].flux_limiter(kf) * (sqrt(gradErad) / CellP[p].Density) / All.cf_atime; // radiation acceleration for a timestep criterion
                     if(gradErad > 0 && radacc > 0)
                     {
                         double dt_radacc = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * KERNEL_CORE_SIZE * DMAX(ForceSoftening_KernelRadius(p), P[p].KernelRadius) / radacc);

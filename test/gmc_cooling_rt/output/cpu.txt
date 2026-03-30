@@ -1,1755 +1,1755 @@
 Step 0, Time: 0, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00076 
-total               1.00  100.0%
-tree+gravity        0.27   26.5%
-   treebuild        0.00    0.3%
-   treewalk         0.22   21.6%
-   treecomm         0.01    0.8%
-   treeimbal        0.03    2.8%
-hydro/fluids        0.64   63.7%
-   dens+grad        0.36   36.1%
-   denscomm         0.02    2.5%
-   densimbal        0.03    3.5%
-   hydrofrc         0.10   10.0%
-   hydcomm          0.01    0.5%
-   hydimbal         0.01    0.9%
-   hmaxupdate       0.00    0.2%
-   hydmisc          0.10   10.1%
-domain              0.06    6.0%
-peano               0.01    0.6%
-drift/splitmg       0.00    0.1%
+Nactive=24754, Imbal(Max/Mean)=1.01712 
+total               0.84  100.0%
+tree+gravity        0.27   31.7%
+   treebuild        0.00    0.4%
+   treewalk         0.20   23.3%
+   treecomm         0.01    1.0%
+   treeimbal        0.05    5.8%
+hydro/fluids        0.51   60.8%
+   dens+grad        0.25   30.3%
+   denscomm         0.03    3.5%
+   densimbal        0.07    8.1%
+   hydrofrc         0.05    5.9%
+   hydcomm          0.01    0.9%
+   hydimbal         0.01    1.3%
+   hmaxupdate       0.00    0.1%
+   hydmisc          0.09   10.8%
+domain              0.02    2.6%
+peano               0.01    0.8%
+drift/splitmg       0.00    0.2%
 kicks               0.00    0.0%
-io/snapshots        0.01    0.8%
-cooling+chem        0.00    0.0%
-sinks               0.00    0.0%
-rt_nonfluxops       0.00    0.0%
-misc                0.02    2.3%
+io/snapshots        0.01    0.7%
+cooling+chem        0.00    0.1%
+sinks               0.00    0.1%
+rt_nonfluxops       0.00    0.1%
+misc                0.03    3.0%
 
 Step 4, Time: 0.015625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00051 
-total               5.13  100.0%
-tree+gravity        0.28    5.4%
-   treebuild        0.01    0.2%
-   treewalk         0.22    4.2%
-   treecomm         0.01    0.1%
-   treeimbal        0.03    0.6%
-hydro/fluids        1.88   36.6%
-   dens+grad        0.78   15.2%
-   denscomm         0.06    1.2%
-   densimbal        0.07    1.4%
-   hydrofrc         0.55   10.6%
-   hydcomm          0.02    0.4%
-   hydimbal         0.04    0.7%
-   hmaxupdate       0.02    0.3%
-   hydmisc          0.34    6.7%
-domain              0.08    1.6%
-peano               0.02    0.3%
-drift/splitmg       0.41    8.1%
+Nactive=24754, Imbal(Max/Mean)=1.00232 
+total               3.21  100.0%
+tree+gravity        0.28    8.7%
+   treebuild        0.01    0.3%
+   treewalk         0.20    6.2%
+   treecomm         0.01    0.3%
+   treeimbal        0.05    1.6%
+hydro/fluids        1.32   41.1%
+   dens+grad        0.49   15.3%
+   denscomm         0.07    2.1%
+   densimbal        0.12    3.8%
+   hydrofrc         0.27    8.4%
+   hydcomm          0.02    0.7%
+   hydimbal         0.06    1.8%
+   hmaxupdate       0.01    0.2%
+   hydmisc          0.28    8.8%
+domain              0.04    1.3%
+peano               0.02    0.6%
+drift/splitmg       0.29    9.1%
 kicks               0.00    0.1%
-io/snapshots        0.04    0.8%
-cooling+chem        2.16   42.1%
-sinks               0.02    0.4%
+io/snapshots        0.01    0.5%
+cooling+chem        1.07   33.5%
+sinks               0.03    1.1%
 rt_nonfluxops       0.00    0.0%
-misc                0.24    4.6%
+misc                0.13    4.2%
 
 Step 8, Time: 0.03125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0005 
-total               6.58  100.0%
-tree+gravity        0.29    4.4%
-   treebuild        0.02    0.2%
-   treewalk         0.22    3.3%
-   treecomm         0.01    0.1%
-   treeimbal        0.03    0.4%
-hydro/fluids        2.72   41.3%
-   dens+grad        1.09   16.6%
-   denscomm         0.09    1.3%
-   densimbal        0.10    1.5%
-   hydrofrc         0.89   13.5%
-   hydcomm          0.03    0.4%
-   hydimbal         0.06    0.9%
-   hmaxupdate       0.02    0.3%
-   hydmisc          0.45    6.8%
-domain              0.11    1.6%
-peano               0.03    0.5%
-drift/splitmg       0.58    8.8%
-kicks               0.01    0.1%
-io/snapshots        0.04    0.6%
-cooling+chem        2.48   37.7%
-sinks               0.02    0.4%
-rt_nonfluxops       0.00    0.0%
-misc                0.31    4.7%
+Nactive=24754, Imbal(Max/Mean)=1.00881 
+total               4.15  100.0%
+tree+gravity        0.29    7.1%
+   treebuild        0.02    0.4%
+   treewalk         0.20    4.8%
+   treecomm         0.01    0.2%
+   treeimbal        0.05    1.2%
+hydro/fluids        1.84   44.2%
+   dens+grad        0.66   15.8%
+   denscomm         0.09    2.2%
+   densimbal        0.16    3.8%
+   hydrofrc         0.44   10.6%
+   hydcomm          0.03    0.8%
+   hydimbal         0.08    2.0%
+   hmaxupdate       0.01    0.2%
+   hydmisc          0.37    8.8%
+domain              0.06    1.4%
+peano               0.03    0.8%
+drift/splitmg       0.42   10.2%
+kicks               0.00    0.1%
+io/snapshots        0.01    0.4%
+cooling+chem        1.26   30.5%
+sinks               0.04    1.1%
+rt_nonfluxops       0.00    0.1%
+misc                0.17    4.2%
 
 Step 12, Time: 0.046875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00056 
-total               8.07  100.0%
-tree+gravity        0.30    3.7%
-   treebuild        0.02    0.3%
-   treewalk         0.22    2.7%
-   treecomm         0.01    0.1%
-   treeimbal        0.03    0.4%
-hydro/fluids        3.65   45.2%
-   dens+grad        1.43   17.7%
-   denscomm         0.11    1.4%
-   densimbal        0.14    1.7%
-   hydrofrc         1.26   15.7%
-   hydcomm          0.04    0.5%
-   hydimbal         0.09    1.1%
-   hmaxupdate       0.02    0.2%
-   hydmisc          0.55    6.9%
-domain              0.13    1.6%
-peano               0.04    0.5%
-drift/splitmg       0.74    9.1%
-kicks               0.01    0.1%
-io/snapshots        0.04    0.5%
-cooling+chem        2.76   34.2%
-sinks               0.03    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.38    4.7%
+Nactive=24754, Imbal(Max/Mean)=1.00241 
+total               5.13  100.0%
+tree+gravity        0.31    6.0%
+   treebuild        0.02    0.4%
+   treewalk         0.20    3.9%
+   treecomm         0.01    0.2%
+   treeimbal        0.05    1.0%
+hydro/fluids        2.41   47.0%
+   dens+grad        0.85   16.5%
+   denscomm         0.12    2.3%
+   densimbal        0.20    3.8%
+   hydrofrc         0.63   12.3%
+   hydcomm          0.04    0.9%
+   hydimbal         0.11    2.2%
+   hmaxupdate       0.01    0.2%
+   hydmisc          0.46    8.9%
+domain              0.08    1.5%
+peano               0.05    0.9%
+drift/splitmg       0.55   10.8%
+kicks               0.01    0.2%
+io/snapshots        0.01    0.3%
+cooling+chem        1.43   27.9%
+sinks               0.06    1.2%
+rt_nonfluxops       0.00    0.1%
+misc                0.22    4.2%
 
 Step 16, Time: 0.0625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00034 
-total               9.61  100.0%
-tree+gravity        0.31    3.2%
-   treebuild        0.03    0.3%
-   treewalk         0.22    2.3%
+Nactive=24754, Imbal(Max/Mean)=1.00831 
+total               6.12  100.0%
+tree+gravity        0.32    5.2%
+   treebuild        0.03    0.4%
+   treewalk         0.20    3.3%
    treecomm         0.01    0.1%
-   treeimbal        0.03    0.3%
-hydro/fluids        4.60   47.9%
-   dens+grad        1.78   18.5%
-   denscomm         0.14    1.4%
-   densimbal        0.17    1.8%
-   hydrofrc         1.66   17.3%
-   hydcomm          0.05    0.5%
-   hydimbal         0.12    1.3%
-   hmaxupdate       0.02    0.2%
-   hydmisc          0.66    6.9%
-domain              0.15    1.6%
-peano               0.05    0.6%
-drift/splitmg       0.89    9.2%
-kicks               0.01    0.1%
-io/snapshots        0.04    0.4%
-cooling+chem        3.07   32.0%
-sinks               0.03    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.45    4.7%
+   treeimbal        0.05    0.9%
+hydro/fluids        3.02   49.4%
+   dens+grad        1.04   17.0%
+   denscomm         0.14    2.4%
+   densimbal        0.24    4.0%
+   hydrofrc         0.83   13.5%
+   hydcomm          0.06    0.9%
+   hydimbal         0.15    2.5%
+   hmaxupdate       0.01    0.2%
+   hydmisc          0.55    8.9%
+domain              0.10    1.6%
+peano               0.06    1.0%
+drift/splitmg       0.67   11.0%
+kicks               0.01    0.2%
+io/snapshots        0.01    0.2%
+cooling+chem        1.59   25.9%
+sinks               0.07    1.2%
+rt_nonfluxops       0.01    0.1%
+misc                0.26    4.2%
 
 Step 20, Time: 0.078125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00024 
-total              11.15  100.0%
-tree+gravity        0.32    2.9%
-   treebuild        0.04    0.3%
-   treewalk         0.22    2.0%
+Nactive=24754, Imbal(Max/Mean)=1.00611 
+total               7.13  100.0%
+tree+gravity        0.34    4.7%
+   treebuild        0.03    0.5%
+   treewalk         0.20    2.9%
    treecomm         0.01    0.1%
-   treeimbal        0.03    0.3%
-hydro/fluids        5.56   49.9%
-   dens+grad        2.13   19.1%
-   denscomm         0.16    1.5%
-   densimbal        0.20    1.8%
-   hydrofrc         2.07   18.5%
-   hydcomm          0.06    0.6%
-   hydimbal         0.14    1.3%
-   hmaxupdate       0.02    0.2%
-   hydmisc          0.77    6.9%
-domain              0.17    1.5%
-peano               0.07    0.6%
-drift/splitmg       1.04    9.3%
-kicks               0.01    0.1%
-io/snapshots        0.04    0.4%
-cooling+chem        3.39   30.4%
-sinks               0.03    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.51    4.6%
+   treeimbal        0.05    0.8%
+hydro/fluids        3.64   51.1%
+   dens+grad        1.24   17.4%
+   denscomm         0.17    2.4%
+   densimbal        0.28    4.0%
+   hydrofrc         1.03   14.4%
+   hydcomm          0.07    1.0%
+   hydimbal         0.20    2.8%
+   hmaxupdate       0.01    0.2%
+   hydmisc          0.64    8.9%
+domain              0.12    1.6%
+peano               0.07    1.0%
+drift/splitmg       0.79   11.1%
+kicks               0.01    0.2%
+io/snapshots        0.01    0.2%
+cooling+chem        1.75   24.6%
+sinks               0.09    1.2%
+rt_nonfluxops       0.01    0.1%
+misc                0.29    4.1%
 
 Step 24, Time: 0.09375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00073 
-total              12.76  100.0%
-tree+gravity        0.33    2.6%
-   treebuild        0.04    0.3%
-   treewalk         0.22    1.7%
+Nactive=24754, Imbal(Max/Mean)=1.00313 
+total               8.22  100.0%
+tree+gravity        0.35    4.3%
+   treebuild        0.04    0.5%
+   treewalk         0.20    2.5%
    treecomm         0.01    0.1%
-   treeimbal        0.03    0.2%
-hydro/fluids        6.55   51.3%
-   dens+grad        2.50   19.6%
-   denscomm         0.19    1.5%
-   densimbal        0.23    1.8%
-   hydrofrc         2.48   19.4%
-   hydcomm          0.07    0.6%
-   hydimbal         0.17    1.3%
+   treeimbal        0.06    0.7%
+hydro/fluids        4.30   52.4%
+   dens+grad        1.45   17.6%
+   denscomm         0.20    2.5%
+   densimbal        0.34    4.1%
+   hydrofrc         1.24   15.1%
+   hydcomm          0.08    1.0%
+   hydimbal         0.25    3.1%
    hmaxupdate       0.02    0.2%
-   hydmisc          0.88    6.9%
-domain              0.19    1.5%
-peano               0.08    0.6%
-drift/splitmg       1.18    9.3%
-kicks               0.02    0.1%
-io/snapshots        0.04    0.3%
-cooling+chem        3.75   29.4%
-sinks               0.04    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.58    4.5%
+   hydmisc          0.73    8.8%
+domain              0.13    1.6%
+peano               0.09    1.1%
+drift/splitmg       0.91   11.1%
+kicks               0.02    0.2%
+io/snapshots        0.01    0.2%
+cooling+chem        1.96   23.8%
+sinks               0.10    1.3%
+rt_nonfluxops       0.01    0.1%
+misc                0.33    4.1%
 
 Step 28, Time: 0.109375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00031 
-total              14.41  100.0%
-tree+gravity        0.34    2.4%
-   treebuild        0.05    0.3%
-   treewalk         0.22    1.5%
+Nactive=24754, Imbal(Max/Mean)=1.04128 
+total               9.40  100.0%
+tree+gravity        0.37    3.9%
+   treebuild        0.05    0.5%
+   treewalk         0.21    2.2%
    treecomm         0.01    0.1%
-   treeimbal        0.03    0.2%
-hydro/fluids        7.56   52.4%
-   dens+grad        2.86   19.9%
-   denscomm         0.22    1.5%
-   densimbal        0.26    1.8%
-   hydrofrc         2.92   20.3%
-   hydcomm          0.08    0.6%
-   hydimbal         0.20    1.4%
+   treeimbal        0.06    0.6%
+hydro/fluids        4.99   53.1%
+   dens+grad        1.66   17.7%
+   denscomm         0.24    2.5%
+   densimbal        0.41    4.3%
+   hydrofrc         1.46   15.5%
+   hydcomm          0.09    1.0%
+   hydimbal         0.30    3.2%
    hmaxupdate       0.02    0.2%
-   hydmisc          0.98    6.8%
-domain              0.22    1.5%
-peano               0.09    0.6%
-drift/splitmg       1.35    9.4%
-kicks               0.02    0.1%
-io/snapshots        0.05    0.3%
-cooling+chem        4.11   28.5%
-sinks               0.04    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.64    4.5%
+   hydmisc          0.82    8.7%
+domain              0.16    1.7%
+peano               0.10    1.1%
+drift/splitmg       1.05   11.2%
+kicks               0.02    0.2%
+io/snapshots        0.02    0.2%
+cooling+chem        2.18   23.2%
+sinks               0.13    1.4%
+rt_nonfluxops       0.01    0.1%
+misc                0.37    4.0%
 
 Step 32, Time: 0.125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00039 
-total              15.97  100.0%
-tree+gravity        0.36    2.2%
-   treebuild        0.06    0.4%
-   treewalk         0.22    1.4%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.2%
-hydro/fluids        8.54   53.4%
-   dens+grad        3.23   20.2%
-   denscomm         0.25    1.5%
-   densimbal        0.29    1.8%
-   hydrofrc         3.34   20.9%
-   hydcomm          0.09    0.6%
-   hydimbal         0.22    1.4%
-   hmaxupdate       0.03    0.2%
-   hydmisc          1.08    6.8%
-domain              0.24    1.5%
-peano               0.10    0.6%
-drift/splitmg       1.48    9.3%
-kicks               0.02    0.1%
-io/snapshots        0.05    0.3%
-cooling+chem        4.44   27.8%
-sinks               0.04    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.70    4.4%
+Nactive=24754, Imbal(Max/Mean)=1.00299 
+total              10.43  100.0%
+tree+gravity        0.38    3.7%
+   treebuild        0.05    0.5%
+   treewalk         0.21    2.0%
+   treecomm         0.01    0.1%
+   treeimbal        0.06    0.6%
+hydro/fluids        5.66   54.2%
+   dens+grad        1.87   17.9%
+   denscomm         0.27    2.6%
+   densimbal        0.46    4.4%
+   hydrofrc         1.67   16.0%
+   hydcomm          0.11    1.0%
+   hydimbal         0.35    3.4%
+   hmaxupdate       0.02    0.2%
+   hydmisc          0.90    8.7%
+domain              0.18    1.7%
+peano               0.11    1.1%
+drift/splitmg       1.15   11.0%
+kicks               0.02    0.2%
+io/snapshots        0.02    0.2%
+cooling+chem        2.35   22.6%
+sinks               0.14    1.3%
+rt_nonfluxops       0.01    0.1%
+misc                0.40    3.9%
 
 Step 36, Time: 0.140625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00048 
-total              17.57  100.0%
-tree+gravity        0.37    2.1%
-   treebuild        0.06    0.4%
-   treewalk         0.22    1.2%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.2%
-hydro/fluids        9.55   54.3%
-   dens+grad        3.60   20.5%
-   denscomm         0.27    1.6%
-   densimbal        0.33    1.9%
-   hydrofrc         3.77   21.5%
-   hydcomm          0.11    0.6%
-   hydimbal         0.25    1.4%
-   hmaxupdate       0.03    0.2%
-   hydmisc          1.18    6.7%
-domain              0.26    1.5%
-peano               0.11    0.6%
-drift/splitmg       1.62    9.2%
-kicks               0.02    0.1%
-io/snapshots        0.05    0.3%
-cooling+chem        4.78   27.2%
-sinks               0.05    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.76    4.3%
+Nactive=24754, Imbal(Max/Mean)=1.01286 
+total              11.45  100.0%
+tree+gravity        0.40    3.5%
+   treebuild        0.06    0.5%
+   treewalk         0.21    1.8%
+   treecomm         0.01    0.1%
+   treeimbal        0.06    0.5%
+hydro/fluids        6.31   55.1%
+   dens+grad        2.08   18.1%
+   denscomm         0.30    2.6%
+   densimbal        0.52    4.5%
+   hydrofrc         1.88   16.4%
+   hydcomm          0.12    1.0%
+   hydimbal         0.40    3.5%
+   hmaxupdate       0.02    0.2%
+   hydmisc          0.98    8.6%
+domain              0.20    1.7%
+peano               0.13    1.1%
+drift/splitmg       1.24   10.9%
+kicks               0.02    0.2%
+io/snapshots        0.02    0.2%
+cooling+chem        2.53   22.1%
+sinks               0.15    1.3%
+rt_nonfluxops       0.01    0.1%
+misc                0.44    3.8%
 
 Step 40, Time: 0.15625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0002 
-total              19.17  100.0%
-tree+gravity        0.38    2.0%
-   treebuild        0.07    0.4%
-   treewalk         0.22    1.1%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.2%
-hydro/fluids       10.55   55.0%
-   dens+grad        3.98   20.7%
-   denscomm         0.30    1.6%
-   densimbal        0.36    1.9%
-   hydrofrc         4.20   21.9%
-   hydcomm          0.12    0.6%
-   hydimbal         0.28    1.5%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.28    6.7%
-domain              0.28    1.5%
-peano               0.12    0.6%
-drift/splitmg       1.75    9.1%
-kicks               0.03    0.1%
-io/snapshots        0.05    0.3%
-cooling+chem        5.14   26.8%
-sinks               0.05    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.82    4.3%
+Nactive=24754, Imbal(Max/Mean)=1.15964 
+total              12.56  100.0%
+tree+gravity        0.42    3.3%
+   treebuild        0.07    0.5%
+   treewalk         0.21    1.7%
+   treecomm         0.01    0.1%
+   treeimbal        0.06    0.5%
+hydro/fluids        7.02   55.9%
+   dens+grad        2.29   18.3%
+   denscomm         0.33    2.6%
+   densimbal        0.59    4.7%
+   hydrofrc         2.10   16.7%
+   hydcomm          0.13    1.1%
+   hydimbal         0.48    3.8%
+   hmaxupdate       0.02    0.2%
+   hydmisc          1.07    8.5%
+domain              0.22    1.7%
+peano               0.14    1.1%
+drift/splitmg       1.34   10.6%
+kicks               0.03    0.2%
+io/snapshots        0.02    0.2%
+cooling+chem        2.73   21.7%
+sinks               0.16    1.3%
+rt_nonfluxops       0.02    0.1%
+misc                0.47    3.8%
 
 Step 45, Time: 0.171875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00061 
-total              20.79  100.0%
-tree+gravity        0.39    1.9%
-   treebuild        0.08    0.4%
-   treewalk         0.22    1.1%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       11.56   55.6%
-   dens+grad        4.35   20.9%
-   denscomm         0.32    1.6%
-   densimbal        0.39    1.9%
-   hydrofrc         4.64   22.3%
-   hydcomm          0.13    0.6%
-   hydimbal         0.31    1.5%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.38    6.6%
-domain              0.30    1.5%
-peano               0.13    0.6%
-drift/splitmg       1.87    9.0%
-kicks               0.03    0.1%
-io/snapshots        0.05    0.2%
-cooling+chem        5.51   26.5%
-sinks               0.06    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.89    4.3%
+Nactive=24754, Imbal(Max/Mean)=1.00347 
+total              13.62  100.0%
+tree+gravity        0.43    3.2%
+   treebuild        0.07    0.5%
+   treewalk         0.21    1.6%
+   treecomm         0.01    0.1%
+   treeimbal        0.06    0.5%
+hydro/fluids        7.70   56.6%
+   dens+grad        2.52   18.5%
+   denscomm         0.36    2.7%
+   densimbal        0.65    4.8%
+   hydrofrc         2.34   17.2%
+   hydcomm          0.15    1.1%
+   hydimbal         0.52    3.8%
+   hmaxupdate       0.03    0.2%
+   hydmisc          1.15    8.5%
+domain              0.25    1.8%
+peano               0.16    1.2%
+drift/splitmg       1.42   10.4%
+kicks               0.03    0.2%
+io/snapshots        0.02    0.2%
+cooling+chem        2.91   21.4%
+sinks               0.17    1.3%
+rt_nonfluxops       0.02    0.1%
+misc                0.51    3.7%
 
 Step 50, Time: 0.1875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00052 
-total              22.40  100.0%
-tree+gravity        0.40    1.8%
-   treebuild        0.08    0.4%
-   treewalk         0.22    1.0%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       12.57   56.1%
-   dens+grad        4.73   21.1%
-   denscomm         0.35    1.6%
-   densimbal        0.43    1.9%
-   hydrofrc         5.08   22.7%
-   hydcomm          0.14    0.6%
-   hydimbal         0.34    1.5%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.47    6.6%
-domain              0.33    1.5%
-peano               0.15    0.7%
-drift/splitmg       1.99    8.9%
-kicks               0.03    0.1%
-io/snapshots        0.05    0.2%
-cooling+chem        5.87   26.2%
-sinks               0.06    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                0.95    4.2%
+Nactive=24754, Imbal(Max/Mean)=1.02044 
+total              14.61  100.0%
+tree+gravity        0.45    3.1%
+   treebuild        0.08    0.5%
+   treewalk         0.22    1.5%
+   treecomm         0.01    0.1%
+   treeimbal        0.07    0.5%
+hydro/fluids        8.34   57.1%
+   dens+grad        2.73   18.7%
+   denscomm         0.39    2.7%
+   densimbal        0.70    4.8%
+   hydrofrc         2.56   17.5%
+   hydcomm          0.16    1.1%
+   hydimbal         0.56    3.8%
+   hmaxupdate       0.03    0.2%
+   hydmisc          1.22    8.4%
+domain              0.27    1.8%
+peano               0.17    1.2%
+drift/splitmg       1.50   10.2%
+kicks               0.03    0.2%
+io/snapshots        0.02    0.1%
+cooling+chem        3.08   21.1%
+sinks               0.18    1.3%
+rt_nonfluxops       0.02    0.1%
+misc                0.54    3.7%
 
 Step 57, Time: 0.203125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00041 
-total              24.01  100.0%
-tree+gravity        0.41    1.7%
-   treebuild        0.09    0.4%
-   treewalk         0.22    0.9%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       13.60   56.6%
-   dens+grad        5.12   21.3%
-   denscomm         0.38    1.6%
-   densimbal        0.46    1.9%
-   hydrofrc         5.52   23.0%
-   hydcomm          0.15    0.6%
-   hydimbal         0.37    1.5%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.57    6.5%
-domain              0.36    1.5%
-peano               0.16    0.7%
-drift/splitmg       2.14    8.9%
-kicks               0.04    0.1%
-io/snapshots        0.06    0.2%
-cooling+chem        6.17   25.7%
-sinks               0.06    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                1.01    4.2%
+Nactive=24754, Imbal(Max/Mean)=1.00322 
+total              15.69  100.0%
+tree+gravity        0.47    3.0%
+   treebuild        0.09    0.6%
+   treewalk         0.22    1.4%
+   treecomm         0.01    0.1%
+   treeimbal        0.07    0.4%
+hydro/fluids        9.03   57.6%
+   dens+grad        2.94   18.7%
+   denscomm         0.42    2.7%
+   densimbal        0.76    4.8%
+   hydrofrc         2.79   17.8%
+   hydcomm          0.18    1.1%
+   hydimbal         0.62    3.9%
+   hmaxupdate       0.03    0.2%
+   hydmisc          1.30    8.3%
+domain              0.30    1.9%
+peano               0.19    1.2%
+drift/splitmg       1.60   10.2%
+kicks               0.04    0.2%
+io/snapshots        0.03    0.2%
+cooling+chem        3.23   20.6%
+sinks               0.20    1.3%
+rt_nonfluxops       0.02    0.1%
+misc                0.58    3.7%
 
 Step 66, Time: 0.21875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00058 
-total              25.60  100.0%
-tree+gravity        0.42    1.7%
-   treebuild        0.10    0.4%
-   treewalk         0.22    0.9%
-   treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       14.66   57.3%
-   dens+grad        5.51   21.5%
-   denscomm         0.40    1.6%
-   densimbal        0.51    2.0%
-   hydrofrc         5.97   23.3%
-   hydcomm          0.16    0.6%
-   hydimbal         0.42    1.6%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.66    6.5%
-domain              0.38    1.5%
-peano               0.17    0.7%
-drift/splitmg       2.25    8.8%
-kicks               0.04    0.1%
-io/snapshots        0.06    0.2%
-cooling+chem        6.46   25.2%
-sinks               0.07    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                1.08    4.2%
+Nactive=24754, Imbal(Max/Mean)=1.01468 
+total              16.69  100.0%
+tree+gravity        0.49    3.0%
+   treebuild        0.10    0.6%
+   treewalk         0.22    1.3%
+   treecomm         0.01    0.1%
+   treeimbal        0.07    0.4%
+hydro/fluids        9.71   58.2%
+   dens+grad        3.17   19.0%
+   denscomm         0.45    2.7%
+   densimbal        0.81    4.9%
+   hydrofrc         3.02   18.1%
+   hydcomm          0.19    1.1%
+   hydimbal         0.66    4.0%
+   hmaxupdate       0.03    0.2%
+   hydmisc          1.38    8.2%
+domain              0.32    1.9%
+peano               0.20    1.2%
+drift/splitmg       1.67   10.0%
+kicks               0.04    0.2%
+io/snapshots        0.03    0.2%
+cooling+chem        3.37   20.2%
+sinks               0.21    1.3%
+rt_nonfluxops       0.03    0.2%
+misc                0.62    3.7%
 
 Step 75, Time: 0.234375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00024 
-total              27.18  100.0%
-tree+gravity        0.44    1.6%
-   treebuild        0.11    0.4%
-   treewalk         0.22    0.8%
+Nactive=24754, Imbal(Max/Mean)=1.00361 
+total              17.76  100.0%
+tree+gravity        0.53    3.0%
+   treebuild        0.11    0.6%
+   treewalk         0.22    1.3%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       15.72   57.8%
-   dens+grad        5.90   21.7%
-   denscomm         0.43    1.6%
-   densimbal        0.55    2.0%
-   hydrofrc         6.43   23.7%
-   hydcomm          0.17    0.6%
-   hydimbal         0.45    1.7%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.75    6.4%
-domain              0.41    1.5%
-peano               0.19    0.7%
-drift/splitmg       2.38    8.8%
+   treeimbal        0.08    0.4%
+hydro/fluids       10.41   58.6%
+   dens+grad        3.40   19.2%
+   denscomm         0.48    2.7%
+   densimbal        0.87    4.9%
+   hydrofrc         3.26   18.4%
+   hydcomm          0.20    1.1%
+   hydimbal         0.71    4.0%
+   hmaxupdate       0.03    0.2%
+   hydmisc          1.46    8.2%
+domain              0.35    1.9%
+peano               0.22    1.2%
+drift/splitmg       1.77   10.0%
 kicks               0.04    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        6.73   24.8%
-sinks               0.07    0.3%
-rt_nonfluxops       0.00    0.0%
-misc                1.14    4.2%
+io/snapshots        0.03    0.2%
+cooling+chem        3.50   19.7%
+sinks               0.22    1.2%
+rt_nonfluxops       0.03    0.2%
+misc                0.65    3.7%
 
 Step 84, Time: 0.25, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00028 
-total              28.87  100.0%
-tree+gravity        0.46    1.6%
-   treebuild        0.12    0.4%
-   treewalk         0.22    0.8%
+Nactive=24754, Imbal(Max/Mean)=1.0066 
+total              18.86  100.0%
+tree+gravity        0.56    2.9%
+   treebuild        0.12    0.6%
+   treewalk         0.23    1.2%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       16.80   58.2%
-   dens+grad        6.30   21.8%
-   denscomm         0.46    1.6%
-   densimbal        0.60    2.1%
-   hydrofrc         6.89   23.9%
-   hydcomm          0.18    0.6%
-   hydimbal         0.49    1.7%
-   hmaxupdate       0.03    0.1%
-   hydmisc          1.84    6.4%
-domain              0.45    1.6%
-peano               0.21    0.7%
-drift/splitmg       2.59    9.0%
-kicks               0.05    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        6.99   24.2%
-sinks               0.08    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.20    4.1%
+   treeimbal        0.09    0.5%
+hydro/fluids       11.09   58.8%
+   dens+grad        3.62   19.2%
+   denscomm         0.51    2.7%
+   densimbal        0.93    4.9%
+   hydrofrc         3.50   18.6%
+   hydcomm          0.22    1.1%
+   hydimbal         0.74    3.9%
+   hmaxupdate       0.04    0.2%
+   hydmisc          1.53    8.1%
+domain              0.39    2.1%
+peano               0.25    1.3%
+drift/splitmg       1.91   10.2%
+kicks               0.05    0.3%
+io/snapshots        0.03    0.2%
+cooling+chem        3.63   19.2%
+sinks               0.24    1.3%
+rt_nonfluxops       0.03    0.2%
+misc                0.68    3.6%
 
 Step 93, Time: 0.265625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00017 
-total              30.61  100.0%
-tree+gravity        0.48    1.6%
-   treebuild        0.13    0.4%
-   treewalk         0.22    0.7%
+Nactive=24754, Imbal(Max/Mean)=1.00199 
+total              20.01  100.0%
+tree+gravity        0.59    2.9%
+   treebuild        0.13    0.7%
+   treewalk         0.23    1.2%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       17.87   58.4%
-   dens+grad        6.70   21.9%
-   denscomm         0.49    1.6%
-   densimbal        0.63    2.1%
-   hydrofrc         7.36   24.1%
-   hydcomm          0.19    0.6%
-   hydimbal         0.52    1.7%
-   hmaxupdate       0.04    0.1%
-   hydmisc          1.94    6.3%
-domain              0.52    1.7%
-peano               0.24    0.8%
-drift/splitmg       2.81    9.2%
-kicks               0.05    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        7.24   23.7%
-sinks               0.08    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.25    4.1%
+   treeimbal        0.09    0.4%
+hydro/fluids       11.80   59.0%
+   dens+grad        3.85   19.3%
+   denscomm         0.54    2.7%
+   densimbal        1.00    5.0%
+   hydrofrc         3.74   18.7%
+   hydcomm          0.23    1.1%
+   hydimbal         0.78    3.9%
+   hmaxupdate       0.04    0.2%
+   hydmisc          1.61    8.0%
+domain              0.44    2.2%
+peano               0.27    1.4%
+drift/splitmg       2.07   10.3%
+kicks               0.05    0.3%
+io/snapshots        0.03    0.1%
+cooling+chem        3.75   18.8%
+sinks               0.25    1.3%
+rt_nonfluxops       0.04    0.2%
+misc                0.71    3.6%
 
 Step 102, Time: 0.28125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00084 
-total              32.32  100.0%
-tree+gravity        0.50    1.6%
-   treebuild        0.15    0.5%
-   treewalk         0.22    0.7%
+Nactive=24754, Imbal(Max/Mean)=1.00152 
+total              21.14  100.0%
+tree+gravity        0.63    3.0%
+   treebuild        0.15    0.7%
+   treewalk         0.23    1.1%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       18.97   58.7%
-   dens+grad        7.11   22.0%
-   denscomm         0.51    1.6%
-   densimbal        0.67    2.1%
-   hydrofrc         7.84   24.3%
-   hydcomm          0.20    0.6%
-   hydimbal         0.56    1.7%
-   hmaxupdate       0.04    0.1%
-   hydmisc          2.03    6.3%
-domain              0.57    1.8%
-peano               0.26    0.8%
-drift/splitmg       3.00    9.3%
-kicks               0.05    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        7.50   23.2%
-sinks               0.09    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.31    4.0%
+   treeimbal        0.09    0.4%
+hydro/fluids       12.48   59.0%
+   dens+grad        4.08   19.3%
+   denscomm         0.57    2.7%
+   densimbal        1.06    5.0%
+   hydrofrc         3.98   18.8%
+   hydcomm          0.24    1.1%
+   hydimbal         0.82    3.9%
+   hmaxupdate       0.04    0.2%
+   hydmisc          1.69    8.0%
+domain              0.49    2.3%
+peano               0.30    1.4%
+drift/splitmg       2.21   10.5%
+kicks               0.06    0.3%
+io/snapshots        0.03    0.1%
+cooling+chem        3.88   18.4%
+sinks               0.27    1.3%
+rt_nonfluxops       0.04    0.2%
+misc                0.75    3.6%
 
 Step 112, Time: 0.296875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00046 
-total              34.01  100.0%
-tree+gravity        0.52    1.5%
-   treebuild        0.16    0.5%
-   treewalk         0.22    0.7%
+Nactive=24754, Imbal(Max/Mean)=1.00533 
+total              22.23  100.0%
+tree+gravity        0.65    2.9%
+   treebuild        0.16    0.7%
+   treewalk         0.24    1.1%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       20.08   59.0%
-   dens+grad        7.52   22.1%
-   denscomm         0.54    1.6%
-   densimbal        0.72    2.1%
-   hydrofrc         8.32   24.5%
-   hydcomm          0.22    0.6%
-   hydimbal         0.60    1.8%
-   hmaxupdate       0.04    0.1%
-   hydmisc          2.12    6.2%
-domain              0.61    1.8%
-peano               0.28    0.8%
-drift/splitmg       3.17    9.3%
-kicks               0.06    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        7.76   22.8%
-sinks               0.09    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.38    4.1%
+   treeimbal        0.10    0.4%
+hydro/fluids       13.18   59.3%
+   dens+grad        4.31   19.4%
+   denscomm         0.60    2.7%
+   densimbal        1.13    5.1%
+   hydrofrc         4.22   19.0%
+   hydcomm          0.25    1.1%
+   hydimbal         0.86    3.9%
+   hmaxupdate       0.04    0.2%
+   hydmisc          1.76    7.9%
+domain              0.53    2.4%
+peano               0.33    1.5%
+drift/splitmg       2.32   10.5%
+kicks               0.06    0.3%
+io/snapshots        0.03    0.1%
+cooling+chem        4.01   18.0%
+sinks               0.29    1.3%
+rt_nonfluxops       0.04    0.2%
+misc                0.79    3.6%
 
 Step 121, Time: 0.3125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00026 
-total              35.70  100.0%
-tree+gravity        0.54    1.5%
-   treebuild        0.17    0.5%
-   treewalk         0.22    0.6%
+Nactive=24754, Imbal(Max/Mean)=1.00563 
+total              23.33  100.0%
+tree+gravity        0.67    2.9%
+   treebuild        0.17    0.7%
+   treewalk         0.24    1.0%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       21.19   59.4%
-   dens+grad        7.94   22.2%
-   denscomm         0.57    1.6%
-   densimbal        0.76    2.1%
-   hydrofrc         8.80   24.7%
-   hydcomm          0.23    0.6%
-   hydimbal         0.63    1.8%
-   hmaxupdate       0.04    0.1%
-   hydmisc          2.22    6.2%
-domain              0.64    1.8%
-peano               0.30    0.8%
-drift/splitmg       3.34    9.4%
-kicks               0.06    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        8.02   22.5%
-sinks               0.10    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.44    4.0%
+   treeimbal        0.10    0.4%
+hydro/fluids       13.91   59.6%
+   dens+grad        4.55   19.5%
+   denscomm         0.63    2.7%
+   densimbal        1.20    5.1%
+   hydrofrc         4.47   19.1%
+   hydcomm          0.27    1.1%
+   hydimbal         0.91    3.9%
+   hmaxupdate       0.04    0.2%
+   hydmisc          1.84    7.9%
+domain              0.56    2.4%
+peano               0.35    1.5%
+drift/splitmg       2.44   10.5%
+kicks               0.06    0.3%
+io/snapshots        0.04    0.2%
+cooling+chem        4.14   17.7%
+sinks               0.31    1.3%
+rt_nonfluxops       0.04    0.2%
+misc                0.82    3.5%
 
 Step 130, Time: 0.328125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00047 
-total              37.50  100.0%
-tree+gravity        0.55    1.5%
-   treebuild        0.18    0.5%
-   treewalk         0.22    0.6%
+Nactive=24754, Imbal(Max/Mean)=1.01928 
+total              24.36  100.0%
+tree+gravity        0.69    2.8%
+   treebuild        0.17    0.7%
+   treewalk         0.24    1.0%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       22.45   59.9%
-   dens+grad        8.45   22.5%
-   denscomm         0.60    1.6%
-   densimbal        0.81    2.2%
-   hydrofrc         9.31   24.8%
-   hydcomm          0.24    0.6%
-   hydimbal         0.67    1.8%
-   hmaxupdate       0.04    0.1%
-   hydmisc          2.32    6.2%
-domain              0.67    1.8%
-peano               0.31    0.8%
-drift/splitmg       3.48    9.3%
-kicks               0.07    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        8.30   22.1%
-sinks               0.10    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.50    4.0%
+   treeimbal        0.10    0.4%
+hydro/fluids       14.61   60.0%
+   dens+grad        4.79   19.6%
+   denscomm         0.66    2.7%
+   densimbal        1.26    5.2%
+   hydrofrc         4.71   19.3%
+   hydcomm          0.28    1.1%
+   hydimbal         0.95    3.9%
+   hmaxupdate       0.05    0.2%
+   hydmisc          1.91    7.9%
+domain              0.59    2.4%
+peano               0.36    1.5%
+drift/splitmg       2.53   10.4%
+kicks               0.07    0.3%
+io/snapshots        0.04    0.2%
+cooling+chem        4.27   17.5%
+sinks               0.31    1.3%
+rt_nonfluxops       0.04    0.2%
+misc                0.85    3.5%
 
 Step 140, Time: 0.34375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00026 
-total              39.28  100.0%
-tree+gravity        0.57    1.5%
-   treebuild        0.19    0.5%
-   treewalk         0.22    0.6%
+Nactive=24754, Imbal(Max/Mean)=1.0039 
+total              25.44  100.0%
+tree+gravity        0.72    2.8%
+   treebuild        0.18    0.7%
+   treewalk         0.25    1.0%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       23.62   60.1%
-   dens+grad        8.88   22.6%
-   denscomm         0.63    1.6%
-   densimbal        0.86    2.2%
-   hydrofrc         9.84   25.1%
-   hydcomm          0.25    0.6%
-   hydimbal         0.72    1.8%
-   hmaxupdate       0.04    0.1%
-   hydmisc          2.41    6.1%
-domain              0.71    1.8%
-peano               0.33    0.8%
-drift/splitmg       3.65    9.3%
-kicks               0.07    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        8.57   21.8%
-sinks               0.11    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.57    4.0%
+   treeimbal        0.11    0.4%
+hydro/fluids       15.30   60.2%
+   dens+grad        5.02   19.7%
+   denscomm         0.69    2.7%
+   densimbal        1.32    5.2%
+   hydrofrc         4.95   19.5%
+   hydcomm          0.29    1.1%
+   hydimbal         0.99    3.9%
+   hmaxupdate       0.05    0.2%
+   hydmisc          1.99    7.8%
+domain              0.62    2.5%
+peano               0.39    1.5%
+drift/splitmg       2.64   10.4%
+kicks               0.07    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        4.39   17.3%
+sinks               0.33    1.3%
+rt_nonfluxops       0.05    0.2%
+misc                0.89    3.5%
 
 Step 149, Time: 0.359375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0005 
-total              41.00  100.0%
-tree+gravity        0.59    1.4%
-   treebuild        0.20    0.5%
-   treewalk         0.22    0.5%
+Nactive=24754, Imbal(Max/Mean)=1.00174 
+total              26.56  100.0%
+tree+gravity        0.76    2.9%
+   treebuild        0.20    0.7%
+   treewalk         0.25    0.9%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       24.76   60.4%
-   dens+grad        9.30   22.7%
-   denscomm         0.65    1.6%
-   densimbal        0.90    2.2%
-   hydrofrc        10.33   25.2%
-   hydcomm          0.26    0.6%
-   hydimbal         0.76    1.8%
-   hmaxupdate       0.04    0.1%
-   hydmisc          2.51    6.1%
-domain              0.75    1.8%
-peano               0.35    0.9%
-drift/splitmg       3.83    9.3%
-kicks               0.07    0.2%
-io/snapshots        0.06    0.2%
-cooling+chem        8.83   21.5%
-sinks               0.11    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.63    4.0%
+   treeimbal        0.12    0.4%
+hydro/fluids       16.02   60.3%
+   dens+grad        5.26   19.8%
+   denscomm         0.72    2.7%
+   densimbal        1.39    5.3%
+   hydrofrc         5.20   19.6%
+   hydcomm          0.31    1.2%
+   hydimbal         1.03    3.9%
+   hmaxupdate       0.05    0.2%
+   hydmisc          2.06    7.8%
+domain              0.66    2.5%
+peano               0.41    1.5%
+drift/splitmg       2.76   10.4%
+kicks               0.08    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        4.52   17.0%
+sinks               0.34    1.3%
+rt_nonfluxops       0.05    0.2%
+misc                0.92    3.5%
 
 Step 158, Time: 0.375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00039 
-total              42.74  100.0%
-tree+gravity        0.61    1.4%
-   treebuild        0.22    0.5%
-   treewalk         0.22    0.5%
+Nactive=24754, Imbal(Max/Mean)=1.00245 
+total              27.64  100.0%
+tree+gravity        0.78    2.8%
+   treebuild        0.21    0.8%
+   treewalk         0.25    0.9%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       25.89   60.6%
-   dens+grad        9.73   22.8%
-   denscomm         0.68    1.6%
-   densimbal        0.93    2.2%
-   hydrofrc        10.83   25.3%
-   hydcomm          0.27    0.6%
-   hydimbal         0.79    1.8%
-   hmaxupdate       0.05    0.1%
-   hydmisc          2.61    6.1%
-domain              0.80    1.9%
-peano               0.37    0.9%
-drift/splitmg       4.03    9.4%
-kicks               0.08    0.2%
-io/snapshots        0.06    0.1%
-cooling+chem        9.10   21.3%
-sinks               0.11    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.69    4.0%
+   treeimbal        0.12    0.4%
+hydro/fluids       16.70   60.4%
+   dens+grad        5.49   19.9%
+   denscomm         0.75    2.7%
+   densimbal        1.46    5.3%
+   hydrofrc         5.44   19.7%
+   hydcomm          0.32    1.1%
+   hydimbal         1.05    3.8%
+   hmaxupdate       0.05    0.2%
+   hydmisc          2.14    7.7%
+domain              0.71    2.6%
+peano               0.44    1.6%
+drift/splitmg       2.89   10.5%
+kicks               0.08    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        4.65   16.8%
+sinks               0.35    1.3%
+rt_nonfluxops       0.05    0.2%
+misc                0.95    3.4%
 
 Step 167, Time: 0.390625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00072 
-total              44.42  100.0%
-tree+gravity        0.62    1.4%
-   treebuild        0.23    0.5%
-   treewalk         0.22    0.5%
+Nactive=24754, Imbal(Max/Mean)=1.00915 
+total              28.70  100.0%
+tree+gravity        0.81    2.8%
+   treebuild        0.22    0.8%
+   treewalk         0.26    0.9%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       27.01   60.8%
-   dens+grad       10.15   22.9%
-   denscomm         0.71    1.6%
-   densimbal        0.97    2.2%
-   hydrofrc        11.33   25.5%
-   hydcomm          0.29    0.6%
-   hydimbal         0.81    1.8%
-   hmaxupdate       0.05    0.1%
-   hydmisc          2.71    6.1%
-domain              0.83    1.9%
-peano               0.39    0.9%
-drift/splitmg       4.18    9.4%
-kicks               0.08    0.2%
-io/snapshots        0.06    0.1%
-cooling+chem        9.36   21.1%
-sinks               0.11    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.75    3.9%
+   treeimbal        0.12    0.4%
+hydro/fluids       17.40   60.6%
+   dens+grad        5.73   19.9%
+   denscomm         0.78    2.7%
+   densimbal        1.52    5.3%
+   hydrofrc         5.69   19.8%
+   hydcomm          0.33    1.1%
+   hydimbal         1.09    3.8%
+   hmaxupdate       0.06    0.2%
+   hydmisc          2.22    7.7%
+domain              0.74    2.6%
+peano               0.46    1.6%
+drift/splitmg       3.00   10.4%
+kicks               0.08    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        4.77   16.6%
+sinks               0.37    1.3%
+rt_nonfluxops       0.05    0.2%
+misc                0.99    3.4%
 
 Step 176, Time: 0.40625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00047 
-total              46.10  100.0%
-tree+gravity        0.64    1.4%
-   treebuild        0.23    0.5%
-   treewalk         0.22    0.5%
+Nactive=24754, Imbal(Max/Mean)=1.0031 
+total              29.80  100.0%
+tree+gravity        0.83    2.8%
+   treebuild        0.23    0.8%
+   treewalk         0.26    0.9%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       28.16   61.1%
-   dens+grad       10.58   22.9%
-   denscomm         0.74    1.6%
-   densimbal        1.02    2.2%
-   hydrofrc        11.83   25.7%
-   hydcomm          0.30    0.6%
-   hydimbal         0.85    1.8%
-   hmaxupdate       0.05    0.1%
-   hydmisc          2.80    6.1%
-domain              0.86    1.9%
-peano               0.40    0.9%
-drift/splitmg       4.33    9.4%
-kicks               0.09    0.2%
-io/snapshots        0.07    0.2%
-cooling+chem        9.62   20.9%
-sinks               0.12    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.81    3.9%
+   treeimbal        0.13    0.4%
+hydro/fluids       18.13   60.8%
+   dens+grad        5.97   20.0%
+   denscomm         0.81    2.7%
+   densimbal        1.59    5.3%
+   hydrofrc         5.93   19.9%
+   hydcomm          0.34    1.1%
+   hydimbal         1.12    3.8%
+   hmaxupdate       0.06    0.2%
+   hydmisc          2.30    7.7%
+domain              0.76    2.6%
+peano               0.47    1.6%
+drift/splitmg       3.10   10.4%
+kicks               0.09    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        4.92   16.5%
+sinks               0.38    1.3%
+rt_nonfluxops       0.06    0.2%
+misc                1.02    3.4%
 
 Step 187, Time: 0.421875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00039 
-total              47.77  100.0%
-tree+gravity        0.65    1.4%
-   treebuild        0.24    0.5%
-   treewalk         0.22    0.5%
+Nactive=24754, Imbal(Max/Mean)=1.00457 
+total              30.85  100.0%
+tree+gravity        0.86    2.8%
+   treebuild        0.23    0.8%
+   treewalk         0.26    0.9%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       29.31   61.4%
-   dens+grad       11.00   23.0%
-   denscomm         0.76    1.6%
-   densimbal        1.07    2.2%
-   hydrofrc        12.33   25.8%
-   hydcomm          0.31    0.6%
-   hydimbal         0.89    1.9%
-   hmaxupdate       0.05    0.1%
-   hydmisc          2.90    6.1%
-domain              0.88    1.9%
-peano               0.42    0.9%
-drift/splitmg       4.47    9.4%
-kicks               0.09    0.2%
-io/snapshots        0.07    0.1%
-cooling+chem        9.87   20.7%
-sinks               0.12    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.87    3.9%
+   treeimbal        0.13    0.4%
+hydro/fluids       18.84   61.1%
+   dens+grad        6.21   20.1%
+   denscomm         0.84    2.7%
+   densimbal        1.65    5.4%
+   hydrofrc         6.18   20.0%
+   hydcomm          0.35    1.1%
+   hydimbal         1.17    3.8%
+   hmaxupdate       0.06    0.2%
+   hydmisc          2.37    7.7%
+domain              0.79    2.6%
+peano               0.49    1.6%
+drift/splitmg       3.19   10.3%
+kicks               0.09    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        5.04   16.3%
+sinks               0.40    1.3%
+rt_nonfluxops       0.06    0.2%
+misc                1.05    3.4%
 
 Step 198, Time: 0.4375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00055 
-total              49.44  100.0%
-tree+gravity        0.67    1.3%
-   treebuild        0.25    0.5%
-   treewalk         0.22    0.5%
+Nactive=24754, Imbal(Max/Mean)=1.00704 
+total              31.90  100.0%
+tree+gravity        0.88    2.8%
+   treebuild        0.24    0.8%
+   treewalk         0.27    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       30.45   61.6%
-   dens+grad       11.43   23.1%
-   denscomm         0.79    1.6%
-   densimbal        1.12    2.3%
-   hydrofrc        12.83   26.0%
-   hydcomm          0.32    0.6%
-   hydimbal         0.92    1.9%
-   hmaxupdate       0.05    0.1%
-   hydmisc          2.99    6.1%
-domain              0.91    1.8%
-peano               0.43    0.9%
-drift/splitmg       4.61    9.3%
-kicks               0.09    0.2%
-io/snapshots        0.07    0.1%
-cooling+chem       10.13   20.5%
-sinks               0.13    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.93    3.9%
+   treeimbal        0.14    0.4%
+hydro/fluids       19.54   61.3%
+   dens+grad        6.45   20.2%
+   denscomm         0.87    2.7%
+   densimbal        1.72    5.4%
+   hydrofrc         6.43   20.1%
+   hydcomm          0.37    1.1%
+   hydimbal         1.20    3.8%
+   hmaxupdate       0.06    0.2%
+   hydmisc          2.45    7.7%
+domain              0.82    2.6%
+peano               0.51    1.6%
+drift/splitmg       3.28   10.3%
+kicks               0.09    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        5.17   16.2%
+sinks               0.42    1.3%
+rt_nonfluxops       0.06    0.2%
+misc                1.08    3.4%
 
 Step 207, Time: 0.453125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00053 
-total              51.11  100.0%
-tree+gravity        0.68    1.3%
-   treebuild        0.26    0.5%
-   treewalk         0.22    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00373 
+total              32.97  100.0%
+tree+gravity        0.91    2.7%
+   treebuild        0.25    0.8%
+   treewalk         0.27    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       31.60   61.8%
-   dens+grad       11.85   23.2%
-   denscomm         0.82    1.6%
-   densimbal        1.16    2.3%
-   hydrofrc        13.33   26.1%
-   hydcomm          0.33    0.6%
-   hydimbal         0.96    1.9%
-   hmaxupdate       0.05    0.1%
-   hydmisc          3.09    6.0%
-domain              0.94    1.8%
-peano               0.45    0.9%
-drift/splitmg       4.74    9.3%
-kicks               0.10    0.2%
-io/snapshots        0.07    0.1%
-cooling+chem       10.39   20.3%
-sinks               0.13    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                1.99    3.9%
+   treeimbal        0.14    0.4%
+hydro/fluids       20.27   61.5%
+   dens+grad        6.68   20.3%
+   denscomm         0.90    2.7%
+   densimbal        1.78    5.4%
+   hydrofrc         6.68   20.3%
+   hydcomm          0.38    1.1%
+   hydimbal         1.24    3.8%
+   hmaxupdate       0.07    0.2%
+   hydmisc          2.53    7.7%
+domain              0.85    2.6%
+peano               0.52    1.6%
+drift/splitmg       3.37   10.2%
+kicks               0.10    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        5.30   16.1%
+sinks               0.43    1.3%
+rt_nonfluxops       0.06    0.2%
+misc                1.12    3.4%
 
 Step 216, Time: 0.46875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00022 
-total              52.78  100.0%
-tree+gravity        0.69    1.3%
-   treebuild        0.27    0.5%
-   treewalk         0.22    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00119 
+total              34.02  100.0%
+tree+gravity        0.94    2.7%
+   treebuild        0.26    0.8%
+   treewalk         0.28    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       32.76   62.1%
-   dens+grad       12.28   23.3%
-   denscomm         0.85    1.6%
-   densimbal        1.21    2.3%
-   hydrofrc        13.84   26.2%
-   hydcomm          0.34    0.6%
-   hydimbal         1.00    1.9%
-   hmaxupdate       0.05    0.1%
-   hydmisc          3.19    6.0%
-domain              0.97    1.8%
-peano               0.46    0.9%
-drift/splitmg       4.88    9.2%
-kicks               0.10    0.2%
-io/snapshots        0.07    0.1%
-cooling+chem       10.65   20.2%
-sinks               0.14    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.05    3.9%
+   treeimbal        0.15    0.4%
+hydro/fluids       20.97   61.6%
+   dens+grad        6.92   20.3%
+   denscomm         0.93    2.7%
+   densimbal        1.85    5.4%
+   hydrofrc         6.93   20.4%
+   hydcomm          0.39    1.1%
+   hydimbal         1.28    3.8%
+   hmaxupdate       0.07    0.2%
+   hydmisc          2.60    7.6%
+domain              0.87    2.6%
+peano               0.54    1.6%
+drift/splitmg       3.46   10.2%
+kicks               0.10    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        5.43   16.0%
+sinks               0.45    1.3%
+rt_nonfluxops       0.06    0.2%
+misc                1.15    3.4%
 
 Step 225, Time: 0.484375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00069 
-total              54.47  100.0%
-tree+gravity        0.71    1.3%
-   treebuild        0.27    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00436 
+total              35.08  100.0%
+tree+gravity        0.96    2.7%
+   treebuild        0.26    0.8%
+   treewalk         0.28    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       33.94   62.3%
-   dens+grad       12.72   23.4%
-   denscomm         0.87    1.6%
-   densimbal        1.26    2.3%
-   hydrofrc        14.35   26.3%
-   hydcomm          0.35    0.6%
-   hydimbal         1.04    1.9%
-   hmaxupdate       0.06    0.1%
-   hydmisc          3.28    6.0%
-domain              1.00    1.8%
-peano               0.48    0.9%
-drift/splitmg       5.01    9.2%
-kicks               0.10    0.2%
-io/snapshots        0.07    0.1%
-cooling+chem       10.91   20.0%
-sinks               0.14    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.11    3.9%
+   treeimbal        0.15    0.4%
+hydro/fluids       21.69   61.8%
+   dens+grad        7.15   20.4%
+   denscomm         0.96    2.7%
+   densimbal        1.93    5.5%
+   hydrofrc         7.18   20.5%
+   hydcomm          0.40    1.1%
+   hydimbal         1.32    3.8%
+   hmaxupdate       0.07    0.2%
+   hydmisc          2.68    7.6%
+domain              0.90    2.6%
+peano               0.56    1.6%
+drift/splitmg       3.55   10.1%
+kicks               0.11    0.3%
+io/snapshots        0.04    0.1%
+cooling+chem        5.57   15.9%
+sinks               0.47    1.3%
+rt_nonfluxops       0.07    0.2%
+misc                1.18    3.4%
 
 Step 234, Time: 0.5, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0004 
-total              56.15  100.0%
-tree+gravity        0.72    1.3%
-   treebuild        0.28    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00205 
+total              36.20  100.0%
+tree+gravity        0.99    2.7%
+   treebuild        0.27    0.7%
+   treewalk         0.28    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.03    0.1%
-hydro/fluids       35.09   62.5%
-   dens+grad       13.14   23.4%
-   denscomm         0.90    1.6%
-   densimbal        1.31    2.3%
-   hydrofrc        14.86   26.5%
-   hydcomm          0.36    0.6%
-   hydimbal         1.08    1.9%
-   hmaxupdate       0.06    0.1%
-   hydmisc          3.38    6.0%
-domain              1.03    1.8%
-peano               0.49    0.9%
-drift/splitmg       5.15    9.2%
-kicks               0.11    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       11.17   19.9%
-sinks               0.14    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.17    3.9%
+   treeimbal        0.15    0.4%
+hydro/fluids       22.40   61.9%
+   dens+grad        7.39   20.4%
+   denscomm         0.99    2.7%
+   densimbal        2.00    5.5%
+   hydrofrc         7.42   20.5%
+   hydcomm          0.41    1.1%
+   hydimbal         1.37    3.8%
+   hmaxupdate       0.07    0.2%
+   hydmisc          2.75    7.6%
+domain              0.92    2.5%
+peano               0.57    1.6%
+drift/splitmg       3.63   10.0%
+kicks               0.11    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        5.71   15.8%
+sinks               0.52    1.4%
+rt_nonfluxops       0.07    0.2%
+misc                1.21    3.3%
 
 Step 243, Time: 0.515625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00068 
-total              57.80  100.0%
-tree+gravity        0.74    1.3%
-   treebuild        0.29    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00321 
+total              37.26  100.0%
+tree+gravity        1.02    2.7%
+   treebuild        0.28    0.7%
+   treewalk         0.29    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       36.24   62.7%
-   dens+grad       13.57   23.5%
-   denscomm         0.93    1.6%
-   densimbal        1.35    2.3%
-   hydrofrc        15.37   26.6%
-   hydcomm          0.38    0.6%
-   hydimbal         1.11    1.9%
-   hmaxupdate       0.06    0.1%
-   hydmisc          3.47    6.0%
-domain              1.05    1.8%
-peano               0.50    0.9%
-drift/splitmg       5.28    9.1%
-kicks               0.11    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       11.42   19.8%
-sinks               0.15    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.23    3.9%
+   treeimbal        0.16    0.4%
+hydro/fluids       23.12   62.0%
+   dens+grad        7.62   20.5%
+   denscomm         1.02    2.7%
+   densimbal        2.06    5.5%
+   hydrofrc         7.67   20.6%
+   hydcomm          0.42    1.1%
+   hydimbal         1.42    3.8%
+   hmaxupdate       0.08    0.2%
+   hydmisc          2.83    7.6%
+domain              0.95    2.5%
+peano               0.59    1.6%
+drift/splitmg       3.73   10.0%
+kicks               0.12    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        5.84   15.7%
+sinks               0.54    1.4%
+rt_nonfluxops       0.07    0.2%
+misc                1.24    3.3%
 
 Step 252, Time: 0.53125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00045 
-total              59.45  100.0%
-tree+gravity        0.75    1.3%
-   treebuild        0.30    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00505 
+total              38.28  100.0%
+tree+gravity        1.04    2.7%
+   treebuild        0.29    0.7%
+   treewalk         0.29    0.8%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       37.39   62.9%
-   dens+grad       13.99   23.5%
-   denscomm         0.95    1.6%
-   densimbal        1.40    2.4%
-   hydrofrc        15.88   26.7%
-   hydcomm          0.39    0.6%
-   hydimbal         1.15    1.9%
-   hmaxupdate       0.06    0.1%
-   hydmisc          3.57    6.0%
-domain              1.08    1.8%
-peano               0.52    0.9%
-drift/splitmg       5.41    9.1%
-kicks               0.12    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       11.66   19.6%
-sinks               0.15    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.29    3.8%
+   treeimbal        0.16    0.4%
+hydro/fluids       23.81   62.2%
+   dens+grad        7.85   20.5%
+   denscomm         1.04    2.7%
+   densimbal        2.12    5.6%
+   hydrofrc         7.92   20.7%
+   hydcomm          0.44    1.1%
+   hydimbal         1.46    3.8%
+   hmaxupdate       0.08    0.2%
+   hydmisc          2.90    7.6%
+domain              0.97    2.5%
+peano               0.61    1.6%
+drift/splitmg       3.82   10.0%
+kicks               0.12    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        5.96   15.6%
+sinks               0.55    1.4%
+rt_nonfluxops       0.08    0.2%
+misc                1.27    3.3%
 
 Step 261, Time: 0.546875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00026 
-total              61.10  100.0%
-tree+gravity        0.76    1.2%
-   treebuild        0.31    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.00186 
+total              39.32  100.0%
+tree+gravity        1.07    2.7%
+   treebuild        0.29    0.7%
+   treewalk         0.29    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       38.53   63.1%
-   dens+grad       14.41   23.6%
-   denscomm         0.98    1.6%
-   densimbal        1.45    2.4%
-   hydrofrc        16.39   26.8%
-   hydcomm          0.40    0.6%
-   hydimbal         1.18    1.9%
-   hmaxupdate       0.06    0.1%
-   hydmisc          3.66    6.0%
-domain              1.11    1.8%
-peano               0.53    0.9%
-drift/splitmg       5.55    9.1%
-kicks               0.12    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       11.91   19.5%
-sinks               0.16    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.35    3.8%
+   treeimbal        0.17    0.4%
+hydro/fluids       24.52   62.4%
+   dens+grad        8.09   20.6%
+   denscomm         1.07    2.7%
+   densimbal        2.19    5.6%
+   hydrofrc         8.17   20.8%
+   hydcomm          0.45    1.1%
+   hydimbal         1.51    3.8%
+   hmaxupdate       0.08    0.2%
+   hydmisc          2.97    7.6%
+domain              1.00    2.5%
+peano               0.62    1.6%
+drift/splitmg       3.90    9.9%
+kicks               0.13    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        6.08   15.5%
+sinks               0.57    1.4%
+rt_nonfluxops       0.08    0.2%
+misc                1.30    3.3%
 
 Step 270, Time: 0.5625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0002 
-total              62.78  100.0%
-tree+gravity        0.78    1.2%
-   treebuild        0.32    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.01507 
+total              40.34  100.0%
+tree+gravity        1.09    2.7%
+   treebuild        0.30    0.7%
+   treewalk         0.29    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       39.70   63.2%
-   dens+grad       14.84   23.6%
-   denscomm         1.00    1.6%
-   densimbal        1.50    2.4%
-   hydrofrc        16.90   26.9%
-   hydcomm          0.41    0.7%
-   hydimbal         1.22    1.9%
-   hmaxupdate       0.07    0.1%
-   hydmisc          3.76    6.0%
-domain              1.14    1.8%
-peano               0.55    0.9%
-drift/splitmg       5.68    9.0%
-kicks               0.12    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       12.16   19.4%
-sinks               0.16    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.41    3.8%
+   treeimbal        0.17    0.4%
+hydro/fluids       25.21   62.5%
+   dens+grad        8.31   20.6%
+   denscomm         1.10    2.7%
+   densimbal        2.26    5.6%
+   hydrofrc         8.42   20.9%
+   hydcomm          0.46    1.1%
+   hydimbal         1.55    3.8%
+   hmaxupdate       0.08    0.2%
+   hydmisc          3.04    7.5%
+domain              1.03    2.6%
+peano               0.64    1.6%
+drift/splitmg       3.99    9.9%
+kicks               0.13    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        6.20   15.4%
+sinks               0.59    1.5%
+rt_nonfluxops       0.08    0.2%
+misc                1.33    3.3%
 
 Step 279, Time: 0.578125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00066 
-total              64.41  100.0%
-tree+gravity        0.79    1.2%
-   treebuild        0.32    0.5%
-   treewalk         0.23    0.4%
+Nactive=24754, Imbal(Max/Mean)=1.01022 
+total              41.35  100.0%
+tree+gravity        1.11    2.7%
+   treebuild        0.31    0.8%
+   treewalk         0.30    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       40.83   63.4%
-   dens+grad       15.25   23.7%
-   denscomm         1.03    1.6%
-   densimbal        1.54    2.4%
-   hydrofrc        17.41   27.0%
-   hydcomm          0.42    0.7%
-   hydimbal         1.25    1.9%
-   hmaxupdate       0.07    0.1%
-   hydmisc          3.85    6.0%
-domain              1.17    1.8%
-peano               0.56    0.9%
-drift/splitmg       5.81    9.0%
-kicks               0.13    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       12.41   19.3%
-sinks               0.17    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.47    3.8%
+   treeimbal        0.17    0.4%
+hydro/fluids       25.90   62.6%
+   dens+grad        8.54   20.6%
+   denscomm         1.12    2.7%
+   densimbal        2.32    5.6%
+   hydrofrc         8.67   21.0%
+   hydcomm          0.47    1.1%
+   hydimbal         1.59    3.8%
+   hmaxupdate       0.08    0.2%
+   hydmisc          3.11    7.5%
+domain              1.06    2.6%
+peano               0.66    1.6%
+drift/splitmg       4.08    9.9%
+kicks               0.13    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        6.31   15.3%
+sinks               0.61    1.5%
+rt_nonfluxops       0.08    0.2%
+misc                1.36    3.3%
 
 Step 288, Time: 0.59375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00055 
-total              66.06  100.0%
-tree+gravity        0.80    1.2%
-   treebuild        0.33    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.0037 
+total              42.34  100.0%
+tree+gravity        1.13    2.7%
+   treebuild        0.32    0.7%
+   treewalk         0.30    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       42.00   63.6%
-   dens+grad       15.68   23.7%
-   denscomm         1.06    1.6%
-   densimbal        1.60    2.4%
-   hydrofrc        17.92   27.1%
-   hydcomm          0.43    0.7%
-   hydimbal         1.30    2.0%
-   hmaxupdate       0.07    0.1%
-   hydmisc          3.95    6.0%
-domain              1.19    1.8%
-peano               0.58    0.9%
-drift/splitmg       5.91    9.0%
-kicks               0.13    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       12.65   19.1%
-sinks               0.17    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.54    3.8%
+   treeimbal        0.18    0.4%
+hydro/fluids       26.58   62.8%
+   dens+grad        8.76   20.7%
+   denscomm         1.15    2.7%
+   densimbal        2.38    5.6%
+   hydrofrc         8.92   21.1%
+   hydcomm          0.48    1.1%
+   hydimbal         1.63    3.8%
+   hmaxupdate       0.08    0.2%
+   hydmisc          3.18    7.5%
+domain              1.08    2.5%
+peano               0.67    1.6%
+drift/splitmg       4.15    9.8%
+kicks               0.14    0.3%
+io/snapshots        0.05    0.1%
+cooling+chem        6.43   15.2%
+sinks               0.63    1.5%
+rt_nonfluxops       0.08    0.2%
+misc                1.39    3.3%
 
 Step 297, Time: 0.609375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00051 
-total              67.75  100.0%
-tree+gravity        0.81    1.2%
-   treebuild        0.34    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00475 
+total              43.34  100.0%
+tree+gravity        1.16    2.7%
+   treebuild        0.32    0.7%
+   treewalk         0.30    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       43.19   63.8%
-   dens+grad       16.10   23.8%
-   denscomm         1.08    1.6%
-   densimbal        1.65    2.4%
-   hydrofrc        18.44   27.2%
-   hydcomm          0.44    0.7%
-   hydimbal         1.36    2.0%
-   hmaxupdate       0.07    0.1%
-   hydmisc          4.05    6.0%
-domain              1.21    1.8%
-peano               0.59    0.9%
-drift/splitmg       6.03    8.9%
-kicks               0.13    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       12.89   19.0%
-sinks               0.18    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.62    3.9%
+   treeimbal        0.18    0.4%
+hydro/fluids       27.27   62.9%
+   dens+grad        8.99   20.7%
+   denscomm         1.17    2.7%
+   densimbal        2.44    5.6%
+   hydrofrc         9.17   21.2%
+   hydcomm          0.49    1.1%
+   hydimbal         1.66    3.8%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.26    7.5%
+domain              1.10    2.5%
+peano               0.68    1.6%
+drift/splitmg       4.22    9.7%
+kicks               0.14    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        6.54   15.1%
+sinks               0.65    1.5%
+rt_nonfluxops       0.09    0.2%
+misc                1.43    3.3%
 
 Step 306, Time: 0.625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00064 
-total              69.34  100.0%
-tree+gravity        0.83    1.2%
-   treebuild        0.34    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.01255 
+total              44.33  100.0%
+tree+gravity        1.18    2.7%
+   treebuild        0.33    0.7%
+   treewalk         0.31    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       44.33   63.9%
-   dens+grad       16.51   23.8%
-   denscomm         1.11    1.6%
-   densimbal        1.70    2.5%
-   hydrofrc        18.95   27.3%
-   hydcomm          0.45    0.7%
-   hydimbal         1.40    2.0%
-   hmaxupdate       0.07    0.1%
-   hydmisc          4.14    6.0%
-domain              1.23    1.8%
-peano               0.60    0.9%
-drift/splitmg       6.14    8.8%
-kicks               0.13    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       13.12   18.9%
-sinks               0.19    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.68    3.9%
+   treeimbal        0.19    0.4%
+hydro/fluids       27.96   63.1%
+   dens+grad        9.22   20.8%
+   denscomm         1.20    2.7%
+   densimbal        2.50    5.6%
+   hydrofrc         9.42   21.3%
+   hydcomm          0.50    1.1%
+   hydimbal         1.70    3.8%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.33    7.5%
+domain              1.12    2.5%
+peano               0.70    1.6%
+drift/splitmg       4.29    9.7%
+kicks               0.14    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        6.66   15.0%
+sinks               0.68    1.5%
+rt_nonfluxops       0.09    0.2%
+misc                1.46    3.3%
 
 Step 315, Time: 0.640625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0005 
-total              70.97  100.0%
-tree+gravity        0.84    1.2%
-   treebuild        0.35    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00619 
+total              45.30  100.0%
+tree+gravity        1.20    2.6%
+   treebuild        0.33    0.7%
+   treewalk         0.31    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       45.49   64.1%
-   dens+grad       16.93   23.9%
-   denscomm         1.13    1.6%
-   densimbal        1.76    2.5%
-   hydrofrc        19.46   27.4%
-   hydcomm          0.46    0.7%
-   hydimbal         1.44    2.0%
-   hmaxupdate       0.07    0.1%
-   hydmisc          4.23    6.0%
-domain              1.25    1.8%
-peano               0.61    0.9%
-drift/splitmg       6.24    8.8%
-kicks               0.14    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       13.36   18.8%
-sinks               0.19    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.75    3.9%
+   treeimbal        0.19    0.4%
+hydro/fluids       28.64   63.2%
+   dens+grad        9.44   20.8%
+   denscomm         1.23    2.7%
+   densimbal        2.56    5.6%
+   hydrofrc         9.67   21.3%
+   hydcomm          0.52    1.1%
+   hydimbal         1.75    3.9%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.40    7.5%
+domain              1.14    2.5%
+peano               0.71    1.6%
+drift/splitmg       4.36    9.6%
+kicks               0.14    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        6.78   15.0%
+sinks               0.69    1.5%
+rt_nonfluxops       0.09    0.2%
+misc                1.50    3.3%
 
 Step 324, Time: 0.65625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00022 
-total              72.56  100.0%
-tree+gravity        0.85    1.2%
-   treebuild        0.36    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00413 
+total              46.29  100.0%
+tree+gravity        1.22    2.6%
+   treebuild        0.34    0.7%
+   treewalk         0.31    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       46.62   64.3%
-   dens+grad       17.35   23.9%
-   denscomm         1.16    1.6%
-   densimbal        1.80    2.5%
-   hydrofrc        19.96   27.5%
-   hydcomm          0.47    0.7%
-   hydimbal         1.48    2.0%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.33    6.0%
-domain              1.28    1.8%
-peano               0.62    0.9%
-drift/splitmg       6.34    8.7%
-kicks               0.14    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       13.60   18.7%
-sinks               0.20    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.82    3.9%
+   treeimbal        0.20    0.4%
+hydro/fluids       29.34   63.4%
+   dens+grad        9.67   20.9%
+   denscomm         1.25    2.7%
+   densimbal        2.63    5.7%
+   hydrofrc         9.91   21.4%
+   hydcomm          0.53    1.1%
+   hydimbal         1.79    3.9%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.47    7.5%
+domain              1.16    2.5%
+peano               0.72    1.6%
+drift/splitmg       4.42    9.6%
+kicks               0.15    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        6.89   14.9%
+sinks               0.71    1.5%
+rt_nonfluxops       0.09    0.2%
+misc                1.53    3.3%
 
 Step 333, Time: 0.671875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00044 
-total              74.14  100.0%
-tree+gravity        0.86    1.2%
-   treebuild        0.36    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00677 
+total              47.27  100.0%
+tree+gravity        1.25    2.6%
+   treebuild        0.35    0.7%
+   treewalk         0.32    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.1%
-hydro/fluids       47.75   64.4%
-   dens+grad       17.76   24.0%
-   denscomm         1.18    1.6%
-   densimbal        1.84    2.5%
-   hydrofrc        20.47   27.6%
-   hydcomm          0.48    0.7%
-   hydimbal         1.51    2.0%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.42    6.0%
-domain              1.30    1.8%
-peano               0.63    0.9%
-drift/splitmg       6.44    8.7%
-kicks               0.14    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       13.83   18.7%
-sinks               0.20    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.88    3.9%
+   treeimbal        0.20    0.4%
+hydro/fluids       30.02   63.5%
+   dens+grad        9.89   20.9%
+   denscomm         1.28    2.7%
+   densimbal        2.69    5.7%
+   hydrofrc        10.16   21.5%
+   hydcomm          0.54    1.1%
+   hydimbal         1.84    3.9%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.53    7.5%
+domain              1.18    2.5%
+peano               0.73    1.6%
+drift/splitmg       4.49    9.5%
+kicks               0.15    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.01   14.8%
+sinks               0.72    1.5%
+rt_nonfluxops       0.10    0.2%
+misc                1.57    3.3%
 
 Step 342, Time: 0.6875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00042 
-total              75.72  100.0%
-tree+gravity        0.87    1.1%
-   treebuild        0.37    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00167 
+total              48.26  100.0%
+tree+gravity        1.27    2.6%
+   treebuild        0.35    0.7%
+   treewalk         0.32    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       48.87   64.5%
-   dens+grad       18.17   24.0%
-   denscomm         1.21    1.6%
-   densimbal        1.88    2.5%
-   hydrofrc        20.98   27.7%
-   hydcomm          0.49    0.7%
-   hydimbal         1.55    2.0%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.51    6.0%
-domain              1.32    1.7%
-peano               0.64    0.9%
-drift/splitmg       6.54    8.6%
-kicks               0.15    0.2%
-io/snapshots        0.08    0.1%
-cooling+chem       14.06   18.6%
-sinks               0.21    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                2.95    3.9%
+   treeimbal        0.21    0.4%
+hydro/fluids       30.71   63.6%
+   dens+grad       10.11   21.0%
+   denscomm         1.30    2.7%
+   densimbal        2.75    5.7%
+   hydrofrc        10.41   21.6%
+   hydcomm          0.55    1.1%
+   hydimbal         1.88    3.9%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.60    7.5%
+domain              1.20    2.5%
+peano               0.75    1.5%
+drift/splitmg       4.56    9.4%
+kicks               0.15    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.13   14.8%
+sinks               0.74    1.5%
+rt_nonfluxops       0.10    0.2%
+misc                1.60    3.3%
 
 Step 352, Time: 0.703125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00048 
-total              77.39  100.0%
-tree+gravity        0.88    1.1%
-   treebuild        0.38    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00199 
+total              49.31  100.0%
+tree+gravity        1.30    2.6%
+   treebuild        0.36    0.7%
+   treewalk         0.32    0.7%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       50.02   64.6%
-   dens+grad       18.58   24.0%
-   denscomm         1.23    1.6%
-   densimbal        1.93    2.5%
-   hydrofrc        21.49   27.8%
-   hydcomm          0.50    0.7%
-   hydimbal         1.59    2.1%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.60    5.9%
-domain              1.35    1.7%
-peano               0.66    0.9%
-drift/splitmg       6.68    8.6%
-kicks               0.15    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       14.29   18.5%
-sinks               0.21    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                3.03    3.9%
+   treeimbal        0.21    0.4%
+hydro/fluids       31.42   63.7%
+   dens+grad       10.34   21.0%
+   denscomm         1.33    2.7%
+   densimbal        2.82    5.7%
+   hydrofrc        10.68   21.6%
+   hydcomm          0.56    1.1%
+   hydimbal         1.93    3.9%
+   hmaxupdate       0.09    0.2%
+   hydmisc          3.67    7.4%
+domain              1.23    2.5%
+peano               0.76    1.5%
+drift/splitmg       4.64    9.4%
+kicks               0.15    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.24   14.7%
+sinks               0.75    1.5%
+rt_nonfluxops       0.10    0.2%
+misc                1.64    3.3%
 
 Step 362, Time: 0.71875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00065 
-total              78.96  100.0%
-tree+gravity        0.90    1.1%
-   treebuild        0.39    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.02041 
+total              50.28  100.0%
+tree+gravity        1.32    2.6%
+   treebuild        0.37    0.7%
+   treewalk         0.33    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       51.16   64.8%
-   dens+grad       19.00   24.1%
-   denscomm         1.26    1.6%
-   densimbal        1.98    2.5%
-   hydrofrc        22.00   27.9%
-   hydcomm          0.51    0.7%
-   hydimbal         1.64    2.1%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.69    5.9%
-domain              1.37    1.7%
-peano               0.67    0.8%
-drift/splitmg       6.76    8.6%
-kicks               0.15    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       14.52   18.4%
-sinks               0.22    0.3%
-rt_nonfluxops       0.01    0.0%
-misc                3.11    3.9%
+   treeimbal        0.21    0.4%
+hydro/fluids       32.10   63.8%
+   dens+grad       10.56   21.0%
+   denscomm         1.36    2.7%
+   densimbal        2.89    5.7%
+   hydrofrc        10.92   21.7%
+   hydcomm          0.57    1.1%
+   hydimbal         1.97    3.9%
+   hmaxupdate       0.10    0.2%
+   hydmisc          3.74    7.4%
+domain              1.25    2.5%
+peano               0.78    1.5%
+drift/splitmg       4.70    9.4%
+kicks               0.16    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.36   14.6%
+sinks               0.77    1.5%
+rt_nonfluxops       0.11    0.2%
+misc                1.69    3.4%
 
 Step 372, Time: 0.734375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00034 
-total              80.54  100.0%
-tree+gravity        0.91    1.1%
-   treebuild        0.39    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00372 
+total              51.25  100.0%
+tree+gravity        1.34    2.6%
+   treebuild        0.37    0.7%
+   treewalk         0.33    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       52.30   64.9%
-   dens+grad       19.41   24.1%
-   denscomm         1.28    1.6%
-   densimbal        2.03    2.5%
-   hydrofrc        22.52   28.0%
-   hydcomm          0.52    0.7%
-   hydimbal         1.68    2.1%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.78    5.9%
-domain              1.40    1.7%
-peano               0.68    0.8%
-drift/splitmg       6.84    8.5%
-kicks               0.15    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       14.74   18.3%
-sinks               0.22    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.20    4.0%
+   treeimbal        0.22    0.4%
+hydro/fluids       32.78   64.0%
+   dens+grad       10.78   21.0%
+   denscomm         1.38    2.7%
+   densimbal        2.95    5.8%
+   hydrofrc        11.17   21.8%
+   hydcomm          0.58    1.1%
+   hydimbal         2.02    3.9%
+   hmaxupdate       0.10    0.2%
+   hydmisc          3.81    7.4%
+domain              1.27    2.5%
+peano               0.79    1.5%
+drift/splitmg       4.76    9.3%
+kicks               0.16    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.47   14.6%
+sinks               0.78    1.5%
+rt_nonfluxops       0.11    0.2%
+misc                1.73    3.4%
 
 Step 382, Time: 0.75, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00082 
-total              82.13  100.0%
-tree+gravity        0.92    1.1%
-   treebuild        0.40    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.0018 
+total              52.21  100.0%
+tree+gravity        1.36    2.6%
+   treebuild        0.38    0.7%
+   treewalk         0.33    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       53.44   65.1%
-   dens+grad       19.82   24.1%
-   denscomm         1.31    1.6%
-   densimbal        2.07    2.5%
-   hydrofrc        23.03   28.0%
-   hydcomm          0.53    0.7%
-   hydimbal         1.72    2.1%
-   hmaxupdate       0.08    0.1%
-   hydmisc          4.87    5.9%
-domain              1.42    1.7%
-peano               0.69    0.8%
-drift/splitmg       6.92    8.4%
-kicks               0.16    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       14.97   18.2%
-sinks               0.22    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.28    4.0%
+   treeimbal        0.22    0.4%
+hydro/fluids       33.45   64.1%
+   dens+grad       11.00   21.1%
+   denscomm         1.41    2.7%
+   densimbal        3.01    5.8%
+   hydrofrc        11.41   21.9%
+   hydcomm          0.59    1.1%
+   hydimbal         2.05    3.9%
+   hmaxupdate       0.10    0.2%
+   hydmisc          3.87    7.4%
+domain              1.29    2.5%
+peano               0.80    1.5%
+drift/splitmg       4.82    9.2%
+kicks               0.16    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.59   14.5%
+sinks               0.79    1.5%
+rt_nonfluxops       0.11    0.2%
+misc                1.77    3.4%
 
 Step 392, Time: 0.765625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00041 
-total              83.73  100.0%
-tree+gravity        0.93    1.1%
-   treebuild        0.41    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00442 
+total              53.18  100.0%
+tree+gravity        1.38    2.6%
+   treebuild        0.38    0.7%
+   treewalk         0.34    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       54.59   65.2%
-   dens+grad       20.23   24.2%
-   denscomm         1.33    1.6%
-   densimbal        2.13    2.5%
-   hydrofrc        23.54   28.1%
-   hydcomm          0.54    0.7%
-   hydimbal         1.77    2.1%
-   hmaxupdate       0.09    0.1%
-   hydmisc          4.96    5.9%
-domain              1.44    1.7%
-peano               0.71    0.8%
-drift/splitmg       7.01    8.4%
-kicks               0.16    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       15.20   18.2%
-sinks               0.23    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.36    4.0%
+   treeimbal        0.22    0.4%
+hydro/fluids       34.14   64.2%
+   dens+grad       11.23   21.1%
+   denscomm         1.43    2.7%
+   densimbal        3.08    5.8%
+   hydrofrc        11.66   21.9%
+   hydcomm          0.60    1.1%
+   hydimbal         2.09    3.9%
+   hmaxupdate       0.10    0.2%
+   hydmisc          3.94    7.4%
+domain              1.31    2.5%
+peano               0.82    1.5%
+drift/splitmg       4.88    9.2%
+kicks               0.17    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.70   14.5%
+sinks               0.81    1.5%
+rt_nonfluxops       0.11    0.2%
+misc                1.82    3.4%
 
 Step 402, Time: 0.78125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00068 
-total              85.30  100.0%
-tree+gravity        0.94    1.1%
-   treebuild        0.41    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00254 
+total              54.15  100.0%
+tree+gravity        1.40    2.6%
+   treebuild        0.39    0.7%
+   treewalk         0.34    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       55.71   65.3%
-   dens+grad       20.64   24.2%
-   denscomm         1.36    1.6%
-   densimbal        2.17    2.5%
-   hydrofrc        24.05   28.2%
-   hydcomm          0.56    0.7%
-   hydimbal         1.80    2.1%
-   hmaxupdate       0.09    0.1%
-   hydmisc          5.05    5.9%
-domain              1.46    1.7%
-peano               0.72    0.8%
-drift/splitmg       7.09    8.3%
-kicks               0.16    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       15.42   18.1%
-sinks               0.23    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.45    4.0%
+   treeimbal        0.23    0.4%
+hydro/fluids       34.82   64.3%
+   dens+grad       11.45   21.1%
+   denscomm         1.46    2.7%
+   densimbal        3.14    5.8%
+   hydrofrc        11.91   22.0%
+   hydcomm          0.61    1.1%
+   hydimbal         2.14    4.0%
+   hmaxupdate       0.10    0.2%
+   hydmisc          4.01    7.4%
+domain              1.33    2.5%
+peano               0.83    1.5%
+drift/splitmg       4.93    9.1%
+kicks               0.17    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.81   14.4%
+sinks               0.82    1.5%
+rt_nonfluxops       0.12    0.2%
+misc                1.86    3.4%
 
 Step 412, Time: 0.796875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00097 
-total              86.86  100.0%
-tree+gravity        0.95    1.1%
-   treebuild        0.42    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00737 
+total              55.13  100.0%
+tree+gravity        1.42    2.6%
+   treebuild        0.40    0.7%
+   treewalk         0.34    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       56.83   65.4%
-   dens+grad       21.06   24.2%
-   denscomm         1.38    1.6%
-   densimbal        2.21    2.5%
-   hydrofrc        24.56   28.3%
-   hydcomm          0.57    0.7%
-   hydimbal         1.83    2.1%
-   hmaxupdate       0.09    0.1%
-   hydmisc          5.14    5.9%
-domain              1.49    1.7%
-peano               0.73    0.8%
-drift/splitmg       7.17    8.3%
-kicks               0.17    0.2%
-io/snapshots        0.09    0.1%
-cooling+chem       15.65   18.0%
-sinks               0.24    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.53    4.1%
+   treeimbal        0.23    0.4%
+hydro/fluids       35.52   64.4%
+   dens+grad       11.68   21.2%
+   denscomm         1.48    2.7%
+   densimbal        3.20    5.8%
+   hydrofrc        12.17   22.1%
+   hydcomm          0.63    1.1%
+   hydimbal         2.18    4.0%
+   hmaxupdate       0.10    0.2%
+   hydmisc          4.08    7.4%
+domain              1.35    2.5%
+peano               0.84    1.5%
+drift/splitmg       4.99    9.0%
+kicks               0.17    0.3%
+io/snapshots        0.06    0.1%
+cooling+chem        7.92   14.4%
+sinks               0.84    1.5%
+rt_nonfluxops       0.12    0.2%
+misc                1.90    3.5%
 
 Step 422, Time: 0.8125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00061 
-total              88.50  100.0%
-tree+gravity        0.97    1.1%
-   treebuild        0.43    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00564 
+total              56.22  100.0%
+tree+gravity        1.45    2.6%
+   treebuild        0.40    0.7%
+   treewalk         0.35    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       57.96   65.5%
-   dens+grad       21.47   24.3%
-   denscomm         1.40    1.6%
-   densimbal        2.25    2.5%
-   hydrofrc        25.07   28.3%
-   hydcomm          0.57    0.6%
-   hydimbal         1.87    2.1%
-   hmaxupdate       0.09    0.1%
-   hydmisc          5.23    5.9%
-domain              1.51    1.7%
-peano               0.74    0.8%
-drift/splitmg       7.30    8.2%
-kicks               0.17    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       15.88   17.9%
-sinks               0.25    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.62    4.1%
+   treeimbal        0.24    0.4%
+hydro/fluids       36.24   64.5%
+   dens+grad       11.90   21.2%
+   denscomm         1.51    2.7%
+   densimbal        3.27    5.8%
+   hydrofrc        12.44   22.1%
+   hydcomm          0.64    1.1%
+   hydimbal         2.23    4.0%
+   hmaxupdate       0.10    0.2%
+   hydmisc          4.15    7.4%
+domain              1.38    2.5%
+peano               0.85    1.5%
+drift/splitmg       5.06    9.0%
+kicks               0.17    0.3%
+io/snapshots        0.07    0.1%
+cooling+chem        8.06   14.3%
+sinks               0.85    1.5%
+rt_nonfluxops       0.12    0.2%
+misc                1.95    3.5%
 
 Step 434, Time: 0.828125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00053 
-total              90.09  100.0%
-tree+gravity        0.98    1.1%
-   treebuild        0.43    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00329 
+total              57.22  100.0%
+tree+gravity        1.48    2.6%
+   treebuild        0.41    0.7%
+   treewalk         0.35    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       59.09   65.6%
-   dens+grad       21.88   24.3%
-   denscomm         1.43    1.6%
-   densimbal        2.30    2.6%
-   hydrofrc        25.58   28.4%
-   hydcomm          0.58    0.6%
-   hydimbal         1.91    2.1%
-   hmaxupdate       0.09    0.1%
-   hydmisc          5.32    5.9%
-domain              1.53    1.7%
-peano               0.75    0.8%
-drift/splitmg       7.38    8.2%
-kicks               0.17    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       16.11   17.9%
-sinks               0.25    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.70    4.1%
+   treeimbal        0.25    0.4%
+hydro/fluids       36.94   64.6%
+   dens+grad       12.13   21.2%
+   denscomm         1.54    2.7%
+   densimbal        3.33    5.8%
+   hydrofrc        12.70   22.2%
+   hydcomm          0.65    1.1%
+   hydimbal         2.28    4.0%
+   hmaxupdate       0.11    0.2%
+   hydmisc          4.22    7.4%
+domain              1.40    2.4%
+peano               0.87    1.5%
+drift/splitmg       5.12    9.0%
+kicks               0.18    0.3%
+io/snapshots        0.07    0.1%
+cooling+chem        8.17   14.3%
+sinks               0.87    1.5%
+rt_nonfluxops       0.12    0.2%
+misc                2.00    3.5%
 
 Step 446, Time: 0.84375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00031 
-total              91.69  100.0%
-tree+gravity        0.99    1.1%
-   treebuild        0.44    0.5%
-   treewalk         0.23    0.3%
+Nactive=24754, Imbal(Max/Mean)=1.00418 
+total              58.34  100.0%
+tree+gravity        1.52    2.6%
+   treebuild        0.42    0.7%
+   treewalk         0.36    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       60.25   65.7%
-   dens+grad       22.29   24.3%
-   denscomm         1.45    1.6%
-   densimbal        2.35    2.6%
-   hydrofrc        26.09   28.5%
-   hydcomm          0.60    0.6%
-   hydimbal         1.96    2.1%
-   hmaxupdate       0.09    0.1%
-   hydmisc          5.41    5.9%
-domain              1.55    1.7%
-peano               0.76    0.8%
-drift/splitmg       7.47    8.1%
-kicks               0.17    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       16.34   17.8%
-sinks               0.26    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.79    4.1%
+   treeimbal        0.26    0.4%
+hydro/fluids       37.72   64.6%
+   dens+grad       12.37   21.2%
+   denscomm         1.57    2.7%
+   densimbal        3.43    5.9%
+   hydrofrc        12.95   22.2%
+   hydcomm          0.66    1.1%
+   hydimbal         2.33    4.0%
+   hmaxupdate       0.11    0.2%
+   hydmisc          4.30    7.4%
+domain              1.43    2.4%
+peano               0.88    1.5%
+drift/splitmg       5.19    8.9%
+kicks               0.18    0.3%
+io/snapshots        0.07    0.1%
+cooling+chem        8.30   14.2%
+sinks               0.88    1.5%
+rt_nonfluxops       0.13    0.2%
+misc                2.05    3.5%
 
 Step 458, Time: 0.859375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00089 
-total              93.27  100.0%
-tree+gravity        1.00    1.1%
-   treebuild        0.45    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00505 
+total              59.34  100.0%
+tree+gravity        1.54    2.6%
+   treebuild        0.43    0.7%
+   treewalk         0.36    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       61.38   65.8%
-   dens+grad       22.71   24.3%
-   denscomm         1.48    1.6%
-   densimbal        2.40    2.6%
-   hydrofrc        26.60   28.5%
-   hydcomm          0.61    0.6%
-   hydimbal         2.00    2.1%
-   hmaxupdate       0.10    0.1%
-   hydmisc          5.50    5.9%
-domain              1.57    1.7%
-peano               0.77    0.8%
-drift/splitmg       7.55    8.1%
-kicks               0.18    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       16.56   17.8%
-sinks               0.26    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.87    4.2%
+   treeimbal        0.26    0.4%
+hydro/fluids       38.40   64.7%
+   dens+grad       12.59   21.2%
+   denscomm         1.59    2.7%
+   densimbal        3.49    5.9%
+   hydrofrc        13.20   22.2%
+   hydcomm          0.67    1.1%
+   hydimbal         2.38    4.0%
+   hmaxupdate       0.11    0.2%
+   hydmisc          4.37    7.4%
+domain              1.45    2.4%
+peano               0.90    1.5%
+drift/splitmg       5.26    8.9%
+kicks               0.18    0.3%
+io/snapshots        0.07    0.1%
+cooling+chem        8.42   14.2%
+sinks               0.90    1.5%
+rt_nonfluxops       0.13    0.2%
+misc                2.09    3.5%
 
 Step 468, Time: 0.875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0008 
-total              94.89  100.0%
-tree+gravity        1.01    1.1%
-   treebuild        0.45    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.01202 
+total              60.34  100.0%
+tree+gravity        1.56    2.6%
+   treebuild        0.43    0.7%
+   treewalk         0.36    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       62.54   65.9%
-   dens+grad       23.12   24.4%
-   denscomm         1.50    1.6%
-   densimbal        2.46    2.6%
-   hydrofrc        27.11   28.6%
-   hydcomm          0.62    0.6%
-   hydimbal         2.06    2.2%
-   hmaxupdate       0.10    0.1%
-   hydmisc          5.59    5.9%
-domain              1.60    1.7%
-peano               0.79    0.8%
-drift/splitmg       7.64    8.0%
-kicks               0.18    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       16.79   17.7%
-sinks               0.27    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                3.96    4.2%
+   treeimbal        0.26    0.4%
+hydro/fluids       39.11   64.8%
+   dens+grad       12.81   21.2%
+   denscomm         1.62    2.7%
+   densimbal        3.55    5.9%
+   hydrofrc        13.45   22.3%
+   hydcomm          0.68    1.1%
+   hydimbal         2.45    4.1%
+   hmaxupdate       0.11    0.2%
+   hydmisc          4.44    7.4%
+domain              1.46    2.4%
+peano               0.91    1.5%
+drift/splitmg       5.32    8.8%
+kicks               0.18    0.3%
+io/snapshots        0.07    0.1%
+cooling+chem        8.53   14.1%
+sinks               0.91    1.5%
+rt_nonfluxops       0.14    0.2%
+misc                2.14    3.5%
 
 Step 478, Time: 0.890625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00079 
-total              96.46  100.0%
-tree+gravity        1.02    1.1%
-   treebuild        0.46    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00387 
+total              61.30  100.0%
+tree+gravity        1.58    2.6%
+   treebuild        0.44    0.7%
+   treewalk         0.37    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       63.67   66.0%
-   dens+grad       23.53   24.4%
-   denscomm         1.52    1.6%
-   densimbal        2.50    2.6%
-   hydrofrc        27.62   28.6%
-   hydcomm          0.63    0.6%
-   hydimbal         2.09    2.2%
-   hmaxupdate       0.10    0.1%
-   hydmisc          5.68    5.9%
-domain              1.62    1.7%
-peano               0.80    0.8%
-drift/splitmg       7.72    8.0%
-kicks               0.18    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       17.02   17.6%
-sinks               0.27    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.04    4.2%
+   treeimbal        0.27    0.4%
+hydro/fluids       39.77   64.9%
+   dens+grad       13.03   21.3%
+   denscomm         1.64    2.7%
+   densimbal        3.62    5.9%
+   hydrofrc        13.70   22.3%
+   hydcomm          0.69    1.1%
+   hydimbal         2.48    4.0%
+   hmaxupdate       0.11    0.2%
+   hydmisc          4.51    7.4%
+domain              1.49    2.4%
+peano               0.92    1.5%
+drift/splitmg       5.38    8.8%
+kicks               0.19    0.3%
+io/snapshots        0.07    0.1%
+cooling+chem        8.64   14.1%
+sinks               0.93    1.5%
+rt_nonfluxops       0.14    0.2%
+misc                2.19    3.6%
 
 Step 488, Time: 0.90625, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0004 
-total              98.13  100.0%
-tree+gravity        1.04    1.1%
-   treebuild        0.47    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.01225 
+total              62.36  100.0%
+tree+gravity        1.61    2.6%
+   treebuild        0.45    0.7%
+   treewalk         0.37    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       64.82   66.1%
-   dens+grad       23.96   24.4%
-   denscomm         1.55    1.6%
-   densimbal        2.55    2.6%
-   hydrofrc        28.13   28.7%
-   hydcomm          0.64    0.6%
-   hydimbal         2.12    2.2%
-   hmaxupdate       0.10    0.1%
-   hydmisc          5.77    5.9%
-domain              1.65    1.7%
-peano               0.81    0.8%
-drift/splitmg       7.86    8.0%
-kicks               0.18    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       17.25   17.6%
-sinks               0.28    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.12    4.2%
+   treeimbal        0.27    0.4%
+hydro/fluids       40.48   64.9%
+   dens+grad       13.26   21.3%
+   denscomm         1.67    2.7%
+   densimbal        3.69    5.9%
+   hydrofrc        13.94   22.4%
+   hydcomm          0.70    1.1%
+   hydimbal         2.52    4.0%
+   hmaxupdate       0.12    0.2%
+   hydmisc          4.58    7.3%
+domain              1.51    2.4%
+peano               0.94    1.5%
+drift/splitmg       5.47    8.8%
+kicks               0.19    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        8.76   14.1%
+sinks               0.95    1.5%
+rt_nonfluxops       0.14    0.2%
+misc                2.23    3.6%
 
 Step 498, Time: 0.921875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00048 
-total              99.72  100.0%
-tree+gravity        1.05    1.1%
-   treebuild        0.47    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.02109 
+total              63.37  100.0%
+tree+gravity        1.64    2.6%
+   treebuild        0.45    0.7%
+   treewalk         0.37    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       65.95   66.1%
-   dens+grad       24.38   24.4%
-   denscomm         1.57    1.6%
-   densimbal        2.59    2.6%
-   hydrofrc        28.64   28.7%
-   hydcomm          0.65    0.6%
-   hydimbal         2.17    2.2%
-   hmaxupdate       0.10    0.1%
-   hydmisc          5.86    5.9%
-domain              1.67    1.7%
-peano               0.82    0.8%
-drift/splitmg       7.95    8.0%
-kicks               0.19    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       17.48   17.5%
-sinks               0.28    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.21    4.2%
+   treeimbal        0.28    0.4%
+hydro/fluids       41.18   65.0%
+   dens+grad       13.48   21.3%
+   denscomm         1.69    2.7%
+   densimbal        3.76    5.9%
+   hydrofrc        14.19   22.4%
+   hydcomm          0.71    1.1%
+   hydimbal         2.57    4.1%
+   hmaxupdate       0.12    0.2%
+   hydmisc          4.64    7.3%
+domain              1.53    2.4%
+peano               0.95    1.5%
+drift/splitmg       5.53    8.7%
+kicks               0.19    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        8.88   14.0%
+sinks               0.96    1.5%
+rt_nonfluxops       0.14    0.2%
+misc                2.27    3.6%
 
 Step 508, Time: 0.9375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00053 
-total             101.30  100.0%
-tree+gravity        1.06    1.0%
-   treebuild        0.48    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00271 
+total              64.34  100.0%
+tree+gravity        1.66    2.6%
+   treebuild        0.46    0.7%
+   treewalk         0.38    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       67.08   66.2%
-   dens+grad       24.79   24.5%
-   denscomm         1.60    1.6%
-   densimbal        2.63    2.6%
-   hydrofrc        29.15   28.8%
-   hydcomm          0.66    0.6%
-   hydimbal         2.21    2.2%
-   hmaxupdate       0.10    0.1%
-   hydmisc          5.95    5.9%
-domain              1.69    1.7%
-peano               0.84    0.8%
-drift/splitmg       8.03    7.9%
-kicks               0.19    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       17.71   17.5%
-sinks               0.29    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.29    4.2%
+   treeimbal        0.28    0.4%
+hydro/fluids       41.86   65.1%
+   dens+grad       13.71   21.3%
+   denscomm         1.72    2.7%
+   densimbal        3.81    5.9%
+   hydrofrc        14.44   22.5%
+   hydcomm          0.72    1.1%
+   hydimbal         2.61    4.1%
+   hmaxupdate       0.12    0.2%
+   hydmisc          4.71    7.3%
+domain              1.56    2.4%
+peano               0.96    1.5%
+drift/splitmg       5.59    8.7%
+kicks               0.20    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        8.99   14.0%
+sinks               0.98    1.5%
+rt_nonfluxops       0.15    0.2%
+misc                2.32    3.6%
 
 Step 518, Time: 0.953125, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00038 
-total             102.89  100.0%
-tree+gravity        1.07    1.0%
-   treebuild        0.49    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00145 
+total              65.31  100.0%
+tree+gravity        1.68    2.6%
+   treebuild        0.46    0.7%
+   treewalk         0.38    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       68.21   66.3%
-   dens+grad       25.20   24.5%
-   denscomm         1.62    1.6%
-   densimbal        2.68    2.6%
-   hydrofrc        29.65   28.8%
-   hydcomm          0.67    0.6%
-   hydimbal         2.25    2.2%
-   hmaxupdate       0.11    0.1%
-   hydmisc          6.04    5.9%
-domain              1.71    1.7%
-peano               0.85    0.8%
-drift/splitmg       8.12    7.9%
-kicks               0.19    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       17.95   17.4%
-sinks               0.29    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.38    4.3%
+   treeimbal        0.28    0.4%
+hydro/fluids       42.55   65.1%
+   dens+grad       13.93   21.3%
+   denscomm         1.74    2.7%
+   densimbal        3.88    5.9%
+   hydrofrc        14.69   22.5%
+   hydcomm          0.74    1.1%
+   hydimbal         2.66    4.1%
+   hmaxupdate       0.12    0.2%
+   hydmisc          4.78    7.3%
+domain              1.58    2.4%
+peano               0.98    1.5%
+drift/splitmg       5.65    8.6%
+kicks               0.20    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        9.10   13.9%
+sinks               0.99    1.5%
+rt_nonfluxops       0.15    0.2%
+misc                2.36    3.6%
 
 Step 536, Time: 0.96875, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00044 
-total             104.48  100.0%
-tree+gravity        1.08    1.0%
-   treebuild        0.49    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00515 
+total              66.34  100.0%
+tree+gravity        1.71    2.6%
+   treebuild        0.47    0.7%
+   treewalk         0.39    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       69.35   66.4%
-   dens+grad       25.61   24.5%
-   denscomm         1.64    1.6%
-   densimbal        2.73    2.6%
-   hydrofrc        30.16   28.9%
-   hydcomm          0.68    0.6%
-   hydimbal         2.29    2.2%
-   hmaxupdate       0.11    0.1%
-   hydmisc          6.13    5.9%
-domain              1.73    1.7%
-peano               0.86    0.8%
-drift/splitmg       8.20    7.8%
-kicks               0.20    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       18.18   17.4%
-sinks               0.30    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.46    4.3%
+   treeimbal        0.29    0.4%
+hydro/fluids       43.26   65.2%
+   dens+grad       14.16   21.3%
+   denscomm         1.77    2.7%
+   densimbal        3.95    6.0%
+   hydrofrc        14.94   22.5%
+   hydcomm          0.75    1.1%
+   hydimbal         2.72    4.1%
+   hmaxupdate       0.12    0.2%
+   hydmisc          4.85    7.3%
+domain              1.60    2.4%
+peano               0.99    1.5%
+drift/splitmg       5.71    8.6%
+kicks               0.20    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        9.22   13.9%
+sinks               1.01    1.5%
+rt_nonfluxops       0.15    0.2%
+misc                2.41    3.6%
 
 Step 550, Time: 0.984375, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.00047 
-total             106.09  100.0%
-tree+gravity        1.09    1.0%
-   treebuild        0.50    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00283 
+total              67.32  100.0%
+tree+gravity        1.74    2.6%
+   treebuild        0.48    0.7%
+   treewalk         0.39    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       70.50   66.5%
-   dens+grad       26.02   24.5%
-   denscomm         1.67    1.6%
-   densimbal        2.78    2.6%
-   hydrofrc        30.67   28.9%
-   hydcomm          0.69    0.6%
-   hydimbal         2.35    2.2%
-   hmaxupdate       0.11    0.1%
-   hydmisc          6.22    5.9%
-domain              1.76    1.7%
-peano               0.87    0.8%
-drift/splitmg       8.28    7.8%
-kicks               0.20    0.2%
-io/snapshots        0.10    0.1%
-cooling+chem       18.41   17.4%
-sinks               0.30    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.55    4.3%
+   treeimbal        0.30    0.4%
+hydro/fluids       43.94   65.3%
+   dens+grad       14.37   21.4%
+   denscomm         1.79    2.7%
+   densimbal        4.01    6.0%
+   hydrofrc        15.19   22.6%
+   hydcomm          0.76    1.1%
+   hydimbal         2.78    4.1%
+   hmaxupdate       0.13    0.2%
+   hydmisc          4.92    7.3%
+domain              1.62    2.4%
+peano               1.00    1.5%
+drift/splitmg       5.77    8.6%
+kicks               0.20    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        9.33   13.9%
+sinks               1.03    1.5%
+rt_nonfluxops       0.15    0.2%
+misc                2.45    3.6%
 
 Step 560, Time: 1, CPUs: 5
-Nactive=24754, Imbal(Max/Mean)=1.0006 
-total             107.70  100.0%
-tree+gravity        1.10    1.0%
-   treebuild        0.51    0.5%
-   treewalk         0.23    0.2%
+Nactive=24754, Imbal(Max/Mean)=1.00341 
+total              68.39  100.0%
+tree+gravity        1.79    2.6%
+   treebuild        0.48    0.7%
+   treewalk         0.40    0.6%
    treecomm         0.01    0.0%
-   treeimbal        0.04    0.0%
-hydro/fluids       71.63   66.5%
-   dens+grad       26.43   24.5%
-   denscomm         1.69    1.6%
-   densimbal        2.82    2.6%
-   hydrofrc        31.18   28.9%
-   hydcomm          0.70    0.6%
-   hydimbal         2.39    2.2%
-   hmaxupdate       0.11    0.1%
-   hydmisc          6.31    5.9%
-domain              1.78    1.7%
-peano               0.88    0.8%
-drift/splitmg       8.39    7.8%
-kicks               0.20    0.2%
-io/snapshots        0.11    0.1%
-cooling+chem       18.64   17.3%
-sinks               0.30    0.3%
-rt_nonfluxops       0.02    0.0%
-misc                4.64    4.3%
+   treeimbal        0.31    0.5%
+hydro/fluids       44.64   65.3%
+   dens+grad       14.60   21.3%
+   denscomm         1.82    2.7%
+   densimbal        4.08    6.0%
+   hydrofrc        15.43   22.6%
+   hydcomm          0.77    1.1%
+   hydimbal         2.84    4.1%
+   hmaxupdate       0.13    0.2%
+   hydmisc          4.98    7.3%
+domain              1.64    2.4%
+peano               1.02    1.5%
+drift/splitmg       5.83    8.5%
+kicks               0.21    0.3%
+io/snapshots        0.08    0.1%
+cooling+chem        9.47   13.8%
+sinks               1.05    1.5%
+rt_nonfluxops       0.16    0.2%
+misc                2.50    3.7%
 
