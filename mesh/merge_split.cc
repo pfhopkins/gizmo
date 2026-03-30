@@ -335,6 +335,15 @@ void merge_and_split_particles(void)
 #endif
                             }
                         }
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+                        /* recall 'i' was already flagged to merge; for this module can get in a timestep trap when BH surrounded only by spawns, keep waking each other up and driving down; put a timestep 'escape' clause explicitly in here -- can tune timestep for different problems of course */
+                        if(P[i].Type==0 && P[j].Type==0) {
+                            if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {
+                                double dti = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i), dtj=GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+                                double dt0 = 1.e-7;
+                                if(dti<dt0 || dtj<dt0) {do_allow_merger = 1;}
+                            }}
+#endif
                         if(P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;} /* boost this enough to ensure the spawned element will never chosen if 'real' candidate exists */
 #endif
                         /* make sure we're not taking the same particle (and that its available to be merged into)! and that its the least-massive available candidate for merging onto */
@@ -444,14 +453,17 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     k=0;
     phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
     cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
-    double d_r = 0.25 * KERNEL_CORE_SIZE*P[i].KernelRadius; // needs to be epsilon*KernelRadius where epsilon<<1, to maintain stability //
     Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
     nearest_xyz(dp);
     double r_near = dp.norm();
-    d_r = DMIN(d_r , 0.35 * r_near); // use a 'buffer' to limit to some multiple of the distance to the nearest particle //
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff,3.*dx_h),0.1*dx_h); d_r = 0.39685*dx_eff; // this allows a larger split in order to reduce artefacts in more aggressive splits, at the expense of more diffusion of the original mass //
-#endif
+    /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
+       placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
+       while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
+    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius;
+    dx_eff = DMAX(DMIN(dx_eff, 3.*dx_h), 0.1*dx_h); // clamp to reasonable range relative to kernel radius
+    dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff, 3.*dx_h), 0.1*dx_h); // clamp to reasonable range relative to nearest-neighbor distance
+    double d_r = pow(0.5, (NUMDIMS + 1.) / (double)NUMDIMS) * dx_eff; // 2^{-(NDIMS+1)/NDIMS} * dx_eff
+    d_r = DMIN(d_r, 0.4 * r_near); // keep displacement well within nearest-neighbor distance
     /*
     double r_near = sqrt(r2_nearest);
     double rkern = Get_Particle_Size(i);
@@ -602,6 +614,18 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
 #endif
 
+#if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+        int l;
+        double total_bin_num, total_bin_mass;
+        for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+            for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
+                total_bin_num = mass_of_new_particle * CellP[i].ISMDustChem_Dust_NumberInBin[k][l]; /* dust grain number conserving */
+                total_bin_mass = mass_of_new_particle * get_ISMDustChemEvo_bin_mass(i,k,l); /* dust grain mass conserving */
+                update_ISMDustChemEvo_bin_number_and_slope(j,k,l,total_bin_num,total_bin_mass); /* update new particle */
+                update_ISMDustChemEvo_bin_number_and_slope(i,k,l,total_bin_num,total_bin_mass); /* update old particle */
+            }
+        }
+#endif
         /* use a better particle shift based on the moment of inertia tensor to place new particles in the direction which is less well-sampled */
 #if (NUMDIMS > 1)        
         double norm=0, dp[3]; int m; dp[0]=dp[1]=dp[2]=0;
@@ -621,9 +645,25 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
             double qq = get_random_number(63432*k + 84*i + 99*j + 358453 + 84537*ThisTask);
             if(qq < 0.5) {norm *= -1.;} // randomly decide which direction along principle axis to orient split (since this is arbitrary, this helps prevent accidental collisions)
             for(k=0;k<NUMDIMS;k++) {dp[k] *= norm;}
+            /* project dp onto the isodensity plane (perpendicular to grad_rho): placing daughters on the same
+               isodensity surface eliminates the leading O(d . grad_rho) density mismatch between the two daughters,
+               which is first-order in d and dominates over the second-order neighbor perturbation the NV_T direction minimizes */
+            {
+                double grad_rho[3]={0}, grad_rho_norm=0;
+                for(k=0;k<NUMDIMS;k++) {grad_rho[k]=CellP[i].Gradients.Density[k]; grad_rho_norm+=grad_rho[k]*grad_rho[k];}
+                grad_rho_norm = sqrt(grad_rho_norm);
+                if(grad_rho_norm > 0 && CellP[i].Density > 0) {
+                    double relative_gradient = grad_rho_norm * Get_Particle_Size(i) / CellP[i].Density; // dimensionless: |grad_rho|*dx/rho
+                    if(relative_gradient > 0.1) { // non-trivial gradient: project dp onto isodensity plane
+                        double dot=0; for(k=0;k<NUMDIMS;k++) {dot += dp[k] * grad_rho[k] / grad_rho_norm;}
+                        double dp_perp[3]={0}, perp_norm=0;
+                        for(k=0;k<NUMDIMS;k++) {dp_perp[k] = dp[k] - dot*(grad_rho[k]/grad_rho_norm); perp_norm += dp_perp[k]*dp_perp[k];}
+                        perp_norm = sqrt(perp_norm);
+                        if(perp_norm > 0.1) {for(k=0;k<NUMDIMS;k++) {dp[k] = dp_perp[k] / perp_norm;}} // adopt projected direction; else dp near-parallel to grad_rho, fall through to NV_T direction
+                    }
+                }
+            }
             dx=d_r*dp[0]; dy=d_r*dp[1]; dz=d_r*dp[2];
-            /* rotate to 90-degree offset from above orientation, if using the density gradient, to get uniform sampling (otherwise get 'ridges' along sampled axis) */
-            //if(dp[2]==1) {dx=d_r; dy=0; dz=0;} else {double dr2d = sqrt(dp[1]*dp[1] + dp[0]*dp[0]); dx = -d_r*dp[1]/dr2d; dy = d_r*dp[0]/dr2d; dz = d_r*dp[2];}
         }
 #endif
 #ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
@@ -899,6 +939,17 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[j].ISMDustChem_Dust_Species[k] = wt_j*CellP[j].ISMDustChem_Dust_Species[k] + wt_i*CellP[i].ISMDustChem_Dust_Species[k];} /* dust species-mass conserving */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+    int l;
+    double total_bin_num, total_bin_mass;
+    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+        for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
+            total_bin_num = CellP[j].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].ISMDustChem_Dust_NumberInBin[k][l]; /* dust grain bin number conserving */
+            total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l) + get_ISMDustChemEvo_bin_mass(i,k,l); /* dust grain bin mass conserving */
+            update_ISMDustChemEvo_bin_number_and_slope(j,k,l,total_bin_num,total_bin_mass);
+        }
+    }
+#endif
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
@@ -1202,21 +1253,23 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
     if(All.Time <= All.TimeBegin) {return 0;} // don't allow on first timestep
     if(P[i].Type != 4) {return 0;} // only stars
     if(P[i].Mass*UNIT_MASS_IN_SOLAR > 1.e6) {return 0;} // stop merging beyond a certain point, only want to downgrade the resolution so much
-    if(evaluate_stellar_age_Gyr(i) < 0.05) {return 0;} // sufficiently old (don't want to do this for extremely young stars as messes up feedback and early dynamics)
+    double dt_gyr = evaluate_stellar_age_Gyr(i), dt_threshold_gyr = 0.05;
+#ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
+    dt_gyr -= P[i].TimeDistribOfStarFormation*UNIT_TIME_IN_GYR; // want to be sure we're this far past the last possible star that formed
+#endif
+    if(dt_gyr < dt_threshold_gyr) {return 0;} // sufficiently old (don't want to do this for extremely young stars as messes up feedback and early dynamics)
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION // need to figure out if the new version of this makes sense
     double r_NGB = 1.25 * pow((All.DesNumNgb*All.G*P[i].Mass)/P[i].tidal_tensor_mag_prev , 1./3.); // kernel size enclosing some target neighbor number in a constant-density medium
     if(r_NGB > 0.5*ForceSoftening_KernelRadius(i)) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
-#else
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+#elif defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     double h_i=ForceSoftening_KernelRadius(i), tidal_mag=0., fac_self=-P[i].Mass*kernel_gravity(0.,1.,1.,1)/(h_i*h_i*h_i); // get what's needed for tidal tensor computation
-    //double tidal_mag_frob = P[i].tidal_tensorps.frobenius_norm_sq(); // compute frobenius norm
     tidal_mag -= P[i].tidal_tensorps.trace(); // want the (negative) trace, actually, and in general this -shouldn't- include the self-contribution
     if(tidal_mag > 0) {
-        //tidal_mag = sqrt(tidal_mag); // squared norm. note this is in code units
         double ngb_dist = 1.25 * pow( (All.DesNumNgb * All.G * P[i].Mass / tidal_mag) , 1./3. ); // distance to the N'th nearest-neighbor
         if(ngb_dist > h_i) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
     }
-#endif
+#else
+    if(GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i)*UNIT_TIME_IN_GYR*1000. > 0.01) {return 0;} // if the particle is taking a very long timestep, it's probably in a very low-density region, so don't allow it to merge (this is a crude proxy for the local density, but it's very fast to check and works well in practice) 
 #endif
     return 1; // allow this particle to -consider- the possibility of a merger
 }

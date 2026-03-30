@@ -209,6 +209,9 @@ void init(void)
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
 #endif
 #endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    Initialize_ISMDustChem_Global_Variables();
+#endif
 #endif
 
 
@@ -391,7 +394,7 @@ void init(void)
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-        Initialize_ISMDustChem_Variables(i);
+    if (P[i].Type == 0) {Initialize_ISMDustChem_Particle_Variables(i);}
 #endif
 
 #ifdef CHIMES

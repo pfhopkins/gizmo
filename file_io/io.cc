@@ -417,6 +417,28 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_DCRATE:
+#if defined(OUTPUT_COOLRATE_DETAIL) && defined(COOLING) && defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].DustCoolingRate;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_PHRATE:
+#if defined(OUTPUT_COOLRATE_DETAIL) && defined(COOLING)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].PElecHeatingRate;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_KERNELRADIUS:		/* gas kernel length */
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -481,7 +503,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
-        case IO_DUST_TO_GAS:        /* grain size */
+        case IO_DUST_TO_GAS:        /* dust to gas mass ratio */
 #ifdef OUTPUT_DUST_TO_GAS_RATIO
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -579,8 +601,8 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
         break;
 
-        case IO_ISMDUSTCHEMMOL:    /* sub-resolved molecular gas properties (fraction of C in CO and fraction of gas that is in dense molecular phase) used in dust routines */
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        case IO_ISMDUSTCHEMMOL:    /* sub-resolved molecular gas properties (fraction of C in CO and fraction of gas that is in dense molecular phase) used in dust routines wiuthout grain size evolution */
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -591,6 +613,111 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
 #endif
         break;
+
+        case IO_MACHNUM:    /* sub-resolved molecular gas properties (fraction of C in CO and fraction of gas that is in dense molecular phase) used in dust routines */
+#if defined(OUTPUT_MACH_NUMBER)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].ISMDustChem_MachNumber;
+                    n++;
+                }
+#endif
+        break;
+
+        case IO_SHOCKMACHNUM:    /* local shock Mach number from pairwise Riemann problem */
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].ShockMachNumber;
+                    n++;
+                }
+#endif
+        break;
+
+        case IO_DUSTCHEMGRAINBINNUMBERS:    /* number of grains for each grain size bin for each dust species */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    int k1, k2;
+                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
+                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {
+                            fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Dust_NumberInBin[k1][k2]/UNIT_GRAIN_NUMBER);
+                        }
+                    }
+                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
+                    n++;
+                }
+#endif
+        break;
+        
+        case IO_DUSTCHEMGRAINBINSLOPES:    /* slopes for each grain size bin for each dust species */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    int k1, k2;
+                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
+                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {    
+                                fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Dust_SlopeInBin[k1][k2] / (UNIT_GRAIN_NUMBER/(UNIT_GRAIN_LENGTH*UNIT_GRAIN_LENGTH)));
+                            }
+                    }
+                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
+                    n++;
+                }
+#endif
+        break;
+
+        case IO_DUSTCHEMGRAINBINMASS:    /* mass for each grain size bin for each dust species */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    int k1, k2;
+                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
+                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {     
+                            fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (get_ISMDustChemEvo_bin_mass(pindex, k1, k2) / UNIT_MASS_IN_CGS);
+                        }
+                    }
+                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
+                    n++;
+                }
+#endif
+        break;
+
+case IO_DUSTCHEM_COAG_MASSRATE:    /* coagulation rate for each grain size bin for each dust species */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    int k1, k2;
+                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
+                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {    
+                                fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Coag_dMdt[k1][k2] / (UNIT_MASS_IN_CGS/UNIT_TIME_IN_CGS));
+                            }
+                    }
+                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
+                    n++;
+                }
+#endif
+
+case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin for each dust species */
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    int k1, k2;
+                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
+                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {    
+                                fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Shat_dMdt[k1][k2] / (UNIT_MASS_IN_CGS/UNIT_TIME_IN_CGS));
+                            }
+                    }
+                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
+                    n++;
+                }
+#endif
 
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
@@ -1414,7 +1541,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
 
         case IO_DUST_TEMP:
-#if defined(RADTRANSFER) && defined(RT_INFRARED)
+#if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1776,6 +1903,8 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_NHRATE:
         case IO_HHRATE:
         case IO_MCRATE:
+        case IO_DCRATE:
+        case IO_PHRATE:
         case IO_KERNELRADIUS:
         case IO_SFR:
         case IO_AGE:
@@ -1922,7 +2051,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
-            case IO_DUSTCHEMZMET:
+        case IO_DUSTCHEMZMET:
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             if(mode)
                 bytes_per_blockelement = (NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES) * sizeof(MyInputFloat);
@@ -1931,7 +2060,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
-            case IO_DUSTCHEMSPECIESMET:
+        case IO_DUSTCHEMSPECIESMET:
 #if (GALSF_ISMDUSTCHEM_MODEL & 2)
             if(mode)
                 bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES) * sizeof(MyInputFloat);
@@ -1940,11 +2069,44 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;    
 
-            case IO_ISMDUSTCHEMMOL:
+        case IO_ISMDUSTCHEMMOL:
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             if(mode)
                 bytes_per_blockelement = 2 * sizeof(MyInputFloat);
             else
                 bytes_per_blockelement = 2 * sizeof(MyOutputFloat);
+#endif
+            break;
+
+            case IO_MACHNUM:
+#if defined(OUTPUT_MACH_NUMBER)
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
+            case IO_SHOCKMACHNUM:
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            if(mode)
+                bytes_per_blockelement = sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+        case IO_DUSTCHEMGRAINBINMASS:
+        case IO_DUSTCHEMGRAINBINSLOPES:
+        case IO_DUSTCHEM_COAG_MASSRATE:
+        case IO_DUSTCHEM_SHAT_MASSRATE:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            if(mode)
+                bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES * NUM_ISMDUSTCHEM_SIZE_BINS) * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES * NUM_ISMDUSTCHEM_SIZE_BINS) * sizeof(MyOutputFloat);
+#endif
             break;
             
         case IO_CHIMES_ABUNDANCES:
@@ -2073,6 +2235,8 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_NHRATE:
         case IO_HHRATE:
         case IO_MCRATE:
+        case IO_DCRATE:
+        case IO_PHRATE:
         case IO_KERNELRADIUS:
         case IO_SFR:
         case IO_AGE:
@@ -2200,23 +2364,43 @@ int get_values_per_blockelement(enum iofields blocknr)
 
         case IO_DUSTCHEMZMET:
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-            values = NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES;
-#else
-            values = 0;
+            values = (NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES);
 #endif
             break;
 
         case IO_DUSTCHEMSPECIESMET:
 #if (GALSF_ISMDUSTCHEM_MODEL & 2)
             values = NUM_ISMDUSTCHEM_SPECIES;
-#else
-            values = 0;
 #endif
             break; 
 
         case IO_ISMDUSTCHEMMOL:
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             values = 2;
+#endif
             break;
+
+        case IO_MACHNUM:
+#if defined(OUTPUT_MACH_NUMBER)
+            values = 1;
+#endif
+            break;
+
+        case IO_SHOCKMACHNUM:
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            values = 1;
+#endif
+            break;
+
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+        case IO_DUSTCHEMGRAINBINSLOPES:
+        case IO_DUSTCHEMGRAINBINMASS:
+        case IO_DUSTCHEM_COAG_MASSRATE:
+        case IO_DUSTCHEM_SHAT_MASSRATE:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            values = (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
+#endif
+            break; 
 
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
@@ -2340,6 +2524,8 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_NHRATE:
         case IO_HHRATE:
         case IO_MCRATE:
+        case IO_DCRATE:
+        case IO_PHRATE:
         case IO_DELAYTIME:
         case IO_SFR:
         case IO_DTENTR:
@@ -2397,6 +2583,13 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DUSTCHEMZMET:
         case IO_DUSTCHEMSPECIESMET:
         case IO_ISMDUSTCHEMMOL:
+        case IO_MACHNUM:
+        case IO_SHOCKMACHNUM:
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+        case IO_DUSTCHEMGRAINBINSLOPES:
+        case IO_DUSTCHEMGRAINBINMASS:
+        case IO_DUSTCHEM_COAG_MASSRATE:
+        case IO_DUSTCHEM_SHAT_MASSRATE:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
             break;
@@ -2526,7 +2719,7 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_DUST_TEMP:
-#if defined(RADTRANSFER) && defined(RT_INFRARED)
+#if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
             return 1;
 #endif
             break;
@@ -2593,10 +2786,42 @@ int blockpresent(enum iofields blocknr)
             break; 
 
         case IO_ISMDUSTCHEMMOL:
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             return 1;
 #endif
             break; 
+
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+        case IO_DUSTCHEMGRAINBINMASS:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            return 1;
+#endif
+            break;
+
+            case IO_DUSTCHEMGRAINBINSLOPES:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 
+            return 1;
+#endif
+            break;      
+
+            case IO_DUSTCHEM_COAG_MASSRATE:
+            case IO_DUSTCHEM_SHAT_MASSRATE:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            return 1;
+#endif
+            break;   
+
+        case IO_MACHNUM:
+#if defined(OUTPUT_MACH_NUMBER)
+            return 1;
+#endif
+            break;
+
+        case IO_SHOCKMACHNUM:
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
+            return 1;
+#endif
+            break;
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES_REDUCED_OUTPUT)
@@ -2690,7 +2915,14 @@ int blockpresent(enum iofields blocknr)
         case IO_NHRATE:
         case IO_HHRATE:
         case IO_MCRATE:
+        case IO_PHRATE:
 #if defined(OUTPUT_COOLRATE_DETAIL) && defined(COOLING)
+            return 1;
+#endif
+            break;
+
+        case IO_DCRATE:
+#if defined(OUTPUT_COOLRATE_DETAIL) && defined(COOLING) && defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING)
             return 1;
 #endif
             break;
@@ -3155,6 +3387,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_MCRATE:
             strncpy(label, "MCRATE", 4);
             break;
+        case IO_DCRATE:
+            strncpy(label, "DCRATE", 4);
+            break;        
+        case IO_PHRATE:
+            strncpy(label, "PHRATE", 4);
+            break;
         case IO_KERNELRADIUS:
             strncpy(label, "HSML", 4);
             break;
@@ -3190,6 +3428,27 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_ISMDUSTCHEMMOL:
             strncpy(label, "DMOL", 4);
+            break;
+        case IO_MACHNUM:
+            strncpy(label, "MACH", 4);
+            break;
+        case IO_SHOCKMACHNUM:
+            strncpy(label, "SMAC", 4);
+            break;
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+            strncpy(label, "DBNU", 4);
+            break;
+        case IO_DUSTCHEMGRAINBINSLOPES:
+            strncpy(label, "DBSL", 4);
+            break;
+        case IO_DUSTCHEM_COAG_MASSRATE:
+            strncpy(label, "DBCO", 4);
+            break;
+        case IO_DUSTCHEM_SHAT_MASSRATE:
+            strncpy(label, "DBSH", 4);
+            break;
+        case IO_DUSTCHEMGRAINBINMASS:
+            strncpy(label, "DBMA", 4);
             break;
         case IO_CHIMES_ABUNDANCES:
             strncpy(label, "CHIM", 4);
@@ -3562,6 +3821,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_MCRATE:
             strcpy(buf, "MetalCoolingRate");
             break;
+        case IO_DCRATE:
+            strcpy(buf, "DustCoolingRate");
+            break;        
+        case IO_PHRATE:
+            strcpy(buf, "PElecHeatingRate");
+            break;
         case IO_DELAYTIME:
             strcpy(buf, "DelayTime");
             break;
@@ -3597,6 +3862,27 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_ISMDUSTCHEMMOL:
             strcpy(buf, "DustMolecularSpeciesFractions");
+            break;
+        case IO_MACHNUM:
+            strcpy(buf, "MachNumber");
+            break;
+        case IO_SHOCKMACHNUM:
+            strcpy(buf, "ShockMachNumber");
+            break;
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+            strcpy(buf, "DustBinNumbers");
+            break;
+        case IO_DUSTCHEMGRAINBINSLOPES:
+            strcpy(buf, "DustBinSlopes");
+            break;
+        case IO_DUSTCHEMGRAINBINMASS:
+            strcpy(buf, "DustBinMasses");
+            break;
+        case IO_DUSTCHEM_COAG_MASSRATE:
+            strcpy(buf, "DustBinCoagMassRate");
+            break;
+        case IO_DUSTCHEM_SHAT_MASSRATE:
+            strcpy(buf, "DustBinShatMassRate");
             break;
         case IO_CHIMES_ABUNDANCES:
             strcpy(buf, "ChimesAbundances");
@@ -4666,9 +4952,30 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #ifdef GALSF_ISMDUSTCHEM_MODEL
     {int holder=NUM_ISMDUSTCHEM_SPECIES; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_NumberOfSpecies", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &holder); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
-#ifdef GALSF_ISMDUSTCHEM_PASSIVE
-    {int holder=1; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_PassiveDustEvolution", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
-    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &holder); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}    
+    /* list out composition (element key and number of atoms per element) of silicates since this changes between versions */
+    // key for each element
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[1]={GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES}; 
+    H5Sset_extent_simple(hdf5_dataspace, 1, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Silicates_Element_Key", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, All.ISMDustChem_SilicateMetallicityFieldIndexTable); 
+    H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+    // number of atoms per element
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[1]={GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES}; 
+    H5Sset_extent_simple(hdf5_dataspace, 1, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Silicates_Element_Number", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.ISMDustChem_SilicateNumberOfAtomsTable);
+    H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
+    {int holder=NUM_ISMDUSTCHEM_SIZE_BINS; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_Num_Grain_Size_Bins", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &holder); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+    {double tmp=UNIT_GRAIN_NUMBER; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitGrainNumber", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+    {double tmp=UNIT_GRAIN_LENGTH; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitGrainLength_in_cm", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+    hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_Grain_Size_Min", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.ISMDustChem_Grain_Size_Min); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+    hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "ISMDustChem_Grain_Size_Max", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.ISMDustChem_Grain_Size_Max); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 #endif
 #endif
 #endif // METALS

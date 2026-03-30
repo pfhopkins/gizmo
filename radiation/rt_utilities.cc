@@ -182,6 +182,20 @@ double rt_kappa(int i, int k_freq)
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     /* three-band (UV, OPTICAL, IR) approximate spectra for stars as used in the FIRE (Hopkins et al.) models. mean opacities here come from integrating over the Hopkins 2004 (Pei 1992) opacities versus wavelength for the large bands here, using a luminosity-weighted mean stellar spectrum from the same starburst99 models used to compute the stellar feedback */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    // Use either MW (FIRE-3 default) or SMC (FIRE-2 default) opacities depending on the evolved local dust population composition
+    // If silicate mass / carbonaceous mass >= 5 use SMC opacities, else MW opacities.
+    double sil_to_C = 0;
+    if (CellP[i].ISMDustChem_Dust_Metal[0]>0 && CellP[i].ISMDustChem_Dust_Species[1]>0)
+    {sil_to_C = (CellP[i].ISMDustChem_Dust_Metal[0] - CellP[i].ISMDustChem_Dust_Species[1])/CellP[i].ISMDustChem_Dust_Species[1];} // Everything that isn't carbonaceous dust is silicates for our purpose
+    else {sil_to_C = 100;}
+    if (sil_to_C >= 5)
+    {
+        if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 1800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/neutral H opacities. effective wavelength here is at something like ~0.2 micron, but spans a broad range from ~0.09-0.36 microns.
+        if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. see O-NIR band notes below, effective wavelength here is ~R-band (0.36-3.4 micron is the rough range of the effective band)
+        if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 10*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. this is updated to integrate through the 2007+ Draine+Li MW-like dust models, for a typical M101-like disk SED. slightly higher for e.g. M82-like with warmer dust. note this is a broad band, from ~3-300 micron, so contributions both from old-star direct IR emission and dust re-emission (warm and cold), which is why this is a bit higher than you would get for pure cold-dust re-emission.  
+    }  
+#endif
     if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/neutral H opacities. effective wavelength here is at something like ~0.2 micron, but spans a broad range from ~0.09-0.36 microns.
     if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. see O-NIR band notes below, effective wavelength here is ~R-band (0.36-3.4 micron is the rough range of the effective band)
     if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 6.5*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. this is updated to integrate through the 2007+ Draine+Li MW-like dust models, for a typical M101-like disk SED. slightly higher for e.g. M82-like with warmer dust. note this is a broad band, from ~3-300 micron, so contributions both from old-star direct IR emission and dust re-emission (warm and cold), which is why this is a bit higher than you would get for pure cold-dust re-emission.

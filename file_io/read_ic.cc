@@ -274,20 +274,59 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             for(n = 0; n < pc; n++) {
                 for(k = 0; k < NUM_ISMDUSTCHEM_ELEMENTS; k++) {CellP[offset + n].ISMDustChem_Dust_Metal[k] = *fp++;} // Get dust fractions
-                for(k = 0; k < NUM_ISMDUSTCHEM_SOURCES; k++) {CellP[offset + n].ISMDustChem_Dust_Source[k] = *fp++;} // Then get the sources of dust
+                for(k = 0; k < NUM_ISMDUSTCHEM_SOURCES; k++) {CellP[offset + n].ISMDustChem_Dust_Source[k] = (*fp++) * CellP[offset + n].ISMDustChem_Dust_Metal[0];} // Then get the sources of dust, converting from dust mass fraction to total gas mass fraction
             }
 #endif
             break;
 
         case IO_DUSTCHEMSPECIESMET:
 #if (GALSF_ISMDUSTCHEM_MODEL & 2)
-            for(n = 0; n < pc; n++) {for(k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {CellP[offset + n].ISMDustChem_Dust_Species[k] = *fp++;}}
+            for(n = 0; n < pc; n++) {for(k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {CellP[offset + n].ISMDustChem_Dust_Species[k] = *fp++;}} // Get dust species fractions
 #endif
             break;
 
         case IO_ISMDUSTCHEMMOL:    /* gas dust species following Species routines */
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; n++) {CellP[offset + n].ISMDustChem_MassFractionInDenseMolecular = *fp++; CellP[offset + n].ISMDustChem_C_in_CO = *fp++;}
+#endif
+            break;
+
+        case IO_DUSTCHEMGRAINBINNUMBERS:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            // Need to check whether the number of grain size bins is the same as the snapshot. If not zero extra bins for now and recalcuate them later in the code
+            for(n = 0; n < pc; n++) {
+                int nmax=NUM_ISMDUSTCHEM_SIZE_BINS;
+                for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+                    int kf;
+                    for(kf=0;kf<nmax;kf++) { // normal read-in
+                        // Grain bin number are stored in special units
+                        CellP[offset + n].ISMDustChem_Dust_NumberInBin[k][kf] = (*fp++) * UNIT_GRAIN_NUMBER;
+                        if (CellP[offset + n].ISMDustChem_Dust_NumberInBin[k][kf] < 0) {CellP[offset + n].ISMDustChem_Dust_NumberInBin[k][kf] = 0;}
+                    } 
+                    if(nmax<NUM_ISMDUSTCHEM_SIZE_BINS) {for(kf=nmax;kf<NUM_ISMDUSTCHEM_SIZE_BINS;kf++) {CellP[offset + n].ISMDustChem_Dust_NumberInBin[k][kf]=0;}} // any extra fields zero'd
+                }
+            }
+#endif
+            break;
+
+        case IO_DUSTCHEMGRAINBINMASS:
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            for(n = 0; n < pc; n++) {
+                // Check whether the desired number of grain size bins is the same as the snapshot. 
+                // If not zero extra bins for now and recalcuate them later in the code.
+                int nmax=NUM_ISMDUSTCHEM_SIZE_BINS;
+                // The code outputs the bin mass but does not track it directly, instead tracking the bin slope
+                // which depends on the bin number, mass, and bin edges. Bin mass is temporarily stored in 
+                // the slope field and then the slope is recalculated in Initialize_ISMDustChemEvo_Particle_Variables()
+                for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+                    int kf;
+                    for(kf=0;kf<nmax;kf++) { // normal read-in
+                        CellP[offset + n].ISMDustChem_Dust_SlopeInBin[k][kf] = (*fp++) * UNIT_MASS_IN_CGS;
+                        if (CellP[offset + n].ISMDustChem_Dust_SlopeInBin[k][kf] < 0) {CellP[offset + n].ISMDustChem_Dust_SlopeInBin[k][kf] = 0;}
+                    } 
+                    if(nmax<NUM_ISMDUSTCHEM_SIZE_BINS) {for(kf=nmax;kf<NUM_ISMDUSTCHEM_SIZE_BINS;kf++) {CellP[offset + n].ISMDustChem_Dust_SlopeInBin[k][kf]=0;}} // any extra fields zero'd
+                }
+            }
 #endif
             break;
 
@@ -429,7 +468,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_DUST_TEMP:
-#if defined(RADTRANSFER) && defined(RT_INFRARED)
+#if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
             for(n = 0; n < pc; n++) {CellP[offset + n].Dust_Temperature = *fp++;}
 #endif
             break;
@@ -597,6 +636,8 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_NHRATE:
         case IO_HHRATE:
         case IO_MCRATE:
+        case IO_PHRATE:
+        case IO_DCRATE:
         case IO_TSTP:
         case IO_IMF:
         case IO_DIVB:
@@ -638,6 +679,10 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_DELAY_TIME_HII:
         case IO_CHIMES_FLUX_G0:
         case IO_CHIMES_FLUX_ION:
+        case IO_DUSTCHEMGRAINBINSLOPES:
+        case IO_DUSTCHEM_COAG_MASSRATE:
+        case IO_DUSTCHEM_SHAT_MASSRATE:
+        case IO_MACHNUM:
             break;
 
         case IO_LASTENTRY:
@@ -980,6 +1025,23 @@ void read_file(char *fname, int readTask, int lastTask)
             if(RestartFlag == 2 && blocknr == IO_MOLECULARFRACTION) {continue;}
 #endif
 
+#if defined(IO_DUST_NOT_IN_ICFILE)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            if(RestartFlag == 2 && blocknr == IO_DUST_TO_GAS) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMZMET) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMSPECIESMET) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_ISMDUSTCHEMMOL) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DCRATE) {continue;}
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+            if(RestartFlag == 2 && blocknr == IO_MACHNUM) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINNUMBERS) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINMASS) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINSLOPES) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEM_COAG_MASSRATE) {continue;}
+            if(RestartFlag == 2 && blocknr == IO_DUSTCHEM_SHAT_MASSRATE) {continue;}
+#endif
+#endif
+#endif
             
             if(blocknr == IO_HSMS) {continue;}
 
@@ -1001,7 +1063,6 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
 #endif
-
             size_t MyBufferSize = All.BufferSize;
             blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
             npart = get_particles_in_block(blocknr, &typelist[0]);

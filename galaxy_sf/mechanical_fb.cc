@@ -126,7 +126,7 @@ static struct temporary_mech_fb_data_tohold
 {
     int N_injected; double m_injected, p_injected[3], KE_injected, TE_injected, Z_injected[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    double Mass_Fraction_Where_Dust_Destroyed;
+    double Mass_Where_Dust_Shocked;
 #endif
 }
 *LocalGasMechFBInfoTemp;
@@ -299,8 +299,11 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     Metallicity_j[k] = P[j].Metallicity[k]; // this can get modified below, so we need to read it thread-safe now
                 }
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-                double Mass_Fraction_Where_Dust_Destroyed = 0;
-                for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k);} // load local dust properties
+                double Mass_Where_Dust_Shocked=0.; // mass fraction of gas cleared of dust from SNe
+                for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {
+                    #pragma omp critical(_feedbackreturnyieldsFIRE2_)
+                    Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k, Mass_j_0); // load local scalar dust properties, note for grain size evolution this includes dust grain bin mass and number but they still work as scalars
+                }
 #endif
                 for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j_0[k] = Metallicity_j[k];} // save initial values to  use below
 #endif
@@ -384,7 +387,12 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 out.M_coupled += dM_ejecta_in;
 #if defined(METALS) /* inject metals */
                 for(k=0;k<NUM_METAL_SPECIES-NUM_AGE_TRACERS;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}
-                if(NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION>0) {for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}}
+                if(NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION>0 && loop_iteration < 2) {
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+                    // treat like any other yield when doing stellar mass exchange 
+                    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}
+#endif
+                }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
                 if(loop_iteration == 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
                 if(loop_iteration != 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
@@ -395,7 +403,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-                if(loop_iteration == 0) {Mass_Fraction_Where_Dust_Destroyed = ISMDustChem_Return_Mass_Fraction_Where_Dust_Destroyed(rho_j, pnorm*Esne51, mj_preshock);} /* feedback is sne, so destroy some dust in surrounding gas due to SNe shock, taken from McKee 1989 and Cioffi 1988 */
+                if(loop_iteration == 0) {Mass_Where_Dust_Shocked = ISMDustChem_Return_Mass_Where_Dust_Shocked(rho_j, pnorm*Esne51, mj_preshock, Metallicity_j[0]);} /* feedback is sne, so destroy some dust in surrounding gas due to SNe shock */
 #endif
                     
                 if(couple_anything_but_scalar_mass_and_metals)
@@ -460,10 +468,11 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     P[j].Metallicity[k] += Metallicity_j[k] - Metallicity_j_0[k]; // delta-update
                 }
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-                double Z_injected[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]={0}; for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Z_injected[k]=Mass_j*Metallicity_j[k] - Mass_j_0*Metallicity_j_0[k];}
-                #pragma omp critical(_isochemaftermechinject_)
+                double Z_injected[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]={0};
+                for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Z_injected[k]=Mass_j*Metallicity_j[k] - Mass_j_0*Metallicity_j_0[k];}
+                #pragma omp critical(_feedbackyieldinjectionFIRE2_)
                 {
-                    update_ISMDustChem_after_mechanical_injection(j, Mass_Fraction_Where_Dust_Destroyed, Mass_j_0, Mass_j, Z_injected); /* update dust chemistry quantities */
+                    update_ISMDustChem_after_mechanical_injection(j, Mass_Where_Dust_Shocked, Mass_j_0, Mass_j, Z_injected); /* update dust chemistry quantities */
                 }
 #endif
             } // for(n = 0; n < numngb; n++)
@@ -621,8 +630,11 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     Metallicity_j[k] = P[j].Metallicity[k]; // this can get modified below, so we need to read it thread-safe now
                 }
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-                double Mass_Fraction_Where_Dust_Destroyed=0.; // mass fraction of gas cleared of dust from SNe
-                for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k);} // load local dust properties
+                double Mass_Where_Dust_Shocked=0.; // mass fraction of gas cleared of dust from SNe
+                for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {
+#pragma omp critical(_feedbackreturnyieldsFIRE3_)
+                    Metallicity_j[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(j,k,Mass_j_0); // load local scalar dust properties, note for grain size evolution this includes dust grain bin mass and number
+                } 
 #endif
                 for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j_0[k] = Metallicity_j[k];} // save initial values to  use below
 #endif
@@ -721,7 +733,12 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 
 #ifdef METALS   /* inject metals */
                 for(k=0;k<NUM_METAL_SPECIES-NUM_AGE_TRACERS;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}
-                if(NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION>0) {for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}}
+                if(NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION>0 && loop_iteration < 2) {
+#if defined(GALSF_ISMDUSTCHEM_MODEL) 
+                    // treat like any other yield when doing stellar mass exchange 
+                    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}
+#endif
+                }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
                 if(loop_iteration == 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
                 if(loop_iteration != 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
@@ -732,7 +749,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-                if(feedback_type_is_SNe == 1) {Mass_Fraction_Where_Dust_Destroyed = ISMDustChem_Return_Mass_Fraction_Where_Dust_Destroyed(rho_j, pnorm*Esne51, mj_preshock);} /* feedback is sne, so destroy some dust in surrounding gas due to SNe shock, taken from McKee 1989 and Cioffi 1988 */
+                if(feedback_type_is_SNe == 1) {Mass_Where_Dust_Shocked = ISMDustChem_Return_Mass_Where_Dust_Shocked(rho_j, pnorm*Esne51, mj_preshock, Metallicity_j[0]);} /* feedback is sne, so destroy some dust in surrounding gas due to SNe shock */
 #endif
                 
                 double KE_initial=0, KE_final=0;
@@ -783,7 +800,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 }
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #pragma omp atomic
-                LocalGasMechFBInfoTemp[j].Mass_Fraction_Where_Dust_Destroyed += Mass_Fraction_Where_Dust_Destroyed; // fractional update (fraction of gas mass cleared of dust)
+                LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked += Mass_Where_Dust_Shocked; // mass update (gas mass shocked to the point of dust destruction)
 #endif
             } // for(n = 0; n < numngb; n++)
         } // while(startnode >= 0)
@@ -816,7 +833,7 @@ void verify_and_assign_local_mechfb_integrals(void)
             double mf=m0+dm; /* save for below */
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (m0/mf)*P[j].Metallicity[k] + (1./mf)*LocalGasMechFBInfoTemp[j].Z_injected[k];} /* update metallicity */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-            update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Fraction_Where_Dust_Destroyed, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
+            update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
             CellP[j].Density *= mf/m0; /* update density [semi-drift] */
             double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
