@@ -671,10 +671,7 @@ void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas
 /***********************************************************************************************************/
 double return_flux_limiter(int target, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
 {
-#ifdef RT_FLUXLIMITER
-    return cell[target].Rad_Flux_Limiter[k_freq]; // apply flux-limiter
-#endif
-    return 1;
+    return cell[target].flux_limiter(k_freq);
 }
 
 
