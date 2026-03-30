@@ -176,7 +176,7 @@ double compute_temperature(int i, struct particle_data *pp, struct gas_cell_data
 double return_user_desired_target_density(int i);
 double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
-double calculate_eos_tillotson(int i);
+double calculate_eos_tillotson(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void tillotson_eos_init(void);
 #endif
 
@@ -347,7 +347,7 @@ double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy);
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
 void CR_spectrum_define_bins(void);
 void CR_initialize_multibin_quantities(void);
-void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, double dtime_cgs, int mode_driftkick);
+void CR_cooling_and_losses_multibin(int target, double n_elec, double nHcgs, double dtime_cgs, int mode_driftkick, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_return_slope_from_number_and_energy_in_bin(double energy_in_code_units, double number_effective_in_code_units, double bin_centered_energy_in_GeV, int k_bin);
 double CR_return_new_bin_edge_from_rate(double rate_dt_dimless, double x_m_bin, double x_p_bin, int loss_mode, int NR_key, double additional_variable_dummy);
 double CR_coulomb_energy_integrand(double x, double tau, double slope);
@@ -593,9 +593,9 @@ void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SN
 void ISMDustChem_get_wind_dust_yields(double *yields, int i);
 double specific_Z_AGB_dust(int spec_indx, double star_age, int z_bound);
 double cumulative_AGB_dust_returns(int dust_type, double star_age, double z);
-void update_dense_molecular_fields(int i, double temp, double rho, double nh0, double ne);
-void update_dust_accretion(int i, double dtime_gyr, double temp, double rho);
-void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho);
+void update_dense_molecular_fields(int i, double temp, double rho, double nh0, double ne, struct particle_data *pp, struct gas_cell_data *cell);
+void update_dust_accretion(int i, double dtime_gyr, double temp, double rho, struct particle_data *pp, struct gas_cell_data *cell);
+void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho, struct particle_data *pp, struct gas_cell_data *cell);
 double Lambda_Dust_HighTemperature_Gas_ISM(int target, double T, double n_elec, struct particle_data *pp, struct gas_cell_data *cell);
 double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, int k, double mass, struct particle_data *pp, struct gas_cell_data *cell);
 double ISMDustChem_Return_Mass_Where_Dust_Shocked(double rho_cell_in_code_units, double Esne51_into_cell, double mass_preshock_in_code_units, double Z_cell);
@@ -614,8 +614,8 @@ void check_for_slope_limiting(int k, double bulk_dens, double *number_in_bin, do
 void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SNeIaFlag, double Msne);
 void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne);
 void ISMDustChemEvo_update_bins_given_grain_size_change(int i, int j, double *bin_da, double mass_limit, struct gas_cell_data *cell);
-void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp, double rho);
-void update_dust_photodestruction(int i, double dtime_gyr);
+void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp, double rho, struct particle_data *pp, struct gas_cell_data *cell);
+void update_dust_photodestruction(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell);
 double shattering_coagulation_polynomial(int i, int spec_indx, int bin_i, int bin_j, struct gas_cell_data *cell);
 void ISMDustChemEvo_update_bins_given_mass_change(int i, int j, double *bin_dM, double bulk_dens, struct gas_cell_data *cell);
 void ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change(double *bin_dM, double *bin_M, double *bin_N, double *bin_slope, double *new_bin_N, double *new_bin_slope, double bulk_dens);
@@ -635,7 +635,7 @@ void update_stellarnumber_and_timedistribofstarformation(void);
 
 
 #ifdef RT_SPEEDOFLIGHT_REDUCTION_VARIABLE_RSL
-double c_light_RSL_reductionfactor_local(int i);
+double c_light_RSL_reductionfactor_local(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 
 
@@ -756,14 +756,14 @@ double cr_get_source_shieldfac(int i);
 
 
 #ifdef CHIMES
-double chimes_convert_u_to_temp(double u, double rho, int target);
-void chimes_update_gas_vars(int target);
+double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
+void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_gizmo_exit(void);
 #ifdef COOL_METAL_LINES_BY_SPECIES
-void chimes_update_element_abundances(int i);
+void chimes_update_element_abundances(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
-void chimes_update_turbulent_abundances(int i, int mode);
+void chimes_update_turbulent_abundances(int i, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef CHIMES_METAL_DEPLETION
 void chimes_init_depletion_data(void);
@@ -810,12 +810,12 @@ double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_dat
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
 double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac);
-MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp);
-MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp);
-MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp);
+MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac); 
+MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp);
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, char *ion_name);
