@@ -18,7 +18,7 @@ def plot_blob_density(coordinates, density, log=True, output_dir="."):
     X, Y, logrho_slice = Meshoid(coordinates).Slice(
         np.log10(density),
         res=2048,
-        order=1,
+        order=0,
         return_grid=True,
         center=np.average(coordinates, axis=0),
         size=6000.0,

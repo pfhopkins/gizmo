@@ -39,7 +39,7 @@ def test_square(num_mpi_ranks, num_omp_threads):
 
     # Plot final density using Meshoid slice interpolation
     M = Meshoid(pos_f, boxsize=1.)
-    rho_slice = M.Slice(rho_f, res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=1)
+    rho_slice = M.Slice(rho_f, res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 1, 0, 1])
     flush_colorbar(im, ax=ax, label="Density")
