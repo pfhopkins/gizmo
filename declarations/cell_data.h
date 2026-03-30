@@ -2,6 +2,7 @@
 extern struct gas_cell_data
 {
     /* the PRIMITIVE and CONSERVED hydro variables used in STATE reconstruction */
+    MyDouble Mass;                  /*!< gas cell mass — authoritative for gas (Type==0); synced to P[i].Mass at tree builds and type conversions */
     MyDouble Density;               /*!< current baryonic mass density of particle */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble MassTrue;              /*!< true particle mass ('mass' now is -predicted- mass */

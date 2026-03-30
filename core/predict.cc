@@ -200,7 +200,7 @@ void drift_particle(int i, integertime time1)
 #endif
             
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            P[i].Mass = DMAX(P[i].Mass + CellP[i].DtMass * dt_entr, 0.5 * CellP[i].MassTrue);
+            P[i].Mass = DMAX(P[i].Mass + CellP[i].DtMass * dt_entr, 0.5 * CellP[i].MassTrue); CellP[i].Mass = P[i].Mass;
 #endif
             
             CellP[i].Density *= exp(-divv_fac);

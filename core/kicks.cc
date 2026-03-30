@@ -403,7 +403,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
                 CellP[i].VelPred = P[i].Vel; //(mass_old*v_old[j] + dp[j]) / mass_new;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                P[i].Mass = CellP[i].MassTrue; //mass_old + CellP[i].DtMass * dt_hydrokick;
+                P[i].Mass = CellP[i].MassTrue; CellP[i].Mass = P[i].Mass; //mass_old + CellP[i].DtMass * dt_hydrokick;
 #endif
                 CellP[i].InternalEnergyPred = CellP[i].InternalEnergy; //ent_old + CellP[i].DtInternalEnergy * dt_entr;
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
@@ -582,7 +582,7 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode)
                 if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]<0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
 #endif
             }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {P[i].Mass=0; if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}}
+            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}}
         }
         else if (P[i].Pos[j] >= box_upper[j])
         {
@@ -597,7 +597,7 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode)
                 if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]>0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
 #endif
             }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {P[i].Mass=0; if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}}
+            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}}
         }
     }
 #endif

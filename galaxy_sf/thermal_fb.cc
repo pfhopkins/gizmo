@@ -78,7 +78,7 @@ struct OUTPUT_STRUCT_NAME
 
 void out2particle_addthermalFB(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
-    if(P[i].Mass > 0) {P[i].dp -= out->M_coupled * P[i].Vel; P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;}}
+    if(P[i].Mass > 0) {P[i].dp -= out->M_coupled * P[i].Vel; P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;}} if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
 }
 
 
@@ -192,7 +192,7 @@ int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnode
                 
                 /* we updated variables that need to get assigned to element 'j' -- let's do it */
                 #pragma omp atomic
-                P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime]
+                P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime] if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                 #pragma omp atomic
                 CellP[j].MassTrue += Mass_j - Mass_j_0; // finite mass update

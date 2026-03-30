@@ -464,6 +464,7 @@ void star_formation_parent_routine(void)
                     if(get_random_number(P[i].ID + 2) < p)
                     {
                         /* make a sink particle */
+                        P[i].Mass = CellP[i].Mass; /* sync mass before type conversion */
                         P[i].Type = 5;
                         TimeBinCountGas[P[i].TimeBin]--;
                         num_sink_formed++;
@@ -483,7 +484,7 @@ void star_formation_parent_routine(void)
                         P[i].Mass = CellP[i].MassTrue + CellP[i].dMass;
 #endif
 #ifdef SINK_INCREASE_DYNAMIC_MASS
-                        P[i].Mass *= SINK_INCREASE_DYNAMIC_MASS;
+                        P[i].Mass *= SINK_INCREASE_DYNAMIC_MASS; CellP[i].Mass = P[i].Mass;
 #endif
 #ifdef SINK_ALPHADISK_ACCRETION
                         P[i].Sink_Mass_Reservoir = All.SeedReservoirMass;
@@ -520,7 +521,7 @@ void star_formation_parent_routine(void)
                         TimeBinCountGas[P[i].TimeBin]--;
                         TimeBinSfr[P[i].TimeBin] -= CellP[i].Sfr;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                        P[i_star].Mass = CellP[i].MassTrue + CellP[i].dMass;
+                        P[i_star].Mass = CellP[i].MassTrue + CellP[i].dMass; CellP[i_star].Mass = P[i_star].Mass;
 #endif
                     } else {
                         /* here we spawn a new star particle, so have to do some extra work to note that the total number of particles in the code is modified, and create the new particle */
@@ -544,9 +545,9 @@ void star_formation_parent_routine(void)
                         P[i].ID_generation = P[i].ID_generation + 1;
                         if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
                         P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
-                        P[i_star].Mass = mass_of_star;
-                        P[i].Mass -= P[i_star].Mass;
-                        if(P[i].Mass<0) {P[i].Mass=0;}
+                        P[i_star].Mass = mass_of_star; CellP[i_star].Mass = P[i_star].Mass;
+                        P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass;
+                        if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                         CellP[i].MassTrue -= P[i_star].Mass;
                         if(CellP[i].MassTrue<0) {CellP[i].MassTrue=0;}
@@ -582,6 +583,7 @@ void star_formation_parent_routine(void)
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                         if(is_particle_single_star_eligible(i))
                         {
+                            P[i_star].Mass = CellP[i_star].Mass; /* sync mass before type conversion */
                             P[i_star].Type = 5;
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
@@ -654,6 +656,7 @@ void star_formation_parent_routine(void)
 #endif
                         }
 #endif // SINGLE_STAR_SINK_DYNAMICS
+                        P[i_star].Mass = CellP[i_star].Mass; /* sync mass before type conversion */
                         if(P[i_star].Type != 5) {P[i_star].Type = 4;} // if we didn't set to type 5 above, default to type 4
 
 #ifdef SINK_SEED_FROM_LOCALGAS

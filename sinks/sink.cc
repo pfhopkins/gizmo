@@ -563,7 +563,7 @@ void set_sink_new_mass(int i, int n, double dt)
     double dm_reservoir = SinkTempInfo[i].mdot_reservoir * dt - dMSINK_continuous_accretion;
     if(dm_reservoir < -P[n].Sink_Mass_Reservoir) {dm_reservoir=-P[n].Sink_Mass_Reservoir; P[n].Sink_Mass_Reservoir=0;} else {P[n].Sink_Mass_Reservoir += dm_reservoir;}
     if(P[n].Sink_Mass_Reservoir<0) {P[n].Sink_Mass_Reservoir=0;}
-    if(P[n].Mass<0) {P[n].Mass=0;}
+    if(P[n].Mass<0) {P[n].Mass=0;} if(P[n].Type==0) {CellP[n].Mass = P[n].Mass;}
     dMSINK_continuous_accretion += dm_reservoir;
 #else // #ifdef SINK_ALPHADISK_ACCRETION
 #if defined(SINK_WIND_SPAWN)
@@ -757,7 +757,7 @@ void sink_final_operations(void)
 #if defined(SINK_RETURN_BFLUX)
             P[n].B += SinkTempInfo[i].accreted_B;
 #endif
-            P[n].Mass += SinkTempInfo[i].accreted_Mass;
+            P[n].Mass += SinkTempInfo[i].accreted_Mass; if(P[n].Type==0) {CellP[n].Mass = P[n].Mass;}
 #if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
             P[n].Sink_AccretionDeficit += SinkTempInfo[i].Sink_AccretionDeficit;
 #endif
@@ -791,7 +791,7 @@ void sink_final_operations(void)
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
         if(All.SinkRadiativeEfficiency > 0 && All.SinkRadiativeEfficiency < 1 && P[n].ProtoStellarStage != 7) {radiation_loss = 0;} // negligible radiation loss term unless the object is actually a compact relic
 #endif
-        P[n].dp -= P[n].Vel * radiation_loss; P[n].Mass -= radiation_loss; P[n].Sink_Mass -= radiation_loss;
+        P[n].dp -= P[n].Vel * radiation_loss; P[n].Mass -= radiation_loss; P[n].Sink_Mass -= radiation_loss; if(P[n].Type==0) {CellP[n].Mass = P[n].Mass;}
 
 
 #if defined(SINGLE_STAR_TIMESTEPPING)
