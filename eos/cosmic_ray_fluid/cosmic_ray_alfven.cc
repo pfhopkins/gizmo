@@ -90,7 +90,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     fac_Omega = (3.*M_PI/16.) * Omega_gyro * (1.+2.*vA2_c2); // factor which will be used heavily below
     /* for turbulent (anisotropic and linear landau) damping terms: need to know the turbulent driving scale: assume a cascade with a driving length equal to the pressure gradient scale length */
     r_turb_driving = cell[i].Gradients.Pressure.norm_sq(); // compute gradient magnitude
-    r_turb_driving = DMAX( cell[i].Pressure / (EPSILON_SMALL + sqrt(r_turb_driving)) , Get_Particle_Size(i) ) * All.cf_atime; // maximum of gradient scale length or resolution scale
+    r_turb_driving = DMAX( cell[i].Pressure / (EPSILON_SMALL + sqrt(r_turb_driving)) , pp[i].Get_Particle_Size() ) * All.cf_atime; // maximum of gradient scale length or resolution scale
     double k_turb = 1./r_turb_driving, k_L = Omega_gyro / clight_code;
     
     // before acting on the 'stiff' sub-system, account for the 'extra' advection term that accounts for 'twisting' of B:
@@ -104,7 +104,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     eA[0]=DMAX(eA[0],0); eA[1]=DMAX(eA[1],0); eCR=DMAX(eCR,0); // enforce non-negative energies 
     double Min_Egy=0, e_tot=0, e_tot_new=0, fmax=0; e_tot = eCR + eA[0] + eA[1] + EPSILON_SMALL; // sum total energy, enforce positive-definite: will use this to ensure total energy conservation when enforcing minima below
     { 
-        double h=Get_Particle_Size(i)*All.cf_atime; int k2; for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {Min_Egy+=cell[i].Gradients.B[k][k2]*cell[i].Gradients.B[k][k2];}}
+        double h=pp[i].Get_Particle_Size()*All.cf_atime; int k2; for(k=0;k<3;k++) {for(k2=0;k2<3;k2++) {Min_Egy+=cell[i].Gradients.B[k][k2]*cell[i].Gradients.B[k][k2];}}
         Min_Egy=h*sqrt(Min_Egy/9.)*All.cf_a2inv; Min_Egy=DMIN(Min_Egy,Bmag); r_turb_driving=DMAX(h,r_turb_driving); Min_Egy=DMIN(Min_Egy,Bmag*pow(h/r_turb_driving,1./3.)); Min_Egy=Min_Egy*pow(DMIN(clight_code/Omega_gyro,DMIN(h,r_turb_driving))/h,1./3.); // Min_Egy is now magnetic field extrap to r_gyro
         Min_Egy = 0.5 * (Min_Egy*Min_Egy) * pp[i].Mass/(cell[i].Density*All.cf_a3inv); // magnetic energy at this scale, from the above //
         double epsilon = 1.e-15; Min_Egy *= epsilon; // minimum energy is a tiny fraction of B at the dissipation scale
@@ -151,7 +151,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         for(i2=0;i2<3;i2++) {dv2_t += cell[i].Gradients.Velocity[i1][i2]*cell[i].Gradients.Velocity[i1][i2]; db2_t += cell[i].Gradients.B[i1][i2]*cell[i].Gradients.B[i1][i2];}
     }
     b2_t = cell[i].Bfield().norm_sq();
-    v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime; h0=Get_Particle_Size(i)*All.cf_atime; // physical units
+    v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime; h0=pp[i].Get_Particle_Size()*All.cf_atime; // physical units
     M_A = h0*(EPSILON_SMALL + dv2_t) / (EPSILON_SMALL + vA_noion); M_A = DMAX(M_A , h0*(EPSILON_SMALL + db2_t) / (EPSILON_SMALL + b2_t)); M_A = DMAX( EPSILON_SMALL , M_A ); // proper calculation of the local Alfven Mach number
     x_LL = clight_code / (Omega_gyro * h0); x_LL=DMAX(x_LL,EPSILON_SMALL); k_turb = 1./h0; // scale at which turbulence is being measured here //
     fturb_multiplier = pow(M_A,3./2.); // corrects to Alfven scale, for correct estimate according to Farmer and Goldreich, Lazarian, etc.

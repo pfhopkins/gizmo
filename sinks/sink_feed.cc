@@ -63,7 +63,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
 #ifdef SINK_ALPHADISK_ACCRETION
     in->Sink_Mass_Reservoir = P[i].Sink_Mass_Reservoir;
 #endif
-    in->Dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i);
+    in->Dt = get_particle_feedback_timestep_in_physical(i);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
     in->Dt = P[i].dt_since_last_gas_search;
 #endif

@@ -81,7 +81,7 @@ double get_turb_pot(double x, double y, double z);
 void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef TURB_DIFFUSION
-void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct gas_cell_data *cell);
+void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 #endif
 
 void   sub_turb_move_perturbers(double t0, double t1);
@@ -140,7 +140,7 @@ static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struc
 
 double ForceSoftening_KernelRadius(int p);
 double sigmoid_sqrt(double x);
-double velocity_gradient_norm(int i);
+/* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void);
@@ -166,7 +166,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
 #endif
 
-void set_eos_pressure(int i, struct gas_cell_data *cell);
+void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 double return_user_desired_target_density(int i);
 double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
@@ -297,9 +297,9 @@ void kinetic_evaluate(int target, int mode);
 
 int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend_local);
 
-double INLINE_FUNC Get_Particle_Size(int i);
+/* Get_Particle_Size is now a member function of particle_data — use P[i].Get_Particle_Size() or pp[i].Get_Particle_Size() */
 double INLINE_FUNC Get_Particle_Expected_Area(double h);
-double Get_Gas_Ionized_Fraction(int i, struct gas_cell_data *cell);
+double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
@@ -359,8 +359,8 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON)
 double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 #endif
-double INLINE_FUNC Get_Gas_effective_soundspeed_i(int i, struct gas_cell_data *cell);
-double INLINE_FUNC Get_Gas_Fast_MHD_wavespeed_i(int i, struct gas_cell_data *cell);
+/* Get_Gas_effective_soundspeed_i is now cell[i].effective_soundspeed() */
+/* Get_Gas_Fast_MHD_wavespeed_i is now cell[i].fast_MHD_wavespeed() */
 double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
@@ -527,8 +527,8 @@ void st_turbdrive_init_ouseq(void);
 void st_turbdrive_calc_phases(void);
 double st_return_driving_scale(void);
 #endif
-double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target);
-inline double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target) { return evaluate_NH_from_GradRho(const_cast<MyFloat*>(gradrho.data), rkern, rho, numngb_ndim, include_h, target); }
+double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P);
+inline double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P) { return evaluate_NH_from_GradRho(const_cast<MyFloat*>(gradrho.data), rkern, rho, numngb_ndim, include_h, target, pp); }
 double evaluate_time_since_t_initial_in_Gyr(double t_initial);
 
 #ifdef GALSF
@@ -775,7 +775,12 @@ integertime find_next_time_walk(int node);
 void free_memory(void);
 void advance_and_find_timesteps(void);
 integertime get_timestep(int p, double *a, int flag);
-double return_timestep_dilation_factor(int i, int mode);
+double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
+double timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
+double unit_integertime_in_physical(int i, struct particle_data *pp = P);
+double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp = P);
+double get_particle_timestep_in_physical(int i, struct particle_data *pp = P);
+double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp = P);
 
 void determine_PMinterior(void);
 void gravity_tree(void);
@@ -790,17 +795,17 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Cplus(int target, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, const char *ion_name, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct gas_cell_data *cell);
-MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell);
-MyFloat cosmic_ray_ionization_rate_C(int i, struct gas_cell_data *cell);
-MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell);
+MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell);
 int ion_name_to_index(const char *ion_name, struct gas_cell_data *cell);
 double get_starformation_rate(int i, int mode);
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double cloudmass_fraction, double rateOfSF);
@@ -924,7 +929,7 @@ void rt_diffusion_cg_solve(void);
 #endif
 
 #ifdef RT_CHEM_PHOTOION
-double rt_return_photon_number_density(int i, int k);
+/* rt_return_photon_number_density is now cell[i].rt_photon_number_density(k) */
 double rt_photoion_chem_return_temperature(int i, double internal_energy);
 void rt_update_chemistry(void);
 void rt_get_sigma(void);

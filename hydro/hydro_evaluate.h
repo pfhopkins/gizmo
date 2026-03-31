@@ -148,7 +148,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 
                 /* check if I need to compute this pair-wise interaction from "i" to "j", or skip it and let it be computed from "j" to "i" */
-                dt_hydrostep_j = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+                dt_hydrostep_j = get_particle_timestep_in_physical(j);
                 dt_hydrostep = DMAX(dt_hydrostep_i , dt_hydrostep_j); // this is used for flux-limiting, so we always want to be more conservative and use the larger timestep //
                 double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1; // these, by default, won't do anything, but will be used below in final flux assignment
                 int j_is_active_for_fluxes = 0;
@@ -182,11 +182,11 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                 kernel.dv = local.Vel - VelPred_j;
                 kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
-                double Particle_Size_j; Particle_Size_j = Get_Particle_Size(j) * All.cf_atime; /* physical units */
+                double Particle_Size_j; Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime; /* physical units */
 
                 /* --------------------------------------------------------------------------------- */
                 /* sound speed, relative velocity, and signal velocity computation */
-                kernel.sound_j = Get_Gas_effective_soundspeed_i(j, CellP);
+                kernel.sound_j = CellP[j].effective_soundspeed();
                 kernel.vsig = kernel.sound_i + kernel.sound_j;
 #ifdef COSMIC_RAY_FLUID
                 double CosmicRayPressure_j[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {CosmicRayPressure_j[k] = Get_Gas_CosmicRayPressure(j, k, CellP);} /* compute this for use below */

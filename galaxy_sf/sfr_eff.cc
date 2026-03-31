@@ -32,8 +32,8 @@
 void assign_imf_properties_from_starforming_gas(int i, int i_star)
 {
 #ifdef GALSF_SFR_IMF_VARIATION
-    double h = Get_Particle_Size(i) * All.cf_atime;
-    double cs = Get_Gas_effective_soundspeed_i(i, CellP) ; // actual sound speed in the simulation: might be unphysically high for SF conditions!
+    double h = P[i].Get_Particle_Size() * All.cf_atime;
+    double cs = CellP[i].effective_soundspeed() ; // actual sound speed in the simulation: might be unphysically high for SF conditions!
     cs = 0.2 / UNIT_VEL_IN_KMS; // set to a minimum cooling temperature, for the actual star-forming conditions. for now, just use a constant //
     double dv2_abs = 0; /* calculate local velocity dispersion (including hubble-flow correction) in physical units */
     // squared norm of the trace-free symmetric [shear] component of the velocity gradient tensor //
@@ -91,7 +91,7 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 #endif
     P[i_star].IMF_FormProps[1] = CellP[i].Density * All.cf_a3inv; // density
     P[i_star].IMF_FormProps[2] = CellP[i].InternalEnergyPred; // thermal internal energy (use to calculate temperature)
-    P[i_star].IMF_FormProps[3] = Get_Gas_effective_soundspeed_i(i, CellP) ; // sound speed (not trivially related to temperature if CRs, etc included)
+    P[i_star].IMF_FormProps[3] = CellP[i].effective_soundspeed() ; // sound speed (not trivially related to temperature if CRs, etc included)
     P[i_star].IMF_FormProps[4] = sqrt(dv2_abs); // shear velocity gradient (norm of shear gradient tensor)
     P[i_star].IMF_FormProps[5] = h; // particle length/size (inter-particle spacing)
     P[i_star].IMF_FormProps[6] = NH; // local gas surface density (our usual estimator) in the cloud where the particle formed
@@ -221,7 +221,7 @@ double get_starformation_rate(int i, int mode)
 
     int exceeds_force_softening_threshold; exceeds_force_softening_threshold = 0; /* flag that notes if the density is so high such that gravity is non-Keplerian [inside of smallest force-softening limits] */
 #if (SINGLE_STAR_SINK_FORMATION & 1024)
-    if(DMIN(P[i].KernelRadius, 2.*Get_Particle_Size(i)) <= DMAX(All.MinKernelRadius, 2.*All.ForceSoftening[0])) {exceeds_force_softening_threshold=1;}
+    if(DMIN(P[i].KernelRadius, 2.*P[i].Get_Particle_Size()) <= DMAX(All.MinKernelRadius, 2.*All.ForceSoftening[0])) {exceeds_force_softening_threshold=1;}
     if(mode == 0) {if(exceeds_force_softening_threshold) {return 10. * rateOfSF;}}
 #endif
 
@@ -246,7 +246,7 @@ double get_starformation_rate(int i, int mode)
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     v_eff_touse = cs_eff;
 #endif
-    double k_cs = 1. * v_eff_touse / (Get_Particle_Size(i)*All.cf_atime), alpha_crit; alpha_crit = 1.0; /* effective wavenumber for thermal+B-field+CR+whatever internal energy support, and threshold virial parameter */
+    double k_cs = 1. * v_eff_touse / (P[i].Get_Particle_Size()*All.cf_atime), alpha_crit; alpha_crit = 1.0; /* effective wavenumber for thermal+B-field+CR+whatever internal energy support, and threshold virial parameter */
 #if defined(SINGLE_STAR_SINK_DYNAMICS) & !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     if(cell_can_be_singlestar) {k_cs *= M_PI;} // use a stricter version here, because the relevant pre-factor depends on whether we expect Jeans collapse at the thermal limit to be resolved or un-resolved
 #endif
@@ -256,7 +256,7 @@ double get_starformation_rate(int i, int mode)
     double Mach_eff_2=0, cs2_contrib=2.*k_cs*k_cs; Mach_eff_2=dv2abs/cs2_contrib; dv2abs+=2.*k_cs*k_cs; // account for thermal+magnetic pressure with standard Jeans criterion (k^2*cs^2 vs 4pi*G*rho) //
     double alpha_vir = dv2abs / (8.*M_PI * All.G * CellP[i].Density * All.cf_a3inv); // coefficient comes from different density profiles, assuming a constant velocity gradient tensor: 22.6=constant-density cube, 8pi[approximate]=constant-density sphere, e.g. rho~exp(-r^n) n={4,8,16,32,64}->{17.1,22.1,24.1,24.9,25.1,25.15} [approaches uniform-density sphere as n->infinity]
 #if defined(GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED) /* compute and prepare to use our time-rolling average virial criterion */
-    double dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i); /* the physical time-step */
+    double dtime = get_particle_timestep_in_physical(i); /* the physical time-step */
     double alpha_0=1./(1.+alpha_vir), dtau=DMIN(1.,DMAX(0.,exp(-(DMIN(DMAX(8.*dtime/tsfr,0.),20.))))); /* dimensionless units for below */
     CellP[i].AlphaVirial_SF_TimeSmoothed = DMIN(DMAX(CellP[i].AlphaVirial_SF_TimeSmoothed * dtau + alpha_0 * (1.-dtau) , 1.e-10), 1.); /* update rolling time-averaged virial parameter */
     alpha_vir = 1./CellP[i].AlphaVirial_SF_TimeSmoothed - 1.; /* use the rolling average below */
@@ -367,7 +367,7 @@ double get_starformation_rate(int i, int mode)
 /* compute the 'effective eos' cooling/heating, including thermal feedback sources, here */
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double cloudmass_fraction, double rateOfSF)
 {
-    double dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i); /*  the actual time-step */
+    double dtime = get_particle_timestep_in_physical(i); /*  the actual time-step */
     double x = cloudmass_fraction, factorEVP = pow(CellP[i].Density * All.cf_a3inv / All.PhysDensThresh, -0.8) * All.FactorEVP, trelax = tsfr * (1 - x) / x / (All.FactorSN * (1 + factorEVP));
     double egyhot = All.EgySpecSN / (1 + factorEVP) + All.EgySpecCold, egyeff = egyhot * (1 - x) + All.EgySpecCold * x, egycurrent = CellP[i].InternalEnergy, ne, ne_out;
     ne=1.0; ne_out=ne;
@@ -388,7 +388,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
     /* now update the thermal variables */
     CellP[i].InternalEnergy = (egyeff + (egycurrent - egyeff) * exp(-dtime / trelax));
     CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
-    set_eos_pressure(i, CellP);
+    set_eos_pressure(i, P, CellP);
     //CellP[i].dInternalEnergy = 0;
     CellP[i].DtInternalEnergy = 0; /* HERE, it's ok, b/c effective EOS is designed to model new pressure even under compressions,
                                  (since we're zero'ing the second-half-step from the hydro step) */
@@ -415,7 +415,7 @@ void star_formation_parent_routine(void)
         if((P[i].Type == 0)&&(P[i].Mass>0))
         {
             CellP[i].Sfr = 0; flag = 1; /* will be reset below if flag==0, but default to flag = 1 (non-eligible) */
-            dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i); /*  the actual time-step */
+            dtime = get_particle_timestep_in_physical(i); /*  the actual time-step */
             
             /* check whether an initial (not fully-complete!) conditions for star formation are fulfilled for a given particle */
             if(CellP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
@@ -652,7 +652,7 @@ void star_formation_parent_routine(void)
                                                 + (CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2])*(CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2]) + (CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])) +
                                        (2./3.)*((CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[0][0] + CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[2][2]*CellP[i].Gradients.Velocity[2][2]) - (CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[2][2] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[2][2]))) * All.cf_a2inv*All.cf_a2inv;
                             // saves at formation sink properties in a table: 0:Time 1:ID 2:Mass 3-5:Position 6-8:Velocity 9-11:Magnetic field 12:Internal energy 13:Density 14:cs_effective 15:particle size 16:local surface density 17:local velocity dispersion 18: distance to closest BH
-                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, Get_Gas_effective_soundspeed_i(i, CellP) , Get_Particle_Size(i) * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
+                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, CellP[i].effective_soundspeed() , P[i].Get_Particle_Size() * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
 #endif
                         }
 #endif // SINGLE_STAR_SINK_DYNAMICS

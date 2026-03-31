@@ -11,11 +11,6 @@
 
 #ifdef RT_CHEM_PHOTOION
 
-/* return photon number density in physical code units */
-double rt_return_photon_number_density(int i, int k)
-{
-    return CellP[i].Rad_E_gamma[k] * (CellP[i].Density*All.cf_a3inv/P[i].Mass) / (rt_nu_eff_eV[k]*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
-}
 
 double rt_photoion_chem_return_temperature(int i, double internal_energy)
 {
@@ -158,7 +153,7 @@ void rt_update_chemistry(void)
     for (int i : ActiveParticleList)
         if(P[i].Type == 0)
         {
-            dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+            dtime = get_particle_timestep_in_physical(i);
             rho = CellP[i].Density * All.cf_a3inv;
             nH = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
             temp = rt_photoion_chem_return_temperature(i,CellP[i].InternalEnergyPred);
@@ -166,7 +161,7 @@ void rt_update_chemistry(void)
             gamma_HI = 5.85e-11 * sqrt(temp) * exp(-157809.1 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
             /* alpha_B recombination coefficient */
             alpha_HII = 2.59e-13 * pow(temp / 1e4, -0.7) * fac;
-            n_photons_vol = rt_return_photon_number_density(i,RT_FREQ_BIN_H0);
+            n_photons_vol = CellP[i].rt_photon_number_density(RT_FREQ_BIN_H0);
             /* number of photons should be positive */
             if(n_photons_vol < 0 || isnan(n_photons_vol))
             {
@@ -262,7 +257,7 @@ void rt_update_chemistry(void)
 #endif
             for(j = 0; j < N_RT_FREQ_BINS; j++)
             {
-                n_photons_vol = rt_return_photon_number_density(i,j);
+                n_photons_vol = CellP[i].rt_photon_number_density(j);
                 if(rt_ion_nu_min[j] >= 13.6) {k_HI += c_light_codeunits * rt_ion_sigma_HI[j] * n_photons_vol;}
 #ifdef RT_CHEM_PHOTOION_HE
                 if(rt_ion_nu_min[j] >= 24.6) {k_HeI += c_light_codeunits * rt_ion_sigma_HeI[j] * n_photons_vol;}
@@ -270,7 +265,7 @@ void rt_update_chemistry(void)
 #endif
             }
             
-            dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+            dtime = get_particle_timestep_in_physical(i);
             rho = CellP[i].Density * All.cf_a3inv;
             nH = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
             temp = rt_photoion_chem_return_temperature(i,CellP[i].InternalEnergyPred);
@@ -372,7 +367,7 @@ void rt_write_chemistry_stats(void)
         {
             rho = CellP[i].Density * All.cf_a3inv;
 #ifndef RT_PHOTOION_MULTIFREQUENCY
-            n_photons_vol = rt_return_photon_number_density(i,RT_FREQ_BIN_H0);
+            n_photons_vol = CellP[i].rt_photon_number_density(RT_FREQ_BIN_H0);
             total_ng += n_photons_vol / 1e53 * P[i].Mass / rho;
 #endif
 #ifdef RT_CHEM_PHOTOION_HE

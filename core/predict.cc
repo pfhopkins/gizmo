@@ -179,7 +179,7 @@ void drift_particle(int i, integertime time1)
     if((P[i].Type == 0) && (P[i].Mass > 0))
         {
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;
-            dt_entr = dt_hydrokick = (time1 - time0) * UNIT_INTEGERTIME_IN_PHYSICAL(i);
+            dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i);
             dt_gravkick = get_gravkick_factor(time0, time1, i, 0);
             
 #ifdef PMGRID
@@ -234,7 +234,7 @@ void drift_particle(int i, integertime time1)
 #endif
             drift_extra_physics(i, time0, time1, dt_entr);
 
-            set_eos_pressure(i, CellP);
+            set_eos_pressure(i, P, CellP);
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
@@ -376,25 +376,6 @@ void do_box_wrapping(void)
 /* ====================================================================== */
 
 
-/* this function returns the effective (grid-equivalent) particle 'size'; useful for things like 
-    time-stepping and limiter functions */
-double INLINE_FUNC Get_Particle_Size(int i)
-{
-    /* in previous versions of the code, we took NumNgb^(1/NDIMS) here; however, now we 
-        take that when NumNgb is computed (at the end of the density routine), so we 
-        don't have to re-compute it each time. That makes this function fast enough to 
-        call -inside- of loops (e.g. hydro computations) */
-#if (NUMDIMS == 1)
-    return 2.00000 * P[i].KernelRadius / P[i].NumNgb; // (2)^(1/1)
-#endif
-#if (NUMDIMS == 2)
-    return 1.77245 * P[i].KernelRadius / P[i].NumNgb; // (pi)^(1/2)
-#endif
-#if (NUMDIMS == 3)
-    return 1.61199 * P[i].KernelRadius / P[i].NumNgb; // (4pi/3)^(1/3)
-#endif
-}
-
 
 
 double INLINE_FUNC Get_Particle_Expected_Area(double h)
@@ -412,13 +393,13 @@ double INLINE_FUNC Get_Particle_Expected_Area(double h)
 
 
 /* return the estimated local column (physical units) from a local Sobolev approximation, or using the 'treecol' approximation from the gravity tree if the relevant config flag options are enabled */
-double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target)
+double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp)
 {
     double gradrho_mag=0;
     if(rho>0)
     {
-#ifdef RT_USE_TREECOL_FOR_NH        
-        gradrho_mag = include_h * rho * rkern / numngb_ndim; if(target>=0) {gradrho_mag += P[target].SigmaEff;}
+#ifdef RT_USE_TREECOL_FOR_NH
+        gradrho_mag = include_h * rho * rkern / numngb_ndim; if(target>=0) {gradrho_mag += pp[target].SigmaEff;}
 #else             
         gradrho_mag = sqrt(gradrho[0]*gradrho[0]+gradrho[1]*gradrho[1]+gradrho[2]*gradrho[2]);
         if(gradrho_mag > 0) {gradrho_mag = rho*rho/gradrho_mag;} else {gradrho_mag=0;}
@@ -444,7 +425,7 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
     return 1;
 #else
     /* define some variables */
-    double dt_entr = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+    double dt_entr = get_particle_timestep_in_physical(i);
     /* check the magnitude of the predicted change in B-fields, vs. B-magnitude */
     Vec3<double> dB = cell[i].DtB * (dt_entr / All.cf_atime); /* converts to code units of Vol_code*B_code = Vol_phys*B_phys/a */
     double dBmag = dB.norm(), Bmag = cell[i].BPred.norm();
@@ -485,11 +466,11 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
     /* this timescale should always be returned as a -physical- time */
 #ifdef HYDRO_SPH
     /* PFH: add simple damping (-phi/tau) term */
-    double damping_tinv = 0.5 * All.DivBcleanParabolicSigma * (CellP[i_particle_id].MaxSignalVel / (All.cf_atime*Get_Particle_Size(i_particle_id)));
+    double damping_tinv = 0.5 * All.DivBcleanParabolicSigma * (CellP[i_particle_id].MaxSignalVel / (All.cf_atime*P[i_particle_id].Get_Particle_Size()));
 #else
     double damping_tinv;
 #ifdef SELFGRAVITY_OFF
-    damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveSpeed / (All.cf_atime*Get_Particle_Size(i_particle_id)); // fastest wavespeed has units of [vphys]
+    damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveSpeed / (All.cf_atime*P[i_particle_id].Get_Particle_Size()); // fastest wavespeed has units of [vphys]
     //double damping_tinv = All.DivBcleanParabolicSigma * All.FastestWaveDecay * All.cf_a2inv; // no improvement over fastestwavespeed; decay has units [vphys/rphys]
 #else
     // only see a small performance drop from fastestwavespeed above to maxsignalvel below, despite the fact that below is purely local (so allows more flexible adapting to high dynamic range)
@@ -497,14 +478,14 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
     
     if(P[i_particle_id].KernelRadius > 0)
     {
-        double h_eff = Get_Particle_Size(i_particle_id);
+        double h_eff = P[i_particle_id].Get_Particle_Size();
         double vsig2 = 0.5 * fabs(CellP[i_particle_id].MaxSignalVel);
         double phi_B_eff = 0.0;
         if(vsig2 > 0) {phi_B_eff = Get_Gas_PhiField(i_particle_id) / (All.cf_atime * vsig2);}
         double vsig1 = 0.0;
         if(CellP[i_particle_id].Density > 0)
         {
-            vsig1 = sqrt( Get_Gas_effective_soundspeed_i(i_particle_id, CellP)*Get_Gas_effective_soundspeed_i(i_particle_id, CellP) +
+            vsig1 = sqrt( CellP[i_particle_id].effective_soundspeed()*CellP[i_particle_id].effective_soundspeed() +
                  (1. / All.cf_atime) *
                  (CellP[i_particle_id].Bfield().norm_sq() +
                   phi_B_eff*phi_B_eff) / CellP[i_particle_id].Density );

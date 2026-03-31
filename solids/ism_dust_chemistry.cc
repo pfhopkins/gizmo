@@ -481,7 +481,7 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
         return; // end routine
     } // below follows species model, and will be default if above not set
     double dt,Z,elem_yield,wind_rate;
-    dt=GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i)*UNIT_TIME_IN_GYR;
+    dt=get_particle_feedback_timestep_in_physical(i)*UNIT_TIME_IN_GYR;
     Z = Z_for_stellar_evol(i);
     // Take difference in cumulative dust production between start and end time to get estimate of instantaneous dust injection rate (M_solar/Gyr)
     double total_dust=0;
@@ -1055,11 +1055,11 @@ void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, st
     // If nonequilibrium H2 not used then need to calculate the mach number here
 
     // define a number of variables needed in the shielding module
-    double dx_cell = Get_Particle_Size(i) * All.cf_atime; // cell size
+    double dx_cell = pp[i].Get_Particle_Size() * All.cf_atime; // cell size
     double surface_density_H2_0 = 5.e14 * PROTONMASS_CGS, x_exp_fac=0.00085, w0=0.2; // characteristic cgs column for -molecular line- self-shielding
     w0 = 0.035; // actual calibration from Drain, Gnedin, Richings, others: 0.2 is more appropriate as a re-calibration for sims doing local eqm without ability to resolve shielding at higher columns
     double v_thermal_rms = 0.111*sqrt(T); // sqrt(3*kB*T/2*mp), since want rms thermal speed of -molecular H2- in kms
-    double gradv = velocity_gradient_norm(i);
+    double gradv = cell[i].velocity_gradient_norm();
     double dv_turb=gradv*dx_cell*UNIT_VEL_IN_KMS; // delta-velocity across cell
     cell[i].ISMDustChem_MachNumber = dv_turb / (v_thermal_rms/sqrt(3.));
 #endif

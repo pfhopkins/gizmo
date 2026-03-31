@@ -52,7 +52,7 @@ void apply_grain_dragforce(void)
 #if defined(GRAIN_BACKREACTION)
             P[i].Grain_DeltaMomentum = {}; /* reset momentum to couple back to gas (or else would diverge) */
 #endif
-            double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+            double dt = get_particle_timestep_in_physical(i);
             double vgas_mag = sqrt((P[i].Gas_Velocity - P[i].Vel).norm_sq()) / All.cf_atime; /* convert to physical units */
             int grain_subtype = 1; /* default assumption about particulate sub-type for operations below */
 #if defined(PIC_MHD)
@@ -108,7 +108,7 @@ void apply_grain_dragforce(void)
                 /* this external_forcing parameter includes additional grain-specific forces. note that -anything- which imparts an
                  identical acceleration onto gas and dust will cancel in the terms in t_stop, and just act like a 'normal' acceleration
                  on the dust. for this reason the gravitational acceleration doesn't need to enter our 'external_forcing' parameter */
-                double external_forcing[3]={0}, eps=MIN_REAL_NUMBER; P[i].Grain_AccelTimeMin = DMAX(1./(eps+tstop_inv) , sqrt(Get_Particle_Size(i)*All.cf_atime/(eps+vgas_mag*tstop_inv)));
+                double external_forcing[3]={0}, eps=MIN_REAL_NUMBER; P[i].Grain_AccelTimeMin = DMAX(1./(eps+tstop_inv) , sqrt(P[i].Get_Particle_Size()*All.cf_atime/(eps+vgas_mag*tstop_inv)));
 #ifdef GRAIN_LORENTZFORCE
                 if(grain_subtype == 1)
                 {
@@ -133,7 +133,7 @@ void apply_grain_dragforce(void)
                     Vec3<double> v_m = dv + efield * (0.5*efield_coeff); // half-step from E-field
                     Vec3<double> vcrosst = cross(v_m, bhat); /* cross-product for rotation */
                     double tL=1./(eps+0.5*bmag*fabs(grain_charge_cinv)), vgasXB_mag=vcrosst.norm_sq();
-                    P[i].Grain_AccelTimeMin = DMIN(P[i].Grain_AccelTimeMin, DMAX(tL , sqrt(Get_Particle_Size(i)*All.cf_atime/(eps+sqrt(vgasXB_mag)/tL))));
+                    P[i].Grain_AccelTimeMin = DMIN(P[i].Grain_AccelTimeMin, DMAX(tL , sqrt(P[i].Get_Particle_Size()*All.cf_atime/(eps+sqrt(vgasXB_mag)/tL))));
                     Vec3<double> v_t = v_m + vcrosst * lorentz_coeff; // first half-rotation
                     vcrosst = cross(v_t, bhat);
                     Vec3<double> v_p = v_m + vcrosst * (2.*lorentz_coeff/(1.+lorentz_coeff*lorentz_coeff)); // second half-rotation
@@ -334,7 +334,7 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
                     double taccel_min_prev = 0, taccel_min_new = 0;
                     #pragma omp atomic read
                     taccel_min_prev = P[j].Grain_AccelTimeMin; // this can be modified below so needs to be done in a thread-safe manner here //
-                    taccel_min_new = DMIN(DMIN(2.*All.ErrTolIntAccuracy*Get_Particle_Size(j)*All.cf_atime*All.cf_atime/sqrt(dv2+MIN_REAL_NUMBER) , 4.*local.Grain_AccelTimeMin), taccel_min_prev);
+                    taccel_min_new = DMIN(DMIN(2.*All.ErrTolIntAccuracy*P[j].Get_Particle_Size()*All.cf_atime*All.cf_atime/sqrt(dv2+MIN_REAL_NUMBER) , 4.*local.Grain_AccelTimeMin), taccel_min_prev);
                     if(taccel_min_new < taccel_min_prev)
                     {
                         #pragma omp atomic write

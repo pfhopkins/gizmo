@@ -61,8 +61,8 @@ int does_particle_need_to_be_merged(int i)
 #ifdef PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT
     if(P[i].Type==0)
     {
-        double lambda_J = Get_Gas_Fast_MHD_wavespeed_i(i, CellP) * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
-        if((lambda_J > 4. * PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * Get_Particle_Size(i)*All.cf_atime) && (P[i].Mass < All.MaxMassForParticleSplit)) {return 1;} // de-refine
+        double lambda_J = CellP[i].fast_MHD_wavespeed() * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
+        if((lambda_J > 4. * PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * P[i].Get_Particle_Size()*All.cf_atime) && (P[i].Mass < All.MaxMassForParticleSplit)) {return 1;} // de-refine
     }
 #endif
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
@@ -75,7 +75,7 @@ int does_particle_need_to_be_merged(int i)
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES)
         rmin_pc = 0;
 #endif
-        if(P[i].Type==0) {if(Get_Particle_Size(i)*All.cf_atime*UNIT_LENGTH_IN_PC < rmin_pc) {return 0;}} // if too high-res spatially, this equiv to size for m=7000 msun for nH=1e-3, dont let de-refine
+        if(P[i].Type==0) {if(P[i].Get_Particle_Size()*All.cf_atime*UNIT_LENGTH_IN_PC < rmin_pc) {return 0;}} // if too high-res spatially, this equiv to size for m=7000 msun for nH=1e-3, dont let de-refine
     }
 #endif
     if((P[i].Type>0) && (P[i].Mass > 0.5*All.MinMassForParticleMerger*target_mass_renormalization_factor_for_mergesplit(i,0))) {return 0;}
@@ -104,8 +104,8 @@ int does_particle_need_to_be_split(int i)
 #ifdef PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT
     if(P[i].Type == 0)
     {
-        double lambda_J = Get_Gas_Fast_MHD_wavespeed_i(i, CellP) * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
-        if((lambda_J < PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * Get_Particle_Size(i)*All.cf_atime) && (P[i].Mass > 2*All.MinMassForParticleMerger)) {return 1;} // refine
+        double lambda_J = CellP[i].fast_MHD_wavespeed() * sqrt(M_PI / (All.G * CellP[i].Density * All.cf_a3inv));
+        if((lambda_J < PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * P[i].Get_Particle_Size()*All.cf_atime) && (P[i].Mass > 2*All.MinMassForParticleMerger)) {return 1;} // refine
     }
 #endif
     return 0;
@@ -326,11 +326,11 @@ void merge_and_split_particles(void)
                                 Vec3<MyDouble> dvel_tmp = P[i].Vel - P[j].Vel; double v2_tmp = dvel_tmp.norm_sq(); double vr_tmp = dot(dvel_tmp, P[i].Pos - P[j].Pos);
                                 if(vr_tmp > 0) {do_allow_merger = 0;}
                                 if(v2_tmp > 0) {v2_tmp=sqrt(v2_tmp*All.cf_a2inv);} else {v2_tmp=0;}
-                                if(v2_tmp >  DMIN(Get_Gas_effective_soundspeed_i(i, CellP),Get_Gas_effective_soundspeed_i(j, CellP))) {do_allow_merger = 0;}
+                                if(v2_tmp >  DMIN(CellP[i].effective_soundspeed(),CellP[j].effective_soundspeed())) {do_allow_merger = 0;}
 #if !defined(SINK_RIAF_SUBEDDINGTON_MODEL) && !defined(SINGLE_STAR_SINK_DYNAMICS) /* if spawning a lot of these, don't want to restrict this so much */
                                 if(P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;} // wind particles can't intermerge
 #if !defined(SINGLE_STAR_FB_JETS) && !defined(SINGLE_STAR_FB_WINDS)
-                                if((v2_tmp > 0.25*All.Sink_outflow_velocity) && (v2_tmp > 0.9*Get_Gas_effective_soundspeed_i(j, CellP))) {do_allow_merger=0;}
+                                if((v2_tmp > 0.25*All.Sink_outflow_velocity) && (v2_tmp > 0.9*CellP[j].effective_soundspeed())) {do_allow_merger=0;}
 #endif
 #endif
                             }
@@ -339,7 +339,7 @@ void merge_and_split_particles(void)
                         /* recall 'i' was already flagged to merge; for this module can get in a timestep trap when BH surrounded only by spawns, keep waking each other up and driving down; put a timestep 'escape' clause explicitly in here -- can tune timestep for different problems of course */
                         if(P[i].Type==0 && P[j].Type==0) {
                             if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {
-                                double dti = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i), dtj=GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+                                double dti = get_particle_timestep_in_physical(i), dtj=get_particle_timestep_in_physical(j);
                                 double dt0 = 1.e-7;
                                 if(dti<dt0 || dtj<dt0) {do_allow_merger = 1;}
                             }}
@@ -459,14 +459,14 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
-    double dx_eff = Get_Particle_Size(i), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius;
+    double dx_eff = P[i].Get_Particle_Size(), dx_h = KERNEL_CORE_SIZE * P[i].KernelRadius;
     dx_eff = DMAX(DMIN(dx_eff, 3.*dx_h), 0.1*dx_h); // clamp to reasonable range relative to kernel radius
     dx_h = r_near; dx_eff = DMAX(DMIN(dx_eff, 3.*dx_h), 0.1*dx_h); // clamp to reasonable range relative to nearest-neighbor distance
     double d_r = pow(0.5, (NUMDIMS + 1.) / (double)NUMDIMS) * dx_eff; // 2^{-(NDIMS+1)/NDIMS} * dx_eff
     d_r = DMIN(d_r, 0.4 * r_near); // keep displacement well within nearest-neighbor distance
     /*
     double r_near = sqrt(r2_nearest);
-    double rkern = Get_Particle_Size(i);
+    double rkern = P[i].Get_Particle_Size();
     if(rkern < r_near) {rkern = r_near;}
     r_near *= 0.35;
     double d_r = 0.25 * rkern; // needs to be epsilon*KernelRadius where epsilon<<1, to maintain stability //
@@ -653,7 +653,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
                 for(k=0;k<NUMDIMS;k++) {grad_rho[k]=CellP[i].Gradients.Density[k]; grad_rho_norm+=grad_rho[k]*grad_rho[k];}
                 grad_rho_norm = sqrt(grad_rho_norm);
                 if(grad_rho_norm > 0 && CellP[i].Density > 0) {
-                    double relative_gradient = grad_rho_norm * Get_Particle_Size(i) / CellP[i].Density; // dimensionless: |grad_rho|*dx/rho
+                    double relative_gradient = grad_rho_norm * P[i].Get_Particle_Size() / CellP[i].Density; // dimensionless: |grad_rho|*dx/rho
                     if(relative_gradient > 0.1) { // non-trivial gradient: project dp onto isodensity plane
                         double dot=0; for(k=0;k<NUMDIMS;k++) {dot += dp[k] * grad_rho[k] / grad_rho_norm;}
                         double dp_perp[3]={0}, perp_norm=0;
@@ -991,7 +991,7 @@ int merge_particles_ij(int i, int j)
     P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
-    set_eos_pressure(j, CellP);
+    set_eos_pressure(j, P, CellP);
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
     /* flag cells as having just undergone refinement/derefinement for other subroutines to be aware */
     CellP[j].recent_refinement_flag = CellP[i].recent_refinement_flag = 1;
@@ -1271,7 +1271,7 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
         if(ngb_dist > h_i) {return 0;} // sufficiently dense region (need to have effective nearest-neighbor spacing approaching the minimum softening, with some arbitrary threshold we set)
     }
 #else
-    if(GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i)*UNIT_TIME_IN_GYR*1000. > 0.01) {return 0;} // if the particle is taking a very long timestep, it's probably in a very low-density region, so don't allow it to merge (this is a crude proxy for the local density, but it's very fast to check and works well in practice) 
+    if(get_particle_timestep_in_physical(i)*UNIT_TIME_IN_GYR*1000. > 0.01) {return 0;} // if the particle is taking a very long timestep, it's probably in a very low-density region, so don't allow it to merge (this is a crude proxy for the local density, but it's very fast to check and works well in practice) 
 #endif
     return 1; // allow this particle to -consider- the possibility of a merger
 }
@@ -1289,7 +1289,7 @@ int check_if_sufficient_mergesplit_time_has_passed(int i)
 #endif
     if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * get_random_number(832LL*i + 890345645LL + 83457LL*ThisTask + 12313403LL*P[i].ID);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
-    double dt_incodescale = (GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
+    double dt_incodescale = (get_particle_timestep_in_physical(i) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     if(All.ComovingIntegrationOn) {if(dtime_code < 1.e-8) {return 0;}} // also enforce an absolute time limit (don't use for nuclear zooms since absolute timesteps can become arbitrarily short

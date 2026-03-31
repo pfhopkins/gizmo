@@ -112,7 +112,7 @@ void rt_diffusion_cg_solve(void)
 {
     PRINT_STATUS("start CG iteration for radiative transfer (diffusion equation)...");
     int k, j; double alpha_cg, beta, sum, rel, res, maxrel, glob_maxrel, DQ;
-    double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * UNIT_INTEGERTIME_IN_PHYSICAL(-1);
+    double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * unit_integertime_in_physical(-1);
     
     /* initialization for the CG method */
     MALLOC_CG(ZVec); MALLOC_CG(XVec); MALLOC_CG(QVec); MALLOC_CG(DVec); MALLOC_CG(Residue); MALLOC_CG(Diag); MALLOC_CG(Diag2); // allocate and zero all the arrays
@@ -394,7 +394,7 @@ void rt_diffusion_cg_matrix_multiply(double **matrixmult_in, double **matrixmult
 
     
     /* do final operations on results */
-    {double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * UNIT_INTEGERTIME_IN_PHYSICAL(-1); int i;
+    {double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * unit_integertime_in_physical(-1); int i;
     for(i = 0; i < N_gas; i++)
         if(P[i].Type == 0) {
             for(k = 0; k < N_RT_FREQ_BINS; k++) {
@@ -423,7 +423,7 @@ int rt_diffusion_cg_evaluate(int target, int mode, double **matrixmult_in, doubl
     if(local.KernelRadius<=0) return 0; // zero-extent kernel, no particles //
     double hinv, hinv3, hinv4, h2=local.KernelRadius*local.KernelRadius;
     kernel_hinv(local.KernelRadius, &hinv, &hinv3, &hinv4);
-    double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * UNIT_INTEGERTIME_IN_PHYSICAL(-1);    
+    double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * unit_integertime_in_physical(-1);    
     /* Now start the actual operations for this particle */
     if(mode == 0) {startnode = All.MaxPart; /* root node */} else {startnode = rt_cg_DataGet[target].NodeList[0]; startnode = Nodes[startnode].u.d.nextnode;/* open it */}
     while(startnode >= 0)

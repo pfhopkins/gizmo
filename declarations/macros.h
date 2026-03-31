@@ -4,31 +4,8 @@
 #define ASSIGN_ADD(x,y,mode) (mode == 0 ? (x=y) : (x+=y))
 
 
-#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
-#define TIMESTEP_DILATION_FACTOR(i,mode) (return_timestep_dilation_factor(i,mode))
-#else
-#define TIMESTEP_DILATION_FACTOR(i,mode) (1)
-#endif
-#define UNIT_INTEGERTIME_IN_PHYSICAL(i) ((All.Timebase_interval/All.cf_hubble_a) * TIMESTEP_DILATION_FACTOR(i,0))
 #define GET_INTEGERTIME_FROM_TIMEBIN(bin) ((bin ? (((integertime) 1) << bin) : 0))
-#define GET_PHYSICAL_TIMESTEP_FROM_TIMEBIN(bin, i) ((GET_INTEGERTIME_FROM_TIMEBIN(bin) * UNIT_INTEGERTIME_IN_PHYSICAL(i)))
-#ifndef WAKEUP
-#define GET_PARTICLE_INTEGERTIME(i) ((GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin)))
-#else
-#define GET_PARTICLE_INTEGERTIME(i) ((P[i].dt_step))
-#endif
-#define GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i) ((GET_PARTICLE_INTEGERTIME(i) * UNIT_INTEGERTIME_IN_PHYSICAL(i)))
-
-#ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
-#define GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i) DMAX(GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i), All.Dt_Min_Between_FBCalc_Gyr/UNIT_TIME_IN_GYR)
-#else
-#define GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i) GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i)
-#endif
-
-#ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
-#undef GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL
-#define GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i) (GET_PARTICLE_INTEGERTIME(i) * (All.Timebase_interval/All.cf_hubble_a)) /* this timestep does -not- involve dilation */
-#endif
+/* Timestep macros replaced by functions in timestep.cc (all take optional pp=P param) — see proto.h */
 
 
 

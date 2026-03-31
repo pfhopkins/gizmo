@@ -277,7 +277,7 @@ void st_turbdrive_calc_phases(void)
 /* Check whether the phases of the turbulent driving force must be recomputed this timestep */
 int new_turbforce_needed_this_timestep(void)
 {
-    double delta = (All.Ti_Current - StTPrev) * UNIT_INTEGERTIME_IN_PHYSICAL(-1), Dt_Update=st_return_dt_between_updates();
+    double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1), Dt_Update=st_return_dt_between_updates();
     if(delta >= Dt_Update){return 1;} else {return 0;}
 }
 
@@ -286,7 +286,7 @@ void set_turb_ampl(void)
 {
     if(new_turbforce_needed_this_timestep())
     {
-        double delta = (All.Ti_Current - StTPrev) * UNIT_INTEGERTIME_IN_PHYSICAL(-1);
+        double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1);
         if(delta > 0)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;
@@ -373,7 +373,7 @@ void do_turb_driving_step_first_half(void)
     int i; integertime ti_step, tstart, tend; double dt_gravkick;
     for (int i : ActiveParticleList)
     {
-        ti_step = GET_PARTICLE_INTEGERTIME(i); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
+        ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
         if(P[i].Type == 0)
         {
@@ -394,7 +394,7 @@ void do_turb_driving_step_second_half(void)
     int i; integertime ti_step, tstart, tend; double dt_gravkick;
     for (int i : ActiveParticleList)
     {
-        ti_step = GET_PARTICLE_INTEGERTIME(i); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
+        ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
         if(P[i].Type == 0)
         {
