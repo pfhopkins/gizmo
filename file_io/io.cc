@@ -934,7 +934,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    *fp++ = (MyOutputFloat) (GET_PARTICLE_TIMESTEP_IN_PHYSICAL(pindex));
+                    *fp++ = (MyOutputFloat) (get_particle_timestep_in_physical(pindex));
                     n++;
                 }
 #endif

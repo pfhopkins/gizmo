@@ -38,7 +38,7 @@ void radiation_pressure_winds_consolidated(void)
                 double lm_ssp = evaluate_light_to_mass_ratio(star_age, i); // light-to-mass ratio in solar
                 double lum_cgs = (lm_ssp * SOLAR_LUM_CGS) * (P[i].Mass*UNIT_MASS_IN_SOLAR); // total L in CGS of star particle
                 double f_lum_ion = particle_ionizing_luminosity_in_cgs(i) / lum_cgs; f_lum_ion=DMAX(0.,DMIN(1.,f_lum_ion)); // fraction of luminosity in H-ionizing radiation
-                double dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i);
+                double dt = get_particle_feedback_timestep_in_physical(i);
                 if(dt <= 0 || !isfinite(dt)) {continue;}
                 double dE_over_c = All.RP_Local_Momentum_Renormalization * lum_cgs * (dt*UNIT_TIME_IN_CGS) / C_LIGHT_CGS; // total photon momentum emitted in timestep, in CGS (= L*dt/c)
                 dE_over_c /= (UNIT_MASS_IN_CGS * UNIT_VEL_IN_CGS); // total photon momentum now in code units
@@ -90,7 +90,7 @@ void radiation_pressure_winds_consolidated(void)
                                     Vec3<double> dp = P[j].Pos - P[i].Pos;
                                     nearest_xyz(dp); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
                                     if(r2>=h*h || r2<=0) {continue;}
-                                    double h_eff_j = Get_Particle_Size(j); wt_sum += h_eff_j*h_eff_j; // weight factor for neighbors
+                                    double h_eff_j = P[j].Get_Particle_Size(); wt_sum += h_eff_j*h_eff_j; // weight factor for neighbors
                                 } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */
                             } /* for(n=0; n<numngb_inbox; n++) */
                             if(wt_sum <= 0) {h*= 1.2123212335; startnode=All.MaxPart;} /* wt_sum <= 0; no particles found inside corners - expand */
@@ -117,7 +117,7 @@ void radiation_pressure_winds_consolidated(void)
                                 Vec3<double> dp = P[j].Pos - P[i].Pos;
                                 nearest_xyz(dp); double r2 = dp.norm_sq(); /* find the closest image in the given box size */
                                 if(r2>=h*h || r2<=0) {continue;}
-                                double h_eff_i = DMIN(h, Get_Particle_Size(i)), h_eff_j = Get_Particle_Size(j);
+                                double h_eff_i = DMIN(h, P[i].Get_Particle_Size()), h_eff_j = P[j].Get_Particle_Size();
                                 r2 += MIN_REAL_NUMBER + (h_eff_i/5.)*(h_eff_i/5.); // just a small number to prevent errors on near-overlaps
                                 double wk = h_eff_j*h_eff_j / wt_sum; // dimensionless weight factor
 
@@ -236,7 +236,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 #endif
         {
             if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) {continue;};
-            dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i);
+            dt = get_particle_feedback_timestep_in_physical(i);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
             if(P[i].Type == 5) {dt = P[i].dt_since_last_gas_search;}
 #endif

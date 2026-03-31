@@ -2,7 +2,7 @@
 #ifdef DM_SIDM
 {
     /* check if target+neighbor are an SIDM candidate, and against self-interaction */
-    double Pj_dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+    double Pj_dtime = get_particle_timestep_in_physical(j);
     if( ((1 << local.Type) & (DM_SIDM)) && ((1 << P[j].Type) & (DM_SIDM)) && (local.ID != P[j].ID) && (local.dtime <= Pj_dtime))
     {
         if((local.dtime==Pj_dtime) && (local.ID > P[j].ID)) continue; // ensures interaction will only be calculated once for each pair //

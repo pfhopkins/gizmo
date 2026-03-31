@@ -86,7 +86,7 @@ void dynamic_diff_vel_calc_initial_operations_preloop(void)
     for (int i : ActiveParticleList) {
         if (P[i].Type == 0) {
             CellP[i].Norm_hat = 0;
-            CellP[i].h_turb = Get_Particle_Size(i); // All.cf_atime unnecessary, will multiply later
+            CellP[i].h_turb = P[i].Get_Particle_Size(); // All.cf_atime unnecessary, will multiply later
             CellP[i].FilterWidth_bar = 0;
             CellP[i].MaxDistance_for_grad = 0;
             CellP[i].Velocity_bar = CellP[i].VelPred / All.TurbDynamicDiffSmoothing;

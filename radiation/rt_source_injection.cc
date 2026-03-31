@@ -54,7 +54,7 @@ void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
     int active_check = rt_get_source_luminosity(i,0,lum, P, CellP);
     double dt = 1; // make this do nothing unless flags below are set:
 #if defined(RT_INJECT_PHOTONS_DISCRETELY)
-    dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i);
+    dt = get_particle_feedback_timestep_in_physical(i);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
     if(P[i].Type == 5) {dt = P[i].dt_since_last_gas_search;}
 #endif
@@ -205,7 +205,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 
 #if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) || defined(RT_REPROCESS_INJECTED_PHOTONS)
                     // add discrete photon momentum from un-resolved absorption //
-                    double x_abs = 2. * CellP[j].Rad_Kappa[k] * (CellP[j].Density*All.cf_a3inv) * (DMAX(2.*Get_Particle_Size(j), DMAX(local.KernelRadius, r))) * All.cf_atime; // effective optical depth through particle
+                    double x_abs = 2. * CellP[j].Rad_Kappa[k] * (CellP[j].Density*All.cf_a3inv) * (DMAX(2.*P[j].Get_Particle_Size(), DMAX(local.KernelRadius, r))) * All.cf_atime; // effective optical depth through particle
                     double slabfac_x = x_abs * slab_averaging_function(x_abs); // 1-exp(-x)
                     if(isnan(slabfac_x)||(slabfac_x<=0)) {slabfac_x=0;} else if(slabfac_x>1) {slabfac_x=1;}
 #if !defined(RT_DISABLE_RAD_PRESSURE) && defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION)
@@ -237,7 +237,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                             stellum *= 1. / (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) / local.Dt * UNIT_LUM_IN_CGS; // convert energy to luminosity in cgs
                         }
                         double RHII = 4.01e-9*pow(stellum,0.333)*pow(local.Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS,-0.66667) / UNIT_LENGTH_IN_CGS;
-                        if(DMAX(r, Get_Particle_Size(j))*All.cf_atime < RHII) {do_donation = 0;} // don't inject ionizing photons outside the Stromgren radius
+                        if(DMAX(r, P[j].Get_Particle_Size())*All.cf_atime < RHII) {do_donation = 0;} // don't inject ionizing photons outside the Stromgren radius
                     }
 #endif
 #ifdef RT_INFRARED

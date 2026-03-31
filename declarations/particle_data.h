@@ -352,6 +352,25 @@ extern ALIGN(32) struct particle_data
     CBE_basis_moments_Gradients[CBE_INTEGRATOR_NBASIS][3]; /* gradients of the scalar weight of each basis function */
 #endif
 #endif
+
+    /* member functions */
+    inline integertime integertime_step() const { /*!< integer timestep for this particle */
+#ifndef WAKEUP
+        return GET_INTEGERTIME_FROM_TIMEBIN(TimeBin);
+#else
+        return dt_step;
+#endif
+    }
+
+    inline double Get_Particle_Size() const { /*!< effective particle/cell size from kernel radius and neighbor number */
+#if (NUMDIMS == 1)
+        return 2.00000 * KernelRadius / NumNgb; // (2)^(1/1)
+#elif (NUMDIMS == 2)
+        return 1.77245 * KernelRadius / NumNgb; // (pi)^(1/2)
+#else
+        return 1.61199 * KernelRadius / NumNgb; // (4pi/3)^(1/3)
+#endif
+    }
 }
 *P,                /*!< holds particle data on local processor */
 *DomainPartBuf;        /*!< buffer for particle data used in domain decomposition */

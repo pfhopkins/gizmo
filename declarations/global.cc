@@ -48,8 +48,8 @@ void compute_global_quantities_of_system(void)
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY)
         sys.EnergyPotComp[P[i].Type] += 0.5 * P[i].Mass * P[i].Potential / a1;
 #endif
-        integertime dt_integerstep = GET_PARTICLE_INTEGERTIME(i);
-        dt_entr = dt_hydrokick = (All.Ti_Current - (P[i].Ti_begstep + dt_integerstep / 2)) * UNIT_INTEGERTIME_IN_PHYSICAL(i);
+        integertime dt_integerstep = P[i].integertime_step();
+        dt_entr = dt_hydrokick = (All.Ti_Current - (P[i].Ti_begstep + dt_integerstep / 2)) * unit_integertime_in_physical(i);
         dt_gravkick = get_gravkick_factor((P[i].Ti_begstep + dt_integerstep / 2), All.Ti_Current, i, 0);
 
         vel = P[i].Vel + P[i].GravAccel * dt_gravkick;
@@ -152,14 +152,6 @@ double sigmoid_sqrt(double x)
 }
 
 /* Returns the Frobenius norm of the velocity gradient in physical units */
-double velocity_gradient_norm(int i)
-{
-    double dv2=0; int j,k; for(j=0;j<3;j++) {for(k=0;k<3;k++) {double vt = CellP[i].Gradients.Velocity[j][k]*All.cf_a2inv; /* physical velocity gradient */
-        if(All.ComovingIntegrationOn) {if(j==k) {vt += All.cf_hubble_a;}} /* add hubble-flow correction */
-        dv2 += vt*vt;}} // calculate magnitude of the velocity shear across cell from || grad -otimes- v ||^(1/2)
-    return sqrt(dv2);
-}
-
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 int is_particle_a_special_zoom_target(int i)
@@ -173,63 +165,4 @@ int is_particle_a_special_zoom_target(int i)
 
 
 
-/* timestep dilation factor for computing quantities in zoom-in runs with variable extreme dynamic range */
-double return_timestep_dilation_factor(int i, int mode)
-{
-#if !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
-    return 1;
-#else
-    
-    if(All.Time <= All.TimeBegin) {return 1;}
-    if(i < 0) {return 1;}
-#ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
-    if(mode != 0) {return 1;}
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    if(P[i].Type != 4 && P[i].Type != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {return 1;} /* only do cosmological 'stars' type -and- the special smoothing-source-types */
-#else
-    if(P[i].Type != 4) {return 1;} /* only do cosmological 'stars' type */
-#endif
-#endif
-    
-    /* now specify some dilation factor a(r) or otherwise */
-    double a = 1;
-    
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    double r = P[i].Min_Distance_to_Sink;
-    if(P[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {r = 0;}
-    double wt = weight_function_for_weighted_motion_smoothing(r, 0);
-    if(wt > 0 && wt < 1) {a = 1. / wt;}
-#endif
-
-#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-    double fac_amax = 100.;
-#ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES
-#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
-    fac_amax = 1.e6;
-#endif
-#endif
-    double amax = fac_amax;
-    double r_amax = fac_amax * All.ForceSoftening[3]; // modify as needed
-    double index = 1;
-    int j, k; double rmin = MAX_REAL_NUMBER, r=0, a=1;
-    for(j=0;j<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;j++)
-    {
-        Vec3<double> p0 = All.SpecialParticle_Position_ForRefinement[j];
-        Vec3<double> pos_i;
-        if(mode==0) {pos_i = P[i].Pos;} /* the reference index refers to a real particle */
-            else {pos_i = Nodes[i].u.d.s;} /* the reference index refers to a node or pseudo-particle */
-        Vec3<double> dp = All.cf_atime * (pos_i - p0);
-        r = dp.norm(); if(r < rmin) {rmin = r;}
-    }
-    r = rmin;
-#if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 3)
-    if(mode==0) {r = sqrt(P[i].Pos[0]*P[i].Pos[0] + P[i].Pos[1]*P[i].Pos[1] + P[i].Pos[2]*P[i].Pos[2]);}
-#endif
-    if(r < 1.e-10 || isnan(r) || isfinite(r)==0) {r = 1.e-10;}
-    a = 1. + 1. / (1./amax + pow(r / r_amax, index));
-#endif
-    
-    return 1. / a;
-#endif
-}
 

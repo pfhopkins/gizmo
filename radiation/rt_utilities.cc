@@ -776,7 +776,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX) && !defined(RT_RADPRESSURE_IN_HYDRO)
             // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
             {
-                double radacc[3]={0}, rmag=0, vel_i[3], L_particle = Get_Particle_Size(i)*All.cf_atime; // particle effective size/slab thickness
+                double radacc[3]={0}, rmag=0, vel_i[3], L_particle = pp[i].Get_Particle_Size()*All.cf_atime; // particle effective size/slab thickness
                 double Sigma_particle = cell[i].Mass / (M_PI*L_particle*L_particle), abs_per_kappa_dt = C_LIGHT_CODE_REDUCED * (cell[i].Density*All.cf_a3inv) * dt_entr; // effective surface density through particle & fractional absorption over timestep
                 double f_kappa_abs = rt_absorb_frac_albedo(i,kf, pp, cell); // get albedo, we'll need this below
                 double slabfac_rp=1; if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kf)==0) {slabfac_rp=slab_averaging_function(f_kappa_abs*cell[i].Rad_Kappa[kf]*Sigma_particle) * slab_averaging_function(f_kappa_abs*cell[i].Rad_Kappa[kf]*abs_per_kappa_dt);} // reduction factor for absorption over dt
@@ -1296,7 +1296,7 @@ Returns
 dE - net dust heating (=0 for dust in equilibrium)
 */
 double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
-    double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+    double dt = get_particle_timestep_in_physical(i, pp);
     double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * cell[i].Density * All.cf_a3inv / PROTONMASS_CGS;
     double lambda_to_dErad = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs * (dt*UNIT_TIME_IN_CGS) / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
     

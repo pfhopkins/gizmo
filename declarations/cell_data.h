@@ -489,6 +489,34 @@ extern struct gas_cell_data
         return sqrt(soundspeed2_from_u(InternalEnergyPred));
     }
 
+    inline double effective_soundspeed() const { /*!< effective soundspeed including non-thermal contributions */
+#ifdef EOS_GENERAL
+        return SoundSpeed;
+#else
+        return sqrt(gamma_eos_value() * Pressure / density_for_energy());
+#endif
+    }
+
+    inline double fast_MHD_wavespeed() const { /*!< fast MHD wave speed: sqrt(cs^2 + vA^2) */
+        double cs = thermal_soundspeed(), vA = Alfven_speed();
+        return sqrt(cs*cs + vA*vA);
+    }
+
+    inline double rt_photon_number_density(int k) const { /*!< photon number density for RT band k */
+#ifdef RT_CHEM_PHOTOION
+        return Rad_E_gamma[k] * (Density*All.cf_a3inv/Mass) / (rt_nu_eff_eV[k]*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+#else
+        return 0;
+#endif
+    }
+
+    inline double velocity_gradient_norm() const { /*!< magnitude of velocity gradient tensor |grad v| in physical units */
+        double dv2=0; for(int j=0;j<3;j++) {for(int k=0;k<3;k++) {double vt = Gradients.Velocity[j][k]*All.cf_a2inv;
+            if(All.ComovingIntegrationOn) {if(j==k) {vt += All.cf_hubble_a;}}
+            dv2 += vt*vt;}}
+        return sqrt(dv2);
+    }
+
     inline double Alfven_speed() const { /*!< Alfven speed */
 #if defined(MAGNETIC)
         double bmag = (Bfield() * All.cf_a2inv).norm_sq();

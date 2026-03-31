@@ -397,8 +397,8 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->Density = CellP[i].Density;
     in->Pressure = CellP[i].Pressure;
     in->InternalEnergyPred = CellP[i].InternalEnergyPred;
-    in->SoundSpeed = Get_Gas_effective_soundspeed_i(i, CellP);
-    in->dt_hydrostep_i = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+    in->SoundSpeed = CellP[i].effective_soundspeed();
+    in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -650,7 +650,7 @@ void hydro_final_operations_and_cleanup(void)
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
         {
-            double dt; dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+            double dt; dt = get_particle_timestep_in_physical(i);
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* signal velocity needs to include rate of gas flow -over- the resolution element, which can be non-zero here */
@@ -681,7 +681,7 @@ void hydro_final_operations_and_cleanup(void)
             for(k=0; k<3; k++)
             {
                 DtB_UnCorr += CellP[i].DtB[k] * CellP[i].DtB[k]; // physical units //
-                db_vsig_h = db_vsig_h_norm * (CellP[i].BPred[k]*All.cf_atime) * (0.5*CellP[i].MaxSignalVel) / (Get_Particle_Size(i)*All.cf_atime);
+                db_vsig_h = db_vsig_h_norm * (CellP[i].BPred[k]*All.cf_atime) * (0.5*CellP[i].MaxSignalVel) / (P[i].Get_Particle_Size()*All.cf_atime);
                 DtB_UnCorr += db_vsig_h * db_vsig_h;
                 DtB_PhiCorr += CellP[i].DtB_PhiCorr[k] * CellP[i].DtB_PhiCorr[k];
             }
@@ -765,7 +765,7 @@ void hydro_final_operations_and_cleanup(void)
                     flux_corr = flux_thin/flux_mag; // set to maximum (optically thin limit)
 #endif
                 }
-                double L_particle=Get_Particle_Size(i)*All.cf_atime, Sigma_particle=P[i].Mass/(M_PI*L_particle*L_particle), abs_per_kappa_dt=C_LIGHT_CODE_REDUCED*(CellP[i].Density*All.cf_a3inv)*dt; // effective surface density through particle & fractional absorption over timestep
+                double L_particle=P[i].Get_Particle_Size()*All.cf_atime, Sigma_particle=P[i].Mass/(M_PI*L_particle*L_particle), abs_per_kappa_dt=C_LIGHT_CODE_REDUCED*(CellP[i].Density*All.cf_a3inv)*dt; // effective surface density through particle & fractional absorption over timestep
                 int checker_int = 0; // normal default: only use the corrections below for bands which dont re-emit to the same band
                 checker_int = 1; // actually here and above now changed to use the slabfac corrections for all bands. in the resolved limit this should still be correct because the re-emitted photons should be isotropic: otherwise you run into linear momentum conservation problems. this is only an issue if the source is at the center of the distribution.
                 double slabfac_rp=1; if(check_if_absorbed_photons_can_be_reemitted_into_same_band(kfreq)<=checker_int) {slabfac_rp=slab_averaging_function(f_kappa_abs*CellP[i].Rad_Kappa[kfreq]*Sigma_particle) * slab_averaging_function(f_kappa_abs*CellP[i].Rad_Kappa[kfreq]*abs_per_kappa_dt);} // reduction factor for absorption over dt

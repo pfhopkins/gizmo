@@ -748,7 +748,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->Mass = P[i].Mass;
     in->AGS_KernelRadius = P[i].AGS_KernelRadius;
     in->Type = P[i].Type;
-    in->dtime = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+    in->dtime = get_particle_timestep_in_physical(i);
     int k,k2; k=0; k2=0;
     in->Pos = P[i].Pos;
     in->Vel = P[i].Vel;
@@ -928,7 +928,7 @@ void AGSForce_calc(void)
     PRINT_STATUS(" ..entering AGS-Force calculation [as hydro loop for non-gas elements]\n");
     /* before doing any operations, need to zero the appropriate memory so we can correctly do pair-wise operations */
 #if defined(DM_SIDM)
-    {int i; for (int i : ActiveParticleList) {P[i].dtime_sidm = 10.*GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);}}
+    {int i; for (int i : ActiveParticleList) {P[i].dtime_sidm = 10.*get_particle_timestep_in_physical(i);}}
 #endif
 #ifdef CBE_INTEGRATOR
     /* need to zero values for active particles (which will be re-calculated) before they are added below */

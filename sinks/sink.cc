@@ -124,7 +124,7 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
 #endif
     if(gas_density > 0)
     {
-        if((Get_Particle_Size(j) > sink_radius*1.396263) && (P[j].Type == 0)) {return 0;} // particle volume should be less than sink volume, enforcing a minimum spatial resolution around the sink
+        if((P[j].Get_Particle_Size() > sink_radius*1.396263) && (P[j].Type == 0)) {return 0;} // particle volume should be less than sink volume, enforcing a minimum spatial resolution around the sink
 #if defined(COOLING)  // check if we're probably sitting at the bottom of a quasi-hydrostatic Larson core
         double nHcgs = HYDROGEN_MASSFRAC * (gas_density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
         if(nHcgs > 1e13 && (cs > 0.1 * vrel || P[j].Type != 0)) {double m_eff = 4. * M_PI * dr_code * dr_code * dr_code * gas_density; vesc = DMAX(sqrt(2*All.G * m_eff / dr_code), vesc);} // assume an isothermal sphere interior, for Shu-type solution, and re-estimate vesc using self-gravity of the gas
@@ -700,7 +700,7 @@ void sink_final_operations(void)
             if(P[n].Sink_PotentialMinimumOfNeighbors < 0.5 * SINK_MINPOTVALUE_INIT)
             {
                 double fac_sink_shift=0;
-                dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(n);
+                dt = get_particle_feedback_timestep_in_physical(n);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
                 dt = P[n].dt_since_last_gas_search;
 #endif
@@ -781,7 +781,7 @@ void sink_final_operations(void)
 
         /* Correct for the mass loss due to radiation and BAL winds */
         /* always substract the radiation energy from P[n].Sink_Mass && P[n].Mass */
-        dt = GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(n);
+        dt = get_particle_feedback_timestep_in_physical(n);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         dt = P[n].dt_since_last_gas_search;
 #endif

@@ -50,7 +50,7 @@ void do_first_halfstep_kick(void)
         {
             if(P[i].Mass > 0)
             {
-                ti_step = GET_PARTICLE_INTEGERTIME(i);
+                ti_step = P[i].integertime_step();
                 tstart = P[i].Ti_begstep;	/* beginning of step */
                 tend = P[i].Ti_begstep + ti_step / 2;	/* midpoint of step */
                 do_the_kick(i, tstart, tend, P[i].Ti_current, 0);
@@ -86,7 +86,7 @@ void do_second_halfstep_kick(void)
         {
             if(P[i].Mass > 0)
             {
-                ti_step = GET_PARTICLE_INTEGERTIME(i);
+                ti_step = P[i].integertime_step();
                 tstart = P[i].Ti_begstep + ti_step / 2;	/* midpoint of step */
                 tend = P[i].Ti_begstep + ti_step;	/* end of step */
                 do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
@@ -111,7 +111,7 @@ int eligible_for_hermite(int i)
     if((1 << P[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
 #endif
 #if defined(SINK_PARTICLES) || defined(GALSF)
-    if(P[i].StellarAge >= DMAX(All.Time - 2*(GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
+    if(P[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
     if(P[i].AccretedThisTimestep) {return 0;}
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -131,7 +131,7 @@ void do_hermite_prediction(void)
     for (int i : ActiveParticleList) {
 	if(eligible_for_hermite(i)) { /* check if we're actually eligible */
 	    if(P[i].Mass > 0) { /* skip massless particles scheduled for deletion */
-		ti_step = GET_PARTICLE_INTEGERTIME(i);
+		ti_step = P[i].integertime_step();
 		tstart = P[i].Ti_begstep;    /* beginning of step */
 		tend = P[i].Ti_begstep + ti_step;    /* end of step */
             double dt_grav = get_gravkick_factor(tstart, tend, i, 0);
@@ -157,7 +157,7 @@ void do_hermite_correction(void) // corrector step
     for (int i : ActiveParticleList) {
 	if(eligible_for_hermite(i)){
                 if(P[i].Mass > 0) {
-                    ti_step = GET_PARTICLE_INTEGERTIME(i);
+                    ti_step = P[i].integertime_step();
                     tstart = P[i].Ti_begstep;    /* beginning of step */
                     tend = P[i].Ti_begstep + ti_step;    /* end of step */
                     double dt_grav = get_gravkick_factor(tstart, tend, i, 0);
@@ -212,7 +212,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             double dMass=0; // fraction of delta_conserved to couple per kick step (each 'kick' is 1/2-timestep) // double dv[3], v_old[3], dMass, ent_old=0, d_inc = 0.5;
             if(mode != 0) // update the --conserved-- variables of each particle //
             {
-                dMass = ((tend - tstart) * UNIT_INTEGERTIME_IN_PHYSICAL(i)) * CellP[i].DtMass; if(dMass * CellP[i].dMass < 0) {dMass = 0;} // slope-limit: no opposite reconstruction! //
+                dMass = ((tend - tstart) * unit_integertime_in_physical(i)) * CellP[i].DtMass; if(dMass * CellP[i].dMass < 0) {dMass = 0;} // slope-limit: no opposite reconstruction! //
                 if((fabs(dMass) > fabs(CellP[i].dMass))) {dMass = CellP[i].dMass;} // try to get close to what the time-integration scheme would give //
                 CellP[i].dMass -= dMass;
             } else {dMass = CellP[i].dMass;}
@@ -239,7 +239,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
     if(TimeBinActive[P[i].TimeBin])
     {
         /* get the timestep (physical units for dt_entr and dt_hydrokick) */
-        dt_entr = dt_hydrokick = (tend - tstart) * UNIT_INTEGERTIME_IN_PHYSICAL(i);
+        dt_entr = dt_hydrokick = (tend - tstart) * unit_integertime_in_physical(i);
         dt_gravkick = get_gravkick_factor(tstart, tend, i, 0);
         
         if(P[i].Type==0)
@@ -274,7 +274,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
              serious errors if this tripped when the B-fields were important */
             double e_thermal,e_kinetic,e_potential;
             e_potential = grav_acc.norm_sq();
-            e_potential = P[i].Mass * sqrt(e_potential) * (Get_Particle_Size(i)*All.cf_atime); // = M*|a_grav|*h (physical)
+            e_potential = P[i].Mass * sqrt(e_potential) * (P[i].Get_Particle_Size()*All.cf_atime); // = M*|a_grav|*h (physical)
             e_kinetic = 0.5 * P[i].Mass * All.cf_a2inv * CellP[i].MaxKineticEnergyNgb;
             e_thermal = DMAX(0.5*CellP[i].InternalEnergy, dEnt) * P[i].Mass;
 #ifdef MAGNETIC
@@ -292,7 +292,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             //  both are not needed. we find slightly cleaner results on that test keeping the gravity and removing the KE switch
             
             // also check for flows which are totally dominated by the adiabatic component of their temperature evolution //
-            // double mach = fabs(CellP[i].MaxSignalVel/Get_Gas_effective_soundspeed_i(i, CellP) - 2.0); //
+            // double mach = fabs(CellP[i].MaxSignalVel/CellP[i].effective_soundspeed() - 2.0); //
             // if(mach < 1.1) {do_entropy=1;} // (actually, this switch tends to do more harm than good!) //
             //do_entropy = 0; // seems unstable in tests like interacting blastwaves... //
             if(do_entropy)
@@ -317,7 +317,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,P[i].Particle_DivVel*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
             if(CellP[i].FaceClosureError > 0) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
                 if(drho2>0 && CellP[i].Density_ExplicitInt>0 && CellP[i].Density>0) {
-                    double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=Get_Gas_effective_soundspeed_i(i, CellP); /* gradient scale length and sound speed */
+                    double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=CellP[i].effective_soundspeed(); /* gradient scale length and sound speed */
 #if defined(EOS_TILLOTSON)
                     cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
 #endif
@@ -467,7 +467,7 @@ void set_predicted_quantities_for_extra_physics(int i)
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor;
 #endif
         
-        set_eos_pressure(i, CellP);
+        set_eos_pressure(i, P, CellP);
     }
 }
 
@@ -486,7 +486,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     if(CellP[i].Density > 0)
     {
         /* now we're going to check for physically reasonable phi values */
-        double cs_phys = Get_Gas_effective_soundspeed_i(i, CellP);
+        double cs_phys = CellP[i].effective_soundspeed();
         double b_phys = sqrt(CellP[i].Bfield().norm_sq())*All.cf_a2inv;
         double vsig1 = sqrt(cs_phys*cs_phys + b_phys*b_phys/(CellP[i].Density*All.cf_a3inv));
         double vsig2 = 0.5 * fabs(CellP[i].MaxSignalVel);
