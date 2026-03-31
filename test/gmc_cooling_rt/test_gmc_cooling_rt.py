@@ -112,11 +112,16 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize("extra_config_flags", [
+    (),
+    ("TRANSPORT_SUBCYCLE=10",),
+    ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
+], ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"])
+def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling_rt"
     test_dir = "test/gmc_cooling_rt"
     get_cooling_tables(test_dir)
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
     final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 
