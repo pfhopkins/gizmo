@@ -522,14 +522,6 @@ extern struct gas_cell_data
         return {};
     }
 
-#ifdef COSMIC_RAY_FLUID
-    inline double CosmicRayPressure(int k_CRegy) const { /*!< CR pressure in bin k_CRegy */
-        if((Mass > 0) && (Density > 0) && (CosmicRayEnergyPred[k_CRegy] > 0)) {
-            return (GAMMA_COSMICRAY(k_CRegy)-1.) * (CosmicRayEnergyPred[k_CRegy] * Density) / Mass;
-        }
-        return 0;
-    }
-#endif
 
     inline double Urad_eVcm3() const { /*!< radiation energy density in eV/cm^3 */
         double erad = 0.26*All.cf_a3inv/All.cf_atime;
