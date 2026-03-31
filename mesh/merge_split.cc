@@ -971,9 +971,11 @@ int merge_particles_ij(int i, int j)
         CellP[j].CosmicRayFlux[k_CRegy] += CellP[i].CosmicRayFlux[k_CRegy];
         CellP[j].CosmicRayFluxPred[k_CRegy] += CellP[i].CosmicRayFluxPred[k_CRegy];
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-        CellP[j].CosmicRayAlfvenEnergy[k_CRegy] += CellP[i].CosmicRayAlfvenEnergy[k_CRegy];
-        CellP[j].CosmicRayAlfvenEnergyPred[k_CRegy] += CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy];
-        CellP[j].DtCosmicRayAlfvenEnergy[k_CRegy] += CellP[i].DtCosmicRayAlfvenEnergy[k_CRegy];
+        int kAlfDir; for(kAlfDir=0; kAlfDir<2; kAlfDir++) {
+            CellP[j].CosmicRayAlfvenEnergy[k_CRegy][kAlfDir] += CellP[i].CosmicRayAlfvenEnergy[k_CRegy][kAlfDir];
+            CellP[j].CosmicRayAlfvenEnergyPred[k_CRegy][kAlfDir] += CellP[i].CosmicRayAlfvenEnergyPred[k_CRegy][kAlfDir];
+            CellP[j].DtCosmicRayAlfvenEnergy[k_CRegy][kAlfDir] += CellP[i].DtCosmicRayAlfvenEnergy[k_CRegy][kAlfDir];
+        }
 #endif
     }
 #endif

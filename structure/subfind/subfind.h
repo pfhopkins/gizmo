@@ -50,8 +50,7 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
 void subfind_density(int j);
 void Subfind_DensityOtherProps_Loop(void);
 int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_local);
-double subfind_ovderdens_treefind(Vec3<double> *searchcenter, MyFloat rkern, int target, int *startnode,
-				  int mode, int *nexport, int *nsend_local);
+double subfind_ovderdens_treefind(Vec3<double>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *nexport, int *nsend_local);
 void subfind_save_densities(int num);
 void subfind_save_local_densities(int num);
 void subfind_setup_smoothinglengths(int j);

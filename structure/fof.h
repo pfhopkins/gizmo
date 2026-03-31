@@ -73,7 +73,7 @@ typedef struct
 #ifdef SUBFIND
   int Nsubs;
   int FirstSub;
-  MyDouble Pos[3];
+  Vec3<MyDouble> Pos;
   int ContaminationLen;
   MyOutputFloat ContaminationMass;
   struct Subfind_DensityOtherPropsEval_data_out SubHaloProps_vsDelta[SUBFIND_ADDIO_NUMOVERDEN];

@@ -314,9 +314,13 @@ void add_along_lines_of_sight(void)
 		      while(bin < 0)
                   bin += PIXELS;
 
+#ifdef COOLING
               utherm = DMAX(All.MinEgySpec, CellP[i].InternalEnergyPred);
               double mu_in = 1, nHe0, nHepp, nhp;
               temp = ThermalProperties(utherm, CellP[n].Density * All.cf_a3inv, n, &mu_in, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
+#else
+              temp = CellP[n].InternalEnergyPred * (GAMMA_DEFAULT - 1) * U_TO_TEMP_UNITS;
+#endif
 
 		      /* do total gas */
 		      weight = P[n].Mass * wk;

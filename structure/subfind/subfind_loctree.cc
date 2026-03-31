@@ -433,9 +433,9 @@ int subfind_locngb_treefind_variable(Vec3<double>& searchcenter, double hguess)
 	  p = no;
 	  no = Nextnode[no];
 
-	  dx = P[p].Pos[0] - searchcenter->x;
-	  dy = P[p].Pos[1] - searchcenter->y;
-	  dz = P[p].Pos[2] - searchcenter->z;
+	  dx = P[p].Pos[0] - searchcenter[0];
+	  dy = P[p].Pos[1] - searchcenter[1];
+	  dz = P[p].Pos[2] - searchcenter[2];
         NEAREST_XYZ(dx,dy,dz,-1);
 
         if(dx < -hguess)
@@ -468,9 +468,9 @@ int subfind_locngb_treefind_variable(Vec3<double>& searchcenter, double hguess)
 
 	  no = Nodes[no].u.d.sibling;	/* in case the node can be discarded */
 
-        dx = that->center[0] - searchcenter->x;
-        dy = that->center[1] - searchcenter->y;
-        dz = that->center[2] - searchcenter->z;
+        dx = that->center[0] - searchcenter[0];
+        dy = that->center[1] - searchcenter[1];
+        dz = that->center[2] - searchcenter[2];
           NEAREST_XYZ(dx,dy,dz,-1);
 
 
