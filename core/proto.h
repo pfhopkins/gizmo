@@ -309,15 +309,15 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
 double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_cooling_and_gas_heating(int target, double n_elec, double nH_cgs, double dtime_cgs, int mode);
-double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target);
+double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
 void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
 double return_CRbin_M1speed(int k_CRegy);
 double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
 double INLINE_FUNC Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell);
 double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
-double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag);
-double diffusion_coefficient_constant(int target, int k_CRegy);
+double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell);
+double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell);
 double diffusion_coefficient_extrinsic_turbulence(int mode, int target, int k_CRegy, double M_A, double L_scale, double b_muG, double vA_noion, double rho_cgs, double temperature, double cs_thermal, double nh0, double nHe0, double f_ion);
 double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy, double M_A, double L_scale, double b_muG, double vA_noion, double rho_cgs, double temperature, double cs_thermal, double nh0, double nHe0, double f_ion);
 double return_CRbin_CR_energies_in_GeV(int target, int k_CRegy);
@@ -330,9 +330,9 @@ double return_CRbin_beta_factor(int target, int k_CRegy);
 void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double return_CRbin_CRmass_in_mp(int target, int k_CRegy);
 double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy);
-double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy);
-double Get_Gas_ion_Alfven_speed_i(int i);
-double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy);
+double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct gas_cell_data *cell);
+double Get_Gas_ion_Alfven_speed_i(int i, struct gas_cell_data *cell);
+double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct gas_cell_data *cell);
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
 void CR_spectrum_define_bins(void);
 void CR_initialize_multibin_quantities(void);
@@ -343,12 +343,12 @@ double CR_coulomb_energy_integrand(double x, double tau, double slope);
 double CR_reaccel_energy_integrand(double x, double tau, double slope, double delta_slope, int NR_key);
 double CR_compton_energy_integrand(double x, double tau, double slope);
 int CR_check_if_bin_is_nonrelativistic(int k_bin);
-double CR_return_true_number_in_bin(int target, int k_bin);
-double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin);
-double CR_return_spectral_slope_target(int target, int k_bin);
+double CR_return_true_number_in_bin(int target, int k_bin, struct gas_cell_data *cell);
+double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell);
+double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell);
 double CR_get_number_in_bin_from_slope(int target, int k_bin, double energy, double slope);
-double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin);
-double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin);
+double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin, struct gas_cell_data *cell);
+double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell);
 int compare_CR_rigidity_for_sort(const void *a, const void *b);
 double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CRegy);
 #endif
@@ -734,8 +734,8 @@ void disp_density(void);
 
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-double cr_get_source_injection_rate(int i);
-double cr_get_source_shieldfac(int i);
+double cr_get_source_injection_rate(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double cr_get_source_shieldfac(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 
 
@@ -789,6 +789,7 @@ void gravity_tree(void);
 void hydro_force(void);
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
+double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
