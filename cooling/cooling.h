@@ -28,6 +28,6 @@ void   IonizeParamsFunction(void);
 void   IonizeParamsTable(void);
 //double INLINE_FUNC LogTemp(double u, double ne);
 void   MakeCoolingTable(void);
-void   ReadIonizeParams(char *fname);
+void   ReadIonizeParams(const char *fname);
 void   SetZeroIonization(void);
 #endif

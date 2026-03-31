@@ -803,12 +803,12 @@ MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp,
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
-MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, char *ion_name, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_slec, MyFloat shieldfac, const char *ion_name, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct gas_cell_data *cell);
 MyFloat total_ionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell);
 MyFloat cosmic_ray_ionization_rate_C(int i, struct gas_cell_data *cell);
 MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct gas_cell_data *cell);
-int ion_name_to_index(char *ion_name);
+int ion_name_to_index(const char *ion_name, struct gas_cell_data *cell);
 double get_starformation_rate(int i, int mode);
 void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double tsfr, double cloudmass_fraction, double rateOfSF);
 void init_clouds(void);

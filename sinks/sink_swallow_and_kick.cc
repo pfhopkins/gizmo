@@ -823,7 +823,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef SINK_ALPHADISK_ACCRETION
                 P[i].Sink_Mass_Reservoir = 0; // just to be safe
 #endif
-                if(P[i].Sink_Mass > 0 && P[i].Sink_Mass > P[i].Sink_Formation_Mass) {P[i].ProtoStellarStage == 7;} // this is a relic now, move it to the next stage
+                if(P[i].Sink_Mass > 0 && P[i].Sink_Mass > P[i].Sink_Formation_Mass) {P[i].ProtoStellarStage = 7;} // this is a relic now, move it to the next stage
 	    }
 	}
     }

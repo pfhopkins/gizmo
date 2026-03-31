@@ -1526,7 +1526,7 @@ static double eH0[TABLESIZE], eHe[TABLESIZE], eHep[TABLESIZE]; // upgrade from f
 static int nheattab;		/* length of table */
 
 
-void ReadIonizeParams(char *fname)
+void ReadIonizeParams(const char *fname)
 {
     int i; FILE *fdcool;
     if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456);}

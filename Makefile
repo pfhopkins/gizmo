@@ -210,7 +210,7 @@ CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  $(CC) #mpifort  ## change this to "mpifort" for packages requiring linking secondary fortran code, currently -only- the helmholtz eos modules do this, so I leave it un-linked for now to save people the compiler headaches
 OPTIMIZE = -O3 -funroll-loops -ffast-math -march=native -flto 
-#OPTIMIZE += -g -Wall # compiler warnings
+OPTIMIZE += -Wno-unused-command-line-argument ## -g -Wall # compiler warnings
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CXX     = mpic++
 CHIMESINCL = -I/usr/local/include/sundials

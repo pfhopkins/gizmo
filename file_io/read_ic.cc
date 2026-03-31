@@ -681,6 +681,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_DUSTCHEM_COAG_MASSRATE:
         case IO_DUSTCHEM_SHAT_MASSRATE:
         case IO_MACHNUM:
+        case IO_DUST_TO_GAS:
+        case IO_AMBIPOLAR:
+        case IO_OHMIC:
+        case IO_HALL:
+        case IO_SOFT:
+        case IO_SHOCKMACHNUM:
             break;
 
         case IO_LASTENTRY:

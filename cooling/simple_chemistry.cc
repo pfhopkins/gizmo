@@ -40,9 +40,9 @@ MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac,
 }
 
 #define NUM_RECOMB_TABLE_IONS 12
-char *ion_names[NUM_RECOMB_TABLE_IONS] = {"H+", "He+", "C+", "Na+", "Mg+", "Si+", "S+", "K+", "Ca+", "Mn+", "Fe+", "Ca++"};
+const char *ion_names[NUM_RECOMB_TABLE_IONS] = {"H+", "He+", "C+", "Na+", "Mg+", "Si+", "S+", "K+", "Ca+", "Mn+", "Fe+", "Ca++"};
 
-int ion_name_to_index(char *ion_name, struct gas_cell_data *cell)
+int ion_name_to_index(const char *ion_name, struct gas_cell_data *cell)
 {
     for (int i = 0; i < NUM_RECOMB_TABLE_IONS; i++)
     {
@@ -68,7 +68,7 @@ Returns
 alpha_gr: float
     Grain-assisted recombination coefficient in cm^3 s^-1, such that the volumetric recombination rate is alpha_gr n_ion n_e
 */
-MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, char *ion_name, struct particle_data *pp, struct gas_cell_data *cell)
+MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, const char *ion_name, struct particle_data *pp, struct gas_cell_data *cell)
 {
     MyFloat psi = grain_charge_psi(i, temp, x_elec, shieldfac, cell);
     // MyFloat temp = CellP[i].temperature();
