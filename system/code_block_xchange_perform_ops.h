@@ -88,10 +88,13 @@ be copy-pasted and can be generically optimized in a single place */
         for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */
         DATAIN_NAME = (struct INPUT_STRUCT_NAME *) mymalloc("DATAIN_NAME", Nexport * sizeof(struct INPUT_STRUCT_NAME));
         DATAOUT_NAME = (struct OUTPUT_STRUCT_NAME *) mymalloc("DATAOUT_NAME", Nexport * sizeof(struct OUTPUT_STRUCT_NAME));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
         for(j = 0; j < Nexport; j++) /* prepare particle data for export [fill in the structures to be passed] */
         {
-            place = DataIndexTable[j].Index;
-            INPUTFUNCTION_NAME(&DATAIN_NAME[j], place, loop_iteration);
+            int place_local = DataIndexTable[j].Index;
+            INPUTFUNCTION_NAME(&DATAIN_NAME[j], place_local, loop_iteration);
             memcpy(DATAIN_NAME[j].NodeList,DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
         }
 
