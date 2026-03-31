@@ -614,6 +614,7 @@
 #USE_TIMESTEP_DILATION_FOR_ZOOMS            #- enable time dilation modules, need to customize for applications, cannot be simply generically turned on without coding how they will work
 #DILATION_FOR_STELLAR_KINEMATICS_ONLY       #- special version of time dilation designed for stellar kinematics in e.g. dense star clusters or galaxy centers
 #SINK_RIAF_SUBEDDINGTON_MODEL=(0.01)        #- enable an arbitrary modular variation in the radiative efficiency of BHs as a function of eddington ratio or other particle properties, with the critical transition to the jet mode at this eddington ratio (defined in terms of mdot/mdot_crit)
+#OUTPUT_SHOCK_MACH_NUMBER                   #- compute and output the shock Mach number for each gas cell, using the information in the Riemann problem and reconstruction, plus additional converging flow and spurious compression checks.
 ####################################################################################################-
 
 ############################################################################################################################-

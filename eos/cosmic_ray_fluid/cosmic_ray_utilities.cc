@@ -434,7 +434,7 @@ double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_s
     b2_t = cell[i].Bfield().norm_sq();
 #endif
     v2_t=sqrt(v2_t); b2_t=sqrt(b2_t); dv2_t=sqrt(dv2_t); db2_t=sqrt(db2_t); dv2_t/=All.cf_atime; db2_t/=All.cf_atime; b2_t*=All.cf_a2inv; db2_t*=All.cf_a2inv; v2_t/=All.cf_atime; dv2_t/=All.cf_atime;
-    h0=pp[i].Get_Particle_Size()*All.cf_atime; // physical units
+    h0=P[i].Get_Particle_Size()*All.cf_atime; // physical units
 
     if(use_shear_corrected_vturb_flag == 1)
     {
@@ -1696,7 +1696,7 @@ double Get_Gas_ion_Alfven_speed_i(int i, struct gas_cell_data *cell)
     return cell[i].thermal_soundspeed(); // if no B-fields, just assume Alfven speed equal to thermal sound speed
 #endif
     double vA = cell[i].Alfven_speed(); // normal ideal-MHD Alfven speed
-    double f_ion = Get_Gas_Ionized_Fraction(i, pp, cell);
+    double f_ion = Get_Gas_Ionized_Fraction(i, P, cell);
     double mu_eff_ion = 1. + (24.305 - 1.)/(1. + pow(f_ion/1.e-3,2)); // -very- crude approximation to transition to heavy-ion dominance at very low ion fractions
     vA /= sqrt(1.e-15 + mu_eff_ion * f_ion); // Alfven speed of interest is that of the ions alone, not the ideal MHD Alfven speed [corrected for weight with crude approximation above - note that in grain-charge dominated regime, this becomes deeply ambiguous] //
     return vA;
