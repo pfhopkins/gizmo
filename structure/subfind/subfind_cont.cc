@@ -228,7 +228,7 @@ int subfind_contamination_evaluate(int target, int mode, int *nexport, int *nsen
 
   if(mode == 0)
     {
-      pos = Group[target].Pos;  // Group[].Pos is raw array
+      pos = Group[target].Pos.data_ptr();
       h = Group[target].SubHaloProps_vsDelta[0].R200;
     }
   else

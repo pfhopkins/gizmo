@@ -50,7 +50,7 @@ typedef float ChimesFloat;
 #endif
 
 /*!< Function pointer that allows the User to specify their own custom exit function. */ 
-void (*chimes_exit)(void); 
+extern void (*chimes_exit)(void);
 
 /** 
  * Structure containing the variables that 

@@ -155,7 +155,7 @@ void savepositions(int num)
     }
 #endif
 
-#ifdef OUTPUT_POWERSPEC
+#if defined(OUTPUT_POWERSPEC) && defined(PMGRID) && defined(BOX_PERIODIC)
     if(RestartFlag != 4)
     {
         if(ThisTask == 0)

@@ -288,7 +288,7 @@
 # ----- accretion models (modules for gas or other particle accretion)
 ## ----------------------------------------------------------------------------------------------------
 #SINK_SWALLOWGAS                  # 'top-level switch' for accretion (should always be enabled if accretion is on). enables BH to actually eliminate gas particles and take their mass.
-#SINK_ALPHADISK_ACCRETION         # gas accreted goes into a 'virtual' alpha-disk (mass reservoir), which then accretes onto the BH at the viscous rate (determining luminosity, etc). cite GIZMO methods (or PFH private communication)
+#SINK_ALPHADISK_ACCRETION=(10)    # gas accreted goes into a 'virtual' alpha-disk (mass reservoir), which then accretes onto the BH at the viscous rate (determining luminosity, etc). cite GIZMO methods. should be set to a value, which limits the maximum mass of the reservoir to that multiple of the central sink mass
 #SINK_SUBGRIDBHVARIABILITY        # model variability below resolved dynamical time for BH (convolve accretion rate with a uniform power spectrum of fluctuations on timescales below the minimum resolved dynamical time). cite Hopkins & Quataert 2011, MNRAS, 415, 1027. Requires GALSF.
 #SINK_GRAVCAPTURE_NONGAS          # accretion determined only by resolved gravitational capture by the BH, for non-gas particles (can be enabled with other accretion models for gas). cite Hopkins et al., 2016, MNRAS, 458, 816
 ## ----
@@ -484,7 +484,7 @@
 #IO_MOLECFRAC_NOT_IN_ICFILE     # special flag needed if using certain molecular modules with restart flag=2 where molecular data was not in that snapshot, to tell code not to read it
 #IO_REDUNDANT_BACKUP_RESTARTFILE_FREQUENCY=3  # keep an extra set of backup files that are IO_REDUNDANT_BACKUP_RESTARTFILE_FREQUENCY number of restarts old (allows for soft restarts from an older position)
 #IO_GRADUAL_SNAPSHOT_RESTART    # when restarting from a snapshot (flag=2) start every element on the shortest possible timestep - can reduce certain transient behaviors from the restart procedure
-#IO_SINKS_ONLY_SNAPSHOT_FREQUENCY # determines the number of snapshots with reduced data (sinks only) per full snapshots (gas+sinks+other), e.g., setting this to 2 means 2/3 of the snapshots will be reduced, 1/3 will have full data. Setting this to 0 disables it. developed by DG.
+#IO_SINKS_ONLY_SNAPSHOT_FREQUENCY=0 # determines the number of snapshots with reduced data (sinks only) per full snapshots (gas+sinks+other), e.g., setting this to 2 means 2/3 of the snapshots will be reduced, 1/3 will have full data. Setting this to 0 disables it. developed by DG.
 ####################################################################################################
 
 
@@ -573,9 +573,9 @@
 #FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT=0 # experiment with modified supernova energies as a function of metallicity - freely modify this module as desired. used for numerical experiments only.
 #SINGLE_STAR_AND_SSP_HYBRID_MODEL=1 # cells with mass less than this (in solar) are treated with the single-stellar evolution models, larger mass with ssp models. needs user to specify a refinement criterion, and a criterion for when one module or another will be used. still in testing.
 #SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS=1 # uses default settings for SINGLE_STAR_AND_SSP_HYBRID_MODEL=SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS (plus lots of other flag settings) from zoom-in experiments around special particles
-#STARFORGE_GMC_TURBINIT             # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic uniform sphere harmonic potential + r^-3 halo outside to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
+#STARFORGE_GMC_TURBINIT=1           # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic uniform sphere harmonic potential + r^-3 halo outside to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
 #STARFORGE_FILAMENT_TURBINIT        # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic potential of an finitite cylinder with a Plummer density profile, truncated at the ends of the cylinder, to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
-#STARFORGE_FEEDBACK_TRACERS         # adds tracer fields to recycled gas in the SINGLE_STAR modules to explicitly track gas coming from jets versus main-sequence winds versus supernovae. tracer fields added to metal fields
+#STARFORGE_FEEDBACK_TRACERS=3       # adds tracer fields to recycled gas in the SINGLE_STAR modules to explicitly track gas coming from jets versus main-sequence winds versus supernovae. tracer fields added to metal fields; 0 for jets, 1 for winds, 2 for SNe, 3 for all.
 # --------------------
 # ----- Dust grain/particulate/aerosol module special options
 #GRAIN_RDI_TESTPROBLEM             # top-level flag to enable a variety of test problem behaviors, customized for the idealized studies of dust dynamics in Moseley et al 2019MNRAS.489..325M, Seligman et al 2019MNRAS.485.3991S, Steinwandel et al arXiv:2111.09335, Ji et al arXiv:2112.00752, Hopkins et al 2020MNRAS.496.2123H and arXiv:2107.04608, Squire et al 2022MNRAS.510..110S. Cite these if used.

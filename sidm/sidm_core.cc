@@ -101,8 +101,9 @@ double geofactor_integ(double x, void * params)
 double geofactor_angle_integ(double u, void * params)
 {
     double x,r,f;
-    r = *(double *) params;
-    x = *(double *) (params + sizeof(double));
+    double *dparams = (double *) params;
+    r = dparams[0];
+    x = dparams[1];
     f = sqrt(x*x + r*r + 2*x*r*u);
     double wk=0; if(f<1) kernel_main(f, 1, 1, &wk, &wk, -1); /*! This function returns the value W(x). The values of the density kernel as a funtion of x=r/h */
     return wk;
