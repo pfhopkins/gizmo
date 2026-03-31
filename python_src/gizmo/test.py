@@ -97,9 +97,8 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
     paramsfile = f"{test_name}.params"
-    system(
-        f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err"
-    )
+    bind_opts = "--bind-to none" if num_openmp_threads > 0 else ""
+    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus {bind_opts} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 
 def get_cooling_tables(test_directory="."):
@@ -111,11 +110,9 @@ def get_cooling_tables(test_directory="."):
     system(f"cp cooling/TREECOOL {test_directory}")
 
 
-def build_and_run_test(
-    test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()
-):
+def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
     """Top-level routine that does all necessary building, downloading, and running of the test"""
-    clean_test_outputs(test_name, extra_flags=extra_config_flags)
+    clean_test_outputs(test_name)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     chdir(f"test/{test_name}/")
     download_test_files(test_name)

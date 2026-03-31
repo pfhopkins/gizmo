@@ -128,15 +128,11 @@ _baseline_stats_cache = {}
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-@pytest.mark.parametrize(
-    "extra_config_flags",
-    [
-        (),
-        ("TRANSPORT_SUBCYCLE=10",),
-        ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
-    ],
-    ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"],
-)
+@pytest.mark.parametrize("extra_config_flags", [
+    (),
+    ("TRANSPORT_SUBCYCLE=10",),
+    ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
+], ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"])
 def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling_rt"
     test_dir = "test/gmc_cooling_rt"

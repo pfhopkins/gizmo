@@ -44,8 +44,8 @@ def test_rotor(num_mpi_ranks, num_omp_threads):
     M = Meshoid(pos_f, boxsize=boxsize)
     center = np.array([boxsize/2, boxsize/2, boxsize/2])
     Bmag = np.sqrt(np.sum(B_f**2, axis=1))
-    rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=center, size=boxsize, order=1)
-    B_slice = M.Slice(Bmag, res=1024, plane="z", center=center, size=boxsize, order=1)
+    rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=center, size=boxsize, order=0)
+    B_slice = M.Slice(Bmag, res=1024, plane="z", center=center, size=boxsize, order=0)
     extent = [0, boxsize, 0, boxsize]
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     axes[0].imshow(rho_slice.T, origin="lower", cmap="inferno", extent=extent)
