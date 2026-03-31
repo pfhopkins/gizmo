@@ -29,7 +29,7 @@
 #ifdef DM_SIDM
 
 
-double prob_of_interaction(double mass, double r, double h_si, double dV[3], double dt)
+double prob_of_interaction(double mass, double r, double h_si, Vec3<double>& dV, double dt)
 {
     double dVmag = sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]) / All.cf_atime; // velocity in physical
     double rho_eff = mass / (h_si*h_si*h_si) * All.cf_a3inv; // density in physical
@@ -42,7 +42,7 @@ double prob_of_interaction(double mass, double r, double h_si, double dV[3], dou
 /*! This routine sets the kicks for each particle after it has been decided that they will
  *  interact. It uses an algorithm tha conserves energy and momentum but picks a random direction so it does not conserves angular momentum. */
 #if !defined(GRAIN_COLLISIONS) /* if using the 'grain collisions' module, these functions will be defined elsewhere [in the grains subroutines] */
-void calculate_interact_kick(double dV[3], double kick[3], double m)
+void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m)
 {
     double dVmag = (1-All.DM_DissipationFactor)*sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]);
     if(dVmag<0) {dVmag=0;}

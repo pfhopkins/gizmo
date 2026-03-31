@@ -209,7 +209,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     double slabfac_x = x_abs * slab_averaging_function(x_abs); // 1-exp(-x)
                     if(isnan(slabfac_x)||(slabfac_x<=0)) {slabfac_x=0;} else if(slabfac_x>1) {slabfac_x=1;}
 #if !defined(RT_DISABLE_RAD_PRESSURE) && defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION)
-                    double dv = -slabfac_x * dE / (C_LIGHT_CODE_REDUCED(j) * P[j].Mass); // total absorbed momentum (needs multiplication by dp[kv]/r for directionality)
+                    double dv = -slabfac_x * dE / (C_LIGHT_CODE_REDUCED * P[j].Mass); // total absorbed momentum (needs multiplication by dp[kv]/r for directionality)
                     for(kv=0;kv<3;kv++) {
                         double dv_tmp = dv*(dp[kv]/r)*All.cf_atime;
                         #pragma omp atomic
@@ -234,7 +234,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 #else			    
                             int k2; for(k2=RT_FREQ_BIN_H0; k2 < RT_FREQ_BIN_H0 + 4; k2++) {stellum += local.Luminosity[k2];} // add up total ionizing photon energy
 #endif			    
-                            stellum *= 1. / (C_LIGHT_CODE_REDUCED(j)/C_LIGHT_CODE) / local.Dt * UNIT_LUM_IN_CGS; // convert energy to luminosity in cgs
+                            stellum *= 1. / (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) / local.Dt * UNIT_LUM_IN_CGS; // convert energy to luminosity in cgs
                         }
                         double RHII = 4.01e-9*pow(stellum,0.333)*pow(local.Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS,-0.66667) / UNIT_LENGTH_IN_CGS;
                         if(DMAX(r, Get_Particle_Size(j))*All.cf_atime < RHII) {do_donation = 0;} // don't inject ionizing photons outside the Stromgren radius
@@ -247,7 +247,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 #endif // RT_REPROCESS_INJECTED_PHOTONS
 
 #if defined(RT_EVOLVE_FLUX) && defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) /* when we use these flags, we add the 'full' optically-thin flux directly to the neighbor cells. a more general formulation allows these fluxes to build up self-consistently, since we don't know a-priori what these 'should' be */
-                    double dflux = -dE * C_LIGHT_CODE_REDUCED(j) / r;
+                    double dflux = -dE * C_LIGHT_CODE_REDUCED / r;
                     dfluxes += dflux*dp;
 #endif
 
@@ -284,9 +284,9 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
 #endif
 
 #if defined(RT_EVOLVE_FLUX) // add relativistic corrections here, which should be there in general. however we will ignore [here] the 'back-reaction' term, since we're assuming the source is a star or something like that, where this would be negligible. gas self gain/loss is handled separately.
-                    {int kv; for(kv=0;kv<3;kv++) {dfluxes[kv] += dE * (RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(j)*local.Vel[kv]/All.cf_atime);}}
+                    {int kv; for(kv=0;kv<3;kv++) {dfluxes[kv] += dE * (RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS*local.Vel[kv]/All.cf_atime);}}
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
-                    double qtau=(0.75*All.Grain_Q_at_MaxGrainSize)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)), e0=(P[j].Mass/CellP[j].Density)*All.Vertical_Grain_Accel/qtau,tau_tot=All.Dust_to_Gas_Mass_Ratio*qtau,flux_egy_0=C_LIGHT_CODE_REDUCED(j)*DMAX(CellP[j].Rad_E_gamma[k],CellP[j].Rad_E_gamma_Pred[k])/(1.+3.*tau_tot),f0=DMAX(flux_egy_0,DMAX(C_LIGHT_CODE_REDUCED(j)*e0,DMAX(CellP[j].Rad_Flux[k][2],CellP[j].Rad_Flux_Pred[k][2])));
+                    double qtau=(0.75*All.Grain_Q_at_MaxGrainSize)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)), e0=(P[j].Mass/CellP[j].Density)*All.Vertical_Grain_Accel/qtau,tau_tot=All.Dust_to_Gas_Mass_Ratio*qtau,flux_egy_0=C_LIGHT_CODE_REDUCED*DMAX(CellP[j].Rad_E_gamma[k],CellP[j].Rad_E_gamma_Pred[k])/(1.+3.*tau_tot),f0=DMAX(flux_egy_0,DMAX(C_LIGHT_CODE_REDUCED*e0,DMAX(CellP[j].Rad_Flux[k][2],CellP[j].Rad_Flux_Pred[k][2])));
                     dfluxes[0]=0; dfluxes[1]=0; dfluxes[2]=f0; /* for now, for this special problem setup, we have everything hard-coded here to ensure it obeys the desired flux boundary condition */
                     {
                         #pragma omp atomic
@@ -302,7 +302,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                         #pragma omp atomic
                         CellP[j].Rad_Flux_Pred[k][2]=0;
                     }
-                    //{double dflux=dE*C_LIGHT_CODE_REDUCED(j); dfluxes[2] += dflux;}
+                    //{double dflux=dE*C_LIGHT_CODE_REDUCED; dfluxes[2] += dflux;}
 #endif
                     {int kv; for(kv=0;kv<3;kv++) {
                         #pragma omp atomic

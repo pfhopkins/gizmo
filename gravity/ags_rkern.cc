@@ -725,8 +725,8 @@ struct INPUT_STRUCT_NAME
 #if defined(DM_FUZZY)
     Vec3<double> AGS_Gradients_Density; double AGS_Gradients2_Density[3][3], AGS_Numerical_QuantumPotential;
 #if (DM_FUZZY > 0)
-    double AGS_Psi_Re; Vec3<double> AGS_Gradients_Psi_Re; double AGS_Gradients2_Psi_Re[3][3];
-    double AGS_Psi_Im; Vec3<double> AGS_Gradients_Psi_Im; double AGS_Gradients2_Psi_Im[3][3];
+    double AGS_Psi_Re; Vec3<double> AGS_Gradients_Psi_Re; Mat3<double> AGS_Gradients2_Psi_Re;
+    double AGS_Psi_Im; Vec3<double> AGS_Gradients_Psi_Im; Mat3<double> AGS_Gradients2_Psi_Im;
 #endif
 #endif
 #if defined(CBE_INTEGRATOR)

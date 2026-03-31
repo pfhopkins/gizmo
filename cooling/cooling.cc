@@ -188,7 +188,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 #if defined(RADTRANSFER) /* account for cooling radiation which should, according to our modules, come out in certain bands */
         double nHcgs = cell[i].nHcgs(); /* hydrogen number dens in cgs units */
-        double ratefact = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
+        double ratefact = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
         double de_u = (unew - cell[i].InternalEnergy) * cell[i].Mass; /* change in the total internal energy of the gas cell [integrating over everything] */
         double de_rad_tot_final = 0, de_rad_tot = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {de_rad_tot += cell[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;} /* energy gained by gas needs to be subtracted from radiation. positive lambda means gas cooling (gas energy loss, so radiation energy gain, so positive here) */
         double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad; /* variables for below showing total change in gas energy from radiation, and placeholder for the hydro work term */
@@ -240,9 +240,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                         int kv; // add leading-order relativistic corrections here, accounting for gas motion in the addition/subtraction to the flux
 #if defined(RT_EVOLVE_FLUX)
                         double corrfac = 0; if(Rad_E_gamma_before > 0 && cell[i].Rad_E_gamma[k] > 0) {corrfac = cell[i].Rad_E_gamma[k] / (MIN_REAL_NUMBER + Rad_E_gamma_before);}
-                        if(corrfac > 0) {cell[i].Rad_Flux[k] *= corrfac; cell[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*cell[i].VelPred[kv]/All.cf_atime * de_rad; cell[i].Rad_Flux[k][kv] += fluxfac; cell[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
+                        if(corrfac > 0) {cell[i].Rad_Flux[k] *= corrfac; cell[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS*cell[i].VelPred[kv]/All.cf_atime * de_rad; cell[i].Rad_Flux[k][kv] += fluxfac; cell[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
 #endif
-                        double momfac = 1. - de_rad / (cell[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED(i)); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
+                        double momfac = 1. - de_rad / (cell[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
                         pp[i].dp += pp[i].Vel * ((momfac - 1.) * cell[i].Mass); pp[i].Vel *= momfac; cell[i].VelPred *= momfac;
                     }
                 }
@@ -2155,7 +2155,7 @@ Mode 1: Use for the C photoionization rate: apply cross- and self-shielding fact
 MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
     MyFloat G0 = 0.;
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+#if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
     G0 += cell[target].Rad_Flux_UV;
     if(gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (gJH0 / 2.29e-10);} // uvb contribution //
 #endif

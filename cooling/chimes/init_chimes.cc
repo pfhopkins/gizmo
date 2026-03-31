@@ -63,7 +63,7 @@ struct chimes_redshift_dependent_UVB_struct chimes_table_redshift_dependent_UVB;
 struct chimes_cooling_struct chimes_table_cooling;                               /*!< Structure containing the cooling and heating rates. */ 
 struct chimes_eqm_abundances_struct chimes_table_eqm_abundances;                 /*!< Structure containing the equilibrium abundance tables. */ 
 
-void (*chimes_exit)(void) = NULL; 
+//void (*chimes_exit)(void) = NULL; 
 
 /** 
  * @brief Default exit routine. 

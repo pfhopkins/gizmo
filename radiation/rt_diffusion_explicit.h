@@ -13,7 +13,7 @@
 #define RT_ENHANCED_NUMERICAL_DIFFUSION /* option which increases numerical diffusion, to get smoother solutions, if desired; akin to slopelimiters~0 model */
 {
     // first define some variables needed regardless //
-    double c_light_eff = C_LIGHT_CODE_REDUCED(j), rsol_corr = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(j);
+    double c_light_eff = C_LIGHT_CODE_REDUCED, rsol_corr = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS;
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME)
     Vec3<double> v_frame = 0.5*(ParticleVel_j + local.ParticleVel)/All.cf_atime; // frame velocity, not fluid velocity, is what appears here
 #else

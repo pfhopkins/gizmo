@@ -50,7 +50,7 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
 void subfind_density(int j);
 void Subfind_DensityOtherProps_Loop(void);
 int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_local);
-double subfind_ovderdens_treefind(MyDouble *searchcenter, MyFloat rkern, int target, int *startnode,
+double subfind_ovderdens_treefind(Vec3<double> *searchcenter, MyFloat rkern, int target, int *startnode,
 				  int mode, int *nexport, int *nsend_local);
 void subfind_save_densities(int num);
 void subfind_save_local_densities(int num);
@@ -83,9 +83,9 @@ int subfind_loctree_treebuild(int npart, struct unbind_data *mp);
 void subfind_loctree_update_node_recursive(int no, int sib, int father);
 double subfind_loctree_treeevaluate_potential(int target);
 void subfind_loctree_copyExtent(void);
-double subfind_locngb_treefind(MyDouble *xyz, int desngb, double hguess);
+double subfind_locngb_treefind(Vec3<double>& xyz, int desngb, double hguess);
 void subfind_loctree_findExtent(int npart, struct unbind_data *mp);
-int subfind_locngb_treefind_variable(MyDouble *searchcenter, double hguess);
+int subfind_locngb_treefind_variable(Vec3<double>& searchcenter, double hguess);
 size_t subfind_loctree_treeallocate(int maxnodes, int maxpart);
 void subfind_loctree_treefree(void);
 void subfind_find_nearesttwo(void);

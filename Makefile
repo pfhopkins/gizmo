@@ -212,7 +212,7 @@ FC       =  $(CC) #mpifort  ## change this to "mpifort" for packages requiring l
 OPTIMIZE = -O3 -funroll-loops -ffast-math -march=native -flto 
 OPTIMIZE += -Wno-unused-command-line-argument ## -g -Wall # compiler warnings
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
-CXX     = mpic++
+#CXX     = mpic++
 CHIMESINCL = -I/usr/local/include/sundials
 CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
 endif

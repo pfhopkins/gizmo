@@ -194,7 +194,9 @@ void do_dm_fuzzy_initialization(void)
     {
         double volume = P[i].AGS_Density / P[i].Mass, psimag = sqrt(P[i].AGS_Density), phase = 0;
         /* approximation for initial phase below is fine for slowly-varying k, otherwise not ideal */
-        phase = dot(P[i].Pos, P[i].Vel) / All.ScalarField_hbar_over_mass;
+        Vec3<double> pos_d = {(double)P[i].Pos[0], (double)P[i].Pos[1], (double)P[i].Pos[2]};
+        Vec3<double> vel_d = {(double)P[i].Vel[0], (double)P[i].Vel[1], (double)P[i].Vel[2]};
+        phase = dot(pos_d, vel_d) / All.ScalarField_hbar_over_mass;
 
         P[i].AGS_Psi_Re = psimag * volume * cos(phase); /* remember, we evolve the volume-integrated value of psi */
         P[i].AGS_Psi_Im = psimag * volume * sin(phase);
@@ -208,9 +210,9 @@ void do_dm_fuzzy_initialization(void)
 
 
 void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
-                                         double q_R, double dq_R[3], double d2q_R[3][3],
-                                         double q_L, double dq_L[3], double d2q_L[3][3],
-                                         double dx[3])
+                                         double q_R, Vec3<double> dq_R, const Mat3<double>& d2q_R,
+                                         double q_L, Vec3<double> dq_L, const Mat3<double>& d2q_L,
+                                         const Vec3<double>& dx)
 {
     double t_L,t_R; int k;
     dm_fuzzy_reconstruct_and_slopelimit_sub(&t_R,&t_L,q_R,dq_R,q_L,dq_L,dx);
@@ -224,7 +226,7 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 }
 
 
-void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, double dq_R_0[3], double q_L, double dq_L_0[3], double dx[3])
+void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, const Vec3<double>& dq_R_0, double q_L, const Vec3<double>& dq_L_0, const Vec3<double>& dx)
 {
     double dq_L=0; for(int k=0;k<3;k++) {dq_L += 0.5*dx[k]*dq_L_0[k];}
     double dq_R=0; for(int k=0;k<3;k++) {dq_R -= 0.5*dx[k]*dq_R_0[k];}
@@ -364,12 +366,12 @@ static inline void out2particle_DMGrad(struct OUTPUT_STRUCT_NAME *out, int i, in
 }
 
 /* this actually builds the final gradients out of the data passed */
-void construct_gradient_DMGrad(double *grad, int i);
-void construct_gradient_DMGrad(double *grad, int i)
+template<typename T>
+void construct_gradient_DMGrad(Vec3<T>& grad, int i)
 {
     /* use the NV_T matrix-based gradient estimator */
-    double v_tmp[3] = {grad[0], grad[1], grad[2]};
-    for(int k=0;k<3;k++) {grad[k] = P[i].NV_T[k][0]*v_tmp[0] + P[i].NV_T[k][1]*v_tmp[1] + P[i].NV_T[k][2]*v_tmp[2];}
+    double v_tmp[3] = {(double)grad[0], (double)grad[1], (double)grad[2]};
+    for(int k=0;k<3;k++) {grad[k] = (T)(P[i].NV_T[k][0]*v_tmp[0] + P[i].NV_T[k][1]*v_tmp[1] + P[i].NV_T[k][2]*v_tmp[2]);}
 }
 
 
@@ -409,7 +411,7 @@ int DMGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 if((P[j].Mass <= 0)||(P[j].AGS_Density <= 0)) {continue;} /* make sure neighbor is valid */
                 /* calculate position relative to target */
-                kernel.dp = local.Pos - P[j].Pos;
+                for(int kk=0;kk<3;kk++) {kernel.dp[kk] = (double)(local.Pos[kk] - P[j].Pos[kk]);}
                 nearest_xyz(kernel.dp);
                 r2 = kernel.dp.norm_sq();
                 if((r2 <= 0) || (r2 >= h2_i)) continue;

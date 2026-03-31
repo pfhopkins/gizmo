@@ -901,7 +901,7 @@ void *DynamicDiff_evaluate_primary(void *p, int dynamic_iteration) {
     int thread_id = *(int *) p;
     int i, j;
     int *exportflag, *exportnodecount, *exportindex, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
+    ngblist = Ngblist.data() + thread_id * NumPart;
     exportflag = Exportflag + thread_id * NTask;
     exportnodecount = Exportnodecount + thread_id * NTask;
     exportindex = Exportindex + thread_id * NTask;
@@ -943,7 +943,7 @@ void *DynamicDiff_evaluate_primary(void *p, int dynamic_iteration) {
 void *DynamicDiff_evaluate_secondary(void *p, int dynamic_iteration) {
     int thread_id = *(int *) p;
     int j, dummy, *ngblist;
-    ngblist = Ngblist + thread_id * NumPart;
+    ngblist = Ngblist.data() + thread_id * NumPart;
 
     while (1) {
 #ifdef _OPENMP

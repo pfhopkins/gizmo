@@ -612,16 +612,9 @@ void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slo
 #endif
 #endif
 
-
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
 void update_stellarnumber_and_timedistribofstarformation(void);
 #endif
-
-
-#ifdef RT_SPEEDOFLIGHT_REDUCTION_VARIABLE_RSL
-double c_light_RSL_reductionfactor_local(int i, struct particle_data *pp, struct gas_cell_data *cell);
-#endif
-
 
 #ifdef SINGLE_STAR_FB_JETS
 double single_star_jet_velocity(int n);
@@ -966,7 +959,7 @@ void AGSForce_calc(void);
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
 void advect_mesh_point(int i, double dt);
-double calculate_face_area_for_cartesian_mesh(double *dp, double rinv, double l_side, double *Face_Area_Vec);
+double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec);
 #endif
 
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -994,16 +987,16 @@ void apply_excision();
 #endif
 
 #ifdef DM_SIDM
-double prob_of_interaction(double mass, double r, double h_si, double dV[3], double dt);
+double prob_of_interaction(double mass, double r, double h_si, Vec3<double>&  dV[3], double dt);
 double g_geo(double r);
-void calculate_interact_kick(double dV[3], double kick[3], double m);
+void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m);
 void init_geofactor_table(void);
 double geofactor_integ(double x, void * params);
 double geofactor_angle_integ(double u, void * params);
 void init_self_interactions();
 #ifdef GRAIN_COLLISIONS
 double return_grain_cross_section_per_unit_mass(int i);
-double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, double dV[3], double dt, int j_ngb);
+double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, Vec3<double>& dV, double dt, int j_ngb);
 #endif
 #endif
 
@@ -1037,11 +1030,11 @@ void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double
                                   double GradRho2_L[3][3], double GradRho2_R[3][3],
                                   double rho_L, double rho_R, double dv_Right_minus_Left,
                                   Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential);
-void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, double dq_R_0[3], double q_L, double dq_L_0[3], double dx[3]);
+void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, const Vec3<double>& dq_R_0, double q_L, const Vec3<double>& dq_L_0, const Vec3<double>& dx);
 void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
-                                         double q_R, double dq_R[3], double d2q_R[3][3],
-                                         double q_L, double dq_L[3], double d2q_L[3][3],
-                                         double dx[3]);
+                                         double q_R, Vec3<double> dq_R, const Mat3<double>& d2q_R,
+                                         double q_L, Vec3<double> dq_L, const Mat3<double>& d2q_L,
+                                         const Vec3<double>& dx);
 #endif
 
 

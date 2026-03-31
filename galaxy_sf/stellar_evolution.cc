@@ -490,7 +490,7 @@ void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i)
     if(is_particle_single_star_eligible(i)) {in->Msne = P[i].Mass;} // conserve mass and destroy star completely
 #endif
     double SNeEgy = All.SNe_Energy_Renormalization*P[i].SNe_ThisTimeStep * 1.0e51/UNIT_ENERGY_IN_CGS; // assume each SNe has 1e51 erg
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2 && NUM_METAL_SPECIES>=10)
     if(SNeIaFlag==0) {double z_eff = P[i].Metallicity[10]/All.SolarAbundances[10]; if(z_eff < 1) {SNeEgy *= pow(z_eff + 1.e-5 , -0.12);}} // updated to use same metallicity used for stellar evolution, rather than total metallicity, if this derives from pre-explosion winds, etc, for consistency
 #if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 1)
     if(i>0) {double z0 = P[i].Metallicity[0]/All.SolarAbundances[0];
@@ -1108,7 +1108,7 @@ double single_star_feedback_velocity_fortimestep(int n) {
     if(P[n].ProtoStellarStage == 6) {v_fb = DMAX(v_fb, single_star_SN_velocity(n));}
 #endif    
 #ifdef RADTRANSFER
-    v_fb = DMAX(v_fb, C_LIGHT_CODE_REDUCED(n));  // produces a timestep criterion redundant with the RSOL CFL condition, but can be important if running fancy timestepping hacks that violate CFL under special circumstances
+    v_fb = DMAX(v_fb, C_LIGHT_CODE_REDUCED);  // produces a timestep criterion redundant with the RSOL CFL condition, but can be important if running fancy timestepping hacks that violate CFL under special circumstances
 #endif
     if(All.Ti_Current == 0 && RestartFlag == 0) v_fb = DMAX(1e3 / UNIT_VEL_IN_KMS, v_fb); // for idealized box problems
     return v_fb;
