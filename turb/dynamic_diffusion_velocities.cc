@@ -27,7 +27,7 @@
 #define NV_MYSIGN(x) (( x > 0 ) - ( x < 0 ))
 
 struct kernel_DiffFilter {
-    double dp[3], r, wk_i, wk_j, dwk_i, dwk_j, h_i;
+    Vec3<double> dp; double r, wk_i, wk_j, dwk_i, dwk_j, h_i;
 };
 
 
