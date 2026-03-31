@@ -1045,7 +1045,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                 if(P[pindex].Type == type)
                 {
                     //for(k=0;k<N_CR_PARTICLE_BINS;k++) {fp[k] = CellP[pindex].CosmicRay_PwrLaw_Slopes_in_Bin[k];} // write out the saved slope
-                    for(k=0;k<N_CR_PARTICLE_BINS;k++) {fp[k] = (MyOutputFloat) CR_return_spectral_slope_target(pindex,k);} // calculate the slope to write out
+                    for(k=0;k<N_CR_PARTICLE_BINS;k++) {fp[k] = (MyOutputFloat) CR_return_spectral_slope_target(pindex,k, CellP);} // calculate the slope to write out
                     fp += N_CR_PARTICLE_BINS;
                     n++;
                 }

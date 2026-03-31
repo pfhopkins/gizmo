@@ -411,7 +411,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) /* inject cosmic rays */
                 Vec3<double> crdir = -kernel.dp / kernel.r;
-                inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr(), P, CellP);
+                inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr(), CellP);
 #endif
                 /* inject the post-shock energy and momentum (convert to specific units as needed first) */
                 e_shock *= 1 / Mass_j;
@@ -757,7 +757,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 {
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
                     Vec3<double> crdir = -kernel.dp / kernel.r;
-                    inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr(), P, CellP);
+                    inject_cosmic_rays(pnorm * CR_energy_to_inject, local.SNe_v_ejecta, loop_iteration, j, crdir.data_ptr(), CellP);
 #endif
                     /* inject momentum: account for ejecta being energy-conserving inside the cooling radius (or KernelRadius, if thats smaller) */
                     double mom_prefactor = All.cf_atime * momentum_to_couple_term_units / Mass_j; // divide by mass to make velocity units used below, include cosmological factor to correctly convert to comoving code units

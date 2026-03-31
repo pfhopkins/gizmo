@@ -126,7 +126,7 @@ void radiation_pressure_winds_consolidated(void)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
                                 /* estimate fraction of the available single-scattering RP that can actually be absorbed in the cell */
                                 double sigma_cell_to_total = (1./wk) * (P[j].Mass / (h_eff_j*All.cf_atime * h_eff_j*All.cf_atime)); // code units -- correct back to 'total' column through all neighbors, since thats what determines the total fraction that will be absorbed here //
-                                double tau_uv = rt_kappa(j,RT_FREQ_BIN_FIRE_UV, P, CellP) * sigma_cell_to_total, tau_op = rt_kappa(j,RT_FREQ_BIN_FIRE_OPT) * sigma_cell_to_total; // opacity in uv and optical bands
+                                double tau_uv = rt_kappa(j,RT_FREQ_BIN_FIRE_UV, P, CellP) * sigma_cell_to_total, tau_op = rt_kappa(j,RT_FREQ_BIN_FIRE_OPT, P, CellP) * sigma_cell_to_total; // opacity in uv and optical bands
                                 double frac_abs = f_lum_ion + (1.-f_lum_ion) * (1. - 0.5*(exp(-tau_uv) + exp(-tau_op))); // absorbed fraction in the actual cell
                                 dv_imparted_singlescattering *= frac_abs; // reduce the single-scattering flux by the fraction of that flux actually absorbed
                                 if(jet_momentum_tocouple > 0) {

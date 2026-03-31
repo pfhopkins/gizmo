@@ -852,7 +852,7 @@ void hydro_final_operations_and_cleanup(void)
                 int target_for_cr_betagamma = i; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = i, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
                 target_for_cr_betagamma = -1; // the correction terms depend on these being evaluated at their bin-centered locations
                 double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(i,k, CellP);
-                double grad_P_dot_B=0, F_dot_B=0, e0_cr=CellP[i].CosmicRayEnergyPred[k]*vol_i, p0_cr=(GAMMA_COSMICRAY(k)-1.)*e0_cr, vA_k=vA_eff*return_CRbin_nuplusminus_asymmetry(i,k), beta_fac=return_CRbin_beta_factor(target_for_cr_betagamma,k);
+                double grad_P_dot_B=0, F_dot_B=0, e0_cr=CellP[i].CosmicRayEnergyPred[k]*vol_i, p0_cr=(GAMMA_COSMICRAY(k)-1.)*e0_cr, vA_k=vA_eff*return_CRbin_nuplusminus_asymmetry(i, k, CellP), beta_fac=return_CRbin_beta_factor(target_for_cr_betagamma,k);
                 Vec3<double> gradpcr = CellP[i].Gradients.CosmicRayPressure[k] * (All.cf_a3inv/All.cf_atime);
                 grad_P_dot_B = dot(bhat, gradpcr); F_dot_B = dot(bhat, CellP[i].CosmicRayFluxPred[k]) * vol_i;
                 if(F_dot_B < 0) {vA_k *= -1;} // needs to have appropriately-matched signage below //
