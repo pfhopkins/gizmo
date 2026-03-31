@@ -419,9 +419,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_EOSTEMP:
-#ifdef EOS_CARRIES_TEMPERATURE
             for(n = 0; n < pc; n++) {CellP[offset + n].Temperature = *fp++;}
-#endif
             break;
 
         case IO_EOSABAR:
@@ -917,9 +915,7 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
-#ifdef EOS_CARRIES_TEMPERATURE
                    && blocknr != IO_EOSTEMP
-#endif
 #ifdef EOS_CARRIES_ABAR
                    && blocknr != IO_EOSABAR
 #endif
@@ -1003,10 +999,6 @@ void read_file(char *fname, int readTask, int lastTask)
             if(RestartFlag == 2 && blocknr == IO_EDDINGTON_TENSOR) {continue;}
 #endif
 
-#if !defined(EOS_CARRIES_TEMPERATURE)
-            if(RestartFlag == 2 && blocknr == IO_EOSTEMP) {continue;}
-#endif
-            
 #if defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && defined(SINGLE_STAR_RESTART_FROM_FIRESIM)
             if(RestartFlag == 2 && blocknr == IO_RADGAMMA) {continue;}
             if(RestartFlag == 2 && blocknr == IO_RAD_OPACITY) {continue;}

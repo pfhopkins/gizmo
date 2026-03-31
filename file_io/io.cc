@@ -1403,23 +1403,12 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_EOSTEMP:
-#ifdef EOS_CARRIES_TEMPERATURE
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *fp++ = (MyOutputFloat) CellP[pindex].Temperature;
                     n++;
                 }
-#elif defined(OUTPUT_TEMPERATURE)
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    double u, ne, nh0 = 0, mu = 1, temp, nHeII, nhp, nHe0, nHepp; u = DMAX(All.MinEgySpec, CellP[pindex].InternalEnergy); // needs to be in code units
-                    temp = ThermalProperties(u, CellP[pindex].Density * All.cf_a3inv, pindex, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
-                    *fp++ = (MyOutputFloat) temp;
-                    n++;
-                }	    
-#endif
             break;
 
         case IO_PRESSURE:
@@ -3185,11 +3174,7 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_EOSTEMP:
-#ifdef EOS_CARRIES_TEMPERATURE
             return 1;
-#elif defined(OUTPUT_TEMPERATURE)
-	    return 1;
-#endif
             break;
 
         case IO_PRESSURE:
