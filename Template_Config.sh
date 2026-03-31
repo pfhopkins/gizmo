@@ -611,7 +611,6 @@
 #CRFLUID_INJECTION_AT_SHOCKS=(0.1)          #- inject CRs (using standard spectra) at resolved shocks throughout simulation. value=maximum fraction of shock energy flux to convert to accelerated CRs. currently using hard threshold of >Mach 5, >100 km/s shock velocity, along with spurious shock detection. coded by PFH, in testing
 #SINK_CR_INJECTION_AT_TERMINATION=(0.25)    #- inject CRs (requires SINK_WIND_SPAWN and SINK_COSMIC_RAYS) approximately at spawned-cell termination shocks. developed by Kung-Yi Su, this version testing by PFH, currently uses very simple deceleration to fraction of launch velocity (=value set here) to determine when to inject
 #SINK_TEST_WIND_MIXED_FASTSLOW=(1.e5)       #- BH has a slow outflow and fast jet, where fast jet has 1/50th the mass-loading and this speed in kms by default
-#RT_SPEEDOFLIGHT_REDUCTION_VARIABLE_RSL     #- allow variable RSL with different strategies for setting it
 #USE_TIMESTEP_DILATION_FOR_ZOOMS            #- enable time dilation modules, need to customize for applications, cannot be simply generically turned on without coding how they will work
 #DILATION_FOR_STELLAR_KINEMATICS_ONLY       #- special version of time dilation designed for stellar kinematics in e.g. dense star clusters or galaxy centers
 #SINK_RIAF_SUBEDDINGTON_MODEL=(0.01)        #- enable an arbitrary modular variation in the radiative efficiency of BHs as a function of eddington ratio or other particle properties, with the critical transition to the jet mode at this eddington ratio (defined in terms of mdot/mdot_crit)

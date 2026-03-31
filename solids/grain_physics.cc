@@ -384,7 +384,7 @@ double return_grain_cross_section_per_unit_mass(int i)
     where here 'All.DM_InteractionCrossSection' is the cross-section read in from the params file, and other params like DM_InteractionVelocityScale
     allow the user to control the collision velocity dependence. This function should be appropriately modified to the actual grain physics being represented.
     Here, the default assumption is simple hard-sphere scattering with a constant cross section per unit grain mass, set by the grain size */
-double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, double dV[3], double dt, int j_ngb)
+double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, Vec3<double>& dV, double dt, int j_ngb)
 {
     double dVmag = sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]) / All.cf_atime; // velocity in physical
     double rho_eff = 0.5*(mass + P[j_ngb].Mass) / (h_si*h_si*h_si) * All.cf_a3inv; // density in physical
@@ -397,7 +397,7 @@ double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, 
 /*! This routine sets the kicks for each grain after it has been decided that they will interact. By default at present this results only in velocity 'kicks',
     but one can modify this function to allow other types of interactions. By default, it will assume elastic collisions,
     and an algorithm that conserves energy and momentum but picks a random direction so it does not conserves angular momentum. */
-void calculate_interact_kick(double dV[3], double kick[3], double m)
+void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m)
 {
     double dVmag = (1-All.DM_DissipationFactor)*sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]);
     if(dVmag<0) {dVmag=0;}
@@ -436,7 +436,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
         for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
         {
             double Q_abs_eff = return_grain_extinction_efficiency_Q(i, k_freq); /* need this to calculate the absorption efficiency in each band */
-            in->Grain_Abs_Coeff[k_freq] = Q_abs_eff * 3. / (4. * C_LIGHT_CODE_REDUCED(j) * rho_grain_code * R_grain_code * rho_gas_code);
+            in->Grain_Abs_Coeff[k_freq] = Q_abs_eff * 3. / (4. * C_LIGHT_CODE_REDUCED * rho_grain_code * R_grain_code * rho_gas_code);
         }
     }
 }
@@ -498,7 +498,7 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
                         }
                     } else { /* sitting on a -grain- element, want to interpolate flux to it and calculate radiation pressure force */
                         wt = CellP[j].Density*All.cf_a3inv * wk_i; /* weight of element to 'i, with appropriate coefficient from above */
-                        double radacc[3]={0},vel_i[3]={0},dtEgamma_work_done=0; for(k=0;k<3;k++) {vel_i[k]=RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(j)*local.Vel[k]/All.cf_atime;} /* velocity of interest here is the grain velocity (radiation in lab frame) */
+                        double radacc[3]={0},vel_i[3]={0},dtEgamma_work_done=0; for(k=0;k<3;k++) {vel_i[k]=RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS*local.Vel[k]/All.cf_atime;} /* velocity of interest here is the grain velocity (radiation in lab frame) */
                         for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
                         {
                             double f_kappa_abs=0.5,vdot_h[3]={0},flux_i[3]={0},flux_mag=0,erad_i=0,flux_corr=1;
@@ -512,10 +512,10 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
                             erad_i = CellP[j].Rad_E_gamma_Pred[k_freq];
                             for(k=0;k<3;k++) {flux_i[k] = -CellP[j].Gradients.Rad_E_gamma_ET[k_freq][k]; flux_mag+=flux_i[k]*flux_i[k];}
                             if(flux_mag>0) {for(k=0;k<3;k++) {flux_i[k]/=sqrt(flux_mag);}} else {flux_i[0]=0;flux_i[1]=0;flux_i[2]=1;}
-                            flux_mag = erad_i*C_LIGHT_CODE_REDUCED(j); for(k=0;k<3;k++) {flux_i[k]*=flux_mag;}
+                            flux_mag = erad_i*C_LIGHT_CODE_REDUCED; for(k=0;k<3;k++) {flux_i[k]*=flux_mag;}
 #endif
                             if(!isfinite(flux_mag) || flux_mag<=MIN_REAL_NUMBER) {flux_mag=MIN_REAL_NUMBER; flux_i[0]=flux_i[1]=0; flux_i[2]=flux_mag;}
-                            double flux_thin = erad_i * C_LIGHT_CODE_REDUCED(j); if(!isfinite(flux_thin) || flux_thin<=0) {flux_thin=0;}
+                            double flux_thin = erad_i * C_LIGHT_CODE_REDUCED; if(!isfinite(flux_thin) || flux_thin<=0) {flux_thin=0;}
                             flux_corr = DMIN(1., 100.*flux_thin/flux_mag);
                             for(k=0;k<3;k++)
                             {

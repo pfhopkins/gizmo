@@ -206,7 +206,7 @@ void drift_particle(int i, integertime time1)
             CellP[i].Density *= exp(-divv_fac);
             double etmp = CellP[i].InternalEnergyPred + CellP[i].DtInternalEnergy * dt_entr;
 #if defined(RADTRANSFER) && defined(RT_EVOLVE_ENERGY) /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal */ 
-            int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma_Pred[kfreq];}
+            int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma_Pred[kfreq];}
             if(erad_tot > 0)
             {
                 int_e_min=0.025*CellP[i].InternalEnergyPred; tot_e_min=0.025*(erad_tot/rsol_fac+CellP[i].InternalEnergyPred*P[i].Mass);
@@ -606,17 +606,18 @@ void advect_mesh_point(int i, double dt)
 
 
 /* routine to calculate the overlapping face area of two cuboids in NDIMS dimensions based on their relative positions */
-double calculate_face_area_for_cartesian_mesh(double *dp, double rinv, double l_side, double *Face_Area_Vec)
+double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec)
 {
-    Face_Area_Vec[0]=Face_Area_Vec[1]=Face_Area_Vec[2]=0; double Face_Area_Norm;
+    Face_Area_Vec = {}; double Face_Area_Norm;
 #if (NUMDIMS==1)
     Face_Area_Norm = 1; Face_Area_Vec[0] = Face_Area_Norm * dp[0]/fabs(dp[0]);
 #elif (NUMDIMS==2)
-    if(fabs(dp[0]) > fabs(dp[1])) {Face_Area_Vec[0] = Face_Area_Norm = DMAX(0,l_side-fabs(dp[1])) * dp[0]/fabs(dp[0]) * All.cf_atime;} else {Face_Area_Vec[1] = Face_Area_Norm = DMAX(0,l_side-fabs(dp[0])) * dp[1]/fabs(dp[1]) * All.cf_atime;}
+    if(fabs(dp[0]) > fabs(dp[1])) {Face_Area_Vec[0] = Face_Area_Norm = std::max(0.,l_side-fabs(dp[1])) * dp[0]/fabs(dp[0]) * All.cf_atime;} else {Face_Area_Vec[1] = Face_Area_Norm = std::max(0.,l_side-fabs(dp[0])) * dp[1]/fabs(dp[1]) * All.cf_atime;}
 #else
-    double dp_abs[3]; int k,kdir; for(k=0;k<3;k++) {dp_abs[k] = fabs(dp[k]);}
+    Vec3<double> dp_abs = {fabs(dp[0]), fabs(dp[1]), fabs(dp[2])};
+    int kdir;
     if((dp_abs[0]>=dp_abs[1])&&(dp_abs[0]>=dp_abs[2])) {kdir=0;} else if ((dp_abs[1]>=dp_abs[0])&&(dp_abs[1]>=dp_abs[2])) {kdir=1;} else {kdir=2;}
-    Face_Area_Norm=1; for(k=0;k<3;k++) {if(k!=kdir) {Face_Area_Norm *= DMAX(0,l_side-dp_abs[k]) * All.cf_atime*All.cf_atime;}}
+    Face_Area_Norm=1; for(int k=0;k<3;k++) {if(k!=kdir) {Face_Area_Norm *= std::max(0.,l_side-dp_abs[k]) * All.cf_atime*All.cf_atime;}}
     Face_Area_Vec[kdir] = Face_Area_Norm * dp[kdir]/fabs(dp[kdir]);
 #endif
     return fabs(Face_Area_Norm);

@@ -342,7 +342,7 @@ void set_sink_mdot(int i, int n, double dt)
 #if (SINK_GRAVACCRETION == 10)
     bhvel2 = 0;
 #endif
-    double fac = pow(soundspeed2+bhvel2, 1.5);
+    fac = pow(soundspeed2+bhvel2, 1.5);
     if(fac > 0) {
         double AccretionFactor = All.SinkAccretionFactor;
 #if (SINK_GRAVACCRETION == 11) /* variable-alpha model (Booth&Schaye 2009): now All.SinkAccretionFactor is the slope of the density dependence */

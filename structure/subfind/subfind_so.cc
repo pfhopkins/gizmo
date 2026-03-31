@@ -489,7 +489,7 @@ int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_loc
 {
   int startnode, listindex = 0;
   double h, mass, massret;
-  MyDouble *pos;
+  Vec3<double> pos;
 
 
   if(mode == 0)
@@ -545,7 +545,7 @@ int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_loc
 }
 
 
-double subfind_ovderdens_treefind(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
+double subfind_ovderdens_treefind(Vec3<double> searchcenter, MyFloat rkern, int target, int *startnode,
 				  int mode, int *nexport, int *nsend_local)
 {
   int no, p, task, nexport_save;

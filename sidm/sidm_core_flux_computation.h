@@ -23,7 +23,7 @@
                 NeedToWakeupParticles_local = 1;
             }}
 #endif
-            double kick[3]; calculate_interact_kick(kernel.dv, kick, m_si);
+            Vec3<double> kick; calculate_interact_kick(kernel.dv, kick, m_si);
             int k; for(k=0;k<3;k++) {
                 double dv_sidm = (local.Mass/m_si)*kick[k];
                 out.sidm_kick[k] -= (P[j].Mass/m_si)*kick[k];
