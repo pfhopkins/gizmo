@@ -328,7 +328,7 @@
             }
 #endif // closes adiabatic flow face correction check //
 
-#if defined(OUTPUT_SHOCK_MACH_NUMBER) && !defined(EOS_GENERAL)
+#if defined(OUTPUT_SHOCK_MACH_NUMBER)
         /* -----------------------------------------------------------------------
          * Shock detection via pairwise Riemann states (MFM/MFV methods only).
          * Uses the Rankine-Hugoniot relation: M^2 = [(gamma+1)*pjump + (gamma-1)] / (2*gamma)
@@ -346,13 +346,17 @@
                 double P_R_phys = Riemann_vec.R.p * cf_a3inv_fac; /* face-reconstructed pressure from i */
                 if(P_L_phys > 0 && P_R_phys > 0) {
                     /* upstream = lower-pressure side (pre-shock gas) */
-                    double P_up = (P_L_phys <= P_R_phys) ? P_L_phys : P_R_phys;
-                    double cs_up = (P_L_phys <= P_R_phys) ? kernel.sound_j : kernel.sound_i;
-                    if(cs_up > 0) {
+                    int upstream_is_L = (P_L_phys <= P_R_phys);
+                    double P_up = upstream_is_L ? P_L_phys : P_R_phys;
+                    double cs_up = upstream_is_L ? kernel.sound_j : kernel.sound_i;
+                    double rho_up = upstream_is_L ? Riemann_vec.L.rho : Riemann_vec.R.rho;
+                    if(cs_up > 0 && rho_up > 0) {
                         double pjump = Riemann_out.P_M / P_up;
-                        if(pjump > 1.0) {
+                        if(pjump > 1.05) { /* require >5% pressure jump to filter noise from marginal compressions */
+                            /* compute per-particle effective gamma from upstream state: gamma = cs^2 * rho / P */
+                            double gamma_eos = cs_up * cs_up * rho_up * cf_a3inv_fac / P_up;
+                            gamma_eos = DMAX(1.001, DMIN(gamma_eos, 5./3. + 0.01)); /* sanity-bound gamma to physical range */
                             /* Rankine-Hugoniot normal Mach number */
-                            double gamma_eos = GAMMA_DEFAULT;
                             double mach2_RH = ((gamma_eos + 1.0) * pjump + (gamma_eos - 1.0)) / (2.0 * gamma_eos);
                             double mach_RH = (mach2_RH > 1.0) ? sqrt(mach2_RH) : 1.0;
                             if(mach_RH > 1.0) {
@@ -364,7 +368,7 @@
                 }
             }
         }
-#endif /* OUTPUT_SHOCK_MACH_NUMBER && !EOS_GENERAL */
+#endif /* OUTPUT_SHOCK_MACH_NUMBER */
 
         } else {
             /* nothing but bad riemann solutions found! */
