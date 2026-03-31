@@ -238,7 +238,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic write
                         CellP[j].Pressure = (GAMMA_DEFAULT - 1.0) * u_pred * rho_j;
                     }
-                    P[j].wakeup = 1;
+                    P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
 #ifdef COSMIC_RAY_FLUID
                     double dEcr = wk * local.Esne * cr_frac;
@@ -288,7 +288,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #endif
                     #pragma omp atomic
                     P[j].Mass += dM;
-                    P[j].wakeup = 1;
+                    P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }
 

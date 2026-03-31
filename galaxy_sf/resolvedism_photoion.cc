@@ -481,7 +481,7 @@ void resolvedism_photoionize(void)
         if(P[j].Type != 0) continue;
         if(CellP[j].Ionized == 2) {
             CellP[j].Ionized = 1;
-            P[j].wakeup = 1;
+            P[j].wakeup = -1;
             NeedToWakeupParticles_local = 1;
             n_woken++;
         }

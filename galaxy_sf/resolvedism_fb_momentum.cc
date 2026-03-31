@@ -325,7 +325,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #endif
                     #pragma omp atomic
                     P[j].Mass += dM;
-                    P[j].wakeup = 1;
+                    P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }
 
@@ -380,7 +380,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                                 (unsigned long long)P[j].ID, dv_mag, vmag,
                                 P[j].NumNgb, CellP[j].Density, wk, kernel.r, local.fb_channel);
                     }
-                    P[j].wakeup = 1;
+                    P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }
 
