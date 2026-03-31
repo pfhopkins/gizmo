@@ -403,6 +403,11 @@
 #RT_REPROCESS_INJECTED_PHOTONS          # re-process photon energy while doing the discrete injection operation conserving photon energy, put only the un-absorbed component of the current band into that band, putting the rest in its "donation" bin (ionizing->optical, all others->IR). This would happen anyway during the routine for resolved absorption, but this may more realistically handle situations where e.g. your dust destruction front is at totally unresolved scales and you don't want to spuriously ionize stuff on larger scales. Assume isotropic re-radiation, so inject only energy for the donated bin and not net flux/momentum. follows STARFORGE methods (Grudic+ arXiv:2010.11254) - cite this
 #RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION   # uses a solid-angle as opposed to simple kernel weight (requires extra passes) for depositing radiation from sinks/BHs when the direct deposition is used. also ensures the sink uses a 2-way search to ensure overlapping diffuse gas gets radiation. cite Grudic+ arXiv:2010.11254
 #RT_ISRF_BACKGROUND=1                   # include Draine 1978 ISRF for photoelectric heating (appropriate for solar circle, must be re-scaled for different environments); rescaled by a constant normalization given by this constant, if defined
+## ----------------------------------------------------------------------------------------------------
+# ----------- Transport subcycling: allow RT and/or CR transport to take multiple smaller steps per hydro step  [HIGHLY EXPERIMENTAL]
+## ----------------------------------------------------------------------------------------------------
+#TRANSPORT_SUBCYCLE=100                 # max number of transport (RT+CR) subcycles per hydro step. decouples the transport CFL from the hydro timestep.
+#TRANSPORT_SUBCYCLE_COOLING             # also subcycle cooling within the transport subcycle loop (otherwise cooling runs once per hydro step
 ####################################################################################################
 
 

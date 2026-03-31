@@ -612,6 +612,10 @@ extern struct global_data_all_processes
     integertime Radiation_Ti_begstep;
     integertime Radiation_Ti_endstep;
 #endif
+#ifdef TRANSPORT_SUBCYCLE
+    int Transport_Subcycle_N;               /*!< number of transport subcycles this step */
+    double Transport_Subcycle_dt_fraction;   /*!< = 1.0/Transport_Subcycle_N, fraction of full dt per sub-step */
+#endif
 #ifdef RT_EVOLVE_INTENSITIES
     double Rad_Intensity_Direction[N_RT_INTENSITY_BINS][3];
 #endif
