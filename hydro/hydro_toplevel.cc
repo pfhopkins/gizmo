@@ -994,14 +994,30 @@ void hydro_force_initial_operations_preloop(void)
 void hydro_force(void)
 {
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
+    double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
+    double t_preloop = timediff(t_preloop_start, my_second());
+    double t_malloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+    double t_malloc = timediff(t_malloc_start, my_second());
+    double t_xchange_start = my_second();
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+    double t_xchange_all = timediff(t_xchange_start, my_second());
+    double t_demalloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    double t_demalloc = timediff(t_demalloc_start, my_second());
+    double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
+    double t_postloop = timediff(t_postloop_start, my_second());
     /* collect timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_HYDCOMPUTE] += timecomp; CPU_Step[CPU_HYDWAIT] += timewait; CPU_Step[CPU_HYDCOMM] += timecomm;
-    CPU_Step[CPU_HYDMISC] += timeall - (timecomp + timewait + timecomm);
+    double hydmisc_total = timeall - (timecomp + timewait + timecomm);
+    double t_xchange_serial = t_xchange_all - (timecomp + timewait + timecomm); /* serial overhead inside xchange loop */
+    CPU_Step[CPU_HYDMISC] += hydmisc_total;
+    if(ThisTask == 0) {
+        printf("  hydro_force breakdown: preloop=%.4f malloc=%.4f xchange_serial=%.4f demalloc=%.4f postloop=%.4f hydmisc_total=%.4f\n",
+               t_preloop, t_malloc, t_xchange_serial, t_demalloc, t_postloop, hydmisc_total);
+    }
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

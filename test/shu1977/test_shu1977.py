@@ -15,7 +15,7 @@ def plot_shu1977_density_slice(coords, rho, boxsize, output_dir="."):
     center = np.average(coords, axis=0)
     size = boxsize * 0.1
     M = Meshoid(coords)
-    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=size, order=1)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=size, order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
     half = size / 2
     im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-half, half, -half, half])
