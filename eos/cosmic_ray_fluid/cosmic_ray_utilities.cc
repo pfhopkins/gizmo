@@ -21,6 +21,17 @@ double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k) {
 #endif
 }
 
+/* return CR pressure within a given bin */
+double INLINE_FUNC Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell)
+{
+    if((cell[i].Mass > 0) && (cell[i].Density > 0) && (cell[i].CosmicRayEnergyPred[k_CRegy] > 0))
+    {
+        return (GAMMA_COSMICRAY(k_CRegy)-1.) * (cell[i].CosmicRayEnergyPred[k_CRegy] * cell[i].Density) / cell[i].Mass;
+    }
+    return 0;
+}
+
+
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
 /* routine which defines the actual bin list for the multi-bin spectral CR models. note the number of entries MUST match the hard-coded N_CR_PARTICLE_BINS defined in allvars.h */
 void CR_spectrum_define_bins(void)
@@ -625,7 +636,7 @@ double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp,
     double L_mean_free_path = (3.e25 / nH_cgs) / UNIT_LENGTH_IN_CGS;
     L_gradient_max = DMIN(L_gradient_max, L_mean_free_path);
     
-    double CRPressureGradScaleLength = cell[i].CosmicRayPressure(k_CRegy) / CRPressureGradMag * All.cf_atime;
+    double CRPressureGradScaleLength = Get_Gas_CosmicRayPressure(i, k_CRegy, cell) / CRPressureGradMag * All.cf_atime;
     if(CRPressureGradScaleLength > 0) {CRPressureGradScaleLength = 1.0/(1.0/CRPressureGradScaleLength + 1.0/L_gradient_max);} else {CRPressureGradScaleLength=0;}
     CRPressureGradScaleLength = sqrt(L_gradient_min*L_gradient_min + CRPressureGradScaleLength*CRPressureGradScaleLength);
     return CRPressureGradScaleLength; /* this is returned in -physical- units */
@@ -733,7 +744,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         closure_f1 = 3.-2.*three_chi; closure_f2 = 1.-three_chi; // prefactors for both terms below //
 
         // this is the exact solution for the CR flux-update equation over a finite timestep dt: it needs to be solved this way [implicitly] as opposed to explicitly for dt because in the limit of dt_cr_dimless being large, the problem exactly approaches the diffusive solution
-        Vec3<double> DtCosmicRayFlux={}, flux={}, CR_veff={}; double CR_vmag=0, q_cr=0, cr_speed=CRFLUID_REDUCED_C_CODE(k_CRegy), rsol_correction_factor=cosmicrayfluid_rsol_corrfac(k_CRegy), V_i=pp[i].Mass/cell[i].Density, P0_cr, fac_for_DtCosmicRayFlux; P0_cr=cell[i].CosmicRayPressure(k_CRegy);
+        Vec3<double> DtCosmicRayFlux={}, flux={}, CR_veff={}; double CR_vmag=0, q_cr=0, cr_speed=CRFLUID_REDUCED_C_CODE(k_CRegy), rsol_correction_factor=cosmicrayfluid_rsol_corrfac(k_CRegy), V_i=pp[i].Mass/cell[i].Density, P0_cr, fac_for_DtCosmicRayFlux; P0_cr=Get_Gas_CosmicRayPressure(i, k_CRegy, cell);
         cr_speed = DMAX(cell[i].MaxSignalVel , DMIN(CRFLUID_REDUCED_C_CODE(k_CRegy) , 10.*fabs(cell[i].CosmicRayDiffusionCoeff[k_CRegy])/(Get_Particle_Size(i)*All.cf_atime)));
         fac_for_DtCosmicRayFlux = -rsol_correction_factor * fabs(cell[i].CosmicRayDiffusionCoeff[k_CRegy]) * V_i / (GAMMA_COSMICRAY(k_CRegy)-1.);
         DtCosmicRayFlux = cell[i].Gradients.CosmicRayPressure[k_CRegy];
@@ -1604,7 +1615,7 @@ double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, 
     return cosmicrayfluid_rsol_corrfac(k_CRegy); // uniform reduction factor for all terms
 #else
     double kappa = cell[target].CosmicRayDiffusionCoeff[k_CRegy]; /* diffusion coefficient [physical units] */
-    double fluxmag=0, Bmag=0, gradmag=0, Lgrad=0, veff=0, P0=cell[target].CosmicRayPressure(k_CRegy);
+    double fluxmag=0, Bmag=0, gradmag=0, Lgrad=0, veff=0, P0=Get_Gas_CosmicRayPressure(target, k_CRegy, cell);
     Vec3<double> B_vec = cell[target].CosmicRayFluxPred[k_CRegy]; /* default projection direction is flux itself */
 #ifdef MAGNETIC
     B_vec = cell[target].Bfield();
@@ -1635,7 +1646,7 @@ double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k
     double v_eff_cr = CRFLUID_REDUCED_C_CODE(k_CRegy); // universal reduction factor
 #else
     double kappa=cell[target].CosmicRayDiffusionCoeff[k_CRegy], Lgrad_inv=cell[target].Gradients.CosmicRayPressure[k_CRegy].norm_sq();
-    Lgrad_inv = (sqrt(Lgrad_inv) / cell[target].CosmicRayPressure(k_CRegy)) / All.cf_atime;
+    Lgrad_inv = (sqrt(Lgrad_inv) / Get_Gas_CosmicRayPressure(target, k_CRegy, cell)) / All.cf_atime;
     double v_eff_cr = DMIN(DMAX(CRFLUID_REDUCED_C_CODE(k_CRegy) , kappa*Lgrad_inv) , C_LIGHT_CODE); // more complicated factor b/c transport not universally slowed-down
 #endif
     ecrv=ecr*v_eff_cr; f=fluxmag2/(ecrv*ecrv); mu1_2=DMAX(0,DMIN(1,f));

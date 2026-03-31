@@ -520,7 +520,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #ifdef COSMIC_RAY_FLUID
     for(j=0;j<N_CR_PARTICLE_BINS;j++)
     {
-        in->CosmicRayPressure[j] = CellP[i].CosmicRayPressure(j);
+        in->CosmicRayPressure[j] = Get_Gas_CosmicRayPressure(i, j, CellP);
         in->CosmicRayDiffusionCoeff[j] = CellP[i].CosmicRayDiffusionCoeff[j];
         in->CosmicRayFlux[j] = CellP[i].CosmicRayFluxPred[j];
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES

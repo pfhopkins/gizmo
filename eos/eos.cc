@@ -125,7 +125,7 @@ void set_eos_pressure(int i, struct gas_cell_data *cell)
     double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
     int k_CRegy; for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
-        press += cell[i].CosmicRayPressure(k_CRegy);
+        press += Get_Gas_CosmicRayPressure(i, k_CRegy, cell);
         soundspeed2 += GAMMA_COSMICRAY(k_CRegy) * (GAMMA_COSMICRAY(k_CRegy)-1.) * cell[i].CosmicRayEnergyPred[k_CRegy] / cell[i].Mass;
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES // using effective gamma of the alfven component = 3/2
         press += (1.5-1) * cell[i].Density * (cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]);

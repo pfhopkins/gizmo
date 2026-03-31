@@ -314,6 +314,7 @@ double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k
 void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
 double return_CRbin_M1speed(int k_CRegy);
 double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
+double INLINE_FUNC Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell);
 double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag);
 double diffusion_coefficient_constant(int target, int k_CRegy);
