@@ -438,7 +438,6 @@
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
 #define COOL_MOLECFRAC_NONEQM
-#define EOS_PRECOMPUTE
 #define EOS_SUBSTELLAR_ISM
 #define OUTPUT_MOLECULAR_FRACTION
 #if defined(MAGNETIC) && !defined(CONDUCTION) && !defined(VISCOSITY) // if we have cooling and magnetic fields, enable conduction + viscosity
@@ -646,10 +645,6 @@
 
 #if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM)
 #define EOS_GAMMA_VARIABLE
-#endif
-#ifdef EOS_PRECOMPUTE  // cache EOS quantities - default to storing temperature and adiabatic index
-#define EOS_CARRIES_TEMPERATURE
-#define EOS_CARRIES_GAMMA
 #endif
 
 

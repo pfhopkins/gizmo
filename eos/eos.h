@@ -8,7 +8,6 @@
 #define EOS_USES_CGS
 #define EOS_CARRIES_YE
 #define EOS_CARRIES_ABAR
-#define EOS_CARRIES_TEMPERATURE
 #define EOS_PROVIDES_ENTROPY
 #define EOS_PROVIDES_CV
 #endif
@@ -23,18 +22,14 @@ struct eos_input
 #ifdef EOS_CARRIES_ABAR
   double Abar;        /* Mean atomic weight (in atomic mass units) */
 #endif
-#ifdef EOS_CARRIES_TEMPERATURE
   double temp;        /* Temperature initial guess */
-#endif
 };
 
 struct eos_output
 {
   double press;       /* Pressure */
   double csound;      /* Sound speed */
-#ifdef EOS_CARRIES_TEMPERATURE
   double temp;        /* Temperature (in Kelvin) */
-#endif
 #ifdef EOS_PROVIDES_ENTROPY
   double entropy;     /* Entropy (in CGS) */
 #endif
