@@ -435,6 +435,7 @@
 ####################################################################################################
 #OPENMP                         # top-level switch for explicit OpenMP implementation (can turn on here, or enable in Makefile for your machine)
 #MULTIPLEDOMAINS=16             # Multi-Domain option for the top-tree level (alters load-balancing)
+#DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
 ####################################################################################################
 
 

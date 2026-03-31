@@ -228,7 +228,7 @@ void parallel_sort_special_P_GrNr_ID(void);
 void calculate_power_spectra(int num, long long *ntot_type_all);
 
 
-int pmforce_is_particle_high_res(int type, MyDouble *pos);
+int pmforce_is_particle_high_res(int type, Vec3<double>& Pos);
 
 void compare_partitions(void);
 void assign_unique_ids(void);
@@ -686,7 +686,7 @@ char *GetMultiSpeciesFilename(int i, int hk);
 #endif
 #endif
 
-double sink_fb_angleweight(double sink_lum_input, MyFloat sink_angle[3], double dx, double dy, double dz);
+double sink_fb_angleweight(double sink_lum_input, Vec3<double>& sink_angle, double dx, double dy, double dz);
 double sink_fb_angleweight_localcoupling(int j, double cos_theta, double r, double H_kernel);
 
 #if defined(GALSF_SUBGRID_WINDS)

@@ -52,7 +52,7 @@ def test_rt(num_mpi_ranks, num_omp_threads):
     # Plot final density using Meshoid slice interpolation
     # BoxSize=0.5, BOX_LONG_X=1, BOX_LONG_Y=2 -> box is 0.5 x 1.0
     M = Meshoid(pos_f, boxsize=0.5)
-    rho_slice = M.Slice(rho_f, res=512, plane="z", center=np.array([0.25, 0.5, 0.25]), size=0.5, order=1)
+    rho_slice = M.Slice(rho_f, res=512, plane="z", center=np.array([0.25, 0.5, 0.25]), size=0.5, order=0)
     fig, ax = plt.subplots(figsize=(4, 8))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, 0.5, 0, 1.0])
     flush_colorbar(im, ax=ax, label="Density")
