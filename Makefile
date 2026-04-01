@@ -325,6 +325,7 @@ GRAVITY_OBJS  = gravity/forcetree.o \
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				hydro/density.o \
 				hydro/gradients.o \
+				hydro/mg_gradient_correction.o \
 				turb/dynamic_diffusion.o \
 				turb/dynamic_diffusion_velocities.o \
 				turb/turb_driving.o \

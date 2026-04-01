@@ -926,6 +926,13 @@ void hydro_gradient_calc(void)
                 /* now check, and if ok, enter the gradient re-calculation */
                 if(CellP[i].FlagForConstrainedGradients == 1)
                 {
+#ifdef MHD_MODIFIED_GRADIENT
+                    /* MG method: skip the CG iterative correction here.
+                       The full MG global solve (mg_gradient_correction_calc) is called
+                       after hydro_gradient_calc() returns, in the main accel loop.
+                       It builds a separate sparse matrix over ALL gas cells and solves via CG. */
+                    (void)0; /* placeholder — MG_cgcoeff will be set by the global solve */
+#else /* standard CG iterative correction */
                     double GB0[3][3];
                     double fsum = 0.0, dmag = 0.0;
                     double h_eff = P[i].Get_Particle_Size();
@@ -988,6 +995,7 @@ void hydro_gradient_calc(void)
                             }
                         } // closes j_gloop loop
                     } // closes fsum/dmag check
+#endif /* MHD_MODIFIED_GRADIENT vs standard CG */
                 } // closes FlagForConstrainedGradients check
 #ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
                 double a_limiter = 0.25; if(CellP[i].ConditionNumber>100) a_limiter=DMIN(0.5, 0.25 + 0.25 * (CellP[i].ConditionNumber-100)/100);

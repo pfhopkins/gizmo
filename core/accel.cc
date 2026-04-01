@@ -84,6 +84,9 @@ void compute_hydro_densities_and_forces(void)
 #endif
 
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
+#ifdef MHD_MODIFIED_GRADIENT
+        mg_gradient_correction_calc(); /* MG method: global sparse-matrix solve for exact div(B)=0 correction coefficients (Tu et al. 2026) */
+#endif
 #if defined(COOLING) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */
 #endif

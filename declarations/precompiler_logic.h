@@ -610,6 +610,19 @@
 #endif
 #endif
 
+#ifdef MHD_MODIFIED_GRADIENT
+#ifndef MAGNETIC
+#define MAGNETIC
+#endif
+/* MG builds on top of the CG infrastructure (FaceCrossX, FaceDotB, Face_Area),
+   but replaces the iterative correction with a global sparse-matrix solve.
+   If user set CG explicitly alongside MG, warn them. Otherwise, auto-enable CG=1. */
+#ifdef MHD_CONSTRAINED_GRADIENT
+#undef MHD_CONSTRAINED_GRADIENT
+#endif
+#define MHD_CONSTRAINED_GRADIENT 1
+#endif
+
 
 #if defined(SPECIAL_POINT_MOTION)
 #if !defined(SINK_CALC_DISTANCES)
