@@ -110,6 +110,7 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_GrainBinSize = pow(10,log10(All.ISMDustChem_Grain_Size_Max/All.ISMDustChem_Grain_Size_Min)/NUM_ISMDUSTCHEM_SIZE_BINS);
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS+1;j++) {All.ISMDustChem_GrainBinEdges[j] = pow(All.ISMDustChem_GrainBinSize,j)*All.ISMDustChem_Grain_Size_Min;}
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {All.ISMDustChem_GrainBinCenters[j] = (All.ISMDustChem_GrainBinEdges[j+1]+All.ISMDustChem_GrainBinEdges[j])/2.;}
+    ISMDustChemEvo_precompute_poly_coeffs(); /* precompute coag/shat polynomial coefficients following bin edges/centers init above */
 #endif
 #endif
 }
@@ -1523,12 +1524,12 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
 #if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 
     // Gas cell volume (cm^-3), relative velocity between colliding grains (cm/s), mass of shattered grains (g), i, j, k grain velocities (cm/s), mach factor for grain velocities, cos theta for angle of impact between two grains
-    double Vcell, vikrel, vkjrel, mshat, vgri, vgrk, vgrj, Mach=CellP[i].ISMDustChem_MachNumber, cos_imp_angle, b_time_Mach, clumping_factor;
-    double vgr[NUM_ISMDUSTCHEM_SIZE_BINS], vrel[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
+    double Vcell, mshat, vgri, vgrk, vgrj, vikrel, vkjrel, vikcoag, vkjcoag, Mach=CellP[i].ISMDustChem_MachNumber, cos_imp_angle, b_time_Mach, clumping_factor;
+    double vgr[NUM_ISMDUSTCHEM_SIZE_BINS], vrel[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], vcoag[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], poly[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
     double nH_cgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS; // hydrogen number dens in cgs units
     // Dust physical properties
     // shattering and coagulation thresholds (cm/s), critical pressure (dyn cm^-2), surface energy per area (dyn cm^-2), Poisson's ratio (dyn cm^-2), Young's modulus
-    double vshat, vcoag, P1, gamma, nu_poisson, E_young;
+    double vshat, P1, gamma, nu_poisson, E_young;
     double ailower, aiupper, aicenter, ajlower, ajupper, ajcenter, aklower, akupper, akcenter;
     double mlost_shat, mgained_shat, mlost_coag, mgained_coag, total_mgained, total_mlost, miavg, mkj_shat, mkj_coag;
     double mk, mj, mej, phi, Eimp, QDstar, afmax, afmin, m_inj, mremnant, aremnant, aaggregate;
@@ -1594,9 +1595,12 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         //cos_imp_angle = 2.0*(get_random_number((MyIDType) (P[i].ID+5+k))-0.5); 
         cos_imp_angle = 2.0*gsl_rng_uniform(random_generator_fordust)-1.0;
         
+        // Precompute relative grain velocities and coagulation thresholds for each grain size bin pair.
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
             for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
                 vrel[bin_i][bin_k] = sqrt(vgr[bin_i]*vgr[bin_i] + vgr[bin_k]*vgr[bin_k] - 2*vgr[bin_i]*vgr[bin_k]*cos_imp_angle); // cm/s
+                aicenter=All.ISMDustChem_GrainBinCenters[bin_i]; akcenter=All.ISMDustChem_GrainBinCenters[bin_k];
+                vcoag[bin_i][bin_k] = DMIN(All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)), vshat); // cm/s; catch rare case where coagualation threshold is higher than shattering threshold
             }
         }        
 
@@ -1605,6 +1609,12 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         k_cycle=0;
         while (k_cycle <= n_subcycle) {
             dMdt_moved=0; dNdt_moved=0; total_N=0;
+            // Compute polynomial for each grain size bin pair for each subcycle timestelp since the mass in each bin changes as grains are shattered and coagulate and this changes the mass moved between bins for each interaction
+            for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
+                for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
+                    poly[bin_i][bin_k] = ISMDustChemEvo_fast_shat_coag_poly(i, k, bin_i, bin_k);
+                }
+            }    
             for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
                 ailower = All.ISMDustChem_GrainBinEdges[bin_i], aiupper = All.ISMDustChem_GrainBinEdges[bin_i+1], aicenter=All.ISMDustChem_GrainBinCenters[bin_i];
                 miavg = 4/3*M_PI*bulk_dens*aicenter*aicenter*aicenter;
@@ -1615,16 +1625,18 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                     mk = 4/3*M_PI*bulk_dens*akcenter*akcenter*akcenter;
 
                     vikrel = vrel[bin_i][bin_k];
+                    vikcoag = vcoag[bin_i][bin_k];
                     // Mass lost from bin i due to shattering collisions with grains in bin k
-                    if (vikrel > vshat) {mlost_shat += All.ISMDustChem_ShatteringScaling * vikrel * shattering_coagulation_polynomial(i, k, bin_i, bin_k);}
-                    vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)); // cm/s
-                    if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
+                    if (vikrel > vshat) {mlost_shat += All.ISMDustChem_ShatteringScaling * vikrel * poly[bin_i][bin_k];}
+                    // vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)); // cm/s
+                    // if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                     // Mass lost from bin i due to coagulating collisions with grains in bin k
-                    if (vikrel <= vcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * shattering_coagulation_polynomial(i, k, bin_i, bin_k);}
+                    else if (vikrel <= vikcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * poly[bin_i][bin_k];}
                     for (bin_j=0;bin_j<NUM_ISMDUSTCHEM_SIZE_BINS;bin_j++) {
                         ajcenter=All.ISMDustChem_GrainBinCenters[bin_j];
                         mj = 4/3*M_PI*bulk_dens*ajcenter*ajcenter*ajcenter; // Typical mass of grains in bin j
                         vkjrel = vrel[bin_k][bin_j];
+                        vkjcoag = vcoag[bin_k][bin_j];
 
                         // Calculate the mass of grains injected into bin i
                         // Mass gained in bin i due to shattering collisions between grains in bin k and bin j producing fragments
@@ -1654,16 +1666,16 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                                 mremnant = DMAX(0,mk-mej);
                                 if (aremnant > ailower && aremnant <= aiupper) {mkj_shat += mremnant;}
                             }
-                            mgained_shat += All.ISMDustChem_ShatteringScaling * vkjrel * mkj_shat * shattering_coagulation_polynomial(i, k, bin_k, bin_j);
+                            mgained_shat += All.ISMDustChem_ShatteringScaling * vkjrel * mkj_shat * poly[bin_k][bin_j];
                         }
-                        vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((akcenter*akcenter*akcenter + ajcenter*ajcenter*ajcenter)/pow(akcenter+ajcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(akcenter*ajcenter/(akcenter + ajcenter),5./6.)*sqrt(bulk_dens)); // cm/s
-                        if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
+                        // vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((akcenter*akcenter*akcenter + ajcenter*ajcenter*ajcenter)/pow(akcenter+ajcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(akcenter*ajcenter/(akcenter + ajcenter),5./6.)*sqrt(bulk_dens)); // cm/s
+                        // if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                         // Mass gained in bin i due to coagulating collisions between grains in bin k and bin j producing aggregate grains
-                        if (vkjrel <= vcoag) {
+                        else if (vkjrel <= vkjcoag) {
                             aaggregate = pow((mk + mj)/(4*M_PI/3*bulk_dens),1./3.);
                             if (aaggregate < aiupper && aaggregate >= ailower) {mkj_coag = (mk + mj)/2;} // Counted twice so divide by 2
                             else {mkj_coag = 0;}
-                            mgained_coag += All.ISMDustChem_CoagulationScaling * (vkjrel) * mkj_coag * shattering_coagulation_polynomial(i, k, bin_k, bin_j);
+                            mgained_coag += All.ISMDustChem_CoagulationScaling * (vkjrel) * mkj_coag * poly[bin_k][bin_j];
                         }
                     }
                 }
@@ -2105,38 +2117,68 @@ void ISMDustChemEvo_update_bins_given_mass_change(int i, int j, double *bin_dM, 
 }
 
 
-/* Returns solution from polynomial function used to update size bins for coagulation and shattering routines*/
-double shattering_coagulation_polynomial(int i, int spec_indx, int bin_i, int bin_j)
+/* Returns explicit solution from polynomial function used for coagulation and shattering routines */
+double ISMDustChemEvo_explicit_shat_coag_poly(double ail, double aiu, double aic,
+                                 double ajl, double aju, double ajc,
+                                 double Ni,  double si,
+                                 double Nj,  double sj)
 {
-    double Ni, Nj, si, sj, ail, aiu, aic, ajl, aju, ajc, Iij;
-    ail = All.ISMDustChem_GrainBinEdges[bin_i], aiu = All.ISMDustChem_GrainBinEdges[bin_i+1]; aic = All.ISMDustChem_GrainBinCenters[bin_i];
-    ajl = All.ISMDustChem_GrainBinEdges[bin_j], aju = All.ISMDustChem_GrainBinEdges[bin_j+1]; ajc = All.ISMDustChem_GrainBinCenters[bin_j];
-    Ni = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_i]; si = CellP[i].ISMDustChem_Dust_SlopeInBin[spec_indx][bin_i];
-    Nj = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_j]; sj = CellP[i].ISMDustChem_Dust_SlopeInBin[spec_indx][bin_j];
-    /* Interaction rate between grains of bin_i and bin_j.
-       An ugly polynomial but it's analytically solvable */
-    Iij = (12*(2*aiu*aiu + 3*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju))*Ni*Nj + 
-     6*aiu*(-2*aic*(2*aiu*aiu + 3*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju)) + 
-        aiu*(3*aiu*aiu + 4*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju)))*Nj*si + 
-     6*(-3*ajl*ajl*ajl*ajl + 2*aiu*aiu*(2*ajc - ajl - aju)*(ajl - aju) + 3*aju*aju*aju*aju + 4*ajc*(ajl*ajl*ajl - aju*aju*aju) + 
-        aiu*(-4*ajl*ajl*ajl + 4*aju*aju*aju + 6*ajc*(ajl - aju)*(ajl + aju)))*Ni*sj + 
-     aiu*(-6*aic*(ajl*(4*aiu*aiu*ajc - 2*aiu*(aiu - 3*ajc)*ajl + 4*(-aiu + ajc)*ajl*ajl - 3*ajl*ajl*ajl) - 
-           4*aiu*aiu*ajc*aju + 2*aiu*(aiu - 3*ajc)*aju*aju + 4*(aiu - ajc)*aju*aju*aju + 3*aju*aju*aju*aju) + 
-        aiu*(-9*ajl*ajl*ajl*ajl + 9*aiu*aiu*(2*ajc - ajl - aju)*(ajl - aju) + 9*aju*aju*aju*aju + 
+    return (12*(2*aiu*aiu + 3*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju))*Ni*Nj +
+     6*aiu*(-2*aic*(2*aiu*aiu + 3*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju)) +
+        aiu*(3*aiu*aiu + 4*aiu*(ajl + aju) + 2*(ajl*ajl + ajl*aju + aju*aju)))*Nj*si +
+     6*(-3*ajl*ajl*ajl*ajl + 2*aiu*aiu*(2*ajc - ajl - aju)*(ajl - aju) + 3*aju*aju*aju*aju + 4*ajc*(ajl*ajl*ajl - aju*aju*aju) +
+        aiu*(-4*ajl*ajl*ajl + 4*aju*aju*aju + 6*ajc*(ajl - aju)*(ajl + aju)))*Ni*sj +
+     aiu*(-6*aic*(ajl*(4*aiu*aiu*ajc - 2*aiu*(aiu - 3*ajc)*ajl + 4*(-aiu + ajc)*ajl*ajl - 3*ajl*ajl*ajl) -
+           4*aiu*aiu*ajc*aju + 2*aiu*(aiu - 3*ajc)*aju*aju + 4*(aiu - ajc)*aju*aju*aju + 3*aju*aju*aju*aju) +
+        aiu*(-9*ajl*ajl*ajl*ajl + 9*aiu*aiu*(2*ajc - ajl - aju)*(ajl - aju) + 9*aju*aju*aju*aju +
            12*ajc*(ajl*ajl*ajl - aju*aju*aju) + 8*aiu*(-2*ajl*ajl*ajl + 2*aju*aju*aju + 3*ajc*(ajl - aju)*(ajl + aju))))*si*sj
-      - 9*ail*ail*ail*ail*si*(2*Nj + (2*ajc - ajl - aju)*(ajl - aju)*sj) + 
+      - 9*ail*ail*ail*ail*si*(2*Nj + (2*ajc - ajl - aju)*(ajl - aju)*sj) +
      4*ail*ail*ail*si*(6*(aic - ajl - aju)*Nj + (ajl - aju)*
-         (6*aic*ajc - 3*aic*(ajl + aju) - 6*ajc*(ajl + aju) + 4*(ajl*ajl + ajl*aju + aju*aju))*sj) + 
-     6*ail*(ajl*(6*Ni*Nj + 4*aic*aju*Nj*si) - 3*aic*ajl*ajl*ajl*ajl*si*sj - 4*ajl*ajl*ajl*(Ni - aic*ajc*si)*sj + 
-        2*aiu*Ni*(2*Nj + (2*ajc - ajl - aju)*(ajl - aju)*sj) + ajl*ajl*(4*aic*Nj*si + 6*ajc*Ni*sj) + 
-        aju*(6*Ni*Nj + 4*aic*aju*Nj*si + aju*(-6*ajc*Ni + 4*aju*Ni - 4*aic*ajc*aju*si + 3*aic*aju*aju*si)*sj)) + 
-     3*ail*ail*(8*Ni*Nj + 4*(2*ajc - ajl - aju)*(ajl - aju)*Ni*sj + 
-        si*(-4*ajl*ajl*Nj - 4*ajl*aju*Nj - 4*ajc*ajl*ajl*ajl*sj + 3*ajl*ajl*ajl*ajl*sj + 
-           aju*aju*(-4*Nj + (4*ajc - 3*aju)*aju*sj) + 
+         (6*aic*ajc - 3*aic*(ajl + aju) - 6*ajc*(ajl + aju) + 4*(ajl*ajl + ajl*aju + aju*aju))*sj) +
+     6*ail*(ajl*(6*Ni*Nj + 4*aic*aju*Nj*si) - 3*aic*ajl*ajl*ajl*ajl*si*sj - 4*ajl*ajl*ajl*(Ni - aic*ajc*si)*sj +
+        2*aiu*Ni*(2*Nj + (2*ajc - ajl - aju)*(ajl - aju)*sj) + ajl*ajl*(4*aic*Nj*si + 6*ajc*Ni*sj) +
+        aju*(6*Ni*Nj + 4*aic*aju*Nj*si + aju*(-6*ajc*Ni + 4*aju*Ni - 4*aic*ajc*aju*si + 3*aic*aju*aju*si)*sj)) +
+     3*ail*ail*(8*Ni*Nj + 4*(2*ajc - ajl - aju)*(ajl - aju)*Ni*sj +
+        si*(-4*ajl*ajl*Nj - 4*ajl*aju*Nj - 4*ajc*ajl*ajl*ajl*sj + 3*ajl*ajl*ajl*ajl*sj +
+           aju*aju*(-4*Nj + (4*ajc - 3*aju)*aju*sj) +
            4*aic*(3*ajl*Nj + 3*ajc*ajl*ajl*sj - 2*ajl*ajl*ajl*sj + aju*(3*Nj + aju*(-3*ajc + 2*aju)*sj)))))/72.;
-
-    return DMAX(0,Iij); // Limit to 0 to avoid negative values due to rounding errors
 }
+
+
+/* Precompute coag/shat polynomial coefficients since these only depend on grain bin parameters. */
+void ISMDustChemEvo_precompute_poly_coeffs(void)
+{
+    int bin_i, bin_j;
+    for (bin_i = 0; bin_i < NUM_ISMDUSTCHEM_SIZE_BINS; bin_i++) {
+        double ail = All.ISMDustChem_GrainBinEdges[bin_i];
+        double aiu = All.ISMDustChem_GrainBinEdges[bin_i+1];
+        double aic = All.ISMDustChem_GrainBinCenters[bin_i];
+        for (bin_j = 0; bin_j < NUM_ISMDUSTCHEM_SIZE_BINS; bin_j++) {
+            double ajl = All.ISMDustChem_GrainBinEdges[bin_j];
+            double aju = All.ISMDustChem_GrainBinEdges[bin_j+1];
+            double ajc = All.ISMDustChem_GrainBinCenters[bin_j];
+            /* Extract each coefficient by evaluating with the corresponding unit vector.
+             * Since I = C_NN*Ni*Nj + C_Nsi*si*Nj + C_Nisj*Ni*sj + C_sisj*si*sj: */
+            All.ISMDustChem_C_NiNj[bin_i][bin_j]   = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 1,0);
+            All.ISMDustChem_C_Njsi[bin_i][bin_j]  = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 1,0);
+            All.ISMDustChem_C_Nisj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 1,0, 0,1);
+            All.ISMDustChem_C_sisj[bin_i][bin_j] = ISMDustChemEvo_explicit_shat_coag_poly(ail,aiu,aic, ajl,aju,ajc, 0,1, 0,1);
+        }
+    }
+}
+
+/* Fast polynomial evaluation used for coagulation and shattering routines */
+double ISMDustChemEvo_fast_shat_coag_poly(int i, int spec_indx, int bin_i, int bin_j)
+{
+    double Ni = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_i];
+    double si = CellP[i].ISMDustChem_Dust_SlopeInBin [spec_indx][bin_i];
+    double Nj = CellP[i].ISMDustChem_Dust_NumberInBin[spec_indx][bin_j];
+    double sj = CellP[i].ISMDustChem_Dust_SlopeInBin [spec_indx][bin_j];
+    return DMAX(0, All.ISMDustChem_C_NiNj[bin_i][bin_j]*Ni*Nj + All.ISMDustChem_C_Njsi[bin_i][bin_j]*si*Nj
+                 + All.ISMDustChem_C_Nisj[bin_i][bin_j]*Ni*sj + All.ISMDustChem_C_sisj[bin_i][bin_j]*si*sj); // Limit to 0 to avoid negative values due to rounding errors
+}
+
+
 
 
 // Determines the new bin numbers and slopes given bin mass changes due shattering or coagulation.

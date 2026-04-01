@@ -600,7 +600,10 @@ void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne)
 void ISMDustChemEvo_update_bins_given_grain_size_change(int i, int j, double *bin_da, double mass_limit);
 void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp, double rho);
 void update_dust_photodestruction(int i, double dtime_gyr);
-double shattering_coagulation_polynomial(int i, int spec_indx, int bin_i, int bin_j);
+// double shattering_coagulation_polynomial(int i, int spec_indx, int bin_i, int bin_j);
+void ISMDustChemEvo_precompute_poly_coeffs(void);
+double ISMDustChemEvo_fast_shat_coag_poly(int i, int spec_indx, int bin_i, int bin_j);
+double ISMDustChemEvo_explicit_shat_coag_poly(double ail, double aiu, double aic, double ajl, double aju, double ajc, double Ni,  double si, double Nj,  double sj);
 void ISMDustChemEvo_update_bins_given_mass_change(int i, int j, double *bin_dM, double bulk_dens);
 void ISMDustChemEvo_get_new_bin_N_and_slope_given_mass_change(double *bin_dM, double *bin_M, double *bin_N, double *bin_slope, double *new_bin_N, double *new_bin_slope, double bulk_dens);
 void ISMDustChem_SNe_sputtering_step(int spec_indx, double *init_bin_N, double *init_bin_slope, double *init_bin_M, double *final_bin_N, double *final_bin_slope, double *final_bin_M, double bulk_dens);
