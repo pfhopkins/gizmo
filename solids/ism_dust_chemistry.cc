@@ -1471,9 +1471,10 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho)
 
         // Sputtering erosion rates (change in grain size per nH) for silicates, carbonaceous, and metallic iron dust from polynomial fits to Nozawa+(2006). Y=(da/dt)/nH (um/yr cm^3)
         // This is the change in grain radius over time which is independant of grain size.
-        carbSput = pow(10,-226.85 + 133.44*logt - 32.572*pow(logt,2) + 4.0057*pow(logt,3) - 0.24747*pow(logt,4) + 0.0061212*pow(logt,5));
-        silSput = pow(10,-226.95 + 127.94*logt - 29.920*pow(logt,2) + 3.5354*pow(logt,3) - 0.21055*pow(logt,4) + 0.0050362*pow(logt,5));
-        ironSput = pow(10,-156.88 +  82.110*logt - 18.238*pow(logt,2) + 2.0692*pow(logt,3) - 0.11933*pow(logt,4) + 0.0027788*pow(logt,5));
+        double logt2 = logt*logt, logt3 = logt2*logt, logt4 = logt3*logt, logt5 = logt4*logt;
+        carbSput = pow(10,-226.85 + 133.44*logt - 32.572*logt2 + 4.0057*logt3 - 0.24747*logt4 + 0.0061212*logt5);
+        silSput = pow(10,-226.95 + 127.94*logt - 29.920*logt2 + 3.5354*logt3 - 0.21055*logt4 + 0.0050362*logt5);
+        ironSput = pow(10,-156.88 +  82.110*logt - 18.238*logt2 + 2.0692*logt3 - 0.11933*logt4 + 0.0027788*logt5);
 
         for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {
             spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
@@ -1525,7 +1526,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
 
     // Gas cell volume (cm^-3), relative velocity between colliding grains (cm/s), mass of shattered grains (g), i, j, k grain velocities (cm/s), mach factor for grain velocities, cos theta for angle of impact between two grains
     double Vcell, mshat, vgri, vgrk, vgrj, vikrel, vkjrel, vikcoag, vkjcoag, Mach=CellP[i].ISMDustChem_MachNumber, cos_imp_angle, b_time_Mach, clumping_factor;
-    double vgr[NUM_ISMDUSTCHEM_SIZE_BINS], vrel[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], vcoag[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], poly[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
+    double vgr[NUM_ISMDUSTCHEM_SIZE_BINS], m_bin[NUM_ISMDUSTCHEM_SIZE_BINS], vrel[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], vcoag[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS], poly[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
     double nH_cgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS; // hydrogen number dens in cgs units
     // Dust physical properties
     // shattering and coagulation thresholds (cm/s), critical pressure (dyn cm^-2), surface energy per area (dyn cm^-2), Poisson's ratio (dyn cm^-2), Young's modulus
@@ -1552,7 +1553,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         if (nH_cgs <= nH_min) {enh_factor=1;}
         else if (nH_cgs <= nH_max) {enh_factor = pow(nH_cgs/nH_min, enh_power);}
         else {enh_factor = COAGULATION_DENSITY_ENHANCEMENT * All.ISMDustChem_CoagDensityEnhancementScaling;}
-        enh_factor = COAGULATION_DENSITY_ENHANCEMENT * All.ISMDustChem_CoagDensityEnhancementScaling;
         nH_cgs *= enh_factor;
         Vcell /= enh_factor;
         // Need to curtail Mach number for grain velocities to be below coagulation threshold
@@ -1595,12 +1595,13 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         //cos_imp_angle = 2.0*(get_random_number((MyIDType) (P[i].ID+5+k))-0.5); 
         cos_imp_angle = 2.0*gsl_rng_uniform(random_generator_fordust)-1.0;
         
-        // Precompute relative grain velocities and coagulation thresholds for each grain size bin pair.
+        // Precompute grain mass, relative grain velocities, and coagulation thresholds for each grain size bin pair.
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
-            for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
-                vrel[bin_i][bin_k] = sqrt(vgr[bin_i]*vgr[bin_i] + vgr[bin_k]*vgr[bin_k] - 2*vgr[bin_i]*vgr[bin_k]*cos_imp_angle); // cm/s
+            m_bin[bin_i] = 4./3.*M_PI*bulk_dens*pow(All.ISMDustChem_GrainBinCenters[bin_i],3); // mass of grains in each bin
+            for (bin_k=bin_i;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
+                vrel[bin_i][bin_k] = vrel[bin_k][bin_i] = sqrt(vgr[bin_i]*vgr[bin_i] + vgr[bin_k]*vgr[bin_k] - 2*vgr[bin_i]*vgr[bin_k]*cos_imp_angle); // cm/s
                 aicenter=All.ISMDustChem_GrainBinCenters[bin_i]; akcenter=All.ISMDustChem_GrainBinCenters[bin_k];
-                vcoag[bin_i][bin_k] = DMIN(All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)), vshat); // cm/s; catch rare case where coagualation threshold is higher than shattering threshold
+                vcoag[bin_i][bin_k] = vcoag[bin_k][bin_i] = DMIN(All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)), vshat); // cm/s; catch rare case where coagualation threshold is higher than shattering threshold
             }
         }        
 
@@ -1617,24 +1618,22 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
             }    
             for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
                 ailower = All.ISMDustChem_GrainBinEdges[bin_i], aiupper = All.ISMDustChem_GrainBinEdges[bin_i+1], aicenter=All.ISMDustChem_GrainBinCenters[bin_i];
-                miavg = 4/3*M_PI*bulk_dens*aicenter*aicenter*aicenter;
+                miavg = m_bin[bin_i];
                 mlost_shat = 0; mgained_shat = 0; mlost_coag = 0; mgained_coag = 0;
 
                 for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
                     akcenter=All.ISMDustChem_GrainBinCenters[bin_k];
-                    mk = 4/3*M_PI*bulk_dens*akcenter*akcenter*akcenter;
+                    mk = m_bin[bin_k];
 
                     vikrel = vrel[bin_i][bin_k];
                     vikcoag = vcoag[bin_i][bin_k];
                     // Mass lost from bin i due to shattering collisions with grains in bin k
                     if (vikrel > vshat) {mlost_shat += All.ISMDustChem_ShatteringScaling * vikrel * poly[bin_i][bin_k];}
-                    // vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)); // cm/s
-                    // if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                     // Mass lost from bin i due to coagulating collisions with grains in bin k
                     else if (vikrel <= vikcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * poly[bin_i][bin_k];}
                     for (bin_j=0;bin_j<NUM_ISMDUSTCHEM_SIZE_BINS;bin_j++) {
                         ajcenter=All.ISMDustChem_GrainBinCenters[bin_j];
-                        mj = 4/3*M_PI*bulk_dens*ajcenter*ajcenter*ajcenter; // Typical mass of grains in bin j
+                        mj = m_bin[bin_j]; // Typical mass of grains in bin j
                         vkjrel = vrel[bin_k][bin_j];
                         vkjcoag = vcoag[bin_k][bin_j];
 
@@ -1662,17 +1661,15 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                             }
                             // Check to injected mass from remnant (if there is any) of grain in bin k after shattering
                             if (mej < mk) {
-                                aremnant = DMAX(0,pow(akcenter*akcenter*akcenter - mej/(4/3*M_PI*bulk_dens),1./3.));
+                                aremnant = DMAX(0,pow(akcenter*akcenter*akcenter - mej/(4./3.*M_PI*bulk_dens),1./3.));
                                 mremnant = DMAX(0,mk-mej);
                                 if (aremnant > ailower && aremnant <= aiupper) {mkj_shat += mremnant;}
                             }
                             mgained_shat += All.ISMDustChem_ShatteringScaling * vkjrel * mkj_shat * poly[bin_k][bin_j];
                         }
-                        // vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((akcenter*akcenter*akcenter + ajcenter*ajcenter*ajcenter)/pow(akcenter+ajcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(akcenter*ajcenter/(akcenter + ajcenter),5./6.)*sqrt(bulk_dens)); // cm/s
-                        // if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                         // Mass gained in bin i due to coagulating collisions between grains in bin k and bin j producing aggregate grains
                         else if (vkjrel <= vkjcoag) {
-                            aaggregate = pow((mk + mj)/(4*M_PI/3*bulk_dens),1./3.);
+                            aaggregate = pow((mk + mj)/(4.*M_PI/3.*bulk_dens),1./3.);
                             if (aaggregate < aiupper && aaggregate >= ailower) {mkj_coag = (mk + mj)/2;} // Counted twice so divide by 2
                             else {mkj_coag = 0;}
                             mgained_coag += All.ISMDustChem_CoagulationScaling * (vkjrel) * mkj_coag * poly[bin_k][bin_j];
@@ -2062,7 +2059,7 @@ void ISMDustChemEvo_update_bins_given_grain_size_change(int i, int j, double *bi
             }
             else {avg_size = 0;}
             // 2: number of grains to be rebinned by shrinking grains to the max grain size but conserving mass
-            rebinned_number = new_bin_masses[l+1]/(4/3*M_PI*bulk_dens*pow(m_high_edge,3));
+            rebinned_number = new_bin_masses[l+1]/(4./3.*M_PI*bulk_dens*pow(m_high_edge,3));
             // 3: new average grain size in last bin after shrinking rebinned grains
             new_avg_size = (last_bin_num*avg_size + rebinned_number*m_high_edge) / (last_bin_num + rebinned_number);
             // 4: new total mass after we shift all excess mass back into last bin
