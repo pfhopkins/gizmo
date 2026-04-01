@@ -276,6 +276,10 @@ void begrun(void)
         All.NumFilesPerSnapshot = all.NumFilesPerSnapshot;
         All.NumFilesWrittenInParallel = all.NumFilesWrittenInParallel;
         All.TreeDomainUpdateFrequency = all.TreeDomainUpdateFrequency;
+#ifdef MHD_MODIFIED_GRADIENT
+        All.ActiveFractionForMGSweep = all.ActiveFractionForMGSweep;
+        All.Flag_SkipMGSolve = 0; /* first timestep always runs the MG global solve */
+#endif
 
         All.OutputListOn = all.OutputListOn;
         All.CourantFac = all.CourantFac;
@@ -1068,6 +1072,13 @@ void read_parameter_file(char *fname)
       strcpy(alternate_tag[nt], "TreeRebuild_ActiveFraction");
       addr[nt] = &All.TreeDomainUpdateFrequency;
       id[nt++] = REAL;
+
+#ifdef MHD_MODIFIED_GRADIENT
+      strcpy(tag[nt], "ActiveFractionForMGSweep");
+      strcpy(alternate_tag[nt], "MGSweep_ActiveFraction");
+      addr[nt] = &All.ActiveFractionForMGSweep;
+      id[nt++] = REAL;
+#endif
 
 #ifdef DEVELOPER_MODE
         strcpy(tag[nt], "ErrTolIntAccuracy");
@@ -2368,6 +2379,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
+#ifdef MHD_MODIFIED_GRADIENT
+                if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
+#endif
                 if(strcmp("MaxKernelRadius",tag[i])==0) {*((double *)addr[i])=MAX_REAL_NUMBER; printf("Tag %s (%s) not set in parameter file: defaulting to assume no maximum (=%g) \n",tag[i],alternate_tag[i],All.MaxKernelRadius); continue;}
                 if(strcmp("GravityConstantInternal",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to calculating in terms of other specified units if needed (=%g) \n",tag[i],alternate_tag[i],All.G); continue;}
                 if(strcmp("MinSizeTimestep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to minimum allowed by memory table-size (=%g) \n",tag[i],alternate_tag[i],All.MinSizeTimestep); continue;}

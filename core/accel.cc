@@ -85,7 +85,19 @@ void compute_hydro_densities_and_forces(void)
 
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #ifdef MHD_MODIFIED_GRADIENT
-        mg_gradient_correction_calc(); /* MG method: global sparse-matrix solve for exact div(B)=0 correction coefficients (Tu et al. 2026) */
+        {   /* determine whether the active gas fraction is large enough to justify the global MG solve */
+            long long ngas_active_local = 0;
+            for(int tbin = 0; tbin < TIMEBINS; tbin++) {if(TimeBinActive[tbin]) {ngas_active_local += TimeBinCountGas[tbin];}}
+            long long ngas_active_global; MPI_Allreduce(&ngas_active_local, &ngas_active_global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            double active_gas_fraction = (All.TotN_gas > 0) ? ((double)ngas_active_global / (double)All.TotN_gas) : 1.0;
+            if(active_gas_fraction >= All.ActiveFractionForMGSweep) {
+                All.Flag_SkipMGSolve = 0;
+                mg_gradient_correction_calc(); /* MG method: global sparse-matrix solve for exact div(B)=0 correction coefficients (Tu et al. 2026) */
+            } else {
+                All.Flag_SkipMGSolve = 1;
+                if(ThisTask == 0) {PRINT_STATUS("Skipping MG global solve (active gas fraction %g < %g), using CG fallback for active cells", active_gas_fraction, All.ActiveFractionForMGSweep);}
+            }
+        }
 #endif
 #if defined(COOLING) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */

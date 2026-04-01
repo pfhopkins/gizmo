@@ -79,7 +79,8 @@ OPTIMIZE = -Wall  -g   # optimization and warning flags (default)
 MPICHLIB = -lmpich	# mpi library (arbitrary default, set for machine below)
 CHIMESINCL = # default to empty, will only be used below if called
 CHIMESLIBS = # default to empty, will only be used below if called
-
+HYPRE_INCL = # hypre library for AMG-preconditioned solver in MG gradient correction
+HYPRE_LIBS = # hypre library for AMG-preconditioned solver in MG gradient correction
 
 
 
@@ -110,6 +111,10 @@ ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+endif
 MKL_INCL = -I$(TACC_MKL_INC)
 MKL_LIBS = -L$(TACC_MKL_LIB) -mkl=sequential
 GSL_INCL = -I$(TACC_GSL_INC)
@@ -132,6 +137,10 @@ FC       =  mpif90 -nofor_main
 OPTIMIZE = -O2 -xCORE-AVX2
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
+endif
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(CPATH)
 MKL_LIBS = -L$(LIBRARY_PATH) -mkl=sequential
@@ -220,8 +229,19 @@ ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
 OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
 endif
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+ifneq (MHD_MODIFIED_GRADIENT_CG_ONLY,$(findstring MHD_MODIFIED_GRADIENT_CG_ONLY,$(CONFIGVARS)))
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+endif
+endif
+ifeq (MHD_MODIFIED_GRADIENT_USE_PARDISO,$(findstring MHD_MODIFIED_GRADIENT_USE_PARDISO,$(CONFIGVARS)))
+MKL_INCL = -I$(MKLROOT)/include
+MKL_LIBS = -L$(MKLROOT)/lib -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
+else
 MKL_INCL = #
 MKL_LIBS = #
+endif
 GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include #-I$(PORTINCLUDE)
 GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib #-L$(PORTLIB)
 FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
@@ -448,9 +468,10 @@ GRACKLEINCL =
 GRACKLELIBS =
 endif
 
+
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL)
+         $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL)
 
 
 
@@ -476,7 +497,7 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 
 $(EXEC): $(OBJS)
