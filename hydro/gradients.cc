@@ -926,76 +926,80 @@ void hydro_gradient_calc(void)
                 /* now check, and if ok, enter the gradient re-calculation */
                 if(CellP[i].FlagForConstrainedGradients == 1)
                 {
+                {
+                    /* When MHD_MODIFIED_GRADIENT is enabled but the MG global solve was skipped this
+                       timestep (small active fraction), fall back to the standard CG iterative correction
+                       for active cells. When MG did run, skip CG (the global solve handles div(B)). */
+                    int do_cg_correction = 1; /* default: always do CG when MHD_MODIFIED_GRADIENT is not defined */
 #ifdef MHD_MODIFIED_GRADIENT
-                    /* MG method: skip the CG iterative correction here.
-                       The full MG global solve (mg_gradient_correction_calc) is called
-                       after hydro_gradient_calc() returns, in the main accel loop.
-                       It builds a separate sparse matrix over ALL gas cells and solves via CG. */
-                    (void)0; /* placeholder — MG_cgcoeff will be set by the global solve */
-#else /* standard CG iterative correction */
-                    double GB0[3][3];
-                    double fsum = 0.0, dmag = 0.0;
-                    double h_eff = P[i].Get_Particle_Size();
-                    for(k=0;k<3;k++)
-                    {
-                        double grad_limiter_mag = CellP[i].Bfield_component(k) / h_eff;
-                        dmag += grad_limiter_mag * grad_limiter_mag;
-                        for(k1=0;k1<3;k1++)
-                        {
-                            GB0[k][k1] = CellP[i].Gradients.B[k][k1];
-                            dmag += GB0[k][k1] * GB0[k][k1];
-                            fsum += GasGradDataPasser[i].FaceCrossX[k][k1] * GasGradDataPasser[i].FaceCrossX[k][k1];
-                        }
-                    }
-                    if((fsum <= 0) || (dmag <= 0))
-                    {
-                        CellP[i].FlagForConstrainedGradients = 0;
-                    } else {
-                        dmag = 2.0 * sqrt(dmag); // limits the maximum magnitude of the correction term we will allow //
-                        fsum = -1 / fsum;
-                        int j_gloop;
-                        for(j_gloop = 0; j_gloop < 5; j_gloop++)
-                        {
-                            /* calculate the correction terms */
-                            double asum=GasGradDataPasser[i].FaceDotB;
-                            for(k=0;k<3;k++)
-                            {
-                                for(k1=0;k1<3;k1++)
-                                {
-                                    asum += CellP[i].Gradients.B[k][k1] * GasGradDataPasser[i].FaceCrossX[k][k1];
-                                }
-                            }
-                            double prefac = 1.0 * asum * fsum;
-                            double ecorr[3][3];
-                            double cmag=0;
-                            for(k=0;k<3;k++)
-                            {
-                                for(k1=0;k1<3;k1++)
-                                {
-                                    ecorr[k][k1] = prefac * GasGradDataPasser[i].FaceCrossX[k][k1];
-                                    double grad_limiter_mag = (CellP[i].Gradients.B[k][k1] + ecorr[k][k1]) - GB0[k][k1];
-                                    cmag += grad_limiter_mag * grad_limiter_mag;
-                                }
-                            }
-                            cmag = sqrt(cmag);
-                            /* limit the correction term, based on the maximum calculated above */
-                            double nnorm = 1.0;
-                            if(cmag > dmag) nnorm *= dmag / cmag;
-                            /* finally, we can apply the correction */
-                            for(k=0;k<3;k++)
-                            {
-                                for(k1=0;k1<3;k1++)
-                                {
-                                    CellP[i].Gradients.B[k][k1] = GB0[k][k1] + nnorm*(CellP[i].Gradients.B[k][k1]+ecorr[k][k1] - GB0[k][k1]);
-                                }
-                                /* slope-limit the corrected gradients again, but with a more tolerant slope-limiter */
-#if (MHD_CONSTRAINED_GRADIENT <= 1)
-                                local_slopelimiter(CellP[i].Gradients.B[k],GasGradDataPasser[i].Maxima.B[k],GasGradDataPasser[i].Minima.B[k],0.25, P[i].KernelRadius, 0.25, 0, 0, 0);
+                    do_cg_correction = All.Flag_SkipMGSolve; /* 1 = MG was skipped, so do CG; 0 = MG ran, skip CG */
 #endif
+                    if(do_cg_correction)
+                    {
+                        double GB0[3][3];
+                        double fsum = 0.0, dmag = 0.0;
+                        double h_eff = P[i].Get_Particle_Size();
+                        for(k=0;k<3;k++)
+                        {
+                            double grad_limiter_mag = CellP[i].Bfield_component(k) / h_eff;
+                            dmag += grad_limiter_mag * grad_limiter_mag;
+                            for(k1=0;k1<3;k1++)
+                            {
+                                GB0[k][k1] = CellP[i].Gradients.B[k][k1];
+                                dmag += GB0[k][k1] * GB0[k][k1];
+                                fsum += GasGradDataPasser[i].FaceCrossX[k][k1] * GasGradDataPasser[i].FaceCrossX[k][k1];
                             }
-                        } // closes j_gloop loop
-                    } // closes fsum/dmag check
-#endif /* MHD_MODIFIED_GRADIENT vs standard CG */
+                        }
+                        if((fsum <= 0) || (dmag <= 0))
+                        {
+                            CellP[i].FlagForConstrainedGradients = 0;
+                        } else {
+                            dmag = 2.0 * sqrt(dmag); // limits the maximum magnitude of the correction term we will allow //
+                            fsum = -1 / fsum;
+                            int j_gloop;
+                            for(j_gloop = 0; j_gloop < 5; j_gloop++)
+                            {
+                                /* calculate the correction terms */
+                                double asum=GasGradDataPasser[i].FaceDotB;
+                                for(k=0;k<3;k++)
+                                {
+                                    for(k1=0;k1<3;k1++)
+                                    {
+                                        asum += CellP[i].Gradients.B[k][k1] * GasGradDataPasser[i].FaceCrossX[k][k1];
+                                    }
+                                }
+                                double prefac = 1.0 * asum * fsum;
+                                double ecorr[3][3];
+                                double cmag=0;
+                                for(k=0;k<3;k++)
+                                {
+                                    for(k1=0;k1<3;k1++)
+                                    {
+                                        ecorr[k][k1] = prefac * GasGradDataPasser[i].FaceCrossX[k][k1];
+                                        double grad_limiter_mag = (CellP[i].Gradients.B[k][k1] + ecorr[k][k1]) - GB0[k][k1];
+                                        cmag += grad_limiter_mag * grad_limiter_mag;
+                                    }
+                                }
+                                cmag = sqrt(cmag);
+                                /* limit the correction term, based on the maximum calculated above */
+                                double nnorm = 1.0;
+                                if(cmag > dmag) nnorm *= dmag / cmag;
+                                /* finally, we can apply the correction */
+                                for(k=0;k<3;k++)
+                                {
+                                    for(k1=0;k1<3;k1++)
+                                    {
+                                        CellP[i].Gradients.B[k][k1] = GB0[k][k1] + nnorm*(CellP[i].Gradients.B[k][k1]+ecorr[k][k1] - GB0[k][k1]);
+                                    }
+                                    /* slope-limit the corrected gradients again, but with a more tolerant slope-limiter */
+#if (MHD_CONSTRAINED_GRADIENT <= 1)
+                                    local_slopelimiter(CellP[i].Gradients.B[k],GasGradDataPasser[i].Maxima.B[k],GasGradDataPasser[i].Minima.B[k],0.25, P[i].KernelRadius, 0.25, 0, 0, 0);
+#endif
+                                }
+                            } // closes j_gloop loop
+                        } // closes fsum/dmag check
+                    } // closes do_cg_correction check
+                } // closes inner block
                 } // closes FlagForConstrainedGradients check
 #ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
                 double a_limiter = 0.25; if(CellP[i].ConditionNumber>100) a_limiter=DMIN(0.5, 0.25 + 0.25 * (CellP[i].ConditionNumber-100)/100);

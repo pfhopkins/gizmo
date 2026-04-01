@@ -7,7 +7,7 @@
 %        SELFGRAVITY_OFF
 %
 InitCondFile                       field_loop_ics
-OutputDir                          output
+OutputDir                          output_Base
 TimeMax                            0.21
 BoxSize                            1
 TimeOfFirstSnapshot                0.01

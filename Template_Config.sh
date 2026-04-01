@@ -82,7 +82,7 @@
 #MHD_CONSTRAINED_GRADIENT=1     # use CG method (in addition to cleaning, optional!) to maintain low divB: set this value to control how aggressive the div-reduction is:
                                 # 0=minimal (safest), 1=intermediate (recommended), 2=aggressive (less stable), 3+=very aggressive (less stable+more expensive). [Please cite Hopkins, MNRAS, 2016, 462, 576]
 #MHD_MODIFIED_GRADIENT          # use MG method (Tu, Wang, Gao & Tang 2026) to correct B-field gradients via global sparse-matrix solve for exact divB=0 (to machine precision).
-                                # applied after gradient calculation + slope limiting, before hydro force loop. mutually exclusive with MHD_CONSTRAINED_GRADIENT.
+                                # applied after gradient calculation + slope limiting, before hydro force loop. mutually exclusive with MHD_CONSTRAINED_GRADIENT. can also enable MHD_MODIFIED_GRADIENT_USE_PARDISO to use MKL PARDISO direct sparse solver instead of Hypre AMG for the MG matrix solve. requires Intel MKL. gathers matrix to rank 0 (best for small-medium problems).
 #MHD_NON_IDEAL_CORRECTIONTERMS  # enable approximate corrections for anomalous resistivity and Epstein-like (drift/slip-dependent) cross sections in non-ideal MHD coefficients. Please cite Hopkins et al., https://arxiv.org/abs/2405.06026, where the scalings here are derived and presented
 ## ----------------------------------------------------------------------------------------------------
 # -------------------------------------- Conduction

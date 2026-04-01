@@ -559,6 +559,10 @@ extern struct global_data_all_processes
 
   /* frequency of tree reconstruction/domain decomposition */
   double TreeDomainUpdateFrequency;	/*!< controls frequency of domain decompositions  */
+#ifdef MHD_MODIFIED_GRADIENT
+  double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
+  int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
+#endif
 
   /* gravitational and hydrodynamical softening lengths (given in terms of an `equivalent' Plummer softening length) five groups of particles are supported 0=gas,1=halo,2=disk,3=bulge,4=stars */
     double MinGasKernelRadiusFractional; /*!< minimim allowed gas kernel length relative to force softening (what you actually set) */
