@@ -271,6 +271,9 @@ struct INPUT_STRUCT_NAME
 #ifdef DIVBCLEANING_DEDNER
     MyFloat PhiPred;
 #endif
+#ifdef MHD_MODIFIED_GRADIENT
+    MyFloat MG_cgcoeff;
+#endif
 #endif // MAGNETIC //
     
 #ifdef COSMIC_RAY_FLUID
@@ -514,6 +517,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #endif
 #ifdef DIVBCLEANING_DEDNER
     in->PhiPred = Get_Gas_PhiField(i);
+#endif
+#ifdef MHD_MODIFIED_GRADIENT
+    in->MG_cgcoeff = CellP[i].MG_cgcoeff;
 #endif
 #endif // MAGNETIC //
 

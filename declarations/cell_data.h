@@ -77,6 +77,9 @@ extern struct gas_cell_data
 #ifdef MHD_CONSTRAINED_GRADIENT
     int FlagForConstrainedGradients;/*!< flag indicating whether the B-field gradient is a 'standard' one or the constrained-divB version */
 #endif
+#ifdef MHD_MODIFIED_GRADIENT
+    MyDouble MG_cgcoeff;            /*!< scalar correction coefficient for modified-gradient (MG) exact div(B)=0 method (Tu et al. 2026) */
+#endif
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
     MyFloat Balpha;                 /*!< effective resistivity coefficient */
 #endif

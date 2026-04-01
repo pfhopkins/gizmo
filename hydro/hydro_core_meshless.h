@@ -127,6 +127,22 @@
             reconstruct_face_states(local.BPred[k], local.Gradients.B[k], BPred_j[k], CellP[j].Gradients.B[k],
                                     distance_from_i, distance_from_j, &Riemann_vec.L.B[k], &Riemann_vec.R.B[k], slim_mode);
         }
+#ifdef MHD_MODIFIED_GRADIENT
+        /* MG correction (Tu et al. 2026): add c_i * correction to face-reconstructed B.
+           The correction only modifies the face-normal component and ensures div(B)=0.
+           delta_B'_i[k] = -c_i * 0.25 * dp[k] * (A · dp)  [for the i-side, Riemann_vec.R]
+           delta_B'_j[k] = +c_j * 0.25 * dp[k] * (A · dp)  [for the j-side, Riemann_vec.L]
+           where dp = kernel.dp = x_i - x_j, A = Face_Area_Vec */
+        {
+            double A_dot_dp = dot(Face_Area_Vec, kernel.dp);
+            double mg_ci = local.MG_cgcoeff;
+            double mg_cj = CellP[j].MG_cgcoeff;
+            for(k=0;k<3;k++) {
+                Riemann_vec.R.B[k] += -mg_ci * 0.25 * kernel.dp[k] * A_dot_dp; /* i-side correction */
+                Riemann_vec.L.B[k] +=  mg_cj * 0.25 * kernel.dp[k] * A_dot_dp; /* j-side correction */
+            }
+        }
+#endif
 #ifdef DIVBCLEANING_DEDNER
         reconstruct_face_states(local.PhiPred, local.Gradients.Phi, PhiPred_j, CellP[j].Gradients.Phi,
                                 distance_from_i, distance_from_j, &Riemann_vec.L.phi, &Riemann_vec.R.phi, 2);
