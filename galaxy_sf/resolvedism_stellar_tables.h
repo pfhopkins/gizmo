@@ -83,6 +83,10 @@ struct StellarTables {
     float *log_L_ion_He1;  /* log10(erg/s), 54.4-70 eV */
     float *log_L_ion_He2;  /* log10(erg/s), >70 eV */
 
+    /* Non-ionizing band luminosities for M1 RT [NZ * NM * NAGE] */
+    float *log_L_NUV;      /* log10(erg/s), near-UV (~3.4-6 eV) */
+    float *log_L_OPT_NIR;  /* log10(erg/s), optical+near-IR (~0.4-3.4 eV) */
+
     /* 4D surface abundances [NZ * NM * NAGE * NELEM] — only if winds enabled */
     float *surface_abundances;
 
@@ -122,6 +126,8 @@ double stellar_log_L_ion_H0(double logM, double logZ, double log_age);
 double stellar_log_L_ion_He0(double logM, double logZ, double log_age);
 double stellar_log_L_ion_He1(double logM, double logZ, double log_age);
 double stellar_log_L_ion_He2(double logM, double logZ, double log_age);
+double stellar_log_L_NUV(double logM, double logZ, double log_age);
+double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age);
 
 /* ---- Surface abundances (3D + element index) ---- */
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem);

@@ -18,7 +18,7 @@ extern "C" {
                crtab[NCRTAB], crphot[NCRPHOT],
                phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
                deff, abundc, abundo, abundsi, abundD,
-               abundM, abundN, G0, G0_LW, f_rsc, phi_pah,
+               abundM, abundN, G0, G0_LW, G0_dust, f_rsc, phi_pah,
                dust_to_gas_ratio, AV_conversion_factor,
                cosmic_ray_ion_rate, redshift, AV_ext,
                pdv_term, h2_form_ex, h2_form_kin,
@@ -231,6 +231,8 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;
+    double NUV_flux_tot = 0.0;
+    double OPT_flux_tot = 0.0;
     double UV_flux_min_pix = 0.324e-2/NPIX / fac_flux2habing;
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix; /* LW floor ~ 10% of FUV floor (typical stellar spectrum) */
     for(i = 0; i < NPIX; i++) {
@@ -238,11 +240,15 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         CellP[target].LW_flux[i] = DMAX(CellP[target].LW_flux[i], LW_flux_min_pix);
         UV_flux_tot += CellP[target].UV_flux[i];
         LW_flux_tot += CellP[target].LW_flux[i];
+        NUV_flux_tot += CellP[target].NUV_flux[i];
+        OPT_flux_tot += CellP[target].OPT_flux[i];
     }
 
     double G0_tot = UV_flux_tot * fac_flux2habing * All.G0;
     /* Lyman-Werner G0 for H2 photodissociation (11.2-13.6 eV only) */
     double G0_LW = LW_flux_tot * fac_flux2habing * All.G0;
+    /* Total radiation field for dust heating: FUV + NUV + optical/NIR */
+    double G0_dust_tot = (UV_flux_tot + NUV_flux_tot + OPT_flux_tot) * fac_flux2habing * All.G0;
 
     /* For cosmological runs: add metagalactic FUV background floor from TREECOOL */
     if(All.ComovingIntegrationOn) {
@@ -257,6 +263,8 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     CellP[target].G0 = G0_tot;
     COOLR.G0_LW = G0_LW;
     CellP[target].G0_LW = G0_LW;
+    /* G0_dust: total radiation field for dust heating (FUV + NUV + optical/NIR from tree walk) */
+    COOLR.G0_dust = DMAX(G0_dust_tot, G0_tot);
 
 #ifdef COSMIC_RAY_FLUID
     { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
@@ -308,6 +316,16 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         /* G0 measures the 6-13.6 eV field in Habing units (PE + LW combined) */
         COOLR.G0    = DMAX((u_PE_cgs + u_LW_cgs) / u_Habing_cgs, 1e-6);
         COOLR.G0_LW = DMAX(u_LW_cgs / u_Habing_cgs, 0.0);
+
+        /* G0_dust: total radiation field for dust heating (includes NUV + optical/NIR) */
+        double u_NUV_cgs = 0, u_OPT_cgs = 0;
+#if defined(RT_NUV)
+        u_NUV_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_NUV] * fac_to_cgs;
+#endif
+#if defined(RT_OPTICAL_NIR)
+        u_OPT_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_OPTICAL_NIR] * fac_to_cgs;
+#endif
+        COOLR.G0_dust = DMAX((u_PE_cgs + u_LW_cgs + u_NUV_cgs + u_OPT_cgs) / u_Habing_cgs, 1e-6);
 
 #if defined(RT_CHEM_PHOTOION)
         /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]

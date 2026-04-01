@@ -109,12 +109,16 @@ void finalize_sampled_star(int i, double M_drawn)
             double log_age = log10(DMAX(star_age_yr, 100.0));
             P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
             P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
+            P[i].NUV_luminosity = pow(10., stellar_log_L_NUV(logM, logZ, log_age));
+            P[i].OPT_luminosity = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
 #ifdef GALSF_RESOLVEDISM_PHOTOION
             P[i].Lyman_photons_per_sec = pow(10., stellar_log_Q_ion(logM, logZ, log_age));
 #endif
 #else
             P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
             P[i].LW_luminosity = P[i].UV_luminosity;
+            P[i].NUV_luminosity = 0; /* no NUV tables without STELLAR_TABLES */
+            P[i].OPT_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
             P[i].Lyman_photons_per_sec = pow(10., get_logS_ly(M_drawn));
 #endif

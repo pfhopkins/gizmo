@@ -105,6 +105,8 @@ extern ALIGN(32) struct particle_data
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyFloat UV_luminosity;                /*!< UV luminosity of star particle for photoelectric heating [erg/s], 6-13.6 eV */
     MyFloat LW_luminosity;                /*!< Lyman-Werner band luminosity [erg/s], 11.2-13.6 eV for H2 photodissociation */
+    MyFloat NUV_luminosity;               /*!< near-UV luminosity [erg/s], ~3.4-6 eV for dust heating */
+    MyFloat OPT_luminosity;               /*!< optical+NIR luminosity [erg/s], ~0.4-3.4 eV for dust heating */
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     MyFloat Lyman_photons_per_sec;        /*!< ionizing photon rate [sec^-1] */
 #endif

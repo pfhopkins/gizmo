@@ -306,7 +306,8 @@ c
 c These variables are initialized during problem setup
 c 
       REAL deff, abundc, abundo, abundsi, abundD, abundM,
-     $     abundN, G0, G0_LW, phi_pah, tdust, dust_to_gas_ratio,
+     $     abundN, G0, G0_LW, G0_dust, phi_pah, tdust,
+     $     dust_to_gas_ratio,
      $     AV_conversion_factor, cosmic_ray_ion_rate, redshift,
      $     AV_ext, pdv_term, h2_form_ex, h2_form_kin, dm_density,
      $     rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
@@ -328,7 +329,8 @@ c     Do not indent the next line!
      $               crtab, crphot, 
      $               phtab, cst, dtlog, tdust, tmax, tmin, 
      $               deff, abundc, abundo, abundsi, abundD, 
-     $               abundM, abundN, G0, G0_LW, f_rsc, phi_pah,
+     $               abundM, abundN, G0, G0_LW, G0_dust, f_rsc,
+     $               phi_pah,
      $               dust_to_gas_ratio, AV_conversion_factor,
      $               cosmic_ray_ion_rate, redshift, AV_ext,
      $               pdv_term, h2_form_ex, h2_form_kin,

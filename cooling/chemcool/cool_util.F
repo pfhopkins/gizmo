@@ -853,7 +853,7 @@ c
 c We assume that the visual/IR/sub-mm background scales linearly with the UV background.
 c In the future, we should make these independently configurable.
 c 
-        field_strength = G0 / 1.7
+        field_strength = G0_dust / 1.7
 c        print*, "field_strength, G0 = ", field_strength, G0
         if (isrf_option .eq. 1) then
            isrf_heat  = 5.8d-24 * chi_isrf * yn * field_strength

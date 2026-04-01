@@ -368,6 +368,14 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum)
     lum[RT_FREQ_BIN_LYMAN_WERNER] = pow(10.0, stellar_log_L_LW(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 11.2-13.6 eV */
 #endif
 
+#if defined(RT_NUV)
+    lum[RT_FREQ_BIN_NUV] = pow(10.0, stellar_log_L_NUV(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* ~3.4-6 eV */
+#endif
+
+#if defined(RT_OPTICAL_NIR)
+    lum[RT_FREQ_BIN_OPTICAL_NIR] = pow(10.0, stellar_log_L_OPT_NIR(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* ~0.4-3.4 eV */
+#endif
+
 #if defined(RT_INFRARED)
     lum[RT_FREQ_BIN_INFRARED] = 0; /* no direct IR — only re-emitted by dust */
 #endif

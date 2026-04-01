@@ -157,9 +157,12 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.log_L_ion_He0   = (float *)mymalloc("stbl_logLiHe0", n3d * sizeof(float));
     StellarTbl.log_L_ion_He1   = (float *)mymalloc("stbl_logLiHe1", n3d * sizeof(float));
     StellarTbl.log_L_ion_He2   = (float *)mymalloc("stbl_logLiHe2", n3d * sizeof(float));
+    StellarTbl.log_L_NUV       = (float *)mymalloc("stbl_logLNUV",  n3d * sizeof(float));
+    StellarTbl.log_L_OPT_NIR   = (float *)mymalloc("stbl_logLOPT",  n3d * sizeof(float));
 #else
     StellarTbl.log_L_ion_tot = StellarTbl.log_L_ion_H0 = StellarTbl.log_L_ion_He0 = NULL;
     StellarTbl.log_L_ion_He1 = StellarTbl.log_L_ion_He2 = NULL;
+    StellarTbl.log_L_NUV = StellarTbl.log_L_OPT_NIR = NULL;
 #endif
 
     /* Surface abundances: only if winds enabled (~500 MB as float) */
@@ -203,13 +206,17 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "log_L_bol",      StellarTbl.log_L_bol,       n3d);
         read_hdf5_dataset_as_float(file, "logR_cm",         StellarTbl.logR_cm,         n3d);
 
-        /* Ionizing sub-band luminosities (only for M1 RT) */
+        /* Ionizing sub-band luminosities and non-ionizing bands (only for M1 RT) */
 #ifdef RADTRANSFER
         read_hdf5_dataset_as_float(file, "log_L_ion_tot",  StellarTbl.log_L_ion_tot,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_H0",   StellarTbl.log_L_ion_H0,    n3d);
+#if (RT_CHEM_PHOTOION >= 2)
         read_hdf5_dataset_as_float(file, "log_L_ion_He0",  StellarTbl.log_L_ion_He0,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_He1",  StellarTbl.log_L_ion_He1,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_He2",  StellarTbl.log_L_ion_He2,   n3d);
+#endif
+        read_hdf5_dataset_as_float(file, "log_L_NUV",      StellarTbl.log_L_NUV,       n3d);
+        read_hdf5_dataset_as_float(file, "log_L_OPT_NIR",  StellarTbl.log_L_OPT_NIR,   n3d);
 #endif
 
         /* Surface abundances */
@@ -265,9 +272,13 @@ void resolvedism_load_stellar_tables(void)
 #ifdef RADTRANSFER
     MPI_Bcast(StellarTbl.log_L_ion_tot,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_H0,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+#if (RT_CHEM_PHOTOION >= 2)
     MPI_Bcast(StellarTbl.log_L_ion_He0,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_He1,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_He2,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+#endif
+    MPI_Bcast(StellarTbl.log_L_NUV,       n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.log_L_OPT_NIR,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 #endif
 
 #ifdef GALSF_RESOLVEDISM_WINDS
@@ -913,6 +924,16 @@ double stellar_log_L_ion_He1(double logM, double logZ, double log_age)
 double stellar_log_L_ion_He2(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.log_L_ion_He2, logM, logZ, log_age);
+}
+
+double stellar_log_L_NUV(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_NUV, logM, logZ, log_age);
+}
+
+double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
 }
 
 /* --- Surface abundances --- */
