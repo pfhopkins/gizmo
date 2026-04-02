@@ -33,6 +33,10 @@ extern struct gas_cell_data
     MyDouble Volume_0;              /*!< 0th-order cell volume for mesh-free (MFM/MFV-type) reconstruction at 0th-order volume quadrature */
     MyDouble Volume_1;              /*!< 1st-order cell volume for mesh-free (MFM/MFV-type) reconstruction at 1st-order volume quadrature */
 #endif
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+    Vec3<MyDouble> GradH_numer;     /*!< numerator sum for kernel support gradient: sum_{j!=i} (dwk/r) * dp */
+    MyDouble GradH_denom;           /*!< denominator sum for kernel support gradient: sum_{j!=i} u * dwk */
+#endif
     
 #ifdef OUTPUT_MACH_NUMBER
     MyDouble ISMDustChem_MachNumber;               /*!< mach number used for sub-resolution density enhancements from turbulence */
