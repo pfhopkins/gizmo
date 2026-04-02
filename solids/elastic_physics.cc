@@ -114,7 +114,7 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
 
 
 
-#if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON)
+#if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
 /* routine to get and define the correction factor needed to prevent tensile instability for negative pressures, for arbitrary kernels & dimensions */
 double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j)
 {

@@ -1,0 +1,31 @@
+% ANEOS giant impact test: differentiated sphere with forsterite + iron
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        SELFGRAVITY_OFF
+%        EOS_ANEOS
+%
+InitCondFile                       aneos_giant_impact_ics
+OutputDir                          output
+TimeMax                            0.01
+BoxSize                            10
+TimeBetSnapshot                    0.005
+MaxSizeTimestep                    0.0001
+DesNumNgb                          32
+MaxNumNgbDeviation                 2
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.02
+CourantFac                         0.1
+MaxRMSDisplacementFac              0.125
+TimeBetStatistics                  0.01
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.005
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+% ANEOS table parameters
+AneosNumMaterials                  2
+AneosTable0                        forsterite.sesame
+AneosTable1                        iron.sesame

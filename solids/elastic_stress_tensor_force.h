@@ -11,8 +11,8 @@
     if( ((local.Mass>0)&&(P[j].Mass>0)) )
     {
         int k_v, j_v;
-        double FNormT=local.Mass * P[j].Mass * fabs(kernel.dwk_i+kernel.dwk_j) / (local.Density * CellP[j].Density) * All.cf_atime*All.cf_atime;
-        double FVec[3]={0}; for(k=0;k<3;k++) {FVec[k] = FNormT * kernel.dp[k]/kernel.r;} // use this particular face formulation for fluxes here to avoid tensile instability //
+        double FNormT = Face_Area_Norm; // use the already-computed face area (MFM: gradient-corrected via NV_T; SPH: standard kernel derivative formulation)
+        double FVec[3]={0}; for(k=0;k<3;k++) {FVec[k] = Face_Area_Vec[k];}
 
         double cmag[3]={0}, v_interface[3], wt_i=-0.5, wt_j=-0.5; // we need a minus sign at some point; its handy to just include it now in the weights //
         for(k=0;k<3;k++) {v_interface[k] = (wt_i*local.Vel[k] + wt_j*VelPred_j[k]) / All.cf_atime;} // physical units //
@@ -36,12 +36,34 @@
                 double eigenval_k=0, eigenvec_k[NUMDIMS]={0}, A_dot_v=0, prefac=0;
                 for(k_v=0;k_v<NUMDIMS;k_v++) {eigenval_k = gsl_vector_get(eigvals, k_v); A_dot_v = 0;
                     for(j_v=0;j_v<NUMDIMS;j_v++) {eigenvec_k[j_v] = gsl_matrix_get(eigvecs, j_v, k_v); A_dot_v += FVec[j_v]*eigenvec_k[j_v];}
-                    prefac = wtfac * eigenval_k * (A_dot_v*All.cf_a2inv); if(eigenval_k > 0) {prefac *= 1. - tensile_correction_factor;}
+                    prefac = wtfac * eigenval_k * (A_dot_v*All.cf_a2inv); 
+#if !defined(HYDRO_MESHLESS_FINITE_VOLUME) && !defined(HYDRO_MESHLESS_FINITE_MASS)
+                    if(eigenval_k > 0) {prefac *= 1. - tensile_correction_factor;} /* for SPH, we want to apply the tensile correction to all positive eigenvalues */
+#endif
                     if(!isnan(eigenval_k)) {for(j_v=0;j_v<NUMDIMS;j_v++) {cmag[j_v] += prefac * eigenvec_k[j_v];}} // evaluate S.Face = S.[sum of eigenvalues times projection on Face onto each eigenvector]
                 }
                 gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs);} // free memory
         }
         for(j_v=0;j_v<3;j_v++) {cmag[j_v] -= wt_rt * kernel.dp[j_v]*All.cf_atime + wt_t * kernel.dv[j_v]/All.cf_atime;} // HLL-type fluxes
+
+        /* zero-energy mode (hourglass) control: damp velocity residuals not captured by the local velocity gradient.
+            inspired by Ganzenmuller 2015 and Kugelstadt et al. 2021, adapted to rate formulation.
+            the velocity difference predicted by the gradient is subtracted, leaving only the sub-grid residual;
+            this vanishes identically for any linear velocity field, so it only targets hourglass-type modes. */
+        {
+            double dv_pred_i, dv_pred_j, dv_err;
+            double cT_hg = 0.5 * wt_t / All.cf_atime; // hourglass damping coefficient: 0.5 * impedance-weighted shear-wave factor (same scaling as HLL transverse term)
+            for(j_v=0;j_v<3;j_v++) {
+                dv_pred_i = 0; dv_pred_j = 0;
+                for(k_v=0;k_v<3;k_v++) {
+                    dv_pred_i += local.Gradients.Velocity[j_v][k_v] * kernel.dp[k_v]; // (nabla v)_i . (x_i - x_j)
+                    dv_pred_j += CellP[j].Gradients.Velocity[j_v][k_v] * kernel.dp[k_v]; // (nabla v)_j . (x_i - x_j)
+                }
+                dv_err = kernel.dv[j_v] - 0.5*(dv_pred_i + dv_pred_j); // velocity residual (zero for linear fields)
+                cmag[j_v] -= cT_hg * dv_err;
+            }
+        }
+
         /* // below limiter doesn't actually appear necessary in our tests, thus far; worth more detailed testing the future //
         if(kernel.vdotr2 < 0) // check if particles are approaching
         {

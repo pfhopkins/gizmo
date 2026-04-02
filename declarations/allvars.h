@@ -936,6 +936,14 @@ extern struct global_data_all_processes
 #ifdef EOS_TABULATED
     char EosTable[100];
 #endif
+
+#ifdef EOS_ANEOS
+#ifndef ANEOS_MAX_MATERIALS
+#define ANEOS_MAX_MATERIALS 7
+#endif
+    int  AneosNumMaterials;                       /* number of ANEOS material tables to load */
+    char AneosTableFiles[ANEOS_MAX_MATERIALS][256]; /* file paths for each material's SESAME table */
+#endif
     
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     Vec3<double> SpecialParticle_Position_ForRefinement[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];
@@ -1321,6 +1329,7 @@ enum iofields
   IO_EOS_STRESS_TENSOR,
   IO_CBE_MOMENTS,
   IO_EOSCOMP,
+  IO_EOSPHASE,
   IO_PARTVEL,
   IO_RADGAMMA,
   IO_RAD_TEMP,
