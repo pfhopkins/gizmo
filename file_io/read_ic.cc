@@ -280,7 +280,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             for(n = 0; n < pc; n++) {for(k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {CellP[offset + n].ISMDustChem_Dust_Species[k] = *fp++;}} // Get dust species fractions
 #endif
             break;

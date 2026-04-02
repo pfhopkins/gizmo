@@ -590,7 +590,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         break;
             
         case IO_DUSTCHEMSPECIESMET:    /* gas dust species following Species routines */
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -2012,7 +2012,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             if(mode)
                 bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES) * sizeof(MyInputFloat);
             else
@@ -2317,7 +2317,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             values = NUM_ISMDUSTCHEM_SPECIES;
 #endif
             break; 
@@ -2722,7 +2722,7 @@ int blockpresent(enum iofields blocknr)
             break;               
           
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             return 1;
 #endif
             break; 
