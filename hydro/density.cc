@@ -182,6 +182,10 @@ static struct OUTPUT_STRUCT_NAME
     Vec3<MyDouble> Gas_B;
 #endif
 #endif
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+    Vec3<MyDouble> GradH_numer;     /*!< numerator for kernel support gradient: sum_{j!=i} (dwk/r) * dp */
+    MyDouble GradH_denom;           /*!< denominator for kernel support gradient: sum_{j!=i} u * dwk */
+#endif
 }
  *DATARESULT_NAME, *DATAOUT_NAME;
 
@@ -201,6 +205,10 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
 #endif
         for(k=0;k<6;k++) {ASSIGN_ADD(CellP[i].NV_T.data[k], out->NV_T.data[k], mode);}
         ASSIGN_ADD(CellP[i].NV_T_face_weights, out->NV_T_face_weights, mode);
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+        ASSIGN_ADD(CellP[i].GradH_numer, out->GradH_numer, mode);
+        ASSIGN_ADD(CellP[i].GradH_denom, out->GradH_denom, mode);
+#endif
 
 #ifdef HYDRO_SPH
         ASSIGN_ADD(CellP[i].DrkernHydroSumFactor, out->DrkernHydroSumFactor, mode);
@@ -324,6 +332,10 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             out.NV_T += wk * outer_product(kernel.dp);
                             /* weighted first moments, used for face area estimation */
                             out.NV_T_face_weights += wk * kernel.dp;
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+                            out.GradH_numer += (kernel.dwk / kernel.r) * kernel.dp; /* sum_{j!=i} (dwk/r)*dp: numerator for grad(H) */
+                            out.GradH_denom += u * kernel.dwk; /* sum_{j!=i} u*dwk: denominator for grad(H) */
+#endif
                         }
                         kernel.dv = local.Vel - CellP[j].VelPred;
                         NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,kernel.dv,1); /* wrap velocities for shearing boxes if needed */
@@ -968,6 +980,14 @@ void density(void)
                 }
 #endif
                 double Volume_0; Volume_0 = P[i].Mass / CellP[i].Density; // save for potential later use
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+                if(CellP[i].GradH_denom != 0) { /* apply FD partition-of-unity volume correction (Massaro Acha+ 2026, Eq. 15 with second-derivative terms dropped) */
+                    Vec3<double> gradH = -CellP[i].GradH_numer / CellP[i].GradH_denom; /* spatial gradient of kernel support size H, from Eq. 40 */
+                    double fd_correction = 1.0 + 4.0 * KERNEL_AWPMHD_FD_ALPHA * gradH.norm_sq(); /* correction factor: 1 + 4*alpha_zeta*|grad(H)|^2 */
+                    CellP[i].Density /= fd_correction; /* apply: volume *= fd_correction, so density /= fd_correction */
+                    Volume_0 = P[i].Mass / CellP[i].Density; /* update Volume_0 to reflect corrected volume */
+                }
+#endif
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR)
                 CellP[i].Density /= CellP[i].FaceClosureError; // correct volume of the cell based on the free surface correction above
                 CellP[i].FaceClosureError = Volume_0;

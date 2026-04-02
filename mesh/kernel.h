@@ -179,6 +179,27 @@
 #endif
 
 
+#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
+/* alpha_zeta coefficients for the FD (first-derivative) partition-of-unity volume correction,
+   from Massaro Acha et al. 2026, Table 1 (defined as alpha_zeta = -(2pi/3) * int_0^1 xi^5 * dzeta/dxi dxi).
+   These are kernel-dependent constants used to correct the cubature weights for the spatial
+   variation of the kernel compact-support size H(x). */
+#if (KERNEL_FUNCTION == 3) // cubic spline
+#define  KERNEL_AWPMHD_FD_ALPHA  (3.0/16.0)
+#elif (KERNEL_FUNCTION == 4) // quartic spline
+#define  KERNEL_AWPMHD_FD_ALPHA  (23.0/150.0)
+#elif (KERNEL_FUNCTION == 6) // Wendland C2
+#define  KERNEL_AWPMHD_FD_ALPHA  (1.0/6.0)
+#elif (KERNEL_FUNCTION == 7) // Wendland C4
+#define  KERNEL_AWPMHD_FD_ALPHA  (5.0/39.0)
+#elif (KERNEL_FUNCTION == 9) // Wendland C6
+#define  KERNEL_AWPMHD_FD_ALPHA  (5.0/48.0)
+#else
+#define  KERNEL_AWPMHD_FD_ALPHA  (3.0/16.0) // default: use cubic spline value as a reasonable approximation
+#endif
+#endif
+
+
 
 static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hinv4)
 {
