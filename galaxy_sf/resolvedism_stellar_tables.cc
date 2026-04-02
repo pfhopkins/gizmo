@@ -41,12 +41,8 @@ static inline void stbl_idx_M(double logM, int *i0, double *f)
 
 static inline void stbl_idx_age(double log_age, int *i0, double *f)
 {
-    /* Age grid is uniform — keep O(1) formula */
-    double x = (log_age - StellarTbl.log_age_min) / StellarTbl.dlog_age;
-    if(x < 0) x = 0;
-    if(x >= STBL_NAGE - 1) { *i0 = STBL_NAGE - 2; *f = 1.0; return; }
-    *i0 = (int)x;
-    *f  = x - *i0;
+    /* Age grid is non-uniform (adaptive) — use binary search */
+    stbl_idx_bsearch(StellarTbl.log_age, STBL_NAGE, log_age, i0, f);
 }
 
 /* flat index helpers */
@@ -196,6 +192,19 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_double(file, "M_CO_core",    StellarTbl.M_CO_core,   n2d);
         read_hdf5_dataset_double(file, "M_He_core",    StellarTbl.M_He_core,   n2d);
 
+        /* PMS duration (feedback delay) [NZ x NM] */
+        read_hdf5_dataset_double(file, "t_PMS", StellarTbl.t_PMS, n2d);
+
+        /* Phase transition times [NZ x NM], in years — zero means phase not reached */
+        read_hdf5_dataset_double(file, "phase_transitions/t_MS_start",      StellarTbl.t_MS_start,      n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_MS_end",        StellarTbl.t_MS_end,        n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_RGB_start",     StellarTbl.t_RGB_start,     n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_CHeB_start",    StellarTbl.t_CHeB_start,    n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_AGB_start",     StellarTbl.t_AGB_start,     n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_AGB_end",       StellarTbl.t_AGB_end,       n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_postAGB_start", StellarTbl.t_postAGB_start, n2d);
+        read_hdf5_dataset_double(file, "phase_transitions/t_WR_start",      StellarTbl.t_WR_start,      n2d);
+
         /* 3D time-dependent datasets */
         read_hdf5_dataset_as_float(file, "M_current",      StellarTbl.M_current,       n3d);
         read_hdf5_dataset_as_float(file, "v_wind",         StellarTbl.v_wind,          n3d);
@@ -259,6 +268,15 @@ void resolvedism_load_stellar_tables(void)
     MPI_Bcast(StellarTbl.M_preSN,     n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.M_CO_core,   n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.M_He_core,   n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_PMS,            n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_MS_start,      n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_MS_end,        n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_RGB_start,     n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_CHeB_start,    n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_AGB_start,     n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_AGB_end,       n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_postAGB_start, n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.t_WR_start,      n2d, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     MPI_Bcast(StellarTbl.M_current,       n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.v_wind,          n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
@@ -305,7 +323,7 @@ void resolvedism_load_stellar_tables(void)
 
     StellarTbl.log_age_min = StellarTbl.log_age[0];
     StellarTbl.log_age_max = StellarTbl.log_age[STBL_NAGE - 1];
-    StellarTbl.dlog_age    = (StellarTbl.log_age_max - StellarTbl.log_age_min) / (STBL_NAGE - 1);
+    StellarTbl.dlog_age    = 0;  /* non-uniform grid — binary search used, dlog_age unused */
 
     StellarTbl.loaded = 1;
 
@@ -337,7 +355,7 @@ void resolvedism_load_stellar_tables(void)
         printf("RESOLVEDISM TABLES: stellar tables loaded. Grid: %d Z x %d M x %d ages\n", STBL_NZ, STBL_NM, STBL_NAGE);
         printf("  logZ: [%.3f, %.3f], dlogZ=%.4f\n", StellarTbl.log_Z_min, StellarTbl.log_Z_max, StellarTbl.dlog_Z);
         printf("  logM: [%.3f, %.3f], dlogM=%.4f\n", StellarTbl.log_M_min, StellarTbl.log_M_max, StellarTbl.dlog_M);
-        printf("  log_age: [%.3f, %.3f], dlog_age=%.4f\n", StellarTbl.log_age_min, StellarTbl.log_age_max, StellarTbl.dlog_age);
+        printf("  log_age: [%.3f, %.3f], N=%d (adaptive grid)\n", StellarTbl.log_age_min, StellarTbl.log_age_max, STBL_NAGE);
         printf("  Memory: %.1f MB (3D arrays) + %.1f MB (surface abundances)\n",
                12.0 * n3d * sizeof(float) / 1e6,
                StellarTbl.surface_abundances ? (double)(n3d * STBL_NELEM * sizeof(float)) / 1e6 : 0.0);
@@ -826,6 +844,53 @@ int stellar_remnant_type(double logM, double logZ)
 double stellar_M_preSN(double logM, double logZ)
 {
     return interp2d(StellarTbl.M_preSN, logM, logZ);
+}
+
+/* --- PMS duration / feedback delay (2D bilinear) --- */
+
+double stellar_t_PMS(double logM, double logZ)
+{
+    return interp2d(StellarTbl.t_PMS, logM, logZ);
+}
+
+/* --- Phase transition times (2D bilinear) --- */
+
+double stellar_t_MS_start(double logM, double logZ)     { return interp2d(StellarTbl.t_MS_start, logM, logZ); }
+double stellar_t_MS_end(double logM, double logZ)        { return interp2d(StellarTbl.t_MS_end, logM, logZ); }
+double stellar_t_RGB_start(double logM, double logZ)     { return interp2d(StellarTbl.t_RGB_start, logM, logZ); }
+double stellar_t_CHeB_start(double logM, double logZ)    { return interp2d(StellarTbl.t_CHeB_start, logM, logZ); }
+double stellar_t_AGB_start(double logM, double logZ)     { return interp2d(StellarTbl.t_AGB_start, logM, logZ); }
+double stellar_t_AGB_end(double logM, double logZ)        { return interp2d(StellarTbl.t_AGB_end, logM, logZ); }
+double stellar_t_postAGB_start(double logM, double logZ) { return interp2d(StellarTbl.t_postAGB_start, logM, logZ); }
+double stellar_t_WR_start(double logM, double logZ)       { return interp2d(StellarTbl.t_WR_start, logM, logZ); }
+
+int stellar_phase_at_age(double logM, double logZ, double age_yr)
+{
+    /* Determine evolutionary phase from transition timestamps.
+     * Returns: 0=PMS, 1=MS, 2=HG/SGB, 3=RGB, 4=CHeB, 5=AGB, 6=post-AGB/WR, 7=dead */
+    double lt = stellar_lifetime(logM, logZ);
+    if(age_yr >= lt) return 7;  /* dead */
+
+    double t_ms_s  = stellar_t_MS_start(logM, logZ);
+    double t_ms_e  = stellar_t_MS_end(logM, logZ);
+    double t_rgb   = stellar_t_RGB_start(logM, logZ);
+    double t_cheb  = stellar_t_CHeB_start(logM, logZ);
+    double t_agb_s = stellar_t_AGB_start(logM, logZ);
+    double t_agb_e = stellar_t_AGB_end(logM, logZ);
+    double t_pagb  = stellar_t_postAGB_start(logM, logZ);
+    double t_wr    = stellar_t_WR_start(logM, logZ);
+
+    /* Post-AGB / WR (phase 6) — check first since it overrides late phases */
+    if(t_pagb > 0 && age_yr >= t_pagb) return 6;
+    if(t_wr   > 0 && age_yr >= t_wr)   return 6;
+
+    /* Walk forward through phases */
+    if(t_agb_s > 0 && age_yr >= t_agb_s && (t_agb_e <= 0 || age_yr <= t_agb_e)) return 5;
+    if(t_cheb  > 0 && age_yr >= t_cheb)  return 4;
+    if(t_rgb   > 0 && age_yr >= t_rgb)   return 3;
+    if(t_ms_e  > 0 && age_yr >= t_ms_e)  return 2;  /* HG/SGB */
+    if(t_ms_s  > 0 && age_yr >= t_ms_s)  return 1;  /* MS */
+    return 0;  /* PMS */
 }
 
 /* --- 3D trilinear (logM, logZ, log_age) --- */

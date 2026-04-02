@@ -106,14 +106,17 @@ void finalize_sampled_star(int i, double M_drawn)
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             double logM = log10(M_drawn);
             double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
-            double log_age = log10(DMAX(star_age_yr, 100.0));
-            P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
-            P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
-            P[i].NUV_luminosity = pow(10., stellar_log_L_NUV(logM, logZ, log_age));
-            P[i].OPT_luminosity = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+            double table_age = star_age_yr - stellar_t_PMS(logM, logZ);
+            if(table_age > 0) {
+                double log_age = log10(DMAX(table_age, 100.0));
+                P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
+                P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
+                P[i].NUV_luminosity = pow(10., stellar_log_L_NUV(logM, logZ, log_age));
+                P[i].OPT_luminosity = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
 #ifdef GALSF_RESOLVEDISM_PHOTOION
-            P[i].Lyman_photons_per_sec = pow(10., stellar_log_Q_ion(logM, logZ, log_age));
+                P[i].Lyman_photons_per_sec = pow(10., stellar_log_Q_ion(logM, logZ, log_age));
 #endif
+            } /* else PMS: luminosities stay at zero (initialized above) */
 #else
             P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
             P[i].LW_luminosity = P[i].UV_luminosity;

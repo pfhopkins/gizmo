@@ -54,13 +54,24 @@ static inline int get_star_info(int i, double *Mstar_out, double *logM_out, doub
     return 1;
 }
 
-/* Get lifetime for a star, using tables if available */
+/* Get total lifetime for a star (birth to death, includes PMS) */
 static inline double get_star_lifetime(double Mstar, double logM, double logZ)
 {
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-    return stellar_lifetime(logM, logZ);
+    return stellar_t_PMS(logM, logZ) + stellar_lifetime(logM, logZ);
 #else
     return get_lifetime(Mstar, pow(10.0, logZ));
+#endif
+}
+
+/* Get table-effective age: star_age minus PMS duration.
+ * Table age axis starts at ZAMS. Returns <= 0 during PMS (no feedback). */
+static inline double get_star_table_age(double star_age_yr, double logM, double logZ)
+{
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+    return star_age_yr - stellar_t_PMS(logM, logZ);
+#else
+    return star_age_yr;
 #endif
 }
 

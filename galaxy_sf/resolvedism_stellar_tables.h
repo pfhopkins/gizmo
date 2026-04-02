@@ -5,7 +5,7 @@
 
 #define STBL_NZ    15
 #define STBL_NM    110
-#define STBL_NAGE  512
+#define STBL_NAGE  768
 #define STBL_NELEM 27     /* element-summed yields in the table */
 #define STBL_NISO  40     /* isotope-resolved yields in the table */
 
@@ -66,6 +66,19 @@ struct StellarTables {
     double M_CO_core[STBL_NZ * STBL_NM];
     double M_He_core[STBL_NZ * STBL_NM];
 
+    /* PMS duration (feedback delay) — flat [NZ * NM], in years */
+    double t_PMS[STBL_NZ * STBL_NM];
+
+    /* 2D phase transition times — flat [NZ * NM], in years.  Zero = phase not reached. */
+    double t_MS_start[STBL_NZ * STBL_NM];
+    double t_MS_end[STBL_NZ * STBL_NM];
+    double t_RGB_start[STBL_NZ * STBL_NM];
+    double t_CHeB_start[STBL_NZ * STBL_NM];
+    double t_AGB_start[STBL_NZ * STBL_NM];
+    double t_AGB_end[STBL_NZ * STBL_NM];
+    double t_postAGB_start[STBL_NZ * STBL_NM];
+    double t_WR_start[STBL_NZ * STBL_NM];
+
     /* 3D time-dependent datasets — dynamically allocated [NZ * NM * NAGE] */
     float *M_current;      /* Msun */
     float *v_wind;         /* km/s */
@@ -111,6 +124,20 @@ double stellar_lifetime(double logM, double logZ);
 double stellar_remnant_mass(double logM, double logZ);
 int    stellar_remnant_type(double logM, double logZ);
 double stellar_M_preSN(double logM, double logZ);
+
+/* ---- PMS duration / feedback delay (2D bilinear: logM, logZ) ---- */
+double stellar_t_PMS(double logM, double logZ);
+
+/* ---- Phase transition times (2D bilinear: logM, logZ), in years ---- */
+double stellar_t_MS_start(double logM, double logZ);
+double stellar_t_MS_end(double logM, double logZ);
+double stellar_t_RGB_start(double logM, double logZ);
+double stellar_t_CHeB_start(double logM, double logZ);
+double stellar_t_AGB_start(double logM, double logZ);
+double stellar_t_AGB_end(double logM, double logZ);
+double stellar_t_postAGB_start(double logM, double logZ);
+double stellar_t_WR_start(double logM, double logZ);
+int    stellar_phase_at_age(double logM, double logZ, double age_yr);
 
 /* ---- 3D trilinear interpolation (logM, logZ, log_age) ---- */
 double stellar_M_current(double logM, double logZ, double log_age);

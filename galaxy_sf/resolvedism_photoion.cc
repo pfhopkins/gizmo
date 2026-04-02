@@ -102,7 +102,9 @@ static double compute_single_star_S_ly(int i)
     {
         double logM = log10(Mstar);
         double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
-        double log_age = log10(DMAX(star_age_yr, 100.0));
+        double table_age = star_age_yr - stellar_t_PMS(logM, logZ);
+        if(table_age <= 0) return 0; /* PMS: no photoionization */
+        double log_age = log10(DMAX(table_age, 100.0));
         S_ly = pow(10., stellar_log_Q_ion(logM, logZ, log_age));
     }
 #else

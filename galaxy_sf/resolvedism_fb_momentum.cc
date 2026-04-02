@@ -74,8 +74,10 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         if(star_age_yr <= 0) return;
         double lifetime_yr = get_star_lifetime(Mstar, logM, logZ);
         if(star_age_yr >= lifetime_yr) return;
+        double table_age = get_star_table_age(star_age_yr, logM, logZ);
+        if(table_age <= 0) return; /* PMS: no radiation pressure */
 
-        double log_age = log10(DMAX(star_age_yr, 100.0));
+        double log_age = log10(DMAX(table_age, 100.0));
         double log_Lbol = stellar_log_L_bol(logM, logZ, log_age);
         double Lbol_cgs = pow(10.0, log_Lbol);
         if(Lbol_cgs <= 0) return;
@@ -124,7 +126,8 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         in->Mej = P[i].WindMassAccum / UNIT_MASS_IN_SOLAR;
 
         double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
-        double log_age = log10(DMAX(star_age_yr, 100.0));
+        double table_age = get_star_table_age(star_age_yr, logM, logZ);
+        double log_age = log10(DMAX(table_age, 100.0));
         double metal_mass_solar = 0;
         for(int k = 0; k < STBL_NELEM; k++) {
             double X_surf = stellar_surface_abundance(logM, logZ, log_age, k);

@@ -284,9 +284,35 @@ MIST_PHASE_MAP = {
     9: 6,   # WR → post-AGB/WR
 }
 
-# Common age grid
-N_AGE = 512
+# Common age grid — adaptive spacing
+# Dense at early (PMS, SN) and late (AGB, PN) ages; sparse on stable MS.
+# Total 768 points (was 512).
 LOG_AGE_MIN, LOG_AGE_MAX = 2.0, 10.3  # 100 yr to 20 Gyr
+
+def _build_adaptive_age_grid():
+    """Build non-uniform log(age) grid: dense where evolution is fast.
+
+    Segments (log_age ranges and fraction of points):
+      1) 2.0 – 7.0  (100 yr to 10 Myr):   25%  PMS contraction, massive star death
+      2) 7.0 – 8.5  (10 Myr to 316 Myr):  10%  stable MS (boring)
+      3) 8.5 – 9.5  (316 Myr to 3.16 Gyr): 30%  intermediate-mass RGB tip + AGB
+      4) 9.5 – 10.3 (3.16 Gyr to 20 Gyr):  35%  low-mass AGB, PN transition
+    """
+    N_total = 768
+    n1 = int(N_total * 0.25)   # 192
+    n2 = int(N_total * 0.10)   #  76
+    n3 = int(N_total * 0.30)   # 230
+    n4 = N_total - n1 - n2 - n3  # 270
+    grid = np.concatenate([
+        np.linspace(2.0,  7.0,  n1, endpoint=False),
+        np.linspace(7.0,  8.5,  n2, endpoint=False),
+        np.linspace(8.5,  9.5,  n3, endpoint=False),
+        np.linspace(9.5,  10.3, n4, endpoint=True),
+    ])
+    return grid
+
+_ADAPTIVE_AGE_GRID = _build_adaptive_age_grid()
+N_AGE = len(_ADAPTIVE_AGE_GRID)  # 768
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -615,6 +641,82 @@ def extract_phase_transitions(age_yr, phase):
     return t
 
 
+def trim_to_ZAMS(result):
+    """Trim PMS phase from track: age origin shifts to ZAMS (first MS point).
+
+    After trimming:
+      - age_yr starts at ~0 (ZAMS)
+      - 't_PMS' stored as scalar = original PMS duration (feedback delay)
+      - phase_transitions shifted by t_PMS
+      - Lifetime becomes ZAMS-to-death
+    """
+    phase = result.get('phase')
+    if phase is None:
+        result['t_PMS'] = 0.0
+        return
+
+    ms_mask = phase >= 1
+    if not np.any(ms_mask):
+        result['t_PMS'] = 0.0
+        return
+
+    zams_idx = np.argmax(ms_mask)  # first MS point
+    t_PMS = result['age_yr'][zams_idx]
+    result['t_PMS'] = t_PMS
+
+    if zams_idx == 0:
+        return  # already starts at MS
+
+    # Trim arrays: keep from zams_idx onward
+    n_orig = len(result['age_yr'])
+    keep = slice(zams_idx, None)
+
+    for key in ['age_yr', 'logL', 'logTeff', 'logR_cm', 'M_current',
+                'log_Mdot', 'v_wind', 'phase']:
+        if key in result and isinstance(result[key], np.ndarray) and len(result[key]) == n_orig:
+            result[key] = result[key][keep]
+
+    for key in RAD_KEYS:
+        if key in result and isinstance(result[key], np.ndarray) and len(result[key]) == n_orig:
+            result[key] = result[key][keep]
+
+    if 'surface' in result and result['surface'].shape[0] == n_orig:
+        result['surface'] = result['surface'][keep]
+
+    # Shift age origin to ZAMS
+    result['age_yr'] = result['age_yr'] - t_PMS
+    result['age_yr'][0] = max(result['age_yr'][0], 1.0)  # avoid log(0)
+
+    # Shift phase transitions
+    pt = result.get('phase_transitions', {})
+    for k in list(pt.keys()):
+        if pt[k] > 0:
+            pt[k] = max(0.0, pt[k] - t_PMS)
+    pt['t_MS_start'] = 0.0  # ZAMS is now age 0
+
+
+def clamp_postAGB_radiation(result):
+    """Zero out radiation for post-AGB stars (phase >= 6 after AGB phase).
+
+    The post-AGB / PN central star becomes very hot (>50,000 K) and produces
+    extreme Q_ion and FUV, but this radiation is absorbed within the planetary
+    nebula shell (~0.1 pc) and does not reach the ISM at simulation resolution.
+    For WR stars (massive, no AGB phase), phase 6 radiation is physical and kept.
+    """
+    phase = result.get('phase')
+    if phase is None:
+        return
+    had_agb = np.any(phase == 5)
+    if not had_agb:
+        return  # WR star — keep phase 6 radiation
+    post_agb = phase >= 6
+    if not np.any(post_agb):
+        return
+    for key in RAD_KEYS:
+        if key in result:
+            result[key][post_agb] = 0.0
+
+
 def parsec_track_to_common(filepath):
     """Load PARSEC track and return standardized dict."""
     d = load_parsec_track_raw(filepath)
@@ -668,6 +770,8 @@ def parsec_track_to_common(filepath):
         'phase_transitions': phase_transitions,
     }
     result.update(rad)
+    trim_to_ZAMS(result)
+    clamp_postAGB_radiation(result)
     return result
 
 
@@ -757,6 +861,8 @@ def boost_track_to_common(filepath):
         'phase_transitions': phase_transitions,
     }
     result.update(rad)
+    trim_to_ZAMS(result)
+    clamp_postAGB_radiation(result)
     return result
 
 
@@ -858,6 +964,8 @@ def mist_track_to_common(filepath):
         'phase_transitions': phase_transitions,
     }
     result.update(rad)
+    trim_to_ZAMS(result)
+    clamp_postAGB_radiation(result)
     return result
 
 
@@ -993,13 +1101,21 @@ def parsec2_vms_track_to_common(filepath):
         Yc = d['YCEN']
         Yc_at_ms_end = Yc[ms_end] if ms_end < len(Yc) else 0
 
+        M_init = M_cur[0]
+        had_CHeB = False
         for i in range(ms_end, len(age_yr)):
+            in_CHeB = Yc[i] > 1e-3 and Yc[i] < Yc_at_ms_end - 1e-3
+            if in_CHeB:
+                had_CHeB = True
+
             if H_surf[i] < 0.4 and logTeff_arr[i] > 4.0:
-                phase[i] = 6  # WR / post-AGB
-            elif Yc[i] > 1e-3 and Yc[i] < Yc_at_ms_end - 1e-3:
-                phase[i] = 4  # CHeB
+                phase[i] = 6  # WR (envelope stripped, hot)
+            elif in_CHeB:
+                phase[i] = 4  # CHeB (core He burning)
+            elif had_CHeB and M_init < 10.0 and Yc[i] < 1e-3 and logTeff_arr[i] < 3.8:
+                phase[i] = 5  # AGB (post-CHeB, cool — only for M < 10 Msun)
             elif logTeff_arr[i] < 3.7 and H_surf[i] > 0.01:
-                phase[i] = 3  # RGB/RSG
+                phase[i] = 3  # RGB/RSG (cool giant)
             else:
                 phase[i] = 2  # HG/SGB
 
@@ -1020,6 +1136,8 @@ def parsec2_vms_track_to_common(filepath):
         'phase_transitions': phase_transitions,
     }
     result.update(rad)
+    trim_to_ZAMS(result)
+    clamp_postAGB_radiation(result)
     return result
 
 
@@ -1127,6 +1245,8 @@ def resample_onto_age_grid(track, log_age_grid):
     result['M_He_core'] = track.get('M_He_core', 0.0)
     # Phase transition times (pass through from raw track)
     result['phase_transitions'] = track.get('phase_transitions', {})
+    # PMS duration / feedback delay (pass through)
+    result['t_PMS'] = track.get('t_PMS', 0.0)
 
     return result
 
@@ -1207,6 +1327,7 @@ def _resample_track_onto_tau_grid(track, tau_grid):
     result['M_preSN_scalar'] = alive_raw[-1] if len(alive_raw) > 0 else 0.0
     result['M_CO_core'] = track.get('M_CO_core', 0.0)
     result['M_He_core'] = track.get('M_He_core', 0.0)
+    result['t_PMS'] = track.get('t_PMS', 0.0)
 
     # Phase transitions stored as fractional lifetime
     pt_raw = track.get('phase_transitions', {})
@@ -1280,6 +1401,12 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
     interp['M_preSN_scalar'] = r_lo['M_preSN_scalar'] + f * (r_hi['M_preSN_scalar'] - r_lo['M_preSN_scalar'])
     interp['M_CO_core'] = r_lo['M_CO_core'] + f * (r_hi['M_CO_core'] - r_lo['M_CO_core'])
     interp['M_He_core'] = r_lo['M_He_core'] + f * (r_hi['M_He_core'] - r_lo['M_He_core'])
+    # PMS duration: interpolate in log-space
+    tpms_lo, tpms_hi = r_lo.get('t_PMS', 0.0), r_hi.get('t_PMS', 0.0)
+    if tpms_lo > 0 and tpms_hi > 0:
+        interp['t_PMS'] = np.exp(np.log(tpms_lo) + f * (np.log(tpms_hi) - np.log(tpms_lo)))
+    else:
+        interp['t_PMS'] = tpms_lo + f * (tpms_hi - tpms_lo)
 
     # Phase transitions: interpolate in log-space (stored as fractional tau)
     pt_lo = r_lo.get('phase_transitions', {})
@@ -1367,6 +1494,7 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
     result['M_CO_core'] = interp['M_CO_core']
     result['M_He_core'] = interp['M_He_core']
     result['phase_transitions'] = interp['phase_transitions']
+    result['t_PMS'] = interp.get('t_PMS', 0.0)
 
     return result
 
@@ -1431,6 +1559,11 @@ def _interpolate_two_tracks(r_lo, r_hi, f):
         else:
             pt[key] = v_lo + f * (v_hi - v_lo)
     result['phase_transitions'] = pt
+    tpms_lo, tpms_hi = r_lo.get('t_PMS', 0.0), r_hi.get('t_PMS', 0.0)
+    if tpms_lo > 0 and tpms_hi > 0:
+        result['t_PMS'] = np.exp(np.log(tpms_lo) + f * (np.log(tpms_hi) - np.log(tpms_lo)))
+    else:
+        result['t_PMS'] = tpms_lo + f * (tpms_hi - tpms_lo)
 
     return result
 
@@ -2537,7 +2670,7 @@ def build_all(base_dir, output_file):
     # Mass grid: PARSEC masses + extend to 500 Msun
     M_grid = sorted(set(parsec_M) | {500.0})
     M_grid = np.array(M_grid)
-    log_age_grid = np.linspace(LOG_AGE_MIN, LOG_AGE_MAX, N_AGE)
+    log_age_grid = _ADAPTIVE_AGE_GRID
 
     N_Z, N_M = len(Z_grid), len(M_grid)
     print(f"\nMaster grid: {N_Z} Z x {N_M} M x {N_AGE} ages")
@@ -2592,7 +2725,10 @@ def build_all(base_dir, output_file):
     track_src = np.zeros((N_Z, N_M), dtype=int)
     phase_arr = np.full(shape, 7, dtype=np.int8)  # default: dead
 
-    # Phase transition times (2D: Z × M), in years
+    # PMS duration (feedback delay) — 2D: Z × M, in years
+    t_PMS = np.zeros((N_Z, N_M))
+
+    # Phase transition times (2D: Z × M), in years (relative to ZAMS after trim)
     TRANS_KEYS = ['t_MS_start', 't_MS_end', 't_RGB_start', 't_CHeB_start',
                   't_AGB_start', 't_AGB_end', 't_postAGB_start', 't_WR_start']
     phase_trans = {k: np.zeros((N_Z, N_M)) for k in TRANS_KEYS}
@@ -2649,6 +2785,7 @@ def build_all(base_dir, output_file):
             src_counts[src] += 1
             track_src[iz, im] = src
             lifetime[iz, im] = result['lifetime']
+            t_PMS[iz, im] = result.get('t_PMS', 0.0)
             M_preSN[iz, im] = result.get('M_preSN_scalar', 0.0)
             M_CO_core_arr[iz, im] = result.get('M_CO_core', 0.0)
             M_He_core_arr[iz, im] = result.get('M_He_core', 0.0)
@@ -2707,6 +2844,7 @@ def build_all(base_dir, output_file):
             surface[iz, im]   = surface[best_jz, best_jm]
             phase_arr[iz, im] = phase_arr[best_jz, best_jm]
             lifetime[iz, im]  = lifetime[best_jz, best_jm]
+            t_PMS[iz, im]     = t_PMS[best_jz, best_jm]
             M_preSN[iz, im]   = M_preSN[best_jz, best_jm]
             M_CO_core_arr[iz, im] = M_CO_core_arr[best_jz, best_jm]
             M_He_core_arr[iz, im] = M_He_core_arr[best_jz, best_jm]
@@ -2733,6 +2871,23 @@ def build_all(base_dir, output_file):
 
     # ── Scale yields for BH/PPISN fallback ──
     scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield_src=yield_src)
+
+    # ── Enforce mass conservation ──
+    # For WD remnants (AGB progenitors, M < 8): no continuous winds in simulation,
+    # so particle mass at death ≈ M_init. Set M_preSN = M_init so that
+    # ejecta = M_init - M_WD (Karakas) is correct.
+    # For SN remnants: M_preSN from tracks is correct (winds ARE modeled for M >= 8).
+    n_fixed = 0
+    for iz in range(N_Z):
+        for im in range(N_M):
+            if rem_type[iz, im] == 0:  # WD
+                M_preSN[iz, im] = M_grid[im]
+                n_fixed += 1
+            elif M_preSN[iz, im] > 0 and rem_mass[iz, im] > M_preSN[iz, im]:
+                rem_mass[iz, im] = M_preSN[iz, im]
+                n_fixed += 1
+    if n_fixed > 0:
+        print(f"  Fixed {n_fixed} M_preSN/remnant_mass entries for mass conservation")
 
     # ── Write HDF5 ──
     print(f"\nWriting {output_file}...", flush=True)
@@ -2790,7 +2945,15 @@ def build_all(base_dir, output_file):
             ds.attrs['units'] = 'yr'
 
         f.create_dataset('lifetime_yr', data=lifetime)
-        f['lifetime_yr'].attrs['units'] = 'yr'
+        f['lifetime_yr'].attrs['units'] = 'yr (ZAMS to death, excludes PMS)'
+        f['lifetime_yr'].attrs['usage'] = ('Effective lifetime for SN timing. '
+                                           'Total age at death = t_PMS + lifetime_yr.')
+
+        ds = f.create_dataset('t_PMS', data=t_PMS)
+        ds.attrs['units'] = 'yr, PMS duration (birth to ZAMS)'
+        ds.attrs['usage'] = ('Feedback delay: no radiation/winds/SN for star_age < t_PMS. '
+                             'Table age axis measures time since ZAMS. '
+                             'table_age = star_age - t_PMS.')
 
         f.create_dataset('track_source', data=track_src)
         f['track_source'].attrs['encoding'] = '0=PARSEC_v1, 1=BoOST, 2=MIST, 3=PARSEC_v2'

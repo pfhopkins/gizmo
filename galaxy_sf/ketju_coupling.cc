@@ -1362,7 +1362,8 @@ static void scatter_results(KetjuRegion &reg)
             double logM = log10(DMAX(P[idx].MstarSampleIMF[0], 0.08));
             double logZ = log10(DMAX(P[idx].BirthMetallicity, 1e-10));
             double age_yr = evaluate_stellar_age_Gyr(idx) * 1e9;
-            double log_age = log10(DMAX(age_yr, 100.0));
+            double table_age = age_yr - stellar_t_PMS(logM, logZ);
+            double log_age = log10(DMAX(table_age, 100.0));
             my_radii[i] = pow(10., stellar_log_R_cm(logM, logZ, log_age));
         }
 

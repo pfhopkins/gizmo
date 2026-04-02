@@ -76,7 +76,9 @@ void resolvedism_determine_SNe(void)
         double lifetime_yr = get_star_lifetime(Mstar, logM, logZ);
         if(star_age_yr >= lifetime_yr) continue; /* dead — handled in death loop below */
 
-        double log_age = log10(DMAX(star_age_yr, 100.0));
+        double table_age = get_star_table_age(star_age_yr, logM, logZ);
+        if(table_age <= 0) continue; /* PMS: no winds yet */
+        double log_age = log10(DMAX(table_age, 100.0));
         double M_new = stellar_M_current(logM, logZ, log_age);
 
         if(P[i].M_current_old > 0 && M_new < P[i].M_current_old) {
@@ -544,7 +546,8 @@ void resolvedism_inject_sn_energy(void)
             double Mstar_w, logM_w, logZ_w;
             if(get_star_info(i, &Mstar_w, &logM_w, &logZ_w)) {
                 double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
-                double log_age_w = log10(DMAX(star_age_yr, 100.0));
+                double table_age_w = get_star_table_age(star_age_yr, logM_w, logZ_w);
+                double log_age_w = log10(DMAX(table_age_w, 100.0));
                 double Z_wind = 0;
                 for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
                     Z_wind += stellar_surface_abundance(logM_w, logZ_w, log_age_w, kk) * dM_wind;
@@ -558,7 +561,8 @@ void resolvedism_inject_sn_energy(void)
                 double Mstar_wl, logM_wl, logZ_wl;
                 if(get_star_info(i, &Mstar_wl, &logM_wl, &logZ_wl)) {
                     double age_wl = evaluate_stellar_age_Gyr(i) * 1.0e9;
-                    double lage_wl = log10(DMAX(age_wl, 100.0));
+                    double table_age_wl = get_star_table_age(age_wl, logM_wl, logZ_wl);
+                    double lage_wl = log10(DMAX(table_age_wl, 100.0));
                     for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
                         Z_w_log += stellar_surface_abundance(logM_wl, logZ_wl, lage_wl, kk) * dM_wind;
                 }
