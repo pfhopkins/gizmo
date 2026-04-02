@@ -232,8 +232,8 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef TURB_DIFF_METALS
                 double mdot_estimated = 0;
 #endif
-#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-                double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j); 
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+                double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
                 
                 /* --------------------------------------------------------------------------------- */

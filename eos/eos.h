@@ -12,6 +12,17 @@
 #define EOS_PROVIDES_CV
 #endif
 
+#ifdef EOS_ANEOS
+#define EOS_TABULATED
+#define EOS_USES_CGS
+#define EOS_PROVIDES_ENTROPY
+#define EOS_PROVIDES_CV
+#endif
+
+#if defined(EOS_ANEOS) && defined(EOS_HELMHOLTZ)
+#error "EOS_ANEOS and EOS_HELMHOLTZ are mutually exclusive"
+#endif
+
 struct eos_input
 {
   double rho;         /* Density */

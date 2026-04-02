@@ -1472,11 +1472,22 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
             case IO_EOSCOMP:
-#ifdef EOS_TILLOTSON
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *ip_int++ = (int) CellP[pindex].CompositionType;
+                    n++;
+                }
+#endif
+            break;
+
+            case IO_EOSPHASE:
+#ifdef EOS_ANEOS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = (int) CellP[pindex].PhaseID;
                     n++;
                 }
 #endif
@@ -1870,6 +1881,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_SINKPROGS:
         case IO_GRAINTYPE:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
             bytes_per_blockelement = sizeof(int);
             break;
@@ -2171,6 +2183,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_SINKPROGS:
         case IO_GRAINTYPE:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
             typekey = 0;		/* native int */
             break;
@@ -2266,6 +2279,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_EOSABAR:
         case IO_EOSCS:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_EOSYE:
         case IO_PRESSURE:
         case IO_SOFT:
@@ -2543,6 +2557,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_EOSCS:
         case IO_EOS_STRESS_TENSOR:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_PRESSURE:
         case IO_VSTURB_DISS:
         case IO_VSTURB_DRIVE:
@@ -3191,7 +3206,13 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_EOSCOMP:
-#ifdef EOS_TILLOTSON
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+            return 1;
+#endif
+            break;
+
+        case IO_EOSPHASE:
+#ifdef EOS_ANEOS
             return 1;
 #endif
             break;
@@ -3614,6 +3635,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_EOSCOMP:
             strncpy(label, "COMP", 4);
+            break;
+        case IO_EOSPHASE:
+            strncpy(label, "PHID", 4);
             break;
         case IO_PARTVEL:
             strncpy(label, "PVEL", 4);
@@ -4048,6 +4072,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_EOSCOMP:
             strcpy(buf, "CompositionType");
+            break;
+        case IO_EOSPHASE:
+            strcpy(buf, "PhaseID");
             break;
         case IO_PARTVEL:
             strcpy(buf, "ParticleVelocities");

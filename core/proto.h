@@ -172,6 +172,9 @@ double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
 void tillotson_eos_init(void);
 #endif
+#ifdef EOS_ANEOS
+#include "../eos/aneos.h"
+#endif
 
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode);
@@ -356,7 +359,7 @@ double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CRegy);
 #ifdef EOS_ELASTIC
 void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 #endif
-#if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON)
+#if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
 double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);
 #endif
 /* Get_Gas_effective_soundspeed_i is now cell[i].effective_soundspeed() */

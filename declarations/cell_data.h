@@ -386,8 +386,11 @@ extern struct gas_cell_data
 #ifdef EOS_CARRIES_ABAR
     MyFloat Abar;                         /* Average atomic weight (in atomic mass units) */
 #endif
-#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     int CompositionType;                  /* define the composition of the material */
+#endif
+#ifdef EOS_ANEOS
+    int PhaseID;                          /* ANEOS material phase flag */
 #endif
 #ifdef EOS_ELASTIC
     Mat3<MyDouble> Elastic_Stress_Tensor; /* deviatoric stress tensor */

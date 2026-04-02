@@ -85,6 +85,23 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #ifdef EOS_TILLOTSON
     press = cell[i].calculate_tillotson_eos(); soundspeed = cell[i].SoundSpeed; /* done in subroutine, save for below */
 #endif
+
+#ifdef EOS_ANEOS
+    {
+        int aneos_mat = cell[i].CompositionType;
+        double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
+        double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
+        double aneos_T_guess = cell[i].Temperature;
+        double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
+        int aneos_phase;
+        aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
+                      &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+        press      = aneos_P / UNIT_PRESSURE_IN_CGS;
+        soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
+        cell[i].Temperature = aneos_T_guess;
+        cell[i].PhaseID = aneos_phase;
+    }
+#endif
     
 #ifdef EOS_MHD_CORE_BAROTROPIC
     press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.)); /* special barotropic EOS for core collapse test (Hopkins 2015) */

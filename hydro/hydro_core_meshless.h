@@ -12,7 +12,7 @@
 #endif
     dummy_pressure=face_area_dot_vel=face_vel_i=face_vel_j=Face_Area_Norm=0;
     double Pressure_i = local.Pressure, Pressure_j = CellP[j].Pressure;
-#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     if((Pressure_i<0)||(Pressure_j<0)) /* negative pressures are allowed, but dealt with below by a constant shift and re-shift, which should be invariant for HLLC with the MFM method */
     {
         dummy_pressure = -DMIN(Pressure_i,Pressure_j);
@@ -168,7 +168,7 @@
         press_tot_limiter *= 100.0; // large number
 #endif
         if(recon_mode==0) {press_tot_limiter = DMAX(press_tot_limiter , DMAX(DMAX(Pressure_i,Pressure_j),2.*DMAX(local.Density,CellP[j].Density)*v2_approach));}
-#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
         press_tot_limiter = 1.e10*(press_tot_limiter+1.); // it is unclear how this particular limiter behaves for solid-body EOS's, so for now, disable it in these cases
 #endif
 
@@ -302,7 +302,7 @@
 #endif
 #endif // MAGNETIC
 
-#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && !(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)) // below is defined for adiabatic ideal fluids, don't use for materials
+#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && !(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) // below is defined for adiabatic ideal fluids, don't use for materials
             /* for MFM, do the face correction for adiabatic flows here */
             double SM_over_ceff = fabs(Riemann_out.S_M) / DMIN(kernel.sound_i,kernel.sound_j); // for now use sound speed here (more conservative) vs magnetosonic speed //
             /* if SM is sufficiently large, we do nothing to the equations */

@@ -196,13 +196,20 @@ void begrun(void)
   GrNr = -1;
 #endif
 
-#ifdef EOS_TABULATED
+#if defined(EOS_TABULATED) && !defined(EOS_ANEOS)
     int ierr = eos_init(All.EosTable);
     if(ierr) {printf("error initializing the eos"); endrun(1);}
 #endif
 
 #ifdef EOS_TILLOTSON
     tillotson_eos_init();
+#endif
+
+#ifdef EOS_ANEOS
+    for(int aneos_k = 0; aneos_k < All.AneosNumMaterials; aneos_k++) {
+        int aneos_ierr = aneos_read_table(All.AneosTableFiles[aneos_k], aneos_k);
+        if(aneos_ierr) {printf("ANEOS: error loading table %d from %s\n", aneos_k, All.AneosTableFiles[aneos_k]); endrun(1);}
+    }
 #endif
 
 #ifdef TURB_DRIVING
@@ -434,8 +441,13 @@ void begrun(void)
       strcpy(All.GrackleDataFile, all.GrackleDataFile);
 #endif
 
-#ifdef EOS_TABULATED
+#if defined(EOS_TABULATED) && !defined(EOS_ANEOS)
         strcpy(All.EosTable, all.EosTable);
+#endif
+#ifdef EOS_ANEOS
+        All.AneosNumMaterials = all.AneosNumMaterials;
+        for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++)
+            strcpy(All.AneosTableFiles[aneos_k], all.AneosTableFiles[aneos_k]);
 #endif
 
       if(All.TimeMax != all.TimeMax) {readjust_timebase(All.TimeMax, all.TimeMax);}
@@ -1909,7 +1921,7 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
-#ifdef EOS_TABULATED
+#if defined(EOS_TABULATED) && !defined(EOS_ANEOS)
         strcpy(tag[nt], "EosTable");
         addr[nt] = All.EosTable;
         id[nt++] = STRING;
@@ -1955,6 +1967,20 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "Tillotson_EOS_params_beta");
         addr[nt] = &All.Tillotson_EOS_params[0][9];
         id[nt++] = REAL;
+#endif
+
+#ifdef EOS_ANEOS
+        strcpy(tag[nt], "AneosNumMaterials");
+        addr[nt] = &All.AneosNumMaterials;
+        id[nt++] = INT;
+
+        for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
+            char aneos_tagname[64];
+            snprintf(aneos_tagname, sizeof(aneos_tagname), "AneosTable%d", aneos_k);
+            strcpy(tag[nt], aneos_tagname);
+            addr[nt] = All.AneosTableFiles[aneos_k];
+            id[nt++] = STRING;
+        }
 #endif
 
 #ifdef EOS_ELASTIC
@@ -2551,6 +2577,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("AgeTracerBinStart",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: left-edge of first age-tracer bin is early in stellar evolution (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinStart); continue;}
                 if(strcmp("AgeTracerBinEnd",tag[i])==0) {*((double *)addr[i])=14000.; printf("Tag %s (%s) not set in parameter file: right-edge of last age-tracer bin is at ~t_Hubble (=%g Myr) \n",tag[i],alternate_tag[i],All.AgeTracerBinEnd); continue;}
 #endif
+#endif
+#ifdef EOS_ANEOS
+                if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
