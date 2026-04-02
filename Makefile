@@ -525,8 +525,8 @@ endif
 # KETJU regularized integrator for BH and stellar dynamics
 ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
 OBJS    += galaxy_sf/ketju_coupling.o
-KETJU_INCL = -I/raven/u/uli/phil/ketju-integrator/include
-KETJU_LIBS = -L/raven/u/uli/phil/ketju-integrator/lib -lketju-integrator -lstdc++
+KETJU_INCL = -Iketju-integrator/include
+KETJU_LIBS = -Lketju-integrator/lib -lketju-integrator -lstdc++
 else
 KETJU_INCL =
 KETJU_LIBS =

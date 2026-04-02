@@ -69,6 +69,7 @@ void ketju_run_integration(void);
 void ketju_set_final_velocities(void);
 void ketju_finish_step(void);
 int ketju_is_particle_in_region(int i);
+void ketju_mark_regions_stale(void);
 void ketju_open_output_file(void);
 void ketju_close_output_file(void);
 void ketju_write_output(void);

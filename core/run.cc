@@ -99,8 +99,16 @@ void run(void)
         {
             domain_Decomposition(0, 0, 1);      /* do domain decomposition if step is big enough, and set new list of active particles  */
             reconstructed_tree = 1;
+#ifdef KETJU_REGULARIZATION
+            ketju_mark_regions_stale();  /* particle indices changed — invalidate cached KETJU communicators */
+#endif
         }
-        else if(TreeReconstructFlag) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag) {
+            domain_Decomposition(0, 0, 1); reconstructed_tree = 1;
+#ifdef KETJU_REGULARIZATION
+            ketju_mark_regions_stale();
+#endif
+        }
         else
         {
             force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
