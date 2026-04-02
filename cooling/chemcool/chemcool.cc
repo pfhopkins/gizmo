@@ -489,6 +489,19 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 #endif
 
+    /* Clamp molecular abundances to zero in fully ionized gas (xH+ > 0.99).
+     * H2/HD/CO cannot survive in ionized gas — forcing them to zero avoids
+     * extreme stiffness in DVODE where destruction rates exceed formation
+     * rates by >10 orders of magnitude, which can produce NaN.
+     * Only needed for network 17 which tracks HD and has more stiff couplings. */
+#if CHEMISTRYNETWORK == 17
+    if(abundances[IHP] > 0.99 && skip_evolve_abundances == 0) {
+        abundances[IH2] = 0.0;
+        abundances[ICO] = 0.0;
+        abundances[IHD] = 0.0;
+    }
+#endif
+
     if(mode == 1 || mode == 2) timestep = 0.0;
 
     /* Evolve abundances */
