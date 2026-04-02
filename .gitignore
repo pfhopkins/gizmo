@@ -1,5 +1,21 @@
+# Files used for gizmo compilation.
 *.o
 GIZMO
 GIZMO_config.h
 compile_time_info.cc
 Config.sh
+
+# Files used for gizmo test suite.
+build/
+spcool_tables/
+TREECOOL
+spcool_tables.tgz
+test/*/*.txt
+test/*/output
+*egg-info
+*.err
+*.out
+*.hdf5
+*.tmp
+*.pyc
+*values
