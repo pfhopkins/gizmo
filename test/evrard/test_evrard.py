@@ -31,7 +31,7 @@ def plot_evrard_density_slice(coords, rho, output_dir="."):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(16, 0), (1, 16), (4, 4)])
+@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(4, 0), (1, 4), (2, 2)])
 def test_evrard(num_mpi_ranks, num_omp_threads):
     test_name = "evrard"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
