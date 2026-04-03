@@ -201,6 +201,23 @@ void Initialize_ISMDustChemEvo_Particle_Variables(int i)
                     update_ISMDustChemEvo_bin_number_and_slope(i,j,k,number_in_bin,mass_in_bin);
                 }
             }
+            // Assume initial mass distribution per logarithmic grain size (a^4*dn/da) is log-normal
+            // double a0=0.1E-4, sigma = 0.6;
+            // for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {
+            //     double bulk_dens, dust_atomic_weight;
+            //     ISMDustChem_get_species_properties(All.ISMDustChem_TrackedSpeciesIDTable[j], &dust_atomic_weight, &bulk_dens);
+            //     double C_norm = (CellP[i].ISMDustChem_Dust_Species[j]*P[i].Mass*UNIT_MASS_IN_CGS)*(3*a0*exp(-(sigma*sigma)/2.))/(pow(2.,5./2.)*pow(M_PI,3./2.)*sigma*bulk_dens);
+            //     // Step through grain size bins setting grain number and mass to fit initial distribution
+            //     for(k=0;k<NUM_ISMDUSTCHEM_SIZE_BINS;k++) {
+            //         double alower = All.ISMDustChem_GrainBinEdges[k], aupper = All.ISMDustChem_GrainBinEdges[k+1];
+            //         double mass_in_bin, number_in_bin;
+            //         number_in_bin = (C_norm*exp(8*sigma*sigma)*sqrt(M_PI/2)*sigma/(pow(a0,4))) * (erf((4*sigma*sigma+log(aupper/a0))/(sqrt(2)*sigma))-erf((4*sigma*sigma+log(alower/a0))/(sqrt(2)*sigma)));
+            //         mass_in_bin = (C_norm*pow(2*M_PI,3./2.)*bulk_dens*sigma*exp(sigma*sigma/2)/(3*a0)) * (erf((sigma*sigma+log(aupper/a0))/(sqrt(2)*sigma))-erf((sigma*sigma+log(alower/a0))/(sqrt(2)*sigma)));
+            //         // Deal with rounding errors for effectively empty bins
+            //         if (number_in_bin<=0 || mass_in_bin<=0) {number_in_bin=0;mass_in_bin=0;}
+            //         update_ISMDustChemEvo_bin_number_and_slope(i,j,k,number_in_bin,mass_in_bin);
+            //     }
+            // }
         }
         else
         {
