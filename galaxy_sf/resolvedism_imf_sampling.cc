@@ -624,6 +624,8 @@ void assign_stellar_masses(void)
 
         /* Star mass = actual mass accreted (exact conservation) */
         P[i].Mass = mass_acc;
+        printf("IMF_DEBUG_SET: Task=%d i=%d ID=%llu Mass=%.6e mass_acc=%.6e Type=%d\n",
+            ThisTask, i, (unsigned long long)P[i].ID, P[i].Mass, mass_acc, P[i].Type);
 
         /* CoM velocity from all donor cells */
         if(mass_acc > 0) {

@@ -1203,6 +1203,8 @@ void rearrange_particle_sequence(void)
     for(i = 0; i < NumPart; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
+            if(P[i].Type == 4) {printf("REARRANGE_ELIM: Task=%d i=%d ID=%llu Mass=%.6e sampled=%d MstarIMF0=%.4f TimeBin=%d\n",
+                ThisTask, i, (unsigned long long)P[i].ID, P[i].Mass, P[i].sampled, P[i].MstarSampleIMF[0], P[i].TimeBin);}
             P[i].Mass = 0;
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
