@@ -14,6 +14,8 @@ import shutil
 import numpy as np
 from glob import glob
 from os import path
+from os.path import isfile
+from urllib.request import urlretrieve, HTTPError
 from matplotlib import pyplot as plt
 import matplotlib
 import h5py
@@ -51,7 +53,17 @@ EOS_FILE = "eos/eos.cc"
 EOS_BACKUP = "eos/eos.cc.hall_wave_backup"
 
 # Reference snapshot for comparison (current known-good output at TimeMax=79)
-REFERENCE_SNAP = "test/hall_wave/hall_wave_reference.hdf5"
+WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
+REFERENCE_SNAP = "test/hall_wave/hall_wave_exact.hdf5"
+
+
+def _download_if_missing(filename):
+    """Download a file from the tapir server if not already present."""
+    if not isfile(filename):
+        try:
+            urlretrieve(WEBSITE + path.basename(filename), filename)
+        except HTTPError:
+            print(f"Could not download {filename} from {WEBSITE}")
 
 
 def _patch_eos():
@@ -178,9 +190,11 @@ def test_hall_wave(num_mpi_ranks, num_omp_threads):
         if patched:
             _restore_eos()
 
-    # Run the simulation (ICs are already in the test directory)
+    # Download ICs and reference if not present, then run
     from os import chdir
     chdir(f"test/{test_name}/")
+    _download_if_missing("hall_wave_ics.hdf5")
+    _download_if_missing("hall_wave_exact.hdf5")
     run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
