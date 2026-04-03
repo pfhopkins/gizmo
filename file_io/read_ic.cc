@@ -210,6 +210,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
             break;
 
+        case IO_REFINE_FLAG:        //refinement flag for flag-based refinement //
+#ifdef FLAG_BASED_REFINEMENT
+            if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].Refinement_Flag = *ip++;}}
+#endif
+            break;
+        
         case IO_MASS:		/* particle mass */
             for(n = 0; n < pc; n++) {P[offset + n].Mass = *fp++;}
             break;
@@ -1422,6 +1428,14 @@ void read_header_attributes_in_hdf5(char *fname)
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "Flag_DoublePrecision");
     H5Aread(hdf5_attribute, H5T_NATIVE_INT, &header.flag_doubleprecision);
     H5Aclose(hdf5_attribute);
+
+    //refinement modification
+#ifdef FLAG_BASED_REFINEMENT
+    hdf5_attribute = H5Aopen_name(hdf5_headergrp, "RefinementRegionCenter");
+    H5Aread(hdf5_attribute, H5T_NATIVE_DOUBLE, header.refinement_center);
+    H5Aclose(hdf5_attribute);
+#endif
+    //refinement modification ends
 
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
     if(RestartFlag==2)
