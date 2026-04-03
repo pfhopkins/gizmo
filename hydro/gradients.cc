@@ -1208,7 +1208,7 @@ void hydro_gradient_calc(void)
 #endif
             local_slopelimiter(CellP[i].Gradients.Density,GasGradDataPasser[i].Maxima.Density,GasGradDataPasser[i].Minima.Density,a_limiter,h_lim,0, 1,d_max,CellP[i].Density);
             int pressure_is_positive_definite = 1;
-#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
             pressure_is_positive_definite = 0; /* some physics allow negative pressures - account for that here */
 #endif
             local_slopelimiter(CellP[i].Gradients.Pressure,GasGradDataPasser[i].Maxima.Pressure,GasGradDataPasser[i].Minima.Pressure,a_limiter,h_lim,stol, pressure_is_positive_definite,d_max,CellP[i].Pressure);
