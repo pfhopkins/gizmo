@@ -297,7 +297,7 @@ extern ALIGN(32) struct particle_data
     integertime dt_step;
 #endif
     
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) || defined(FLAG_BASED_REFINEMENT)
     MyFloat Time_Of_Last_MergeSplit;
 #endif
 
