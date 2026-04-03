@@ -261,6 +261,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
             break;
 
+        case IO_REFINE_FLAG:  /* particle refinement flag (for flag-based refinement) */
+#ifdef FLAG_BASED_REFINEMENT
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip++ = (MyIDType) P[pindex].Refinement_Flag;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_MASS:		/* particle mass */
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -1875,6 +1886,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_REFINE_FLAG:
             bytes_per_blockelement = sizeof(MyIDType);
             break;
 
@@ -2176,6 +2188,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_REFINE_FLAG:   // refinement modifications
             typekey = 2;		/* native long long */
             break;
 
@@ -2218,6 +2231,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_REFINE_FLAG:
         case IO_MASS:
         case IO_SINK_DIST:
         case IO_U:
@@ -2479,6 +2493,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_REFINE_FLAG:
         case IO_POT:
         case IO_SOFT:
         case IO_AGS_HKERN:
@@ -2691,6 +2706,12 @@ int blockpresent(enum iofields blocknr)
         case IO_RHO:
         case IO_KERNELRADIUS:
             return 1;			/* always present */
+            break;
+
+        case IO_REFINE_FLAG:
+#ifdef FLAG_BASED_REFINEMENT
+            return 1;
+#endif
             break;
 
         case IO_NE:
@@ -3342,6 +3363,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_GENERATION_ID:
             strncpy(label, "IDgn", 4);
             break;
+        case IO_REFINE_FLAG:
+            strncpy(label, "RefF", 4);
+            break;
         case IO_ID:
             strncpy(label, "ID  ", 4);
             break;
@@ -3760,6 +3784,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_GENERATION_ID:
             strcpy(buf, "ParticleIDGenerationNumber");
+            break;
+        case IO_REFINE_FLAG:
+            strcpy(buf, "RefinementFlag");
             break;
         case IO_MASS:
             strcpy(buf, "Masses");
