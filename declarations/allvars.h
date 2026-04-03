@@ -579,8 +579,8 @@ extern struct global_data_all_processes
   double MassTable[6];
 
   /* some filenames */
-  char InitCondFile[100],
-    OutputDir[100],
+  char InitCondFile[200],
+    OutputDir[200],
     SnapshotFileBase[100],
     RestartFile[100], ResubmitCommand[100], OutputListFilename[100];
 
