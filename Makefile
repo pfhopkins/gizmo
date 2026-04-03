@@ -451,6 +451,11 @@ FOBJS   += eos/helmholtz/helm_impl.o eos/helmholtz/helm_wrap.o
 FINCL   += eos/helmholtz/helm_const.dek eos/helmholtz/helm_implno.dek eos/helmholtz/helm_table_storage.dek eos/helmholtz/helm_vector_eos.dek
 endif
 
+ifeq (EOS_ANEOS,$(findstring EOS_ANEOS,$(CONFIGVARS)))
+OBJS    += eos/aneos.o
+INCL    += eos/aneos.h
+endif
+
 # chimes files are treated as special for now because they require special external libraries (e.g. sundials) that are otherwise not
 #   used anywhere else in the code, and have not had their macro logic cleaned up to allow appropriate compilation without chimes flags enabled
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))

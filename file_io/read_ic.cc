@@ -429,9 +429,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_EOSCOMP:
-#ifdef EOS_TILLOTSON
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
             for(n = 0; n < pc; n++) {CellP[offset + n].CompositionType = *ip_int++;}
 #endif
+            break;
+
+        case IO_EOSPHASE:
             break;
 
         case IO_EOSYE:
@@ -928,7 +931,7 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef EOS_CARRIES_YE
                    && blocknr != IO_EOSYE
 #endif
-#ifdef EOS_TILLOTSON
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
                    && blocknr != IO_EOSCOMP
 #endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))

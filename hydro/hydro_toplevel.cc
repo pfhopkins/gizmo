@@ -292,8 +292,10 @@ struct INPUT_STRUCT_NAME
     MyDouble DelayTime;
 #endif
     
-#ifdef EOS_ELASTIC
+#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     int CompositionType;
+#endif
+#ifdef EOS_ELASTIC
     MyFloat Elastic_Stress_Tensor[3][3];
 #endif
     
@@ -539,8 +541,10 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     }
 #endif
 
-#ifdef EOS_ELASTIC
+#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     in->CompositionType = CellP[i].CompositionType;
+#endif
+#ifdef EOS_ELASTIC
     {int k_v; for(k=0;k<3;k++) {for(k_v=0;k_v<3;k_v++) {in->Elastic_Stress_Tensor[k][k_v] = CellP[i].Elastic_Stress_Tensor_Pred[k][k_v];}}}
 #endif
 

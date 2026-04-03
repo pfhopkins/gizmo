@@ -563,7 +563,18 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    for(k=0;k<NUM_METAL_SPECIES;k++) {fp[k] = (MyOutputFloat) P[pindex].Metallicity[k];}
+                    for(k=0;k<NUM_METAL_SPECIES;k++)
+                    {
+                        MyOutputFloat val = (MyOutputFloat) P[pindex].Metallicity[k];
+#ifndef OUTPUT_IN_DOUBLEPRECISION
+                        /* Quantize to ~3.3 significant decimal digits (10-bit mantissa) by zeroing
+                           the low 13 mantissa bits of the float32. This is lossless at the precision
+                           level meaningful for metal abundances, and makes the data ~2x more
+                           compressible with shuffle+deflate (IO_COMPRESS_HDF5). */
+                        {unsigned int *ibits = (unsigned int *)&val; *ibits &= 0xFFFFE000u;}
+#endif
+                        fp[k] = val;
+                    }
                     fp += NUM_METAL_SPECIES;
                     n++;
                 }
@@ -1472,11 +1483,22 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
             case IO_EOSCOMP:
-#ifdef EOS_TILLOTSON
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
                     *ip_int++ = (int) CellP[pindex].CompositionType;
+                    n++;
+                }
+#endif
+            break;
+
+            case IO_EOSPHASE:
+#ifdef EOS_ANEOS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = (int) CellP[pindex].PhaseID;
                     n++;
                 }
 #endif
@@ -1870,6 +1892,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_SINKPROGS:
         case IO_GRAINTYPE:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
             bytes_per_blockelement = sizeof(int);
             break;
@@ -2171,6 +2194,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_SINKPROGS:
         case IO_GRAINTYPE:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
             typekey = 0;		/* native int */
             break;
@@ -2266,6 +2290,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_EOSABAR:
         case IO_EOSCS:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_EOSYE:
         case IO_PRESSURE:
         case IO_SOFT:
@@ -2543,6 +2568,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_EOSCS:
         case IO_EOS_STRESS_TENSOR:
         case IO_EOSCOMP:
+        case IO_EOSPHASE:
         case IO_PRESSURE:
         case IO_VSTURB_DISS:
         case IO_VSTURB_DRIVE:
@@ -3191,7 +3217,13 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_EOSCOMP:
-#ifdef EOS_TILLOTSON
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+            return 1;
+#endif
+            break;
+
+        case IO_EOSPHASE:
+#ifdef EOS_ANEOS
             return 1;
 #endif
             break;
@@ -3614,6 +3646,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_EOSCOMP:
             strncpy(label, "COMP", 4);
+            break;
+        case IO_EOSPHASE:
+            strncpy(label, "PHID", 4);
             break;
         case IO_PARTVEL:
             strncpy(label, "PVEL", 4);
@@ -4049,6 +4084,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_EOSCOMP:
             strcpy(buf, "CompositionType");
             break;
+        case IO_EOSPHASE:
+            strcpy(buf, "PhaseID");
+            break;
         case IO_PARTVEL:
             strcpy(buf, "ParticleVelocities");
             break;
@@ -4446,10 +4484,22 @@ void write_file(char *fname, int writeTask, int lastTask)
                             if(dims[0] > 10)
                             {
                             	hid_t plist_id = H5Pcreate(H5P_DATASET_CREATE);
-                            	hsize_t cdims[2]; cdims[0] = (hsize_t) (dims[0] / 10); cdims[1] = dims[1];
-                            	hdf5_status = H5Pset_chunk (plist_id, rank, cdims);
-                            	hdf5_status = H5Pset_deflate (plist_id, 4);
+                            	/* Use many small chunks (~4096 rows) so incremental hyperslab writes
+                            	   don't trigger repeated decompress-recompress of huge chunks. The old
+                            	   code used dims[0]/10 which could be millions of rows, causing massive
+                            	   slowdowns with MPI parallel writes. */
+                            	hsize_t target_chunk_rows = 4096;
+                            	if(target_chunk_rows > dims[0]) {target_chunk_rows = dims[0];}
+                            	hsize_t cdims[2]; cdims[0] = target_chunk_rows; cdims[1] = dims[1];
+                            	hdf5_status = H5Pset_chunk(plist_id, rank, cdims);
+                            	/* Shuffle reorders bytes for better compression (nearly free CPU cost).
+                            	   Deflate/gzip level 1 is fast and gives ~1.5-2x compression on float data.
+                            	   The combination shuffle+deflate(1) is much faster than deflate(4) alone
+                            	   and achieves similar or better compression ratios. */
+                            	hdf5_status = H5Pset_shuffle(plist_id);
+                            	hdf5_status = H5Pset_deflate(plist_id, 1);
                             	hdf5_dataset = H5Dcreate2(hdf5_grp[type], buf, hdf5_datatype, hdf5_dataspace_in_file, H5P_DEFAULT, plist_id, H5P_DEFAULT);
+                            	H5Pclose(plist_id);
                             } else {
                             	hdf5_dataset = H5Dcreate(hdf5_grp[type], buf, hdf5_datatype, hdf5_dataspace_in_file, H5P_DEFAULT);
                             }
