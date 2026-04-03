@@ -122,7 +122,24 @@ void run(void)
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
-        
+
+        // refinement modifications
+#ifdef FLAG_BASED_REFINEMENT
+        // We will calculate this only ever so often to save time
+        double timestep_threshold = 1e-7;                                   // cutoff for "small" timesteps; hard-coded for now
+        int calculate_center = 0;                                           // flag to decide whether to calculate the center of the refinement region this timestep
+        if (All.TimeStep > timestep_threshold) {should_calculate = 1;}      // Large timesteps: call every timestep        
+        else {
+            // Small timesteps: call less frequently based on timestep size
+            double frequency_factor = All.TimeStep / timestep_threshold; 
+            int call_interval = (int)(1.0 / frequency_factor);
+            if (call_interval < 1) call_interval = 1;                       // minimum interval of 1
+            if (call_interval > 10000) call_interval = 10000;               // maximum interval of 10000
+            if ((All.NumCurrentTiStep % call_interval) == 0) {calculate_center = 1;}
+        }
+        if (calculate_center) {calculate_refinement_region_center();}
+#endif
+
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
         {
