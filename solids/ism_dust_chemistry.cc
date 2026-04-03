@@ -56,9 +56,9 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_SilicateNumberOfAtomsTable[1] = 1.06;
     All.ISMDustChem_SilicateNumberOfAtomsTable[2] = 1.;
     All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0.571;
-    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 2) {All.ISMDustChem_SilicateMetallicityFieldIndexTable[0] += 2;}
-    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 4) {All.ISMDustChem_SilicateMetallicityFieldIndexTable[3] += 1;}
-    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 8) {All.ISMDustChem_SilicateMetallicityFieldIndexTable[3] = 0;}
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 2) {All.ISMDustChem_SilicateNumberOfAtomsTable[0] += 2;}
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 4) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] += 1;}
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 8) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0;}
     All.ISMDustChem_EffectiveSilicateDustAtomicWeight = 0.; for(j=0;j<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;j++) {All.ISMDustChem_EffectiveSilicateDustAtomicWeight += All.ISMDustChem_SilicateNumberOfAtomsTable[j] * All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[j]];}
 
     All.ISMDustChem_Sil_Index = 0;
@@ -134,7 +134,7 @@ void Initialize_ISMDustChem_Particle_Variables(int i)
                     sil_mass_frac+=CellP[i].ISMDustChem_Dust_Metal[7];
                     for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++) { 
                         // Set element depletions for all other elements in silicates given initial Si depletion
-                        if(All.ISMDustChem_SilicateMetallicityFieldIndexTable[k] != 7){
+                        if(All.ISMDustChem_SilicateMetallicityFieldIndexTable[k] != 7 && All.ISMDustChem_SilicateNumberOfAtomsTable[k] > 0) { // if this element is in silicate composition and not Si itself then set depletion based on Si depletion and silicate stoichiometry
                             CellP[i].ISMDustChem_Dust_Metal[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]] += CellP[i].ISMDustChem_Dust_Metal[7] / (All.ISMDustChem_SilicateNumberOfAtomsTable[2] * All.ISMDustChem_AtomicMassTable[7]) * (All.ISMDustChem_SilicateNumberOfAtomsTable[k] * All.ISMDustChem_AtomicMassTable[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]]);
                             sil_mass_frac += CellP[i].ISMDustChem_Dust_Metal[All.ISMDustChem_SilicateMetallicityFieldIndexTable[k]];
                         }
@@ -289,9 +289,10 @@ void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, i
     /******** SILICATE ********/
     if (spec_indx==All.ISMDustChem_Sil_Index) {
         double sil_elem_abunds[GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES] = {0.};
-        *key_elem = 0;
+        for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++) {if (All.ISMDustChem_SilicateNumberOfAtomsTable[k] > 0) {*key_elem = k; break;}} // start with first element in silicates
         for(k=0;k<GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES;k++)
         {
+            if (All.ISMDustChem_SilicateNumberOfAtomsTable[k] <=0) {continue;} // if no atoms of this element in silicate composition then skip
             int index = All.ISMDustChem_SilicateMetallicityFieldIndexTable[k];
             sil_elem_abunds[k] = dust_metallicity[index] / All.ISMDustChem_AtomicMassTable[index];
             // If an element is missing nothing else to do
