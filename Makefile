@@ -260,17 +260,22 @@ endif
 
 #----------------------------
 # Should work on any Flatiron institute linux cluster environment: rusty, popeye and linux workstations
+# Load modules with: module load openmpi hdf5 gsl fftw/mpi-3.3.10
 ifeq ($(SYSTYPE),"RUSTY")
 CC       =   mpicc
+CXX      =   mpicxx
 ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
 CC       =   mpicxx
 endif
 FC      = mpifort
-OPTIMIZE =  -O2 -g -Wall
+OPTIMIZE =  -O2 -g -Wall 
+OPTIMIZE += -Wno-misleading-indentation -Wno-unused-variable -Wno-unused-value -Wno-unused-but-set-variable 
+OPTIMIZE += -Wno-stringop-truncation -Wno-restrict -Wno-format-truncation -Wno-sign-compare -Wno-unknown-pragmas 
+OPTIMIZE += -Wno-switch -Wno-write-strings -Wno-maybe-uninitialized
 GSL_INCL = -I$(GSL_BASE)/include
 GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
-FFTW_INCL= -I$(FFTW3_BASE)/include
-FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+FFTW_INCL= -I$(FFTW_BASE)/include
+FFTW_LIBS= -L$(FFTW_BASE)/lib -Xlinker -R -Xlinker $(FFTW_BASE)/lib
 MPICHLIB =
 HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
