@@ -16,6 +16,8 @@ import pytest
 import shutil
 import numpy as np
 from os import path
+from os.path import isfile
+from urllib.request import urlretrieve, HTTPError
 from matplotlib import pyplot as plt
 import h5py
 from gizmo.test import (
@@ -28,6 +30,8 @@ from gizmo.test import (
     default_omp_threads,
     get_final_snapshot,
 )
+
+WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
 
 # Code block injected into calculate_and_assign_nonideal_mhd_coefficients
 _PATCH_MARKER = "/* C_SHOCK_TEST: fixed coefficients */"
@@ -51,10 +55,19 @@ EOS_FILE = "eos/eos.cc"
 EOS_BACKUP = "eos/eos.cc.c_shock_backup"
 
 # Reference snapshot for comparison
-REFERENCE_SNAP = "test/c_shock/c_shock_reference.hdf5"
+REFERENCE_SNAP = "test/c_shock/c_shock_exact.hdf5"
 
 # Plot x-axis range (zoomed to shock region)
 PLOT_XLIM = (3.05e7, 3.4e7)
+
+
+def _download_if_missing(filename):
+    """Download a file from the tapir server if not already present."""
+    if not isfile(filename):
+        try:
+            urlretrieve(WEBSITE + path.basename(filename), filename)
+        except HTTPError:
+            print(f"Could not download {filename} from {WEBSITE}")
 
 
 def _patch_eos():
@@ -146,9 +159,11 @@ def test_c_shock(num_mpi_ranks, num_omp_threads):
         if patched:
             _restore_eos()
 
-    # Run the simulation
+    # Download ICs and reference if not present, then run
     from os import chdir
     chdir(f"test/{test_name}/")
+    _download_if_missing("c_shock_ics.hdf5")
+    _download_if_missing("c_shock_exact.hdf5")
     run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 

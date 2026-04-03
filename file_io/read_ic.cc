@@ -1129,8 +1129,15 @@ void read_file(char *fname, int readTask, int lastTask)
                                     if(All.ICFormat == 3 && pc > 0)
                                     {
                                         get_dataset_name(blocknr, buf);
+                                        /* suppress HDF5 error messages for optional datasets that may not exist in the file */
+                                        H5E_auto_t old_func; void *old_client_data;
+                                        H5Eget_auto(&old_func, &old_client_data);
+                                        H5Eset_auto(NULL, NULL);
                                         hdf5_dataset = H5Dopen(hdf5_grp[type], buf);
+                                        H5Eset_auto(old_func, old_client_data);
 
+                                      if(hdf5_dataset >= 0)
+                                      {
                                         dims[0] = header.npart[type];
                                         dims[1] = get_values_per_blockelement(blocknr);
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
@@ -1165,7 +1172,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                             case 0:
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_UINT);
                                                 break;
-                                                
+
                                             case 1:
 #ifdef INPUT_IN_DOUBLEPRECISION
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_DOUBLE);
@@ -1173,7 +1180,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_FLOAT);
 #endif
                                                 break;
-                                                
+
                                             case 2:
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_UINT64);
                                                 break;
@@ -1192,6 +1199,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                         H5Sclose(hdf5_dataspace_in_memory);
                                         H5Sclose(hdf5_dataspace_in_file);
                                         H5Dclose(hdf5_dataset);
+                                      }
                                     }
 
                                 }
