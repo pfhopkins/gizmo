@@ -177,6 +177,15 @@ void init(void)
     All.TimeNextOnTheFlyFoF = All.TimeBegin;
 #endif
 
+#ifdef FLAG_BASED_REFINEMENT
+    for(int k = 0; k < 3; k++) {All.RefinementRegionCenter[k] = header.refinement_center[k];}
+    if(ThisTask == 0) {printf("Refinement region center from IC header: %f %f %f\n",
+                             All.RefinementRegionCenter[0], All.RefinementRegionCenter[1], All.RefinementRegionCenter[2]); fflush(stdout);}
+    calculate_refinement_region_center();
+    if(ThisTask == 0) {printf("Refinement region center after initial calculation: %f %f %f\n",
+                             All.RefinementRegionCenter[0], All.RefinementRegionCenter[1], All.RefinementRegionCenter[2]); fflush(stdout);}
+#endif
+
     for(i = 0; i < GRAVCOSTLEVELS; i++) {All.LevelToTimeBin[i] = 0;}
 
     for(i = 0; i < NumPart; i++) {for(j = 0; j < GRAVCOSTLEVELS; j++) {P[i].GravCost[j] = 0;}}
