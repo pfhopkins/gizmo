@@ -300,6 +300,10 @@ extern ALIGN(32) struct particle_data
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     MyFloat Time_Of_Last_MergeSplit;
 #endif
+
+#ifdef FLAG_BASED_REFINEMENT
+    MyIDType Refinement_Flag;   /*!< flag marking particles that define the refinement region; 1 = tagged */
+#endif
     
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     MyFloat Time_Of_Last_SmoothedVelUpdate;
