@@ -933,6 +933,10 @@ extern struct global_data_all_processes
     double Mass_of_SpecialParticle[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];
 #endif
 
+#ifdef FLAG_BASED_REFINEMENT
+    double RefinementRegionCenter[3];           /*!< COM of tagged particles; used as the center of the refinement region */
+#endif
+
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
   double AGS_DesNumNgb;
   double AGS_MaxNumNgbDeviation;
@@ -1194,6 +1198,11 @@ extern struct io_header
   int flag_stellarage;		/*!< flags whether the file contains formation times of star particles */
   int flag_metals;		    /*!< flags whether the file contains metallicity values for gas and star particles */
 
+#ifdef FLAG_BASED_REFINEMENT
+  double refinement_center[3]; /*!< position of the center of the refinement region */
+#endif
+
+
   unsigned int npartTotalHighWord[6];   /*!< High word of the total number of particles of each type (needed to combine with npartTotal to allow >2^31 particles of a given type) */
   int flag_entropy_instead_u; /*!< flag here strictly for historical compatibility with unformatted binary files from GADGET-3 era formats, which expect this flag to exist. this does nothing in gizmo */
   int flag_doubleprecision; /*!< flags that snapshot contains double-precision instead of single precision */
@@ -1228,6 +1237,7 @@ enum iofields
   IO_ID,
   IO_CHILD_ID,
   IO_GENERATION_ID,
+  IO_REFINE_FLAG,
   IO_MASS,
   IO_U,
   IO_RHO,
