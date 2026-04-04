@@ -128,7 +128,7 @@ void run(void)
         // We will calculate this only ever so often to save time
         double timestep_threshold = 1e-7;                                   // cutoff for "small" timesteps; hard-coded for now
         int calculate_center = 0;                                           // flag to decide whether to calculate the center of the refinement region this timestep
-        if (All.TimeStep > timestep_threshold) {should_calculate = 1;}      // Large timesteps: call every timestep        
+        if (All.TimeStep > timestep_threshold) {calculate_center = 1;}      // Large timesteps: call every timestep        
         else {
             // Small timesteps: call less frequently based on timestep size
             double frequency_factor = All.TimeStep / timestep_threshold; 
