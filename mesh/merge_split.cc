@@ -39,7 +39,7 @@ int does_particle_need_to_be_merged(int i)
     return 0;
 #else
     if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) || defined(FLAG_BASED_REFINEMENT)
     if(check_if_sufficient_mergesplit_time_has_passed(i) == 0) return 0;
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM
@@ -48,9 +48,11 @@ int does_particle_need_to_be_merged(int i)
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4) {return evaluate_starstar_merger_for_starcluster_eligibility(i);}
 #endif
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) || defined(FLAG_BASED_REFINEMENT)
     if(P[i].Type>0) {return 0;} // don't allow merging of collisionless particles [only splitting, in these runs]
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     if(is_particle_a_special_zoom_target(i)) {return 0;}
+#endif
 #endif
 #ifdef SINK_WIND_SPAWN
     if(P[i].ID==All.SpawnedWindCellID && P[i].Type==0)
@@ -94,13 +96,12 @@ int does_particle_need_to_be_split(int i)
     return 0;
 #else
     if(P[i].Type==0) {if(CellP[i].recent_refinement_flag==1) return 0;}
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) || defined(FLAG_BASED_REFINEMENT)
     if(check_if_sufficient_mergesplit_time_has_passed(i) == 0) return 0;
 #endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4) {return 0;}
 #endif
-    if(P[i].Mass >= (All.MaxMassForParticleSplit*target_mass_renormalization_factor_for_mergesplit(i,1))) {return 1;}
 #ifdef PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT
     if(P[i].Type == 0)
     {
@@ -108,9 +109,186 @@ int does_particle_need_to_be_split(int i)
         if((lambda_J < PARTICLE_MERGE_SPLIT_TRUELOVE_REFINEMENT * Get_Particle_Size(i)*All.cf_atime) && (P[i].Mass > 2*All.MinMassForParticleMerger)) {return 1;} // refine
     }
 #endif
+#ifdef JEANS_REFINEMENT_IN_REGION
+    if(P[i].Type==0)
+    {
+        // only refine if particle is within the specified region around RefinementRegionCenter
+        double dx = 0.0; double r2 = 0.0;
+        for(int k=0;k<3;k++) {dx=(P[i].Pos[k]-All.RefinementRegionCenter[k])*All.cf_atime; r2+=dx*dx;}
+        double r_pc = sqrt(r2) * UNIT_LENGTH_IN_PC;
+        if (r_pc > JEANS_REFINEMENT_IN_REGION_RADIUS_PC) {return 0;}
+    }
+#endif
+    if(P[i].Mass >= (All.MaxMassForParticleSplit*target_mass_renormalization_factor_for_mergesplit(i,1))) {return 1;}
     return 0;
 #endif
 }
+
+
+
+#ifdef FLAG_BASED_REFINEMENT
+#ifdef FLAG_BASED_REFINEMENT_MAXDENSITY
+    /* Static variables for the max-density centering mode. On first call, lock the center to the densest tagged particle.
+    Afterwards, only jump to a new center if a farther tagged particle has density > 4x the tracked max AND contains more enclosed mass.
+    This prevents the center from oscillating between two dense clumps or finding a dense clump which doesn't have much stuff around it. */
+static int    maxdens_center_is_set = 0;   /* 0 = not yet initialised */
+static double maxdens_tracked = 0.0;       /* current max density (physical) that defines the center */
+#endif /* FLAG_BASED_REFINEMENT_MAXDENSITY */
+
+/* Physical squared distance from particle i to reference point ref */
+static inline double phys_dist2(int i, double *ref)
+{
+    double r2 = 0;
+    for(int k = 0; k < 3; k++) { double d = (P[i].Pos[k] - ref[k]) * All.cf_atime; r2 += d*d; }
+    return r2;
+}
+
+#ifdef FLAG_BASED_REFINEMENT_MAXDENSITY
+/* Find the global-max-density tagged gas particle, optionally within dist_cutoff_phys of center.
+ * Pass dist_cutoff_phys <= 0 for no cutoff. Returns global max density; writes winner's position to out_pos. */
+static double find_global_maxdens_pos(double *center, double dist_cutoff_phys, double *out_pos)
+{
+    double local_max_dens = -1.0, local_pos[3] = {0};
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0 || P[i].Refinement_Flag != 1) continue;
+        if(dist_cutoff_phys > 0 && sqrt(phys_dist2(i, center)) > dist_cutoff_phys) continue;
+        double dens_phys = CellP[i].Density * All.cf_a3inv;
+        if(dens_phys > local_max_dens) { local_max_dens = dens_phys; for(int k = 0; k < 3; k++) local_pos[k] = P[i].Pos[k]; }
+    }
+    struct { double val; int rank; } local_di = {local_max_dens, ThisTask}, global_di;
+    MPI_Allreduce(&local_di, &global_di, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
+    if(ThisTask == global_di.rank) { for(int k = 0; k < 3; k++) out_pos[k] = local_pos[k]; }
+    MPI_Bcast(out_pos, 3, MPI_DOUBLE, global_di.rank, MPI_COMM_WORLD);
+    return global_di.val;
+}
+#endif /* FLAG_BASED_REFINEMENT_MAXDENSITY */
+
+void calculate_refinement_region_center(void)
+{
+    /* count tagged particles */
+    int n_tagged_local = 0;
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type==0 && P[i].Refinement_Flag==1) n_tagged_local++;}
+    int n_tagged_global = 0;
+    MPI_Allreduce(&n_tagged_local, &n_tagged_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+#ifdef FLAG_BASED_REFINEMENT_MAXDENSITY
+    /* ---- max-density centering mode ---- */
+    double dist_cutoff_maxdens = 0.01; /* code-length units (physical); a few pc at typical zoom resolutions */
+
+    /* Find global densest tagged gas particle */
+    double winning_pos[3];
+    double global_max_dens = find_global_maxdens_pos(NULL, -1.0, winning_pos);
+
+    /* Decide whether to update the center */
+    if(!maxdens_center_is_set)
+    {
+        if(global_max_dens > 0)
+        {
+            for(int k = 0; k < 3; k++) All.RefinementRegionCenter[k] = winning_pos[k];
+            maxdens_tracked = global_max_dens;
+            maxdens_center_is_set = 1;
+            if(ThisTask == 0)
+                printf("FLAG_BASED_REFINEMENT_MAXDENSITY: initial center set at [%f, %f, %f], density = %g (physical)\n",
+                       All.RefinementRegionCenter[0], All.RefinementRegionCenter[1],
+                       All.RefinementRegionCenter[2], maxdens_tracked);
+        }
+    }
+    else
+    {
+        double r2_new = 0;
+        for(int k = 0; k < 3; k++) { double d = (winning_pos[k] - All.RefinementRegionCenter[k]) * All.cf_atime; r2_new += d*d; }
+        double dist_new = sqrt(r2_new);
+
+        int jumped = 0;
+        if(dist_new > dist_cutoff_maxdens && global_max_dens > 4.0 * maxdens_tracked)
+        {
+            /* Check enclosed masses before committing to a jump */
+            double local_mass_new = 0.0, local_mass_cur = 0.0;
+            for(int i = 0; i < NumPart; i++)
+            {
+                if(P[i].Type != 0 || P[i].Refinement_Flag != 1) continue;
+                if(sqrt(phys_dist2(i, winning_pos))               <= dist_cutoff_maxdens) local_mass_new += P[i].Mass;
+                if(sqrt(phys_dist2(i, All.RefinementRegionCenter)) <= dist_cutoff_maxdens) local_mass_cur += P[i].Mass;
+            }
+            double global_mass_new = 0.0, global_mass_cur = 0.0;
+            MPI_Allreduce(&local_mass_new, &global_mass_new, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&local_mass_cur, &global_mass_cur, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+            if(global_mass_new > global_mass_cur)
+            {
+                for(int k = 0; k < 3; k++) All.RefinementRegionCenter[k] = winning_pos[k];
+                maxdens_tracked = global_max_dens;
+                jumped = 1;
+                if(ThisTask == 0)
+                    printf("FLAG_BASED_REFINEMENT_MAXDENSITY: center JUMPED to [%f, %f, %f], density=%g, dist=%g, mass_new=%g, mass_cur=%g\n",
+                           All.RefinementRegionCenter[0], All.RefinementRegionCenter[1], All.RefinementRegionCenter[2],
+                           maxdens_tracked, dist_new, global_mass_new, global_mass_cur);
+            }
+        }
+        if(!jumped)
+        {
+            /* Stay near current center: follow densest tagged particle within dist_cutoff_maxdens */
+            double near_winning_pos[3];
+            double near_max_dens = find_global_maxdens_pos(All.RefinementRegionCenter, dist_cutoff_maxdens, near_winning_pos);
+            if(near_max_dens > 0)
+            {
+                for(int k = 0; k < 3; k++) All.RefinementRegionCenter[k] = near_winning_pos[k];
+                maxdens_tracked = near_max_dens;
+            }
+            if(ThisTask == 0)
+                printf("FLAG_BASED_REFINEMENT_MAXDENSITY: center follows local densest [%f, %f, %f], density=%g\n",
+                       All.RefinementRegionCenter[0], All.RefinementRegionCenter[1], All.RefinementRegionCenter[2], maxdens_tracked);
+        }
+    }
+
+#else /* FLAG_BASED_REFINEMENT_MAXDENSITY not defined: COM-tracking mode */
+
+    double sum_mass = 0.0, sum_pos[3] = {0, 0, 0};
+    int count_refinement_particles = 0;
+    const double dist_cutoff = 1.0; /* kpc */
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Refinement_Flag != 1) continue;
+        double dist = sqrt(phys_dist2(i, All.RefinementRegionCenter)) * UNIT_LENGTH_IN_PC / 1000.;
+        if(dist < dist_cutoff)
+        {
+            sum_mass += P[i].Mass;
+            for(int k = 0; k < 3; k++) sum_pos[k] += P[i].Mass * P[i].Pos[k];
+            count_refinement_particles++;
+        }
+        if(dist > 2*dist_cutoff) P[i].Refinement_Flag = 0; /* reset flag if particle wandered too far */
+    }
+
+    double sum_mass_global = 0.0, sum_pos_global[3] = {0, 0, 0};
+    int count_global = 0;
+    MPI_Allreduce(&sum_mass, &sum_mass_global,   1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(sum_pos,   sum_pos_global,     3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&count_refinement_particles, &count_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+    if(ThisTask == 0 && sum_mass_global > 0.0 && count_global > 0)
+    {
+        for(int k = 0; k < 3; k++) All.RefinementRegionCenter[k] = sum_pos_global[k] / sum_mass_global;
+        if(count_global == 1) { All.RefinementRegionCenter[0] += 0.01; } /* tiny displacement if only one particle */
+        printf("Refinement Region Center: %f %f %f  (N_tagged=%d, step=%lld)\n",
+               All.RefinementRegionCenter[0], All.RefinementRegionCenter[1],
+               All.RefinementRegionCenter[2], count_global, All.NumCurrentTiStep);
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(&All.RefinementRegionCenter[0], 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+#endif /* FLAG_BASED_REFINEMENT_MAXDENSITY */
+
+    /* Strip refinement flags from tagged particles that have wandered too far (1 kpc cutoff) */
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Refinement_Flag != 1) continue;
+        double dist_kpc = sqrt(phys_dist2(i, All.RefinementRegionCenter)) * UNIT_LENGTH_IN_PC / 1000.;
+        if(dist_kpc > 2*JEANS_REFINEMENT_IN_REGION_RADIUS_PC) P[i].Refinement_Flag = 0;
+    }
+}
+#endif /* FLAG_BASED_REFINEMENT */
+
 
 /*! A multiplicative factor that determines the target mass of a particle for the (de)refinement routines; split_key tells you if this is for a split (1) or merge (0) */
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
@@ -194,7 +372,7 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
         f0 = DMIN(DMAX(DMAX(1.,f0),1./m_ref_mJ), f0minfac*f0);
 #endif
 #endif
-#endif
+#endif // SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
 
         double M_target = f0 * DMAX( mcrit_0, m_ref_mJ ) / UNIT_MASS_IN_SOLAR;
         double M_min_absolute = minimum_refinement_mass_in_solar / UNIT_MASS_IN_SOLAR; // arbitrarily set minimum mass for refinement at any level
@@ -239,6 +417,31 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
         }
 #endif
         double M_target = DMAX( mcrit_0, m_ref_mJ ) / UNIT_MASS_IN_SOLAR; // enforce minimum refinement to 7000 Msun, and convert to code units, compare to 0.001xJeans mass, which is designed to target desired levels
+#ifdef JEANS_REFINEMENT_IN_REGION
+        // Distance-dependent mass threshold: logarithmically interpolate between
+        // m_in at r_in and m_out at r_out (in pc) relative to RefinementRegionCenter.
+        // Will take the maximum of this and the Jeans-based criterion above, so that 
+        // we can follow collapse more naturally at its own timescale
+        {
+            double dx_refine = 0.0, r_refine_sq = 0.0;
+            for(int k=0; k<3; k++) {dx_refine = (P[i].Pos[k] - All.RefinementRegionCenter[k]) * All.cf_atime; r_refine_sq += dx_refine*dx_refine;}
+            double r_refine_pc = sqrt(r_refine_sq) * UNIT_LENGTH_IN_PC;
+            double r_out = JEANS_REFINEMENT_IN_REGION_RADIUS_PC; // this should be the same as the radius of the region within which we want to refine based on Jeans, but can be adjusted as needed
+            double r_in = JEANS_REFINEMENT_IN_REGION_RADIUS_PC/20.0; // inner radius in pc
+            //double r_in=20.0, r_out=300.0;    // inner/outer transition radii in pc
+            double m_in=0.001, m_out=7000.0;  // target masses at inner/outer radius (solar masses)
+            double m_dist_func;
+            if(r_refine_pc <= r_in) { m_dist_func = m_in; }
+            else if(r_refine_pc >= r_out) { m_dist_func = m_out; }
+            else {
+                // power-law in log-log: m = m_in * (r/r_in)^alpha
+                double log_m = log(m_in) + (log(m_out)-log(m_in)) * (log(r_refine_pc)-log(r_in)) / (log(r_out)-log(r_in));
+                m_dist_func = exp(log_m);
+            }
+            m_dist_func /= UNIT_MASS_IN_SOLAR;
+            M_target = DMAX(M_target, m_dist_func);
+        }
+#endif // JEANS_REFINEMENT_IN_REGION
         double normal_median_mass = All.MaxMassForParticleSplit / 3.; // code median mass from ICs
         ref_factor = DMAX(1.e-30, DMIN( M_target / normal_median_mass , 1)); // this shouldn't get larger than unity since that would exceed the normal maximum mass
         return ref_factor; // return it
