@@ -111,6 +111,9 @@ struct GasGraddata_in
     MyDouble ConditionNumber;
     SymmetricTensor2<MyDouble> NV_T;
     MyFloat BGrad[3][3];
+#ifdef MHD_MODIFIED_GRADIENT
+    MyFloat MG_cgcoeff;
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV
     Vec3<MyFloat> PhiGrad;
 #endif
@@ -256,6 +259,9 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
     {
         for(k=0;k<3;k++) {in->BGrad[j][k] = CellP[i].Gradients.B[j][k];}
     }
+#ifdef MHD_MODIFIED_GRADIENT
+    in->MG_cgcoeff = CellP[i].MG_cgcoeff;
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
     in->PhiGrad = CellP[i].Gradients.Phi;
 #endif
@@ -1604,6 +1610,23 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                         out_iter.FaceDotB += Face_Area_Vec[k] * (local.GQuant.B[k] + Q_L);
                     }
                 }
+
+#ifdef MHD_MODIFIED_GRADIENT
+                /* Include the stale MG face correction in FaceDotB so the CG iteration targets the
+                   residual div(B) *after* the MG correction, rather than the raw gradient div(B).
+                   The MG correction adds delta_B = ±c * 0.25 * dp * (A·dp) to each face state,
+                   contributing 0.25 * (c_j - c_i) * (A·dp)^2 to the face-flux sum per pair.
+                   When MG is exact this zeroes the CG residual; when stale, CG corrects the remainder. */
+                {
+                    double A_dot_dp = dot(Face_Area_Vec, kernel.dp);
+                    double mg_delta = 0.25 * (CellP[j].MG_cgcoeff - local.MG_cgcoeff) * A_dot_dp * A_dot_dp;
+                    if(gradient_iteration==0) {
+                        out.FaceDotB += mg_delta;
+                    } else {
+                        out_iter.FaceDotB += mg_delta;
+                    }
+                }
+#endif
 
 #if defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
                 /* this will fit the gradient at the -midpoint- as opposed to at the j locations, i.e.
