@@ -4666,6 +4666,13 @@ void write_header_attributes_in_hdf5(hid_t handle)
     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "HubbleParam", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &header.HubbleParam); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 
+#ifdef FLAG_BASED_REFINEMENT
+    {hsize_t bdim[1] = { 3 };
+    hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, bdim, NULL);
+    hdf5_attribute = H5Acreate(handle, "RefinementRegionCenter", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.RefinementRegionCenter); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#endif
+
     {double tmp=UNIT_MASS_IN_CGS; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitMass_In_CGS", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
         H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
     {double tmp=UNIT_VEL_IN_CGS; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitVelocity_In_CGS", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
