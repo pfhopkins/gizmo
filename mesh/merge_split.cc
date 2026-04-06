@@ -284,7 +284,7 @@ void calculate_refinement_region_center(void)
     {
         if(P[i].Refinement_Flag != 1) continue;
         double dist_kpc = sqrt(phys_dist2(i, All.RefinementRegionCenter)) * UNIT_LENGTH_IN_PC / 1000.;
-        if(dist_kpc > 2*JEANS_REFINEMENT_IN_REGION_RADIUS_PC) P[i].Refinement_Flag = 0;
+        if(dist_kpc > 2*JEANS_REFINEMENT_IN_REGION_RADIUS_PC*1000) P[i].Refinement_Flag = 0;
     }
 }
 #endif /* FLAG_BASED_REFINEMENT */
@@ -703,6 +703,10 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     P[i].ID_generation = P[i].ID_generation + 1;
     if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
     P[j].ID_generation = P[i].ID_generation; // ok, all set!
+
+#ifdef FLAG_BASED_REFINEMENT
+    P[j].Refinement_Flag = 1; P[i].Refinement_Flag = 1; // Copy the refinment flag    
+#endif
 
     /* assign masses to both particles (so they sum correctly), but first record some numbers in case we need them below */
     double mass_before_split = 0, density_before_split = 0, volume_before_split = 0; mass_before_split = P[i].Mass; // save for use below
@@ -1528,7 +1532,7 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
 
 
 
-#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) 
 /* subroutine to check if too little time has passed since the last merge-split, in which case we won't allow it again */
 int check_if_sufficient_mergesplit_time_has_passed(int i)
 {
