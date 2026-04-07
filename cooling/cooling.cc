@@ -149,8 +149,78 @@ void do_the_cooling_for_particle(int i)
 #if defined(RADTRANSFER)
         {int k_rt; for(k_rt=0;k_rt<N_RT_FREQ_BINS;k_rt++) {CellP[i].Lambda_RadiativeCooling_toRHDBins[k_rt]=0;}} /* prevent stale values from affecting RT solver */
 #endif
+        double u_before_chemcool = CellP[i].InternalEnergy;
         do_chemcool_step(i, dtime, 0, 0); /* dl=0: shielding columns come from TREE_RAD/TREE_RAD_H2, not local approx */
         if(CellP[i].InternalEnergy < All.MinEgySpec) { CellP[i].InternalEnergy = All.MinEgySpec; CellP[i].InternalEnergyPred = All.MinEgySpec; }
+
+#if defined(RADTRANSFER)
+        /* --- Radiation-chemistry-cooling coupling ---
+           do_chemcool_step already populated Lambda_RadiativeCooling_toRHDBins[] and called
+           rt_ir_lambdadust (which sets Dust_Temperature). Now transfer energy between gas
+           cooling/heating and Rad_E_gamma[k] to conserve total energy.
+           Mirrors standard solver (cooling.cc lines 238-296). */
+        {
+            double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * CellP[i].Density * All.cf_a3inv / PROTONMASS_CGS;
+            double nH2 = nHcgs * nHcgs;
+            double unew_cc = CellP[i].InternalEnergy;
+            int k;
+            double ratefact = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nH2 / (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * P[i].Mass;
+            double de_u = (unew_cc - u_before_chemcool) * P[i].Mass;
+            double de_rad_tot_final = 0, de_rad_tot = 0;
+            for(k=0;k<N_RT_FREQ_BINS;k++) {de_rad_tot += CellP[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;}
+            double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad;
+            de_u_work = (CellP[i].DtInternalEnergy*(UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS)*(PROTONMASS_CGS/HYDROGEN_MASSFRAC)) / nHcgs * ratefact;
+            double de_u_radabs=0;
+            for(k=0;k<N_RT_FREQ_BINS;k++)
+            {
+                int k_donor = rt_get_donation_target_bin(k);
+                double tau = fabs(rt_absorption_rate(i,k) * dtime), f_abs = 1.-exp(-tau); if(tau<0.01) {f_abs=tau*(1.-tau/2.);}
+                double absorpted_rad_energy = DMIN(CellP[i].Rad_E_gamma[k],CellP[i].Rad_E_gamma_Pred[k]) * f_abs;
+#ifdef RT_INFRARED
+                if(k==RT_FREQ_BIN_INFRARED) {
+                    k_donor = -1;
+                    double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,CellP[i].Dust_Temperature,CellP[i].Radiation_Temperature,-1,-1) / (rt_kappa_adaptive_IR_band(i,CellP[i].Dust_Temperature,CellP[i].Radiation_Temperature,0,0) + MIN_REAL_NUMBER);
+                    absorpted_rad_energy *= opacity_fraction_from_gas_absorption;
+                }
+#endif
+                if(k_donor >= 0) {continue;}
+                de_u_radabs += fabs(absorpted_rad_energy);
+            }
+            de_u_work += de_u_radabs;
+            double de_u_touse = de_u - de_u_work;
+
+            for(k=0;k<N_RT_FREQ_BINS;k++)
+            {
+                if((fabs(CellP[i].Lambda_RadiativeCooling_toRHDBins[k]) > MIN_REAL_NUMBER) && (fabs(de_rad_tot) > MIN_REAL_NUMBER))
+                {
+                    double de_rad = CellP[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;
+                    if(fabs(de_rad) > MIN_REAL_NUMBER)
+                    {
+                        double de_rad_min = DMIN(DMAX(-0.99*CellP[i].Rad_E_gamma[k], -de_u_touse), 0);
+                        double de_rad_max = DMAX(DMIN(10.*unew_cc*P[i].Mass, -de_u_touse), 0);
+                        de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min);
+                        if(fabs(de_rad) > MIN_REAL_NUMBER)
+                        {
+                            de_rad_tot_final += de_rad;
+#ifdef RT_INFRARED
+                            if(k==RT_FREQ_BIN_INFRARED) {CellP[i].Radiation_Temperature = CellP[i].Radiation_Temperature_CoolingWeighted;}
+#endif
+                            double Rad_E_gamma_before = CellP[i].Rad_E_gamma[k];
+                            CellP[i].Rad_E_gamma[k] += de_rad;
+                            CellP[i].Rad_E_gamma_Pred[k] = CellP[i].Rad_E_gamma[k];
+                            int kv;
+#if defined(RT_EVOLVE_FLUX)
+                            double corrfac = 0; if(Rad_E_gamma_before > 0 && CellP[i].Rad_E_gamma[k] > 0) {corrfac = CellP[i].Rad_E_gamma[k] / (MIN_REAL_NUMBER + Rad_E_gamma_before);}
+                            for(kv=0;kv<3;kv++) {if(corrfac > 0) {CellP[i].Rad_Flux[k][kv] *= corrfac; CellP[i].Rad_Flux_Pred[k][kv] *= corrfac;} else {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(i)*CellP[i].VelPred[kv]/All.cf_atime * de_rad; CellP[i].Rad_Flux[k][kv] += fluxfac; CellP[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
+#endif
+                            double momfac = 1. - de_rad / (P[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED(i));
+                            for(kv=0;kv<3;kv++) {P[i].Vel[kv] *= momfac; CellP[i].VelPred[kv] *= momfac;}
+                        }
+                    }
+                }
+            }
+        } /* end RADTRANSFER energy conservation block */
+#endif /* RADTRANSFER */
 
         set_eos_pressure(i);
         return;

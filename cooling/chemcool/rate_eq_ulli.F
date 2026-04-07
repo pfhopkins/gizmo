@@ -575,7 +575,14 @@ c
 c Exponentially reduce rate at high temperature
       h_gr = h_gr * dexp(-temp / 3d4)
 c
+#if defined(RADTRANSFER)
+c     M1 solver owns the dust temperature; skip optically-thin solve.
+c     tdust was set from CellP.Dust_Temperature on entry in chemcool.cc.
+c     We still need RH2 and Rdust for H2 formation on dust.
+      call calc_dust_temp(yn, chi_isrf, temp, abHI, RH2, Rdust, 1)
+#else
       call calc_dust_temp(yn, chi_isrf, temp, abHI, RH2, Rdust, 0)
+#endif
 c
       cr1  = crtab(1)  ! HI
       cr1a = crtab(1)  ! DI (same rate as HI)

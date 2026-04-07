@@ -393,7 +393,13 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 
     /* Set correct dust temperature in coolr common block */
+#if defined(RT_INFRARED)
+    /* M1 solver owns the dust temperature — feed it into CHEMCOOL so gas-dust
+       coupling (R1) and H2 formation on dust use the transported value */
+    COOLR.tdust = CellP[target].Dust_Temperature;
+#else
     COOLR.tdust = CellP[target].DustTemp;
+#endif
 
     /* 'energy' is internal energy density, NOT specific internal energy [in code units] */
     energy = rho * CellP[target].InternalEnergy;
@@ -558,6 +564,64 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #ifdef OUTPUT_COOLRATE
         CellP[target].CoolingRate_CHEMCOOL = cooling_rate;
 #endif
+
+#if defined(RADTRANSFER)
+        /* --- Distribute CHEMCOOL cooling rates into RT bins ---
+           Mirrors the standard cooling solver (cooling.cc ~lines 1295-1333).
+           COOLR.lambda[0..27] contains individual rates in erg/s/cm^3 (= nH^2 * Lambda).
+           Lambda_RadiativeCooling_toRHDBins uses the same nH^2-scaled convention. */
+        {
+            double nHcgs_loc = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * CellP[target].Density * All.cf_a3inv / PROTONMASS_CGS;
+            double nH2_loc = nHcgs_loc * nHcgs_loc;
+
+            /* Molecular + fine-structure → IR:
+               R2=H2, R4=H2O rot, R5=H2O vib, R6=H2O18 vib,
+               R7=CO rot, R8=CO vib, R9=13CO vib, R10=OH, R13=OI, R14=CI,
+               R15=SiI, R16=CII, R17=SiII, R18=Compton, R19=HD, R20=H2 CIE,
+               R21=13CO rot, R22=CO18 rot, R23=H2O18 rot, R24=CO18 vib
+               NOTE: R1 (gas-dust, index 0) excluded — rt_ir_lambdadust handles it.
+               NOTE: R11 (CR heating, index 10) and R12 (PE heating, index 11) excluded —
+               these are not radiative cooling, they are heating from CRs and the PE band. */
+            double Lambda_IR = 0;
+            int ir_idx[] = {1,3,4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,23};
+            for(int j=0; j<20; j++) {Lambda_IR += COOLR.lambda[ir_idx[j]];}
+
+            /* Atomic/ionic excitation → NUV:
+               R3=atomic (index 2), R25=Ly-alpha (24), R26=HeI (25), R27=HeII (26) */
+            double Lambda_NUV = COOLR.lambda[2] + COOLR.lambda[24] + COOLR.lambda[25] + COOLR.lambda[26];
+
+            /* Bremsstrahlung R28 (index 27): NUV if hot, IR if cold */
+            if(temp >= 1e5) {Lambda_NUV += COOLR.lambda[27];} else {Lambda_IR += COOLR.lambda[27];}
+
+#ifdef RT_INFRARED
+            CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] = Lambda_IR / nH2_loc;
+#endif
+#ifdef RT_NUV
+            /* If Radiation_Temperature > 1e4, redirect NUV → IR (same as standard solver) */
+            if(CellP[target].Radiation_Temperature > 1.e4) {
+#ifdef RT_INFRARED
+                CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += Lambda_NUV / nH2_loc;
+#endif
+                CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV] = 0;
+            } else {
+                CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV] = Lambda_NUV / nH2_loc;
+            }
+#elif defined(RT_INFRARED)
+            CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += Lambda_NUV / nH2_loc;
+#endif
+
+#ifdef RT_INFRARED
+            /* Solve for equilibrium dust temperature. rt_ir_lambdadust root-finds Tdust
+               balancing: dust absorption (all bands) + gas-dust collisional exchange = dust emission.
+               It updates Dust_Temperature and Lambda_RadiativeCooling_toRHDBins[IR].
+               CHEMCOOL already applied gas-dust coupling (R1) to the gas energy, so we do NOT
+               apply the returned LambdaDust to the gas — only use it for Tdust + IR bookkeeping. */
+            rt_ir_lambdadust(target, temp);
+            CellP[target].DustTemp = CellP[target].Dust_Temperature;
+#endif
+        }
+#endif /* RADTRANSFER */
+
         return CellP[target].InternalEnergy;
     } else if(mode == 1) {
         return cooling_rate;
