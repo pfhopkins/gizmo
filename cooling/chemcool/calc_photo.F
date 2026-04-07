@@ -359,6 +359,20 @@ c
 #endif /* RAYTRACE or TREE_RAD */
       endif
 c
+c When M1 radiation transport is active, dust attenuation is already
+c handled by the RT solver. Override all dust shielding factors to unity
+c so only molecular self-shielding (H2, CO) from TREE_RAD remains.
+c
+#ifdef RADTRANSFER
+      f_dust   = 1d0
+      chi_isrf = 1d0
+      chi_NUV  = 1d0
+      chi_OPT  = 1d0
+      f_simp   = 1d0
+      df25     = 1d0
+      df30     = 1d0
+#endif
+c
 c CO self-shielding, shielding by H2.
 c
 c Our treatment here is based on L96.
