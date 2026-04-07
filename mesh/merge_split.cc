@@ -284,7 +284,7 @@ void calculate_refinement_region_center(void)
     {
         if(P[i].Refinement_Flag != 1) continue;
         double dist_kpc = sqrt(phys_dist2(i, All.RefinementRegionCenter)) * UNIT_LENGTH_IN_PC / 1000.;
-        if(dist_kpc > 2*JEANS_REFINEMENT_IN_REGION_RADIUS_PC*1000) P[i].Refinement_Flag = 0;
+        if(dist_kpc > 2*JEANS_REFINEMENT_IN_REGION_RADIUS_PC/1000) P[i].Refinement_Flag = 0;
     }
 }
 #endif /* FLAG_BASED_REFINEMENT */
