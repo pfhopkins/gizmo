@@ -476,7 +476,7 @@ c
 c H2: use Lyman-Werner band (11.2-13.6 eV) specifically for H2 photodissociation
 #if CHEMISTRYNETWORK != 1
 c Network 1 doesn't use CPHOTO stuff
-      phrates(1) = phtab(1) * G0_LW * f_dust
+      phrates(1) = phtab(1) * G0_LW * fshield * f_dust
 #else
       phrates(1) = phtab(1) * G0_LW * fshield * f_dust
 #endif
