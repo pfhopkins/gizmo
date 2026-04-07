@@ -18,7 +18,8 @@ extern "C" {
                crtab[NCRTAB], crphot[NCRPHOT],
                phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
                deff, abundc, abundo, abundsi, abundD,
-               abundM, abundN, G0, G0_LW, G0_dust, f_rsc, phi_pah,
+               abundM, abundN, G0, G0_LW, G0_dust, G0_NUV, G0_OPT,
+               f_rsc, phi_pah,
                dust_to_gas_ratio, AV_conversion_factor,
                cosmic_ray_ion_rate, redshift, AV_ext,
                pdv_term, h2_form_ex, h2_form_kin,
@@ -35,7 +36,8 @@ extern "C" {
 #endif
                dm_density,
                rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
-               rt_heat_HI, rt_heat_HeI, rt_heat_HeII;
+               rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
+               chi_NUV, chi_OPT;
     } COOLR;
 
     extern struct {
@@ -51,6 +53,8 @@ extern "C" {
         double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         double fac_uv[NPIX];
+        double fac_nuv[NPIX];
+        double fac_opt[NPIX];
 #endif
         double column_density_projection[NPIX];
         double column_density_projection_h2[NPIX];
@@ -225,6 +229,9 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #endif
 
 
+    COOLR.G0_NUV = 0;
+    COOLR.G0_OPT = 0;
+
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double u_Habing = 5.29e-14; /* Habing field, in erg cm^-3 */
     double fac_flux2habing = All.cf_a2inv / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)) / u_Habing; /* cf_a2inv converts comoving r^2 from treecol to physical r^2 */
@@ -247,8 +254,9 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     double G0_tot = UV_flux_tot * fac_flux2habing * All.G0;
     /* Lyman-Werner G0 for H2 photodissociation (11.2-13.6 eV only) */
     double G0_LW = LW_flux_tot * fac_flux2habing * All.G0;
-    /* Total radiation field for dust heating: FUV + NUV + optical/NIR */
-    double G0_dust_tot = (UV_flux_tot + NUV_flux_tot + OPT_flux_tot) * fac_flux2habing * All.G0;
+    /* Per-band unshielded contributions (shielding applied in calc_photo via chi_isrf/chi_NUV/chi_OPT) */
+    double G0_NUV_val = NUV_flux_tot * fac_flux2habing * All.G0;
+    double G0_OPT_val = OPT_flux_tot * fac_flux2habing * All.G0;
 
     /* For cosmological runs: add metagalactic FUV background floor from TREECOOL */
     if(All.ComovingIntegrationOn) {
@@ -263,8 +271,10 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     CellP[target].G0 = G0_tot;
     COOLR.G0_LW = G0_LW;
     CellP[target].G0_LW = G0_LW;
-    /* G0_dust: total radiation field for dust heating (FUV + NUV + optical/NIR from tree walk) */
-    COOLR.G0_dust = DMAX(G0_dust_tot, G0_tot);
+    COOLR.G0_NUV = G0_NUV_val;
+    COOLR.G0_OPT = G0_OPT_val;
+    /* G0_dust: FUV part only; NUV/OPT shielded separately in calc_dust_temp */
+    COOLR.G0_dust = G0_tot;
 
 #ifdef COSMIC_RAY_FLUID
     { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
@@ -430,6 +440,8 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         PROJECT.column_density_projection[i] = NH;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         PROJECT.fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;
+        PROJECT.fac_nuv[i] = (NUV_flux_tot > 0) ? CellP[target].NUV_flux[i] / NUV_flux_tot : 1.0 / NPIX;
+        PROJECT.fac_opt[i] = (OPT_flux_tot > 0) ? CellP[target].OPT_flux[i] / OPT_flux_tot : 1.0 / NPIX;
 #endif
     }
 #endif

@@ -126,7 +126,12 @@ void gravity_tree(void)
         for(i = 0; i < GRAVCOSTLEVELS; i++) {if(All.LevelToTimeBin[i] == All.HighestActiveTimeBin) {All.LevelToTimeBin[i] = 0;}}
         TakeLevel = -1;
     }
-    if(TakeLevel >= 0) {for(i = 0; i < NumPart; i++) {P[i].GravCost[TakeLevel] = 0;}} /* re-zero the cost [will be re-summed] */
+    if(TakeLevel >= 0) {for(i = 0; i < NumPart; i++) {
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+        if(!needs_new_treeforce(i)) continue; /* keep previous GravCost for skipped particles so domain decomposition still accounts for them */
+#endif
+        P[i].GravCost[TakeLevel] = 0;
+    }} /* re-zero the cost [will be re-summed] */
 
     /* begin main communication and tree-walk loop. note the ewald-iter terms here allow for multiple iterations for periodic-tree corrections if needed */
     for(Ewald_iter = 0; Ewald_iter <= ewald_max; Ewald_iter++)

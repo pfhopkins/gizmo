@@ -25,10 +25,11 @@ c This test will fail only if y(I) is NaN (not a number); if this happens,
 c we abort...
 c
         if (y(I) .ne. y(I)) then
-          print*, 'Species', I, ' is NaN. Aborting...'
+          print*, 'Species', I, ' is NaN (flagging ipar).'
           print*, y
           print*, 'Particle ID', id_current
-          ABORT(1)
+          ipar(1) = 1
+          return
         endif
 c
         if (y(I) .lt. 0d0) then
@@ -99,11 +100,11 @@ c
 
       do I = 1, nspec
         if (ydot(I) .ne. ydot(I)) then
-          print*, 'ydot for species ', I, ' is NaN...'
-          print*, 'ID ', id_current
-          print*, ydot
-          print*, y
-          print*, rpar
+          print*, 'NaN_DEBUG validate_output: ydot species', I,
+     $      ' is NaN. ID=', id_current
+          print*, 'NaN_DEBUG ydot=', ydot
+          print*, 'NaN_DEBUG y=', y
+          print*, 'NaN_DEBUG rpar=', rpar
           ABORT(1)
         endif
       enddo

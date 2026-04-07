@@ -82,7 +82,8 @@ c
       REAL rpar(nrpar)
       REAL yn, dl, abh2, abhd, abco, temp
 
-      REAL sigma_dust
+      REAL sigma_dust, sigma_NUV, sigma_OPT
+      REAL fac_nuv_pix, fac_opt_pix
 
       REAL f_dust, NH, fshield_CO,
      $     AV, f_simp, localapprox, chi
@@ -127,6 +128,8 @@ c
           phrates(I) = 0d0
         enddo
         G_dust = 0d0
+        chi_NUV = 0d0
+        chi_OPT = 0d0
         return
       endif
 c
@@ -202,6 +205,8 @@ c
          if (AV .gt. 0d0) then
             f_dust = dexp(-AV * (2d-21 / AV_conversion_factor))
             chi_isrf = chi(AV)
+            chi_NUV = dexp(-AV * (1.3d-21 / AV_conversion_factor))
+            chi_OPT = dexp(-AV * (0.5d-21 / AV_conversion_factor))
 #ifdef DEBUGDUSTTEMP
             if (yn .gt. 1e5 ) print *, 
      &         "DUST T DEBUG (n, AV, NH, chi):",
@@ -263,10 +268,16 @@ c
             df39   = 1d0
             dfsp1  = 1d0
             chi_isrf = 1d0
+            chi_NUV  = 1d0
+            chi_OPT  = 1d0
          endif
       elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then        
 #if defined RAYTRACE || defined TREE_RAD
          sigma_dust = 2d-21 * dust_to_gas_ratio
+         sigma_NUV  = 1.3d-21 * dust_to_gas_ratio
+         sigma_OPT  = 0.5d-21 * dust_to_gas_ratio
+         chi_NUV    = 0d0
+         chi_OPT    = 0d0
          f_dust     = 0d0
          f_simp     = 0d0
          df05       = 0d0
@@ -307,7 +318,22 @@ c
      $             * dust_to_gas_ratio * column_density_projection(I)
             AV = AV + AVlocal
             chi_isrf = chi_isrf + fac_uv_pix * chi(AV)
-
+c
+c NUV/OPT shielding (same structure, band-appropriate cross-sections)
+c
+#ifdef G0_VARIABLE
+            fac_nuv_pix = fac_nuv(I)
+            fac_opt_pix = fac_opt(I)
+#else
+            fac_nuv_pix = 1d0 / nray
+            fac_opt_pix = 1d0 / nray
+#endif
+            chi_NUV = chi_NUV + fac_nuv_pix *
+     $               dexp(-sigma_NUV * (column_density_projection(I)
+     $             + NH_ext))
+            chi_OPT = chi_OPT + fac_opt_pix *
+     $               dexp(-sigma_OPT * (column_density_projection(I)
+     $             + NH_ext))
 
 #ifdef DEBUG_CALC_PHOTO
             if (AV .ne. AV) then

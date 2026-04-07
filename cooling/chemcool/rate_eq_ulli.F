@@ -173,14 +173,45 @@ c
 c Compute current adiabatic index and total number density
 c
       yntot = (1d0 + abhe + abe - abh2) * yn
+      if (yntot .le. 0d0 .or. yntot .ne. yntot) then
+        print*, 'NaN_DEBUG yntot: ID=', id_current,
+     $    ' yntot=', yntot, ' yn=', yn, ' abhe=', abhe,
+     $    ' abe=', abe, ' abh2=', abh2
+        print*, 'NaN_DEBUG y=', y
+        ipar(1) = 1
+        do I = 1, nspec
+          ydot(I) = 0d0
+        enddo
+        return
+      endif
       ekn = energy / (kboltz * yntot)
+      if (ekn .ne. ekn) then
+        print*, 'NaN_DEBUG ekn: ID=', id_current,
+     $    ' energy=', energy, ' yntot=', yntot, ' ekn=', ekn
+        ipar(1) = 1
+        do I = 1, nspec
+          ydot(I) = 0d0
+        enddo
+        return
+      endif
 
       call lookup_temp_gamma(abh2, ekn, temp, gamma)
+      if (temp .ne. temp .or. gamma .ne. gamma) then
+        print*, 'NaN_DEBUG temp/gamma: ID=', id_current,
+     $    ' temp=', temp, ' gamma=', gamma, ' ekn=', ekn,
+     $    ' abh2=', abh2
+        ipar(1) = 1
+        do I = 1, nspec
+          ydot(I) = 0d0
+        enddo
+        return
+      endif
 c
 c Compute local Jeans length (for use in cool_func)
 c
       rho = (1d0 + 4d0 * abhe) * mh * yn
       cs2 = (gamma * (gamma - 1d0) * energy / rho)
+      if (cs2 .lt. 0d0) cs2 = 0d0
       L_jeans = dsqrt(PI * cs2 /
      $           (GRAVITY * rho))
 
@@ -380,11 +411,25 @@ c density dependence
 c
 c CID rate from MSM96
 c
+      if (ch165 .eq. 0d0 .or. ch165 .ne. ch165) then
+        print*, 'NaN_DEBUG ch165=0: ID=', id_current,
+     $    ' ch165=', ch165, ' itemp=', itemp, ' temp=', temp
+      endif
+      if (ch171 .eq. 0d0 .or. ch171 .ne. ch171) then
+        print*, 'NaN_DEBUG ch171=0: ID=', id_current,
+     $    ' ch171=', ch171, ' itemp=', itemp, ' temp=', temp
+      endif
       cdh2_h = (ch161 - (ch161 - ch163)
      $       / (1d0 + (yn * abHI / ch165)**ch166))
      $       + (ch162 - (ch162 - ch164)
      $       / (1d0 + (yn * abHI / (1d1**(-1.164408e0)
      $       * ch165))**ch166))
+      if (cdh2_h .ne. cdh2_h .or. dabs(cdh2_h) .gt. 300d0) then
+        print*, 'NaN_DEBUG cdh2_h pre-exp: ID=', id_current,
+     $    ' cdh2_h=', cdh2_h, ' ch161=', ch161, ' ch163=', ch163,
+     $    ' ch165=', ch165, ' ch166=', ch166, ' abHI=', abHI,
+     $    ' temp=', temp
+      endif
       cdh2_h = 1d1**cdh2_h
 c
 c DT rate from MSM96
@@ -394,6 +439,12 @@ c
      $          + (ch168 - (ch168 - ch170)
      $          / (1d0 + (yn * abHI / (1d1**(-1.174242e0)
      $          * ch171))**ch172))
+      if (cdh2_h_dt .ne. cdh2_h_dt .or.
+     $    dabs(cdh2_h_dt) .gt. 300d0) then
+        print*, 'NaN_DEBUG cdh2_h_dt pre-exp: ID=', id_current,
+     $    ' cdh2_h_dt=', cdh2_h_dt, ' ch167=', ch167,
+     $    ' ch169=', ch169, ' ch171=', ch171, ' temp=', temp
+      endif
       cdh2_h_dt = 1d1**cdh2_h_dt
 c
 c Total dissociation rate
@@ -918,7 +969,28 @@ c
 
 c
       ydot(itmp) = -(ylam - ylam_cmb + ylam_chem)
-
+c
+c NaN debug: check all ydots before returning to DVODE
+c
+      do I = 1, nspec
+        if (ydot(I) .ne. ydot(I)) then
+          print*, 'NaN_DEBUG ydot: ID=', id_current,
+     $      ' species=', I, ' ydot=', ydot(I)
+          print*, 'NaN_DEBUG state: temp=', temp, ' yn=', yn,
+     $      ' energy=', energy, ' yntot=', yntot, ' ekn=', ekn
+          print*, 'NaN_DEBUG abund: abh2=', abh2, ' abhp=', abhp,
+     $      ' abhep=', abhep, ' abhepp=', abhepp, ' abco=', abco,
+     $      ' abe=', abe, ' abHI=', abHI
+          print*, 'NaN_DEBUG cool: ylam=', ylam, ' ylam_chem=',
+     $      ylam_chem, ' ylam_cmb=', ylam_cmb
+          print*, 'NaN_DEBUG y=', y
+          ipar(1) = 1
+          do J = 1, nspec
+            ydot(J) = 0d0
+          enddo
+          return
+        endif
+      enddo
 c
 #endif /* CHEMCOOL */
       return
