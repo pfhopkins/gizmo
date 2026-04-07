@@ -402,6 +402,9 @@ extern struct Subfind_DensityOtherPropsEval_data_out
  * it allows the introduction of new global variables in a simple way. The only thing to do is to introduce
  * them into this structure.
  */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
 extern struct global_data_all_processes
 {
   long long TotNumPart;		/*!<  total particle numbers (global value) */
@@ -986,6 +989,9 @@ extern struct global_data_all_processes
 #endif
 }
 All;
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 
 

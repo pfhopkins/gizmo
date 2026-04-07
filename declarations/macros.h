@@ -140,8 +140,21 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 /*****************************************************************/
 
 #define terminate(x) {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, 1); exit(0);}
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__NVCOMPILER) && defined(_OPENMP)
+/* GPU-safe versions: printf works on NVIDIA device, but MPI calls and exit() do not.
+   On device, endrun prints the error and halts the GPU thread via __trap(). On host, original behavior. */
+#pragma omp begin declare target
+static inline void endrun_device(int x, const char *func, const char *file, int line) {
+    if(x != 0) {printf("ENDRUN on GPU, function '%s()', file '%s', line %d: error level %d\n", func, file, line, x);}
+    __builtin_trap();
+}
+#pragma omp end declare target
+#define endrun(x) endrun_device(x, __FUNCTION__, __FILE__, __LINE__)
+#define PRINT_WARNING(...) {printf("GPU WARNING: "); printf(__VA_ARGS__); printf("\n");}
+#else
 #define endrun(x) {if(x==0) {MPI_Finalize(); exit(0);} else {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);}}
 #define PRINT_WARNING(...) {char termbuf1[MAX_PATH_BUFFERSIZE_TOUSE], termbuf2[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf1, MAX_PATH_BUFFERSIZE_TOUSE, "WARNING issued on task=%d, function %s(), file %s, line %d", ThisTask, __FUNCTION__, __FILE__, __LINE__); snprintf(termbuf2, MAX_PATH_BUFFERSIZE_TOUSE, __VA_ARGS__); fflush(stdout); printf("%s: %s\n", termbuf1, termbuf2); fflush(stdout);}
+#endif
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
 #define PRINT_STATUS(...) {if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {if(ThisTask==0) {fflush(stdout); printf( __VA_ARGS__ ); printf("\n"); fflush(stdout);}}}
 #else

@@ -27,6 +27,9 @@
 #define NCOOLTAB  2000 /* defines size of cooling table */
 
 #if !defined(CHIMES)
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target /* cooling table data must be accessible on GPU device */
+#endif
 static double Tmin = -1.0, Tmax = 9.0, deltaT; /* minimum/maximum temp, in log10(T/K) and temperature gridding for the TABULATED rates only - not the same as the min/max temperature gas is actually allowed to reach: will be appropriately set in make_cooling_tables subroutine below */
 static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep; // UV background parameters
 #ifdef COOL_METAL_LINES_BY_SPECIES
@@ -36,6 +39,9 @@ static float *SpCoolTable0, *SpCoolTable1;
 #endif
 /* these are constants of the UV background at a given redshift: they are interpolated from TREECOOL but then not modified particle-by-particle */
 static double J_UV = 0, gJH0 = 0, gJHep = 0, gJHe0 = 0, epsH0 = 0, epsHep = 0, epsHe0 = 0;
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 #endif
 
 #if defined(CHIMES)
@@ -91,16 +97,39 @@ void cooling_parent_routine(void)
     int N_active = (int) cool_indices.size();
     if(N_active == 0) {return;}
 
-    /* Step 2: Gather — allocate compact arrays and copy active particle data into contiguous storage */
+    /* Step 2: Gather — allocate compact arrays and copy active particle data into contiguous storage.
+       For GPU offload we use standard malloc so the arrays can be mapped to device memory
+       (the custom mymalloc pool is host-only and cannot be mapped by OpenMP target). */
+#ifdef OPENMP_GPU_OFFLOAD
+    struct particle_data *compact_P = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+#else
     struct particle_data *compact_P = (struct particle_data *) mymalloc("compact_P", N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("compact_Cell", N_active * sizeof(struct gas_cell_data));
+#endif
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];
         compact_Cell[j] = CellP[cool_indices[j]];
     }
 
-    /* Step 3: Dispatch — run cooling on compact arrays indexed 0..N_active-1 */
+    /* Step 3: Dispatch — run cooling on compact arrays indexed 0..N_active-1.
+       With OPENMP_GPU_OFFLOAD, offload the embarrassingly-parallel loop to GPU via OpenMP target.
+       The compact arrays are mapped tofrom (read on device, modified results copied back).
+       The cooling tables are copied to device as read-only.
+       Note: 'All' is declare-target so its device copy is kept in sync via omp target update below. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(_OPENMP) && !defined(CHIMES)
+    /* sync declare-target scalar globals to device (table arrays are persistently mapped from InitCool) */
+    #pragma omp target update to(All, Tmin, Tmax, deltaT, J_UV, gJH0, gJHep, gJHe0, epsH0, epsHep, epsHe0)
+    #pragma omp target data map(tofrom: compact_P[0:N_active], compact_Cell[0:N_active])
+    {
+        #pragma omp target teams distribute parallel for schedule(static)
+        for(int j = 0; j < N_active; j++)
+        {
+            do_the_cooling_for_particle(j, compact_P, compact_Cell);
+        }
+    }
+#else
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -108,6 +137,7 @@ void cooling_parent_routine(void)
     {
         do_the_cooling_for_particle(j, compact_P, compact_Cell);
     }
+#endif
 
     /* Step 4: Scatter — copy modified data back from compact arrays to the global arrays */
     for(int j = 0; j < N_active; j++)
@@ -117,8 +147,13 @@ void cooling_parent_routine(void)
         P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
     }
 
+#ifdef OPENMP_GPU_OFFLOAD
+    free(compact_Cell);
+    free(compact_P);
+#else
     myfree(compact_Cell);
     myfree(compact_P);
+#endif
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
@@ -128,6 +163,14 @@ void cooling_parent_routine(void)
 
 
 
+
+/* ---- BEGIN DEVICE-COMPILABLE COOLING FUNCTIONS ----
+   When OPENMP_GPU_OFFLOAD is enabled, all functions from here through the matching END marker
+   are compiled for both host and GPU device via OpenMP declare target. This covers the entire
+   particle-level cooling call chain dispatched from cooling_parent_routine. */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
@@ -1388,6 +1431,10 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     return Q;
 } // ends CoolingRate
 
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
+/* ---- END first block of device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
 
 
 void InitCoolMemory(void)
@@ -1779,6 +1826,19 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     LoadMultiSpeciesTables();
 #endif
+#ifdef OPENMP_GPU_OFFLOAD
+    /* upload cooling tables to GPU device after initialization; these are read-only during the cooling loop */
+    #pragma omp target enter data map(to: BetaH0[0:NCOOLTAB+1], BetaHep[0:NCOOLTAB+1], Betaff[0:NCOOLTAB+1])
+    #pragma omp target enter data map(to: AlphaHp[0:NCOOLTAB+1], AlphaHep[0:NCOOLTAB+1], Alphad[0:NCOOLTAB+1], AlphaHepp[0:NCOOLTAB+1])
+    #pragma omp target enter data map(to: GammaeH0[0:NCOOLTAB+1], GammaeHe0[0:NCOOLTAB+1], GammaeHep[0:NCOOLTAB+1])
+#ifdef COOL_METAL_LINES_BY_SPECIES
+    {long SpCoolTable_size = (long)NUM_LIVE_SPECIES_FOR_COOLTABLES * 41L * 176L;
+    #pragma omp target enter data map(to: SpCoolTable0[0:SpCoolTable_size])
+    if(All.ComovingIntegrationOn) {
+        #pragma omp target enter data map(to: SpCoolTable1[0:SpCoolTable_size])
+    }}
+#endif
+#endif
 #endif // CHIMES
 }
 
@@ -1786,6 +1846,10 @@ void InitCool(void)
 
 #ifndef CHIMES
 #ifdef COOL_METAL_LINES_BY_SPECIES
+/* ---- BEGIN second block of device-compilable functions (metal-line table lookups) ---- */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
 double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
 {
     double ne_over_nh_tbl=1, Lambda=0;
@@ -1847,6 +1911,10 @@ double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long ind
     return u1;
 }
 
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
+/* ---- END second block of device-compilable functions ---- */
 #endif // COOL_METAL_LINES_BY_SPECIES
 #endif // !(CHIMES)
 
@@ -1887,6 +1955,11 @@ void selfshield_local_incident_uv_flux(void)
 
 
 
+
+/* ---- BEGIN third block of device-compilable functions (molecular fraction, dust, UVB, helper functions) ---- */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
 
 /* subroutine to update the molecular fraction using our implicit solver for a simple --single-species-- network (just H2) */
 void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell)
@@ -2419,6 +2492,10 @@ double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double lo
     return 0.98 / pow(1 + pow(q_SS,1.64), 2.28) + 0.02 / pow(1 + q_SS*(1.+1.e-4*nHcgs*nHcgs*nHcgs*nHcgs), 0.84); // from Rahmati et al. 2012: gives gentler cutoff at high densities. but we need to modify it with the extra 1+(nHcgs/10)^4 denominator term since at very high nH, this cuts off much too-slowly (as nH^-0.84), which means UVB heating can be stronger than molecular cooling even at densities >> 1e4
 }
 
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
+/* ---- END third block of device-compilable functions ---- */
 
 
 #ifdef CHIMES

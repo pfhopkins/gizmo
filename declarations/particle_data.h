@@ -1,5 +1,8 @@
 /* This structure holds all the information that is stored for each particle of the simulation. */
 
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
 extern ALIGN(32) struct particle_data
 {
     short int Type;                 /*!< flags particle type.  0=gas, 1=halo/high-res dm, 2=alt dm/disk/collisionless, 3=pic/dust/bulge/alt dm, 4=new stars, 5=sink */
@@ -374,4 +377,7 @@ extern ALIGN(32) struct particle_data
 }
 *P,                /*!< holds particle data on local processor */
 *DomainPartBuf;        /*!< buffer for particle data used in domain decomposition */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 

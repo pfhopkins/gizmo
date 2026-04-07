@@ -130,6 +130,31 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Frontera_GPU")
+CC       =  mpicc
+CXX      =  mpicxx -std=c++17
+FC       =  mpif90
+OPTIMIZE = -O2 -mp=gpu -gpu=cc75 -Minfo=accel -Wall
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+CHIMESINCL = -I$(TACC_SUNDIALS_INC)
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
+endif
+MKL_INCL = -I$(TACC_MKL_INC)
+MKL_LIBS = -L$(TACC_MKL_LIB) -lmkl_rt
+GSL_INCL = -I$(TACC_GSL_INC)
+GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas
+FFTW_INCL= -I$(TACC_FFTW3_INC)
+FFTW_LIBS= -L$(TACC_FFTW3_LIB)
+HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
+HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK -DOPENMP_GPU_OFFLOAD
+## compiles with module set: nvhpc/24.1 openmpi hdf5 fftw3 gsl cuda/12
+## submit to 'rtx' queue on Frontera (4x NVIDIA RTX 5000 per node, cc75)
+endif
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"CaltechHPC")
 CC       =  mpicc
 CXX      =  mpic++

@@ -8,6 +8,7 @@
 
 #SYSTYPE="github-ubuntu"
 #SYSTYPE="Frontera"
+#SYSTYPE="Frontera_GPU"
 SYSTYPE="MacBookCellar"
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"

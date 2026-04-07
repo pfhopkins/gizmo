@@ -11,6 +11,10 @@ Equations follow Boley 2007, ApJ, 656, L89
 
 #ifdef EOS_SUBSTELLAR_ISM
 
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
+
 void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
     /*
     Rotational partition function of hydrogen molecule and derived quantities,
@@ -189,5 +193,9 @@ double hydrogen_molecule_gamma(double temp) {
     cv += zvib[2] / BOLTZMANN_CGS; // vibration
     return (cv + 1) / cv;
 }
+
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 #endif // EOS_SUBSTELLAR_ISM

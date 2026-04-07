@@ -1436,6 +1436,11 @@ double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp
 #endif
 }
 
+/* ---- BEGIN device-compilable timestep functions (for OPENMP_GPU_OFFLOAD cooling loop) ---- */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
+
 double timestep_dilation_factor(int i, int mode, struct particle_data *pp)
 {
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
@@ -1460,6 +1465,11 @@ double get_particle_timestep_in_physical(int i, struct particle_data *pp)
 {
     return pp[i].integertime_step() * unit_integertime_in_physical(i, pp);
 }
+
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
+/* ---- END device-compilable timestep functions ---- */
 
 double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp)
 {

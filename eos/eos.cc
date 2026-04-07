@@ -37,6 +37,11 @@ double return_user_desired_target_pressure(int i)
      */
 }
 
+/* ---- BEGIN device-compilable EOS functions (for OPENMP_GPU_OFFLOAD cooling loop) ---- */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp begin declare target
+#endif
+
 /*!
     Updates the thermodynamic quantities determined by the current internal
     energy, density, and chemistry: pressure, and potentially adiabatic index
@@ -464,6 +469,10 @@ double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0,
 #endif
 }
 
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
+/* ---- END device-compilable EOS functions ---- */
 
 
 /* subroutine to calculate the conductivities and assign the various non-ideal MHD coefficients (Ohmic, Hall, Ambipolar). can modify or expand chemistry or assumptions about grains herein. */
