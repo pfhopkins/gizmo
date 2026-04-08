@@ -32,12 +32,16 @@ def plot_evrard_density_slice(coords, rho, output_dir="."):
 
 
 @pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(4, 0), (1, 4), (2, 2)])
-def test_evrard(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize(
+    "extra_config_flags",
+    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
+    ids=["baseline", "tidal_adaptive"],
+)
+def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "evrard"
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
 
-    outputdir = f"test/{test_name}/output"
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
     # Load simulation data
