@@ -142,9 +142,9 @@
 #if !defined(MULTIPLEDOMAINS)
 #define MULTIPLEDOMAINS 32                  /*! slightly closer to our usual default, but users should feel free to adjust */
 #endif
-//#if !defined(DOMAIN_LIGHTWEIGHT_REPARTITION)
-//#define DOMAIN_LIGHTWEIGHT_REPARTITION      /*! enable lightweight domain repartition that reuses the top tree between full decompositions */
-//#endif
+#if !defined(DOMAIN_LIGHTWEIGHT_REPARTITION)
+#define DOMAIN_LIGHTWEIGHT_REPARTITION      /*! enable lightweight domain repartition that reuses the top tree between full decompositions */
+#endif
 #define OPENMP_TREE_UPDATE
 
 #define GALSF_FB_MECHANICAL                 /*! top-level switch for mechanical feedback modules */
