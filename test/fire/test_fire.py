@@ -17,7 +17,6 @@ from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
 from matplotlib import pyplot as plt
 import h5py
-from shutil import move, rmtree
 from gizmo.test import (
     build_gizmo_for_test,
     clean_test_outputs,
@@ -25,8 +24,8 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     get_final_snapshot,
-    variant_output_dir,
-    variant_suffix,
+    stash_baseline_output,
+    finalize_variant_output,
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -134,17 +133,12 @@ def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "fire"
     clean_test_outputs(test_name, extra_config_flags)
 
-    # Build and run
-    run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
-
-    # Rename output for non-default flag combinations so multiple variants can coexist
-    if variant_suffix(extra_config_flags):
-        src = f"test/{test_name}/output"
-        dst = variant_output_dir(test_name, extra_config_flags)
-        if path.isdir(dst):
-            rmtree(dst)
-        if path.isdir(src):
-            move(src, dst)
+    # Build and run, stashing any baseline output/ aside so non-default variants don't clobber it
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
     # Check simulation produced output
     final_snap = get_final_snapshot(test_name, extra_config_flags)

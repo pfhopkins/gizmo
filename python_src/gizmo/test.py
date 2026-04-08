@@ -34,12 +34,18 @@ def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
 
 
 def clean_test_outputs(test_name: str, extra_config_flags=()):
-    """Remove output directory, plot PNGs, and log files from a previous test run."""
+    """Remove this variant's output directory, plot PNGs, and log files from a previous test run.
+    Other variants' output directories are left untouched."""
     test_dir = f"test/{test_name}"
-    # Remove the variant-specific output dir AND any leftover plain "output" from a crashed run.
-    for d in {variant_output_dir(test_name, extra_config_flags), path.join(test_dir, "output")}:
-        if path.isdir(d):
-            rmtree(d)
+    output_dir = variant_output_dir(test_name, extra_config_flags)
+    if path.isdir(output_dir):
+        rmtree(output_dir)
+    # For non-baseline variants, also remove a leftover plain "output" from a crashed run
+    # of the SAME variant (the one we're about to launch will write there before being renamed).
+    if variant_suffix(extra_config_flags):
+        plain = path.join(test_dir, "output")
+        if path.isdir(plain):
+            rmtree(plain)
     for f in glob(path.join(test_dir, f"test_{test_name}.out")):
         remove(f)
     for f in glob(path.join(test_dir, f"test_{test_name}.err")):
@@ -122,24 +128,57 @@ def get_cooling_tables(test_directory="."):
     system(f"cp cooling/TREECOOL {test_directory}")
 
 
+_BASELINE_STASH = "__output_baseline_stash__"
+
+
+def stash_baseline_output(test_name: str, extra_config_flags=()):
+    """If running a non-baseline variant, move an existing output/ aside so the variant
+    run doesn't clobber it. Returns True if a stash was made."""
+    if not variant_suffix(extra_config_flags):
+        return False
+    plain = f"test/{test_name}/output"
+    stash = f"test/{test_name}/{_BASELINE_STASH}"
+    if path.isdir(plain):
+        if path.isdir(stash):
+            rmtree(stash)
+        move(plain, stash)
+        return True
+    return False
+
+
+def finalize_variant_output(test_name: str, extra_config_flags=()):
+    """After a non-baseline run, rename output/ → variant dir, then restore the
+    baseline stash (if any). Idempotent and safe to call in a finally block."""
+    if not variant_suffix(extra_config_flags):
+        return
+    plain = f"test/{test_name}/output"
+    stash = f"test/{test_name}/{_BASELINE_STASH}"
+    dst = variant_output_dir(test_name, extra_config_flags)
+    if path.isdir(plain):
+        if path.isdir(dst):
+            rmtree(dst)
+        move(plain, dst)
+    if path.isdir(stash):
+        if path.isdir(plain):
+            rmtree(plain)
+        move(stash, plain)
+
+
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
-    variant-specific name so that multiple flag combinations can coexist on disk."""
+    variant-specific name so that multiple flag combinations can coexist on disk. The baseline
+    output/ (if any) is temporarily stashed aside so it isn't overwritten by the variant run."""
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
-    chdir(f"test/{test_name}/")
-    download_test_files(test_name)
-    run_test(test_name, num_mpi_ranks, num_openmp_threads)
-    chdir("../../")
-    suffix = variant_suffix(extra_config_flags)
-    if suffix:
-        src = f"test/{test_name}/output"
-        dst = variant_output_dir(test_name, extra_config_flags)
-        if path.isdir(dst):
-            rmtree(dst)
-        if path.isdir(src):
-            move(src, dst)
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        chdir(f"test/{test_name}/")
+        download_test_files(test_name)
+        run_test(test_name, num_mpi_ranks, num_openmp_threads)
+        chdir("../../")
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
 
 def parse_params(params_file: str) -> dict:
