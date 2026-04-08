@@ -137,9 +137,37 @@
             double A_dot_dp = dot(Face_Area_Vec, kernel.dp);
             double mg_ci = local.MG_cgcoeff;
             double mg_cj = CellP[j].MG_cgcoeff;
+            double mg_fac = 1.0;
+            if(All.Flag_SkipMGSolve) {
+                /* MG did not run this step: coefficients are stale. Check whether applying the
+                   correction would increase the face-normal B jump |dBn| = |(B_R - B_L) · A_hat|.
+                   If so, reduce the correction to at most not increase it (blend to zero). */
+                double dBn_before = 0, dBn_delta = 0;
+                for(k=0;k<3;k++) {
+                    dBn_before += (Riemann_vec.R.B[k] - Riemann_vec.L.B[k]) * Face_Area_Vec[k];
+                    dBn_delta  += (-mg_ci - mg_cj) * 0.25 * kernel.dp[k] * A_dot_dp * Face_Area_Vec[k];
+                }
+                /* dBn_after = dBn_before + dBn_delta. We want |dBn_after| <= |dBn_before|.
+                   If dBn_delta pushes in the same direction as dBn_before (amplifies the jump),
+                   limit the fraction applied. If it opposes (reduces the jump), apply in full. */
+                double abs_before = fabs(dBn_before);
+                double dBn_after = dBn_before + dBn_delta;
+                double abs_after = fabs(dBn_after);
+                if(abs_after > abs_before && fabs(dBn_delta) > 1.0e-60) {
+                    /* find largest fraction f in [0,1] such that |dBn_before + f*dBn_delta| <= |dBn_before| */
+                    if(dBn_before * dBn_delta > 0) {
+                        /* same sign: correction amplifies jump, suppress entirely */
+                        mg_fac = 0.0;
+                    } else {
+                        /* opposite sign but overshoots past zero: limit to the zero-crossing */
+                        mg_fac = fabs(dBn_before) / fabs(dBn_delta);
+                        if(mg_fac > 1.0) mg_fac = 1.0;
+                    }
+                }
+            }
             for(k=0;k<3;k++) {
-                Riemann_vec.R.B[k] += -mg_ci * 0.25 * kernel.dp[k] * A_dot_dp; /* i-side correction */
-                Riemann_vec.L.B[k] +=  mg_cj * 0.25 * kernel.dp[k] * A_dot_dp; /* j-side correction */
+                Riemann_vec.R.B[k] += mg_fac * (-mg_ci) * 0.25 * kernel.dp[k] * A_dot_dp; /* i-side correction */
+                Riemann_vec.L.B[k] += mg_fac * ( mg_cj) * 0.25 * kernel.dp[k] * A_dot_dp; /* j-side correction */
             }
         }
 #endif
