@@ -3,3 +3,20 @@ GIZMO
 GIZMO_config.h
 compile_time_info.cc
 Config.sh
+
+# Test artifacts
+test/*/output/
+test/*/output_*/
+test/*/GIZMO
+test/*/*_ics.hdf5
+test/*/spcool_tables/
+test/*/spcool_tables.tgz
+test/*/TREECOOL
+test/*/ewald_spc_table_*.dat
+test/*/glass_*.hdf5
+test/*/*.params-usedvalues
+test/*/test_*.out
+test/*/test_*.err
+test/*/__pycache__/
+test/*/*.png
+python_src/gizmo.egg-info/

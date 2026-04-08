@@ -7,6 +7,7 @@ Compares baseline, TRANSPORT_SUBCYCLE, and TRANSPORT_SUBCYCLE_COOLING variants."
 import pytest
 import numpy as np
 import h5py
+from glob import glob
 from matplotlib import pyplot as plt
 from scipy.stats import binned_statistic
 from pathlib import Path
@@ -17,6 +18,7 @@ from gizmo.test import (
     assert_final_time,
     default_omp_threads,
     default_mpi_ranks,
+    variant_output_dir,
 )
 
 TEST_NAME = "HII_region"
@@ -91,6 +93,66 @@ def make_comparison_plots(all_profiles, test_dir):
 
 _baseline_profiles_cache = {}
 _all_profiles = {}
+_all_ifront_evolution = {}
+
+
+def compute_ifront_radius(snap_file):
+    """Return (time, r_ifront) for a snapshot. r_ifront is where binned-mean
+    PartType0/HII crosses 0.5 (linear interp in log r); NaN if no crossing."""
+    with h5py.File(snap_file, "r") as F:
+        time = float(F["Header"].attrs["Time"])
+        if "PartType5" not in F:
+            return time, np.nan
+        pos = F["PartType0/Coordinates"][:]
+        star_pos = F["PartType5/Coordinates"][0]
+        r = np.linalg.norm(pos - star_pos, axis=1)
+        if "PartType0/HII" not in F:
+            return time, np.nan
+        hii = F["PartType0/HII"][:]
+    mean_hii, _, _ = binned_statistic(r, hii, "mean", R_BINS)
+    centers = R_BIN_CENTERS
+    valid = np.isfinite(mean_hii)
+    if valid.sum() < 2:
+        return time, np.nan
+    mh = mean_hii[valid]
+    cc = centers[valid]
+    # Find rightmost bin where mean_hii >= 0.5 followed by < 0.5
+    above = mh >= 0.5
+    if not above.any() or above.all():
+        return time, np.nan
+    # last index where above is True and next is False
+    idx = np.where(above[:-1] & ~above[1:])[0]
+    if len(idx) == 0:
+        return time, np.nan
+    i = idx[-1]
+    # linear interp in log(r)
+    x0, x1 = np.log(cc[i]), np.log(cc[i + 1])
+    y0, y1 = mh[i], mh[i + 1]
+    r_if = np.exp(x0 + (0.5 - y0) * (x1 - x0) / (y1 - y0))
+    return time, r_if
+
+
+def compute_ifront_evolution(test_name, extra_config_flags=()):
+    """Compute (times, r_ifront) over all snapshots in the variant output directory."""
+    snaps = sorted(glob(f"{variant_output_dir(test_name, extra_config_flags)}/snapshot_*.hdf5"))
+    times, radii = [], []
+    for s in snaps:
+        t, r = compute_ifront_radius(s)
+        times.append(t)
+        radii.append(r)
+    return np.array(times), np.array(radii)
+
+
+def make_ifront_evolution_plot(all_evo, test_dir):
+    """Plot ionization-front radius vs time for each flag combination."""
+    plt.figure()
+    for label, (times, radii) in all_evo.items():
+        plt.plot(times, radii, marker="o", label=label)
+    plt.xlabel(r"$t$ (code units)")
+    plt.ylabel(r"$r_{\rm IF}$ (pc)")
+    plt.legend()
+    plt.savefig(str(test_dir / "ifront_evolution.png"), bbox_inches="tight")
+    plt.close()
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -108,7 +170,7 @@ def test_HII_region(num_mpi_ranks, num_omp_threads, extra_config_flags):
     generate_ics()
     get_cooling_tables(str(TEST_DIR))
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
-    final_snap = get_final_snapshot(TEST_NAME)
+    final_snap = get_final_snapshot(TEST_NAME, extra_config_flags)
     assert_final_time(final_snap, TEST_NAME)
 
     with h5py.File(final_snap, "r") as F:
@@ -122,6 +184,8 @@ def test_HII_region(num_mpi_ranks, num_omp_threads, extra_config_flags):
     else:
         label = "baseline"
     _all_profiles[label] = profiles
+    # Capture ionization-front time evolution before the next variant overwrites output/
+    _all_ifront_evolution[label] = compute_ifront_evolution(TEST_NAME, extra_config_flags)
 
     if not extra_config_flags:
         # Baseline: cache for subcycled comparison
@@ -138,3 +202,4 @@ def test_HII_region(num_mpi_ranks, num_omp_threads, extra_config_flags):
     # After the last variant, generate comparison plots
     if len(_all_profiles) == 3:
         make_comparison_plots(_all_profiles, TEST_DIR)
+        make_ifront_evolution_plot(_all_ifront_evolution, TEST_DIR)

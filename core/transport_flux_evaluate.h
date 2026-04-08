@@ -32,7 +32,7 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
     V_i = local.Mass / local.Density;
     Particle_Size_i = pow(V_i, 1./NUMDIMS) * All.cf_atime;
 
-    if(mode == 0) { dt_hydrostep_i = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(target); }
+    if(mode == 0) { dt_hydrostep_i = get_particle_timestep_in_physical(target); }
     else { dt_hydrostep_i = All.MaxSizeTimestep; /* conservative fallback for imported particles */ }
 
     /* condition number criterion for face area computation */
@@ -76,7 +76,7 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 if(u_j < 1) kernel_main(u_j, hinv_j*hinv_j*hinv_j, hinv_j*hinv_j*hinv_j*hinv_j, &kernel.wk_j, &kernel.dwk_j, -1);
 
                 double V_j = P[j].Mass / CellP[j].Density;
-                double Particle_Size_j = Get_Particle_Size(j) * All.cf_atime;
+                double Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime;
 
                 /* compute MFM face area — include the standard face area computation */
                 double rinv_soft = rinv;
@@ -84,7 +84,7 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 if(Face_Area_Norm <= 0) continue;
 
                 /* timestep for flux limiting */
-                dt_hydrostep_j = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(j);
+                dt_hydrostep_j = get_particle_timestep_in_physical(j);
                 dt_hydrostep = DMAX(dt_hydrostep_i, dt_hydrostep_j) * All.Transport_Subcycle_dt_fraction; /* use sub-step dt for stability limiting — each sub-step must be stable independently */
 
                 /* face velocities for HLL */
@@ -92,7 +92,7 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 face_vel_j = dot(CellP[j].VelPred, kernel.dp) * rinv / All.cf_atime;
 
                 /* signal velocity — must match hydro_evaluate.h for consistent flux computation */
-                kernel.sound_j = Get_Gas_effective_soundspeed_i(j);
+                kernel.sound_j = CellP[j].effective_soundspeed();
                 kernel.vsig = kernel.sound_i + kernel.sound_j; /* sum of sound speeds, same as hydro pass line 190 */
 
                 /* determine if j should also accumulate (symmetric flux application) */
@@ -100,8 +100,8 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 double FluxCorrectionFactor_to_i = 1.0, FluxCorrectionFactor_to_j = 1.0;
 
                 /* variables needed by rt_diffusion_explicit.h */
-                double c_light_eff = C_LIGHT_CODE_REDUCED(j);
-                double rsol_corr = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS(j);
+                double c_light_eff = C_LIGHT_CODE_REDUCED;
+                double rsol_corr = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                 Vec3<double> v_frame = 0.5*(local.ParticleVel + P[j].Vel)/All.cf_atime;
 #else

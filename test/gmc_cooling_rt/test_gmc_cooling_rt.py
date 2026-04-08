@@ -138,11 +138,13 @@ def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_dir = "test/gmc_cooling_rt"
     get_cooling_tables(test_dir)
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
+    from gizmo.test import variant_output_dir
     test_stats = compute_test_statistic(
-        test_dir + "/output/snapshot_010.hdf5", plot=True, extra_config_flags=extra_config_flags
+        variant_output_dir(test_name, extra_config_flags) + "/snapshot_010.hdf5",
+        plot=True, extra_config_flags=extra_config_flags
     )
     if not extra_config_flags:
         # baseline: cache stats for subcycled variants, then compare against reference

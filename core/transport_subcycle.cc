@@ -114,11 +114,11 @@ void particle2in_transport(struct INPUT_STRUCT_NAME *in, int i, int loop_iterati
     in->Density = CellP[i].Density;
     in->KernelRadius = P[i].KernelRadius;
     in->ConditionNumber = CellP[i].ConditionNumber;
-    in->SoundSpeed = Get_Gas_effective_soundspeed_i(i);
+    in->SoundSpeed = CellP[i].effective_soundspeed();
     for(int kf=0; kf<N_RT_FREQ_BINS; kf++) {
         in->Rad_E_gamma[kf] = CellP[i].Rad_E_gamma_Pred[kf];
         in->Rad_Kappa[kf] = CellP[i].Rad_Kappa[kf];
-        in->RT_DiffusionCoeff[kf] = rt_diffusion_coefficient(i, kf);
+        in->RT_DiffusionCoeff[kf] = rt_diffusion_coefficient(i, kf, &CellP[i]);
 #if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
         in->ET[kf] = CellP[i].ET[kf];
 #endif
@@ -217,7 +217,7 @@ void transport_subcycle_kick(void)
     for(int idx : ActiveParticleList) {
         if(P[idx].Type != 0 || P[idx].Mass <= 0) continue;
         int i = idx;
-        double sub_dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i) * sub_frac;
+        double sub_dt = get_particle_timestep_in_physical(i) * sub_frac;
         if(sub_dt <= 0) continue;
 
 #ifdef RADTRANSFER
@@ -225,12 +225,12 @@ void transport_subcycle_kick(void)
            Since we call it N times, the rate would accumulate N-fold. Save/restore
            DtInternalEnergy each sub-step to prevent accumulation, but keep the final
            sub-step's contribution so the cooling function sees the correct IR heating rate. */
-        rt_update_driftkick(i, sub_dt, 0); /* kick: advance conserved variables */
-        rt_eddington_update_calculation(i);
+        rt_update_driftkick(i, sub_dt, 0, &P[i], &CellP[i]); /* kick: advance conserved variables */
+        rt_eddington_update_calculation(i, &CellP[i]);
         /* update opacities — Rad_Kappa (especially IR band) depends on Dust_Temperature and
            Radiation_Temperature which were just modified by rt_update_driftkick. Stale opacities
            cause the transport flux computation in subsequent sub-steps to use the wrong diffusion rate. */
-        for(int kf = 0; kf < N_RT_FREQ_BINS; kf++) {CellP[i].Rad_Kappa[kf] = rt_kappa(i, kf);}
+        for(int kf = 0; kf < N_RT_FREQ_BINS; kf++) {CellP[i].Rad_Kappa[kf] = rt_kappa(i, kf, &P[i], &CellP[i]);}
         /* sync Pred = conserved for the next sub-step's flux exchange */
         for(int kf = 0; kf < N_RT_FREQ_BINS; kf++) {
             CellP[i].Rad_E_gamma_Pred[kf] = CellP[i].Rad_E_gamma[kf];
@@ -245,7 +245,7 @@ void transport_subcycle_kick(void)
 #endif
 
 #ifdef COSMIC_RAY_FLUID
-        CosmicRay_Update_DriftKick(i, sub_dt, 0);
+        CosmicRay_Update_DriftKick(i, sub_dt, 0, &P[i], &CellP[i]);
         for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {
             CellP[i].CosmicRayEnergyPred[kb] = CellP[i].CosmicRayEnergy[kb];
             CellP[i].CosmicRayFluxPred[kb] = CellP[i].CosmicRayFlux[kb];

@@ -4,7 +4,7 @@ from os import system, environ, path, chdir, cpu_count, remove
 from urllib.request import urlretrieve, HTTPError
 from shutil import move, rmtree
 from glob import glob
-import pytest
+import numpy as np
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import h5py
@@ -20,14 +20,26 @@ def flush_colorbar(mappable, ax=None, label=None, **kwargs):
     return fig.colorbar(mappable, cax=cax, label=label, **kwargs)
 
 
-def clean_test_outputs(test_name: str, extra_flags=None):
+def variant_suffix(extra_config_flags=()):
+    """Return a filename-safe suffix encoding extra_config_flags (empty for no flags)."""
+    if not extra_config_flags:
+        return ""
+    sanitized = ["".join(c if c.isalnum() else "_" for c in f) for f in extra_config_flags]
+    return "_" + "__".join(sanitized)
+
+
+def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
+    """Return the output directory used for a given (test, flag combination)."""
+    return f"test/{test_name}/output{variant_suffix(extra_config_flags)}"
+
+
+def clean_test_outputs(test_name: str, extra_config_flags=()):
     """Remove output directory, plot PNGs, and log files from a previous test run."""
     test_dir = f"test/{test_name}"
-    output_dir = path.join(test_dir, "output")
-    if path.isdir(output_dir):
-        rmtree(output_dir)
-    for f in glob(path.join(test_dir, "*".join(extra_flags) + "*.png")):
-        remove(f)
+    # Remove the variant-specific output dir AND any leftover plain "output" from a crashed run.
+    for d in {variant_output_dir(test_name, extra_config_flags), path.join(test_dir, "output")}:
+        if path.isdir(d):
+            rmtree(d)
     for f in glob(path.join(test_dir, f"test_{test_name}.out")):
         remove(f)
     for f in glob(path.join(test_dir, f"test_{test_name}.err")):
@@ -111,13 +123,23 @@ def get_cooling_tables(test_directory="."):
 
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
-    """Top-level routine that does all necessary building, downloading, and running of the test"""
-    clean_test_outputs(test_name)
+    """Top-level routine that does all necessary building, downloading, and running of the test.
+    When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
+    variant-specific name so that multiple flag combinations can coexist on disk."""
+    clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     chdir(f"test/{test_name}/")
     download_test_files(test_name)
     run_test(test_name, num_mpi_ranks, num_openmp_threads)
     chdir("../../")
+    suffix = variant_suffix(extra_config_flags)
+    if suffix:
+        src = f"test/{test_name}/output"
+        dst = variant_output_dir(test_name, extra_config_flags)
+        if path.isdir(dst):
+            rmtree(dst)
+        if path.isdir(src):
+            move(src, dst)
 
 
 def parse_params(params_file: str) -> dict:
@@ -134,11 +156,12 @@ def parse_params(params_file: str) -> dict:
     return params
 
 
-def get_final_snapshot(test_name: str) -> str:
-    """Return the path to the last snapshot produced by a test."""
-    snaps = sorted(glob(f"test/{test_name}/output/snapshot_*.hdf5"))
+def get_final_snapshot(test_name: str, extra_config_flags=()) -> str:
+    """Return the path to the last snapshot produced by a test (variant-aware)."""
+    output_dir = variant_output_dir(test_name, extra_config_flags)
+    snaps = sorted(glob(f"{output_dir}/snapshot_*.hdf5"))
     if not snaps:
-        raise RuntimeError(f"No snapshots found for test {test_name}")
+        raise RuntimeError(f"No snapshots found for test {test_name} in {output_dir}")
     return snaps[-1]
 
 
@@ -175,7 +198,10 @@ def assert_snapshots_are_close(
             datafields[s][f] = datafields[s][f][id_order]
 
     for f in fields_to_compare:
-        pytest.approx((datafields[snapshot1][f], datafields[snapshot2][f]), rel=rtol, abs=atol)
+        np.testing.assert_allclose(
+            datafields[snapshot1][f], datafields[snapshot2][f], rtol=rtol, atol=atol,
+            err_msg=f"Field {f} differs between {snapshot1} and {snapshot2}",
+        )
 
 
 def plot_1D_snapshot_comparison(

@@ -792,7 +792,7 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TRANSPORT_SUBCYCLE
                 CellP[i].Dt_Rad_E_gamma_Work[kfreq] += (2.*f_kappa_abs-1.)*work_band; // save work term separately for subcycle restoration
 #endif
-                CellP[i].DtInternalEnergy -= (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED(i)) * 2.*f_kappa_abs*work_band / P[i].Mass; // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
+                CellP[i].DtInternalEnergy -= (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED) * 2.*f_kappa_abs*work_band / P[i].Mass; // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
             }
             /* now actually set the frequency-integrated cell values as needed */
 #ifdef RT_RAD_PRESSURE_OUTPUT
