@@ -305,7 +305,7 @@ c
          nray_start = 0
 
          do I = nray_start, nray_end
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
            fac_uv_pix = fac_uv(I)
 #else
            fac_uv_pix = 1d0 / nray
@@ -321,7 +321,7 @@ c
 c
 c NUV/OPT shielding (same structure, band-appropriate cross-sections)
 c
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             fac_nuv_pix = fac_nuv(I)
             fac_opt_pix = fac_opt(I)
 #else
@@ -423,7 +423,7 @@ c
         theta_CO   = 0d0
         theta_H2   = 0d0
         do I = nray_start, nray_end
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
           fac_uv_pix = fac_uv(I)
 #else
           fac_uv_pix = 1d0 / nray
@@ -782,7 +782,7 @@ c
 #endif
 #ifdef TREE_RAD_H2
         do I = 0, NPIX-1
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
           fac_uv_pix = fac_uv(I)
 #else
           fac_uv_pix = 1d0 / nray
@@ -852,7 +852,7 @@ c
       elseif (iphoto .eq. 6) then
 #ifdef TREE_RAD_H2
         do I = 0, NPIX-1
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
           fac_uv_pix = fac_uv(I)
 #else
           fac_uv_pix = 1d0 / NPIX

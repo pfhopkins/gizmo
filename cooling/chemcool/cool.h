@@ -387,7 +387,7 @@ c     Do not indent the next line!
 
 #if defined TREE_RAD || defined TREE_RAD_H2
       REAL diffuse_dust_heat
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
       REAL fac_uv(0:NPIX-1)
       REAL fac_nuv(0:NPIX-1)
       REAL fac_opt(0:NPIX-1)
@@ -396,7 +396,7 @@ c     Do not indent the next line!
       REAL column_density_projection_h2(0:NPIX-1)
       REAL column_density_projection_co(0:NPIX-1)
       common /project/ diffuse_dust_heat,
-#ifdef G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
      $                 fac_uv, fac_nuv, fac_opt,
 #endif
      $                 column_density_projection, 
