@@ -85,14 +85,20 @@ HYPRE_LIBS = # hypre library for AMG-preconditioned solver in MG gradient correc
 
 
 ## read the systype information to use the blocks below for different machines
+## precedence: environment SYSTYPE overrides; otherwise ~/.gizmo is checked before Makefile.systype
+HOME_GIZMO := $(wildcard $(HOME)/.gizmo)
 ifdef SYSTYPE
-SYSTYPE := "$(SYSTYPE)"
--include Makefile.systype
+SYSTYPE := "$(patsubst "%",%,$(SYSTYPE))"
+else ifneq ($(HOME_GIZMO),)
+include $(HOME_GIZMO)
+SYSTYPE := "$(patsubst "%",%,$(SYSTYPE))"
 else
 include Makefile.systype
 endif
 
-ifeq ($(wildcard Makefile.systype), Makefile.systype)
+ifneq ($(HOME_GIZMO),)
+INCL = $(HOME_GIZMO)
+else ifeq ($(wildcard Makefile.systype), Makefile.systype)
 INCL = Makefile.systype
 else
 INCL =
@@ -246,8 +252,9 @@ GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include #-I$(PORTINCLUDE)
 GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib #-L$(PORTLIB)
 FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
 FFTW_LIBS= -L/opt/homebrew/Cellar/fftw/3.3.10_3/lib
-HDF5INCL = -I/opt/homebrew/Cellar/hdf5/2.1.1/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
-HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/2.1.1/lib -lhdf5 -lz  #-L$(PORTLIB)
+HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | tail -n 1)
+HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
+HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz  #-L$(PORTLIB)
 MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION #
 endif
