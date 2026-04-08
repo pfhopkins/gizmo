@@ -37,11 +37,22 @@ def generate_ics():
         make_HII_region_ics(str(ic_file))
 
 
-def plot_quantiles_vs_r(r, quantity, r_bins=R_BINS, label=None, **plotargs):
+_VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
+
+
+def _short(label, maxlen=30):
+    return label if len(label) <= maxlen else label[: maxlen - 3] + "..."
+
+
+def plot_quantiles_vs_r(r, quantity, r_bins=R_BINS, label=None, marker=None, markersize=6, **plotargs):
     quantiles = [binned_statistic(r, quantity, lambda x: np.percentile(x, q), r_bins)[0] for q in (16, 50, 84)]
     centers = np.sqrt(r_bins[1:] * r_bins[:-1])
-    plt.loglog(centers, quantiles[1], label=label, **plotargs)
-    plt.fill_between(centers, quantiles[0], quantiles[2], alpha=0.3, **plotargs)
+    if marker is not None:
+        plt.loglog(centers, quantiles[1], marker=marker, markersize=markersize, markerfacecolor="none",
+                   linestyle="none", label=label, alpha=0.8, **plotargs)
+    else:
+        plt.loglog(centers, quantiles[1], label=label, **plotargs)
+    plt.fill_between(centers, quantiles[0], quantiles[2], alpha=0.15, **plotargs)
 
 
 def compute_profiles(snap_file):
@@ -82,11 +93,16 @@ def make_comparison_plots(all_profiles, test_dir):
         ("urad_ONIR", r"$u_{\rm rad,\,ONIR}\;(\rm eV\,cm^{-3})$", "urad_ONIR"),
     ]
     for field, ylabel, fname in plot_configs:
-        for label, profiles in all_profiles.items():
-            plot_quantiles_vs_r(profiles["_r"], profiles[f"_{field}"], label=label)
+        for i, (label, profiles) in enumerate(all_profiles.items()):
+            # Decreasing marker size + open markers so overlapping points remain visible
+            ms = 10 - 2 * i
+            plot_quantiles_vs_r(
+                profiles["_r"], profiles[f"_{field}"], label=_short(label),
+                marker=_VARIANT_MARKERS[i % len(_VARIANT_MARKERS)], markersize=max(ms, 4),
+            )
         plt.xlabel(r"$r\;(\rm pc)$")
         plt.ylabel(ylabel)
-        plt.legend()
+        plt.legend(loc="best", fontsize="x-small")
         plt.savefig(str(test_dir / f"r_vs_{fname}.png"), bbox_inches="tight")
         plt.close()
 

@@ -17,10 +17,15 @@ from gizmo.test import build_and_run_test, clean_test_outputs, assert_final_time
 
 
 _variant_profiles = {}
+_VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
 
 
 def _variant_label(extra_config_flags):
     return "+".join(extra_config_flags) if extra_config_flags else "baseline"
+
+
+def _short(label, maxlen=30):
+    return label if len(label) <= maxlen else label[: maxlen - 3] + "..."
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -88,12 +93,13 @@ def test_zeldovich(num_mpi_ranks, num_omp_threads, extra_config_flags):
     ]:
         plt.figure()
         plt.plot(x_centers, exact_vals, "-", color="red", label="Exact")
-        for vlabel, prof in _variant_profiles.items():
-            plt.plot(prof["x"], prof[label], "o", markersize=3, label=vlabel)
+        for i, (vlabel, prof) in enumerate(_variant_profiles.items()):
+            plt.plot(prof["x"], prof[label], _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
+                     markersize=max(10 - 2 * i, 4), markerfacecolor="none", alpha=0.7, label=_short(vlabel))
         plt.xlabel("x (Mpc)")
         plt.ylabel(label)
-        plt.legend()
-        plt.savefig(f"test/{test_name}/{label}.png")
+        plt.legend(fontsize="x-small", loc="best")
+        plt.savefig(f"test/{test_name}/{label}.png", bbox_inches="tight")
         plt.close()
 
     # Check density profile - exclude the sharp caustic peak (|x| < 2 Mpc)

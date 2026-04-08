@@ -20,8 +20,18 @@ import numpy as np
 def plot_quantiles_vs_nH(nH, quantity, nH_bins=np.logspace(-1, 4, 21), plotargs={}, label=None):
     quantiles = [binned_statistic(nH, quantity, lambda x: np.percentile(x, q), nH_bins)[0] for q in (16, 50, 84)]
 
-    plt.loglog(np.sqrt(nH_bins[1:] * nH_bins[:-1]), quantiles[1], label=label, **plotargs)
-    plt.fill_between(np.sqrt(nH_bins[1:] * nH_bins[:-1]), quantiles[0], quantiles[2], **plotargs, alpha=0.5)
+    centers = np.sqrt(nH_bins[1:] * nH_bins[:-1])
+    plt.loglog(centers, quantiles[1], label=label, **plotargs)
+    fill_kwargs = {k: v for k, v in plotargs.items()
+                   if k not in ("marker", "markersize", "markerfacecolor", "linestyle")}
+    plt.fill_between(centers, quantiles[0], quantiles[2], **fill_kwargs, alpha=0.2)
+
+
+_VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
+
+
+def _short(label, maxlen=30):
+    return label if len(label) <= maxlen else label[: maxlen - 3] + "..."
 
 
 _variant_data = {}
@@ -58,12 +68,17 @@ def _render_combined_gmc_plots(test_dir):
         ("xe", r"$x_e$", "nH_vs_xe.png"),
     ]
     for field, ylabel, fname in plot_specs:
-        plot_quantiles_vs_nH(ref["nH"], ref[field], label="Benchmark")
-        for vlabel, d in _variant_data.items():
-            plot_quantiles_vs_nH(d["nH"], d[field], label=vlabel)
+        plot_quantiles_vs_nH(ref["nH"], ref[field], label="Benchmark", plotargs={"color": "red"})
+        for i, (vlabel, d) in enumerate(_variant_data.items()):
+            plot_quantiles_vs_nH(
+                d["nH"], d[field], label=_short(vlabel),
+                plotargs={"marker": _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
+                          "markersize": max(10 - 2 * i, 4), "markerfacecolor": "none",
+                          "linestyle": "none", "alpha": 0.8},
+            )
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(ylabel)
-        plt.legend(loc=3)
+        plt.legend(loc="best", fontsize="x-small")
         plt.savefig(f"{test_dir}/{fname}", bbox_inches="tight")
         plt.close()
     # Per-band radiation: one figure per variant + reference (5 bands each)

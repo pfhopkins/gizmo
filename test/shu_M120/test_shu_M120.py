@@ -22,8 +22,18 @@ def plot_quantiles_vs_radius(radius, quantity, radius_bins=np.logspace(-4, -1, 2
         binned_statistic(radius, quantity, lambda x: np.percentile(x, q), radius_bins)[0] for q in (16, 50, 84)
     ]
 
-    plt.loglog(np.sqrt(radius_bins[1:] * radius_bins[:-1]), quantiles[1], label=label, **plotargs)
-    plt.fill_between(np.sqrt(radius_bins[1:] * radius_bins[:-1]), quantiles[0], quantiles[2], **plotargs, alpha=0.5)
+    centers = np.sqrt(radius_bins[1:] * radius_bins[:-1])
+    plt.loglog(centers, quantiles[1], label=label, **plotargs)
+    fill_kwargs = {k: v for k, v in plotargs.items()
+                   if k not in ("marker", "markersize", "markerfacecolor", "linestyle")}
+    plt.fill_between(centers, quantiles[0], quantiles[2], **fill_kwargs, alpha=0.2)
+
+
+_VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
+
+
+def _short(label, maxlen=30):
+    return label if len(label) <= maxlen else label[: maxlen - 3] + "..."
 
 
 _variant_data = {}
@@ -60,12 +70,17 @@ def _render_combined_shu_plots(test_dir):
         ("urad_FIR", r"$u_{\rm rad} (\rm eV\,cm^{-3})$", "r_vs_urad.png"),
     ]
     for field, ylabel, fname in plot_specs:
-        plot_quantiles_vs_radius(ref["r"], ref[field], label="Benchmark")
-        for vlabel, d in _variant_data.items():
-            plot_quantiles_vs_radius(d["r"], d[field], label=vlabel)
+        plot_quantiles_vs_radius(ref["r"], ref[field], label="Benchmark", plotargs={"color": "red"})
+        for i, (vlabel, d) in enumerate(_variant_data.items()):
+            plot_quantiles_vs_radius(
+                d["r"], d[field], label=_short(vlabel),
+                plotargs={"marker": _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
+                          "markersize": max(10 - 2 * i, 4), "markerfacecolor": "none",
+                          "linestyle": "none", "alpha": 0.8},
+            )
         plt.xlabel(r"$r\,\left(\rm pc\right)$")
         plt.ylabel(ylabel)
-        plt.legend(loc=3)
+        plt.legend(loc="best", fontsize="x-small")
         plt.savefig(f"{test_dir}/{fname}", bbox_inches="tight")
         plt.close()
 
