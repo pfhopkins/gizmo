@@ -557,7 +557,7 @@
 #define GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED
 #endif
 
-#ifdef GRAVITY_ACCURATE_FEWBODY_sINTEGRATION /* utility flag to enable a few different extra-conservative time-integration flags for gravity */
+#ifdef GRAVITY_ACCURATE_FEWBODY_INTEGRATION /* utility flag to enable a few different extra-conservative time-integration flags for gravity */
 #if !defined(GRAVITY_HYBRID_OPENING_CRIT)
 #define GRAVITY_HYBRID_OPENING_CRIT // use both Barnes-Hut + relative tree opening criterion
 #endif
