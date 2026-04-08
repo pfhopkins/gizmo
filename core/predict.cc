@@ -283,10 +283,10 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
-    CosmicRay_Update_DriftKick(i,dt_entr,1, P, CellP);
+    CosmicRay_Update_DriftKick(i, dt_entr, 1, &P[i], &CellP[i]);
 #endif
 #ifdef RADTRANSFER
-    rt_update_driftkick(i,dt_entr,1, P, CellP);
+    rt_update_driftkick(i, dt_entr, 1, &P[i], &CellP[i]);
 #endif
 #ifdef EOS_ELASTIC
     elastic_body_update_driftkick(i,dt_entr,1);

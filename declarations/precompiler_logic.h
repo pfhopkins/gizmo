@@ -145,6 +145,7 @@
 #if !defined(DOMAIN_LIGHTWEIGHT_REPARTITION)
 #define DOMAIN_LIGHTWEIGHT_REPARTITION      /*! enable lightweight domain repartition that reuses the top tree between full decompositions */
 #endif
+#define OPENMP_TREE_UPDATE
 
 #define GALSF_FB_MECHANICAL                 /*! top-level switch for mechanical feedback modules */
 #define GALSF_FB_FIRE_STELLAREVOLUTION (FIRE_PHYSICS_DEFAULTS) /*! turns on default FIRE processes+lookup tables including gas return, SNe, R-process, etc. this carries a number matching the defaults set you choose */
@@ -556,7 +557,7 @@
 #define GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED
 #endif
 
-#ifdef GRAVITY_ACCURATE_FEWBODY_INTEGRATION /* utility flag to enable a few different extra-conservative time-integration flags for gravity */
+#ifdef GRAVITY_ACCURATE_FEWBODY_sINTEGRATION /* utility flag to enable a few different extra-conservative time-integration flags for gravity */
 #if !defined(GRAVITY_HYBRID_OPENING_CRIT)
 #define GRAVITY_HYBRID_OPENING_CRIT // use both Barnes-Hut + relative tree opening criterion
 #endif

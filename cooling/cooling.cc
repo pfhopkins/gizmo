@@ -176,6 +176,9 @@ void cooling_parent_routine(void)
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
+#endif
 
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
@@ -328,7 +331,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
         set_eos_pressure(i, pp, cell);
 #ifndef COOLING_OPERATOR_SPLIT
-        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
+        if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {CellP[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
+        /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -810,7 +814,10 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.; /* more initialized quantities */
     int bisection_mode=0; // 0 if doing the usual fixed-point iteration; 1 if switched to bisection method
-    if(target >= 0) {dt = get_particle_timestep_in_physical(target, pp);} // dtime [code units]
+    if(target >= 0) {dt = get_particle_timestep_in_physical(target);} // dtime [code units]
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N */
+#endif
     fac_noneq_cgs = (dt * UNIT_TIME_IN_CGS) * (necgs + 1.e-30*nHcgs); // factor needed below to asses whether timestep is larger/smaller than recombination time
 
 #if defined(RT_CHEM_PHOTOION)

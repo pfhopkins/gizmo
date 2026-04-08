@@ -128,7 +128,7 @@ void run(void)
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
-        
+
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
         {
@@ -282,21 +282,62 @@ void calculate_non_standard_physics(void)
         if(All.ComovingIntegrationOn) {All.TimeNextOnTheFlyFoF *= All.TimeBetOnTheFlyFoF;} else {All.TimeNextOnTheFlyFoF += All.TimeBetOnTheFlyFoF;}}
 #endif
 
+#ifdef TRANSPORT_SUBCYCLE
+    /* --- compute the global number of transport subcycles --- */
+    {
+        double min_transport_dt_local = MAX_REAL_NUMBER, max_hydro_dt_local = 0;
+        for(int idx : ActiveParticleList) {
+            if(P[idx].Type != 0 || P[idx].Mass <= 0) continue;
+            double hydro_dt = get_particle_timestep_in_physical(idx);
+            min_transport_dt_local = DMIN(min_transport_dt_local, CellP[idx].Transport_Dt_Subcycle);
+            max_hydro_dt_local = DMAX(max_hydro_dt_local, hydro_dt);
+        }
+        double min_transport_dt_global, max_hydro_dt_global;
+        MPI_Allreduce(&min_transport_dt_local, &min_transport_dt_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&max_hydro_dt_local, &max_hydro_dt_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        All.Transport_Subcycle_N = 1;
+        if(min_transport_dt_global > 0 && min_transport_dt_global < MAX_REAL_NUMBER && max_hydro_dt_global > min_transport_dt_global)
+            All.Transport_Subcycle_N = IMIN((int)ceil(max_hydro_dt_global / min_transport_dt_global), TRANSPORT_SUBCYCLE);
+        All.Transport_Subcycle_dt_fraction = 1.0 / (double)All.Transport_Subcycle_N;
+        if(ThisTask == 0 && All.Transport_Subcycle_N > 1)
+            printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
+                   All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
+    }
+    /* Save the hydro-pass DtInternalEnergy before the subcycle loop. rt_update_driftkick adds
+       IR gas heating to DtInternalEnergy each sub-step; without resetting, it accumulates N-fold.
+       We reset to the hydro value before each kick so only one sub-step's IR contribution is present. */
+#if defined(RT_INFRARED) && defined(COOLING)
+    for(int idx : ActiveParticleList) {
+        if(P[idx].Type == 0 && P[idx].Mass > 0)
+            CellP[idx].DtIE_IR_Subcycle = CellP[idx].DtInternalEnergy;
+    }
+#endif
+    for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
+#endif // TRANSPORT_SUBCYCLE
+
 #ifdef RADTRANSFER
     CPU_Step[CPU_MISC] += measure_time();
 #if defined(RT_SOURCE_INJECTION)
-    int flag; flag=1;
+#ifdef TRANSPORT_SUBCYCLE
+    if(transport_sub == 0) /* source injection only on first sub-step */
+#endif
+    {
+        int flag; flag=1;
 #if !defined(RT_INJECT_PHOTONS_DISCRETELY)
-    flag = Flag_FullStep; /* for continous injection, requires all sources and gas be active synchronously or else 2x-counts */
+        flag = Flag_FullStep; /* for continous injection, requires all sources and gas be active synchronously or else 2x-counts */
 #endif
 #if !defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION)
-    if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
+        if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
 #endif
+    }
 #endif
 #if defined(RT_DIFFUSION_CG) /* use the CG method to solve the RT diffusion equation implicitly for all particles; do only on full timesteps, requires synchronous timestepping right now */
     if(Flag_FullStep) {All.Radiation_Ti_endstep = All.Ti_Current; rt_diffusion_cg_solve(); All.Radiation_Ti_begstep = All.Radiation_Ti_endstep;}
 #endif
 #if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
+#ifdef TRANSPORT_SUBCYCLE
+    if(transport_sub == 0) /* chemistry update only on first sub-step (cooling handles it on subsequent sub-steps if TRANSPORT_SUBCYCLE_COOLING) */
+#endif
     rt_update_chemistry(); /* chemistry updated at sub-stepping as well */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(Flag_FullStep) {rt_write_chemistry_stats();}
@@ -305,7 +346,56 @@ void calculate_non_standard_physics(void)
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
-#ifdef COOLING	/* radiative cooling and chemistry  */
+#ifdef TRANSPORT_SUBCYCLE
+    /* --- recompute transport fluxes every sub-step and apply kick --- */
+    transport_subcycle_exchange_fluxes();
+    /* Reset DtInternalEnergy to hydro-pass value before each kick, so rt_update_driftkick's
+       IR gas heating contribution doesn't accumulate across sub-steps. */
+#if defined(RT_INFRARED) && defined(COOLING)
+    for(int idx : ActiveParticleList) {
+        if(P[idx].Type == 0 && P[idx].Mass > 0)
+            CellP[idx].DtInternalEnergy = CellP[idx].DtIE_IR_Subcycle;
+    }
+#endif
+    transport_subcycle_kick();
+#endif
+
+#if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
+    /* save DtInternalEnergy before cooling (it gets overwritten with CGS-converted value inside cooling).
+       Restore the original code-units value before each sub-step so the CGS conversion isn't applied twice. */
+    {
+#ifndef COOLING_OPERATOR_SPLIT
+        for(int idx : ActiveParticleList) {
+            if(P[idx].Type == 0 && P[idx].Mass > 0)
+                CellP[idx].Dt_Transport_Subcycle_Saved = CellP[idx].DtInternalEnergy;
+        }
+#endif
+        cooling_parent_routine();
+#ifndef COOLING_OPERATOR_SPLIT
+        for(int idx : ActiveParticleList) {
+            if(P[idx].Type == 0 && P[idx].Mass > 0)
+                CellP[idx].DtInternalEnergy = CellP[idx].Dt_Transport_Subcycle_Saved;
+        }
+#endif
+    }
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
+
+#ifdef TRANSPORT_SUBCYCLE
+    } /* end transport subcycle loop */
+    /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
+       the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
+       KDK half-kick see exactly one sub-step's IR contribution at the final Rad_E_gamma state. */
+#if defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    /* zero DtInternalEnergy after the subcycle loop — the hydro work has been fully applied across all sub-steps */
+    for(int idx : ActiveParticleList) {
+        if(P[idx].Type == 0 && P[idx].Mass > 0 && CellP[idx].CoolingIsOperatorSplitThisTimestep==0)
+            CellP[idx].DtInternalEnergy = 0;
+    }
+#endif
+#endif
+
+#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif

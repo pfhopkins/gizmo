@@ -911,6 +911,16 @@ void rt_source_injection(void);
 #endif
 MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust);
 
+#ifdef TRANSPORT_SUBCYCLE
+void transport_subcycle_build_cache(void);
+void transport_subcycle_pack_state(void);
+void transport_subcycle_unpack_state(void);
+void transport_subcycle_exchange_fluxes(void);
+void transport_subcycle_kick(void);
+void transport_subcycle_halo_exchange(void);
+void transport_subcycle_free_cache(void);
+#endif
+
 #ifdef RADTRANSFER
 void rt_set_simple_inits(int RestartFlag);
 #if defined(RT_EVOLVE_INTENSITIES)
