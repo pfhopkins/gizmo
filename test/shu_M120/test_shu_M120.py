@@ -121,10 +121,11 @@ def test_shu_M120(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_dir = "test/shu_M120"
     get_cooling_tables(test_dir)
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
-    test_snap = test_dir + "/output/snapshot_005.hdf5"
+    from gizmo.test import variant_output_dir
+    test_snap = variant_output_dir(test_name, extra_config_flags) + "/snapshot_005.hdf5"
     test_stats = compute_test_statistic(test_snap, plot=True, extra_config_flags=extra_config_flags)
     benchmark_stats = compute_test_statistic(test_dir + "/shu_M120_exact.hdf5")
     for name in test_stats:
