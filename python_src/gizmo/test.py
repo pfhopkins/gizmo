@@ -35,17 +35,11 @@ def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
 
 def clean_test_outputs(test_name: str, extra_config_flags=()):
     """Remove this variant's output directory, plot PNGs, and log files from a previous test run.
-    Other variants' output directories are left untouched."""
+    Other variants' output directories (including the baseline plain "output") are left untouched."""
     test_dir = f"test/{test_name}"
     output_dir = variant_output_dir(test_name, extra_config_flags)
     if path.isdir(output_dir):
         rmtree(output_dir)
-    # For non-baseline variants, also remove a leftover plain "output" from a crashed run
-    # of the SAME variant (the one we're about to launch will write there before being renamed).
-    if variant_suffix(extra_config_flags):
-        plain = path.join(test_dir, "output")
-        if path.isdir(plain):
-            rmtree(plain)
     for f in glob(path.join(test_dir, f"test_{test_name}.out")):
         remove(f)
     for f in glob(path.join(test_dir, f"test_{test_name}.err")):
