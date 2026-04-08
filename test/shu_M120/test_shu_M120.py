@@ -25,11 +25,12 @@ def plot_quantiles_vs_radius(radius, quantity, radius_bins=np.logspace(-4, -1, 2
     centers = np.sqrt(radius_bins[1:] * radius_bins[:-1])
     plt.loglog(centers, quantiles[1], label=label, **plotargs)
     fill_kwargs = {k: v for k, v in plotargs.items()
-                   if k not in ("marker", "markersize", "markerfacecolor", "linestyle")}
+                   if k not in ("marker", "markersize", "markerfacecolor", "linestyle", "alpha")}
     plt.fill_between(centers, quantiles[0], quantiles[2], **fill_kwargs, alpha=0.2)
 
 
 _VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
+_VARIANT_COLORS = ["C0", "C2", "C1", "C3", "C4", "C5", "C6", "C7"]
 
 
 def _short(label, maxlen=30):
@@ -70,13 +71,14 @@ def _render_combined_shu_plots(test_dir):
         ("urad_FIR", r"$u_{\rm rad} (\rm eV\,cm^{-3})$", "r_vs_urad.png"),
     ]
     for field, ylabel, fname in plot_specs:
-        plot_quantiles_vs_radius(ref["r"], ref[field], label="Benchmark", plotargs={"color": "red"})
+        plot_quantiles_vs_radius(ref["r"], ref[field], label="Benchmark", plotargs={"color": "black"})
         for i, (vlabel, d) in enumerate(_variant_data.items()):
             plot_quantiles_vs_radius(
                 d["r"], d[field], label=_short(vlabel),
                 plotargs={"marker": _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
                           "markersize": max(10 - 2 * i, 4), "markerfacecolor": "none",
-                          "linestyle": "none", "alpha": 0.8},
+                          "linestyle": "none", "alpha": 0.85,
+                          "color": _VARIANT_COLORS[i % len(_VARIANT_COLORS)]},
             )
         plt.xlabel(r"$r\,\left(\rm pc\right)$")
         plt.ylabel(ylabel)

@@ -38,6 +38,7 @@ def generate_ics():
 
 
 _VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
+_VARIANT_COLORS = ["C0", "C2", "C1", "C3", "C4", "C5", "C6", "C7"]
 
 
 def _short(label, maxlen=30):
@@ -99,6 +100,7 @@ def make_comparison_plots(all_profiles, test_dir):
             plot_quantiles_vs_r(
                 profiles["_r"], profiles[f"_{field}"], label=_short(label),
                 marker=_VARIANT_MARKERS[i % len(_VARIANT_MARKERS)], markersize=max(ms, 4),
+                color=_VARIANT_COLORS[i % len(_VARIANT_COLORS)],
             )
         plt.xlabel(r"$r\;(\rm pc)$")
         plt.ylabel(ylabel)
