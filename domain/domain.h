@@ -28,6 +28,9 @@ void domain_free(void);
 void domain_shiftSplit(void);
 void domain_sumCost(void);
 void domain_update_adaptive_weights(void);
+#if (DOMAIN_TIMEBINS == 1)
+void domain_init_timebin_costs(void);
+#endif
 int domain_topsplit(int node, peanokey startkey);
 int domain_topsplit_local(int node, peanokey startkey, int mode);
 int domain_topsplit_special(void);

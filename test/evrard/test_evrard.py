@@ -20,7 +20,7 @@ def plot_evrard_density_slice(coords, rho, output_dir="."):
     """Plot a density slice through the Evrard collapse center."""
     M = Meshoid(coords)
     center = np.average(coords, axis=0)
-    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=1., order=1)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=center, size=1., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-0.5, 0.5, -0.5, 0.5])
     flush_colorbar(im, ax=ax, label="log10(Density)")

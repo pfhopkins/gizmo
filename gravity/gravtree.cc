@@ -144,6 +144,19 @@ void gravity_tree(void)
     }
     if(TakeLevel >= 0) {for(i = 0; i < NumPart; i++) {P[i].GravCost[TakeLevel] = 0;}} /* re-zero the cost [will be re-summed] */
 
+    /* cache which particles need a new tree force BEFORE the tree walk runs: the tree walk can modify
+       quantities like Min_Sink_FeedbackTime that needs_new_treeforce() depends on, so re-calling it
+       in the post-processing loop could give a different answer, causing a particle that was computed
+       by the tree walk (raw GravAccel, raw GravJerk) to incorrectly take the jerk-skip path (which
+       expects G-multiplied GravAccel/GravJerk from a previous step). */
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+    std::vector<int> treeforce_skip_flag(ActiveParticleList.size(), 0);
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {
+        int i = ActiveParticleList[ii];
+        if(!needs_new_treeforce(i)) {treeforce_skip_flag[ii] = 1;}
+    }
+#endif
+
     /* begin main communication and tree-walk loop. note the ewald-iter terms here allow for multiple iterations for periodic-tree corrections if needed */
     for(Ewald_iter = 0; Ewald_iter <= ewald_max; Ewald_iter++)
     {
@@ -486,8 +499,8 @@ void gravity_tree(void)
         if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
 #endif      
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
-        double dt = get_particle_timestep_in_physical(i);
-        if(!needs_new_treeforce(i)) { // if we don't yet need a new tree pass, just update GravAccel according to the jerk term, increment the counter, and go to the next particle           
+        double dt = GET_PARTICLE_TIMESTEP_IN_PHYSICAL(i);
+        if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
             continue;

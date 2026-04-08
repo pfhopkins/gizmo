@@ -37,7 +37,7 @@ def test_ring_collision(num_mpi_ranks, num_omp_threads):
         center = np.array([pos[:, 0].mean(), pos[:, 1].mean(), pos[:, 2].mean() if pos.shape[1] > 2 else 0.])
         size = max(pos[:, 0].max() - pos[:, 0].min(), pos[:, 1].max() - pos[:, 1].min()) * 1.1
         M = Meshoid(pos)
-        rho_slice = M.Slice(rho, res=1024, plane="z", center=center, size=size, order=1)
+        rho_slice = M.Slice(rho, res=1024, plane="z", center=center, size=size, order=0)
         fig, ax = plt.subplots(figsize=(6, 6))
         extent = [center[0] - size/2, center[0] + size/2, center[1] - size/2, center[1] + size/2]
         im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=extent)
