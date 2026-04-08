@@ -16,6 +16,13 @@ import glob
 from gizmo.test import build_and_run_test, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads, variant_output_dir
 
 
+_variant_profiles = {}
+
+
+def _variant_label(extra_config_flags):
+    return "+".join(extra_config_flags) if extra_config_flags else "baseline"
+
+
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 @pytest.mark.parametrize(
@@ -69,14 +76,20 @@ def test_zeldovich(num_mpi_ranks, num_omp_threads, extra_config_flags):
     logrho_exact_interp = interp1d(x_exact, logrho_exact, bounds_error=False, fill_value="extrapolate")(x_centers)
     vel_exact_interp = interp1d(x_exact, vel_exact, bounds_error=False, fill_value="extrapolate")(x_centers)
 
-    # Plot
-    for label, binned, exact_vals in [
-        ("LogDensity", logrho_binned, logrho_exact_interp),
-        ("Velocity", vel_binned, vel_exact_interp),
+    # Accumulate this variant and re-render combined plots
+    _variant_profiles[_variant_label(extra_config_flags)] = {
+        "x": x_centers,
+        "LogDensity": logrho_binned,
+        "Velocity": vel_binned,
+    }
+    for label, exact_vals in [
+        ("LogDensity", logrho_exact_interp),
+        ("Velocity", vel_exact_interp),
     ]:
         plt.figure()
-        plt.plot(x_centers, binned, "o", markersize=3, label="GIZMO")
         plt.plot(x_centers, exact_vals, "-", color="red", label="Exact")
+        for vlabel, prof in _variant_profiles.items():
+            plt.plot(prof["x"], prof[label], "o", markersize=3, label=vlabel)
         plt.xlabel("x (Mpc)")
         plt.ylabel(label)
         plt.legend()

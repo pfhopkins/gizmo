@@ -16,6 +16,13 @@ from meshoid import Meshoid
 from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot
 
 
+_variant_profiles = {}
+
+
+def _variant_label(extra_config_flags):
+    return "+".join(extra_config_flags) if extra_config_flags else "baseline"
+
+
 def plot_evrard_density_slice(coords, rho, output_dir="."):
     """Plot a density slice through the Evrard collapse center."""
     M = Meshoid(coords)
@@ -79,18 +86,21 @@ def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     plot_evrard_density_slice(coords, rho_sim, output_dir=f"test/{test_name}")
 
-    # Plot comparison
-    for label, binned, exact_vals, log in [
-        ("Density", rho_binned, rho_exact_interp, True),
-        ("RadialVelocity", vr_binned, vr_exact_interp, False),
+    # Accumulate this variant's binned profiles, then re-render combined plots
+    _variant_profiles[_variant_label(extra_config_flags)] = {
+        "r": r_centers,
+        "Density": rho_binned,
+        "RadialVelocity": vr_binned,
+    }
+    for label, exact_vals, log in [
+        ("Density", rho_exact_interp, True),
+        ("RadialVelocity", vr_exact_interp, False),
     ]:
         plt.figure()
-        if log:
-            plt.loglog(r_centers, binned, "o", markersize=3, label="GIZMO")
-            plt.loglog(r_centers, exact_vals, "-", color="red", label="Exact")
-        else:
-            plt.semilogx(r_centers, binned, "o", markersize=3, label="GIZMO")
-            plt.semilogx(r_centers, exact_vals, "-", color="red", label="Exact")
+        plotter = plt.loglog if log else plt.semilogx
+        plotter(r_centers, exact_vals, "-", color="red", label="Exact")
+        for vlabel, prof in _variant_profiles.items():
+            plotter(prof["r"], prof[label], "o", markersize=3, label=vlabel)
         plt.xlabel("r")
         plt.ylabel(label)
         plt.legend()
