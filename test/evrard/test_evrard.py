@@ -18,6 +18,7 @@ from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, as
 
 _variant_profiles = {}
 _VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
+_VARIANT_COLORS = ["C0", "C2", "C1", "C3", "C4", "C5", "C6", "C7"]
 
 
 def _variant_label(extra_config_flags):
@@ -103,10 +104,11 @@ def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags):
     ]:
         plt.figure()
         plotter = plt.loglog if log else plt.semilogx
-        plotter(r_centers, exact_vals, "-", color="red", label="Exact")
+        plotter(r_centers, exact_vals, "-", color="black", label="Exact")
         for i, (vlabel, prof) in enumerate(_variant_profiles.items()):
             plotter(prof["r"], prof[label], _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
-                    markersize=max(10 - 2 * i, 4), markerfacecolor="none", alpha=0.7, label=_short(vlabel))
+                    markersize=max(10 - 2 * i, 4), markerfacecolor="none", alpha=0.85,
+                    color=_VARIANT_COLORS[i % len(_VARIANT_COLORS)], label=_short(vlabel))
         plt.xlabel("r")
         plt.ylabel(label)
         plt.legend(fontsize="x-small", loc="best")
