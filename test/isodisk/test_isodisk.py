@@ -12,8 +12,7 @@ import h5py
 import glob
 from os import path, chdir
 from meshoid import Meshoid
-from shutil import move, rmtree
-from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads, variant_output_dir, variant_suffix
+from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads, variant_output_dir, stash_baseline_output, finalize_variant_output
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -27,22 +26,15 @@ def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "isodisk"
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
-    chdir(f"test/{test_name}/")
-
-    download_test_files(test_name)
-    get_cooling_tables()
-
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
-
-    # Rename output dir for non-default flag combinations so multiple variants can coexist
-    if variant_suffix(extra_config_flags):
-        src = f"test/{test_name}/output"
-        dst = variant_output_dir(test_name, extra_config_flags)
-        if path.isdir(dst):
-            rmtree(dst)
-        if path.isdir(src):
-            move(src, dst)
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        chdir(f"test/{test_name}/")
+        download_test_files(test_name)
+        get_cooling_tables()
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+        chdir("../../")
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
     outputdir = variant_output_dir(test_name, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
