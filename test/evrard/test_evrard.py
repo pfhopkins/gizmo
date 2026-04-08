@@ -17,10 +17,15 @@ from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, as
 
 
 _variant_profiles = {}
+_VARIANT_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*"]
 
 
 def _variant_label(extra_config_flags):
     return "+".join(extra_config_flags) if extra_config_flags else "baseline"
+
+
+def _short(label, maxlen=30):
+    return label if len(label) <= maxlen else label[: maxlen - 3] + "..."
 
 
 def plot_evrard_density_slice(coords, rho, output_dir="."):
@@ -99,12 +104,13 @@ def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags):
         plt.figure()
         plotter = plt.loglog if log else plt.semilogx
         plotter(r_centers, exact_vals, "-", color="red", label="Exact")
-        for vlabel, prof in _variant_profiles.items():
-            plotter(prof["r"], prof[label], "o", markersize=3, label=vlabel)
+        for i, (vlabel, prof) in enumerate(_variant_profiles.items()):
+            plotter(prof["r"], prof[label], _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
+                    markersize=max(10 - 2 * i, 4), markerfacecolor="none", alpha=0.7, label=_short(vlabel))
         plt.xlabel("r")
         plt.ylabel(label)
-        plt.legend()
-        plt.savefig(f"test/{test_name}/{label}.png")
+        plt.legend(fontsize="x-small", loc="best")
+        plt.savefig(f"test/{test_name}/{label}.png", bbox_inches="tight")
         plt.close()
 
     # Check density profile
