@@ -537,11 +537,15 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
     
 #ifdef COSMIC_RAY_FLUID
-    CosmicRay_Update_DriftKick(i,dt_entr,0, P, CellP);
+#ifndef TRANSPORT_SUBCYCLE
+    CosmicRay_Update_DriftKick(i,dt_entr,0);
 #endif
-    
+#endif
+
 #ifdef RADTRANSFER
-    rt_update_driftkick(i,dt_entr,0, P, CellP);
+#ifndef TRANSPORT_SUBCYCLE  /* when subcycling, RT kicks are handled in the subcycle loop */
+    rt_update_driftkick(i,dt_entr,0);
+#endif
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
     if(P[i].Pos[2] > DMIN(19., DMAX(1.1*All.Time*C_LIGHT_CODE_REDUCED, DMIN(18.*boxSize_X + (All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio - All.Vertical_Gravity_Strength)*All.Time*All.Time/2., 19.)))) {for(j=0;j<N_RT_FREQ_BINS;j++) {CellP[i].Rad_E_gamma[j]*=0.5; CellP[i].Rad_E_gamma_Pred[j]*=0.5;
 #ifdef RT_EVOLVE_FLUX
@@ -549,7 +553,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
     }}
 #endif
-#endif
+#endif // RADTRANSFER
 
 #ifdef EOS_ELASTIC
     elastic_body_update_driftkick(i,dt_entr,0);

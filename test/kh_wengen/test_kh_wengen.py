@@ -44,7 +44,7 @@ def test_kh_wengen(num_mpi_ranks, num_omp_threads):
     box_z = boxsize * 2
     M = Meshoid(pos_f, boxsize=boxsize)
     center = np.array([box_x / 2, box_y / 2, box_z / 2])
-    rho_slice = M.Slice(rho_f, res=1024, plane="z", center=center, size=box_x, order=1)
+    rho_slice = M.Slice(rho_f, res=1024, plane="z", center=center, size=box_x, order=0)
     fig, ax = plt.subplots(figsize=(8, 8))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="viridis", extent=[0, box_x, 0, box_y])
     flush_colorbar(im, ax=ax, label="Density")

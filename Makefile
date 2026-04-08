@@ -320,7 +320,8 @@ endif
 CORE_OBJS =	core/main.o core/accel.o core/timestep.o core/init.o file_io/restart.o file_io/io.o \
 			core/predict.o declarations/global.o core/begrun.o core/run.o declarations/allvars.o \
 			file_io/read_ic.o domain/domain.o core/driftfac.o core/kicks.o mesh/ngb.o \
-			compile_time_info.o mesh/merge_split.o
+			compile_time_info.o mesh/merge_split.o \
+			core/transport_subcycle.o
 
 SYSTEM_OBJS =   system/system.o \
 				system/allocate.o \

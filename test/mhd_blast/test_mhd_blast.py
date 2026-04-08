@@ -17,7 +17,7 @@ from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs
 def plot_mhd_blast_density_slice(coords, rho, output_dir="."):
     """Plot a density slice of the MHD blast wave."""
     M = Meshoid(coords, boxsize=1.)
-    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=1)
+    rho_slice = M.Slice(np.log10(rho), res=1024, plane="z", center=np.array([0.5, 0.5, 0.5]), size=1., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[0, 1, 0, 1])
     flush_colorbar(im, ax=ax, label="log10(Density)")
