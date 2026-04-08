@@ -313,7 +313,8 @@ c
      $     AV_ext, pdv_term, h2_form_ex, h2_form_kin, dm_density,
      $     rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
      $     rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-     $     chi_NUV, chi_OPT
+     $     chi_NUV, chi_OPT,
+     $     cr_energy_density
       integer iphoto, iflag_mn, iflag_ad, iflag_atom, 
      $        iflag_3bh2a, iflag_3bh2b, iflag_h3pra,
      $        iflag_h2opc, id_current, idma_mass_option,
@@ -351,7 +352,8 @@ c     Do not indent the next line!
      $               dm_density,
      $               rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
      $               rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-     $               chi_NUV, chi_OPT
+     $               chi_NUV, chi_OPT,
+     $               cr_energy_density
 
       common /cooli/ iphoto, iflag_mn, iflag_ad, iflag_atom
      $,              iflag_3bh2a, iflag_3bh2b, iflag_h3pra

@@ -37,7 +37,8 @@ extern "C" {
                dm_density,
                rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
                rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-               chi_NUV, chi_OPT;
+               chi_NUV, chi_OPT,
+               cr_energy_density;
     } COOLR;
 
     extern struct {
@@ -110,6 +111,7 @@ void chemcool_init(void)
     COOLR.G0          = All.G0;
     COOLR.G0_LW       = All.G0;
     COOLR.cosmic_ray_ion_rate = All.CosmicRayIonRate;
+    COOLR.cr_energy_density = 0.0;  /* [erg/cm^3], overwritten per-cell if COSMIC_RAY_FLUID active */
     COOLR.dust_to_gas_ratio = All.DGRnormalized;
 
     COOLINMO();
@@ -281,6 +283,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target); /* [erg cm^-3] */
         double ecr_eVcm3 = ecr_cgs / 1.602e-12; /* convert to [eV cm^-3] */
         COOLR.cosmic_ray_ion_rate = 3e-17 * ecr_eVcm3;
+        COOLR.cr_energy_density = ecr_cgs; /* [erg cm^-3], for hadronic+Coulomb heating in cool_func */
     }
 #elif defined(CR_SCALE_WITH_G0)
     COOLR.cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (COOLR.G0 / 1.7) * All.CosmicRayIonRate));

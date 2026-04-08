@@ -837,6 +837,19 @@ c
         rates(11) = -1d-11 * (ynh2 + ynh + yne) * cosmic_ray_ion_rate *
      $              (1d0 + 4.1d0 * dsqrt(abe / (abe + 7d-2) ) )
 #endif
+c       Hadronic + Coulomb heating from CR proton losses (Guo & Oh 2008,
+c       Mannheim & Schlickeiser 1994).  Matches CR_gas_heating() in
+c       cosmic_ray_utilities.cc for N_CR_PARTICLE_BINS <= 2.
+c       a_hadronic and b_coulomb are rate coefficients [cm^3/s].
+c       cr_energy_density [erg/cm^3] is set from COSMIC_RAY_FLUID on C side.
+c       Result is erg/cm^3/s (negative = heating).
+        if (cr_energy_density .gt. 0d0) then
+          rates(11) = rates(11)
+     $      - (0.87d0 * 6.37d-16 / 6d0
+     $       + 0.53d0 * 3.09d-16 * (abe + 0.57d0 * abHI)
+     $                / (1d0 + 4d0 * abhe))
+     $      * cr_energy_density * yn
+        endif
       else
         rates(11) = 0d0
       endif
