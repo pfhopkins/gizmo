@@ -14,9 +14,21 @@ Units: CGS (UnitLength=1 cm, UnitMass=1 g, UnitVelocity=1 cm/s)
 import numpy as np
 import h5py
 import os
+import urllib.request
+
+
+def ensure_helm_table():
+    """Download helm_table.dat to the EOS directory if not already present."""
+    table_path = os.path.join(os.path.dirname(__file__), "..", "..", "eos", "helmholtz", "helm_table.dat")
+    if not os.path.exists(table_path):
+        url = "http://www.tapir.caltech.edu/~phopkins/public/helm_table.dat"
+        print(f"Downloading {url}...")
+        urllib.request.urlretrieve(url, table_path)
+        print(f"Saved to {table_path}")
 
 
 def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
+    ensure_helm_table()
     # domain: 1D tube, length L = 1e6 cm (10 km)
     L = 1.0e6
     N = 1000  # number of gas particles

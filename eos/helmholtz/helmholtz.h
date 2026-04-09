@@ -10,6 +10,8 @@
 #ifndef EOS_HELMHOLTZ_H
 #define EOS_HELMHOLTZ_H
 
+#include "../../GIZMO_config.h"
+
 #ifdef EOS_HELMHOLTZ
 
 #include <cmath>
