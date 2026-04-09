@@ -212,6 +212,10 @@ void begrun(void)
     }
 #endif
 
+#ifdef NUCLEAR_NETWORK
+    InitNuclearNetwork();
+#endif
+
 #ifdef TURB_DRIVING
     init_turb();
 #endif
@@ -439,6 +443,9 @@ void begrun(void)
 
 #ifdef COOL_GRACKLE
       strcpy(All.GrackleDataFile, all.GrackleDataFile);
+#endif
+#ifdef NUCLEAR_NETWORK
+      strcpy(All.NuclearNetworkDataFile, all.NuclearNetworkDataFile);
 #endif
 
 #if defined(EOS_TABULATED) && !defined(EOS_ANEOS)
@@ -1515,6 +1522,24 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "GrackleDataFile");
         addr[nt] = All.GrackleDataFile;
         id[nt++] = STRING;
+#endif
+
+#ifdef NUCLEAR_NETWORK
+        strcpy(tag[nt], "NuclearNetworkDataFile");
+        addr[nt] = All.NuclearNetworkDataFile;
+        id[nt++] = STRING;
+
+        strcpy(tag[nt], "NuclearBurningFloor_T");
+        addr[nt] = &All.NuclearBurningFloor_T;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "NuclearBurningFloor_rho");
+        addr[nt] = &All.NuclearBurningFloor_rho;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "NuclearNSE_T_threshold");
+        addr[nt] = &All.NuclearNSE_T_threshold;
+        id[nt++] = REAL;
 #endif
 
       strcpy(tag[nt], "TimeLimitCPU");

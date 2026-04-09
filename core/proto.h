@@ -753,6 +753,10 @@ void chimes_compute_depletions(double nH, double T, int thread_id);
 #else
 #endif
 void cooling_parent_routine(void);
+#ifdef NUCLEAR_NETWORK
+void nuclear_parent_routine(void);
+void InitNuclearNetwork(void);
+#endif
 void count_hot_phase(void);
 void delete_node(int i);
 void density(void);

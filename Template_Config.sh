@@ -73,7 +73,15 @@
 #EOS_TILLOTSON                  # Use Tillotson (1962) EOS (for solid/liquid+vapor bodies, impacts); custom EOS params can be specified or pre-computed materials used. see User Guide and Deng et al., arXiv:1711.04589
 #EOS_ANEOS                      # Use ANEOS/SESAME tabulated EOS (for planetary impacts/collisions); specify table file paths in parameterfile (AneosTable0, AneosTable1, etc.)
 #EOS_ELASTIC                    # treat fluid as elastic or plastic (or visco-elastic) material, obeying Hooke's law with full stress terms and von Mises yield model. custom EOS params can be specified or pre-computed materials used.
-## -----------------------------------------------------------------------------------------------------
+## ----------------------------------------------------------------------------------------------------
+# --------------------------------------- Nuclear Reaction Networks
+#NUCLEAR_NETWORK                 # top-level switch: enables nuclear burning and species tracking. requires EOS_HELMHOLTZ.
+#NUCLEAR_NETWORK_SOLVER=0        # solver: 0=built-in aprox13 alpha-chain (default, no external deps), 1=SkyNet (Lippuner & Roberts 2017), 2=XNet (starkiller-astro, GPU-capable)
+#NUCLEAR_NETWORK_NSPECIES=13     # number of species (default 13 for aprox13: He4,C12,O16,Ne20,Mg24,Si28,S32,Ar36,Ca40,Ti44,Cr48,Fe52,Ni56)
+#NUCLEAR_NETWORK_SCREENING       # include Coulomb screening corrections to thermonuclear reaction rates
+#NUCLEAR_NETWORK_NSE_TABLE       # use tabulated NSE (nuclear statistical equilibrium) above threshold T, instead of integrating
+#NUCLEAR_NETWORK_NEUTRINOS       # enable neutrino emission/absorption coupling via RT bands (requires RADTRANSFER)
+## ----------------------------------------------------------------------------------------------------
 # --------------------------------- Magneto-Hydrodynamics
 # ---------------------------------  these modules are public, but if used, the user should also cite the MHD-specific GIZMO methods paper
 # ---------------------------------  (Hopkins 2015: 'Accurate, Meshless Methods for Magneto-Hydrodynamics') as well as the standard GIZMO paper

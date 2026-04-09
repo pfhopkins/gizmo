@@ -597,6 +597,12 @@ extern struct global_data_all_processes
 #ifdef COOL_GRACKLE
     char GrackleDataFile[100];
 #endif
+#ifdef NUCLEAR_NETWORK
+    char NuclearNetworkDataFile[256]; /* path to reaction rate table (REACLIB) or external library data */
+    double NuclearBurningFloor_T;    /* minimum temperature [K] for burning (default 1e8) */
+    double NuclearBurningFloor_rho;  /* minimum density [code units] for burning */
+    double NuclearNSE_T_threshold;   /* temperature [K] above which to use NSE table (default 6e9) */
+#endif
     /*! table with desired output times */
     double OutputListTimes[MAXLEN_OUTPUTLIST];
     char OutputListFlag[MAXLEN_OUTPUTLIST];
@@ -1328,6 +1334,9 @@ enum iofields
   IO_EOSTEMP,
   IO_EOSABAR,
   IO_EOSYE,
+#ifdef NUCLEAR_NETWORK
+  IO_NUCLEAR_COMPOSITION,
+#endif
   IO_PRESSURE,
   IO_EOSCS,
   IO_EOS_STRESS_TENSOR,

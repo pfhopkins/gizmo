@@ -444,6 +444,24 @@ OBJS    += eos/aneos.o
 INCL    += eos/aneos.h
 endif
 
+# nuclear reaction network
+ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
+OBJS    += nuclear/nuclear.o nuclear/nuclear_physics.o nuclear/nuclear_neutrino.o
+INCL    += nuclear/nuclear.h
+endif
+ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
+OBJS    += nuclear/nuclear_skynet.o
+SKYNETLIBS = -lskynet
+else
+SKYNETLIBS =
+endif
+ifeq (NUCLEAR_NETWORK_SOLVER=2,$(findstring NUCLEAR_NETWORK_SOLVER=2,$(CONFIGVARS)))
+OBJS    += nuclear/nuclear_torch.o
+TORCHLIBS = -ltorch_nuclear
+else
+TORCHLIBS =
+endif
+
 # chimes files are treated as special for now because they require special external libraries (e.g. sundials) that are otherwise not
 #   used anywhere else in the code, and have not had their macro logic cleaned up to allow appropriate compilation without chimes flags enabled
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
@@ -490,7 +508,7 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 
 $(EXEC): $(OBJS)

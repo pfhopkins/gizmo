@@ -395,6 +395,11 @@ void calculate_non_standard_physics(void)
 #endif
 #endif
 
+#ifdef NUCLEAR_NETWORK
+    nuclear_parent_routine(); // nuclear burning (operator-split, before cooling; fixup is done inside on compact arrays) //
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
+
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling

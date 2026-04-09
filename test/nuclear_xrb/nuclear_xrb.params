@@ -1,0 +1,49 @@
+% X-ray burst column test
+% He4 column on a neutron star surface, heated from below to trigger
+% thermonuclear runaway via the triple-alpha reaction.
+%
+%  Config: HYDRO_MESHLESS_FINITE_MASS, BOX_SPATIAL_DIMENSION=1,
+%          EOS_HELMHOLTZ, NUCLEAR_NETWORK, NUCLEAR_NETWORK_NSE_TABLE,
+%          METALS, GRAVITY_ANALYTIC, SELFGRAVITY_OFF
+
+InitCondFile                       nuclear_xrb_ics
+OutputDir                          output
+TimeMax                            1.0e-2
+BoxSize                            1.0e4
+
+% CGS units
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+% output
+TimeBetSnapshot                    1.0e-3
+MaxSizeTimestep                    1.0e-5
+MinSizeTimestep                    1.0e-15
+
+% hydro
+DesNumNgb                          4
+MaxNumNgbDeviation                 0.25
+CourantFac                         0.1
+ErrTolIntAccuracy                  0.005
+
+% EOS
+EosTable                           ../../eos/helmholtz/helm_table.dat
+
+% nuclear network
+NuclearBurningFloor_T              5.0e8
+NuclearNSE_T_threshold             6.0e9
+
+% gravity: analytic point mass potential (neutron star)
+% GRAVITY_ANALYTIC parameters set in the gravity_analytic module
+% M_NS = 1.4 Msun = 2.785e33 g at distance R_NS = 1e6 cm below the column
+
+% memory
+MaxMemSize                         2000
+
+% misc
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  1.0

@@ -20,6 +20,7 @@ test/*/test_*.err
 test/*/__pycache__/
 test/*/*.png
 test/*/test_helmholtz
+test/*/test_nuclear
 
 # EOS table data files (large, downloaded separately)
 eos/helmholtz/helm_table.dat

@@ -908,6 +908,15 @@ integertime get_timestep(int p,		/*!< particle index */
             }
 #endif
 
+#ifdef NUCLEAR_NETWORK
+            /* advisory nuclear burning timestep limiter — the ODE solver subcycles internally,
+               but limiting the hydro dt improves accuracy of the operator-split coupling */
+            if(CellP[p].NuclearBurningTimescale > 0 && CellP[p].NuclearBurningTimescale < 1.0e30) {
+                double dt_nuclear = 0.5 * CellP[p].NuclearBurningTimescale;
+                if(dt_nuclear < dt) dt = dt_nuclear;
+            }
+#endif
+
         } // closes if(P[p].Type == 0) [gas particle check] //
 
 

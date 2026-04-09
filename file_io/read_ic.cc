@@ -443,6 +443,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            for(n = 0; n < pc; n++) {for(k = 0; k < NUM_NUCLEAR_SPECIES; k++) {P[offset + n].Metallicity[NUCLEAR_SPECIES_OFFSET_IN_METALLICITY + k] = *fp++;}}
+            break;
+#endif
+
         case IO_PARTVEL:
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
             for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {CellP[offset + n].ParticleVel[k] = *fp++;}}
@@ -930,6 +936,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #endif
 #ifdef EOS_CARRIES_YE
                    && blocknr != IO_EOSYE
+#endif
+#ifdef NUCLEAR_NETWORK
+                   && blocknr != IO_NUCLEAR_COMPOSITION
 #endif
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
                    && blocknr != IO_EOSCOMP

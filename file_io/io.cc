@@ -1413,6 +1413,17 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < NUM_NUCLEAR_SPECIES; k++) {*fp++ = (MyOutputFloat) P[pindex].Metallicity[NUCLEAR_SPECIES_OFFSET_IN_METALLICITY + k];}
+                    n++;
+                }
+            break;
+#endif
+
         case IO_EOSTEMP:
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -1949,6 +1960,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSTEMP:
         case IO_EOSABAR:
         case IO_EOSYE:
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+#endif
         case IO_EOSCS:
         case IO_PRESSURE:
         case IO_SOFT:
@@ -2326,6 +2340,12 @@ int get_values_per_blockelement(enum iofields blocknr)
             values = 1;
             break;
 
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            values = NUM_NUCLEAR_SPECIES;
+            break;
+#endif
+
         case IO_COSMICRAY_ENERGY:
         case IO_COSMICRAY_SLOPES:
         case IO_COSMICRAY_KAPPA:
@@ -2565,6 +2585,9 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_EOSTEMP:
         case IO_EOSABAR:
         case IO_EOSYE:
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+#endif
         case IO_EOSCS:
         case IO_EOS_STRESS_TENSOR:
         case IO_EOSCOMP:
@@ -3240,6 +3263,11 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            return 1;
+#endif
+
         case IO_CBE_MOMENTS:
 #ifdef CBE_INTEGRATOR
             return 1;
@@ -3656,6 +3684,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_EOSYE:
             strncpy(label, "YE  ", 4);
             break;
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            strncpy(label, "NUCX", 4);
+            break;
+#endif
         case IO_PRESSURE:
             strncpy(label, "P   ", 4);
             break;
@@ -4093,6 +4126,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_EOSYE:
             strcpy(buf, "Ye");
             break;
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            strcpy(buf, "NuclearComposition");
+            break;
+#endif
         case IO_PRESSURE:
             strcpy(buf, "Pressure");
             break;

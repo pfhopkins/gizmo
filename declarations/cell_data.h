@@ -427,6 +427,15 @@ extern struct gas_cell_data
 #endif
 #endif
     
+#ifdef NUCLEAR_NETWORK
+    MyFloat NuclearEnergyGenerationRate;  /* specific nuclear energy generation rate [code units] */
+    MyFloat NuclearBurningTimescale;      /* shortest burning timescale [code units], for timestep control */
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    MyFloat NeutrinoLuminosity[3];        /* neutrino luminosity per flavor (e, ebar, x) [code units] */
+    MyFloat NeutrinoMeanEnergy[3];        /* mean neutrino energy per flavor [MeV] */
+#endif
+#endif
+
 #if defined(COOLING) && defined(COOL_GRACKLE)
 #if (COOL_GRACKLE_CHEMISTRY >= 1)
     gr_float grHI;

@@ -118,6 +118,16 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     }
 #endif
     
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    /* neutrino emission from nuclear burning (gas cells only) */
+    if(pp[i].Type == 0) {
+        lum[RT_FREQ_BIN_NU_E]    += cell[i].NeutrinoLuminosity[0];
+        lum[RT_FREQ_BIN_NU_EBAR] += cell[i].NeutrinoLuminosity[1];
+        lum[RT_FREQ_BIN_NU_X]    += cell[i].NeutrinoLuminosity[2];
+        SET_ACTIVE_RT_CHECK();
+    }
+#endif
+
     /* need to renormalize ALL sources for reduced speed of light */
     {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k] *= (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE);}}
     return active_check;
@@ -237,8 +247,14 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     }
 #endif
 #endif    
-    
-    
+
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    if(k_freq==RT_FREQ_BIN_NU_E || k_freq==RT_FREQ_BIN_NU_EBAR || k_freq==RT_FREQ_BIN_NU_X) {
+        extern double nuclear_neutrino_opacity(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+        return nuclear_neutrino_opacity(i, k_freq, pp, cell);
+    }
+#endif
+
     return 0;
 }
 
@@ -280,6 +296,13 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
     }
 #endif
     
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    if(k_freq==RT_FREQ_BIN_NU_E || k_freq==RT_FREQ_BIN_NU_EBAR || k_freq==RT_FREQ_BIN_NU_X) {
+        extern double nuclear_neutrino_absorb_frac(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+        return nuclear_neutrino_absorb_frac(i, k_freq, pp, cell);
+    }
+#endif
+
     return 0.5; /* default to assuming kappa_scattering = kappa_absorption (pretty reasonable for dust at most wavelengths) */
 }
 
@@ -545,6 +568,15 @@ void rt_define_effective_frequencies_in_bands(void)
 #endif
 #ifdef RT_FREEFREE
     k=RT_FREQ_BIN_FREEFREE; rhd_bins_nu_min_ev[k]=0; rhd_bins_nu_max_ev[k]=MAX_REAL_NUMBER;
+#endif
+#ifdef RT_NEUTRINO_ELECTRON
+    k=RT_FREQ_BIN_NU_E;    rhd_bins_nu_min_ev[k]=1.0e6; rhd_bins_nu_max_ev[k]=100.0e6; /* electron neutrino: ~1-100 MeV */
+#endif
+#ifdef RT_NEUTRINO_ANTIELECTRON
+    k=RT_FREQ_BIN_NU_EBAR; rhd_bins_nu_min_ev[k]=1.0e6; rhd_bins_nu_max_ev[k]=100.0e6; /* electron antineutrino: ~1-100 MeV */
+#endif
+#ifdef RT_NEUTRINO_HEAVY
+    k=RT_FREQ_BIN_NU_X;    rhd_bins_nu_min_ev[k]=1.0e6; rhd_bins_nu_max_ev[k]=100.0e6; /* heavy-flavor neutrino: ~1-100 MeV */
 #endif
     for(k=0;k<N_RT_FREQ_BINS;k++) {All.RHD_bins_nu_min_ev[k]=rhd_bins_nu_min_ev[k]; All.RHD_bins_nu_max_ev[k]=rhd_bins_nu_max_ev[k];}
 }
@@ -942,7 +974,13 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 
 #ifdef RT_ISRF_BACKGROUND
     if(mode==0) {rt_apply_boundary_conditions(i, pp, cell);} /* if we have any special boundary conditions (e.g. fixed ISRF at box edge) apply this here */
-#endif    
+#endif
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    if(mode==0) { /* after RT kick, update Ye from neutrino absorption */
+        extern void nuclear_neutrino_ye_feedback(int i, double dt_code, struct particle_data *pp, struct gas_cell_data *cell);
+        nuclear_neutrino_ye_feedback(i, dt_entr, pp, cell);
+    }
+#endif
 #endif
 }
 
