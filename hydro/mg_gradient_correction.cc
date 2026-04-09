@@ -258,7 +258,16 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
                 out.rhs += flux;
 
-                /* store per-neighbor matrix entries */
+                /* store per-neighbor matrix entries.
+                   These updates touch MG_Rows[target] and MG_Rows[j], both of
+                   which can be concurrently accessed by other OpenMP threads
+                   working on different targets that share neighbors. The whole
+                   block (including the realloc inside mg_add_*_entry) must be
+                   serialized to avoid data races. */
+                #ifdef _OPENMP
+                #pragma omp critical(_mg_rows_update_)
+                #endif
+                {
                 if(mode == 0) {
                     /* both i (=target) and j are local: store entries for both rows */
                     mg_add_local_entry(target, j, Qnorm2);
@@ -292,6 +301,7 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                         flux_j += 0.5 * (Bface_j2 + Bface_i2) * (-Face_Area_Vec[k]);
                     }
                     MG_Rows[j].rhs += flux_j;
+                }
                 }
             }
         }
