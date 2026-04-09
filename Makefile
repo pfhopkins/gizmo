@@ -142,8 +142,8 @@ ifeq ($(SYSTYPE),"Frontera_GPU")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
-OPTIMIZE = -O2 -mp -Wall
-GPU_CFLAGS = -mp=gpu -gpu=cc75 -Minfo=accel
+OPTIMIZE = -O2 -Wall
+GPU_CFLAGS = -mp=gpu -gpu=cc75 -Minfo=accel  ## only applied to cooling.cc; -mp=gpu defines _OPENMP, so other files see no OpenMP
 GPU_LDFLAGS = -mp=gpu -gpu=cc75
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
