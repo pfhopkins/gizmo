@@ -113,6 +113,7 @@ void cooling_parent_routine(void)
        The cooling tables are copied to device as read-only.
        Note: 'All' is declare-target so its device copy is kept in sync via omp target update below. */
 #if defined(OPENMP_GPU_OFFLOAD) && defined(_OPENMP) && !defined(CHIMES)
+    printf("[GPU] OPENMP_GPU_OFFLOAD path reached: N_active=%d, task=%d\n", N_active, ThisTask); fflush(stdout);
     /* sync declare-target scalar globals to device (table arrays are persistently mapped from InitCool) */
     #pragma omp target update to(All, Tmin, Tmax, deltaT, J_UV, gJH0, gJHep, gJHe0, epsH0, epsHep, epsHe0)
     #pragma omp target data map(tofrom: compact_P[0:N_active], compact_Cell[0:N_active])
