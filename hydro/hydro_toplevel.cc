@@ -656,8 +656,8 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-    for (int i : ActiveParticleList)
-    {
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
+    { int i = ActiveParticleList[_apl];
         if(P[i].Type == 0 && P[i].Mass > 0)
         {
             double dt; dt = get_particle_timestep_in_physical(i);
@@ -957,7 +957,8 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-    for (int i : ActiveParticleList)
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
+    {   int i = ActiveParticleList[_apl];
         if(P[i].Type==0)
         {
             CellP[i].MaxSignalVel = MIN_REAL_NUMBER;
