@@ -666,9 +666,6 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
 
 /* this function determines the electron fraction, and hence the mean molecular weight. With it arrives at a self-consistent temperature.
  * Ionization abundances and the rates for the emission are also computed */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
 double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int iter = 0;
@@ -757,9 +754,6 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 
 #ifndef CHIMES
 /* this function computes the actual ionization states, relative abundances, and returns the ionization/recombination rates if needed */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
 double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
                                  double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess,
                                  double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
@@ -1039,9 +1033,6 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 
 
 /*  this function first computes the self-consistent temperature and abundance ratios, and then it calculates (heating rate-cooling rate)/n_h^2 in cgs units */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
 double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu; nH0_guess = DMAX(0,DMIN(1,1.-ne_guess/1.2));
@@ -1062,9 +1053,6 @@ extern FILE *fd;
 #ifndef CHIMES
 /*  Calculates (heating rate-cooling rate)/n_h^2 in cgs units
  */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
 double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double n_elec=n_elec_guess, nH0, nHe0, nHp, nHep, nHepp, mu; /* ionization states [computed below] */
@@ -1447,7 +1435,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 } // ends CoolingRate
 
 #ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
+#pragma omp end declare target  /* matches the begin declare target block at line ~168 */
 #endif
 /* ---- END first block of device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
 
