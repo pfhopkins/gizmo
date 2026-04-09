@@ -2606,6 +2606,12 @@ void read_parameter_file(char *fname)
 #ifdef EOS_ANEOS
                 if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
 #endif
+#ifdef NUCLEAR_NETWORK
+                if(strcmp("NuclearNetworkDataFile",tag[i])==0) {strcpy((char *)addr[i], ""); continue;} /* empty = built-in aprox13, no external data needed */
+                if(strcmp("NuclearBurningFloor_T",tag[i])==0) {*((double *)addr[i])=1.0e8; continue;} /* default: 10^8 K */
+                if(strcmp("NuclearBurningFloor_rho",tag[i])==0) {*((double *)addr[i])=0; continue;} /* default: no density floor */
+                if(strcmp("NuclearNSE_T_threshold",tag[i])==0) {*((double *)addr[i])=6.0e9; continue;} /* default: 6 GK */
+#endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
             }

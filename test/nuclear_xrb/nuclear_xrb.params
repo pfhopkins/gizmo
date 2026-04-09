@@ -26,6 +26,7 @@ DesNumNgb                          4
 MaxNumNgbDeviation                 0.25
 CourantFac                         0.1
 ErrTolIntAccuracy                  0.005
+MaxRMSDisplacementFac              0.1
 
 % EOS
 EosTable                           ../../eos/helmholtz/helm_table.dat
