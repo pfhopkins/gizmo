@@ -1028,6 +1028,7 @@ void hydro_force_initial_operations_preloop(void)
             P[i].wakeup = 0;
 #endif
         }
+    } // for (_apl over ActiveParticleList) //
 }
 
 
