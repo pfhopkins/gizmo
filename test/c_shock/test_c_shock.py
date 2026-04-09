@@ -171,6 +171,12 @@ def test_c_shock(num_mpi_ranks, num_omp_threads):
     final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 
+    # Plot 6-panel overview zoomed to the shock region
+    plot_c_shock_overview(
+        REFERENCE_SNAP, final_snap,
+        output_dir=f"test/{test_name}",
+    )
+    
     # Compare final snapshot against reference numerical solution
     fields = ("Density", "InternalEnergy", "Velocities", "MagneticField")
     assert_snapshots_are_close(
@@ -179,8 +185,3 @@ def test_c_shock(num_mpi_ranks, num_omp_threads):
         rtol=0.05, atol=1e-5,
     )
 
-    # Plot 6-panel overview zoomed to the shock region
-    plot_c_shock_overview(
-        REFERENCE_SNAP, final_snap,
-        output_dir=f"test/{test_name}",
-    )

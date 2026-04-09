@@ -35,7 +35,7 @@ Softening_Type2_MaxPhysLimit       5e-6
 Softening_Type3_MaxPhysLimit       5e-6
 Softening_Type4_MaxPhysLimit       5e-6
 Softening_Type5_MaxPhysLimit       5e-6
-MaxSizeTimestep                    5e-05
+MaxSizeTimestep                    1.0
 MaxHsml                            100
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2

@@ -118,8 +118,9 @@ CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(TACC_MKL_INC)
 MKL_LIBS = -L$(TACC_MKL_LIB) -mkl=sequential
@@ -145,8 +146,9 @@ ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
 endif
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(CPATH)
 MKL_LIBS = -L$(LIBRARY_PATH) -mkl=sequential
@@ -237,8 +239,9 @@ OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
 endif
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
 ifneq (MHD_MODIFIED_GRADIENT_CG_ONLY,$(findstring MHD_MODIFIED_GRADIENT_CG_ONLY,$(CONFIGVARS)))
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 endif
 ifeq (MHD_MODIFIED_GRADIENT_USE_PARDISO,$(findstring MHD_MODIFIED_GRADIENT_USE_PARDISO,$(CONFIGVARS)))
