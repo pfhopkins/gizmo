@@ -389,7 +389,8 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				turb/turb_driving.o \
 				turb/turb_powerspectra.o
 
-EOSCOOL_OBJS =  cooling/cooling.o \
+GPU_OBJS = cooling/cooling.o  ## compiled separately with GPU_CFLAGS; must NOT be in OBJS or the pattern rule overrides the specific rule below
+EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
 				eos/eos.o \
@@ -447,6 +448,7 @@ OPTIONS = $(OPTIMIZE) $(OPT)
 OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 		$(EOSCOOL_OBJS) $(STARFORM_OBJS) $(SINK_OBJS) $(RHD_OBJS) \
 		$(FOF_OBJS) $(MISC_OBJS)
+## GPU_OBJS are kept separate so the pattern rule does not override their specific compile rules
 
 ## fortran recompiler block
 FOPTIONS = $(OPTIMIZE) $(FOPT)
@@ -543,8 +545,8 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
 	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 
-$(EXEC): $(OBJS)
-	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(LIBS) -o $(EXEC)
+$(EXEC): $(OBJS) $(GPU_OBJS)
+	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(LIBS) -o $(EXEC)
 
 ## GPU-offloaded files: compile with GPU_CFLAGS (only cooling.cc for now)
 cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
@@ -560,6 +562,6 @@ compile_time_info.cc: $(CONFIG)
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:
-	rm -f $(OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
+	rm -f $(OBJS) $(GPU_OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
 
 
