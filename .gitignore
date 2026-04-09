@@ -19,4 +19,8 @@ test/*/test_*.out
 test/*/test_*.err
 test/*/__pycache__/
 test/*/*.png
+test/*/test_helmholtz
+
+# EOS table data files (large, downloaded separately)
+eos/helmholtz/helm_table.dat
 python_src/gizmo.egg-info/

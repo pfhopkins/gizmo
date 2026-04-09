@@ -74,7 +74,6 @@ OPT += -DBUILDINFO='$(BUILDINFO)'
 # initialize some default flags -- these will all get re-written below
 CC	= mpicc		# sets the C-compiler (default, will be set for machine below)
 CXX	= mpiCC		# sets the C++-compiler (default, will be set for machine below)
-FC	= mpif90	# sets the fortran compiler (default, will be set for machine below)
 OPTIMIZE = -Wall  -g   # optimization and warning flags (default)
 MPICHLIB = -lmpich	# mpi library (arbitrary default, set for machine below)
 CHIMESINCL = # default to empty, will only be used below if called
@@ -103,7 +102,6 @@ INCL = Makefile.systype
 else
 INCL =
 endif
-FINCL =
 
 
 
@@ -111,7 +109,6 @@ FINCL =
 ifeq ($(SYSTYPE),"Frontera")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
-FC       =  mpif90 -nofor_main
 OPTIMIZE = -ggdb -O2 -xCORE-AVX2 -Wno-unknown-pragmas -Wall -Wno-format-security -qopenmp
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
@@ -139,7 +136,6 @@ endif
 ifeq ($(SYSTYPE),"CaltechHPC")
 CC       =  mpicc
 CXX      =  mpic++
-FC       =  mpif90 -nofor_main
 OPTIMIZE = -O2 -xCORE-AVX2
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
@@ -165,7 +161,6 @@ endif
 ifeq ($(SYSTYPE),"BigRed200")
 CC       =  cc # For Cray use this instead of mpicc
 CXX      =  CC # mpic++
-FC       =  $(CC)
 OPTIMIZE =  -O2
 
 # Extra compile time warning flags
@@ -198,7 +193,6 @@ endif
 ifeq ($(SYSTYPE),"Expanse")
 CC       = mpicc
 CXX      = mpicxx
-FC       = $(CC)
 OPTIMIZE = -Ofast
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
@@ -223,7 +217,6 @@ endif
 ifeq ($(SYSTYPE),"MacBookCellar")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
-FC       =  $(CC) #mpifort  ## change this to "mpifort" for packages requiring linking secondary fortran code, currently -only- the helmholtz eos modules do this, so I leave it un-linked for now to save people the compiler headaches
 OPTIMIZE = -O3 -funroll-loops -ffast-math -march=native -flto 
 OPTIMIZE += -Wno-unused-command-line-argument ## -g -Wall # compiler warnings
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
@@ -263,7 +256,6 @@ endif
 ifeq ($(SYSTYPE),"github-ubuntu")
 CC       =  mpicc
 CXX      =  mpicxx
-FC       =  $(CC)
 OPTIMIZE = -g -fcommon -O1 -funroll-loops -finline-functions -funswitch-loops -fpredictive-commoning -fgcse-after-reload -fipa-cp-clone  ## optimizations for gcc compilers (1/2)
 OPTIMIZE += -ftree-loop-distribute-patterns -fvect-cost-model -ftree-partial-pre   ## optimizations for gcc compilers (2/2)
 OPTIMIZE += -g -Wall # compiler warnings
@@ -274,7 +266,6 @@ CHIMESLIBS = -L/usr/lib -lsundials_cvode -lsundials_nvecserial
 endif
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -fopenmp # openmp required compiler flags
-FC       = $(CC)
 endif
 MKL_INCL = #
 MKL_LIBS = #
@@ -296,7 +287,6 @@ CC       =   mpicc
 ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
 CC       =   mpicxx
 endif
-FC      = mpifort
 OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=native -g -Wall
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -fopenmp
@@ -418,9 +408,6 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 		$(EOSCOOL_OBJS) $(STARFORM_OBJS) $(SINK_OBJS) $(RHD_OBJS) \
 		$(FOF_OBJS) $(MISC_OBJS)
 
-## fortran recompiler block
-FOPTIONS = $(OPTIMIZE) $(FOPT)
-FOBJS =
 
 ## include files needed at compile time for the above objects
 INCL    += 	declarations/allvars.h \
@@ -446,17 +433,10 @@ INCL    += 	declarations/allvars.h \
 ##  there are certain special libraries needed, or external compilers, for
 ##  certain features
 
-# helmholtz eos routines need special treatment here because they are written
-#  in fortran and call the additional fortran compilers and linkers. these could
-#  be written to always compile and just be ignored, but then the large majority
-#  of cases that -don't- need the fortran linker would always have to go
-#  through these additional compilation options and steps (and this 
-#  can cause additional problems on some machines). so we sandbox it here.
+# helmholtz eos — now pure C++ (ported from Fortran), no Fortran compiler needed
 ifeq (EOS_HELMHOLTZ,$(findstring EOS_HELMHOLTZ,$(CONFIGVARS)))
-OBJS    += eos/eos_interface.o
-INCL    += eos/helmholtz/helm_wrap.h
-FOBJS   += eos/helmholtz/helm_impl.o eos/helmholtz/helm_wrap.o
-FINCL   += eos/helmholtz/helm_const.dek eos/helmholtz/helm_implno.dek eos/helmholtz/helm_table_storage.dek eos/helmholtz/helm_vector_eos.dek
+OBJS    += eos/eos_interface.o eos/helmholtz/helmholtz.o
+INCL    += eos/helmholtz/helmholtz.h
 endif
 
 ifeq (EOS_ANEOS,$(findstring EOS_ANEOS,$(CONFIGVARS)))
@@ -519,13 +499,10 @@ $(EXEC): $(OBJS)
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-#$(FOBJS): %.o: %.f90
-#	$(FC) $(OPTIMIZE) -c $< -o $@
-
 compile_time_info.cc: $(CONFIG)
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:
-	rm -f $(OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
+	rm -f $(OBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
 
 
