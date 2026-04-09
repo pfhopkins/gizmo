@@ -143,8 +143,9 @@ CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
-GPU_CFLAGS = -mp=gpu -gpu=cc90,unified -Minfo=accel  ## only applied to cooling.cc; cc90=GraceHopper H200; unified=NVLink unified memory
-GPU_LDFLAGS = -mp=gpu -gpu=cc90,unified
+GPU_CFLAGS = -mp=gpu -gpu=cc90 -Minfo=accel  ## only applied to cooling.cc; cc90=GraceHopper H200
+GPU_LDFLAGS = -mp=gpu -gpu=cc90
+## NOTE: tried -gpu=cc90,unified but unified memory mode appears to suppress kernel dispatch on GH nodes; omit for now
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
