@@ -143,8 +143,8 @@ CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
-GPU_CFLAGS = -mp=gpu -gpu=cc75 -Minfo=accel  ## only applied to cooling.cc; -mp=gpu defines _OPENMP, so other files see no OpenMP
-GPU_LDFLAGS = -mp=gpu -gpu=cc75
+GPU_CFLAGS = -mp=gpu -gpu=cc90,unified -Minfo=accel  ## only applied to cooling.cc; cc90=GraceHopper H200; unified=NVLink unified memory
+GPU_LDFLAGS = -mp=gpu -gpu=cc90,unified
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
@@ -159,8 +159,8 @@ HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK -DOPENMP_GPU_OFFLOAD
-## compiles with module set: nvhpc/24.1 openmpi hdf5 fftw3 gsl cuda/12
-## submit to 'rtx' queue on Frontera (4x NVIDIA RTX 5000 per node, cc75)
+## compiles with module set: nvhpc/24.5 openmpi hdf5 fftw3 gsl
+## submit to 'gh' or 'gh-dev' queue on Vista (NVIDIA Grace Hopper H200, cc90)
 endif
 
 
