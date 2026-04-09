@@ -98,15 +98,9 @@ void cooling_parent_routine(void)
     if(N_active == 0) {return;}
 
     /* Step 2: Gather — allocate compact arrays and copy active particle data into contiguous storage.
-       For GPU offload we use standard malloc so the arrays can be mapped to device memory
-       (the custom mymalloc pool is host-only and cannot be mapped by OpenMP target). */
-#ifdef OPENMP_GPU_OFFLOAD
+       Uses standard malloc (not mymalloc) so the arrays are GPU-mappable via OpenMP target. */
     struct particle_data *compact_P = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
-#else
-    struct particle_data *compact_P = (struct particle_data *) mymalloc("compact_P", N_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("compact_Cell", N_active * sizeof(struct gas_cell_data));
-#endif
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];
@@ -147,13 +141,8 @@ void cooling_parent_routine(void)
         P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
     }
 
-#ifdef OPENMP_GPU_OFFLOAD
     free(compact_Cell);
     free(compact_P);
-#else
-    myfree(compact_Cell);
-    myfree(compact_P);
-#endif
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);

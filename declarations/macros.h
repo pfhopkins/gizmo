@@ -145,8 +145,8 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    On device, endrun prints the error and halts the GPU thread via __trap(). On host, original behavior. */
 #pragma omp begin declare target
 static inline void endrun_device(int x, const char *func, const char *file, int line) {
-    if(x != 0) {printf("ENDRUN on GPU, function '%s()', file '%s', line %d: error level %d\n", func, file, line, x);}
-    __builtin_trap();
+    if(x != 0) {printf("ENDRUN on GPU, function '%s()', file '%s', line %d: error level %d\n", func, file, line, x);
+        volatile int *null_ptr = 0; *null_ptr = 0;} /* force fault to halt GPU thread; __builtin_trap() emits llvm.trap which NVC++ cannot resolve in declare-target regions */
 }
 #pragma omp end declare target
 #define endrun(x) endrun_device(x, __FUNCTION__, __FILE__, __LINE__)

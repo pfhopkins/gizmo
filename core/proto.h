@@ -865,8 +865,9 @@ double report_time(void);
 
 /* on some DEC Alphas, the correct prototype for pow() is missing,
    even when math.h is included ! */
-
+#ifndef __NVCOMPILER
 double pow(double, double);
+#endif
 
 
 void long_range_init(void);
