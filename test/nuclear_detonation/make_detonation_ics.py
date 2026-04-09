@@ -27,15 +27,14 @@ def ensure_helm_table():
 def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
     ensure_helm_table()
 
-    # Quasi-1D tube: Nx particles along x, small cross-section in y,z
+    # Quasi-1D tube: Nx particles along x, cross-section in y,z
     # Using BOX_LONG_X=16, BOX_LONG_Y=1, BOX_LONG_Z=1 with BOX_PERIODIC
     # BoxSize sets the y,z size; x goes from 0 to 16*BoxSize
     Nx = 256  # particles along the tube
-    Ny, Nz = 4, 4  # cross-section (thin)
+    Ny, Nz = 4, 4  # cross-section
     N = Nx * Ny * Nz
 
-    # physical box: BoxSize = L_y = L_z, L_x = 16 * BoxSize
-    # we want L_x ~ 1e5 cm (1 km) — short enough for detonation to cross in ~ms
+    # physical box: L_x = 16 * BoxSize
     BoxSize = 625.0  # cm (so L_x = 16 * 625 = 10000 cm = 100 m)
     L_x = 16.0 * BoxSize
 
@@ -54,8 +53,10 @@ def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
                 pos[idx, 2] = (iz + 0.5) * dz
                 idx += 1
 
-    # uniform density: rho = 1e6 g/cc (moderate WD density — stays in Helmholtz table range)
-    rho0 = 1.0e6
+    # uniform density: rho = 1e5 g/cc (sub-Chandrasekhar He shell density)
+    # moderate enough to stay well within Helmholtz table range even with
+    # kernel smoothing variations, while still hot enough for triple-alpha
+    rho0 = 1.0e5
     vol_per_particle = dx * dy * dz
     mass = rho0 * vol_per_particle
 
@@ -66,12 +67,13 @@ def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
 
     T = np.where(pos[:, 0] < hot_length, T_hot, T_cold)
 
-    # internal energy from ideal gas (Helmholtz will refine at startup)
-    k_B = 1.380649e-16
-    m_p = 1.672621898e-24
+    # internal energy: use values consistent with the Helmholtz EOS at these conditions
+    # (ideal gas formula underestimates because it misses electron degeneracy energy)
+    # From Helmholtz table at rho=1e5, abar=4, ye=0.5:
+    #   T=5e8 K -> eps = 5.72e16 erg/g
+    #   T=3e9 K -> eps = 1.37e19 erg/g
+    u = np.where(T > 1e9, 1.37e19, 5.72e16)
     Abar = 4.0
-    mu = Abar / (1.0 + Abar * 0.5)
-    u = 1.5 * k_B * T / (mu * m_p)
 
     vel = np.zeros((N, 3), dtype=np.float64)
 

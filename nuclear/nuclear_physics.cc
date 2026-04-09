@@ -630,8 +630,23 @@ int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output 
                     * 1.602176634e-6 * 6.02214076e23; /* MeV/nucleon * MeV_to_erg * N_A */
     }
     out->de   = de_binding / UNIT_SPECEGY_IN_CGS;
-    out->edot = (dt_cgs > 0) ? de_binding / dt_cgs / (UNIT_SPECEGY_IN_CGS / UNIT_TIME_IN_CGS) : 0;
-    out->burning_timescale = tau_min / UNIT_TIME_IN_CGS;
+    /* edot = de/dt, but only meaningful if de is actually significant.
+       if the composition barely changed (near equilibrium), edot should be ~0 */
+    out->edot = (dt_cgs > 0 && fabs(de_binding) > 1.0e-10 * fabs(in->rho * UNIT_DENSITY_IN_CGS))
+              ? de_binding / dt_cgs / (UNIT_SPECEGY_IN_CGS / UNIT_TIME_IN_CGS) : 0;
+
+    /* recompute burning timescale from the FINAL (post-burn) state, not the initial state.
+       the initial tau_min can be absurdly short (1e-67 s) for conditions where burning is
+       instantaneous, but after equilibrating the composition changes slowly. */
+    nuclear_rhs(rho_cgs, T9, Y_new, dYdt, &edot_cgs);
+    double tau_final = 1.0e30;
+    for (int k = 0; k < NS; k++) {
+        if (fabs(dYdt[k]) > 1.0e-50 && Y_new[k] > 1.0e-30) {
+            double t = fabs(Y_new[k] / dYdt[k]);
+            if (t < tau_final) tau_final = t;
+        }
+    }
+    out->burning_timescale = tau_final / UNIT_TIME_IN_CGS;
 
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
     /* estimate neutrino luminosity from thermal processes at current conditions */

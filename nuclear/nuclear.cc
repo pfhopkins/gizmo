@@ -116,8 +116,16 @@ static inline void unpack_nuclear_output(int j, const struct nuclear_output *out
     }
     nuclear_update_ye_abar(j, out, pp, cell);
     if (out->de != 0.0) {
-        cell[j].InternalEnergy     += out->de;
-        cell[j].InternalEnergyPred += out->de;
+        /* cap energy injection to prevent EOS blowup: limit to 2x current internal energy per step.
+           if nuclear burning would release more, the timestep limiter (via burning_timescale) will
+           ensure smaller steps next time so the energy is deposited gradually. */
+        double u_current = DMAX(cell[j].InternalEnergy, All.MinEgySpec);
+        double de_max = 0.25 * u_current; /* limit to 25% energy change per hydro step for stability */
+        double de_apply = out->de;
+        if (de_apply > de_max) de_apply = de_max;
+        if (de_apply < -0.9 * u_current) de_apply = -0.9 * u_current; /* don't cool below 10% of current */
+        cell[j].InternalEnergy     += de_apply;
+        cell[j].InternalEnergyPred += de_apply;
         cell[j].InternalEnergy      = DMAX(cell[j].InternalEnergy, All.MinEgySpec);
         cell[j].InternalEnergyPred  = DMAX(cell[j].InternalEnergyPred, All.MinEgySpec);
     }
