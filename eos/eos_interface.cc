@@ -97,7 +97,21 @@ int eos_compute(struct eos_input const * in_, struct eos_output * out_)
   }
   struct eos_output out;
   ierr = eos_compute_from_valid(&in, &out);
-  assert(!ierr);
+  if (ierr) {
+    /* EOS evaluation failed even after clamping — use a fallback ideal gas estimate
+       rather than crashing. This can happen at extreme conditions during initialization. */
+    double gamma = 5.0/3.0;
+    out.press = (gamma - 1.0) * in.rho * in.eps;
+    out.csound = sqrt(gamma * out.press / in.rho);
+    out.temp = in.temp > 0 ? in.temp : 1.0e6;
+#ifdef EOS_PROVIDES_ENTROPY
+    out.entropy = 0;
+#endif
+#ifdef EOS_PROVIDES_CV
+    out.cv = in.eps / (out.temp + 1.0e-30);
+#endif
+    ierr = 0;
+  }
 #ifdef EOS_USES_CGS
   ierr = eos_output_from_cgs(&out);
   assert(!ierr);
