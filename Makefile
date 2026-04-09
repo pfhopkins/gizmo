@@ -77,6 +77,8 @@ CXX	= mpiCC		# sets the C++-compiler (default, will be set for machine below)
 FC	= mpif90	# sets the fortran compiler (default, will be set for machine below)
 OPTIMIZE = -Wall  -g   # optimization and warning flags (default)
 MPICHLIB = -lmpich	# mpi library (arbitrary default, set for machine below)
+GPU_CFLAGS = # GPU offload compiler flags (set for GPU systypes below)
+GPU_LDFLAGS = # GPU offload linker flags (set for GPU systypes below)
 CHIMESINCL = # default to empty, will only be used below if called
 CHIMESLIBS = # default to empty, will only be used below if called
 HYPRE_INCL = # hypre library for AMG-preconditioned solver in MG gradient correction
@@ -140,7 +142,9 @@ ifeq ($(SYSTYPE),"Frontera_GPU")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
-OPTIMIZE = -O2 -mp=gpu -gpu=cc75 -Minfo=accel -Wall
+OPTIMIZE = -O2 -mp -Wall
+GPU_CFLAGS = -mp=gpu -gpu=cc75 -Minfo=accel
+GPU_LDFLAGS = -mp=gpu -gpu=cc75
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
@@ -539,7 +543,11 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
 
 
 $(EXEC): $(OBJS)
-	$(CXX) $(OPTIMIZE) $(OBJS) $(LIBS) -o $(EXEC)
+	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(LIBS) -o $(EXEC)
+
+## GPU-offloaded files: compile with GPU_CFLAGS (only cooling.cc for now)
+cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(CXX) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
