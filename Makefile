@@ -160,9 +160,6 @@ HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK -DOPENMP_GPU_OFFLOAD
-ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
-GPU_CFLAGS += -D_OPENMP  ## -mp=gpu alone doesn't define _OPENMP for host preprocessor; force it so #if defined(_OPENMP) guards in cooling.cc pass
-endif
 ## compiles with module set: nvhpc/24.5 openmpi hdf5 fftw3 gsl
 ## submit to 'gh' or 'gh-dev' queue on Vista (NVIDIA Grace Hopper H200, cc90)
 endif
