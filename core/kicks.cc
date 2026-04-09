@@ -44,8 +44,8 @@ void do_first_halfstep_kick(void)
     {
         if((TimeBinActive[P[i].TimeBin]) || (P[i].Type==0)) /* active OR gas, need to check each timestep to ensure manifest conservation */
 #else
-    for (int i : ActiveParticleList) /* 'full' kick for active particles */
-    {
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) /* 'full' kick for active particles */
+    { int i = ActiveParticleList[_apl];
 #endif
         {
             if(P[i].Mass > 0)
@@ -80,8 +80,8 @@ void do_second_halfstep_kick(void)
     {
         if((TimeBinActive[P[i].TimeBin]) || (P[i].Type==0)) /* active OR gas, need to check each timestep to ensure manifest conservation */
 #else
-    for (int i : ActiveParticleList) /* 'full' kick for active particles */
-    {
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) /* 'full' kick for active particles */
+    { int i = ActiveParticleList[_apl];
 #endif
         {
             if(P[i].Mass > 0)
@@ -128,7 +128,8 @@ void do_hermite_prediction(void)
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
 #endif
-    for (int i : ActiveParticleList) {
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
+        int i = ActiveParticleList[_apl];
 	if(eligible_for_hermite(i)) { /* check if we're actually eligible */
 	    if(P[i].Mass > 0) { /* skip massless particles scheduled for deletion */
 		ti_step = P[i].integertime_step();
@@ -145,7 +146,7 @@ void do_hermite_prediction(void)
 #endif
             P[i].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/3)) * (dt_grav/2)) * dt_grav;
             P[i].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/2)) * dt_grav;
-		}}} // for (int i : ActiveParticleList)
+		}}} // for (int _apl : ActiveParticleList)
 }
 
 void do_hermite_correction(void) // corrector step
@@ -154,7 +155,8 @@ void do_hermite_correction(void) // corrector step
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
 #endif
-    for (int i : ActiveParticleList) {
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
+        int i = ActiveParticleList[_apl];
 	if(eligible_for_hermite(i)){
                 if(P[i].Mass > 0) {
                     ti_step = P[i].integertime_step();
@@ -171,7 +173,7 @@ void do_hermite_correction(void) // corrector step
                         P[i].Vel += P[i].GravPM * dt_grav_pm;
                     }
 #endif
-		}}} //     for (int i : ActiveParticleList)
+		}}} //     for (int _apl : ActiveParticleList)
 }
 #endif // HERMITE_INTEGRATION
 
