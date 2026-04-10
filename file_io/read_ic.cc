@@ -956,6 +956,7 @@ void read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_STAGE_PROTOSTAR
                    && blocknr != IO_AGE_PROTOSTAR
                    && blocknr != IO_LUM_SINGLESTAR
+                   && blocknr != IO_AGE
 #endif
                    )
                                 continue;	/* ignore all other blocks in initial conditions */
