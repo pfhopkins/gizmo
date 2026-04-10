@@ -38,7 +38,7 @@ void add_analytic_gravitational_forces()
     /* now add the appropriate [if any] analytic gravitational forces */
 #ifdef GRAVITY_ANALYTIC
 #ifdef GRAVITY_TESTPROBLEM_RT
-    GravAccel_RayleighTaylorTest();     // uniform vertical force for Rayleigh-Taylor-type tests
+    {for (int i : ActiveParticleList) {P[i].GravAccel[0] -= (GRAVITY_TESTPROBLEM_RT);}} // uniform acceleration along x (negative = toward x=0); value set by GRAVITY_TESTPROBLEM_RT=accel_value
 #endif
     //GravAccel_StaticPlummerSphere();    // plummer sphere
     //GravAccel_StaticHernquist();        // hernquist-profile sphere

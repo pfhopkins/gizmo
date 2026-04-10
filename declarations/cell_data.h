@@ -169,7 +169,7 @@ extern struct gas_cell_data
 #endif
     
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    MyFloat Dyield[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    MyFloat Dyield[NUM_METAL_SPECIES];
 #endif
     
 #ifdef HYDRO_SPH

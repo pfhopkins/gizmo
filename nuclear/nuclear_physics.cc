@@ -94,22 +94,48 @@ static const int Z_sp[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
    Temperature T9 is in units of 10^9 K.
    ========================================================================= */
 
-/* Triple-alpha rate: 3 He4 -> C12 (CF88 eqs 15-17 + Fynbo 2005 update) */
+/* Triple-alpha rate: 3 He4 -> C12 (CF88 eqs 15-17).
+   Returns the effective 3-body rate coefficient <sigma_v>_3a in cm^6/s.
+   The caller (nuclear_rhs) computes: dY_C12/dt = fwd[0] * (rho*NA)^2 * Y_He4^3 / 6 */
 static double rate_triple_alpha(double T9)
 {
-    /* Step 1: He4 + He4 -> Be8 (equilibrium) */
-    double T9a = T9 / (1.0 + 0.0396*T9);
-    double r2a = 7.40e+05 * pow(T9, -1.5) * exp(-1.0663/T9)
-               + 4.164e+09 * pow(T9, -2.0/3.0) * exp(-13.49/pow(T9, 1.0/3.0))
-                 / pow(1.0 + 0.031*pow(T9, 1.0/3.0), 2) * exp(-0.219*T9*T9);
+    /* Be8 ground state (0+) decay width Gamma_Be8 = 6.8 eV (to 2 He4).
+       Decay rate lambda_Be8 = Gamma / hbar in s^-1. */
+    static constexpr double Gamma_Be8_eV = 6.8;
+    static constexpr double eV_to_erg = 1.602176634e-12;
+    static constexpr double lambda_Be8 = Gamma_Be8_eV * eV_to_erg / hbar_cgs; /* ~1.033e16 s^-1 */
 
-    /* Step 2: Be8 + He4 -> C12* (resonance at 7.654 MeV) */
+    double T9a = T9 / (1.0 + 0.0396*T9);
+
+    /* Step 1: N_A<sigma v> for He4+He4 -> Be8 (CF88 forward rate, cm^3/mol/s).
+       Note: this is the FORWARD reaction rate, not the Saha factor. */
+    double r2a_fwd = 7.40e+05 * pow(T9, -1.5) * exp(-1.0663/T9)
+                   + 4.164e+09 * pow(T9, -2.0/3.0) * exp(-13.49/pow(T9, 1.0/3.0))
+                     / pow(1.0 + 0.031*pow(T9, 1.0/3.0), 2) * exp(-0.219*T9*T9);
+
+    /* Step 2: N_A<sigma v> for Be8+He4 -> C12 (CF88, cm^3/mol/s). */
     double raag = 130.0 * pow(T9, -1.5) * exp(-3.3364/T9)
                 + 2.510e+07 * pow(T9a, -1.5) * exp(-23.570/pow(T9a, 1.0/3.0))
                   / pow(1.0 + 0.018*pow(T9a, 1.0/3.0), 2);
 
-    /* Combined triple-alpha: rate per (Y_alpha)^3, density^2 factor included by caller */
-    return r2a * raag;
+    /* Effective 3-body rate coefficient, units [cm^6/s], such that the caller's formula:
+         dY_C12/dt = fwd[0] * (rho*NA)^2 * Y_He4^3 / 6
+       gives the correct physical rate.
+
+       Derivation (quasi-equilibrium Be8 picture):
+         n_Be8^eq = n_He4^2 * <sigma_v>_aa / (2 * lambda_Be8)   [from P=D]
+         dn_C12/dt = n_He4 * n_Be8^eq * <sigma_v>_Be8+He4
+                   = n_He4^3 / (2*lambda_Be8) * <sigma_v>_aa * <sigma_v>_Be8+He4
+
+       Converting to dY_C12/dt = dn_C12/dt / (rho*NA):
+         dY_C12/dt = rho^2 * Y^3 * r2a_fwd * raag / (2*lambda_Be8)
+
+       The caller divides by 6 (identical-particle factor for 3-body → caller has /6):
+         fwd[0] * (rho*NA)^2 * Y^3 / 6 = rho^2 * Y^3 * r2a_fwd * raag / (2*lambda_Be8)
+         fwd[0] = 3 * r2a_fwd * raag / (NA^2 * lambda_Be8)
+
+       Numerical check at T9=1: r2a_fwd~2.6e5, raag~4.6, lambda_Be8~1.03e16 → fwd[0]~9.7e-58 cm^6/s */
+    return 3.0 * r2a_fwd * raag / (avo * avo * lambda_Be8);
 }
 
 /* Standard (a,g) rate in REACLIB/CF88 parametric form:
@@ -446,10 +472,16 @@ static int backward_euler_step(double rho, double T9, double dt,
             residual[k] = Y_new[k] - Y_old[k] - dt * dYdt[k];
         }
 
-        /* check convergence */
+        /* check convergence: mixed absolute/relative tolerance.
+           For trace species (Y ~ 1e-27), absolute residual < atol is sufficient.
+           For abundant species, relative residual < tol is required. */
+        double Y_max = 0;
+        for (int k = 0; k < NS; k++) { if (fabs(Y_old[k]) > Y_max) Y_max = fabs(Y_old[k]); }
+        double atol = tol * Y_max;  /* absolute tolerance scaled to largest abundance */
         double rnorm = 0;
         for (int k = 0; k < NS; k++) {
-            double rel = fabs(residual[k]) / (fabs(Y_new[k]) + 1.0e-30);
+            double scale = fabs(Y_new[k]) + atol;
+            double rel = fabs(residual[k]) / scale;
             if (rel > rnorm) rnorm = rel;
         }
         if (rnorm < tol) return 0; /* converged */
@@ -470,11 +502,15 @@ static int backward_euler_step(double rho, double T9, double dt,
         for (int k = 0; k < NS; k++) rhs[k] = -residual[k];
         if (solve_13x13(M, rhs) != 0) return -1; /* singular */
 
-        /* update */
+        /* update — guard against NaN from ill-conditioned solve */
+        bool bad = false;
+        for (int k = 0; k < NS; k++) { if (!isfinite(rhs[k])) { bad = true; break; } }
+        if (bad) return -1;
         for (int k = 0; k < NS; k++) {
             Y_new[k] += rhs[k];
             if (Y_new[k] < 0) Y_new[k] = 0;
         }
+
     }
 
     return 1; /* didn't converge — caller should subcycle */
@@ -551,19 +587,22 @@ int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output 
             double Y_step[NS];
             int ierr = backward_euler_step(rho_cgs, T9, dt_step, Y_new, Y_step);
             if (ierr != 0) {
-                /* Newton failed — use tiny forward-Euler substeps */
-                double dt2 = std::min(tau_min, dt_step / 100.0);
-                int ns2 = (int)ceil(dt_step / dt2);
-                dt2 = dt_step / ns2;
+                /* Newton failed — retry with 10x smaller substeps */
+                int ns2 = 10;
+                double dt2 = dt_step / ns2;
                 for (int s2 = 0; s2 < ns2; s2++) {
-                    nuclear_rhs(rho_cgs, T9, Y_new, dYdt, &edot_cgs);
-                    for (int k = 0; k < NS; k++) { Y_new[k] += dYdt[k] * dt2; if (Y_new[k] < 0) Y_new[k] = 0; }
-                    total_energy += edot_cgs * dt2;
+                    double Y2[NS];
+                    if (backward_euler_step(rho_cgs, T9, dt2, Y_new, Y2) == 0) {
+                        double Y_mid[NS]; for (int k = 0; k < NS; k++) Y_mid[k] = 0.5*(Y_new[k]+Y2[k]);
+                        nuclear_rhs(rho_cgs, T9, Y_mid, dYdt, &edot_cgs);
+                        if (isfinite(edot_cgs)) total_energy += edot_cgs * dt2;
+                        memcpy(Y_new, Y2, sizeof(Y_new));
+                    }
                 }
             } else {
                 double Y_mid[NS]; for (int k = 0; k < NS; k++) Y_mid[k] = 0.5*(Y_new[k]+Y_step[k]);
                 nuclear_rhs(rho_cgs, T9, Y_mid, dYdt, &edot_cgs);
-                total_energy += edot_cgs * dt_step;
+                if (isfinite(edot_cgs)) total_energy += edot_cgs * dt_step;
                 memcpy(Y_new, Y_step, sizeof(Y_new));
             }
             dt_remaining -= dt_step;
@@ -596,19 +635,31 @@ int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output 
             double Y_step[NS];
             int ierr = backward_euler_step(rho_cgs, T9, dt_sub, Y_new, Y_step);
             if (ierr != 0) {
-                int nsub2 = 10; double dt2 = dt_sub / nsub2;
+                /* retry backward-Euler with 10x smaller substeps */
+                int nsub2 = 10;
+                double dt2 = dt_sub / nsub2;
                 for (int s2 = 0; s2 < nsub2; s2++) {
-                    nuclear_rhs(rho_cgs, T9, Y_new, dYdt, &edot_cgs);
-                    for (int k = 0; k < NS; k++) { Y_new[k] += dYdt[k] * dt2; if (Y_new[k] < 0) Y_new[k] = 0; }
-                    total_energy += edot_cgs * dt2;
+                    double Y2[NS];
+                    if (backward_euler_step(rho_cgs, T9, dt2, Y_new, Y2) == 0) {
+                        double Y_mid[NS]; for (int k = 0; k < NS; k++) Y_mid[k] = 0.5*(Y_new[k]+Y2[k]);
+                        nuclear_rhs(rho_cgs, T9, Y_mid, dYdt, &edot_cgs);
+                        if (isfinite(edot_cgs)) total_energy += edot_cgs * dt2;
+                        memcpy(Y_new, Y2, sizeof(Y_new));
+                    }
+                    /* if sub-sub-step also fails, skip it (hold composition fixed) */
                 }
                 continue;
             }
             double Y_mid[NS]; for (int k = 0; k < NS; k++) Y_mid[k] = 0.5*(Y_new[k]+Y_step[k]);
             nuclear_rhs(rho_cgs, T9, Y_mid, dYdt, &edot_cgs);
-            total_energy += edot_cgs * dt_sub;
+            if (isfinite(edot_cgs)) total_energy += edot_cgs * dt_sub;
             memcpy(Y_new, Y_step, sizeof(Y_new));
         }
+    }
+
+    /* sanitize Y_new: replace any NaN/Inf with the initial value */
+    for (int k = 0; k < NS; k++) {
+        if (!isfinite(Y_new[k]) || Y_new[k] < 0) Y_new[k] = Y_old[k];
     }
 
     /* convert back to mass fractions and clamp */

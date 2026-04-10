@@ -1195,7 +1195,7 @@ extern struct addFB_evaluate_data_in_
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS];
 #endif
 #ifdef METALS
-    MyDouble yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    MyDouble yields[NUM_METAL_SPECIES];
 #endif
     int NodeList[NODELISTLENGTH];
 }

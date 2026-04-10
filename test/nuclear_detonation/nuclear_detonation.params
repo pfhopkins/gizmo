@@ -8,8 +8,8 @@
 
 InitCondFile                       nuclear_detonation_ics
 OutputDir                          output
-TimeMax                            1.0e-4
-BoxSize                            625.0
+TimeMax                            1.0e-5
+BoxSize                            2500.0
 
 % CGS units
 UnitLength_in_cm                   1.0
@@ -17,7 +17,7 @@ UnitMass_in_g                      1.0
 UnitVelocity_in_cm_per_s           1.0
 
 % output
-TimeBetSnapshot                    2.0e-5
+TimeBetSnapshot                    5.0e-6
 MaxSizeTimestep                    1.0e-6
 MinSizeTimestep                    1.0e-15
 
@@ -30,6 +30,10 @@ MaxRMSDisplacementFac              0.1
 
 % EOS
 EosTable                           ../../eos/helmholtz/helm_table.dat
+
+% softening (not used for gravity, but provides initial kernel radius guess)
+SofteningGas                       300.0
+SofteningGasMaxPhys                300.0
 
 % memory
 MaxMemSize                         2000

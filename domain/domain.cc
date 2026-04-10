@@ -363,7 +363,11 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
         All.TopNodeAllocFactor *= 1.3;
 
         PRINT_STATUS("..new value=%g", All.TopNodeAllocFactor);
-        if(All.TopNodeAllocFactor > 1000) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); endrun(781);}
+        double topnode_limit = 1000;
+#if (NUMDIMS < 3)
+        topnode_limit = 100000; /* 1D/2D problems need many more top nodes because the 3D Peano-Hilbert decomposition wastes refinement on degenerate dimensions */
+#endif
+        if(All.TopNodeAllocFactor > topnode_limit) {printf("something seems to be going seriously wrong here. Stopping.\n"); fflush(stdout); endrun(781);}
       }
     }
     while(retsum);

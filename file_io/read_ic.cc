@@ -939,6 +939,7 @@ void read_file(char *fname, int readTask, int lastTask)
 #endif
 #ifdef NUCLEAR_NETWORK
                    && blocknr != IO_NUCLEAR_COMPOSITION
+                   && blocknr != IO_Z /* need to read Metallicity for nuclear species stored within it */
 #endif
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
                    && blocknr != IO_EOSCOMP

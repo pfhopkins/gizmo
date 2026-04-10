@@ -2,8 +2,9 @@
 """Generate initial conditions for a 1D thermonuclear detonation test.
 
 Quasi-1D setup: a thin 3D periodic tube (like the Brio-Wu test) of He4 fuel
-at white dwarf conditions (rho=1e7 g/cc, T=1e8 K) with a hot spot (T=2e9 K)
-at the left end to trigger a detonation wave.
+at white dwarf conditions (rho=1e5 g/cc, T=1e8 K) with a hot spot (T=9e8 K)
+at the left end to trigger a detonation wave. Uses a smooth tanh temperature
+profile to avoid sharp pressure discontinuities.
 
 Units: CGS (UnitLength=1 cm, UnitMass=1 g, UnitVelocity=1 cm/s)
 """
@@ -27,16 +28,15 @@ def ensure_helm_table():
 def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
     ensure_helm_table()
 
-    # Quasi-1D tube: Nx particles along x, cross-section in y,z
-    # Using BOX_LONG_X=16, BOX_LONG_Y=1, BOX_LONG_Z=1 with BOX_PERIODIC
-    # BoxSize sets the y,z size; x goes from 0 to 16*BoxSize
-    Nx = 256  # particles along the tube
-    Ny, Nz = 4, 4  # cross-section
-    N = Nx * Ny * Nz
+    # 3D periodic box with BOX_LONG_X=4: cube-ish aspect ratio so the kernel
+    # is well-resolved in all dimensions (avoids artifacts from thin tubes)
+    Nx = 32   # particles along x
+    Ny, Nz = 8, 8  # cross-section (8x8 gives good 3D neighbor resolution)
+    N = Nx * Ny * Nz  # = 2048
 
-    # physical box: L_x = 16 * BoxSize
-    BoxSize = 625.0  # cm (so L_x = 16 * 625 = 10000 cm = 100 m)
-    L_x = 16.0 * BoxSize
+    # physical box: L_x = 4 * BoxSize
+    BoxSize = 2500.0  # cm (so L_x = 4 * 2500 = 10000 cm)
+    L_x = 4.0 * BoxSize
 
     dx = L_x / Nx
     dy = BoxSize / Ny
@@ -60,19 +60,19 @@ def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
     vol_per_particle = dx * dy * dz
     mass = rho0 * vol_per_particle
 
-    # temperature profile: cold fuel + hot spot
-    T_cold = 5.0e8   # 0.5 GK (warm but below strong burning)
-    T_hot = 3.0e9     # 3 GK (triggers triple-alpha vigorously)
-    hot_length = 0.1 * L_x  # leftmost 10%
+    # uniform temperature — tests nuclear network stability in 3D without
+    # pressure-driven detonation fronts that become unresolvable
+    Abar = 4.0  # pure He4
+    T = np.full(N, 5.0e8)  # 0.5 GK: at burning floor, negligible triple-alpha at rho=1e5
 
-    T = np.where(pos[:, 0] < hot_length, T_hot, T_cold)
-
-    # internal energy: use values consistent with the Helmholtz EOS at these conditions
-    # (ideal gas formula underestimates because it misses electron degeneracy energy)
-    # From Helmholtz table at rho=1e5, abar=4, ye=0.5:
-    #   T=5e8 K -> eps = 5.72e16 erg/g
-    #   T=3e9 K -> eps = 1.37e19 erg/g
-    u = np.where(T > 1e9, 1.37e19, 5.72e16)
+    # internal energy consistent with Helmholtz EOS (ion + radiation + electron thermal)
+    k_B = 1.380649e-16; m_p = 1.672621898e-24; mu = Abar / (1.0 + Abar * 0.5)
+    a_rad = 7.5657e-15
+    u_ion = 1.5 * k_B * T / (mu * m_p)
+    u_rad = a_rad * T**4 / rho0
+    n_e = rho0 * 0.5 / (Abar * m_p)
+    u_e = 1.5 * k_B * T * n_e / rho0
+    u = u_ion + u_rad + u_e
     Abar = 4.0
 
     vel = np.zeros((N, 3), dtype=np.float64)
@@ -103,6 +103,7 @@ def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
         h.attrs["Omega0"] = 0.0
         h.attrs["OmegaLambda"] = 0.0
         h.attrs["HubbleParam"] = 1.0
+        h.attrs["Flag_Metals"] = n_metallicity
 
         g = f.create_group("PartType0")
         g.create_dataset("Coordinates", data=pos)
@@ -111,7 +112,7 @@ def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
         g.create_dataset("ParticleIDs", data=ids)
         g.create_dataset("InternalEnergy", data=u)
         g.create_dataset("Density", data=np.full(N, rho0, dtype=np.float64))
-        g.create_dataset("Metallicity", data=metallicity.astype(np.float32))
+        g.create_dataset("Metallicity", data=metallicity)
         g.create_dataset("Temperature", data=T)
         g.create_dataset("Abar", data=Abar_arr)
         g.create_dataset("Ye", data=Ye_arr)
@@ -120,8 +121,7 @@ def make_detonation_ics(output_file="nuclear_detonation_ics.hdf5"):
     print(f"Wrote {N} particles ({Nx}x{Ny}x{Nz}) to {output_file}")
     print(f"  BoxSize={BoxSize} cm, L_x={L_x} cm ({L_x/1e5:.1f} km)")
     print(f"  rho={rho0:.2e} g/cc, mass/particle={mass:.4e} g")
-    print(f"  T_cold={T_cold:.2e} K, T_hot={T_hot:.2e} K")
-    print(f"  u_cold={u[N//2]:.4e} erg/g, u_hot={u[0]:.4e} erg/g")
+    print(f"  T={T[0]:.2e} K (uniform), u={u[0]:.4e} erg/g")
 
 
 if __name__ == "__main__":

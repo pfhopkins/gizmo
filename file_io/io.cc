@@ -1960,9 +1960,6 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSTEMP:
         case IO_EOSABAR:
         case IO_EOSYE:
-#ifdef NUCLEAR_NETWORK
-        case IO_NUCLEAR_COMPOSITION:
-#endif
         case IO_EOSCS:
         case IO_PRESSURE:
         case IO_SOFT:
@@ -2067,6 +2064,15 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+
+#ifdef NUCLEAR_NETWORK
+        case IO_NUCLEAR_COMPOSITION:
+            if(mode)
+                bytes_per_blockelement = (NUM_NUCLEAR_SPECIES) * sizeof(MyInputFloat);
+            else
+                bytes_per_blockelement = (NUM_NUCLEAR_SPECIES) * sizeof(MyOutputFloat);
+            break;
+#endif
 
         case IO_Z:
 #ifdef METALS

@@ -220,12 +220,15 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                     if(P[i].Pos[2] > Nodes[th].center[2]) {subnode += 4;}
                 }
                 
-                if(Nodes[th].len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * ForceSoftening_KernelRadius(i))
                 {
-                    /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
-                     * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                    subnode = (int) (8.0 * get_random_number(P[i].ID));
-                    if(subnode >= 8) {subnode = 7;}
+                    double split_scale = DMAX(ForceSoftening_KernelRadius(i), P[i].KernelRadius);
+                    if(Nodes[th].len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * split_scale)
+                    {
+                        /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
+                         * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
+                        subnode = (int) (8.0 * get_random_number(P[i].ID));
+                        if(subnode >= 8) {subnode = 7;}
+                    }
                 }
                 
                 nn = Nodes[th].u.suns[subnode];
@@ -282,12 +285,15 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                     if(P[th].Pos[2] > nfreep->center[2]) {subnode += 4;}
                 }
                 
-                if(nfreep->len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * ForceSoftening_KernelRadius(th))
                 {
-                    /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
-                     * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                    subnode = (int) (8.0 * get_random_number(P[th].ID));
-                    if(subnode >= 8) {subnode = 7;}
+                    double split_scale = DMAX(ForceSoftening_KernelRadius(th), P[th].KernelRadius);
+                    if(nfreep->len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * split_scale)
+                    {
+                        /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
+                         * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
+                        subnode = (int) (8.0 * get_random_number(P[th].ID));
+                        if(subnode >= 8) {subnode = 7;}
+                    }
                 }
                 
                 nfreep->u.suns[subnode] = th;
