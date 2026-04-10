@@ -2,7 +2,9 @@
 #pragma once
 
 typedef  long long integertime;
+#ifndef __CUDACC__
 static MPI_Datatype MPI_TYPE_TIME = MPI_LONG_LONG;
+#endif
 #define  TIMEBINS        60
 #define  TIMEBASE        (((integertime) 1)<<TIMEBINS)  /* The simulated timespan is mapped onto the integer interval [0,TIMESPAN], where TIMESPAN needs to be a power of 2. Note that (1<<28) corresponds to 2^29 */
 
