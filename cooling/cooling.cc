@@ -33,6 +33,9 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../core/timestep_device.h"
 /* evaluate_NH_from_GradRho is in core/predict.cc (not GPU_OBJS) */
 #include "../core/predict_device.h"
+/* return_dust_to_metals_ratio_vs_solar is in eos.cc (GPU_OBJS) but cross-TU
+ * device calls fail without -rdc.  Inline it here. */
+#include "../eos/dust_to_metals_device.h"
 /* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
 #include "../eos/cosmic_ray_fluid/cosmic_ray_device.h"
 /* Simple steady-state chemistry (simple_chemistry.cc is not GPU_OBJS) */
@@ -142,9 +145,7 @@ KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_correct
 KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
-/* Cross-TU forward declarations: functions defined in eos.cc (GPU_OBJS) with
-   KOKKOS_FUNCTION, but cooling.cc call sites only see proto.h host-only decl. */
-KOKKOS_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
+/* return_dust_to_metals_ratio_vs_solar is now inlined via dust_to_metals_device.h */
 /* Functions in cooling.cc that nvcc needs to see as device-callable for the
    metal-line cooling table lookup (GetCoolingRateWSpecies) */
 KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);

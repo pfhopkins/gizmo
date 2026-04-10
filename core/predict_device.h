@@ -13,7 +13,7 @@
 #endif
 
 KOKKOS_INLINE_FUNCTION
-double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp)
+double evaluate_NH_from_GradRho_impl(const double* gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp)
 {
     double gradrho_mag=0;
     if(rho>0)
@@ -27,4 +27,20 @@ double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, do
 #endif
     }
     return gradrho_mag * All.cf_a2inv;
+}
+
+/* Array version — matches proto.h line 530 declaration */
+KOKKOS_INLINE_FUNCTION
+double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp)
+{
+    double grd[3] = {(double)gradrho[0], (double)gradrho[1], (double)gradrho[2]};
+    return evaluate_NH_from_GradRho_impl(grd, rkern, rho, numngb_ndim, include_h, target, pp);
+}
+
+/* Vec3 overload — matches proto.h line 531 wrapper, but device-callable */
+KOKKOS_INLINE_FUNCTION
+double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp)
+{
+    double grd[3] = {(double)gradrho[0], (double)gradrho[1], (double)gradrho[2]};
+    return evaluate_NH_from_GradRho_impl(grd, rkern, rho, numngb_ndim, include_h, target, pp);
 }
