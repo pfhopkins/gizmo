@@ -12,6 +12,15 @@
 #ifndef GLOBAL_DATA_ALL_STRUCT_H
 #define GLOBAL_DATA_ALL_STRUCT_H
 
+/* GIZMO_GPU_COMPILER: defined when compiled by any GPU device compiler.
+ * Placed here (earliest universal header) so it is available before allvars.h
+ * and macros.h, which matters for the All_dev guards in cooling.cc/eos.cc. */
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#ifndef GIZMO_GPU_COMPILER
+#define GIZMO_GPU_COMPILER
+#endif
+#endif
+
 #include "../GIZMO_config.h"
 #include "precompiler_logic.h"
 #include "constants.h"

@@ -143,10 +143,10 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 
 /* ---- GPU portability layer ----
    GIZMO_GPU_COMPILER: true when compiled by any GPU device compiler (nvcc, hipcc).
-   GIZMO_GPU_FUNCTION: marks functions __device__ __host__ on GPU, nothing on CPU.
-   These abstractions allow the same source to compile for NVIDIA (CUDA), AMD (HIP),
-   or CPU-only builds without #ifdef __CUDACC__ scattered through the codebase. */
-#if defined(__CUDACC__) || defined(__HIPCC__)
+   Primary definition is in global_data_all_struct.h (earliest universal header).
+   Redundant guard here ensures it is defined even if macros.h is included first.
+   GIZMO_GPU_FUNCTION: marks functions __device__ __host__ on GPU, nothing on CPU. */
+#if (defined(__CUDACC__) || defined(__HIPCC__)) && !defined(GIZMO_GPU_COMPILER)
 #define GIZMO_GPU_COMPILER
 #endif
 #ifdef GIZMO_GPU_COMPILER

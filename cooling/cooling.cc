@@ -12,12 +12,13 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror: include the struct type and define All_dev BEFORE allvars.h so that
- * inline __device__ __host__ methods in cell_data.h/particle_data.h (pulled in by
- * allvars.h) see All_dev via the #define All All_dev macro during device compilation.
- * Use raw __CUDACC__/__HIPCC__ — GIZMO_GPU_COMPILER not yet defined (macros.h comes via allvars.h below). */
-#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__)) && !defined(CHIMES)
+/* GPU All mirror: include global_data_all_struct.h BEFORE allvars.h so that
+ * GIZMO_GPU_COMPILER is defined and inline __device__ __host__ methods in
+ * cell_data.h/particle_data.h see All_dev via the #define All All_dev macro. */
+#ifdef OPENMP_GPU_OFFLOAD
 #include "../declarations/global_data_all_struct.h"
+#endif
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER) && !defined(CHIMES)
 static __managed__ struct global_data_all_processes All_dev;
 #define All All_dev  /* redirect All -> managed copy for ALL GPU-compiled code (host+device) */
 #endif

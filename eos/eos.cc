@@ -10,11 +10,11 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror: same pattern as cooling.cc — must precede allvars.h.
- * Use raw __CUDACC__/__HIPCC__ here because GIZMO_GPU_COMPILER (defined in
- * macros.h) is not yet available — macros.h is included via allvars.h below. */
-#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__))
+/* GPU All mirror: same pattern as cooling.cc — must precede allvars.h. */
+#ifdef OPENMP_GPU_OFFLOAD
 #include "../declarations/global_data_all_struct.h"
+#endif
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
 static __managed__ struct global_data_all_processes All_dev;
 #define All All_dev  /* redirect All -> managed copy for ALL nvcc-compiled code (host+device) */
 #endif
