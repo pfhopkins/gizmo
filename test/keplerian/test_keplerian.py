@@ -9,17 +9,22 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, assert_final_time, default_omp_threads
+from gizmo.test import build_and_run_test, default_mpi_ranks, clean_test_outputs, assert_final_time, default_omp_threads, variant_output_dir
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_keplerian(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize(
+    "extra_config_flags",
+    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
+    ids=["baseline", "tidal_adaptive"],
+)
+def test_keplerian(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "keplerian"
-    clean_test_outputs(test_name)
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
+    clean_test_outputs(test_name, extra_config_flags)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
 
-    outputdir = f"test/{test_name}/output"
+    outputdir = variant_output_dir(test_name, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError("GIZMO did not run successfully.")

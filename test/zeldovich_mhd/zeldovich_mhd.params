@@ -21,7 +21,7 @@ HubbleParam                        1
 BoxSize                            1
 TimeOfFirstSnapshot                0.047619
 ScaleFac_Between_Snapshots         1.05
-MaxSizeTimestep                    0.01
+MaxSizeTimestep                    1.0
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
 BiniX                              0

@@ -247,7 +247,12 @@ void init(void)
         P[i].Potential = 0;
 #endif
 #ifdef GALSF
-        if(RestartFlag == 0) {P[i].StellarAge = 0;}
+        if(RestartFlag == 0) {
+#if defined(INPUT_READ_SINKPROPS) && defined(SINGLE_STAR_SINK_DYNAMICS)
+            if(P[i].Type != 5) /* sink particles have their age read from the IC */
+#endif
+            {P[i].StellarAge = 0;}
+        }
 #ifdef GALSF_SFR_IMF_VARIATION
         if(RestartFlag == 0) {P[i].IMF_Mturnover = 2.0;} /* gives a solar-type IMF for our calculations in current code */
 #endif
@@ -260,7 +265,7 @@ void init(void)
 #endif
         
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
-        if(RestartFlag == 0) {P[i].ProtoStellarStage = 0;}
+        if(RestartFlag == 0 && P[i].ProtoStellarStage <= 0) {P[i].ProtoStellarStage = 0;} /* only reset if not already set from IC (via INPUT_READ_SINKPROPS) */
 #endif
 
         if(RestartFlag != 1)
@@ -307,7 +312,12 @@ void init(void)
         }
 
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED) && defined(GALSF)
-        if(RestartFlag == 0) {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number(P[i].ID + 3);}
+        if(RestartFlag == 0) {
+#if defined(INPUT_READ_SINKPROPS) && defined(SINGLE_STAR_SINK_DYNAMICS)
+            if(P[i].Type != 5) /* sink particles have their age read from the IC */
+#endif
+            {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number(P[i].ID + 3);}
+        }
 #endif
         
 #ifdef GRAIN_FLUID
@@ -444,7 +454,7 @@ void init(void)
 #if (SINGLE_STAR_SINK_FORMATION & 8)
         P[i].Sink_Ngb_Flag = 0;
 #endif
-#ifdef SINGLE_STAR_FB_TIMESTEP_LIMIT
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
  // start with a large value (> plausible values v_ejecta or v_wind) as a conservative choice when starting up a simulation with an active feedback-emmiting star - this will get updated to a more reasonable value once the particle walks the gravity tree, but need this to ensure the first timestep is stable.
         P[i].MaxFeedbackVel = 1e4 / UNIT_VEL_IN_KMS;
 #endif
@@ -469,6 +479,7 @@ void init(void)
                 P[i].Sink_Mass = P[i].Mass;
 #endif
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION // properly initialize luminosity
+                if(P[i].ProtoStellarRadius_inSolar <= 0) {P[i].ProtoStellarRadius_inSolar = ps_radius_MS_in_solar(P[i].Sink_Mass);} /* initialize protostellar radius if not set */
                 singlestar_subgrid_protostellar_evolution_update_track(i,0,0);
 #if (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2)
                 P[i].ZAMS_Mass = P[i].Sink_Mass;
@@ -1140,7 +1151,20 @@ void setup_smoothinglengths(void)
 #endif
 #ifndef SELFGRAVITY_OFF
                     double soft = All.ForceSoftening[P[i].Type];
-                    if(soft != 0) {if((P[i].KernelRadius>100.*soft)||(P[i].KernelRadius<=0.01*soft)||(Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {P[i].KernelRadius = soft;}}
+                    int ags_active_flag = 0;
+#ifdef ADAPTIVE_GRAVSOFT_FORGAS
+                    if(P[i].Type == 0) {ags_active_flag = 1;}
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FORALL
+                    if((ADAPTIVE_GRAVSOFT_FORALL) & (1 << P[i].Type)) {ags_active_flag = 1;}
+#endif
+                    if(ags_active_flag) {
+                        /* adaptive softening: fixed softening is just a floor and can be arbitrarily small,
+                           so only reset KernelRadius if the tree data itself is degenerate */
+                        if((Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {P[i].KernelRadius = 0.05 * All.BoxSize;}
+                    } else {
+                        if(soft != 0) {if((P[i].KernelRadius>100.*soft)||(P[i].KernelRadius<=0.01*soft)||(Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {P[i].KernelRadius = soft;}}
+                    }
 #else
                     if((Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {
 #if (defined(BOX_PERIODIC) || defined(BOX_SHEARING) || defined(BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE) || defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z))

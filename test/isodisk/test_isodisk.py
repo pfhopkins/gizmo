@@ -12,24 +12,31 @@ import h5py
 import glob
 from os import path, chdir
 from meshoid import Meshoid
-from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads
+from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads, variant_output_dir, stash_baseline_output, finalize_variant_output
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_isodisk(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize(
+    "extra_config_flags",
+    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
+    ids=["baseline", "tidal_adaptive"],
+)
+def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "isodisk"
-    clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name, num_omp_threads)
-    chdir(f"test/{test_name}/")
+    clean_test_outputs(test_name, extra_config_flags)
+    build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        chdir(f"test/{test_name}/")
+        download_test_files(test_name)
+        get_cooling_tables()
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+        chdir("../../")
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
-    download_test_files(test_name)
-    get_cooling_tables()
-
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
-
-    outputdir = f"test/{test_name}/output"
+    outputdir = variant_output_dir(test_name, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError("GIZMO did not run successfully.")
@@ -50,7 +57,7 @@ def test_isodisk(num_mpi_ranks, num_omp_threads):
     # Plot face-on view of the disk using Meshoid slice interpolation
     M = Meshoid(pos_f, boxsize=boxsize)
     disk_center = np.array([center, center, center])
-    rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=disk_center, size=60., order=1)
+    rho_slice = M.Slice(np.log10(rho_f), res=1024, plane="z", center=disk_center, size=60., order=0)
     fig, ax = plt.subplots(figsize=(6, 6))
     im = ax.imshow(rho_slice.T, origin="lower", cmap="inferno", extent=[-30, 30, -30, 30])
     flush_colorbar(im, ax=ax, label="log10(Density)")

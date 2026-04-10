@@ -1297,6 +1297,9 @@ dE - net dust heating (=0 for dust in equilibrium)
 */
 double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
     double dt = get_particle_timestep_in_physical(i, pp);
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N — projections here must match */
+#endif
     double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * cell[i].Density * All.cf_a3inv / PROTONMASS_CGS;
     double lambda_to_dErad = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs * (dt*UNIT_TIME_IN_CGS) / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
     

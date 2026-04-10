@@ -28,8 +28,12 @@ else
 {
     if(no >= maxPart + maxNodes)	/* pseudo particle */
     {
-        if(mode == 1) {endrun(123128);}
-        
+        /* In mode==1 (imported-particle walk on the receiving task), encountering
+           a pseudo means sibling traversal has carried us out of the subtree the
+           sender exported to us. This is the geometric mirror of the top-level
+           boundary check below — terminate the walk cleanly rather than aborting. */
+        if(mode == 1) {*startnode = -1; return numngb;}
+
         if(target >= 0)	/* if no target is given, export will not occur */
         {
             if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)

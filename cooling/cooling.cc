@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <string>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
@@ -133,6 +134,9 @@ void cooling_parent_routine(void)
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
+#endif
 
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
@@ -286,6 +290,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         set_eos_pressure(i, pp, cell);
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
+        /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -768,6 +773,9 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.; /* more initialized quantities */
     int bisection_mode=0; // 0 if doing the usual fixed-point iteration; 1 if switched to bisection method
     if(target >= 0) {dt = get_particle_timestep_in_physical(target, pp);} // dtime [code units]
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N */
+#endif
     fac_noneq_cgs = (dt * UNIT_TIME_IN_CGS) * (necgs + 1.e-30*nHcgs); // factor needed below to asses whether timestep is larger/smaller than recombination time
 
 #if defined(RT_CHEM_PHOTOION)
@@ -1109,7 +1117,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
             LambdaMol *= (1+Z_sol)*(0.001 + 0.1*nHcgs/(1.+nHcgs) + 0.09*nHcgs/(1.+0.1*nHcgs) + Z_sol*Z_sol/(1.0+nHcgs)); // gives very crude estimate of metal-dependent terms //
 #if defined(COOL_METAL_LINES_BY_SPECIES) && ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
-            double column = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target) * UNIT_SURFDEN_IN_CGS; // converts to cgs            
+            double column = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target,pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
             double Z_C = DMAX(1.e-6, Z[2]/All.SolarAbundances[2]), sqrt_T=sqrt(T), ncrit_CO=1.9e4*sqrt_T, Sigma_crit_CO=3.0e-5*T/Z_C, T3=T/1.e3, EXPmax=90.; // carbon abundance (relative to solar and 1/2 factor for original assumed 0.5 depletion), critical density and column
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             Z_C = DMAX(1.e-6, Z[2]/(0.5*All.SolarAbundances[2])); // gas-phase carbon abundance (relative to solar/2, usual assumption implicitly)
@@ -1347,7 +1355,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
      */
     if( (nHcgs > 0.1) && (target >= 0) )  /* don't bother at very low densities, since youre not optically thick, and protect from target=-1 with GALSF_EFFECTIVE_EQS */
     {
-        double surface_density = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target);
+        double surface_density = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target,pp);
         surface_density *=  UNIT_SURFDEN_IN_CGS; // converts to cgs
         double effective_area = 2.3 * PROTONMASS_CGS / surface_density; // since cooling rate is ultimately per-particle, need a particle-weight here
         double kappa_eff; // effective kappa, accounting for metal abundance, temperature, and density //
@@ -1710,6 +1718,30 @@ void IonizeParamsFunction(void)
 #endif // !(CHIMES)
 
 
+/* Check for required cooling data files and provide them from defaults if missing */
+static bool file_exists(const char *path) {FILE *f = fopen(path, "r"); if(f) {fclose(f); return true;} return false;}
+
+static void rank0_run_or_die(const char *cmd, const char *errmsg) {
+    if(system(cmd) != 0) {printf(" *** %s ***\n", errmsg); endrun(456);}
+}
+
+static void ensure_cooling_tables_exist(void) {
+    if(ThisTask == 0) {
+        if(!file_exists("TREECOOL")) {
+            std::string treecool_src = std::string(GIZMO_SOURCE_DIR) + "cooling/TREECOOL";
+            printf(" *** WARNING: TREECOOL not found in run directory. Copying default from %s — make sure this is the table you want! ***\n", treecool_src.c_str());
+            rank0_run_or_die(("cp '" + treecool_src + "' TREECOOL").c_str(), "Could not copy TREECOOL from source tree. Place it in the run directory manually.");
+        }
+#ifdef COOL_METAL_LINES_BY_SPECIES
+        if(!file_exists(GetMultiSpeciesFilename(0, 0))) {
+            const char *url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz";
+            printf(" *** WARNING: spcool_tables not found in run directory. Downloading from %s — make sure these are the tables you want! ***\n", url);
+            rank0_run_or_die(("curl -fsSL '" + std::string(url) + "' | tar xz").c_str(), "Download/extraction of spcool_tables failed. Place spcool_tables/ in the run directory manually.");
+        }
+#endif
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
 
 
 void InitCool(void)
@@ -1774,6 +1806,7 @@ void InitCool(void)
 #else // CHIMES
     InitCoolMemory();
     MakeCoolingTable();
+    ensure_cooling_tables_exist();
     ReadIonizeParams("TREECOOL");
     IonizeParams();
 #ifdef COOL_METAL_LINES_BY_SPECIES
@@ -1934,7 +1967,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     double surface_density_H2_0 = 5.e14 * PROTONMASS_CGS, x_exp_fac=0.00085, w0=0.2; // characteristic cgs column for -molecular line- self-shielding
     w0 = 0.035; // actual calibration from Drain, Gnedin, Richings, others: 0.2 is more appropriate as a re-calibration for sims doing local eqm without ability to resolve shielding at higher columns
     //double surface_density_local = xH0 * cell[i].Density * All.cf_a3inv * dx_cell * UNIT_SURFDEN_IN_CGS; // this is -just- the [neutral] depth through the local cell/slab. note G0 is -already- attenuated in the pre-processing by dust.
-    double surface_density_local = xH0 * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i) * UNIT_SURFDEN_IN_CGS; // this is -just- the [neutral] depth to infinity with our Sobolev-type approximation. Note G0 is already attenuated by dust, but we need to include H2 self-shielding, for which it is appropriate to integrate to infinity.
+    double surface_density_local = xH0 * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS; // this is -just- the [neutral] depth to infinity with our Sobolev-type approximation. Note G0 is already attenuated by dust, but we need to include H2 self-shielding, for which it is appropriate to integrate to infinity.
     double v_thermal_rms = 0.111*sqrt(T); // sqrt(3*kB*T/2*mp), since want rms thermal speed of -molecular H2- in kms
     double gradv = cell[i].velocity_gradient_norm();
     double dv_turb=gradv*dx_cell*UNIT_VEL_IN_KMS; // delta-velocity across cell
@@ -2117,7 +2150,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 #endif
 	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
 #if defined(RT_ISRF_BACKGROUND) // account for additional optical + IR radiation field with extinction
-	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i); // column density in code units
+	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp); // column density in code units
 	double kappa_IR = rt_kappa_adaptive_IR_band(i,20.,20.,0,1, pp, cell); // assume Trad=20 for IR dust opacity
 	double Zfac = 1.;
 #ifdef METALS
@@ -2185,7 +2218,7 @@ MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data
     G0 += cell[target].Rad_Flux_UV;
     if(gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (gJH0 / 2.29e-10);} // uvb contribution //
 #endif
-    double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target) * UNIT_SURFDEN_IN_CGS; // converts to cgs    
+    double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target, pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
 #ifdef RT_PHOTOELECTRIC
     G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / cell[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
@@ -2496,7 +2529,7 @@ void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cel
 
 #ifdef CHIMES_SOBOLEV_SHIELDING
   double surface_density;
-  surface_density = evaluate_NH_from_GradRho(pp[target].GradRho,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target) * UNIT_SURFDEN_IN_CGS; // converts to cgs
+  surface_density = evaluate_NH_from_GradRho(pp[target].GradRho,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target,pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
   ChimesGasVars[target].cell_size = (ChimesFloat) (shielding_length_factor * surface_density / rho_cgs);
 #else
   ChimesGasVars[target].cell_size = 1.0;

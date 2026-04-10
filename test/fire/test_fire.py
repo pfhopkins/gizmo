@@ -24,6 +24,8 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     get_final_snapshot,
+    stash_baseline_output,
+    finalize_variant_output,
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -98,9 +100,9 @@ def _download_if_missing(filename):
             print(f"Could not download {filename} from {WEBSITE}")
 
 
-def run_fire_test(test_name, num_mpi_ranks, num_omp_threads):
+def run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags=()):
     """Build and run the FIRE test with restart flag 2."""
-    build_gizmo_for_test(test_name, num_omp_threads)
+    build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
     chdir(f"test/{test_name}/")
     # Download ICs and reference if not present
     _download_if_missing("fire_ics.hdf5")
@@ -122,15 +124,24 @@ def run_fire_test(test_name, num_mpi_ranks, num_omp_threads):
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_fire(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize(
+    "extra_config_flags",
+    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
+    ids=["baseline", "tidal_adaptive"],
+)
+def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "fire"
-    clean_test_outputs(test_name)
+    clean_test_outputs(test_name, extra_config_flags)
 
-    # Build and run
-    run_fire_test(test_name, num_mpi_ranks, num_omp_threads)
+    # Build and run, stashing any baseline output/ aside so non-default variants don't clobber it
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
     # Check simulation produced output
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
 
     # Get initial and final masses
     initial_snap = f"test/{test_name}/fire_ics.hdf5"

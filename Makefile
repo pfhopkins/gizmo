@@ -69,6 +69,7 @@ HG_REPO := $(shell git config --get remote.origin.url)
 HG_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 BUILDINFO = "Build on $(HOSTNAME) by $(USER) from $(HG_BRANCH):$(HG_COMMIT) at $(HG_REPO)"
 OPT += -DBUILDINFO='$(BUILDINFO)'
+OPT += -DGIZMO_SOURCE_DIR='"$(CURDIR)/"'
 
 
 # initialize some default flags -- these will all get re-written below
@@ -85,14 +86,20 @@ HYPRE_LIBS = # hypre library for AMG-preconditioned solver in MG gradient correc
 
 
 ## read the systype information to use the blocks below for different machines
+## precedence: environment SYSTYPE overrides; otherwise ~/.gizmo is checked before Makefile.systype
+HOME_GIZMO := $(wildcard $(HOME)/.gizmo)
 ifdef SYSTYPE
-SYSTYPE := "$(SYSTYPE)"
--include Makefile.systype
+SYSTYPE := "$(patsubst "%",%,$(SYSTYPE))"
+else ifneq ($(HOME_GIZMO),)
+include $(HOME_GIZMO)
+SYSTYPE := "$(patsubst "%",%,$(SYSTYPE))"
 else
 include Makefile.systype
 endif
 
-ifeq ($(wildcard Makefile.systype), Makefile.systype)
+ifneq ($(HOME_GIZMO),)
+INCL = $(HOME_GIZMO)
+else ifeq ($(wildcard Makefile.systype), Makefile.systype)
 INCL = Makefile.systype
 else
 INCL =
@@ -112,8 +119,9 @@ CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(TACC_MKL_INC)
 MKL_LIBS = -L$(TACC_MKL_LIB) -mkl=sequential
@@ -139,8 +147,9 @@ ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
 endif
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(CPATH)
 MKL_LIBS = -L$(LIBRARY_PATH) -mkl=sequential
@@ -231,8 +240,9 @@ OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
 endif
 ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
 ifneq (MHD_MODIFIED_GRADIENT_CG_ONLY,$(findstring MHD_MODIFIED_GRADIENT_CG_ONLY,$(CONFIGVARS)))
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/3.1.0/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/3.1.0/lib/ -lHYPRE
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 endif
 ifeq (MHD_MODIFIED_GRADIENT_USE_PARDISO,$(findstring MHD_MODIFIED_GRADIENT_USE_PARDISO,$(CONFIGVARS)))
@@ -246,8 +256,9 @@ GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include #-I$(PORTINCLUDE)
 GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib #-L$(PORTLIB)
 FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
 FFTW_LIBS= -L/opt/homebrew/Cellar/fftw/3.3.10_3/lib
-HDF5INCL = -I/opt/homebrew/Cellar/hdf5/2.1.1/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
-HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/2.1.1/lib -lhdf5 -lz  #-L$(PORTLIB)
+HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | tail -n 1)
+HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
+HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz  #-L$(PORTLIB)
 MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION #
 endif
@@ -320,7 +331,8 @@ endif
 CORE_OBJS =	core/main.o core/accel.o core/timestep.o core/init.o file_io/restart.o file_io/io.o \
 			core/predict.o declarations/global.o core/begrun.o core/run.o declarations/allvars.o \
 			file_io/read_ic.o domain/domain.o core/driftfac.o core/kicks.o mesh/ngb.o \
-			compile_time_info.o mesh/merge_split.o
+			compile_time_info.o mesh/merge_split.o \
+			core/transport_subcycle.o
 
 SYSTEM_OBJS =   system/system.o \
 				system/allocate.o \
