@@ -177,11 +177,13 @@ void cooling_parent_routine(void)
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
             Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
-                if(j == 0) { /* one-shot device diagnostic — remove once cooling is verified */
-                    double _dt = get_particle_timestep_in_physical(0, kp);
-                    printf("[GPU-DIAG] batch dtime=%e TimeBin=%d u0=%e\n", _dt, (int)kp[0].TimeBin, kc[0].InternalEnergy);
-                }
+                double _u_before = kc[j].InternalEnergy;
                 do_the_cooling_for_particle(j, kp, kc);
+                if(j == 0) { /* one-shot diagnostic: did DoCooling change u? */
+                    printf("[GPU-DIAG] j=0 u_before=%e u_after=%e dtime=%e TimeBin=%d\n",
+                           _u_before, kc[0].InternalEnergy,
+                           get_particle_timestep_in_physical(0, kp), (int)kp[0].TimeBin);
+                }
             });
             Kokkos::fence();
             cudaError_t _ce = cudaGetLastError();
@@ -2885,14 +2887,15 @@ void chimes_gizmo_exit(void)
 void gizmo_kokkos_initialize(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-    /* Set device stack size once at init.  The cooling kernel inlines a deep
-     * call chain (DoCooling → CoolingRateFromU → CoolingRate →
-     * find_abundances_and_rates → convert_u_to_temp → H2 partition functions).
-     * CUDA allocates stack_size × N_launched_threads bytes of HBM3 per launch,
-     * so this value must be kept small.  4KB is sufficient for the chain;
-     * the expensive set_eos_pressure call is skipped on-device (host scatter). */
-    {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 4096);
-     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,4096) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
+    /* Set device stack size once at init.  The cooling kernel has a deep call
+     * chain: DoCooling → CoolingRateFromU → convert_u_to_temp (+ inlined H2
+     * partition functions) → CoolingRate → find_abundances_and_rates.
+     * CUDA allocates stack_size × N_launched_threads bytes of HBM3 per launch.
+     * With GPU_COOL_BATCH_SIZE=32768 and 32KB stack: 32768×32768=1GB — fine for
+     * H200 with 96GB HBM3 at 1 rank/node.  Too little stack causes silent
+     * corruption (CoolingRateFromU returns 0, rootfinder never moves from u_old). */
+    {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 32768);
+     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
 #endif
 }
 void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }
