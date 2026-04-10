@@ -403,20 +403,11 @@ extern struct Subfind_DensityOtherPropsEval_data_out
 #include "global_data_all_struct.h"
 
 
-/* Declare All for every TU that includes allvars.h:
- *   - CUDA TUs (OPENMP_GPU_OFFLOAD + __CUDACC__): extern __managed__ links to the
- *     __managed__ definition in allvars_gpu.cu.
- *   - All other TUs: plain extern links to the same symbol (managed memory is
- *     accessible from host code without __managed__ on the extern).
- *   - allvars_gpu.cu itself sets GIZMO_ALLVARS_GPU_OWNER to suppress this
- *     declaration — that TU provides the definition, not a declaration. */
-#ifndef GIZMO_ALLVARS_GPU_OWNER
-#  if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-extern __managed__ struct global_data_all_processes All;
-#  else
+/* All is a plain host global defined in allvars.cc.  GPU TUs (cooling.cc, eos.cc)
+ * each maintain a TU-local __managed__ static All_dev copy (see those files) and
+ * redirect device-pass references via #define All All_dev.  No __managed__ extern
+ * and no -rdc needed — TU-local __managed__ statics work without relocatable device code. */
 extern struct global_data_all_processes All;
-#  endif
-#endif
 
 
 

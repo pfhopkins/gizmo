@@ -11,6 +11,17 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 
+/* TU-local __managed__ copy of All for device code in this file.  Matches the
+ * pattern in cooling.cc.  Device-pass references to All are redirected here via
+ * the macro; host-pass references use the global All from allvars.cc as normal.
+ * No cross-TU __managed__ and no -rdc needed. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+__managed__ static struct global_data_all_processes All_dev;
+#ifdef __CUDA_ARCH__
+#define All All_dev
+#endif
+#endif
+
 /*! Routines for gas equation-of-state terms (collects things like calculation of gas pressure)
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */

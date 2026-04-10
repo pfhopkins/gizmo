@@ -156,7 +156,7 @@ OPTIMIZE = -O2 -Wall
 KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
 ## Compile flags: Kokkos includes + CUDA relaxed-constexpr/lambda extensions + sm_90 arch
 KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
-KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_90 --relocatable-device-code=true
+KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_90
 ## Link flags: Kokkos libs (core + containers) + CUDA runtime
 KOKKOS_LDFLAGS  = -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB) -L$(TACC_CUDA_LIB) -Wl,-rpath,$(TACC_CUDA_LIB)
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart -lcuda
@@ -412,7 +412,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o declarations/allvars_gpu.o
+GPU_OBJS = cooling/cooling.o eos/eos.o
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
@@ -567,18 +567,8 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
 	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 
-## LINK_CXX: use nvcc_wrapper for GPU builds; fall back to CXX for CPU-only builds.
-LINK_CXX = $(if $(GPU_CXX),$(GPU_CXX),$(CXX))
-## GPU_DLINK_OBJ: device link step required for --relocatable-device-code=true.
-## nvcc -dlink merges device code from all GPU objects and emits managed-memory
-## registration stubs that the host linker needs to resolve __managed__ symbols.
-GPU_DLINK_OBJ = $(if $(GPU_CXX),declarations/gpu_device_link.o,)
-
-declarations/gpu_device_link.o: $(GPU_OBJS)
-	$(TACC_KOKKOS_BIN)/nvcc -dlink $(GPU_OBJS) -arch=sm_90 -o $@
-
-$(EXEC): $(OBJS) $(GPU_OBJS) $(GPU_DLINK_OBJ)
-	$(LINK_CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(GPU_DLINK_OBJ) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)
+$(EXEC): $(OBJS) $(GPU_OBJS)
+	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)
 
 ## GPU-offloaded files: compiled via nvcc_wrapper so nvcc handles device code.
 ## GPU_CXX = $(KOKKOS_PATH)/bin/nvcc_wrapper on GPU systypes; falls back to $(CXX) otherwise.
@@ -601,6 +591,6 @@ compile_time_info.cc: $(CONFIG)
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:
-	rm -f $(OBJS) $(GPU_OBJS) $(GPU_DLINK_OBJ) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
+	rm -f $(OBJS) $(GPU_OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
 
 
