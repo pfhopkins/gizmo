@@ -1,3 +1,15 @@
+/* GPU All mirror: include the struct type and define All_dev BEFORE allvars.h so that
+ * inline __device__ __host__ methods in cell_data.h/particle_data.h (pulled in by
+ * allvars.h) see All_dev via the #define All All_dev macro during device compilation.
+ * global_data_all_struct.h is self-contained (no MPI/GSL/HDF5); safe to include first. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__) && !defined(CHIMES)
+#include "../declarations/global_data_all_struct.h"
+static __managed__ struct global_data_all_processes All_dev;
+#ifdef __CUDA_ARCH__
+#define All All_dev
+#endif
+#endif
+
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,17 +76,7 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 
-/* With Kokkos+CUDA: a __managed__ (unified memory) copy of the global All struct, local to
-   cooling.cc. Device functions read from All_dev; it is synced from the host All before
-   each kernel launch in cooling_parent_routine. On CPU builds All_dev is not used and
-   the normal global All is accessed directly. */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-__managed__ static struct global_data_all_processes All_dev;
-/* Macro: device functions use All_dev when compiled for device, host All otherwise. */
-#ifdef __CUDA_ARCH__
-#define All All_dev
-#endif
-#endif
+/* All_dev and #define All All_dev are defined at the top of this file, before includes. */
 
 /* forward declarations for functions used before their definitions.
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable

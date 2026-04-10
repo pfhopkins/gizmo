@@ -404,10 +404,13 @@ extern struct Subfind_DensityOtherPropsEval_data_out
 
 
 /* All is a plain host global defined in allvars.cc.  GPU TUs (cooling.cc, eos.cc)
- * each maintain a TU-local __managed__ static All_dev copy (see those files) and
- * redirect device-pass references via #define All All_dev.  No __managed__ extern
- * and no -rdc needed — TU-local __managed__ statics work without relocatable device code. */
+ * each maintain a TU-local __managed__ static All_dev copy and redirect device-pass
+ * references via #define All All_dev.  Suppress the extern in device pass so the
+ * macro does not expand it to "extern ... All_dev", which would conflict with the
+ * static __managed__ definition already present in that TU. */
+#ifndef __CUDA_ARCH__
 extern struct global_data_all_processes All;
+#endif
 
 
 
