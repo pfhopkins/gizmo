@@ -2,7 +2,7 @@
 /GIZMO
 GIZMO_config.h
 compile_time_info.cc
-Config.sh
+/Config.sh
 
 # Test artifacts
 test/*/output/
