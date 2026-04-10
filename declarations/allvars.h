@@ -989,12 +989,14 @@ struct global_data_all_processes
   double Sink_jet_precess_period;
 #endif
 };
-/* Plain extern declaration for all TUs.  When OPENMP_GPU_OFFLOAD is set, the actual
-   definition is in cooling.cc as __managed__ CUDA unified memory (same nvcc TU as all
-   GPU kernels), so device code in that TU can access All directly.  Other TUs link
-   against the managed symbol via the normal linker resolution — no __managed__ needed
-   on the extern because the definition is not in the same TU. */
+/* GIZMO_COOLING_DEFINES_ALL is set by cooling.cc before its includes so that nvcc sees
+   no prior extern declaration when it later emits the __managed__ definition.  All other
+   TUs (including non-CUDA ones) get the normal extern declaration and link against the
+   managed symbol transparently (managed memory is host-accessible without __managed__
+   on the extern). */
+#ifndef GIZMO_COOLING_DEFINES_ALL
 extern struct global_data_all_processes All;
+#endif
 
 
 
