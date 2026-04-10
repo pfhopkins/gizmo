@@ -265,6 +265,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
     dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
 #endif
 
+    if(i == 0) {
+        printf("[GPU-INSIDE] i=0 dtime=%e Mass=%e Type=%d dt_step=%lld\n",
+               dtime, (double)cell[0].Mass, (int)pp[0].Type, (long long)pp[0].dt_step);
+    }
+
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
