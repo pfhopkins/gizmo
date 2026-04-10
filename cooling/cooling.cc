@@ -1,15 +1,7 @@
-/* GPU All mirror: include the struct type and define All_dev BEFORE allvars.h so that
- * inline __device__ __host__ methods in cell_data.h/particle_data.h (pulled in by
- * allvars.h) see All_dev via the #define All All_dev macro during device compilation.
- * global_data_all_struct.h is self-contained (no MPI/GSL/HDF5); safe to include first. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__) && !defined(CHIMES)
-#include "../declarations/global_data_all_struct.h"
-static __managed__ struct global_data_all_processes All_dev;
-#ifdef __CUDA_ARCH__
-#define All All_dev
-#endif
-#endif
-
+/* Standard and Kokkos headers must come BEFORE global_data_all_struct.h.
+ * macros.h (included by global_data_all_struct.h) defines #define terminate(x) {...}
+ * which conflicts with std::terminate declared in <exception>.  Including Kokkos/stdlib
+ * first ensures <exception> is processed before the macro is defined. */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +10,18 @@ static __managed__ struct global_data_all_processes All_dev;
 #ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #endif
+
+/* GPU All mirror: include the struct type and define All_dev BEFORE allvars.h so that
+ * inline __device__ __host__ methods in cell_data.h/particle_data.h (pulled in by
+ * allvars.h) see All_dev via the #define All All_dev macro during device compilation. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__) && !defined(CHIMES)
+#include "../declarations/global_data_all_struct.h"
+static __managed__ struct global_data_all_processes All_dev;
+#ifdef __CUDA_ARCH__
+#define All All_dev
+#endif
+#endif
+
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"

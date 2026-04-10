@@ -1,12 +1,5 @@
-/* GPU All mirror: same pattern as cooling.cc — must precede allvars.h. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-#include "../declarations/global_data_all_struct.h"
-static __managed__ struct global_data_all_processes All_dev;
-#ifdef __CUDA_ARCH__
-#define All All_dev
-#endif
-#endif
-
+/* Standard/Kokkos headers before global_data_all_struct.h to avoid #define terminate
+ * colliding with std::terminate in <exception> (same issue as cooling.cc). */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +9,16 @@ static __managed__ struct global_data_all_processes All_dev;
 #ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #endif
+
+/* GPU All mirror: same pattern as cooling.cc — must precede allvars.h. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+#include "../declarations/global_data_all_struct.h"
+static __managed__ struct global_data_all_processes All_dev;
+#ifdef __CUDA_ARCH__
+#define All All_dev
+#endif
+#endif
+
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
