@@ -162,10 +162,12 @@ void cooling_parent_routine(void)
 
 /* ---- DEVICE-COMPILABLE COOLING FUNCTIONS ----
    When OPENMP_GPU_OFFLOAD is enabled, each function in the cooling call chain is individually
-   annotated with '#pragma omp declare target' (single-function form, no matching end needed).
-   This form works correctly inside #ifndef/#ifdef preprocessor conditional blocks, unlike the
-   block form (begin/end declare target) which NVC++ 24.7 does not reliably handle for
-   conditionally-compiled functions. */
+   annotated with paired '#pragma omp declare target' / '#pragma omp end declare target' blocks.
+   NVC++ 24.7 treats bare 'declare target' as a block requiring a matching 'end', so each
+   function gets its own balanced pair. Both pragmas are inside the same #ifdef OPENMP_GPU_OFFLOAD
+   and (where applicable) the same #ifndef CHIMES conditional, so they are always balanced.
+   This approach works for functions inside preprocessor conditionals, unlike a single large
+   begin/end block which NVC++ 24.7 does not reliably handle for conditionally-compiled code. */
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
 #ifdef OPENMP_GPU_OFFLOAD
@@ -355,6 +357,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
     } // closes if((dt>0)&&(cell[i].Mass>0)&&(pp[i].Type==0)) check
 }
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 
 /* returns new internal energy per unit mass.
@@ -473,6 +478,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     return specific_energy_codeunits_toreturn;
 #endif // CHIMES
 }
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 
 
@@ -549,6 +557,9 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
     if(iter >= MAXITER) {printf("failed to converge in DoInstabilityCooling(cell): m_in=%g u_in=%g rho=%g dt=%g fac=%g ne_in=%g target=%d ID=%ld\n",m_old,u,rho,dt,fac,ne_guess,target,(long)(long long)target /* particle index */); endrun(11);}
     return m;
 }
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 #endif // !(CHIMES)
 
@@ -758,6 +769,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
     if(log10(temp)<Tmin) temp=pow(10.0,Tmin);
     return temp;
 }
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 #endif // CHIMES
 
 
@@ -1043,6 +1057,9 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     }
     return 0;
 } // end of find_abundances_and_rates(, pp, cell) //
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 
 
@@ -1057,6 +1074,9 @@ double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, 
     double Lambda = CoolingRate(log10(temp), rho, ne_guess, ne_eval, target, pp, cell);
     return Lambda;
 }
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 
 
 #endif // !(CHIMES)
@@ -1453,6 +1473,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
     return Q;
 } // ends CoolingRate
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
 /* ---- END device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
 
 
