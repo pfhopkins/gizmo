@@ -756,7 +756,7 @@ extern struct global_data_all_processes
     double Dt_Min_Between_FBCalc_Gyr; // minimum timestep to enforce between feedback calculations, for optimization
 #endif
     
-#if (defined(GALSF) && defined(METALS)) || defined(COOL_METAL_LINES_BY_SPECIES) || defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_THERMAL)
+#if ((defined(GALSF) && defined(METALS)) || defined(COOL_METAL_LINES_BY_SPECIES) || defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_THERMAL)) && !defined(SINGLE_STAR_STARFORGE_DEFAULTS)
 #define INIT_STELLAR_METALS_AGES_DEFINED // convenience flag for later to know these variables exist
     double InitMetallicityinSolar;
     double InitStellarAgeinGyr;
