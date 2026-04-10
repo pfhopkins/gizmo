@@ -160,15 +160,17 @@ void cooling_parent_routine(void)
 
 
 
-/* ---- BEGIN DEVICE-COMPILABLE COOLING FUNCTIONS ----
-   When OPENMP_GPU_OFFLOAD is enabled, all functions from here through the matching END marker
-   are compiled for both host and GPU device via OpenMP declare target. This covers the entire
-   particle-level cooling call chain dispatched from cooling_parent_routine. */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp begin declare target
-#endif
+/* ---- DEVICE-COMPILABLE COOLING FUNCTIONS ----
+   When OPENMP_GPU_OFFLOAD is enabled, each function in the cooling call chain is individually
+   annotated with '#pragma omp declare target' (single-function form, no matching end needed).
+   This form works correctly inside #ifndef/#ifdef preprocessor conditional blocks, unlike the
+   block form (begin/end declare target) which NVC++ 24.7 does not reliably handle for
+   conditionally-compiled functions. */
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
@@ -358,6 +360,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double u, du; u=0; du=0;
@@ -495,6 +500,9 @@ double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(fac <= 0) {return 0.01*m_old;} /* the hot phase is actually colder than the cold reservoir! */
@@ -666,6 +674,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
 
 /* this function determines the electron fraction, and hence the mean molecular weight. With it arrives at a self-consistent temperature.
  * Ionization abundances and the rates for the emission are also computed */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int iter = 0;
@@ -754,6 +765,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 
 #ifndef CHIMES
 /* this function computes the actual ionization states, relative abundances, and returns the ionization/recombination rates if needed */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
                                  double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess,
                                  double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
@@ -1033,6 +1047,9 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 
 
 /*  this function first computes the self-consistent temperature and abundance ratios, and then it calculates (heating rate-cooling rate)/n_h^2 in cgs units */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu; nH0_guess = DMAX(0,DMIN(1,1.-ne_guess/1.2));
@@ -1053,6 +1070,9 @@ extern FILE *fd;
 #ifndef CHIMES
 /*  Calculates (heating rate-cooling rate)/n_h^2 in cgs units
  */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp declare target
+#endif
 double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double n_elec=n_elec_guess, nH0, nHe0, nHp, nHep, nHepp, mu; /* ionization states [computed below] */
@@ -1433,11 +1453,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
     return Q;
 } // ends CoolingRate
-
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target  /* matches the begin declare target block at line ~168 */
-#endif
-/* ---- END first block of device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
+/* ---- END device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
 
 
 void InitCoolMemory(void)
