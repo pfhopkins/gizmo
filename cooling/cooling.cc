@@ -940,13 +940,15 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     if(target==0) {printf("[GPU-TRACE] FAR2: nHcgs=%e rho=%e HYDROGEN_MASSFRAC=%e PROTONMASS=%e local_gammamult=%e gJH0=%e shieldfac_in=%e j=%d\n",
                           nHcgs, rho, HYDROGEN_MASSFRAC, PROTONMASS_CGS, local_gammamultiplier, gJH0, shieldfac, j);}
     if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, cell);} // if < 0, that's a key to tell us this needs to be recalculated
+    if(target==0) {printf("[GPU-TRACE] FAR2b: post-shieldfac shieldfac=%e nHcgs_check=%e rho_check=%e logT=%e\n", shieldfac, nHcgs, rho, logT);}
     n_elec = *ne_guess; if(!isfinite(n_elec)) {n_elec=1;}
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.; /* more initialized quantities */
     int bisection_mode=0; // 0 if doing the usual fixed-point iteration; 1 if switched to bisection method
+    if(target==0) {printf("[GPU-TRACE] FAR2c: pre-timestep nHcgs=%e n_elec=%e necgs=%e\n", nHcgs, n_elec, necgs);}
     if(target >= 0) {dt = get_particle_timestep_in_physical(target, pp);} // dtime [code units]
-    if(target==0) {printf("[GPU-TRACE] FAR3: dt=%e shieldfac=%e n_elec=%e nHcgs=%e AlphaHp_j=%e BetaH0_j=%e\n",
-                          dt, shieldfac, n_elec, nHcgs, AlphaHp[j], BetaH0[j]);}
+    if(target==0) {printf("[GPU-TRACE] FAR3: post-timestep dt=%e nHcgs=%e shieldfac=%e n_elec=%e AlphaHp_j=%e BetaH0_j=%e Timebase=%e cf_hubble=%e dt_step=%lld\n",
+                          dt, nHcgs, shieldfac, n_elec, AlphaHp[j], BetaH0[j], All.Timebase_interval, All.cf_hubble_a, (long long)pp[target].dt_step);}
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N */
 #endif
@@ -2618,12 +2620,14 @@ KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_
 /* function to attenuate the UVB to model self-shielding in optically-thin simulations */
 KOKKOS_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell)
 {
+    if(target==0) {printf("[GPU-TRACE] UVB1: target=%d gamma_12=%e nHcgs=%e logT=%e\n", target, gamma_12, nHcgs, logT);}
 #ifdef GALSF_EFFECTIVE_EQS
     return 1; // self-shielding is implicit in the sub-grid model already //
 #endif
 #if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
-    if(target>=0) {if(cell[target].DelayTimeHII > 0) {return 1;}} // newer HII region model irradiates and removes shielding for regions, but allows cooling function to evolve //
+    if(target>=0) {if(cell[target].DelayTimeHII > 0) {if(target==0) {printf("[GPU-TRACE] UVB2: HII shortcut DelayTimeHII=%e\n", cell[target].DelayTimeHII);} return 1;}} // newer HII region model irradiates and removes shielding for regions, but allows cooling function to evolve //
 #endif
+    if(target==0) {printf("[GPU-TRACE] UVB3: past HII check, computing Rahmati\n");}
     double NH_SS_z, NH_SS = 0.0123; /* CAFG: H number density above which we assume no ionizing bkg (proper cm^-3): note this is a factor ~2 higher than Schaye and Rahmati normalization, owing to CAFG calibration (lower effective cross-section, owing to different UVB spectrum and potentially clumping factors, etc) */
     if(gamma_12>0) {NH_SS_z = NH_SS*pow(gamma_12,0.66)*pow(10.,0.173*(logT-4.));} else {NH_SS_z = NH_SS*pow(10.,0.173*(logT-4.));}
     double q_SS = nHcgs/NH_SS_z;
