@@ -151,23 +151,21 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #endif
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-/* GPU-safe endrun/PRINT_WARNING: printf works on NVIDIA device, MPI and exit() do not.
-   In device code (__CUDA_ARCH__ defined), printf + __trap() halts the GPU thread.
-   In host code within the same nvcc TU, original MPI-based behavior is preserved. */
-static __device__ __host__ inline void endrun_device(int x, const char *func, const char *file, int line) {
-#ifdef __CUDA_ARCH__
-    printf("ENDRUN on GPU, function '%s()', file '%s', line %d: error level %d\n", func, file, line, x);
-    __trap(); /* halts the GPU thread and triggers a CUDA error on the host */
-#else
-    /* ThisTask and MAX_PATH_BUFFERSIZE_TOUSE are defined after macros.h in allvars.h;
-       use extern declaration and printf directly to avoid parse-order issues. */
-    extern int ThisTask;
-    if(x==0) {MPI_Finalize(); exit(0);}
-    printf("ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, func, file, line, x);
-    fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);
-#endif
-}
-#define endrun(x) endrun_device(x, __FUNCTION__, __FILE__, __LINE__)
+/* GPU-safe endrun/PRINT_WARNING: pure macros avoid duplicate-definition across nvcc
+   multi-pass compilation. __CUDA_ARCH__ is only defined during the device pass. */
+#  ifdef __CUDA_ARCH__
+/* Device code: printf works on NVIDIA GPUs; __trap() halts the thread safely. */
+#    define endrun(x) do { \
+    printf("ENDRUN on GPU: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
+    __trap(); } while(0)
+#  else
+/* Host code within nvcc TU: MPI-based abort, same as non-GPU path. */
+#    define endrun(x) do { \
+    extern int ThisTask; \
+    if((x)==0){MPI_Finalize();exit(0);} \
+    printf("ENDRUN on task=%d, file '%s', line %d, error %d\n", ThisTask, __FILE__, __LINE__, (x)); \
+    fflush(stdout); MPI_Abort(MPI_COMM_WORLD,(x)); exit(0); } while(0)
+#  endif
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)
 #else
 #define endrun(x) {if(x==0) {MPI_Finalize(); exit(0);} else {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);}}
