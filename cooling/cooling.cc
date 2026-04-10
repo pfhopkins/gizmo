@@ -181,10 +181,8 @@ void cooling_parent_routine(void)
      * than N_active × struct_size, further reducing UVM pressure.
      */
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_COOL_BATCH_SIZE = 32768;
-    printf("[GPU] cooling_parent_routine: N_active=%d, task=%d, batch_size=%d\n",
-           N_active, ThisTask, GPU_COOL_BATCH_SIZE);
-    fflush(stdout);
     /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
@@ -232,8 +230,9 @@ void cooling_parent_routine(void)
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
-#else
-    /* Non-GPU path: single allocation, OpenMP-parallel dispatch */
+  } else
+#endif
+  { /* CPU path: OpenMP-parallel dispatch (also used as fallback for small N on GPU builds) */
     struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < N_active; j++)
@@ -256,7 +255,7 @@ void cooling_parent_routine(void)
     }
     free(compact_Cell);
     free(compact_P);
-#endif
+  } /* end CPU/GPU path selection */
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);

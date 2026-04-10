@@ -204,8 +204,8 @@ void nuclear_parent_routine(void)
 
     /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_BURN_BATCH_SIZE = 32768;
-    All_dev = All; /* sync managed copy */
 
     int batch_cap = (N_active < GPU_BURN_BATCH_SIZE) ? N_active : GPU_BURN_BATCH_SIZE;
     struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
@@ -248,8 +248,9 @@ void nuclear_parent_routine(void)
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
-#else
-    /* Non-GPU path: single allocation, OpenMP-parallel dispatch */
+  } else
+#endif
+  { /* CPU path: OpenMP-parallel dispatch (also used as fallback for small N on GPU builds) */
     struct particle_data *compact_P = (struct particle_data *) mymalloc("nuclear_P",
             N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("nuclear_Cell",
@@ -279,7 +280,7 @@ void nuclear_parent_routine(void)
     }
     myfree(compact_Cell);
     myfree(compact_P);
-#endif
+  } /* end CPU/GPU path selection */
 }
 
 

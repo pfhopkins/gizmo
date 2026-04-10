@@ -1,5 +1,13 @@
 /* values of various constants to be parsed as part of global definitions */
 
+/* Minimum number of active particles for GPU offload to be worthwhile.
+ * Below this threshold, the kernel launch + memory transfer overhead exceeds
+ * the GPU compute benefit, so we fall back to the CPU (OpenMP) path.
+ * Applies to cooling, nuclear burning, and any future Kokkos-parallelized loops. */
+#ifndef GPU_MIN_PARTICLES_FOR_OFFLOAD
+#define GPU_MIN_PARTICLES_FOR_OFFLOAD 4096
+#endif
+
 #if (SLOPE_LIMITER_TOLERANCE > 0)
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
