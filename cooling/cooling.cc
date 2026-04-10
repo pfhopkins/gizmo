@@ -136,6 +136,15 @@ KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_correct
 KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
+/* Cross-TU forward declarations: functions defined in eos.cc (GPU_OBJS) with
+   KOKKOS_FUNCTION, but cooling.cc call sites only see proto.h host-only decl. */
+KOKKOS_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
+/* Functions in cooling.cc that nvcc needs to see as device-callable for the
+   metal-line cooling table lookup (GetCoolingRateWSpecies) */
+KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);
+KOKKOS_FUNCTION double GetLambdaSpecies(long kspecies, long NCOOLTAB_LOCAL, long ki, long kip, long kj, double dki, double dkj, double tmin, double tdiff);
+/* Functions called from find_abundances_and_rates under SIMPLE_STEADYSTATE_CHEMISTRY */
+KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 
 /* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost.
    Uses a gather-dispatch-scatter pattern with compact arrays so that the cooling chain operates on contiguous memory
@@ -2045,6 +2054,7 @@ double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
 }
 
 
+KOKKOS_FUNCTION
 double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long index_x1y0, long index_x1y1, double dx, double dy, double dz, double mdz)
 {
     long x0y0 = index_x0y0 + k_index;

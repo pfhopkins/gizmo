@@ -552,24 +552,24 @@ extern struct gas_cell_data
         return 0;
     }
 
-    inline double Bfield_microGauss() const { /*!< B-field magnitude in microGauss */
+    GIZMO_GPU_FUNCTION inline double Bfield_microGauss() const { /*!< B-field magnitude in microGauss */
         double Bmag=0;
 #ifdef MAGNETIC
         Bmag = (Bfield() * All.cf_a2inv).norm_sq();
 #else
         Bmag = 2.*Pressure*All.cf_a3inv;
 #endif
-        return UNIT_B_IN_GAUSS * sqrt(std::max(Bmag,0.)) * 1.e6;
+        return UNIT_B_IN_GAUSS * sqrt(DMAX(Bmag,0.)) * 1.e6;
     }
 
-    inline double Bfield_component(int k) const { /*!< B-field component k in code units (B*Vol = BPred * Density / Mass) */
+    GIZMO_GPU_FUNCTION inline double Bfield_component(int k) const { /*!< B-field component k in code units (B*Vol = BPred * Density / Mass) */
 #if defined(MAGNETIC)
         return BPred[k] * Density / Mass;
 #endif
         return 0;
     }
 
-    inline Vec3<double> Bfield() const { /*!< B-field vector in code units */
+    GIZMO_GPU_FUNCTION inline Vec3<double> Bfield() const { /*!< B-field vector in code units */
 #if defined(MAGNETIC)
         double fac = Density / Mass;
         return BPred * fac;
