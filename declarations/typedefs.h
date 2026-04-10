@@ -1,4 +1,5 @@
 /* contains global type definitions */
+#pragma once
 
 typedef  long long integertime;
 static MPI_Datatype MPI_TYPE_TIME = MPI_LONG_LONG;
