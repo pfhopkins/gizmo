@@ -22,7 +22,10 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #ifdef OPENMP_GPU_OFFLOAD
-#include <Kokkos_Core.hpp>
+/* Forward-declare Kokkos lifecycle wrappers defined in cooling/cooling.cc (compiled by
+   nvcc_wrapper). We never include Kokkos_Core.hpp here — it requires __CUDACC__. */
+void gizmo_kokkos_initialize(int argc, char *argv[]);
+void gizmo_kokkos_finalize(void);
 #endif
 
 
@@ -46,7 +49,7 @@ int main(int argc, char **argv)
   MPI_Comm_rank(MPI_COMM_WORLD, &ThisTask);
   MPI_Comm_size(MPI_COMM_WORLD, &NTask);
 #ifdef OPENMP_GPU_OFFLOAD
-  Kokkos::initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
+  gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
 #endif
 
 #ifdef IMPOSE_PINNING
@@ -135,7 +138,7 @@ int main(int argc, char **argv)
   run();			/* main simulation loop */
 
 #ifdef OPENMP_GPU_OFFLOAD
-  Kokkos::finalize();  /* must come before MPI_Finalize */
+  gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
 #endif
   MPI_Finalize();		/* clean up & finalize MPI */
 

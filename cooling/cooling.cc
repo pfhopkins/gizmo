@@ -2817,4 +2817,12 @@ void chimes_gizmo_exit(void)
   endrun(56275362);
 }
 #endif // CHIMES
+
+/* Kokkos lifecycle wrappers — defined here so only this file (compiled by nvcc_wrapper)
+   ever includes Kokkos_Core.hpp. main.cc calls these via forward declarations. */
+#ifdef OPENMP_GPU_OFFLOAD
+void gizmo_kokkos_initialize(int argc, char *argv[]) { Kokkos::initialize(argc, argv); }
+void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }
+#endif
+
 #endif
