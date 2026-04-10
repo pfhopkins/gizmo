@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <string>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
@@ -1717,6 +1718,30 @@ void IonizeParamsFunction(void)
 #endif // !(CHIMES)
 
 
+/* Check for required cooling data files and provide them from defaults if missing */
+static bool file_exists(const char *path) {FILE *f = fopen(path, "r"); if(f) {fclose(f); return true;} return false;}
+
+static void rank0_run_or_die(const char *cmd, const char *errmsg) {
+    if(system(cmd) != 0) {printf(" *** %s ***\n", errmsg); endrun(456);}
+}
+
+static void ensure_cooling_tables_exist(void) {
+    if(ThisTask == 0) {
+        if(!file_exists("TREECOOL")) {
+            std::string treecool_src = std::string(GIZMO_SOURCE_DIR) + "cooling/TREECOOL";
+            printf(" *** WARNING: TREECOOL not found in run directory. Copying default from %s — make sure this is the table you want! ***\n", treecool_src.c_str());
+            rank0_run_or_die(("cp '" + treecool_src + "' TREECOOL").c_str(), "Could not copy TREECOOL from source tree. Place it in the run directory manually.");
+        }
+#ifdef COOL_METAL_LINES_BY_SPECIES
+        if(!file_exists(GetMultiSpeciesFilename(0, 0))) {
+            const char *url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz";
+            printf(" *** WARNING: spcool_tables not found in run directory. Downloading from %s — make sure these are the tables you want! ***\n", url);
+            rank0_run_or_die(("curl -fsSL '" + std::string(url) + "' | tar xz").c_str(), "Download/extraction of spcool_tables failed. Place spcool_tables/ in the run directory manually.");
+        }
+#endif
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+}
 
 
 void InitCool(void)
@@ -1781,6 +1806,7 @@ void InitCool(void)
 #else // CHIMES
     InitCoolMemory();
     MakeCoolingTable();
+    ensure_cooling_tables_exist();
     ReadIonizeParams("TREECOOL");
     IonizeParams();
 #ifdef COOL_METAL_LINES_BY_SPECIES
