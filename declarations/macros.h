@@ -146,14 +146,13 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    Expands to nothing on CPU-only builds. Safe to use in headers included by all TUs. */
 #ifdef __CUDACC__
 #define GIZMO_GPU_FUNCTION __device__ __host__
-/* GPU-safe isfinite/isnan: the standard library versions (from <cmath> or glibc)
-   are host-only and get stubbed to return 0 on device by nvcc, making every value
-   appear non-finite.  CUDA provides __isfinited/__isnand as device builtins.
-   We wrap them in __device__ __host__ inline functions to work on both sides. */
-__device__ __host__ static inline int gizmo_isfinite(double x) { return (x == x) && (x - x == 0.0); }
-__device__ __host__ static inline int gizmo_isnan(double x) { return x != x; }
-#define isfinite(x) gizmo_isfinite((double)(x))
-#define isnan(x) gizmo_isnan((double)(x))
+/* GPU-safe isfinite/isnan: glibc versions are host-only and nvcc stubs them to
+   return 0 on device.  These pure-arithmetic macros work on both host and device
+   with no linkage issues: NaN is the only float where x != x; Inf - Inf = NaN. */
+#undef isfinite
+#undef isnan
+#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
+#define isnan(x) ((double)(x) != (double)(x))
 #else
 #define GIZMO_GPU_FUNCTION
 #endif
