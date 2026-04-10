@@ -30,6 +30,12 @@ static __managed__ struct global_data_all_processes All_dev;
  * inlined into this TU's GPU kernel without requiring -rdc=true. */
 #include "../eos/eos_device.h"
 #include "../eos/hydrogen_molecule_device.h"
+/* Timestep device functions (get_particle_timestep_in_physical, etc.) inlined
+ * here so the GPU cooling kernel doesn't call into the host-only timestep.cc TU. */
+#include "../core/timestep_device.h"
+/* set_eos_pressure inlined here so the GPU kernel can call it; the body's
+ * ThermalProperties call resolves to the KOKKOS_FUNCTION in this same TU. */
+#include "../eos/set_eos_pressure_device.h"
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
