@@ -21,7 +21,6 @@ from gizmo.test import (
     flush_colorbar,
     assert_final_time,
     get_final_snapshot,
-    get_cooling_tables,
 )
 from pathlib import Path
 
@@ -116,7 +115,6 @@ def load_snapshot_radial(snap_file):
 )
 def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
     generate_ics()
-    get_cooling_tables(str(TEST_DIR))
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads)
 
     final_snap = get_final_snapshot(TEST_NAME)

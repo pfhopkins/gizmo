@@ -69,6 +69,7 @@ HG_REPO := $(shell git config --get remote.origin.url)
 HG_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 BUILDINFO = "Build on $(HOSTNAME) by $(USER) from $(HG_BRANCH):$(HG_COMMIT) at $(HG_REPO)"
 OPT += -DBUILDINFO='$(BUILDINFO)'
+OPT += -DGIZMO_SOURCE_DIR='"$(CURDIR)/"'
 
 
 # initialize some default flags -- these will all get re-written below
