@@ -180,18 +180,17 @@ void cooling_parent_routine(void)
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
             Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
+                /* DIAG-ENTRY: print before any function call to confirm thread executes */
+                if(j == 0) {
+                    printf("[GPU-DIAG-ENTRY] kernel entered j=0 u=%e rho=%e dtime=%e\n",
+                           kc[0].InternalEnergy, kc[0].Density * All.cf_a3inv,
+                           get_particle_timestep_in_physical(0, kp));
+                }
                 double _u_before = kc[j].InternalEnergy;
                 do_the_cooling_for_particle(j, kp, kc);
-                if(j == 0) { /* surgical diagnostic: probe convert_u_to_temp and CoolingRateFromU directly */
-                    double _u0  = _u_before;
-                    double _rho = kc[0].Density * All.cf_a3inv;
-                    double _ne=kc[0].Ne, _nH0=0, _nHp=0, _nHe0=0, _nHep=0, _nHepp=0, _mu=1;
-                    double _ne_eval = _ne;
-                    double _T = convert_u_to_temp(_u0, _rho, 0, &_ne, &_nH0, &_nHp, &_nHe0, &_nHep, &_nHepp, &_mu, kp, kc);
-                    double _Lambda = CoolingRateFromU(_u0, _rho, kc[0].Ne, &_ne_eval, 0, kp, kc);
-                    printf("[GPU-DIAG] j=0 u=%e rho=%e T_from_u=%e Lambda=%e ne_in=%e ne_out=%e mu=%e u_after=%e dtime=%e\n",
-                           _u0, _rho, _T, _Lambda, kc[0].Ne, _ne_eval, _mu, kc[0].InternalEnergy,
-                           get_particle_timestep_in_physical(0, kp));
+                if(j == 0) {
+                    printf("[GPU-DIAG-EXIT] j=0 u_before=%e u_after=%e\n",
+                           _u_before, kc[0].InternalEnergy);
                 }
             });
             Kokkos::fence();
