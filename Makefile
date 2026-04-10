@@ -142,11 +142,14 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
-ifeq ($(SYSTYPE),"Frontera_GPU")
+ifeq ($(SYSTYPE),"Vista")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
 ## Kokkos GPU offload for cooling.cc (and future GPU-ported files).
 ## cooling.cc and eos/eos.cc are compiled via nvcc_wrapper → nvcc for device code.
 ## TACC's kokkos/4.5.01-cuda module sets TACC_KOKKOS_DIR/INC/LIB/BIN.
@@ -407,6 +410,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
 GPU_OBJS = cooling/cooling.o eos/eos.o
+## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
@@ -502,10 +506,11 @@ OBJS    += eos/aneos.o
 INCL    += eos/aneos.h
 endif
 
-# nuclear reaction network
+# nuclear reaction network — nuclear.o and nuclear_physics.o go to GPU_OBJS for Kokkos offload
 ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
-OBJS    += nuclear/nuclear.o nuclear/nuclear_physics.o nuclear/nuclear_neutrino.o
-INCL    += nuclear/nuclear.h
+GPU_OBJS += nuclear/nuclear.o nuclear/nuclear_physics.o
+OBJS     += nuclear/nuclear_neutrino.o
+INCL     += nuclear/nuclear.h
 endif
 ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_skynet.o
@@ -579,6 +584,10 @@ GPU_CC = $(if $(GPU_CXX),$(GPU_CXX),$(CXX))
 cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+nuclear/nuclear.o: nuclear/nuclear.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+nuclear/nuclear_physics.o: nuclear/nuclear_physics.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data_all_struct.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

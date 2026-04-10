@@ -17,15 +17,37 @@
 #include <cstring>
 #include <vector>
 #include <algorithm>
+#ifdef OPENMP_GPU_OFFLOAD
+#include <Kokkos_Core.hpp>
+#endif
+
+/* GPU All mirror — same pattern as cooling.cc.  Must precede allvars.h. */
+#ifdef OPENMP_GPU_OFFLOAD
+#include "../declarations/global_data_all_struct.h"
+#endif
+#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__))
+static __managed__ struct global_data_all_processes All_dev;
+#define All All_dev
+#endif
+
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/timestep_device.h"
 #include "nuclear.h"
+
+/* GPU-safe isfinite/isnan overrides */
+#ifdef GIZMO_GPU_COMPILER
+#undef isfinite
+#undef isnan
+#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
+#define isnan(x) ((double)(x) != (double)(x))
+#endif
 
 #ifdef NUCLEAR_NETWORK
 
 
 /* Update Ye and Abar in compact cell data from network output. */
-void nuclear_update_ye_abar(int j, const struct nuclear_output *out,
+KOKKOS_FUNCTION void nuclear_update_ye_abar(int j, const struct nuclear_output *out,
                             struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef EOS_CARRIES_YE
@@ -71,7 +93,7 @@ void InitNuclearNetwork(void)
    CallNuclearNetwork — dispatch to the selected solver.
    Pure function: no global state, thread-safe.
    ========================================================================= */
-int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out)
+KOKKOS_FUNCTION int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out)
 {
     memset(out, 0, sizeof(*out));
 #if !defined(NUCLEAR_NETWORK_SOLVER) || (NUCLEAR_NETWORK_SOLVER == 0)
@@ -90,7 +112,7 @@ int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *ou
    Pack / unpack helpers for the gather-dispatch-scatter pattern.
    These operate only on compact_P[j] / compact_Cell[j].
    ========================================================================= */
-static inline struct nuclear_input pack_nuclear_input(int j,
+KOKKOS_FUNCTION static inline struct nuclear_input pack_nuclear_input(int j,
         struct particle_data *pp, struct gas_cell_data *cell)
 {
     struct nuclear_input in;
@@ -108,7 +130,7 @@ static inline struct nuclear_input pack_nuclear_input(int j,
     return in;
 }
 
-static inline void unpack_nuclear_output(int j, const struct nuclear_output *out,
+KOKKOS_FUNCTION static inline void unpack_nuclear_output(int j, const struct nuclear_output *out,
         struct particle_data *pp, struct gas_cell_data *cell)
 {
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
@@ -141,7 +163,7 @@ static inline void unpack_nuclear_output(int j, const struct nuclear_output *out
    nuclear_fixup_mass_fractions — clamp negatives and renormalize.
    Can operate on compact arrays (pp[j]) or global P[j].
    ========================================================================= */
-void nuclear_fixup_mass_fractions(int j, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION void nuclear_fixup_mass_fractions(int j, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double sum = 0;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
@@ -180,7 +202,54 @@ void nuclear_parent_routine(void)
     int N_active = (int) burn_indices.size();
     if (N_active == 0) return;
 
-    /* Step 2: Gather — allocate compact arrays, copy active particle data */
+    /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+    static const int GPU_BURN_BATCH_SIZE = 32768;
+    All_dev = All; /* sync managed copy */
+
+    int batch_cap = (N_active < GPU_BURN_BATCH_SIZE) ? N_active : GPU_BURN_BATCH_SIZE;
+    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
+
+    for (int batch_start = 0; batch_start < N_active; batch_start += GPU_BURN_BATCH_SIZE) {
+        int batch_n = N_active - batch_start;
+        if (batch_n > GPU_BURN_BATCH_SIZE) batch_n = GPU_BURN_BATCH_SIZE;
+
+        /* Gather + fixup */
+        for (int j = 0; j < batch_n; j++) {
+            compact_P[j]    = P[burn_indices[batch_start + j]];
+            compact_Cell[j] = CellP[burn_indices[batch_start + j]];
+            nuclear_fixup_mass_fractions(j, compact_P, compact_Cell);
+        }
+
+        /* GPU dispatch */
+        {
+            struct particle_data *kp = compact_P;
+            struct gas_cell_data *kc = compact_Cell;
+            Kokkos::parallel_for("nuclear_burn", batch_n, KOKKOS_LAMBDA(int j) {
+                if (kp[j].Type != 0 || kc[j].Mass <= 0) return;
+                struct nuclear_input  in  = pack_nuclear_input(j, kp, kc);
+                if (in.dt <= 0) return;
+                struct nuclear_output out;
+                int ierr = CallNuclearNetwork(&in, &out);
+                if (ierr == 0) { unpack_nuclear_output(j, &out, kp, kc); }
+            });
+            Kokkos::fence();
+        }
+
+        /* Scatter */
+        for (int j = 0; j < batch_n; j++) {
+            int i = burn_indices[batch_start + j];
+            CellP[i] = compact_Cell[j];
+            P[i]     = compact_P[j];
+        }
+    }
+
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+
+#else
+    /* Non-GPU path: single allocation, OpenMP-parallel dispatch */
     struct particle_data *compact_P = (struct particle_data *) mymalloc("nuclear_P",
             N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) mymalloc("nuclear_Cell",
@@ -189,13 +258,9 @@ void nuclear_parent_routine(void)
         compact_P[j]    = P[burn_indices[j]];
         compact_Cell[j] = CellP[burn_indices[j]];
     }
-
-    /* Step 2b: fixup mass fractions on compact arrays before burning */
     for (int j = 0; j < N_active; j++) {
         nuclear_fixup_mass_fractions(j, compact_P, compact_Cell);
     }
-
-    /* Step 3: Dispatch — run nuclear burning on compact arrays */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -205,21 +270,28 @@ void nuclear_parent_routine(void)
         if (in.dt <= 0) continue;
         struct nuclear_output out;
         int ierr = CallNuclearNetwork(&in, &out);
-        if (ierr == 0) {
-            unpack_nuclear_output(j, &out, compact_P, compact_Cell);
-        }
+        if (ierr == 0) { unpack_nuclear_output(j, &out, compact_P, compact_Cell); }
     }
-
-    /* Step 4: Scatter — copy modified data back to global arrays */
     for (int j = 0; j < N_active; j++) {
         int i = burn_indices[j];
         CellP[i] = compact_Cell[j];
         P[i]     = compact_P[j];
     }
-
     myfree(compact_Cell);
     myfree(compact_P);
+#endif
 }
 
+
+/* Sync the __managed__ All_dev copy for this TU (called from gizmo_gpu_sync_all in cooling.cc) */
+#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__))
+void gizmo_gpu_sync_all_nuclear(void) {
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+    All_dev = All;
+#pragma pop_macro("All")
+}
+#endif
 
 #endif /* NUCLEAR_NETWORK */
