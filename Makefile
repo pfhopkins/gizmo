@@ -158,7 +158,7 @@ KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
 KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
 KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_90
 ## Link flags: Kokkos libs (core + containers) + CUDA runtime
-KOKKOS_LDFLAGS  = -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB)
+KOKKOS_LDFLAGS  = -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB) -L$(TACC_CUDA_LIB) -Wl,-rpath,$(TACC_CUDA_LIB)
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart
 ## nvcc_wrapper reads NVCC_WRAPPER_DEFAULT_COMPILER as its host compiler.
 ## Set it to mpicxx so nvcc_wrapper → nvcc -ccbin mpicxx, bringing in MPI headers/libs.
