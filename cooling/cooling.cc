@@ -17,9 +17,7 @@
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__) && !defined(CHIMES)
 #include "../declarations/global_data_all_struct.h"
 static __managed__ struct global_data_all_processes All_dev;
-#ifdef __CUDA_ARCH__
-#define All All_dev
-#endif
+#define All All_dev  /* redirect All -> managed copy for ALL nvcc-compiled code (host+device) */
 #endif
 
 #include "../declarations/allvars.h"
@@ -33,6 +31,8 @@ static __managed__ struct global_data_all_processes All_dev;
 /* Timestep device functions (get_particle_timestep_in_physical, etc.) inlined
  * here so the GPU cooling kernel doesn't call into the host-only timestep.cc TU. */
 #include "../core/timestep_device.h"
+/* evaluate_NH_from_GradRho is in core/predict.cc (not GPU_OBJS) */
+#include "../core/predict_device.h"
 /* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
  * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
  * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,

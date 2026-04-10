@@ -92,4 +92,15 @@ void hydrogen_molecule_partitionfunc(double temp, double result[3]) {
     result[2] = gamma;
 }
 
+KOKKOS_INLINE_FUNCTION
+double hydrogen_molecule_gamma(double temp) {
+    if (temp < 12.5) { return 5. / 3; }
+    else if (temp > 1e5) { return 9. / 7; }
+    double zrot[3], zvib[3];
+    hydrogen_molecule_zrot_mixture(temp, zrot);
+    hydrogen_molecule_zvib(temp, zvib);
+    double cv = 1.5 + zrot[2] / BOLTZMANN_CGS + zvib[2] / BOLTZMANN_CGS;
+    return (cv + 1) / cv;
+}
+
 #endif /* EOS_SUBSTELLAR_ISM */

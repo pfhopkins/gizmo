@@ -14,9 +14,7 @@
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
 #include "../declarations/global_data_all_struct.h"
 static __managed__ struct global_data_all_processes All_dev;
-#ifdef __CUDA_ARCH__
-#define All All_dev
-#endif
+#define All All_dev  /* redirect All -> managed copy for ALL nvcc-compiled code (host+device) */
 #endif
 
 #include "../declarations/allvars.h"
@@ -240,7 +238,7 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
  T_dust_manual_override here designates whether we want to pass a specific dust temp or allow the code to call one itself here, to avoid creating circular dependencies and to
     allow for self-consistent coupling to various other dust dynamics/formation/chemistry modules. if you just want 'default' behavior and aren't worried about this, call with this parameter set to 0
  */
-double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(i<0 || pp[i].Type!=0) {return 1;}
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) /* note since the applications of this module really want a -surface area per unit mass- ratio to scale off of, we actually want to scale this by the geometric opacity, relative to what 'typical' solar conditions would give */

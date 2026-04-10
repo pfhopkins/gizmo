@@ -365,7 +365,7 @@ extern ALIGN(32) struct particle_data
 #endif
     }
 
-    inline double Get_Particle_Size() const { /*!< effective particle/cell size from kernel radius and neighbor number */
+    GIZMO_GPU_FUNCTION inline double Get_Particle_Size() const { /*!< effective particle/cell size from kernel radius and neighbor number */
 #if (NUMDIMS == 1)
         return 2.00000 * KernelRadius / NumNgb; // (2)^(1/1)
 #elif (NUMDIMS == 2)
