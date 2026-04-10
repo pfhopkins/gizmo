@@ -29,6 +29,7 @@ static __managed__ struct global_data_all_processes All_dev;
  * Get_Gas_Mean_Molecular_Weight_mu) as KOKKOS_INLINE_FUNCTION so they are
  * inlined into this TU's GPU kernel without requiring -rdc=true. */
 #include "../eos/eos_device.h"
+#include "../eos/hydrogen_molecule_device.h"
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
@@ -99,7 +100,7 @@ KOKKOS_FUNCTION double find_abundances_and_rates(double logT, double rho, int ta
                                  double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
                                  struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
-double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
@@ -602,7 +603,7 @@ u = Etot/Mtot = SUM_i(N_i E_i) / SUM_i(N_i m_i) over all species i with energy E
 Argument cv will return the specific heat capacity at constant volume du/dT
  */
 #define NUM_SPECIES_IN_EOS 5
-double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
+KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dummy;
     find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne, nH0, nHp, nHe0, nHep, nHepp, mu, &dummy, &dummy, &dummy,&dummy, pp, cell); // all the thermo variables for this T
     double X = HYDROGEN_MASSFRAC, Y = 1. - X, Z = 0, fmol;
@@ -663,7 +664,7 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
    EOS_SUBSTELLAR_ISM implementation of convert_u_to_temp: we call convert_temp_to_u
    and root-find to solve it = u
 */
-double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
+KOKKOS_FUNCTION double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
     double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
     temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS);
