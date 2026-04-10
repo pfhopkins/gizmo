@@ -272,6 +272,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
+        if(i==0) {printf("[GPU-TRACE] A: entered if-block\n");}
         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
@@ -280,19 +281,20 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-#ifndef __CUDA_ARCH__
             set_eos_pressure(i, pp, cell);
-#endif
             }
 #endif
 #endif
-        
+        if(i==0) {printf("[GPU-TRACE] B: past HII block\n");}
+
 #if defined(RADTRANSFER)
         for(k=0;k<N_RT_FREQ_BINS;k++) {cell[i].Lambda_RadiativeCooling_toRHDBins[k]=0;} // zero these out before cooling subroutine
 #endif
-        
+
 #ifdef COOL_MOLECFRAC_NONEQM
+        if(i==0) {printf("[GPU-TRACE] C: about to call update_explicit_molecular_fraction\n");}
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
+        if(i==0) {printf("[GPU-TRACE] D: returned from update_explicit_molecular_fraction\n");}
 #endif
 
 #ifndef COOLING_OPERATOR_SPLIT
@@ -321,6 +323,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         /* and convert to cgs before use in the cooling sub-routine */
         DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;} // if unsplit, send this converted variable to cooling below
+        if(i==0) {printf("[GPU-TRACE] E: DtInternalEnergy prep done, about to call DoCooling\n");}
 #endif
 
 #if !defined(CHIMES)
@@ -328,8 +331,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
         unew = DoCooling(uold, cell[i].Density * All.cf_a3inv, dtime, ne_in, &ne_out, i, pp, cell);
         if(i == 0) {
-            printf("[GPU-COOL-DIAG] uold=%e unew=%e rho=%e dtime=%e ne_in=%e ne_out=%e DtU=%e\n",
-                   uold, unew, cell[0].Density * All.cf_a3inv, dtime, ne_in, ne_out, cell[0].DtInternalEnergy);
+            printf("[GPU-TRACE] F: DoCooling returned uold=%e unew=%e\n", uold, unew);
         }
 #if !defined(CHIMES)
         cell[i].Ne = ne_out; /* update the free electron variable */
