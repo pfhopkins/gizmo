@@ -1630,7 +1630,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     }
                 }
                 dr = P[no].Pos - pos;
-                nearest_xyz(dr,-1);
+                GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 mass = P[no].Mass;
                 
@@ -1854,7 +1854,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 
                 dr = nop->u.d.s - pos;
-                nearest_xyz(dr,-1);
+                GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
 #ifdef PMGRID
                 if(r2 > rcut2) /* check whether we can stop walking along this branch */
@@ -1961,7 +1961,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                     d_stellarlum = nop->rt_source_lum_s - pos;
-                    nearest_xyz(d_stellarlum,-1);
+                    GRAVITY_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
 #else
                     d_stellarlum = dr;
 #endif
@@ -2384,7 +2384,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef DM_SCALARFIELD_SCREENING
                 if(ptype != 0)    /* we have a dark matter particle as target */
                 {
-                    nearest_xyz(d_dm,-1);
+                    GRAVITY_NEAREST_XYZ(d_dm[0],d_dm[1],d_dm[2],-1);
                     r2 = d_dm.norm_sq();
                     r = sqrt(r2); double fac_dmsf, h_inv_dmsf, h3inv_dmsf, u_dmsf;
                     if(r >= h) {fac_dmsf = mass_dm / (r2 * r);} else {
@@ -2749,7 +2749,7 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
                 mass = nop->u.d.mass;
                 dr = nop->u.d.s - pos;
             }
-            nearest_xyz(dr,-1);
+            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
 
             if(no < All.MaxPart)
             {no = Nextnode[no];}
