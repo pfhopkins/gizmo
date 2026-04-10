@@ -146,26 +146,28 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    Expands to nothing on CPU-only builds. Safe to use in headers included by all TUs. */
 #ifdef __CUDACC__
 #define GIZMO_GPU_FUNCTION __device__ __host__
+/* GPU-safe isfinite/isnan: the standard library versions (from <cmath> or glibc)
+   are host-only and get stubbed to return 0 on device by nvcc, making every value
+   appear non-finite.  CUDA provides __isfinited/__isnand as device builtins.
+   We wrap them in __device__ __host__ inline functions to work on both sides. */
+__device__ __host__ static inline int gizmo_isfinite(double x) { return (x == x) && (x - x == 0.0); }
+__device__ __host__ static inline int gizmo_isnan(double x) { return x != x; }
+#define isfinite(x) gizmo_isfinite((double)(x))
+#define isnan(x) gizmo_isnan((double)(x))
 #else
 #define GIZMO_GPU_FUNCTION
 #endif
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-/* GPU-safe endrun/PRINT_WARNING: pure macros avoid duplicate-definition across nvcc
-   multi-pass compilation. __CUDA_ARCH__ is only defined during the device pass. */
-#  ifdef __CUDA_ARCH__
-/* Device code: printf works on NVIDIA GPUs; __trap() halts the thread safely. */
-#    define endrun(x) do { \
-    printf("ENDRUN on GPU: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
-    __trap(); } while(0)
-#  else
-/* Host code within nvcc TU: MPI-based abort, same as non-GPU path. */
-#    define endrun(x) do { \
-    extern int ThisTask; \
-    if((x)==0){MPI_Finalize();exit(0);} \
-    printf("ENDRUN on task=%d, file '%s', line %d, error %d\n", ThisTask, __FILE__, __LINE__, (x)); \
-    fflush(stdout); MPI_Abort(MPI_COMM_WORLD,(x)); exit(0); } while(0)
-#  endif
+/* GPU-safe endrun: nvcc_wrapper does NOT reliably define __CUDA_ARCH__ during
+   device compilation, so we cannot use #ifdef to select host vs device at
+   compile time.  Instead, define a single version that works on both: printf
+   is device-safe on NVIDIA GPUs, and we simply return rather than calling
+   MPI_Abort (which would segfault from device).  The host scatter pass will
+   detect the error via the modified state if needed. */
+#define endrun(x) do { \
+    printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
+    return; } while(0)
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)
 #else
 #define endrun(x) {if(x==0) {MPI_Finalize(); exit(0);} else {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);}}
