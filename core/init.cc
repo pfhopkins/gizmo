@@ -247,7 +247,12 @@ void init(void)
         P[i].Potential = 0;
 #endif
 #ifdef GALSF
-        if(RestartFlag == 0) {P[i].StellarAge = 0;}
+        if(RestartFlag == 0) {
+#if defined(INPUT_READ_SINKPROPS) && defined(SINGLE_STAR_SINK_DYNAMICS)
+            if(P[i].Type != 5) /* sink particles have their age read from the IC */
+#endif
+            {P[i].StellarAge = 0;}
+        }
 #ifdef GALSF_SFR_IMF_VARIATION
         if(RestartFlag == 0) {P[i].IMF_Mturnover = 2.0;} /* gives a solar-type IMF for our calculations in current code */
 #endif
@@ -307,7 +312,12 @@ void init(void)
         }
 
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED) && defined(GALSF)
-        if(RestartFlag == 0) {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number(P[i].ID + 3);}
+        if(RestartFlag == 0) {
+#if defined(INPUT_READ_SINKPROPS) && defined(SINGLE_STAR_SINK_DYNAMICS)
+            if(P[i].Type != 5) /* sink particles have their age read from the IC */
+#endif
+            {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number(P[i].ID + 3);}
+        }
 #endif
         
 #ifdef GRAIN_FLUID

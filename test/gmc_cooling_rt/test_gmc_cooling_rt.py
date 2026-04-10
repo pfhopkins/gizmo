@@ -22,8 +22,9 @@ def plot_quantiles_vs_nH(nH, quantity, nH_bins=np.logspace(-1, 4, 21), plotargs=
 
     centers = np.sqrt(nH_bins[1:] * nH_bins[:-1])
     plt.loglog(centers, quantiles[1], label=label, **plotargs)
-    fill_kwargs = {k: v for k, v in plotargs.items()
-                   if k not in ("marker", "markersize", "markerfacecolor", "linestyle", "alpha")}
+    fill_kwargs = {
+        k: v for k, v in plotargs.items() if k not in ("marker", "markersize", "markerfacecolor", "linestyle", "alpha")
+    }
     plt.fill_between(centers, quantiles[0], quantiles[2], **fill_kwargs, alpha=0.2)
 
 
@@ -72,11 +73,17 @@ def _render_combined_gmc_plots(test_dir):
         plot_quantiles_vs_nH(ref["nH"], ref[field], label="Benchmark", plotargs={"color": "black"})
         for i, (vlabel, d) in enumerate(_variant_data.items()):
             plot_quantiles_vs_nH(
-                d["nH"], d[field], label=_short(vlabel),
-                plotargs={"marker": _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
-                          "markersize": max(10 - 2 * i, 4), "markerfacecolor": "none",
-                          "linestyle": "none", "alpha": 0.85,
-                          "color": _VARIANT_COLORS[i % len(_VARIANT_COLORS)]},
+                d["nH"],
+                d[field],
+                label=_short(vlabel),
+                plotargs={
+                    "marker": _VARIANT_MARKERS[i % len(_VARIANT_MARKERS)],
+                    "markersize": max(10 - 2 * i, 4),
+                    "markerfacecolor": "none",
+                    "linestyle": "none",
+                    "alpha": 0.85,
+                    "color": _VARIANT_COLORS[i % len(_VARIANT_COLORS)],
+                },
             )
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(ylabel)
@@ -110,11 +117,15 @@ _baseline_stats_cache = {}
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-@pytest.mark.parametrize("extra_config_flags", [
-    (),
-    ("TRANSPORT_SUBCYCLE=10",),
-    ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
-], ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"])
+@pytest.mark.parametrize(
+    "extra_config_flags",
+    [
+        (),
+        ("TRANSPORT_SUBCYCLE=10",),
+        ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
+    ],
+    ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"],
+)
 def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling_rt"
     test_dir = "test/gmc_cooling_rt"
@@ -124,6 +135,7 @@ def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
     assert_final_time(final_snap, test_name)
 
     from gizmo.test import variant_output_dir
+
     test_snap = variant_output_dir(test_name, extra_config_flags) + "/snapshot_010.hdf5"
     test_stats = compute_test_statistic(test_snap)
 
@@ -140,5 +152,6 @@ def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
         if benchmark_stats is None:
             pytest.skip("baseline must run first")
     for name in test_stats:
-        assert test_stats[name] == pytest.approx(benchmark_stats[name], rel=0.1), \
-            f"{name}: max rel diff = {np.max(np.abs(test_stats[name] - benchmark_stats[name]) / np.abs(benchmark_stats[name] + 1e-300)):.3f}"
+        assert test_stats[name] == pytest.approx(
+            benchmark_stats[name], rel=0.10
+        ), f"{name}: max rel diff = {np.max(np.abs(test_stats[name] - benchmark_stats[name]) / np.abs(benchmark_stats[name] + 1e-300)):.3f}"

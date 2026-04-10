@@ -108,6 +108,11 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run."""
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
+    # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
+    # in MHD_MODIFIED_GRADIENT) don't introduce nondeterministic/non-reproducible
+    # results that get amplified by the divergence-cleaning feedback loop.
+    environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    environ.setdefault("MKL_NUM_THREADS", "1")
     paramsfile = f"{test_name}.params"
     bind_opts = "--bind-to none" if num_openmp_threads > 0 else ""
     system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus {bind_opts} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")

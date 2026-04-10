@@ -258,7 +258,16 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
                 out.rhs += flux;
 
-                /* store per-neighbor matrix entries */
+                /* store per-neighbor matrix entries.
+                   These updates touch MG_Rows[target] and MG_Rows[j], both of
+                   which can be concurrently accessed by other OpenMP threads
+                   working on different targets that share neighbors. The whole
+                   block (including the realloc inside mg_add_*_entry) must be
+                   serialized to avoid data races. */
+                #ifdef _OPENMP
+                #pragma omp critical(_mg_rows_update_)
+                #endif
+                {
                 if(mode == 0) {
                     /* both i (=target) and j are local: store entries for both rows */
                     mg_add_local_entry(target, j, Qnorm2);
@@ -293,6 +302,7 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                     }
                     MG_Rows[j].rhs += flux_j;
                 }
+                }
             }
         }
         if(mode == 1) {
@@ -303,8 +313,16 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
         }
     }
 
-    if(mode == 0) out2particle_MG(&out, target, 0);
-    else MGDataResult[target] = out;
+    /* out2particle_MG writes MG_Rows[target].Rdiag/rhs, which can race with
+       another thread writing MG_Rows[target] inside the critical section (when
+       target is that thread's neighbor j). Must be serialized under the same lock. */
+    #ifdef _OPENMP
+    #pragma omp critical(_mg_rows_update_)
+    #endif
+    {
+        if(mode == 0) out2particle_MG(&out, target, 0);
+        else MGDataResult[target] = out;
+    }
 
     return 0;
 }
@@ -390,7 +408,15 @@ static void mg_build_matrix(void)
         MG_Rows[i].n_remote = 0;
     }
 
-    /* Main MPI communication loop — same pattern as gradient sweep but over ALL gas cells */
+    /* Main MPI communication loop — same pattern as gradient sweep but over ALL gas cells.
+       Force single-threaded execution: the per-pair critical section already serializes
+       most of the work, and thread-order-dependent floating-point accumulation (amplified
+       by -ffast-math) makes the matrix non-reproducible under OMP. Since the MG sweep is
+       infrequent (gated on ActiveFractionForMGSweep) the performance cost is negligible. */
+    #ifdef _OPENMP
+    int save_omp_threads = omp_get_max_threads();
+    omp_set_num_threads(1);
+    #endif
     NextParticle_MG = 0;
     memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
     int BufferCollisionFlag_MG = 0;
@@ -549,6 +575,9 @@ static void mg_build_matrix(void)
     while(ndone < NTask);
 
     myfree(DataNodeList); myfree(DataIndexTable);
+    #ifdef _OPENMP
+    omp_set_num_threads(save_omp_threads);
+    #endif
 }
 
 

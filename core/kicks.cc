@@ -540,13 +540,13 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     
 #ifdef COSMIC_RAY_FLUID
 #ifndef TRANSPORT_SUBCYCLE
-    CosmicRay_Update_DriftKick(i,dt_entr,0,&P[i],&CellP[i]);
+    CosmicRay_Update_DriftKick(i,dt_entr,0,P,CellP);
 #endif
 #endif
 
 #ifdef RADTRANSFER
 #ifndef TRANSPORT_SUBCYCLE  /* when subcycling, RT kicks are handled in the subcycle loop */
-    rt_update_driftkick(i,dt_entr,0,&P[i],&CellP[i]);
+    rt_update_driftkick(i,dt_entr,0,P,CellP);
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
     if(P[i].Pos[2] > DMIN(19., DMAX(1.1*All.Time*C_LIGHT_CODE_REDUCED, DMIN(18.*boxSize_X + (All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio - All.Vertical_Gravity_Strength)*All.Time*All.Time/2., 19.)))) {for(j=0;j<N_RT_FREQ_BINS;j++) {CellP[i].Rad_E_gamma[j]*=0.5; CellP[i].Rad_E_gamma_Pred[j]*=0.5;

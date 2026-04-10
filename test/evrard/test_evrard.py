@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 import h5py
 
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot
+from gizmo.test import build_and_run_test, default_mpi_ranks, flush_colorbar, assert_final_time, get_final_snapshot, default_omp_threads
 
 
 _variant_profiles = {}
@@ -44,7 +44,7 @@ def plot_evrard_density_slice(coords, rho, output_dir="."):
     plt.close(fig)
 
 
-@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(4, 0), (1, 4), (2, 2)])
+@pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(default_mpi_ranks(), default_omp_threads())])
 @pytest.mark.parametrize(
     "extra_config_flags",
     [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
