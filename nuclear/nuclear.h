@@ -109,20 +109,20 @@ void nuclear_parent_routine(void);
 /* Pure function: evaluate the nuclear network for a single particle.
    No global state access — only reads from the const rate tables and
    the input struct. Thread-safe, GPU-kernel-safe. */
-int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out);
+KOKKOS_FUNCTION int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out);
 
 /* Update Ye and Abar in compact cell data from network output.
    Called per-particle after CallNuclearNetwork in the dispatch loop. */
-void nuclear_update_ye_abar(int j, const struct nuclear_output *out,
+KOKKOS_FUNCTION void nuclear_update_ye_abar(int j, const struct nuclear_output *out,
                             struct particle_data *pp, struct gas_cell_data *cell);
 
 /* Clamp mass fractions to [0,1] and renormalize to sum=1.
    Called after hydro advection to fix passive scalar positivity violations. */
-void nuclear_fixup_mass_fractions(int j, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION void nuclear_fixup_mass_fractions(int j, struct particle_data *pp, struct gas_cell_data *cell);
 
 
 /* Ye/Abar computation from mass fractions — used by all solvers */
-void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES], double *Ye_out, double *Abar_out);
+KOKKOS_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES], double *Ye_out, double *Abar_out);
 
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
 /* Neutrino emission estimate from thermal processes (pair, plasmon). Pure function. */
@@ -141,10 +141,10 @@ void nuclear_neutrino_ye_feedback(int i, double dt_code, struct particle_data *p
 
 #if !defined(NUCLEAR_NETWORK_SOLVER) || (NUCLEAR_NETWORK_SOLVER == 0)
 /* Built-in aprox13 alpha-chain network */
-int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output *out);
+KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output *out);
 /* NSE equilibrium composition lookup */
-void nuclear_nse_composition(double rho_cgs, double T9, double Ye, double X_out[NUM_NUCLEAR_SPECIES]);
-int nuclear_check_nse(double T9);
+KOKKOS_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye, double X_out[NUM_NUCLEAR_SPECIES]);
+KOKKOS_FUNCTION int nuclear_check_nse(double T9);
 #endif
 
 #if defined(NUCLEAR_NETWORK_SOLVER) && (NUCLEAR_NETWORK_SOLVER == 1)
