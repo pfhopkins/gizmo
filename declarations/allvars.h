@@ -402,10 +402,7 @@ extern struct Subfind_DensityOtherPropsEval_data_out
  * it allows the introduction of new global variables in a simple way. The only thing to do is to introduce
  * them into this structure.
  */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp begin declare target
-#endif
-extern struct global_data_all_processes
+struct global_data_all_processes
 {
   long long TotNumPart;		/*!<  total particle numbers (global value) */
   long long TotN_gas;		/*!<  total gas particle number (global value) */
@@ -991,10 +988,14 @@ extern struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
-}
-All;
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
+};
+/* Declare All with __managed__ when compiled by nvcc so device code can access it.
+   The actual definition lives in cooling.cc (__managed__) when OPENMP_GPU_OFFLOAD is set,
+   or in allvars.cc (plain) otherwise.  Host code can always use a plain extern. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+extern __managed__ struct global_data_all_processes All;
+#else
+extern struct global_data_all_processes All;
 #endif
 
 

@@ -21,6 +21,12 @@
  *   and massively modified/extended for GIZMO, primarily by Phil Hopkins, Mike Grudic, and Alex Richings.
  */
 
+/* When GPU offloading, this TU is compiled by nvcc.  Define All here as __managed__ CUDA
+   unified memory so it lives in pages accessible from both host and device threads.
+   allvars.cc's definition is suppressed by #ifndef OPENMP_GPU_OFFLOAD there. */
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+__managed__ struct global_data_all_processes All;
+#endif
 
 #ifdef COOLING
 
@@ -758,7 +764,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
         */
         temp_old_old = temp_old;
         iter++;
-        if(iter > (MAXITER - 10)) {printf("-> temp_next/new/old/oldold=%g/%g/%g/%g ne=%g mu=%g rho=%g iter=%d target=%d err_new/prev=%g/%g gamma_minus_1_mu_new/prev=%g/%g Brackets: Error_bracket_positive=%g Error_bracket_negative=%g T_bracket_Min/Max=%g/%g fac_for_SecantDT=%g \n", temp,temp_new,temp_old,temp_old_old,*ne_guess, (*mu_guess) ,rho,iter,target,err_new,err_old,prefac_fun,prefac_fun_old,T_bracket_errpos,T_bracket_errneg,T_bracket_min,T_bracket_max,fac); fflush(stdout);}
+        if(iter > (MAXITER - 10)) {printf("-> temp_next/new/old/oldold=%g/%g/%g/%g ne=%g mu=%g rho=%g iter=%d target=%d err_new/prev=%g/%g gamma_minus_1_mu_new/prev=%g/%g Brackets: Error_bracket_positive=%g Error_bracket_negative=%g T_bracket_Min/Max=%g/%g fac_for_SecantDT=%g \n", temp,temp_new,temp_old,temp_old_old,*ne_guess, (*mu_guess) ,rho,iter,target,err_new,err_old,prefac_fun,prefac_fun_old,T_bracket_errpos,T_bracket_errneg,T_bracket_min,T_bracket_max,fac);}
     }
     while(
 #if defined(RT_INFRARED)
@@ -817,7 +823,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     j = (int) t;
     if(j<0) {j=0;}
     if(j>NCOOLTAB){
-        PRINT_WARNING("j>=NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g Tmin %g deltaT %g \n",j,t,Tmin+deltaT*j,Tmin+deltaT*(j+1),logT,Tmin,deltaT);fflush(stdout);
+        PRINT_WARNING("j>=NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g Tmin %g deltaT %g \n",j,t,Tmin+deltaT*j,Tmin+deltaT*(j+1),logT,Tmin,deltaT);
         j=NCOOLTAB;
     }
     jp = j + 1;
@@ -840,7 +846,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.; /* more initialized quantities */
     int bisection_mode=0; // 0 if doing the usual fixed-point iteration; 1 if switched to bisection method
-    if(target >= 0) {dt = get_particle_timestep_in_physical(target);} // dtime [code units]
+    if(target >= 0) {dt = get_particle_timestep_in_physical(target, pp);} // dtime [code units]
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N */
 #endif
@@ -1187,7 +1193,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
             LambdaMol *= (1+Z_sol)*(0.001 + 0.1*nHcgs/(1.+nHcgs) + 0.09*nHcgs/(1.+0.1*nHcgs) + Z_sol*Z_sol/(1.0+nHcgs)); // gives very crude estimate of metal-dependent terms //
 #if defined(COOL_METAL_LINES_BY_SPECIES) && ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
-            double column = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target) * UNIT_SURFDEN_IN_CGS; // converts to cgs            
+            double column = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target,pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
             double Z_C = DMAX(1.e-6, Z[2]/All.SolarAbundances[2]), sqrt_T=sqrt(T), ncrit_CO=1.9e4*sqrt_T, Sigma_crit_CO=3.0e-5*T/Z_C, T3=T/1.e3, EXPmax=90.; // carbon abundance (relative to solar and 1/2 factor for original assumed 0.5 depletion), critical density and column
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             Z_C = DMAX(1.e-6, Z[2]/(0.5*All.SolarAbundances[2])); // gas-phase carbon abundance (relative to solar/2, usual assumption implicitly)
@@ -1425,7 +1431,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
      */
     if( (nHcgs > 0.1) && (target >= 0) )  /* don't bother at very low densities, since youre not optically thick, and protect from target=-1 with GALSF_EFFECTIVE_EQS */
     {
-        double surface_density = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target);
+        double surface_density = evaluate_NH_from_GradRho(cell[target].Gradients.Density,pp[target].KernelRadius,cell[target].Density,pp[target].NumNgb,1,target,pp);
         surface_density *=  UNIT_SURFDEN_IN_CGS; // converts to cgs
         double effective_area = 2.3 * PROTONMASS_CGS / surface_density; // since cooling rate is ultimately per-particle, need a particle-weight here
         double kappa_eff; // effective kappa, accounting for metal abundance, temperature, and density //
@@ -2036,7 +2042,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     double surface_density_H2_0 = 5.e14 * PROTONMASS_CGS, x_exp_fac=0.00085, w0=0.2; // characteristic cgs column for -molecular line- self-shielding
     w0 = 0.035; // actual calibration from Drain, Gnedin, Richings, others: 0.2 is more appropriate as a re-calibration for sims doing local eqm without ability to resolve shielding at higher columns
     //double surface_density_local = xH0 * cell[i].Density * All.cf_a3inv * dx_cell * UNIT_SURFDEN_IN_CGS; // this is -just- the [neutral] depth through the local cell/slab. note G0 is -already- attenuated in the pre-processing by dust.
-    double surface_density_local = xH0 * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i) * UNIT_SURFDEN_IN_CGS; // this is -just- the [neutral] depth to infinity with our Sobolev-type approximation. Note G0 is already attenuated by dust, but we need to include H2 self-shielding, for which it is appropriate to integrate to infinity.
+    double surface_density_local = xH0 * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS; // this is -just- the [neutral] depth to infinity with our Sobolev-type approximation. Note G0 is already attenuated by dust, but we need to include H2 self-shielding, for which it is appropriate to integrate to infinity.
     double v_thermal_rms = 0.111*sqrt(T); // sqrt(3*kB*T/2*mp), since want rms thermal speed of -molecular H2- in kms
     double gradv = cell[i].velocity_gradient_norm();
     double dv_turb=gradv*dx_cell*UNIT_VEL_IN_KMS; // delta-velocity across cell
@@ -2219,7 +2225,7 @@ KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double s
 #endif
 	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
 #if defined(RT_ISRF_BACKGROUND) // account for additional optical + IR radiation field with extinction
-	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i); // column density in code units
+	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp); // column density in code units
 	double kappa_IR = rt_kappa_adaptive_IR_band(i,20.,20.,0,1, pp, cell); // assume Trad=20 for IR dust opacity
 	double Zfac = 1.;
 #ifdef METALS
@@ -2287,7 +2293,7 @@ KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, stru
     G0 += cell[target].Rad_Flux_UV;
     if(gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (gJH0 / 2.29e-10);} // uvb contribution //
 #endif
-    double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target) * UNIT_SURFDEN_IN_CGS; // converts to cgs    
+    double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target, pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
 #ifdef RT_PHOTOELECTRIC
     G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / cell[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif

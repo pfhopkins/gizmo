@@ -292,7 +292,11 @@ void *CommBuffer;		/*!< points to communication buffer, which is used at a few p
  * it allows the introduction of new global variables in a simple way. The only thing to do is to introduce
  * them into this structure.
  */
+/* When GPU offloading, All is defined as __managed__ in cooling.cc (nvcc TU) so it is
+   accessible from device code.  In non-GPU builds, define it here as a plain global. */
+#ifndef OPENMP_GPU_OFFLOAD
 struct global_data_all_processes All;
+#endif
 
 
 
