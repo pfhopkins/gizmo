@@ -159,7 +159,7 @@ KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
 KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_90
 ## Link flags: Kokkos libs (core + containers) + CUDA runtime
 KOKKOS_LDFLAGS  = -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB) -L$(TACC_CUDA_LIB) -Wl,-rpath,$(TACC_CUDA_LIB)
-KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart -lcuda
 ## nvcc_wrapper reads NVCC_WRAPPER_DEFAULT_COMPILER as its host compiler.
 ## Set it to mpicxx so nvcc_wrapper → nvcc -ccbin mpicxx, bringing in MPI headers/libs.
 export NVCC_WRAPPER_DEFAULT_COMPILER = mpicxx
@@ -567,8 +567,12 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
 	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 
+## LINK_CXX: use nvcc_wrapper for GPU builds so __managed__ symbols are registered
+## by the CUDA device linker; fall back to CXX for CPU-only builds.
+LINK_CXX = $(if $(GPU_CXX),$(GPU_CXX),$(CXX))
+
 $(EXEC): $(OBJS) $(GPU_OBJS)
-	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)
+	$(LINK_CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)
 
 ## GPU-offloaded files: compiled via nvcc_wrapper so nvcc handles device code.
 ## GPU_CXX = $(KOKKOS_PATH)/bin/nvcc_wrapper on GPU systypes; falls back to $(CXX) otherwise.
