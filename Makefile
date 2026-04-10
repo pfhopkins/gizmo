@@ -160,7 +160,9 @@ KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_90
 ## Link flags: Kokkos libs (core + containers) + CUDA runtime
 KOKKOS_LDFLAGS  = -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB)
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart
-## nvcc_wrapper: Kokkos' thin nvcc driver that handles MPI+CUDA compilation together
+## nvcc_wrapper reads NVCC_WRAPPER_DEFAULT_COMPILER as its host compiler.
+## Set it to mpicxx so nvcc_wrapper → nvcc -ccbin mpicxx, bringing in MPI headers/libs.
+export NVCC_WRAPPER_DEFAULT_COMPILER = mpicxx
 GPU_CXX    = $(TACC_KOKKOS_BIN)/nvcc_wrapper --std=c++17
 GPU_CFLAGS = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
 GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
