@@ -22,6 +22,18 @@ test/*/*.png
 test/*/test_helmholtz
 test/*/test_nuclear
 
+# Binary reference/data files (large, should not be in git)
+test/*/*.hdf5
+*.tgz
+*.tar.gz
+
 # EOS table data files (large, downloaded separately)
 eos/helmholtz/helm_table.dat
+
+# Python build artifacts
 python_src/gizmo.egg-info/
+__pycache__/
+*.pyc
+
+# Build directory
+build/
