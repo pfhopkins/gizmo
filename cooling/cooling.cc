@@ -327,16 +327,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         ne_in = cell[i].Ne; ne_out = ne_in; /* this variable is not defined if chimes is on */
 #endif
         unew = DoCooling(uold, cell[i].Density * All.cf_a3inv, dtime, ne_in, &ne_out, i, pp, cell);
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDA_ARCH__)
         if(i == 0) {
-            double _rho_cgs = cell[0].Density * All.cf_a3inv;
-            double _ne_tmp = cell[0].Ne;
-            double _ne_eval_tmp = _ne_tmp;
-            double _Lambda = CoolingRateFromU(uold, _rho_cgs, _ne_tmp, &_ne_eval_tmp, 0, pp, cell);
-            printf("[GPU-COOL-DIAG] uold=%e unew=%e rho=%e dtime=%e ne=%e Lambda=%e DtU=%e Mass=%e Type=%d\n",
-                   uold, unew, _rho_cgs, dtime, ne_in, _Lambda, cell[0].DtInternalEnergy, (double)cell[0].Mass, (int)pp[0].Type);
+            printf("[GPU-COOL-DIAG] uold=%e unew=%e rho=%e dtime=%e ne_in=%e ne_out=%e DtU=%e\n",
+                   uold, unew, cell[0].Density * All.cf_a3inv, dtime, ne_in, ne_out, cell[0].DtInternalEnergy);
         }
-#endif
 #if !defined(CHIMES)
         cell[i].Ne = ne_out; /* update the free electron variable */
 #endif
