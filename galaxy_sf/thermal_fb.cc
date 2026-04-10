@@ -51,7 +51,7 @@ struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], KernelRadius, Msne, Esne, wt_sum;
 #ifdef METALS
-    MyDouble yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    MyDouble yields[NUM_METAL_SPECIES];
 #endif
     int NodeList[NODELISTLENGTH];
 }

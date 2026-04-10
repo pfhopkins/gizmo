@@ -402,12 +402,6 @@ extern struct Subfind_DensityOtherPropsEval_data_out
    all existing code that includes allvars.h sees the type as before. */
 #include "global_data_all_struct.h"
 
-
-/* All is a plain host global defined in allvars.cc.  GPU TUs (cooling.cc, eos.cc)
- * each maintain a TU-local __managed__ static All_dev copy and redirect device-pass
- * references via #define All All_dev.  Suppress the extern in device pass so the
- * macro does not expand it to "extern ... All_dev", which would conflict with the
- * static __managed__ definition already present in that TU. */
 /* In GPU TUs (cooling.cc, eos.cc), All is #defined to All_dev (a static
  * __managed__ variable).  Suppress the extern declaration so the macro doesn't
  * expand it to "extern ... All_dev" which would conflict with the static defn.
@@ -615,7 +609,7 @@ extern struct addFB_evaluate_data_in_
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS];
 #endif
 #ifdef METALS
-    MyDouble yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    MyDouble yields[NUM_METAL_SPECIES];
 #endif
     int NodeList[NODELISTLENGTH];
 }
@@ -754,6 +748,9 @@ enum iofields
   IO_EOSTEMP,
   IO_EOSABAR,
   IO_EOSYE,
+#ifdef NUCLEAR_NETWORK
+  IO_NUCLEAR_COMPOSITION,
+#endif
   IO_PRESSURE,
   IO_EOSCS,
   IO_EOS_STRESS_TENSOR,

@@ -34,7 +34,7 @@
         
         int k_species;
         double rho_i = local.Density*All.cf_a3inv, rho_j = CellP[j].Density*All.cf_a3inv, rho_ij = 0.5*(rho_i+rho_j); // physical
-        for(k_species=0;k_species<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k_species++)
+        for(k_species=0;k_species<NUM_METAL_SPECIES;k_species++)
         {
             cmag = 0.0; double grad_dot_x_ij = 0.0; double Z_j = 0;
             if(k_species < NUM_METAL_SPECIES) {Z_j = P[j].Metallicity[k_species];}

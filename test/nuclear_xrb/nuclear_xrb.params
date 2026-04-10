@@ -1,0 +1,40 @@
+% 1D nuclear burning stability test
+% Uniform He4 box with hot spot, no gravity. Tests nuclear network + Helmholtz EOS.
+
+InitCondFile                       nuclear_xrb_ics
+OutputDir                          output
+TimeMax                            1.0e-2
+BoxSize                            2.0e6
+
+% CGS units
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+% output
+TimeBetSnapshot                    2.0e-3
+MaxSizeTimestep                    1.0e-5
+MinSizeTimestep                    1.0e-15
+
+% hydro
+DesNumNgb                          4
+CourantFac                         0.2
+ErrTolIntAccuracy                  0.02
+
+% EOS
+EosTable                           ../../eos/helmholtz/helm_table.dat
+
+% nuclear network
+NuclearBurningFloor_T              5.0e8
+NuclearNSE_T_threshold             6.0e9
+
+% softening (initial kernel radius guess)
+SofteningGas                       50000.0
+SofteningGasMaxPhys                50000.0
+
+% memory
+MaxMemSize                         4000
+
+% misc
+ResubmitOn                         0
+ResubmitCommand                    none

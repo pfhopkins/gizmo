@@ -1,0 +1,46 @@
+% 1D thermonuclear detonation test
+% He4 fuel at WD conditions with a hot spot triggering triple-alpha burning
+% Quasi-1D tube: BOX_LONG_X=16, periodic in y,z
+%
+%  Config: HYDRO_MESHLESS_FINITE_MASS, BOX_PERIODIC, BOX_LONG_X=16,
+%          SELFGRAVITY_OFF, EOS_HELMHOLTZ, NUCLEAR_NETWORK,
+%          NUCLEAR_NETWORK_NSE_TABLE, METALS
+
+InitCondFile                       nuclear_detonation_ics
+OutputDir                          output
+TimeMax                            1.0e-5
+BoxSize                            2500.0
+
+% CGS units
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+
+% output
+TimeBetSnapshot                    5.0e-6
+MaxSizeTimestep                    1.0e-6
+MinSizeTimestep                    1.0e-15
+
+% hydro
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.25
+CourantFac                         0.2
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+
+% EOS
+EosTable                           ../../eos/helmholtz/helm_table.dat
+
+% softening (not used for gravity, but provides initial kernel radius guess)
+SofteningGas                       300.0
+SofteningGasMaxPhys                300.0
+
+% memory
+MaxMemSize                         2000
+
+% misc
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  1.0

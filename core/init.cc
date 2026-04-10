@@ -397,10 +397,13 @@ void init(void)
 #else
             P[i].Metallicity[0] = 0;
 #endif
-            /* initialize abundance ratios. for now, assume solar */
-            for(j=0;j<NUM_METAL_SPECIES;j++) {P[i].Metallicity[j]=All.SolarAbundances[j]*(P[i].Metallicity[0]/All.SolarAbundances[0]);}
+            /* initialize abundance ratios. for now, assume solar. only set the base cooling/tracer species,
+               not dustchem or nuclear passive scalars which are initialized from ICs or their own modules. */
+            {int n_base = 1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS;
+            for(j=0;j<n_base;j++) {P[i].Metallicity[j]=All.SolarAbundances[j]*(P[i].Metallicity[0]/All.SolarAbundances[0]);}
             /* need to allow for a primordial He abundance */
             if(NUM_LIVE_SPECIES_FOR_COOLTABLES>=10) P[i].Metallicity[1]=(1.-HYDROGEN_MASSFRAC)+(All.SolarAbundances[1]-(1.-HYDROGEN_MASSFRAC))*P[i].Metallicity[0]/All.SolarAbundances[0];
+            }
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)

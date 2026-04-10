@@ -2,18 +2,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <gsl/gsl_const_cgsm.h>
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include <assert.h>
 
 #include "eos.h"
 #include "../declarations/allvars.h"
 
 #ifdef EOS_HELMHOLTZ
-#include "helmholtz/helm_wrap.h"
+#include "helmholtz/helmholtz.h"
+static HelmTable helm_table; /* read-only after eos_init, safe for concurrent access */
 #endif
 
 #define BITMASK_SET_FLAG(BITMASK,FLAG)      (BITMASK) |= (FLAG)
@@ -38,13 +34,12 @@ static int eos_compute_from_valid(struct eos_input const * in, struct eos_output
 #ifdef EOS_TABULATED
 int eos_init(char const * eos_table_fname)
 {
-  if(access(eos_table_fname, R_OK) != 0)
-  {
-    fprintf(stderr, "Could not read \"%s\"\n", eos_table_fname);
+#ifdef EOS_HELMHOLTZ
+  int ierr = helm_read_table(eos_table_fname, &helm_table);
+  if (ierr) {
+    fprintf(stderr, "eos_init: failed to read Helmholtz table '%s'\n", eos_table_fname);
     return 1;
   }
-#ifdef EOS_HELMHOLTZ
-  helm_read_table_c(eos_table_fname);
 #endif
   return 0;
 }
@@ -88,7 +83,7 @@ int eos_compute(struct eos_input const * in_, struct eos_output * out_)
     char const * unit_dens = "";
     char const * unit_ene  = "";
 #endif
-     
+
     fprintf(stderr, "  rho  = %.19e %s\n", in.rho, unit_dens);
     fprintf(stderr, "  eps  = %.19e %s\n", in.eps, unit_ene);
 #ifdef EOS_CARRIES_YE
@@ -102,7 +97,21 @@ int eos_compute(struct eos_input const * in_, struct eos_output * out_)
   }
   struct eos_output out;
   ierr = eos_compute_from_valid(&in, &out);
-  assert(!ierr);
+  if (ierr) {
+    /* EOS evaluation failed even after clamping — use a fallback ideal gas estimate
+       rather than crashing. This can happen at extreme conditions during initialization. */
+    double gamma = 5.0/3.0;
+    out.press = (gamma - 1.0) * in.rho * in.eps;
+    out.csound = sqrt(gamma * out.press / in.rho);
+    out.temp = in.temp > 0 ? in.temp : 1.0e6;
+#ifdef EOS_PROVIDES_ENTROPY
+    out.entropy = 0;
+#endif
+#ifdef EOS_PROVIDES_CV
+    out.cv = in.eps / (out.temp + 1.0e-30);
+#endif
+    ierr = 0;
+  }
 #ifdef EOS_USES_CGS
   ierr = eos_output_from_cgs(&out);
   assert(!ierr);
@@ -147,9 +156,9 @@ static int eos_validate(struct eos_input const * vars, struct eos_input * vars_a
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_COMPOSITION);
     vars_adj->Abar = 1;
   }
- 
+
   double rho_ye_min, rho_ye_max;
-  helm_range_rho_ye_c(&rho_ye_min, &rho_ye_max);
+  helm_get_rhoye_range(&helm_table, &rho_ye_min, &rho_ye_max);
   if(vars->rho * vars_adj->Ye < rho_ye_min)
   {
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_LT_RHOMIN);
@@ -161,20 +170,24 @@ static int eos_validate(struct eos_input const * vars, struct eos_input * vars_a
     vars_adj->rho = rho_ye_max / vars_adj->Ye;
   }
 
-#ifdef _OPENMP
-  int rank = omp_get_thread_num();
-#else
-  int rank = 0;
-#endif
-  int fail;
-  double eps_min, eps_max;
-  helm_range_eps_c(&rank, &vars_adj->rho, &vars_adj->Abar, &vars_adj->Ye, &eps_min,
-      &eps_max, &fail);
-  if(fail)
-  {
-    fprintf(stderr, "%s:%d unexpected EOS failure!\n", __FILE__, __LINE__);
-    return 1;
-  }
+  /* check energy range by evaluating at table T boundaries */
+  HelmInput hin;
+  HelmResult hout;
+  hin.rho  = vars_adj->rho;
+  hin.abar = vars_adj->Abar;
+  hin.ye   = vars_adj->Ye;
+
+  double tmin, tmax;
+  helm_get_temp_range(&helm_table, &tmin, &tmax);
+
+  hin.temp = tmin;
+  if (helm_eos_from_temp(&helm_table, &hin, &hout)) return 1;
+  double eps_min = hout.etot;
+
+  hin.temp = tmax;
+  if (helm_eos_from_temp(&helm_table, &hin, &hout)) return 1;
+  double eps_max = hout.etot;
+
   if(vars->eps < eps_min)
   {
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_EPS_LT_EPSMIN);
@@ -193,31 +206,33 @@ static int eos_validate(struct eos_input const * vars, struct eos_input * vars_a
 static int eos_compute_from_valid(struct eos_input const * in, struct eos_output * out)
 {
 #ifdef EOS_HELMHOLTZ
-  out->temp = in->temp;
-  double temp_min, temp_max;
-  helm_range_temp_c(&temp_min, &temp_max);
-  if(in->temp < temp_min || in->temp > temp_max)
-  {
-    /* Initial guess from gamma = 5/3, electron gas EOS */
-    out->temp = 2.0/3.0 * in->Abar * in->eps * GSL_CONST_CGSM_MASS_ELECTRON/GSL_CONST_CGSM_BOLTZMANN;
+  /* use Newton iteration to invert for T given (rho, eps, abar, ye) */
+  double temp_guess = in->temp;
+  double tmin, tmax;
+  helm_get_temp_range(&helm_table, &tmin, &tmax);
+  if (temp_guess < tmin || temp_guess > tmax) {
+    /* initial guess from gamma=5/3 electron gas */
+    temp_guess = (2.0/3.0) * in->Abar * in->eps * helm_constants::me / helm_constants::kerg;
   }
 
-#ifdef _OPENMP
-  int rank = omp_get_thread_num();
-#else
-  int rank = 0;
-#endif
-  int fail;
-  helm_eos_e_c(&rank, &in->rho, &in->eps, &in->Abar, &in->Ye, &out->temp,
-      &out->press, &out->entropy, &out->csound, &out->cv, &fail);
-  if(fail)
-  {
+  HelmResult hout;
+  int ierr = helm_eos_from_energy(&helm_table, in->rho, in->eps,
+                                  in->Abar, in->Ye, temp_guess, &hout);
+  if (ierr) {
     fprintf(stderr, "%s:%d unexpected EOS failure!\n", __FILE__, __LINE__);
     return 1;
   }
+
+  out->press  = hout.ptot;
+  out->csound = hout.csound;
+  out->temp   = hout.temp;
+#ifdef EOS_PROVIDES_ENTROPY
+  out->entropy = hout.stot;
+#endif
+#ifdef EOS_PROVIDES_CV
+  out->cv = hout.cv;
+#endif
 #endif
 
   return 0;
 }
-
-

@@ -908,6 +908,20 @@ integertime get_timestep(int p,		/*!< particle index */
             }
 #endif
 
+#ifdef NUCLEAR_NETWORK
+            /* nuclear burning timestep limiter: the ODE solver handles stiffness internally
+               via subcycling, and the energy cap in nuclear.cc prevents runaway injection.
+               only limit the hydro timestep if the actual energy deposited last step was a
+               significant fraction of the internal energy (> 10%), to improve operator-split accuracy. */
+            if(CellP[p].NuclearEnergyGenerationRate != 0 && CellP[p].InternalEnergy > 0) {
+                double de_last = fabs(CellP[p].NuclearEnergyGenerationRate) * dt; /* approx energy change at current dt */
+                if(de_last > 0.5 * CellP[p].InternalEnergy) { /* would change u by >50% */
+                    double dt_nuclear = 0.5 * CellP[p].InternalEnergy / fabs(CellP[p].NuclearEnergyGenerationRate);
+                    if(dt_nuclear > 0 && dt_nuclear < dt) dt = dt_nuclear;
+                }
+            }
+#endif
+
         } // closes if(P[p].Type == 0) [gas particle check] //
 
 

@@ -73,6 +73,37 @@
 #endif
 #endif
 
+/* nuclear network requires Helmholtz EOS, metals tracking, and automatically enables Ye/Abar tracking */
+#ifdef NUCLEAR_NETWORK
+#ifndef EOS_HELMHOLTZ
+#define EOS_HELMHOLTZ
+#endif
+#ifndef EOS_CARRIES_YE
+#define EOS_CARRIES_YE
+#endif
+#ifndef EOS_CARRIES_ABAR
+#define EOS_CARRIES_ABAR
+#endif
+#ifndef METALS
+#define METALS  /* nuclear species ride in the Metallicity[] passive scalar array */
+#endif
+#ifndef NUCLEAR_NETWORK_SOLVER
+#define NUCLEAR_NETWORK_SOLVER 0
+#endif
+#ifndef NUCLEAR_NETWORK_NSPECIES
+#define NUCLEAR_NETWORK_NSPECIES 13
+#endif
+#define NUM_NUCLEAR_SPECIES NUCLEAR_NETWORK_NSPECIES
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+#ifndef RADTRANSFER
+#define RADTRANSFER  /* neutrino transport requires RT framework */
+#endif
+#define RT_NEUTRINO_ELECTRON
+#define RT_NEUTRINO_ANTIELECTRON
+#define RT_NEUTRINO_HEAVY
+#endif
+#endif
+
 #if (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_HELMHOLTZ) || defined(EOS_ANEOS) || defined(COSMIC_RAY_FLUID) || defined(RT_RADPRESSURE_IN_HYDRO) || defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE) || defined(EOS_GMC_BAROTROPIC) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && !defined(EOS_GENERAL)
 #define EOS_GENERAL
 #endif
@@ -926,12 +957,31 @@
 #endif
 
 
+/* neutrino transport bands (3 flavors: electron, anti-electron, heavy) */
+#ifndef RT_NEUTRINO_ELECTRON
+#define RT_FREQ_BIN_NU_E (RT_FREQ_BIN_GENERIC_USER_FREQ+0)
+#else
+#define RT_FREQ_BIN_NU_E (RT_FREQ_BIN_GENERIC_USER_FREQ+1)
+#endif
+
+#ifndef RT_NEUTRINO_ANTIELECTRON
+#define RT_FREQ_BIN_NU_EBAR (RT_FREQ_BIN_NU_E+0)
+#else
+#define RT_FREQ_BIN_NU_EBAR (RT_FREQ_BIN_NU_E+1)
+#endif
+
+#ifndef RT_NEUTRINO_HEAVY
+#define RT_FREQ_BIN_NU_X (RT_FREQ_BIN_NU_EBAR+0)
+#else
+#define RT_FREQ_BIN_NU_X (RT_FREQ_BIN_NU_EBAR+1)
+#endif
+
 /* be sure to add all new wavebands to these lists, or else we will run into problems */
 /* ALSO, the IR bin here should be the last bin: add additional bins ABOVE this line */
 #ifndef RT_INFRARED
-#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_GENERIC_USER_FREQ+0)
+#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_NU_X+0)
 #else
-#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_GENERIC_USER_FREQ+1)
+#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_NU_X+1)
 #endif
 
 #define N_RT_FREQ_BINS (RT_FREQ_BIN_INFRARED+1)
@@ -1070,14 +1120,8 @@
 #define NUM_LIVE_SPECIES_FOR_COOLTABLES 0
 #endif
 
-#define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
-#endif // METALS //
-
-
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION 0 /* placeholder for arbitrary number of additional species to be used for different operations like yields, etc. */
-
-
-#if defined(GALSF_ISMDUSTCHEM_MODEL) /* define some global and other useful variables for dust chemistry modules which also utilize the metals info above */
+/* ISM dust chemistry species counts (defined before NUM_METAL_SPECIES so they can be included) */
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
 #if defined(COOLING)
 #define GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING // optional, can turn off
 #endif
@@ -1104,7 +1148,7 @@
 #define NUM_ISMDUSTCHEM_SIZE_BINS (GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 #define UNIT_GRAIN_NUMBER      (All.UnitGrainNumber)
 #define UNIT_GRAIN_LENGTH      (All.UnitGrainLength_in_cm)
-#else 
+#else
 #define NUM_ISMDUSTCHEM_SPECIES 4 /* 0=silicates, 1=carbonaceous, 2=SiC, 3=free-flying iron */
 #endif
 #else
@@ -1115,13 +1159,41 @@
 #else
 #define GALSF_ISMDUSTCHEM_VAR_ELEM_IN_SILICATES 4 /* O, Mg, Si, and Fe needed to make silicates */
 #endif
-#undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
+/* total number of dustchem passive scalars in the Metallicity array */
 #if ((GALSF_ISMDUSTCHEM_MODEL & 16) || (GALSF_ISMDUSTCHEM_MODEL & 32)) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(2*NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS))
+#define NUM_ISMDUSTCHEM_PASSIVE_SCALARS (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(2*NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS))
 #else
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES)
+#define NUM_ISMDUSTCHEM_PASSIVE_SCALARS (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES)
 #endif
+#else
+#define NUM_ISMDUSTCHEM_PASSIVE_SCALARS 0
 #endif
+
+/* nuclear network species count */
+#ifdef NUCLEAR_NETWORK
+#define NUM_NUCLEAR_PASSIVE_SCALARS NUM_NUCLEAR_SPECIES
+#else
+#define NUM_NUCLEAR_PASSIVE_SCALARS 0
+#endif
+
+/* NUM_METAL_SPECIES: total size of Metallicity[] array, including ALL passive scalars.
+   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear...]
+   Every module that adds fields must add its count here so that all loops, I/O, diffusion,
+   merge/split, and MPI exchange automatically handle the correct number of species. */
+#define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS)
+
+/* offset of ISM dustchem species within Metallicity array */
+#define ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
+
+/* offset of nuclear species within Metallicity array (after dustchem) */
+#ifdef NUCLEAR_NETWORK
+#define NUCLEAR_SPECIES_OFFSET_IN_METALLICITY (ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+NUM_ISMDUSTCHEM_PASSIVE_SCALARS)
+#endif
+
+/* legacy compatibility: some code uses this macro; define it as 0 since everything is now in NUM_METAL_SPECIES */
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION 0
+
+#endif // METALS //
 
 /* end of metals block */
 

@@ -1,0 +1,1998 @@
+SINGLE_STAR_AND_SSP_HYBRID_MODEL=1.0
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_CRS=0
+FIRE_MHD
+FIRE_BHS
+--
+--------------------
+--------------------
+SINGLE_STAR_STARFORGE_DEFAULTS
+MAGNETIC
+COOLING
+SINGLE_STAR_FB_JETS
+SINGLE_STAR_FB_RAD
+SINGLE_STAR_FB_WINDS=0
+SINGLE_STAR_FB_SNE
+BOX_PERIODIC
+GRAVITY_NOT_PERIODIC
+ADAPTIVE_TREEFORCE_UPDATE=0.0625
+--
+--------------------
+--------------------
+COSMIC_RAY_SUBGRID_LEBRON
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_BHS
+--
+--------------------
+--------------------
+CRFLUID_M1=10000
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+BH_DEBUG_FIX_MDOT=0.5
+FIRE_BHS
+--
+--------------------
+--------------------
+CRFLUID_M1=10000
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+SPAWN_B_POL_TOR_SET_IN_PARAMS
+FIRE_BHS
+--
+--------------------
+--------------------
+CRFLUID_M1=10000
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+BH_JET_PRECESSION_SET_IN_PARAMS
+FIRE_BHS
+--
+--------------------
+--------------------
+CRFLUID_M1=10000
+CRFLUID_ALT_RSOL_FORM
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+--
+--------------------
+--------------------
+CRFLUID_M1=10000
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+--
+--------------------
+--------------------
+CRFLUID_ANISO_CLOSURE
+CRFLUID_M1=10000
+CRFLUID_ALT_RSOL_FORM
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+--
+--------------------
+--------------------
+CRFLUID_ANISO_CLOSURE
+CRFLUID_M1=10000
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+IO_MOLECFRAC_NOT_IN_ICFILE
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+OPENMP=2
+PMGRID=512
+MULTIPLEDOMAINS=32
+STOP_WHEN_BELOW_MINTIMESTEP
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+BOX_PERIODIC
+USE_FFTW3
+OUTPUT_ADDITIONAL_RUNINFO
+--
+--------------------
+--------------------
+MAGNETIC
+PIC_MHD
+PIC_SPEEDOFLIGHT_REDUCTION=0.01
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=7
+BH_WIND_SPAWN=2
+BH_WAKEUP_GAS
+BH_DEBUG_SPAWN_JET_TEST=30.
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+CRFLUID_EVOLVE_SPECTRUM=2
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+CRFLUID_EVOLVE_SPECTRUM=1
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=2
+CRFLUID_EVOLVE_SPECTRUM=1
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=1
+CRFLUID_EVOLVE_SPECTRUM=2
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM_EXTENDED_NETWORK
+CRFLUID_EVOLVE_SPECTRUM_SPECIAL_SNAPSHOTRESTART=2
+CRFLUID_EVOLVE_SPECTRUM=2
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=1
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+FIRE_MHD
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+FIRE_CRS=0
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=1
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+FIRE_BHS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_BHS
+FIRE_MHD
+FIRE_CRS=1
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+GALSF_FB_FIRE_RPROCESS=4
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+FIRE_PHYSICS_DEFAULTS=2
+GALSF_FB_FIRE_RPROCESS=4
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=1
+GALSF_FB_FIRE_AGE_TRACERS_DISABLE_SURFACE_YIELDS
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+OUTPUT_RECOMPUTE_POTENTIAL
+OUTPUT_DENS_AROUND_STAR
+OUTPUT_DELAY_TIME_HII
+OUTPUT_MOLECULAR_FRACTION
+--
+--------------------
+--------------------
+SINGLE_STAR_STARFORGE_DEFAULTS
+--
+--------------------
+--------------------
+GALSF
+CHIMES
+METALS
+COOLING
+COOL_METAL_LINES_BY_SPECIES
+CHIMES_REDUCED_OUTPUT
+CHIMES_NH_OUTPUT
+--
+cooling/chimes/init_chimes.cc:66:8: error: redefinition of 'chimes_exit'
+   66 | void (*chimes_exit)(void) = NULL; 
+      |        ^
+cooling/chimes/../../declarations/../cooling/chimes/chimes_proto.h:53:8: note: previous definition is here
+   53 | void (*chimes_exit)(void); 
+      |        ^
+1 error generated.
+make: *** [cooling/chimes/init_chimes.o] Error 1
+--------------------
+--------------------
+CHIMES
+METALS
+TURB_DIFF_METALS
+TURB_DIFF_METALS_LOWORDER
+COOLING
+COOL_METAL_LINES_BY_SPECIES
+CHIMES_INITIALISE_IN_EQM
+CHIMES_TURB_DIFF_IONS
+CHIMES_METAL_DEPLETION
+--
+cooling/chimes/init_chimes.cc:66:8: error: redefinition of 'chimes_exit'
+   66 | void (*chimes_exit)(void) = NULL; 
+      |        ^
+cooling/chimes/../../declarations/../cooling/chimes/chimes_proto.h:53:8: note: previous definition is here
+   53 | void (*chimes_exit)(void); 
+      |        ^
+1 error generated.
+make: *** [cooling/chimes/init_chimes.o] Error 1
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=2
+CHIMES
+COOLING
+COOL_METAL_LINES_BY_SPECIES
+CHIMES_SOBOLEV_SHIELDING
+CHIMES_HII_REGIONS
+CHIMES_STELLAR_FLUXES
+--
+radiation/rt_utilities.cc:162:45: error: no member named 'Ne' in 'gas_cell_data'
+  162 |     if(i>=0) {kappa_HHe=0.02 + 0.35*cell[i].Ne;}
+      |                                     ~~~~~~~ ^
+1 error generated.
+make: *** [radiation/rt_utilities.o] Error 1
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_FB_WINDS=0
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_SINK_FORMATION=0
+SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_FB_SNE
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_SINK_FORMATION=0
+SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_STARFORGE_DEFAULTS
+COOLING
+MAGNETIC
+RT_M1
+RT_INFRARED
+RT_SOURCES=1+16+32
+RT_LYMAN_WERNER
+RT_PHOTOELECTRIC
+RT_NUV
+RT_FREEFREE
+RT_CHEM_PHOTOION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION=1
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_FB_RT_HEATING
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_FB_JETS
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_FB_WINDS=0
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_FB_SNE
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_FB_RT_HEATING
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_SINK_FORMATION=0
+SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_FB_JETS
+SINGLE_STAR_ACCRETION=7
+SINGLE_STAR_SINK_FORMATION=0
+SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=12
+BH_ACCRETE_NEARESTFIRST
+BH_RETURN_ANGMOM_TO_GAS
+BH_SWALLOW_SMALLTIMESTEPS
+BH_DEBUG_DISABLE_MERGERS
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=7
+BH_WIND_SPAWN=1
+--
+--------------------
+--------------------
+RT_OTVET
+METALS
+COOLING
+RT_INFRARED
+RT_GENERIC_USER_FREQ
+RT_DISABLE_RAD_PRESSURE
+--
+--------------------
+--------------------
+FOF
+SUBFIND
+--
+structure/subfind/subfind_so.cc:502:59: error: assigning to 'MyDouble *' (aka 'double *') from incompatible type 'Vec3<MyDouble>' (aka 'Vec3<double>')
+  502 |       pos = Subfind_DensityOtherPropsEval_DataGet[target].Pos;
+      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+1 error generated.
+make: *** [structure/subfind/subfind_so.o] Error 1
+--------------------
+--------------------
+FOF
+SUBFIND
+IO_SUBFIND_IN_OLD_ASCII_FORMAT
+IO_SUBFIND_READFOF_FROMIC
+--
+structure/subfind/subfind_so.cc:502:59: error: assigning to 'MyDouble *' (aka 'double *') from incompatible type 'Vec3<MyDouble>' (aka 'Vec3<double>')
+  502 |       pos = Subfind_DensityOtherPropsEval_DataGet[target].Pos;
+      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+1 error generated.
+make: *** [structure/subfind/subfind_so.o] Error 1
+--------------------
+--------------------
+FOF
+SUBFIND
+SUBFIND_ADDIO_NUMOVERDEN=1
+SUBFIND_ADDIO_VELDISP
+SUBFIND_ADDIO_BARYONS
+--
+structure/subfind/subfind_so.cc:502:59: error: assigning to 'MyDouble *' (aka 'double *') from incompatible type 'Vec3<MyDouble>' (aka 'Vec3<double>')
+  502 |       pos = Subfind_DensityOtherPropsEval_DataGet[target].Pos;
+      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+1 error generated.
+make: *** [structure/subfind/subfind_so.o] Error 1
+--------------------
+--------------------
+FOF
+SUBFIND
+SUBFIND_ADDIO_NUMOVERDEN=1
+SUBFIND_ADDIO_VELDISP
+SUBFIND_ADDIO_BARYONS
+SUBFIND_REMOVE_GAS_STRUCTURES
+SUBFIND_SAVE_PARTICLEDATA
+--
+structure/subfind/subfind_so.cc:502:59: error: assigning to 'MyDouble *' (aka 'double *') from incompatible type 'Vec3<MyDouble>' (aka 'Vec3<double>')
+  502 |       pos = Subfind_DensityOtherPropsEval_DataGet[target].Pos;
+      |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+1 error generated.
+make: *** [structure/subfind/subfind_so.o] Error 1
+--------------------
+--------------------
+COOLING
+COOL_GRACKLE
+--
+cooling/cooling.cc:305:13: error: use of undeclared identifier 'CallGrackle'
+  305 |         u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
+      |             ^
+cooling/cooling.cc:412:24: error: use of undeclared identifier 'CallGrackle'
+  412 |     double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
+      |                        ^
+cooling/cooling.cc:1697:5: error: use of undeclared identifier 'InitGrackle'
+ 1697 |     InitGrackle();
+      |     ^
+3 errors generated.
+make: *** [cooling/cooling.o] Error 1
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+COOL_GRACKLE
+--
+cooling/cooling.cc:305:13: error: use of undeclared identifier 'CallGrackle'
+  305 |         u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
+      |             ^
+cooling/cooling.cc:412:24: error: use of undeclared identifier 'CallGrackle'
+  412 |     double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
+      |                        ^
+cooling/cooling.cc:1697:5: error: use of undeclared identifier 'InitGrackle'
+ 1697 |     InitGrackle();
+      |     ^
+3 errors generated.
+make: *** [cooling/cooling.o] Error 1
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+COOL_GRACKLE
+COOL_GRACKLE_CHEMISTRY=0
+--
+cooling/cooling.cc:305:13: error: use of undeclared identifier 'CallGrackle'
+  305 |         u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
+      |             ^
+cooling/cooling.cc:412:24: error: use of undeclared identifier 'CallGrackle'
+  412 |     double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
+      |                        ^
+cooling/cooling.cc:1697:5: error: use of undeclared identifier 'InitGrackle'
+ 1697 |     InitGrackle();
+      |     ^
+3 errors generated.
+make: *** [cooling/cooling.o] Error 1
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+COOL_GRACKLE
+COOL_GRACKLE_CHEMISTRY=1
+--
+cooling/cooling.cc:305:13: error: use of undeclared identifier 'CallGrackle'
+  305 |         u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
+      |             ^
+cooling/cooling.cc:412:24: error: use of undeclared identifier 'CallGrackle'
+  412 |     double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
+      |                        ^
+cooling/cooling.cc:1697:5: error: use of undeclared identifier 'InitGrackle'
+ 1697 |     InitGrackle();
+      |     ^
+3 errors generated.
+make: *** [cooling/cooling.o] Error 1
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+COOL_GRACKLE
+COOL_GRACKLE_CHEMISTRY=2
+--
+cooling/cooling.cc:305:13: error: use of undeclared identifier 'CallGrackle'
+  305 |         u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
+      |             ^
+cooling/cooling.cc:412:24: error: use of undeclared identifier 'CallGrackle'
+  412 |     double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
+      |                        ^
+cooling/cooling.cc:1697:5: error: use of undeclared identifier 'InitGrackle'
+ 1697 |     InitGrackle();
+      |     ^
+3 errors generated.
+make: *** [cooling/cooling.o] Error 1
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+COOL_GRACKLE
+COOL_GRACKLE_CHEMISTRY=3
+--
+cooling/cooling.cc:305:13: error: use of undeclared identifier 'CallGrackle'
+  305 |         u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
+      |             ^
+cooling/cooling.cc:412:24: error: use of undeclared identifier 'CallGrackle'
+  412 |     double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
+      |                        ^
+cooling/cooling.cc:1697:5: error: use of undeclared identifier 'InitGrackle'
+ 1697 |     InitGrackle();
+      |     ^
+3 errors generated.
+make: *** [cooling/cooling.o] Error 1
+--------------------
+--------------------
+OPENMP=2
+--
+--------------------
+--------------------
+HYDRO_TENSOR_FACE_CORRECTIONS
+--
+--------------------
+--------------------
+HYDRO_FACE_VOLUME_RECONSTRUCTION_CORRECTION
+--
+--------------------
+--------------------
+HYDRO_FACE_AREA_LIMITER
+--
+--------------------
+--------------------
+HYDRO_VOLUME_CORRECTIONS
+--
+--------------------
+--------------------
+KERNEL_CRK_FACES
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+CRFLUID_DISABLE_STREAMING
+CRFLUID_DISABLE_COOLING
+--
+--------------------
+--------------------
+FIRE_PHYSICS_DEFAULTS=3
+FIRE_MHD
+FIRE_CRS=0
+CRFLUID_EVOLVE_SPECTRUM=2
+CRFLUID_DIFFUSIVE_REACCELERATION
+FIRE_BHS
+--
+--------------------
+--------------------
+USE_FFTW3
+--
+--------------------
+--------------------
+BOX_SPATIAL_DIMENSION=1
+--
+--------------------
+--------------------
+BOX_SPATIAL_DIMENSION=2
+--
+--------------------
+--------------------
+BOX_SPATIAL_DIMENSION=3
+--
+--------------------
+--------------------
+BOX_PERIODIC
+--
+--------------------
+--------------------
+BOX_BND_PARTICLES
+--
+--------------------
+--------------------
+BOX_SHEARING=1
+--
+--------------------
+--------------------
+BOX_SHEARING=2
+--
+--------------------
+--------------------
+BOX_SHEARING=3
+--
+--------------------
+--------------------
+BOX_SHEARING=4
+--
+--------------------
+--------------------
+BOX_SHEARING=3
+BOX_SHEARING_Q=1.
+--
+--------------------
+--------------------
+BOX_LONG_X=2
+BOX_LONG_Y=3
+BOX_LONG_Z=3
+--
+--------------------
+--------------------
+BOX_REFLECT_X=0
+BOX_REFLECT_Y=0
+BOX_REFLECT_Z=0
+--
+--------------------
+--------------------
+BOX_REFLECT_X=-1
+BOX_REFLECT_Y=-1
+BOX_REFLECT_Z=-1
+--
+--------------------
+--------------------
+BOX_REFLECT_X=1
+BOX_REFLECT_Y=1
+BOX_REFLECT_Z=1
+--
+--------------------
+--------------------
+BOX_OUTFLOW_X=1
+BOX_OUTFLOW_Y=1
+BOX_OUTFLOW_Z=1
+--
+--------------------
+--------------------
+BOX_OUTFLOW_X=-1
+BOX_OUTFLOW_Y=-1
+BOX_OUTFLOW_Z=-1
+--
+--------------------
+--------------------
+BOX_OUTFLOW_X=0
+BOX_OUTFLOW_Y=0
+BOX_OUTFLOW_Z=0
+--
+--------------------
+--------------------
+HYDRO_MESHLESS_FINITE_MASS
+--
+--------------------
+--------------------
+HYDRO_MESHLESS_FINITE_VOLUME
+--
+--------------------
+--------------------
+HYDRO_REGULAR_GRID
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=0
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=1
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=2
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=3
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=4
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=5
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=6
+--
+--------------------
+--------------------
+HYDRO_FIX_MESH_MOTION=7
+--
+--------------------
+--------------------
+HYDRO_GENERATE_TARGET_MESH
+--
+--------------------
+--------------------
+HYDRO_PRESSURE_SPH
+--
+--------------------
+--------------------
+HYDRO_DENSITY_SPH
+--
+--------------------
+--------------------
+HYDRO_PRESSURE_SPH
+SPH_DISABLE_CD10_ARTVISC
+SPH_DISABLE_PM_CONDUCTIVITY
+KERNEL_FUNCTION=2
+--
+--------------------
+--------------------
+KERNEL_FUNCTION=3
+--
+--------------------
+--------------------
+KERNEL_FUNCTION=4
+--
+--------------------
+--------------------
+KERNEL_FUNCTION=5
+--
+--------------------
+--------------------
+KERNEL_FUNCTION=6
+--
+--------------------
+--------------------
+KERNEL_FUNCTION=7
+--
+--------------------
+--------------------
+KERNEL_FUNCTION=8
+--
+--------------------
+--------------------
+KERNEL_CRK_FACES
+--
+--------------------
+--------------------
+EOS_GAMMA=1.001
+--
+--------------------
+--------------------
+EOS_TILLOTSON
+EOS_ELASTIC
+--
+--------------------
+--------------------
+MAGNETIC
+MHD_B_SET_IN_PARAMS
+MHD_NON_IDEAL
+--
+--------------------
+--------------------
+MAGNETIC
+MHD_CONSTRAINED_GRADIENT=0
+--
+--------------------
+--------------------
+MAGNETIC
+MHD_CONSTRAINED_GRADIENT=1
+--
+--------------------
+--------------------
+MAGNETIC
+MHD_CONSTRAINED_GRADIENT=2
+--
+--------------------
+--------------------
+MAGNETIC
+MHD_CONSTRAINED_GRADIENT=3
+--
+--------------------
+--------------------
+CONDUCTION
+--
+--------------------
+--------------------
+CONDUCTION
+CONDUCTION_SPITZER
+--
+--------------------
+--------------------
+CONDUCTION
+COOLING
+CONDUCTION_SPITZER
+--
+--------------------
+--------------------
+MAGNETIC
+CONDUCTION
+COOLING
+CONDUCTION_SPITZER
+--
+--------------------
+--------------------
+VISCOSITY
+--
+--------------------
+--------------------
+VISCOSITY
+VISCOSITY_BRAGINSKII
+--
+--------------------
+--------------------
+VISCOSITY
+COOLING
+VISCOSITY_BRAGINSKII
+--
+--------------------
+--------------------
+MAGNETIC
+VISCOSITY
+COOLING
+VISCOSITY_BRAGINSKII
+--
+--------------------
+--------------------
+COOLING
+--
+--------------------
+--------------------
+COOLING
+METALS
+COOL_LOW_TEMPERATURES
+--
+--------------------
+--------------------
+COOLING
+METALS
+COOL_LOW_TEMPERATURES
+COOL_METAL_LINES_BY_SPECIES
+--
+--------------------
+--------------------
+METALS
+--
+--------------------
+--------------------
+METALS
+TURB_DIFF_METALS
+TURB_DIFF_ENERGY
+TURB_DIFF_VELOCITY
+--
+--------------------
+--------------------
+METALS
+TURB_DIFF_METALS
+TURB_DIFF_ENERGY
+TURB_DIFF_VELOCITY
+TURB_DIFF_DYNAMIC
+IO_TURB_DIFF_DYNAMIC_ERROR
+--
+turb/dynamic_diffusion.cc:904:23: error: invalid operands to binary expression ('std::vector<int>' and 'int')
+  904 |     ngblist = Ngblist + thread_id * NumPart;
+      |               ~~~~~~~ ^ ~~~~~~~~~~~~~~~~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/__iterator/reverse_iterator.h:302:1: note: candidate template ignored: could not match 'reverse_iterator<_Iter>' against 'int'
+  302 | operator+(typename reverse_iterator<_Iter>::difference_type __n, const reverse_iterator<_Iter>& __x) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/__iterator/move_iterator.h:328:1: note: candidate template ignored: could not match 'move_iterator<_Iter>' against 'int'
+  328 | operator+(typename move_iterator<_Iter>::difference_type __n, const move_iterator<_Iter>& __x) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/__iterator/wrap_iter.h:194:1: note: candidate template ignored: could not match '__wrap_iter<_Iter1>' against 'int'
+  194 | operator+(typename __wrap_iter<_Iter1>::difference_type __n, __wrap_iter<_Iter1> __x) _NOEXCEPT {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3865:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3865 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs,
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3882:1: note: candidate template ignored: could not match 'const _CharT *' against 'std::vector<int>'
+ 3882 | operator+(const _CharT* __lhs, const basic_string<_CharT, _Traits, _Allocator>& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3898:1: note: candidate template ignored: could not match 'basic_string<_CharT, _Traits, _Allocator>' against 'int'
+ 3898 | operator+(_CharT __lhs, const basic_string<_CharT, _Traits, _Allocator>& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3913:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3913 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs, const _CharT* __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3929:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3929 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs, _CharT __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3946:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3946 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, const basic_string<_CharT, _Traits, _Allocator>& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3952:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3952 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3958:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3958 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3964:1: note: candidate template ignored: could not match 'const _CharT *' against 'std::vector<int>'
+ 3964 | operator+(const _CharT* __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3970:1: note: candidate template ignored: could not match 'basic_string<_CharT, _Traits, _Allocator>' against 'int'
+ 3970 | operator+(_CharT __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3977:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3977 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, const _CharT* __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3983:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3983 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, _CharT __rhs) {
+      | ^
+turb/../declarations/../math_types/vec3.h:32:37: note: candidate template ignored: could not match 'Vec3' against 'vector'
+   32 | template<typename T> inline Vec3<T> operator+(Vec3<T> a, const Vec3<T>& b) noexcept { a += b; return a; }
+      |                                     ^
+turb/../declarations/../math_types/mat3.h:75:37: note: candidate template ignored: could not match 'Mat3' against 'vector'
+   75 | template<typename T> inline Mat3<T> operator+(Mat3<T> a, const Mat3<T>& b) noexcept { a += b; return a; }
+      |                                     ^
+turb/../declarations/../math_types/symmetric_tensor2.h:107:28: note: candidate template ignored: could not match 'SymmetricTensor2' against 'vector'
+  107 | inline SymmetricTensor2<T> operator+(SymmetricTensor2<T> a, const SymmetricTensor2<T>& b) noexcept { a += b; return a; }
+      |                            ^
+turb/dynamic_diffusion.cc:946:23: error: invalid operands to binary expression ('std::vector<int>' and 'int')
+  946 |     ngblist = Ngblist + thread_id * NumPart;
+      |               ~~~~~~~ ^ ~~~~~~~~~~~~~~~~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/__iterator/reverse_iterator.h:302:1: note: candidate template ignored: could not match 'reverse_iterator<_Iter>' against 'int'
+  302 | operator+(typename reverse_iterator<_Iter>::difference_type __n, const reverse_iterator<_Iter>& __x) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/__iterator/move_iterator.h:328:1: note: candidate template ignored: could not match 'move_iterator<_Iter>' against 'int'
+  328 | operator+(typename move_iterator<_Iter>::difference_type __n, const move_iterator<_Iter>& __x) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/__iterator/wrap_iter.h:194:1: note: candidate template ignored: could not match '__wrap_iter<_Iter1>' against 'int'
+  194 | operator+(typename __wrap_iter<_Iter1>::difference_type __n, __wrap_iter<_Iter1> __x) _NOEXCEPT {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3865:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3865 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs,
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3882:1: note: candidate template ignored: could not match 'const _CharT *' against 'std::vector<int>'
+ 3882 | operator+(const _CharT* __lhs, const basic_string<_CharT, _Traits, _Allocator>& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3898:1: note: candidate template ignored: could not match 'basic_string<_CharT, _Traits, _Allocator>' against 'int'
+ 3898 | operator+(_CharT __lhs, const basic_string<_CharT, _Traits, _Allocator>& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3913:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3913 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs, const _CharT* __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3929:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3929 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs, _CharT __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3946:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3946 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, const basic_string<_CharT, _Traits, _Allocator>& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3952:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3952 | operator+(const basic_string<_CharT, _Traits, _Allocator>& __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3958:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3958 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3964:1: note: candidate template ignored: could not match 'const _CharT *' against 'std::vector<int>'
+ 3964 | operator+(const _CharT* __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3970:1: note: candidate template ignored: could not match 'basic_string<_CharT, _Traits, _Allocator>' against 'int'
+ 3970 | operator+(_CharT __lhs, basic_string<_CharT, _Traits, _Allocator>&& __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3977:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3977 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, const _CharT* __rhs) {
+      | ^
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1/string:3983:1: note: candidate template ignored: could not match 'basic_string' against 'vector'
+ 3983 | operator+(basic_string<_CharT, _Traits, _Allocator>&& __lhs, _CharT __rhs) {
+      | ^
+turb/../declarations/../math_types/vec3.h:32:37: note: candidate template ignored: could not match 'Vec3' against 'vector'
+   32 | template<typename T> inline Vec3<T> operator+(Vec3<T> a, const Vec3<T>& b) noexcept { a += b; return a; }
+      |                                     ^
+turb/../declarations/../math_types/mat3.h:75:37: note: candidate template ignored: could not match 'Mat3' against 'vector'
+   75 | template<typename T> inline Mat3<T> operator+(Mat3<T> a, const Mat3<T>& b) noexcept { a += b; return a; }
+      |                                     ^
+turb/../declarations/../math_types/symmetric_tensor2.h:107:28: note: candidate template ignored: could not match 'SymmetricTensor2' against 'vector'
+  107 | inline SymmetricTensor2<T> operator+(SymmetricTensor2<T> a, const SymmetricTensor2<T>& b) noexcept { a += b; return a; }
+      |                            ^
+2 errors generated.
+make: *** [turb/dynamic_diffusion.o] Error 1
+--------------------
+--------------------
+GRAIN_FLUID
+--
+--------------------
+--------------------
+MAGNETIC
+GRAIN_FLUID
+GRAIN_BACKREACTION
+GRAIN_LORENTZFORCE
+GRAIN_COLLISIONS
+--
+core/timestep.cc:905:27: error: no matching function for call to 'prob_of_grain_interaction'
+  905 |             double p_dt = prob_of_grain_interaction(return_grain_cross_section_per_unit_mass(p),P[p].Mass,0.,P[p].AGS_KernelRadius,dV.data_ptr(),dt,p); // probability of interacting with another grain super-particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~
+core/../core/proto.h:1006:8: note: candidate function not viable: no known conversion from 'double *' to 'Vec3<double> &' for 5th argument
+ 1006 | double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, Vec3<double>& dV, double dt, int j_ngb);
+      |        ^                                                                                     ~~~~~~~~~~~~~~~~
+1 error generated.
+make: *** [core/timestep.o] Error 1
+--------------------
+--------------------
+MAGNETIC
+GRAIN_FLUID
+GRAIN_BACKREACTION
+GRAIN_LORENTZFORCE
+GRAIN_COLLISIONS
+GRAIN_EPSTEIN_STOKES=1
+--
+core/timestep.cc:905:27: error: no matching function for call to 'prob_of_grain_interaction'
+  905 |             double p_dt = prob_of_grain_interaction(return_grain_cross_section_per_unit_mass(p),P[p].Mass,0.,P[p].AGS_KernelRadius,dV.data_ptr(),dt,p); // probability of interacting with another grain super-particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~
+core/../core/proto.h:1006:8: note: candidate function not viable: no known conversion from 'double *' to 'Vec3<double> &' for 5th argument
+ 1006 | double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, Vec3<double>& dV, double dt, int j_ngb);
+      |        ^                                                                                     ~~~~~~~~~~~~~~~~
+1 error generated.
+make: *** [core/timestep.o] Error 1
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+MAGNETIC
+COOLING
+CRFLUID_ALFVEN=500.
+CRFLUID_ION_ALFVEN_SPEED
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=0
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+MAGNETIC
+METALS
+COOLING
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=1
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+MAGNETIC
+METALS
+COOLING
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=2
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+METALS
+COOLING
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=3
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+MAGNETIC
+COOLING
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=4
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+MAGNETIC
+COOLING
+GALSF
+METALS
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=5
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+GALSF
+COOLING
+METALS
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=6
+--
+--------------------
+--------------------
+COSMIC_RAY_FLUID
+MAGNETIC
+COOLING
+METALS
+CRFLUID_M1=500.
+CRFLUID_DIFFUSION_MODEL=7
+--
+--------------------
+--------------------
+TURB_DRIVING
+--
+--------------------
+--------------------
+TURB_DRIVING
+BOX_PERIODIC
+TURB_DRIVING_SPECTRUMGRID=128
+--
+--------------------
+--------------------
+PMGRID=512
+--
+--------------------
+--------------------
+PMGRID=512
+PM_PLACEHIGHRESREGION=1+2+16
+PM_HIRES_REGION_CLIPPING=1000
+PM_HIRES_REGION_CLIPDM
+--
+--------------------
+--------------------
+ADAPTIVE_GRAVSOFT_FORGAS
+--
+--------------------
+--------------------
+ADAPTIVE_GRAVSOFT_FORALL=1+2+4+8+16+32
+--
+--------------------
+--------------------
+SELFGRAVITY_OFF
+--
+--------------------
+--------------------
+GRAVITY_NOT_PERIODIC
+--
+--------------------
+--------------------
+GRAVITY_ANALYTIC
+--
+--------------------
+--------------------
+DM_SIDM=2+4
+--
+In file included from gravity/ags_rkern.cc:912:
+gravity/../sidm/sidm_core_flux_computation.h:13:23: error: no matching function for call to 'prob_of_interaction'
+   13 |         double prob = prob_of_interaction(m_si, kernel.r, h_si, kernel.dv, local.dtime);
+      |                       ^~~~~~~~~~~~~~~~~~~
+gravity/../core/proto.h:997:8: note: candidate function not viable: no known conversion from 'Vec3<double>' to 'double *' for 4th argument
+  997 | double prob_of_interaction(double mass, double r, double h_si, double dV[3], double dt);
+      |        ^                                                       ~~~~~~~~~~~~
+In file included from gravity/ags_rkern.cc:912:
+gravity/../sidm/sidm_core_flux_computation.h:26:29: error: no matching function for call to 'calculate_interact_kick'
+   26 |             double kick[3]; calculate_interact_kick(kernel.dv, kick, m_si);
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~
+gravity/../core/proto.h:999:6: note: candidate function not viable: no known conversion from 'double[3]' to 'Vec3<double> &' for 2nd argument
+  999 | void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m);
+      |      ^                                         ~~~~~~~~~~~~~~~~~~
+2 errors generated.
+make: *** [gravity/ags_rkern.o] Error 1
+--------------------
+--------------------
+DM_SCALARFIELD_SCREENING
+--
+--------------------
+--------------------
+DM_FUZZY=0
+--
+sidm/dm_fuzzy.cc:490:17: error: no matching function for call to 'construct_gradient_DMGrad'
+  490 |                 construct_gradient_DMGrad(P[i].AGS_Gradients_Density,i);
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~
+sidm/dm_fuzzy.cc:368:6: note: candidate function not viable: no known conversion from 'Vec3<MyFloat>' (aka 'Vec3<double>') to 'double *' for 1st argument
+  368 | void construct_gradient_DMGrad(double *grad, int i)
+      |      ^                         ~~~~~~~~~~~~
+sidm/dm_fuzzy.cc:503:21: error: no matching function for call to 'construct_gradient_DMGrad'
+  503 |                     construct_gradient_DMGrad(P[i].AGS_Gradients2_Density[k],i);
+      |                     ^~~~~~~~~~~~~~~~~~~~~~~~~
+sidm/dm_fuzzy.cc:368:6: note: candidate function not viable: no known conversion from 'Vec3<double>' to 'double *' for 1st argument
+  368 | void construct_gradient_DMGrad(double *grad, int i)
+      |      ^                         ~~~~~~~~~~~~
+2 errors generated.
+make: *** [sidm/dm_fuzzy.o] Error 1
+--------------------
+--------------------
+DM_FUZZY=1
+--
+In file included from gravity/ags_rkern.cc:909:
+gravity/../sidm/dm_fuzzy_flux_computation.h:56:5: error: no matching function for call to 'dm_fuzzy_reconstruct_and_slopelimit'
+   56 |     dm_fuzzy_reconstruct_and_slopelimit(&Psi_Re_R, d_Psi_Re_R, &Psi_Re_L, d_Psi_Re_L,
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gravity/../core/proto.h:1041:6: note: candidate function not viable: no known conversion from 'Vec3<double>' to 'double *' for 6th argument
+ 1041 | void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
+      |      ^
+ 1042 |                                          double q_R, double dq_R[3], double d2q_R[3][3],
+      |                                                      ~~~~~~~~~~~~~~
+In file included from gravity/ags_rkern.cc:909:
+gravity/../sidm/dm_fuzzy_flux_computation.h:61:5: error: no matching function for call to 'dm_fuzzy_reconstruct_and_slopelimit'
+   61 |     dm_fuzzy_reconstruct_and_slopelimit(&Psi_Im_R, d_Psi_Im_R, &Psi_Im_L, d_Psi_Im_L,
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gravity/../core/proto.h:1041:6: note: candidate function not viable: no known conversion from 'Vec3<double>' to 'double *' for 6th argument
+ 1041 | void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
+      |      ^
+ 1042 |                                          double q_R, double dq_R[3], double d2q_R[3][3],
+      |                                                      ~~~~~~~~~~~~~~
+2 errors generated.
+make: *** [gravity/ags_rkern.o] Error 1
+--------------------
+--------------------
+DM_FUZZY=2
+--
+In file included from gravity/ags_rkern.cc:909:
+gravity/../sidm/dm_fuzzy_flux_computation.h:56:5: error: no matching function for call to 'dm_fuzzy_reconstruct_and_slopelimit'
+   56 |     dm_fuzzy_reconstruct_and_slopelimit(&Psi_Re_R, d_Psi_Re_R, &Psi_Re_L, d_Psi_Re_L,
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gravity/../core/proto.h:1041:6: note: candidate function not viable: no known conversion from 'Vec3<double>' to 'double *' for 6th argument
+ 1041 | void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
+      |      ^
+ 1042 |                                          double q_R, double dq_R[3], double d2q_R[3][3],
+      |                                                      ~~~~~~~~~~~~~~
+In file included from gravity/ags_rkern.cc:909:
+gravity/../sidm/dm_fuzzy_flux_computation.h:61:5: error: no matching function for call to 'dm_fuzzy_reconstruct_and_slopelimit'
+   61 |     dm_fuzzy_reconstruct_and_slopelimit(&Psi_Im_R, d_Psi_Im_R, &Psi_Im_L, d_Psi_Im_L,
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+gravity/../core/proto.h:1041:6: note: candidate function not viable: no known conversion from 'Vec3<double>' to 'double *' for 6th argument
+ 1041 | void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
+      |      ^
+ 1042 |                                          double q_R, double dq_R[3], double d2q_R[3][3],
+      |                                                      ~~~~~~~~~~~~~~
+2 errors generated.
+make: *** [gravity/ags_rkern.o] Error 1
+--------------------
+--------------------
+GRAVITY_ACCURATE_FEWBODY_INTEGRATION
+--
+--------------------
+--------------------
+GR_TABULATED_COSMOLOGY
+--
+--------------------
+--------------------
+GR_TABULATED_COSMOLOGY
+GR_TABULATED_COSMOLOGY_W
+GR_TABULATED_COSMOLOGY_H
+GR_TABULATED_COSMOLOGY_G
+--
+--------------------
+--------------------
+EOS_TRUELOVE_PRESSURE
+--
+--------------------
+--------------------
+FOF
+--
+--------------------
+--------------------
+FOF
+FOF_PRIMARY_LINK_TYPES=2
+FOF_SECONDARY_LINK_TYPES=1+16+32
+FOF_DENSITY_SPLIT_TYPES=1+2+16+32
+FOF_GROUP_MIN_SIZE=32
+--
+--------------------
+--------------------
+GALSF
+--
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+GALSF_SFR_CRITERION=0+1+2+4+32+64+128+256+512+1024
+--
+--------------------
+--------------------
+GALSF
+COOLING
+METALS
+BLACK_HOLES
+BH_CALC_DISTANCES
+GALSF_SFR_CRITERION=0+1+2+4+8+16+32+64+128+256+512+1024
+--
+core/timestep.cc:451:74: error: no member named 'Min_Sink_Approach_Time' in 'particle_data'
+  451 |         double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * 0.3 / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
+      |                                                                     ~~~~ ^
+core/timestep.cc:451:107: error: no member named 'Min_Sink_Freefall_time' in 'particle_data'
+  451 |         double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * 0.3 / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
+      |                                                                                                      ~~~~ ^
+2 errors generated.
+make: *** [core/timestep.o] Error 1
+--------------------
+--------------------
+GALSF
+METALS
+COOLING
+GALSF_SFR_MOLECULAR_CRITERION
+GALSF_SFR_VIRIAL_SF_CRITERION=0
+GALSF_SFR_IMF_VARIATION
+GALSF_SFR_IMF_SAMPLING
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_GENERATIONS=1
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_EFFECTIVE_EQS
+GALSF_SUBGRID_WINDS
+GALSF_SUBGRID_WIND_SCALING=0
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_EFFECTIVE_EQS
+GALSF_SUBGRID_WINDS
+GALSF_SUBGRID_WIND_SCALING=1
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_EFFECTIVE_EQS
+GALSF_SUBGRID_WINDS
+GALSF_SUBGRID_WIND_SCALING=2
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_EFFECTIVE_EQS
+GALSF_SUBGRID_WINDS
+GALSF_SUBGRID_WIND_SCALING=0
+GALSF_WINDS_ORIENTATION=0
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_EFFECTIVE_EQS
+GALSF_SUBGRID_WINDS
+GALSF_SUBGRID_WIND_SCALING=0
+GALSF_WINDS_ORIENTATION=1
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_EFFECTIVE_EQS
+GALSF_SUBGRID_WINDS
+GALSF_SUBGRID_WIND_SCALING=0
+GALSF_WINDS_ORIENTATION=2
+--
+--------------------
+--------------------
+GALSF
+COOLING
+GALSF_FB_TURNOFF_COOLING
+--
+--------------------
+--------------------
+GALSF
+COOLING
+METALS
+GALSF_FB_MECHANICAL
+--
+--------------------
+--------------------
+GALSF
+COOLING
+METALS
+GALSF_FB_THERMAL
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_TIMESTEPPING=0
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_TIMESTEPPING=1
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_TIMESTEPPING=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+HERMITE_INTEGRATION=32
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_SINK_FORMATION=0+1+2+4+8+16+32+64+128
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=0
+--
+sinks/sink_environment.cc:323:10: fatal error: '../../system/code_block_xchange_initialize.h' file not found
+  323 | #include "../../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.
+make: *** [sinks/sink_environment.o] Error 1
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=1
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=2
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=3
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=4
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=5
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=6
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=7
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=8
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=9
+--
+sinks/sink.cc:345:12: error: redefinition of 'fac'
+  345 |     double fac = pow(soundspeed2+bhvel2, 1.5);
+      |            ^
+sinks/sink.cc:221:61: note: previous definition is here
+  221 |     double m_tmp_for_accrate, mdisk_for_accrate, sink_mass, fac;
+      |                                                             ^
+1 error generated.
+make: *** [sinks/sink.o] Error 1
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=10
+--
+sinks/sink.cc:345:12: error: redefinition of 'fac'
+  345 |     double fac = pow(soundspeed2+bhvel2, 1.5);
+      |            ^
+sinks/sink.cc:221:61: note: previous definition is here
+  221 |     double m_tmp_for_accrate, mdisk_for_accrate, sink_mass, fac;
+      |                                                             ^
+1 error generated.
+make: *** [sinks/sink.o] Error 1
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=11
+--
+--------------------
+--------------------
+SINGLE_STAR_SINK_DYNAMICS
+SINGLE_STAR_ACCRETION=12
+--
+--------------------
+--------------------
+BLACK_HOLES
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+BH_SEED_FROM_FOF=0
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+BH_SEED_FROM_FOF=1
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_INCREASE_DYNAMIC_MASS=100
+BH_DYNFRICTION=0
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_DYNFRICTION=1
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_DYNFRICTION=2
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_DRAG=1
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_DRAG=2
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_REPOSITION_ON_POTMIN=1
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SEED_FROM_LOCALGAS
+BH_REPOSITION_ON_POTMIN=2
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVCAPTURE_GAS
+BH_GRAVCAPTURE_NONGAS
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVCAPTURE_GAS
+BH_GRAVCAPTURE_NONGAS
+BH_ALPHADISK_ACCRETION=10.
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=0
+BH_DEBUG_FIX_MASS
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+BH_SWALLOWGAS
+BH_GRAVACCRETION=1
+BH_ALPHADISK_ACCRETION=10.
+BH_SUBGRIDBHVARIABILITY
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=2
+BH_ALPHADISK_ACCRETION=10.
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=3
+BH_THERMALFEEDBACK
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+METALS
+BH_SWALLOWGAS
+BH_GRAVACCRETION=4
+BH_WIND_CONTINUOUS
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=5
+BH_WIND_KICK=1
+BH_CALC_DISTANCES
+--
+--------------------
+--------------------
+BLACK_HOLES
+BH_SWALLOWGAS
+BH_GRAVACCRETION=6
+BH_WIND_KICK=-1
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+BH_SWALLOWGAS
+BH_BONDI=0
+GALSF_FB_FIRE_RT_LONGRANGE
+BH_PHOTONMOMENTUM
+--
+--------------------
+--------------------
+BLACK_HOLES
+GALSF
+BH_SWALLOWGAS
+BH_BONDI=1
+GALSF_FB_FIRE_RT_LONGRANGE
+BH_PHOTONMOMENTUM
+BH_COMPTON_HEATING
+--
+--------------------
+--------------------
+BLACK_HOLES
+COOLING
+GALSF
+BH_SWALLOWGAS
+BH_BONDI=2
+GALSF_FB_FIRE_RT_HIIHEATING
+BH_HII_HEATING
+--
+--------------------
+--------------------
+BLACK_HOLES
+COSMIC_RAY_FLUID
+GALSF
+BH_COSMIC_RAYS
+BH_BONDI=2
+BH_OUTPUT_MOREINFO
+--
+--------------------
+--------------------
+GALSF
+RT_FLUXLIMITEDDIFFUSION
+RT_SPEEDOFLIGHT_REDUCTION=0.1
+RT_CHEM_PHOTOION=2
+RT_OPTICAL_NIR
+--
+--------------------
+--------------------
+RT_FLUXLIMITEDDIFFUSION
+RT_DIFFUSION_IMPLICIT
+RT_DIFFUSION_CG_MODIFY_EDDINGTON_TENSOR
+--
+--------------------
+--------------------
+GALSF
+METALS
+RT_M1
+RT_SOURCES=1+16+32
+RT_XRAY=3
+RT_LYMAN_WERNER
+RT_PHOTOELECTRIC
+RT_NUV
+RT_FREEFREE
+RT_RAD_PRESSURE_OUTPUT
+--
+--------------------
+--------------------
+RT_OTVET
+METALS
+RT_INFRARED
+RT_GENERIC_USER_FREQ
+RT_DISABLE_RAD_PRESSURE
+--
+Undefined symbols for architecture arm64:
+  "rt_eqm_dust_temp(int, double, double, particle_data*, gas_cell_data*)", referenced from:
+      rt_update_driftkick(int, double, int, particle_data*, gas_cell_data*) in lto.o
+ld: symbol(s) not found for architecture arm64
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+make: *** [GIZMO] Error 1
+--------------------
+--------------------
+RT_M1
+RT_ENABLE_R15_GRADIENTFIX
+RT_SELFGRAVITY_OFF
+--
+--------------------
+--------------------
+RT_FLUXLIMITEDDIFFUSION
+RT_DISABLE_FLUXLIMITER
+RT_HYDROGEN_GAS_ONLY
+--
+--------------------
+--------------------
+RT_LEBRON
+RT_XRAY=2
+RT_SEPARATELY_TRACK_LUMPOS
+--
+--------------------
+--------------------
+RT_LEBRON
+MULTIPLEDOMAINS=4
+RT_CHEM_PHOTOION=1
+--
+--------------------
+--------------------
+RT_LOCALRAYGRID=1
+MULTIPLEDOMAINS=16
+OUTPUT_ADDITIONAL_RUNINFO
+OUTPUT_IN_DOUBLEPRECISION
+--
+--------------------
+--------------------
+RT_M1
+RT_INJECT_PHOTONS_DISCRETELY
+RT_SOURCES=1+16+32
+RT_XRAY=1
+GALSF
+METALS
+COOLING
+RT_USE_TREECOL_FOR_NH=6
+--
+--------------------
+--------------------
+INPUT_IN_DOUBLEPRECISION
+OUTPUT_POTENTIAL
+OUTPUT_TIDAL_TENSOR
+OUTPUT_ACCELERATION
+--
+--------------------
+--------------------
+OUTPUT_POSITIONS_IN_DOUBLE
+INPUT_POSITIONS_IN_DOUBLE
+OUTPUT_CHANGEOFENERGY
+OUTPUT_VORTICITY
+--
+--------------------
+--------------------
+COOLING
+OUTPUT_TIMESTEP
+OUTPUT_COOLRATE
+OUTPUT_COOLRATE_DETAIL
+--
+--------------------
+--------------------
+BOX_PERIODIC
+METALS
+COOLING
+OUTPUT_LINEOFSIGHT
+--
+--------------------
+--------------------
+BOX_PERIODIC
+PMGRID=512
+METALS
+COOLING
+GALSF
+OUTPUT_LINEOFSIGHT
+OUTPUT_LINEOFSIGHT_SPECTRUM
+OUTPUT_LINEOFSIGHT_PARTICLES
+OUTPUT_POWERSPEC
+--
+--------------------
+--------------------
+INPUT_READ_HSML
+OUTPUT_TWOPOINT_ENABLED
+IO_DISABLE_HDF5
+IO_COMPRESS_HDF5
+IO_SUPPRESS_TIMEBIN_STDOUT=10
+--
+--------------------
+--------------------
+DEVELOPER_MODE
+LONG_INTEGER_TIME
+FORCE_EQUAL_TIMESTEPS
+STOP_WHEN_BELOW_MINTIMESTEP
+DEBUG
+--
+--------------------
+--------------------
+FREEZE_HYDRO
+--
+--------------------
+--------------------
+EOS_ENFORCE_ADIABAT=1.0001
+HYDRO_REPLACE_RIEMANN_KT
+SLOPE_LIMITER_TOLERANCE=0
+--
+--------------------
+--------------------
+SLOPE_LIMITER_TOLERANCE=2
+EOS_GMC_BAROTROPIC
+MERGESPLIT_HARDCODE_MAX_MASS=1e-6
+--
+--------------------
+--------------------
+HYDRO_REPLACE_RIEMANN_KT
+HYDRO_RIEMANN_KT_UNLIMITED
+MERGESPLIT_HARDCODE_MIN_MASS=1e-6
+--
+--------------------
+--------------------
+ENERGY_ENTROPY_SWITCH_IS_ACTIVE
+PARTICLE_EXCISION
+--
+--------------------
+--------------------
+FORCE_ENTROPIC_EOS_BELOW=0.01
+PREVENT_PARTICLE_MERGE_SPLIT
+--
+--------------------
+--------------------
+EOS_GMC_BAROTROPIC=1
+DISABLE_SPH_PARTICLE_WAKEUP
+DO_UPWIND_TIME_CENTERING
+COOLING
+COOLING_OPERATOR_SPLIT
+COOL_LOWTEMP_THIN_ONLY
+ASSIGN_NEW_IDS
+--
+eos/eos.cc:106:35: error: redefinition of 'rho'
+  106 |     gamma_eos_index=7./5.; double rho=cell[i].density_for_energy(), nH_cgs=rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS;
+      |                                   ^
+eos/eos.cc:57:50: note: previous definition is here
+   57 |     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
+      |                                                  ^
+1 error generated.
+make: *** [eos/eos.o] Error 1
+--------------------
+--------------------
+MAGNETIC
+MHD_ALTERNATIVE_LEAPFROG_SCHEME
+NO_CHILD_IDS_IN_ICS
+--
+--------------------
+--------------------
+CONDUCTION
+SUPER_TIMESTEP_DIFFUSION
+LONGIDS
+--
+--------------------
+--------------------
+EVALPOTENTIAL
+GRAVITY_HYBRID_OPENING_CRIT
+TIDAL_TIMESTEP_CRITERION
+TEST_FOR_IDUNIQUENESS
+--
+--------------------
+--------------------
+USE_MPI_IN_PLACE
+NO_ISEND_IRECV_IN_DOMAIN
+ALLOW_IMBALANCED_GASPARTICLELOAD
+--
+--------------------
+--------------------
+NUCLEAR_NETWORK
+EOS_NSPECIES=20
+--
+--------------------
+--------------------
+NUCLEAR_NETWORK
+EOS_NSPECIES=20
+NUCLEARNET_NEGLECT_DTDY_TERMS
+NUCLEARNET_OUTPUT_TIMEEVOLUTION
+--
+--------------------
+--------------------
+DUMMY

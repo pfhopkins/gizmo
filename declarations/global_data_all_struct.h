@@ -610,6 +610,12 @@ struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
+#ifdef NUCLEAR_NETWORK
+    char NuclearNetworkDataFile[256];
+    double NuclearBurningFloor_T;
+    double NuclearBurningFloor_rho;
+    double NuclearNSE_T_threshold;
+#endif
 };
 
 #endif /* GLOBAL_DATA_ALL_STRUCT_H */

@@ -78,7 +78,7 @@ extern ALIGN(32) struct particle_data
     MyFloat StellarAge;        /*!< formation time of star particle */
 #endif
 #ifdef METALS
-    MyFloat Metallicity[NUM_METAL_SPECIES]; /*!< metallicity (species-by-species) of gas or star particle */
+    MyFloat Metallicity[NUM_METAL_SPECIES]; /*!< metallicity (species-by-species) of gas or star particle, including all passive scalar tracers (cooling species, rprocess, age tracers, dustchem, nuclear, etc.) */
 #endif
 #ifdef GALSF_SFR_IMF_VARIATION
     MyFloat IMF_Mturnover; /*!< IMF turnover mass [in solar] (or any other parameter which conveniently describes the IMF) */

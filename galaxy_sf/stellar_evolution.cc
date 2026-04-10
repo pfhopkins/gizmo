@@ -482,8 +482,8 @@ void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i)
     double t_gyr = evaluate_stellar_age_Gyr(i); int SNeIaFlag=0; if(t_gyr > 0.03753) {SNeIaFlag=1;}; /* assume SNe before critical time are core-collapse, later are Ia */
     double Msne=10.5; if(SNeIaFlag) {Msne=1.4;} // average ejecta mass for single event (normalized to give total mass loss correctly)
 #ifdef METALS
-    double yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]={0}; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne); // call subroutine to collect the yields
-    for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->yields[k]=yields[k];} // assign them back to the vector
+    double yields[NUM_METAL_SPECIES]={0}; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne); // call subroutine to collect the yields
+    for(k=0;k<NUM_METAL_SPECIES;k++) {in->yields[k]=yields[k];} // assign them back to the vector
 #endif
     in->Msne = P[i].SNe_ThisTimeStep * (Msne/UNIT_MASS_IN_SOLAR); // total mass in code units
 #ifdef SINGLE_STAR_SINK_DYNAMICS
@@ -621,8 +621,8 @@ void particle2in_addFB_winds(struct addFB_evaluate_data_in_ *in, int i)
 #endif
 
 #ifdef METALS /* assume track initial metallicity; turn on COOL_METAL_LINES_BY_SPECIES for more detailed tracking of light elements */
-    double yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]={0}; get_wind_yields(yields, i);
-    for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->yields[k]=yields[k];} // assign them back to the vector
+    double yields[NUM_METAL_SPECIES]={0}; get_wind_yields(yields, i);
+    for(k=0;k<NUM_METAL_SPECIES;k++) {in->yields[k]=yields[k];} // assign them back to the vector
 #endif
     in->Msne = P[i].Mass * P[i].MassReturn_ThisTimeStep; // mass (in code units) returned
 }

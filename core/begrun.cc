@@ -216,6 +216,10 @@ void begrun(void)
     }
 #endif
 
+#ifdef NUCLEAR_NETWORK
+    InitNuclearNetwork();
+#endif
+
 #ifdef TURB_DRIVING
     init_turb();
 #endif
@@ -443,6 +447,9 @@ void begrun(void)
 
 #ifdef COOL_GRACKLE
       strcpy(All.GrackleDataFile, all.GrackleDataFile);
+#endif
+#ifdef NUCLEAR_NETWORK
+      strcpy(All.NuclearNetworkDataFile, all.NuclearNetworkDataFile);
 #endif
 
 #if defined(EOS_TABULATED) && !defined(EOS_ANEOS)
@@ -1521,6 +1528,24 @@ void read_parameter_file(char *fname)
         id[nt++] = STRING;
 #endif
 
+#ifdef NUCLEAR_NETWORK
+        strcpy(tag[nt], "NuclearNetworkDataFile");
+        addr[nt] = All.NuclearNetworkDataFile;
+        id[nt++] = STRING;
+
+        strcpy(tag[nt], "NuclearBurningFloor_T");
+        addr[nt] = &All.NuclearBurningFloor_T;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "NuclearBurningFloor_rho");
+        addr[nt] = &All.NuclearBurningFloor_rho;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "NuclearNSE_T_threshold");
+        addr[nt] = &All.NuclearNSE_T_threshold;
+        id[nt++] = REAL;
+#endif
+
       strcpy(tag[nt], "TimeLimitCPU");
       strcpy(alternate_tag[nt], "MaxSimulationWallTime_in_Seconds");
       addr[nt] = &All.TimeLimitCPU;
@@ -2584,6 +2609,12 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef EOS_ANEOS
                 if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
+#endif
+#ifdef NUCLEAR_NETWORK
+                if(strcmp("NuclearNetworkDataFile",tag[i])==0) {strcpy((char *)addr[i], ""); continue;} /* empty = built-in aprox13, no external data needed */
+                if(strcmp("NuclearBurningFloor_T",tag[i])==0) {*((double *)addr[i])=1.0e8; continue;} /* default: 10^8 K */
+                if(strcmp("NuclearBurningFloor_rho",tag[i])==0) {*((double *)addr[i])=0; continue;} /* default: no density floor */
+                if(strcmp("NuclearNSE_T_threshold",tag[i])==0) {*((double *)addr[i])=6.0e9; continue;} /* default: 6 GK */
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;

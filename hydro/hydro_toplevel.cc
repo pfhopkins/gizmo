@@ -219,7 +219,7 @@ struct INPUT_STRUCT_NAME
 #endif
     
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    MyFloat Metallicity[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    MyFloat Metallicity[NUM_METAL_SPECIES];
 #endif
     
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -331,7 +331,7 @@ struct OUTPUT_STRUCT_NAME
 #endif
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    MyFloat Dyield[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    MyFloat Dyield[NUM_METAL_SPECIES];
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -484,7 +484,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, CellP);}
+    for(k=ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY;k<ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+NUM_ISMDUSTCHEM_PASSIVE_SCALARS;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, CellP);}
 #endif
 #endif
 
@@ -585,7 +585,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     if(CellP[i].MaxKineticEnergyNgb < out->MaxKineticEnergyNgb) {CellP[i].MaxKineticEnergyNgb = out->MaxKineticEnergyNgb;}
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += out->Dyield[k];}
+    for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] += out->Dyield[k];}
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -811,23 +811,24 @@ void hydro_final_operations_and_cleanup(void)
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
-#if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange */
-            for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
-            for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
-            for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = DMAX(CellP[i].ISMDustChem_Dust_Species[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Species[k]);}
+#if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange: offsets within Dyield match Metallicity layout */
+            {int dc0 = ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; /* base offset for dustchem in Metallicity/Dyield */
+            for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[dc0+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
+            for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[dc0+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
+            for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = DMAX(CellP[i].ISMDustChem_Dust_Species[k] + CellP[i].Dyield[dc0+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Species[k]);}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-            // For grain size bins we track the total mass and number and not a scalar mass fraction, so convert back to total values
             for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
                 int l;
                 double new_bin_mass, new_bin_number, old_bin_mass;
                 for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
-                    new_bin_number = DMAX(CellP[i].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)], 0.01*CellP[i].ISMDustChem_Dust_NumberInBin[k][l]);
+                    new_bin_number = DMAX(CellP[i].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].Dyield[dc0+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)], 0.01*CellP[i].ISMDustChem_Dust_NumberInBin[k][l]);
                     old_bin_mass = get_ISMDustChemEvo_bin_mass(i,k,l, CellP);
-                    new_bin_mass = DMAX(old_bin_mass + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)] * UNIT_MASS_IN_CGS, 0.01*old_bin_mass);
+                    new_bin_mass = DMAX(old_bin_mass + CellP[i].Dyield[dc0+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)] * UNIT_MASS_IN_CGS, 0.01*old_bin_mass);
                     update_ISMDustChemEvo_bin_number_and_slope(i,k,l,new_bin_number,new_bin_mass, CellP);
                 }
             }
 #endif
+            } /* close dc0 scope */
 #endif
 #endif
             
@@ -969,12 +970,17 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
+#if 0 /* disabled: adding nuclear edot to DtInternalEnergy causes runaway pressure extrapolation in the predict step, which drives divV and shrinks kernel radii catastrophically */
+#ifdef NUCLEAR_NETWORK
+            CellP[i].DtInternalEnergy += CellP[i].NuclearEnergyGenerationRate;
+#endif
+#endif
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-            for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] = 0;}
+            for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}
 #endif
 #if defined(RT_SOLVER_EXPLICIT)
 #if defined(RT_EVOLVE_ENERGY)

@@ -493,7 +493,6 @@ void density(void)
             if(P[i].Type == 5) {maxsoft = All.SinkMaxAccretionRadius / All.cf_atime;}  // MaxAccretionRadius is now defined in params.txt in PHYSICAL units
 #endif
             if((P[i].KernelRadius < 0) || !isfinite(P[i].KernelRadius) || (P[i].KernelRadius > 0.99*maxsoft)) {P[i].KernelRadius = 0.99*maxsoft;} /* don't set to exactly maxsoft because our looping below won't treat this correctly */
-            
         }} /* done with intial zero-out loop */
 
     /* allocate buffers to arrange communication */
