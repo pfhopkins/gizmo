@@ -408,7 +408,12 @@ extern struct Subfind_DensityOtherPropsEval_data_out
  * references via #define All All_dev.  Suppress the extern in device pass so the
  * macro does not expand it to "extern ... All_dev", which would conflict with the
  * static __managed__ definition already present in that TU. */
-#ifndef __CUDA_ARCH__
+/* In GPU TUs (cooling.cc, eos.cc), All is #defined to All_dev (a static
+ * __managed__ variable).  Suppress the extern declaration so the macro doesn't
+ * expand it to "extern ... All_dev" which would conflict with the static defn.
+ * The guard uses 'All' as a defined-macro test rather than __CUDA_ARCH__
+ * (which nvcc_wrapper does not reliably define). */
+#ifndef All
 extern struct global_data_all_processes All;
 #endif
 
