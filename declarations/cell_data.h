@@ -497,7 +497,7 @@ extern struct gas_cell_data
     inline double pressure() const {return Pressure;} /*!< gas pressure */
     inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
 
-    inline double gamma_eos_value() const { /*!< effective adiabatic index */
+    GIZMO_GPU_FUNCTION double gamma_eos_value() const { /*!< effective adiabatic index */
 #if defined(COOL_MOLECFRAC_NONEQM)
         double fH = HYDROGEN_MASSFRAC, f = MolecularMassFraction, xe = Ne;
         double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.;
@@ -544,7 +544,7 @@ extern struct gas_cell_data
         return sqrt(dv2);
     }
 
-    inline double Alfven_speed() const { /*!< Alfven speed */
+    GIZMO_GPU_FUNCTION double Alfven_speed() const { /*!< Alfven speed */
 #if defined(MAGNETIC)
         double bmag = (Bfield() * All.cf_a2inv).norm_sq();
         if(bmag > 0) {return sqrt(bmag / (MIN_REAL_NUMBER + Density*All.cf_a3inv));}

@@ -78,7 +78,9 @@ __managed__ static struct global_data_all_processes All_dev;
 #endif
 
 /* forward declarations for functions used before their definitions.
-   KOKKOS_FUNCTION marks them __device__ __host__ for CUDA compilation; expands to nothing on CPU. */
+   KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
+   when they appear in call expressions within other KOKKOS_FUNCTION bodies in this TU.
+   nvcc may issue advisory warning #20040 (consistent redeclaration) but this is harmless. */
 KOKKOS_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -351,7 +353,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
         set_eos_pressure(i, pp, cell);
 #ifndef COOLING_OPERATOR_SPLIT
-        if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {CellP[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
+        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
         /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
 #endif
 
