@@ -34,5 +34,14 @@ double unit_integertime_in_physical(int i, struct particle_data *pp)
 KOKKOS_INLINE_FUNCTION
 double get_particle_timestep_in_physical(int i, struct particle_data *pp)
 {
-    return pp[i].integertime_step() * unit_integertime_in_physical(i, pp);
+    /* Avoid calling pp[i].integertime_step() — the inline member function is not
+     * reliably compiled for device by nvcc without an explicit __device__ annotation.
+     * Instead replicate its logic by accessing the struct fields directly. */
+    int _bin = (int) pp[i].TimeBin;
+#ifndef WAKEUP
+    integertime ti_step = (_bin ? ((integertime)1 << _bin) : (integertime)0);
+#else
+    integertime ti_step = pp[i].dt_step;
+#endif
+    return (double)ti_step * unit_integertime_in_physical(i, pp);
 }
