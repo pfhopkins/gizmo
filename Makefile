@@ -536,7 +536,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL)
+         $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
 
 
 
