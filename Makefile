@@ -150,7 +150,6 @@ OPTIMIZE = -O2 -Wall
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -fopenmp
 endif
-ifeq (OPENMP_GPU_OFFLOAD,$(findstring OPENMP_GPU_OFFLOAD,$(CONFIGVARS)))
 ## Kokkos GPU offload for cooling.cc (and future GPU-ported files).
 ## cooling.cc and eos/eos.cc are compiled via nvcc_wrapper → nvcc for device code.
 ## TACC's kokkos/4.5.01-cuda module sets TACC_KOKKOS_DIR/INC/LIB/BIN.
@@ -169,7 +168,6 @@ export NVCC_WRAPPER_DEFAULT_COMPILER = mpicxx
 GPU_CXX    = $(TACC_KOKKOS_BIN)/nvcc_wrapper --std=c++17
 GPU_CFLAGS = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
 GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
-endif
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
