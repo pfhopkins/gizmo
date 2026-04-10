@@ -161,13 +161,29 @@ void cooling_parent_routine(void)
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
     printf("[GPU] Kokkos GPU dispatch: N_active=%d, task=%d\n", N_active, ThisTask); fflush(stdout);
     All_dev = All; /* sync All to __managed__ device copy before kernel */
+    /* DIAG-A: increase device stack to handle inlined EOS/cooling chain (default 1KB can overflow) */
+    cudaDeviceSetLimit(cudaLimitStackSize, 16384);
     {
         struct particle_data  *kp   = compact_P;
         struct gas_cell_data  *kc   = compact_Cell;
         Kokkos::parallel_for("cooling_loop", N_active, KOKKOS_LAMBDA(int j) {
+            /* DIAG-D: one-shot printf from device — confirms kernel runs + shows dtime root cause */
+            if(j == 0) {
+                double _dtime = get_particle_timestep_in_physical(0, kp);
+                printf("[GPU-DIAG] kernel running: j=0 dtime=%e TimeBin=%d Timebase=%e cf_hubble=%e u0=%e\n",
+                       _dtime, (int)kp[0].TimeBin,
+                       All.Timebase_interval, All.cf_hubble_a,
+                       kc[0].InternalEnergy);
+            }
             do_the_cooling_for_particle(j, kp, kc);
         });
         Kokkos::fence();
+        /* DIAG-C: surface any silent CUDA error (stack overflow, illegal access, etc.) */
+        cudaError_t _cuda_err = cudaGetLastError();
+        if(_cuda_err != cudaSuccess) {
+            printf("[GPU-DIAG] CUDA error after cooling kernel: %s\n", cudaGetErrorString(_cuda_err));
+            fflush(stdout);
+        }
     }
 #else
 #ifdef _OPENMP
