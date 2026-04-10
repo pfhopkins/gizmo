@@ -1,0 +1,182 @@
+%---- Sedov-like single-star supernova test
+%
+%   A 10 Msun star with age 50 Myr (already past its MS lifetime) sits at the
+%   center of a uniform gas box (50000 Msun, n_H = 100 cm^-3 ambient) and goes
+%   supernova on the first timestep.
+
+%---- Relevant files
+InitCondFile  SN_singlestar_ics
+OutputDir     output
+
+%---- File formats
+ICFormat    3
+SnapFormat  3
+
+%---- Output parameters
+RestartFile                 restart
+SnapshotFileBase            snapshot
+OutputListOn                0
+OutputListFilename          output_times.txt
+NumFilesPerSnapshot         1
+NumFilesWrittenInParallel   1
+
+%---- Output frequency
+TimeOfFirstSnapshot     0.0
+TimeBetSnapshot         0.0015
+TimeBetStatistics       0.0005
+
+%---- CPU run-time and checkpointing time-limits
+TimeLimitCPU            172800
+CpuTimeBetRestartFile   7200
+ResubmitOn              0
+ResubmitCommand         my-scriptfile
+
+%---- Desired simulation beginning and end times (in code units) for run
+TimeBegin   0.0
+TimeMax     0.15
+
+%---- Maximum and minimum timesteps allowed
+MaxSizeTimestep         0.1
+MinSizeTimestep         1.0e-15
+
+%---- System of units: pc, Msun, km/s
+UnitLength_in_cm            3.085678e+18
+UnitMass_in_g               1.989e+33
+UnitVelocity_in_cm_per_s    1.00e+05
+UnitMagneticField_in_gauss  1.00e+00
+GravityConstantInternal     0
+
+%---- Cosmological parameters
+ComovingIntegrationOn   0
+BoxSize                 24.181
+Omega0                  0.
+OmegaLambda             0.
+OmegaBaryon             0.
+HubbleParam             1.
+
+%----- Memory allocation
+MaxMemSize          5000
+PartAllocFactor     20.0
+BufferSize          500
+
+%---- Rebuild domains when >this fraction of particles active
+TreeDomainUpdateFrequency   0.005
+
+%---- Initial hydro temperature & temperature floor (in Kelvin)
+InitGasTemp     1e2
+MinGasTemp      10
+
+%---- Hydro reconstruction (kernel) parameters
+DesNumNgb               32
+MaxKernelRadius         1.0e10
+MinGasKernelRadiusFractional    0
+
+%---- Gravitational softening lengths
+SofteningGas    1e-10
+SofteningHalo   0.020
+SofteningDisk   0.150
+SofteningBulge  0.500
+SofteningStars  0.01
+SofteningBndry  0.01
+
+SofteningGasMaxPhys     0.0005
+SofteningHaloMaxPhys    0.010
+SofteningDiskMaxPhys    0.075
+SofteningBulgeMaxPhys   0.250
+SofteningStarsMaxPhys   0.0005
+SofteningBndryMaxPhys   0.0005
+
+AGS_DesNumNgb           32
+
+%---- Magneto-Hydrodynamics Parameters
+BiniX   1.0e-8
+BiniY   1.0e-8
+BiniZ   1.0e-8
+
+%---- Thermal Conduction
+ConductionCoeff  1.0
+
+%---- Navier-Stokes Viscosity
+ShearViscosityCoeff     1.0
+BulkViscosityCoeff      1.0
+
+%---- Turbulent Diffusion
+TurbDiffusionCoefficient 1.0
+
+%---- Cosmic Ray
+CosmicRayDiffusionCoeff     1.0
+
+%---- Dust-Gas Mixtures
+Grain_Internal_Density      1.0
+Grain_Size_Min              1.e-6
+Grain_Size_Max              1.e-4
+Grain_Size_Spectrum_Powerlaw  0.5
+
+%---- Star Formation parameters
+CritPhysDensity     1.00e+13
+SfEffPerFreeFall    1.0
+
+%---- FIRE explicit star formation & feedback model
+InitMetallicity             1.0
+InitStellarAge              0.0
+WindMomentumLoading         1.0
+SNeIIEnergyFrac             1.0
+HIIRegion_fLum_Coupled      1.0
+PhotonMomentum_Coupled_Fraction  1.0
+PhotonMomentum_fUV          0.0
+PhotonMomentum_fOPT         0.0
+GasReturnFraction           1.0
+GasReturnEnergy             1.0
+CosmicRay_SNeFraction       0.1
+
+InterstellarRadiationFieldStrength  1.0
+
+%---- Black Hole accretion & formation
+SeedBlackHoleMass            5.00e-01
+SeedAlphaDiskMass            0.0
+SeedBlackHoleMinRedshift     2.0
+SeedBlackHoleMassSigma       0.5
+MinFoFMassForNewSeed         10.
+TimeBetOnTheFlyFoF           1.01
+BlackHoleAccretionFactor     1.0
+BlackHoleEddingtonFactor     1e100
+BlackHoleNgbFactor           1.0
+BlackHoleMaxAccretionRadius  1.00e+02
+BlackHoleRadiativeEfficiency 5e-7
+BlackHoleFeedbackFactor      1.0
+BH_FluxMomentumFactor        0.0
+BAL_f_accretion              0.7
+BAL_v_outflow                100.
+BAL_internal_temperature     1.0e3
+BAL_wind_particle_mass       1.00e-01
+BAL_wind_particle_mass_MS    1.00e-02
+
+%---- Grackle cooling module
+GrackleDataFile              CloudyData_UVB=HM2012.h5
+
+%---- Driven Turbulence
+TurbDrive_ApproxRMSVturb            3.21e+00
+TurbDrive_MinWavelength             5.00e+00
+TurbDrive_MaxWavelength             2.00e+01
+TurbDrive_SolenoidalFraction        1
+TurbDrive_CoherenceTime             2.51e+00
+TurbDrive_DrivingSpectrum           1
+TurbDrive_RandomNumberSeed          42
+TurbDrive_TimeBetweenTurbUpdates    0.025
+TurbDrive_TimeBetTurbSpectrum       0.025
+
+%--- Non-Standard Dark Matter / Dark Energy
+DarkEnergyConstantW       -1
+TabulatedCosmologyFile    CosmoTbl
+
+%--- Developer-Mode Parameters
+ErrTolTheta                  0.5
+ErrTolForceAcc               0.0025
+ErrTolIntAccuracy        0.01
+CourantFac               0.2
+MaxRMSDisplacementFac    0.125
+MaxNumNgbDeviation      0.05
+AGS_MaxNumNgbDeviation  0.10
+DivBcleaningParabolicSigma   1.0
+DivBcleaningHyperbolicSigma  1.0
+Sink_outflow_particlemass 1e-2
