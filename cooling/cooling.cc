@@ -14,8 +14,9 @@
 
 /* GPU All mirror: include the struct type and define All_dev BEFORE allvars.h so that
  * inline __device__ __host__ methods in cell_data.h/particle_data.h (pulled in by
- * allvars.h) see All_dev via the #define All All_dev macro during device compilation. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER) && !defined(CHIMES)
+ * allvars.h) see All_dev via the #define All All_dev macro during device compilation.
+ * Use raw __CUDACC__/__HIPCC__ — GIZMO_GPU_COMPILER not yet defined (macros.h comes via allvars.h below). */
+#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__)) && !defined(CHIMES)
 #include "../declarations/global_data_all_struct.h"
 static __managed__ struct global_data_all_processes All_dev;
 #define All All_dev  /* redirect All -> managed copy for ALL GPU-compiled code (host+device) */
@@ -2939,12 +2940,10 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
      * With GPU_COOL_BATCH_SIZE=32768 and 32KB stack: 32768x32768=1GB -- safe. */
 #if defined(__CUDACC__)
     {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 32768);
-     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s
-", cudaGetErrorString(_e)); fflush(stdout);}}
+     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
 #elif defined(__HIPCC__)
     {hipError_t _e = hipDeviceSetLimit(hipLimitStackSize, 32768);
-     if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,32768) failed: %s
-", hipGetErrorString(_e)); fflush(stdout);}}
+     if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,32768) failed: %s\n", hipGetErrorString(_e)); fflush(stdout);}}
 #endif
 }
 void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }
