@@ -121,10 +121,7 @@ static inline double WRAP_POSITION_UNIFORM_BOX(double x)
     return x;
 }
 
-static inline double DMAX(double a, double b) { return (a > b) ? a : b; }
-static inline double DMIN(double a, double b) { return (a < b) ? a : b; }
-static inline int IMAX(int a, int b) { return (a > b) ? a : b; }
-static inline int IMIN(int a, int b) { return (a < b) ? a : b; }
+/* DMAX/DMIN/IMAX/IMIN are now macros in macros.h (GPU-safe, no linkage issues). */
 static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMIN(a,b)) : ((b>=0) ? 0 : DMAX(a,b));}
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 static inline double MINMOD_G(double a, double b) {return a;}

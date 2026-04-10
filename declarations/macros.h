@@ -150,6 +150,18 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #define GIZMO_GPU_FUNCTION
 #endif
 
+/* DMAX/DMIN/IMAX/IMIN as macros: the static inline function versions in proto.h
+   lack __device__ annotations and nvcc silently stubs them to return 0 on device.
+   These macro versions expand directly into the source and work on both host and
+   device with no linkage or type-matching issues. They are defined here (macros.h)
+   so they are visible to all TUs before proto.h is included. proto.h still has the
+   inline function definitions for backward compatibility with any code that takes
+   their address, but the macros take precedence at call sites. */
+#define DMAX(a,b) ((a) > (b) ? (a) : (b))
+#define DMIN(a,b) ((a) < (b) ? (a) : (b))
+#define IMAX(a,b) ((a) > (b) ? (a) : (b))
+#define IMIN(a,b) ((a) < (b) ? (a) : (b))
+
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
 /* GPU-safe endrun/PRINT_WARNING: nvcc_wrapper does not reliably define
    __CUDA_ARCH__, so we cannot distinguish host vs device at compile time.
