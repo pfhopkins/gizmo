@@ -302,7 +302,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
 
 #ifdef COOL_MOLECFRAC_NONEQM
-        if(i==0) {printf("[GPU-TRACE] C: about to call update_explicit_molecular_fraction\n");}
+        if(i==0) {printf("[GPU-TRACE] C: UnitMass=%e UnitLen=%e UnitVel=%e cf_a3inv=%e MinEgy=%e u0=%e rho=%e UNIT_DENS_CGS=%e\n",
+                         All.UnitMass_in_g, All.UnitLength_in_cm, All.UnitVelocity_in_cm_per_s,
+                         All.cf_a3inv, All.MinEgySpec, cell[0].InternalEnergy,
+                         cell[0].Density, UNIT_DENSITY_IN_CGS);}
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
         if(i==0) {printf("[GPU-TRACE] D: returned from update_explicit_molecular_fraction\n");}
 #endif
