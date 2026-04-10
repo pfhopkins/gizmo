@@ -138,59 +138,83 @@ void cooling_parent_routine(void)
     int N_active = (int) cool_indices.size();
     if(N_active == 0) {return;}
 
-    /* Step 2: Gather — allocate compact arrays and copy active particle data into contiguous storage.
-       With OPENMP_GPU_OFFLOAD, allocate in CUDA Unified Memory (CudaUVMSpace) so the arrays
-       are accessible from both host (gather/scatter loops) and GPU kernel without deep_copy.
-       Without GPU offload, falls back to standard malloc. */
+    /* Steps 2-4: Gather / Dispatch / Scatter in batches.
+     *
+     * Why batching:  CUDA allocates stack_size × N_launched_threads bytes of HBM3 at
+     * kernel launch.  stack_size is set to 4096 at init (sufficient for the cooling
+     * chain).  Without batching a large N_active (e.g. entire startup timestep) can
+     * launch millions of threads, exhausting device memory with stack alone.  Batching
+     * to GPU_COOL_BATCH_SIZE caps peak stack at 4096 × GPU_COOL_BATCH_SIZE bytes per
+     * launch.  At 32768 that is 128 MB — safe even when many MPI ranks share a GPU.
+     *
+     * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
+     * than N_active × struct_size, further reducing UVM pressure.
+     */
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(N_active * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(N_active * sizeof(struct gas_cell_data));
+    static const int GPU_COOL_BATCH_SIZE = 32768;
+    printf("[GPU] cooling_parent_routine: N_active=%d, task=%d, batch_size=%d\n",
+           N_active, ThisTask, GPU_COOL_BATCH_SIZE); fflush(stdout);
+    All_dev = All; /* sync All to __managed__ device copy — only needs to happen once per call */
+
+    int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
+    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(batch_cap * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(batch_cap * sizeof(struct gas_cell_data));
+
+    for(int batch_start = 0; batch_start < N_active; batch_start += GPU_COOL_BATCH_SIZE)
+    {
+        int batch_n = N_active - batch_start;
+        if(batch_n > GPU_COOL_BATCH_SIZE) {batch_n = GPU_COOL_BATCH_SIZE;}
+
+        /* Gather batch */
+        for(int j = 0; j < batch_n; j++)
+        {
+            compact_P[j]    = P[cool_indices[batch_start + j]];
+            compact_Cell[j] = CellP[cool_indices[batch_start + j]];
+        }
+
+        /* Dispatch batch to GPU */
+        {
+            struct particle_data *kp = compact_P;
+            struct gas_cell_data *kc = compact_Cell;
+            Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
+                if(j == 0) { /* one-shot device diagnostic — remove once cooling is verified */
+                    double _dt = get_particle_timestep_in_physical(0, kp);
+                    printf("[GPU-DIAG] batch dtime=%e TimeBin=%d u0=%e\n", _dt, (int)kp[0].TimeBin, kc[0].InternalEnergy);
+                }
+                do_the_cooling_for_particle(j, kp, kc);
+            });
+            Kokkos::fence();
+            cudaError_t _ce = cudaGetLastError();
+            if(_ce != cudaSuccess) {
+                printf("[GPU-DIAG] CUDA error batch [%d..%d] N=%d: %s\n",
+                       batch_start, batch_start+batch_n-1, batch_n, cudaGetErrorString(_ce));
+                fflush(stdout);
+            }
+        }
+
+        /* Scatter batch back and call set_eos_pressure on host
+         * (skipped on-device to avoid doubling device stack depth) */
+        for(int j = 0; j < batch_n; j++)
+        {
+            int i = cool_indices[batch_start + j];
+            CellP[i] = compact_Cell[j];
+            P[i]     = compact_P[j];
+            set_eos_pressure(i, P, CellP);
+        }
+    }
+
+    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_Cell);
+    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_P);
+
 #else
+    /* Non-GPU path: single allocation, OpenMP-parallel dispatch */
     struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
-#endif
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];
         compact_Cell[j] = CellP[cool_indices[j]];
     }
-
-    /* Step 3: Dispatch — run cooling on compact arrays indexed 0..N_active-1.
-       With OPENMP_GPU_OFFLOAD, offload to GPU via Kokkos::parallel_for (CUDA backend).
-       compact_P and compact_Cell are allocated in CudaUVMSpace so they are accessible
-       from both host (gather/scatter) and device (kernel) without explicit deep_copy.
-       Kokkos::fence() after the kernel ensures device writes are complete before scatter. */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-    printf("[GPU] Kokkos GPU dispatch: N_active=%d, task=%d\n", N_active, ThisTask); fflush(stdout);
-    All_dev = All; /* sync All to __managed__ device copy before kernel */
-    /* Increase device stack: default 1KB can overflow the EOS/cooling chain.
-     * set_eos_pressure is now skipped on-device (called in scatter on host),
-     * so 8KB is sufficient for the remaining DoCooling → convert_u_to_temp → H2 chain. */
-    {cudaError_t _slimit_err = cudaDeviceSetLimit(cudaLimitStackSize, 8192);
-     if(_slimit_err != cudaSuccess) {printf("[GPU] cudaDeviceSetLimit failed: %s\n", cudaGetErrorString(_slimit_err)); fflush(stdout);}}
-    {
-        struct particle_data  *kp   = compact_P;
-        struct gas_cell_data  *kc   = compact_Cell;
-        Kokkos::parallel_for("cooling_loop", N_active, KOKKOS_LAMBDA(int j) {
-            /* DIAG-D: one-shot printf from device — confirms kernel runs + shows dtime root cause */
-            if(j == 0) {
-                double _dtime = get_particle_timestep_in_physical(0, kp);
-                printf("[GPU-DIAG] kernel running: j=0 dtime=%e TimeBin=%d Timebase=%e cf_hubble=%e u0=%e\n",
-                       _dtime, (int)kp[0].TimeBin,
-                       All.Timebase_interval, All.cf_hubble_a,
-                       kc[0].InternalEnergy);
-            }
-            do_the_cooling_for_particle(j, kp, kc);
-        });
-        Kokkos::fence();
-        /* DIAG-C: surface any silent CUDA error (stack overflow, illegal access, etc.) */
-        cudaError_t _cuda_err = cudaGetLastError();
-        if(_cuda_err != cudaSuccess) {
-            printf("[GPU-DIAG] CUDA error after cooling kernel: %s\n", cudaGetErrorString(_cuda_err));
-            fflush(stdout);
-        }
-    }
-#else
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -198,25 +222,12 @@ void cooling_parent_routine(void)
     {
         do_the_cooling_for_particle(j, compact_P, compact_Cell);
     }
-#endif
-
-    /* Step 4: Scatter — copy modified data back from compact arrays to the global arrays.
-       set_eos_pressure is called here on the host for GPU builds (it was skipped on-device
-       to avoid doubling the CUDA device stack depth). */
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];
         CellP[i] = compact_Cell[j];
-        P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-        set_eos_pressure(i, P, CellP); /* update Pressure/Temperature/SoundSpeed/Gamma post-cooling */
-#endif
+        P[i] = compact_P[j];
     }
-
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_Cell);
-    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_P);
-#else
     free(compact_Cell);
     free(compact_P);
 #endif
@@ -2871,7 +2882,19 @@ void chimes_gizmo_exit(void)
 /* Kokkos lifecycle wrappers — defined here so only this file (compiled by nvcc_wrapper)
    ever includes Kokkos_Core.hpp. main.cc calls these via forward declarations. */
 #ifdef OPENMP_GPU_OFFLOAD
-void gizmo_kokkos_initialize(int argc, char *argv[]) { Kokkos::initialize(argc, argv); }
+void gizmo_kokkos_initialize(int argc, char *argv[]) {
+    Kokkos::initialize(argc, argv);
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+    /* Set device stack size once at init.  The cooling kernel inlines a deep
+     * call chain (DoCooling → CoolingRateFromU → CoolingRate →
+     * find_abundances_and_rates → convert_u_to_temp → H2 partition functions).
+     * CUDA allocates stack_size × N_launched_threads bytes of HBM3 per launch,
+     * so this value must be kept small.  4KB is sufficient for the chain;
+     * the expensive set_eos_pressure call is skipped on-device (host scatter). */
+    {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 4096);
+     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,4096) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
+#endif
+}
 void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }
 #endif
 
