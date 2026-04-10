@@ -25,6 +25,10 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
+/* EOS device functions (yhelium, Get_Gas_Molecular_Mass_Fraction,
+ * Get_Gas_Mean_Molecular_Weight_mu) as KOKKOS_INLINE_FUNCTION so they are
+ * inlined into this TU's GPU kernel without requiring -rdc=true. */
+#include "../eos/eos_device.h"
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,

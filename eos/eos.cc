@@ -260,8 +260,17 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
 }
 
 
-/* return an estimate of the Hydrogen molecular fraction of gas, intended for simulations of e.g. molecular clouds, galaxies, and star formation */
-KOKKOS_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
+/* Device-callable EOS functions (Get_Gas_Molecular_Mass_Fraction, yhelium,
+ * Get_Gas_Mean_Molecular_Weight_mu) are defined as KOKKOS_INLINE_FUNCTION in
+ * eos_device.h so cooling.cc's GPU kernel can call them without -rdc=true. */
+#include "eos_device.h"
+
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma omp end declare target
+#endif
+/* ---- END device-compilable EOS functions ---- */
+
+#if 0 // old function bodies removed — now in eos_device.h
 {
     /* if tracking chemistry explicitly, return the explicitly-evolved H2 fraction */
 #ifdef CHIMES // use the CHIMES molecular network for H2
@@ -483,11 +492,7 @@ KOKKOS_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double r
     return 4./(3.+5.*HYDROGEN_MASSFRAC); // fully-ionized H-He plasma
 #endif
 }
-
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
-/* ---- END device-compilable EOS functions ---- */
+#endif // 0 — end of old bodies (now in eos_device.h)
 
 
 /* subroutine to calculate the conductivities and assign the various non-ideal MHD coefficients (Ohmic, Hall, Ambipolar). can modify or expand chemistry or assumptions about grains herein. */
