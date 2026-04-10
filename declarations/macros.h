@@ -146,27 +146,19 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    Expands to nothing on CPU-only builds. Safe to use in headers included by all TUs. */
 #ifdef __CUDACC__
 #define GIZMO_GPU_FUNCTION __device__ __host__
-/* GPU-safe isfinite/isnan: glibc versions are host-only and nvcc stubs them to
-   return 0 on device.  These pure-arithmetic macros work on both host and device
-   with no linkage issues: NaN is the only float where x != x; Inf - Inf = NaN. */
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
-#define isnan(x) ((double)(x) != (double)(x))
 #else
 #define GIZMO_GPU_FUNCTION
 #endif
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-/* GPU-safe endrun: nvcc_wrapper does NOT reliably define __CUDA_ARCH__ during
-   device compilation, so we cannot use #ifdef to select host vs device at
-   compile time.  Instead, define a single version that works on both: printf
-   is device-safe on NVIDIA GPUs, and we simply return rather than calling
-   MPI_Abort (which would segfault from device).  The host scatter pass will
-   detect the error via the modified state if needed. */
+/* GPU-safe endrun/PRINT_WARNING: nvcc_wrapper does not reliably define
+   __CUDA_ARCH__, so we cannot distinguish host vs device at compile time.
+   endrun just prints (no MPI_Abort which segfaults from device, no bare
+   'return' which is UB in non-void functions).  The function continues
+   with bad data but won't crash the kernel — errors are caught post-kernel. */
 #define endrun(x) do { \
     printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
-    return; } while(0)
+    } while(0)
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)
 #else
 #define endrun(x) {if(x==0) {MPI_Finalize(); exit(0);} else {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);}}
