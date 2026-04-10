@@ -153,7 +153,10 @@ void cooling_parent_routine(void)
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
     static const int GPU_COOL_BATCH_SIZE = 32768;
     printf("[GPU] cooling_parent_routine: N_active=%d, task=%d, batch_size=%d\n",
-           N_active, ThisTask, GPU_COOL_BATCH_SIZE); fflush(stdout);
+           N_active, ThisTask, GPU_COOL_BATCH_SIZE);
+    printf("[GPU-HOST] J_UV=%e gJH0=%e gJHe0=%e gJHep=%e Tmin=%e deltaT=%e\n",
+           J_UV, gJH0, gJHe0, gJHep, Tmin, deltaT);
+    fflush(stdout);
     All_dev = All; /* sync All to __managed__ device copy — only needs to happen once per call */
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
