@@ -180,9 +180,10 @@ void cooling_parent_routine(void)
                 double _u_before = kc[j].InternalEnergy;
                 do_the_cooling_for_particle(j, kp, kc);
                 if(j == 0) { /* one-shot diagnostic: did DoCooling change u? */
-                    printf("[GPU-DIAG] j=0 u_before=%e u_after=%e dtime=%e TimeBin=%d\n",
+                    printf("[GPU-DIAG] j=0 u_before=%e u_after=%e dtime=%e TimeBin=%d J_UV=%e gJH0=%e Tmin=%e deltaT=%e MinEgy=%e\n",
                            _u_before, kc[0].InternalEnergy,
-                           get_particle_timestep_in_physical(0, kp), (int)kp[0].TimeBin);
+                           get_particle_timestep_in_physical(0, kp), (int)kp[0].TimeBin,
+                           J_UV, gJH0, Tmin, deltaT, All.MinEgySpec);
                 }
             });
             Kokkos::fence();
