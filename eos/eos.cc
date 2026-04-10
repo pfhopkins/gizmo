@@ -758,3 +758,14 @@ void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particl
 #endif
 }
 #endif
+
+
+#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+void gizmo_gpu_sync_all_eos(void) {
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+    All_dev = All;
+#pragma pop_macro("All")
+}
+#endif

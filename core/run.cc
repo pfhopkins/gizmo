@@ -512,6 +512,9 @@ void find_next_sync_point_and_drift(void)
     else {All.Time = All.TimeBegin + All.Ti_Current * All.Timebase_interval;}
 
   set_cosmo_factors_for_current_time();
+#ifdef OPENMP_GPU_OFFLOAD
+  {extern void gizmo_gpu_sync_all(void); gizmo_gpu_sync_all();}
+#endif
 #ifdef BOX_SHEARING
     calc_shearing_box_pos_offset();
 #endif

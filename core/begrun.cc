@@ -96,6 +96,10 @@ void begrun(void)
   set_cosmo_factors_for_current_time();
   All.Time = All.TimeBegin;
 
+#ifdef OPENMP_GPU_OFFLOAD
+  {extern void gizmo_gpu_sync_all(void); gizmo_gpu_sync_all();}  /* sync All to GPU managed copies before any EOS/cooling calls */
+#endif
+
 #ifdef COOLING
   InitCool();
 #endif

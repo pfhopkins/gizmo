@@ -167,7 +167,7 @@ void cooling_parent_routine(void)
     printf("[GPU-HOST] J_UV=%e gJH0=%e gJHe0=%e gJHep=%e Tmin=%e deltaT=%e\n",
            J_UV, gJH0, gJHe0, gJHep, Tmin, deltaT);
     fflush(stdout);
-    All_dev = All; /* sync All to __managed__ device copy — only needs to happen once per call */
+    /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
     struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(batch_cap * sizeof(struct particle_data));
@@ -2928,6 +2928,23 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
 #endif
 }
 void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }
+/* Sync the __managed__ All_dev copy from the host All.  Must be called after
+ * any update to All (set_units, set_cosmo_factors_for_current_time, etc.)
+ * because #define All All_dev makes ALL code in this TU and eos.cc read
+ * All_dev — including host-only functions like set_eos_pressure called by
+ * the hydro solver before the cooling kernel ever launches. */
+extern void gizmo_gpu_sync_all_eos(void); /* defined in eos.cc — syncs its own static All_dev */
+void gizmo_gpu_sync_all(void) {
+    /* Each GPU TU (cooling.cc, eos.cc) has its own static __managed__ All_dev.
+     * Sync both from the host All.  #pragma push/pop_macro temporarily undoes
+     * the #define All All_dev so we can access the real host extern All. */
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+    All_dev = All;
+#pragma pop_macro("All")
+    gizmo_gpu_sync_all_eos();
+}
 #endif
 
 #endif
