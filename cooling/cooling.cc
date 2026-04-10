@@ -33,6 +33,12 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../core/timestep_device.h"
 /* evaluate_NH_from_GradRho is in core/predict.cc (not GPU_OBJS) */
 #include "../core/predict_device.h"
+/* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
+#include "../eos/cosmic_ray_fluid/cosmic_ray_device.h"
+/* Simple steady-state chemistry (simple_chemistry.cc is not GPU_OBJS) */
+#include "./simple_chemistry_device.h"
+/* RT utility functions (rt_utilities.cc is not GPU_OBJS) */
+#include "../radiation/rt_device.h"
 /* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
  * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
  * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,
