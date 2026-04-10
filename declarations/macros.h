@@ -149,6 +149,15 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #else
 #define GIZMO_GPU_FUNCTION
 #endif
+/* KOKKOS_FUNCTION / KOKKOS_INLINE_FUNCTION: defined by Kokkos headers when
+   OPENMP_GPU_OFFLOAD is active.  On non-GPU builds, define to nothing/inline
+   so code annotated with these compiles without Kokkos. */
+#ifndef KOKKOS_FUNCTION
+#define KOKKOS_FUNCTION
+#endif
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
 
 /* DMAX/DMIN/IMAX/IMIN as macros: the static inline function versions in proto.h
    lack __device__ annotations and nvcc silently stubs them to return 0 on device.
