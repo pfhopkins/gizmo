@@ -33,9 +33,11 @@ static __managed__ struct global_data_all_processes All_dev;
 /* Timestep device functions (get_particle_timestep_in_physical, etc.) inlined
  * here so the GPU cooling kernel doesn't call into the host-only timestep.cc TU. */
 #include "../core/timestep_device.h"
-/* set_eos_pressure inlined here so the GPU kernel can call it; the body's
- * ThermalProperties call resolves to the KOKKOS_FUNCTION in this same TU. */
-#include "../eos/set_eos_pressure_device.h"
+/* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
+ * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
+ * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,
+ * set_eos_pressure calls are guarded with #ifndef __CUDA_ARCH__ inside
+ * do_the_cooling_for_particle, and the scatter pass calls it on the host. */
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
@@ -161,8 +163,11 @@ void cooling_parent_routine(void)
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
     printf("[GPU] Kokkos GPU dispatch: N_active=%d, task=%d\n", N_active, ThisTask); fflush(stdout);
     All_dev = All; /* sync All to __managed__ device copy before kernel */
-    /* DIAG-A: increase device stack to handle inlined EOS/cooling chain (default 1KB can overflow) */
-    cudaDeviceSetLimit(cudaLimitStackSize, 16384);
+    /* Increase device stack: default 1KB can overflow the EOS/cooling chain.
+     * set_eos_pressure is now skipped on-device (called in scatter on host),
+     * so 8KB is sufficient for the remaining DoCooling → convert_u_to_temp → H2 chain. */
+    {cudaError_t _slimit_err = cudaDeviceSetLimit(cudaLimitStackSize, 8192);
+     if(_slimit_err != cudaSuccess) {printf("[GPU] cudaDeviceSetLimit failed: %s\n", cudaGetErrorString(_slimit_err)); fflush(stdout);}}
     {
         struct particle_data  *kp   = compact_P;
         struct gas_cell_data  *kc   = compact_Cell;
@@ -195,12 +200,17 @@ void cooling_parent_routine(void)
     }
 #endif
 
-    /* Step 4: Scatter — copy modified data back from compact arrays to the global arrays */
+    /* Step 4: Scatter — copy modified data back from compact arrays to the global arrays.
+       set_eos_pressure is called here on the host for GPU builds (it was skipped on-device
+       to avoid doubling the CUDA device stack depth). */
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];
         CellP[i] = compact_Cell[j];
         P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+        set_eos_pressure(i, P, CellP); /* update Pressure/Temperature/SoundSpeed/Gamma post-cooling */
+#endif
     }
 
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
@@ -243,7 +253,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
-            cell[i].InternalEnergyPred = cell[i].InternalEnergy; set_eos_pressure(i, pp, cell);}
+            cell[i].InternalEnergyPred = cell[i].InternalEnergy;
+#ifndef __CUDA_ARCH__
+            set_eos_pressure(i, pp, cell);
+#endif
+            }
 #endif
 #endif
         
@@ -383,7 +397,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-        set_eos_pressure(i, pp, cell);
+#ifndef __CUDA_ARCH__
+        set_eos_pressure(i, pp, cell); /* skipped on-device: called in scatter pass on host instead */
+#endif
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
         /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
