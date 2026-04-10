@@ -159,7 +159,12 @@ static __device__ __host__ inline void endrun_device(int x, const char *func, co
     printf("ENDRUN on GPU, function '%s()', file '%s', line %d: error level %d\n", func, file, line, x);
     __trap(); /* halts the GPU thread and triggers a CUDA error on the host */
 #else
-    if(x==0) {MPI_Finalize(); exit(0);} else {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, func, file, line, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);}
+    /* ThisTask and MAX_PATH_BUFFERSIZE_TOUSE are defined after macros.h in allvars.h;
+       use extern declaration and printf directly to avoid parse-order issues. */
+    extern int ThisTask;
+    if(x==0) {MPI_Finalize(); exit(0);}
+    printf("ENDRUN issued on task=%d, function '%s()', file '%s', line %d: error level %d\n", ThisTask, func, file, line, x);
+    fflush(stdout); MPI_Abort(MPI_COMM_WORLD, x); exit(0);
 #endif
 }
 #define endrun(x) endrun_device(x, __FUNCTION__, __FILE__, __LINE__)
