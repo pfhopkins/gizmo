@@ -152,7 +152,7 @@ OPTIMIZE = -O2 -Wall
 ## cooling.cc is compiled via nvcc_wrapper which invokes nvcc directly; the rest of the code
 ## uses standard mpicxx. KOKKOS_DEVICES selects CUDA+OpenMP backends; KOKKOS_ARCH=Hopper90
 ## targets the H200 GPU on Vista Grace-Hopper nodes (sm_90/cc90).
-## Load modules: kokkos cuda nvhpc openmpi hdf5 fftw3 gsl
+## Load modules: kokkos/4.5.01-cuda nvhpc openmpi hdf5 fftw3 gsl
 KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
 KOKKOS_DEVICES = "Cuda,OpenMP"
 KOKKOS_ARCH    = "Hopper90"
