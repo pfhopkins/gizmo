@@ -4,6 +4,9 @@
 #include <string.h>
 #include <math.h>
 #include <gsl/gsl_math.h>
+#ifdef OPENMP_GPU_OFFLOAD
+#include <Kokkos_Core.hpp>
+#endif
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -246,7 +249,7 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
 
 
 /* return an estimate of the Hydrogen molecular fraction of gas, intended for simulations of e.g. molecular clouds, galaxies, and star formation */
-double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
 {
     /* if tracking chemistry explicitly, return the explicitly-evolved H2 fraction */
 #ifdef CHIMES // use the CHIMES molecular network for H2
@@ -438,7 +441,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 
 
 /* return helium -number- fraction, not mass fraction */
-double INLINE_FUNC yhelium(int target, struct particle_data *pp)
+KOKKOS_FUNCTION double INLINE_FUNC yhelium(int target, struct particle_data *pp)
 {
 #ifdef COOL_METAL_LINES_BY_SPECIES
     if(target >= 0) {double ytmp=DMIN(0.5,pp[target].Metallicity[1]); return 0.25*ytmp/(1.-ytmp);} else {return ((1.-HYDROGEN_MASSFRAC)/(4.*HYDROGEN_MASSFRAC));}
@@ -449,7 +452,7 @@ double INLINE_FUNC yhelium(int target, struct particle_data *pp)
 
 
 /* return mean molecular weight, appropriate for the approximations of the user-selected chemical network[s] */
-double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(CHIMES)
     return calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars);

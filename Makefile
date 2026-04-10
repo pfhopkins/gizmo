@@ -79,6 +79,11 @@ OPTIMIZE = -Wall  -g   # optimization and warning flags (default)
 MPICHLIB = -lmpich	# mpi library (arbitrary default, set for machine below)
 GPU_CFLAGS = # GPU offload compiler flags (set for GPU systypes below)
 GPU_LDFLAGS = # GPU offload linker flags (set for GPU systypes below)
+KOKKOS_PATH = # path to Kokkos installation (set for GPU systypes below)
+KOKKOS_CPPFLAGS = # populated by Kokkos Makefile.kokkos include below
+KOKKOS_CXXFLAGS = #
+KOKKOS_LDFLAGS  = #
+KOKKOS_LIBS     = #
 CHIMESINCL = # default to empty, will only be used below if called
 CHIMESLIBS = # default to empty, will only be used below if called
 HYPRE_INCL = # hypre library for AMG-preconditioned solver in MG gradient correction
@@ -143,15 +148,28 @@ CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
-GPU_CFLAGS = -mp=gpu -gpu=cc90 -Minfo=accel  ## only applied to cooling.cc; cc90=GraceHopper H200
-GPU_LDFLAGS = -mp=gpu -gpu=cc90
-## NOTE: tried -gpu=cc90,unified but unified memory mode appears to suppress kernel dispatch on GH nodes; omit for now
+## Kokkos GPU offload for cooling.cc (and future GPU-ported files).
+## cooling.cc is compiled via nvcc_wrapper which invokes nvcc directly; the rest of the code
+## uses standard mpicxx. KOKKOS_DEVICES selects CUDA+OpenMP backends; KOKKOS_ARCH=Hopper90
+## targets the H200 GPU on Vista Grace-Hopper nodes (sm_90/cc90).
+## Load modules: kokkos cuda nvhpc openmpi hdf5 fftw3 gsl
+KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
+KOKKOS_DEVICES = "Cuda,OpenMP"
+KOKKOS_ARCH    = "Hopper90"
+KOKKOS_CXX_STANDARD = 17
+## Populate KOKKOS_CPPFLAGS / KOKKOS_CXXFLAGS / KOKKOS_LDFLAGS / KOKKOS_LIBS from Kokkos:
+include $(KOKKOS_PATH)/Makefile.kokkos
+## nvcc_wrapper is Kokkos' thin wrapper around nvcc; use it to compile GPU-offloaded files.
+## It passes host flags through and compiles device code with nvcc -arch=sm_90.
+GPU_CXX    = $(KOKKOS_PATH)/bin/nvcc_wrapper --std=c++17
+GPU_CFLAGS = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
-MKL_INCL = -I$(TACC_MKL_INC)
-MKL_LIBS = -L$(TACC_MKL_LIB) -lmkl_rt
+MKL_INCL = #-I$(TACC_MKL_INC)
+MKL_LIBS = #-L$(TACC_MKL_LIB) -lmkl_rt
 GSL_INCL = -I$(TACC_GSL_INC)
 GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas
 FFTW_INCL= -I$(TACC_FFTW3_INC)
@@ -160,8 +178,7 @@ HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK -DOPENMP_GPU_OFFLOAD
-## compiles with module set: nvhpc/24.5 openmpi hdf5 fftw3 gsl
-## submit to 'gh' or 'gh-dev' queue on Vista (NVIDIA Grace Hopper H200, cc90)
+## submit to 'gh' or 'gh-dev' queue on Vista (NVIDIA Grace Hopper H200, sm_90)
 endif
 
 
@@ -389,11 +406,14 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				turb/turb_driving.o \
 				turb/turb_powerspectra.o
 
-GPU_OBJS = cooling/cooling.o  ## compiled separately with GPU_CFLAGS; must NOT be in OBJS or the pattern rule overrides the specific rule below
+## GPU_OBJS: files compiled by nvcc_wrapper (Kokkos CUDA backend) with GPU_CFLAGS.
+## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
+## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
+## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
+GPU_OBJS = cooling/cooling.o eos/eos.o
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
-				eos/eos.o \
 				eos/hydrogen_molecule.o \
 				eos/cosmic_ray_fluid/cosmic_ray_alfven.o \
 				eos/cosmic_ray_fluid/cosmic_ray_utilities.o \
@@ -546,11 +566,16 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
 
 
 $(EXEC): $(OBJS) $(GPU_OBJS)
-	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(LIBS) -o $(EXEC)
+	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)
 
-## GPU-offloaded files: compile with GPU_CFLAGS (only cooling.cc for now)
+## GPU-offloaded files: compiled via nvcc_wrapper so nvcc handles device code.
+## GPU_CXX = $(KOKKOS_PATH)/bin/nvcc_wrapper on GPU systypes; falls back to $(CXX) otherwise.
+## GPU_CFLAGS carries the Kokkos include/feature flags populated by Makefile.kokkos.
+GPU_CC = $(if $(GPU_CXX),$(GPU_CXX),$(CXX))
 cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
-	$(CXX) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@

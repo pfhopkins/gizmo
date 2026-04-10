@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef OPENMP_GPU_OFFLOAD
+#include <Kokkos_Core.hpp>
+#endif
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
@@ -27,22 +30,27 @@
 #define NCOOLTAB  2000 /* defines size of cooling table */
 
 #if !defined(CHIMES)
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target /* cooling table data must be accessible on GPU device */
-#endif
-static double Tmin = -1.0, Tmax = 9.0, deltaT; /* minimum/maximum temp, in log10(T/K) and temperature gridding for the TABULATED rates only - not the same as the min/max temperature gas is actually allowed to reach: will be appropriately set in make_cooling_tables subroutine below */
-static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep; // UV background parameters
+/* Cooling table scalars and UV background constants.
+   With Kokkos+CUDA (OPENMP_GPU_OFFLOAD), declared __managed__ so they live in CUDA unified
+   memory and are accessible from both host and device code without explicit copies.
+   Without GPU offload, plain static variables as before.
+   Note: __managed__ implies __device__, so these ARE the device copies — no shadow needed. */
+#if defined(OPENMP_GPU_OFFLOAD)
+__managed__ static double Tmin = -1.0, Tmax = 9.0, deltaT;
+__managed__ static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep;
 #ifdef COOL_METAL_LINES_BY_SPECIES
-/* if this is enabled, the cooling table files should be in a folder named 'spcool_tables' in the run directory.
- cooling tables can be downloaded at: http://www.tapir.caltech.edu/~phopkins/public/spcool_tables.tgz or on the GitHub site (wiki section) */
+__managed__ static float *SpCoolTable0, *SpCoolTable1;
+#endif
+__managed__ static double J_UV = 0, gJH0 = 0, gJHep = 0, gJHe0 = 0, epsH0 = 0, epsHep = 0, epsHe0 = 0;
+#else
+static double Tmin = -1.0, Tmax = 9.0, deltaT;
+static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep;
+#ifdef COOL_METAL_LINES_BY_SPECIES
 static float *SpCoolTable0, *SpCoolTable1;
 #endif
-/* these are constants of the UV background at a given redshift: they are interpolated from TREECOOL but then not modified particle-by-particle */
 static double J_UV = 0, gJH0 = 0, gJHep = 0, gJHe0 = 0, epsH0 = 0, epsHep = 0, epsHe0 = 0;
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
-#endif
+#endif /* OPENMP_GPU_OFFLOAD */
+#endif /* !CHIMES */
 
 #if defined(CHIMES)
 int ChimesEqmMode, ChimesUVBMode, ChimesInitIonState, N_chimes_full_output_freq, Chimes_incl_full_output = 1;
@@ -57,26 +65,33 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 
-/* forward declarations for functions used before their definitions (needed because pp/cell params changed signatures) */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp begin declare target
+/* With Kokkos+CUDA: a __managed__ (unified memory) copy of the global All struct, local to
+   cooling.cc. Device functions read from All_dev; it is synced from the host All before
+   each kernel launch in cooling_parent_routine. On CPU builds All_dev is not used and
+   the normal global All is accessed directly. */
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+__managed__ static struct global_data_all_processes All_dev;
+/* Macro: device functions use All_dev when compiled for device, host All otherwise. */
+#ifdef __CUDA_ARCH__
+#define All All_dev
 #endif
-double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
-double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
-double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
-double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
-double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
+#endif
+
+/* forward declarations for functions used before their definitions.
+   KOKKOS_FUNCTION marks them __device__ __host__ for CUDA compilation; expands to nothing on CPU. */
+KOKKOS_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
                                  double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess,
                                  double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
                                  struct particle_data *pp, struct gas_cell_data *cell);
-double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_FUNCTION double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
 double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 
@@ -104,9 +119,16 @@ void cooling_parent_routine(void)
     if(N_active == 0) {return;}
 
     /* Step 2: Gather — allocate compact arrays and copy active particle data into contiguous storage.
-       Uses standard malloc (not mymalloc) so the arrays are GPU-mappable via OpenMP target. */
-    struct particle_data *compact_P = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
+       With OPENMP_GPU_OFFLOAD, allocate in CUDA Unified Memory (CudaUVMSpace) so the arrays
+       are accessible from both host (gather/scatter loops) and GPU kernel without deep_copy.
+       Without GPU offload, falls back to standard malloc. */
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(N_active * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(N_active * sizeof(struct gas_cell_data));
+#else
+    struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+#endif
     for(int j = 0; j < N_active; j++)
     {
         compact_P[j] = P[cool_indices[j]];
@@ -114,21 +136,20 @@ void cooling_parent_routine(void)
     }
 
     /* Step 3: Dispatch — run cooling on compact arrays indexed 0..N_active-1.
-       With OPENMP_GPU_OFFLOAD, offload the embarrassingly-parallel loop to GPU via OpenMP target.
-       The compact arrays are mapped tofrom (read on device, modified results copied back).
-       The cooling tables are copied to device as read-only.
-       Note: 'All' is declare-target so its device copy is kept in sync via omp target update below. */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)  /* _OPENMP not required: OPENMP_GPU_OFFLOAD is the correct gate; -mp=gpu may not define _OPENMP on host preprocessor pass */
-    printf("[GPU] OPENMP_GPU_OFFLOAD path reached: N_active=%d, task=%d\n", N_active, ThisTask); fflush(stdout);
-    /* sync declare-target scalar globals to device (table arrays are persistently mapped from InitCool) */
-    #pragma omp target update to(All, Tmin, Tmax, deltaT, J_UV, gJH0, gJHep, gJHe0, epsH0, epsHep, epsHe0)
-    #pragma omp target data map(tofrom: compact_P[0:N_active], compact_Cell[0:N_active])
+       With OPENMP_GPU_OFFLOAD, offload to GPU via Kokkos::parallel_for (CUDA backend).
+       compact_P and compact_Cell are allocated in CudaUVMSpace so they are accessible
+       from both host (gather/scatter) and device (kernel) without explicit deep_copy.
+       Kokkos::fence() after the kernel ensures device writes are complete before scatter. */
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+    printf("[GPU] Kokkos GPU dispatch: N_active=%d, task=%d\n", N_active, ThisTask); fflush(stdout);
+    All_dev = All; /* sync All to __managed__ device copy before kernel */
     {
-        #pragma omp target teams distribute parallel for schedule(static)
-        for(int j = 0; j < N_active; j++)
-        {
-            do_the_cooling_for_particle(j, compact_P, compact_Cell);
-        }
+        struct particle_data  *kp   = compact_P;
+        struct gas_cell_data  *kc   = compact_Cell;
+        Kokkos::parallel_for("cooling_loop", N_active, KOKKOS_LAMBDA(int j) {
+            do_the_cooling_for_particle(j, kp, kc);
+        });
+        Kokkos::fence();
     }
 #else
 #ifdef _OPENMP
@@ -148,8 +169,13 @@ void cooling_parent_routine(void)
         P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
     }
 
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_Cell);
+    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_P);
+#else
     free(compact_Cell);
     free(compact_P);
+#endif
 
 #ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
   CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
@@ -161,18 +187,12 @@ void cooling_parent_routine(void)
 
 
 /* ---- DEVICE-COMPILABLE COOLING FUNCTIONS ----
-   When OPENMP_GPU_OFFLOAD is enabled, each function in the cooling call chain is individually
-   annotated with paired '#pragma omp declare target' / '#pragma omp end declare target' blocks.
-   NVC++ 24.7 treats bare 'declare target' as a block requiring a matching 'end', so each
-   function gets its own balanced pair. Both pragmas are inside the same #ifdef OPENMP_GPU_OFFLOAD
-   and (where applicable) the same #ifndef CHIMES conditional, so they are always balanced.
-   This approach works for functions inside preprocessor conditionals, unlike a single large
-   begin/end block which NVC++ 24.7 does not reliably handle for conditionally-compiled code. */
+   KOKKOS_FUNCTION expands to __device__ __host__ when compiled by nvcc (CUDA backend) and
+   to nothing on CPU-only builds. It works correctly inside #ifndef/#ifdef preprocessor
+   conditional blocks — unlike OpenMP 'declare target' on NVC++ 24.7. */
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
@@ -357,17 +377,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
     } // closes if((dt>0)&&(cell[i].Mass>0)&&(pp[i].Type==0)) check
 }
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 
 
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double u, du; u=0; du=0;
@@ -478,9 +493,6 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     return specific_energy_codeunits_toreturn;
 #endif // CHIMES
 }
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 
 
 
@@ -508,9 +520,7 @@ double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(fac <= 0) {return 0.01*m_old;} /* the hot phase is actually colder than the cold reservoir! */
@@ -557,9 +567,6 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
     if(iter >= MAXITER) {printf("failed to converge in DoInstabilityCooling(cell): m_in=%g u_in=%g rho=%g dt=%g fac=%g ne_in=%g target=%d ID=%ld\n",m_old,u,rho,dt,fac,ne_guess,target,(long)(long long)target /* particle index */); endrun(11);}
     return m;
 }
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 
 #endif // !(CHIMES)
 
@@ -685,9 +692,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
 
 /* this function determines the electron fraction, and hence the mean molecular weight. With it arrives at a self-consistent temperature.
  * Ionization abundances and the rates for the emission are also computed */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int iter = 0;
@@ -769,9 +774,6 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
     if(log10(temp)<Tmin) temp=pow(10.0,Tmin);
     return temp;
 }
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 #endif // CHIMES
 
 
@@ -779,9 +781,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 
 #ifndef CHIMES
 /* this function computes the actual ionization states, relative abundances, and returns the ionization/recombination rates if needed */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
                                  double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess,
                                  double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
@@ -1057,16 +1057,11 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     }
     return 0;
 } // end of find_abundances_and_rates(, pp, cell) //
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 
 
 
 /*  this function first computes the self-consistent temperature and abundance ratios, and then it calculates (heating rate-cooling rate)/n_h^2 in cgs units */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu; nH0_guess = DMAX(0,DMIN(1,1.-ne_guess/1.2));
@@ -1074,9 +1069,6 @@ double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, 
     double Lambda = CoolingRate(log10(temp), rho, ne_guess, ne_eval, target, pp, cell);
     return Lambda;
 }
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 
 
 #endif // !(CHIMES)
@@ -1090,9 +1082,7 @@ extern FILE *fd;
 #ifndef CHIMES
 /*  Calculates (heating rate-cooling rate)/n_h^2 in cgs units
  */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp declare target
-#endif
+KOKKOS_FUNCTION
 double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double n_elec=n_elec_guess, nH0, nHe0, nHp, nHep, nHepp, mu; /* ionization states [computed below] */
@@ -1473,30 +1463,36 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
     return Q;
 } // ends CoolingRate
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
 /* ---- END device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
 
 
 void InitCoolMemory(void)
 {
-    BetaH0 = (double *) mymalloc("BetaH0", (NCOOLTAB + 1) * sizeof(double));
-    BetaHep = (double *) mymalloc("BetaHep", (NCOOLTAB + 1) * sizeof(double));
-    AlphaHp = (double *) mymalloc("AlphaHp", (NCOOLTAB + 1) * sizeof(double));
-    AlphaHep = (double *) mymalloc("AlphaHep", (NCOOLTAB + 1) * sizeof(double));
-    Alphad = (double *) mymalloc("Alphad", (NCOOLTAB + 1) * sizeof(double));
-    AlphaHepp = (double *) mymalloc("AlphaHepp", (NCOOLTAB + 1) * sizeof(double));
-    GammaeH0 = (double *) mymalloc("GammaeH0", (NCOOLTAB + 1) * sizeof(double));
-    GammaeHe0 = (double *) mymalloc("GammaeHe0", (NCOOLTAB + 1) * sizeof(double));
-    GammaeHep = (double *) mymalloc("GammaeHep", (NCOOLTAB + 1) * sizeof(double));
-    Betaff = (double *) mymalloc("Betaff", (NCOOLTAB + 1) * sizeof(double));
-
+    /* With Kokkos+CUDA (OPENMP_GPU_OFFLOAD), allocate cooling table arrays in CUDA unified
+       memory via Kokkos so they are accessible from device kernels. The pointer variables
+       themselves are __managed__ (see top of file), so assigning to them here is fine.
+       Without GPU offload, use the normal mymalloc pool. */
+#if defined(OPENMP_GPU_OFFLOAD)
+#define COOLMEM(name, type, n) name = (type *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(#name, (n) * sizeof(type))
+#else
+#define COOLMEM(name, type, n) name = (type *) mymalloc(#name, (n) * sizeof(type))
+#endif
+    COOLMEM(BetaH0,    double, NCOOLTAB + 1);
+    COOLMEM(BetaHep,   double, NCOOLTAB + 1);
+    COOLMEM(AlphaHp,   double, NCOOLTAB + 1);
+    COOLMEM(AlphaHep,  double, NCOOLTAB + 1);
+    COOLMEM(Alphad,    double, NCOOLTAB + 1);
+    COOLMEM(AlphaHepp, double, NCOOLTAB + 1);
+    COOLMEM(GammaeH0,  double, NCOOLTAB + 1);
+    COOLMEM(GammaeHe0, double, NCOOLTAB + 1);
+    COOLMEM(GammaeHep, double, NCOOLTAB + 1);
+    COOLMEM(Betaff,    double, NCOOLTAB + 1);
 #ifdef COOL_METAL_LINES_BY_SPECIES
     long i_nH=41; long i_T=176; long kspecies=(long)NUM_LIVE_SPECIES_FOR_COOLTABLES;
-    SpCoolTable0 = (float *) mymalloc("SpCoolTable0",(kspecies*i_nH*i_T)*sizeof(float));
-    if(All.ComovingIntegrationOn) {SpCoolTable1 = (float *) mymalloc("SpCoolTable1",(kspecies*i_nH*i_T)*sizeof(float));}
+    COOLMEM(SpCoolTable0, float, kspecies*i_nH*i_T);
+    if(All.ComovingIntegrationOn) { COOLMEM(SpCoolTable1, float, kspecies*i_nH*i_T); }
 #endif
+#undef COOLMEM
 }
 
 
@@ -1888,10 +1884,8 @@ void InitCool(void)
 
 #ifndef CHIMES
 #ifdef COOL_METAL_LINES_BY_SPECIES
-/* ---- BEGIN second block of device-compilable functions (metal-line table lookups) ---- */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp begin declare target
-#endif
+/* Metal-line table lookup — KOKKOS_FUNCTION so device kernels can call it */
+KOKKOS_FUNCTION
 double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z)
 {
     double ne_over_nh_tbl=1, Lambda=0;
@@ -1952,11 +1946,6 @@ double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long ind
     u1 = w1*(1-dx) + w2*dx;
     return u1;
 }
-
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
-/* ---- END second block of device-compilable functions ---- */
 #endif // COOL_METAL_LINES_BY_SPECIES
 #endif // !(CHIMES)
 
@@ -1998,12 +1987,8 @@ void selfshield_local_incident_uv_flux(void)
 
 
 
-/* ---- BEGIN third block of device-compilable functions (molecular fraction, dust, UVB, helper functions) ---- */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp begin declare target
-#endif
-
 /* subroutine to update the molecular fraction using our implicit solver for a simple --single-species-- network (just H2) */
+KOKKOS_FUNCTION
 void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(dtime_cgs <= 0) {return;}
@@ -2190,7 +2175,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
 #endif
 }
 
-double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded){
+KOKKOS_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded){
     const double x_exp_fac=0.00085, w0 = 0.035, EXPmax=90.;
     double x_ss_1=1.+fH2*x01,
 	x_ss_sqrt=sqrt(1.+fH2*x00),
@@ -2203,7 +2188,7 @@ double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_
 
 
 /* simple subroutine to estimate the dust temperatures in our runs without detailed tracking of these individually [more detailed chemistry models do this] */
-double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(RT_INFRARED)
     if(i >= 0) {return cell[i].Dust_Temperature;} // this is pre-computed -- simply return it
@@ -2278,7 +2263,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
 
 
 /* Calculates the coefficient for gas-dust collisional heat transfer, such that LambdaDust = gas_dust_heating_coeff * (T-Tdust) in erg cm^3 s^-1. */
-double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell) 
+KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double Z_sol=1;
 #ifdef METALS
@@ -2293,7 +2278,7 @@ double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_dat
 Mode 0: Account only for dust-shielded FUV flux
 Mode 1: Use for the C photoionization rate: apply cross- and self-shielding factor from Tielens & Hollenbach 1985
 */
-MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
     MyFloat G0 = 0.;
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
@@ -2319,7 +2304,7 @@ MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data
 }
 
 /* this function estimates the free electron fraction from heavy ions, assuming a simple mix of cold molecular gas, Mg, and dust, with the ions from singly-ionized Mg, to prevent artificially low free electron fractions */
-double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(All.ComovingIntegrationOn) {double rhofac=density_cgs/(1000.*COSMIC_BARYON_DENSITY_CGS); if(rhofac<0.2) {return 0;}} // ignore these reactions in the IGM
     double zeta_cr=1.0e-17, f_dustgas=0.01, n_ion_max=4.1533e-5, XH=HYDROGEN_MASSFRAC; // cosmic ray ionization rate (fixed as constant for non-CR runs) and dust-to-gas ratio
@@ -2359,7 +2344,7 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
 /* this function evaluates Compton heating+cooling rates and synchrotron cooling for thermal gas populations, accounting for the
     explicitly-evolved radiation field if it is evolved (otherwise assuming a standard background), and B-fields if they
     are evolved, as well as the proper relativistic or non-relativistic effects and two-temperature plasma effects. */
-double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct gas_cell_data *cell)
 {
     double Lambda = 0;
     double compton_prefac_eV = 2.16e-35 / nHcgs; // multiply field in eV/cm^3 by this and temperature difference to obtain rate
@@ -2453,7 +2438,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 
 
 /* this function defines an effective background radiation temperature for purposes of computing the emission corrections above */
-double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell)
 {
     double T_cmb = 2.73/All.cf_atime;
 #ifdef RT_ISRF_BACKGROUND
@@ -2477,7 +2462,7 @@ double get_background_radiation_temperature_for_emission_corrections(int target,
 
 
 /*  this function computes the self-consistent temperature and electron fraction */
-double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(CHIMES)
     int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
@@ -2501,7 +2486,7 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
 
 
 /* function to return the local multiplier relative to the UVB model to account in some local RHD models for local ionizing sources */
-double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
 {
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
     if((target >= 0) && (gJH0 > 0))
@@ -2517,7 +2502,7 @@ double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
 
 
 /* function to attenuate the UVB to model self-shielding in optically-thin simulations */
-double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell)
+KOKKOS_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell)
 {
 #ifdef GALSF_EFFECTIVE_EQS
     return 1; // self-shielding is implicit in the sub-grid model already //
@@ -2533,11 +2518,6 @@ double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double lo
 #endif
     return 0.98 / pow(1 + pow(q_SS,1.64), 2.28) + 0.02 / pow(1 + q_SS*(1.+1.e-4*nHcgs*nHcgs*nHcgs*nHcgs), 0.84); // from Rahmati et al. 2012: gives gentler cutoff at high densities. but we need to modify it with the extra 1+(nHcgs/10)^4 denominator term since at very high nH, this cuts off much too-slowly (as nH^-0.84), which means UVB heating can be stronger than molecular cooling even at densities >> 1e4
 }
-
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
-/* ---- END third block of device-compilable functions ---- */
 
 
 #ifdef CHIMES
