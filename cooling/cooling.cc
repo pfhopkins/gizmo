@@ -2928,16 +2928,13 @@ void chimes_gizmo_exit(void)
 }
 #endif // CHIMES
 
-/* Kokkos lifecycle wrappers — defined here so only this file (compiled by nvcc_wrapper)
-   ever includes Kokkos_Core.hpp. main.cc calls these via forward declarations. */
+#endif /* COOLING */
+
+/* Kokkos lifecycle and sync functions — OUTSIDE #ifdef COOLING because they
+   must exist for any GPU build (e.g. NUCLEAR_NETWORK without COOLING). */
 #ifdef OPENMP_GPU_OFFLOAD
 void gizmo_kokkos_initialize(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
-    /* Set device stack size once at init.  The cooling kernel has a deep call
-     * chain: DoCooling -> CoolingRateFromU -> convert_u_to_temp (+ inlined H2
-     * partition functions) -> CoolingRate -> find_abundances_and_rates.
-     * GPU allocates stack_size x N_launched_threads bytes per launch.
-     * With GPU_COOL_BATCH_SIZE=32768 and 32KB stack: 32768x32768=1GB -- safe. */
 #if defined(__CUDACC__)
     {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 32768);
      if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
@@ -2946,28 +2943,22 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
      if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,32768) failed: %s\n", hipGetErrorString(_e)); fflush(stdout);}}
 #endif
 }
-void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }
-/* Sync the __managed__ All_dev copy from the host All.  Must be called after
- * any update to All (set_units, set_cosmo_factors_for_current_time, etc.)
- * because #define All All_dev makes ALL code in this TU and eos.cc read
- * All_dev — including host-only functions like set_eos_pressure called by
- * the hydro solver before the cooling kernel ever launches. */
-extern void gizmo_gpu_sync_all_eos(void); /* defined in eos.cc */
+void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
+extern void gizmo_gpu_sync_all_eos(void);
 #ifdef NUCLEAR_NETWORK
-extern void gizmo_gpu_sync_all_nuclear(void); /* defined in nuclear/nuclear.cc */
+extern void gizmo_gpu_sync_all_nuclear(void);
 #endif
 void gizmo_gpu_sync_all(void) {
-    /* Each GPU TU has its own static __managed__ All_dev.  Sync all from host All. */
+#if defined(GIZMO_GPU_COMPILER)
 #pragma push_macro("All")
 #undef All
     extern struct global_data_all_processes All;
     All_dev = All;
 #pragma pop_macro("All")
+#endif
     gizmo_gpu_sync_all_eos();
 #ifdef NUCLEAR_NETWORK
     gizmo_gpu_sync_all_nuclear();
 #endif
 }
-#endif
-
-#endif
+#endif /* OPENMP_GPU_OFFLOAD */
