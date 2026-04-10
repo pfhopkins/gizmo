@@ -313,8 +313,16 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
         }
     }
 
-    if(mode == 0) out2particle_MG(&out, target, 0);
-    else MGDataResult[target] = out;
+    /* out2particle_MG writes MG_Rows[target].Rdiag/rhs, which can race with
+       another thread writing MG_Rows[target] inside the critical section (when
+       target is that thread's neighbor j). Must be serialized under the same lock. */
+    #ifdef _OPENMP
+    #pragma omp critical(_mg_rows_update_)
+    #endif
+    {
+        if(mode == 0) out2particle_MG(&out, target, 0);
+        else MGDataResult[target] = out;
+    }
 
     return 0;
 }
@@ -400,7 +408,15 @@ static void mg_build_matrix(void)
         MG_Rows[i].n_remote = 0;
     }
 
-    /* Main MPI communication loop — same pattern as gradient sweep but over ALL gas cells */
+    /* Main MPI communication loop — same pattern as gradient sweep but over ALL gas cells.
+       Force single-threaded execution: the per-pair critical section already serializes
+       most of the work, and thread-order-dependent floating-point accumulation (amplified
+       by -ffast-math) makes the matrix non-reproducible under OMP. Since the MG sweep is
+       infrequent (gated on ActiveFractionForMGSweep) the performance cost is negligible. */
+    #ifdef _OPENMP
+    int save_omp_threads = omp_get_max_threads();
+    omp_set_num_threads(1);
+    #endif
     NextParticle_MG = 0;
     memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
     int BufferCollisionFlag_MG = 0;
@@ -559,6 +575,9 @@ static void mg_build_matrix(void)
     while(ndone < NTask);
 
     myfree(DataNodeList); myfree(DataIndexTable);
+    #ifdef _OPENMP
+    omp_set_num_threads(save_omp_threads);
+    #endif
 }
 
 
