@@ -21,22 +21,7 @@
  *   and massively modified/extended for GIZMO, primarily by Phil Hopkins, Mike Grudic, and Alex Richings.
  */
 
-/* Tell allvars.h to suppress its extern declaration of All in this TU.
-   We provide the __managed__ definition ourselves below, after the includes.
-   Other TUs (compiled without this macro) still get the normal extern declaration. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
-#define GIZMO_COOLING_DEFINES_ALL
-#endif
-
 #ifdef COOLING
-
-/* __managed__ definition of All for GPU builds: unified memory accessible from both
-   host and device threads in this TU.  The extern declaration is suppressed in allvars.h
-   via GIZMO_COOLING_DEFINES_ALL so there is no prior conflicting declaration here.
-   allvars.cc's definition is likewise suppressed by #ifndef OPENMP_GPU_OFFLOAD. */
-#ifdef GIZMO_COOLING_DEFINES_ALL
-__managed__ struct global_data_all_processes All;
-#endif
 
 /* these are variables of the cooling tables. they are static but this shouldnt be a problem for shared-memory structure because
     they are only defined once in a global operation, then locked for particle-by-particle operations */

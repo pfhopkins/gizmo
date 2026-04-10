@@ -412,7 +412,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o
+GPU_OBJS = cooling/cooling.o eos/eos.o declarations/allvars_gpu.o
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
@@ -577,6 +577,8 @@ GPU_CC = $(if $(GPU_CXX),$(GPU_CXX),$(CXX))
 cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data_all_struct.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
