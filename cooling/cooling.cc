@@ -15,10 +15,10 @@
 /* GPU All mirror: include the struct type and define All_dev BEFORE allvars.h so that
  * inline __device__ __host__ methods in cell_data.h/particle_data.h (pulled in by
  * allvars.h) see All_dev via the #define All All_dev macro during device compilation. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__) && !defined(CHIMES)
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER) && !defined(CHIMES)
 #include "../declarations/global_data_all_struct.h"
 static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev  /* redirect All -> managed copy for ALL nvcc-compiled code (host+device) */
+#define All All_dev  /* redirect All -> managed copy for ALL GPU-compiled code (host+device) */
 #endif
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -51,7 +51,7 @@ static __managed__ struct global_data_all_processes All_dev;
 /* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
  * return 0 on device (making every value appear non-finite).  Override with
  * pure-arithmetic macros AFTER all #includes so they take precedence. */
-#ifdef __CUDACC__
+#ifdef GIZMO_GPU_COMPILER
 #undef isfinite
 #undef isnan
 #define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
@@ -186,8 +186,8 @@ void cooling_parent_routine(void)
     /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
-    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(batch_cap * sizeof(struct particle_data));
-    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(batch_cap * sizeof(struct gas_cell_data));
+    struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
+    struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
 
     for(int batch_start = 0; batch_start < N_active; batch_start += GPU_COOL_BATCH_SIZE)
     {
@@ -209,12 +209,11 @@ void cooling_parent_routine(void)
                 do_the_cooling_for_particle(j, kp, kc);
             });
             Kokkos::fence();
-            cudaError_t _ce = cudaGetLastError();
-            if(_ce != cudaSuccess) {
-                printf("[GPU] CUDA error batch [%d..%d] N=%d: %s\n",
-                       batch_start, batch_start+batch_n-1, batch_n, cudaGetErrorString(_ce));
-                fflush(stdout);
-            }
+#if defined(__CUDACC__)
+            {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] error batch [%d..%d] N=%d: %s\n", batch_start, batch_start+batch_n-1, batch_n, cudaGetErrorString(_ce)); fflush(stdout);}}
+#elif defined(__HIPCC__)
+            {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] error batch [%d..%d] N=%d: %s\n", batch_start, batch_start+batch_n-1, batch_n, hipGetErrorString(_ce)); fflush(stdout);}}
+#endif
         }
 
         /* Scatter batch back and call set_eos_pressure on host
@@ -228,8 +227,8 @@ void cooling_parent_routine(void)
         }
     }
 
-    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_Cell);
-    Kokkos::kokkos_free<Kokkos::CudaUVMSpace>(compact_P);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
 #else
     /* Non-GPU path: single allocation, OpenMP-parallel dispatch */
@@ -1557,7 +1556,7 @@ void InitCoolMemory(void)
        themselves are __managed__ (see top of file), so assigning to them here is fine.
        Without GPU offload, use the normal mymalloc pool. */
 #if defined(OPENMP_GPU_OFFLOAD)
-#define COOLMEM(name, type, n) name = (type *) Kokkos::kokkos_malloc<Kokkos::CudaUVMSpace>(#name, (n) * sizeof(type))
+#define COOLMEM(name, type, n) name = (type *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, (n) * sizeof(type))
 #else
 #define COOLMEM(name, type, n) name = (type *) mymalloc(#name, (n) * sizeof(type))
 #endif
@@ -2933,16 +2932,19 @@ void chimes_gizmo_exit(void)
 #ifdef OPENMP_GPU_OFFLOAD
 void gizmo_kokkos_initialize(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
     /* Set device stack size once at init.  The cooling kernel has a deep call
-     * chain: DoCooling → CoolingRateFromU → convert_u_to_temp (+ inlined H2
-     * partition functions) → CoolingRate → find_abundances_and_rates.
-     * CUDA allocates stack_size × N_launched_threads bytes of HBM3 per launch.
-     * With GPU_COOL_BATCH_SIZE=32768 and 32KB stack: 32768×32768=1GB — fine for
-     * H200 with 96GB HBM3 at 1 rank/node.  Too little stack causes silent
-     * corruption (CoolingRateFromU returns 0, rootfinder never moves from u_old). */
+     * chain: DoCooling -> CoolingRateFromU -> convert_u_to_temp (+ inlined H2
+     * partition functions) -> CoolingRate -> find_abundances_and_rates.
+     * GPU allocates stack_size x N_launched_threads bytes per launch.
+     * With GPU_COOL_BATCH_SIZE=32768 and 32KB stack: 32768x32768=1GB -- safe. */
+#if defined(__CUDACC__)
     {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 32768);
-     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
+     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s
+", cudaGetErrorString(_e)); fflush(stdout);}}
+#elif defined(__HIPCC__)
+    {hipError_t _e = hipDeviceSetLimit(hipLimitStackSize, 32768);
+     if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,32768) failed: %s
+", hipGetErrorString(_e)); fflush(stdout);}}
 #endif
 }
 void gizmo_kokkos_finalize(void)                     { Kokkos::finalize(); }

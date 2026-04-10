@@ -141,10 +141,15 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 
 #define terminate(x) {char termbuf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf, MAX_PATH_BUFFERSIZE_TOUSE, "TERMINATE issued on task=%d, function '%s()', file '%s', line %d: '%s'\n", ThisTask, __FUNCTION__, __FILE__, __LINE__, x); fflush(stdout); printf("%s", termbuf); fflush(stdout); MPI_Abort(MPI_COMM_WORLD, 1); exit(0);}
 
-/* GIZMO_GPU_FUNCTION: marks functions callable from both host and device code.
-   Expands to __device__ __host__ when compiled by nvcc/nvcc_wrapper (CUDA backend).
-   Expands to nothing on CPU-only builds. Safe to use in headers included by all TUs. */
-#ifdef __CUDACC__
+/* ---- GPU portability layer ----
+   GIZMO_GPU_COMPILER: true when compiled by any GPU device compiler (nvcc, hipcc).
+   GIZMO_GPU_FUNCTION: marks functions __device__ __host__ on GPU, nothing on CPU.
+   These abstractions allow the same source to compile for NVIDIA (CUDA), AMD (HIP),
+   or CPU-only builds without #ifdef __CUDACC__ scattered through the codebase. */
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define GIZMO_GPU_COMPILER
+#endif
+#ifdef GIZMO_GPU_COMPILER
 #define GIZMO_GPU_FUNCTION __device__ __host__
 #else
 #define GIZMO_GPU_FUNCTION
@@ -157,6 +162,12 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #endif
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
+#endif
+/* Kokkos memory space abstraction: Kokkos::SharedSpace is backend-agnostic
+   (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
+   convenience alias so allocation code doesn't hardcode a backend. */
+#ifdef OPENMP_GPU_OFFLOAD
+#define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
 #endif
 
 /* DMAX/DMIN/IMAX/IMIN as macros: the static inline function versions in proto.h
@@ -171,7 +182,7 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #define IMAX(a,b) ((a) > (b) ? (a) : (b))
 #define IMIN(a,b) ((a) < (b) ? (a) : (b))
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
 /* GPU-safe endrun/PRINT_WARNING: nvcc_wrapper does not reliably define
    __CUDA_ARCH__, so we cannot distinguish host vs device at compile time.
    endrun just prints (no MPI_Abort which segfaults from device, no bare

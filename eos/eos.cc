@@ -11,7 +11,7 @@
 #endif
 
 /* GPU All mirror: same pattern as cooling.cc — must precede allvars.h. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
 #include "../declarations/global_data_all_struct.h"
 static __managed__ struct global_data_all_processes All_dev;
 #define All All_dev  /* redirect All -> managed copy for ALL nvcc-compiled code (host+device) */
@@ -22,7 +22,7 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../mesh/kernel.h"
 
 /* GPU-safe isfinite/isnan overrides (see cooling.cc for explanation) */
-#ifdef __CUDACC__
+#ifdef GIZMO_GPU_COMPILER
 #undef isfinite
 #undef isnan
 #define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
@@ -760,7 +760,7 @@ void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particl
 #endif
 
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(__CUDACC__)
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
 void gizmo_gpu_sync_all_eos(void) {
 #pragma push_macro("All")
 #undef All

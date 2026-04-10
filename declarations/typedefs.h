@@ -2,7 +2,7 @@
 #pragma once
 
 typedef  long long integertime;
-#ifndef __CUDACC__
+#ifndef GIZMO_GPU_COMPILER
 static MPI_Datatype MPI_TYPE_TIME = MPI_LONG_LONG;
 #endif
 #define  TIMEBINS        60
