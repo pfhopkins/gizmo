@@ -22,10 +22,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #ifdef OPENMP_GPU_OFFLOAD
-/* Forward-declare Kokkos lifecycle wrappers defined in cooling/cooling.cc (compiled by
-   nvcc_wrapper). We never include Kokkos_Core.hpp here — it requires __CUDACC__. */
-void gizmo_kokkos_initialize(int argc, char *argv[]);
-void gizmo_kokkos_finalize(void);
+/* Kokkos lifecycle wrappers declared in proto.h, defined in cooling/cooling.cc */
 #endif
 
 

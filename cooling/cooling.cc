@@ -129,29 +129,19 @@ KOKKOS_FUNCTION double find_abundances_and_rates(double logT, double rho, int ta
 KOKKOS_FUNCTION double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
-double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
-/* Additional KOKKOS_FUNCTION forward declarations for functions defined later in
-   this file but called from device code before their definitions appear.  Without
-   these, nvcc resolves calls to the host-only proto.h declarations, generating a
-   host stub on device that corrupts the caller's stack frame. */
 KOKKOS_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double molecfrac_rootfind_function(double fH2, double x00, double x01, double x_b_0, double x_c, double y_a, double G_LW_dt_unshielded);
-/* return_dust_to_metals_ratio_vs_solar is now inlined via dust_to_metals_device.h */
-/* Functions in cooling.cc that nvcc needs to see as device-callable for the
-   metal-line cooling table lookup (GetCoolingRateWSpecies) */
 KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double *Z);
 KOKKOS_FUNCTION double GetLambdaSpecies(long kspecies, long NCOOLTAB_LOCAL, long ki, long kip, long kj, double dki, double dkj, double tmin, double tdiff);
-/* Functions called from find_abundances_and_rates under SIMPLE_STEADYSTATE_CHEMISTRY */
-KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
+double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 
 /* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost.
    Uses a gather-dispatch-scatter pattern with compact arrays so that the cooling chain operates on contiguous memory
@@ -192,8 +182,6 @@ void cooling_parent_routine(void)
     static const int GPU_COOL_BATCH_SIZE = 32768;
     printf("[GPU] cooling_parent_routine: N_active=%d, task=%d, batch_size=%d\n",
            N_active, ThisTask, GPU_COOL_BATCH_SIZE);
-    printf("[GPU-HOST] J_UV=%e gJH0=%e gJHe0=%e gJHep=%e Tmin=%e deltaT=%e\n",
-           J_UV, gJH0, gJHe0, gJHep, Tmin, deltaT);
     fflush(stdout);
     /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
 
@@ -218,23 +206,12 @@ void cooling_parent_routine(void)
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
             Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
-                /* DIAG-ENTRY: print before any function call to confirm thread executes */
-                if(j == 0) {
-                    printf("[GPU-DIAG-ENTRY] kernel entered j=0 u=%e rho=%e dtime=%e\n",
-                           kc[0].InternalEnergy, kc[0].Density * All.cf_a3inv,
-                           get_particle_timestep_in_physical(0, kp));
-                }
-                double _u_before = kc[j].InternalEnergy;
                 do_the_cooling_for_particle(j, kp, kc);
-                if(j == 0) {
-                    printf("[GPU-DIAG-EXIT] j=0 u_before=%e u_after=%e\n",
-                           _u_before, kc[0].InternalEnergy);
-                }
             });
             Kokkos::fence();
             cudaError_t _ce = cudaGetLastError();
             if(_ce != cudaSuccess) {
-                printf("[GPU-DIAG] CUDA error batch [%d..%d] N=%d: %s\n",
+                printf("[GPU] CUDA error batch [%d..%d] N=%d: %s\n",
                        batch_start, batch_start+batch_n-1, batch_n, cudaGetErrorString(_ce));
                 fflush(stdout);
             }
@@ -303,14 +280,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
     dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
 #endif
 
-    if(i == 0) {
-        printf("[GPU-INSIDE] i=0 dtime=%e Mass=%e Type=%d dt_step=%lld\n",
-               dtime, (double)cell[0].Mass, (int)pp[0].Type, (long long)pp[0].dt_step);
-    }
-
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
-        if(i==0) {printf("[GPU-TRACE] A: entered if-block\n");}
         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
@@ -323,20 +294,13 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             }
 #endif
 #endif
-        if(i==0) {printf("[GPU-TRACE] B: past HII block\n");}
 
 #if defined(RADTRANSFER)
         for(k=0;k<N_RT_FREQ_BINS;k++) {cell[i].Lambda_RadiativeCooling_toRHDBins[k]=0;} // zero these out before cooling subroutine
 #endif
 
 #ifdef COOL_MOLECFRAC_NONEQM
-        if(i==0) {printf("[GPU-TRACE] C: UnitMass=%e UnitLen=%e UnitVel=%e cf_a3inv=%e MinEgy=%e u0=%e rho=%e UNIT_DENS_CGS=%e Ne=%e Temp=%e gamma=%e fmol=%e\n",
-                         All.UnitMass_in_g, All.UnitLength_in_cm, All.UnitVelocity_in_cm_per_s,
-                         All.cf_a3inv, All.MinEgySpec, cell[0].InternalEnergy,
-                         cell[0].Density, UNIT_DENSITY_IN_CGS, cell[0].Ne, cell[0].Temperature,
-                         cell[0].gamma_eos_value(), cell[0].MolecularMassFraction);}
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
-        if(i==0) {printf("[GPU-TRACE] D: returned from update_explicit_molecular_fraction\n");}
 #endif
 
 #ifndef COOLING_OPERATOR_SPLIT
@@ -365,16 +329,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         /* and convert to cgs before use in the cooling sub-routine */
         DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;} // if unsplit, send this converted variable to cooling below
-        if(i==0) {printf("[GPU-TRACE] E: DtInternalEnergy prep done, about to call DoCooling\n");}
 #endif
 
 #if !defined(CHIMES)
         ne_in = cell[i].Ne; ne_out = ne_in; /* this variable is not defined if chimes is on */
 #endif
         unew = DoCooling(uold, cell[i].Density * All.cf_a3inv, dtime, ne_in, &ne_out, i, pp, cell);
-        if(i == 0) {
-            printf("[GPU-TRACE] F: DoCooling returned uold=%e unew=%e\n", uold, unew);
-        }
 #if !defined(CHIMES)
         cell[i].Ne = ne_out; /* update the free electron variable */
 #endif
@@ -717,9 +677,7 @@ Argument cv will return the specific heat capacity at constant volume du/dT
 #define NUM_SPECIES_IN_EOS 5
 KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dummy;
-    if(target==0) {printf("[GPU-TRACE] CTU1: temp=%e rho=%e logT=%e ne_in=%e\n", temp, rho, log10(temp), *ne);}
     find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne, nH0, nHp, nHe0, nHep, nHepp, mu, &dummy, &dummy, &dummy,&dummy, pp, cell); // all the thermo variables for this T
-    if(target==0) {printf("[GPU-TRACE] CTU2: post-find_abund ne=%e nH0=%e nHp=%e mu=%e\n", *ne, *nH0, *nHp, *mu);}
     double X = HYDROGEN_MASSFRAC, Y = 1. - X, Z = 0, fmol;
 #ifdef METALS
     if (target >= 0) {
@@ -781,17 +739,13 @@ KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, do
 KOKKOS_FUNCTION double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
     double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
-    if(target==0) {printf("[GPU-TRACE] CUT1: u=%e rho=%e temp_init=%e Tmin=%e Tmax=%e cachedT=%e cachedU=%e UNIT_SPEC=%e\n",
-                          u, rho, temp, Tmin, Tmax, cell[0].Temperature, cell[0].InternalEnergy, UNIT_SPECEGY_IN_CGS);}
     temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS);
     temp = DMIN(DMAX(temp,temp_min),temp_max);
-    if(target==0) {printf("[GPU-TRACE] CUT2: temp_scaled=%e temp_min=%e temp_max=%e\n", temp, temp_min, temp_max);}
     const double tolerance = 1e-4;
     double dummy;
     int iter = 0, bisection = 0;
     do {
         u_from_temp = convert_temp_to_u(temp, rho, target, &cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell);
-        if(target==0 && iter==0) {printf("[GPU-TRACE] CUT3: iter0 u_from_temp=%e cv=%e ne=%e nH0=%e mu=%e\n", u_from_temp, cv, *ne, *nH0, *mu);}
 	du_old = du;
 	du = u_from_temp - u;
 	if(du > 0 && temp <= temp_min){return temp_min;}
@@ -922,8 +876,6 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     double bH0, bHep, bff, aHp, aHep, aHepp, ad, geH0, geHe0, geHep, EPSILON_SMALL=1.e-40;
     double n_elec, nH0, nHe0, nHp, nHep, nHepp; /* ionization states */
     logT_input = logT; rho_input = rho; ne_input = *ne_guess; /* save inputs (in case of failed convergence below) */
-    if(target==0) {printf("[GPU-TRACE] FAR1: logT=%e rho=%e ne=%e isfinite_logT=%d isfinite_rho=%d Tmin=%e Tmax=%e deltaT=%e\n",
-                          logT, rho, *ne_guess, isfinite(logT), isfinite(rho), Tmin, Tmax, deltaT);}
     if(!isfinite(logT)) {logT=Tmin;}    /* nan trap (just in case) */
     if(!isfinite(rho)) {logT=Tmin;}
 
@@ -965,18 +917,12 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     /* CAFG: this is the density that we should use for UV background threshold */
     double local_gammamultiplier = return_local_gammamultiplier(target, cell); // account for local UVB terms in some expressions below
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
-    if(target==0) {printf("[GPU-TRACE] FAR2: nHcgs=%e rho=%e HYDROGEN_MASSFRAC=%e PROTONMASS=%e local_gammamult=%e gJH0=%e shieldfac_in=%e j=%d\n",
-                          nHcgs, rho, HYDROGEN_MASSFRAC, PROTONMASS_CGS, local_gammamultiplier, gJH0, shieldfac, j);}
     if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, cell);} // if < 0, that's a key to tell us this needs to be recalculated
-    if(target==0) {printf("[GPU-TRACE] FAR2b: post-shieldfac shieldfac=%e nHcgs_check=%e rho_check=%e logT=%e\n", shieldfac, nHcgs, rho, logT);}
     n_elec = *ne_guess; if(!isfinite(n_elec)) {n_elec=1;}
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.; /* more initialized quantities */
     int bisection_mode=0; // 0 if doing the usual fixed-point iteration; 1 if switched to bisection method
-    if(target==0) {printf("[GPU-TRACE] FAR2c: pre-timestep nHcgs=%e n_elec=%e necgs=%e\n", nHcgs, n_elec, necgs);}
     if(target >= 0) {dt = get_particle_timestep_in_physical(target, pp);} // dtime [code units]
-    if(target==0) {printf("[GPU-TRACE] FAR3: post-timestep dt=%e nHcgs=%e shieldfac=%e n_elec=%e AlphaHp_j=%e BetaH0_j=%e Timebase=%e cf_hubble=%e dt_step=%lld\n",
-                          dt, nHcgs, shieldfac, n_elec, AlphaHp[j], BetaH0[j], All.Timebase_interval, All.cf_hubble_a, (long long)pp[target].dt_step);}
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N */
 #endif
@@ -2135,12 +2081,8 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     // first define a number of environmental variables that are fixed over this update step
     double fH2_initial = cell[i].MolecularMassFraction_perNeutralH; // initial molecular fraction per H atom, entering this subroutine, needed for update below
     double xn_e=1, nh0=0, nHe0, nHepp, nhp, nHep, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergy;
-    if(i==0) {printf("[GPU-TRACE] C1: pre-ThermalProperties u0=%e rho_code=%e rho_phys=%e Ne=%e Temp_cached=%e gamma=%e UNIT_SPEC=%e UNIT_DENS=%e\n",
-                     u0, cell[0].Density, rho, cell[0].Ne, cell[0].Temperature, cell[0].gamma_eos_value(), UNIT_SPECEGY_IN_CGS, UNIT_DENSITY_IN_CGS);}
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &xn_e, &nh0, &nhp, &nHe0, &nHep, &nHepp, pp, cell); // get thermodynamic properties [will assume fixed value of fH2 at previous update value]
-    if(i==0) {printf("[GPU-TRACE] C2: post-ThermalProperties T=%e mu=%e ne=%e nH0=%e nHp=%e\n", temperature, mu_meanwt, xn_e, nh0, nhp);}
     double T=1, f_dustgas_solar=1, urad_G0=1, xH0=1, x_e=0, nH_cgs=rho*UNIT_DENSITY_IN_NHCGS; // initialize definitions of some variables used below to prevent compiler warnings
-    if(i==0) {printf("[GPU-TRACE] C3: nH_cgs=%e UNIT_DENS_NHCGS=%e\n", nH_cgs, UNIT_DENSITY_IN_NHCGS);}
     f_dustgas_solar=1; urad_G0=1; // initialize metal/dust and radiation fields. will assume solar-Z and spatially-uniform Habing field for incident FUV radiation unless reset below.
 #ifdef RT_ISRF_BACKGROUND
     urad_G0 = All.InterstellarRadiationFieldStrength;
@@ -2617,9 +2559,7 @@ KOKKOS_FUNCTION double ThermalProperties(double u, double rho, int target, doubl
 #else
     if(target >= 0) {*ne_guess=cell[target].Ne; *nH0_guess = DMAX(0,DMIN(1,1.-( *ne_guess / 1.2 )));} else {*ne_guess=1.; *nH0_guess=0.;}
     rho *= UNIT_DENSITY_IN_CGS; u *= UNIT_SPECEGY_IN_CGS;   /* convert to physical cgs units */
-    if(target==0) {printf("[GPU-TRACE] TP1: u_cgs=%e rho_cgs=%e ne=%e nH0=%e UNIT_SPEC=%e UNIT_DENS=%e\n", u, rho, *ne_guess, *nH0_guess, UNIT_SPECEGY_IN_CGS, UNIT_DENSITY_IN_CGS);}
     double temp = convert_u_to_temp(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell);
-    if(target==0) {printf("[GPU-TRACE] TP2: temp_returned=%e ne=%e mu=%e\n", temp, *ne_guess, *mu_guess);}
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
     if(target >= 0) {if(cell[target].DelayTimeHII > 0) {cell[target].Ne = 1.0 + 2.0*yhelium(target, pp); *nH0_guess=0; nHe0_guess=0;}} /* fully ionized [if using older model] */
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
@@ -2649,14 +2589,12 @@ KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_
 /* function to attenuate the UVB to model self-shielding in optically-thin simulations */
 KOKKOS_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell)
 {
-    if(target==0) {printf("[GPU-TRACE] UVB1: target=%d gamma_12=%e nHcgs=%e logT=%e\n", target, gamma_12, nHcgs, logT);}
 #ifdef GALSF_EFFECTIVE_EQS
     return 1; // self-shielding is implicit in the sub-grid model already //
 #endif
 #if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
-    if(target>=0) {if(cell[target].DelayTimeHII > 0) {if(target==0) {printf("[GPU-TRACE] UVB2: HII shortcut DelayTimeHII=%e\n", cell[target].DelayTimeHII);} return 1;}} // newer HII region model irradiates and removes shielding for regions, but allows cooling function to evolve //
+    if(target>=0) {if(cell[target].DelayTimeHII > 0) {return 1;}} // newer HII region model irradiates and removes shielding for regions, but allows cooling function to evolve //
 #endif
-    if(target==0) {printf("[GPU-TRACE] UVB3: past HII check, computing Rahmati\n");}
     double NH_SS_z, NH_SS = 0.0123; /* CAFG: H number density above which we assume no ionizing bkg (proper cm^-3): note this is a factor ~2 higher than Schaye and Rahmati normalization, owing to CAFG calibration (lower effective cross-section, owing to different UVB spectrum and potentially clumping factors, etc) */
     if(gamma_12>0) {NH_SS_z = NH_SS*pow(gamma_12,0.66)*pow(10.,0.173*(logT-4.));} else {NH_SS_z = NH_SS*pow(10.,0.173*(logT-4.));}
     double q_SS = nHcgs/NH_SS_z;

@@ -38,8 +38,5 @@ double get_particle_timestep_in_physical(int i, struct particle_data *pp)
      * __device__ annotation and nvcc silently stubs it to return 0 on device.
      * WAKEUP is always defined in GIZMO (via constants.h), so the integer timestep
      * is always pp[i].dt_step — read it directly. */
-    double _result = (double)pp[i].dt_step * unit_integertime_in_physical(i, pp);
-    if(i==0) {printf("[GPU-TRACE] DTSTEP: device_version dt_step=%lld Timebase=%e cf_hubble=%e result=%e\n",
-                     (long long)pp[0].dt_step, All.Timebase_interval, All.cf_hubble_a, _result);}
-    return _result;
+    return (double)pp[i].dt_step * unit_integertime_in_physical(i, pp);
 }

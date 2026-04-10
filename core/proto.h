@@ -1064,4 +1064,12 @@ double gravfac(double r, double mass);
 double gravfac2(double r, double mass);
 void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
 double eccentric_anomaly(double mean_anomaly, double ecc);
+
+/* Kokkos/GPU lifecycle and sync functions (defined in cooling/cooling.cc) */
+#ifdef OPENMP_GPU_OFFLOAD
+void gizmo_kokkos_initialize(int argc, char *argv[]);
+void gizmo_kokkos_finalize(void);
+void gizmo_gpu_sync_all(void);
+#endif
+
 #endif
