@@ -149,19 +149,19 @@ CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
 ## Kokkos GPU offload for cooling.cc (and future GPU-ported files).
-## cooling.cc is compiled via nvcc_wrapper which invokes nvcc directly; the rest of the code
-## uses standard mpicxx. KOKKOS_DEVICES selects CUDA+OpenMP backends; KOKKOS_ARCH=Hopper90
-## targets the H200 GPU on Vista Grace-Hopper nodes (sm_90/cc90).
-## Load modules: kokkos/4.5.01-cuda nvhpc openmpi hdf5 fftw3 gsl
+## cooling.cc and eos/eos.cc are compiled via nvcc_wrapper → nvcc for device code.
+## TACC's kokkos/4.5.01-cuda module sets TACC_KOKKOS_DIR/INC/LIB/BIN.
+## We set flags manually (no Makefile.kokkos — TACC's Kokkos is CMake-installed).
+## Load modules: nvidia/25.9 cuda kokkos/4.5.01-cuda openmpi hdf5/2.0.0 fftw3 gsl
 KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
-KOKKOS_DEVICES = "Cuda,OpenMP"
-KOKKOS_ARCH    = "Hopper90"
-KOKKOS_CXX_STANDARD = 17
-## Populate KOKKOS_CPPFLAGS / KOKKOS_CXXFLAGS / KOKKOS_LDFLAGS / KOKKOS_LIBS from Kokkos:
-include $(KOKKOS_PATH)/Makefile.kokkos
-## nvcc_wrapper is Kokkos' thin wrapper around nvcc; use it to compile GPU-offloaded files.
-## It passes host flags through and compiles device code with nvcc -arch=sm_90.
-GPU_CXX    = $(KOKKOS_PATH)/bin/nvcc_wrapper --std=c++17
+## Compile flags: Kokkos includes + CUDA relaxed-constexpr/lambda extensions + sm_90 arch
+KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
+KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_90
+## Link flags: Kokkos libs (core + containers) + CUDA runtime
+KOKKOS_LDFLAGS  = -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB)
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart
+## nvcc_wrapper: Kokkos' thin nvcc driver that handles MPI+CUDA compilation together
+GPU_CXX    = $(TACC_KOKKOS_BIN)/nvcc_wrapper --std=c++17
 GPU_CFLAGS = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
 GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
