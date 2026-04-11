@@ -109,232 +109,292 @@ void ghost_exchange(double safety_factor)
     N_gas_before_ghost = N_gas;
     NumGhostParticles = 0;
 
-    /* Step 1: For each local particle, find its top-level leaf and record hmax per leaf.
-       Also build a mapping from leaf index to the particles it contains. */
+    int i, k, task;
+    int tile_target = 64;
 
-    /* Count particles per local leaf */
-    int *local_leaf_count = (int *) mymalloc("ghost_llc", NTopleaves * sizeof(int));
-    memset(local_leaf_count, 0, NTopleaves * sizeof(int));
+    /* ================================================================
+       Step 1: Build SFC tiles from local particles.
+       Particles are already Peano-Hilbert sorted. Group into tiles of
+       ~tile_target particles, computing bbox and hmax per tile.
+       Uses malloc (not mymalloc) for tile metadata to avoid stack issues.
+       ================================================================ */
+    int local_ntiles = 0, num_pool = 0;
 
-    int i;
-    for(i = 0; i < NumPart; i++)
+    /* Count pool particles (all types, positive mass) */
+    for(i = 0; i < NumPart; i++) { if(P[i].Mass > 0) num_pool++; }
+
+    /* Build pool index array */
+    int *pool = (int *) malloc((num_pool > 0 ? num_pool : 1) * sizeof(int));
+    int p = 0;
+    for(i = 0; i < NumPart; i++) { if(P[i].Mass > 0) pool[p++] = i; }
+
+    local_ntiles = (num_pool + tile_target - 1) / tile_target;
+    if(local_ntiles < 1) local_ntiles = 1;
+
+    /* Compact tile metadata for exchange: bbox (6 doubles) + hmax (1 double) + count (1 int) = 60 bytes */
+    struct tile_meta_t {
+        double lo[3], hi[3], hmax;
+        int count;
+    };
+
+    tile_meta_t *local_meta = (tile_meta_t *) malloc(local_ntiles * sizeof(tile_meta_t));
+    int *tile_first = (int *) malloc(local_ntiles * sizeof(int)); /* index into pool[] */
+
+    for(int t = 0; t < local_ntiles; t++)
     {
-        int leaf = ghost_toptree_leaf(Key[i]);
-        local_leaf_count[leaf]++;
-    }
+        int start = t * tile_target;
+        int count = tile_target;
+        if(start + count > num_pool) count = num_pool - start;
+        tile_first[t] = start;
+        local_meta[t].count = count;
+        local_meta[t].hmax = 0;
 
-    /* Step 2: Use per-leaf hmax from ExtNodes (already computed by force_update_hmax).
-       A remote leaf is needed if the gap between its bounding box and any local leaf's
-       bounding box is less than max(hmax_local_leaf, hmax_remote_leaf). This correctly
-       handles the symmetric search r_ij < max(h_i, h_j) at the leaf level. */
+        int j0 = pool[start];
+        for(k = 0; k < 3; k++) local_meta[t].lo[k] = local_meta[t].hi[k] = P[j0].Pos[k];
+        if(P[j0].KernelRadius > local_meta[t].hmax) local_meta[t].hmax = P[j0].KernelRadius;
 
-    /* Gather per-leaf hmax values globally — each rank knows its own leaves' hmax,
-       need to know remote leaves' hmax for the overlap check. */
-    double *leaf_hmax = (double *) mymalloc("ghost_lhmax", NTopleaves * sizeof(double));
-    memset(leaf_hmax, 0, NTopleaves * sizeof(double));
-    int m;
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
-    {
-        int start = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-        int end = DomainEndList[ThisTask * MULTIPLEDOMAINS + m];
-        if(start < 0 || end < start) continue;
-        int ll;
-        for(ll = start; ll <= end; ll++)
-        {
-            int ni = DomainNodeIndex[ll];
-            if(ni >= 0) leaf_hmax[ll] = Extnodes[ni].hmax;
+        for(int s = 1; s < count; s++) {
+            int j = pool[start + s];
+            for(k = 0; k < 3; k++) {
+                if(P[j].Pos[k] < local_meta[t].lo[k]) local_meta[t].lo[k] = P[j].Pos[k];
+                if(P[j].Pos[k] > local_meta[t].hi[k]) local_meta[t].hi[k] = P[j].Pos[k];
+            }
+            if(P[j].KernelRadius > local_meta[t].hmax) local_meta[t].hmax = P[j].KernelRadius;
         }
     }
-    MPI_Allreduce(MPI_IN_PLACE, leaf_hmax, NTopleaves, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
-    /* Save leaf hmax for h-growth detection after density converges */
+    /* Save per-tile hmax for h-growth detection */
     if(saved_leaf_hmax) {free(saved_leaf_hmax); saved_leaf_hmax = NULL;}
-    saved_leaf_hmax = (double *) malloc(NTopleaves * sizeof(double));
-    memcpy(saved_leaf_hmax, leaf_hmax, NTopleaves * sizeof(double));
-    saved_leaf_hmax_n = NTopleaves;
+    saved_leaf_hmax_n = local_ntiles;
+    saved_leaf_hmax = (double *) malloc(local_ntiles * sizeof(double));
+    for(int t = 0; t < local_ntiles; t++) saved_leaf_hmax[t] = local_meta[t].hmax;
 
-    /* Step 3: For each remote leaf, check overlap with local leaves using per-leaf hmax.
-       search_radius = max(hmax_local_leaf, hmax_remote_leaf) for each pair. */
+    /* ================================================================
+       Step 2: Gather tile metadata from all ranks.
+       Each rank sends its tile count and metadata to all ranks.
+       ================================================================ */
+    int *all_ntiles = (int *) malloc(NTask * sizeof(int));
+    MPI_Allgather(&local_ntiles, 1, MPI_INT, all_ntiles, 1, MPI_INT, MPI_COMM_WORLD);
 
-    int *need_leaf = (int *) mymalloc("ghost_nl", NTopleaves * sizeof(int));
-    memset(need_leaf, 0, NTopleaves * sizeof(int));
+    int *tile_disp = (int *) malloc(NTask * sizeof(int));
+    int total_tiles = 0;
+    for(task = 0; task < NTask; task++) {
+        tile_disp[task] = total_tiles;
+        total_tiles += all_ntiles[task];
+    }
 
-    int leaf, local_leaf;
-    for(leaf = 0; leaf < NTopleaves; leaf++)
+    /* Exchange tile metadata using MPI_Allgatherv with MPI_BYTE */
+    tile_meta_t *all_meta = (tile_meta_t *) malloc(total_tiles * sizeof(tile_meta_t));
+    int *meta_counts = (int *) malloc(NTask * sizeof(int));
+    int *meta_disps = (int *) malloc(NTask * sizeof(int));
+    for(task = 0; task < NTask; task++) {
+        meta_counts[task] = all_ntiles[task] * sizeof(tile_meta_t);
+        meta_disps[task] = tile_disp[task] * sizeof(tile_meta_t);
+    }
+    MPI_Allgatherv(local_meta, local_ntiles * sizeof(tile_meta_t), MPI_BYTE,
+                   all_meta, meta_counts, meta_disps, MPI_BYTE, MPI_COMM_WORLD);
+    free(meta_counts); free(meta_disps);
+
+    if(ThisTask == 0) {
+        double hmax_min = 1e30, hmax_max = 0, hmax_sum = 0;
+        for(int t = 0; t < local_ntiles; t++) {
+            if(local_meta[t].hmax < hmax_min) hmax_min = local_meta[t].hmax;
+            if(local_meta[t].hmax > hmax_max) hmax_max = local_meta[t].hmax;
+            hmax_sum += local_meta[t].hmax;
+        }
+        PRINT_STATUS("Ghost exchange (tile-based): %d local tiles, %d total across %d ranks, tile hmax=[%.4g, %.4g] avg=%.4g",
+                     local_ntiles, total_tiles, NTask, hmax_min, hmax_max, hmax_sum / local_ntiles);
+    }
+
+    /* ================================================================
+       Step 3: Per-task tile overlap check.
+       For each remote task, check which of its tiles overlap with any
+       of our tiles AND which of our tiles overlap with any of its tiles.
+       No global Allreduce — each rank independently computes per-task
+       recv and send lists using the symmetric overlap criterion.
+       ================================================================ */
+
+    /* Per-tile need flags: need_from[total_tiles] = do WE need this remote tile?
+       send_to[local_ntiles * NTask] = does task t need our tile lt? */
+    int *need_from = (int *) calloc(total_tiles, sizeof(int));
+    int *send_to = (int *) calloc(local_ntiles * NTask, sizeof(int));
+    int my_tile_start = tile_disp[ThisTask];
+
+    for(task = 0; task < NTask; task++)
     {
-        if(DomainTask[leaf] == ThisTask) continue;
-        int remote_node = DomainNodeIndex[leaf];
-        if(remote_node < 0) continue;
-        double hmax_remote = leaf_hmax[leaf];
+        if(task == ThisTask) continue;
+        int t_start = tile_disp[task];
+        int t_count = all_ntiles[task];
 
-        /* check overlap with each local leaf */
-        for(m = 0; m < MULTIPLEDOMAINS; m++)
+        for(int rt_idx = 0; rt_idx < t_count; rt_idx++)
         {
-            int start = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-            int end = DomainEndList[ThisTask * MULTIPLEDOMAINS + m];
-            if(start < 0 || end < start) continue;
-            for(local_leaf = start; local_leaf <= end; local_leaf++)
+            int rt = t_start + rt_idx;
+            tile_meta_t *rm = &all_meta[rt];
+
+            for(int lt_idx = 0; lt_idx < local_ntiles; lt_idx++)
             {
-                int local_node = DomainNodeIndex[local_leaf];
-                if(local_node < 0) continue;
+                int lt = my_tile_start + lt_idx;
+                tile_meta_t *lm = &all_meta[lt];
+                double search_r = DMAX(lm->hmax, rm->hmax) * safety_factor;
+                if(search_r <= 0) continue;
+                double search_r2 = search_r * search_r;
 
-                double search_radius = DMAX(leaf_hmax[local_leaf], hmax_remote) * safety_factor;
-                if(search_radius <= 0) continue;
-
-                /* min distance between two axis-aligned bounding boxes */
+                /* Min distance between two AABBs with periodic wrapping */
                 double dist2 = 0;
-                int k;
+                int overlaps = 1;
                 for(k = 0; k < 3; k++)
                 {
-                    double d = fabs(Nodes[remote_node].center[k] - Nodes[local_node].center[k]);
-#ifdef BOX_PERIODIC
-                    double boxsize_k = (k==0) ? boxSize_X : ((k==1) ? boxSize_Y : boxSize_Z);
-                    if(d > 0.5 * boxsize_k) d = boxsize_k - d;
+#if defined(BOX_PERIODIC)
+                    int is_periodic = 1;
+                    double bsize = (k==0) ? boxSize_X : ((k==1) ? boxSize_Y : boxSize_Z);
+#if defined(BOX_REFLECT_X)
+                    if(k==0) is_periodic = 0;
 #endif
-                    d -= 0.5 * (Nodes[remote_node].len + Nodes[local_node].len);
-                    if(d > 0) dist2 += d * d;
+#if defined(BOX_REFLECT_Y)
+                    if(k==1) is_periodic = 0;
+#endif
+#if defined(BOX_REFLECT_Z)
+                    if(k==2) is_periodic = 0;
+#endif
+#if defined(BOX_OUTFLOW_X)
+                    if(k==0) is_periodic = 0;
+#endif
+#if defined(BOX_OUTFLOW_Y)
+                    if(k==1) is_periodic = 0;
+#endif
+#if defined(BOX_OUTFLOW_Z)
+                    if(k==2) is_periodic = 0;
+#endif
+#else
+                    int is_periodic = 0;
+                    double bsize = 0;
+#endif
+                    double c_local = 0.5 * (lm->lo[k] + lm->hi[k]);
+                    double c_remote = 0.5 * (rm->lo[k] + rm->hi[k]);
+                    double hw_local = 0.5 * (lm->hi[k] - lm->lo[k]);
+                    double hw_remote = 0.5 * (rm->hi[k] - rm->lo[k]);
+
+                    double dx = fabs(c_local - c_remote);
+                    if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
+
+                    double gap = dx - hw_local - hw_remote;
+                    if(gap <= 0) continue; /* AABBs overlap on this axis */
+
+                    if(gap > search_r) { overlaps = 0; break; }
+                    dist2 += gap * gap;
                 }
 
-                if(dist2 < search_radius * search_radius)
-                {
-                    need_leaf[leaf] = 1;
-                    goto next_remote_leaf;
+                if(overlaps && dist2 < search_r2) {
+                    need_from[rt] = 1;          /* we need this remote tile */
+                    send_to[lt_idx * NTask + task] = 1; /* task t needs our tile lt */
+                    /* don't break — need to check all local tiles for send_to */
                 }
             }
         }
-        next_remote_leaf:;
     }
-    /* leaf_hmax freed at end with other allocations (stack allocator requires reverse order) */
 
-    /* Step 4: Exchange leaf particle counts globally so each rank knows how many
-       particles are in each leaf (needed to compute recv counts). */
-    int *global_leaf_count = (int *) mymalloc("ghost_glc", NTopleaves * sizeof(int));
-    MPI_Allreduce(local_leaf_count, global_leaf_count, NTopleaves, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-
-    /* Step 5: Compute send/recv counts per task.
-       recv_count[t] = total particles we want from task t (sum over needed leaves owned by t)
-       send_count[t] = total particles task t wants from us
-
-       For send_count, we need to know which of OUR leaves each remote task requested.
-       Exchange need_leaf arrays: each task broadcasts which leaves it needs, then each task
-       can determine what to send. We use MPI_Allreduce(MPI_MAX) on need_leaf as a
-       Phase 0 approximation: if ANY task needs a leaf, we send it to ALL requesters.
-       This over-sends but guarantees correctness. Per-task routing deferred. */
-
-    int *global_need_leaf = (int *) mymalloc("ghost_gnl", NTopleaves * sizeof(int));
-    MPI_Allreduce(need_leaf, global_need_leaf, NTopleaves, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-
-    /* recv_count[t] = sum of global_leaf_count[leaf] for leaves we need owned by task t */
+    /* ================================================================
+       Step 4: Compute per-task send/recv counts from overlap results.
+       ================================================================ */
     int *recv_count = (int *) mymalloc("ghost_rc", NTask * sizeof(int));
-    memset(recv_count, 0, NTask * sizeof(int));
-    for(leaf = 0; leaf < NTopleaves; leaf++)
-    {
-        if(need_leaf[leaf])
-            recv_count[DomainTask[leaf]] += global_leaf_count[leaf];
-    }
-
-    /* send_count: how many of our particles are in globally-requested leaves, per requesting task.
-       Phase 0: count our particles in any globally-needed leaf. Each requesting task gets the same set. */
-    int n_boundary_particles = 0;
-    for(i = 0; i < NumPart; i++)
-    {
-        int leaf_i = ghost_toptree_leaf(Key[i]);
-        if(global_need_leaf[leaf_i] && DomainTask[leaf_i] == ThisTask)
-            n_boundary_particles++;
-    }
-
-    /* Each task that wants particles from us gets n_boundary_particles.
-       Use Alltoall to communicate: we send recv_count (what we want from each task),
-       each task receives what others want from it. */
     int *send_count = (int *) mymalloc("ghost_sc", NTask * sizeof(int));
-    MPI_Alltoall(recv_count, 1, MPI_INT, send_count, 1, MPI_INT, MPI_COMM_WORLD);
+    memset(recv_count, 0, NTask * sizeof(int));
+    memset(send_count, 0, NTask * sizeof(int));
+
+    for(task = 0; task < NTask; task++) {
+        if(task == ThisTask) continue;
+        /* Recv: remote tiles we need from this task */
+        for(int rt = tile_disp[task]; rt < tile_disp[task] + all_ntiles[task]; rt++) {
+            if(need_from[rt]) recv_count[task] += all_meta[rt].count;
+        }
+        /* Send: our tiles this task needs */
+        for(int lt = 0; lt < local_ntiles; lt++) {
+            if(send_to[lt * NTask + task]) send_count[task] += local_meta[lt].count;
+        }
+    }
 
     /* Compute totals and displacements */
     int total_recv = 0, total_send = 0;
     int *recv_disp = (int *) mymalloc("ghost_rd", NTask * sizeof(int));
     int *send_disp = (int *) mymalloc("ghost_sd", NTask * sizeof(int));
     recv_disp[0] = 0; send_disp[0] = 0;
-    int task;
-    for(task = 0; task < NTask; task++)
-    {
+    for(task = 0; task < NTask; task++) {
         total_recv += recv_count[task];
         total_send += send_count[task];
-        if(task > 0)
-        {
+        if(task > 0) {
             recv_disp[task] = recv_disp[task-1] + recv_count[task-1];
             send_disp[task] = send_disp[task-1] + send_count[task-1];
         }
     }
 
+    int tiles_needed = 0, tiles_sent = 0;
+    for(int rt = 0; rt < total_tiles; rt++) tiles_needed += need_from[rt];
+    for(int lt = 0; lt < local_ntiles; lt++) {
+        for(task = 0; task < NTask; task++) { if(send_to[lt * NTask + task]) { tiles_sent++; break; } }
+    }
+
     /* Check space */
-    if(NumPart + total_recv > All.MaxPart)
-    {
+    if(NumPart + total_recv > All.MaxPart) {
         if(ThisTask == 0)
             PRINT_WARNING("Ghost exchange: need %d ghost particles but only %d slots free (MaxPart=%d). Skipping.\n",
                           total_recv, All.MaxPart - NumPart, All.MaxPart);
         myfree(send_disp); myfree(recv_disp); myfree(send_count); myfree(recv_count);
-        myfree(global_need_leaf); myfree(global_leaf_count); myfree(need_leaf); myfree(leaf_hmax); myfree(local_leaf_count);
+        free(send_to); free(need_from);
+        free(all_meta); free(tile_disp); free(all_ntiles);
+        free(tile_first); free(local_meta); free(pool);
         NumPart_before_ghost = -1;
         return;
     }
 
-    /* Step 6: Pack particles to send.
-       global_need_leaf (from Step 5) tells us which of our leaves are requested.
-       send_count[t] (from Alltoall) tells us how many particles task t expects.
-
-       Phase 0 approach: the same set of boundary particles goes to every requesting task.
-       Pack them into the send buffer, replicated per destination task. */
+    /* ================================================================
+       Step 5: Pack particles from tiles needed by each task.
+       ================================================================ */
     struct particle_data *send_P = (struct particle_data *) mymalloc("ghost_sP",
-        total_send * sizeof(struct particle_data));
+        (total_send > 0 ? total_send : 1) * sizeof(struct particle_data));
     struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("ghost_sC",
-        total_send * sizeof(struct gas_cell_data));
+        (total_send > 0 ? total_send : 1) * sizeof(struct gas_cell_data));
 
     int *task_offset = (int *) mymalloc("ghost_toff", NTask * sizeof(int));
     memcpy(task_offset, send_disp, NTask * sizeof(int));
 
-    /* For each requesting task, pack our boundary particles */
     for(task = 0; task < NTask; task++)
     {
         if(send_count[task] <= 0) continue;
-        for(i = 0; i < NumPart; i++)
+        for(int t = 0; t < local_ntiles; t++)
         {
-            int leaf_i = ghost_toptree_leaf(Key[i]);
-            if(!global_need_leaf[leaf_i] || DomainTask[leaf_i] != ThisTask) continue;
-            if(task_offset[task] >= send_disp[task] + send_count[task]) break;
-
-            int idx = task_offset[task]++;
-            send_P[idx] = P[i];
-            if(P[i].Type == 0 && i < N_gas)
-                send_CellP[idx] = CellP[i];
-            else
-                memset(&send_CellP[idx], 0, sizeof(struct gas_cell_data));
+            if(!send_to[t * NTask + task]) continue;
+            for(int s = 0; s < local_meta[t].count; s++)
+            {
+                if(task_offset[task] >= send_disp[task] + send_count[task]) break;
+                int j = pool[tile_first[t] + s];
+                int off = task_offset[task]++;
+                send_P[off] = P[j];
+                if(P[j].Type == 0 && j < N_gas)
+                    send_CellP[off] = CellP[j];
+                else
+                    memset(&send_CellP[off], 0, sizeof(struct gas_cell_data));
+            }
         }
     }
 
-    /* Step 8: Exchange via MPI_Alltoallv.
-       Send/recv full particle_data and gas_cell_data structs.
-       Counts are in particles; MPI needs bytes. */
-
-    /* Convert counts to bytes for MPI */
+    /* ================================================================
+       Step 6: Exchange via MPI_Alltoallv.
+       ================================================================ */
     int *recv_bytes = (int *) mymalloc("ghost_rb", NTask * sizeof(int));
     int *send_bytes = (int *) mymalloc("ghost_sb", NTask * sizeof(int));
     int *recv_bdisp = (int *) mymalloc("ghost_rbd", NTask * sizeof(int));
     int *send_bdisp = (int *) mymalloc("ghost_sbd", NTask * sizeof(int));
-    for(task = 0; task < NTask; task++)
-    {
+    for(task = 0; task < NTask; task++) {
         recv_bytes[task] = recv_count[task] * sizeof(struct particle_data);
         send_bytes[task] = send_count[task] * sizeof(struct particle_data);
         recv_bdisp[task] = recv_disp[task] * sizeof(struct particle_data);
         send_bdisp[task] = send_disp[task] * sizeof(struct particle_data);
     }
 
-    /* Receive directly into P[] at ghost region */
     MPI_Alltoallv(send_P, send_bytes, send_bdisp, MPI_BYTE,
                   &P[NumPart], recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
 
-    /* Exchange CellP similarly */
-    for(task = 0; task < NTask; task++)
-    {
+    for(task = 0; task < NTask; task++) {
         recv_bytes[task] = recv_count[task] * sizeof(struct gas_cell_data);
         send_bytes[task] = send_count[task] * sizeof(struct gas_cell_data);
         recv_bdisp[task] = recv_disp[task] * sizeof(struct gas_cell_data);
@@ -347,20 +407,21 @@ void ghost_exchange(double safety_factor)
     /* Update counts */
     NumGhostParticles = total_recv;
     NumPart += total_recv;
-    /* N_gas unchanged — ghost gas is at indices >= NumPart_before_ghost, accessed via CellP[j] */
 
     if(ThisTask == 0)
-        PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total particles",
-                     NumPart_before_ghost, NumGhostParticles, NumPart);
+        PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total particles (recv %d tiles, sent %d/%d local tiles)",
+                     NumPart_before_ghost, NumGhostParticles, NumPart,
+                     tiles_needed, tiles_sent, local_ntiles);
 
-    /* Cleanup temporaries (MUST be in reverse mymalloc order — stack allocator) */
+    /* Cleanup: mymalloc in reverse order, then free malloc'd metadata */
     myfree(send_bdisp); myfree(recv_bdisp); myfree(send_bytes); myfree(recv_bytes);
     myfree(task_offset);
     myfree(send_CellP); myfree(send_P);
     myfree(send_disp); myfree(recv_disp);
     myfree(send_count); myfree(recv_count);
-    myfree(global_need_leaf); myfree(global_leaf_count);
-    myfree(need_leaf); myfree(leaf_hmax); myfree(local_leaf_count);
+    free(send_to); free(need_from);
+    free(all_meta); free(tile_disp); free(all_ntiles);
+    free(tile_first); free(local_meta); free(pool);
 }
 
 
@@ -375,38 +436,55 @@ void ghost_exchange(double safety_factor)
 int ghost_exchange_needs_redo(void)
 {
     if(NTask <= 1) return 0;
-    if(!saved_leaf_hmax || saved_leaf_hmax_n != NTopleaves) return 0;
+    if(!saved_leaf_hmax || saved_leaf_hmax_n <= 0) return 0;
 
-    /* Compute current per-leaf hmax from local particles */
-    double *current_hmax = (double *) malloc(NTopleaves * sizeof(double));
-    memset(current_hmax, 0, NTopleaves * sizeof(double));
-
-    /* Use NumPart_before_ghost if ghosts are present (only check local particles) */
+    /* Rebuild tiles from current local particles to get current per-tile hmax */
     int nlocal = (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart;
+    int tile_target = 64;
+
+    /* Count pool and build tile hmax values (same tiling as ghost_exchange) */
+    int num_pool = 0;
     int i;
-    for(i = 0; i < nlocal; i++)
-    {
-        int leaf = ghost_toptree_leaf(Key[i]);
-        if(P[i].KernelRadius > current_hmax[leaf])
-            current_hmax[leaf] = P[i].KernelRadius;
+    for(i = 0; i < nlocal; i++) { if(P[i].Mass > 0) num_pool++; }
+
+    int ntiles = (num_pool + tile_target - 1) / tile_target;
+    if(ntiles < 1) ntiles = 1;
+    if(ntiles != saved_leaf_hmax_n) return 1; /* tile count changed, definitely redo */
+
+    double *current_hmax = (double *) malloc(ntiles * sizeof(double));
+    memset(current_hmax, 0, ntiles * sizeof(double));
+
+    int p = 0;
+    for(i = 0; i < nlocal; i++) {
+        if(P[i].Mass <= 0) continue;
+        int t = p / tile_target;
+        if(t >= ntiles) t = ntiles - 1;
+        if(P[i].KernelRadius > current_hmax[t]) current_hmax[t] = P[i].KernelRadius;
+        p++;
     }
 
-    /* Allreduce to get global per-leaf hmax (same as ghost_exchange does) */
-    MPI_Allreduce(MPI_IN_PLACE, current_hmax, NTopleaves, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-
-    /* Check if any leaf's hmax grew by more than 10% */
-    int needs_redo = 0;
-    int leaf;
-    for(leaf = 0; leaf < NTopleaves; leaf++)
-    {
-        if(current_hmax[leaf] > saved_leaf_hmax[leaf] * 1.1)
-        {
-            if(ThisTask == 0 && !needs_redo)
-                PRINT_STATUS("Ghost exchange redo needed: leaf %d hmax grew %.4g -> %.4g (%.1f%%)",
-                             leaf, saved_leaf_hmax[leaf], current_hmax[leaf],
-                             100.0 * (current_hmax[leaf] - saved_leaf_hmax[leaf]) / (saved_leaf_hmax[leaf] + 1e-30));
-            needs_redo = 1;
+    /* Check if any tile's hmax grew by more than 10% */
+    int needs_redo_local = 0;
+    for(int t = 0; t < ntiles; t++) {
+        if(current_hmax[t] > saved_leaf_hmax[t] * 1.1) {
+            needs_redo_local = 1;
+            break;
         }
+    }
+
+    /* Global consensus: if ANY rank needs redo, all redo */
+    int needs_redo = 0;
+    MPI_Allreduce(&needs_redo_local, &needs_redo, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+
+    if(needs_redo && ThisTask == 0) {
+        double max_growth = 0;
+        for(int t = 0; t < ntiles; t++) {
+            if(saved_leaf_hmax[t] > 0) {
+                double growth = (current_hmax[t] - saved_leaf_hmax[t]) / saved_leaf_hmax[t];
+                if(growth > max_growth) max_growth = growth;
+            }
+        }
+        PRINT_STATUS("Ghost exchange redo needed: max tile hmax growth = %.1f%%", 100.0 * max_growth);
     }
 
     free(current_hmax);

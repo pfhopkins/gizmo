@@ -65,8 +65,7 @@ void compute_hydro_densities_and_forces(void)
         /* Ghost exchange: import boundary particles from neighboring MPI ranks.
            Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
            are guesses that may grow significantly during density iteration. */
-        double ghost_safety = (All.Ti_Current == 0 && RestartFlag == 0) ? 2.0 : 1.0;
-        ghost_exchange(ghost_safety);
+        ghost_exchange(1.0);
 
         PRINT_STATUS("Start hydrodynamics computation...");
         density();		/* computes density, and pressure */
