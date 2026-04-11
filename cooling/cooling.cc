@@ -33,8 +33,7 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../core/timestep_functions.h"
 /* evaluate_NH_from_GradRho — single source in predict_functions.h */
 #include "../core/predict_functions.h"
-/* return_dust_to_metals_ratio_vs_solar — single source in dust_to_metals_functions.h */
-#include "../eos/dust_to_metals_functions.h"
+/* return_dust_to_metals_ratio_vs_solar now in eos_functions.h (included above) */
 /* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 /* Simple steady-state chemistry — single source in simple_chemistry.h */

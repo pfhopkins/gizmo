@@ -245,7 +245,6 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
    providing externally-visible symbols for other TUs that link via proto.h. */
 #undef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION
-#include "dust_to_metals_functions.h"
 #include "eos_functions.h"
 
 #ifdef OPENMP_GPU_OFFLOAD
