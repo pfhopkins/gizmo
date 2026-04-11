@@ -69,7 +69,7 @@ static constexpr double pi_val     = 3.14159265358979323846;
 
 /* Q-values [MeV] for the 12 reactions: Q = BE(product) - BE(reactants).
    Computed from AME2020 mass excess values. */
-static constexpr double Q_MeV[] = {
+GIZMO_GPU_DEVICE static constexpr double Q_MeV[] = {
     7.2748,   /* 3 He4 -> C12 */
     7.1616,   /* C12(a,g)O16 */
     4.7300,   /* O16(a,g)Ne20 */
@@ -88,8 +88,8 @@ static constexpr int NS = 13;  /* number of species */
 static constexpr int NR = 12;  /* number of reactions */
 
 /* Species A and Z (from nuclear.h) */
-static constexpr int A_sp[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
-static constexpr int Z_sp[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
+GIZMO_GPU_DEVICE static constexpr int A_sp[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
+GIZMO_GPU_DEVICE static constexpr int Z_sp[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
 
 
 /* =========================================================================
@@ -171,20 +171,20 @@ KOKKOS_FUNCTION static inline double eval_rate(const struct rate_coeff *r, int n
    Each reaction may have 1-3 REACLIB components (resonant + non-resonant). */
 
 /* C12(a,g)O16: CF88 eq 18, two components */
-static constexpr struct rate_coeff rc12ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rc12ag[] = {
     {{ 2.54985e+02, -1.84000e+00,  1.03411e+02, -4.20567e+02,  6.40874e+01, -1.24624e+01,  1.37803e+02}},
     {{ 6.96526e+01, -1.39254e+00,  5.89128e+01, -1.48273e+02,  9.08324e+00, -5.41041e-01,  7.03554e+01}},
 };
 
 /* O16(a,g)Ne20: CF88 eq 19 */
-static constexpr struct rate_coeff ro16ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff ro16ag[] = {
     {{ 2.86431e+01, -6.52460e+01,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 4.86604e+01, -5.48875e+01, -3.97262e+01, -2.10799e-01,  4.42879e-01, -7.97753e-02,  8.33333e-01}},
     {{ 3.42658e+01, -6.76518e+01,  0.00000e+00, -3.65925e+00,  7.14224e-01, -1.07508e-03,  0.00000e+00}},
 };
 
 /* Ne20(a,g)Mg24: NACRE (Angulo+ 1999) */
-static constexpr struct rate_coeff rne20ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rne20ag[] = {
     {{ 2.68017e+01, -1.17334e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{-1.38869e+01, -1.10620e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 4.93244e+01, -1.08114e+02, -4.62525e+01,  5.58901e+00,  7.61843e+00, -3.68300e+00,  8.33333e-01}},
@@ -192,51 +192,51 @@ static constexpr struct rate_coeff rne20ag[] = {
 };
 
 /* Mg24(a,g)Si28: CF88 */
-static constexpr struct rate_coeff rmg24ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rmg24ag[] = {
     {{ 3.89908e+01, -1.66186e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{-1.23895e+01, -1.59316e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.52250e+01, -1.43656e+02, -6.33980e+01, -1.48750e+00,  2.61250e+01, -7.25750e+00,  8.33333e-01}},
 };
 
 /* Si28(a,g)S32: CF88 */
-static constexpr struct rate_coeff rsi28ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rsi28ag[] = {
     {{ 4.42778e+01, -1.79782e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{-1.80237e+01, -1.68431e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.54965e+01, -1.56772e+02, -6.64270e+01,  7.05180e-01,  3.08400e+01, -8.42250e+00,  8.33333e-01}},
 };
 
 /* S32(a,g)Ar36: CF88 */
-static constexpr struct rate_coeff rs32ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rs32ag[] = {
     {{ 2.12300e+01, -1.87399e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.57920e+01, -1.69466e+02, -6.94270e+01,  1.68950e+00,  3.44200e+01, -9.31500e+00,  8.33333e-01}},
 };
 
 /* Ar36(a,g)Ca40: CF88 */
-static constexpr struct rate_coeff rar36ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rar36ag[] = {
     {{ 5.28990e+01, -1.86899e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.62690e+01, -1.82485e+02, -7.24270e+01,  2.69870e+00,  3.77260e+01, -1.01475e+01,  8.33333e-01}},
 };
 
 /* Ca40(a,g)Ti44: CF88 */
-static constexpr struct rate_coeff rca40ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rca40ag[] = {
     {{ 4.58750e+01, -1.97302e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.65130e+01, -1.95538e+02, -7.54270e+01,  3.62700e+00,  4.09700e+01, -1.09475e+01,  8.33333e-01}},
 };
 
 /* Ti44(a,g)Cr48: CF88 */
-static constexpr struct rate_coeff rti44ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rti44ag[] = {
     {{ 5.02560e+01, -2.11138e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.62610e+01, -2.08637e+02, -7.84270e+01,  4.68900e+00,  4.39800e+01, -1.17175e+01,  8.33333e-01}},
 };
 
 /* Cr48(a,g)Fe52: CF88 */
-static constexpr struct rate_coeff rcr48ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rcr48ag[] = {
     {{ 5.25460e+01, -2.24370e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.68670e+01, -2.21666e+02, -8.14270e+01,  5.55700e+00,  4.72800e+01, -1.25025e+01,  8.33333e-01}},
 };
 
 /* Fe52(a,g)Ni56: CF88 */
-static constexpr struct rate_coeff rfe52ag[] = {
+GIZMO_GPU_DEVICE static constexpr struct rate_coeff rfe52ag[] = {
     {{ 5.46850e+01, -2.37410e+02,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00,  0.00000e+00}},
     {{ 6.72850e+01, -2.34743e+02, -8.44270e+01,  6.48100e+00,  5.04400e+01, -1.32625e+01,  8.33333e-01}},
 };
@@ -724,9 +724,9 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
    ========================================================================= */
 
 /* Aliases — use constexpr pointers so they're device-accessible */
-static constexpr const double *BE_per_A = nuclear_aprox13_BE_per_A;
-static constexpr const int *A_species = A_sp;
-static constexpr const int *Z_species = Z_sp;
+GIZMO_GPU_DEVICE static constexpr const double *BE_per_A = nuclear_aprox13_BE_per_A;
+GIZMO_GPU_DEVICE static constexpr const int *A_species = A_sp;
+GIZMO_GPU_DEVICE static constexpr const int *Z_species = Z_sp;
 
 KOKKOS_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye,
                              double X_out[NUM_NUCLEAR_SPECIES])

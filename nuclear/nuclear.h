@@ -43,11 +43,11 @@ enum nuclear_species_aprox13 {
 };
 
 /* atomic numbers and mass numbers for the 13 species */
-static constexpr int nuclear_aprox13_A[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
-static constexpr int nuclear_aprox13_Z[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
+GIZMO_GPU_DEVICE static constexpr int nuclear_aprox13_A[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
+GIZMO_GPU_DEVICE static constexpr int nuclear_aprox13_Z[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
 
 /* binding energies per nucleon [MeV] (from AME2020) — used for energy generation */
-static constexpr double nuclear_aprox13_BE_per_A[] = {
+GIZMO_GPU_DEVICE static constexpr double nuclear_aprox13_BE_per_A[] = {
     7.07392,  /* He4  */
     7.68014,  /* C12  */
     7.97621,  /* O16  */

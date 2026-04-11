@@ -151,8 +151,10 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #endif
 #ifdef GIZMO_GPU_COMPILER
 #define GIZMO_GPU_FUNCTION __device__ __host__
+#define GIZMO_GPU_DEVICE   __device__           /* for variables (not functions) that must be device-accessible */
 #else
 #define GIZMO_GPU_FUNCTION
+#define GIZMO_GPU_DEVICE
 #endif
 /* KOKKOS_FUNCTION / KOKKOS_INLINE_FUNCTION: defined by Kokkos headers when
    OPENMP_GPU_OFFLOAD is active.  On non-GPU builds, define to nothing/inline
