@@ -759,6 +759,10 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses(int target, double n_elec, dou
         cell[target].CosmicRayFlux[k_CRegy] *= q_CR_cool; cell[target].CosmicRayFluxPred[k_CRegy] *= q_CR_cool;
     }
 }
+#else /* CRFLUID_EVOLVE_SPECTRUM is defined — forward to multibin solver */
+KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell) {
+    CR_cooling_and_losses_multibin(target, n_elec, nHcgs, dtime_cgs, 0, pp, cell);
+}
 #endif /* !CRFLUID_EVOLVE_SPECTRUM */
 
 #endif /* COSMIC_RAY_FLUID */

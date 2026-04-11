@@ -146,7 +146,7 @@ void compute_global_quantities_of_system(void)
 
 
 /* Sigmoid ("turn-on") function (1 + x/(1+x^2))/2, interpolates between 0 as x->-infty and 1 as x->infty. Useful for cheaply doing smooth fits of e.g. EOS where different thermo processes turn on at certain temps */
-double sigmoid_sqrt(double x)
+GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x)
 {
     return 0.5*(1 + x/sqrt(1+x*x));
 }

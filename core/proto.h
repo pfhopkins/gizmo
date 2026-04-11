@@ -136,7 +136,7 @@ static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, 
 static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
 double ForceSoftening_KernelRadius(int p);
-double sigmoid_sqrt(double x);
+GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x);
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
 #ifdef BOX_SHEARING

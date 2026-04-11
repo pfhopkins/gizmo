@@ -621,3 +621,126 @@ int rt_get_donation_target_bin(int bin)
 #endif
     return donation_target_bin;
 }
+
+
+/* ========================================================================
+ * dust_dE_cooling — dust energy balance for RT_INFRARED solver
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+#ifdef RT_INFRARED
+KOKKOS_INLINE_FUNCTION
+double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
+    double dt = get_particle_timestep_in_physical(i, pp);
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N — projections here must match */
+#endif
+    double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * cell[i].Density * All.cf_a3inv / PROTONMASS_CGS;
+    double lambda_to_dErad = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs * (dt*UNIT_TIME_IN_CGS) / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
+    
+    double dust_absorption_nonIR = 0;
+    for(int k=0; k < N_RT_FREQ_BINS; k++){
+#ifdef RT_CHEM_PHOTOION
+        if(RT_BAND_IS_IONIZING(k)) {continue;} /* gas-phase absorption */
+#endif
+        if(k==RT_FREQ_BIN_INFRARED) {continue;} /* this is only counting up non-IR contributions, e.g. nebular NUV */
+        double e_final = cell[i].Rad_E_gamma[k] + cell[i].Lambda_RadiativeCooling_toRHDBins[k] * lambda_to_dErad;
+        e_final = DMAX(0,e_final); // check against overshoot into negative values
+        double absrate_k = rt_absorption_rate(i, k, pp, cell) * dt; // this needs to be positive to sensible behavior here
+        if(absrate_k > 0) {dust_absorption_nonIR += e_final * fabs(expm1(-absrate_k));}
+    }
+    double alpha_gd = gas_dust_heating_coeff(i,Tgas,Tdust, pp, cell);
+    double LambdaDust = alpha_gd * (Tgas-Tdust);
+    double de_IR_dust = LambdaDust * lambda_to_dErad; // equates to *net* emission of radiation by dust (emission - absorption)
+    double LambdaIR_gas = cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED];
+    double de_IR_gas = LambdaIR_gas * lambda_to_dErad; // net emission by gas
+    
+    double kappa_dust_emission = rt_kappa_adaptive_IR_band(i, Tdust, Tdust, 1,1, pp, cell);
+    double fac_emission = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS)*cell[i].Mass*(C_LIGHT_CODE_REDUCED/C_LIGHT_CODE)*dt;
+    double dust_emission = fac_emission*kappa_dust_emission*pow(Tdust,4); // *total* dust emission
+    
+    double T_IR_0 = cell[i].Radiation_Temperature;
+    double Tmax = DMAX(DMAX(Tgas, Tdust),T_IR_0), Tmin = DMIN(DMIN(Tgas,Tdust), T_IR_0);
+    double e_IR_0 = cell[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED];
+    double e_IR_final = DMAX(e_IR_0 + de_IR_dust + de_IR_gas, 0);
+    double T_IR_final = e_IR_final / (DMAX(e_IR_0/T_IR_0,0) + DMAX(de_IR_gas / Tgas,0) + DMAX(de_IR_dust / Tdust,0) + MIN_REAL_NUMBER);
+    T_IR_final = DMAX(Tmin, DMIN(T_IR_final, Tmax));
+#ifdef COOLING
+    cell[i].Radiation_Temperature_CoolingWeighted = T_IR_final;
+#endif
+    double dE_dust = 0; // now count up the energy changes in the dust for us to solve for 0
+    double dust_absorption = dust_absorption_nonIR;
+    dust_absorption += e_IR_final * C_LIGHT_CODE_REDUCED * rt_kappa_adaptive_IR_band(i, Tdust, T_IR_final,-1,1, pp, cell) * cell[i].Density*All.cf_a3inv * dt;
+    double result = LambdaDust * lambda_to_dErad + dust_absorption - dust_emission;
+
+    double Tdust_fixed1_tmp = Tgas + (dust_absorption - dust_emission)/(alpha_gd*lambda_to_dErad + MIN_REAL_NUMBER);
+    double Tdust_fixed2_tmp = sqrt(sqrt(DMAX(0,LambdaDust * lambda_to_dErad + dust_absorption)/(fac_emission * kappa_dust_emission + MIN_REAL_NUMBER)));
+    
+    *Tdust_fixedpoint_1 = DMAX(Tdust_fixed1_tmp, 0);
+    *Tdust_fixedpoint_2 = DMAX(Tdust_fixed2_tmp, 0);
+    return result;
+}
+
+/* rt_ir_lambdadust — dust cooling rate solver for RT_INFRARED
+ * (moved from radiation/rt_utilities.cc) */
+KOKKOS_INLINE_FUNCTION
+double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_cell_data *cell){
+    double Tdust, T_lower, T_upper, dE, dE1, dE2, dE_lower, dE_upper, dE_guess, dTdust_tol=1e-6;
+    double Tdust_fixedpoint_1, Tdust_fixedpoint_2, dummy;
+    #define ROOTFIND_FUNCTION_INNER(dTdust) dust_dE_cooling(i, T, T+dTdust, &Tdust_fixedpoint_1, &Tdust_fixedpoint_2, pp, cell)
+    if((All.Time==0 )|| (!isfinite(cell[i].Dust_Temperature))) {Tdust=T;} else {Tdust = DMIN(MAX_DUST_TEMP, cell[i].Dust_Temperature);}
+
+    dE = dE_guess = ROOTFIND_FUNCTION_INNER(Tdust-T);
+    if(Tdust_fixedpoint_1 <= 0) {Tdust_fixedpoint_1 = T;}
+    if(Tdust_fixedpoint_1 > MAX_DUST_TEMP) {Tdust_fixedpoint_1 = MAX_DUST_TEMP;}
+    if(Tdust_fixedpoint_2 > MAX_DUST_TEMP) {Tdust_fixedpoint_2 = MAX_DUST_TEMP;}
+    if(Tdust_fixedpoint_1 > 0 && Tdust_fixedpoint_1 <= MAX_DUST_TEMP) {dE1 =  dust_dE_cooling(i, T, Tdust_fixedpoint_1, &dummy, &dummy, pp, cell);} else {dE1 = MAX_REAL_NUMBER;}
+    if(Tdust_fixedpoint_2 > 0 && Tdust_fixedpoint_2 <= MAX_DUST_TEMP) {dE2 =  dust_dE_cooling(i, T, Tdust_fixedpoint_2, &dummy, &dummy, pp, cell);} else {dE2 = MAX_REAL_NUMBER;}
+
+    double fixedpoint_error = DMIN(fabs(Tdust-Tdust_fixedpoint_2), fabs(Tdust-Tdust_fixedpoint_1))/Tdust; 
+    if(fabs(dE1) < fabs(dE)){Tdust = Tdust_fixedpoint_1; dE=dE_guess=dE1;}
+    if(fabs(dE2) < fabs(dE)){Tdust = Tdust_fixedpoint_2; dE=dE_guess=dE2;}
+    
+    int n_iter = 0;
+    if(dE < 0)
+    {
+        double scalefac = DMAX(0.9, 1-fixedpoint_error);
+        T_upper = Tdust;
+        dE_upper = dE_guess; 
+        while(dE < 0) {
+            Tdust *= scalefac; 
+            dE = ROOTFIND_FUNCTION_INNER(Tdust-T);
+            if(dE==0){break;}
+            scalefac *= 0.9; 
+            n_iter++;
+        }
+        T_lower = Tdust, dE_lower = dE;
+    } else {
+        T_lower = Tdust, dE_lower = dE_guess;
+        double scalefac = DMIN(1.1, 1+fixedpoint_error);
+        while(dE > 0 && Tdust < MAX_DUST_TEMP) {
+            Tdust *= scalefac; Tdust = DMIN(Tdust,MAX_DUST_TEMP);
+            dE = ROOTFIND_FUNCTION_INNER(Tdust-T); 
+            if(dE==0){break;}
+            scalefac *= 1.1; 
+            n_iter++;
+        }
+        T_upper = Tdust, dE_upper = dE;
+    }     
+    if(T_upper>=MAX_DUST_TEMP && dE_upper > 0) {cell[i].Dust_Temperature = MAX_DUST_TEMP; return 0;}
+
+    if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)(long long)i /* particle index */, T, T_lower,T_upper, dE_lower, dE_upper);}
+
+    if(dE!=0){
+        double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T;
+        double ROOTFUNC_a = dE_lower; double ROOTFUNC_b = dE_upper;
+        double ROOTFIND_REL_X_tol = dTdust_tol, ROOTFIND_ABS_X_tol=0.;
+        #include "../system/bracketed_rootfind.h"
+        Tdust = ROOTFIND_X_new+T;
+    }
+    double LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
+    cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += LambdaDust;
+    cell[i].Dust_Temperature = Tdust;
+    return LambdaDust;
+}
+#endif /* RT_INFRARED */

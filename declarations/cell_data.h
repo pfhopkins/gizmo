@@ -478,7 +478,7 @@ extern struct gas_cell_data
 #endif
 
     /* ---- member functions for derived quantities ---- */
-    inline double nHcgs() const {return HYDROGEN_MASSFRAC * Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;} /*!< hydrogen number density in cgs */
+    GIZMO_GPU_FUNCTION inline double nHcgs() const {return HYDROGEN_MASSFRAC * Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;} /*!< hydrogen number density in cgs */
 
     inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
 #ifdef HYDRO_PRESSURE_SPH
@@ -587,7 +587,7 @@ extern struct gas_cell_data
     }
 
 
-    inline double Urad_eVcm3() const { /*!< radiation energy density in eV/cm^3 */
+    GIZMO_GPU_FUNCTION inline double Urad_eVcm3() const { /*!< radiation energy density in eV/cm^3 */
         double erad = 0.26*All.cf_a3inv/All.cf_atime;
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
         int kfreq; double e_units = (Density*All.cf_a3inv/Mass) * UNIT_PRESSURE_IN_EV;

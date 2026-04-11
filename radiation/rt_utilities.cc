@@ -1129,7 +1129,9 @@ Returns
 -------
 dE - net dust heating (=0 for dust in equilibrium)
 */
-double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
+/* dust_dE_cooling and rt_ir_lambdadust: definitions now in rt_functions.h */
+#if 0 /* bodies moved to rt_functions.h */
+double dust_dE_cooling_MOVED(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
     double dt = get_particle_timestep_in_physical(i, pp);
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N — projections here must match */
@@ -1250,8 +1252,9 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
     cell[i].Dust_Temperature = Tdust;
     return LambdaDust;
 }
+#endif /* #if 0 — dust_dE_cooling and rt_ir_lambdadust moved to rt_functions.h */
 
-#endif
+#endif /* RT_INFRARED */
 
 /* dust_dEdt: definition now in rt_functions.h (single source of truth) */
 

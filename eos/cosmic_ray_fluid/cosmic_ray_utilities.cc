@@ -368,15 +368,8 @@ double diffusion_coefficient_extrinsic_turbulence(int mode, int target, int k_CR
     they are solved implicitly above. however we need to account for energy losses of the actual cosmic ray fluid, here. The
     timescale for this is reasonably long, so we can treat it semi-explicitly, as we do here.
     -- We use the estimate for combined hadronic + Coulomb losses from Volk 1996, Ensslin 1997, as updated in Guo & Oh 2008: */
-/* CR_cooling_and_losses: non-EVOLVE_SPECTRUM version is in cosmic_ray_functions.h.
-   EVOLVE_SPECTRUM forwarding version is kept here. */
-#if defined(CRFLUID_EVOLVE_SPECTRUM)
-void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    CR_cooling_and_losses_multibin(target, n_elec, nHcgs, dtime_cgs, 0, pp, cell);
-    return;
-}
-#endif
+/* CR_cooling_and_losses: both non-EVOLVE_SPECTRUM and EVOLVE_SPECTRUM versions
+   are now in cosmic_ray_functions.h (single source of truth) */
 
                                                                                                                               
 
