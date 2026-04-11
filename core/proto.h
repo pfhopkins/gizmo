@@ -500,6 +500,8 @@ void write_pid_file(void);
 void pm_init_periodic_allocate(void);
 void pm_init_periodic_free(void);
 void move_particles(integertime time1);
+void ghost_exchange(void);
+void ghost_exchange_cleanup(void);
 void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);

@@ -62,6 +62,7 @@ void compute_hydro_densities_and_forces(void)
            GPU neighbor finding (no critical sections) and for halo exchange
            (halo particles must be at current positions before exchange). */
         move_particles(All.Ti_Current);
+        ghost_exchange(); /* import boundary particles from neighboring MPI ranks */
 
         PRINT_STATUS("Start hydrodynamics computation...");
         density();		/* computes density, and pressure */
@@ -118,6 +119,7 @@ void compute_hydro_densities_and_forces(void)
         dynamic_diff_calc(); /* This MUST be called immediately following gradient calculations */
 #endif
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
+        ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
         PRINT_STATUS(" ..hydro force computation done.");
 
