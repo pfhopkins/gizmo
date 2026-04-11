@@ -57,6 +57,12 @@ void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
     {
+        /* Drift ALL particles to current time before any neighbor operations.
+           This eliminates lazy drifting during the tree walk — required for
+           GPU neighbor finding (no critical sections) and for halo exchange
+           (halo particles must be at current positions before exchange). */
+        move_particles(All.Ti_Current);
+
         PRINT_STATUS("Start hydrodynamics computation...");
         density();		/* computes density, and pressure */
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
