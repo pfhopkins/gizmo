@@ -357,7 +357,7 @@ extern ALIGN(32) struct particle_data
 #endif
 
     /* member functions */
-    inline integertime integertime_step() const { /*!< integer timestep for this particle */
+    GIZMO_GPU_FUNCTION inline integertime integertime_step() const { /*!< integer timestep for this particle */
 #ifndef WAKEUP
         return GET_INTEGERTIME_FROM_TIMEBIN(TimeBin);
 #else
