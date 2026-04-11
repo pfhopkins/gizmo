@@ -180,7 +180,7 @@ void cooling_parent_routine(void)
      * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
      * than N_active × struct_size, further reducing UVM pressure.
      */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES) && !defined(COOL_GRACKLE)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_COOL_BATCH_SIZE = 32768;
     /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
@@ -216,14 +216,21 @@ void cooling_parent_routine(void)
 #endif
         }
 
-        /* Scatter batch back and call set_eos_pressure on host
-         * (skipped on-device to avoid doubling device stack depth) */
+        /* Scatter batch back + host-side post-processing for functions that
+         * can't run on device (external libraries, non-GPU TUs, global refs) */
         for(int j = 0; j < batch_n; j++)
         {
             int i = cool_indices[batch_start + j];
             CellP[i] = compact_Cell[j];
             P[i]     = compact_P[j];
             set_eos_pressure(i, P, CellP);
+#if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
+            double dtime_j = get_particle_timestep_in_physical(i);
+            CR_cooling_and_losses(i, CellP[i].Ne, CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime_j*UNIT_TIME_IN_CGS, P, CellP);
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            {double dtime_j = get_particle_timestep_in_physical(i); update_dust_processes(i, dtime_j*UNIT_TIME_IN_MYR*0.001, P, CellP);}
+#endif
         }
     }
 
@@ -355,12 +362,14 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
 
 
-#if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
+#if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES) && !defined(OPENMP_GPU_OFFLOAD)
         CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS , pp, cell);
+        /* On GPU builds, CR_cooling_and_losses is called in the host scatter pass instead
+           (it lives in cosmic_ray_utilities.cc which is not a GPU TU). */
 #endif
-        
 
-#if defined(RADTRANSFER) /* account for cooling radiation which should, according to our modules, come out in certain bands */
+
+#if defined(RADTRANSFER) && !defined(OPENMP_GPU_OFFLOAD) /* RT energy redistribution block skipped on GPU — calls rt_absorption_rate (not device-safe). Handled in host scatter pass. */
         double nHcgs = cell[i].nHcgs(); /* hydrogen number dens in cgs units */
         double ratefact = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
         double de_u = (unew - cell[i].InternalEnergy) * cell[i].Mass; /* change in the total internal energy of the gas cell [integrating over everything] */
@@ -439,8 +448,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
 #endif
 
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(OPENMP_GPU_OFFLOAD)
         update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell);
+        /* On GPU builds, update_dust_processes is called in the host scatter pass instead
+           (it uses global P/CellP references and is not device-compiled). */
 #endif
 
 #ifdef COOL_MOLECFRAC_NONEQM

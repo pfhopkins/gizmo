@@ -208,7 +208,7 @@ void nuclear_parent_routine(void)
     if (N_active == 0) return;
 
     /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+#if defined(OPENMP_GPU_OFFLOAD) && (!defined(NUCLEAR_NETWORK_SOLVER) || (NUCLEAR_NETWORK_SOLVER == 0))
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_BURN_BATCH_SIZE = 32768;
 
