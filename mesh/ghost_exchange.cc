@@ -10,6 +10,17 @@
  *  After all neighbor operations complete, ghost_exchange_cleanup() resets NumPart/N_gas.
  *
  *  This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
+ *
+ *  KNOWN LIMITATIONS (Phase 0 — to be optimized):
+ *  - Sends full P[i]/CellP[i] structs per ghost (~2-5 KB/particle). Should use compact
+ *    struct with only fields needed by the active kernel set (~200 bytes).
+ *  - O(NTopleaves^2) overlap check between local and remote leaves. Should use spatial
+ *    sorting or tree-based pruning for simulations with many top-level leaves.
+ *  - Global MPI_Allreduce on need_leaf (NTopleaves ints). Could use point-to-point for
+ *    sparse communication patterns.
+ *  - Per-task routing is approximate: uses MPI_Allreduce(MPI_MAX) on need_leaf, so a leaf
+ *    requested by ANY task is sent to ALL requesting tasks. Per-task leaf request lists
+ *    would reduce traffic.
  */
 
 #include <mpi.h>
@@ -103,24 +114,32 @@ void ghost_exchange(void)
         local_leaf_count[leaf]++;
     }
 
-    /* Step 2: Gather hmax per leaf from the tree's ExtNodes (already computed by force_update_hmax).
-       Use this to determine which remote leaves we need: any remote leaf within
-       hmax_local + hmax_remote of a local leaf boundary.
+    /* Step 2: Use per-leaf hmax from ExtNodes (already computed by force_update_hmax).
+       A remote leaf is needed if the gap between its bounding box and any local leaf's
+       bounding box is less than max(hmax_local_leaf, hmax_remote_leaf). This correctly
+       handles the symmetric search r_ij < max(h_i, h_j) at the leaf level. */
 
-       Phase 0 simplification: use a global hmax across all particles. This over-imports
-       but is correct and simple. Optimize with per-leaf hmax later. */
-    double hmax_local = 0;
-    for(i = 0; i < NumPart; i++)
+    /* Gather per-leaf hmax values globally — each rank knows its own leaves' hmax,
+       need to know remote leaves' hmax for the overlap check. */
+    double *leaf_hmax = (double *) mymalloc("ghost_lhmax", NTopleaves * sizeof(double));
+    memset(leaf_hmax, 0, NTopleaves * sizeof(double));
+    int m;
+    for(m = 0; m < MULTIPLEDOMAINS; m++)
     {
-        if(P[i].Type == 0 && P[i].Mass > 0)
-            if(P[i].KernelRadius > hmax_local) hmax_local = P[i].KernelRadius;
+        int start = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
+        int end = DomainEndList[ThisTask * MULTIPLEDOMAINS + m];
+        if(start < 0 || end < start) continue;
+        int ll;
+        for(ll = start; ll <= end; ll++)
+        {
+            int ni = DomainNodeIndex[ll];
+            if(ni >= 0) leaf_hmax[ll] = Extnodes[ni].hmax;
+        }
     }
-    double hmax_global;
-    MPI_Allreduce(&hmax_local, &hmax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    if(hmax_global <= 0) {myfree(local_leaf_count); NumPart_before_ghost = -1; return;}
+    MPI_Allreduce(MPI_IN_PLACE, leaf_hmax, NTopleaves, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
-    /* Step 3: For each remote leaf, check if it's within hmax_global of any local leaf.
-       Use node bounding boxes from the gravity tree (Nodes[DomainNodeIndex[leaf]]). */
+    /* Step 3: For each remote leaf, check overlap with local leaves using per-leaf hmax.
+       search_radius = max(hmax_local_leaf, hmax_remote_leaf) for each pair. */
 
     int *need_leaf = (int *) mymalloc("ghost_nl", NTopleaves * sizeof(int));
     memset(need_leaf, 0, NTopleaves * sizeof(int));
@@ -131,9 +150,9 @@ void ghost_exchange(void)
         if(DomainTask[leaf] == ThisTask) continue;
         int remote_node = DomainNodeIndex[leaf];
         if(remote_node < 0) continue;
+        double hmax_remote = leaf_hmax[leaf];
 
         /* check overlap with each local leaf */
-        int m;
         for(m = 0; m < MULTIPLEDOMAINS; m++)
         {
             int start = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
@@ -143,6 +162,9 @@ void ghost_exchange(void)
             {
                 int local_node = DomainNodeIndex[local_leaf];
                 if(local_node < 0) continue;
+
+                double search_radius = DMAX(leaf_hmax[local_leaf], hmax_remote);
+                if(search_radius <= 0) continue;
 
                 /* min distance between two axis-aligned bounding boxes */
                 double dist2 = 0;
@@ -158,15 +180,16 @@ void ghost_exchange(void)
                     if(d > 0) dist2 += d * d;
                 }
 
-                if(dist2 < hmax_global * hmax_global)
+                if(dist2 < search_radius * search_radius)
                 {
                     need_leaf[leaf] = 1;
-                    goto next_remote_leaf; /* found overlap, no need to check more local leaves */
+                    goto next_remote_leaf;
                 }
             }
         }
         next_remote_leaf:;
     }
+    /* leaf_hmax freed at end with other allocations (stack allocator requires reverse order) */
 
     /* Step 4: Exchange leaf particle counts globally so each rank knows how many
        particles are in each leaf (needed to compute recv counts). */
@@ -235,7 +258,7 @@ void ghost_exchange(void)
             PRINT_WARNING("Ghost exchange: need %d ghost particles but only %d slots free (MaxPart=%d). Skipping.\n",
                           total_recv, All.MaxPart - NumPart, All.MaxPart);
         myfree(send_disp); myfree(recv_disp); myfree(send_count); myfree(recv_count);
-        myfree(global_need_leaf); myfree(global_leaf_count); myfree(need_leaf); myfree(local_leaf_count);
+        myfree(global_need_leaf); myfree(global_leaf_count); myfree(need_leaf); myfree(leaf_hmax); myfree(local_leaf_count);
         NumPart_before_ghost = -1;
         return;
     }
@@ -322,7 +345,7 @@ void ghost_exchange(void)
     myfree(send_disp); myfree(recv_disp);
     myfree(send_count); myfree(recv_count);
     myfree(global_need_leaf); myfree(global_leaf_count);
-    myfree(need_leaf); myfree(local_leaf_count);
+    myfree(need_leaf); myfree(leaf_hmax); myfree(local_leaf_count);
 }
 
 
