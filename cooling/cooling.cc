@@ -962,7 +962,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         else
         {
             /* account for self-shielding in calculating UV background effects */
-            gJH0ne = gJH0 * local_gammamultiplier / necgs * shieldfac; // check units, should be = c_light * n_photons_vol * rt_ion_sigma_HI[0] / necgs;
+            gJH0ne = gJH0 * local_gammamultiplier / necgs * shieldfac; // check units, should be = c_light * n_photons_vol * All.rt_ion_sigma_HI[0] / necgs;
             gJH0ne = DMAX(gJH0ne, EPSILON_SMALL); if(!isfinite(gJH0ne)) {gJH0ne=0;} // need traps here b/c very small numbers assigned in some newer TREECOOL versions cause a nan underflow
             gJHe0ne = gJHe0 * local_gammamultiplier / necgs * shieldfac;
             gJHe0ne = DMAX(gJHe0ne, EPSILON_SMALL); if(!isfinite(gJHe0ne)) {gJHe0ne=0;}
@@ -991,32 +991,32 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
                 {
                     double n_gamma_tot = cell[target].rt_photon_number_density(k);
 #ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
                     double c_ne_time_n_photons_vol = c_light_ne * n_gamma_tot; // gives photon flux
                     double cross_section_ion, dummy, thold=1.0e20;
 #ifdef GALSF
                     if(All.ComovingIntegrationOn) {thold=1.0e10;}
 #endif
-                    if(rt_ion_G_HI[k] > 0)
+                    if(All.rt_ion_G_HI[k] > 0)
                     {
-                        cross_section_ion = nH0 * rt_ion_sigma_HI[k];
-                        dummy = rt_ion_sigma_HI[k] * c_ne_time_n_photons_vol;// egy per photon x cross section x photon flux (w attenuation factors already included in flux/energy update:) * slab_averaging_function(cross_section_ion * Sigma_particle); // * slab_averaging_function(cross_section_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
+                        cross_section_ion = nH0 * All.rt_ion_sigma_HI[k];
+                        dummy = All.rt_ion_sigma_HI[k] * c_ne_time_n_photons_vol;// egy per photon x cross section x photon flux (w attenuation factors already included in flux/energy update:) * slab_averaging_function(cross_section_ion * Sigma_particle); // * slab_averaging_function(cross_section_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
                         //if(dummy > thold*gJH0ne_0) {dummy = thold*gJH0ne_0;}
                         gJH0ne += dummy;
                     }
 #if 1 //def RT_CHEM_PHOTOION_HE
-                    if(rt_ion_G_HeI[k] > 0)
+                    if(All.rt_ion_G_HeI[k] > 0)
                     {
-                        cross_section_ion = nHe0 * rt_ion_sigma_HeI[k];
-                        dummy = rt_ion_sigma_HeI[k] * c_ne_time_n_photons_vol;// * slab_averaging_function(cross_section_ion * Sigma_particle); // * slab_averaging_function(cross_section_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
+                        cross_section_ion = nHe0 * All.rt_ion_sigma_HeI[k];
+                        dummy = All.rt_ion_sigma_HeI[k] * c_ne_time_n_photons_vol;// * slab_averaging_function(cross_section_ion * Sigma_particle); // * slab_averaging_function(cross_section_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
                         //if(dummy > thold*gJHe0ne_0) {dummy = thold*gJHe0ne_0;}
                         gJHe0ne += dummy;
                     }
-                    if(rt_ion_G_HeII[k] > 0)
+                    if(All.rt_ion_G_HeII[k] > 0)
                     {
-                        cross_section_ion = nHep * rt_ion_sigma_HeII[k];
-                        dummy = rt_ion_sigma_HeII[k] * c_ne_time_n_photons_vol;// * slab_averaging_function(cross_section_ion * Sigma_particle); // * slab_averaging_function(cross_section_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
+                        cross_section_ion = nHep * All.rt_ion_sigma_HeII[k];
+                        dummy = All.rt_ion_sigma_HeII[k] * c_ne_time_n_photons_vol;// * slab_averaging_function(cross_section_ion * Sigma_particle); // * slab_averaging_function(cross_section_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
                         //if(dummy > thold*gJHepne_0) {dummy = thold*gJHepne_0;}
                         gJHepne += dummy;
                     }
@@ -1347,31 +1347,31 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
                 {
                     double n_gamma_tot = cell[target].rt_photon_number_density(k);
 #ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
                     double c_nH_time_n_photons_vol = c_light_nH * n_gamma_tot; // gives photon flux
                     double cross_section_ion, kappa_ion, dummy;
-                    if(rt_ion_G_HI[k] > 0)
+                    if(All.rt_ion_G_HI[k] > 0)
                     {
-                        cross_section_ion = nH0 * rt_ion_sigma_HI[k];
+                        cross_section_ion = nH0 * All.rt_ion_sigma_HI[k];
                         kappa_ion = cx_to_kappa * cross_section_ion;
-                        dummy = rt_ion_G_HI[k] * cross_section_ion * c_nH_time_n_photons_vol;// (egy per photon x cross section x photon flux) :: attenuation factors [already in flux/energy update]: * slab_averaging_function(kappa_ion * Sigma_particle); // egy per photon x cross section x photon flux (w attenuation factors) // * slab_averaging_function(kappa_ion * abs_per_kappa_dt);  // commented-out terms not appropriate here based on how we treat RSOL terms
+                        dummy = All.rt_ion_G_HI[k] * cross_section_ion * c_nH_time_n_photons_vol;// (egy per photon x cross section x photon flux) :: attenuation factors [already in flux/energy update]: * slab_averaging_function(kappa_ion * Sigma_particle); // egy per photon x cross section x photon flux (w attenuation factors) // * slab_averaging_function(kappa_ion * abs_per_kappa_dt);  // commented-out terms not appropriate here based on how we treat RSOL terms
                         Heat += dummy;
                         Heat_Ion_from_RHD += dummy;
                     }
-                    if(rt_ion_G_HeI[k] > 0)
+                    if(All.rt_ion_G_HeI[k] > 0)
                     {
-                        cross_section_ion = nHe0 * rt_ion_sigma_HeI[k];
+                        cross_section_ion = nHe0 * All.rt_ion_sigma_HeI[k];
                         kappa_ion = cx_to_kappa * cross_section_ion;
-                        dummy = rt_ion_G_HeI[k] * cross_section_ion * c_nH_time_n_photons_vol;// * slab_averaging_function(kappa_ion * Sigma_particle); // * slab_averaging_function(kappa_ion * abs_per_kappa_dt);  // commented-out terms not appropriate here based on how we treat RSOL terms
+                        dummy = All.rt_ion_G_HeI[k] * cross_section_ion * c_nH_time_n_photons_vol;// * slab_averaging_function(kappa_ion * Sigma_particle); // * slab_averaging_function(kappa_ion * abs_per_kappa_dt);  // commented-out terms not appropriate here based on how we treat RSOL terms
                         Heat += dummy;
                         Heat_Ion_from_RHD += dummy;
                     }
-                    if(rt_ion_G_HeII[k] > 0)
+                    if(All.rt_ion_G_HeII[k] > 0)
                     {
-                        cross_section_ion = nHep * rt_ion_sigma_HeII[k];
+                        cross_section_ion = nHep * All.rt_ion_sigma_HeII[k];
                         kappa_ion = cx_to_kappa * cross_section_ion;
-                        dummy = rt_ion_G_HeII[k] * cross_section_ion * c_nH_time_n_photons_vol;// * slab_averaging_function(kappa_ion*Sigma_particle); // * slab_averaging_function(kappa_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
+                        dummy = All.rt_ion_G_HeII[k] * cross_section_ion * c_nH_time_n_photons_vol;// * slab_averaging_function(kappa_ion*Sigma_particle); // * slab_averaging_function(kappa_ion * abs_per_kappa_dt); // commented-out terms not appropriate here based on how we treat RSOL terms
                         Heat += dummy;
                         Heat_Ion_from_RHD += dummy;
                     }
@@ -2494,10 +2494,10 @@ KOKKOS_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double 
             if(k==RT_FREQ_BIN_LYMAN_WERNER) {Teff=28800.;}
 #endif
 #if defined(RT_CHEM_PHOTOION) /* Hydrogen and Helium ionizing bands: H0 here */
-            if(k==RT_FREQ_BIN_H0) {Teff=2340.*rt_nu_eff_eV[k];}
+            if(k==RT_FREQ_BIN_H0) {Teff=2340.*All.rt_nu_eff_eV[k];}
 #endif
 #if defined(RT_PHOTOION_MULTIFREQUENCY) /* Hydrogen and Helium ionizing bands: He bands */
-            if(k==RT_FREQ_BIN_He0 || k==RT_FREQ_BIN_He1 || k==RT_FREQ_BIN_He2) {Teff=2340.*rt_nu_eff_eV[k];}
+            if(k==RT_FREQ_BIN_He0 || k==RT_FREQ_BIN_He1 || k==RT_FREQ_BIN_He2) {Teff=2340.*All.rt_nu_eff_eV[k];}
 #endif
 #if defined(RT_SOFT_XRAY) /* soft and hard X-rays for e.g. compton heating by X-ray binaries */
             if(k==RT_FREQ_BIN_SOFT_XRAY) {Teff=3.6e6;}

@@ -24,7 +24,7 @@ KOKKOS_INLINE_FUNCTION double cosmicrayfluid_rsol_corrfac(int k) {
 
 KOKKOS_INLINE_FUNCTION int return_CRbin_CR_species_ID(int k_CRegy) {
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
-    return CR_species_ID_in_bin[k_CRegy];
+    return All.CR_species_ID_in_bin[k_CRegy];
 #endif
 #if (N_CR_PARTICLE_BINS == 2)
     if(k_CRegy==0) {return 1;} else {return -1;}
@@ -34,7 +34,7 @@ KOKKOS_INLINE_FUNCTION int return_CRbin_CR_species_ID(int k_CRegy) {
 
 KOKKOS_INLINE_FUNCTION double return_CRbin_CR_charge_in_e(int target, int k_CRegy) {
 #if (N_CR_PARTICLE_BINS > 2)
-    return CR_global_charge_in_bin[k_CRegy];
+    return All.CR_global_charge_in_bin[k_CRegy];
 #endif
 #if (N_CR_PARTICLE_BINS == 2)
     if(k_CRegy==0) {return 1;} else {return -1;}
@@ -49,9 +49,9 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_C
 #endif
 #if (N_CR_PARTICLE_BINS > 2)
 #ifndef GIZMO_GPU_COMPILER
-    if(target >= 0) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, CellP);} else {R=CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
+    if(target >= 0) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, CellP);} else {R=All.CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
 #else
-    R=CR_global_rigidity_at_bin_center[k_CRegy]; // GPU fallback: spectral-slope-weighted mean not available on device
+    R=All.CR_global_rigidity_at_bin_center[k_CRegy]; // GPU fallback: spectral-slope-weighted mean not available on device
 #endif
 #endif
     return R;
@@ -189,16 +189,16 @@ KOKKOS_INLINE_FUNCTION int CR_check_if_bin_is_nonrelativistic(int k_bin) // rela
     if(return_CRbin_CR_species_ID(k_bin) <= 0) {return 0;} // assume e-, e+ relativistic here
     else {
         double m_cr_mp = return_CRbin_CRmass_in_mp(-1,k_bin), Zabs = fabs(return_CRbin_CR_charge_in_e(-1,k_bin)); // mass in proton masses, charge in e
-        if(CR_global_rigidity_at_bin_center[k_bin] < 1.87655*m_cr_mp/Zabs) {return 1;} else {return 0;} // use a simple momentum criterion, dividing exactly for protons as desired here
+        if(All.CR_global_rigidity_at_bin_center[k_bin] < 1.87655*m_cr_mp/Zabs) {return 1;} else {return 0;} // use a simple momentum criterion, dividing exactly for protons as desired here
     }
-    //if((CR_species_ID_in_bin[k_bin] > 0) && (CR_global_rigidity_at_bin_center[k_bin] < 1.87655)) {return 1;} // simpler version if just using e- and p; for now, only protons with division at p=2m0*c, so NR and R expressions equate, qualify as non-relativistic
+    //if((All.CR_species_ID_in_bin[k_bin] > 0) && (All.CR_global_rigidity_at_bin_center[k_bin] < 1.87655)) {return 1;} // simpler version if just using e- and p; for now, only protons with division at p=2m0*c, so NR and R expressions equate, qualify as non-relativistic
     return 0; // default to relativistic otherwise
 }
 
 /* routine to return bin-centered energy using the slope approximation used in the fast cooling sub-cycling, of each bin being in the relativistic or non-relativistic regime */
 KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CRegy)
 {
-    double R_GV = CR_global_rigidity_at_bin_center[k_CRegy];
+    double R_GV = All.CR_global_rigidity_at_bin_center[k_CRegy];
     double Zabs = fabs(return_CRbin_CR_charge_in_e(-1,k_CRegy));
     if(CR_check_if_bin_is_nonrelativistic(k_CRegy))
     {
@@ -212,17 +212,17 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int 
 /* input value 'R' = ratio of total CR energy in the bin ('e_tot') to the total CR number times the energy of the CRs with the bin-centered rigidity ('n_tot' x 'E_cr_bin_center_list'), which is a dimensionless function of the slope, whether the bin is relativistic or not, and the bin edges relative to the bin center */
 KOKKOS_INLINE_FUNCTION double CR_return_slope_from_number_and_energy_in_bin(double energy_in_code_units, double number_effective_in_code_units, double bin_centered_energy_in_GeV, int k_bin)
 {
-    if((energy_in_code_units <= 0.) || isnan(energy_in_code_units) || (number_effective_in_code_units <= 0.) || isnan(number_effective_in_code_units)) {return CR_global_slope_lut[k_bin][0];}
+    if((energy_in_code_units <= 0.) || isnan(energy_in_code_units) || (number_effective_in_code_units <= 0.) || isnan(number_effective_in_code_units)) {return All.CR_global_slope_lut[k_bin][0];}
     double R = energy_in_code_units / (number_effective_in_code_units * bin_centered_energy_in_GeV + MIN_REAL_NUMBER);
     int n_table = N_CR_SPECTRUM_LUT; // table size
-    double xm = CR_global_min_rigidity_in_bin[k_bin] / CR_global_rigidity_at_bin_center[k_bin], xp = CR_global_max_rigidity_in_bin[k_bin] / CR_global_rigidity_at_bin_center[k_bin], xm_e = xm, xp_e = xp;
+    double xm = All.CR_global_min_rigidity_in_bin[k_bin] / All.CR_global_rigidity_at_bin_center[k_bin], xp = All.CR_global_max_rigidity_in_bin[k_bin] / All.CR_global_rigidity_at_bin_center[k_bin], xm_e = xm, xp_e = xp;
     if(CR_check_if_bin_is_nonrelativistic(k_bin)) {xm_e=xm*xm; xp_e=xp*xp;} // sets bounds that this value can possibly obtain
-    if(R >= xp_e) {return CR_global_slope_lut[k_bin][n_table-1];} // set to maximum
-    if(R <= xm_e) {return CR_global_slope_lut[k_bin][0];} // set to minimum
+    if(R >= xp_e) {return All.CR_global_slope_lut[k_bin][n_table-1];} // set to maximum
+    if(R <= xm_e) {return All.CR_global_slope_lut[k_bin][0];} // set to minimum
     double n_interp = (log(R / xm_e) / log(xp_e / xm_e)) * (n_table-1); // fraction of the way between min and max in our log-spaced table, returns 0-1
     int n0 = (int) floor(n_interp), n1=n0+1;
     if(n1 > n_table-1) {n1=n_table-1;}
-    double slope_gamma = CR_global_slope_lut[k_bin][n0] + (n_interp-(double)n0) * (CR_global_slope_lut[k_bin][n1]-CR_global_slope_lut[k_bin][n0]);
+    double slope_gamma = All.CR_global_slope_lut[k_bin][n0] + (n_interp-(double)n0) * (All.CR_global_slope_lut[k_bin][n1]-All.CR_global_slope_lut[k_bin][n0]);
     // check for specific bad values that will nan out and avoid them - this introduces really minimal errors
     double tol = 0.0001, badval; // tolerance around the bad values
     badval=-1; if(fabs(slope_gamma - badval) < tol) {if(slope_gamma<badval) {slope_gamma=badval-tol;} else {slope_gamma=badval+tol;}}
@@ -334,19 +334,19 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
     {
         Ucr_i[k] = Ucr[k]; // save initial energy for reference at the end of this loop
         Z[k] = return_CRbin_CR_charge_in_e(-1,k); // want bin-centered values, so give index = -1
-        R0[k] = CR_global_rigidity_at_bin_center[k]; // want bin-centered values, so give index = -1
+        R0[k] = All.CR_global_rigidity_at_bin_center[k]; // want bin-centered values, so give index = -1
         E_GeV[k] = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k); // want bin-centered values, so give index = -1
         NR_key[k] = CR_check_if_bin_is_nonrelativistic(k); // key to decide whether to use relativistic or non-relativistic scalings
         A_wt[k] = return_CRbin_CRmass_in_mp(-1,k); // return the proper nuclear weight here, in units of the proton mass
-        x_m[k] = CR_global_min_rigidity_in_bin[k] / R0[k]; // ratio of min-to-mid-bin CR rigidity or momentum, used for scaling everything below
-        x_p[k] = CR_global_max_rigidity_in_bin[k] / R0[k]; // ratio of max-to-mid-bin CR rigidity or momentum, used for scaling everything below
+        x_m[k] = All.CR_global_min_rigidity_in_bin[k] / R0[k]; // ratio of min-to-mid-bin CR rigidity or momentum, used for scaling everything below
+        x_p[k] = All.CR_global_max_rigidity_in_bin[k] / R0[k]; // ratio of max-to-mid-bin CR rigidity or momentum, used for scaling everything below
         bin_slopes[k] = CR_return_slope_from_number_and_energy_in_bin(Ucr[k], ntot_evolved[k], E_GeV[k], k); // initialize slopes to use below from LUT, if not directly evolving them
-        if(CR_species_ID_in_bin[k] < 0) {if(R0[k]<min_R_e) {min_R_e=R0[k];}} else {if(R0[k]<min_R_p) {min_R_p=R0[k];}} // record minimum rigidity to use in limits applied below
-        if(CR_species_ID_in_bin[k] < 0) {if(R0[k]>max_R_e) {max_R_e=R0[k];}} else {if(R0[k]>max_R_p) {max_R_p=R0[k];}} // record minimum rigidity to use in limits applied below
+        if(All.CR_species_ID_in_bin[k] < 0) {if(R0[k]<min_R_e) {min_R_e=R0[k];}} else {if(R0[k]<min_R_p) {min_R_p=R0[k];}} // record minimum rigidity to use in limits applied below
+        if(All.CR_species_ID_in_bin[k] < 0) {if(R0[k]>max_R_e) {max_R_e=R0[k];}} else {if(R0[k]>max_R_p) {max_R_p=R0[k];}} // record minimum rigidity to use in limits applied below
         double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(target,k, cell); // get the closure function
         adiabatic_coeff[k] = three_chi*adiabatic_coeff_divv + (1.-three_chi)*bbGv; // allows for energy+species-dependent CR anisotropy
 
-        if(CR_species_ID_in_bin[k] < 0) {brems_coeff[k] = brems_coeff_0 * DMAX(log(2.*(1.+E_GeV[k]/E_rest_e_GeV))-0.33,0);} else {brems_coeff[k]=0;}
+        if(All.CR_species_ID_in_bin[k] < 0) {brems_coeff[k] = brems_coeff_0 * DMAX(log(2.*(1.+E_GeV[k]/E_rest_e_GeV))-0.33,0);} else {brems_coeff[k]=0;}
         streaming_coeff[k] = CR_get_streaming_loss_rate_coefficient(target,k, pp, cell) / UNIT_TIME_IN_CGS;
 
         M1SpeedCorrFac[k] = evaluate_cr_transport_reductionfactor(target, k, 1, cell); /* implement PFH correction term, similar to RHD with RSOL, to account for RSOL in residence time for attenuation */
@@ -356,7 +356,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
         double adiab_brem_coeff = adiabatic_coeff[k] + streaming_coeff[k] + brems_coeff[k]; bin_centered_rate_coeff[k]+=adiab_brem_coeff; // do constraint from adiabatic + Bremsstrahlung
         if(adiab_brem_coeff < 0) {sign_key_for_adiabatic_loop=-1;} // note the net sign of this term for use below
         if(k>0) {if(adiab_brem_coeff * (adiabatic_coeff[k-1] + streaming_coeff[k-1] + brems_coeff[k-1]) < 0) {sign_flip_adiabatic_terms = 1;}} // have a sign flip, and its not negligible in magnitude //
-        if(CR_species_ID_in_bin[k] < 0) // e- or e+ (leptonic): do constraint from synchrotron + IC
+        if(All.CR_species_ID_in_bin[k] < 0) // e- or e+ (leptonic): do constraint from synchrotron + IC
         {
             double IC_sync_coeff = (E_GeV[k]/E_rest_e_GeV) * synchIC_coeff_0; bin_centered_rate_coeff[k]+=IC_sync_coeff;
             double ion_coeff = (e_coulomb_coeff + (1.+0.07*log(E_GeV[k])) * e_ion_coeff) / R0[k]; bin_centered_rate_coeff[k]+=ion_coeff; // relativistic expression. note this is equation for p evolution, where R is rigidity, so need to be careful with Z factors, etc.
@@ -376,8 +376,8 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
     for(k=0;k<N_CR_PARTICLE_BINS;k++) // additional variables need to be initialized here, after the previous loop definitions
     {
         int minbin_flag=0, maxbin_flag=0;
-        if(k>0) {if(CR_species_ID_in_bin[k-1] != CR_species_ID_in_bin[k]) {minbin_flag=1;}} else {minbin_flag=1;} // previous bin doesn't exist or has opposite sign: lowest-E bin for type
-        if(k<N_CR_PARTICLE_BINS-1) {if(CR_species_ID_in_bin[k+1] != CR_species_ID_in_bin[k]) {maxbin_flag=1;}} else {maxbin_flag=1;} // next bin doesn't exist or has opposite sign: highest-E bin for type
+        if(k>0) {if(All.CR_species_ID_in_bin[k-1] != All.CR_species_ID_in_bin[k]) {minbin_flag=1;}} else {minbin_flag=1;} // previous bin doesn't exist or has opposite sign: lowest-E bin for type
+        if(k<N_CR_PARTICLE_BINS-1) {if(All.CR_species_ID_in_bin[k+1] != All.CR_species_ID_in_bin[k]) {maxbin_flag=1;}} else {maxbin_flag=1;} // next bin doesn't exist or has opposite sign: highest-E bin for type
         /* need to estimate the log-slope of the spatial diffusion coefficient vs momentum: delta = dln[kappa] / dln[R], for each species type */
         if(minbin_flag) {
             delta_diffcoeff[k] = log((kappa_i[k+1] + MIN_REAL_NUMBER) / (kappa_i[k] + MIN_REAL_NUMBER)) / log((R0[k+1] + MIN_REAL_NUMBER) / (R0[k] + MIN_REAL_NUMBER)); // linear estimate from next bin
@@ -400,11 +400,11 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
     for(k=0;k<N_CR_PARTICLE_BINS;k++)
     {
         if((Ucr[k] < 1.e-10 * Ucr_tot) || (bin_centered_rate_coeff[k]==0)) {continue;} // don't bother with timestep limits if the bin contains totally negligible fraction of CR energy
-        if(All.ComovingIntegrationOn) {if(All.Time < 0.12) {if(CR_species_ID_in_bin[k] < 0) {if(R0[k] >= 0.999*max_R_e) {continue;}}}} // don't need to apply the same timestep in the smallest bin, so long as regulated by the bin above it, since we'll just cool to 0 here in finite time and that's ok
+        if(All.ComovingIntegrationOn) {if(All.Time < 0.12) {if(All.CR_species_ID_in_bin[k] < 0) {if(R0[k] >= 0.999*max_R_e) {continue;}}}} // don't need to apply the same timestep in the smallest bin, so long as regulated by the bin above it, since we'll just cool to 0 here in finite time and that's ok
         double abs_bin_coeff_limit = 0.05 * fabs(bin_centered_rate_coeff[k]) * M1SpeedCorrFac[k]; // set threshold for fraction of rate where we need to worry about detailed subcycling: sub-dominant processes not important here. find few percent works well here.
         double adiab_brem_coeff = fabs(adiabatic_coeff[k] + streaming_coeff[k] + brems_coeff[k]) * M1SpeedCorrFac[k]; // do constraint from adiabatic + Bremsstrahlung
-        if(adiab_brem_coeff > abs_bin_coeff_limit) {dt_tmp = CourFac * log(x_p[k]/x_m[k]) / adiab_brem_coeff; if(CR_species_ID_in_bin[k]<0) {dt_min_e=DMIN(dt_min_e, dt_tmp);} else {dt_min_p=DMIN(dt_min_p, dt_tmp);}}
-        if(CR_species_ID_in_bin[k] < 0) // e- or e+ (leptonic): do constraint from synchrotron + IC
+        if(adiab_brem_coeff > abs_bin_coeff_limit) {dt_tmp = CourFac * log(x_p[k]/x_m[k]) / adiab_brem_coeff; if(All.CR_species_ID_in_bin[k]<0) {dt_min_e=DMIN(dt_min_e, dt_tmp);} else {dt_min_p=DMIN(dt_min_p, dt_tmp);}}
+        if(All.CR_species_ID_in_bin[k] < 0) // e- or e+ (leptonic): do constraint from synchrotron + IC
         {
            double IC_sync_coeff = (E_GeV[k]/E_rest_e_GeV) * synchIC_coeff_0 * M1SpeedCorrFac[k];
            if(IC_sync_coeff > abs_bin_coeff_limit) {dt_tmp = CourFac * (1./x_m[k] - 1./x_p[k]) / IC_sync_coeff; dt_min_e=DMIN(dt_min_e, dt_tmp);}
@@ -414,7 +414,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
            if(NR_key[k]==1) // bin is in non-relativistic limit, use those expressions
            {
                double Coul_coeff = ((0.88 * A_wt[k]*A_wt[k]) / (R0[k]*R0[k]*R0[k] * fabs(Z[k]))) * coulomb_coeff * M1SpeedCorrFac[k]; // non-relativistic expression. note this is equation for p evolution, where R is rigidity, so need to be careful with Z factors, etc. should be multiplied by atomic weight A^2 as well.
-               if((CR_species_ID_in_bin[k] == 1) || (E_GeV[k]/A_wt[k] > 1.)) {if(Coul_coeff > abs_bin_coeff_limit) {dt_tmp = CourFac * (x_p[k]*x_p[k]*x_p[k] - x_m[k]*x_m[k]*x_m[k]) / (3.*Coul_coeff); dt_min_p=DMIN(dt_min_p, dt_tmp);}}
+               if((All.CR_species_ID_in_bin[k] == 1) || (E_GeV[k]/A_wt[k] > 1.)) {if(Coul_coeff > abs_bin_coeff_limit) {dt_tmp = CourFac * (x_p[k]*x_p[k]*x_p[k] - x_m[k]*x_m[k]*x_m[k]) / (3.*Coul_coeff); dt_min_p=DMIN(dt_min_p, dt_tmp);}}
            } else { // bin is in relativistic limit, use those expressions
                double Coul_coeff = (fabs(Z[k])/R0[k]) * coulomb_coeff * M1SpeedCorrFac[k]; // relativistic expression. note this is equation for p evolution, where R is rigidity, so need to be careful with Z factors, etc.
                if(Coul_coeff > abs_bin_coeff_limit) {dt_tmp = CourFac * DMIN(x_p[k]-x_m[k], x_m[k]) / Coul_coeff; dt_min_p=DMIN(dt_min_p, dt_tmp);}
@@ -423,7 +423,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
 #if defined(CRFLUID_ALT_REACCEL_ONLY_DIFFUSIVE)
         double rcoeff_bin = fabs(reaccel_coeff[k]) * (1.-0.5*DMIN(bin_slopes[k],1.)) * M1SpeedCorrFac[k]; // limit b/c this might change in step, then estimate rate coefficient at bin center
         if(rcoeff_bin > abs_bin_coeff_limit) {dt_tmp = CourFac * (pow(x_p[k],delta_diffcoeff[k]) - pow(x_m[k],delta_diffcoeff[k])) / rcoeff_bin;} // set timestep limit
-        if(CR_species_ID_in_bin[k]<0) {dt_min_e=DMIN(dt_min_e, dt_tmp);} else {dt_min_p=DMIN(dt_min_p, dt_tmp);} // applies to both e and p
+        if(All.CR_species_ID_in_bin[k]<0) {dt_min_e=DMIN(dt_min_e, dt_tmp);} else {dt_min_p=DMIN(dt_min_p, dt_tmp);} // applies to both e and p
 #endif
     }
     if(All.ComovingIntegrationOn) {if(Ucr_tot < 1.e-6*pp[target].Mass*cell[target].InternalEnergy) {dt_min_e*=10.; dt_min_p*=10.; dt_min_e=DMAX(dt_min_e,0.01*dtime_cgs); dt_min_p=DMAX(dt_min_p,0.01*dtime_cgs);}} // allow larger slope errors when the CR energy is a negligible fraction of total
@@ -448,8 +448,8 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
 
     int cr_species_key; for(cr_species_key=0;cr_species_key<N_CR_PARTICLE_SPECIES;cr_species_key++) // loop over whether we consider nuclei or electrons, first //
     {
-        int species_ID=CR_species_ID_active_list[cr_species_key]; int n_active=0, bins_sorted[N_CR_PARTICLE_BINS]; double R0_bins[N_CR_PARTICLE_BINS];
-        for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(CR_species_ID_in_bin[k]==species_ID) {bins_sorted[n_active]=k; R0_bins[n_active]=R0[k]; n_active++;}} // bin is valid: charge matches that desired
+        int species_ID=All.CR_species_ID_active_list[cr_species_key]; int n_active=0, bins_sorted[N_CR_PARTICLE_BINS]; double R0_bins[N_CR_PARTICLE_BINS];
+        for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(All.CR_species_ID_in_bin[k]==species_ID) {bins_sorted[n_active]=k; R0_bins[n_active]=R0[k]; n_active++;}} // bin is valid: charge matches that desired
         if(n_active<=0) {continue;} // nothing to do here
         if(n_active<N_CR_PARTICLE_BINS) {for(k=n_active;k<N_CR_PARTICLE_BINS;k++) {R0_bins[k]=MAX_REAL_NUMBER;}} // set a dummy value here for sorting purposes below
         //qsort(bins_sorted, n_active, sizeof(int), compare_CR_rigidity_for_sort); // sort on energies from smallest-to-largest [this is hard-coded by requiring the list go in monotonic increasing order for e and p, regardless of how the e and p are themselves ordered //
@@ -485,7 +485,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
                     {
 #if 1 // (CRFLUID_EVOLVE_SPECTRUM == 2) // now even the simpler network has secondary e-, important for dense regions synchrotron
                         /* this is where we also include losses from fragmentation and radioactive decay, for heavier nuclei */
-                        double frag_coeff=CR_frag_coeff[j]*nHcgs, rad_coeff=CR_rad_decay_coeff[j], total_catastrophic_coeff=frag_coeff+rad_coeff;
+                        double frag_coeff=All.CR_frag_coeff[j]*nHcgs, rad_coeff=All.CR_rad_decay_coeff[j], total_catastrophic_coeff=frag_coeff+rad_coeff;
                         if(total_catastrophic_coeff > 0) // have some losses here, account for those
                         {
                             double fac_n=DMIN(total_catastrophic_coeff*dt*M1SpeedCorrFac[j], 60.), fac_e=fac_n; // loss rate for number & energy [equal if loss rate is energy-independent. correction term is small: ~0.95 if loss rate ~1/E [e.g. radioactive], or ~1.05 if rate ~E
@@ -495,34 +495,34 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
                             ecorrfac = (slope_gamma*(2.+slope_gamma))/((1.+slope_gamma)*(1.+slope_gamma)) * ((xm_g1-xp_g1)*(xm_g1-xp_g1)) / ((xm_g-xp_g)*(xm_g2-xp_g2));
                             if(ecorrfac>0 && isfinite(ecorrfac)) {fac_e *= ecorrfac;}
                             */
-                            if(CR_secondary_target_bin[j][0] > -2) /* now check for whether or not there are any secondary products */
+                            if(All.CR_secondary_target_bin[j][0] > -2) /* now check for whether or not there are any secondary products */
                             {
                                 double dfac_e, dfac_n; if(fac_e<0.07) {dfac_e=fac_e-0.5*fac_e*fac_e+fac_e*fac_e*fac_e/6.;} else {dfac_e=1.-exp(-fac_e);}
                                 if(fac_n<0.07) {dfac_n=fac_n-0.5*fac_n*fac_n+fac_n*fac_n*fac_n/6.;} else {dfac_n=1.-exp(-fac_n);}
                                 double slope_inj = bin_slopes[j]; // slope dN/dp of CRs doing the injection -- should be conserved in production
                                 int m; for(m=0;m<N_CR_PARTICLE_SPECIES;m++) {
-                                    int j_s = CR_secondary_target_bin[j][m]; /* destination bin for secondary product 'm' */
+                                    int j_s = All.CR_secondary_target_bin[j][m]; /* destination bin for secondary product 'm' */
                                     if(j_s < -1) {break;} /* no more secondaries exist, cease this loop */
-                                    double secondary_coeff = CR_frag_secondary_coeff[j][m]*nHcgs; /* rate of secondary production via fragmentation scales with this */
+                                    double secondary_coeff = All.CR_frag_secondary_coeff[j][m]*nHcgs; /* rate of secondary production via fragmentation scales with this */
                                     if(m==0) {secondary_coeff += rad_coeff;} /* 100% of radioactive products go into the first secondary bin */
                                     if(j_s < 0 || secondary_coeff <= 0) {continue;} /* no production in this particular bin/channel */
                                     double frac_secondary = DMAX(0.,DMIN(1., secondary_coeff / total_catastrophic_coeff)); /* restrict to sensible bounds */
-                                    if(CR_species_ID_in_bin[j_s] < 0) {frac_secondary *= 1./HYDROGEN_MASSFRAC;} // crude correction for He secondary e-/e+ production terms
+                                    if(All.CR_species_ID_in_bin[j_s] < 0) {frac_secondary *= 1./HYDROGEN_MASSFRAC;} // crude correction for He secondary e-/e+ production terms
 
                                     double U_donor = frac_secondary*dfac_e*Ucr[j] * DMAX(1.,A_wt[j_s])/DMAX(1.,A_wt[j]); // need to account for the different total energy assuming fixed energy per nucleon here
-                                    if(CR_species_ID_in_bin[j_s] < 0) {U_donor *= 0.1;} // secondary e+/e- from protons (pion decay) get ~0.1 original p energy -- needs to match assumption above
-                                    if(CR_species_ID_in_bin[j_s] == 7) {U_donor *= 0.08;} // pbar get ~0.08 original p energy -- needs to match assumption above
+                                    if(All.CR_species_ID_in_bin[j_s] < 0) {U_donor *= 0.1;} // secondary e+/e- from protons (pion decay) get ~0.1 original p energy -- needs to match assumption above
+                                    if(All.CR_species_ID_in_bin[j_s] == 7) {U_donor *= 0.08;} // pbar get ~0.08 original p energy -- needs to match assumption above
                                     double N_donor = frac_secondary*dfac_n*ntot_evolved[j]; // absolute number being transferred between bins
 
-                                    if(CR_species_ID_in_bin[j]==6 && CR_species_ID_in_bin[j_s]==5) {U_donor *= 0.9;} // 10Be assumption needs tiny correction b/c of mean molecular weight of CNO bin putting it slightly in the wrong place (giving problematic slopes)
+                                    if(All.CR_species_ID_in_bin[j]==6 && All.CR_species_ID_in_bin[j_s]==5) {U_donor *= 0.9;} // 10Be assumption needs tiny correction b/c of mean molecular weight of CNO bin putting it slightly in the wrong place (giving problematic slopes)
                                     int split_two_bin=0, j2=-1, js2=-1; /* for some species where we have a big energy jump in the parent and not secondary (e.g. hadrons -> leptons) we get 'jumps' in the spectrum, which produce artificial features; attempt to smooth these out by distributing over a pair of bins */
-                                    if((CR_species_ID_in_bin[j_s]<0 || CR_species_ID_in_bin[j_s]==7) && (k<n_active-1) && k>0) {
-                                        j2=bins_sorted[n_active-1-(k+1)]; if(CR_species_ID_in_bin[j2]==CR_species_ID_in_bin[j]) {
-                                            js2=CR_secondary_target_bin[j2][m]; if(CR_species_ID_in_bin[j_s]==CR_species_ID_in_bin[js2]) {
+                                    if((All.CR_species_ID_in_bin[j_s]<0 || All.CR_species_ID_in_bin[j_s]==7) && (k<n_active-1) && k>0) {
+                                        j2=bins_sorted[n_active-1-(k+1)]; if(All.CR_species_ID_in_bin[j2]==All.CR_species_ID_in_bin[j]) {
+                                            js2=All.CR_secondary_target_bin[j2][m]; if(All.CR_species_ID_in_bin[j_s]==All.CR_species_ID_in_bin[js2]) {
                                                 if(js2 < j_s-1) {split_two_bin=1; U_donor *= 0.5; N_donor *= 0.5;}}}}
 
                                     /* instead of conserving U and N separately, which can cause problems in this step with unphysical slopes owing to discreteness, conserve U and dN/dp */
-                                    double E_GeV_s=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(j_s),egy_slopemode_s=1,xm_s=CR_global_min_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s],xp_s=CR_global_max_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s],xm_e_s=xm_s, xp_e_s=xp_s;
+                                    double E_GeV_s=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(j_s),egy_slopemode_s=1,xm_s=All.CR_global_min_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s],xp_s=All.CR_global_max_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s],xm_e_s=xm_s, xp_e_s=xp_s;
                                     if(CR_check_if_bin_is_nonrelativistic(j_s)) {egy_slopemode_s=2; xm_e_s=xm_s*xm_s; xp_e_s=xp_s*xp_s;} // values needed to scale from slope injected to number and back
                                     double gamma_one_s=slope_inj+1., xm_gamma_one_s=pow(xm_s,gamma_one_s), xp_gamma_one_s=pow(xp_s,gamma_one_s); // variables below
                                     N_donor = (U_donor/E_GeV_s) * ((gamma_one_s + egy_slopemode_s) / (gamma_one_s)) * (xp_gamma_one_s - xm_gamma_one_s) / (xp_gamma_one_s*xp_e_s - xm_gamma_one_s*xm_e_s); // injected number in bin
@@ -535,7 +535,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
                                         double facU=0.5/0.5; U_donor *= facU; //facN=0.5/0.5; /* share over a second bin */
                                         Ucr[j_s] += U_donor;
                                         /* repeat exercise to obtain N_donor */
-                                        E_GeV_s=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(j_s); egy_slopemode_s=1; xm_s=CR_global_min_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s]; xp_s=CR_global_max_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s]; xm_e_s=xm_s; xp_e_s=xp_s;
+                                        E_GeV_s=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(j_s); egy_slopemode_s=1; xm_s=All.CR_global_min_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s]; xp_s=All.CR_global_max_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s]; xm_e_s=xm_s; xp_e_s=xp_s;
                                         if(CR_check_if_bin_is_nonrelativistic(j_s)) {egy_slopemode_s=2; xm_e_s=xm_s*xm_s; xp_e_s=xp_s*xp_s;} // values needed to scale from slope injected to number and back
                                         gamma_one_s=slope_inj+1.; xm_gamma_one_s=pow(xm_s,gamma_one_s); xp_gamma_one_s=pow(xp_s,gamma_one_s); // variables below
                                         N_donor = (U_donor/E_GeV_s) * ((gamma_one_s + egy_slopemode_s) / (gamma_one_s)) * (xp_gamma_one_s - xm_gamma_one_s) / (xp_gamma_one_s*xp_e_s - xm_gamma_one_s*xm_e_s); // injected number in bin
@@ -545,13 +545,13 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
                                         bin_slopes[j_s] = CR_return_slope_from_number_and_energy_in_bin(Ucr[j_s],ntot_evolved[j_s],E_GeV[j_s],j_s);
                                     }
 
-                                    if(split_two_bin==0 && CR_species_ID_in_bin[j]==1 && k==0 && (CR_species_ID_in_bin[j_s]<0 || CR_species_ID_in_bin[j_s]==7)) { /* now code extending the CR spectrum of secondary production to energies higher than our max limit, assuming continued power-law extrapolation of the CR spectrum */
-                                        double Rx0=CR_global_rigidity_at_bin_center[j_s], U00=U_donor, xm_0=CR_global_min_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s], xp_0=CR_global_max_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s];
-                                        int spec_0=CR_species_ID_in_bin[j_s], slope_0=2.+slope_inj; slope_0=DMAX(-4.,DMIN(slope_0,0.)); if(spec_0==7) {slope_0=DMIN(slope_0,-0.7);}
+                                    if(split_two_bin==0 && All.CR_species_ID_in_bin[j]==1 && k==0 && (All.CR_species_ID_in_bin[j_s]<0 || All.CR_species_ID_in_bin[j_s]==7)) { /* now code extending the CR spectrum of secondary production to energies higher than our max limit, assuming continued power-law extrapolation of the CR spectrum */
+                                        double Rx0=All.CR_global_rigidity_at_bin_center[j_s], U00=U_donor, xm_0=All.CR_global_min_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s], xp_0=All.CR_global_max_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s];
+                                        int spec_0=All.CR_species_ID_in_bin[j_s], slope_0=2.+slope_inj; slope_0=DMAX(-4.,DMIN(slope_0,0.)); if(spec_0==7) {slope_0=DMIN(slope_0,-0.7);}
                                         j_s++;
-                                        while(j_s<N_CR_PARTICLE_BINS && CR_species_ID_in_bin[j_s]==spec_0) {
-                                            double Rx1=CR_global_rigidity_at_bin_center[j_s];
-                                            E_GeV_s=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(j_s); egy_slopemode_s=1; xm_s=CR_global_min_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s]; xp_s=CR_global_max_rigidity_in_bin[j_s]/CR_global_rigidity_at_bin_center[j_s]; xm_e_s=xm_s; xp_e_s=xp_s;
+                                        while(j_s<N_CR_PARTICLE_BINS && All.CR_species_ID_in_bin[j_s]==spec_0) {
+                                            double Rx1=All.CR_global_rigidity_at_bin_center[j_s];
+                                            E_GeV_s=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(j_s); egy_slopemode_s=1; xm_s=All.CR_global_min_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s]; xp_s=All.CR_global_max_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s]; xm_e_s=xm_s; xp_e_s=xp_s;
                                             if(CR_check_if_bin_is_nonrelativistic(j_s)) {egy_slopemode_s=2; xm_e_s=xm_s*xm_s; xp_e_s=xp_s*xp_s;} // values needed to scale from slope injected to number and back
                                             gamma_one_s=slope_inj+1.; xm_gamma_one_s=pow(xm_s,gamma_one_s); xp_gamma_one_s=pow(xp_s,gamma_one_s); // variables below
                                             U_donor = U00 * pow(Rx1/Rx0,slope_0) * log(xp_s/xm_s)/log(xp_0/xm_0);
@@ -598,7 +598,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
                     }
                     if(loss_mode==2) // coulomb + ion
                     {
-                        if(CR_species_ID_in_bin[j] < 0) // electron or positron ionization losses here
+                        if(All.CR_species_ID_in_bin[j] < 0) // electron or positron ionization losses here
                         {
                             rate_prefac = (e_coulomb_coeff + (1.+0.07*log(E_GeV[j])) * e_ion_coeff) / R0[j]; // always in relativistic limit here. 1/R0 is b/c this coefficient is defined normalized to the bin center in GeV, to make the equations dimensionless
                         } else { // proton or nuclei ionization + Coulomb losses here

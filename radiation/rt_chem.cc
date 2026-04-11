@@ -28,17 +28,17 @@ void rt_get_sigma(void)
     int k;
     for(k=0;k<N_RT_FREQ_BINS;k++)
     {
-        rt_ion_nu_min[k] = 0; rt_nu_eff_eV[k] = rt_ion_nu_min[k];
-        rt_ion_G_HI[k]=rt_ion_G_HeI[k]=rt_ion_G_HeII[k]=rt_ion_sigma_HI[k]=rt_ion_sigma_HeI[k]=rt_ion_sigma_HeII[k]=rt_ion_precalc_stellar_luminosity_fraction[k]=0;
+        All.rt_ion_nu_min[k] = 0; All.rt_nu_eff_eV[k] = All.rt_ion_nu_min[k];
+        All.rt_ion_G_HI[k]=All.rt_ion_G_HeI[k]=All.rt_ion_G_HeII[k]=All.rt_ion_sigma_HI[k]=All.rt_ion_sigma_HeI[k]=All.rt_ion_sigma_HeII[k]=All.rt_ion_precalc_stellar_luminosity_fraction[k]=0;
     }
     double fac = 1.0 / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
     
 #ifndef RT_PHOTOION_MULTIFREQUENCY
     /* just the hydrogen ionization bin */
-    rt_ion_sigma_HI[RT_FREQ_BIN_H0] = 6.3e-18 * fac; // cross-section (blackbody-weighted) for photons
-    rt_ion_nu_min[RT_FREQ_BIN_H0] = 13.6; // minimum frequency [in eV] of photons of interest
-    rt_nu_eff_eV[RT_FREQ_BIN_H0] = 27.2; // typical blackbody-weighted frequency [in eV] of photons of interest: to convert energies to numbers
-    rt_ion_G_HI[RT_FREQ_BIN_H0] = (rt_nu_eff_eV[RT_FREQ_BIN_H0]-13.6)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS; // absorption cross-section weighted photon energy in code units
+    All.rt_ion_sigma_HI[RT_FREQ_BIN_H0] = 6.3e-18 * fac; // cross-section (blackbody-weighted) for photons
+    All.rt_ion_nu_min[RT_FREQ_BIN_H0] = 13.6; // minimum frequency [in eV] of photons of interest
+    All.rt_nu_eff_eV[RT_FREQ_BIN_H0] = 27.2; // typical blackbody-weighted frequency [in eV] of photons of interest: to convert energies to numbers
+    All.rt_ion_G_HI[RT_FREQ_BIN_H0] = (All.rt_nu_eff_eV[RT_FREQ_BIN_H0]-13.6)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS; // absorption cross-section weighted photon energy in code units
 #else
     
     /* now we use the multi-bin spectral information */
@@ -60,13 +60,13 @@ void rt_get_sigma(void)
     for(k = 0; k < N_BINS_FOR_IONIZATION; k++)
     {
         i = i_vec[k];
-        e_start = rt_ion_nu_min[i] = nu_vec[k];
+        e_start = All.rt_ion_nu_min[i] = nu_vec[k];
         if(k==N_BINS_FOR_IONIZATION-1) {e_end = 500.;} else {e_end = nu_vec[k+1];} 
         d_nu = (e_end - e_start) / (float)(integral - 1);
-        rt_ion_sigma_HI[i] = rt_ion_G_HI[i] = rt_nu_eff_eV[i] = 0.0;
+        All.rt_ion_sigma_HI[i] = All.rt_ion_G_HI[i] = All.rt_nu_eff_eV[i] = 0.0;
         sum_HI_sigma = sum_HI_G = 0.0;
 #ifdef RT_CHEM_PHOTOION_HE
-        rt_ion_sigma_HeI[i] = rt_ion_sigma_HeII[i] = rt_ion_G_HeI[i] = rt_ion_G_HeII[i] = 0.0;
+        All.rt_ion_sigma_HeI[i] = All.rt_ion_sigma_HeII[i] = All.rt_ion_G_HeI[i] = All.rt_ion_G_HeII[i] = 0.0;
         sum_HeI_sigma = sum_HeII_sigma = sum_HeI_G = sum_HeII_G = 0.0;
 #endif
         double n_photon_sum = 0.0, sum_energy = 0.0;
@@ -76,62 +76,62 @@ void rt_get_sigma(void)
             I_nu = 2.0 * pow(e * ELECTRONVOLT_IN_ERGS, 3) / (hc * hc) / (exp(e * ELECTRONVOLT_IN_ERGS / (BOLTZMANN_CGS * T_eff)) - 1.0);
             sum_energy += d_nu * I_nu;
             n_photon_sum += d_nu * I_nu / e;
-            if(rt_ion_nu_min[i] >= 13.6)
+            if(All.rt_ion_nu_min[i] >= 13.6)
             {
                 f = sqrt((e / 13.6) - 1.0);
                 if(e <= 13.6) {sig = 6.3e-18;} else {sig = 6.3e-18 * pow(13.6 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
-                rt_ion_sigma_HI[i] += d_nu * sig * I_nu / e;
+                All.rt_ion_sigma_HI[i] += d_nu * sig * I_nu / e;
                 sum_HI_sigma += d_nu * I_nu / e;
-                rt_ion_G_HI[i] += d_nu * sig * (e - 13.6) * I_nu / e;
+                All.rt_ion_G_HI[i] += d_nu * sig * (e - 13.6) * I_nu / e;
                 sum_HI_G += d_nu * sig * I_nu / e;
             }
 #ifdef RT_CHEM_PHOTOION_HE
-            if(rt_ion_nu_min[i] >= 24.6)
+            if(All.rt_ion_nu_min[i] >= 24.6)
             {
                 f = sqrt((e / 24.6) - 1.0);
                 if(e <= 24.6) {sig = 7.83e-18;} else {sig = 7.83e-18 * pow(24.6 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
-                rt_ion_sigma_HeI[i] += d_nu * sig * I_nu / e;
+                All.rt_ion_sigma_HeI[i] += d_nu * sig * I_nu / e;
                 sum_HeI_sigma += d_nu * I_nu / e;
-                rt_ion_G_HeI[i] += d_nu * sig * (e - 24.6) * I_nu / e;
+                All.rt_ion_G_HeI[i] += d_nu * sig * (e - 24.6) * I_nu / e;
                 sum_HeI_G += d_nu * sig * I_nu / e;
             }
-            if(rt_ion_nu_min[i] >= 54.4)
+            if(All.rt_ion_nu_min[i] >= 54.4)
             {
                 f = sqrt((e / 54.4) - 1.0);
                 if(e <= 54.4) {sig = 1.58e-18;} else {sig = 1.58e-18 * pow(54.4 / e, 4) * exp(4 - (4 * atan(f) / f)) / (1.0 - exp(-2 * M_PI / f));}
-                rt_ion_sigma_HeII[i] += d_nu * sig * I_nu / e;
+                All.rt_ion_sigma_HeII[i] += d_nu * sig * I_nu / e;
                 sum_HeII_sigma += d_nu * I_nu / e;
-                rt_ion_G_HeII[i] += d_nu * sig * (e - 54.4) * I_nu / e;
+                All.rt_ion_G_HeII[i] += d_nu * sig * (e - 54.4) * I_nu / e;
                 sum_HeII_G += d_nu * sig * I_nu / e;
             }
 #endif
         }
-        rt_nu_eff_eV[i] = sum_energy / n_photon_sum;
-        rt_ion_precalc_stellar_luminosity_fraction[i] = sum_energy;
+        All.rt_nu_eff_eV[i] = sum_energy / n_photon_sum;
+        All.rt_ion_precalc_stellar_luminosity_fraction[i] = sum_energy;
 
-        if(rt_ion_nu_min[i] >= 13.6)
+        if(All.rt_ion_nu_min[i] >= 13.6)
         {
-            rt_ion_sigma_HI[i] *= fac / sum_HI_sigma;
-            rt_ion_G_HI[i] *= fac_two / sum_HI_G;
+            All.rt_ion_sigma_HI[i] *= fac / sum_HI_sigma;
+            All.rt_ion_G_HI[i] *= fac_two / sum_HI_G;
         }
 #ifdef RT_CHEM_PHOTOION_HE
-        if(rt_ion_nu_min[i] >= 24.6)
+        if(All.rt_ion_nu_min[i] >= 24.6)
         {
-            rt_ion_sigma_HeI[i] *= fac / sum_HeI_sigma;
-            rt_ion_G_HeI[i] *= fac_two / sum_HeI_G;
+            All.rt_ion_sigma_HeI[i] *= fac / sum_HeI_sigma;
+            All.rt_ion_G_HeI[i] *= fac_two / sum_HeI_G;
         }
-        if(rt_ion_nu_min[i] >= 54.4)
+        if(All.rt_ion_nu_min[i] >= 54.4)
         {
-            rt_ion_sigma_HeII[i] *= fac / sum_HeII_sigma;
-            rt_ion_G_HeII[i] *= fac_two / sum_HeII_G;
+            All.rt_ion_sigma_HeII[i] *= fac / sum_HeII_sigma;
+            All.rt_ion_G_HeII[i] *= fac_two / sum_HeII_G;
         }
 #endif
          sum_egy_allbands += sum_energy;
     }
 
-    for(i = 0; i < N_RT_FREQ_BINS; i++) {rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
+    for(i = 0; i < N_RT_FREQ_BINS; i++) {All.rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
     
-    if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",rt_ion_sigma_HI[i]/fac, rt_ion_G_HI[i]/fac_two,rt_ion_sigma_HeI[i]/fac, rt_ion_G_HeI[i]/fac_two,rt_ion_sigma_HeII[i]/fac, rt_ion_G_HeII[i]/fac_two);}}
+    if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",All.rt_ion_sigma_HI[i]/fac, All.rt_ion_G_HI[i]/fac_two,All.rt_ion_sigma_HeI[i]/fac, All.rt_ion_G_HeI[i]/fac_two,All.rt_ion_sigma_HeII[i]/fac, All.rt_ion_G_HeII[i]/fac_two);}}
 #endif
 }
 
@@ -171,7 +171,7 @@ void rt_update_chemistry(void)
             }
             
             A = dtime * gamma_HI * nH * CellP[i].Ne;
-            B = dtime * c_light_codeunits * n_photons_vol * rt_ion_sigma_HI[RT_FREQ_BIN_H0];
+            B = dtime * c_light_codeunits * n_photons_vol * All.rt_ion_sigma_HI[RT_FREQ_BIN_H0];
             CC = dtime * alpha_HII * nH * CellP[i].Ne;
             
             /* semi-implicit scheme for ionization */
@@ -258,10 +258,10 @@ void rt_update_chemistry(void)
             for(j = 0; j < N_RT_FREQ_BINS; j++)
             {
                 n_photons_vol = CellP[i].rt_photon_number_density(j);
-                if(rt_ion_nu_min[j] >= 13.6) {k_HI += c_light_codeunits * rt_ion_sigma_HI[j] * n_photons_vol;}
+                if(All.rt_ion_nu_min[j] >= 13.6) {k_HI += c_light_codeunits * All.rt_ion_sigma_HI[j] * n_photons_vol;}
 #ifdef RT_CHEM_PHOTOION_HE
-                if(rt_ion_nu_min[j] >= 24.6) {k_HeI += c_light_codeunits * rt_ion_sigma_HeI[j] * n_photons_vol;}
-                if(rt_ion_nu_min[j] >= 54.4) {k_HeII += c_light_codeunits * rt_ion_sigma_HeII[j] * n_photons_vol;}
+                if(All.rt_ion_nu_min[j] >= 24.6) {k_HeI += c_light_codeunits * All.rt_ion_sigma_HeI[j] * n_photons_vol;}
+                if(All.rt_ion_nu_min[j] >= 54.4) {k_HeII += c_light_codeunits * All.rt_ion_sigma_HeII[j] * n_photons_vol;}
 #endif
             }
             

@@ -318,6 +318,23 @@ struct global_data_all_processes
 
 #ifdef COSMIC_RAY_FLUID
     double CosmicRayDiffusionCoeff;
+#if (N_CR_PARTICLE_BINS > 2)
+    double CR_global_charge_in_bin[N_CR_PARTICLE_BINS];
+#endif
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+#define N_CR_SPECTRUM_LUT 101
+    double CR_global_min_rigidity_in_bin[N_CR_PARTICLE_BINS];
+    double CR_global_max_rigidity_in_bin[N_CR_PARTICLE_BINS];
+    double CR_global_rigidity_at_bin_center[N_CR_PARTICLE_BINS];
+    int CR_species_ID_in_bin[N_CR_PARTICLE_BINS];
+    double CR_global_slope_lut[N_CR_PARTICLE_BINS][N_CR_SPECTRUM_LUT];
+    int CR_secondary_species_listref[N_CR_PARTICLE_SPECIES][N_CR_PARTICLE_SPECIES];
+    int CR_secondary_target_bin[N_CR_PARTICLE_BINS][N_CR_PARTICLE_SPECIES];
+    double CR_frag_secondary_coeff[N_CR_PARTICLE_BINS][N_CR_PARTICLE_SPECIES];
+    double CR_frag_coeff[N_CR_PARTICLE_BINS];
+    double CR_rad_decay_coeff[N_CR_PARTICLE_BINS];
+    int CR_species_ID_active_list[N_CR_PARTICLE_SPECIES];
+#endif
 #endif
 
 #ifdef GALSF		/* star formation and feedback sector */
@@ -415,6 +432,17 @@ struct global_data_all_processes
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
     double RHD_bins_nu_min_ev[N_RT_FREQ_BINS]; /* minimum frequency of the radiation 'bin' in eV */
     double RHD_bins_nu_max_ev[N_RT_FREQ_BINS]; /* maximum frequency of the radiation 'bin' in eV */
+#endif
+#ifdef RT_CHEM_PHOTOION
+    double rt_ion_nu_min[N_RT_FREQ_BINS];
+    double rt_nu_eff_eV[N_RT_FREQ_BINS];
+    double rt_ion_precalc_stellar_luminosity_fraction[N_RT_FREQ_BINS];
+    double rt_ion_sigma_HI[N_RT_FREQ_BINS];
+    double rt_ion_sigma_HeI[N_RT_FREQ_BINS];
+    double rt_ion_sigma_HeII[N_RT_FREQ_BINS];
+    double rt_ion_G_HI[N_RT_FREQ_BINS];
+    double rt_ion_G_HeI[N_RT_FREQ_BINS];
+    double rt_ion_G_HeII[N_RT_FREQ_BINS];
 #endif
 
 #ifdef METALS

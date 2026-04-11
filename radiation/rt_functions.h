@@ -425,9 +425,9 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
 #ifdef RT_CHEM_PHOTOION
     /* opacity to ionizing radiation for Petkova & Springel bands. note cooling.c or rt_update_chemistry is where ionization is actually calculated */
     double nH_over_Density = HYDROGEN_MASSFRAC / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
-    double kappa = nH_over_Density * (cell[i].HI + MIN_REAL_NUMBER) * rt_ion_sigma_HI[k_freq]; // note this is designed for specific applications: does not include dust, or free-free, or free-electron scattering contributions here, all of which can be important.
+    double kappa = nH_over_Density * (cell[i].HI + MIN_REAL_NUMBER) * All.rt_ion_sigma_HI[k_freq]; // note this is designed for specific applications: does not include dust, or free-free, or free-electron scattering contributions here, all of which can be important.
 #if defined(RT_CHEM_PHOTOION_HE) && defined(RT_PHOTOION_MULTIFREQUENCY)
-    kappa += nH_over_Density * ((cell[i].HeI + MIN_REAL_NUMBER) * rt_ion_sigma_HeI[k_freq] + (cell[i].HeII + MIN_REAL_NUMBER) * rt_ion_sigma_HeII[k_freq]);
+    kappa += nH_over_Density * ((cell[i].HeI + MIN_REAL_NUMBER) * All.rt_ion_sigma_HeI[k_freq] + (cell[i].HeII + MIN_REAL_NUMBER) * All.rt_ion_sigma_HeII[k_freq]);
     if(k_freq==RT_FREQ_BIN_He0)  {return kappa;}
     if(k_freq==RT_FREQ_BIN_He1)  {return kappa;}
     if(k_freq==RT_FREQ_BIN_He2)  {return kappa;}

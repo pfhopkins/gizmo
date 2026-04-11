@@ -540,7 +540,7 @@ extern struct gas_cell_data
 
     GIZMO_GPU_FUNCTION inline double rt_photon_number_density(int k) const { /*!< photon number density for RT band k */
 #ifdef RT_CHEM_PHOTOION
-        return Rad_E_gamma[k] * (Density*All.cf_a3inv/Mass) / (rt_nu_eff_eV[k]*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+        return Rad_E_gamma[k] * (Density*All.cf_a3inv/Mass) / (All.rt_nu_eff_eV[k]*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #else
         return 0;
 #endif

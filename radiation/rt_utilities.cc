@@ -93,7 +93,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
         lum[RT_FREQ_BIN_H0] = l_ion; // default to all flux into single-band
 #if defined(RT_PHOTOION_MULTIFREQUENCY)
         int i_vec[4] = {RT_FREQ_BIN_H0, RT_FREQ_BIN_He0, RT_FREQ_BIN_He1, RT_FREQ_BIN_He2}; // these will all be the same if not using multi-frequency module //
-        int k; for(k=0;k<4;k++) {lum[i_vec[k]] = l_ion * rt_ion_precalc_stellar_luminosity_fraction[i_vec[k]];} // assign flux appropriately according to pre-tabulated result //
+        int k; for(k=0;k<4;k++) {lum[i_vec[k]] = l_ion * All.rt_ion_precalc_stellar_luminosity_fraction[i_vec[k]];} // assign flux appropriately according to pre-tabulated result //
 #endif
     }
 #endif
@@ -224,7 +224,7 @@ int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct parti
     lum[RT_FREQ_BIN_H0] = l_ion; // default to putting everything into a single band //
 #if defined(RT_PHOTOION_MULTIFREQUENCY)
     int i_vec[4] = {RT_FREQ_BIN_H0, RT_FREQ_BIN_He0, RT_FREQ_BIN_He1, RT_FREQ_BIN_He2}; // these will all be the same if not using multi-frequency module //
-    int k; for(k=0;k<4;k++) {lum[i_vec[k]] = l_ion * rt_ion_precalc_stellar_luminosity_fraction[i_vec[k]];} // assign flux appropriately according to pre-tabulated result //
+    int k; for(k=0;k<4;k++) {lum[i_vec[k]] = l_ion * All.rt_ion_precalc_stellar_luminosity_fraction[i_vec[k]];} // assign flux appropriately according to pre-tabulated result //
 #endif
 #endif
 
@@ -340,7 +340,7 @@ int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_dat
 #else
     SET_ACTIVE_RT_CHECK(); k=RT_FREQ_BIN_H0; lum[k]=stellar_lum_in_band(i,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], pp, cell); // total ionizing flux
 #ifdef RT_STARBENCH_TEST
-    lum[RT_FREQ_BIN_H0] = 1e49 * (rt_nu_eff_eV[RT_FREQ_BIN_H0]*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_H0] = 1e49 * (All.rt_nu_eff_eV[RT_FREQ_BIN_H0]*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS;
 #endif
 #endif
 #endif
@@ -372,7 +372,7 @@ void rt_define_effective_frequencies_in_bands(void)
 #ifdef RT_CHEM_PHOTOION
 #if defined(RT_PHOTOION_MULTIFREQUENCY)
     int i_vec[4] = {RT_FREQ_BIN_H0, RT_FREQ_BIN_He0, RT_FREQ_BIN_He1, RT_FREQ_BIN_He2};
-    rhd_bins_nu_min_ev[i_vec[3]]=rt_ion_nu_min[i_vec[3]]; rhd_bins_nu_max_ev[i_vec[3]]=500; for(k=0;k<3;k++) {rhd_bins_nu_min_ev[i_vec[k]]=rt_ion_nu_min[i_vec[k]]; rhd_bins_nu_max_ev[i_vec[k]]=rt_ion_nu_min[i_vec[k+1]];}
+    rhd_bins_nu_min_ev[i_vec[3]]=All.rt_ion_nu_min[i_vec[3]]; rhd_bins_nu_max_ev[i_vec[3]]=500; for(k=0;k<3;k++) {rhd_bins_nu_min_ev[i_vec[k]]=All.rt_ion_nu_min[i_vec[k]]; rhd_bins_nu_max_ev[i_vec[k]]=All.rt_ion_nu_min[i_vec[k+1]];}
 #else
     k=RT_FREQ_BIN_H0; rhd_bins_nu_min_ev[k]=13.6; rhd_bins_nu_max_ev[k]=500;
 #endif

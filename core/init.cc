@@ -663,7 +663,7 @@ void init(void)
 #endif
             // now define the desired spectrum //
             for(j=0;j<N_CR_PARTICLE_BINS;j++) {
-                int species = CR_species_ID_in_bin[j];
+                int species = All.CR_species_ID_in_bin[j];
                 double f_norm = 1.e-20;
                 double f_elec = 0.05; // fraction of the energy to put into e- as opposed to p+ at injection [early experiments with 'observed'  fraction ~ 1% give lower e-/p+ actually observed in the end, so tentative favoring closer to equal at injection? but not run to z=0, so U_rad high from CMB; still experimenting here]
                 if(species == -1) {f_norm = f_elec;} // e-
@@ -679,9 +679,9 @@ void init(void)
                     if(species == 5) {f_norm = 1.4e-20 * Zfac;} // Be10 (radioactive)
                     if(species == 6) {f_norm = 0.0094 * Zfac;} // CNO (combined bin)
                 }
-                double e_tmp = 1.0 * f_norm * e0, x_RGV = CR_global_rigidity_at_bin_center[j], a_0=0.715197, x_0=1.7, gamma_0=-2.3, gamma_1=0.8, fac, slope; // hadrons
+                double e_tmp = 1.0 * f_norm * e0, x_RGV = All.CR_global_rigidity_at_bin_center[j], a_0=0.715197, x_0=1.7, gamma_0=-2.3, gamma_1=0.8, fac, slope; // hadrons
                 if(species < 0) {a_0=0.506309; x_0=1.0; gamma_0=-0.6; gamma_1=1.3;} // leptons
-                double dlnR = log(CR_global_max_rigidity_in_bin[j]/CR_global_min_rigidity_in_bin[j]); // bin-width needed below for assignment
+                double dlnR = log(All.CR_global_max_rigidity_in_bin[j]/All.CR_global_min_rigidity_in_bin[j]); // bin-width needed below for assignment
                 double qx0=pow(x_RGV/x_0,gamma_0), qx1=pow(x_RGV/x_0,gamma_1); fac=a_0*dlnR/(qx0+qx1); slope=-(gamma_0*qx0 + gamma_1*qx1)/(qx0+qx1)-2.; // adopt an extremely simple two-power law spectrum, identical in E space for everything, except normalization, to initialize
                 //double fac = 2.3 / (pow(x_RGV,-0.6) + pow(x_RGV,0.8)), slope = (3. - 4.*pow(x_RGV,1.4)) / (5. + 5.*pow(x_RGV,1.4)) - 2.;
                 if(CR_check_if_bin_is_nonrelativistic(j)) {slope -= 1.;} // correct for NR terms

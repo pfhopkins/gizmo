@@ -235,33 +235,8 @@ extern peanokey *Key, *KeySorted;
 extern int HermiteOnlyFlag;     /*!< flag to only do Hermite integration for applicable particles (ie. stars) in the gravity routine - set =1 on the first prediction pass and =2 on the second correction pass */
 #endif
 
-#ifdef RT_CHEM_PHOTOION
-extern double rt_ion_nu_min[N_RT_FREQ_BINS];
-extern double rt_nu_eff_eV[N_RT_FREQ_BINS];
-extern double rt_ion_precalc_stellar_luminosity_fraction[N_RT_FREQ_BINS];
-extern double rt_ion_sigma_HI[N_RT_FREQ_BINS];
-extern double rt_ion_sigma_HeI[N_RT_FREQ_BINS];
-extern double rt_ion_sigma_HeII[N_RT_FREQ_BINS];
-extern double rt_ion_G_HI[N_RT_FREQ_BINS];
-extern double rt_ion_G_HeI[N_RT_FREQ_BINS];
-extern double rt_ion_G_HeII[N_RT_FREQ_BINS];
-#endif
-
-#if defined(CRFLUID_EVOLVE_SPECTRUM) /* define some global variables we will need to use semi-constantly to make reference to the CR spectra */
-extern double CR_global_min_rigidity_in_bin[N_CR_PARTICLE_BINS];
-extern double CR_global_max_rigidity_in_bin[N_CR_PARTICLE_BINS];
-extern double CR_global_rigidity_at_bin_center[N_CR_PARTICLE_BINS];
-extern double CR_global_charge_in_bin[N_CR_PARTICLE_BINS];
-extern int CR_species_ID_in_bin[N_CR_PARTICLE_BINS];
-#define N_CR_SPECTRUM_LUT 101 /*!< number of elements per bin in the look-up-tables we will pre-compute to use for inverting the energy-number relation to determine the spectral slope */
-extern double CR_global_slope_lut[N_CR_PARTICLE_BINS][N_CR_SPECTRUM_LUT]; /*!< holder for the actual look-up-tables */
-extern int CR_secondary_species_listref[N_CR_PARTICLE_SPECIES][N_CR_PARTICLE_SPECIES]; /*!< list for each type of the different secondaries to which it can decay */
-extern int CR_secondary_target_bin[N_CR_PARTICLE_BINS][N_CR_PARTICLE_SPECIES]; /*!< destination bin for the secondaries produced by different primaries */
-extern double CR_frag_secondary_coeff[N_CR_PARTICLE_BINS][N_CR_PARTICLE_SPECIES]; /*!< coefficients for fragmentation to the given secondaries (also pre-computed for simplicity) */
-extern double CR_frag_coeff[N_CR_PARTICLE_BINS]; /*!< total coefficients for fragmentation processes (pre-compute b/c cross-sections are complicated) */
-extern double CR_rad_decay_coeff[N_CR_PARTICLE_BINS]; /*!< radioactive decay coefficients (pre-computed for ease, also because of dilation dependence) */
-extern int CR_species_ID_active_list[N_CR_PARTICLE_SPECIES]; /*!< holds the list of species ids to loop over */
-#endif
+/* RT_CHEM_PHOTOION arrays and CRFLUID_EVOLVE_SPECTRUM arrays are now in the All struct
+   (global_data_all_struct.h) for GPU visibility via __managed__ All. */
 
 
 extern int MaxNodes;        /*!< maximum allowed number of internal nodes */

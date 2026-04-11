@@ -50,14 +50,14 @@ void CR_spectrum_define_bins(void)
     /* for ease-of-use purposes rather than adding a bunch of extra flags, we will use spec = -2 to signify positrons. the code will understand what to do with them and treat them with the correct charge, but its just a special
         flag. otherwise the charge should correspond to -1 for electrons, or to the fully-ionized charge of a given nucleus (e.g. its atomic number, 1=p/H, 2=He, etc. [some can have hard-coded behaviors/cross-sections below for various processes designed for their use as tracers, including e.g. 4=Be, 5=B, 6/7/8=C/N/O, etc.)
      can use some slightly-offset values if desired to hard-code special flags, or code a shared weight here [e.g. weight in amu] to represent different isotopes, if desired (e.g. 10Be vs 7Be) */
-    int ibin=0, ilast=-200; for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(ibin>=N_CR_PARTICLE_SPECIES) {continue;} else {if(spec[k] != ilast) {CR_species_ID_active_list[ibin]=spec[k]; ilast=spec[k]; ibin++;}}} /* creates list of all species here that are active */
-    for(k=0;k<N_CR_PARTICLE_BINS;k++) {CR_global_rigidity_at_bin_center[k]=R[k]; CR_global_charge_in_bin[k]=Z[k]; CR_species_ID_in_bin[k]=spec[k];}
+    int ibin=0, ilast=-200; for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(ibin>=N_CR_PARTICLE_SPECIES) {continue;} else {if(spec[k] != ilast) {All.CR_species_ID_active_list[ibin]=spec[k]; ilast=spec[k]; ibin++;}}} /* creates list of all species here that are active */
+    for(k=0;k<N_CR_PARTICLE_BINS;k++) {All.CR_global_rigidity_at_bin_center[k]=R[k]; All.CR_global_charge_in_bin[k]=Z[k]; All.CR_species_ID_in_bin[k]=spec[k];}
 
 #if 1 // (CRFLUID_EVOLVE_SPECTRUM == 2) // now even the simpler network has secondary e-, important for dense regions synchrotron
     /* note that some of our assumptions here and below are hard-coded to the fact below that the species are -ordered- in the order given by 'species list' at the top */
     int temp_species_map[100]; int min_species_id=99999, id_last=-200, n00=0, j; for(k=0;k<N_CR_PARTICLE_SPECIES;k++) {if(species_list[k]<min_species_id) {min_species_id=species_list[k];}}
     int id_map_offset=0; if(min_species_id<0) {id_map_offset=-min_species_id;}
-    for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(CR_species_ID_in_bin[k] != id_last) {id_last=CR_species_ID_in_bin[k]; temp_species_map[id_last+id_map_offset]=n00; n00++;}}
+    for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(All.CR_species_ID_in_bin[k] != id_last) {id_last=All.CR_species_ID_in_bin[k]; temp_species_map[id_last+id_map_offset]=n00; n00++;}}
     /* now species_list[temp_species_map[species_id+id_map_offset]] = species_id, useful as a lookup below */
     for(k=0;k<N_CR_PARTICLE_SPECIES;k++)
     {
@@ -72,38 +72,38 @@ void CR_spectrum_define_bins(void)
         if(primary_spec == 3 || primary_spec == 6) {secondary_spec[0]=2; secondary_spec[1]=4; if(N_CR_PARTICLE_SPECIES>2) {secondary_spec[2]=5;}} // C or CNO -> secondary B, Be-7+9, and Be-10 [also e, p, but untracked for now b/c small contributions]
         //if(primary_spec == 4) {secondary_spec[0]=-200;} // Be7+9 -> secondary p and e, [un-tracked for now, b/c small contributions]
         if(primary_spec == 5) {secondary_spec[0]=4;} // Be10 -> B10 (radioactive decay, not from fragmentation: separate vector?)
-        for(j=0;j<N_CR_PARTICLE_SPECIES;j++) {if(secondary_spec[j] > -100) {CR_secondary_species_listref[k][j] = temp_species_map[secondary_spec[j]+id_map_offset];} else {CR_secondary_species_listref[k][j]=-200;}}
+        for(j=0;j<N_CR_PARTICLE_SPECIES;j++) {if(secondary_spec[j] > -100) {All.CR_secondary_species_listref[k][j] = temp_species_map[secondary_spec[j]+id_map_offset];} else {All.CR_secondary_species_listref[k][j]=-200;}}
     }
     /* also need to figure out the 'destination bin' for each type of secondary -- we will assume nucleon-nucleon conserves energy per nucleon, while cascades to positrons and secondary electrons are treated slightly differently */
     double E_GeV[N_CR_PARTICLE_BINS], A_wt[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {E_GeV[k]=return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k); A_wt[k]=return_CRbin_CRmass_in_mp(-1,k);}
     for(k=0;k<N_CR_PARTICLE_BINS;k++)
     {
-        int primary_id = CR_species_ID_in_bin[k];
+        int primary_id = All.CR_species_ID_in_bin[k];
         int primary_listref = temp_species_map[primary_id+id_map_offset];
         for(j=0;j<N_CR_PARTICLE_SPECIES;j++)
         {
-            int secondary_listref = CR_secondary_species_listref[primary_listref][j];
-            if(secondary_listref <= -1) {CR_secondary_target_bin[k][j]=-2;}
+            int secondary_listref = All.CR_secondary_species_listref[primary_listref][j];
+            if(secondary_listref <= -1) {All.CR_secondary_target_bin[k][j]=-2;}
             else {
                 int secondary_id = species_list[secondary_listref];
                 int m, target_bin=-1; double diff_min=MAX_REAL_NUMBER, E_target_0=E_GeV[k];
                 for(m=0;m<N_CR_PARTICLE_BINS;m++)
                 {
-                    if(CR_species_ID_in_bin[m] != secondary_id) {continue;}
+                    if(All.CR_species_ID_in_bin[m] != secondary_id) {continue;}
                     double E_target = E_GeV[k] * DMAX(1.,A_wt[m]) / DMAX(1.,A_wt[k]); // fixed energy per nucleon/particle (treating e-/e+ as 1)
                     if(secondary_id < 0) {E_target *= 0.14;} // secondary e+/e- from protons (pion decay) get ~1/8 original p energy, likewise for anti-protons
                     if(secondary_id == 7) {E_target *= 0.08;} // anti-protons similar but get slightly-less energy on average [testing effects right now of this level of hair-splitting!]
                     double diff = log(E_GeV[m]/E_target); diff*=diff; // square of log-diff between energies
                     if(diff < diff_min) {diff_min=diff; target_bin=m; E_target_0=E_target;} // set to this as the 'closest' option
                 }
-                CR_secondary_target_bin[k][j]=-1; // default to no secondary bin (secondary is 'lost')
+                All.CR_secondary_target_bin[k][j]=-1; // default to no secondary bin (secondary is 'lost')
                 if(target_bin >= 0) // check if the bin is valid
                 {
                     double E_target=E_target_0, E_bin=E_GeV[target_bin], E_bin_m=E_bin, E_bin_p=E_bin; // if decay to lower energy than we track bins, the products are gone from the spectrum we follow
-                    if(target_bin>0) {if(CR_species_ID_in_bin[target_bin-1] == secondary_id) {E_bin_m=E_GeV[target_bin-1];}} // define the bin ranges that we will consider for whether the target energy fits
-                    if(target_bin<N_CR_PARTICLE_BINS-1) {if(CR_species_ID_in_bin[target_bin+1] == secondary_id) {E_bin_p=E_GeV[target_bin+1];}}
+                    if(target_bin>0) {if(All.CR_species_ID_in_bin[target_bin-1] == secondary_id) {E_bin_m=E_GeV[target_bin-1];}} // define the bin ranges that we will consider for whether the target energy fits
+                    if(target_bin<N_CR_PARTICLE_BINS-1) {if(All.CR_species_ID_in_bin[target_bin+1] == secondary_id) {E_bin_p=E_GeV[target_bin+1];}}
                     E_bin_m=sqrt(E_bin_m*E_bin); E_bin_p=sqrt(E_bin_p*E_bin); if(E_bin_m==E_bin) {E_bin_m=E_bin*(E_bin/E_bin_p)*(E_bin/E_bin_p);} else if(E_bin_p==E_bin) {E_bin_p=E_bin*(E_bin/E_bin_m)*(E_bin/E_bin_m);}
-                    if(E_target >= 0.9*E_bin_m && E_target <= 1.1*E_bin_p) {CR_secondary_target_bin[k][j] = target_bin;} // assign a destination bin
+                    if(E_target >= 0.9*E_bin_m && E_target <= 1.1*E_bin_p) {All.CR_secondary_target_bin[k][j] = target_bin;} // assign a destination bin
                 }
             }
         }
@@ -111,60 +111,60 @@ void CR_spectrum_define_bins(void)
     /* now pre-calculate the fragmentation factors and radioactive factors, all static up to their nH dependence */
     for(k=0;k<N_CR_PARTICLE_BINS;k++)
     {
-        CR_frag_coeff[k]=0; CR_rad_decay_coeff[k]=0; double beta_fac=return_CRbin_beta_factor(-1,k), cx_mb_to_coeff=3.0e-17*beta_fac; // cx_mb_to_coeff = (millibarn x c_light) * beta in cgs, to convert units to get \dot[f] = sigma*v*n*f, so prefactor is this times n in cgs
-        if(CR_species_ID_in_bin[k] == -2)
+        All.CR_frag_coeff[k]=0; All.CR_rad_decay_coeff[k]=0; double beta_fac=return_CRbin_beta_factor(-1,k), cx_mb_to_coeff=3.0e-17*beta_fac; // cx_mb_to_coeff = (millibarn x c_light) * beta in cgs, to convert units to get \dot[f] = sigma*v*n*f, so prefactor is this times n in cgs
+        if(All.CR_species_ID_in_bin[k] == -2)
         {
             double gamma_fac=return_CRbin_gamma_factor(-1,k), gamma_positron=gamma_fac, gamma_minus_1=gamma_positron-1., fac=0; // Dirac expression below considers e- at rest, which is what we're interested in here since it's e+ CRs annihilating (gamma is the gamma of the positron)
             if(gamma_minus_1 > 1.e-2) {fac=((gamma_positron*gamma_positron+4.*gamma_positron+1.)*log(gamma_positron+sqrt(gamma_positron*gamma_positron-1.))/(gamma_positron*gamma_positron-1.) - (gamma_positron+3.)/sqrt(gamma_positron*gamma_positron-1.))/(gamma_positron+1.);} else {fac=1./sqrt(2.*DMAX(gamma_minus_1,1.e-8));} // Dirac expression
-            CR_frag_coeff[k] = 7.479e-15 * beta_fac * fac; // e+ annihilation with ISM (rest) e- to gamma rays
+            All.CR_frag_coeff[k] = 7.479e-15 * beta_fac * fac; // e+ annihilation with ISM (rest) e- to gamma rays
         }
-        if(CR_species_ID_in_bin[k] == 1) {if(E_GeV[k] > 0.28) {CR_frag_coeff[k] = 6.37e-16;}} // coefficient for hadronic/catastrophic interactions/pionic losses: dEtot/dt = -(coeff) *nnucleoncgs* Etot, or dPtot/dt = -(coeff)*nnucleoncgs* Ptot (since all p effected are in rel limit, and works by deleting N not by lowering individual E. Mannheim & Schlickeiser 1994
-        if(CR_species_ID_in_bin[k] > 1) /* total fragmentation cross-section/rate, from Mannheim & Schlickeiser 1994: */
+        if(All.CR_species_ID_in_bin[k] == 1) {if(E_GeV[k] > 0.28) {All.CR_frag_coeff[k] = 6.37e-16;}} // coefficient for hadronic/catastrophic interactions/pionic losses: dEtot/dt = -(coeff) *nnucleoncgs* Etot, or dPtot/dt = -(coeff)*nnucleoncgs* Ptot (since all p effected are in rel limit, and works by deleting N not by lowering individual E. Mannheim & Schlickeiser 1994
+        if(All.CR_species_ID_in_bin[k] > 1) /* total fragmentation cross-section/rate, from Mannheim & Schlickeiser 1994: */
         {
             double sigma_frag_tot = 45. * pow(A_wt[k],0.7) * (1.+0.016*sin(1.3-2.63*log(A_wt[k])));
             if(E_GeV[k] < 2.0) {sigma_frag_tot *= (1.-0.62*exp(-E_GeV[k]/0.2)*sin(1.57553/pow(E_GeV[k],0.28)));}
-            CR_frag_coeff[k] = cx_mb_to_coeff * sigma_frag_tot; // rate depends on 'v', need to include beta here
-            if(CR_species_ID_in_bin[k] == 7) {double RGV=CR_global_rigidity_at_bin_center[k], lnR=log(RGV); CR_frag_coeff[k] = cx_mb_to_coeff * 1.5 * (-107.9 + 29.43*lnR - 1.655*lnR*lnR + 189.9/pow(RGV,1./3.));} // larger CX b/c this is anti-proton annihilation; factor ~1.5 accounts for sum of species heavier than H; from summation of cross-sections in Evoli et al. 2017 [arXiv:1711.09616]
+            All.CR_frag_coeff[k] = cx_mb_to_coeff * sigma_frag_tot; // rate depends on 'v', need to include beta here
+            if(All.CR_species_ID_in_bin[k] == 7) {double RGV=All.CR_global_rigidity_at_bin_center[k], lnR=log(RGV); All.CR_frag_coeff[k] = cx_mb_to_coeff * 1.5 * (-107.9 + 29.43*lnR - 1.655*lnR*lnR + 189.9/pow(RGV,1./3.));} // larger CX b/c this is anti-proton annihilation; factor ~1.5 accounts for sum of species heavier than H; from summation of cross-sections in Evoli et al. 2017 [arXiv:1711.09616]
         }
-        for(j=0;j<N_CR_PARTICLE_SPECIES;j++) {CR_frag_secondary_coeff[k][j]=0;} // initialize this to null
-        if(CR_frag_coeff[k] > 0) {for(j=0;j<N_CR_PARTICLE_SPECIES;j++) {if(CR_secondary_target_bin[k][j] >= 0) // desired secondary products exist
+        for(j=0;j<N_CR_PARTICLE_SPECIES;j++) {All.CR_frag_secondary_coeff[k][j]=0;} // initialize this to null
+        if(All.CR_frag_coeff[k] > 0) {for(j=0;j<N_CR_PARTICLE_SPECIES;j++) {if(All.CR_secondary_target_bin[k][j] >= 0) // desired secondary products exist
             {
                 double x=DMAX(-2.,DMIN(2.,log10(E_GeV[k]))); // used in some of the fitting functions below
-                int primary_id = CR_species_ID_in_bin[k], secondary_id = CR_species_ID_in_bin[CR_secondary_target_bin[k][j]];
+                int primary_id = All.CR_species_ID_in_bin[k], secondary_id = All.CR_species_ID_in_bin[All.CR_secondary_target_bin[k][j]];
                 //if((primary_id == 5) && (secondary_id == 4)) {} // Be10->B10 (radioactive - frag probability is null) //
                 if(primary_id==1) { // p; assume some simple branching ratios for pion production in the relevant regime above
-                    if(secondary_id==-1) {CR_frag_secondary_coeff[k][j] = (1./3.) * CR_frag_coeff[k];} // p->e-
-                    if(secondary_id==-2) {CR_frag_secondary_coeff[k][j] = (1./3.) * CR_frag_coeff[k];} // p->e+
-                    if(secondary_id== 7) {if(E_GeV[k]>=2.) {double sqrt_s=1.87654*sqrt(1.+E_GeV[k]/1.87654); CR_frag_secondary_coeff[k][j]=cx_mb_to_coeff * 1.4*pow(sqrt_s,0.6)*exp(-pow(17./sqrt_s,1.4));}} // p->pbar [anti-proton production; multiplied by 2x here to include anti-neutrons that decay rapidly to anti-p]. fit to integrated-over-pT results from Reinert & Winkler 2017, arXiv:1712.00002
+                    if(secondary_id==-1) {All.CR_frag_secondary_coeff[k][j] = (1./3.) * All.CR_frag_coeff[k];} // p->e-
+                    if(secondary_id==-2) {All.CR_frag_secondary_coeff[k][j] = (1./3.) * All.CR_frag_coeff[k];} // p->e+
+                    if(secondary_id== 7) {if(E_GeV[k]>=2.) {double sqrt_s=1.87654*sqrt(1.+E_GeV[k]/1.87654); All.CR_frag_secondary_coeff[k][j]=cx_mb_to_coeff * 1.4*pow(sqrt_s,0.6)*exp(-pow(17./sqrt_s,1.4));}} // p->pbar [anti-proton production; multiplied by 2x here to include anti-neutrons that decay rapidly to anti-p]. fit to integrated-over-pT results from Reinert & Winkler 2017, arXiv:1712.00002
                 }
                 if(primary_id==2) { // B; fitting function to the results compiled and re-fit in Moskalenko & Mashnik 2003 (used for GALPROP), doing a solar-abundance-ratio weighted average over CNO, and summing over the relevant isotopes
-                    if(secondary_id==4) {CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * 12.0 * pow(E_GeV[k],-0.022);} // B->Be9 (declines weakly from ~14 to ~10 over MeV-TeV, approx here)
-                    if(secondary_id==5) {CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * 12.5 * pow(E_GeV[k], 0.018);} // B->Be10 (increases weakly from 11 to 14 over MeV-TeV, approx here)
+                    if(secondary_id==4) {All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * 12.0 * pow(E_GeV[k],-0.022);} // B->Be9 (declines weakly from ~14 to ~10 over MeV-TeV, approx here)
+                    if(secondary_id==5) {All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * 12.5 * pow(E_GeV[k], 0.018);} // B->Be10 (increases weakly from 11 to 14 over MeV-TeV, approx here)
                 }
                 if(primary_id==3) { // C; fitting function to the results compiled and re-fit in Moskalenko & Mashnik 2003 (used for GALPROP), doing a solar-abundance-ratio weighted average over CNO, and summing over the relevant isotopes
                     if(secondary_id==2) { // C->B
-                        CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10.,1.88490356 -0.05648715*x -0.13108485*x*x +0.11340508*x*x*x +0.08119785*x*x*x*x -0.06574148*x*x*x*x*x -0.01159932*x*x*x*x*x*x +0.00962035*x*x*x*x*x*x*x +0.23395042856711876*exp(-10.8066678706701*(x+1.24740008)*(x+1.24740008)));
+                        All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10.,1.88490356 -0.05648715*x -0.13108485*x*x +0.11340508*x*x*x +0.08119785*x*x*x*x -0.06574148*x*x*x*x*x -0.01159932*x*x*x*x*x*x +0.00962035*x*x*x*x*x*x*x +0.23395042856711876*exp(-10.8066678706701*(x+1.24740008)*(x+1.24740008)));
                     }
                     if(secondary_id==4) { // C->Be7+9
-                        CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10.,1.18321683 +0.11629153*x +0.01653084*x*x -0.11321897*x*x*x -0.03375688*x*x*x*x +0.05771537*x*x*x*x*x +0.00684962*x*x*x*x*x*x -0.00876353*x*x*x*x*x*x*x +0.40590023164209293*exp(-17.1253106513537*(x+1.28525319)*(x+1.28525319)));
+                        All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10.,1.18321683 +0.11629153*x +0.01653084*x*x -0.11321897*x*x*x -0.03375688*x*x*x*x +0.05771537*x*x*x*x*x +0.00684962*x*x*x*x*x*x -0.00876353*x*x*x*x*x*x*x +0.40590023164209293*exp(-17.1253106513537*(x+1.28525319)*(x+1.28525319)));
                     }
                     if(secondary_id==5) { // C->Be10
-                        CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * (0.10757855 + pow(10., 0.53413363 +0.38478345*x -0.51584177*x*x -0.22611016*x*x*x +0.51009595*x*x*x*x +0.04492848*x*x*x*x*x -0.23828966*x*x*x*x*x*x +0.06889871*x*x*x*x*x*x*x));
+                        All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * (0.10757855 + pow(10., 0.53413363 +0.38478345*x -0.51584177*x*x -0.22611016*x*x*x +0.51009595*x*x*x*x +0.04492848*x*x*x*x*x -0.23828966*x*x*x*x*x*x +0.06889871*x*x*x*x*x*x*x));
                     }
                 }
                 if(primary_id==6) { // CNO effective bin; fitting function to the results compiled and re-fit in Moskalenko & Mashnik 2003 (used for GALPROP), doing a solar-abundance-ratio weighted average over CNO, and summing over the relevant isotopes
                     if(secondary_id==2) { // CNO->B
-                        CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10., 1.71801936 - 0.03475011*x -0.09856187*x*x +0.12369455*x*x*x +0.02958446*x*x*x*x -0.05273341*x*x*x*x*x -0.00223893*x*x*x*x*x*x +0.00639451*x*x*x*x*x*x*x + 0.464605776*exp(-17.769530*(x+1.23499649)*(x+1.23499649)) );}
+                        All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10., 1.71801936 - 0.03475011*x -0.09856187*x*x +0.12369455*x*x*x +0.02958446*x*x*x*x -0.05273341*x*x*x*x*x -0.00223893*x*x*x*x*x*x +0.00639451*x*x*x*x*x*x*x + 0.464605776*exp(-17.769530*(x+1.23499649)*(x+1.23499649)) );}
                     if(secondary_id==4) { // CNO->Be7+9 // (could also use CNO->Be9 (not really a point here explicitly tracking Be7), but including all here since closer to what is actually observed)
-                        CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10., 1.16648147  +0.09557578*x -0.17970136*x*x +0.06823829*x*x*x +0.04448299*x*x*x*x -0.02883429*x*x*x*x*x -0.00274047*x*x*x*x*x*x +0.00286316*x*x*x*x*x*x*x + 0.476812578*exp(-14.203615*(x+1.21352966)*(x+1.21352966)) );}
+                        All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * pow(10., 1.16648147  +0.09557578*x -0.17970136*x*x +0.06823829*x*x*x +0.04448299*x*x*x*x -0.02883429*x*x*x*x*x -0.00274047*x*x*x*x*x*x +0.00286316*x*x*x*x*x*x*x + 0.476812578*exp(-14.203615*(x+1.21352966)*(x+1.21352966)) );}
                     if(secondary_id==5) { // CNO->Be10
-                        CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * (0.073388 + pow(10., 0.454778746 + 0.349074384*x -0.684152925*x*x -0.153016497*x*x*x +0.657169204*x*x*x*x +8.06147155e-04*x*x*x*x*x -0.296932460*x*x*x*x*x*x +0.0918014184*x*x*x*x*x*x*x ));}
+                        All.CR_frag_secondary_coeff[k][j] = cx_mb_to_coeff * (0.073388 + pow(10., 0.454778746 + 0.349074384*x -0.684152925*x*x -0.153016497*x*x*x +0.657169204*x*x*x*x +8.06147155e-04*x*x*x*x*x -0.296932460*x*x*x*x*x*x +0.0918014184*x*x*x*x*x*x*x ));}
                 }
             }}}
         
         double r_decay = 0; // default to assume no radioactive decay
-        if(CR_species_ID_in_bin[k] == 5) {r_decay = 1.455e-14;} // Be10 -> B10
-        if(r_decay > 0) {CR_rad_decay_coeff[k] = r_decay / return_CRbin_gamma_factor(-1,k);} // need to account for the fact that relativistic time dilation extends the lifetimes of highly relativistic sources
+        if(All.CR_species_ID_in_bin[k] == 5) {r_decay = 1.455e-14;} // Be10 -> B10
+        if(r_decay > 0) {All.CR_rad_decay_coeff[k] = r_decay / return_CRbin_gamma_factor(-1,k);} // need to account for the fact that relativistic time dilation extends the lifetimes of highly relativistic sources
     }
 #endif
 }
@@ -194,7 +194,7 @@ double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, doubl
     //if(species < 0 && R < R_break_e) {inj_slope = inj_slope_lowE_e;} // follow model injection spectra favored in Strong et al. 2011 (A+A, 534, A54), who argue the low-energy e- injection spectrum must break to a lower slope by ~1 independent of propagation and re-acceleration model
     if(species > -200 && R < R_break_e) {inj_slope = inj_slope_lowE_e;} // follow model injection spectra favored in Strong et al. 2011 (A+A, 534, A54), who argue the low-energy e- injection spectrum must break to a lower slope by ~1 independent of propagation and re-acceleration model
     double EGeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy); // get bin-centered E_GeV for normalizing total energy in bin
-    f_bin = EGeV * pow(R/R_break_e , 3.-inj_slope) * log(CR_global_max_rigidity_in_bin[k_CRegy] / CR_global_min_rigidity_in_bin[k_CRegy]); // normalize accounting for slope, isotropic spectrum, logarithmic bin width [which can vary], and energy per N
+    f_bin = EGeV * pow(R/R_break_e , 3.-inj_slope) * log(All.CR_global_max_rigidity_in_bin[k_CRegy] / All.CR_global_min_rigidity_in_bin[k_CRegy]); // normalize accounting for slope, isotropic spectrum, logarithmic bin width [which can vary], and energy per N
 
     if(return_index_in_bin) {return 2.-inj_slope;} // this is the index corresponding to our dN/dp ~ p^gamma
     double f_norm = 1.e-20; // default to very little energy
@@ -230,7 +230,7 @@ double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_d
     double dimensionless_kappa_relative_to_GV_protons = 1;
 #if (N_CR_PARTICLE_BINS > 1)    /* insert physics here */
     int target_bin_centering_for_CR_quantities = -1; // the correction terms depend on these being evaluated at their bin-centered locations
-    dimensionless_kappa_relative_to_GV_protons = return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy) * pow( CR_global_min_rigidity_in_bin[k_CRegy]*CR_global_max_rigidity_in_bin[k_CRegy] , 0.5 * 0.6 ); // assume a quasi-empirical scaling here, and for these correction terms its important that the 'bin center' being used for the zero point here is the geometric mean of the bin edges, hence the 0.5 term b/c geometric mean is sqrt[min*max] //
+    dimensionless_kappa_relative_to_GV_protons = return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy) * pow( All.CR_global_min_rigidity_in_bin[k_CRegy]*All.CR_global_max_rigidity_in_bin[k_CRegy] , 0.5 * 0.6 ); // assume a quasi-empirical scaling here, and for these correction terms its important that the 'bin center' being used for the zero point here is the geometric mean of the bin edges, hence the 0.5 term b/c geometric mean is sqrt[min*max] //
 #endif
     return All.CosmicRayDiffusionCoeff * dimensionless_kappa_relative_to_GV_protons;
 }
@@ -266,10 +266,10 @@ double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy,
     B2=b0.norm_sq(); e_B=cell[target].Pressure*All.cf_a3inv; b0/=sqrt(B2+MIN_REAL_NUMBER); // calculate B-field energy and bhat vector
 #endif
 #ifdef CRFLUID_EVOLVE_SPECTRUM
-    double R0_m=CR_global_min_rigidity_in_bin[k_CRegy], R0_p=CR_global_max_rigidity_in_bin[k_CRegy];  // e_CR is in bin, but doesn't take account of bin width; needed only for NLL, want to include CRs 'close' to energy but not all b/c non-resonant, but don't want bin-size dependent, so replace with ~constant * de_cr / dlnR, which works pretty well
+    double R0_m=All.CR_global_min_rigidity_in_bin[k_CRegy], R0_p=All.CR_global_max_rigidity_in_bin[k_CRegy];  // e_CR is in bin, but doesn't take account of bin width; needed only for NLL, want to include CRs 'close' to energy but not all b/c non-resonant, but don't want bin-size dependent, so replace with ~constant * de_cr / dlnR, which works pretty well
     double fac_dXdlnR = 1.0 / log(R0_p/R0_m); // factor to multiply by to account for 'width' of gyro-resonance
     for(k=0;k<N_CR_PARTICLE_BINS;k++) {
-        double R0_k=CR_global_rigidity_at_bin_center[k];
+        double R0_k=All.CR_global_rigidity_at_bin_center[k];
         if(R0_k>R0_m && R0_k<R0_p) {
             e_CR += cell[target].CosmicRayEnergyPred[k] * fac_dXdlnR * vol_inv; // convert to energy density units
             p0 += cell[target].Gradients.CosmicRayPressure[k] * (fac_dXdlnR * All.cf_a3inv/All.cf_atime); // convert to appropriate physical units
@@ -531,14 +531,14 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
         double dEcr = evaluate_cr_transport_reductionfactor(target, k_CRegy, 0, cell) * CR_energy_to_inject * f_injected[k_CRegy]; // normalized properly to sum to unity, and account for RSOL in injection rate [akin to RHD treatment]
         if(dEcr <= 0) {continue;}
 #if defined(CRFLUID_EVOLVE_SPECTRUM) // update the evolved slopes with the injection spectrum slope: do a simple energy-weighted mean for the updated/mixed slope here
-        double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy), egy_slopemode = 1, xm = CR_global_min_rigidity_in_bin[k_CRegy] / CR_global_rigidity_at_bin_center[k_CRegy], xp = CR_global_max_rigidity_in_bin[k_CRegy] / CR_global_rigidity_at_bin_center[k_CRegy], xm_e=xm, xp_e=xp; // values needed for bin injection parameters
+        double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy), egy_slopemode = 1, xm = All.CR_global_min_rigidity_in_bin[k_CRegy] / All.CR_global_rigidity_at_bin_center[k_CRegy], xp = All.CR_global_max_rigidity_in_bin[k_CRegy] / All.CR_global_rigidity_at_bin_center[k_CRegy], xm_e=xm, xp_e=xp; // values needed for bin injection parameters
         if(CR_check_if_bin_is_nonrelativistic(k_CRegy)) {egy_slopemode=2; xm_e=xm*xm; xp_e=xp*xp;} // values needed to scale from slope injected to number and back
         double slope_inj = CR_energy_spectrum_injection_fraction(k_CRegy,source_type,injection_velocity,1,target, P, CellP); // spectral slope of injected CRs
 #if defined(CRFLUID_ALT_RSOL_FORM) && defined(CRFLUID_ALT_VARIABLE_RSOL) // want to correct injection slope if we're modulating injection with a variable Psi-type rsol function or variable-rsol
         if(k_CRegy>0) {int spec_0=return_CRbin_CR_species_ID(k_CRegy), spec_m=return_CRbin_CR_species_ID(k_CRegy-1), spec_p=-200; if(spec_m==spec_0) {
-            double rfac_0=evaluate_cr_transport_reductionfactor(target,k_CRegy,0, cell), rfac_m=evaluate_cr_transport_reductionfactor(target,k_CRegy-1,0), rfac_p=rfac_0, R_0=CR_global_rigidity_at_bin_center[k_CRegy], R_m=CR_global_rigidity_at_bin_center[k_CRegy-1], R_p=R_0;
+            double rfac_0=evaluate_cr_transport_reductionfactor(target,k_CRegy,0, cell), rfac_m=evaluate_cr_transport_reductionfactor(target,k_CRegy-1,0), rfac_p=rfac_0, R_0=All.CR_global_rigidity_at_bin_center[k_CRegy], R_m=All.CR_global_rigidity_at_bin_center[k_CRegy-1], R_p=R_0;
             if(k_CRegy<N_CR_PARTICLE_BINS) {spec_p=return_CRbin_CR_species_ID(k_CRegy+1);}
-            if(spec_p==spec_0) {rfac_p=evaluate_cr_transport_reductionfactor(target,k_CRegy+1,0, cell); R_p=CR_global_rigidity_at_bin_center[k_CRegy+1];
+            if(spec_p==spec_0) {rfac_p=evaluate_cr_transport_reductionfactor(target,k_CRegy+1,0, cell); R_p=All.CR_global_rigidity_at_bin_center[k_CRegy+1];
                 double xm=log(R_m/R_0),xp=log(R_p/R_0),qm=log(rfac_m/rfac_0),qp=log(rfac_p/rfac_0); slope_inj += (qm*xm + qp*xp) / (xm*xm + xp*xp);} else {slope_inj += log(rfac_0/rfac_m) / log(R_0/R_m);}}} // not clear if actually improves accuracy by substantial margin here, vs letting code self-adjust in next timestep
 #endif
         double gamma_one = slope_inj + 1., xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one); // variables below
@@ -656,10 +656,10 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         double flux_diff=sqrt(dt_f_m), flux_stream=fabs(rsol_correction_factor*v_Alfven*(GAMMA_COSMICRAY(k_CRegy)*eCR)); // estimate contribution to flux from both diffusive and streaming components
         double frac_diff=flux_diff/(flux_diff+flux_stream); // fraction of flux from diffusive term
         double alpha_v=0.,alpha_qN=0.,alpha_qE=1.,alpha_nu=-0.6,alpha_L=0.,alpha_f0=CR_return_spectral_slope_target(i,k_CRegy, cell); // values of coefficients: replace hard-coded alpha_nu with lookup to actual function numerically, below
-        double xi = CR_global_max_rigidity_in_bin[k_CRegy] / CR_global_min_rigidity_in_bin[k_CRegy]; // bin width in our units
+        double xi = All.CR_global_max_rigidity_in_bin[k_CRegy] / All.CR_global_min_rigidity_in_bin[k_CRegy]; // bin width in our units
         int kCR_p=k_CRegy, kCR_m=k_CRegy-1; // want two neighboring bins with same species
-        if(k_CRegy<N_CR_PARTICLE_BINS-1) {if(CR_species_ID_in_bin[k_CRegy+1]==CR_species_ID_in_bin[k_CRegy]) {kCR_m++; kCR_p++;}} // check if can use this and next, or use this and below
-        double xi_pm = sqrt((CR_global_min_rigidity_in_bin[kCR_p]*CR_global_max_rigidity_in_bin[kCR_p])/(CR_global_min_rigidity_in_bin[kCR_m]*CR_global_max_rigidity_in_bin[kCR_m])); // bin ratio to next bin for numerical derivative (being careful to follow our convention of defining these at the geometric mean)
+        if(k_CRegy<N_CR_PARTICLE_BINS-1) {if(All.CR_species_ID_in_bin[k_CRegy+1]==All.CR_species_ID_in_bin[k_CRegy]) {kCR_m++; kCR_p++;}} // check if can use this and next, or use this and below
+        double xi_pm = sqrt((All.CR_global_min_rigidity_in_bin[kCR_p]*All.CR_global_max_rigidity_in_bin[kCR_p])/(All.CR_global_min_rigidity_in_bin[kCR_m]*All.CR_global_max_rigidity_in_bin[kCR_m])); // bin ratio to next bin for numerical derivative (being careful to follow our convention of defining these at the geometric mean)
         double beta_k =return_CRbin_beta_factor(-1,k_CRegy), beta_p=return_CRbin_beta_factor(-1,kCR_p), beta_m=return_CRbin_beta_factor(-1,kCR_m); // get beta factors needed to go between scattering rates and diffusivities
         alpha_nu = log((beta_p*beta_p/cell[i].CosmicRayDiffusionCoeff[kCR_p]) / (beta_m*beta_m/cell[i].CosmicRayDiffusionCoeff[kCR_m])) / log(xi_pm); // numerically calculate the slope of the scattering-rate dependence for any functional form
         if(CR_check_if_bin_is_nonrelativistic(k_CRegy)) {alpha_v=1.; alpha_qE=2.;} // correct to non-relativistic values as needed
@@ -723,7 +723,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         if(mode==0) // only update on kicks, since we worth with a drift-conserved slope determining the ratio of N and E
         {
             double dN = cell[i].DtCosmicRay_Number_in_Bin[k_CRegy]*dt_entr, n0 = cell[i].CosmicRay_Number_in_Bin[k_CRegy], n_new = n0+dN;
-            double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy), xm = CR_global_min_rigidity_in_bin[k] / CR_global_rigidity_at_bin_center[k], xp = CR_global_max_rigidity_in_bin[k] / CR_global_rigidity_at_bin_center[k], xm_e=xm, xp_e=xp;
+            double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy), xm = All.CR_global_min_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k], xp = All.CR_global_max_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k], xm_e=xm, xp_e=xp;
             if(CR_check_if_bin_is_nonrelativistic(k_CRegy)) {xm_e = xm*xm; xp_e = xp*xp;} // extra power of p in energy equation accounted for here, all that's needed
             double N_min = eCR_tmp / (E_GeV * xp_e * (1.-1.e-4)); // even with arbitrarily large slopes we cannot exceed this limit: all CRs 'piled up' at highest energy
             double N_max = eCR_tmp / (E_GeV * xm_e * (1.+1.e-4)); // even with arbitrarily large slopes we cannot exceed this limit: all CRs 'piled up' at lowest energy
@@ -789,12 +789,12 @@ void CR_initialize_multibin_quantities(void)
     if(ThisTask==0) {printf("Initializing global cosmic ray spectral variables:\n"); fflush(stdout);}
     int k; CR_spectrum_define_bins(); // call this to define the actual list of bins, needs to be done before basically anything else!
     double R0[N_CR_PARTICLE_BINS], Z[N_CR_PARTICLE_BINS];
-    for(k=0;k<N_CR_PARTICLE_BINS;k++) {R0[k]=CR_global_rigidity_at_bin_center[k]; Z[k]=return_CRbin_CR_charge_in_e(-1,k);}
+    for(k=0;k<N_CR_PARTICLE_BINS;k++) {R0[k]=All.CR_global_rigidity_at_bin_center[k]; Z[k]=return_CRbin_CR_charge_in_e(-1,k);}
     double R0_bins[N_CR_PARTICLE_BINS], R0_bin_m[N_CR_PARTICLE_BINS], R0_bin_p[N_CR_PARTICLE_BINS];
     int cr_species_key; for(cr_species_key=0;cr_species_key<N_CR_PARTICLE_SPECIES;cr_species_key++) // loop over whether we consider nuclei or electrons, first //
     {
        int n_active=0, bins_sorted[N_CR_PARTICLE_BINS];
-       for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(CR_species_ID_in_bin[k]==CR_species_ID_active_list[cr_species_key]) {bins_sorted[n_active]=k; R0_bins[n_active]=R0[k]; n_active++;}} // bin is valid: charge matches that desired
+       for(k=0;k<N_CR_PARTICLE_BINS;k++) {if(All.CR_species_ID_in_bin[k]==All.CR_species_ID_active_list[cr_species_key]) {bins_sorted[n_active]=k; R0_bins[n_active]=R0[k]; n_active++;}} // bin is valid: charge matches that desired
        if(n_active<=0) {continue;} // nothing to do here
        if(n_active<N_CR_PARTICLE_BINS) {for(k=n_active;k<N_CR_PARTICLE_BINS;k++) {R0_bins[k]=MAX_REAL_NUMBER;}} // set a dummy value here for sorting purposes below
        //qsort(bins_sorted, n_active, sizeof(int), compare_CR_rigidity_for_sort); // sort on energies from smallest-to-largest [this is hard-coded by requiring the list go in monotonic increasing order for e and p, regardless of how the e and p are themselves ordered //
@@ -808,15 +808,15 @@ void CR_initialize_multibin_quantities(void)
            if(j_p==j) {R0_bin_p[j] = R0[j] * pow(R0[j]/R0_bin_m[j], 2);} // highest bin gets 'padded' in the large-R direction [extends 2x as far in log-space]
        }
     }
-    for(k=0;k<N_CR_PARTICLE_BINS;k++) {CR_global_min_rigidity_in_bin[k] = R0_bin_m[k]; CR_global_max_rigidity_in_bin[k] = R0_bin_p[k];} // set the variables we just defined
+    for(k=0;k<N_CR_PARTICLE_BINS;k++) {All.CR_global_min_rigidity_in_bin[k] = R0_bin_m[k]; All.CR_global_max_rigidity_in_bin[k] = R0_bin_p[k];} // set the variables we just defined
 
     /* ok, now we need to build the lookup tables */
     double gamma_limit = 120.;
     int n_gamma_sample = 10000, n_table = N_CR_SPECTRUM_LUT-1;
     for(k=0;k<N_CR_PARTICLE_BINS;k++)
     {
-        double xm = CR_global_min_rigidity_in_bin[k] / CR_global_rigidity_at_bin_center[k]; // dimensionless bin minimum
-        double xp = CR_global_max_rigidity_in_bin[k] / CR_global_rigidity_at_bin_center[k]; // dimensionless bin maximum
+        double xm = All.CR_global_min_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k]; // dimensionless bin minimum
+        double xp = All.CR_global_max_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k]; // dimensionless bin maximum
         double p_power_in_e = 1., xm_e = xm, xp_e = xp; // define variables used below
         if(CR_check_if_bin_is_nonrelativistic(k)) {p_power_in_e = 2.; xm_e = xm*xm; xp_e = xp*xp;} // extra power of p in momentum equation accounted for here, all that's needed
         double gamma_min = -gamma_limit, gamma_max = gamma_limit, d_gamma = (gamma_max-gamma_min) / ((double)n_gamma_sample); int j;
@@ -830,8 +830,8 @@ void CR_initialize_multibin_quantities(void)
             if((int)R_index >= j)
             {
                 double slope_gamma = gamma + (gamma-gamma_prev) * (((double)j) - R_index) / (R_index - R_index_prev); // linearly interpolate between this and previous step to 'exact' gamma giving desired R
-                if(j==1 && slope_gamma < gamma_min) {CR_global_slope_lut[k][j-1] = slope_gamma + gamma_min;}
-                CR_global_slope_lut[k][j] = slope_gamma; // set the look-up-table value for use later
+                if(j==1 && slope_gamma < gamma_min) {All.CR_global_slope_lut[k][j-1] = slope_gamma + gamma_min;}
+                All.CR_global_slope_lut[k][j] = slope_gamma; // set the look-up-table value for use later
                 j++; // move to look for next target bin
             }
             if(j >= n_table) {alldone_key=1; break;} // dont need to continue loop, we've filled in all values desired here //
@@ -843,17 +843,17 @@ void CR_initialize_multibin_quantities(void)
             badval=-2; if(fabs(gamma - badval) < tol) {if(gamma<badval) {gamma=badval-tol;} else {gamma=badval+tol;}}
             badval=-3; if(fabs(gamma - badval) < tol) {if(gamma<badval) {gamma=badval-tol;} else {gamma=badval+tol;}}
         }
-        if(alldone_key==0 && j<n_table) {int j0=j-1; for(j=j0+1;j<N_CR_SPECTRUM_LUT;j++) {CR_global_slope_lut[k][j]=CR_global_slope_lut[k][j0]+(j-j0)*DMIN(gamma_limit,fabs(gamma_limit-CR_global_slope_lut[k][j0]));}}
-            else {CR_global_slope_lut[k][N_CR_SPECTRUM_LUT-1]=gamma_limit;} // set upper end of table value to unity
+        if(alldone_key==0 && j<n_table) {int j0=j-1; for(j=j0+1;j<N_CR_SPECTRUM_LUT;j++) {All.CR_global_slope_lut[k][j]=All.CR_global_slope_lut[k][j0]+(j-j0)*DMIN(gamma_limit,fabs(gamma_limit-All.CR_global_slope_lut[k][j0]));}}
+            else {All.CR_global_slope_lut[k][N_CR_SPECTRUM_LUT-1]=gamma_limit;} // set upper end of table value to unity
     }
     
     if(ThisTask==0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) { // print outputs for users
         printf("\n .. bin=%d, charge=%g e, mass=%g mp, rigidity Rmin=%g R0=%g Rmax=%g GV, energy=%g GeV, relativistic?=%d [1=Y/0=N] beta=%g gamma=%g \n",
-           k,return_CRbin_CR_charge_in_e(-1,k),return_CRbin_CRmass_in_mp(-1,k),CR_global_min_rigidity_in_bin[k],CR_global_rigidity_at_bin_center[k],
-           CR_global_max_rigidity_in_bin[k],return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k),1-CR_check_if_bin_is_nonrelativistic(k),return_CRbin_beta_factor(-1,k),
+           k,return_CRbin_CR_charge_in_e(-1,k),return_CRbin_CRmass_in_mp(-1,k),All.CR_global_min_rigidity_in_bin[k],All.CR_global_rigidity_at_bin_center[k],
+           All.CR_global_max_rigidity_in_bin[k],return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k),1-CR_check_if_bin_is_nonrelativistic(k),return_CRbin_beta_factor(-1,k),
            return_CRbin_gamma_factor(-1,k)); fflush(stdout);
         printf(" .. LUT for CR slopes in this bin: \n"); printf("  .. j  .. R_egy/num .. gamma \n");
-        int j; for(j=0;j<N_CR_SPECTRUM_LUT;j++) {printf("  .. %4d  %5.4g %10.3g \n",j,((double)j)/((double)n_table),CR_global_slope_lut[k][j]); fflush(stdout);}
+        int j; for(j=0;j<N_CR_SPECTRUM_LUT;j++) {printf("  .. %4d  %5.4g %10.3g \n",j,((double)j)/((double)n_table),All.CR_global_slope_lut[k][j]); fflush(stdout);}
     }}
     
     return;
@@ -907,8 +907,8 @@ double CR_get_number_in_bin_from_slope(int target, int k_bin, double energy, dou
     double etot = energy;
     double gamma_one = 1. + slope;
     double E_bin_center = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_bin);
-    double xm = CR_global_min_rigidity_in_bin[k_bin] / CR_global_rigidity_at_bin_center[k_bin];
-    double xp = CR_global_max_rigidity_in_bin[k_bin] / CR_global_rigidity_at_bin_center[k_bin];
+    double xm = All.CR_global_min_rigidity_in_bin[k_bin] / All.CR_global_rigidity_at_bin_center[k_bin];
+    double xp = All.CR_global_max_rigidity_in_bin[k_bin] / All.CR_global_rigidity_at_bin_center[k_bin];
     double xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
     int NR_key = CR_check_if_bin_is_nonrelativistic(k_bin);
     double gamma_fac = 0; // factor to get total number in bin. we use the slope we obtain to convert between number and energy, given the bin-centered values
@@ -932,7 +932,7 @@ double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_ce
 {
     double slope = CR_return_spectral_slope_target(target, k_bin, cell);
     double gamma_one = 1. + slope;
-    double R0 = CR_global_rigidity_at_bin_center[k_bin], xm = CR_global_min_rigidity_in_bin[k_bin] / R0, xp = CR_global_max_rigidity_in_bin[k_bin] / R0, xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
+    double R0 = All.CR_global_rigidity_at_bin_center[k_bin], xm = All.CR_global_min_rigidity_in_bin[k_bin] / R0, xp = All.CR_global_max_rigidity_in_bin[k_bin] / R0, xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
     double gamma_fac = (gamma_one/(gamma_one+1.)) * (xp_gamma_one*xp - xm_gamma_one*xm) / (xp_gamma_one - xm_gamma_one); // dimensionless term from weighted integral over the bin
     return R0 * gamma_fac; // returns value appropriately weighted over the bin
 }
@@ -941,8 +941,8 @@ double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_ce
 /* sort function if we need to sort CR bins by rigidity from lowest to highest for future compatibility */
 int compare_CR_rigidity_for_sort(const void *a, const void *b)
 {
-    double x = CR_global_rigidity_at_bin_center[ *(int *) a];
-    double y = CR_global_rigidity_at_bin_center[ *(int *) b];
+    double x = All.CR_global_rigidity_at_bin_center[ *(int *) a];
+    double y = All.CR_global_rigidity_at_bin_center[ *(int *) b];
     if (x < y) {return -1;} else if(x > y) {return 1;}
     return 0;
 }
@@ -959,7 +959,7 @@ double return_CRbin_M1speed(int k_CRegy)
 {
     double vmax = CRFLUID_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE;
 #if defined(CRFLUID_ALT_VARIABLE_RSOL) && (N_CR_PARTICLE_BINS > 1)    /* experimental block here */
-    double R = CR_global_rigidity_at_bin_center[k_CRegy];
+    double R = All.CR_global_rigidity_at_bin_center[k_CRegy];
     double f = All.CosmicRayDiffusionCoeff * UNIT_LENGTH_IN_KPC * pow(R , 0.8);
     if(f > vmax) {return f;}
 #endif
