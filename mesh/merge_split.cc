@@ -666,9 +666,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
             dx=d_r*dp[0]; dy=d_r*dp[1]; dz=d_r*dp[2];
         }
 #endif
-#ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
-        P[i].wakeup = -1; P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
-#endif
+        P[i].wakeup = -1; P[j].wakeup = -1; NeedToWakeupParticles_local = 1; /* rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
 
     } // closes special operations required only of gas particles
 
@@ -793,9 +791,7 @@ int merge_particles_ij(int i, int j)
     double mass_before_merger_i,mass_before_merger_j,volume_before_merger_i,volume_before_merger_j; mass_before_merger_i=P[i].Mass; mass_before_merger_j=P[j].Mass; volume_before_merger_i=P[i].Mass/CellP[i].Density; volume_before_merger_j=P[j].Mass/CellP[j].Density; // save some numbers for potential use below
     if(P[i].TimeBin < P[j].TimeBin)
     {
-#ifdef WAKEUP
         P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
-#endif
     }
     double dm_i=0,dm_j=0,de_i=0,de_j=0,dm_ij,de_ij;
     Vec3<double> dp_i{}, dp_j{}, dp_ij{};

@@ -201,15 +201,9 @@ void find_timesteps(void)
             P[i].TimeBin = bin;
         }
 
-#ifndef WAKEUP
-        ti_step_old = GET_INTEGERTIME_FROM_TIMEBIN(binold);
-#else
         ti_step_old = P[i].dt_step;
-#endif
         P[i].Ti_begstep += ti_step_old;
-#if defined(WAKEUP)
         P[i].dt_step = ti_step;
-#endif
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[i].Type == 5){
             if(All.Ti_Current == 0) { // first timestep
@@ -270,9 +264,7 @@ void find_timesteps(void)
     }
 #endif
 
-#ifdef WAKEUP
     process_wake_ups();
-#endif
 
     CPU_Step[CPU_TIMELINE] += measure_time();
 }
@@ -1277,7 +1269,6 @@ int get_timestep_bin(integertime ti_step)
 
 
 
-#ifdef WAKEUP
 void process_wake_ups(void)
 {
     int i, n, max_time_bin_active, bin, binold, prev, next; long long ntot;
@@ -1396,7 +1387,6 @@ void process_wake_ups(void)
     NeedToWakeupParticles = 0;
     NeedToWakeupParticles_local = 0;
 }
-#endif
 
 
 
@@ -1471,40 +1461,12 @@ double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp
 #endif
 }
 
-/* ---- BEGIN device-compilable timestep functions (for OPENMP_GPU_OFFLOAD cooling loop) ---- */
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp begin declare target
-#endif
-
-double timestep_dilation_factor(int i, int mode, struct particle_data *pp)
-{
-#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
-    return return_timestep_dilation_factor(i, mode, pp);
-#else
-    return 1;
-#endif
-}
-
-/* timestep utility functions — replacements for macros formerly in macros.h */
-double unit_integertime_in_physical(int i, struct particle_data *pp)
-{
-    return (All.Timebase_interval / All.cf_hubble_a) * timestep_dilation_factor(i, 0, pp);
-}
-
-double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp)
-{
-    return GET_INTEGERTIME_FROM_TIMEBIN(bin) * unit_integertime_in_physical(i, pp);
-}
-
-double get_particle_timestep_in_physical(int i, struct particle_data *pp)
-{
-    return pp[i].integertime_step() * unit_integertime_in_physical(i, pp);
-}
-
-#ifdef OPENMP_GPU_OFFLOAD
-#pragma omp end declare target
-#endif
-/* ---- END device-compilable timestep functions ---- */
+/* timestep_dilation_factor, unit_integertime_in_physical, get_physical_timestep_from_timebin,
+   get_particle_timestep_in_physical: definitions now in timestep_functions.h (single source of truth).
+   Include with non-inline linkage to provide externally-visible symbols. */
+#undef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION
+#include "timestep_functions.h"
 
 double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp)
 {

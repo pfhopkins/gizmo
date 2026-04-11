@@ -296,9 +296,7 @@ extern ALIGN(32) struct particle_data
     
     float GravCost[GRAVCOSTLEVELS];   /*!< weight factor used for balancing the work-load */
     
-#ifdef WAKEUP
     integertime dt_step;
-#endif
     
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     MyFloat Time_Of_Last_MergeSplit;
@@ -317,9 +315,7 @@ extern ALIGN(32) struct particle_data
     MyDouble AGS_vsig;          /*!< signal velocity of particle approach, to properly time-step */
 #endif
     
-#if defined(WAKEUP)
     short int wakeup;                     /*!< flag to wake up particle */
-#endif
     
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     MyFloat StarParticleEffectiveSize;   /*!< effective 'size' of a star particle at formation */
@@ -358,11 +354,7 @@ extern ALIGN(32) struct particle_data
 
     /* member functions */
     GIZMO_GPU_FUNCTION inline integertime integertime_step() const { /*!< integer timestep for this particle */
-#ifndef WAKEUP
-        return GET_INTEGERTIME_FROM_TIMEBIN(TimeBin);
-#else
         return dt_step;
-#endif
     }
 
     GIZMO_GPU_FUNCTION inline double Get_Particle_Size() const { /*!< effective particle/cell size from kernel radius and neighbor number */

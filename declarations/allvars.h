@@ -200,10 +200,8 @@ extern int TreeReconstructFlag;
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 extern int GlobFlag;
 extern char DumpFlag;
-#ifdef WAKEUP
 extern int NeedToWakeupParticles;
 extern int NeedToWakeupParticles_local;
-#endif
 
 extern int NumPart;		/*!< number of particles on the LOCAL processor */
 extern int N_gas;		/*!< number of gas particles on the LOCAL processor  */

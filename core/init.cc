@@ -825,7 +825,7 @@ void init(void)
     for(i = 0; i < NumPart; i++) {P[i].IMF_Mturnover = 2.0;} // reset to normal IMF
 #endif
 
-#if defined(WAKEUP) && defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
     for(i=0;i<NumPart;i++) {P[i].wakeup=0;}
 #endif
 
@@ -883,11 +883,9 @@ void init(void)
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
         P[i].AGS_zeta = 0;
 #endif
-#ifdef WAKEUP
         if(RestartFlag!=0) {P[i].wakeup=0;}
         NeedToWakeupParticles = 0;
         NeedToWakeupParticles_local = 0;
-#endif
 #ifdef SUPER_TIMESTEP_DIFFUSION
         CellP[i].Super_Timestep_Dt_Explicit = 0;
         CellP[i].Super_Timestep_j = 0;

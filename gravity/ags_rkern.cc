@@ -199,7 +199,7 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         double vsig = 0.5 * fabs( fac_mu * v_dot_r / kernel.r );
                         short int TimeBin_j = P[j].TimeBin; if(TimeBin_j < 0) {TimeBin_j = -TimeBin_j - 1;} // need to make sure we correct for the fact that TimeBin is used as a 'switch' here to determine if a particle is active for iteration, otherwise this gives nonsense!
                         if(vsig > out.AGS_vsig) {out.AGS_vsig = vsig;}
-#if defined(WAKEUP) && (defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(DM_FUZZY) || defined(CBE_INTEGRATOR))
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
                         int wakeup_condition = 0; // determine if wakeup is allowed
                         if(!(TimeBinActive[TimeBin_j]) && (All.Time > All.TimeBegin) && (vsig > WAKEUP*P[j].AGS_vsig)) {wakeup_condition = 1;}
 #if defined(GALSF)
@@ -257,9 +257,7 @@ void ags_density(void)
     for (int i : ActiveParticleList) {
         if(ags_density_isactive(i)) {
             Left[i] = Right[i] = 0; AGS_Prev[i] = P[i].AGS_KernelRadius; P[i].AGS_vsig = 0;
-#ifdef WAKEUP
             P[i].wakeup = 0;
-#endif
       }}
 
     /* allocate buffers to arrange communication */

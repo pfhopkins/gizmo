@@ -161,10 +161,8 @@ int Flag_FullStep;		/*!< Flag used to signal that the current step involves all 
 
 int TreeReconstructFlag;
 int TreeMomentsStaleFlag;
-#ifdef WAKEUP
 int NeedToWakeupParticles;      /*!< Flags used to signal that wakeups need to be processed at the beginning of the next timestep */
 int NeedToWakeupParticles_local;
-#endif
 int GlobFlag;
 #ifdef HERMITE_INTEGRATION
 int HermiteOnlyFlag;            /*! Flag used to indicate whether to skip non-Hermite integrated particles in the force evaluation */

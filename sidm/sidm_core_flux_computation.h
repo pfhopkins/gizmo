@@ -15,14 +15,12 @@
         if(prob > 0.2) {out.dtime_sidm = DMIN(out.dtime_sidm , local.dtime*(0.2/prob));} // timestep condition not being met as desired, warn code to lower timestep next turn //
         if (gsl_rng_uniform(random_generator) < prob)
         {
-#ifdef WAKEUP
             if(!(TimeBinActive[P[j].TimeBin])) {if(WAKEUP*local.dtime < Pj_dtime) {
                 #pragma omp atomic write
                 P[j].wakeup=-1;
                 #pragma omp atomic write
                 NeedToWakeupParticles_local = 1;
             }}
-#endif
             Vec3<double> kick; calculate_interact_kick(kernel.dv, kick, m_si);
             int k; for(k=0;k<3;k++) {
                 double dv_sidm = (local.Mass/m_si)*kick[k];

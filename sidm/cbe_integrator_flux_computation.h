@@ -144,14 +144,12 @@
         vsig /= Face_Area_Norm  * All.cf_atime; // into appropriate sound-speed units
         if(vsig > out.AGS_vsig) {out.AGS_vsig = vsig;} // set signal velocity if new value found
         //if(TimeBinActive[P[j].TimeBin]) {if(vsig > P[j].AGS_vsig) P[j].AGS_vsig = vsig;}
-#ifdef WAKEUP
         if(!(TimeBinActive[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {if(vsig > WAKEUP*P[j].AGS_vsig) {
             #pragma omp atomic write
             P[j].wakeup = -1;
             #pragma omp atomic write
             NeedToWakeupParticles_local = 1;
         }}
-#endif
     } // v_wt_sum > 0
 } // total bracket (for variable protection)
 #endif

@@ -502,9 +502,7 @@ void pm_init_periodic_free(void);
 void move_particles(integertime time1);
 void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
-#ifdef WAKEUP
 void process_wake_ups(void);
-#endif
 void set_units_sfr(void);
 void gravity_forcetest(void);
 void allocate_commbuffers(void);

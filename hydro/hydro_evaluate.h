@@ -459,7 +459,6 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 /* --------------------------------------------------------------------------------- */
                 if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
                 if(j_is_active_for_fluxes) {if(kernel.vsig > CellP[j].MaxSignalVel) CellP[j].MaxSignalVel = kernel.vsig;}
-#ifdef WAKEUP
                 if(!(TimeBinActive[P[j].TimeBin]))
                 {
                     if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel) {
@@ -469,7 +468,6 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         NeedToWakeupParticles_local = 1;
                     }
                 }
-#endif
 
 
             } // for(n = 0; n < numngb; n++) //
