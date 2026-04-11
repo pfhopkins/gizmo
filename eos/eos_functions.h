@@ -1,12 +1,9 @@
-/* eos_device.h — KOKKOS_INLINE_FUNCTION definitions for EOS routines called
- * from the cooling GPU kernel.  By using KOKKOS_INLINE_FUNCTION (which expands
- * to "inline __device__ __host__ __forceinline__" in Kokkos 4.x) these
- * definitions are inlined at every call site and do NOT require -rdc=true.
+/* eos_functions.h — Canonical KOKKOS_INLINE_FUNCTION implementations of EOS
+ * utility routines (Get_Gas_Molecular_Mass_Fraction, yhelium,
+ * Get_Gas_Mean_Molecular_Weight_mu).  These are the single source of truth —
+ * included by both eos.cc and cooling.cc.  No separate _device.h copy.
  *
- * Include order requirement: this header must be included AFTER allvars.h
- * (so that struct particle_data and struct gas_cell_data are complete types),
- * and AFTER the TU-local All_dev / #define All All_dev block (cooling.cc) so
- * that device-pass references to All resolve correctly.
+ * Include order: after allvars.h (for struct types and All).
  *
  * This header is included by:
  *   cooling/cooling.cc  — so the GPU kernel can call these inline

@@ -1,9 +1,8 @@
-/* dust_to_metals_device.h — KOKKOS_INLINE_FUNCTION version of
- * return_dust_to_metals_ratio_vs_solar for use in the GPU cooling kernel.
- * The original is in eos/eos.cc (GPU_OBJS), but cross-TU device calls
- * don't work without -rdc.  This inlines it into cooling.cc.
+/* dust_to_metals_functions.h — Canonical KOKKOS_INLINE_FUNCTION implementation
+ * of return_dust_to_metals_ratio_vs_solar.  Single source of truth for both
+ * CPU and GPU paths.
  *
- * Include order: after allvars.h, eos_device.h. */
+ * Include order: after allvars.h (for struct types, All). */
 #pragma once
 
 #ifndef KOKKOS_INLINE_FUNCTION

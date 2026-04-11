@@ -1,14 +1,7 @@
-/* hydrogen_molecule_device.h — KOKKOS_INLINE_FUNCTION versions of the H2
- * partition-function routines needed by convert_temp_to_u on the GPU.
+/* hydrogen_molecule_functions.h — Canonical KOKKOS_INLINE_FUNCTION implementations
+ * of H2 partition function routines.  Single source of truth for both CPU and GPU.
  *
- * cooling.cc includes this header so the GPU cooling kernel can call these
- * without -rdc=true (they are inlined at the call site).  hydrogen_molecule.cc
- * retains its own non-inline host definitions for non-GPU builds and for any
- * host callers from other TUs.
- *
- * Include order: must come after Kokkos headers (for KOKKOS_INLINE_FUNCTION)
- * and after allvars.h (for BOLTZMANN_CGS).
- */
+ * Include order: after allvars.h (for BOLTZMANN_CGS). */
 #pragma once
 
 #ifndef KOKKOS_INLINE_FUNCTION
@@ -90,6 +83,22 @@ void hydrogen_molecule_partitionfunc(double temp, double result[3]) {
     result[0] = etot;
     result[1] = cv;
     result[2] = gamma;
+}
+
+KOKKOS_INLINE_FUNCTION
+double hydrogen_molecule_energy(double temp) {
+    if (temp < 12.5) {
+        return 1.5 * BOLTZMANN_CGS * temp; // only translation
+    } else if (temp > 1e5) {
+        return 3.5 * BOLTZMANN_CGS * temp; // all DOF excited
+    }
+    double zrot[3], zvib[3];
+    hydrogen_molecule_zrot_mixture(temp, zrot);
+    hydrogen_molecule_zvib(temp, zvib);
+    double etot = 1.5 * BOLTZMANN_CGS * temp; // translation
+    etot += zrot[1];                          // rotation
+    etot += zvib[1];                          // vibration
+    return etot;
 }
 
 KOKKOS_INLINE_FUNCTION

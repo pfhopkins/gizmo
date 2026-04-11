@@ -1,0 +1,388 @@
+/* rt_functions.h — Canonical KOKKOS_INLINE_FUNCTION implementations of RT
+ * utility functions used by the cooling chain.  Single source of truth:
+ * included by both cooling/cooling.cc (GPU kernel) and
+ * radiation/rt_utilities.cc (host path).
+ *
+ * Contains: dust_planck_mean_opacity, blackbody_lum_frac,
+ *   rt_kappa_adaptive_IR_band, dust_dEdt, rt_eqm_dust_temp,
+ *   rt_irband_egydensity_in_band.
+ *
+ * Include order: after allvars.h and proto.h (for struct types, All, and
+ * forward declarations of gas_dust_heating_coeff, ThermalProperties, etc.).
+ */
+#pragma once
+
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
+
+/* ========================================================================
+ * dust_planck_mean_opacity — Semenov 2003 table interpolation
+ * (moved from radiation/rt_dust_opacity.cc)
+ * ======================================================================== */
+
+/* Returns the Planck-mean dust opacity tabulated for the Semenov 2003 5-layered
+ porous shell dust model.
+
+ Parameters
+ ----------
+ Trad: Radiation temperature in K
+ Tdust: Dust temperature in K
+
+ Returns
+ -------
+ kappa_dust: Planck-mean dust opacity in cm^2/g assuming Solar metallicity
+ */
+KOKKOS_INLINE_FUNCTION
+MyFloat dust_planck_mean_opacity(MyFloat Trad, MyFloat Tdust) {
+    static constexpr int N_TRAD_loc = 15;
+    static constexpr int N_TDUST_loc = 5;
+    static constexpr MyFloat Tdust_zones[5] = {160, 275, 425, 680, 1500};
+    static constexpr MyFloat logTrad_table[15] = {0.0,
+                                     0.2857142857142857,
+                                     0.5714285714285714,
+                                     0.8571428571428571,
+                                     1.1428571428571428,
+                                     1.4285714285714284,
+                                     1.7142857142857142,
+                                     2.0,
+                                     2.2857142857142856,
+                                     2.571428571428571,
+                                     2.8571428571428568,
+                                     3.142857142857143,
+                                     3.4285714285714284,
+                                     3.714285714285714,
+                                     4.0};
+    static constexpr MyFloat log_kappadust_table[5][15] = {
+        {-1.909515215033498, -1.5017616295543856, -1.2610211141587906,
+         -1.0643751130254193, -0.7661794028048912, -0.2485164276172981,
+         0.3936319485109052, 0.7185651396015793, 1.003536500936941,
+         1.0703750048744685, 1.185414318657744, 1.4334392971521788,
+         1.6154100043688104, 1.833331149478953, 2.2402919406422592},
+        {-2.0584711507666156, -1.639523808954471, -1.3937562378746238,
+         -1.217712452271845, -1.0035307263948003, -0.6537979484512214,
+         -0.14444336531252724, 0.33781494089162734, 0.6204502553977504,
+         0.7073792380378322, 0.817126602196553, 1.1620592165098858,
+         1.4775329387335934, 1.7314724407802422, 2.122441393841703},
+        {-2.092756656625387, -1.6688435106176933, -1.4197982288972344,
+         -1.2491484838263678, -1.0526101054461765, -0.7239962293949143,
+         -0.21897626943630635, 0.26791745490238816, 0.5498747399044497,
+         0.6380011931553505, 0.7545581854919681, 1.1204828950445178,
+         1.447717175478172, 1.6975481925473666, 2.066531977172171},
+        {-2.466846959771108, -1.9983094494283768, -1.7094791411944892,
+         -1.5454814504892613, -1.4403397374848839, -1.2856048236415571,
+         -0.8297121104893529, -0.28151883033918534, 0.004258175582704628,
+         0.12669094376131687, 0.31518820522515606, 0.8267768233252955,
+         1.2296194436753016, 1.4691152621947785, 1.6952767195239868},
+        {-3.7448342907548136, -3.298656729562377, -2.8766563714426696,
+         -2.4999445785716605, -2.1658033063307927, -1.8743193706624732,
+         -1.5588128589881036, -1.0606192296411485, -0.33965876540303136,
+         0.5368140402181846, 1.1915541410857275, 1.4384491935887818,
+         1.4792273276721044, 1.5197919949174217, 1.6603749111299055},
+    };
+
+    MyFloat logTmax = logTrad_table[N_TRAD_loc - 1], logTmin = logTrad_table[0];
+    MyFloat logT = log10(Trad);
+
+    int Tdust_idx;
+    for (Tdust_idx = 0; Tdust_idx < N_TDUST_loc; Tdust_idx++) {
+        if (Tdust < Tdust_zones[Tdust_idx]) {
+            break;
+        }
+    }
+    if (Tdust_idx >= N_TDUST_loc) { // Tdust exceeds table max
+#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) || defined(GALSF_ISMDUSTCHEM_MODEL) || defined(RT_INFRARED) || (defined(COOL_LOW_TEMPERATURES) && !defined(SINGLE_STAR_SINK_DYNAMICS))
+        Tdust_idx = N_TDUST_loc-1; // Tdust is hot but we have explicit grain model and need IR opacity to calculate dust-to-gas ratios, so return max table value
+#else
+        return MIN_REAL_NUMBER; // Tdust is hot so dust is sublimated; return smol value
+#endif
+    }
+
+    if (logT >= logTmax) {
+        return pow(10., log_kappadust_table[Tdust_idx][N_TRAD_loc - 1]);
+    }
+    if (logT <= logTmin) {
+        return pow(10., log_kappadust_table[Tdust_idx][0]);
+    }
+
+    MyFloat dlogT = logTrad_table[1] - logTrad_table[0];
+    int Trad_idx = (int)(N_TRAD_loc - 1) * logT / (logTmax - logTmin);
+    MyFloat wt1 = 1 - (logT - logTrad_table[Trad_idx]) / dlogT, wt2 = 1 - wt1;
+    MyFloat log_kappa = wt1 * log_kappadust_table[Tdust_idx][Trad_idx] +
+                        wt2 * log_kappadust_table[Tdust_idx][Trad_idx + 1];
+    return pow(10., log_kappa);
+}
+
+
+/* ========================================================================
+ * blackbody_lum_frac — fraction of blackbody SED in a photon energy band
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+/* returns the fraction of a blackbody SED in a given photon energy band - accurate to <1% over all wavelengths
+   E_lower - lower end of the energy band in eV
+   E_upper - upper end of the energy band in eV
+   T_eff - effective blackbody temperature of the SED, in K
+*/
+KOKKOS_INLINE_FUNCTION
+double blackbody_lum_frac(double E_lower, double E_upper, double T_eff)
+{
+    double k_B = 8.617e-5; // Boltzmann constant in eV/K
+    double x1 = E_lower / (k_B * T_eff), x2 = E_upper / (k_B * T_eff), f_lower, f_upper;
+    if(x1 < 3.40309){
+      f_lower = (131.4045728599595*x1*x1*x1)/(2560. + x1*(960. + x1*(232. + 39.*x1))); // approximation of integral of Planck function from 0 to x1, valid for x1 << 1
+    } else {
+      f_lower = 1 - (0.15398973382026504*(6. + x1*(6. + x1*(3. + x1))))*exp(-DMIN(x1,40.)); // approximation of Planck integral for large x
+    }
+    if(x2 < 3.40309){
+      f_upper = (131.4045728599595*x2*x2*x2)/(2560. + x2*(960. + x2*(232. + 39.*x2))); // approximation of integral of Planck function from 0 to x2, valid for x2 << 1
+    } else {
+      f_upper = 1 - (0.15398973382026504*(6. + x2*(6. + x2*(3. + x2))))*exp(-DMIN(x2,40.)); // approximation of Planck integral for large x
+    }
+    double df = f_upper - f_lower;
+    if(df<=0) {if(x2<=x1) {return 0;} else {if(x1>4.) {if(x1<120.) {return 0.15398973382026504*(6.+x1*(6.+x1*(3.+x1)))*exp(-DMIN(x1,120.));} else {return 2.e-47;}}}}
+    return DMAX(df, 0);
+}
+
+
+/* ========================================================================
+ * rt_kappa_adaptive_IR_band — full Semenov + gas-phase opacity
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(do_emission_absorption_scattering_opacity==1) {Trad = T_dust;} // if we want the emissivity then we assume radiation emitted at T_dust
+    double fac=UNIT_SURFDEN_IN_CGS, x = 4.*log10(Trad) - 8., kappa=0, T_dust_opacitytable = T_dust; // needed for fitting functions to opacities (may come up with cheaper function later)
+    double dx_excess=0; if(x > 7.) {dx_excess=x-7.; x=7.;} // cap for maximum temperatures at which fit-functions should be used //
+    //if(x < -4.) {x=-4.;} // cap for minimum temperatures at which fit functions below should be used //
+    double Zfac = 1.0, dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i, T_dust, pp, cell); // avoid call to return_dust_to_metals_ratio_vs_solar to avert circular dependency
+#ifdef METALS
+    if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
+#endif
+
+    if(dust_or_gas_opacity_only_flag >= 0) // dust opacities
+    {
+        // use fancy detailed fit with composition varying by dust temperature
+        /* opacities are from tables of Semenov et al 2003; we use their 'standard'
+         model, for each -dust- temperature range (which gives a different dust composition,
+         hence different wavelength-dependent specific opacity). We then integrate to
+         get the Rosseland-mean opacity for the given dust composition, assuming
+         the radiation is a blackbody with the specified -radiation- temperature.
+         We adopt their 'porous 5-layered sphere' model for dust composition.
+         We use simple fitting functions to the full tabulated data: however, note that
+         (because the blackbody assumption smoothes fine structure in the opacities),
+         the deviations from the fit functions are much smaller than the deviations owing
+         to different grain composition choices (porous/non, composite/non, 5-layer/aggregated/etc)
+         in Semenov et al's paper */
+        kappa = dust_planck_mean_opacity(Trad, T_dust_opacitytable);
+#ifdef RADTRANSFER
+        if((do_emission_absorption_scattering_opacity==1) || (do_emission_absorption_scattering_opacity==-1)) {
+            kappa *= (1.-0.5/(1.+((725.*725.)/(1.+Trad*Trad)))); /* rough interpolation for dust depending on the radiation temperature: high Trad, this is 1/2, low Trad, gets closer to unity */
+        } /* multiply by (1-albedo) because absorption depends only on albedo, and emission cross section depends only on kappa_absorption */
+#endif
+        kappa *= Zfac*dust_to_metals_vs_standard; // the above are all dust opacities, so they scale with dust content per our usual expressions
+    }
+
+    if(dust_or_gas_opacity_only_flag <= 0) // non-dust (e.g. gas-phase) IR opacities
+    {
+        /* this is an approximate result for a wide range of low-to-high-temperature opacities -not- from the dust phase, but provides a pretty good fit from 1.5e3 - 1.0e9 K, and valid at O(1) level down to <10 K, with updates from PFH in Sept 2022 */
+        double x_elec = 1., zmetals = 0.014;
+#if defined(COOLING) && !defined(CHIMES)
+        x_elec = cell[i].Ne; // actual free electron fraction
+#endif
+#ifdef METALS
+        zmetals = pp[i].Metallicity[0];
+#endif
+        double f_neutral_approx = DMAX(0., 1.-x_elec); /* approximate neutral fraction (good enough for us for what we need below) */
+        double f_free_metals_approx = zmetals * DMAX(0, 1.-0.5*dust_to_metals_vs_standard); /* metal mass fraction times the free (not locked in dust abundance), assuming the default solar scaling is 1/2 */
+        double Tgas=1. + 0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho_cgs = cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; /* crude estimate of gas temperature to use with scalings below, and gas density in cgs */
+        double k_electron = 0.4 * HYDROGEN_MASSFRAC * x_elec / ((1. + 2.7e11*rho_cgs/(Tgas*Tgas)) * (1. + pow(Trad/4.5e8, 0.86))); /* Thompson scattering (non-relativistic), scaling with free electron fraction [remembering that in our units, x_elec is n_e/n_H_nuclei, not scaled to total nuclear number]; includes corrections for partial degeneracy at low gas temperatures from Buchler et al. 1976, and Klein-Nishina terms at high radiation temperatures >1e9 */
+        double k_molecular = 0.1 * (f_free_metals_approx + 3.e-9) * f_neutral_approx; /* molecular line opacities, which should only dominate at low-temperatures in the fits below, but are not really assumed to extrapolate to the very low densities we apply this to here; this works ok comparing e.g. Lenzuni, Chernoff & Salpeter 1991 ApJS 76 759L [opacities for metal free gases], using the 3e-9 to represent the H2 molecular opacity (really low, only here for completeness) */
+#if defined(COOL_MOLECFRAC_NONEQM)
+        k_molecular *= cell[i].MolecularMassFraction;
+#endif
+        double k_Kramers = 4.0e25 * (1.+HYDROGEN_MASSFRAC) * (f_free_metals_approx * exp(-DMIN(1.5e5/Trad,40.)) + 0.001*x_elec) * rho_cgs / (Trad*Trad*Trad*sqrt(Tgas)); /* free-free, bound-free, bound-bound transitions. bound-bound is small except at discrete wavelengths, so in a mean for a broad-band like we have here, is negligible. the 0.001 term is free-free, independent of metallicity, but note the power of the free electron fraction. the bound-free depends on metal ions here by assumption, specifically those not locked in dust, being ionized -- hence the exponential suppression at low radiation temperatures where the bound states cannot be ionized. the overall Tgas dependence here comes from the sound speed, the Trad from the wavelength (1/nu^3) dependence of the opacity */
+        double k_effective_Fe = 1.5e20 * f_free_metals_approx * rho_cgs / (Trad*Trad) * exp(-DMIN(pow(0.8e4/Trad,4),40.)) * exp(-DMIN(pow(Trad/0.7e6,2),40.)); /* crude approximation to the iron line-blanketing opacity calculations from Jiang et al. 2015+2016 */
+        k_Kramers += k_effective_Fe;
+        double k_Rayleigh = f_neutral_approx * DMIN(5.e-19 * pow(Trad,4) , 0.2*(1.+ HYDROGEN_MASSFRAC)); /* rayleigh scattering from atomic gas [caps at thompson, much lower at low-T here] */
+#ifdef COOLING
+#ifdef RT_CHEM_PHOTOION
+        double x_Hp = cell[i].HII, x_H0 = cell[i].HI;
+#else
+        double u_in=cell[i].InternalEnergy, rho_in=cell[i].Density*All.cf_a3inv, mu=1, ne=1, nHI=0, nHII=0, nHeI=1, nHeII=0, nHeIII=0;
+        double temp = ThermalProperties(u_in, rho_in, i, &mu, &ne, &nHI, &nHII, &nHeI, &nHeII, &nHeIII, pp, cell);
+        double x_Hp = nHII, x_H0 = nHI;
+#endif
+        double x_Hminus = 4.e-10 * Tgas * x_elec * x_H0 / ((1. + x_Hp*300. + x_elec*1000.*(Tgas/1.3e4)*(Tgas/1.3e4)/(1.+(Tgas/1.3e4)*(Tgas/1.3e4)) + 4.e-17*1.) * (1. + Tgas/3.e4)); /* H- abundance: see series of equations in our non-equilbrium molecular solver (from e.g. Glover and Jappsen 2007 and other sources), with simple but accurate enough for our purposes replacements to make it quick to compute these to the needed accuracy for our purposes. note we need the free-electron fraction, neutral fraction, and free proton fraction. these denominator terms quantify differences from the idealized scaling assumed here, which assumes an idealized scaling of xH0~1~constant and near-vanishing xHp and x_e, for lower temperatures. last term assumes a constant photon-to-baryon ratio for scaling to different environments */
+        double k_Hminus_bf = 4.2e7 * pow(8760./Trad, 1.5) * exp(-DMIN(8760./Trad,40.)); /* bound-free H- opacity, from using the fitting functions in John 1988 [A&A, 193, 189], integrating over the Planck function for a flux-mean opacity (Rosseland mean ill-defined here because need all components since this vanishes outside certain ranges) */
+        double phi_hm = DMIN(Tgas/5040.,2.), k_Hminus_ff = 1.9e6 * pow(8760./Trad, 2) * exp(-DMIN(8760./Trad,40.)) * (0.6-2.5*sqrt(phi_hm)+2.5*phi_hm+2.7*phi_hm*sqrt(phi_hm)); /* free-free H- opacity, mixing the fits from John and references in Lenzuni, Chernoff, & Salpeter, but re-calculated for arbitrary radiation vs gas temperature. note this will appear to give differences from their opacities, the main difference comes not from this expression (which is simplified) but from the different x_H- and x_e, which owes to a very different chain of expressions, which give a quite different result in the end. */
+        double k_Hminus = x_Hminus * (k_Hminus_bf + k_Hminus_ff); /* add both together */
+#else
+        double k_Hminus = 1.1e-25 * sqrt((zmetals + 1.e-5) * rho_cgs) * pow(Tgas,7.7) * exp(-DMIN(8760./Trad,40.)); /* negative H- ion opacity (this is a fit for stellar atmospheres, which has a very strong temp dependence because of implicit free-electron and H- scaling with T, but that's not as useful for us since we're tracking the chemistry we need here) */
+#endif
+        double k_radiative = k_molecular + k_Kramers + k_Hminus + k_electron + k_Rayleigh; /* we don't want a rosseland mean here given our band divisions (already kramers and H- and molecular are rosseleand-mean-ized in fact within themselves), but here different sources should add linearly for a flux-mean */
+        if((do_emission_absorption_scattering_opacity==1) || (do_emission_absorption_scattering_opacity==-1)) {k_radiative -= k_electron;} /* here we just want absorption/emission, not scattering opacity, so we do not include the free electron term */
+        kappa += k_radiative; /* add this to the dust opacity we have already calculated above */
+    }
+
+    return kappa * fac;
+}
+
+
+/* ========================================================================
+ * dust_dEdt — volumetric de/dt for dust energy balance root-finding
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, double fdustmet_init, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * cell[i].Density * All.cf_a3inv / PROTONMASS_CGS;    /* hydrogen number dens in cgs units */
+    double fac_emission = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS)*cell[i].Density*All.cf_a3inv; // in code units
+    double LambdaDust_fac = 0;
+#ifdef COOLING
+    if(T>0) {LambdaDust_fac = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * nHcgs * nHcgs /(UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS);}
+#endif
+    double kappa_emission = rt_kappa_adaptive_IR_band(i, Tdust, Tdust, 1, 1, pp, cell);
+    double dust_emission = fac_emission * kappa_emission * pow(Tdust,4);
+#if defined(COOLING) && !defined(RT_INFRARED) // if we aren't doing RT self-consistently, approximate outward radiative transport rate in optically-thick regime
+    double column = evaluate_NH_from_GradRho(cell[i].Gradients.Density,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i, pp);
+    double tau = column * kappa_emission;
+    dust_emission /= (1 + tau*tau); // e.g. Masunaha & Inutsuka 1999, Rafikov 2007
+#endif
+    double fac_abs = 1.; /* this will rescale the estimated absorption by the new dust-to-gas ratio */
+    if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust, pp, cell) / fdustmet_init;}
+    return LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
+}
+
+
+/* ========================================================================
+ * rt_eqm_dust_temp — equilibrium dust temperature solver
+ * (moved from radiation/rt_utilities.cc, inside #ifdef COOLING)
+ * ======================================================================== */
+
+#ifdef COOLING
+KOKKOS_INLINE_FUNCTION
+double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double T_old, T_lower=0, T_upper=MAX_REAL_NUMBER, T_secant, Tdust_guess, Tdust, dEdt, dEdt_upper, dEdt_lower, fac, dEdt_guess, scalefac;
+    double Tmax=1e10; // upper-bound dust temperature above which we definitely don't believe our detailed (tiny) dust abundance
+    Tmax = MAX_DUST_TEMP; // this is now a global variable
+    /* First we come up with a reasonable guess for the dust temp based on available info */
+#ifdef RT_INFRARED
+    Tdust_guess = DMIN(DMAX(cell[i].Dust_Temperature, 1.), MAX_DUST_TEMP); // previous dust temperature should be a good guess
+#else // case where we don't have a pre-computed dust temp, use asymptotic limits to get a good guess
+    double Zfac = 1.0;
+#ifdef METALS
+    if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
+#endif
+    double rho_c_arad_fac = (4.*5.67e-5)/(UNIT_VEL_IN_CGS*UNIT_PRESSURE_IN_CGS)*cell[i].Density*All.cf_a3inv; // a c rho in code units
+    Tdust_guess = sqrt(cbrt(100 * dust_absorption_rate/(rho_c_arad_fac * (0.1*UNIT_SURFDEN_IN_CGS) * Zfac)));  // guess neglecting gas-dust coupling term and assuming a beta=2 emission opacity law kappa = 0.1 cm^2/g Z (T/10K)^2
+    Tdust_guess = DMAX(Tdust_guess, sqrt(sqrt(dust_absorption_rate / (rho_c_arad_fac * (5.*UNIT_SURFDEN_IN_CGS) * Zfac)))); // account for how opacity tops out around 5 Z cm^2/g
+#ifdef COOLING // account for gas-dust coupling
+    double nHcgs = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * cell[i].Density * All.cf_a3inv / PROTONMASS_CGS;    /* hydrogen number dens in cgs units */
+    double LambdaDust_fac = gas_dust_heating_coeff(i,T,Tdust_guess, pp, cell) * nHcgs * nHcgs /(UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS);
+    double Tdust_coupled = T - rho_c_arad_fac * rt_kappa_adaptive_IR_band(i,T,T,1,0, pp, cell) * pow(T,4) / (LambdaDust_fac+MIN_REAL_NUMBER); // bound for the gas-dust coupled regime assuming T ~ Td
+    Tdust_guess = DMAX(Tdust_coupled, Tdust_guess);
+#endif
+#endif // end non-RT case for guess
+    /* We now have our initial guess */
+    if(T==0) {return Tdust_guess;} // if just calling for a rough estimate this is good enough
+
+    Tdust = Tdust_guess;
+    int n_iter=0;
+    double fdustmet_init = return_dust_to_metals_ratio_vs_solar(i, Tdust, pp, cell); /* need this for reference but can't let it change over iterations */
+    dEdt_guess = dEdt = dust_dEdt(i,T,Tdust_guess,dust_absorption_rate,fdustmet_init, pp, cell);
+
+    if(dEdt==0){return Tdust_guess;}
+    /* bracketing the dust temperature */
+    if(dEdt < 0)
+    {
+	scalefac = 0.9;
+	T_upper = DMIN(Tmax,Tdust), dEdt_upper = dEdt_guess;
+	while(dEdt<0) {
+	    Tdust *= scalefac;
+	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
+        if(dEdt==0){return Tdust;}
+	    scalefac *= 0.9;
+	    n_iter++;
+	}
+	T_lower = Tdust, dEdt_lower = dEdt;
+    } else {
+	T_lower = Tdust, dEdt_lower = dEdt_guess;
+	scalefac = 1.1;
+	while(dEdt>0 && Tdust < Tmax) {
+	    Tdust *= scalefac; Tdust = DMIN(Tdust,Tmax);
+	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
+        if(dEdt==0){return Tdust;}
+	    scalefac *= 1.1;
+	    n_iter++;
+	    }
+	    T_upper = Tdust, dEdt_upper = dEdt;
+    }
+    if(T_upper==Tmax && dEdt_upper > 0) {return Tmax;}
+    if(T_lower>=Tmax) {return Tmax;}
+
+#if (0) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES)  // PFH: still testing which option is better, but the new rootfind struggles here, in hyper-zoom-in runs when given dust close to max temperature (raising max temp resolves the failure to converge or Nan's but then jumps to very high solutions somewhat randomly, where it shouldnt. The old secant routine below appears stable and more robust in this particular instance for now.
+    #define ROOTFIND_FUNCTION(dTdust) dust_dEdt(i,T,T+dTdust,dust_absorption_rate,fdustmet_init, pp, cell); // here we want to converge on a relative tolerance for Tdust-Tgas
+    if(dEdt!=0)
+    {
+        double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T, ROOTFUNC_a = dEdt_lower, ROOTFUNC_b = dEdt_upper, ROOTFIND_REL_X_tol = 1e-6, ROOTFIND_ABS_X_tol=0.;
+        #include "../system/bracketed_rootfind.h"
+        Tdust = ROOTFIND_X_new + T;
+        if(ROOTFIND_ITER > MAXITER || isnan(Tdust)){PRINT_WARNING("WARNING: Particle %lld did not converge to desired Tdust tolerance (iter=%d, Tdust=%g, Tgas=%g)\n",(long long)(long long)i /* particle index */,ROOTFIND_ITER,Tdust,T);}
+    }
+#else
+
+    T_old = Tdust; double dEdt_old = dEdt; Tdust = Tdust_guess; dEdt = dEdt_guess; // For our second guess we take the backeting value opposite of the initial guess.
+    double dT_dustgas = T-Tdust;
+    do  // secant method iterations with bisection as a backup; usually converges to machine epsilon in 4-5 iterations
+    {
+        dT_dustgas = T - Tdust;
+        T_secant = Tdust - dEdt * (Tdust - T_old) / (dEdt - dEdt_old);
+        T_secant = DMAX(DMIN(T_secant,T_upper),T_lower);
+        dEdt_old = dEdt;
+        dEdt = dust_dEdt(i,T,T_secant,dust_absorption_rate,fdustmet_init, pp, cell);
+        fac = fabs(T_secant - Tdust)/(MIN_REAL_NUMBER+fabs(Tdust-T_old)); //fabs(dEdt)/(MIN_REAL_NUMBER+fabs(dEdt_old));
+        if(fac < 0.5) { // accept the secant iteration if it is converging more rapidly
+            T_old=Tdust;
+            Tdust=T_secant;
+        } else { // if secant isn't working do bisection iteration instead; guaranteed to reduce the error
+            T_old = Tdust;
+            Tdust = sqrt(T_lower*T_upper);
+            dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
+            fac = 0.5;
+        }
+        if(dEdt>0) {T_lower=Tdust;} else {T_upper=Tdust;} // either way, update upper and lower bounds
+        n_iter++;
+        if(n_iter > MAXITER-10) {
+            PRINT_WARNING("Warning: Dust temperature iteration converging slowly: ID=%lld iter=%d T=%g Tdust=%g Tdust_guess=%g T_upper=%g T_lower=%g dEdt=%g fac=%g.\n",(long long)(long long)i /* particle index */,n_iter,T,Tdust,Tdust_guess, T_upper, T_lower,dEdt, fac);
+            if(n_iter > MAXITER){break;}
+        }
+    } while(fabs(dT_dustgas - (T-Tdust)) > 1.e-3 * fabs(T-Tdust)); // sufficient to converge dust cooling to 10^-3 tolerance, at this point uncertainties in dust properties will dominate the error budget
+
+#endif
+
+    return Tdust;
+}
+#endif /* COOLING */
+
+
+/* ========================================================================
+ * rt_irband_egydensity_in_band — photon energy density in a frequency band
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell)
+{
+#if defined(RT_INFRARED)
+    double u_gamma = cell[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED] * (cell[i].Density*All.cf_a3inv/cell[i].Mass) * blackbody_lum_frac(E_lower, E_upper, cell[i].Radiation_Temperature);
+    if(!isfinite(u_gamma) || (u_gamma<0)) {u_gamma = 0;}
+    return u_gamma;
+#else
+    return 0;
+#endif
+}

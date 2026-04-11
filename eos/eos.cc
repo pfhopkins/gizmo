@@ -240,38 +240,13 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
  T_dust_manual_override here designates whether we want to pass a specific dust temp or allow the code to call one itself here, to avoid creating circular dependencies and to
     allow for self-consistent coupling to various other dust dynamics/formation/chemistry modules. if you just want 'default' behavior and aren't worried about this, call with this parameter set to 0
  */
-KOKKOS_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    if(i<0 || pp[i].Type!=0) {return 1;}
-#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) /* note since the applications of this module really want a -surface area per unit mass- ratio to scale off of, we actually want to scale this by the geometric opacity, relative to what 'typical' solar conditions would give */
-    double kappa_interp_geo_cgs = cell[i].InterpolatedGeometricDustCrossSection / UNIT_SURFDEN_IN_CGS; // this should be in cgs, in cm^2/g
-    double kappa_solar_geo_cgs = 3300.; // this is a rough estimate of what one would get as a 'reference' opacity if one assumed a maximum grain size of 0.1 micron, grain density of 2.25 g/cm^3, as in e.g. Weingartner & Draine 2001 (roughly what their models would give, for the size range we usually model, to compare)
-    double Z_scaled = pp[i].Metallicity[0]/All.SolarAbundances[0]; // metallicity of the particle in solar
-    return (kappa_interp_geo_cgs / kappa_solar_geo_cgs) / (Z_scaled); // will be multiplied by metallicity to convert later
-#endif
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-    if(pp[i].Metallicity[0]>0) {return (cell[i].ISMDustChem_Dust_Metal[0]/pp[i].Metallicity[0])/0.5;} else {return 0;} // use total amount of dust from 'live' dust evolution models
-#endif
-#if defined(RT_INFRARED)
-    double T_evap = 1500.; // 2e3 * pow(cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS, 0.0195); // latter function from Kuiper 2010 eqs 21-22; sublimation temperature from Isella & Natta 2005, fit to Pollack 1994. works for protostellar environments, but extrapolates poorly to diffuse ISM and/or stellar/AGN atmosphere environments, so for now use a simpler 1500 K which is a rough median between these, with more sophisticated dust modules required to fit all different parameter regimes.
-    double T_dust = T_dust_manual_override; if(T_dust == 0) {T_dust = cell[i].Dust_Temperature;} // use this iff the dust temp sent is nil
-    double Tdust_Tsub = T_dust / T_evap; // ratio for below
-    double fdust = sigmoid_sqrt(9.*(1.-Tdust_Tsub)) * exp(-DMIN(40.,Tdust_Tsub*Tdust_Tsub/9.)); // crudely don't bother accounting for size spectrum, just adopt an exponential cutoff above the sublimation temperature
-    //if(cell[i].Dust_Temperature >= MAX_DUST_TEMP) {return 1.e-22;} // since using this upper limit as a value to represent where things are basically all sublimated, use a (intentionally very low compared to the slower formula below) low floor value in this case */
-    return DMAX(fdust, 1.e-25); // floor at value too small to influence physical dust processes, just so dust temp root-finders have something finite and continuous to work with
-#endif
-#if defined(COOL_LOW_TEMPERATURES) && !defined(SINGLE_STAR_SINK_DYNAMICS) // skip this and assume fdust=1 if SINGLE_STAR_SINK_DYNAMICS on because it uses the fancy dust temp solver whose result depends implicitly on the dust fraction - if sublimation is important then we should be running full RT anyway
-    double Tdust = T_dust_manual_override; if(Tdust == 0) {Tdust = get_equilibrium_dust_temperature_estimate(i,0,0, pp, cell);} // call this iff the dust temp sent is nil
-    if(Tdust >= 2000.) {return 1.e-4;} else {return exp(-pow(Tdust/1000.,3));} // this hit the maximum allowed temperature in the routine if it gets >2000; for lower temps, let it smoothly cut off
-#endif
-    return 1; // default behavior
-}
-
-
-/* Device-callable EOS functions (Get_Gas_Molecular_Mass_Fraction, yhelium,
- * Get_Gas_Mean_Molecular_Weight_mu) are defined as KOKKOS_INLINE_FUNCTION in
- * eos_device.h so cooling.cc's GPU kernel can call them without -rdc=true. */
-#include "eos_device.h"
+/* Function bodies now in _functions.h headers (single source of truth).
+   Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
+   providing externally-visible symbols for other TUs that link via proto.h. */
+#undef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION
+#include "dust_to_metals_functions.h"
+#include "eos_functions.h"
 
 #ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target

@@ -25,25 +25,22 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
-/* EOS device functions (yhelium, Get_Gas_Molecular_Mass_Fraction,
- * Get_Gas_Mean_Molecular_Weight_mu) as KOKKOS_INLINE_FUNCTION so they are
- * inlined into this TU's GPU kernel without requiring -rdc=true. */
-#include "../eos/eos_device.h"
-#include "../eos/hydrogen_molecule_device.h"
-/* Timestep device functions (get_particle_timestep_in_physical, etc.) inlined
- * here so the GPU cooling kernel doesn't call into the host-only timestep.cc TU. */
-#include "../core/timestep_device.h"
-/* evaluate_NH_from_GradRho is in core/predict.cc (not GPU_OBJS) */
-#include "../core/predict_device.h"
-/* return_dust_to_metals_ratio_vs_solar is in eos.cc (GPU_OBJS) but cross-TU
- * device calls fail without -rdc.  Inline it here. */
-#include "../eos/dust_to_metals_device.h"
+/* EOS functions (yhelium, Get_Gas_Molecular_Mass_Fraction,
+ * Get_Gas_Mean_Molecular_Weight_mu) — single source in eos_functions.h */
+#include "../eos/eos_functions.h"
+#include "../eos/hydrogen_molecule_functions.h"
+/* Timestep functions — single source in timestep_functions.h */
+#include "../core/timestep_functions.h"
+/* evaluate_NH_from_GradRho — single source in predict_functions.h */
+#include "../core/predict_functions.h"
+/* return_dust_to_metals_ratio_vs_solar — single source in dust_to_metals_functions.h */
+#include "../eos/dust_to_metals_functions.h"
 /* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
-#include "../eos/cosmic_ray_fluid/cosmic_ray_device.h"
-/* Simple steady-state chemistry (simple_chemistry.cc is not GPU_OBJS) */
-#include "./simple_chemistry_device.h"
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+/* Simple steady-state chemistry — single source in simple_chemistry.h */
+#include "./simple_chemistry.h"
 /* RT utility functions (rt_utilities.cc is not GPU_OBJS) */
-#include "../radiation/rt_device.h"
+#include "../radiation/rt_functions.h"
 /* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
  * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
  * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,

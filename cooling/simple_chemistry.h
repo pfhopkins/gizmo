@@ -1,13 +1,12 @@
-/* simple_chemistry_device.h — KOKKOS_INLINE_FUNCTION versions of functions
- * from simple_chemistry.cc needed by the GPU cooling kernel.
+/* simple_chemistry.h — Canonical KOKKOS_INLINE_FUNCTION implementations of
+ * ISM steady-state chemistry functions.  Single source of truth for both
+ * CPU and GPU.  simple_chemistry.cc retains host-only helpers (f_CO,
+ * ion_name_to_index, string-based alpha_recomb_grain wrapper).
  *
- * simple_chemistry.cc is NOT in GPU_OBJS (not compiled by nvcc_wrapper).
- * These inlined versions are included in cooling.cc so device code can call
- * them without -rdc=true.
+ * alpha_recomb_grain uses integer ion index (0=H+, 1=He+, 2=C+, etc.)
+ * instead of strcmp-based string lookup for GPU compatibility.
  *
- * The grain-assisted recombination in alpha_recomb_grain uses strcmp/string
- * table lookup in the original.  Here we replace it with a direct integer
- * index (the call sites all pass known string literals). */
+ * Include order: after allvars.h, proto.h. */
 #pragma once
 
 #ifndef KOKKOS_INLINE_FUNCTION

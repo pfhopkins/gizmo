@@ -32,7 +32,7 @@ static __managed__ struct global_data_all_processes All_dev;
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../core/timestep_device.h"
+#include "../core/timestep_functions.h"
 #include "nuclear.h"
 
 /* GPU-safe isfinite/isnan overrides */
