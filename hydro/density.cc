@@ -9,6 +9,11 @@
 #include "../mesh/kernel.h"
 #include "../mesh/mesh_motion.h"
 
+/* provide externally-visible (non-inline) symbols for functions defined in density_functions.h */
+#undef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION
+#include "density_functions.h"
+
 /*! \file density.c
  *  \brief hydro kernel size and neighbor determination, volumetric quantities calculated
  *
@@ -22,11 +27,6 @@
  * criteria and conditioning and calcuilations actually being done for the modular hydro solvers)
  * by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
-
-struct kernel_density /*! defines a number of useful variables we will use below */
-{
-  Vec3<double> dp; Vec3<double> dv; double r, wk, dwk, hinv, hinv3, hinv4, mj_wk, mj_dwk_r;
-};
 
 
 /*! routine to determine if a given element is actually going to be active in the density subroutines below */
@@ -106,22 +106,8 @@ int density_isactive(int n)
 #define CONDITIONFUNCTION_FOR_EVALUATION if(density_isactive(i)) /* function for which elements will be 'active' and allowed to undergo operations. can be a function call, e.g. 'density_is_active(i)', or a direct function call like 'if(P[i].Mass>0)' */
 #include "../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
 
-/*! this structure defines the variables that need to be sent -from- the 'searching' element */
-static struct INPUT_STRUCT_NAME
-{
-  Vec3<MyDouble> Pos;
-#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-  Vec3<MyFloat> Accel;
-#endif
-  Vec3<MyFloat> Vel;
-  MyFloat KernelRadius;
-#ifdef GALSF_SUBGRID_WINDS
-  MyFloat DelayTime;
-#endif
-  int NodeList[NODELISTLENGTH];
-  int Type;
-}
- *DATAIN_NAME, *DATAGET_NAME;
+/* struct INPUT_STRUCT_NAME (= density_evaluate_data_in_) is defined in density_functions.h */
+static struct INPUT_STRUCT_NAME *DATAIN_NAME, *DATAGET_NAME;
 
 /*! this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
 void hydrokerneldensity_particle2in(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
@@ -139,55 +125,8 @@ void hydrokerneldensity_particle2in(struct INPUT_STRUCT_NAME *in, int i, int loo
 #endif
 }
 
-/*! this structure defines the variables that need to be sent -back to- the 'searching' element */
-static struct OUTPUT_STRUCT_NAME
-{
-    MyDouble Ngb;
-    MyDouble Rho;
-    MyDouble DrkernNgb;
-    MyDouble Particle_DivVel;
-    SymmetricTensor2<MyDouble> NV_T;
-    Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-    Vec3<MyDouble> ParticleVel;
-#endif
-#ifdef HYDRO_SPH
-    MyDouble DrkernHydroSumFactor;
-#endif
-#ifdef RT_SOURCE_INJECTION
-    MyDouble KernelSum_Around_RT_Source;
-#endif
-#ifdef HYDRO_PRESSURE_SPH
-    MyDouble EgyRho;
-#endif
-#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-    MyFloat NV_D[3][3];
-    MyFloat NV_A[3][3];
-#endif
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    Vec3<MyFloat> GradRho;
-#endif
-#if defined(SINK_PARTICLES)
-    int Sink_TimeBinGasNeighbor;
-#if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
-    MyDouble Sink_dr_to_NearestGasNeighbor;
-#endif
-#endif
-#if defined(TURB_DRIVING) || defined(GRAIN_FLUID)
-    Vec3<MyDouble> GasVel;
-#endif
-#if defined(GRAIN_FLUID)
-    MyDouble Gas_InternalEnergy;
-#if defined(GRAIN_LORENTZFORCE)
-    Vec3<MyDouble> Gas_B;
-#endif
-#endif
-#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
-    Vec3<MyDouble> GradH_numer;     /*!< numerator for kernel support gradient: sum_{j!=i} (dwk/r) * dp */
-    MyDouble GradH_denom;           /*!< denominator for kernel support gradient: sum_{j!=i} u * dwk */
-#endif
-}
- *DATARESULT_NAME, *DATAOUT_NAME;
+/* struct OUTPUT_STRUCT_NAME (= density_evaluate_data_out_) is defined in density_functions.h */
+static struct OUTPUT_STRUCT_NAME *DATARESULT_NAME, *DATAOUT_NAME;
 
 /*! this subroutine assigns the values to the variables that need to be sent -back to- the 'searching' element */
 void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
@@ -264,18 +203,14 @@ void hydrokerneldensity_out2particle(struct OUTPUT_STRUCT_NAME *out, int i, int 
 #endif
 }
 
-/*! declare this utility function here now that the relevant structures it uses have been defined */
-void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct OUTPUT_STRUCT_NAME *out, struct kernel_density *kernel, int j);
-
-
 /*! This function represents the core of the initial hydro kernel-identification and volume computation. The target particle may either be local, or reside in the communication buffer. */
 /*!   -- this subroutine should in general contain no writes to shared memory. for optimization reasons, a couple of such writes have been included here in the sub-code for some sink routines -- those need to be handled with special care, both for thread safety and because of iteration. in general writes to shared memory in density.c are strongly discouraged -- */
 int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)
 {
-    int j, n, startnode, numngb_inbox, listindex = 0; double r2, h2, u, mass_j, wk;
+    int j, n, startnode, numngb_inbox, listindex = 0;
     struct kernel_density kernel; struct INPUT_STRUCT_NAME local; struct OUTPUT_STRUCT_NAME out; memset(&out, 0, sizeof(struct OUTPUT_STRUCT_NAME));
     if(mode == 0) {hydrokerneldensity_particle2in(&local, target, loop_iteration);} else {local = DATAGET_NAME[target];}
-    h2 = local.KernelRadius * local.KernelRadius; kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
+    double h2 = local.KernelRadius * local.KernelRadius; kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
 #if defined(SINK_PARTICLES)
     out.Sink_TimeBinGasNeighbor = TIMEBINS;
 #endif
@@ -287,161 +222,32 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
             for(n = 0; n < numngb_inbox; n++)
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
-#ifdef GALSF_SUBGRID_WINDS /* check if partner is a wind particle: if I'm not wind, then ignore the wind particle */
-                if(CellP[j].DelayTime > 0) {if(local.DelayTime <= 0) {continue;}}
-#endif
-                if(P[j].Mass <= 0) continue;
-                kernel.dp = local.Pos - P[j].Pos;
-                nearest_xyz(kernel.dp);
-                r2 = kernel.dp.norm_sq();
-                if(r2 < h2) /* this loop is only considering particles inside local.KernelRadius, i.e. seen-by-main */
+#if defined(SINK_PARTICLES)
+                /* shared-memory writes for sink particles — not in the GPU-callable kernel because they require atomics */
+                if(local.Type == 5)
                 {
-                    kernel.r = sqrt(r2);
-                    u = kernel.r * kernel.hinv;
-                    kernel_main(u, kernel.hinv3, kernel.hinv4, &kernel.wk, &kernel.dwk, 0);
-                    mass_j = P[j].Mass;
-                    kernel.mj_wk = (mass_j * kernel.wk);
-
-                    out.Ngb += kernel.wk;
-                    out.Rho += kernel.mj_wk;
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-                    if(local.Type == 0 && kernel.r==0) {out.ParticleVel += kernel.mj_wk * CellP[j].VelPred;} // just the self-contribution //
+                    #pragma omp atomic write
+                    P[j].SwallowID = 0;
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+                    #pragma omp atomic write
+                    P[j].SwallowTime = MAX_REAL_NUMBER;
 #endif
-#if defined(RT_SOURCE_INJECTION)
-#if defined(RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION)
-                    if(All.TimeStep == 0) // we only do this on the 0'th timestep, since we haven't done a sink loop yet to get the angle weights we'll use normally
+#if (SINGLE_STAR_SINK_FORMATION & 8)
+                    {Vec3<double> dp_tmp = local.Pos - P[j].Pos; nearest_xyz(dp_tmp); double r_tmp = sqrt(dp_tmp.norm_sq());
+                    if(r_tmp < DMAX(P[j].KernelRadius, SinkParticle_GravityKernelRadius)) {
+                        #pragma omp atomic write
+                        P[j].Sink_Ngb_Flag = 1;
+                    }}
 #endif
-                    if((1 << local.Type) & (RT_SOURCES)) {out.KernelSum_Around_RT_Source += 1.-u*u;}
+                }
 #endif
-                    out.DrkernNgb += -(NUMDIMS * kernel.hinv * kernel.wk + u * kernel.dwk);
-#ifdef HYDRO_SPH
-                    double mass_eff = mass_j;
-#ifdef HYDRO_PRESSURE_SPH
-                    mass_eff *= CellP[j].InternalEnergyPred;
-                    out.EgyRho += kernel.wk * mass_eff;
-#endif
-                    out.DrkernHydroSumFactor += -mass_eff * (NUMDIMS * kernel.hinv * kernel.wk + u * kernel.dwk);
-#endif
-                    /* for everything below, we do NOT include the particle self-contribution! */
-                    if(kernel.r > 0)
-                    {
-                        if(local.Type == 0)
-                        {
-                            wk = kernel.wk; /* MAKE SURE THIS MATCHES CHOICE IN GRADIENTS.c! */
-                            /* the weights for the MLS tensor used for gradient estimation */
-                            out.NV_T += wk * outer_product(kernel.dp);
-                            /* weighted first moments, used for face area estimation */
-                            out.NV_T_face_weights += wk * kernel.dp;
-#ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
-                            out.GradH_numer += (kernel.dwk / kernel.r) * kernel.dp; /* sum_{j!=i} (dwk/r)*dp: numerator for grad(H) */
-                            out.GradH_denom += u * kernel.dwk; /* sum_{j!=i} u*dwk: denominator for grad(H) */
-#endif
-                        }
-                        kernel.dv = local.Vel - CellP[j].VelPred;
-                        NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,kernel.dv,1); /* wrap velocities for shearing boxes if needed */
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
-                        // do neighbor contribution to smoothed particle velocity here, after wrap, so can account for shearing boxes correctly //
-                        out.ParticleVel += kernel.mj_wk * (local.Vel - kernel.dv);
-#endif
-                        out.Particle_DivVel -= kernel.dwk * dot(kernel.dp, kernel.dv) / kernel.r;
-                        /* this is the -particle- divv estimator, which determines how KernelRadius will evolve (particle drift) */
-
-                        density_evaluate_extra_physics_gas(&local, &out, &kernel, j);
-                    } // kernel.r > 0
-                } // if(r2 < h2)
+                density_accumulate_neighbor(&local, &out, &kernel, j, h2, P, CellP);
             } // numngb_inbox loop
         } // while(startnode)
         if(mode == 1) {listindex++; if(listindex < NODELISTLENGTH) {startnode = DATAGET_NAME[target].NodeList[listindex]; if(startnode >= 0) {startnode = Nodes[startnode].u.d.nextnode; /* open it */}}} /* continue to open leaves if needed */
     }
     if(mode == 0) {hydrokerneldensity_out2particle(&out, target, 0, loop_iteration);} else {DATARESULT_NAME[target] = out;} /* collects the result at the right place */
     return 0;
-}
-
-
-
-/*! this is an extra function to simplify additional computations within the kernel that need to be done as part of the evaluation above */
-void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct OUTPUT_STRUCT_NAME *out, struct kernel_density *kernel, int j)
-{
-    kernel->mj_dwk_r = P[j].Mass * kernel->dwk / kernel->r;
-
-    if(local->Type != 0)
-    {
-#if defined(GRAIN_FLUID)
-        if((1 << local->Type) & (GRAIN_PTYPES))
-        {
-            out->Gas_InternalEnergy += kernel->mj_wk * CellP[j].InternalEnergyPred;
-            out->GasVel += kernel->mj_wk * (local->Vel - kernel->dv);
-#if defined(GRAIN_LORENTZFORCE)
-            out->Gas_B += kernel->wk * CellP[j].BPred;
-#endif
-        }
-#endif
-
-#if defined(SINK_PARTICLES)
-        /* note, we will have some writes to shared memory here for some initializations of 'j' quantities. fortunately these do not depend on previous values of those quantities, so can be done thread-safely with minor edits using the constructs below */
-        if(local->Type == 5)
-        {
-            #pragma omp atomic write
-            P[j].SwallowID = 0;  // this way we don't have to do a global loop over local particles in sink_accretion() to reset these quantities...
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-            #pragma omp atomic write
-            P[j].SwallowTime = MAX_REAL_NUMBER; // initialize as a large number before looking
-#endif
-#if (SINGLE_STAR_SINK_FORMATION & 8)
-            if(kernel->r < DMAX(P[j].KernelRadius, SinkParticle_GravityKernelRadius)) {
-                #pragma omp atomic write
-                P[j].Sink_Ngb_Flag = 1; // note that this particle is inside of a sink's kernel function
-            }
-#endif
-            short int TimeBin_j = P[j].TimeBin; if(TimeBin_j < 0) {TimeBin_j = -TimeBin_j - 1;} // need to make sure we correct for the fact that TimeBin is used as a 'switch' here to determine if a particle is active for iteration, otherwise this gives nonsense!
-            if(out->Sink_TimeBinGasNeighbor > TimeBin_j) {out->Sink_TimeBinGasNeighbor = TimeBin_j;}
-#if defined(SINGLE_STAR_TIMESTEPPING)
-            double dr_eff_wtd = P[j].Get_Particle_Size();
-            dr_eff_wtd=sqrt(dr_eff_wtd*dr_eff_wtd + (kernel->r)*(kernel->r)); /* effective distance for Gaussian-type kernel, weighted by density */
-            if((dr_eff_wtd < out->Sink_dr_to_NearestGasNeighbor) && (P[j].Mass > 0)) {out->Sink_dr_to_NearestGasNeighbor = dr_eff_wtd;}
-#endif
-        }
-#endif // SINK_PARTICLES
-        
-    } else { /* local.Type == 0 */
-
-#if defined(TURB_DRIVING)
-        out->GasVel += kernel->mj_wk * (local->Vel - kernel->dv);
-#endif
-
-#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-        double wk = kernel->wk;
-        out->NV_A[0][0] += (local->Accel[0] - All.cf_a2inv*P[j].GravAccel[0] - CellP[j].HydroAccel[0]) * kernel->dp[0] * wk;
-        out->NV_A[0][1] += (local->Accel[0] - All.cf_a2inv*P[j].GravAccel[0] - CellP[j].HydroAccel[0]) * kernel->dp[1] * wk;
-        out->NV_A[0][2] += (local->Accel[0] - All.cf_a2inv*P[j].GravAccel[0] - CellP[j].HydroAccel[0]) * kernel->dp[2] * wk;
-        out->NV_A[1][0] += (local->Accel[1] - All.cf_a2inv*P[j].GravAccel[1] - CellP[j].HydroAccel[1]) * kernel->dp[0] * wk;
-        out->NV_A[1][1] += (local->Accel[1] - All.cf_a2inv*P[j].GravAccel[1] - CellP[j].HydroAccel[1]) * kernel->dp[1] * wk;
-        out->NV_A[1][2] += (local->Accel[1] - All.cf_a2inv*P[j].GravAccel[1] - CellP[j].HydroAccel[1]) * kernel->dp[2] * wk;
-        out->NV_A[2][0] += (local->Accel[2] - All.cf_a2inv*P[j].GravAccel[2] - CellP[j].HydroAccel[2]) * kernel->dp[0] * wk;
-        out->NV_A[2][1] += (local->Accel[2] - All.cf_a2inv*P[j].GravAccel[2] - CellP[j].HydroAccel[2]) * kernel->dp[1] * wk;
-        out->NV_A[2][2] += (local->Accel[2] - All.cf_a2inv*P[j].GravAccel[2] - CellP[j].HydroAccel[2]) * kernel->dp[2] * wk;
-
-        out->NV_D[0][0] += kernel->dv[0] * kernel->dp[0] * wk;
-        out->NV_D[0][1] += kernel->dv[0] * kernel->dp[1] * wk;
-        out->NV_D[0][2] += kernel->dv[0] * kernel->dp[2] * wk;
-        out->NV_D[1][0] += kernel->dv[1] * kernel->dp[0] * wk;
-        out->NV_D[1][1] += kernel->dv[1] * kernel->dp[1] * wk;
-        out->NV_D[1][2] += kernel->dv[1] * kernel->dp[2] * wk;
-        out->NV_D[2][0] += kernel->dv[2] * kernel->dp[0] * wk;
-        out->NV_D[2][1] += kernel->dv[2] * kernel->dp[1] * wk;
-        out->NV_D[2][2] += kernel->dv[2] * kernel->dp[2] * wk;
-#endif
-
-    } // Type = 0 check
-
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    /* this is here because for the models of BH growth and self-shielding of stars, we
-     just need a quick-and-dirty, single-pass approximation for the gradients (the error from
-     using this as opposed to the higher-order gradient estimators is small compared to the
-     Sobolev approximation): use only for -non-gas- particles */
-    out->GradRho += kernel->mj_dwk_r * kernel->dp;
-#endif
-
 }
 
 
@@ -1052,6 +858,110 @@ void density(void)
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
+
+/* Temporary validation: compare cell-list neighbor finder against tree-walk results.
+   Called once after density() converges to verify the cell-list finds the same neighbors.
+   This will be removed once the GPU density pipeline is validated end-to-end. */
+#include "../mesh/neighbor_list.h"
+#include "../mesh/sfc_tiles.h"
+void validate_neighbor_list(void)
+{
+    /* Build list of active gas particles */
+    int num_active = 0;
+    for(int i : ActiveParticleList) {if(density_isactive(i) && P[i].Type == 0) num_active++;}
+    int *active = (int *) mymalloc("validate_active", (num_active > 0 ? num_active : 1) * sizeof(int));
+    int a = 0;
+    for(int i : ActiveParticleList) {if(density_isactive(i) && P[i].Type == 0) active[a++] = i;}
+
+    /* Build SFC-tile neighbor list (one-way, gas-only) */
+    neighbor_list_t nlist;
+    build_neighbor_list_sfc(P, CellP, NumPart, active, num_active, NGB_SEARCH_ONEWAY, 1, &nlist);
+
+    /* Compare: for each active particle, run density_accumulate_neighbor over the CSR
+       list and compare the resulting density against CellP[i].Density from tree walk.
+       For MFM/MFV, CellP[i].Density = P[i].Mass / Volume where Volume is derived from
+       the kernel sum. The cell-list raw Rho = sum(mj*wk), which for equal-mass particles
+       equals CellP.Density * Volume_norm * h^NDIMS / NumNgb_processed. Instead, compare
+       the MFM density directly: cell_rho = mass * ngb_cell / (VOLUME_NORM * h^NDIMS). */
+    int mismatches = 0, printed = 0;
+    double max_rho_err = 0;
+    for(a = 0; a < num_active; a++)
+    {
+        int i = active[a];
+        double h_i = P[i].KernelRadius;
+        double h2 = h_i * h_i;
+
+        struct density_evaluate_data_out_ out;
+        memset(&out, 0, sizeof(out));
+        struct kernel_density kernel;
+        kernel_hinv(h_i, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
+
+        struct density_evaluate_data_in_ local;
+        local.Pos = P[i].Pos;
+        local.Type = P[i].Type;
+        local.KernelRadius = h_i;
+        if(P[i].Type == 0) {local.Vel = CellP[i].VelPred;} else {local.Vel = P[i].Vel;}
+#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
+        if(P[i].Type == 0) {local.Accel = All.cf_a2inv * P[i].GravAccel + CellP[i].HydroAccel;}
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+        if(P[i].Type == 0) {local.DelayTime = CellP[i].DelayTime;} else {local.DelayTime = 0;}
+#endif
+
+        for(int idx = nlist.offsets[a]; idx < nlist.offsets[a + 1]; idx++)
+        {
+            int j = nlist.neighbors[idx];
+            density_accumulate_neighbor(&local, &out, &kernel, j, h2, P, CellP);
+        }
+
+        /* For MFM/MFV: density = mass * Ngb_eff / (VOLUME_NORM * h^NDIMS)
+           where Ngb_eff = Ngb_raw * VOLUME_NORM * h^NDIMS (the effective neighbor count).
+           The tree walk stores Ngb^(1/NDIMS) in P[i].NumNgb after processing.
+           cell_density = mass * ngb_cell_eff / (VOLUME_NORM * h^NDIMS) where ngb_cell_eff = out.Ngb * VOLUME_NORM * h^NDIMS */
+        double cell_density = P[i].Mass * out.Ngb; /* = mass * sum(wk) = mass * Ngb_raw / (VOLUME_NORM * h^NDIMS) ... no.
+           Actually: out.Ngb = sum(wk_j). Then Ngb_eff = out.Ngb * VOLUME_NORM * h^NDIMS.
+           And density = mass * Ngb_eff / (VOLUME_NORM * h^NDIMS) = mass * out.Ngb. Wait, that's just mass * sum(wk).
+           But the tree walk computes CellP[i].Density = P[i].Mass * P[i].NumNgb / (VOLUME_NORM * h^NDIMS)
+           where P[i].NumNgb (post-processing) = (Ngb_raw * VOLUME_NORM * h^NDIMS)^(1/NDIMS).
+           So CellP[i].Density = P[i].Mass * NumNgb^NDIMS / (VOLUME_NORM * h^NDIMS) ... no wait. */
+        /* Simplest: just compare sum(wk) directly.
+           Tree walk: raw out.Ngb = sum(wk). After density() post-processing:
+             P[i].NumNgb was: raw_ngb *= VOLUME_NORM * h^NDIMS, then ^(1/NDIMS).
+           So raw_ngb_tree = (P[i].NumNgb)^NDIMS / (VOLUME_NORM * h^NDIMS). Nope, the code does:
+             P[i].NumNgb *= VOLUME_NORM * h^NDIMS  (line ~520), then P[i].NumNgb = pow(NumNgb, 1/NDIMS) (line ~1029).
+           So: NumNgb_final = ( raw_sum_wk * VOLUME_NORM * h^NDIMS )^(1/NDIMS).
+           Therefore: raw_sum_wk = NumNgb_final^NDIMS / (VOLUME_NORM * h^NDIMS). */
+        /* Compare effective neighbor number: cell-list sum(wk)*VOLUME_NORM*h^3 vs tree NumNgb^3.
+           Tree: NumNgb_final = (sum(wk) * VOLUME_NORM * h^NDIMS)^(1/NDIMS)
+           So: NumNgb_final^NDIMS = sum(wk) * VOLUME_NORM * h^NDIMS.
+           Cell: out.Ngb = sum(wk), so ngb_eff_cell = out.Ngb * VOLUME_NORM * h^NDIMS.
+           Compare ngb_eff_cell vs NumNgb_final^NDIMS. */
+        double ngb_eff_cell = out.Ngb * VOLUME_NORM_COEFF_FOR_NDIMS * pow(h_i, (double)NUMDIMS);
+        double raw_ngb_tree = pow(P[i].NumNgb, (double)NUMDIMS);
+        double raw_ngb_cell = ngb_eff_cell;
+
+        if(raw_ngb_tree > 0) {
+            double rel_err = fabs(raw_ngb_cell - raw_ngb_tree) / raw_ngb_tree;
+            if(rel_err > max_rho_err) max_rho_err = rel_err;
+            if(rel_err > 0.01) mismatches++;
+            /* Print a few samples for debugging */
+            if(printed < 5 && ThisTask == 0) {
+                PRINT_STATUS("  sample i=%d: cell_ngb_raw=%.6f tree_ngb_raw=%.6f rel_err=%.4g nlist_count=%d h=%.4f",
+                             i, raw_ngb_cell, raw_ngb_tree, rel_err,
+                             nlist.offsets[a+1] - nlist.offsets[a], h_i);
+                printed++;
+            }
+        }
+    }
+
+    if(ThisTask == 0) {
+        PRINT_STATUS("Cell-list validation: %d active, %d pairs, max_err=%.6g, mismatches(>1%%)=%d",
+                     num_active, nlist.total_pairs, max_rho_err, mismatches);
+    }
+
+    free_neighbor_list(&nlist);
+    myfree(active);
+}
 
 
 /* Routines for a loop after the iterative density loop needed to find neighbors, etc, once all have converged, to apply additional correction terms to the cell volumes and faces (for those needed -before- the gradients loop because they alter primitive quantities needed for gradients, such as particle densities, pressures, etc.)

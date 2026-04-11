@@ -62,7 +62,11 @@ void compute_hydro_densities_and_forces(void)
            GPU neighbor finding (no critical sections) and for halo exchange
            (halo particles must be at current positions before exchange). */
         move_particles(All.Ti_Current);
-        ghost_exchange(); /* import boundary particles from neighboring MPI ranks */
+        /* Ghost exchange: import boundary particles from neighboring MPI ranks.
+           Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
+           are guesses that may grow significantly during density iteration. */
+        double ghost_safety = (All.Ti_Current == 0 && RestartFlag == 0) ? 2.0 : 1.0;
+        ghost_exchange(ghost_safety);
 
         PRINT_STATUS("Start hydrodynamics computation...");
         density();		/* computes density, and pressure */
@@ -71,6 +75,17 @@ void compute_hydro_densities_and_forces(void)
 #endif
         force_update_hmax();	/* update kernel lengths in tree */
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
+
+        /* Check if h grew beyond the ghost pool during density iteration.
+           If so, re-exchange with converged hmax to ensure complete ghost pool.
+           The tree walk result (P[i].NumNgb) is independent of ghosts, so no
+           need to re-run density — just need correct ghosts for the cell-list
+           (and later GPU dispatch). */
+        if(ghost_exchange_needs_redo()) {
+            ghost_exchange_cleanup();
+            ghost_exchange(1.0);
+        }
+        validate_neighbor_list(); /* temporary: compare cell-list neighbor finder against tree walk */
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 

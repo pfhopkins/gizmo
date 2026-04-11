@@ -65,6 +65,10 @@ static int NumPart_before_ghost = -1;
 static int N_gas_before_ghost = -1;
 static int NumGhostParticles = 0;
 
+/* saved per-leaf hmax at time of ghost exchange, for h-growth detection */
+static double *saved_leaf_hmax = NULL;
+static int saved_leaf_hmax_n = 0;
+
 
 /* ---- Utility: walk TopNodes to find which leaf a particle belongs to ---- */
 static inline int ghost_toptree_leaf(peanokey key)
@@ -90,8 +94,13 @@ static inline int ghost_toptree_leaf(peanokey key)
  * Ghost particles are appended to P[]/CellP[] starting at NumPart.
  *
  * After all neighbor operations, call ghost_exchange_cleanup() to remove ghosts.
+ *
+ * safety_factor: multiplier on search_radius for the overlap criterion.
+ *   1.0 = normal (previous-step hmax is accurate).
+ *   >1.0 = inflate search radius to account for h-growth during density iteration
+ *          (e.g. 2.0 on first timestep when densities are just guesses).
  */
-void ghost_exchange(void)
+void ghost_exchange(double safety_factor)
 {
     if(NTask <= 1) return;
 
@@ -138,6 +147,12 @@ void ghost_exchange(void)
     }
     MPI_Allreduce(MPI_IN_PLACE, leaf_hmax, NTopleaves, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
+    /* Save leaf hmax for h-growth detection after density converges */
+    if(saved_leaf_hmax) {free(saved_leaf_hmax); saved_leaf_hmax = NULL;}
+    saved_leaf_hmax = (double *) malloc(NTopleaves * sizeof(double));
+    memcpy(saved_leaf_hmax, leaf_hmax, NTopleaves * sizeof(double));
+    saved_leaf_hmax_n = NTopleaves;
+
     /* Step 3: For each remote leaf, check overlap with local leaves using per-leaf hmax.
        search_radius = max(hmax_local_leaf, hmax_remote_leaf) for each pair. */
 
@@ -163,7 +178,7 @@ void ghost_exchange(void)
                 int local_node = DomainNodeIndex[local_leaf];
                 if(local_node < 0) continue;
 
-                double search_radius = DMAX(leaf_hmax[local_leaf], hmax_remote);
+                double search_radius = DMAX(leaf_hmax[local_leaf], hmax_remote) * safety_factor;
                 if(search_radius <= 0) continue;
 
                 /* min distance between two axis-aligned bounding boxes */
@@ -346,6 +361,56 @@ void ghost_exchange(void)
     myfree(send_count); myfree(recv_count);
     myfree(global_need_leaf); myfree(global_leaf_count);
     myfree(need_leaf); myfree(leaf_hmax); myfree(local_leaf_count);
+}
+
+
+/*!
+ * \brief Check whether any leaf's hmax grew since the last ghost exchange.
+ *
+ * Recomputes per-leaf hmax from current particle KernelRadius values and
+ * compares against the values saved during the last ghost_exchange() call.
+ * Returns 1 if any leaf's hmax grew by more than 10%, meaning the ghost
+ * pool may be incomplete and a re-exchange is needed.
+ */
+int ghost_exchange_needs_redo(void)
+{
+    if(NTask <= 1) return 0;
+    if(!saved_leaf_hmax || saved_leaf_hmax_n != NTopleaves) return 0;
+
+    /* Compute current per-leaf hmax from local particles */
+    double *current_hmax = (double *) malloc(NTopleaves * sizeof(double));
+    memset(current_hmax, 0, NTopleaves * sizeof(double));
+
+    /* Use NumPart_before_ghost if ghosts are present (only check local particles) */
+    int nlocal = (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart;
+    int i;
+    for(i = 0; i < nlocal; i++)
+    {
+        int leaf = ghost_toptree_leaf(Key[i]);
+        if(P[i].KernelRadius > current_hmax[leaf])
+            current_hmax[leaf] = P[i].KernelRadius;
+    }
+
+    /* Allreduce to get global per-leaf hmax (same as ghost_exchange does) */
+    MPI_Allreduce(MPI_IN_PLACE, current_hmax, NTopleaves, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    /* Check if any leaf's hmax grew by more than 10% */
+    int needs_redo = 0;
+    int leaf;
+    for(leaf = 0; leaf < NTopleaves; leaf++)
+    {
+        if(current_hmax[leaf] > saved_leaf_hmax[leaf] * 1.1)
+        {
+            if(ThisTask == 0 && !needs_redo)
+                PRINT_STATUS("Ghost exchange redo needed: leaf %d hmax grew %.4g -> %.4g (%.1f%%)",
+                             leaf, saved_leaf_hmax[leaf], current_hmax[leaf],
+                             100.0 * (current_hmax[leaf] - saved_leaf_hmax[leaf]) / (saved_leaf_hmax[leaf] + 1e-30));
+            needs_redo = 1;
+        }
+    }
+
+    free(current_hmax);
+    return needs_redo;
 }
 
 
