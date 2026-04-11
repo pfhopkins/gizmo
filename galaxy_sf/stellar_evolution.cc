@@ -1026,7 +1026,9 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
     logmdot_wind = DMAX(logmdot_wind, logmdot_wind_high);
 #endif
     wind_mass_loss_rate = pow(10.0,logmdot_wind) / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR); //reducing the rate to be more in line with observations, see Nathan Smith 2014, conversion to code units from Msun/yr
-
+#ifdef WIND_MDOT
+    wind_mass_loss_rate = WIND_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR);
+#endif
     // let's deal with the case of undefined wind mode (just promoted to MS or restart from snapshot)
     if ( set_mode && (wind_mass_loss_rate>0) ) {
         // let's calculate N_wind = Mdot_wind * t_wind / dm_wind, where t_wind is solved from: Mdot_wind * t_wind = material swept up = 4/3 pi rho (v_wind*t_wind)^3
@@ -1064,6 +1066,9 @@ double singlestar_WR_lifetime_Gyr(int n) { // calculate lifetime for star in Wol
 
 
 double single_star_wind_velocity(int n) { /* Let's get the wind velocity for MS stars */
+#if defined(WIND_MDOT) && defined(WIND_LUMINOSITY)
+    return sqrt(2*WIND_LUMINOSITY/UNIT_LUM_IN_CGS/(WIND_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR)));
+#endif    
     double T_eff = 5814.33 * pow( P[n].StarLuminosity_Solar/(P[n].ProtoStellarRadius_inSolar*P[n].ProtoStellarRadius_inSolar), 0.25 ); // effective temperature in K
     double v_esc = single_star_escape_speed(n); // surface escape velocity - wind escape velocity should be O(1) factor times this, factor given below
     if(T_eff < 1.25e4){ return 0.7 * v_esc;}  // Lamers 1995
