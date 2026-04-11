@@ -202,7 +202,7 @@ void nuclear_neutrino_ye_feedback(int i, double dt_code,
 
    We use the Itoh et al. (1996) fitting formulae for pair and plasmon rates.
    --------------------------------------------------------------------------- */
-void nuclear_neutrino_emission(double rho_cgs, double T9, double Ye,
+KOKKOS_FUNCTION void nuclear_neutrino_emission(double rho_cgs, double T9, double Ye,
                                double nu_lum[3], double nu_emean[3])
 {
     nu_lum[0] = nu_lum[1] = nu_lum[2] = 0;

@@ -126,7 +126,7 @@ KOKKOS_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES]
 
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
 /* Neutrino emission estimate from thermal processes (pair, plasmon). Pure function. */
-void nuclear_neutrino_emission(double rho_cgs, double T9, double Ye,
+KOKKOS_FUNCTION void nuclear_neutrino_emission(double rho_cgs, double T9, double Ye,
                                double nu_lum[3], double nu_emean[3]);
 /* Neutrino opacity for RT bands */
 double nuclear_neutrino_opacity(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);

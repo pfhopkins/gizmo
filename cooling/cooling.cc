@@ -44,7 +44,7 @@ static __managed__ struct global_data_all_processes All_dev;
 /* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
  * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
  * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,
- * set_eos_pressure calls are guarded with #ifndef __CUDA_ARCH__ inside
+ * set_eos_pressure calls are guarded with #ifndef GIZMO_GPU_COMPILER inside
  * do_the_cooling_for_particle, and the scatter pass calls it on the host. */
 
 /* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
@@ -287,7 +287,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-            set_eos_pressure(i, pp, cell);
+#ifndef GIZMO_GPU_COMPILER
+            set_eos_pressure(i, pp, cell); /* deferred to scatter pass on GPU (derived quantities only) */
+#endif
             }
 #endif
 #endif
@@ -428,8 +430,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-#ifndef __CUDA_ARCH__
-        set_eos_pressure(i, pp, cell); /* skipped on-device: called in scatter pass on host instead */
+#ifndef GIZMO_GPU_COMPILER
+        set_eos_pressure(i, pp, cell); /* skipped on-device: called in scatter pass on host instead (stack depth) */
 #endif
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
@@ -437,7 +439,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-        update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell);
+#ifndef GIZMO_GPU_COMPILER
+        update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell); /* deferred to scatter pass on GPU (large module, post-cooling) */
+#endif
 #endif
 
 #ifdef COOL_MOLECFRAC_NONEQM

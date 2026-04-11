@@ -144,173 +144,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
 /* calculate the opacity for use in radiation transport operations [in physical code units = Length^2/Mass]. this should
     be a total extinction opacity, i.e. kappa = kappa_scattering + kappa_absorption */
 /***********************************************************************************************************/
-double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
-{
-
-#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
-#ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION /* special test problem implementation */
-    return cell[i].Interpolated_Opacity[k_freq] + 1.e-3 * All.Dust_to_Gas_Mass_Ratio*0.75*All.Grain_Q_at_MaxGrainSize/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)); /* enforce minimum; note kappa in code units here so need to convert appropriately */
-#endif
-    return MIN_REAL_NUMBER + cell[i].Interpolated_Opacity[k_freq]; /* this is calculated in a different routine, just return it now */
-#endif
-
-#ifdef RT_CHEM_PHOTOION
-    /* opacity to ionizing radiation for Petkova & Springel bands. note cooling.c or rt_update_chemistry is where ionization is actually calculated */
-    double nH_over_Density = HYDROGEN_MASSFRAC / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
-    double kappa = nH_over_Density * (cell[i].HI + MIN_REAL_NUMBER) * rt_ion_sigma_HI[k_freq]; // note this is designed for specific applications: does not include dust, or free-free, or free-electron scattering contributions here, all of which can be important.
-#if defined(RT_CHEM_PHOTOION_HE) && defined(RT_PHOTOION_MULTIFREQUENCY)
-    kappa += nH_over_Density * ((cell[i].HeI + MIN_REAL_NUMBER) * rt_ion_sigma_HeI[k_freq] + (cell[i].HeII + MIN_REAL_NUMBER) * rt_ion_sigma_HeII[k_freq]);
-    if(k_freq==RT_FREQ_BIN_He0)  {return kappa;}
-    if(k_freq==RT_FREQ_BIN_He1)  {return kappa;}
-    if(k_freq==RT_FREQ_BIN_He2)  {return kappa;}
-#endif
-    if(k_freq==RT_FREQ_BIN_H0)  {return kappa;}
-#endif
-
-#if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_PHOTOELECTRIC) || defined (GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_LYMAN_WERNER) || defined(RT_INFRARED) || defined(RT_FREEFREE)
-    double fac = UNIT_SURFDEN_IN_CGS, Zfac, dust_to_metals_vs_standard, kappa_HHe; /* units */
-    Zfac = 1.0; kappa_HHe=0.35; // assume solar metallicity, simple Thompson cross-section limit for various processes below
-    dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // many of the dust opacities below will need this as the dimensionless dust-to-metals ratio normalized to the canonical Solar value of ~1/2
-#ifdef METALS
-    if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
-#endif
-#if defined(COOLING) && !defined(CHIMES)
-    if(i>=0) {kappa_HHe=0.02 + 0.35*cell[i].Ne;}
-#endif
-
-    
-#ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
-    if(k_freq==RT_FREQ_BIN_FREEFREE)
-    {
-        double T_eff=0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
-        double kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
-        return (0.35 + kappa_abs) * fac;
-    }
-#endif
-#ifdef RT_HARD_XRAY
-    /* opacity comes from H+He (Thompson) + metal ions. expressions here for metal ions come from integrating over the standard Morrison & McCammmon 1983 metal cross-sections for a standard slope gamma in the band */
-    if(k_freq==RT_FREQ_BIN_HARD_XRAY) {return (0.53 + 0.27*Zfac) * fac;}
-#endif
-#ifdef RT_SOFT_XRAY
-    /* opacity comes from H+He (Thompson) + metal ions. expressions here for metal ions come from integrating over the standard Morrison & McCammmon 1983 metal cross-sections for a standard slope gamma in the band */
-    if(k_freq==RT_FREQ_BIN_SOFT_XRAY) {return (127. + 50.0*Zfac) * fac;}
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-    /* three-band (UV, OPTICAL, IR) approximate spectra for stars as used in the FIRE (Hopkins et al.) models. mean opacities here come from integrating over the Hopkins 2004 (Pei 1992) opacities versus wavelength for the large bands here, using a luminosity-weighted mean stellar spectrum from the same starburst99 models used to compute the stellar feedback */
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-    // Use either MW (FIRE-3 default) or SMC (FIRE-2 default) opacities depending on the evolved local dust population composition
-    // If silicate mass / carbonaceous mass >= 5 use SMC opacities, else MW opacities.
-    double sil_to_C = 0;
-    if (cell[i].ISMDustChem_Dust_Metal[0]>0 && cell[i].ISMDustChem_Dust_Species[1]>0)
-    {sil_to_C = (cell[i].ISMDustChem_Dust_Metal[0] - cell[i].ISMDustChem_Dust_Species[1])/cell[i].ISMDustChem_Dust_Species[1];} // Everything that isn't carbonaceous dust is silicates for our purpose
-    else {sil_to_C = 100;}
-    if (sil_to_C >= 5)
-    {
-        if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 1800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/neutral H opacities. effective wavelength here is at something like ~0.2 micron, but spans a broad range from ~0.09-0.36 microns.
-        if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. see O-NIR band notes below, effective wavelength here is ~R-band (0.36-3.4 micron is the rough range of the effective band)
-        if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 10*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. this is updated to integrate through the 2007+ Draine+Li MW-like dust models, for a typical M101-like disk SED. slightly higher for e.g. M82-like with warmer dust. note this is a broad band, from ~3-300 micron, so contributions both from old-star direct IR emission and dust re-emission (warm and cold), which is why this is a bit higher than you would get for pure cold-dust re-emission.  
-    }  
-#endif
-    if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/neutral H opacities. effective wavelength here is at something like ~0.2 micron, but spans a broad range from ~0.09-0.36 microns.
-    if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. see O-NIR band notes below, effective wavelength here is ~R-band (0.36-3.4 micron is the rough range of the effective band)
-    if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 6.5*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;} // floored at Thomson/bound-free/bound-bound H opacities [Kramer's-type law gives the 1e-3 'floor' effective here]. this is updated to integrate through the 2007+ Draine+Li MW-like dust models, for a typical M101-like disk SED. slightly higher for e.g. M82-like with warmer dust. note this is a broad band, from ~3-300 micron, so contributions both from old-star direct IR emission and dust re-emission (warm and cold), which is why this is a bit higher than you would get for pure cold-dust re-emission.
-#endif
-    if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return (1800.) * fac;}
-    if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return (180.)  * fac;} /* note this is roughly equivalent to the specific extinction at R-band [bit higher in UBV, lower in IJHK] */
-    if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return (10.) * fac * (0.1 + Zfac);}
-#endif
-#ifdef RT_PHOTOELECTRIC
-    /* opacity comes primarily from dust (ignoring H2 molecular opacities here). band is 8-13.6 eV [0.091-0.155 micron] (note overlap with LW band) */
-    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC) {return DMAX(kappa_HHe, 720.*DMAX(1.e-4,Zfac*dust_to_metals_vs_standard)) * fac;} // depends rather sensitively on assumed input spectrum+dust composition (e.g. MW vs SMC-like), using 2007+ Draine+Li MW-like dust results here, weighted over a flat spectrum with 1/2 of the weight for the portion of the band which overlaps with LW.
-#endif
-#ifdef RT_LYMAN_WERNER
-    /* opacity from molecular H2 and dust (dominant at higher-metallicity) should be included. band is 11.2-13.6 eV [0.111-0.155 micron] */
-    if(k_freq==RT_FREQ_BIN_LYMAN_WERNER) {return DMAX(kappa_HHe, 900.*Zfac*dust_to_metals_vs_standard) * fac;} // just dust term for now, depends rather sensitively on assumed input spectrum+dust composition (e.g. MW vs SMC-like). using 2007+ Draine+Li MW-like dust results here, weighted by the LW cross-section and a flat spectrum in the range.
-#endif
-#ifdef RT_NUV
-    /* opacity comes primarily from dust. effective waveband is 0.16-0.36 micron [~3.444-8 eV] */
-    if(k_freq==RT_FREQ_BIN_NUV) {return DMAX(kappa_HHe, 480.*Zfac*dust_to_metals_vs_standard) * fac;} // depends rather sensitively on assumed input spectrum+dust composition (e.g. MW vs SMC-like), using 2007+ Draine+Li MW-like dust results here
-#endif
-#ifdef RT_OPTICAL_NIR
-    /* opacity comes primarily from dust. effective waveband is 0.36-3 microns [~0.4133-3.444 eV], e.g. between U-K+ band  */
-    if(k_freq==RT_FREQ_BIN_OPTICAL_NIR) {return DMAX(kappa_HHe, 180.*Zfac*dust_to_metals_vs_standard) * fac;} // this is close to the specific opacity at R-band, which you can treat very crudely as a sort of 'effective wavelength' for this
-#endif
-#ifdef RT_INFRARED
-    /* IR with dust opacity */
-    double T_min = get_min_allowed_dustIRrad_temperature();
-    if(k_freq==RT_FREQ_BIN_INFRARED)
-    {
-        if(isnan(cell[i].Dust_Temperature)) {PRINT_WARNING("\n NaN dust temperature for cell-ID=%llu  \n", (unsigned long long) (long long)i /* particle index */); cell[i].Dust_Temperature = 1.e4;}
-        if(isnan(cell[i].Radiation_Temperature)) {PRINT_WARNING("\n NaN gas temperature for cell-ID=%llu  \n", (unsigned long long) (long long)i /* particle index */);}
-        if(cell[i].Dust_Temperature<=T_min) {cell[i].Dust_Temperature=T_min;} // reset baseline
-        if(cell[i].Radiation_Temperature<=T_min) {cell[i].Radiation_Temperature=T_min;} // reset baseline
-        double T_dust_em = cell[i].Dust_Temperature; // dust temperature in K //
-        double Trad = cell[i].Radiation_Temperature; // radiation temperature in K //
-        if((Trad <= 0) || (T_dust_em<=0)) {PRINT_WARNING("\n Cell-ID=%llu  has T_rad=%g and T_dust=%g\n", (unsigned long long) (long long)i /* particle index */, Trad, T_dust_em);}
-        return rt_kappa_adaptive_IR_band(i,T_dust_em,Trad,0,0, pp, cell); // < 1500 K, dust is present; here first flag 0 uses the radiation temperature because we want to know the Planck-mean *absorption* opacity. Second flag 0 says to include both dust and gas opacities. In the subroutine, divide by fac because the function outputs in code units but we're working in CGS here.
-        
-    }
-#endif
-#endif    
-
-#ifdef NUCLEAR_NETWORK_NEUTRINOS
-    if(k_freq==RT_FREQ_BIN_NU_E || k_freq==RT_FREQ_BIN_NU_EBAR || k_freq==RT_FREQ_BIN_NU_X) {
-        extern double nuclear_neutrino_opacity(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-        return nuclear_neutrino_opacity(i, k_freq, pp, cell);
-    }
-#endif
-
-    return 0;
-}
-
-
-/***********************************************************************************************************/
-/* calculate absorbed fraction of opacity = 1-albedo = kappa_absorption / (kappa_scattering + kappa_absorption) needed for RT operations */
-/***********************************************************************************************************/
-double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) && defined(RT_GENERIC_USER_FREQ)
-    if(k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ) {return DMAX(1.e-6, DMIN(1.0 - 1.e-6, All.Grain_Absorbed_Fraction_vs_Total_Extinction));}
-#endif
-
-#ifdef RT_CHEM_PHOTOION
-    if(k_freq==RT_FREQ_BIN_H0)  {return 1.-1.e-6;} /* negligible scattering for ionizing radiation */
-#if defined(RT_CHEM_PHOTOION_HE) && defined(RT_PHOTOION_MULTIFREQUENCY)
-    if(k_freq==RT_FREQ_BIN_He0 || k_freq==RT_FREQ_BIN_He1 || k_freq==RT_FREQ_BIN_He2)  {return 1.-1.e-6;}
-#endif
-#endif
-
-#if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_INFRARED) /* these have mixed opacities from dust(assume albedo=1/2), ionization(albedo=0), and Thompson (albedo=1) */
-    double fac; fac = UNIT_SURFDEN_IN_CGS; /* units */
-#ifdef RT_HARD_XRAY /* opacity comes from H+He (Thompson) + metal ions -- assume 0 scattering from ions, 1 from Thompson */
-    if(k_freq==RT_FREQ_BIN_HARD_XRAY) {return 1.-0.5*(0. + DMIN(1.,0.35*fac/rt_kappa(i,k_freq, pp, cell)));}
-#endif
-#ifdef RT_SOFT_XRAY /* opacity comes from H+He (Thompson) + metal ions -- assume 0 scattering from ions, 1 from Thompson */
-    if(k_freq==RT_FREQ_BIN_SOFT_XRAY) {return 1.-0.5*(0. + DMIN(1.,0.35*fac/rt_kappa(i,k_freq, pp, cell)));}
-#endif
-#ifdef RT_INFRARED /* opacity comes from gas + dust -- we have a whole separate set of flags in the subroutine to separate the absorption vs scattering opacity, use those, for consistency and accuracy */
-    if(k_freq==RT_FREQ_BIN_INFRARED) {return rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,-1,0, pp, cell) / (MIN_REAL_NUMBER + rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,0,0, pp, cell));}
-#endif
-#endif
-    
-#ifdef RT_FREEFREE
-    if(k_freq==RT_FREQ_BIN_FREEFREE)
-    {
-        double T_eff=0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS, kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
-        return kappa_abs / (0.35 + kappa_abs);
-    }
-#endif
-    
-#ifdef NUCLEAR_NETWORK_NEUTRINOS
-    if(k_freq==RT_FREQ_BIN_NU_E || k_freq==RT_FREQ_BIN_NU_EBAR || k_freq==RT_FREQ_BIN_NU_X) {
-        extern double nuclear_neutrino_absorb_frac(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-        return nuclear_neutrino_absorb_frac(i, k_freq, pp, cell);
-    }
-#endif
-
-    return 0.5; /* default to assuming kappa_scattering = kappa_absorption (pretty reasonable for dust at most wavelengths) */
-}
+/* rt_kappa, rt_absorb_frac_albedo: definitions now in rt_functions.h */
 
 
 
@@ -608,16 +442,7 @@ void rt_define_effective_frequencies_in_bands(void)
 
 
 /***********************************************************************************************************/
-/* rate of photon absorption [absorptions per unit time per photon]: this, times the timestep dt, times the photon energy density E,
-    gives the change in the energy density from absorptions (the sink term) */
-/***********************************************************************************************************/
-#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
-double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    /* should be equal to (c_reduced * Kappa_opacity * rho) */
-    return (C_LIGHT_CODE_REDUCED) * rt_absorb_frac_albedo(i,k_freq, pp, cell) * (rt_kappa(i,k_freq, pp, cell) * cell[i].Density*All.cf_a3inv);
-}
-#endif 
+/* rt_absorption_rate: definition now in rt_functions.h */
 
 
 
@@ -1239,35 +1064,7 @@ void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas
 
 
 /***********************************************************************************************************/
-/* subroutine specific to some bands where, rather than modeling absorption and emission explicitly (with some emissivity
-    associated with e.g. gas or dust), we assume an instantaneous exact local radiative equilibrium re-emission from
-    band A into band B, in the absorption step essentially transferring photon energy instantly between bins */
-/***********************************************************************************************************/
-int rt_get_donation_target_bin(int bin)
-{
-    int donation_target_bin = -1; // default here is to assume no 'target bin' -- meaning the absorbed radiation does not get 'transferred' but simply absorbed (emission handled separately)
-#if defined(RT_CHEM_PHOTOION) && defined(RT_OPTICAL_NIR)
-    /* in these modules, as typically applied to galaxy and star-formation simulations, we will
-       assume absorbed ionizing photons are instantly re-emitted via recombination into optical-NIR bins. valid if recombination time is
-       fast compared to all our timesteps. more accurately, this should be separately calculated in the cooling rates, and gas treated as a source, but for now we use this module */
-    if(bin==RT_FREQ_BIN_H0) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
-#ifdef RT_PHOTOION_MULTIFREQUENCY
-    if(bin==RT_FREQ_BIN_He0) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
-    if(bin==RT_FREQ_BIN_He1) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
-    if(bin==RT_FREQ_BIN_He2) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
-#endif
-#endif
-#if defined(RT_PHOTOELECTRIC) && defined(RT_INFRARED)
-    if(bin==RT_FREQ_BIN_PHOTOELECTRIC) {donation_target_bin=RT_FREQ_BIN_INFRARED;} /* this is direct dust absorption, re-radiated in IR if we aren't explicitly modeling dust thermal physics (module here) */
-#endif
-#if defined(RT_NUV) && defined(RT_INFRARED)
-    if(bin==RT_FREQ_BIN_NUV) {donation_target_bin=RT_FREQ_BIN_INFRARED;} /* this is direct dust absorption, re-radiated in IR if we aren't explicitly modeling dust thermal physics (module here) */
-#endif
-#if defined(RT_OPTICAL_NIR) && defined(RT_INFRARED)
-    if(bin==RT_FREQ_BIN_OPTICAL_NIR) {donation_target_bin=RT_FREQ_BIN_INFRARED;} /* this is direct dust absorption, re-radiated in IR if we aren't explicitly modeling dust thermal physics (module here) */
-#endif
-    return donation_target_bin;
-}
+/* rt_get_donation_target_bin: definition now in rt_functions.h */
 
 
 
@@ -1312,14 +1109,7 @@ dust, and the IR radiation field component (RT_INFRARED)
 
 #ifdef RT_INFRARED
 
-/* return the minimum user-specified dust temperature. note there is nothing physical about this, just a convenience function since we enforce a minimum -gas- temperature */
-double get_min_allowed_dustIRrad_temperature(void)
-{
-#if defined(GALSF)
-    return DMAX(All.MinGasTemp, 2.73/All.cf_atime);
-#endif
-    return MIN_REAL_NUMBER;
-}
+/* get_min_allowed_dustIRrad_temperature: definition now in rt_functions.h */
 
 /* dust_dE_cooling
 Returns the derivative of the dust energy, to be root-solved to 0 to obtain

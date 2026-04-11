@@ -386,3 +386,238 @@ double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struc
     return 0;
 #endif
 }
+
+
+/* ========================================================================
+ * get_min_allowed_dustIRrad_temperature — minimum dust/radiation temperature
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+#ifdef RT_INFRARED
+KOKKOS_INLINE_FUNCTION
+double get_min_allowed_dustIRrad_temperature(void)
+{
+#if defined(GALSF)
+    return DMAX(All.MinGasTemp, 2.73/All.cf_atime);
+#endif
+    return MIN_REAL_NUMBER;
+}
+#endif
+
+
+/* ========================================================================
+ * rt_kappa — total opacity for a given RT frequency bin
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
+KOKKOS_INLINE_FUNCTION
+double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
+{
+
+#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
+#ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION /* special test problem implementation */
+    return cell[i].Interpolated_Opacity[k_freq] + 1.e-3 * All.Dust_to_Gas_Mass_Ratio*0.75*All.Grain_Q_at_MaxGrainSize/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)); /* enforce minimum; note kappa in code units here so need to convert appropriately */
+#endif
+    return MIN_REAL_NUMBER + cell[i].Interpolated_Opacity[k_freq]; /* this is calculated in a different routine, just return it now */
+#endif
+
+#ifdef RT_CHEM_PHOTOION
+    /* opacity to ionizing radiation for Petkova & Springel bands. note cooling.c or rt_update_chemistry is where ionization is actually calculated */
+    double nH_over_Density = HYDROGEN_MASSFRAC / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
+    double kappa = nH_over_Density * (cell[i].HI + MIN_REAL_NUMBER) * rt_ion_sigma_HI[k_freq]; // note this is designed for specific applications: does not include dust, or free-free, or free-electron scattering contributions here, all of which can be important.
+#if defined(RT_CHEM_PHOTOION_HE) && defined(RT_PHOTOION_MULTIFREQUENCY)
+    kappa += nH_over_Density * ((cell[i].HeI + MIN_REAL_NUMBER) * rt_ion_sigma_HeI[k_freq] + (cell[i].HeII + MIN_REAL_NUMBER) * rt_ion_sigma_HeII[k_freq]);
+    if(k_freq==RT_FREQ_BIN_He0)  {return kappa;}
+    if(k_freq==RT_FREQ_BIN_He1)  {return kappa;}
+    if(k_freq==RT_FREQ_BIN_He2)  {return kappa;}
+#endif
+    if(k_freq==RT_FREQ_BIN_H0)  {return kappa;}
+#endif
+
+#if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_PHOTOELECTRIC) || defined (GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_LYMAN_WERNER) || defined(RT_INFRARED) || defined(RT_FREEFREE)
+    double fac = UNIT_SURFDEN_IN_CGS, Zfac, dust_to_metals_vs_standard, kappa_HHe; /* units */
+    Zfac = 1.0; kappa_HHe=0.35; // assume solar metallicity, simple Thompson cross-section limit for various processes below
+    dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // many of the dust opacities below will need this as the dimensionless dust-to-metals ratio normalized to the canonical Solar value of ~1/2
+#ifdef METALS
+    if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
+#endif
+#if defined(COOLING) && !defined(CHIMES)
+    if(i>=0) {kappa_HHe=0.02 + 0.35*cell[i].Ne;}
+#endif
+
+#ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
+    if(k_freq==RT_FREQ_BIN_FREEFREE)
+    {
+        double T_eff=0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS; // we're assuming fully-ionized gas with a simple equation-of-state here, nothing fancy, to get the temperature //
+        double kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
+        return (0.35 + kappa_abs) * fac;
+    }
+#endif
+#ifdef RT_HARD_XRAY
+    /* opacity comes from H+He (Thompson) + metal ions. expressions here for metal ions come from integrating over the standard Morrison & McCammmon 1983 metal cross-sections for a standard slope gamma in the band */
+    if(k_freq==RT_FREQ_BIN_HARD_XRAY) {return (0.53 + 0.27*Zfac) * fac;}
+#endif
+#ifdef RT_SOFT_XRAY
+    /* opacity comes from H+He (Thompson) + metal ions. expressions here for metal ions come from integrating over the standard Morrison & McCammmon 1983 metal cross-sections for a standard slope gamma in the band */
+    if(k_freq==RT_FREQ_BIN_SOFT_XRAY) {return (127. + 50.0*Zfac) * fac;}
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+    /* three-band (UV, OPTICAL, IR) approximate spectra for stars as used in the FIRE (Hopkins et al.) models. mean opacities here come from integrating over the Hopkins 2004 (Pei 1992) opacities versus wavelength for the large bands here, using a luminosity-weighted mean stellar spectrum from the same starburst99 models used to compute the stellar feedback */
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    // Use either MW (FIRE-3 default) or SMC (FIRE-2 default) opacities depending on the evolved local dust population composition
+    // If silicate mass / carbonaceous mass >= 5 use SMC opacities, else MW opacities.
+    double sil_to_C = 0;
+    if (cell[i].ISMDustChem_Dust_Metal[0]>0 && cell[i].ISMDustChem_Dust_Species[1]>0)
+    {sil_to_C = (cell[i].ISMDustChem_Dust_Metal[0] - cell[i].ISMDustChem_Dust_Species[1])/cell[i].ISMDustChem_Dust_Species[1];} // Everything that isn't carbonaceous dust is silicates for our purpose
+    else {sil_to_C = 100;}
+    if (sil_to_C >= 5)
+    {
+        if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 1800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;}
+        if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;}
+        if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 10*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;}
+    }
+#endif
+    if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return DMAX(kappa_HHe, 800.*(1.e-2 + Zfac*dust_to_metals_vs_standard)) * fac;}
+    if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return DMAX(kappa_HHe, 180.*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;}
+    if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return DMAX(kappa_HHe, 6.5*(1.e-3 + Zfac*dust_to_metals_vs_standard)) * fac;}
+#endif
+    if(k_freq==RT_FREQ_BIN_FIRE_UV)  {return (1800.) * fac;}
+    if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return (180.)  * fac;}
+    if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return (10.) * fac * (0.1 + Zfac);}
+#endif
+#ifdef RT_PHOTOELECTRIC
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC) {return DMAX(kappa_HHe, 720.*DMAX(1.e-4,Zfac*dust_to_metals_vs_standard)) * fac;}
+#endif
+#ifdef RT_LYMAN_WERNER
+    if(k_freq==RT_FREQ_BIN_LYMAN_WERNER) {return DMAX(kappa_HHe, 900.*Zfac*dust_to_metals_vs_standard) * fac;}
+#endif
+#ifdef RT_NUV
+    if(k_freq==RT_FREQ_BIN_NUV) {return DMAX(kappa_HHe, 480.*Zfac*dust_to_metals_vs_standard) * fac;}
+#endif
+#ifdef RT_OPTICAL_NIR
+    if(k_freq==RT_FREQ_BIN_OPTICAL_NIR) {return DMAX(kappa_HHe, 180.*Zfac*dust_to_metals_vs_standard) * fac;}
+#endif
+#ifdef RT_INFRARED
+    /* IR with dust opacity */
+    double T_min = get_min_allowed_dustIRrad_temperature();
+    if(k_freq==RT_FREQ_BIN_INFRARED)
+    {
+        if(isnan(cell[i].Dust_Temperature)) {PRINT_WARNING("\n NaN dust temperature for cell-ID=%llu  \n", (unsigned long long) (long long)i /* particle index */); cell[i].Dust_Temperature = 1.e4;}
+        if(isnan(cell[i].Radiation_Temperature)) {PRINT_WARNING("\n NaN gas temperature for cell-ID=%llu  \n", (unsigned long long) (long long)i /* particle index */);}
+        if(cell[i].Dust_Temperature<=T_min) {cell[i].Dust_Temperature=T_min;}
+        if(cell[i].Radiation_Temperature<=T_min) {cell[i].Radiation_Temperature=T_min;}
+        double T_dust_em = cell[i].Dust_Temperature;
+        double Trad = cell[i].Radiation_Temperature;
+        if((Trad <= 0) || (T_dust_em<=0)) {PRINT_WARNING("\n Cell-ID=%llu  has T_rad=%g and T_dust=%g\n", (unsigned long long) (long long)i /* particle index */, Trad, T_dust_em);}
+        return rt_kappa_adaptive_IR_band(i,T_dust_em,Trad,0,0, pp, cell);
+    }
+#endif
+#endif
+
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    if(k_freq==RT_FREQ_BIN_NU_E || k_freq==RT_FREQ_BIN_NU_EBAR || k_freq==RT_FREQ_BIN_NU_X) {
+        extern double nuclear_neutrino_opacity(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+        return nuclear_neutrino_opacity(i, k_freq, pp, cell);
+    }
+#endif
+
+    return 0;
+}
+
+
+/* ========================================================================
+ * rt_absorb_frac_albedo — absorbed fraction = 1 - albedo
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
+{
+#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) && defined(RT_GENERIC_USER_FREQ)
+    if(k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ) {return DMAX(1.e-6, DMIN(1.0 - 1.e-6, All.Grain_Absorbed_Fraction_vs_Total_Extinction));}
+#endif
+
+#ifdef RT_CHEM_PHOTOION
+    if(k_freq==RT_FREQ_BIN_H0)  {return 1.-1.e-6;} /* negligible scattering for ionizing radiation */
+#if defined(RT_CHEM_PHOTOION_HE) && defined(RT_PHOTOION_MULTIFREQUENCY)
+    if(k_freq==RT_FREQ_BIN_He0 || k_freq==RT_FREQ_BIN_He1 || k_freq==RT_FREQ_BIN_He2)  {return 1.-1.e-6;}
+#endif
+#endif
+
+#if defined(RT_HARD_XRAY) || defined(RT_SOFT_XRAY) || defined(RT_INFRARED) /* these have mixed opacities from dust(assume albedo=1/2), ionization(albedo=0), and Thompson (albedo=1) */
+    double fac; fac = UNIT_SURFDEN_IN_CGS; /* units */
+#ifdef RT_HARD_XRAY
+    if(k_freq==RT_FREQ_BIN_HARD_XRAY) {return 1.-0.5*(0. + DMIN(1.,0.35*fac/rt_kappa(i,k_freq, pp, cell)));}
+#endif
+#ifdef RT_SOFT_XRAY
+    if(k_freq==RT_FREQ_BIN_SOFT_XRAY) {return 1.-0.5*(0. + DMIN(1.,0.35*fac/rt_kappa(i,k_freq, pp, cell)));}
+#endif
+#ifdef RT_INFRARED
+    if(k_freq==RT_FREQ_BIN_INFRARED) {return rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,-1,0, pp, cell) / (MIN_REAL_NUMBER + rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,0,0, pp, cell));}
+#endif
+#endif
+
+#ifdef RT_FREEFREE
+    if(k_freq==RT_FREQ_BIN_FREEFREE)
+    {
+        double T_eff=0.59*(cell[i].gamma_eos_value()-1.)*U_TO_TEMP_UNITS*cell[i].InternalEnergyPred, rho=cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_CGS, kappa_abs = 1.e30*rho*pow(T_eff,-3.5);
+        return kappa_abs / (0.35 + kappa_abs);
+    }
+#endif
+
+#ifdef NUCLEAR_NETWORK_NEUTRINOS
+    if(k_freq==RT_FREQ_BIN_NU_E || k_freq==RT_FREQ_BIN_NU_EBAR || k_freq==RT_FREQ_BIN_NU_X) {
+        extern double nuclear_neutrino_absorb_frac(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+        return nuclear_neutrino_absorb_frac(i, k_freq, pp, cell);
+    }
+#endif
+
+    return 0.5; /* default to assuming kappa_scattering = kappa_absorption (pretty reasonable for dust at most wavelengths) */
+}
+
+
+/* ========================================================================
+ * rt_absorption_rate — photon absorption rate (absorptions per unit time per photon)
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    /* should be equal to (c_reduced * Kappa_opacity * rho) */
+    return (C_LIGHT_CODE_REDUCED) * rt_absorb_frac_albedo(i,k_freq, pp, cell) * (rt_kappa(i,k_freq, pp, cell) * cell[i].Density*All.cf_a3inv);
+}
+
+#endif /* RADTRANSFER || RT_USE_GRAVTREE */
+
+
+/* ========================================================================
+ * rt_get_donation_target_bin — which bin absorbed radiation is re-emitted into
+ * (moved from radiation/rt_utilities.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+int rt_get_donation_target_bin(int bin)
+{
+    int donation_target_bin = -1;
+#if defined(RT_CHEM_PHOTOION) && defined(RT_OPTICAL_NIR)
+    if(bin==RT_FREQ_BIN_H0) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
+#ifdef RT_PHOTOION_MULTIFREQUENCY
+    if(bin==RT_FREQ_BIN_He0) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
+    if(bin==RT_FREQ_BIN_He1) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
+    if(bin==RT_FREQ_BIN_He2) {donation_target_bin=RT_FREQ_BIN_OPTICAL_NIR;}
+#endif
+#endif
+#if defined(RT_PHOTOELECTRIC) && defined(RT_INFRARED)
+    if(bin==RT_FREQ_BIN_PHOTOELECTRIC) {donation_target_bin=RT_FREQ_BIN_INFRARED;}
+#endif
+#if defined(RT_NUV) && defined(RT_INFRARED)
+    if(bin==RT_FREQ_BIN_NUV) {donation_target_bin=RT_FREQ_BIN_INFRARED;}
+#endif
+#if defined(RT_OPTICAL_NIR) && defined(RT_INFRARED)
+    if(bin==RT_FREQ_BIN_OPTICAL_NIR) {donation_target_bin=RT_FREQ_BIN_INFRARED;}
+#endif
+    return donation_target_bin;
+}

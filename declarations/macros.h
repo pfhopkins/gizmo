@@ -185,8 +185,8 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #define IMIN(a,b) ((a) < (b) ? (a) : (b))
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-/* GPU-safe endrun/PRINT_WARNING: nvcc_wrapper does not reliably define
-   __CUDA_ARCH__, so we cannot distinguish host vs device at compile time.
+/* GPU-safe endrun/PRINT_WARNING: we use GIZMO_GPU_COMPILER (not __CUDA_ARCH__
+   which is unreliable with nvcc_wrapper and absent on AMD/HIP).
    endrun just prints (no MPI_Abort which segfaults from device, no bare
    'return' which is UB in non-void functions).  The function continues
    with bad data but won't crash the kernel — errors are caught post-kernel. */
