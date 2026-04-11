@@ -41,6 +41,11 @@ static __managed__ struct global_data_all_processes All_dev;
 #undef isnan
 #define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
 #define isnan(x) ((double)(x) != (double)(x))
+/* Include nuclear_physics.cc directly so nvcc compiles it in the same TU.
+   Without -rdc, cross-TU device function calls cause 'unresolved extern' at
+   PTX assembly.  On CPU builds, nuclear_physics.o is compiled separately. */
+#define NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC
+#include "nuclear_physics.cc"
 #endif
 
 #ifdef NUCLEAR_NETWORK

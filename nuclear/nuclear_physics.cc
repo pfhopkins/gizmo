@@ -19,6 +19,10 @@
    Thread-safe: all mutable state is stack-local. No global arrays modified.
 */
 
+/* When compiled by nvcc (GPU builds), this file is #included from nuclear.cc
+   to form a single TU (required because nvcc without -rdc can't resolve
+   cross-TU device calls).  Skip the redundant includes in that case. */
+#ifndef NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -26,6 +30,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "nuclear.h"
+#endif
 
 #ifdef NUCLEAR_NETWORK
 
