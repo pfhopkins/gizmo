@@ -93,6 +93,22 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int
     return R_GV * Z * KE_fac;
 }
 
+KOKKOS_INLINE_FUNCTION double gamma_eos_of_crs_in_bin(int k_CRegy)
+{
+    return (4. + 1./return_CRbin_gamma_factor(-1,k_CRegy)) / 3.;
+}
+
+KOKKOS_INLINE_FUNCTION double return_CRbin_M1speed(int k_CRegy)
+{
+    double vmax = CRFLUID_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE;
+#if defined(CRFLUID_ALT_VARIABLE_RSOL) && (N_CR_PARTICLE_BINS > 1)
+    double R = All.CR_global_rigidity_at_bin_center[k_CRegy];
+    double f = All.CosmicRayDiffusionCoeff * UNIT_LENGTH_IN_KPC * pow(R , 0.8);
+    if(f > vmax) {return f;}
+#endif
+    return vmax;
+}
+
 KOKKOS_INLINE_FUNCTION double Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell)
 {
     if((cell[i].Mass > 0) && (cell[i].Density > 0) && (cell[i].CosmicRayEnergyPred[k_CRegy] > 0))

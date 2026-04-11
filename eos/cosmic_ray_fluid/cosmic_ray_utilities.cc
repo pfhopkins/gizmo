@@ -602,11 +602,7 @@ double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp,
 /* return_CRbin_CRmass_in_mp, return_CRbin_beta_factor, return_CRbin_gamma_factor,
    return_CRbin_kinetic_energy_in_GeV: definitions now in cosmic_ray_functions.h */
 
-/* routine which returns the effective adiabatic index of CRs, P_cr = (gamma_eos - 1) * e_kinetic */
-double gamma_eos_of_crs_in_bin(int k_CRegy)
-{
-    return (4. + 1./return_CRbin_gamma_factor(-1,k_CRegy)) / 3.;
-}
+/* gamma_eos_of_crs_in_bin: definition now in cosmic_ray_functions.h */
 
 
 /* return pre-factor for CR streaming losses, such that loss rate dE/dt = -E * streamfac */
@@ -947,17 +943,7 @@ int compare_CR_rigidity_for_sort(const void *a, const void *b)
 #endif
 
 
-/* optional code to allow the RSOL to depend on bin energy, still testing this */
-double return_CRbin_M1speed(int k_CRegy)
-{
-    double vmax = CRFLUID_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE;
-#if defined(CRFLUID_ALT_VARIABLE_RSOL) && (N_CR_PARTICLE_BINS > 1)    /* experimental block here */
-    double R = All.CR_global_rigidity_at_bin_center[k_CRegy];
-    double f = All.CosmicRayDiffusionCoeff * UNIT_LENGTH_IN_KPC * pow(R , 0.8);
-    if(f > vmax) {return f;}
-#endif
-    return vmax;
-}
+/* return_CRbin_M1speed: definition now in cosmic_ray_functions.h */
 
 
 /* evaluate_cr_transport_reductionfactor: definition now in cosmic_ray_functions.h */
