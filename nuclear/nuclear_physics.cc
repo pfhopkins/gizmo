@@ -21,7 +21,13 @@
 
 /* When compiled by nvcc (GPU builds), this file is #included from nuclear.cc
    to form a single TU (required because nvcc without -rdc can't resolve
-   cross-TU device calls).  Skip the redundant includes in that case. */
+   cross-TU device calls).  When compiled standalone as its own .o (CPU builds
+   via OBJS), it compiles normally.  On GPU builds, the standalone .o must be
+   empty to avoid multiple-definition linker errors. */
+#if defined(OPENMP_GPU_OFFLOAD) && !defined(NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC)
+/* GPU build, standalone compilation — skip everything (already in nuclear.o via #include) */
+#else
+
 #ifndef NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC
 #include <cmath>
 #include <cstdio>
@@ -809,3 +815,4 @@ KOKKOS_FUNCTION int nuclear_check_nse(double T9)
 
 #endif /* NUCLEAR_NETWORK_SOLVER == 0 */
 #endif /* NUCLEAR_NETWORK */
+#endif /* GPU standalone guard */
