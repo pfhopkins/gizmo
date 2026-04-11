@@ -330,8 +330,8 @@ double return_CRbin_beta_factor(int target, int k_CRegy);
 void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double return_CRbin_CRmass_in_mp(int target, int k_CRegy);
 double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy);
-double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct gas_cell_data *cell);
-double Get_Gas_ion_Alfven_speed_i(int i, struct gas_cell_data *cell);
+double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
+double Get_Gas_ion_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct gas_cell_data *cell);
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
 void CR_spectrum_define_bins(void);

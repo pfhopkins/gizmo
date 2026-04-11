@@ -275,3 +275,26 @@ double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override
 #endif
     return 1;
 }
+
+
+/* ========================================================================
+ * Get_Gas_Ionized_Fraction — ionized fraction of gas
+ * (moved from eos/eos.cc)
+ * ======================================================================== */
+
+KOKKOS_INLINE_FUNCTION
+double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+#ifdef COOLING
+#ifdef CHIMES
+  return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
+#else
+    double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
+    temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); // get thermodynamic properties
+    double f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
+    if((!isfinite(f_ion)) || (f_ion<0)) {f_ion=0;}
+    return f_ion;
+#endif
+#endif
+    return 1;
+}

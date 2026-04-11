@@ -846,7 +846,7 @@ void hydro_final_operations_and_cleanup(void)
                 (note this is important; otherwise build up CR 'traps' where the gas piles up and cools but is entirely supported by CRs in outer disks) */
 #if !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) // handled in separate solver if explicitly evolving the relevant wave families
             for(k=0;k<N_CR_PARTICLE_BINS;k++) {
-                double streamfac = fabs(CR_get_streaming_loss_rate_coefficient(i,k, CellP));
+                double streamfac = fabs(CR_get_streaming_loss_rate_coefficient(i,k, P, CellP));
                 CellP[i].DtInternalEnergy += CellP[i].CosmicRayEnergyPred[k] * streamfac / P[i].Mass; // make sure to divide by mass here to get the correct units since DtInternalEnergy has been converted to specific energy units (while CR energies are absolute)
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
                 CellP[i].DtCosmicRayEnergy[k] -= cosmicrayfluid_rsol_corrfac(k) * CellP[i].CosmicRayEnergyPred[k] * streamfac; // in the multi-bin formalism, save this operation for the CR cooling ops since can involve bin-to-bin transfer of energy
@@ -855,7 +855,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #if defined(MAGNETIC) // only makes sense to include parallel correction below if all these terms enabled //
             /* 'residual' term from parallel scattering of CRs being not-necessarily-in-equilibrium with a two-moment form of the equations */
-            double vA_eff=Get_Gas_ion_Alfven_speed_i(i, CellP), vol_i=CellP[i].Density*All.cf_a3inv/P[i].Mass, Bmag=0; Vec3<double> bhat = CellP[i].BPred; // define some useful variables
+            double vA_eff=Get_Gas_ion_Alfven_speed_i(i, P, CellP), vol_i=CellP[i].Density*All.cf_a3inv/P[i].Mass, Bmag=0; Vec3<double> bhat = CellP[i].BPred; // define some useful variables
             Bmag = bhat.norm_sq(); // get direction vector for B-field needed below
             if(Bmag>0) {Bmag=sqrt(Bmag); bhat /= Bmag;} // make dimensionless
             if(Bmag>0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) {
