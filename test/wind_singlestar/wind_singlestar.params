@@ -21,7 +21,7 @@ NumFilesWrittenInParallel   1
 
 %---- Output frequency
 TimeOfFirstSnapshot     0.0
-TimeBetSnapshot         0.05
+TimeBetSnapshot         0.01
 TimeBetStatistics       0.05
 
 %---- CPU run-time and checkpointing time-limits
@@ -32,7 +32,7 @@ ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0.0
-TimeMax     0.6
+TimeMax     0.1
 
 %---- Maximum and minimum timesteps allowed
 MaxSizeTimestep         0.1
