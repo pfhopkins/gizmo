@@ -115,11 +115,69 @@ void free_sfc_tiles(sfc_tile_t *tiles, int *pool_indices)
 }
 
 
-/* Check if a search sphere overlaps a tile's bounding box (with periodic wrapping).
+/* ================================================================
+   BVH over SFC tiles — recursive midpoint subdivision.
+   Since tiles are SFC-sorted, consecutive tiles are spatially local,
+   so midpoint subdivision produces a spatially balanced tree.
+   ================================================================ */
+
+/* Recursive builder. Returns the index of the created node in bvh[].
+   *next_node is the next free slot. */
+static int build_bvh_recursive(sfc_tile_t *tiles, int tile_start, int tile_end,
+                               tile_bvh_node_t *bvh, int *next_node)
+{
+    if(tile_end - tile_start == 1)
+    {
+        /* Leaf: create a node pointing to a single tile */
+        int idx = (*next_node)++;
+        int t = tile_start;
+        for(int k = 0; k < 3; k++) { bvh[idx].lo[k] = tiles[t].lo[k]; bvh[idx].hi[k] = tiles[t].hi[k]; }
+        bvh[idx].hmax = tiles[t].hmax;
+        bvh[idx].left = -(t + 1);   /* negative encoding: leaf = -(tile_index + 1) */
+        bvh[idx].right = -(t + 1);  /* same tile for both (signals leaf) */
+        return idx;
+    }
+
+    /* Internal node: split at midpoint */
+    int mid = (tile_start + tile_end) / 2;
+
+    /* Reserve this node's slot first (ensures parent index > children for root-last ordering) */
+    /* Actually, build children first, then this node, so we can compute union bbox */
+    int left_idx = build_bvh_recursive(tiles, tile_start, mid, bvh, next_node);
+    int right_idx = build_bvh_recursive(tiles, mid, tile_end, bvh, next_node);
+
+    int idx = (*next_node)++;
+    for(int k = 0; k < 3; k++) {
+        bvh[idx].lo[k] = DMIN(bvh[left_idx].lo[k], bvh[right_idx].lo[k]);
+        bvh[idx].hi[k] = DMAX(bvh[left_idx].hi[k], bvh[right_idx].hi[k]);
+    }
+    bvh[idx].hmax = DMAX(bvh[left_idx].hmax, bvh[right_idx].hmax);
+    bvh[idx].left = left_idx;
+    bvh[idx].right = right_idx;
+    return idx;
+}
+
+int build_tile_bvh(sfc_tile_t *tiles, int ntiles, tile_bvh_node_t **bvh_out)
+{
+    if(ntiles <= 0) { *bvh_out = NULL; return 0; }
+
+    /* A binary tree with ntiles leaves has (2*ntiles - 1) total nodes */
+    int max_nodes = 2 * ntiles - 1;
+    tile_bvh_node_t *bvh = (tile_bvh_node_t *) mymalloc("tile_bvh", max_nodes * sizeof(tile_bvh_node_t));
+
+    int next_node = 0;
+    build_bvh_recursive(tiles, 0, ntiles, bvh, &next_node);
+
+    *bvh_out = bvh;
+    return next_node; /* root is at index (next_node - 1) */
+}
+
+
+/* Check if a search sphere overlaps an axis-aligned bounding box (with periodic wrapping).
  * Returns 1 if overlap, 0 otherwise.
  * Uses center+halfwidth approach for correct periodic distance to AABB. */
-static int tile_overlaps_sphere(sfc_tile_t *tile, double pos[3], double search_r,
-                                double search_r2)
+static int bbox_overlaps_sphere(double box_lo[3], double box_hi[3],
+                                double pos[3], double search_r, double search_r2)
 {
     double dist2 = 0;
     int k;
@@ -128,9 +186,9 @@ static int tile_overlaps_sphere(sfc_tile_t *tile, double pos[3], double search_r
         int is_periodic = (k == 0) ? TILE_PERIODIC_X : ((k == 1) ? TILE_PERIODIC_Y : TILE_PERIODIC_Z);
         double bsize = (k == 0) ? boxSize_X : ((k == 1) ? boxSize_Y : boxSize_Z);
 
-        /* Distance from pos to center of tile bbox, with periodic wrapping */
-        double center = 0.5 * (tile->lo[k] + tile->hi[k]);
-        double halfwidth = 0.5 * (tile->hi[k] - tile->lo[k]);
+        /* Distance from pos to center of bbox, with periodic wrapping */
+        double center = 0.5 * (box_lo[k] + box_hi[k]);
+        double halfwidth = 0.5 * (box_hi[k] - box_lo[k]);
         double dx = fabs(pos[k] - center);
         if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
 
@@ -145,61 +203,89 @@ static int tile_overlaps_sphere(sfc_tile_t *tile, double pos[3], double search_r
 }
 
 
-/* Search for neighbors of particle i within all overlapping tiles.
+/* Process a single tile's particles against particle i. Returns neighbor count. */
+static inline int check_tile_particles(struct particle_data *P, int i, double h_i, double h2_i,
+                                       sfc_tile_t *tile, int *pool, int search_mode,
+                                       int *store_neighbors, int count)
+{
+    MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
+    for(int s = 0; s < tile->count; s++)
+    {
+        int j = pool[tile->first + s];
+        double dx_raw = P[i].Pos[0] - P[j].Pos[0];
+        double dy_raw = P[i].Pos[1] - P[j].Pos[1];
+        double dz_raw = P[i].Pos[2] - P[j].Pos[2];
+        double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+        double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+        double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
+
+        double pair_search_r2;
+        if(search_mode == NGB_SEARCH_ONEWAY) {
+            pair_search_r2 = h2_i;
+        } else {
+            double h_max = DMAX(h_i, P[j].KernelRadius);
+            pair_search_r2 = h_max * h_max;
+        }
+
+        if(adx > h_i && (search_mode == NGB_SEARCH_ONEWAY || adx * adx > pair_search_r2)) continue;
+        double r2 = adx * adx + ady * ady + adz * adz;
+        if(r2 < pair_search_r2) {
+            if(store_neighbors) store_neighbors[count] = j;
+            count++;
+        }
+    }
+    return count;
+}
+
+
+/* Search for neighbors of particle i using BVH traversal over tiles.
+ * Iterative stack-based traversal (GPU-friendly, no recursion).
  * Returns count; if store_neighbors != NULL, writes indices there. */
 static int search_neighbors_sfc(struct particle_data *P, int i, double h_i,
                                 sfc_tile_t *tiles, int ntiles,
                                 int *pool, int search_mode,
+                                tile_bvh_node_t *bvh, int bvh_root,
                                 int *store_neighbors)
 {
     double h2_i = h_i * h_i;
-    MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
+    double pos_i[3] = {P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]};
     int count = 0;
 
-    int t;
-    for(t = 0; t < ntiles; t++)
+    /* Stack-based iterative BVH traversal */
+    int stack[TILE_BVH_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = bvh_root;
+
+    while(sp > 0)
     {
-        /* Determine search radius for this tile */
-        double search_r;
-        if(search_mode == NGB_SEARCH_ONEWAY) {
-            search_r = h_i;
-        } else {
-            search_r = DMAX(h_i, tiles[t].hmax);
-        }
+        int node_idx = stack[--sp];
+        tile_bvh_node_t *node = &bvh[node_idx];
+
+        /* Compute search radius for this node: for SYMMETRIC, use node's subtree hmax */
+        double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : DMAX(h_i, node->hmax);
         double search_r2 = search_r * search_r;
 
-        /* Check tile-level overlap before iterating particles */
-        double pos_i[3] = {P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]};
-        if(!tile_overlaps_sphere(&tiles[t], pos_i, search_r, search_r2)) continue;
+        /* Check if node's bbox (expanded by search_r) overlaps particle i */
+        if(!bbox_overlaps_sphere(node->lo, node->hi, pos_i, search_r, search_r2)) continue;
 
-        /* Iterate particles in this tile */
-        int s;
-        for(s = 0; s < tiles[t].count; s++)
+        /* Check if leaf */
+        if(node->left < 0)
         {
-            int j = pool[tiles[t].first + s];
-
-            /* Distance check using same macros as tree walk */
-            double dx_raw = P[i].Pos[0] - P[j].Pos[0];
-            double dy_raw = P[i].Pos[1] - P[j].Pos[1];
-            double dz_raw = P[i].Pos[2] - P[j].Pos[2];
-            double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
-            double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
-            double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
-
-            double pair_search_r2;
-            if(search_mode == NGB_SEARCH_ONEWAY) {
-                pair_search_r2 = h2_i;
-            } else {
-                double h_max = DMAX(h_i, P[j].KernelRadius);
-                pair_search_r2 = h_max * h_max;
+            /* Leaf node: process the tile's particles */
+            int tile_idx = -(node->left + 1);
+            count = check_tile_particles(P, i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
+                                         store_neighbors, count);
+        }
+        else
+        {
+            /* Internal node: push children onto stack */
+            if(sp + 2 > TILE_BVH_STACK_SIZE) {
+                /* Stack overflow — fall back to processing both children inline.
+                   This shouldn't happen with STACK_SIZE=64 (supports 2^32 tiles). */
+                endrun(77701);
             }
-
-            if(adx > h_i && (search_mode == NGB_SEARCH_ONEWAY || adx * adx > pair_search_r2)) continue;
-            double r2 = adx * adx + ady * ady + adz * adz;
-            if(r2 < pair_search_r2) {
-                if(store_neighbors) store_neighbors[count] = j;
-                count++;
-            }
+            stack[sp++] = node->left;
+            stack[sp++] = node->right;
         }
     }
     return count;
@@ -237,21 +323,27 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
         return;
     }
 
+    /* Build BVH over tiles for O(log ntiles) spatial pruning */
+    tile_bvh_node_t *bvh;
+    int bvh_nnodes = build_tile_bvh(tiles, ntiles, &bvh);
+    int bvh_root = bvh_nnodes - 1;
+
     /* Pass 1: count neighbors per active particle */
     int *counts = (int *) mymalloc("sfc_counts", num_active * sizeof(int));
     int a;
     for(a = 0; a < num_active; a++) {
         int i = active_indices[a];
         counts[a] = search_neighbors_sfc(P, i, P[i].KernelRadius,
-                        tiles, ntiles, pool, search_mode, NULL);
+                        tiles, ntiles, pool, search_mode, bvh, bvh_root, NULL);
     }
 
     int total_pairs = 0;
     for(a = 0; a < num_active; a++) total_pairs += counts[a];
 
     /* Free pass-1 temporaries in reverse mymalloc order before allocating output.
-       Stack is: pool, tiles, counts (top). Output arrays must be at stack base. */
+       Stack is: pool, tiles, bvh, counts (top). Output arrays must be at stack base. */
     myfree(counts);
+    myfree(bvh);
     myfree(tiles);
     myfree(pool);
 
@@ -260,20 +352,23 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
     out->offsets = (int *) mymalloc("ngb_offsets", (num_active + 1) * sizeof(int));
     out->neighbors = (int *) mymalloc("ngb_neighbors", (total_pairs > 0 ? total_pairs : 1) * sizeof(int));
 
-    /* Pass 2: rebuild tiles and fill neighbor indices */
+    /* Pass 2: rebuild tiles + BVH and fill neighbor indices */
     ntiles = build_sfc_tiles(P, num_total, type_bitmask, TILE_TARGET_SIZE,
                              &tiles, &pool, &num_pool);
+    bvh_nnodes = build_tile_bvh(tiles, ntiles, &bvh);
+    bvh_root = bvh_nnodes - 1;
 
     out->offsets[0] = 0;
     for(a = 0; a < num_active; a++) {
         int i = active_indices[a];
         int n = search_neighbors_sfc(P, i, P[i].KernelRadius,
-                        tiles, ntiles, pool, search_mode,
+                        tiles, ntiles, pool, search_mode, bvh, bvh_root,
                         &out->neighbors[out->offsets[a]]);
         out->offsets[a + 1] = out->offsets[a] + n;
     }
 
     /* Cleanup pass-2 temporaries (reverse order) */
+    myfree(bvh);
     myfree(tiles);
     myfree(pool);
 }

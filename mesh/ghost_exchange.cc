@@ -103,6 +103,7 @@ static inline int ghost_toptree_leaf(peanokey key)
 void ghost_exchange(double safety_factor)
 {
     if(NTask <= 1) return;
+    double t_ghost_start = my_second();
 
     /* save current state for cleanup */
     NumPart_before_ghost = NumPart;
@@ -408,10 +409,11 @@ void ghost_exchange(double safety_factor)
     NumGhostParticles = total_recv;
     NumPart += total_recv;
 
+    double t_ghost_end = my_second();
     if(ThisTask == 0)
-        PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total particles (recv %d tiles, sent %d/%d local tiles)",
+        PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
-                     tiles_needed, tiles_sent, local_ntiles);
+                     tiles_needed, tiles_sent, local_ntiles, timediff(t_ghost_start, t_ghost_end));
 
     /* Cleanup: mymalloc in reverse order, then free malloc'd metadata */
     myfree(send_bdisp); myfree(recv_bdisp); myfree(send_bytes); myfree(recv_bytes);

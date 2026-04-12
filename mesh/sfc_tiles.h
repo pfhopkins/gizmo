@@ -18,6 +18,7 @@
 #include "neighbor_list.h"
 
 #define TILE_TARGET_SIZE 64  /* particles per tile (tunable) */
+#define TILE_BVH_STACK_SIZE 64  /* traversal stack depth (log2(ntiles) + margin) */
 
 struct sfc_tile_t {
     int first;          /* first particle index (into pool index array) */
@@ -26,6 +27,20 @@ struct sfc_tile_t {
     double hi[3];       /* bounding box upper corner */
     double hmax;        /* max kernel radius in tile */
 };
+
+/* BVH node over SFC tiles. Built bottom-up from SFC-sorted tiles via
+ * recursive midpoint subdivision. Enables O(log ntiles) spatial pruning
+ * for neighbor search, critical for zoom-in sims with h/box ~ 10^-6. */
+struct tile_bvh_node_t {
+    double lo[3], hi[3]; /* bounding box of subtree */
+    double hmax;         /* max kernel radius in subtree */
+    int left, right;     /* children: >= 0 = internal node index, < 0 = -(tile_index+1) for leaf */
+};
+
+/* Build BVH over tiles. Returns number of internal nodes.
+ * bvh_out: allocated array of internal nodes (caller frees via myfree).
+ * Root is at index (num_internal_nodes - 1). */
+int build_tile_bvh(sfc_tile_t *tiles, int ntiles, tile_bvh_node_t **bvh_out);
 
 /* Build SFC tiles from particles in P[0..num_total-1].
  * Only includes particles matching type_bitmask with Mass > 0.

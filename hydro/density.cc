@@ -855,6 +855,7 @@ void density(void)
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_DENSCOMPUTE] += timecomp; CPU_Step[CPU_DENSWAIT] += timewait;
     CPU_Step[CPU_DENSCOMM] += timecomm; CPU_Step[CPU_DENSMISC] += timeall - (timecomp + timewait + timecomm);
+    if(ThisTask == 0) {PRINT_STATUS("  density tree walk: total=%.4f s (compute=%.4f wait=%.4f comm=%.4f)", timeall, timecomp, timewait, timecomm);}
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
@@ -866,6 +867,8 @@ void density(void)
 #include "../mesh/sfc_tiles.h"
 void validate_neighbor_list(void)
 {
+    double t0 = my_second();
+
     /* Build list of active gas particles */
     int num_active = 0;
     for(int i : ActiveParticleList) {if(density_isactive(i) && P[i].Type == 0) num_active++;}
@@ -874,8 +877,10 @@ void validate_neighbor_list(void)
     for(int i : ActiveParticleList) {if(density_isactive(i) && P[i].Type == 0) active[a++] = i;}
 
     /* Build SFC-tile neighbor list (one-way, gas-only) */
+    double t_ngb_start = my_second();
     neighbor_list_t nlist;
     build_neighbor_list_sfc(P, CellP, NumPart, active, num_active, NGB_SEARCH_ONEWAY, 1, &nlist);
+    double t_ngb_end = my_second();
 
     /* Compare: for each active particle, run density_accumulate_neighbor over the CSR
        list and compare the resulting density against CellP[i].Density from tree walk.
@@ -883,6 +888,7 @@ void validate_neighbor_list(void)
        the kernel sum. The cell-list raw Rho = sum(mj*wk), which for equal-mass particles
        equals CellP.Density * Volume_norm * h^NDIMS / NumNgb_processed. Instead, compare
        the MFM density directly: cell_rho = mass * ngb_cell / (VOLUME_NORM * h^NDIMS). */
+    double t_acc_start = my_second();
     int mismatches = 0, printed = 0;
     double max_rho_err = 0;
     for(a = 0; a < num_active; a++)
@@ -954,9 +960,13 @@ void validate_neighbor_list(void)
         }
     }
 
+    double t_end = my_second();
+
     if(ThisTask == 0) {
         PRINT_STATUS("Cell-list validation: %d active, %d pairs, max_err=%.6g, mismatches(>1%%)=%d",
                      num_active, nlist.total_pairs, max_rho_err, mismatches);
+        PRINT_STATUS("  timing: neighbor_list=%.4f s, accumulate=%.4f s, total=%.4f s",
+                     timediff(t_ngb_start, t_ngb_end), timediff(t_acc_start, t_end), timediff(t0, t_end));
     }
 
     free_neighbor_list(&nlist);
