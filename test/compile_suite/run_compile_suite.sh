@@ -58,17 +58,13 @@ if [[ $RESUME -eq 0 ]]; then
     > "$RESULTS_FILE"
 fi
 
-# Build set of already-completed configs for resume
-declare -A DONE_CONFIGS
+# Build file of already-passed configs for resume
+DONE_FILE="/tmp/compile_suite_done.$$"
+> "$DONE_FILE"
 if [[ $RESUME -eq 1 ]] && [[ -f "$RESULTS_FILE" ]]; then
-    while IFS= read -r line; do
-        status="${line%% *}"
-        cfg="${line#* }"
-        if [[ "$status" == "PASS" ]]; then
-            DONE_CONFIGS["$cfg"]=1
-        fi
-    done < "$RESULTS_FILE"
-    echo "[compile_suite] Resuming: ${#DONE_CONFIGS[@]} configs already passed, skipping those"
+    grep "^PASS " "$RESULTS_FILE" | sed 's/^PASS //' > "$DONE_FILE"
+    ndone=$(wc -l < "$DONE_FILE" | tr -d ' ')
+    echo "[compile_suite] Resuming: $ndone configs already passed, skipping those"
 fi
 
 PASS=0
@@ -292,7 +288,7 @@ for i in "${!CONFIGS[@]}"; do
     label="$(echo "$flags" | cut -c1-60)"
 
     # Skip already-passed configs in resume mode
-    if [[ $RESUME -eq 1 ]] && [[ "${DONE_CONFIGS[$flags]:-}" == "1" ]]; then
+    if [[ $RESUME -eq 1 ]] && grep -qxF "$flags" "$DONE_FILE" 2>/dev/null; then
         PASS=$((PASS + 1))
         continue
     fi
@@ -335,7 +331,8 @@ for i in "${!CONFIGS[@]}"; do
     fi
 done
 
-# Restore originals
+# Cleanup
+rm -f "$DONE_FILE"
 cp -f Config.sh.compile_suite_backup Config.sh 2>/dev/null || true
 cp -f Makefile.systype.compile_suite_backup Makefile.systype 2>/dev/null || true
 make clean > /dev/null 2>&1

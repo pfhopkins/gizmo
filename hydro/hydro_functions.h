@@ -140,8 +140,19 @@ void hydro_accumulate_neighbor(
     /* Variables expected by sub-includes that are normally in the enclosing scope */
     double cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber * local.ConditionNumber;
     double fac_mu = 1.0 / All.cf_atime;
+    double fac_vsic_fix = All.cf_hubble_a; /* needed by SPH viscosity limiter */
 #ifdef MAGNETIC
     double fac_magnetic_pressure = 1.0 / All.cf_atime; /* B*B*fac = pressure units */
+#if defined(HYDRO_SPH)
+    Vec3<double> magfluxv = {}; double resistivity_heatflux = 0;
+    kernel.mf_i = local.Mass * fac_magnetic_pressure / (local.Density * local.Density);
+    kernel.mf_j = local.Mass * fac_magnetic_pressure;
+    double mm_i[3][3], mm_j[3][3];
+    for(k = 0; k < 3; k++) {
+        for(int k2 = 0; k2 < 3; k2++) mm_i[k][k2] = local.BPred[k] * local.BPred[k2];
+    }
+    for(k = 0; k < 3; k++) mm_i[k][k] -= 0.5 * kernel.b2_i;
+#endif
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_MASS
     double epsilon_entropic_eos_big = 0.5;
