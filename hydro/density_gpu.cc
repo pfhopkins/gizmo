@@ -706,6 +706,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             kernel.h_i = local.KernelRadius;
             kernel.sound_i = local.SoundSpeed;
             kernel.spec_egy_u_i = local.InternalEnergyPred;
+            out.MaxSignalVel = kernel.sound_i; /* must match hydro_evaluate.h line 82 */
 #ifdef MAGNETIC
             {
                 double fac_magnetic_pressure_loc = 1.0 / All.cf_atime; /* B*B*fac = pressure units */
@@ -723,6 +724,13 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                 hydro_accumulate_neighbor(&local, &out, &kernel, &Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
                                           kTimeBinActive, kNeedWakeup);
+                /* TEMPORARY DEBUG: print first particle's first 2 neighbors */
+                if(aa == 0 && idx < offsets[0] + 2) {
+                    printf("  [HYDRO PAIR aa=0] j=%d r=%e vsig=%e Fv=(%e,%e,%e) Fp=%e h_i=%e h_j=%e rho_j=%e P_j=%e\n",
+                           j, kernel.r, kernel.vsig,
+                           Fluxes.v[0], Fluxes.v[1], Fluxes.v[2], Fluxes.p,
+                           kernel.h_i, kernel.h_j, kc[j].Density, kc[j].Pressure);
+                }
             }
 
             /* Store output for this particle */
