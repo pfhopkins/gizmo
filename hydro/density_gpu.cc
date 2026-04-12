@@ -363,7 +363,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 
 #if defined(GRAIN_FLUID)
             if((1 << kp[ii].Type) & (GRAIN_PTYPES)) {
-                kc[ii].Density = out.Rho;
+                kp[ii].Gas_Density = out.Rho; /* must write to P.Gas_Density, not CellP.Density */
                 kp[ii].Gas_InternalEnergy = out.Gas_InternalEnergy;
                 kp[ii].Gas_Velocity = out.GasVel;
 #if defined(GRAIN_LORENTZFORCE)
@@ -372,7 +372,14 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
             }
 #endif
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+            kp[ii].DensityAroundParticle = out.Rho; /* must scatter both DensityAroundParticle and GradRho */
             kp[ii].GradRho = out.GradRho;
+#endif
+#if defined(RT_SOURCE_INJECTION)
+#if defined(RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION)
+            if(All.TimeStep == 0)
+#endif
+            if((1 << kp[ii].Type) & (RT_SOURCES)) {kp[ii].KernelSum_Around_RT_Source = out.KernelSum_Around_RT_Source;}
 #endif
 #if defined(SINK_PARTICLES)
             if(kp[ii].Type == 5) {
@@ -493,12 +500,11 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
             for(int k=0;k<NUM_METAL_SPECIES;k++) {local.GQuant.Metallicity[k] = kp[ii].Metallicity[k];}
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-            {double V_i_inv = kc[ii].Density / kp[ii].Mass;
-             for(int k=0;k<N_RT_FREQ_BINS;k++) {
-                 local.GQuant.Rad_E_gamma[k] = kc[ii].Rad_E_gamma_Pred[k] * V_i_inv;
-                 local.GQuant.Rad_E_gamma_ET[k] = local.GQuant.Rad_E_gamma[k] * kc[ii].ET[k];
+            {for(int k=0;k<N_RT_FREQ_BINS;k++) {
+                 local.GQuant.Rad_E_gamma[k] = kc[ii].Rad_E_gamma_Pred[k]; /* store RAW, kernel applies V_i_inv */
+                 local.GQuant.Rad_E_gamma_ET[k] = kc[ii].ET[k]; /* store RAW ET tensor, kernel multiplies with Rad_E_gamma*V_i_inv */
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-                 for(int k2=0;k2<3;k2++) {local.GQuant.Rad_Flux[k][k2] = kc[ii].Rad_Flux_Pred[k][k2] * V_i_inv;}
+                 for(int k2=0;k2<3;k2++) {local.GQuant.Rad_Flux[k][k2] = kc[ii].Rad_Flux_Pred[k][k2];} /* store RAW, kernel applies V_i_inv */
 #endif
              }}
 #endif
@@ -697,6 +703,84 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #endif
 #if defined(KERNEL_CRK_FACES)
             for(int k=0;k<16;k++) {local.Tensor_CRK_Face_Corrections[k] = kc[ii].Tensor_CRK_Face_Corrections[k];}
+#endif
+#ifdef HYDRO_SPH
+            local.DrkernHydroSumFactor = kc[ii].DrkernHydroSumFactor;
+#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
+            local.alpha = kc[ii].alpha_limiter * kc[ii].alpha;
+#else
+            local.alpha = kc[ii].alpha_limiter;
+#endif
+#endif
+#ifdef HYDRO_PRESSURE_SPH
+            local.EgyWtRho = kc[ii].EgyWtDensity;
+#endif
+#ifdef MHD_NON_IDEAL
+            local.Eta_MHD_OhmicResistivity_Coeff = kc[ii].Eta_MHD_OhmicResistivity_Coeff;
+            local.Eta_MHD_HallEffect_Coeff = kc[ii].Eta_MHD_HallEffect_Coeff;
+            local.Eta_MHD_AmbiPolarDiffusion_Coeff = kc[ii].Eta_MHD_AmbiPolarDiffusion_Coeff;
+#endif
+#if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
+            local.Balpha = kc[ii].Balpha;
+#endif
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
+            for(int k=0;k<NUM_METAL_SPECIES;k++) {local.Gradients.Metallicity[k] = kc[ii].Gradients.Metallicity[k];}
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            for(int k=ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY;k<ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+NUM_ISMDUSTCHEM_PASSIVE_SCALARS;k++) {local.Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(ii,k,0, kc);}
+#endif
+#ifdef CHIMES_TURB_DIFF_IONS
+            for(int k=0;k<ChimesGlobalVars.totalNumberOfSpecies;k++) {local.ChimesNIons[k] = kc[ii].ChimesNIons[k];}
+#endif
+#if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {local.Gradients.Rad_E_gamma_ET[k] = kc[ii].Gradients.Rad_E_gamma_ET[k];}
+#endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {
+                for(int k2=0;k2<3;k2++) {local.Gradients.Rad_E_gamma_Grad[k][k2] = kc[ii].Gradients.Rad_E_gamma_Grad[k][k2];}
+                for(int k2=0;k2<3;k2++) {for(int k3=0;k3<3;k3++) {local.Gradients.Rad_Flux_Grad[k][k2][k3] = kc[ii].Gradients.Rad_Flux_Grad[k][k2][k3];}}
+            }
+#endif
+#ifdef RT_SOLVER_EXPLICIT
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {
+                local.Rad_E_gamma[k] = kc[ii].Rad_E_gamma_Pred[k];
+                local.Rad_Kappa[k] = kc[ii].Rad_Kappa[k];
+                local.RT_DiffusionCoeff[k] = rt_diffusion_coefficient(ii, k, kc);
+#if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
+                local.ET[k] = kc[ii].ET[k];
+#endif
+#ifdef RT_EVOLVE_FLUX
+                local.Rad_Flux[k] = kc[ii].Rad_Flux_Pred[k];
+#endif
+#if defined(RT_EVOLVE_INTENSITIES)
+                for(int k2=0;k2<N_RT_INTENSITY_BINS;k2++) {local.Rad_Intensity_Pred[k][k2] = kc[ii].Rad_Intensity_Pred[k][k2];}
+#endif
+            }
+#ifdef RT_INFRARED
+            local.Radiation_Temperature = kc[ii].Radiation_Temperature;
+#endif
+#endif
+#ifdef COSMIC_RAY_FLUID
+            for(int k=0;k<N_CR_PARTICLE_BINS;k++) {
+                local.CosmicRayDiffusionCoeff[k] = kc[ii].CosmicRayDiffusionCoeff[k];
+                local.CosmicRayFlux[k] = kc[ii].CosmicRayFluxPred[k];
+#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
+                for(int k2=0;k2<2;k2++) {local.CosmicRayAlfvenEnergy[k][k2] = kc[ii].CosmicRayAlfvenEnergyPred[k][k2];}
+#endif
+#ifdef CRFLUID_EVOLVE_SPECTRUM
+                local.CR_number_to_energy_ratio[k] = kc[ii].CosmicRay_Number_in_Bin[k] / (kc[ii].CosmicRayEnergy[k] + MIN_REAL_NUMBER);
+                local.CR_number_to_energy_ratio[k] *= kc[ii].Flux_Number_to_Energy_Correction_Factor[k];
+#endif
+            }
+#endif
+#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+            local.CompositionType = kc[ii].CompositionType;
+#endif
+#ifdef EOS_ELASTIC
+            for(int k=0;k<3;k++) {for(int k2=0;k2<3;k2++) {local.Elastic_Stress_Tensor[k][k2] = kc[ii].Elastic_Stress_Tensor_Pred[k][k2];}}
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+            local.DelayTime = kc[ii].DelayTime;
 #endif
 
             /* Initialize output and workspace */

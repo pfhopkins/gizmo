@@ -299,11 +299,10 @@ void hydro_accumulate_neighbor(
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
 #endif
 #ifdef RT_SOLVER_EXPLICIT
-#if defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1)
-#include "../radiation/rt_diffusion_explicit.h"
-#endif
-#if defined(RT_LOCALRAYGRID) || defined(RT_FIRE_FIX_SPECTRAL_SHAPE)
+#if defined(RT_EVOLVE_INTENSITIES)
 #include "../radiation/rt_direct_ray_transport.h"
+#else
+#include "../radiation/rt_diffusion_explicit.h"
 #endif
 #endif
 
