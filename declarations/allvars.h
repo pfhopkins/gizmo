@@ -112,7 +112,7 @@ extern short int special_boundary_condition_xyz_def_reflect[3];
 extern short int special_boundary_condition_xyz_def_outflow[3];
 #endif
 
-template<typename T> inline void nearest_xyz(Vec3<T>& v, int sign=1) { NEAREST_XYZ(v[0], v[1], v[2], sign); }
+template<typename T> GIZMO_GPU_FUNCTION inline void nearest_xyz(Vec3<T>& v, int sign=1) { NEAREST_XYZ(v[0], v[1], v[2], sign); }
 
 
 #ifdef CHIMES

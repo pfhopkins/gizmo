@@ -201,7 +201,7 @@
 
 
 
-static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hinv4)
+GIZMO_GPU_FUNCTION static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hinv4)
 {
   *hinv = 1.0 / h;
 
@@ -224,7 +224,7 @@ static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hi
    Call with mode -1 to calculate only wk
    Call with mode +1 to calculate only dwk */
 
-static inline void kernel_main(double u, double hinv3, double hinv4, double *wk, double *dwk, int mode)
+GIZMO_GPU_FUNCTION static inline void kernel_main(double u, double hinv3, double hinv4, double *wk, double *dwk, int mode)
 {
     if(u>=1) {*wk=0; *dwk=0; return;} /* currently fully-redundant, but better safety for various subroutines calling this */
     
