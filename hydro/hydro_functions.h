@@ -222,28 +222,45 @@ void hydro_accumulate_neighbor(
     double face_area_dot_vel = 0;
 #endif
 
-    /* MHD signal velocity setup (bhat, bhat_mag used by B_dot_grad_weights in core solver) */
+    /* ---- Core hydro solver (face reconstruction + Riemann) ---- */
+#ifdef HYDRO_SPH
+#include "hydro_core_sph.h"
+#else
+#include "hydro_core_meshless.h"
+#endif
+
+#ifdef FREEZE_HYDRO
+    memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
+#endif
+
+    /* SPH face setup (needs to come AFTER core solver for SPH mode) */
+#ifdef HYDRO_SPH
+    face_vel_i = dot(local.Vel, kernel.dp) / (kernel.r * All.cf_atime);
+    face_vel_j = dot(VelPred_j, kernel.dp) / (kernel.r * All.cf_atime);
+    Face_Area_Norm = local.Mass * P[j].Mass * fabs(kernel.dwk_i+kernel.dwk_j) / (local.Density * CellP[j].Density) * All.cf_atime*All.cf_atime;
+    Face_Area_Vec = kernel.dp * (Face_Area_Norm / kernel.r);
+#endif
+
+    /* HLL diffusion setup: bhat, v_hll, B_dot_grad_weights.
+       MUST come AFTER core solver because face_vel_i/j are computed there. */
 #ifdef MAGNETIC
     Vec3<double> bhat = 0.5 * (local.BPred + BPred_j) * All.cf_a2inv;
     double bhat_mag = bhat.norm_sq();
     if(bhat_mag>0) {bhat_mag=sqrt(bhat_mag); bhat /= bhat_mag;}
+    v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(magneticspeed_i,magneticspeed_j);
 #define B_dot_grad_weights(grad_i,grad_j) {if(bhat_mag<=0) {b_hll=1;} else {double q_tmp_sum=0,b_tmp_sum=0; for(k=0;k<3;k++) {\
                                            double q_tmp=0.5*(grad_i[k]+grad_j[k]); q_tmp_sum+=q_tmp*q_tmp; b_tmp_sum+=bhat[k]*q_tmp;}\
-                                           if(q_tmp_sum>0) {b_hll=b_tmp_sum*b_tmp_sum/q_tmp_sum;} else {b_hll=1;}}}
+                                           if((b_tmp_sum!=0)&&(q_tmp_sum>0)) {b_hll=fabs(b_tmp_sum)/sqrt(q_tmp_sum); b_hll*=b_hll;} else {b_hll=0;}}}
+#ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
+#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.1
 #endif
-
-    /* HLL correction macros (normally in hydro_evaluate.h, needed by conduction/viscosity sub-includes) */
-#ifndef MAGNETIC
+#else
     v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(kernel.sound_i,kernel.sound_j);
 #ifndef B_dot_grad_weights
 #define B_dot_grad_weights(grad_i,grad_j) {b_hll=1;}
 #endif
 #ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
 #define HLL_DIFFUSION_COMPROMISE_FACTOR 1.5
-#endif
-#else
-#ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.1
 #endif
 #endif
 #ifndef HLL_correction
@@ -257,13 +274,6 @@ void hydro_accumulate_neighbor(
 #else
 #define HLL_DIFFUSION_OVERSHOOT_FACTOR  1.0
 #endif
-#endif
-
-    /* ---- Core hydro solver (face reconstruction + Riemann) ---- */
-#ifdef HYDRO_SPH
-#include "hydro_core_sph.h"
-#else
-#include "hydro_core_meshless.h"
 #endif
 
     /* ---- Physics sub-modules ---- */
