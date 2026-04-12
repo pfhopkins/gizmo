@@ -798,8 +798,8 @@ void hydro_force(void)
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
     double t_preloop = timediff(t_preloop_start, my_second());
     double t_malloc = 0, t_xchange_all = 0, t_demalloc = 0;
-    double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
     /* Neighbor-list path: GPU/Kokkos dispatch over symmetric CSR list */
     if(1) /* all ranks must take the same path — GPU path handles 0 active particles gracefully */
     {
