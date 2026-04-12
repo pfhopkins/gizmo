@@ -408,7 +408,7 @@ GIZMO_GPU_FUNCTION static inline void kernel_main(double u, double hinv3, double
   mode= 2 to calculate -(1/u)*d[(1/u)*dphi_du]/du  (for tidal tensor)
 */
 
-static inline double kernel_gravity(double u, double hinv, double hinv3, int mode)
+GIZMO_GPU_FUNCTION static inline double kernel_gravity(double u, double hinv, double hinv3, int mode)
 {
     /* here everything is newtonian, add this as a check just in case */
     if(u >= 1)

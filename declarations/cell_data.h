@@ -480,7 +480,7 @@ extern struct gas_cell_data
     /* ---- member functions for derived quantities ---- */
     GIZMO_GPU_FUNCTION inline double nHcgs() const {return HYDROGEN_MASSFRAC * Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;} /*!< hydrogen number density in cgs */
 
-    inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
+    GIZMO_GPU_FUNCTION inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
 #ifdef HYDRO_PRESSURE_SPH
         return EgyWtDensity;
 #endif
@@ -525,7 +525,7 @@ extern struct gas_cell_data
         return sqrt(soundspeed2_from_u(InternalEnergyPred));
     }
 
-    inline double effective_soundspeed() const { /*!< effective soundspeed including non-thermal contributions */
+    GIZMO_GPU_FUNCTION inline double effective_soundspeed() const { /*!< effective soundspeed including non-thermal contributions */
 #ifdef EOS_GENERAL
         return SoundSpeed;
 #else
