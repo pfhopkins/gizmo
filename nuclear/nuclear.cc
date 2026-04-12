@@ -298,6 +298,8 @@ void gizmo_gpu_sync_all_nuclear(void) {
     All_dev = All;
 #pragma pop_macro("All")
 }
+#elif defined(OPENMP_GPU_OFFLOAD)
+void gizmo_gpu_sync_all_nuclear(void) {}
 #endif
 
 #endif /* NUCLEAR_NETWORK */

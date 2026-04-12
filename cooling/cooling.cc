@@ -80,7 +80,7 @@ static __managed__ struct global_data_all_processes All_dev;
    memory and are accessible from both host and device code without explicit copies.
    Without GPU offload, plain static variables as before.
    Note: __managed__ implies __device__, so these ARE the device copies — no shadow needed. */
-#if defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
 __managed__ static double Tmin = -1.0, Tmax = 9.0, deltaT;
 __managed__ static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep;
 #ifdef COOL_METAL_LINES_BY_SPECIES
@@ -2948,6 +2948,9 @@ extern void gizmo_gpu_sync_all_eos(void);
 #ifdef NUCLEAR_NETWORK
 extern void gizmo_gpu_sync_all_nuclear(void);
 #endif
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+extern void gizmo_gpu_sync_all_density(void);
+#endif
 void gizmo_gpu_sync_all(void) {
 #if defined(GIZMO_GPU_COMPILER)
 #pragma push_macro("All")
@@ -2959,6 +2962,9 @@ void gizmo_gpu_sync_all(void) {
     gizmo_gpu_sync_all_eos();
 #ifdef NUCLEAR_NETWORK
     gizmo_gpu_sync_all_nuclear();
+#endif
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+    gizmo_gpu_sync_all_density();
 #endif
 }
 #endif /* OPENMP_GPU_OFFLOAD */

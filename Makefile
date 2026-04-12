@@ -308,6 +308,45 @@ MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION #
 endif
 
+## MacBookCellar with Kokkos (OpenMP backend) — for testing GPU code paths without a GPU.
+## Kokkos::parallel_for dispatches to OpenMP threads, SharedSpace = HostSpace.
+## GPU TU files (cooling.cc, density_gpu.cc, etc.) are compiled with the same mpicxx
+## compiler but with Kokkos include flags. GIZMO_GPU_COMPILER is NOT defined (no nvcc),
+## so __managed__ All_dev blocks are skipped and All remains the normal extern global.
+## Install: brew install kokkos (needs libomp: brew install libomp)
+ifeq ($(SYSTYPE),"MacBookCellar_Kokkos")
+CC       =  mpicc
+CXX      =  mpicxx -std=c++20
+OPTIMIZE = -O3 -funroll-loops -ffast-math -march=native
+OPTIMIZE += -Wno-unused-command-line-argument
+## OpenMP is required for Kokkos OpenMP backend
+OPTIMIZE += -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
+OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
+## Kokkos paths (homebrew)
+KOKKOS_INCL = -I/opt/homebrew/opt/kokkos/include
+KOKKOS_LIBS_PATH = -L/opt/homebrew/opt/kokkos/lib
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+## GPU TU files: same compiler, just add Kokkos includes
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_INCL)
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+CHIMESINCL = -I/usr/local/include/sundials
+CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
+endif
+MKL_INCL = #
+MKL_LIBS = #
+GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include
+GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib
+FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
+FFTW_LIBS= -L/opt/homebrew/Cellar/fftw/3.3.10_3/lib
+HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | tail -n 1)
+HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API
+HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION -DOPENMP_GPU_OFFLOAD
+endif
+
 #----------------------------
 ifeq ($(SYSTYPE),"github-ubuntu")
 CC       =  mpicc
@@ -409,7 +448,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o
+GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -586,6 +625,8 @@ cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
 eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+hydro/density_gpu.o: hydro/density_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data_all_struct.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

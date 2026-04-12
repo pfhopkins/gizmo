@@ -506,4 +506,6 @@ void gizmo_gpu_sync_all_eos(void) {
     All_dev = All;
 #pragma pop_macro("All")
 }
+#elif defined(OPENMP_GPU_OFFLOAD)
+void gizmo_gpu_sync_all_eos(void) {} /* no-op: no __managed__ copy with OpenMP backend */
 #endif
