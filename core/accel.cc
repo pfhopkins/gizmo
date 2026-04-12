@@ -61,6 +61,7 @@ void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
     {
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Drift ALL particles to current time before any neighbor operations.
            This eliminates lazy drifting during the tree walk — required for
            GPU neighbor finding (no critical sections) and for halo exchange
@@ -70,6 +71,7 @@ void compute_hydro_densities_and_forces(void)
            Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
            are guesses that may grow significantly during density iteration. */
         ghost_exchange(1.0);
+#endif
 
         PRINT_STATUS("Start hydrodynamics computation...");
         density();		/* computes density, and pressure */
@@ -79,6 +81,7 @@ void compute_hydro_densities_and_forces(void)
         force_update_hmax();	/* update kernel lengths in tree */
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
 
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Check if h grew beyond the ghost pool during density iteration.
            If so, re-exchange with converged hmax to ensure complete ghost pool.
            The tree walk result (P[i].NumNgb) is independent of ghosts, so no
@@ -89,6 +92,7 @@ void compute_hydro_densities_and_forces(void)
             ghost_exchange(1.0);
         }
         validate_neighbor_list(); /* temporary: compare cell-list neighbor finder against tree walk */
+#endif
 
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Build symmetric neighbor list (r < max(h_i, h_j)) with converged h values.
@@ -165,7 +169,9 @@ void compute_hydro_densities_and_forces(void)
         gizmo_sym_active_indices = NULL;
         gizmo_sym_num_active = 0;
 #endif
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */
+#endif
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
         PRINT_STATUS(" ..hydro force computation done.");
 
