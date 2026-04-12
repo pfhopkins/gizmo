@@ -413,6 +413,7 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
             u = DMAX(u_min,u);
         } else {u = All.MinEgySpec;}
     }
+    CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell); /* evaluate at converged u to ensure ne_eval and other side-effects are consistent with the final answer */
 
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
     cell[target].Ne = *ne_eval;

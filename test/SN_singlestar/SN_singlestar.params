@@ -33,7 +33,7 @@ ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0.0
-TimeMax     0.15
+TimeMax     0.05
 
 %---- Maximum and minimum timesteps allowed
 MaxSizeTimestep         0.1
