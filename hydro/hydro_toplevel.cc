@@ -801,7 +801,7 @@ void hydro_force(void)
     double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     /* Neighbor-list path: GPU/Kokkos dispatch over symmetric CSR list */
-    if(gizmo_sym_neighbor_list.total_pairs > 0)
+    if(1) /* all ranks must take the same path — GPU path handles 0 active particles gracefully */
     {
         /* Zero ghost accumulator fields before the hydro kernel */
         ghost_writeback_zero_hydro();

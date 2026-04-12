@@ -43,10 +43,10 @@ void ghost_writeback_zero_hydro(void)
 
 void ghost_writeback_hydro(void)
 {
+    if(NTask <= 1) return; /* single rank: no ghosts, no communication needed */
+
     int num_ghosts = ghost_get_num_ghosts();
     int num_local = ghost_get_num_local();
-    if(num_ghosts <= 0 || NTask <= 1) return;
-
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
     int *wb_recv_count = ghost_get_wb_recv_count();
@@ -54,7 +54,9 @@ void ghost_writeback_hydro(void)
     int *wb_send_count = ghost_get_wb_send_count();
     int *wb_send_disp  = ghost_get_wb_send_disp();
 
-    if(!home_rank || !wb_recv_count) return; /* provenance not available (single rank or early return) */
+    /* All ranks must participate in MPI collectives below, even with 0 ghosts.
+       If provenance map is unavailable (ghost_exchange was skipped), all ranks
+       must still agree — use zero-length communication. */
 
     /* Count how many deltas to send to each rank (only ghosts with modifications) */
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));

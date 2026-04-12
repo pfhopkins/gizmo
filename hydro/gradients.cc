@@ -674,7 +674,7 @@ void hydro_gradient_calc(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
         /* Neighbor-list path for gradient_iteration==0: use cached symmetric CSR list
            with GPU/Kokkos dispatch. Falls through to tree walk for iteration>0 (MHD). */
-        if(gradient_iteration == 0 && gizmo_sym_neighbor_list.total_pairs > 0)
+        if(gradient_iteration == 0) /* all ranks must enter this branch to avoid MPI collective mismatch */
         {
             /* Allocate output array for GPU kernel results.
                GasGraddata_out_ (gradient_functions.h) is layout-identical to GasGraddata_out (this file). */
