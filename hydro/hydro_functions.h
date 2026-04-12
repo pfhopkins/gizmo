@@ -81,7 +81,7 @@ void hydro_accumulate_neighbor(
 
     double dt_hydrostep_j = get_particle_timestep_in_physical(j, P);
     double dt_hydrostep = DMAX(dt_hydrostep_i, dt_hydrostep_j);
-    double FluxCorrectionFactor_to_i = 1;
+    double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1;
     int j_is_active_for_fluxes = 0; /* GPU: always 0 — each side accumulates its own fluxes */
 
     kernel.dp = local.Pos - P[j].Pos;

@@ -158,7 +158,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
     /* use the simpler Kumholz, McKee, & Tumlinson 2009 sub-grid model for molecular fractions in equilibrium, which is a function modeling spherical clouds
         of internally uniform properties exposed to incident radiation. Depends on column density, metallicity, and incident FUV field. */
     /* get estimate of mass column density integrated away from this location for self-shielding */
-    double surface_density_Msun_pc2_infty = 0.05 * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i) * UNIT_SURFDEN_IN_CGS / 0.000208854; // approximate column density with Sobolev or Treecol methods as appropriate; converts to M_solar/pc^2
+    double surface_density_Msun_pc2_infty = 0.05 * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS / 0.000208854; // approximate column density with Sobolev or Treecol methods as appropriate; converts to M_solar/pc^2
     /* 0.05 above is in testing, based on calculations by Laura Keating: represents a plausible re-scaling of the shielding length for sub-grid clumping */
     double surface_density_Msun_pc2_local = cell[i].Density * pp[i].Get_Particle_Size() * All.cf_a2inv * UNIT_SURFDEN_IN_CGS / 0.000208854; // this is -just- the depth through the local cell/slab. that's closer to what we want here, since G0 is -already- attenuated in the pre-processing step!
     double surface_density_Msun_pc2 = DMIN( surface_density_Msun_pc2_local, surface_density_Msun_pc2_infty);
@@ -195,7 +195,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
 
 
 #if (SINGLE_STAR_SINK_FORMATION & 256) || (COOL_MOLECFRAC == 2) /* estimate f_H2 with Krumholz & Gnedin 2010 fitting function, assuming simple scalings of radiation field, clumping, and other factors with basic gas properties so function only of surface density and metallicity, truncated at low values (or else it gives non-sensical answers) */
-    double clumping_factor=1, fH2_kg=0, tau_fmol = (0.1 + pp[i].Metallicity[0]/All.SolarAbundances[0]) * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i) * 434.78 * UNIT_SURFDEN_IN_CGS; // convert units for surface density. also limit to Z>=0.1, where their fits were actually good, or else get unphysically low molecular fractions
+    double clumping_factor=1, fH2_kg=0, tau_fmol = (0.1 + pp[i].Metallicity[0]/All.SolarAbundances[0]) * evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * 434.78 * UNIT_SURFDEN_IN_CGS; // convert units for surface density. also limit to Z>=0.1, where their fits were actually good, or else get unphysically low molecular fractions
     if(tau_fmol>0) {double y = 0.756 * (1 + 3.1*pow(pp[i].Metallicity[0]/All.SolarAbundances[0],0.365)) / clumping_factor; // this assumes all the equilibrium scalings of radiation field, density, SFR, etc, to get a trivial expression
         y = log(1 + 0.6*y + 0.01*y*y) / (0.6*tau_fmol); y = 1 - 0.75*y/(1 + 0.25*y); fH2_kg=DMIN(1,DMAX(0,y));}
     return fH2_kg * neutral_fraction;
