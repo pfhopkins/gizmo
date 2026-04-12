@@ -122,6 +122,10 @@ struct global_data_all_processes
     HubbleParam;		/*!< little `h', i.e. Hubble constant in units of 100 km/s/Mpc.  Only needed to get absolute physical values for cooling physics */
 
   double BoxSize;		/*!< Boxsize in case periodic boundary conditions are used */
+#ifdef BOX_SHEARING
+  MyDouble Shearing_Box_Vel_Offset; /*!< shearing box velocity offset (in All for GPU access) */
+  MyDouble Shearing_Box_Pos_Offset; /*!< shearing box position offset (in All for GPU access) */
+#endif
 
   /* Code options */
   int ComovingIntegrationOn;	/*!< flags that comoving integration is enabled */

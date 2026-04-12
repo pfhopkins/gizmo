@@ -88,26 +88,40 @@ extern MyDouble boxSize, boxHalf;
 #endif
 #if defined(BOX_LONG_X) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize_X, boxHalf_X;
+#elif defined(BOX_LONG_X) && defined(GIZMO_GPU_COMPILER)
+#define boxSize_X (All.BoxSize * ((MyDouble)(BOX_LONG_X)))
+#define boxHalf_X (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_X)))
 #elif !defined(BOX_LONG_X)
 #define boxSize_X boxSize
 #define boxHalf_X boxHalf
 #endif
 #if defined(BOX_LONG_Y) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize_Y, boxHalf_Y;
+#elif defined(BOX_LONG_Y) && defined(GIZMO_GPU_COMPILER)
+#define boxSize_Y (All.BoxSize * ((MyDouble)(BOX_LONG_Y)))
+#define boxHalf_Y (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_Y)))
 #elif !defined(BOX_LONG_Y)
 #define boxSize_Y boxSize
 #define boxHalf_Y boxHalf
 #endif
 #if defined(BOX_LONG_Z) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize_Z, boxHalf_Z;
+#elif defined(BOX_LONG_Z) && defined(GIZMO_GPU_COMPILER)
+#define boxSize_Z (All.BoxSize * ((MyDouble)(BOX_LONG_Z)))
+#define boxHalf_Z (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_Z)))
 #elif !defined(BOX_LONG_Z)
 #define boxSize_Z boxSize
 #define boxHalf_Z boxHalf
 #endif
 
 #ifdef BOX_SHEARING
+#ifdef GIZMO_GPU_COMPILER
+#define Shearing_Box_Vel_Offset (All.Shearing_Box_Vel_Offset)
+#define Shearing_Box_Pos_Offset (All.Shearing_Box_Pos_Offset)
+#else
 extern MyDouble Shearing_Box_Vel_Offset;
 extern MyDouble Shearing_Box_Pos_Offset;
+#endif
 #endif
 
 #if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)

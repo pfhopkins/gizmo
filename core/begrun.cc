@@ -131,6 +131,7 @@ void begrun(void)
     L_box_towrap *= BOX_LONG_X;
 #endif
     Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
+    All.Shearing_Box_Vel_Offset = Shearing_Box_Vel_Offset; /* sync to All for GPU access */
     calc_shearing_box_pos_offset();
 #endif
 

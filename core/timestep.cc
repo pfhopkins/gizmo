@@ -1396,6 +1396,8 @@ void calc_shearing_box_pos_offset(void) /* function that calculates the shear-of
 {
     Shearing_Box_Pos_Offset = Shearing_Box_Vel_Offset * All.Time;
     while(Shearing_Box_Pos_Offset > boxSize_Y) {Shearing_Box_Pos_Offset -= boxSize_Y;}
+    All.Shearing_Box_Vel_Offset = Shearing_Box_Vel_Offset; /* sync to All for GPU access */
+    All.Shearing_Box_Pos_Offset = Shearing_Box_Pos_Offset;
 }
 #endif
 

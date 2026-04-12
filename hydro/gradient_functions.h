@@ -56,7 +56,7 @@ struct Quantities_for_Gradients
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
     MyDouble Metallicity[NUM_METAL_SPECIES];
 #endif
-#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
     SymmetricTensor2<MyFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
@@ -446,7 +446,7 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
     }
 #endif
 
-#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
     SymmetricTensor2<double> dnET[N_RT_FREQ_BINS];
     double dn[N_RT_FREQ_BINS];
     double V_i_inv = 1/V_i, V_j_inv = CellP[j].Density/P[j].Mass;
@@ -532,7 +532,7 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
             for(int k2=0;k2<NUM_METAL_SPECIES;k2++) {out->Gradients[k].Metallicity[k2] += wk_xyz_i * dmetal[k2];}
 #endif
-#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int k2=0;k2<N_RT_FREQ_BINS;k2++) {
                 out->Gradients[k].Rad_E_gamma[k2] += wk_xyz_i * dn[k2];
                 out->Gradients[k].Rad_E_gamma_ET[k2] += wk_xyz_i * dnET[k2];

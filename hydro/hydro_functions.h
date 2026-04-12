@@ -171,7 +171,7 @@ void hydro_accumulate_neighbor(
     kernel.p_over_rho2_i = local.Pressure / (local.Density*local.Density);
 #endif
 #endif
-#ifdef RT_SOLVER_EXPLICIT
+#if defined(RT_SOLVER_EXPLICIT) && (N_RT_FREQ_BINS > 0)
     double tau_c_i[N_RT_FREQ_BINS]; for(k=0;k<N_RT_FREQ_BINS;k++) {tau_c_i[k] = Particle_Size_i * local.Rad_Kappa[k]*local.Density*All.cf_a3inv;}
 #endif
 
@@ -309,7 +309,7 @@ void hydro_accumulate_neighbor(
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
 #endif
-#ifdef RT_SOLVER_EXPLICIT
+#if defined(RT_SOLVER_EXPLICIT) && (N_RT_FREQ_BINS > 0)
 #if defined(RT_EVOLVE_INTENSITIES)
 #include "../radiation/rt_direct_ray_transport.h"
 #else
