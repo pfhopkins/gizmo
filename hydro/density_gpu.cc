@@ -649,6 +649,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.Density = kc[ii].Density;
             local.Pressure = kc[ii].Pressure;
             local.ConditionNumber = kc[ii].ConditionNumber;
+#ifdef MHD_CONSTRAINED_GRADIENT
+            if(kc[ii].FlagForConstrainedGradients == 0) {local.ConditionNumber *= -1;} /* sign encodes gradient flag status, matching particle2in_hydra */
+#endif
             local.FaceClosureError = kc[ii].FaceClosureError;
             local.InternalEnergyPred = kc[ii].InternalEnergyPred;
             local.SoundSpeed = kc[ii].effective_soundspeed();
@@ -660,7 +663,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.NV_T = kc[ii].NV_T;
             local.TimeBin = kp[ii].TimeBin;
 #ifdef MAGNETIC
-            local.BPred = kc[ii].BPred;
+            local.BPred = kc[ii].Bfield(); /* Bfield() = BPred * Density/Mass: convert from mass-weighted storage to physical B */
             local.Gradients.B = kc[ii].Gradients.B;
 #ifdef DIVBCLEANING_DEDNER
             local.PhiPred = kc[ii].PhiPred / kp[ii].Mass;
