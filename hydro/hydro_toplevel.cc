@@ -8,6 +8,12 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
+extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                               int, int *, int, int *, int *, int, void *);
+#endif
 
 /*! \file hydro_toplevel.c
  *  \brief This contains the "primary" hydro loop, where the hydro fluxes are computed.
@@ -791,15 +797,52 @@ void hydro_force(void)
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
     double t_preloop = timediff(t_preloop_start, my_second());
+    double t_malloc = 0, t_xchange_all = 0, t_demalloc = 0;
+    double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* Neighbor-list path: GPU/Kokkos dispatch over symmetric CSR list */
+    if(gizmo_sym_neighbor_list.total_pairs > 0)
+    {
+        /* Zero ghost accumulator fields before the hydro kernel */
+        ghost_writeback_zero_hydro();
+
+        /* Allocate output array */
+        struct hydro_data_out *hydro_out = (struct hydro_data_out *) mymalloc("hydro_out",
+            (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(struct hydro_data_out));
+
+        hydro_evaluate_gpu(P, CellP, NumPart,
+                           gizmo_sym_active_indices, gizmo_sym_num_active,
+                           gizmo_sym_neighbor_list.offsets,
+                           gizmo_sym_neighbor_list.neighbors,
+                           gizmo_sym_neighbor_list.total_pairs,
+                           (void *)hydro_out);
+
+        /* Scatter results: hydro_data_out is layout-identical to OUTPUT_STRUCT_NAME base */
+        for(int aa = 0; aa < gizmo_sym_num_active; aa++)
+        {
+            int ii = gizmo_sym_active_indices[aa];
+            out2particle_hydra((struct OUTPUT_STRUCT_NAME *)&hydro_out[aa], ii, 0, 0);
+        }
+        myfree(hydro_out);
+
+        /* Reverse-communicate ghost j-particle modifications (dMass, wakeup) */
+        ghost_writeback_hydro();
+    }
+    else
+    {
+#endif
     double t_malloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    double t_malloc = timediff(t_malloc_start, my_second());
+    t_malloc = timediff(t_malloc_start, my_second());
     double t_xchange_start = my_second();
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    double t_xchange_all = timediff(t_xchange_start, my_second());
+    t_xchange_all = timediff(t_xchange_start, my_second());
     double t_demalloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-    double t_demalloc = timediff(t_demalloc_start, my_second());
+    t_demalloc = timediff(t_demalloc_start, my_second());
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    } /* close else-branch of neighbor-list vs tree-walk dispatch */
+#endif
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
     double t_postloop = timediff(t_postloop_start, my_second());

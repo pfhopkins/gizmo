@@ -27,6 +27,16 @@
    This header is #include'd from within hydro_toplevel.cc or the GPU TU after those
    struct definitions are in scope. */
 
+/* Portable atomic operations: Kokkos atomics on GPU, direct write on CPU.
+   On CPU the caller ensures thread safety via OpenMP atomics at a higher level. */
+#ifdef OPENMP_GPU_OFFLOAD
+#define HYDRO_ATOMIC_ADD(ptr, val) Kokkos::atomic_add(ptr, val)
+#define HYDRO_ATOMIC_STORE(ptr, val) Kokkos::atomic_store(ptr, val)
+#else
+#define HYDRO_ATOMIC_ADD(ptr, val) (*(ptr) += (val))
+#define HYDRO_ATOMIC_STORE(ptr, val) (*(ptr) = (val))
+#endif
+
 
 /* Per-neighbor-pair hydro flux accumulation for particle i.
  * This is the inner body of hydro_force_evaluate() from hydro_evaluate.h,
@@ -127,6 +137,19 @@ void hydro_accumulate_neighbor(
     } else { kernel.wk_j = kernel.dwk_j = 0; }
     kernel.dwk_ij = 0.5 * (kernel.dwk_i + kernel.dwk_j);
 
+    /* Variables expected by sub-includes that are normally in the enclosing scope */
+    double cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber * local.ConditionNumber;
+#ifdef MAGNETIC
+    double fac_magnetic_pressure = 1.0 / (All.cf_atime * All.cf_atime);
+#endif
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+    double epsilon_entropic_eos_big = 0.5;
+    double epsilon_entropic_eos_small = 1.e-3;
+#if defined(FORCE_ENTROPIC_EOS_BELOW)
+    epsilon_entropic_eos_small = FORCE_ENTROPIC_EOS_BELOW;
+#endif
+#endif
+
     double V_i = local.Mass / local.Density;
     double V_j = P[j].Mass / CellP[j].Density;
     double Face_Area_Norm = 0;
@@ -135,7 +158,7 @@ void hydro_accumulate_neighbor(
     double v_hll = 0, k_hll = 0, b_hll = 1;
     int kernel_mode = 0;
 
-    memset(Fluxes, 0, sizeof(struct Conserved_var_Riemann));
+    memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
 
 #ifndef HYDRO_SPH
     struct Input_vec_Riemann Riemann_vec;
@@ -143,6 +166,47 @@ void hydro_accumulate_neighbor(
     memset(&Riemann_vec, 0, sizeof(struct Input_vec_Riemann));
     memset(&Riemann_out, 0, sizeof(struct Riemann_outputs));
     double face_area_dot_vel = 0;
+#endif
+
+    /* MHD signal velocity setup (bhat, bhat_mag used by B_dot_grad_weights in core solver) */
+#ifdef MAGNETIC
+    Vec3<double> bhat = 0.5 * (local.BPred + BPred_j) * All.cf_a2inv;
+    double bhat_mag = bhat.norm_sq();
+    if(bhat_mag>0) {bhat_mag=sqrt(bhat_mag); bhat /= bhat_mag;}
+#define B_dot_grad_weights(grad_i,grad_j) {if(bhat_mag<=0) {b_hll=1;} else {double q_tmp_sum=0,b_tmp_sum=0; for(k=0;k<3;k++) {\
+                                           double q_tmp=0.5*(grad_i[k]+grad_j[k]); q_tmp_sum+=q_tmp*q_tmp; b_tmp_sum+=bhat[k]*q_tmp;}\
+                                           if(q_tmp_sum>0) {b_hll=b_tmp_sum*b_tmp_sum/q_tmp_sum;} else {b_hll=1;}}}
+#endif
+
+    /* HLL correction macros (normally in hydro_evaluate.h, needed by conduction/viscosity sub-includes) */
+#ifndef MAGNETIC
+    v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(kernel.sound_i,kernel.sound_j);
+#ifndef B_dot_grad_weights
+#define B_dot_grad_weights(grad_i,grad_j) {b_hll=1;}
+#endif
+#ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
+#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.5
+#endif
+#else
+#ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
+#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.1
+#endif
+#endif
+#ifndef HLL_correction
+#define HLL_correction(ui,uj,wt,kappa) (k_hll = v_hll * (wt) * kernel.r * All.cf_atime / fabs(kappa),\
+                                        k_hll = (0.2 + k_hll) / (0.2 + k_hll + k_hll*k_hll),\
+                                        -1.0*k_hll*Face_Area_Norm*v_hll*((ui)-(uj)))
+#endif
+#ifndef HLL_DIFFUSION_OVERSHOOT_FACTOR
+#if !defined(MAGNETIC) || defined(GALSF) || defined(COOLING) || defined(SINK_PARTICLES)
+#define HLL_DIFFUSION_OVERSHOOT_FACTOR  0.005
+#else
+#define HLL_DIFFUSION_OVERSHOOT_FACTOR  1.0
+#endif
+#endif
+
+#ifdef EOS_ELASTIC
+    double tensile_correction_factor = 0;
 #endif
 
     /* ---- Core hydro solver (face reconstruction + Riemann) ---- */
@@ -253,10 +317,10 @@ void hydro_accumulate_neighbor(
         double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
         if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
             /* i has shorter timestep: both sides get full flux */
-            Kokkos::atomic_add(&CellP[j].dMass, (MyDouble)(-dmass_holder));
+            HYDRO_ATOMIC_ADD(&CellP[j].dMass, (MyDouble)(-dmass_holder));
         } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
             /* equal timesteps, j_is_active_for_fluxes=0: half flux */
-            Kokkos::atomic_add(&CellP[j].dMass, (MyDouble)(-0.5 * dmass_holder));
+            HYDRO_ATOMIC_ADD(&CellP[j].dMass, (MyDouble)(-0.5 * dmass_holder));
         }
         /* if dt_i > dt_j: j will handle this pair when it's active */
     }
@@ -271,8 +335,8 @@ void hydro_accumulate_neighbor(
     {
         if(kernel.vsig > WAKEUP * CellP[j].MaxSignalVel) {
             short int wakeup_val = (short int)(local.TimeBin + 1);
-            Kokkos::atomic_store(&P[j].wakeup, wakeup_val);
-            if(NeedToWakeup_flag) Kokkos::atomic_store(NeedToWakeup_flag, 1);
+            HYDRO_ATOMIC_STORE(&P[j].wakeup, wakeup_val);
+            if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);
         }
     }
 }

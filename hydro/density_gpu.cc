@@ -44,6 +44,16 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../mesh/sfc_tiles_functions.h"
 #include "density_functions.h"
 #include "gradient_functions.h"
+#include "hydro_structs.h"
+#ifndef HYDRO_SPH
+#include "reimann.h"
+#endif
+/* Define xchange macro names so hydro_functions.h can reference the structs */
+#define INPUT_STRUCT_NAME hydro_data_in
+#define OUTPUT_STRUCT_NAME hydro_data_out
+#include "hydro_functions.h"
+#undef INPUT_STRUCT_NAME
+#undef OUTPUT_STRUCT_NAME
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 
@@ -568,13 +578,200 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
 }
 
 
+/* ================================================================
+   GPU hydro force kernel (B3b)
+   ================================================================ */
+
+void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
+                        int num_total, int *active_indices_host, int num_active,
+                        int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
+                        void *out_host_void)
+{
+    struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
+
+    /* Allocate SharedSpace copies */
+    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
+    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+
+    /* Copy CSR neighbor list to SharedSpace */
+    int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
+    int *d_neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((csr_total_pairs > 0) ? csr_total_pairs : 1) * sizeof(int));
+    int *d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
+    memcpy(d_offsets, csr_offsets_host, (num_active + 1) * sizeof(int));
+    memcpy(d_neighbors, csr_neighbors_host, csr_total_pairs * sizeof(int));
+    memcpy(d_active, active_indices_host, num_active * sizeof(int));
+
+    /* Copy TimeBinActive to SharedSpace */
+    int *d_TimeBinActive = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
+    memcpy(d_TimeBinActive, TimeBinActive, TIMEBINS * sizeof(int));
+
+    /* Wakeup flag in SharedSpace */
+    int *d_NeedToWakeup = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    *d_NeedToWakeup = 0;
+
+    /* Output array in SharedSpace */
+    struct hydro_data_out *d_out = (struct hydro_data_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct hydro_data_out));
+
+    if(ThisTask == 0) {
+        printf("  GPU hydro: %d active particles, %d neighbor pairs (%.1f avg)\n",
+               num_active, csr_total_pairs,
+               num_active > 0 ? (double)csr_total_pairs / num_active : 0.0);
+        fflush(stdout);
+    }
+
+    /* GPU hydro force kernel */
+    {
+        int *offsets = d_offsets;
+        int *neighbors = d_neighbors;
+        int *active = d_active;
+        struct particle_data *kp = P_gpu;
+        struct gas_cell_data *kc = CellP_gpu;
+        struct hydro_data_out *kout = d_out;
+        int *kTimeBinActive = d_TimeBinActive;
+        int *kNeedWakeup = d_NeedToWakeup;
+
+        Kokkos::parallel_for("hydro_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+            int ii = active[aa];
+
+            /* particle2in equivalent: load searching particle data */
+            struct hydro_data_in local;
+            memset(&local, 0, sizeof(local));
+            local.Pos = kp[ii].Pos;
+            local.Vel = kc[ii].VelPred;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            local.ParticleVel = kc[ii].VelPred;
+#endif
+            local.KernelRadius = kp[ii].KernelRadius;
+            local.Mass = kp[ii].Mass;
+            local.Density = kc[ii].Density;
+            local.Pressure = kc[ii].Pressure;
+            local.ConditionNumber = kc[ii].ConditionNumber;
+            local.FaceClosureError = kc[ii].FaceClosureError;
+            local.InternalEnergyPred = kc[ii].InternalEnergyPred;
+            local.SoundSpeed = kc[ii].effective_soundspeed();
+            local.dt_hydrostep_i = get_particle_timestep_in_physical(ii, kp);
+            local.DrkernNgbFactor = kp[ii].DrkernNgbFactor;
+            local.Gradients.Density = kc[ii].Gradients.Density;
+            local.Gradients.Pressure = kc[ii].Gradients.Pressure;
+            local.Gradients.Velocity = kc[ii].Gradients.Velocity;
+            local.NV_T = kc[ii].NV_T;
+            local.TimeBin = kp[ii].TimeBin;
+#ifdef MAGNETIC
+            local.BPred = kc[ii].BPred;
+            local.Gradients.B = kc[ii].Gradients.B;
+#ifdef DIVBCLEANING_DEDNER
+            local.PhiPred = kc[ii].PhiPred / kp[ii].Mass;
+            local.Gradients.Phi = kc[ii].Gradients.Phi;
+#endif
+#ifdef MHD_MODIFIED_GRADIENT
+            local.MG_cgcoeff = kc[ii].MG_cgcoeff;
+#endif
+#endif
+#ifdef DOGRAD_INTERNAL_ENERGY
+            local.Gradients.InternalEnergy = kc[ii].Gradients.InternalEnergy;
+#endif
+#ifdef DOGRAD_SOUNDSPEED
+            local.Gradients.SoundSpeed = kc[ii].Gradients.SoundSpeed;
+#endif
+#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+            for(int k=0;k<NUM_METAL_SPECIES;k++) {local.Metallicity[k] = kp[ii].Metallicity[k];}
+#endif
+#ifdef COSMIC_RAY_FLUID
+            for(int k=0;k<N_CR_PARTICLE_BINS;k++) {local.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(ii, k, kc);}
+#endif
+#ifdef CONDUCTION
+            local.Kappa_Conduction = kc[ii].Kappa_Conduction;
+#endif
+#ifdef VISCOSITY
+            local.Eta_ShearViscosity = kc[ii].Eta_ShearViscosity;
+            local.Zeta_BulkViscosity = kc[ii].Zeta_BulkViscosity;
+#endif
+#ifdef TURB_DIFFUSION
+            local.TD_DiffCoeff = kc[ii].TD_DiffCoeff;
+#endif
+#if defined(KERNEL_CRK_FACES)
+            for(int k=0;k<16;k++) {local.Tensor_CRK_Face_Corrections[k] = kc[ii].Tensor_CRK_Face_Corrections[k];}
+#endif
+
+            /* Initialize output and workspace */
+            struct hydro_data_out out;
+            memset(&out, 0, sizeof(out));
+            struct kernel_hydra kernel;
+            memset(&kernel, 0, sizeof(kernel));
+            struct Conserved_var_Riemann Fluxes;
+
+            kernel.h_i = local.KernelRadius;
+            kernel.sound_i = local.SoundSpeed;
+            kernel.spec_egy_u_i = local.InternalEnergyPred;
+#ifdef MAGNETIC
+            {
+                double fac_magnetic_pressure_loc = 1.0 / (All.cf_atime * All.cf_atime);
+                kernel.b2_i = local.BPred.norm_sq() * fac_magnetic_pressure_loc;
+                kernel.alfven2_i = kernel.b2_i / local.Density;
+            }
+#endif
+
+            /* Accumulate over symmetric neighbors */
+            for(int idx = offsets[aa]; idx < offsets[aa + 1]; idx++)
+            {
+                int j = neighbors[idx];
+                memset(&Fluxes, 0, sizeof(Fluxes));
+                hydro_accumulate_neighbor(&local, &out, &kernel, &Fluxes, j,
+                                          local.dt_hydrostep_i, kp, kc,
+                                          kTimeBinActive, kNeedWakeup);
+            }
+
+            /* Store output for this particle */
+            kout[aa] = out;
+        }); /* end KOKKOS_LAMBDA */
+        Kokkos::fence();
+
+#if defined(__CUDACC__)
+        {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] hydro kernel error: %s\n", cudaGetErrorString(_ce)); fflush(stdout);}}
+#elif defined(__HIPCC__)
+        {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] hydro kernel error: %s\n", hipGetErrorString(_ce)); fflush(stdout);}}
+#endif
+    }
+
+    /* Copy output back to host */
+    memcpy(out_host, d_out, num_active * sizeof(struct hydro_data_out));
+
+    /* Copy wakeup flag back */
+    if(*d_NeedToWakeup) NeedToWakeupParticles_local = 1;
+
+    /* Scatter j-particle modifications (dMass, wakeup) back to host P/CellP.
+       Ghost writeback handles the MPI communication — here we just copy the
+       SharedSpace arrays back so local+ghost modifications are visible on host. */
+    for(int j = 0; j < num_total; j++) {
+        P_host[j].wakeup = P_gpu[j].wakeup;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        CellP_host[j].dMass = CellP_gpu[j].dMass;
+#endif
+    }
+
+    /* Cleanup SharedSpace */
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_NeedToWakeup);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_TimeBinActive);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+}
+
+
 #else /* !OPENMP_GPU_OFFLOAD || !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
-/* Stub: GPU density/gradient not available */
+/* Stub: GPU density/gradient/hydro not available */
 void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                           int, int *, int) {}
 void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                            int, int *, int, int *, int *, int, void *) {}
+void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                        int, int *, int, int *, int *, int, void *) {}
 void gizmo_gpu_sync_all_density(void) {}
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
