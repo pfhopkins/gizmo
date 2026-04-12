@@ -22,7 +22,10 @@
 #define HYDRO_FUNCTIONS_H
 
 /* Requires: allvars.h, proto.h, kernel.h, reimann.h included before this header.
-   Also requires: Conserved_var_Riemann, kernel_hydra defined (from hydro_toplevel.cc). */
+   Also requires: Conserved_var_Riemann, kernel_hydra, INPUT_STRUCT_NAME, OUTPUT_STRUCT_NAME
+   defined (from hydro_toplevel.cc via code_block_xchange_initialize.h).
+   This header is #include'd from within hydro_toplevel.cc or the GPU TU after those
+   struct definitions are in scope. */
 
 
 /* Per-neighbor-pair hydro flux accumulation for particle i.
@@ -48,7 +51,8 @@ void hydro_accumulate_neighbor(
     struct kernel_hydra *kernel_ptr_arg,
     struct Conserved_var_Riemann *Fluxes_ptr_arg,
     int j, double dt_hydrostep_i,
-    struct particle_data *P, struct gas_cell_data *CellP)
+    struct particle_data *P, struct gas_cell_data *CellP,
+    int *TimeBinActive_arr, int *NeedToWakeup_flag)
 {
     /* Sub-includes (hydro_core_meshless.h, reimann.h, conduction.h, etc.) expect
        local, out, kernel, Fluxes as value types with . access. Create references
@@ -186,7 +190,13 @@ void hydro_accumulate_neighbor(
         if(dmass_holder > 0) {dmass_limiter = P[j].Mass;} else {dmass_limiter = local.Mass;}
         dmass_limiter *= 0.1;
         if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
-        out.dMass += FluxCorrectionFactor_to_i * dmass_holder;
+        /* Timestep-conditional mass flux for machine-accurate conservation */
+        double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
+        if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
+            out.dMass += FluxCorrectionFactor_to_i * dmass_holder;
+        } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
+            out.dMass += FluxCorrectionFactor_to_i * 0.5 * dmass_holder;
+        }
         out.DtMass += FluxCorrectionFactor_to_i * Fluxes.rho;
         Vec3<double> gravwork = kernel.dp * Fluxes.rho;
         out.GravWorkTerm += gravwork * FluxCorrectionFactor_to_i;
@@ -229,8 +239,42 @@ void hydro_accumulate_neighbor(
 #endif
 #endif
 
+    /* ---- J-particle writes (Kokkos atomics for thread safety) ---- */
+
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    /* MFV mass conservation: machine-accurate two-sided mass exchange.
+       With j_is_active_for_fluxes=0 (dead code, always 0 in modern GIZMO),
+       FluxCorrectionFactor_to_j=1, and we use the timestep-conditional logic. */
+    {
+        double dmass_holder = Fluxes.rho * dt_hydrostep_i, dmass_limiter;
+        if(dmass_holder > 0) {dmass_limiter = P[j].Mass;} else {dmass_limiter = local.Mass;}
+        dmass_limiter *= 0.1;
+        if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
+        double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
+        if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
+            /* i has shorter timestep: both sides get full flux */
+            Kokkos::atomic_add(&CellP[j].dMass, (MyDouble)(-dmass_holder));
+        } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
+            /* equal timesteps, j_is_active_for_fluxes=0: half flux */
+            Kokkos::atomic_add(&CellP[j].dMass, (MyDouble)(-0.5 * dmass_holder));
+        }
+        /* if dt_i > dt_j: j will handle this pair when it's active */
+    }
+#endif
+
     /* Signal velocity for timestepping */
     if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
+
+    /* Wakeup check: if j is inactive and signal velocity exceeds threshold,
+       flag it for wakeup. Uses Kokkos atomics for thread safety. */
+    if(TimeBinActive_arr && !(TimeBinActive_arr[P[j].TimeBin]))
+    {
+        if(kernel.vsig > WAKEUP * CellP[j].MaxSignalVel) {
+            short int wakeup_val = (short int)(local.TimeBin + 1);
+            Kokkos::atomic_store(&P[j].wakeup, wakeup_val);
+            if(NeedToWakeup_flag) Kokkos::atomic_store(NeedToWakeup_flag, 1);
+        }
+    }
 }
 
 
