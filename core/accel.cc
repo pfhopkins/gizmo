@@ -62,6 +62,8 @@ void compute_hydro_densities_and_forces(void)
   if(All.TotN_gas > 0)
     {
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        double t_bench_ghost = 0, t_bench_symlist = 0;
+        {double t0 = my_second();
         /* Drift ALL particles to current time before any neighbor operations.
            This eliminates lazy drifting during the tree walk — required for
            GPU neighbor finding (no critical sections) and for halo exchange
@@ -71,9 +73,11 @@ void compute_hydro_densities_and_forces(void)
            Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
            are guesses that may grow significantly during density iteration. */
         ghost_exchange(1.0);
+        t_bench_ghost = timediff(t0, my_second());}
 #endif
 
         PRINT_STATUS("Start hydrodynamics computation...");
+        double t_bench_density_start = my_second();
         density();		/* computes density, and pressure */
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
         ags_density();
@@ -107,6 +111,7 @@ void compute_hydro_densities_and_forces(void)
             double t_sym_start = my_second();
             build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
             double t_sym_end = my_second();
+            t_bench_symlist = timediff(t_sym_start, t_sym_end);
 
             if(ThisTask == 0) {
                 PRINT_STATUS("Symmetric neighbor list: %d active, %d pairs (%.4f s) — cached for gradients+hydro",
@@ -115,6 +120,7 @@ void compute_hydro_densities_and_forces(void)
         }
 #endif
 
+        double t_bench_density = timediff(t_bench_density_start, my_second());
         PRINT_STATUS(" ..density & tree-update computation done...");
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
@@ -133,6 +139,7 @@ void compute_hydro_densities_and_forces(void)
         compute_stellar_feedback();
 #endif
 
+        double t_bench_grad_start = my_second();
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #ifdef MHD_MODIFIED_GRADIENT
         {   /* determine whether the active gas fraction is large enough to justify the global MG solve */
@@ -152,6 +159,7 @@ void compute_hydro_densities_and_forces(void)
 #if defined(COOLING) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */
 #endif
+        double t_bench_grad = timediff(t_bench_grad_start, my_second());
         PRINT_STATUS(" ..gradient computation done.");
 
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
@@ -161,7 +169,9 @@ void compute_hydro_densities_and_forces(void)
 #ifdef TURB_DIFF_DYNAMIC
         dynamic_diff_calc(); /* This MUST be called immediately following gradient calculations */
 #endif
+        double t_bench_hydro_start = my_second();
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
+        double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Free symmetric neighbor list — no longer needed after hydro_force */
         free_neighbor_list(&gizmo_sym_neighbor_list);
@@ -173,6 +183,14 @@ void compute_hydro_densities_and_forces(void)
         ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */
 #endif
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
+        if(ThisTask == 0) {
+            printf("  [BENCH] density=%.4f grad=%.4f hydro=%.4f", t_bench_density, t_bench_grad, t_bench_hydro);
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+            printf(" ghost=%.4f symlist=%.4f", t_bench_ghost, t_bench_symlist);
+#endif
+            printf(" total=%.4f\n", t_bench_density + t_bench_grad + t_bench_hydro);
+            fflush(stdout);
+        }
         PRINT_STATUS(" ..hydro force computation done.");
 
     } else {
