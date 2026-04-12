@@ -8,6 +8,10 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/mesh_motion.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/neighbor_list.h"
+#include "../mesh/sfc_tiles.h"
+#endif
 
 /* provide externally-visible (non-inline) symbols for functions defined in density_functions.h */
 #undef KOKKOS_INLINE_FUNCTION
@@ -306,7 +310,50 @@ void density(void)
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        /* SFC-tile neighbor list path: build neighbor list from local+ghost pool,
+           accumulate density for each active particle using CSR neighbor iteration.
+           No MPI export/import needed — ghosts already in P[]. */
+        {
+            /* Build active list for this iteration (only particles still iterating) */
+            int nl_num_active = 0;
+            for(int ii : ActiveParticleList) {if(density_isactive(ii)) nl_num_active++;}
+            int *nl_active = (int *) mymalloc("nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
+            {int aa = 0; for(int ii : ActiveParticleList) {if(density_isactive(ii)) nl_active[aa++] = ii;}}
+
+            /* Build SFC-tile neighbor list (one-way search for density) */
+            neighbor_list_t nl_density;
+            build_neighbor_list_sfc(P, CellP, NumPart, nl_active, nl_num_active, NGB_SEARCH_ONEWAY, 1, &nl_density);
+
+            /* Accumulate density for each active particle */
+            for(int aa = 0; aa < nl_num_active; aa++)
+            {
+                int ii = nl_active[aa];
+                struct density_evaluate_data_in_ local;
+                struct density_evaluate_data_out_ out;
+                struct kernel_density kernel;
+                memset(&out, 0, sizeof(out));
+                hydrokerneldensity_particle2in(&local, ii, 0);
+                double h2 = local.KernelRadius * local.KernelRadius;
+                kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
+#if defined(SINK_PARTICLES)
+                out.Sink_TimeBinGasNeighbor = TIMEBINS;
+#endif
+                for(int idx = nl_density.offsets[aa]; idx < nl_density.offsets[aa + 1]; idx++)
+                {
+                    int j = nl_density.neighbors[idx];
+                    density_accumulate_neighbor(&local, &out, &kernel, j, h2, P, CellP);
+                    if(kernel.r > 0) {density_evaluate_extra_physics_gas(&local, &out, &kernel, j, P, CellP);}
+                }
+                hydrokerneldensity_out2particle(&out, ii, 0, 0);
+            }
+
+            free_neighbor_list(&nl_density);
+            myfree(nl_active);
+        }
+#else
         #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+#endif
 
         /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
