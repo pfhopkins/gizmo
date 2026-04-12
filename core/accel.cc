@@ -7,6 +7,10 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/neighbor_list.h"
+#include "../mesh/sfc_tiles.h"
+#endif
 
 /*! \file accel.c
  *  \brief driver routines to carry out force computation
@@ -85,6 +89,33 @@ void compute_hydro_densities_and_forces(void)
             ghost_exchange(1.0);
         }
         validate_neighbor_list(); /* temporary: compare cell-list neighbor finder against tree walk */
+
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        /* Build symmetric neighbor list (r < max(h_i, h_j)) with converged h values.
+           This list is reused by gradients, volume corrections, and hydro force —
+           built once here, freed after hydro_force completes. */
+        {
+            int sym_num_active = 0;
+            for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) sym_num_active++;}
+            int *sym_active = (int *) mymalloc("sym_active", (sym_num_active > 0 ? sym_num_active : 1) * sizeof(int));
+            {int aa = 0; for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) sym_active[aa++] = ii;}}
+
+            double t_sym_start = my_second();
+            neighbor_list_t sym_nlist;
+            build_neighbor_list_sfc(P, CellP, NumPart, sym_active, sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &sym_nlist);
+            double t_sym_end = my_second();
+
+            if(ThisTask == 0) {
+                PRINT_STATUS("Symmetric neighbor list: %d active, %d pairs (%.4f s) — cached for gradients+hydro",
+                             sym_num_active, sym_nlist.total_pairs, timediff(t_sym_start, t_sym_end));
+            }
+
+            /* TODO: wire into hydro_gradient_calc() and hydro_force() via global pointer.
+               For now, just build and free to benchmark construction cost. */
+            free_neighbor_list(&sym_nlist);
+            myfree(sym_active);
+        }
+#endif
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
