@@ -906,9 +906,11 @@ double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_dat
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
 double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef RT_SOLVER_EXPLICIT
 GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell) {
     return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
 }
+#endif
 void rt_eddington_update_calculation(int j, struct gas_cell_data *cell);
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
