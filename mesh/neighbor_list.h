@@ -54,4 +54,13 @@ void build_neighbor_list(struct particle_data *P, struct gas_cell_data *CellP,
 
 void free_neighbor_list(neighbor_list_t *list);
 
+/* Global symmetric neighbor list cached between density and hydro_force.
+ * Built in accel.cc after density converges, freed after hydro_force completes.
+ * Used by gradients and hydro force when GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is set. */
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+extern neighbor_list_t gizmo_sym_neighbor_list;
+extern int *gizmo_sym_active_indices;
+extern int gizmo_sym_num_active;
+#endif
+
 #endif /* NEIGHBOR_LIST_H */

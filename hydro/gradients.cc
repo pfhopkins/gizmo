@@ -7,6 +7,16 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/neighbor_list.h"
+/* gradient_evaluate_gpu writes results as GasGraddata_out_ structs (defined in
+   gradient_functions.h, layout-identical to GasGraddata_out defined below).
+   We pass a void* buffer to avoid including gradient_functions.h which would
+   conflict with the local struct definitions. The cast to GasGraddata_out*
+   is safe because the two structs have identical field layout. */
+extern void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                                  int, int *, int, int *, int *, int, void *);
+#endif
 
 
 
@@ -661,6 +671,34 @@ void hydro_gradient_calc(void)
 #endif
             }
 
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+        /* Neighbor-list path for gradient_iteration==0: use cached symmetric CSR list
+           with GPU/Kokkos dispatch. Falls through to tree walk for iteration>0 (MHD). */
+        if(gradient_iteration == 0 && gizmo_sym_neighbor_list.total_pairs > 0)
+        {
+            /* Allocate output array for GPU kernel results.
+               GasGraddata_out_ (gradient_functions.h) is layout-identical to GasGraddata_out (this file). */
+            struct GasGraddata_out *grad_out = (struct GasGraddata_out *) mymalloc("grad_out",
+                (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(struct GasGraddata_out));
+
+            gradient_evaluate_gpu(P, CellP, NumPart,
+                                  gizmo_sym_active_indices, gizmo_sym_num_active,
+                                  gizmo_sym_neighbor_list.offsets,
+                                  gizmo_sym_neighbor_list.neighbors,
+                                  gizmo_sym_neighbor_list.total_pairs,
+                                  (void *)grad_out);
+
+            /* Scatter results into CellP + GasGradDataPasser */
+            for(int aa = 0; aa < gizmo_sym_num_active; aa++)
+            {
+                int ii = gizmo_sym_active_indices[aa];
+                out2particle_GasGrad(&grad_out[aa], ii, 0, gradient_iteration);
+            }
+            myfree(grad_out);
+        }
+        else
+        {
+#endif
         // now we actually begin the main gradient loop //
         NextParticle = 0;	/* begin with this index into ActiveParticleList */
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
@@ -873,6 +911,9 @@ void hydro_gradient_calc(void)
             tend = my_second(); timewait2 += timediff(tstart, tend);
         }
         while(ndone < NTask);
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+        } /* close else-branch of neighbor-list vs tree-walk dispatch */
+#endif
 
 
         /* here, we insert intermediate operations on the results, from the iterations we have completed */

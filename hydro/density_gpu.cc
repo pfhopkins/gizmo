@@ -43,6 +43,7 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/sfc_tiles_functions.h"
 #include "density_functions.h"
+#include "gradient_functions.h"
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 
@@ -393,11 +394,187 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 }
 
+/* ================================================================
+   GPU gradient kernel (B3)
+   ================================================================
+   For each active particle: load data, iterate symmetric CSR neighbors,
+   accumulate gradients via gradient_functions.h, return output structs.
+   The caller (gradients.cc) does the scatter into CellP + GasGradDataPasser.
+   ================================================================ */
+
+/* Entry point for GPU gradient evaluation (gradient_iteration==0 only).
+ * Takes a pre-built symmetric CSR neighbor list (offsets/neighbors).
+ * Fills out_host[0..num_active-1] with accumulated gradient outputs.
+ * Caller must allocate out_host (num_active * sizeof(GasGraddata_out_)). */
+void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
+                           int num_total, int *active_indices_host, int num_active,
+                           int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
+                           void *out_host_void)
+{
+    struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
+
+    /* Allocate SharedSpace copies */
+    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
+    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+
+    /* Copy CSR neighbor list to SharedSpace */
+    int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
+    int *d_neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((csr_total_pairs > 0) ? csr_total_pairs : 1) * sizeof(int));
+    int *d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
+    memcpy(d_offsets, csr_offsets_host, (num_active + 1) * sizeof(int));
+    memcpy(d_neighbors, csr_neighbors_host, csr_total_pairs * sizeof(int));
+    memcpy(d_active, active_indices_host, num_active * sizeof(int));
+
+    /* Allocate output array in SharedSpace */
+    struct GasGraddata_out_ *d_out = (struct GasGraddata_out_ *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct GasGraddata_out_));
+
+    if(ThisTask == 0) {
+        printf("  GPU gradient: %d active particles, %d neighbor pairs (%.1f avg)\n",
+               num_active, csr_total_pairs,
+               num_active > 0 ? (double)csr_total_pairs / num_active : 0.0);
+        fflush(stdout);
+    }
+
+    /* GPU gradient accumulation kernel */
+    {
+        int *offsets = d_offsets;
+        int *neighbors = d_neighbors;
+        int *active = d_active;
+        struct particle_data *kp = P_gpu;
+        struct gas_cell_data *kc = CellP_gpu;
+        struct GasGraddata_out_ *kout = d_out;
+
+        Kokkos::parallel_for("gradient_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+            int ii = active[aa];
+
+            /* particle2in equivalent: load searching particle data */
+            struct GasGraddata_in_ local;
+            memset(&local, 0, sizeof(local));
+            local.Pos = kp[ii].Pos;
+            local.KernelRadius = kp[ii].KernelRadius;
+            local.Mass = kp[ii].Mass;
+            if(local.Mass < 0) {local.Mass = 0;}
+            int sph_gradients_flag_i = SHOULD_I_USE_SPH_GRADIENTS(kc[ii].ConditionNumber);
+            if(sph_gradients_flag_i) {local.Mass *= -1;}
+
+            /* Load gradient quantities */
+            local.GQuant.Density = kc[ii].Density;
+            local.GQuant.Pressure = kc[ii].Pressure;
+            local.GQuant.Velocity = kc[ii].VelPred;
+#ifdef MAGNETIC
+            local.GQuant.B = kc[ii].BPred * (kc[ii].Density / kp[ii].Mass);
+#ifdef DIVBCLEANING_DEDNER
+            local.GQuant.Phi = kc[ii].PhiPred / kp[ii].Mass;
+#endif
+#endif
+#ifdef DOGRAD_INTERNAL_ENERGY
+            local.GQuant.InternalEnergy = kc[ii].InternalEnergyPred;
+#endif
+#ifdef DOGRAD_SOUNDSPEED
+            local.GQuant.SoundSpeed = kc[ii].effective_soundspeed();
+#endif
+#ifdef COSMIC_RAY_FLUID
+            for(int k=0;k<N_CR_PARTICLE_BINS;k++) {local.GQuant.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(ii, k, kc);}
+#endif
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
+            for(int k=0;k<NUM_METAL_SPECIES;k++) {local.GQuant.Metallicity[k] = kp[ii].Metallicity[k];}
+#endif
+#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
+            {double V_i_inv = kc[ii].Density / kp[ii].Mass;
+             for(int k=0;k<N_RT_FREQ_BINS;k++) {
+                 local.GQuant.Rad_E_gamma[k] = kc[ii].Rad_E_gamma_Pred[k] * V_i_inv;
+                 local.GQuant.Rad_E_gamma_ET[k] = local.GQuant.Rad_E_gamma[k] * kc[ii].ET[k];
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+                 for(int k2=0;k2<3;k2++) {local.GQuant.Rad_Flux[k][k2] = kc[ii].Rad_Flux_Pred[k][k2] * V_i_inv;}
+#endif
+             }}
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+            local.GQuant.Velocity_bar = kc[ii].Velocity_bar;
+            local.Norm_hat = kc[ii].Norm_hat;
+#ifdef GALSF_SUBGRID_WINDS
+            local.DelayTime = kc[ii].DelayTime;
+#endif
+#endif
+#ifdef MHD_CONSTRAINED_GRADIENT
+            local.ConditionNumber = kc[ii].ConditionNumber;
+            local.NV_T = kc[ii].NV_T;
+            for(int k=0;k<3;k++) for(int k2=0;k2<3;k2++) {local.BGrad[k][k2] = kc[ii].Gradients.B[k][k2];}
+#ifdef MHD_MODIFIED_GRADIENT
+            local.MG_cgcoeff = kc[ii].MG_cgcoeff;
+#endif
+#ifdef MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV
+            local.PhiGrad = kc[ii].Gradients.Phi;
+#endif
+#endif
+
+            if(sph_gradients_flag_i) {local.Mass *= -1;} /* negate Mass as flag for SPH gradients */
+
+            /* Initialize output */
+            struct GasGraddata_out_ out;
+            memset(&out, 0, sizeof(out));
+
+            /* Pre-compute kernel quantities */
+            double h_i = local.KernelRadius;
+            double hinv, hinv3, hinv4;
+            kernel_hinv(h_i, &hinv, &hinv3, &hinv4);
+            if(local.Mass < 0) {local.Mass *= -1;} /* restore for V_i computation */
+            double V_i = local.Mass / local.GQuant.Density;
+            if(sph_gradients_flag_i) {local.Mass *= -1;} /* re-negate for kernel */
+
+            int kernel_mode_i = -1;
+            if(sph_gradients_flag_i) kernel_mode_i = 0;
+#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
+            kernel_mode_i = 0;
+#endif
+
+            struct kernel_GasGrad kernel;
+            kernel.h_i = h_i;
+
+            /* Accumulate over symmetric neighbors */
+            for(int idx = offsets[aa]; idx < offsets[aa + 1]; idx++)
+            {
+                int j = neighbors[idx];
+                gradient_accumulate_neighbor(&local, &out, &kernel, j,
+                                             sph_gradients_flag_i, V_i,
+                                             hinv, hinv3, hinv4, kernel_mode_i,
+                                             kp, kc);
+            }
+
+            /* Store output for this particle */
+            kout[aa] = out;
+        }); /* end KOKKOS_LAMBDA */
+        Kokkos::fence();
+
+#if defined(__CUDACC__)
+        {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] gradient kernel error: %s\n", cudaGetErrorString(_ce)); fflush(stdout);}}
+#elif defined(__HIPCC__)
+        {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] gradient kernel error: %s\n", hipGetErrorString(_ce)); fflush(stdout);}}
+#endif
+    }
+
+    /* Copy output back to host */
+    memcpy(out_host, d_out, num_active * sizeof(struct GasGraddata_out_));
+
+    /* Cleanup SharedSpace */
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+}
+
+
 #else /* !OPENMP_GPU_OFFLOAD || !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
-/* Stub: GPU density not available */
+/* Stub: GPU density/gradient not available */
 void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                           int, int *, int) {}
+void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                           int, int *, int, int *, int *, int, void *) {}
 void gizmo_gpu_sync_all_density(void) {}
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

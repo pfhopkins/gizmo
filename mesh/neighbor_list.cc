@@ -329,3 +329,10 @@ void free_neighbor_list(neighbor_list_t *list)
     list->offsets = NULL;
     list->total_pairs = 0;
 }
+
+/* Global symmetric neighbor list: defined here, extern'd in neighbor_list.h */
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+neighbor_list_t gizmo_sym_neighbor_list = {NULL, NULL, 0, 0};
+int *gizmo_sym_active_indices = NULL;
+int gizmo_sym_num_active = 0;
+#endif

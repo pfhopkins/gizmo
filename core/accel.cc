@@ -95,25 +95,19 @@ void compute_hydro_densities_and_forces(void)
            This list is reused by gradients, volume corrections, and hydro force —
            built once here, freed after hydro_force completes. */
         {
-            int sym_num_active = 0;
-            for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) sym_num_active++;}
-            int *sym_active = (int *) mymalloc("sym_active", (sym_num_active > 0 ? sym_num_active : 1) * sizeof(int));
-            {int aa = 0; for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) sym_active[aa++] = ii;}}
+            gizmo_sym_num_active = 0;
+            for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
+            gizmo_sym_active_indices = (int *) mymalloc("sym_active", (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
+            {int aa = 0; for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
 
             double t_sym_start = my_second();
-            neighbor_list_t sym_nlist;
-            build_neighbor_list_sfc(P, CellP, NumPart, sym_active, sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &sym_nlist);
+            build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
             double t_sym_end = my_second();
 
             if(ThisTask == 0) {
                 PRINT_STATUS("Symmetric neighbor list: %d active, %d pairs (%.4f s) — cached for gradients+hydro",
-                             sym_num_active, sym_nlist.total_pairs, timediff(t_sym_start, t_sym_end));
+                             gizmo_sym_num_active, gizmo_sym_neighbor_list.total_pairs, timediff(t_sym_start, t_sym_end));
             }
-
-            /* TODO: wire into hydro_gradient_calc() and hydro_force() via global pointer.
-               For now, just build and free to benchmark construction cost. */
-            free_neighbor_list(&sym_nlist);
-            myfree(sym_active);
         }
 #endif
 
@@ -164,6 +158,13 @@ void compute_hydro_densities_and_forces(void)
         dynamic_diff_calc(); /* This MUST be called immediately following gradient calculations */
 #endif
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        /* Free symmetric neighbor list — no longer needed after hydro_force */
+        free_neighbor_list(&gizmo_sym_neighbor_list);
+        myfree(gizmo_sym_active_indices);
+        gizmo_sym_active_indices = NULL;
+        gizmo_sym_num_active = 0;
+#endif
         ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
         PRINT_STATUS(" ..hydro force computation done.");
