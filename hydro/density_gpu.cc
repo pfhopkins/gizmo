@@ -38,6 +38,7 @@ static __managed__ struct global_data_all_processes All_dev;
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/timestep_functions.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
