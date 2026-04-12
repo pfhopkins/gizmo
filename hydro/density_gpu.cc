@@ -46,6 +46,7 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "density_functions.h"
 #include "gradient_functions.h"
 #include "hydro_structs.h"
+#include "../system/eigen_symmetric.h"
 #ifndef HYDRO_SPH
 #include "reimann.h"
 #endif

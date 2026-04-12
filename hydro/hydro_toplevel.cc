@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <gsl/gsl_math.h>
-#include <gsl/gsl_eigen.h>
+#include "../system/eigen_symmetric.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"

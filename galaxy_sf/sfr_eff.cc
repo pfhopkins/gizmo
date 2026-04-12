@@ -6,7 +6,7 @@
 #include <gsl/gsl_math.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
-#include <gsl/gsl_eigen.h>
+#include "../system/eigen_symmetric.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -303,10 +303,8 @@ double get_starformation_rate(int i, int mode)
 #if (SINGLE_STAR_SINK_FORMATION & 128) /* check that the velocity gradient is negative-definite, ie. converging along all principal axes, which is much stricter than div v < 0 */
     for(j=0;j<3;j++){ // symmetrize the velocity gradient
       for(k=0;k<j;k++){double temp = gradv[3*j + k]; gradv[3*j + k] = 0.5*(gradv[3*j + k] + gradv[3*k + j]); gradv[3*k + j] = 0.5*(temp + gradv[3*k + j]);}}
-    gsl_matrix_view M = gsl_matrix_view_array(gradv, 3, 3); gsl_vector *eval1 = gsl_vector_alloc(3);
-    gsl_eigen_symm_workspace *v = gsl_eigen_symm_alloc(3); gsl_eigen_symm(&M.matrix, eval1,  v);
-    if(exceeds_force_softening_threshold==0) {for(k=0;k<3;k++) if(gsl_vector_get(eval1,k) >= 0) {rateOfSF=0;}} /* cannot apply this criterion when we exceed the limits where gravity is treated as fully-Newtonian, it will severely suppress 'true' collapse */
-    gsl_eigen_symm_free(v); gsl_vector_free(eval1);
+    {double eval1[3]={0}; eigen_symmetric_values(gradv, eval1, 3);
+    if(exceeds_force_softening_threshold==0) {for(k=0;k<3;k++) if(eval1[k] >= 0) {rateOfSF=0;}}}
 #endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 64) /* check if Jeans mass is low enough for conceivable formation of 'stars' */
@@ -329,10 +327,8 @@ double get_starformation_rate(int i, int mode)
             /* ok, the trace is negative, and SFR non-zero so its possible this could get through, and gravity sufficiently reliable to check individual eigenvalues */
             double h_i=ForceSoftening_KernelRadius(i), fac_self=-P[i].Mass*kernel_gravity(0.,1.,1.,1)/(h_i*h_i*h_i); /* add the self-contribution (tree loop currently excludes the self-self force, since not needed normally for gravity */
             double tt[9]; for(j=0;j<3;j++) {for(k=0;k<3;k++) {tt[3*j+k] = P[i].tidal_tensorps[j][k]; if(j==k) {tt[3*j+k] += fac_self;}}} /* copy the tidal tensor to a convenient vector, adding the self-contribution since that is -definitely- potentially important for this self-gravity criterion. note the self-contribution is strictly diagonal for a spherically-symmetric softening */
-            gsl_matrix_view m = gsl_matrix_view_array(tt, 3, 3); gsl_vector *eval = gsl_vector_alloc(3); /* set up our workspace */
-            gsl_eigen_symm_workspace *w = gsl_eigen_symm_alloc(3); gsl_eigen_symm(&m.matrix, eval,  w); /* allocate and solve for the eigenvalues */
-            for(k=0; k<3; k++) {if(gsl_vector_get(eval,k) >= 0) {rateOfSF=0;}} /* this returns the three eigenvalues, check each of them, if any is >= 0, we set the SFR=0 */
-            gsl_eigen_symm_free(w); gsl_vector_free(eval); /* free the structures */
+            double eval_tt[3]={0}; eigen_symmetric_values(tt, eval_tt, 3);
+            for(k=0; k<3; k++) {if(eval_tt[k] >= 0) {rateOfSF=0;}} /* check each eigenvalue, if any is >= 0, we set the SFR=0 */
         }
     }
 #endif

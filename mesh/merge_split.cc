@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <gsl/gsl_rng.h>
-#include <gsl/gsl_eigen.h>
+#include "../system/eigen_symmetric.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -632,12 +632,11 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
 
         // get the eigenvector of NV_T that has the largest eigenvalue (= sparsest sampling direction, if assume equal-mass particles, for our definition of NV_T)
         double nvt[NUMDIMS*NUMDIMS]={0}; for(k=0;k<NUMDIMS;k++) {for(m=0;m<NUMDIMS;m++) {nvt[NUMDIMS*k + m]=CellP[i].NV_T[k][m];}} // auxiliary array to store NV_T in for feeding to GSL eigen routine
-        gsl_matrix_view M = gsl_matrix_view_array(nvt,NUMDIMS,NUMDIMS); gsl_vector *eigvals = gsl_vector_alloc(NUMDIMS); gsl_matrix *eigvecs = gsl_matrix_alloc(NUMDIMS,NUMDIMS);
-        gsl_eigen_symmv_workspace *v = gsl_eigen_symmv_alloc(NUMDIMS); gsl_eigen_symmv(&M.matrix, eigvals, eigvecs, v);
-        int min_eigvec_index = 0; double max_eigval = -MAX_REAL_NUMBER; //
-        for(k=0;k<NUMDIMS;k++) {if(gsl_vector_get(eigvals,k) > max_eigval) {max_eigval = gsl_vector_get(eigvals,k); min_eigvec_index=k;}}
-        for(k=0;k<NUMDIMS;k++) {dp[k] = gsl_matrix_get(eigvecs, k, min_eigvec_index);}
-        gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs);
+        double eigvals_loc[3]={0}, eigvecs_loc[9]={0};
+        eigen_symmetric(nvt, eigvals_loc, eigvecs_loc, NUMDIMS);
+        int min_eigvec_index = 0; double max_eigval = -MAX_REAL_NUMBER;
+        for(k=0;k<NUMDIMS;k++) {if(eigvals_loc[k] > max_eigval) {max_eigval = eigvals_loc[k]; min_eigvec_index=k;}}
+        for(k=0;k<NUMDIMS;k++) {dp[k] = eigvecs_loc[NUMDIMS*min_eigvec_index + k];}
         for(k=0;k<NUMDIMS;k++) {norm += dp[k] * dp[k];}
         if(norm > 0)
         {
