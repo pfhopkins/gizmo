@@ -289,7 +289,10 @@ static GIZMO_GPU_FUNCTION void Riemann_solver(struct Input_vec_Riemann Riemann_v
     if((Riemann_vec.L.p < 0 && Riemann_vec.R.p < 0)||(Riemann_vec.L.rho < 0)||(Riemann_vec.R.rho < 0))
     {
         printf("FAILURE: Unphysical Inputs to Reimann Solver: Left P/rho=%g/%g, Right P/rho=%g/%g \n",
-               Riemann_vec.L.p,Riemann_vec.L.rho,Riemann_vec.R.p,Riemann_vec.R.rho); fflush(stdout);
+               Riemann_vec.L.p,Riemann_vec.L.rho,Riemann_vec.R.p,Riemann_vec.R.rho);
+#ifndef GIZMO_GPU_COMPILER
+        fflush(stdout);
+#endif
         Riemann_out->P_M = 0;
         return;
     }

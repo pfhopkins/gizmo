@@ -122,9 +122,9 @@ static inline double WRAP_POSITION_UNIFORM_BOX(double x)
 }
 
 /* DMAX/DMIN/IMAX/IMIN are now macros in macros.h (GPU-safe, no linkage issues). */
-static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMIN(a,b)) : ((b>=0) ? 0 : DMAX(a,b));}
+GIZMO_GPU_FUNCTION static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMIN(a,b)) : ((b>=0) ? 0 : DMAX(a,b));}
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
-static inline double MINMOD_G(double a, double b) {return a;}
+GIZMO_GPU_FUNCTION static inline double MINMOD_G(double a, double b) {return a;}
 
 static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)
@@ -781,12 +781,12 @@ integertime find_next_time_walk(int node);
 void free_memory(void);
 void advance_and_find_timesteps(void);
 integertime get_timestep(int p, double *a, int flag);
-double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
-double timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
-double unit_integertime_in_physical(int i, struct particle_data *pp = P);
-double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp = P);
-double get_particle_timestep_in_physical(int i, struct particle_data *pp = P);
-double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double timestep_dilation_factor(int i, int mode, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double unit_integertime_in_physical(int i, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct particle_data *pp = P);
+GIZMO_GPU_FUNCTION double get_particle_feedback_timestep_in_physical(int i, struct particle_data *pp = P);
 
 void determine_PMinterior(void);
 void gravity_tree(void);

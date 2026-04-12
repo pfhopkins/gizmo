@@ -53,7 +53,11 @@
         Riemann_out.phi_normal_mean=Riemann_out.phi_normal_db=0;
 #endif
     } else {
-        if((Face_Area_Norm<=0)||(isnan(Face_Area_Norm))) {PRINT_WARNING("PANIC! Face_Area_Norm=%g Mij=%g/%g wk_ij=%g/%g Vij=%g/%g dx/dy/dz=%g/%g/%g NVT=%g/%g/%g NVT_j=%g/%g/%g \n",Face_Area_Norm,local.Mass,P[j].Mass,kernel.wk_i,kernel.wk_j,V_i,V_j,kernel.dp[0],kernel.dp[1],kernel.dp[2],local.NV_T[0][0],local.NV_T[0][1],local.NV_T[0][2],CellP[j].NV_T[0][0],CellP[j].NV_T[0][1],CellP[j].NV_T[0][2]); fflush(stdout);}
+        if((Face_Area_Norm<=0)||(isnan(Face_Area_Norm))) {PRINT_WARNING("PANIC! Face_Area_Norm=%g Mij=%g/%g wk_ij=%g/%g Vij=%g/%g dx/dy/dz=%g/%g/%g NVT=%g/%g/%g NVT_j=%g/%g/%g \n",Face_Area_Norm,local.Mass,P[j].Mass,kernel.wk_i,kernel.wk_j,V_i,V_j,kernel.dp[0],kernel.dp[1],kernel.dp[2],local.NV_T[0][0],local.NV_T[0][1],local.NV_T[0][2],CellP[j].NV_T[0][0],CellP[j].NV_T[0][1],CellP[j].NV_T[0][2]);
+#ifndef GIZMO_GPU_COMPILER
+         fflush(stdout);
+#endif
+        }
         Vec3<double> n_unit = Face_Area_Vec / Face_Area_Norm; /* define useful unit vector for below */
 
         /* --------------------------------------------------------------------------------- */
