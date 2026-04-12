@@ -708,9 +708,10 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             kernel.spec_egy_u_i = local.InternalEnergyPred;
 #ifdef MAGNETIC
             {
-                double fac_magnetic_pressure_loc = 1.0 / (All.cf_atime * All.cf_atime);
-                kernel.b2_i = local.BPred.norm_sq() * fac_magnetic_pressure_loc;
-                kernel.alfven2_i = kernel.b2_i / local.Density;
+                double fac_magnetic_pressure_loc = 1.0 / All.cf_atime; /* B*B*fac = pressure units */
+                kernel.b2_i = local.BPred.norm_sq(); /* raw B^2, without fac_magnetic_pressure */
+                kernel.alfven2_i = kernel.b2_i * fac_magnetic_pressure_loc / local.Density;
+                kernel.alfven2_i = DMIN(kernel.alfven2_i, 1000. * kernel.sound_i * kernel.sound_i);
             }
 #endif
 

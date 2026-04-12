@@ -139,15 +139,69 @@ void hydro_accumulate_neighbor(
 
     /* Variables expected by sub-includes that are normally in the enclosing scope */
     double cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber * local.ConditionNumber;
+    double fac_mu = 1.0 / All.cf_atime;
 #ifdef MAGNETIC
-    double fac_magnetic_pressure = 1.0 / (All.cf_atime * All.cf_atime);
+    double fac_magnetic_pressure = 1.0 / All.cf_atime; /* B*B*fac = pressure units */
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_MASS
     double epsilon_entropic_eos_big = 0.5;
     double epsilon_entropic_eos_small = 1.e-3;
 #if defined(FORCE_ENTROPIC_EOS_BELOW)
     epsilon_entropic_eos_small = FORCE_ENTROPIC_EOS_BELOW;
+#elif !defined(SELFGRAVITY_OFF)
+    epsilon_entropic_eos_small = 1.e-2; epsilon_entropic_eos_big = 0.6;
 #endif
+#endif
+
+#if defined(HYDRO_SPH)
+#ifdef HYDRO_PRESSURE_SPH
+    kernel.p_over_rho2_i = local.Pressure / (local.EgyWtRho*local.EgyWtRho);
+#else
+    kernel.p_over_rho2_i = local.Pressure / (local.Density*local.Density);
+#endif
+#endif
+#ifdef RT_SOLVER_EXPLICIT
+    double tau_c_i[N_RT_FREQ_BINS]; for(k=0;k<N_RT_FREQ_BINS;k++) {tau_c_i[k] = Particle_Size_i * local.Rad_Kappa[k]*local.Density*All.cf_a3inv;}
+#endif
+
+    /* MHD signal velocity: full fast magnetosonic wave speed computation */
+#ifdef MAGNETIC
+    kernel.b2_j = BPred_j.norm_sq();
+    kernel.alfven2_j = kernel.b2_j * fac_magnetic_pressure / CellP[j].Density;
+    kernel.alfven2_j = DMIN(kernel.alfven2_j, 1000. * kernel.sound_j*kernel.sound_j);
+    double vcsa2_j = kernel.sound_j*kernel.sound_j + kernel.alfven2_j;
+    double vcsa2_i = kernel.sound_i*kernel.sound_i + kernel.alfven2_i;
+    double Bpro2_j = dot(BPred_j, kernel.dp) / kernel.r; Bpro2_j *= Bpro2_j;
+    double magneticspeed_j = sqrt(0.5 * (vcsa2_j + sqrt(DMAX((vcsa2_j*vcsa2_j -
+            4 * kernel.sound_j*kernel.sound_j * Bpro2_j*fac_magnetic_pressure/CellP[j].Density), 0))));
+    double Bpro2_i = dot(local.BPred, kernel.dp) / kernel.r; Bpro2_i *= Bpro2_i;
+    double magneticspeed_i = sqrt(0.5 * (vcsa2_i + sqrt(DMAX((vcsa2_i*vcsa2_i -
+            4 * kernel.sound_i*kernel.sound_i * Bpro2_i*fac_magnetic_pressure/local.Density), 0))));
+    kernel.vsig = magneticspeed_i + magneticspeed_j;
+    Bpro2_i /= kernel.b2_i; Bpro2_j /= kernel.b2_j;
+#endif
+
+    /* relative velocity along separation vector + hubble correction */
+    kernel.vdotr2 = dot(kernel.dp, kernel.dv);
+    if(All.ComovingIntegrationOn) {kernel.vdotr2 += All.cf_hubble_a2 * r2;}
+    if(kernel.vdotr2 < 0)
+    {
+#if defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME)
+        kernel.vsig -= 3 * fac_mu * kernel.vdotr2 * rinv;
+#else
+        kernel.vsig -= fac_mu * kernel.vdotr2 * rinv;
+#endif
+    }
+
+#ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
+    double KE = kernel.dv.norm_sq();
+    if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
+#endif
+#ifdef TURB_DIFF_METALS
+    double mdot_estimated = 0;
+#endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+    double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
 
     double V_i = local.Mass / local.Density;
@@ -203,10 +257,6 @@ void hydro_accumulate_neighbor(
 #else
 #define HLL_DIFFUSION_OVERSHOOT_FACTOR  1.0
 #endif
-#endif
-
-#ifdef EOS_ELASTIC
-    double tensile_correction_factor = 0;
 #endif
 
     /* ---- Core hydro solver (face reconstruction + Riemann) ---- */
