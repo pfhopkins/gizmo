@@ -649,7 +649,10 @@ double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoin
         double absrate_k = rt_absorption_rate(i, k, pp, cell) * dt; // this needs to be positive to sensible behavior here
         if(absrate_k > 0) {dust_absorption_nonIR += e_final * fabs(expm1(-absrate_k));}
     }
-    double alpha_gd = gas_dust_heating_coeff(i,Tgas,Tdust, pp, cell);
+    double alpha_gd = 0;
+#ifdef COOLING
+    alpha_gd = gas_dust_heating_coeff(i,Tgas,Tdust, pp, cell);
+#endif
     double LambdaDust = alpha_gd * (Tgas-Tdust);
     double de_IR_dust = LambdaDust * lambda_to_dErad; // equates to *net* emission of radiation by dust (emission - absorption)
     double LambdaIR_gas = cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED];
@@ -738,7 +741,10 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
         #include "../system/bracketed_rootfind.h"
         Tdust = ROOTFIND_X_new+T;
     }
-    double LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
+    double LambdaDust = 0;
+#ifdef COOLING
+    LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
+#endif
     cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += LambdaDust;
     cell[i].Dust_Temperature = Tdust;
     return LambdaDust;

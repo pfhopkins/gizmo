@@ -449,13 +449,7 @@ void rt_define_effective_frequencies_in_bands(void)
 
 #ifdef RADTRANSFER
 
-/***********************************************************************************************************/
-/* returns the photon diffusion coefficient = fluxlimiter * speed_of_light[reduced] / (kappa_opacity * density)  [physical units] */
-/***********************************************************************************************************/
-double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell)
-{
-    return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
-}
+/* rt_diffusion_coefficient is now defined inline in proto.h for GPU compatibility */
 
 
 

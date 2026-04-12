@@ -136,7 +136,7 @@ static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, 
 static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
 double ForceSoftening_KernelRadius(int p);
-GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x);
+GIZMO_GPU_FUNCTION inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(1+x*x));} /* inline for GPU single-TU; definition also in global.cc for non-GPU TUs */
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
 #ifdef BOX_SHEARING
@@ -906,7 +906,9 @@ double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_dat
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
 double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_absorption_rate(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, struct gas_cell_data *cell) {
+    return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
+}
 void rt_eddington_update_calculation(int j, struct gas_cell_data *cell);
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
