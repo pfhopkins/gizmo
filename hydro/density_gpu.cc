@@ -248,28 +248,62 @@ static void gpu_ngb_list_free(gpu_neighbor_list_t *gnl)
 
 
 /* ================================================================
-   GPU density kernel (B2)
+   GPU density kernel (B2) — persistent session API
    ================================================================
-   For each active particle: load data, iterate CSR neighbors,
-   accumulate density via density_functions.h, write results back.
+   Session pattern avoids re-copying full P/CellP arrays on every
+   h-iteration. Call sequence:
+     density_gpu_session_begin()  — one-time full copy to SharedSpace
+     density_evaluate_gpu() ×N   — reuses persistent arrays per iteration
+     density_gpu_session_end()    — free SharedSpace arrays
    ================================================================ */
 
-/* Entry point called from density.cc during h-iteration.
- * P_host/CellP_host are the regular (host-malloc'd) particle arrays.
- * This function:
- *   1. Copies P/CellP to SharedSpace (UVM)
- *   2. Builds GPU neighbor list (BVH + 2-pass CSR)
- *   3. Runs GPU density accumulation kernel
- *   4. Scatters results back to host P/CellP for active particles
- */
+/* Persistent SharedSpace arrays for density h-iteration loop */
+static struct particle_data *density_P_gpu = NULL;
+static struct gas_cell_data *density_CellP_gpu = NULL;
+static int density_session_num_total = 0;
+
+void density_gpu_session_begin(struct particle_data *P_host, struct gas_cell_data *CellP_host, int num_total)
+{
+    density_session_num_total = num_total;
+    density_P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+    density_CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
+    memcpy(density_P_gpu, P_host, num_total * sizeof(struct particle_data));
+    memcpy(density_CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+}
+
+void density_gpu_session_end(void)
+{
+    if(density_CellP_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_CellP_gpu); density_CellP_gpu = NULL;}
+    if(density_P_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_P_gpu); density_P_gpu = NULL;}
+    density_session_num_total = 0;
+}
+
+/* Entry point called from density.cc during each h-iteration.
+ * If a session is active (density_P_gpu != NULL), reuses persistent arrays
+ * and only syncs KernelRadius from host for active particles.
+ * Otherwise falls back to full copy (backward-compatible). */
 void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                           int num_total, int *active_indices_host, int num_active)
 {
-    /* Allocate SharedSpace copies of full particle arrays (neighbors indexed by global j) */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    struct particle_data *P_gpu;
+    struct gas_cell_data *CellP_gpu;
+    int session_active = (density_P_gpu != NULL && density_session_num_total == num_total);
+
+    if(session_active) {
+        P_gpu = density_P_gpu;
+        CellP_gpu = density_CellP_gpu;
+        /* Sync only KernelRadius from host for active particles (h changed during iteration) */
+        for(int aa = 0; aa < num_active; aa++) {
+            int ii = active_indices_host[aa];
+            P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
+        }
+    } else {
+        /* No session: full copy (backward-compatible fallback) */
+        P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+        CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
+        memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+        memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    }
 
     /* Build GPU neighbor list */
     gpu_neighbor_list_t gnl;
@@ -409,8 +443,11 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         CellP_host[ii] = CellP_gpu[ii];
     }
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    /* Only free if no persistent session (session_end handles cleanup) */
+    if(!session_active) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    }
 }
 
 /* ================================================================

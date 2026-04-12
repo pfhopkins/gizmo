@@ -14,6 +14,8 @@
 #endif
 #ifdef OPENMP_GPU_OFFLOAD
 extern void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int, int *, int);
+extern void density_gpu_session_begin(struct particle_data *, struct gas_cell_data *, int);
+extern void density_gpu_session_end(void);
 #endif
 
 /* provide externally-visible (non-inline) symbols for functions defined in density_functions.h */
@@ -310,6 +312,9 @@ void density(void)
 
     /* allocate buffers to arrange communication */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
+#endif
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
@@ -730,6 +735,9 @@ void density(void)
     while(ntot > 0);
 
     /* iteration is done - de-malloc everything now */
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    density_gpu_session_end(); /* free persistent SharedSpace arrays */
+#endif
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
     myfree(Right); myfree(Left);
 
