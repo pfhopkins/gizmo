@@ -37,35 +37,6 @@ static __managed__ struct global_data_all_processes All_dev;
 #endif
 
 #include "../declarations/allvars.h"
-
-/* BOX_PERIODIC makes boxSize/boxHalf extern host variables (allvars.h:81),
-   which are inaccessible from device code. Override them as macros reading
-   from All (= All_dev, __managed__) so periodic wrapping works on GPU. */
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER) && defined(BOX_PERIODIC)
-#undef boxSize
-#undef boxHalf
-#define boxSize (All.BoxSize)
-#define boxHalf (0.5*All.BoxSize)
-#ifndef BOX_LONG_X
-#undef boxSize_X
-#undef boxHalf_X
-#define boxSize_X boxSize
-#define boxHalf_X boxHalf
-#endif
-#ifndef BOX_LONG_Y
-#undef boxSize_Y
-#undef boxHalf_Y
-#define boxSize_Y boxSize
-#define boxHalf_Y boxHalf
-#endif
-#ifndef BOX_LONG_Z
-#undef boxSize_Z
-#undef boxHalf_Z
-#define boxSize_Z boxSize
-#define boxHalf_Z boxHalf
-#endif
-#endif
-
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"

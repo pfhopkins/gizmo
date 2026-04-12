@@ -77,27 +77,30 @@
 /*  Global variables                                     */
 /*********************************************************/
 
-#ifdef BOX_PERIODIC
+#if defined(BOX_PERIODIC) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize, boxHalf;
 #else
+/* Non-periodic: always macros. GPU TUs with BOX_PERIODIC: also macros,
+   reading from All (= All_dev, __managed__) so device code can access them.
+   The extern variables still exist in allvars.cc for host TUs. */
 #define boxSize (All.BoxSize)
 #define boxHalf (0.5*All.BoxSize)
 #endif
-#ifdef BOX_LONG_X
+#if defined(BOX_LONG_X) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize_X, boxHalf_X;
-#else
+#elif !defined(BOX_LONG_X)
 #define boxSize_X boxSize
 #define boxHalf_X boxHalf
 #endif
-#ifdef BOX_LONG_Y
+#if defined(BOX_LONG_Y) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize_Y, boxHalf_Y;
-#else
+#elif !defined(BOX_LONG_Y)
 #define boxSize_Y boxSize
 #define boxHalf_Y boxHalf
 #endif
-#ifdef BOX_LONG_Z
+#if defined(BOX_LONG_Z) && !defined(GIZMO_GPU_COMPILER)
 extern MyDouble boxSize_Z, boxHalf_Z;
-#else
+#elif !defined(BOX_LONG_Z)
 #define boxSize_Z boxSize
 #define boxHalf_Z boxHalf
 #endif
