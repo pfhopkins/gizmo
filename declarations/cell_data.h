@@ -518,10 +518,10 @@ extern struct gas_cell_data
         return GAMMA_DEFAULT;
     }
 
-    inline double soundspeed2_from_u(double u) const { /*!< convert specific internal energy to soundspeed^2 */
+    GIZMO_GPU_FUNCTION inline double soundspeed2_from_u(double u) const { /*!< convert specific internal energy to soundspeed^2 */
         double g = gamma_eos_value(); return g * (g-1.) * u;
     }
-    inline double thermal_soundspeed() const { /*!< thermal sound speed */
+    GIZMO_GPU_FUNCTION inline double thermal_soundspeed() const { /*!< thermal sound speed */
         return sqrt(soundspeed2_from_u(InternalEnergyPred));
     }
 

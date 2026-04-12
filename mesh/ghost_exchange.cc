@@ -65,6 +65,16 @@ static int NumPart_before_ghost = -1;
 static int N_gas_before_ghost = -1;
 static int NumGhostParticles = 0;
 
+/* Ghost provenance map: for each ghost particle, the home MPI rank and index.
+   Used by ghost_writeback to reverse-communicate j-particle modifications.
+   Allocated with malloc (not mymalloc) to avoid stack ordering issues. */
+static int *ghost_home_rank_map = NULL;     /* [NumGhostParticles] home MPI rank */
+static int *ghost_home_index_map = NULL;    /* [NumGhostParticles] home P[]/CellP[] index */
+static int *ghost_wb_recv_count = NULL;     /* [NTask] ghosts received from each rank */
+static int *ghost_wb_recv_disp = NULL;      /* [NTask] displacement by source rank */
+static int *ghost_wb_send_count = NULL;     /* [NTask] ghosts we sent to each rank */
+static int *ghost_wb_send_disp = NULL;      /* [NTask] displacement for what each rank got from us */
+
 /* saved per-leaf hmax at time of ghost exchange, for h-growth detection */
 static double *saved_leaf_hmax = NULL;
 static int saved_leaf_hmax_n = 0;
@@ -354,6 +364,8 @@ void ghost_exchange(double safety_factor)
         (total_send > 0 ? total_send : 1) * sizeof(struct particle_data));
     struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("ghost_sC",
         (total_send > 0 ? total_send : 1) * sizeof(struct gas_cell_data));
+    /* Record home index of each sent particle for ghost writeback */
+    int *send_home_idx = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
 
     int *task_offset = (int *) mymalloc("ghost_toff", NTask * sizeof(int));
     memcpy(task_offset, send_disp, NTask * sizeof(int));
@@ -370,6 +382,7 @@ void ghost_exchange(double safety_factor)
                 int j = pool[tile_first[t] + s];
                 int off = task_offset[task]++;
                 send_P[off] = P[j];
+                send_home_idx[off] = j; /* record home index for writeback provenance */
                 if(P[j].Type == 0 && j < N_gas)
                     send_CellP[off] = CellP[j];
                 else
@@ -409,18 +422,55 @@ void ghost_exchange(double safety_factor)
     NumGhostParticles = total_recv;
     NumPart += total_recv;
 
+    /* ================================================================
+       Step 7: Build ghost provenance map for writeback.
+       Exchange home indices so each ghost knows its home rank + index.
+       ================================================================ */
+    {
+        /* Exchange home indices: send_home_idx[total_send] → recv_home_idx[total_recv] */
+        int *recv_home_idx = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
+        for(task = 0; task < NTask; task++) {
+            send_bytes[task] = send_count[task] * sizeof(int);
+            recv_bytes[task] = recv_count[task] * sizeof(int);
+            send_bdisp[task] = send_disp[task] * sizeof(int);
+            recv_bdisp[task] = recv_disp[task] * sizeof(int);
+        }
+        MPI_Alltoallv(send_home_idx, send_bytes, send_bdisp, MPI_BYTE,
+                      recv_home_idx, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+
+        /* Build per-ghost provenance: home_rank and home_index */
+        ghost_home_rank_map = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
+        ghost_home_index_map = recv_home_idx; /* take ownership — freed in cleanup */
+        for(task = 0; task < NTask; task++) {
+            for(int g = 0; g < recv_count[task]; g++) {
+                ghost_home_rank_map[recv_disp[task] + g] = task;
+            }
+        }
+
+        /* Preserve comm maps for reverse Alltoallv (malloc copies of mymalloc'd arrays) */
+        ghost_wb_recv_count = (int *) malloc(NTask * sizeof(int));
+        ghost_wb_recv_disp  = (int *) malloc(NTask * sizeof(int));
+        ghost_wb_send_count = (int *) malloc(NTask * sizeof(int));
+        ghost_wb_send_disp  = (int *) malloc(NTask * sizeof(int));
+        memcpy(ghost_wb_recv_count, recv_count, NTask * sizeof(int));
+        memcpy(ghost_wb_recv_disp,  recv_disp,  NTask * sizeof(int));
+        memcpy(ghost_wb_send_count, send_count, NTask * sizeof(int));
+        memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
+    }
+
     double t_ghost_end = my_second();
     if(ThisTask == 0)
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, timediff(t_ghost_start, t_ghost_end));
 
-    /* Cleanup: mymalloc in reverse order, then free malloc'd metadata */
+    /* Cleanup: mymalloc in reverse order, then free malloc'd send metadata */
     myfree(send_bdisp); myfree(recv_bdisp); myfree(send_bytes); myfree(recv_bytes);
     myfree(task_offset);
     myfree(send_CellP); myfree(send_P);
     myfree(send_disp); myfree(recv_disp);
     myfree(send_count); myfree(recv_count);
+    free(send_home_idx);
     free(send_to); free(need_from);
     free(all_meta); free(tile_disp); free(all_ntiles);
     free(tile_first); free(local_meta); free(pool);
@@ -507,4 +557,21 @@ void ghost_exchange_cleanup(void)
     N_gas = N_gas_before_ghost;
     NumGhostParticles = 0;
     NumPart_before_ghost = -1;
+    /* Free ghost provenance map */
+    if(ghost_home_rank_map)  { free(ghost_home_rank_map);  ghost_home_rank_map = NULL; }
+    if(ghost_home_index_map) { free(ghost_home_index_map); ghost_home_index_map = NULL; }
+    if(ghost_wb_recv_count)  { free(ghost_wb_recv_count);  ghost_wb_recv_count = NULL; }
+    if(ghost_wb_recv_disp)   { free(ghost_wb_recv_disp);   ghost_wb_recv_disp = NULL; }
+    if(ghost_wb_send_count)  { free(ghost_wb_send_count);  ghost_wb_send_count = NULL; }
+    if(ghost_wb_send_disp)   { free(ghost_wb_send_disp);   ghost_wb_send_disp = NULL; }
 }
+
+/* Accessors for ghost provenance data — used by ghost_writeback.cc */
+int ghost_get_num_ghosts(void) { return NumGhostParticles; }
+int ghost_get_num_local(void)  { return (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart; }
+int *ghost_get_home_rank(void)  { return ghost_home_rank_map; }
+int *ghost_get_home_index(void) { return ghost_home_index_map; }
+int *ghost_get_wb_recv_count(void) { return ghost_wb_recv_count; }
+int *ghost_get_wb_recv_disp(void)  { return ghost_wb_recv_disp; }
+int *ghost_get_wb_send_count(void) { return ghost_wb_send_count; }
+int *ghost_get_wb_send_disp(void)  { return ghost_wb_send_disp; }

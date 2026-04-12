@@ -83,42 +83,42 @@ struct rotation_matrix
 /* --------------------------------------------------------------------------------- */
 /* function definitions */
 /* --------------------------------------------------------------------------------- */
-static inline double actual_slopelimiter(double dQ_1, double dQ_2);
-static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], struct kernel_hydra kernel, double rinv);
-void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit, double press_tot_limiter);
-double guess_for_pressure(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION static inline double actual_slopelimiter(double dQ_1, double dQ_2);
+GIZMO_GPU_FUNCTION static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], struct kernel_hydra kernel, double rinv);
+GIZMO_GPU_FUNCTION void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit, double press_tot_limiter);
+GIZMO_GPU_FUNCTION double guess_for_pressure(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                           double v_line_L, double v_line_R, double cs_L, double cs_R);
-void sample_reimann_standard(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_standard(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                              Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R);
-void sample_reimann_vaccum_internal(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_vaccum_internal(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                                     Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R);
-void sample_reimann_vaccum_right(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_vaccum_right(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                                  Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R);
-void sample_reimann_vaccum_left(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_vaccum_left(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                                 Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R);
-void Riemann_solver_exact(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void Riemann_solver_exact(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                             double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R);
-void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                  double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R, double S_L, double S_R);
-void get_wavespeeds_and_pressure_star(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void get_wavespeeds_and_pressure_star(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                                       double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R,
                                       double *S_L_out, double *S_R_out, double press_tot_limiter);
-void Riemann_solver_Rusanov(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void Riemann_solver_Rusanov(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                             double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R);
-void Riemann_solver_KurganovTadmor_PWK(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void Riemann_solver_KurganovTadmor_PWK(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                             double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R);
-void HLLC_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void HLLC_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                          double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R, double press_tot_limiter);
-void convert_face_to_flux(struct Riemann_outputs *Riemann_out, Vec3<double> n_unit);
-int iterative_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void convert_face_to_flux(struct Riemann_outputs *Riemann_out, Vec3<double> n_unit);
+GIZMO_GPU_FUNCTION int iterative_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                               double v_line_L, double v_line_R, double cs_L, double cs_R);
-void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloat Grad_Q_j[3],
+GIZMO_GPU_FUNCTION void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloat Grad_Q_j[3],
                              double distance_from_i[3], double distance_from_j[3], double *Q_L, double *Q_R, int mode);
-inline void reconstruct_face_states(double Q_i, const Vec3<MyDouble>& Grad_Q_i, double Q_j, const Vec3<MyDouble>& Grad_Q_j, double distance_from_i[3], double distance_from_j[3], double *Q_L, double *Q_R, int mode) { reconstruct_face_states(Q_i, const_cast<MyDouble*>(Grad_Q_i.data), Q_j, const_cast<MyDouble*>(Grad_Q_j.data), distance_from_i, distance_from_j, Q_L, Q_R, mode); }
+GIZMO_GPU_FUNCTION inline void reconstruct_face_states(double Q_i, const Vec3<MyDouble>& Grad_Q_i, double Q_j, const Vec3<MyDouble>& Grad_Q_j, double distance_from_i[3], double distance_from_j[3], double *Q_L, double *Q_R, int mode) { reconstruct_face_states(Q_i, const_cast<MyDouble*>(Grad_Q_i.data), Q_j, const_cast<MyDouble*>(Grad_Q_j.data), distance_from_i, distance_from_j, Q_L, Q_R, mode); }
 #ifdef MAGNETIC
-void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double press_tot_limiter);
-void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, Vec3<double> n_unit, struct rotation_matrix *rot_matrix);
-void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotation_matrix rot_matrix);
+GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double press_tot_limiter);
+GIZMO_GPU_FUNCTION void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, Vec3<double> n_unit, struct rotation_matrix *rot_matrix);
+GIZMO_GPU_FUNCTION void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotation_matrix rot_matrix);
 #endif
 
 
@@ -127,7 +127,7 @@ void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotat
 /* reconstruction procedure (use to extrapolate from cell/particle centered quantities to faces) */
 /*  (reconstruction and slope-limiter from P. Hopkins) */
 /* --------------------------------------------------------------------------------- */
-void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloat Grad_Q_j[3],
+GIZMO_GPU_FUNCTION void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloat Grad_Q_j[3],
                              double distance_from_i[3], double distance_from_j[3], double *Q_L, double *Q_R, int mode)
 {
     if(mode == 0)
@@ -253,7 +253,7 @@ void reconstruct_face_states(double Q_i, MyFloat Grad_Q_i[3], double Q_j, MyFloa
 /* slope limiter: put other limiters here, will replace all calculations with this */
 /*  (not currently used, but optional if we want to use other limiters, cited as noted below) */
 /* --------------------------------------------------------------------------------- */
-static inline double actual_slopelimiter(double dQ_1, double dQ_2)
+GIZMO_GPU_FUNCTION static inline double actual_slopelimiter(double dQ_1, double dQ_2)
 {
     //return dQ_2; /* no limiter (unstable, use for tests) */
     if(((dQ_1<0)&&(dQ_2<0))||((dQ_1>0)&&(dQ_2>0)))
@@ -273,7 +273,7 @@ static inline double actual_slopelimiter(double dQ_1, double dQ_2)
 /* simple function to get the slope limiter from the difference and gradient vectors */
 /*  (not currently used, but optional if we want to use other limiters, cited as noted below) */
 /* --------------------------------------------------------------------------------- */
-static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], struct kernel_hydra kernel, double rinv)
+GIZMO_GPU_FUNCTION static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], struct kernel_hydra kernel, double rinv)
 {
     double dQ_2 = (grad[0]*kernel.dp[0] + grad[1]*kernel.dp[1] + grad[2]*kernel.dp[2]) * rinv;
     return actual_slopelimiter(dQ_1,dQ_2);
@@ -284,7 +284,7 @@ static inline double get_dQ_from_slopelimiter(double dQ_1, MyFloat grad[3], stru
 /* Top-level Riemann solver routine: call this, it will call sub-routines */
 /*  (written by P. Hopkins, this is just a wrapper though for the various sub-routines) */
 /* --------------------------------------------------------------------------------- */
-void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit, double press_tot_limiter)
+GIZMO_GPU_FUNCTION void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit, double press_tot_limiter)
 {
     if((Riemann_vec.L.p < 0 && Riemann_vec.R.p < 0)||(Riemann_vec.L.rho < 0)||(Riemann_vec.R.rho < 0))
     {
@@ -388,7 +388,7 @@ void Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs
 /*  (wrapper for sub-routines to evaluate hydro reimann problem) */
 /* -------------------------------------------------------------------------------------------------------------- */
 /* HLLC: hydro (no MHD) */
-void HLLC_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void HLLC_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                         double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R, double press_tot_limiter)
 {
     double S_L,S_R;
@@ -419,7 +419,7 @@ void HLLC_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_ou
 
 /*  Rusanov flux: generally not used, because it's too diffusive. But here if we need it. 
         (this implementation written by P. Hopkins) */
-void Riemann_solver_Rusanov(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void Riemann_solver_Rusanov(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                             double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R)
 {
     /* estimate wave speed and simplest-average intermediate state (Primitive Variable Riemann Solvers approximate Riemann solver from Toro) */
@@ -469,7 +469,7 @@ void Riemann_solver_Rusanov(struct Input_vec_Riemann Riemann_vec, struct Riemann
 
 /* generalized Kurganov-Tadmor flux as derived in Panuelos, Wadsley, and Kevlahan [PWK] 'Low Shear Diffusion Central Schemes for Particle Methods' (this implementation written by P. Hopkins).
     This is qualitatively similar to a Rusanov flux, as they are essentially Lax-Friedrichs schemes with some improvements */
-void Riemann_solver_KurganovTadmor_PWK(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void Riemann_solver_KurganovTadmor_PWK(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                             double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R)
 {
     /* estimate wave speed using the PWK 'switch' alpha */
@@ -512,7 +512,7 @@ void Riemann_solver_KurganovTadmor_PWK(struct Input_vec_Riemann Riemann_vec, str
     Lagrangian (contact-wave) method; note we keep trying several methods here in the hopes of eventually getting a
     valid (positive-pressure) solution */
 /*  (written by P. Hopkins) */
-void get_wavespeeds_and_pressure_star(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void get_wavespeeds_and_pressure_star(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                                       double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R,
                                       double *S_L_out, double *S_R_out, double press_tot_limiter)
 {
@@ -586,7 +586,7 @@ void get_wavespeeds_and_pressure_star(struct Input_vec_Riemann Riemann_vec, stru
 /* ... fluxes from HLLC four-wave sampling ... */
 /*  (written by P. Hopkins) */
 /* --------------------------------------------------------------------------------- */
-void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                  double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R, double S_L, double S_R)
 {
     /* note that we are solving everything in the REST FRAME of the interface, then de-boosting the Riemann solution in the main loop */
@@ -663,7 +663,7 @@ void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *R
 /*  exact Riemann solver here -- deals with all the problematic states! */
 /*  (written by V. Springel for AREPO; as are the extensions to the exact solver below) */
 /* --------------------------------------------------------------------------------- */
-void Riemann_solver_exact(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
+GIZMO_GPU_FUNCTION void Riemann_solver_exact(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, Vec3<double> n_unit,
                        double v_line_L, double v_line_R, double cs_L, double cs_R, double h_L, double h_R)
 {
     /* first, we need to check for all the special/exceptional cases that will cause things to go haywire */
@@ -710,7 +710,7 @@ void Riemann_solver_exact(struct Input_vec_Riemann Riemann_vec, struct Riemann_o
 /* left state is a vacuum, but right state is not: sample the fan appropriately */
 /*  (written by V. Springel for AREPO) */
 /* --------------------------------------------------------------------------------- */
-void sample_reimann_vaccum_left(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_vaccum_left(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                                 Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R)
 {
     double S_R = v_line_R - GAMMA_G4 * cs_R;
@@ -756,7 +756,7 @@ void sample_reimann_vaccum_left(double S, struct Input_vec_Riemann Riemann_vec, 
 /* right state is a vacuum, but left state is not: sample the fan appropriately */
 /*  (written by V. Springel for AREPO) */
 /* --------------------------------------------------------------------------------- */
-void sample_reimann_vaccum_right(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_vaccum_right(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                                 Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R)
 {
     //double S_L = v_line_L - GAMMA_G4 * cs_L;
@@ -805,7 +805,7 @@ void sample_reimann_vaccum_right(double S, struct Input_vec_Riemann Riemann_vec,
 /*   (note that these solutions are identical to the left/right solutions above) */
 /*  (written by V. Springel for AREPO) */
 /* --------------------------------------------------------------------------------- */
-void sample_reimann_vaccum_internal(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_vaccum_internal(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                                     Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R)
 {
     double S_L = v_line_L + GAMMA_G4 * cs_L;
@@ -844,7 +844,7 @@ void sample_reimann_vaccum_internal(double S, struct Input_vec_Riemann Riemann_v
 /*  This is the "normal" Riemann fan, with no vacuum on L or R state! */
 /*  (written by V. Springel for AREPO) */
 /* --------------------------------------------------------------------------------- */
-void sample_reimann_standard(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
+GIZMO_GPU_FUNCTION void sample_reimann_standard(double S, struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out,
                              Vec3<double> n_unit, double v_line_L, double v_line_R, double cs_L, double cs_R)
 {
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
@@ -996,7 +996,7 @@ void sample_reimann_standard(double S, struct Input_vec_Riemann Riemann_vec, str
 /*  (written by P. Hopkins; however this is adapted from the iterative solver in 
         ATHENA by J. Stone) */
 /* --------------------------------------------------------------------------------- */
-int iterative_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double v_line_L, double v_line_R, double cs_L, double cs_R)
+GIZMO_GPU_FUNCTION int iterative_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double v_line_L, double v_line_R, double cs_L, double cs_R)
 {
     /* before going on, let's compare this to an exact Riemann solution calculated iteratively */
     double Pg,Pg_prev,W_L,W_R,Z_L,Z_R,tol,pratio; int niter_Riemann=0;
@@ -1066,7 +1066,7 @@ int iterative_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Rieman
 /* get a pressure guess to begin iteration, for the iterative exact Riemann solver(s) */
 /*   (written by V. Springel for AREPO, with minor modifications) */
 /* --------------------------------------------------------------------------------- */
-double guess_for_pressure(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double v_line_L, double v_line_R, double cs_L, double cs_R)
+GIZMO_GPU_FUNCTION double guess_for_pressure(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double v_line_L, double v_line_R, double cs_L, double cs_R)
 {
     double pmin, pmax;
     /* start with the usual lowest-order guess for the contact wave pressure */
@@ -1108,7 +1108,7 @@ double guess_for_pressure(struct Input_vec_Riemann Riemann_vec, struct Riemann_o
  /*    take the face state we have calculated from the exact Riemann solution and get the corresponding fluxes */
 /*   (written by V. Springel for AREPO, with minor modifications) */
  /* -------------------------------------------------------------------------------------------------------------- */
-void convert_face_to_flux(struct Riemann_outputs *Riemann_out, Vec3<double> n_unit)
+GIZMO_GPU_FUNCTION void convert_face_to_flux(struct Riemann_outputs *Riemann_out, Vec3<double> n_unit)
 {
     double rho, P, v_frame=0;
     rho = Riemann_out->Fluxes.rho;
@@ -1137,7 +1137,7 @@ void convert_face_to_flux(struct Riemann_outputs *Riemann_out, Vec3<double> n_un
 /*   (written by P. Hopkins) */
 /* -------------------------------------------------------------------------------------------------------------- */
 /* HLLD: (MHD) */
-void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double press_tot_limiter)
+GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, double press_tot_limiter)
 {
     double v_frame = 0; /* frame velocity (in the direction of its normal): this will be used below! */
     double SMALL_NUMBER = 1.0e-11;
@@ -1588,7 +1588,7 @@ void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_ou
  *    (based on the code by V. Springel in AREPO; a nearly identical implementation was also developed by E. Gaburov
  *      based on the Weighted-Particle MHD code)
  * -------------------------------------------------------------------------------------------------------------- */
-void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, Vec3<double> n_unit, struct rotation_matrix *rot_matrix)
+GIZMO_GPU_FUNCTION void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, Vec3<double> n_unit, struct rotation_matrix *rot_matrix)
 {
     rot_matrix->n = n_unit;
     /* now we can construct a basis orthonormal to this */
@@ -1617,7 +1617,7 @@ void rotate_states_to_face(struct Input_vec_Riemann *Riemann_vec, Vec3<double> n
     Riemann_vec->R.B = {dot(v, rot_matrix->n), dot(v, rot_matrix->m), dot(v, rot_matrix->p)};
 #endif
 }
-void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotation_matrix rot_matrix)
+GIZMO_GPU_FUNCTION void rotate_fluxes_back_to_lab(struct Riemann_outputs *Riemann_out, struct rotation_matrix rot_matrix)
 {
     /* for an orthonormal rotation matrix A, we have A_transpose = A_inverse, so this is easy */
     Vec3<double> v;
