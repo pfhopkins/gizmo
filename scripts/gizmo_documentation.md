@@ -140,7 +140,7 @@ The simulation code **GIZMO** is a flexible, massively-parallel, multi-method mu
 
 The code is extensively documented. **Please read the User Guide** before asking questions of me or other users: most questions I get are already answered here.
 
-The code is written in standard ANSI C, and should run on all parallel platforms that support MPI. The portability of the code has been confirmed on a large number of systems ranging from a laptop to >1 million threads/cores on national super-computers.
+The code is written in C++ (C++17 standard), and should run on all parallel platforms that support MPI. The portability of the code has been confirmed on a large number of systems ranging from a laptop to >1 million threads/cores on national super-computers, including GPU-accelerated systems via the Kokkos portability layer.
 
 The original reference for the numerical methods (the original fluid+gravity solver) is the paper [here](https://arxiv.org/abs/1409.7395). It is recommended that you read it before using (or modifying) the code, although of course there have been many updates and improvements (including in the core algorithms) since this paper, for which this User Guide provides many more details. For more details on GADGET, which underpins some aspects here, see the [GADGET-2 methods paper](http://adsabs.harvard.edu/cgi-bin/nph-bib_query?bibcode=2005MNRAS.364.1105S&db_key=AST) or [GADGET-2 user guide](http://www.mpa-garching.mpg.de/gadget/users-guide.pdf).
 
@@ -548,7 +548,7 @@ Long story short, we want to take advantage of the large community using, develo
 
 That said, GIZMO is a totally different code from GADGET "under the hood" in many ways. 
 
-Most obviously, the physics options (e.g. magnetic fields, conduction, turbulent diffusion, models for galaxy and star formation, feedback, coupled dust-gas physics, nuclear reaction networks, cooling, exotic dark matter, black holes, etc.) are either completely not present, or are qualitatively totally different from the physics included in GADGET (or in its more direct descendant, AREPO). Where there are some overlaps, they are intentionally included so that we can compare the new code results with the large body of historical simulations. 
+Most obviously, the physics options (e.g. magnetic fields, conduction, turbulent diffusion, models for galaxy and star formation, feedback, coupled dust-gas physics, nuclear reaction networks, cooling, exotic dark matter, black holes, etc.) are either completely not present, or are qualitatively totally different from the physics included in GADGET (or in its more direct descendant, AREPO). Where there are some overlaps, they are intentionally included so that we can compare the new code results with the large body of historical simulations. Additionally, GIZMO now includes GPU acceleration for key physics loops (density, gradients, hydro force, cooling, nuclear burning) via the Kokkos portability library, and the code has been migrated from C to C++ (C++17) to support modern language features, templates, and device-callable inline functions.
 
 But the differences go deeper as well. The actual method for solving the hydrodynamics has almost nothing in common with GADGET. Obviously, if you choose to use a non-SPH hydro solver (e.g. the meshless finite-volume, or lagrangian finite-mass method), you aren't even using an SPH code anymore! But even in SPH mode, the differences are very fundamental, and include: the functional form of the SPH equations (pressure-energy vs density-entropy), constraints used to determine the SPH smoothing lengths (constant-mass vs constant-particle number in kernel), artificial viscosity (higher-order matrix moments following Cullen and Dehnen's 'inviscid SPH' versus 'constant AV'), artificial conductivity (not present in GADGET), pairwise symmetric hydro operations (not present in GADGET), high-order integral-based gradient estimation (not present in GADGET), and timestepping (limiter based on Saitoh et al. with a second-order leapfrog, versus unlimited timestepping in single-step marching). Don't expect to run GIZMO in SPH mode and get exactly the same answer as you would with GADGET!
 
@@ -2320,6 +2320,20 @@ The remaining flags in this section all turn on/off additional (optional) output
 **OUTPUT\_MOLECULAR\_FRACTION**: Output the code-estimated molecular mass fraction (needs COOLING), for e.g. approximate molecular fraction estimators (as opposed to detailed chemistry modules, which already output this).
 
 **OUTPUT\_TEMPERATURE**: Output the in-code gas temperature. Useful when complicated equations-of-state are involved, so the internal energy (normally output) is not sufficient to calculate this.
+
+**OUTPUT\_GRADIENT\_RHO**: Output the density gradient vector for each gas particle (HDF5 "GradientRho"). Useful for post-processing analysis of shocks, interfaces, and sub-grid models that depend on local density gradients.
+
+**OUTPUT\_GRADIENT\_VEL**: Output the velocity gradient tensor for each gas particle (HDF5 "GradientVel"). The full 3x3 tensor is saved, which can be used to compute vorticity, strain rate, divergence, and other derived quantities in post-processing.
+
+**OUTPUT\_HYDROACCELERATION**: Output the hydrodynamic acceleration (from the hydro force solver, excluding gravity) for each gas particle (HDF5 "HydroAcceleration"). Useful for diagnosing the relative importance of pressure, magnetic, and gravitational forces.
+
+**OUTPUT\_RT\_RAD\_OPACITY**: Output the radiation opacity for each particle and frequency bin (HDF5 "RadOpacity"). Requires one of the radiation transport methods to be enabled.
+
+**OUTPUT\_SHOCK\_MACH\_NUMBER**: Output the estimated Mach number of the strongest shock passing through each gas particle (HDF5 "ShockMachNumber"). The Mach number is estimated from the Rankine-Hugoniot jump conditions applied to the Riemann solver states at particle interfaces. Useful for shock-finding and cosmic ray injection at shocks.
+
+**OUTPUT\_SOFTENING**: Output the gravitational softening length for each particle (HDF5 "Softening"). Particularly useful when adaptive gravitational softening is enabled (`ADAPTIVE_GRAVSOFT_FORGAS` or `ADAPTIVE_GRAVSOFT_FORALL`), where softenings vary per particle.
+
+**OUTPUT\_UNSPAWNED\_SINKMASS**: Output the mass that has been flagged for spawning into a sink particle but has not yet been spawned (HDF5 "UnspawnedSinkMass"). Relevant for sink particle formation models where mass accumulation occurs over multiple timesteps before the sink is created.
 
 **OUTPUT\_SINK\_ACCRETION_HIST**: Save full accretion histories of sink (BH/star/etc) particles.
 
