@@ -1415,6 +1415,20 @@ void read_header_attributes_in_hdf5(char *fname)
     hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
     hdf5_headergrp = H5Gopen(hdf5_file, "/Header");
 
+    /* Suppress HDF5 error messages for optional attributes that may not exist in the IC file.
+       Many ICs lack attributes like Flag_DoublePrecision, Flag_Metals, cell merge/split limits, etc.
+       HDF5 prints verbose error stacks to stderr for each missing attribute, which is harmless
+       but confusing. We restore error reporting after reading. */
+#if H5_VERSION_GE(1,8,0) && !defined(H5_USE_16_API)
+    H5E_auto2_t old_func; void *old_client_data;
+    H5Eget_auto(H5E_DEFAULT, &old_func, &old_client_data);
+    H5Eset_auto(H5E_DEFAULT, NULL, NULL);
+#else
+    H5E_auto_t old_func; void *old_client_data;
+    H5Eget_auto(&old_func, &old_client_data);
+    H5Eset_auto(NULL, NULL);
+#endif
+
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_ThisFile");
     H5Aread(hdf5_attribute, H5T_NATIVE_INT, header.npart);
     H5Aclose(hdf5_attribute);
@@ -1463,6 +1477,11 @@ void read_header_attributes_in_hdf5(char *fname)
 
     H5Gclose(hdf5_headergrp);
     H5Fclose(hdf5_file);
+#if H5_VERSION_GE(1,8,0) && !defined(H5_USE_16_API)
+    H5Eset_auto(H5E_DEFAULT, old_func, old_client_data);
+#else
+    H5Eset_auto(old_func, old_client_data);
+#endif
 }
 
 

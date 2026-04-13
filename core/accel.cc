@@ -95,7 +95,6 @@ void compute_hydro_densities_and_forces(void)
             ghost_exchange_cleanup();
             ghost_exchange(1.0);
         }
-        /* validate_neighbor_list(); */ /* disabled: validation overhead not needed for production runs */
 #endif
 
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY

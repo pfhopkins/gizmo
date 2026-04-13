@@ -396,8 +396,6 @@ void hydro_accumulate_neighbor(
     }
 #endif
 
-    /* TEMPORARY DEBUG: print per-pair diagnostics (controlled by caller) */
-
     /* Signal velocity for timestepping */
     if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
 

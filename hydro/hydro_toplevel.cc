@@ -817,19 +817,6 @@ void hydro_force(void)
                            gizmo_sym_neighbor_list.total_pairs,
                            (void *)hydro_out);
 
-        /* TEMPORARY: print first particle's raw GPU output for debugging */
-        if(ThisTask == 0 && gizmo_sym_num_active > 0) {
-            int ii0 = gizmo_sym_active_indices[0];
-            printf("  [GPU RAW OUT] particle %d: Acc=(%e,%e,%e) DtU=%e MaxVsig=%e\n",
-                   ii0, hydro_out[0].Acc[0], hydro_out[0].Acc[1], hydro_out[0].Acc[2],
-                   hydro_out[0].DtInternalEnergy, hydro_out[0].MaxSignalVel);
-            printf("  [GPU RAW IN]  particle %d: Pos=(%e,%e,%e) Vel=(%e,%e,%e) rho=%e P=%e h=%e\n",
-                   ii0, P[ii0].Pos[0], P[ii0].Pos[1], P[ii0].Pos[2],
-                   CellP[ii0].VelPred[0], CellP[ii0].VelPred[1], CellP[ii0].VelPred[2],
-                   CellP[ii0].Density, CellP[ii0].Pressure, P[ii0].KernelRadius);
-            fflush(stdout);
-        }
-
         /* Scatter results: hydro_data_out is layout-identical to OUTPUT_STRUCT_NAME base */
         for(int aa = 0; aa < gizmo_sym_num_active; aa++)
         {
@@ -856,27 +843,6 @@ void hydro_force(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     } /* close else-branch of neighbor-list vs tree-walk dispatch */
 #endif
-    /* TEMPORARY DIAGNOSTIC: compare hydro force outputs between paths */
-    {
-        double max_acc = 0, max_dtegy = 0, max_sigvel = 0, sum_acc = 0;
-        int n_active = 0;
-        for(int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
-            int i = ActiveParticleList[_apl];
-            if(P[i].Type == 0 && P[i].Mass > 0) {
-                double acc = CellP[i].HydroAccel.norm_sq();
-                if(acc > max_acc) max_acc = acc;
-                sum_acc += acc;
-                if(fabs(CellP[i].DtInternalEnergy) > max_dtegy) max_dtegy = fabs(CellP[i].DtInternalEnergy);
-                if(CellP[i].MaxSignalVel > max_sigvel) max_sigvel = CellP[i].MaxSignalVel;
-                n_active++;
-            }
-        }
-        if(ThisTask == 0) {
-            printf("  [HYDRO DIAG] n=%d max|acc|^2=%.6e avg|acc|^2=%.6e max|DtU|=%.6e maxVsig=%.6e\n",
-                   n_active, max_acc, n_active>0 ? sum_acc/n_active : 0, max_dtegy, max_sigvel);
-            fflush(stdout);
-        }
-    }
 
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */

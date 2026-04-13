@@ -635,14 +635,15 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
    The caller (gradients.cc) does the scatter into CellP + GasGradDataPasser.
    ================================================================ */
 
-/* Entry point for GPU gradient evaluation (gradient_iteration==0 only).
+/* Entry point for GPU gradient evaluation.
  * Takes a pre-built symmetric CSR neighbor list (offsets/neighbors).
  * Fills out_host[0..num_active-1] with accumulated gradient outputs.
- * Caller must allocate out_host (num_active * sizeof(GasGraddata_out_)). */
+ * Caller must allocate out_host (num_active * sizeof(GasGraddata_out_)).
+ * gradient_iteration: 0 = standard gradients, >0 = MHD constrained gradient iteration */
 void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                            int num_total, int *active_indices_host, int num_active,
                            int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
-                           void *out_host_void)
+                           void *out_host_void, int gradient_iteration)
 {
     struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
 
@@ -678,6 +679,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
         struct particle_data *kp = P_gpu;
         struct gas_cell_data *kc = CellP_gpu;
         struct GasGraddata_out_ *kout = d_out;
+        int grad_iter = gradient_iteration;
 
         Kokkos::parallel_for("gradient_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
@@ -691,6 +693,9 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
             if(local.Mass < 0) {local.Mass = 0;}
             int sph_gradients_flag_i = SHOULD_I_USE_SPH_GRADIENTS(kc[ii].ConditionNumber);
             if(sph_gradients_flag_i) {local.Mass *= -1;}
+#ifdef MHD_CONSTRAINED_GRADIENT
+            if(grad_iter > 0) {if(kc[ii].FlagForConstrainedGradients <= 0) {local.Mass = 0;}}
+#endif
 
             /* Load gradient quantities */
             local.GQuant.Density = kc[ii].Density;
@@ -1026,13 +1031,6 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                 hydro_accumulate_neighbor(&local, &out, &kernel, &Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
                                           kTimeBinActive, kNeedWakeup);
-                /* TEMPORARY DEBUG: print first particle's first 2 neighbors */
-                if(aa == 0 && idx < offsets[0] + 2) {
-                    printf("  [HYDRO PAIR aa=0] j=%d r=%e vsig=%e Fv=(%e,%e,%e) Fp=%e h_i=%e h_j=%e rho_j=%e P_j=%e\n",
-                           j, kernel.r, kernel.vsig,
-                           Fluxes.v[0], Fluxes.v[1], Fluxes.v[2], Fluxes.p,
-                           kernel.h_i, kernel.h_j, kc[j].Density, kc[j].Pressure);
-                }
             }
 
             /* Store output for this particle */
@@ -1081,7 +1079,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                           int, int *, int) {}
 void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
-                           int, int *, int, int *, int *, int, void *) {}
+                           int, int *, int, int *, int *, int, void *, int) {}
 void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                         int, int *, int, int *, int *, int, void *) {}
 void gizmo_gpu_sync_all_density(void) {}

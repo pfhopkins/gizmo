@@ -15,7 +15,7 @@
    conflict with the local struct definitions. The cast to GasGraddata_out*
    is safe because the two structs have identical field layout. */
 extern void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
-                                  int, int *, int, int *, int *, int, void *);
+                                  int, int *, int, int *, int *, int, void *, int);
 #endif
 
 
@@ -672,12 +672,10 @@ void hydro_gradient_calc(void)
             }
 
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-        /* Neighbor-list path for gradient_iteration==0: use cached symmetric CSR list
-           with GPU/Kokkos dispatch. Falls through to tree walk for iteration>0 (MHD). */
-        if(gradient_iteration == 0) /* all ranks must enter this branch to avoid MPI collective mismatch */
+        /* Neighbor-list path: use cached symmetric CSR list with GPU/Kokkos dispatch.
+           Works for all gradient iterations (0 and >0 for MHD_CONSTRAINED_GRADIENT). */
+        if(1) /* all ranks must enter this branch to avoid MPI collective mismatch */
         {
-            /* Allocate output array for GPU kernel results.
-               GasGraddata_out_ (gradient_functions.h) is layout-identical to GasGraddata_out (this file). */
             struct GasGraddata_out *grad_out = (struct GasGraddata_out *) mymalloc("grad_out",
                 (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(struct GasGraddata_out));
 
@@ -686,13 +684,30 @@ void hydro_gradient_calc(void)
                                   gizmo_sym_neighbor_list.offsets,
                                   gizmo_sym_neighbor_list.neighbors,
                                   gizmo_sym_neighbor_list.total_pairs,
-                                  (void *)grad_out);
+                                  (void *)grad_out, gradient_iteration);
 
-            /* Scatter results into CellP + GasGradDataPasser */
-            for(int aa = 0; aa < gizmo_sym_num_active; aa++)
-            {
-                int ii = gizmo_sym_active_indices[aa];
-                out2particle_GasGrad(&grad_out[aa], ii, 0, gradient_iteration);
+            if(gradient_iteration == 0) {
+                for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
+                    int ii = gizmo_sym_active_indices[aa];
+                    out2particle_GasGrad(&grad_out[aa], ii, 0, gradient_iteration);
+                }
+            } else {
+                /* For iteration >0: extract only FaceDotB (and PhiGrad if MIDPOINT) from the
+                   full output struct into the compact iter struct for scatter. */
+                for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
+                    int ii = gizmo_sym_active_indices[aa];
+                    struct GasGraddata_out_iter out_iter;
+                    memset(&out_iter, 0, sizeof(out_iter));
+#ifdef MHD_CONSTRAINED_GRADIENT
+                    out_iter.FaceDotB = grad_out[aa].FaceDotB;
+#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+                    out_iter.PhiGrad[0] = grad_out[aa].Gradients[0].Phi;
+                    out_iter.PhiGrad[1] = grad_out[aa].Gradients[1].Phi;
+                    out_iter.PhiGrad[2] = grad_out[aa].Gradients[2].Phi;
+#endif
+#endif
+                    out2particle_GasGrad_iter(&out_iter, ii, 0, gradient_iteration);
+                }
             }
             myfree(grad_out);
         }
