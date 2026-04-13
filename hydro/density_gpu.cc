@@ -329,6 +329,17 @@ static struct particle_data *density_P_gpu = NULL;
 static struct gas_cell_data *density_CellP_gpu = NULL;
 static int density_session_num_total = 0;
 
+/* Cached oversized CSR neighbor list for h-iteration reuse.
+   Built on the first iteration with inflated KernelRadius (DENSITY_H_BUFFER_FACTOR).
+   Subsequent iterations reuse the same CSR and filter by current KernelRadius in the kernel.
+   Uses a particle-index → CSR-offset lookup table so subsets of active particles
+   can efficiently index into the original full CSR. */
+#define DENSITY_H_BUFFER_FACTOR 1.3 /* oversize initial search radius by this factor */
+static gpu_neighbor_list_t density_cached_gnl = {};
+static int *density_csr_offset_lookup = NULL; /* maps particle index ii → position aa in original CSR */
+static double *density_csr_max_h = NULL; /* buffered search radius used per particle when CSR was built */
+static int density_cached_gnl_valid = 0;
+
 void density_gpu_session_begin(struct particle_data *P_host, struct gas_cell_data *CellP_host, int num_total)
 {
     density_session_num_total = num_total;
@@ -336,10 +347,18 @@ void density_gpu_session_begin(struct particle_data *P_host, struct gas_cell_dat
     density_CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
     memcpy(density_P_gpu, P_host, num_total * sizeof(struct particle_data));
     memcpy(density_CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    density_cached_gnl_valid = 0;
 }
 
 void density_gpu_session_end(void)
 {
+    /* Free cached CSR neighbor list */
+    if(density_cached_gnl_valid) {
+        gpu_ngb_list_free(&density_cached_gnl, &density_cached_spatial_index);
+        density_cached_gnl_valid = 0;
+    }
+    if(density_csr_max_h) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_max_h); density_csr_max_h = NULL;}
+    if(density_csr_offset_lookup) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_offset_lookup); density_csr_offset_lookup = NULL;}
     gpu_spatial_index_free(&density_cached_spatial_index); /* free cached tiles+BVH */
     if(density_CellP_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_CellP_gpu); density_CellP_gpu = NULL;}
     if(density_P_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_P_gpu); density_P_gpu = NULL;}
@@ -347,9 +366,10 @@ void density_gpu_session_end(void)
 }
 
 /* Entry point called from density.cc during each h-iteration.
- * If a session is active (density_P_gpu != NULL), reuses persistent arrays
- * and only syncs KernelRadius from host for active particles.
- * Otherwise falls back to full copy (backward-compatible). */
+ * First iteration: builds oversized CSR neighbor list (KernelRadius * DENSITY_H_BUFFER_FACTOR)
+ * and caches it. Subsequent iterations: reuses cached CSR, only re-runs density kernel
+ * with current KernelRadius (pairs outside current h are filtered by the kernel).
+ * If any particle's h grew beyond the buffered radius, the CSR is rebuilt. */
 void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                           int num_total, int *active_indices_host, int num_active)
 {
@@ -360,29 +380,99 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     if(session_active) {
         P_gpu = density_P_gpu;
         CellP_gpu = density_CellP_gpu;
-        /* Sync only KernelRadius from host for active particles (h changed during iteration) */
+        /* Sync KernelRadius from host for active particles (h changed during iteration) */
         for(int aa = 0; aa < num_active; aa++) {
             int ii = active_indices_host[aa];
             P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
         }
     } else {
-        /* No session: full copy (backward-compatible fallback) */
         P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
         CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
         memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
         memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
     }
 
-    /* Build spatial index once per session, reuse across h-iterations */
+    /* Build spatial index once per session */
     if(session_active && !density_cached_spatial_index.valid) {
         gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, &density_cached_spatial_index);
     }
 
-    /* Build GPU neighbor list (reuses cached tiles+BVH if session active) */
+    /* Check if we can reuse the cached CSR list */
+    int reuse_csr = 0;
+    if(session_active && density_cached_gnl_valid && density_csr_offset_lookup && density_csr_max_h) {
+        reuse_csr = 1;
+        for(int aa = 0; aa < num_active; aa++) {
+            int ii = active_indices_host[aa];
+            if(density_csr_offset_lookup[ii] < 0) {
+                reuse_csr = 0; break; /* particle wasn't in original active list */
+            }
+            if(P_host[ii].KernelRadius > density_csr_max_h[ii]) {
+                reuse_csr = 0; break; /* h grew beyond the buffered search radius */
+            }
+        }
+    }
+
     gpu_neighbor_list_t gnl;
-    gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
-                       NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl,
-                       session_active ? &density_cached_spatial_index : NULL);
+    int *csr_lookup = NULL; /* maps particle index → CSR row for this call */
+
+    if(reuse_csr) {
+        /* Reuse cached CSR. Upload only the new active indices and use the lookup table
+           to map each active particle to its CSR row in the cached list. */
+        gnl = density_cached_gnl; /* share the CSR arrays (don't free them!) */
+        csr_lookup = density_csr_offset_lookup;
+        /* Re-upload active indices for this iteration */
+        gnl.d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
+        memcpy(gnl.d_active, active_indices_host, num_active * sizeof(int));
+        gnl.num_active = num_active;
+    } else {
+        /* Build fresh CSR (first iteration, or buffer exceeded) */
+        if(density_cached_gnl_valid) {
+            gpu_ngb_list_free(&density_cached_gnl, &density_cached_spatial_index);
+            density_cached_gnl_valid = 0;
+        }
+
+        /* Temporarily inflate KernelRadius for oversized search */
+        if(session_active) {
+            for(int aa = 0; aa < num_active; aa++) {
+                int ii = active_indices_host[aa];
+                P_gpu[ii].KernelRadius *= DENSITY_H_BUFFER_FACTOR;
+            }
+        }
+
+        gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
+                           NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl,
+                           session_active ? &density_cached_spatial_index : NULL);
+
+        /* Restore actual KernelRadius (kernel uses this for the density computation) */
+        if(session_active) {
+            for(int aa = 0; aa < num_active; aa++) {
+                int ii = active_indices_host[aa];
+                P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
+            }
+        }
+
+        /* Cache the CSR and build lookup table */
+        if(session_active) {
+            density_cached_gnl = gnl;
+            density_cached_gnl_valid = 1;
+            /* Build particle-index → CSR-row lookup table */
+            if(!density_csr_offset_lookup) {
+                density_csr_offset_lookup = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(int));
+            }
+            memset(density_csr_offset_lookup, -1, num_total * sizeof(int));
+            /* Store the buffered search radius used for each particle */
+            if(!density_csr_max_h) {
+                density_csr_max_h = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(double));
+            }
+            memset(density_csr_max_h, 0, num_total * sizeof(double));
+            for(int aa = 0; aa < num_active; aa++) {
+                int ii = active_indices_host[aa];
+                density_csr_offset_lookup[ii] = aa;
+                density_csr_max_h[ii] = P_host[ii].KernelRadius * DENSITY_H_BUFFER_FACTOR;
+            }
+            csr_lookup = density_csr_offset_lookup;
+        }
+    }
 
     if(ThisTask == 0) {
         printf("  GPU density: %d active particles, %d neighbor pairs (%.1f avg)\n",
@@ -396,11 +486,17 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         int *offsets = gnl.offsets;
         int *neighbors = gnl.neighbors;
         int *active = gnl.d_active;
+        int *csr_map = csr_lookup; /* maps particle index → CSR row (NULL if direct aa indexing) */
+        int use_csr_map = reuse_csr ? 1 : 0;
         struct particle_data *kp = P_gpu;
         struct gas_cell_data *kc = CellP_gpu;
 
         Kokkos::parallel_for("density_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
+
+            /* When reusing cached CSR, map particle index to its row in the original CSR */
+            int csr_row = aa;
+            if(use_csr_map && csr_map) { csr_row = csr_map[ii]; }
 
             /* particle2in: load searching particle data */
             struct density_evaluate_data_in_ local;
@@ -427,9 +523,9 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
             double h2 = local.KernelRadius * local.KernelRadius;
             kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
 
-            /* Accumulate over neighbors (density_accumulate_neighbor calls
-               density_evaluate_extra_physics_gas internally for r > 0) */
-            for(int idx = offsets[aa]; idx < offsets[aa + 1]; idx++)
+            /* Accumulate over neighbors — the CSR list may contain extra neighbors from
+               the oversized initial search; density_accumulate_neighbor filters by r2 >= h2 */
+            for(int idx = offsets[csr_row]; idx < offsets[csr_row + 1]; idx++)
             {
                 int j = neighbors[idx];
                 density_accumulate_neighbor(&local, &out, &kernel, j, h2, kp, kc);
@@ -508,7 +604,14 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 #endif
     }
 
-    gpu_ngb_list_free(&gnl, session_active ? &density_cached_spatial_index : NULL);
+    if(reuse_csr) {
+        /* Only free the d_active we uploaded this iteration; CSR arrays belong to cache */
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl.d_active);
+    } else if(!session_active || !density_cached_gnl_valid) {
+        /* No session or cache not valid: free everything */
+        gpu_ngb_list_free(&gnl, session_active ? &density_cached_spatial_index : NULL);
+    }
+    /* If session_active and we just built + cached the CSR, don't free it (cache owns it) */
 
     /* Scatter results back to host arrays for active particles */
     for(int aa = 0; aa < num_active; aa++) {
