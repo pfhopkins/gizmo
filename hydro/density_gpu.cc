@@ -121,51 +121,110 @@ struct gpu_neighbor_list_t {
 };
 
 
-static void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
-                               int *active_indices_host, int num_active,
-                               int search_mode, int type_bitmask,
-                               gpu_neighbor_list_t *gnl)
+/* ================================================================
+   Cached spatial index for density h-iteration.
+   Tiles + BVH depend only on particle positions (which don't change
+   during h-iteration), so we build them once and reuse across
+   iterations. Only the CSR neighbor lists (which depend on
+   KernelRadius) are rebuilt each iteration.
+   ================================================================ */
+struct gpu_spatial_index_t {
+    sfc_tile_t *d_tiles;
+    tile_bvh_node_t *d_bvh;
+    int *d_pool;
+    int ntiles;
+    int bvh_root;
+    int periodic_flags[3];
+    double box_sizes[3];
+    double box_halves[3];
+    int valid;  /* 1 if built and usable */
+};
+
+static gpu_spatial_index_t density_cached_spatial_index = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, 0};
+
+static void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
+                                    int type_bitmask, gpu_spatial_index_t *idx)
 {
-    gnl->num_active = num_active;
+    /* Capture periodicity parameters */
+    idx->periodic_flags[0] = TILE_PERIODIC_X;
+    idx->periodic_flags[1] = TILE_PERIODIC_Y;
+    idx->periodic_flags[2] = TILE_PERIODIC_Z;
+    idx->box_sizes[0] = boxSize_X; idx->box_sizes[1] = boxSize_Y; idx->box_sizes[2] = boxSize_Z;
+    idx->box_halves[0] = boxHalf_X; idx->box_halves[1] = boxHalf_Y; idx->box_halves[2] = boxHalf_Z;
 
-    /* Capture periodicity parameters from globals (on host) */
-    gnl->periodic_flags[0] = TILE_PERIODIC_X;
-    gnl->periodic_flags[1] = TILE_PERIODIC_Y;
-    gnl->periodic_flags[2] = TILE_PERIODIC_Z;
-    gnl->box_sizes[0] = boxSize_X; gnl->box_sizes[1] = boxSize_Y; gnl->box_sizes[2] = boxSize_Z;
-    gnl->box_halves[0] = boxHalf_X; gnl->box_halves[1] = boxHalf_Y; gnl->box_halves[2] = boxHalf_Z;
-
-    /* Build SFC tiles + BVH on CPU (serial, recursive) */
+    /* Build SFC tiles + BVH on CPU */
     sfc_tile_t *h_tiles;
     int *h_pool;
     int num_pool;
     int ntiles = build_sfc_tiles(P_shared, num_total, type_bitmask, TILE_TARGET_SIZE,
                                  &h_tiles, &h_pool, &num_pool);
-    gnl->ntiles = ntiles;
+    idx->ntiles = ntiles;
 
     tile_bvh_node_t *h_bvh;
     int bvh_nnodes = build_tile_bvh(h_tiles, ntiles, &h_bvh);
-    gnl->bvh_root = bvh_nnodes - 1;
+    idx->bvh_root = bvh_nnodes - 1;
 
-    /* Copy spatial index to SharedSpace */
+    /* Copy to SharedSpace */
     int bvh_size = (2 * ntiles - 1);
     if(bvh_size < 1) bvh_size = 1;
-    gnl->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(ntiles * sizeof(sfc_tile_t));
-    gnl->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bvh_size * sizeof(tile_bvh_node_t));
-    gnl->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_pool > 0) ? num_pool : 1) * sizeof(int));
-    gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
+    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(ntiles * sizeof(sfc_tile_t));
+    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bvh_size * sizeof(tile_bvh_node_t));
+    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_pool > 0) ? num_pool : 1) * sizeof(int));
 
-    memcpy(gnl->d_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
-    memcpy(gnl->d_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
-    memcpy(gnl->d_pool, h_pool, num_pool * sizeof(int));
-    memcpy(gnl->d_active, active_indices_host, num_active * sizeof(int));
+    memcpy(idx->d_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
+    memcpy(idx->d_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
+    memcpy(idx->d_pool, h_pool, num_pool * sizeof(int));
 
-    /* Free CPU temporaries (reverse mymalloc order) */
     myfree(h_bvh);
     myfree(h_tiles);
     myfree(h_pool);
+    idx->valid = 1;
+}
 
-    /* Allocate CSR offsets in SharedSpace */
+static void gpu_spatial_index_free(gpu_spatial_index_t *idx)
+{
+    if(idx->d_pool) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_pool); idx->d_pool = NULL;}
+    if(idx->d_bvh) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_bvh); idx->d_bvh = NULL;}
+    if(idx->d_tiles) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_tiles); idx->d_tiles = NULL;}
+    idx->valid = 0;
+}
+
+/* Build neighbor list using a pre-built (or freshly-built) spatial index.
+   If cached_idx is valid, reuses tiles+BVH and only rebuilds CSR arrays.
+   Otherwise builds everything from scratch. */
+static void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
+                               int *active_indices_host, int num_active,
+                               int search_mode, int type_bitmask,
+                               gpu_neighbor_list_t *gnl,
+                               gpu_spatial_index_t *cached_idx)
+{
+    gnl->num_active = num_active;
+
+    /* Use cached spatial index if available, otherwise build fresh */
+    gpu_spatial_index_t local_idx = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, 0};
+    gpu_spatial_index_t *idx;
+    if(cached_idx && cached_idx->valid) {
+        idx = cached_idx;
+    } else {
+        gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx);
+        idx = &local_idx;
+    }
+
+    /* Copy spatial index pointers to gnl for use by free */
+    gnl->d_tiles = idx->d_tiles;
+    gnl->d_bvh = idx->d_bvh;
+    gnl->d_pool = idx->d_pool;
+    gnl->ntiles = idx->ntiles;
+    gnl->bvh_root = idx->bvh_root;
+    memcpy(gnl->periodic_flags, idx->periodic_flags, 3 * sizeof(int));
+    memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
+    memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
+
+    /* Active indices: always re-uploaded (changes per h-iteration) */
+    gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
+    memcpy(gnl->d_active, active_indices_host, num_active * sizeof(int));
+
+    /* Allocate CSR offsets */
     gnl->offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
 
     /* Pass 1: count neighbors per active particle */
@@ -175,6 +234,7 @@ static void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         int *pool = gnl->d_pool;
         int *active = gnl->d_active;
         int *offsets = gnl->offsets;
+        int ntiles = gnl->ntiles;
         int bvh_root = gnl->bvh_root;
         int smode = search_mode;
         int pf0 = gnl->periodic_flags[0], pf1 = gnl->periodic_flags[1], pf2 = gnl->periodic_flags[2];
@@ -189,12 +249,12 @@ static void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             int cnt = search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius,
                                                tiles, ntiles, pool, smode,
                                                bvh, bvh_root, NULL, pf, bs, bh);
-            offsets[aa] = cnt;  /* store count temporarily; will become offset after scan */
+            offsets[aa] = cnt;
         });
         Kokkos::fence();
     }
 
-    /* Exclusive prefix scan on host (offsets is UVM-accessible) */
+    /* Exclusive prefix scan on host */
     int total = 0;
     for(int aa = 0; aa < num_active; aa++) {
         int cnt = gnl->offsets[aa];
@@ -215,6 +275,7 @@ static void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         int *active = gnl->d_active;
         int *offsets = gnl->offsets;
         int *neighbors = gnl->neighbors;
+        int ntiles = gnl->ntiles;
         int bvh_root = gnl->bvh_root;
         int smode = search_mode;
         int pf0 = gnl->periodic_flags[0], pf1 = gnl->periodic_flags[1], pf2 = gnl->periodic_flags[2];
@@ -236,14 +297,20 @@ static void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 }
 
 
-static void gpu_ngb_list_free(gpu_neighbor_list_t *gnl)
+/* Free CSR arrays + active indices. Does NOT free tiles/BVH/pool if they
+   belong to the cached spatial index (those are freed by gpu_spatial_index_free). */
+static void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx)
 {
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->offsets);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_active);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_pool);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_bvh);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_tiles);
+    /* Only free tiles/BVH/pool if they were NOT from the cached index */
+    if(!cached_idx || !cached_idx->valid ||
+       gnl->d_tiles != cached_idx->d_tiles) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_pool);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_bvh);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_tiles);
+    }
 }
 
 
@@ -273,6 +340,7 @@ void density_gpu_session_begin(struct particle_data *P_host, struct gas_cell_dat
 
 void density_gpu_session_end(void)
 {
+    gpu_spatial_index_free(&density_cached_spatial_index); /* free cached tiles+BVH */
     if(density_CellP_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_CellP_gpu); density_CellP_gpu = NULL;}
     if(density_P_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_P_gpu); density_P_gpu = NULL;}
     density_session_num_total = 0;
@@ -305,10 +373,16 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
     }
 
-    /* Build GPU neighbor list */
+    /* Build spatial index once per session, reuse across h-iterations */
+    if(session_active && !density_cached_spatial_index.valid) {
+        gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, &density_cached_spatial_index);
+    }
+
+    /* Build GPU neighbor list (reuses cached tiles+BVH if session active) */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
-                       NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl);
+                       NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl,
+                       session_active ? &density_cached_spatial_index : NULL);
 
     if(ThisTask == 0) {
         printf("  GPU density: %d active particles, %d neighbor pairs (%.1f avg)\n",
@@ -434,7 +508,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 #endif
     }
 
-    gpu_ngb_list_free(&gnl);
+    gpu_ngb_list_free(&gnl, session_active ? &density_cached_spatial_index : NULL);
 
     /* Scatter results back to host arrays for active particles */
     for(int aa = 0; aa < num_active; aa++) {
