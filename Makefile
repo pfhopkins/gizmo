@@ -417,6 +417,10 @@ MISC_OBJS = sidm/cbe_integrator.o \
 EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
 
+ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
+EOSCOOL_OBJS += cooling/jaco.o cooling/microphysics_func_jac.o
+endif
+
 ## combine all the objects above
 OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 		$(EOSCOOL_OBJS) $(STARFORM_OBJS) $(SINK_OBJS) $(RHD_OBJS) \
@@ -440,6 +444,10 @@ INCL    += 	declarations/allvars.h \
 			structure/subfind/subfind.h \
 			cooling/cooling.h \
 			Makefile
+
+ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
+INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h
+endif
 
 
 ## now we add special cases dependent on compiler flags. normally we would

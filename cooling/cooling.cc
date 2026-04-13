@@ -133,6 +133,9 @@ void cooling_parent_routine(void)
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef JACO
+    call_jaco(i); return;
+#endif
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
@@ -1750,6 +1753,9 @@ void InitCool(void)
 
     All.Time = All.TimeBegin;
     set_cosmo_factors_for_current_time();
+#ifdef JACO
+    return;
+#endif
 
 #ifdef COOL_GRACKLE
     InitGrackle();

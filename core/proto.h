@@ -6,6 +6,9 @@
 #ifdef COOLING
 #include "../cooling/cooling.h"
 #endif
+#ifdef JACO
+#include "../cooling/microphysics_func_jac.h"
+#endif
 #ifdef SINK_PARTICLES
 #include "../sinks/sink.h"
 #endif
@@ -790,6 +793,14 @@ void gravity_tree(void);
 void hydro_force(void);
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef JACO
+void call_jaco(int i);
+void jaco_do_cooling(int i);
+void jaco_set_eos_pressure(int i);
+void gizmo_to_jaco(int i, SolveVars *sv, Params *pr);
+void jaco_to_gizmo(int i, SolveVars *sv);
+int jaco_solve(SolveVars *sv, Params *pr, double tol);
+#endif
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
