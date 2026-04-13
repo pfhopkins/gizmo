@@ -121,6 +121,9 @@ void compute_hydro_densities_and_forces(void)
 #endif
 
         double t_bench_density = timediff(t_bench_density_start, my_second());
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        t_bench_density -= t_bench_symlist; /* symlist is reported separately, don't double-count */
+#endif
         PRINT_STATUS(" ..density & tree-update computation done...");
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
