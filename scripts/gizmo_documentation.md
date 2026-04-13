@@ -19,6 +19,7 @@
 6. [Compiling and Using the Code (a very brief tutorial)](#tutorial)
     + [Compilation Requirements](#tutorial-requirements)
     + [Starting & Running the Code](#tutorial-running)  
+    + [CPU-GPU Acceleration (Kokkos)](#cpugpu)
     + [Restarting a Run](#tutorial-restart) 
 7. [Modules in Config.sh (Setting compile-time options, i.e. Physics)](#config)
     + [Overview](#config-overview)
@@ -26,6 +27,7 @@
     + [Hydro Solver Method](#config-hydro)
     + [Additional Fluid Physics](#config-fluids)
         + [Equations-of-State](#config-fluids-eos)
+        + [Nuclear Reaction Networks](#config-fluids-nuclear)
         + [Magnetic Fields](#config-fluids-mhd)
         + [Conduction & Viscosity](#config-fluids-navierstokes)
         + [Passive Scalars, Metals, & Sub-Grid Turbulent Mixing](#config-fluids-metalsturb)
@@ -147,6 +149,18 @@ The un-official code website (showing examples, demonstrations, and giving an ov
 **GIZMO** was written by me, Philip F. Hopkins (PFH), although the codebase builds on parts of Volker Springel's GADGET code. If you find the code useful, please reference the numerical methods paper in all studies using simulations run with **GIZMO**. You should also reference the GADGET paper for the domain decomposition and N-body algorithms. Various modules have their own methods papers, contributed by different authors, that should be cited if they are used; these are specified in the "Config.sh (Setting compile-time options)" section of this Guide.
 
 
+## Code Philosophy & Design 
+
+A few core principles distinguish **GIZMO** from other simulation codes and are worth understanding before diving into the technical details.
+
+**Modularity and cross-compatibility.** Almost every physics module in the code is designed to be independently toggled on or off via a single flag in `Config.sh`, and modules are designed to be cross-compatible wherever physically meaningful. A simple periodic-box hydrodynamics simulation can be transformed into a magnetized GMC star formation calculation, a cosmic-ray transport simulation, a multi-fluid dust-gas dynamics problem, or a thermonuclear detonation, by changing a few compile-time flags -- often without modifying a single line of source code. This modularity means that improvements to any one module (e.g. better cooling physics, or a GPU-accelerated hydro solver) automatically benefit every science application that uses it, and new physics can be added without risk of breaking existing functionality. 
+
+**Multi-method flexibility.** Unlike most astrophysical simulation codes, which are built around a single numerical approach (e.g. AMR, or SPH, or a moving mesh), **GIZMO** implements fundamentally different fluid solvers -- meshless finite-mass (MFM), meshless finite-volume (MFV), smoothed-particle hydrodynamics (SPH), and Eulerian fixed-grid methods -- within the same codebase, sharing the same gravity solver, the same physics modules, and the same I/O infrastructure. This allows direct, controlled comparisons of numerical methods on the same problem, and means users can choose the most appropriate method for their science rather than being locked into a particular approach.
+
+**Accuracy and conservation.** The default MFM/MFV methods are designed to combine the best properties of particle-based and grid-based methods: exact mass, energy, and momentum conservation (to machine precision), Galilean invariance, zero advection errors, automatic and continuous spatial adaptivity, and high-order shock capturing via Riemann solvers. These properties are not compromises -- they are achieved simultaneously, in a mathematically well-defined framework. See [Hopkins 2015](https://arxiv.org/abs/1409.7395) for the mathematical foundations.
+
+**Scalability.** The code is designed for problems ranging from a few hundred particles on a laptop to billions of resolution elements on national supercomputing facilities. The hybrid MPI+OpenMP parallelization (with emerging GPU/Kokkos acceleration for key physics loops) and hierarchical adaptive timestepping enable efficient use of modern heterogeneous computing architectures. For details on GPU acceleration, see the [CPU-GPU Acceleration](#cpugpu) section below.
+
 
 ***
 
@@ -197,6 +211,8 @@ The GIZMO code is a flexible, massively parallel, multi-purpose fluid dynamics +
 + **Cosmic ray** physics on ISM, single-cloud or SNe, sub-galactic through cosmological scales. This includes injection via stars and SNe, MHD-dependent transport via advection, diffusion, and streaming (both isotropic and anisotropic, magnetic-field dependent terms), adiabatic heating/cooling, and catastrophic and coulomb losses and subsequent gas heating. 
 
 + **MHD-Particle-in-Cell (PIC) simulations** using the hybrid MHD-PIC method where arbitrary particulate species (e.g. cosmic rays, protons, dust) with large gyro-radii are integrated explicitly via particle-in-cell methods while those with smaller gyro-radii (e.g. electrons) are treated as a background fluid.
+
++ **Nuclear reaction networks** for live thermonuclear burning, with a built-in 13-species alpha-chain network (aprox13) or hooks for external networks (SkyNet, Torch) supporting hundreds of species. Includes plasma screening corrections, optional neutrino transport bands, and NSE table lookups. Coupled to the Helmholtz equation of state for self-consistent nuclear energy generation in simulations of thermonuclear supernovae, white dwarf mergers, X-ray bursts, and detonations.
 
 
 <a name="features-examples"></a>
@@ -595,6 +611,8 @@ The necessary libraries are: MPI, GSL, FFTW (version 3), and HDF5:
 
 + **HDF5** - the ‘Hierarchical Data Format’ (available at [`https://support.hdfgroup.org/`](https://support.hdfgroup.org/)). This optional library is only needed when one wants to read or write snapshot files in HDF format, although this is strongly recommended (and the default code behavior). It is possible to compile and use the code without this library. Note that, like FFTW2, at some point the versions of HDF5 altered the syntax for calling certain functions. If you use HDF5 after version 1.6, you may need to include the flag `-DH5_USE_16_API` in the line following `HDF5INCL` in the GIZMO Makefile, to enable backwards-compatibility. This flag works with HDF5 1.8, 1.10, 1.12, and 2.x. On some systems with very recent HDF5 versions (2.x), you may also need `-DHDF5_DISABLE_VERSION_CHECK` if the library issues version warnings. See the Makefile for details and examples for specific machines.  
 
++ **Kokkos** (optional, for GPU acceleration) - the Kokkos performance portability library ([`https://github.com/kokkos/kokkos`](https://github.com/kokkos/kokkos)). Required only when compiling with GPU offload support (`OPENMP_GPU_OFFLOAD` in `Config.sh`) or CPU-side Kokkos parallelism (`GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY`). Kokkos provides a portable abstraction for CUDA, HIP, and OpenMP backends, allowing the same code to run on NVIDIA, AMD, or CPU-only systems without modification. On HPC systems, Kokkos is often available as a module (e.g. `module load kokkos`); otherwise it can be installed as a CMake subproject or from source. See the Makefile for machine-specific Kokkos linking examples (e.g. the "Vista" or "MacBookCellar_Kokkos" configurations). Kokkos is not needed for CPU-only builds without the GPU neighbor-list infrastructure.
+
 
 
 The GIZMO code package includes various .c and .h files, folders with different modules, and the following critical files: 
@@ -653,6 +671,54 @@ Here is a typical example SLURM script (most modern systems use this or PBS as t
 
 This is a script submitting job-name `TEST`, requesting it go in the `NORMAL` queue, run on `100` nodes, with `16` MPI tasks per node, running for 1 hour (time in HH:MM:SS format), charged to allocation `ALLOCATIONNAME`. We've set it to use 2 OPENMP threads. We've also used the module system of the machine to load the relevant shared libraries (intel compiler, intel-MPI, hdf5, fftw, and gsl here). We can also load the modules through our personal .bashrc file, so including both calls here is a bit redundant. Then we submit the job, using `ibrun` (this is like `mpirun` above: different compilers and machines have different calls for running MPI executables), to call our compiled `GIZMO` executable in the local directory, with parameterfile `params.txt` in the same directory, restartflag `0` (start from ICs). The `1>gizmo.out 2>gizmo.err` are standard bash prompts that redirect stdout and stderr to files with those names, respectively (otherwise the machine will decide their default names, which you may prefer). Note that on different machines, the modules will be different, as will the `ibrun`/`mpirun` call, as will some of the required flags. Some machines will use `#PBS` instead of `#SBATCH`. You need to read the machine user guide to know how to submit on a particular machine. Also read the SBATCH or PBS (whichever you are using) manual page to learn what all the different flag options are. Finally, you could name this script something like `runscript` and submit it with the command `sbatch runscript`. 
 
+
+
+<a name="cpugpu"></a>
+## CPU-GPU Acceleration (Kokkos)
+
+**GIZMO** includes GPU acceleration for computationally intensive physics loops, using the [Kokkos](https://github.com/kokkos/kokkos) performance portability library. This allows the same source code to target NVIDIA GPUs (via CUDA), AMD GPUs (via HIP), or multi-core CPUs (via OpenMP), selected at compile time through the Makefile machine configuration.
+
+### What is accelerated
+
+GPU offload is currently implemented for:
+
++ **Cooling and chemistry** (the per-particle implicit cooling solver): this is an embarrassingly-parallel loop where each particle's thermochemistry is solved independently. On GPU, particles are batched and solved in parallel via `Kokkos::parallel_for`.
+
++ **Density, gradient, and hydro force kernels**: these neighbor-interaction loops use a GPU-resident SFC-tile neighbor finder with BVH acceleration, replacing the traditional tree-walk for neighbor finding. The per-pair physics kernels (kernel evaluation, Riemann solver, flux accumulation) run as Kokkos parallel kernels over a CSR (compressed sparse row) neighbor list. Ghost exchange provides boundary particles from other MPI ranks before the GPU kernels run, and a reverse-communication ("ghost writeback") step propagates any j-particle modifications (e.g. mass flux for MFV, wakeup flags) back to their home ranks.
+
++ **Nuclear reaction networks** (if enabled): the per-particle nuclear burning integration, similar in structure to the cooling solver.
+
+All GPU-accelerated loops produce results that are bitwise-identical (on the same hardware) or within floating-point summation-order tolerance (across CPU/GPU) compared to the traditional tree-walk code paths. The tree-walk paths remain in the code as a fallback and for validation.
+
+### How to enable GPU acceleration
+
+Two `Config.sh` flags control GPU acceleration:
+
+```bash
+GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY   # enables SFC-tile neighbor lists for density/gradient/hydro
+OPENMP_GPU_OFFLOAD                     # enables Kokkos GPU kernels (set automatically by some Makefile configs)
+```
+
+`GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY` activates the neighbor-list infrastructure (ghost exchange, SFC tiles, symmetric CSR lists) and routes density, gradient, and hydro force through the GPU/Kokkos dispatch path. If Kokkos is compiled with a GPU backend (CUDA or HIP), the kernels run on GPU; if compiled with the OpenMP backend, they run as multi-threaded CPU loops using the same code path. This flag should be included in `Config.sh` for any simulation intended to use the GPU-accelerated hydro.
+
+The Makefile must link to Kokkos and (for GPU) the appropriate device compiler. See the "Vista" or "MacBookCellar_Kokkos" blocks in the Makefile for working examples. On systems where Kokkos is installed via `module load kokkos`, the include and library paths are typically set by environment variables.
+
+### Architecture
+
+The GPU acceleration follows an "AthenaK-style" pattern: all device-callable physics functions live in `.h` header files (with `KOKKOS_INLINE_FUNCTION` annotation), while `.cc` files contain only host-side orchestration (memory management, MPI communication, kernel launch). A `__managed__` copy of the global `All` struct provides device code with access to simulation parameters. Each GPU translation unit (e.g. `density_gpu.cc`, `cooling.cc`) is compiled by the device compiler (nvcc or hipcc) and linked with the rest of the code.
+
+For neighbor-interaction kernels, the workflow per timestep is:
+
+1. **Ghost exchange**: import boundary particles from neighboring MPI ranks (tile-based overlap detection, MPI_Alltoallv)
+2. **Density** (GPU): iterative h-convergence with persistent GPU arrays across iterations
+3. **Symmetric neighbor list build**: SFC tiles + BVH, two-pass CSR construction via Kokkos parallel_for
+4. **Gradient** (GPU): MLS gradient reconstruction over symmetric neighbor list
+5. **Hydro force** (GPU): Riemann solver + flux accumulation, with Kokkos atomic j-writes for MFV mass conservation and wakeup flags
+6. **Ghost writeback**: reverse-communicate j-particle modifications to home ranks
+
+### Performance characteristics
+
+GPU acceleration provides the largest speedup for the hydro force kernel (10-20x on modern GPUs such as NVIDIA GH200), with smaller but significant gains for gradients (~2x). The density phase includes overhead from neighbor list construction that partially offsets kernel speedups at small particle counts (<100k). At larger particle counts (>500k), the kernel speedups dominate and overall speedup increases. The code automatically handles all MPI communication on the CPU side; only the compute-intensive per-particle and per-pair kernels are offloaded to GPU.
 
 
 <a name="tutorial-interrupt"></a>
@@ -874,6 +940,34 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 
 **EOS\_GMC\_BAROTROPIC**: This implements the idealized barotropic EOS calibrated to simplified radiation-hydrodynamic simulations Masunaga & Inutsuka 2000; useful for test problems in small-scale star formation such as cloud collapse, jet launching. See Federrath et al. 2014ApJ...790..128F. You can also set this parameter to a numerical value =1 to instead use EOS used in Bate Bonnell & Bromm 2003. 
 
+
+
+<a name="config-fluids-nuclear"></a>
+### _Nuclear Reaction Networks_
+
+```bash
+##-----------------------------------------------------------------------------------------------------
+#---------------------------------------- Nuclear Reaction Networks
+#NUCLEAR_NETWORK                 # top-level switch: enable live nuclear burning (species mass fractions evolved each timestep)
+#NUCLEAR_NETWORK_SOLVER=0        # solver: 0=built-in aprox13 alpha-chain (13 species, no external deps), 1=SkyNet, 2=Torch
+#NUCLEAR_NETWORK_NSPECIES=13     # number of isotopes tracked (set automatically for aprox13; user-specified for external solvers)
+#NUCLEAR_NETWORK_SCREENING       # enable plasma screening corrections (Chugunov+07/Yakovlev+06) for reaction rates
+#NUCLEAR_NETWORK_NEUTRINOS       # enable neutrino emission/absorption bands (reuses RT infrastructure for nu_e, nu_ebar, nu_x transport)
+#NUCLEAR_NETWORK_NSE_TABLE       # use tabulated NSE (nuclear statistical equilibrium) lookup for T > T_NSE instead of integrating
+##-----------------------------------------------------------------------------------------------------
+```
+
+**NUCLEAR\_NETWORK**: Top-level switch enabling live nuclear burning in the simulation. When active, each gas particle carries an array of isotope mass fractions (stored in `Metallicity[]` slots beyond the standard metal species) that are evolved each timestep according to thermonuclear reaction rates. The nuclear energy generation rate is coupled to the particle's internal energy, providing self-consistent nuclear heating. This module is designed for problems such as thermonuclear supernovae (Type Ia), white dwarf mergers, X-ray bursts, neutron star accretion disks, and any scenario where nuclear energy release is dynamically important. The nuclear solver runs as a per-particle embarrassingly-parallel loop, making it efficient on both CPUs and GPUs (it uses the same Kokkos gather-dispatch-scatter pattern as the cooling solver). Requires `EOS_HELMHOLTZ` for the degenerate equation of state. Users should cite Hopkins et al. (in prep.) for the numerical implementation.
+
+**NUCLEAR\_NETWORK\_SOLVER**: Selects the nuclear reaction network backend. **=0** (default): the built-in `aprox13` alpha-chain network, which tracks 13 species (He4, C12, O16, Ne20, Mg24, Si28, S32, Ar36, Ca40, Ti44, Cr48, Fe52, Ni56) with forward and reverse rates from Timmes (1999). This requires no external libraries and is GPU-callable. **=1**: the SkyNet network library (Lippuner & Roberts 2017), which supports arbitrary isotope lists including r-process nucleosynthesis with hundreds of species, and includes weak interaction rates and neutrino interactions. SkyNet must be separately installed and linked (see `Makefile` for SkyNet linking examples). **=2**: the Torch network (Timmes, Hoffman, & Woosley 2000), another external network supporting large isotope sets. Both external solvers are called per-particle during the nuclear burning substep.
+
+**NUCLEAR\_NETWORK\_NSPECIES**: The number of isotopes tracked per particle. For the built-in aprox13 solver, this is automatically set to 13 and should not be changed. For external solvers (SkyNet, Torch), this must match the number of species in the network definition file. The isotope mass fractions are stored in the particle's `Metallicity[]` array starting after the standard metal species slots, so `NUM_METAL_SPECIES` is automatically adjusted to accommodate both the standard metals and the nuclear species.
+
+**NUCLEAR\_NETWORK\_SCREENING**: Enables plasma screening corrections for thermonuclear reaction rates, following the formalism of Chugunov, DeWitt, & Yakovlev (2007) and Yakovlev et al. (2006). Screening enhances reaction rates in dense, degenerate plasma by accounting for the electrostatic potential of the surrounding ion distribution. This is important for accurate burning rates in white dwarf interiors and neutron star envelopes. The screening factors are computed per-particle from the local density, temperature, and composition, and multiply the bare nuclear reaction rates before integration.
+
+**NUCLEAR\_NETWORK\_NEUTRINOS**: Enables neutrino emission and absorption as separate radiation bands, reusing the existing radiation transport infrastructure. Three neutrino species are tracked: electron neutrinos ($\nu_e$), electron anti-neutrinos ($\bar{\nu}_e$), and heavy-flavor neutrinos ($\nu_x$, representing $\nu_\mu$, $\bar{\nu}_\mu$, $\nu_\tau$, $\bar{\nu}_\tau$ combined). Each species is treated as a frequency bin in the RT framework, with emission rates computed from the nuclear network (beta decays, electron captures, pair annihilation) and absorption via charged-current interactions. This is primarily relevant for core-collapse supernova simulations and neutron star merger remnants where neutrino transport affects the electron fraction and hence the nucleosynthesis yields.
+
+**NUCLEAR\_NETWORK\_NSE\_TABLE**: At sufficiently high temperatures ($T \gtrsim 5 \times 10^9$ K), nuclear reactions are fast enough that the composition reaches nuclear statistical equilibrium (NSE) on timescales much shorter than the hydrodynamic timestep. When this flag is enabled, the code uses a pre-computed NSE lookup table (in density-temperature-electron fraction space) instead of integrating the full reaction network at these temperatures. This significantly accelerates simulations of detonations and deflagrations where large volumes of material pass through NSE conditions. The NSE table is generated from the same reaction rate data as the network and ensures thermodynamic consistency.
 
 
 <a name="config-fluids-mhd"></a>
