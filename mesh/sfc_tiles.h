@@ -20,6 +20,23 @@
 #define TILE_TARGET_SIZE 64  /* particles per tile (tunable) */
 #define TILE_BVH_STACK_SIZE 64  /* traversal stack depth (log2(ntiles) + margin) */
 
+/* Axis periodicity flags for tile-based neighbor search and ghost exchange */
+#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_X) && !defined(BOX_OUTFLOW_X)
+#define TILE_PERIODIC_X 1
+#else
+#define TILE_PERIODIC_X 0
+#endif
+#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_Y) && !defined(BOX_OUTFLOW_Y)
+#define TILE_PERIODIC_Y 1
+#else
+#define TILE_PERIODIC_Y 0
+#endif
+#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_Z) && !defined(BOX_OUTFLOW_Z)
+#define TILE_PERIODIC_Z 1
+#else
+#define TILE_PERIODIC_Z 0
+#endif
+
 struct sfc_tile_t {
     int first;          /* first particle index (into pool index array) */
     int count;          /* number of particles in this tile */

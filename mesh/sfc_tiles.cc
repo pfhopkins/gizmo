@@ -18,24 +18,7 @@
 #include "sfc_tiles.h"
 
 
-/* Axis periodicity flags (matching neighbor_list.cc) */
-#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_X) && !defined(BOX_OUTFLOW_X)
-#define TILE_PERIODIC_X 1
-#else
-#define TILE_PERIODIC_X 0
-#endif
-
-#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_Y) && !defined(BOX_OUTFLOW_Y)
-#define TILE_PERIODIC_Y 1
-#else
-#define TILE_PERIODIC_Y 0
-#endif
-
-#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_Z) && !defined(BOX_OUTFLOW_Z)
-#define TILE_PERIODIC_Z 1
-#else
-#define TILE_PERIODIC_Z 0
-#endif
+/* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h */
 
 
 int build_sfc_tiles(struct particle_data *P, int num_total,
