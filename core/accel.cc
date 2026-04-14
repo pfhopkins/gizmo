@@ -62,27 +62,32 @@ void compute_hydro_densities_and_forces(void)
   if(All.TotN_gas > 0)
     {
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        double t_bench_ghost = 0, t_bench_symlist = 0;
+        double t_bench_ghost = 0, t_bench_symlist = 0, t_bench_drift = 0, t_bench_ghost_redo = 0;
         {double t0 = my_second();
         /* Drift ALL particles to current time before any neighbor operations.
            This eliminates lazy drifting during the tree walk — required for
            GPU neighbor finding (no critical sections) and for halo exchange
            (halo particles must be at current positions before exchange). */
         move_particles(All.Ti_Current);
+        t_bench_drift = timediff(t0, my_second());
         /* Ghost exchange: import boundary particles from neighboring MPI ranks.
            Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
            are guesses that may grow significantly during density iteration. */
+        double t_ghost0 = my_second();
         ghost_exchange(1.0);
-        t_bench_ghost = timediff(t0, my_second());}
+        t_bench_ghost = timediff(t_ghost0, my_second());}
 #endif
 
         PRINT_STATUS("Start hydrodynamics computation...");
         double t_bench_density_start = my_second();
         density();		/* computes density, and pressure */
+        double t_bench_density_only = timediff(t_bench_density_start, my_second());
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
         ags_density();
 #endif
+        double t_hmax_start = my_second();
         force_update_hmax();	/* update kernel lengths in tree */
+        double t_bench_hmax = timediff(t_hmax_start, my_second());
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
 
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
@@ -92,8 +97,10 @@ void compute_hydro_densities_and_forces(void)
            need to re-run density — just need correct ghosts for the cell-list
            (and later GPU dispatch). */
         if(ghost_exchange_needs_redo()) {
+            double t_redo0 = my_second();
             ghost_exchange_cleanup();
             ghost_exchange(1.0);
+            t_bench_ghost_redo = timediff(t_redo0, my_second());
         }
 #endif
 
@@ -188,7 +195,9 @@ void compute_hydro_densities_and_forces(void)
         if(ThisTask == 0 && All.Time > All.TimeBegin) { /* skip first step (warmup with bad initial h guesses) */
             printf("  [BENCH] density=%.4f grad=%.4f hydro=%.4f", t_bench_density, t_bench_grad, t_bench_hydro);
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-            printf(" ghost=%.4f symlist=%.4f", t_bench_ghost, t_bench_symlist);
+            printf(" ghost=%.4f symlist=%.4f drift=%.4f hmax=%.4f", t_bench_ghost, t_bench_symlist, t_bench_drift, t_bench_hmax);
+            if(t_bench_ghost_redo > 0) printf(" ghost_redo=%.4f", t_bench_ghost_redo);
+            printf(" density_only=%.4f", t_bench_density_only);
 #endif
             printf(" total=%.4f\n", t_bench_density + t_bench_grad + t_bench_hydro);
             fflush(stdout);

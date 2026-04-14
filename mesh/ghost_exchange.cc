@@ -113,7 +113,7 @@ static inline int ghost_toptree_leaf(peanokey key)
 void ghost_exchange(double safety_factor)
 {
     if(NTask <= 1) return;
-    double t_ghost_start = my_second();
+    double t_ghost_start = my_second(), t_ghost_phase;
 
     /* save current state for cleanup */
     NumPart_before_ghost = NumPart;
@@ -180,10 +180,13 @@ void ghost_exchange(double safety_factor)
     saved_leaf_hmax = (double *) malloc(local_ntiles * sizeof(double));
     for(int t = 0; t < local_ntiles; t++) saved_leaf_hmax[t] = local_meta[t].hmax;
 
+    double t_ghost_tiles = timediff(t_ghost_start, my_second());
+
     /* ================================================================
        Step 2: Gather tile metadata from all ranks.
        Each rank sends its tile count and metadata to all ranks.
        ================================================================ */
+    t_ghost_phase = my_second();
     int *all_ntiles = (int *) malloc(NTask * sizeof(int));
     MPI_Allgather(&local_ntiles, 1, MPI_INT, all_ntiles, 1, MPI_INT, MPI_COMM_WORLD);
 
@@ -216,6 +219,8 @@ void ghost_exchange(double safety_factor)
         PRINT_STATUS("Ghost exchange (tile-based): %d local tiles, %d total across %d ranks, tile hmax=[%.4g, %.4g] avg=%.4g",
                      local_ntiles, total_tiles, NTask, hmax_min, hmax_max, hmax_sum / local_ntiles);
     }
+
+    double t_ghost_meta = timediff(t_ghost_phase, my_second());
 
     /* ================================================================
        Step 3: Per-task tile overlap check.
@@ -344,6 +349,8 @@ void ghost_exchange(double safety_factor)
         for(task = 0; task < NTask; task++) { if(send_to[lt * NTask + task]) { tiles_sent++; break; } }
     }
 
+    double t_ghost_overlap = timediff(t_ghost_meta, my_second()); /* includes steps 3+4 (overlap + schedule) */
+
     /* Check space: ghost particles are appended to P[]/CellP[] arrays, which are
        allocated to All.MaxPart = PartAllocFactor * (TotNumPart / NTask).
        If there isn't enough room, we MUST exit — silently skipping would produce
@@ -466,11 +473,17 @@ void ghost_exchange(double safety_factor)
         memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
     }
 
+    double t_ghost_mpi = timediff(t_ghost_overlap, my_second()); /* includes steps 5+6 (pack + MPI + unpack) */
     double t_ghost_end = my_second();
-    if(ThisTask == 0)
+    double t_ghost_total = timediff(t_ghost_start, t_ghost_end);
+    if(ThisTask == 0) {
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
-                     tiles_needed, tiles_sent, local_ntiles, timediff(t_ghost_start, t_ghost_end));
+                     tiles_needed, tiles_sent, local_ntiles, t_ghost_total);
+        PRINT_STATUS("  ghost breakdown: tiles=%.4f meta_xchg=%.4f overlap=%.4f pack+MPI=%.4f writeback_setup=%.4f",
+                     t_ghost_tiles, t_ghost_meta, t_ghost_overlap, t_ghost_mpi,
+                     t_ghost_total - t_ghost_tiles - t_ghost_meta - t_ghost_overlap - t_ghost_mpi);
+    }
     /* Warn if ghost particles used >80% of available headroom */
     if(NumPart > 0.8 * All.MaxPart) {
         double usage_frac = (double)NumPart / (double)All.MaxPart;

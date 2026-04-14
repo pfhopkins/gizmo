@@ -298,6 +298,7 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
                              neighbor_list_t *out)
 {
     out->num_active = num_active;
+    double t_sfc_start = my_second();
 
     /* Build SFC tiles */
     sfc_tile_t *tiles;
@@ -305,6 +306,7 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
     int num_pool;
     int ntiles = build_sfc_tiles(P, num_total, type_bitmask, TILE_TARGET_SIZE,
                                  &tiles, &pool, &num_pool);
+    double t_sfc_tiles = timediff(t_sfc_start, my_second());
 
     if(ThisTask == 0) {
         double max_h = 0;
@@ -327,6 +329,7 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
     tile_bvh_node_t *bvh;
     int bvh_nnodes = build_tile_bvh(tiles, ntiles, &bvh);
     int bvh_root = bvh_nnodes - 1;
+    double t_sfc_bvh_end = my_second();
 
     /* Pass 1: count neighbors per active particle */
     int *counts = (int *) mymalloc("sfc_counts", num_active * sizeof(int));
@@ -339,6 +342,7 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
 
     int total_pairs = 0;
     for(a = 0; a < num_active; a++) total_pairs += counts[a];
+    double t_sfc_pass1_end = my_second();
 
     /* Free pass-1 temporaries in reverse mymalloc order before allocating output.
        Stack is: pool, tiles, bvh, counts (top). Output arrays must be at stack base. */
@@ -371,4 +375,14 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
     myfree(bvh);
     myfree(tiles);
     myfree(pool);
+
+    double t_sfc_end = my_second();
+    if(ThisTask == 0) {
+        double dt_bvh = timediff(t_sfc_start, t_sfc_bvh_end) - t_sfc_tiles; /* BVH = (start→bvh_end) - tiles */
+        PRINT_STATUS("  symlist breakdown: tiles=%.4f BVH=%.4f pass1_count=%.4f pass2_fill=%.4f total=%.4f",
+                     t_sfc_tiles, dt_bvh,
+                     timediff(t_sfc_bvh_end, t_sfc_pass1_end),
+                     timediff(t_sfc_pass1_end, t_sfc_end),
+                     timediff(t_sfc_start, t_sfc_end));
+    }
 }

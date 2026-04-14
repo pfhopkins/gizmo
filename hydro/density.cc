@@ -270,6 +270,7 @@ void density(void)
 {
     /* initialize variables used below, in particlar the structures we need to call throughout the iteration */
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second(); MyFloat *Left, *Right; double fac, fac_lim, desnumngb, desnumngbdev; long long ntot;
+    double t_density_kernel_total = 0, t_density_hiter_total = 0; int density_iter_count = 0;
     int i, npleft, iter=0, redo_particle, particle_set_to_minrkern_flag = 0, particle_set_to_maxrkern_flag = 0;
     Left = (MyFloat *) mymalloc("Left", NumPart * sizeof(MyFloat));
     Right = (MyFloat *) mymalloc("Right", NumPart * sizeof(MyFloat));
@@ -332,7 +333,9 @@ void density(void)
 #if defined(OPENMP_GPU_OFFLOAD)
             /* GPU path: density_evaluate_gpu handles SharedSpace allocation,
                GPU neighbor list build, GPU density kernel, and scatter internally */
+            {double t_dk0 = my_second();
             density_evaluate_gpu(P, CellP, NumPart, nl_active, nl_num_active);
+            t_density_kernel_total += timediff(t_dk0, my_second()); density_iter_count++;}
 #else
             /* CPU path: build CSR neighbor list and accumulate density */
             {
@@ -920,7 +923,14 @@ void density(void)
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_DENSCOMPUTE] += timecomp; CPU_Step[CPU_DENSWAIT] += timewait;
     CPU_Step[CPU_DENSCOMM] += timecomm; CPU_Step[CPU_DENSMISC] += timeall - (timecomp + timewait + timecomm);
-    if(ThisTask == 0) {PRINT_STATUS("  density tree walk: total=%.4f s (compute=%.4f wait=%.4f comm=%.4f)", timeall, timecomp, timewait, timecomm);}
+    if(ThisTask == 0) {
+        PRINT_STATUS("  density tree walk: total=%.4f s (compute=%.4f wait=%.4f comm=%.4f)", timeall, timecomp, timewait, timecomm);
+        double t_density_postprocess = timeall - t_density_kernel_total - (timecomp - t_density_kernel_total);
+        PRINT_STATUS("  density breakdown: kernel=%.4f h_iter_overhead=%.4f postprocess=%.4f misc=%.4f iters=%d",
+                     t_density_kernel_total, timecomp - t_density_kernel_total,
+                     timediff(t00_truestart, t1) - timeall, /* time outside the do-while loop */
+                     timeall - (timecomp + timewait + timecomm), density_iter_count);
+    }
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
