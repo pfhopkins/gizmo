@@ -21,6 +21,9 @@
 #define GRADIENT_FUNCTIONS_H
 
 /* Requires: allvars.h, proto.h, kernel.h included before this header. */
+#ifdef COSMIC_RAY_FLUID
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
 
 #ifndef MINMAX_CHECK
 #define MINMAX_CHECK(x,xmin,xmax) ((x<xmin)?(xmin=x):((x>xmax)?(xmax=x):(1)))

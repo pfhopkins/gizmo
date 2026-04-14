@@ -21,6 +21,10 @@
 #ifndef HYDRO_FUNCTIONS_H
 #define HYDRO_FUNCTIONS_H
 
+#ifdef COSMIC_RAY_FLUID
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
+
 /* Requires: allvars.h, proto.h, kernel.h, reimann.h included before this header.
    Also requires: Conserved_var_Riemann, kernel_hydra, INPUT_STRUCT_NAME, OUTPUT_STRUCT_NAME
    defined (from hydro_toplevel.cc via code_block_xchange_initialize.h).

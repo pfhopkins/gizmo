@@ -86,6 +86,12 @@ double return_user_desired_target_pressure(int i)
  T_dust_manual_override here designates whether we want to pass a specific dust temp or allow the code to call one itself here, to avoid creating circular dependencies and to
     allow for self-consistent coupling to various other dust dynamics/formation/chemistry modules. if you just want 'default' behavior and aren't worried about this, call with this parameter set to 0
  */
+/* Pre-include cosmic_ray_functions.h with inline semantics so #pragma once
+   prevents re-inclusion in the non-inline block below (avoids duplicate symbols
+   with cosmic_ray_utilities.o which also provides non-inline versions). */
+#ifdef COSMIC_RAY_FLUID
+#include "cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h. */
