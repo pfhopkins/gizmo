@@ -2442,7 +2442,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("GravityConstantInternal",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to calculating in terms of other specified units if needed (=%g) \n",tag[i],alternate_tag[i],All.G); continue;}
                 if(strcmp("MinSizeTimestep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to minimum allowed by memory table-size (=%g) \n",tag[i],alternate_tag[i],All.MinSizeTimestep); continue;}
                 if(strcmp("TimeLimitCPU",tag[i])==0) {*((double *)addr[i])=8.6e4; printf("Tag %s (%s) not set in parameter file: defaulting to 24-hours before auto-shutdown (=%g) \n",tag[i],alternate_tag[i],All.TimeLimitCPU); continue;}
-                if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=2.0; printf("Tag %s (%s) not set in parameter file: defaulting to a relatively small value, but this may not work for your problem and machine memory constraints (adjust this as needed to better handle load-balancing) (=%g) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
+                if(strcmp("PartAllocFactor",tag[i])==0) {*((double *)addr[i])=10.0; printf("Tag %s (%s) not set in parameter file: defaulting to %g (needed for ghost particle headroom in multi-rank runs) \n",tag[i],alternate_tag[i],All.PartAllocFactor); continue;}
 #if !(defined(BOX_PERIODIC) || defined(BOX_SHEARING) || defined(BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE) || defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z))
                 if(strcmp("BoxSize",tag[i])==0) {*((double *)addr[i])=0; continue;} /* can ignore box size */
 #endif

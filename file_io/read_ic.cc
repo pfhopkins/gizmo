@@ -828,6 +828,13 @@ void read_file(char *fname, int readTask, int lastTask)
 
         All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
         All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        if(All.PartAllocFactor < 10.0 && NTask > 1 && ThisTask == 0) {
+            printf("WARNING: PartAllocFactor=%.1f is low for the GPU neighbor-list path (GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY).\n", All.PartAllocFactor);
+            printf("  Ghost particles from other MPI ranks are appended to P[]/CellP[] arrays and need\n");
+            printf("  substantial headroom. Recommend PartAllocFactor >= 10 to avoid ghost overflow.\n");
+        }
+#endif
 #ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
         All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
         // (PFH: needed to revert the change -- i.e. INCLUDE the line above: commenting it out, while it improved memory useage, causes some instability in the domain decomposition for
