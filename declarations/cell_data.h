@@ -1,6 +1,8 @@
-/* forward declarations needed by member functions below */
+/* hydrogen_molecule_gamma is needed by gamma_eos_value() below.
+   Include the inline definition directly so GPU TUs get it inlined
+   rather than generating an unresolvable external device call. */
 #ifdef EOS_SUBSTELLAR_ISM
-GIZMO_GPU_FUNCTION double hydrogen_molecule_gamma(double temp);
+#include "../eos/hydrogen_molecule_functions.h"
 #endif
 
 /* the following struture holds data that is stored for each fluid cell in addition to the collisionless variables.
