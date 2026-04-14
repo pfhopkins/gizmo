@@ -31,10 +31,10 @@
 #define NUM_SPECIES_IN_EOS 5
 #endif
 
-/* CoolTables: defined as __managed__ in cooling.cc, extern here for other TUs */
-#ifndef COOLING_FUNCTIONS_OWNER
-extern struct cooling_tables_t CoolTables;
-#endif
+/* CoolTables access: cooling.cc defines #define aliases (gJH0 -> gJH0, etc.)
+   BEFORE including this header, so bare names work there. Other TUs must define their
+   own extern CoolTables and aliases before including this header. The functions below
+   use bare names (Tmin, gJH0, BetaH0, etc.) which resolve via the caller's aliases. */
 
 
 /* ================================================================
@@ -44,12 +44,12 @@ KOKKOS_INLINE_FUNCTION
 double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
 {
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
-    if((target >= 0) && (CoolTables.gJH0 > 0))
+    if((target >= 0) && (gJH0 > 0))
     {
         double local_gammamultiplier = cell[target].Rad_Flux_EUV * 2.29e-10;
-        local_gammamultiplier = 1.0 + local_gammamultiplier / CoolTables.gJH0;
+        local_gammamultiplier = 1.0 + local_gammamultiplier / gJH0;
         if(!isfinite(local_gammamultiplier)) {local_gammamultiplier=1;}
-        return DMAX(1., DMIN(2./CoolTables.gJH0, DMIN(1.e20, local_gammamultiplier)));
+        return DMAX(1., DMIN(2./gJH0, DMIN(1.e20, local_gammamultiplier)));
     }
 #endif
     return 1;
@@ -92,17 +92,17 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     double bH0, bHep, bff, aHp, aHep, aHepp, ad, geH0, geHe0, geHep, EPSILON_SMALL=1.e-40;
     double n_elec, nH0, nHe0, nHp, nHep, nHepp;
     logT_input = logT; rho_input = rho; ne_input = *ne_guess;
-    if(!isfinite(logT)) {logT=CoolTables.Tmin;}
-    if(!isfinite(rho)) {logT=CoolTables.Tmin;}
+    if(!isfinite(logT)) {logT=Tmin;}
+    if(!isfinite(rho)) {logT=Tmin;}
 
-    if(logT <= CoolTables.Tmin)
+    if(logT <= Tmin)
     {
         nH0 = 1.0; nHe0 = yhelium(target, pp); nHp = 0; nHep = 0; nHepp = 0; n_elec = 1.e-22;
         *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
         *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, 0, target, pp, cell);
         return 0;
     }
-    if(logT >= CoolTables.Tmax)
+    if(logT >= Tmax)
     {
         nH0 = 0; nHe0 = 0; nHp = 1.0; nHep = 0; nHepp = yhelium(target, pp); n_elec = nHp + 2.0 * nHepp;
         *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
@@ -110,17 +110,17 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         return 0;
     }
 
-    t = (logT - CoolTables.Tmin) / CoolTables.deltaT;
+    t = (logT - Tmin) / deltaT;
     j = (int) t;
     if(j<0) {j=0;}
     if(j>NCOOLTAB){
-        PRINT_WARNING("j>=NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g Tmin %g deltaT %g \n",j,t,CoolTables.Tmin+CoolTables.deltaT*j,CoolTables.Tmin+CoolTables.deltaT*(j+1),logT,CoolTables.Tmin,CoolTables.deltaT);
+        PRINT_WARNING("j>=NCOOLTAB : j=%d t %g Tlow %g Thi %g logT %g Tmin %g deltaT %g \n",j,t,Tmin+deltaT*j,Tmin+deltaT*(j+1),logT,Tmin,deltaT);
         j=NCOOLTAB;
     }
     jp = j + 1;
     if(jp > NCOOLTAB) {jp=NCOOLTAB;}
-    Tlow = CoolTables.Tmin + CoolTables.deltaT * j;
-    Thi = Tlow + CoolTables.deltaT;
+    Tlow = Tmin + deltaT * j;
+    Thi = Tlow + deltaT;
     fhi = t - j;
     flow = 1 - fhi;
     if(*ne_guess == 0)
@@ -131,7 +131,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     }
     double local_gammamultiplier = return_local_gammamultiplier(target, cell);
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;
-    if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*CoolTables.gJH0/1.0e-12, nHcgs, logT, cell);}
+    if(shieldfac < 0) {shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, cell);}
     n_elec = *ne_guess; if(!isfinite(n_elec)) {n_elec=1;}
     neold = n_elec; niter = 0;
     double dt = 0, fac_noneq_cgs = 0, necgs = n_elec * nHcgs, ne_lower=0, ne_upper=2.;
@@ -157,28 +157,28 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     {
         niter++;
 
-        aHp = flow * CoolTables.AlphaHp[j] + fhi * CoolTables.AlphaHp[jp];
-        aHep = flow * CoolTables.AlphaHep[j] + fhi * CoolTables.AlphaHep[jp];
-        aHepp = flow * CoolTables.AlphaHepp[j] + fhi * CoolTables.AlphaHepp[jp];
-        ad = flow * CoolTables.Alphad[j] + fhi * CoolTables.Alphad[jp];
-        geH0 = flow * CoolTables.GammaeH0[j] + fhi * CoolTables.GammaeH0[jp];
+        aHp = flow * AlphaHp[j] + fhi * AlphaHp[jp];
+        aHep = flow * AlphaHep[j] + fhi * AlphaHep[jp];
+        aHepp = flow * AlphaHepp[j] + fhi * AlphaHepp[jp];
+        ad = flow * Alphad[j] + fhi * Alphad[jp];
+        geH0 = flow * GammaeH0[j] + fhi * GammaeH0[jp];
         geH0 = DMAX(geH0, EPSILON_SMALL);
-        geHe0 = flow * CoolTables.GammaeHe0[j] + fhi * CoolTables.GammaeHe0[jp];
+        geHe0 = flow * GammaeHe0[j] + fhi * GammaeHe0[jp];
         geHe0 = DMAX(geHe0, EPSILON_SMALL);
-        geHep = flow * CoolTables.GammaeHep[j] + fhi * CoolTables.GammaeHep[jp];
+        geHep = flow * GammaeHep[j] + fhi * GammaeHep[jp];
         geHep = DMAX(geHep, EPSILON_SMALL);
         fac_noneq_cgs = (dt * UNIT_TIME_IN_CGS) * (necgs + 1.e-30*nHcgs);
-        if(necgs <= 1.e-25 || CoolTables.J_UV == 0)
+        if(necgs <= 1.e-25 || J_UV == 0)
         {
             gJH0ne = gJHe0ne = gJHepne = 0;
         }
         else
         {
-            gJH0ne = CoolTables.gJH0 * local_gammamultiplier / necgs * shieldfac;
+            gJH0ne = gJH0 * local_gammamultiplier / necgs * shieldfac;
             gJH0ne = DMAX(gJH0ne, EPSILON_SMALL); if(!isfinite(gJH0ne)) {gJH0ne=0;}
-            gJHe0ne = CoolTables.gJHe0 * local_gammamultiplier / necgs * shieldfac;
+            gJHe0ne = gJHe0 * local_gammamultiplier / necgs * shieldfac;
             gJHe0ne = DMAX(gJHe0ne, EPSILON_SMALL); if(!isfinite(gJHe0ne)) {gJHe0ne=0;}
-            gJHepne = CoolTables.gJHep * local_gammamultiplier / necgs * shieldfac;
+            gJHepne = gJHep * local_gammamultiplier / necgs * shieldfac;
             gJHepne = DMAX(gJHepne, EPSILON_SMALL); if(!isfinite(gJHepne)) {gJHepne=0;}
         }
 #if defined(RT_DISABLE_UV_BACKGROUND)
@@ -189,7 +189,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         {
             int k;
             c_light_ne = C_LIGHT_CGS / ((MIN_REAL_NUMBER + necgs) * UNIT_LENGTH_IN_CGS);
-            double gJH0ne_0=CoolTables.gJH0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHe0ne_0=CoolTables.gJHe0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHepne_0=CoolTables.gJHep * local_gammamultiplier / (MIN_REAL_NUMBER + necgs);
+            double gJH0ne_0=gJH0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHe0ne_0=gJHe0 * local_gammamultiplier / (MIN_REAL_NUMBER + necgs), gJHepne_0=gJHep * local_gammamultiplier / (MIN_REAL_NUMBER + necgs);
             gJH0ne = DMAX(gJH0ne, EPSILON_SMALL); if(!isfinite(gJH0ne)) {gJH0ne=0;}
             gJHe0ne = DMAX(gJHe0ne, EPSILON_SMALL); if(!isfinite(gJHe0ne)) {gJHe0ne=0;}
             gJHepne = DMAX(gJHepne, EPSILON_SMALL); if(!isfinite(gJHepne)) {gJHepne=0;}
@@ -308,15 +308,15 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 
     if(niter >= MAXITER) {printf("failed to converge in find_abundances_and_rates(): logT_input=%g  rho_input=%g  ne_input=%g target=%d ID=%ld shieldfac=%g cooling_return=%d", logT_input, rho_input, ne_input, target, (long)(long long)target, shieldfac, return_cooling_mode); endrun(13);}
 
-    bH0 = flow * CoolTables.BetaH0[j] + fhi * CoolTables.BetaH0[jp];
-    bHep = flow * CoolTables.BetaHep[j] + fhi * CoolTables.BetaHep[jp];
-    bff = flow * CoolTables.Betaff[j] + fhi * CoolTables.Betaff[jp];
+    bH0 = flow * BetaH0[j] + fhi * BetaH0[jp];
+    bHep = flow * BetaHep[j] + fhi * BetaHep[jp];
+    bff = flow * Betaff[j] + fhi * Betaff[jp];
     *nH0_guess=nH0; *nHe0_guess=nHe0; *nHp_guess=nHp; *nHep_guess=nHep; *nHepp_guess=nHepp; *ne_guess=n_elec;
-    *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), target, pp, cell);
+    *mu_guess=Get_Gas_Mean_Molecular_Weight_mu(pow(10.,logT), rho, nH0_guess, ne_guess, sqrt(shieldfac)*(gJH0/2.29e-10), target, pp, cell);
     if(target >= 0)
     {
 #if defined(OUTPUT_MOLECULAR_FRACTION)
-        cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), pp, cell);
+        cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, pow(10.,logT), nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), pp, cell);
 #endif
     }
 
@@ -415,7 +415,7 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
 KOKKOS_INLINE_FUNCTION
 double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
-    double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,CoolTables.Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,CoolTables.Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
+    double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
     temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS);
     temp = DMIN(DMAX(temp,temp_min),temp_max);
     const double tolerance = 1e-4;
@@ -518,8 +518,8 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
 #endif
     if(iter >= MAXITER) {printf("failed to converge in convert_u_to_temp(): u_input= %g rho_input=%g n_elec_input=%g target=%d ID=%ld\n", u_input, rho_input, *ne_guess, target, (long)(long long)target); endrun(12);}
 
-    if(temp<=0) temp=pow(10.0,CoolTables.Tmin);
-    if(log10(temp)<CoolTables.Tmin) temp=pow(10.0,CoolTables.Tmin);
+    if(temp<=0) temp=pow(10.0,Tmin);
+    if(log10(temp)<Tmin) temp=pow(10.0,Tmin);
     return temp;
 }
 #endif /* EOS_SUBSTELLAR_ISM vs default */
