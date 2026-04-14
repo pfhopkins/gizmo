@@ -29,6 +29,23 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "gpu_neighbor_list.h"
 #include "neighbor_list.h"
 
+/* Axis periodicity flags (matching sfc_tiles.cc) */
+#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_X) && !defined(BOX_OUTFLOW_X)
+#define TILE_PERIODIC_X 1
+#else
+#define TILE_PERIODIC_X 0
+#endif
+#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_Y) && !defined(BOX_OUTFLOW_Y)
+#define TILE_PERIODIC_Y 1
+#else
+#define TILE_PERIODIC_Y 0
+#endif
+#if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_Z) && !defined(BOX_OUTFLOW_Z)
+#define TILE_PERIODIC_Z 1
+#else
+#define TILE_PERIODIC_Z 0
+#endif
+
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
