@@ -131,7 +131,17 @@ extern struct cooling_tables_t CoolTables;
 #ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
 #endif
-/* ---- END device-compilable EOS/cooling functions ---- */
+/* Include cooling_functions.h for set_eos_pressure and the cooling chain.
+   Use __host__ (not __device__) to provide externally-visible host symbols
+   without triggering device linking of CoolingRateFromU and other cooling.cc
+   functions. GPU TUs that need device-callable versions include the header
+   directly with proper KOKKOS_INLINE_FUNCTION. */
+#undef KOKKOS_INLINE_FUNCTION
+#ifdef GIZMO_GPU_COMPILER
+#define KOKKOS_INLINE_FUNCTION __host__
+#else
+#define KOKKOS_INLINE_FUNCTION
+#endif
 #include "../cooling/cooling_functions.h"
 
 
