@@ -30,11 +30,28 @@
 void grain_backrx(void);
 #endif
 
+#ifdef OPENMP_GPU_OFFLOAD
+extern void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int *, int);
+#endif
+
 /* function to apply the drag on the grains from surrounding gas properties */
 void apply_grain_dragforce(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
     int i, k; PRINT_STATUS("Beginning particulate/grain/PIC force evaluation.");
+
+#if defined(OPENMP_GPU_OFFLOAD)
+    /* GPU path: gather active particles, dispatch Kokkos kernel, scatter results */
+    {
+        int N_active = 0;
+        for(int ii : ActiveParticleList) N_active++;
+        int *grain_indices = (int *) malloc((N_active > 0 ? N_active : 1) * sizeof(int));
+        int aa = 0;
+        for(int ii : ActiveParticleList) grain_indices[aa++] = ii;
+        grain_drag_evaluate_gpu(P, CellP, grain_indices, N_active);
+        free(grain_indices);
+    }
+#else
     for (int i : ActiveParticleList) /* loop over active particles */
     {
         if(!((1 << P[i].Type) & (GRAIN_PTYPES))) {P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;} /* for active elements, set this large to re-set below */
@@ -231,6 +248,7 @@ void apply_grain_dragforce(void)
 
         } /* closes check for particle type, id */
     } /* closes main particle loop (loop over active particles) */
+#endif /* !OPENMP_GPU_OFFLOAD */
 #if defined(GRAIN_BACKREACTION)
     grain_backrx(); /* call parent routine to assign the back-reaction force among neighbors */
 #endif

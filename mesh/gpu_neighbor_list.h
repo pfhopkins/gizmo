@@ -70,12 +70,15 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx);
    P_shared must be accessible from GPU (SharedSpace or managed memory).
    active_indices_host: host-side array of particle indices to search FROM.
    search_mode: NGB_SEARCH_ONEWAY or NGB_SEARCH_SYMMETRIC.
-   type_bitmask: which particle types to include in the search pool. */
+   type_bitmask: which particle types to include in the search pool.
+   search_radius_factor: multiplier on KernelRadius for the search sphere
+     (default 1.0; set >1 for loops like TURB_DIFF_DYNAMIC that search wider). */
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
                         gpu_neighbor_list_t *gnl,
-                        gpu_spatial_index_t *cached_idx);
+                        gpu_spatial_index_t *cached_idx,
+                        double search_radius_factor = 1.0);
 
 /* Free CSR arrays + active indices. Does NOT free tiles/BVH/pool if they
    belong to the cached spatial index (use gpu_spatial_index_free for those). */

@@ -7,6 +7,12 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/neighbor_list.h"
+extern void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                                     int, int *, int, int *, int *, int,
+                                     void *, void *, void *, int);
+#endif
 
 
 
@@ -196,20 +202,23 @@ void dynamic_diff_calc(void) {
     long long n_exported = 0;
 
     /* allocate buffers to arrange communication */
-    long long NTaskTimesNumPart;
     DynamicDiffDataPasser = (struct temporary_data_dyndiff *) mymalloc("DynamicDiffDataPasser", N_gas * sizeof(struct temporary_data_dyndiff));
+#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    long long NTaskTimesNumPart;
     NTaskTimesNumPart = maxThreads * NumPart;
     All.BunchSize = (long) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct DynamicDiffdata_in) +
                                                              sizeof(struct DynamicDiffdata_out) +
                                                              sizemax(sizeof(struct DynamicDiffdata_in),
                                                                      sizeof(struct DynamicDiffdata_out))));
+#endif
     CPU_Step[CPU_DYNDIFFMISC] += measure_time();
     t0 = my_second();
-    
+#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     Ngblist.resize(NTaskTimesNumPart);
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
+#endif
     PRINT_STATUS(" ..begin initializing smoothed quantities.");
 
     /* Because of smoothing operation, we don't zero these out, they get set to their current value */
@@ -241,10 +250,102 @@ void dynamic_diff_calc(void) {
     PRINT_STATUS(" ..entering iteration loop for the first time. # of iterations = %d", (All.TurbDynamicDiffIterations + 2));
     
     /* prepare to do the requisite number of sweeps over the particle distribution */
-    for (dynamic_iteration = 0; dynamic_iteration < (All.TurbDynamicDiffIterations + 1); dynamic_iteration++) {      
+    for (dynamic_iteration = 0; dynamic_iteration < (All.TurbDynamicDiffIterations + 1); dynamic_iteration++) {
+        PRINT_STATUS(" ..first loop over active particles (iter = %d)", dynamic_iteration);
+
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+        /* GPU/neighbor-list path: use cached symmetric CSR list with wider search radius.
+           Follows the same pattern as gradient_evaluate_gpu multi-iteration. */
+        {
+            /* Build active index and gather per-particle input */
+            int dd_num_active = 0;
+            for(int ii : ActiveParticleList) { if(P[ii].Type == 0 && P[ii].Mass > 0) dd_num_active++; }
+            int *dd_active = (int *) mymalloc("dd_active", (dd_num_active > 0 ? dd_num_active : 1) * sizeof(int));
+            {int aa = 0; for(int ii : ActiveParticleList) { if(P[ii].Type == 0 && P[ii].Mass > 0) dd_active[aa++] = ii; }}
+
+            /* Gather input struct per active particle */
+            struct { double VelShear_bar[3][3]; double TD_DynDiffCoeff; double MagShear_bar;
+                     double Velocity_bar[3]; double Velocity_hat[3]; double Norm_hat;
+                     double Dynamic_numerator; double Dynamic_denominator; double FilterWidth_bar;
+                     double KernelRadius; int sph_gradients_flag;
+#ifdef GALSF_SUBGRID_WINDS
+                     double DelayTime;
+#endif
+            } *dd_in;
+            dd_in = (decltype(dd_in)) mymalloc("dd_in", (dd_num_active > 0 ? dd_num_active : 1) * sizeof(*dd_in));
+
+            for(int aa = 0; aa < dd_num_active; aa++) {
+                int ii = dd_active[aa];
+                for(int kk=0; kk<3; kk++) for(int vv=0; vv<3; vv++) dd_in[aa].VelShear_bar[kk][vv] = CellP[ii].VelShear_bar[kk][vv];
+                dd_in[aa].TD_DynDiffCoeff = CellP[ii].TD_DynDiffCoeff;
+                dd_in[aa].MagShear_bar = CellP[ii].MagShear_bar;
+                for(int kk=0; kk<3; kk++) { dd_in[aa].Velocity_bar[kk] = CellP[ii].Velocity_bar[kk]; dd_in[aa].Velocity_hat[kk] = CellP[ii].Velocity_hat[kk]; }
+                dd_in[aa].Norm_hat = CellP[ii].Norm_hat;
+                dd_in[aa].Dynamic_numerator = CellP[ii].Dynamic_numerator;
+                dd_in[aa].Dynamic_denominator = CellP[ii].Dynamic_denominator;
+                dd_in[aa].FilterWidth_bar = CellP[ii].FilterWidth_bar;
+                dd_in[aa].KernelRadius = P[ii].KernelRadius;
+                dd_in[aa].sph_gradients_flag = SHOULD_I_USE_SPH_GRADIENTS(CellP[ii].ConditionNumber);
+#ifdef GALSF_SUBGRID_WINDS
+                dd_in[aa].DelayTime = CellP[ii].DelayTime;
+#endif
+            }
+
+            /* Allocate output structs */
+            struct { double GradVelocity_hat[3][3]; double Maxima_Velocity_hat[3]; double Minima_Velocity_hat[3];
+                     double FilterWidth_hat; double Dynamic_numerator_hat; double Dynamic_denominator_hat;
+                     double ProductVelocity_hat[3][3]; } *dd_out0;
+            dd_out0 = (decltype(dd_out0)) mymalloc("dd_out0", (dd_num_active > 0 ? dd_num_active : 1) * sizeof(*dd_out0));
+
+            struct { double dynamic_fac[3][3];
+#ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
+                     double dynamic_fac_const[3][3];
+#endif
+            } *dd_out_iter;
+            dd_out_iter = (decltype(dd_out_iter)) mymalloc("dd_out_iter", (dd_num_active > 0 ? dd_num_active : 1) * sizeof(*dd_out_iter));
+
+            dynamicdiff_evaluate_gpu(P, CellP, NumPart, dd_active, dd_num_active,
+                                     gizmo_sym_neighbor_list.offsets, gizmo_sym_neighbor_list.neighbors,
+                                     gizmo_sym_neighbor_list.total_pairs,
+                                     (void *)dd_in, (void *)dd_out0, (void *)dd_out_iter, dynamic_iteration);
+
+            /* Scatter results */
+            for(int aa = 0; aa < dd_num_active; aa++) {
+                int ii = dd_active[aa];
+                /* out_iter: always scatter (all iterations) */
+                for(int kk=0; kk<3; kk++) for(int vv=0; vv<3; vv++) {
+                    DynamicDiffDataPasser[ii].dynamic_fac[kk][vv] += dd_out_iter[aa].dynamic_fac[kk][vv];
+#ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
+                    DynamicDiffDataPasser[ii].dynamic_fac_const[kk][vv] += dd_out_iter[aa].dynamic_fac_const[kk][vv];
+#endif
+                }
+                /* out0: only on iteration 0 */
+                if(dynamic_iteration == 0) {
+                    if(dd_out0[aa].FilterWidth_hat > DynamicDiffDataPasser[ii].FilterWidth_hat)
+                        DynamicDiffDataPasser[ii].FilterWidth_hat = dd_out0[aa].FilterWidth_hat;
+                    DynamicDiffDataPasser[ii].Dynamic_numerator_hat += dd_out0[aa].Dynamic_numerator_hat;
+                    DynamicDiffDataPasser[ii].Dynamic_denominator_hat += dd_out0[aa].Dynamic_denominator_hat;
+                    for(int kk=0; kk<3; kk++) {
+                        if(dd_out0[aa].Maxima_Velocity_hat[kk] > DynamicDiffDataPasser[ii].Maxima.Velocity_hat[kk])
+                            DynamicDiffDataPasser[ii].Maxima.Velocity_hat[kk] = dd_out0[aa].Maxima_Velocity_hat[kk];
+                        if(dd_out0[aa].Minima_Velocity_hat[kk] < DynamicDiffDataPasser[ii].Minima.Velocity_hat[kk])
+                            DynamicDiffDataPasser[ii].Minima.Velocity_hat[kk] = dd_out0[aa].Minima_Velocity_hat[kk];
+                        for(int vv=0; vv<3; vv++) {
+                            DynamicDiffDataPasser[ii].ProductVelocity_hat[kk][vv] += dd_out0[aa].ProductVelocity_hat[kk][vv];
+                            DynamicDiffDataPasser[ii].GradVelocity_hat[kk][vv] += dd_out0[aa].GradVelocity_hat[kk][vv];
+                        }
+                    }
+                }
+            }
+
+            myfree(dd_out_iter);
+            myfree(dd_out0);
+            myfree(dd_in);
+            myfree(dd_active);
+        }
+#else /* tree-walk path */
         // now we actually begin the main gradient loop //
         NextParticle = 0;	/* begin with this index */
-        PRINT_STATUS(" ..first loop over active particles (iter = %d)", dynamic_iteration);
 
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
         BufferCollisionFlag = 0; /* set to zero before operations begin */
@@ -487,6 +588,7 @@ void dynamic_diff_calc(void) {
             myfree(DynamicDiffDataGet);
         }
         while(ndone < NTask);
+#endif /* !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
         PRINT_STATUS(" ..finished communication, beginning secondary calculations (iter = %d)", dynamic_iteration);
 
         /* The first two iterations were solely to calculate the hat quantities */ 
@@ -685,22 +787,27 @@ void dynamic_diff_calc(void) {
         timewait3 += timediff(tstart, tend); 
     } // closes dynamic_iteration
     
+#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     myfree(DataNodeList);
     myfree(DataIndexTable);
-    
+#endif
+
     myfree(DynamicDiffDataPasser);
  
     /* collect some timing information */
     t1 = WallclockTime = my_second();
     timeall = timediff(t0, t1);
+#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     timecomp = timecomp1 + timecomp2;
     timewait = timewait1 + timewait2 + timewait3;
     timecomm = timecommsumm1 + timecommsumm2;
-    
     CPU_Step[CPU_DYNDIFFCOMPUTE] += timecomp;
     CPU_Step[CPU_DYNDIFFWAIT] += timewait;
     CPU_Step[CPU_DYNDIFFCOMM] += timecomm;
     CPU_Step[CPU_DYNDIFFMISC] += timeall - (timecomp + timewait + timecomm);
+#else
+    CPU_Step[CPU_DYNDIFFCOMPUTE] += timeall;
+#endif
     PRINT_STATUS(" ..dynamic diffusion calculations done.");
 }
 

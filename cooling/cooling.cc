@@ -2442,6 +2442,12 @@ extern void gizmo_gpu_sync_all_rt_chem(void);
 #ifdef TURB_DRIVING
 extern void gizmo_gpu_sync_all_turb(void);
 #endif
+#ifdef TURB_DIFF_DYNAMIC
+extern void gizmo_gpu_sync_all_difffilter(void);
+#endif
+#ifdef GRAIN_FLUID
+extern void gizmo_gpu_sync_all_grain(void);
+#endif
 void gizmo_gpu_sync_all(void) {
 #if defined(GIZMO_GPU_COMPILER)
 #pragma push_macro("All")
@@ -2463,6 +2469,12 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef TURB_DRIVING
     gizmo_gpu_sync_all_turb();
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+    gizmo_gpu_sync_all_difffilter();
+#endif
+#ifdef GRAIN_FLUID
+    gizmo_gpu_sync_all_grain();
 #endif
 }
 #endif /* OPENMP_GPU_OFFLOAD */

@@ -14,6 +14,12 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/neighbor_list.h"
+#include "../hydro/hydro_structs.h"
+extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                               int, int *, int, int *, int *, int, void *);
+#endif
 
 #ifdef TRANSPORT_SUBCYCLE
 
@@ -23,7 +29,8 @@
 /* ===== CODE_BLOCK_XCHANGE SETUP FOR TRANSPORT FLUX EXCHANGE ============================= */
 /* ======================================================================================== */
 
-/* kernel struct — same as hydro_toplevel.cc */
+/* kernel struct — same as hydro_toplevel.cc; definition in hydro_structs.h when GPU path is active */
+#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 struct kernel_hydra
 {
     Vec3<double> dp;
@@ -43,6 +50,7 @@ struct kernel_hydra
 #endif
 #endif
 };
+#endif
 
 
 /* define the code_block_xchange names */
@@ -187,9 +195,47 @@ void transport_subcycle_exchange_fluxes(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
     transport_flux_initial_operations();
+
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* GPU/neighbor-list path: reuse the hydro GPU kernel with the symmetric CSR list.
+       The hydro kernel computes face geometry + RT fluxes (via rt_diffusion_explicit.h);
+       we scatter only the RT output fields and discard the hydro force outputs.
+       This eliminates the tree-walk + MPI exchange per subcycle step. */
+    {
+        struct hydro_data_out *hydro_out = (struct hydro_data_out *) mymalloc("transport_hydro_out",
+            (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(struct hydro_data_out));
+
+        hydro_evaluate_gpu(P, CellP, NumPart,
+                           gizmo_sym_active_indices, gizmo_sym_num_active,
+                           gizmo_sym_neighbor_list.offsets,
+                           gizmo_sym_neighbor_list.neighbors,
+                           gizmo_sym_neighbor_list.total_pairs,
+                           (void *)hydro_out);
+
+        /* Scatter only RT flux outputs (discard hydro forces) */
+        for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
+            int ii = gizmo_sym_active_indices[aa];
+#if defined(RT_SOLVER_EXPLICIT) && defined(RT_EVOLVE_ENERGY)
+            for(int kf=0; kf<N_RT_FREQ_BINS; kf++)
+                CellP[ii].Dt_Rad_E_gamma[kf] += hydro_out[aa].Dt_Rad_E_gamma[kf];
+#endif
+#if defined(RT_SOLVER_EXPLICIT) && defined(RT_EVOLVE_FLUX)
+            for(int kf=0; kf<N_RT_FREQ_BINS; kf++)
+                CellP[ii].Dt_Rad_Flux[kf] += hydro_out[aa].Dt_Rad_Flux[kf];
+#endif
+#if defined(RT_SOLVER_EXPLICIT) && defined(RT_INFRARED)
+            CellP[ii].Dt_Rad_E_gamma_T_weighted_IR += hydro_out[aa].Dt_Rad_E_gamma_T_weighted_IR;
+#endif
+        }
+
+        myfree(hydro_out);
+    }
+#else
+    /* Tree-walk path: standard MPI/OpenMP neighbor exchange */
     #include "../system/code_block_xchange_perform_ops_malloc.h"
     #include "../system/code_block_xchange_perform_ops.h"
     #include "../system/code_block_xchange_perform_ops_demalloc.h"
+#endif
 
     /* add back the radiation pressure work terms saved during the hydro pass.
        The flux exchange zeroed Dt_Rad_E_gamma and recomputed only transport fluxes;

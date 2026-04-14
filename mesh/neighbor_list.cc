@@ -335,4 +335,10 @@ void free_neighbor_list(neighbor_list_t *list)
 neighbor_list_t gizmo_sym_neighbor_list = {NULL, NULL, 0, 0};
 int *gizmo_sym_active_indices = NULL;
 int gizmo_sym_num_active = 0;
+
+void gizmo_sym_neighbor_list_free(void) {
+    if(gizmo_sym_neighbor_list.offsets) { free_neighbor_list(&gizmo_sym_neighbor_list); }
+    if(gizmo_sym_active_indices) { myfree(gizmo_sym_active_indices); gizmo_sym_active_indices = NULL; }
+    gizmo_sym_num_active = 0;
+}
 #endif

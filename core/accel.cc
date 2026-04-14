@@ -12,7 +12,8 @@
 #include "../mesh/sfc_tiles.h"
 #if defined(OPENMP_GPU_OFFLOAD)
 extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
-    int *active_indices, int num_active, neighbor_list_t *out);
+    int *active_indices, int num_active, neighbor_list_t *out,
+    double search_radius_factor = 1.0);
 #endif
 #endif
 
@@ -67,6 +68,11 @@ void compute_hydro_densities_and_forces(void)
     {
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         double t_bench_ghost = 0, t_bench_symlist = 0, t_bench_drift = 0, t_bench_ghost_redo = 0;
+        /* Ghost exchange safety factor: inflate when TURB_DIFF_DYNAMIC needs wider search */
+        double ghost_safety = 1.0;
+#ifdef TURB_DIFF_DYNAMIC
+        ghost_safety = DMAX(ghost_safety, All.TurbDynamicDiffFac);
+#endif
         {double t0 = my_second();
         /* Drift ALL particles to current time before any neighbor operations.
            This eliminates lazy drifting during the tree walk — required for
@@ -78,7 +84,7 @@ void compute_hydro_densities_and_forces(void)
            Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
            are guesses that may grow significantly during density iteration. */
         double t_ghost0 = my_second();
-        ghost_exchange(1.0);
+        ghost_exchange(ghost_safety);
         t_bench_ghost = timediff(t_ghost0, my_second());}
 #endif
 
@@ -103,7 +109,7 @@ void compute_hydro_densities_and_forces(void)
         if(ghost_exchange_needs_redo()) {
             double t_redo0 = my_second();
             ghost_exchange_cleanup();
-            ghost_exchange(1.0);
+            ghost_exchange(ghost_safety);
             t_bench_ghost_redo = timediff(t_redo0, my_second());
         }
 #endif
@@ -118,10 +124,17 @@ void compute_hydro_densities_and_forces(void)
             gizmo_sym_active_indices = (int *) mymalloc("sym_active", (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
             {int aa = 0; for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
 
+            /* When TURB_DIFF_DYNAMIC is enabled, the gradient pass needs neighbors out to
+               TurbDynamicDiffFac * h_i for hat-kernel computations. Build the symlist with
+               the wider search radius so those pairs are included. */
+            double sym_search_fac = 1.0;
+#ifdef TURB_DIFF_DYNAMIC
+            sym_search_fac = DMAX(sym_search_fac, All.TurbDynamicDiffFac);
+#endif
             double t_sym_start = my_second();
 #if defined(OPENMP_GPU_OFFLOAD)
             /* GPU path: build CSR via GPU parallel_for, copy back to mymalloc neighbor_list_t */
-            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list);
+            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, sym_search_fac);
 #else
             build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
 #endif
@@ -191,11 +204,12 @@ void compute_hydro_densities_and_forces(void)
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Free symmetric neighbor list — no longer needed after hydro_force */
-        free_neighbor_list(&gizmo_sym_neighbor_list);
-        myfree(gizmo_sym_active_indices);
-        gizmo_sym_active_indices = NULL;
-        gizmo_sym_num_active = 0;
+#ifndef TRANSPORT_SUBCYCLE
+        /* Free symmetric neighbor list — no longer needed after hydro_force.
+           When TRANSPORT_SUBCYCLE is enabled, keep the list for RT subcycle steps
+           (freed via gizmo_sym_neighbor_list_free after transport subcycling in run.cc). */
+        gizmo_sym_neighbor_list_free();
+#endif
 #endif
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */

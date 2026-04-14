@@ -85,7 +85,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
                         gpu_neighbor_list_t *gnl,
-                        gpu_spatial_index_t *cached_idx)
+                        gpu_spatial_index_t *cached_idx,
+                        double search_radius_factor)
 {
     gnl->num_active = num_active;
 
@@ -130,12 +131,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double bs0 = gnl->box_sizes[0], bs1 = gnl->box_sizes[1], bs2 = gnl->box_sizes[2];
         double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
 
+        double sr_fac = search_radius_factor;
         Kokkos::parallel_for("ngb_count", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
             double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
-            int cnt = search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius,
+            int cnt = search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius * sr_fac,
                                                tiles, ntiles, pool, smode,
                                                bvh, bvh_root, NULL, pf, bs, bh);
             offsets[aa] = cnt;
@@ -171,12 +173,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double bs0 = gnl->box_sizes[0], bs1 = gnl->box_sizes[1], bs2 = gnl->box_sizes[2];
         double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
 
+        double sr_fac = search_radius_factor;
         Kokkos::parallel_for("ngb_fill", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
             double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
-            search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius,
+            search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius * sr_fac,
                                      tiles, ntiles, pool, smode,
                                      bvh, bvh_root, &neighbors[offsets[aa]],
                                      pf, bs, bh);
@@ -202,10 +205,12 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
 
 /* High-level wrapper: build a symmetric neighbor list on GPU and return it
    in the mymalloc-based neighbor_list_t format expected by gradient/hydro.
-   Called from accel.cc (which is NOT compiled by nvcc). */
+   Called from accel.cc (which is NOT compiled by nvcc).
+   search_radius_factor: multiplier on KernelRadius (default 1.0; >1 for TURB_DIFF_DYNAMIC). */
 void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_total,
                                        int *active_indices, int num_active,
-                                       neighbor_list_t *out)
+                                       neighbor_list_t *out,
+                                       double search_radius_factor)
 {
     /* Copy P to SharedSpace for GPU kernel access */
     struct particle_data *P_shared = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
@@ -214,7 +219,8 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
     /* Build GPU CSR */
     gpu_neighbor_list_t gpu_nl;
     gpu_ngb_list_build(P_shared, num_total, active_indices, num_active,
-                       NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, NULL);
+                       NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, NULL,
+                       search_radius_factor);
 
     /* Copy CSR into mymalloc neighbor_list_t */
     out->num_active = num_active;
@@ -247,9 +253,9 @@ void gizmo_gpu_sync_all_ngb(void) {
 void gpu_spatial_index_build(struct particle_data *, int, int, gpu_spatial_index_t *) {}
 void gpu_spatial_index_free(gpu_spatial_index_t *) {}
 void gpu_ngb_list_build(struct particle_data *, int, int *, int, int, int,
-                        gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
+                        gpu_neighbor_list_t *, gpu_spatial_index_t *, double) {}
 void gpu_ngb_list_free(gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
-void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *) {}
+void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *, double) {}
 void gizmo_gpu_sync_all_ngb(void) {}
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

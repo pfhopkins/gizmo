@@ -8,7 +8,8 @@
 
 #SYSTYPE="github-ubuntu"
 #SYSTYPE="Frontera"
-SYSTYPE="MacBookCellar"
+#SYSTYPE="MacBookCellar"
+SYSTYPE="MacBookCellar_Kokkos"
 #SYSTYPE="Vista"
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"

@@ -192,17 +192,60 @@ int DiffFilter_evaluate(int target, int mode, int *exportflag, int *exportnodeco
 /**
  * primary routine being called for this calculation
  */
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+extern void difffilter_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                                    int, int *, int, void *);
+#endif
+
 void dynamic_diff_vel_calc(void) {
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
     PRINT_STATUS("Start velocity smoothing computation...");
     dynamic_diff_vel_calc_initial_operations_preloop(); /* any initial operations */
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* GPU/neighbor-list path: build wider CSR list and run DiffFilter kernel */
+    {
+        /* Build active gas particle index */
+        int num_active = 0;
+        for(int ii : ActiveParticleList) { if(P[ii].Type == 0 && P[ii].TimeBin >= 0 && P[ii].Mass > 0) num_active++; }
+        int *active_indices = (int *) mymalloc("difffilter_active", (num_active > 0 ? num_active : 1) * sizeof(int));
+        int aa = 0;
+        for(int ii : ActiveParticleList) { if(P[ii].Type == 0 && P[ii].TimeBin >= 0 && P[ii].Mass > 0) active_indices[aa++] = ii; }
+
+        /* Output struct must match DiffFilter_out in difffilter_gpu.cc */
+        struct { double Norm_hat; double Velocity_bar[3]; double FilterWidth_bar; double MaxDistance_for_grad; } *df_out;
+        df_out = (decltype(df_out)) mymalloc("difffilter_out", (num_active > 0 ? num_active : 1) * sizeof(*df_out));
+
+        difffilter_evaluate_gpu(P, CellP, NumPart, active_indices, num_active, (void *)df_out);
+
+        /* Scatter results back to CellP (mode=0: direct assignment += for accumulation fields) */
+        for(aa = 0; aa < num_active; aa++) {
+            int ii = active_indices[aa];
+            for(int k = 0; k < 3; k++) CellP[ii].Velocity_bar[k] += df_out[aa].Velocity_bar[k];
+            if(df_out[aa].FilterWidth_bar > CellP[ii].FilterWidth_bar) CellP[ii].FilterWidth_bar = df_out[aa].FilterWidth_bar;
+            if(df_out[aa].MaxDistance_for_grad > CellP[ii].MaxDistance_for_grad) CellP[ii].MaxDistance_for_grad = df_out[aa].MaxDistance_for_grad;
+            CellP[ii].Norm_hat += df_out[aa].Norm_hat;
+        }
+
+        myfree(df_out);
+        myfree(active_indices);
+    }
+#else
+    /* Tree-walk path: standard MPI/OpenMP neighbor exchange */
+    #include "../system/code_block_xchange_perform_ops_malloc.h"
+    #include "../system/code_block_xchange_perform_ops.h"
+    #include "../system/code_block_xchange_perform_ops_demalloc.h"
+#endif
+
     PRINT_STATUS(" ..velocity smoothing done.");
-    double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
+    double t1; t1 = WallclockTime = my_second();
+    double timeall_local = timediff(t00_truestart, t1);
+#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     CPU_Step[CPU_IMPROVDIFFCOMPUTE] += timecomp; CPU_Step[CPU_IMPROVDIFFWAIT] += timewait; CPU_Step[CPU_IMPROVDIFFCOMM] += timecomm;
-    CPU_Step[CPU_IMPROVDIFFMISC] += timeall - (timecomp + timewait + timecomm);
+    CPU_Step[CPU_IMPROVDIFFMISC] += timeall_local - (timecomp + timewait + timecomm);
+#else
+    CPU_Step[CPU_IMPROVDIFFCOMPUTE] += timeall_local;
+#endif
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
