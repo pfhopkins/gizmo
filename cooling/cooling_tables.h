@@ -50,8 +50,10 @@ struct cooling_tables_t {
 };
 
 /* Global cooling tables instance. Defined in cooling.cc.
-   With GPU offload: __managed__ static (accessible from device).
-   Without: plain static. */
-extern struct cooling_tables_t CoolTables;
+   Other TUs that need it should declare:
+     extern struct cooling_tables_t CoolTables;
+   before use. Not declared here to avoid conflict with the
+   __managed__ definition in cooling.cc (nvcc doesn't allow
+   extern + __managed__ definition in the same TU). */
 
 #endif /* COOLING_TABLES_H */
