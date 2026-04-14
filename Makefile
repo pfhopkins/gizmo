@@ -441,14 +441,14 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				hydro/mg_gradient_correction.o \
 				turb/dynamic_diffusion.o \
 				turb/dynamic_diffusion_velocities.o \
-				turb/turb_driving.o \
 				turb/turb_powerspectra.o
+## turb/turb_driving.o is in GPU_OBJS (compiled by nvcc_wrapper for Kokkos offload)
 
 ## GPU_OBJS: files compiled by nvcc_wrapper (Kokkos CUDA backend) with GPU_CFLAGS.
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o
+GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o radiation/rt_chem.o turb/turb_driving.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -476,8 +476,8 @@ SINK_OBJS = sinks/sink.o \
 RHD_OBJS =  radiation/rt_utilities.o \
 			radiation/rt_CGmethod.o \
 			radiation/rt_source_injection.o \
-			radiation/rt_chem.o \
-			radiation/rt_dust_opacity.o 
+			radiation/rt_dust_opacity.o
+## radiation/rt_chem.o is in GPU_OBJS (compiled by nvcc_wrapper for Kokkos offload)
 
 FOF_OBJS =	structure/fof.o \
 			structure/subfind/subfind.o \
@@ -627,6 +627,10 @@ eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
 nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 hydro/density_gpu.o: hydro/density_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+radiation/rt_chem.o: radiation/rt_chem.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+turb/turb_driving.o: turb/turb_driving.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data_all_struct.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

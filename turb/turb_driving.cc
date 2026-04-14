@@ -1,3 +1,7 @@
+/* Standard and Kokkos headers must come BEFORE global_data_all_struct.h.
+ * macros.h (included by global_data_all_struct.h) defines #define terminate(x) {...}
+ * which conflicts with std::terminate declared in <exception>.  Including Kokkos/stdlib
+ * first ensures <exception> is processed before the macro is defined. */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,7 +11,20 @@
 #include <sys/types.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
+#ifdef OPENMP_GPU_OFFLOAD
+#include <Kokkos_Core.hpp>
+#endif
 
+/* GPU All mirror: include global_data_all_struct.h BEFORE allvars.h so that
+ * GIZMO_GPU_COMPILER is defined and inline __device__ __host__ methods in
+ * cell_data.h/particle_data.h see All_dev via the #define All All_dev macro. */
+#ifdef OPENMP_GPU_OFFLOAD
+#include "../declarations/global_data_all_struct.h"
+#endif
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
+static __managed__ struct global_data_all_processes All_dev;
+#define All All_dev  /* redirect All -> managed copy for ALL GPU-compiled code (host+device) */
+#endif
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -323,45 +340,135 @@ void set_turb_ampl(void)
 }
 
 
+/* Per-particle turbulent acceleration kernel — device-callable.
+ * Evaluates the Fourier-mode driving field at particle position.
+ * Mode arrays (mode/aka/akb/ampl) are passed as arguments since the
+ * host-side global pointers (StMode etc.) are not device-accessible. */
+KOKKOS_FUNCTION
+void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell,
+                                  const double *mode, const double *aka, const double *akb,
+                                  const double *ampl, int nmodes, double fac_sol)
+{
+    if(pp[i].Type != 0) return;
+    double fx = 0, fy = 0, fz = 0;
+    for(int m = 0; m < nmodes; m++)
+    {
+        double kdotx = mode[3*m+0]*pp[i].Pos[0] + mode[3*m+1]*pp[i].Pos[1] + mode[3*m+2]*pp[i].Pos[2];
+        double a = ampl[m], realt = cos(kdotx), imagt = sin(kdotx);
+        fx += a*(aka[3*m+0]*realt - akb[3*m+0]*imagt);
+        fy += a*(aka[3*m+1]*realt - akb[3*m+1]*imagt);
+        fz += a*(aka[3*m+2]*realt - akb[3*m+2]*imagt);
+    }
+    fx *= fac_sol; fy *= fac_sol; fz *= fac_sol;
+
+    if(pp[i].Mass > 0.)
+    {
+        double acc[3];
+        acc[0] = fx; acc[1] = acc[2] = 0;
+#if (NUMDIMS > 1)
+        acc[1] = fy;
+#endif
+#if (NUMDIMS > 2)
+        acc[2] = fz;
+#endif
+        cell[i].TurbAccel = {acc[0], acc[1], acc[2]};
+    } else {
+        cell[i].TurbAccel = {};
+    }
+}
+
+
 /* routine to actually calculate the turbulent acceleration 'driving field' force on every resolution element */
 void add_turb_accel()
 {
     set_turb_ampl();
-    int i, m; double acc[3], fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
-    for (int i : ActiveParticleList)
-    {
-        if(P[i].Type == 0)
+    double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
+
+    /* Build active gas particle index list */
+    int N_active = 0;
+    int *turb_indices = (int *) malloc(ActiveParticleList.size() * sizeof(int));
+    for (int i : ActiveParticleList) {if(P[i].Type == 0) {turb_indices[N_active++] = i;}}
+    if(N_active == 0) {free(turb_indices); PRINT_STATUS("Finished turbulence driving (acceleration) computation"); return;}
+
+#if defined(OPENMP_GPU_OFFLOAD)
+    if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+        /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
+        double *gpu_mode = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
+        double *gpu_aka  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
+        double *gpu_akb  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
+        double *gpu_ampl = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * sizeof(double));
+        memcpy(gpu_mode, StMode, StNModes * 3 * sizeof(double));
+        memcpy(gpu_aka,  StAka,  StNModes * 3 * sizeof(double));
+        memcpy(gpu_akb,  StAkb,  StNModes * 3 * sizeof(double));
+        memcpy(gpu_ampl, StAmpl, StNModes * sizeof(double));
+
+        /* Gather into compact SharedSpace arrays */
+        struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N_active * sizeof(struct particle_data));
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N_active * sizeof(struct gas_cell_data));
+        for(int j = 0; j < N_active; j++)
         {
-            double fx = 0, fy = 0, fz = 0;
-#ifdef _OPENMP
-#pragma omp parallel for reduction(+:fx) reduction(+:fy) reduction(+:fz) // parallelize the sum reduction over the different wavenumbers
-#endif
-            for(m=0; m<StNModes; m++) // calc force
-            {
-                double kxx = StMode[3*m+0]*P[i].Pos[0], kyy = StMode[3*m+1]*P[i].Pos[1], kzz = StMode[3*m+2]*P[i].Pos[2];
-                double kdotx = kxx+kyy+kzz, ampl = StAmpl[m], realt = cos(kdotx), imagt = sin(kdotx);
-                
-                fx += ampl*(StAka[3*m+0]*realt - StAkb[3*m+0]*imagt);
-                fy += ampl*(StAka[3*m+1]*realt - StAkb[3*m+1]*imagt);
-                fz += ampl*(StAka[3*m+2]*realt - StAkb[3*m+2]*imagt);
-            }
-            fx *= fac_sol; fy *= fac_sol; fz *= fac_sol;
-            
-            if(P[i].Mass > 0.)
-            {
-                acc[0] = fx; acc[1] = acc[2] = 0;
-#if (NUMDIMS > 1)
-                acc[1] = fy;
-#endif
-#if (NUMDIMS > 2)
-                acc[2] = fz;
-#endif
-                CellP[i].TurbAccel = {acc[0], acc[1], acc[2]};
-            } else {
-                CellP[i].TurbAccel = {};
-            }
+            compact_P[j]    = P[turb_indices[j]];
+            compact_Cell[j] = CellP[turb_indices[j]];
         }
-    }
+
+        /* Dispatch to GPU */
+        {
+            struct particle_data *kp = compact_P;
+            struct gas_cell_data *kc = compact_Cell;
+            const double *km = gpu_mode, *ka = gpu_aka, *kb = gpu_akb, *kamp = gpu_ampl;
+            int nm = StNModes; double fs = fac_sol;
+            Kokkos::parallel_for("turb_accel_loop", N_active, KOKKOS_LAMBDA(int j) {
+                add_turb_accel_for_particle(j, kp, kc, km, ka, kb, kamp, nm, fs);
+            });
+            Kokkos::fence();
+#if defined(__CUDACC__)
+            {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] turb_accel error N=%d: %s\n", N_active, cudaGetErrorString(_ce)); fflush(stdout);}}
+#elif defined(__HIPCC__)
+            {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] turb_accel error N=%d: %s\n", N_active, hipGetErrorString(_ce)); fflush(stdout);}}
+#endif
+        }
+
+        /* Scatter back */
+        for(int j = 0; j < N_active; j++)
+        {
+            int ii = turb_indices[j];
+            CellP[ii] = compact_Cell[j];
+        }
+
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_ampl);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_akb);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_aka);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_mode);
+
+    } else
+#endif
+    { /* CPU path */
+        struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+        for(int j = 0; j < N_active; j++)
+        {
+            compact_P[j]    = P[turb_indices[j]];
+            compact_Cell[j] = CellP[turb_indices[j]];
+        }
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for(int j = 0; j < N_active; j++)
+        {
+            add_turb_accel_for_particle(j, compact_P, compact_Cell, StMode, StAka, StAkb, StAmpl, StNModes, fac_sol);
+        }
+        for(int j = 0; j < N_active; j++)
+        {
+            int ii = turb_indices[j];
+            CellP[ii] = compact_Cell[j];
+        }
+        free(compact_Cell);
+        free(compact_P);
+    } /* end CPU/GPU path selection */
+
+    free(turb_indices);
     PRINT_STATUS("Finished turbulence driving (acceleration) computation");
 }
 
@@ -439,6 +546,24 @@ void log_turb_temp(void)
     }
 #endif
 }
+
+
+/* ---- GPU All_dev sync function ---- */
+#if defined(OPENMP_GPU_OFFLOAD)
+void gizmo_gpu_sync_all_turb(void) {
+#if defined(GIZMO_GPU_COMPILER)
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+    All_dev = All;
+#pragma pop_macro("All")
+#else
+    /* no-op: no __managed__ copy with OpenMP backend */
+#endif
+}
+#else
+void gizmo_gpu_sync_all_turb(void) {}
+#endif
 
 
 #endif

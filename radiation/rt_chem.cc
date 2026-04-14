@@ -1,24 +1,176 @@
+/* Standard and Kokkos headers must come BEFORE global_data_all_struct.h.
+ * macros.h (included by global_data_all_struct.h) defines #define terminate(x) {...}
+ * which conflicts with std::terminate declared in <exception>.  Including Kokkos/stdlib
+ * first ensures <exception> is processed before the macro is defined. */
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
+#ifdef OPENMP_GPU_OFFLOAD
+#include <Kokkos_Core.hpp>
+#endif
 
+/* GPU All mirror: include global_data_all_struct.h BEFORE allvars.h so that
+ * GIZMO_GPU_COMPILER is defined and inline __device__ __host__ methods in
+ * cell_data.h/particle_data.h see All_dev via the #define All All_dev macro. */
+#ifdef OPENMP_GPU_OFFLOAD
+#include "../declarations/global_data_all_struct.h"
+#endif
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
+static __managed__ struct global_data_all_processes All_dev;
+#define All All_dev  /* redirect All -> managed copy for ALL GPU-compiled code (host+device) */
+#endif
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+/* Timestep functions — single source in timestep_functions.h */
+#include "../core/timestep_functions.h"
+
+/* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
+ * return 0 on device (making every value appear non-finite).  Override with
+ * arithmetic equivalents that compile to PTX intrinsics on device. */
+#ifdef GIZMO_GPU_COMPILER
+#undef isfinite
+#undef isnan
+#define isfinite(x) (((double)(x)==(double)(x)) && ((double)(x)-(double)(x)==0.0))
+#define isnan(x) ((double)(x) != (double)(x))
+#endif
 
 
 #ifdef RT_CHEM_PHOTOION
 
 
-double rt_photoion_chem_return_temperature(int i, double internal_energy)
+/* Return gas temperature from internal energy for photo-ionization chemistry.
+ * Takes compact arrays for GPU compatibility (same function for CPU and GPU). */
+KOKKOS_FUNCTION
+double rt_photoion_chem_return_temperature(int i, double internal_energy, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef RT_ILIEV_TEST1
     return 1e4; // use a fixed temp if this special flag for numerical testing is enabled
 #endif
-    double mol_wt = 4 / (1 + 3 * HYDROGEN_MASSFRAC + 4 * HYDROGEN_MASSFRAC * CellP[i].Ne);
-    return mol_wt * (CellP[i].gamma_eos_value()-1) * internal_energy * U_TO_TEMP_UNITS;
+    double mol_wt = 4 / (1 + 3 * HYDROGEN_MASSFRAC + 4 * HYDROGEN_MASSFRAC * cell[i].Ne);
+    return mol_wt * (cell[i].gamma_eos_value()-1) * internal_energy * U_TO_TEMP_UNITS;
+}
+
+
+/* Per-particle RT chemistry kernel — device-callable, handles both single-freq
+ * and multi-freq paths via compile-time #ifdef RT_PHOTOION_MULTIFREQUENCY.
+ * Operates on compact arrays pp[i] and cell[i] (not global P/CellP). */
+KOKKOS_FUNCTION
+void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(pp[i].Type != 0) return;
+    double dtime = get_particle_timestep_in_physical(i, pp);
+    if(dtime <= 0 || cell[i].Mass <= 0) return;
+
+    double fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
+    double c_light_codeunits = C_LIGHT_CODE;
+    double rho = cell[i].Density * All.cf_a3inv;
+    double nH = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
+    double temp = rt_photoion_chem_return_temperature(i, cell[i].InternalEnergyPred, pp, cell);
+
+    /* collisional ionization rate */
+    double gamma_HI = 5.85e-11 * sqrt(temp) * exp(-157809.1 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
+    /* alpha_B recombination coefficient */
+    double alpha_HII = 2.59e-13 * pow(temp / 1e4, -0.7) * fac;
+
+    double A, B, CC, nHII;
+
+#ifndef RT_PHOTOION_MULTIFREQUENCY
+    /* single-frequency: use single ionization bin */
+    double n_photons_vol = cell[i].rt_photon_number_density(RT_FREQ_BIN_H0);
+    if(n_photons_vol < 0 || isnan(n_photons_vol))
+    {
+        printf("NEGATIVE n_photons_per_volume: %g %d\n", n_photons_vol, i);
+        printf("Rad_E_gamma %g mass %g All.cf_a3inv %g\n", cell[i].Rad_E_gamma[0], pp[i].Mass, All.cf_a3inv);
+        fflush(stdout); endrun(111);
+        return;
+    }
+    A = dtime * gamma_HI * nH * cell[i].Ne;
+    B = dtime * c_light_codeunits * n_photons_vol * All.rt_ion_sigma_HI[RT_FREQ_BIN_H0];
+    CC = dtime * alpha_HII * nH * cell[i].Ne;
+#else
+    /* multi-frequency: sum photo-ionization rates over all frequency bins */
+    double k_HI = 0.0;
+#ifdef RT_CHEM_PHOTOION_HE
+    double k_HeI = 0.0, k_HeII = 0.0;
+#endif
+    for(int j = 0; j < N_RT_FREQ_BINS; j++)
+    {
+        double n_photons_vol = cell[i].rt_photon_number_density(j);
+        if(All.rt_ion_nu_min[j] >= 13.6) {k_HI += c_light_codeunits * All.rt_ion_sigma_HI[j] * n_photons_vol;}
+#ifdef RT_CHEM_PHOTOION_HE
+        if(All.rt_ion_nu_min[j] >= 24.6) {k_HeI += c_light_codeunits * All.rt_ion_sigma_HeI[j] * n_photons_vol;}
+        if(All.rt_ion_nu_min[j] >= 54.4) {k_HeII += c_light_codeunits * All.rt_ion_sigma_HeII[j] * n_photons_vol;}
+#endif
+    }
+    A = dtime * gamma_HI * nH * cell[i].Ne;
+    B = dtime * k_HI;
+    CC = dtime * alpha_HII * nH * cell[i].Ne;
+#endif
+
+    /* semi-implicit scheme for hydrogen ionization */
+    nHII = cell[i].HII + B + A;
+    nHII /= 1.0 + B + CC + A;
+    if(nHII < 0 || nHII > 1 || isnan(nHII))
+    {
+        printf("ERROR nHII %g\n", nHII);
+        fflush(stdout); endrun(333);
+        return;
+    }
+    cell[i].Ne = nHII;
+    cell[i].HII = nHII;
+    cell[i].HI = 1.0 - nHII;
+
+#ifdef RT_CHEM_PHOTOION_HE
+    /* collisional ionization rate */
+    double gamma_HeI = 2.38e-11 * sqrt(temp) * exp(-285335.4 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
+    double gamma_HeII = 5.68e-12 * sqrt(temp) * exp(-631515 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
+    /* alpha_B recombination coefficient */
+    double alpha_HeII = 1.5e-10 * pow(temp, -0.6353) * fac;
+    double alpha_HeIII = 3.36e-10 / sqrt(temp) * pow(temp / 1e3, -0.2) / (1.0 + pow(temp / 1e6, 0.7)) * fac;
+    cell[i].Ne += cell[i].HeII + 2.0 * cell[i].HeIII;
+
+    double D = dtime * gamma_HeII * nH * cell[i].Ne;
+    double E = dtime * alpha_HeIII * nH * cell[i].Ne;
+    double F = dtime * gamma_HeI * nH * cell[i].Ne;
+    double J = dtime * alpha_HeII * nH * cell[i].Ne;
+#ifndef RT_PHOTOION_MULTIFREQUENCY
+    double G = 0.0;
+    double L = 0.0;
+#else
+    double G = dtime * k_HeI;
+    double L = dtime * k_HeII;
+#endif
+    double y_fac = (1.0-HYDROGEN_MASSFRAC)/4.0/HYDROGEN_MASSFRAC;
+
+    double nHeII = cell[i].HeII / y_fac;
+    double nHeIII = cell[i].HeIII / y_fac;
+    nHeII = nHeII + G + F - ((G + F - E) / (1.0 + E)) * nHeIII;
+    nHeII /= 1.0 + G + F + D + J + ((G + F - E) / (1.0 + E)) * (D + L);
+    if(nHeII < 0 || nHeII > 1 || isnan(nHeII))
+    {
+        printf("ERROR nHeII %g\n", nHeII); fflush(stdout);
+        endrun(333);
+        return;
+    }
+    nHeIII = nHeIII + (D + L) * nHeII;
+    nHeIII /= 1.0 + E;
+    if(nHeIII < 0 || nHeIII > 1 || isnan(nHeIII))
+    {
+        printf("ERROR nHeIII %g\n", nHeIII); fflush(stdout);
+        endrun(333);
+        return;
+    }
+    nHeII *= y_fac;
+    nHeIII *= y_fac;
+    cell[i].Ne = cell[i].HII + nHeII + 2.0 * nHeIII;
+    cell[i].HeII = nHeII;
+    cell[i].HeIII = nHeIII;
+    cell[i].HeI = y_fac - cell[i].HeII - cell[i].HeIII;
+    if(cell[i].HeI < 0) {cell[i].HeI = 0.0;}
+    if(cell[i].HeI > y_fac) {cell[i].HeI = y_fac;}
+#endif
 }
 
 
@@ -32,7 +184,7 @@ void rt_get_sigma(void)
         All.rt_ion_G_HI[k]=All.rt_ion_G_HeI[k]=All.rt_ion_G_HeII[k]=All.rt_ion_sigma_HI[k]=All.rt_ion_sigma_HeI[k]=All.rt_ion_sigma_HeII[k]=All.rt_ion_precalc_stellar_luminosity_fraction[k]=0;
     }
     double fac = 1.0 / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
-    
+
 #ifndef RT_PHOTOION_MULTIFREQUENCY
     /* just the hydrogen ionization bin */
     All.rt_ion_sigma_HI[RT_FREQ_BIN_H0] = 6.3e-18 * fac; // cross-section (blackbody-weighted) for photons
@@ -40,28 +192,28 @@ void rt_get_sigma(void)
     All.rt_nu_eff_eV[RT_FREQ_BIN_H0] = 27.2; // typical blackbody-weighted frequency [in eV] of photons of interest: to convert energies to numbers
     All.rt_ion_G_HI[RT_FREQ_BIN_H0] = (All.rt_nu_eff_eV[RT_FREQ_BIN_H0]-13.6)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS; // absorption cross-section weighted photon energy in code units
 #else
-    
+
     /* now we use the multi-bin spectral information */
 #define N_BINS_FOR_IONIZATION 4
     double nu_vec[N_BINS_FOR_IONIZATION] = {13.6, 24.6, 54.4, 70.0};
     int i_vec[N_BINS_FOR_IONIZATION] = {RT_FREQ_BIN_H0, RT_FREQ_BIN_He0, RT_FREQ_BIN_He1, RT_FREQ_BIN_He2};
-    
+
     int i, j, integral=10000;
     double e, d_nu, e_start, e_end, sum_HI_sigma=0, sum_HI_G=0, hc=C_LIGHT_CGS*6.6262e-27, I_nu, sig, f, fac_two, T_eff, sum_egy_allbands=0;
 #if defined(GALSF)
     T_eff = 4.0e4;
-#else 
+#else
     T_eff = All.star_Teff;
 #endif
     fac_two = ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS;
 #ifdef RT_CHEM_PHOTOION_HE
     double sum_HeI_sigma=0, sum_HeII_sigma=0, sum_HeI_G=0, sum_HeII_G=0;
-#endif    
+#endif
     for(k = 0; k < N_BINS_FOR_IONIZATION; k++)
     {
         i = i_vec[k];
         e_start = All.rt_ion_nu_min[i] = nu_vec[k];
-        if(k==N_BINS_FOR_IONIZATION-1) {e_end = 500.;} else {e_end = nu_vec[k+1];} 
+        if(k==N_BINS_FOR_IONIZATION-1) {e_end = 500.;} else {e_end = nu_vec[k+1];}
         d_nu = (e_end - e_start) / (float)(integral - 1);
         All.rt_ion_sigma_HI[i] = All.rt_ion_G_HI[i] = All.rt_nu_eff_eV[i] = 0.0;
         sum_HI_sigma = sum_HI_G = 0.0;
@@ -130,220 +282,91 @@ void rt_get_sigma(void)
     }
 
     for(i = 0; i < N_RT_FREQ_BINS; i++) {All.rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
-    
+
     if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",All.rt_ion_sigma_HI[i]/fac, All.rt_ion_G_HI[i]/fac_two,All.rt_ion_sigma_HeI[i]/fac, All.rt_ion_G_HeI[i]/fac_two,All.rt_ion_sigma_HeII[i]/fac, All.rt_ion_G_HeII[i]/fac_two);}}
 #endif
 }
 
 
-
-
-#ifndef RT_PHOTOION_MULTIFREQUENCY
+/* Unified rt_update_chemistry: single-freq and multi-freq paths are both handled
+ * by rt_update_chemistry_for_particle(). GPU path uses gather-dispatch-scatter;
+ * CPU path uses compact arrays with OpenMP. */
 void rt_update_chemistry(void)
 {
-    int i;
-    double nH, temp, rho, nHII, dtime, c_light_codeunits, A, B, CC, n_photons_vol, alpha_HII, gamma_HI, fac;
-#ifdef RT_CHEM_PHOTOION_HE
-    double alpha_HeII, alpha_HeIII, gamma_HeI, gamma_HeII, nHeII, nHeIII, D, E, F, G, J, L, y_fac;
-#endif
-    
-    fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
-    c_light_codeunits = C_LIGHT_CODE;
-    
-    for (int i : ActiveParticleList)
-        if(P[i].Type == 0)
+    /* Build index of active gas particles */
+    int N_active = 0;
+    for(int i : ActiveParticleList) {if(P[i].Type == 0) N_active++;}
+    int *chem_indices = (int *) malloc(N_active * sizeof(int));
+    {int j = 0; for(int i : ActiveParticleList) {if(P[i].Type == 0) chem_indices[j++] = i;}}
+
+#if defined(OPENMP_GPU_OFFLOAD)
+    if(N_active > 0)
+    {
+        /* Gather into compact SharedSpace arrays */
+        int batch_n = N_active;
+        struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_n * sizeof(struct particle_data));
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_n * sizeof(struct gas_cell_data));
+        for(int j = 0; j < batch_n; j++)
         {
-            dtime = get_particle_timestep_in_physical(i);
-            rho = CellP[i].Density * All.cf_a3inv;
-            nH = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
-            temp = rt_photoion_chem_return_temperature(i,CellP[i].InternalEnergyPred);
-            /* collisional ionization rate */
-            gamma_HI = 5.85e-11 * sqrt(temp) * exp(-157809.1 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
-            /* alpha_B recombination coefficient */
-            alpha_HII = 2.59e-13 * pow(temp / 1e4, -0.7) * fac;
-            n_photons_vol = CellP[i].rt_photon_number_density(RT_FREQ_BIN_H0);
-            /* number of photons should be positive */
-            if(n_photons_vol < 0 || isnan(n_photons_vol))
-            {
-                printf("NEGATIVE n_photons_per_volume: %g %d %d \n", n_photons_vol, i, ThisTask);
-                printf("Rad_E_gamma %g mass %g All.cf_a3inv %g \n", CellP[i].Rad_E_gamma[0], P[i].Mass, All.cf_a3inv);
-                fflush(stdout); endrun(111);
-            }
-            
-            A = dtime * gamma_HI * nH * CellP[i].Ne;
-            B = dtime * c_light_codeunits * n_photons_vol * All.rt_ion_sigma_HI[RT_FREQ_BIN_H0];
-            CC = dtime * alpha_HII * nH * CellP[i].Ne;
-            
-            /* semi-implicit scheme for ionization */
-            nHII = CellP[i].HII + B + A;
-            nHII /= 1.0 + B + CC + A;
-            if(nHII < 0 || nHII > 1 || isnan(nHII))
-            {
-                printf("ERROR nHII %g \n", nHII);
-                fflush(stdout); endrun(333);
-            }
-            CellP[i].Ne = nHII;
-            CellP[i].HII = nHII;
-            CellP[i].HI = 1.0 - nHII;
-            
-#ifdef RT_CHEM_PHOTOION_HE
-            /* collisional ionization rate */
-            gamma_HeI = 2.38e-11 * sqrt(temp) * exp(-285335.4 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
-            gamma_HeII = 5.68e-12 * sqrt(temp) * exp(-631515 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
-            /* alpha_B recombination coefficient */
-            alpha_HeII = 1.5e-10 * pow(temp, -0.6353) * fac;
-            alpha_HeIII = 3.36e-10 / sqrt(temp) * pow(temp / 1e3, -0.2) / (1.0 + pow(temp / 1e6, 0.7)) * fac;
-            CellP[i].Ne += CellP[i].HeII + 2.0 * CellP[i].HeIII;
-            D = dtime * gamma_HeII * nH * CellP[i].Ne;
-            E = dtime * alpha_HeIII * nH * CellP[i].Ne;
-            F = dtime * gamma_HeI * nH * CellP[i].Ne;
-            J = dtime * alpha_HeII * nH * CellP[i].Ne;
-            G = 0.0;
-            L = 0.0;
-            y_fac = (1.0-HYDROGEN_MASSFRAC)/4.0/HYDROGEN_MASSFRAC;
-            
-            nHeII = CellP[i].HeII / y_fac;
-            nHeIII = CellP[i].HeIII / y_fac;
-            nHeII = nHeII + G + F - ((G + F - E) / (1.0 + E)) * nHeIII;
-            nHeII /= 1.0 + G + F + D + J + ((G + F - E) / (1.0 + E)) * (D + L);
-            if(nHeII < 0 || nHeII > 1 || isnan(nHeII))
-            {
-                printf("ERROR nHeII %g \n", nHeII); fflush(stdout);
-                endrun(333);
-            }
-            nHeIII = nHeIII + (D + L) * nHeII;
-            nHeIII /= 1.0 + E;
-            if(nHeIII < 0 || nHeIII > 1 || isnan(nHeIII))
-            {
-                printf("ERROR nHeIII %g \n", nHeIII); fflush(stdout);
-                endrun(333);
-            }
-            CellP[i].Ne = CellP[i].HII + nHeII + 2.0 * nHeIII;
-            nHeII *= y_fac;
-            nHeIII *= y_fac;
-            CellP[i].Ne = CellP[i].HII + nHeII + 2.0 * nHeIII;
-            CellP[i].HeII = nHeII;
-            CellP[i].HeIII = nHeIII;
-            CellP[i].HeI = y_fac - CellP[i].HeII - CellP[i].HeIII;
-            if(CellP[i].HeI < 0) {CellP[i].HeI = 0.0;}
-            if(CellP[i].HeI > y_fac) {CellP[i].HeI = y_fac;}
+            compact_P[j]    = P[chem_indices[j]];
+            compact_Cell[j] = CellP[chem_indices[j]];
+        }
+
+        /* Dispatch batch to GPU */
+        {
+            struct particle_data *kp = compact_P;
+            struct gas_cell_data *kc = compact_Cell;
+            Kokkos::parallel_for("rt_chem_loop", batch_n, KOKKOS_LAMBDA(int j) {
+                rt_update_chemistry_for_particle(j, kp, kc);
+            });
+            Kokkos::fence();
+#if defined(__CUDACC__)
+            {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] rt_chem error N=%d: %s\n", batch_n, cudaGetErrorString(_ce)); fflush(stdout);}}
+#elif defined(__HIPCC__)
+            {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] rt_chem error N=%d: %s\n", batch_n, hipGetErrorString(_ce)); fflush(stdout);}}
 #endif
         }
-}
 
-#else
-
-/*---------------------------------------------------------------------*/
-/* if the multi-frequency scheme is used*/
-/*---------------------------------------------------------------------*/
-void rt_update_chemistry(void)
-{
-    int i, j;
-    double nH, temp, rho, nHII, c_light_codeunits, n_photons_vol, dtime, A, B, CC, alpha_HII, gamma_HI, fac, k_HI;
-#ifdef RT_CHEM_PHOTOION_HE
-    double alpha_HeII, alpha_HeIII, gamma_HeI, gamma_HeII, nHeII, nHeIII, D, E, F, G, J, L, k_HeI, k_HeII, y_fac;
-#endif
-    
-    fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
-    c_light_codeunits = C_LIGHT_CODE;
-    
-    for (int i : ActiveParticleList)
-        if(P[i].Type == 0)
+        /* Scatter batch back */
+        for(int j = 0; j < batch_n; j++)
         {
-            /* get the photo-ionization rates*/
-            k_HI = 0.0;
-#ifdef RT_CHEM_PHOTOION_HE
-            k_HeI = k_HeII = 0.0;
-#endif
-            for(j = 0; j < N_RT_FREQ_BINS; j++)
-            {
-                n_photons_vol = CellP[i].rt_photon_number_density(j);
-                if(All.rt_ion_nu_min[j] >= 13.6) {k_HI += c_light_codeunits * All.rt_ion_sigma_HI[j] * n_photons_vol;}
-#ifdef RT_CHEM_PHOTOION_HE
-                if(All.rt_ion_nu_min[j] >= 24.6) {k_HeI += c_light_codeunits * All.rt_ion_sigma_HeI[j] * n_photons_vol;}
-                if(All.rt_ion_nu_min[j] >= 54.4) {k_HeII += c_light_codeunits * All.rt_ion_sigma_HeII[j] * n_photons_vol;}
-#endif
-            }
-            
-            dtime = get_particle_timestep_in_physical(i);
-            rho = CellP[i].Density * All.cf_a3inv;
-            nH = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS * UNIT_MASS_IN_CGS;
-            temp = rt_photoion_chem_return_temperature(i,CellP[i].InternalEnergyPred);
-            /* collisional ionization rate */
-            gamma_HI = 5.85e-11 * sqrt(temp) * exp(-157809.1 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
-            /* alpha_B recombination coefficient */
-            alpha_HII = 2.59e-13 * pow(temp / 1e4, -0.7) * fac;
-            
-            A = dtime * gamma_HI * nH * CellP[i].Ne;
-            B = dtime * k_HI;
-            CC = dtime * alpha_HII * nH * CellP[i].Ne;
-            
-            /* semi-implicit scheme for ionization */
-            nHII = CellP[i].HII + B + A;
-            nHII /= 1.0 + B + CC + A;
-            if(nHII < 0 || nHII > 1 || isnan(nHII))
-            {
-                printf("ERROR nHII %g \n", nHII);
-                printf("HII %g \n", CellP[i].HII);
-                printf("B %g CC %g A %g \n",B,CC,A);
-                printf("alpha HII %g \n",alpha_HII);
-                printf("nH %g \n",nH);
-                printf("fac %g \n",fac);
-                printf("temp %g \n",temp);
-                printf("pressure %g \n",CellP[i].Pressure);
-                printf("kHI %g \n",k_HI);
-                printf("Rad_E_gamma %g \n",CellP[i].Rad_E_gamma[0]);
-                fflush(stdout); endrun(333);
-            }
-            CellP[i].Ne = nHII;
-            CellP[i].HII = nHII;
-            CellP[i].HI = 1.0 - nHII;
-            
-#ifdef RT_CHEM_PHOTOION_HE
-            /* collisional ionization rate */
-            gamma_HeI = 2.38e-11 * sqrt(temp) * exp(-285335.4 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
-            gamma_HeII = 5.68e-12 * sqrt(temp) * exp(-631515 / temp) / (1.0 + sqrt(temp / 1e5)) * fac;
-            /* alpha_B recombination coefficient */
-            alpha_HeII = 1.5e-10 * pow(temp, -0.6353) * fac;
-            alpha_HeIII = 3.36e-10 / sqrt(temp) * pow(temp / 1e3, -0.2) / (1.0 + pow(temp / 1e6, 0.7)) * fac;
-            CellP[i].Ne += CellP[i].HeII +  2.0 * CellP[i].HeIII;
-            
-            D = dtime * gamma_HeII * nH * CellP[i].Ne;
-            E = dtime * alpha_HeIII * nH * CellP[i].Ne;
-            F = dtime * gamma_HeI * nH * CellP[i].Ne;
-            J = dtime * alpha_HeII * nH * CellP[i].Ne;
-            G = dtime * k_HeI;
-            L = dtime * k_HeII;
-            
-            y_fac = (1.0-HYDROGEN_MASSFRAC)/4.0/HYDROGEN_MASSFRAC;
-            nHeII = CellP[i].HeII / y_fac;
-            nHeIII = CellP[i].HeIII / y_fac;
-            nHeII = nHeII + G + F - ((G + F - E) / (1.0 + E)) * nHeIII;
-            nHeII /= 1.0 + G + F + D + J + ((G + F - E) / (1.0 + E)) * (D + L);
-            if(nHeII < 0 || nHeII > 1 || isnan(nHeII))
-            {
-                printf("ERROR nHeII %g %g %g\n", nHeII, temp, k_HeI); fflush(stdout);
-                endrun(333);
-            }
-            nHeIII = nHeIII + (D + L) * nHeII;
-            nHeIII /= 1.0 + E;
-            if(nHeIII < 0 || nHeIII > 1 || isnan(nHeIII))
-            {
-                printf("ERROR nHeIII %g %g %g\n", nHeIII, temp, k_HeII); fflush(stdout); 
-                endrun(333);
-            }
-            nHeII *= y_fac;
-            nHeIII *= y_fac;
-            CellP[i].Ne = CellP[i].HII + nHeII + 2.0 * nHeIII;
-            CellP[i].HeII = nHeII;
-            CellP[i].HeIII = nHeIII;
-            CellP[i].HeI = y_fac - CellP[i].HeII - CellP[i].HeIII;
-            if(CellP[i].HeI < 0) {CellP[i].HeI = 0.0;}
-            if(CellP[i].HeI > y_fac) {CellP[i].HeI = y_fac;}
-#endif
+            int ii = chem_indices[j];
+            CellP[ii] = compact_Cell[j];
+            P[ii]     = compact_P[j];
         }
-}
+
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+
+    } else
 #endif
+    { /* CPU path: OpenMP-parallel dispatch */
+        struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
+        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
+        for(int j = 0; j < N_active; j++)
+        {
+            compact_P[j]    = P[chem_indices[j]];
+            compact_Cell[j] = CellP[chem_indices[j]];
+        }
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for(int j = 0; j < N_active; j++)
+        {
+            rt_update_chemistry_for_particle(j, compact_P, compact_Cell);
+        }
+        for(int j = 0; j < N_active; j++)
+        {
+            int ii = chem_indices[j];
+            CellP[ii] = compact_Cell[j];
+            P[ii]     = compact_P[j];
+        }
+        free(compact_Cell);
+        free(compact_P);
+    } /* end CPU/GPU path selection */
+
+    free(chem_indices);
+}
 
 
 void rt_write_chemistry_stats(void)
@@ -361,7 +384,7 @@ void rt_write_chemistry_stats(void)
     double total_nHeII, total_nHeII_all;
     total_nHeI = total_nHeII = 0.0;
 #endif
-    
+
     for(i = 0; i < NumPart; i++)
         if(P[i].Type == 0)
         {
@@ -386,7 +409,7 @@ void rt_write_chemistry_stats(void)
     MPI_Allreduce(&total_nHeI, &total_nHeI_all, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&total_nHeII, &total_nHeII_all, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 #endif
-    
+
     if(ThisTask == 0)
     {
         if(All.Time == All.TimeBegin)
@@ -415,4 +438,23 @@ void rt_write_chemistry_stats(void)
 #endif
 }
 
+
+/* ---- GPU All_dev sync function ---- */
+#if defined(OPENMP_GPU_OFFLOAD)
+void gizmo_gpu_sync_all_rt_chem(void) {
+#if defined(GIZMO_GPU_COMPILER)
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+    All_dev = All;
+#pragma pop_macro("All")
+#else
+    /* no-op: no __managed__ copy with OpenMP backend */
 #endif
+}
+#else
+void gizmo_gpu_sync_all_rt_chem(void) {}
+#endif
+
+
+#endif /* RT_CHEM_PHOTOION */

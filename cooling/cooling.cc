@@ -2951,6 +2951,12 @@ extern void gizmo_gpu_sync_all_nuclear(void);
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 extern void gizmo_gpu_sync_all_density(void);
 #endif
+#ifdef RT_CHEM_PHOTOION
+extern void gizmo_gpu_sync_all_rt_chem(void);
+#endif
+#ifdef TURB_DRIVING
+extern void gizmo_gpu_sync_all_turb(void);
+#endif
 void gizmo_gpu_sync_all(void) {
 #if defined(GIZMO_GPU_COMPILER)
 #pragma push_macro("All")
@@ -2965,6 +2971,12 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
     gizmo_gpu_sync_all_density();
+#endif
+#ifdef RT_CHEM_PHOTOION
+    gizmo_gpu_sync_all_rt_chem();
+#endif
+#ifdef TURB_DRIVING
+    gizmo_gpu_sync_all_turb();
 #endif
 }
 #endif /* OPENMP_GPU_OFFLOAD */
