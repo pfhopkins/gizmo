@@ -330,6 +330,13 @@ KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
 GPU_CXX    = mpicxx -std=c++20
 GPU_CFLAGS = $(KOKKOS_INCL)
 GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+ifneq (MHD_MODIFIED_GRADIENT_CG_ONLY,$(findstring MHD_MODIFIED_GRADIENT_CG_ONLY,$(CONFIGVARS)))
+HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
+HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
+HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
+endif
+endif
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I/usr/local/include/sundials
 CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial

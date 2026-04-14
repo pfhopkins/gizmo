@@ -59,6 +59,11 @@ def test_dustywave(num_mpi_ranks, num_omp_threads):
     vgas_interp = interp1d(x_exact, vgas_exact, bounds_error=False, fill_value="extrapolate")(x_gas)
     vdust_interp = interp1d(x_exact, vdust_exact, bounds_error=False, fill_value="extrapolate")(x_dust)
 
+    # Mask particles within the valid range of exact solution (avoid extrapolation)
+    x_min, x_max = x_exact.min(), x_exact.max()
+    mask_gas = (x_gas >= x_min) & (x_gas <= x_max)
+    mask_dust = (x_dust >= x_min) & (x_dust <= x_max)
+
     # Plot
     plt.figure()
     gas_order = x_gas.argsort()
@@ -73,10 +78,10 @@ def test_dustywave(num_mpi_ranks, num_omp_threads):
     plt.savefig(f"test/{test_name}/velocities.png")
     plt.close()
 
-    # Compute L1 errors
+    # Compute L1 errors (only for particles within valid interpolation range)
     amp = np.max(np.abs(vgas_exact))
-    L1_gas = np.mean(np.abs(vx_gas - vgas_interp)) / amp
-    L1_dust = np.mean(np.abs(vx_dust - vdust_interp)) / amp
+    L1_gas = np.mean(np.abs(vx_gas[mask_gas] - vgas_interp[mask_gas])) / amp
+    L1_dust = np.mean(np.abs(vx_dust[mask_dust] - vdust_interp[mask_dust])) / amp
 
     assert L1_gas < 0.15, f"Gas velocity L1 error {L1_gas:.4f} exceeds tolerance"
     assert L1_dust < 0.15, f"Dust velocity L1 error {L1_dust:.4f} exceeds tolerance"
