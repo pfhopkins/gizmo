@@ -685,7 +685,11 @@ Argument cv will return the specific heat capacity at constant volume du/dT
  */
 /* convert_temp_to_u, convert_u_to_temp, find_abundances_and_rates:
    definitions moved to cooling_functions.h (included above). */
+#else
+/* default (non-CHIMES, non-EOS_SUBSTELLAR_ISM): all definitions in cooling_functions.h */
+#endif // CHIMES / EOS_SUBSTELLAR_ISM
 
+#ifndef CHIMES
 /*  this function first computes the self-consistent temperature and abundance ratios, and then it calculates (heating rate-cooling rate)/n_h^2 in cgs units */
 KOKKOS_FUNCTION
 double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
