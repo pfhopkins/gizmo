@@ -150,6 +150,7 @@ void density_gpu_session_end(void)
 void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                           int num_total, int *active_indices_host, int num_active)
 {
+    double t_dens_gpu_start = my_second(), t_dens_gpu_phase;
     struct particle_data *P_gpu;
     struct gas_cell_data *CellP_gpu;
     int session_active = (density_P_gpu != NULL && density_session_num_total == num_total);
@@ -251,12 +252,16 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         }
     }
 
+    double t_dens_csr = timediff(t_dens_gpu_start, my_second());
+
     if(ThisTask == 0) {
-        printf("  GPU density: %d active particles, %d neighbor pairs (%.1f avg)\n",
+        printf("  GPU density: %d active particles, %d neighbor pairs (%.1f avg) [csr=%.4f reuse=%d]\n",
                num_active, gnl.total_pairs,
-               num_active > 0 ? (double)gnl.total_pairs / num_active : 0.0);
+               num_active > 0 ? (double)gnl.total_pairs / num_active : 0.0,
+               t_dens_csr, reuse_csr);
         fflush(stdout);
     }
+    t_dens_gpu_phase = my_second();
 
     /* GPU density accumulation kernel */
     {
@@ -390,6 +395,9 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     }
     /* If session_active and we just built + cached the CSR, don't free it (cache owns it) */
 
+    double t_dens_kernel = timediff(t_dens_gpu_phase, my_second());
+    t_dens_gpu_phase = my_second();
+
     /* Scatter results back to host arrays for active particles */
     for(int aa = 0; aa < num_active; aa++) {
         int ii = active_indices_host[aa];
@@ -401,6 +409,14 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     if(!session_active) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    }
+
+    double t_dens_scatter = timediff(t_dens_gpu_phase, my_second());
+    if(ThisTask == 0 && num_active > 1000) {
+        printf("    density_gpu internal: csr=%.4f kernel=%.4f scatter=%.4f total=%.4f\n",
+               t_dens_csr, t_dens_kernel, t_dens_scatter,
+               timediff(t_dens_gpu_start, my_second()));
+        fflush(stdout);
     }
 }
 
