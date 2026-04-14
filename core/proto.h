@@ -267,9 +267,11 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
 void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
+#ifndef GIZMO_GPU_COMPILER /* these are KOKKOS_INLINE_FUNCTION in cosmic_ray_functions.h; proto.h decl conflicts with device annotation */
 double return_CRbin_M1speed(int k_CRegy);
 double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
 double INLINE_FUNC Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell);
+#endif
 double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell);
 double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell);
@@ -279,7 +281,9 @@ double return_CRbin_CR_charge_in_e(int target, int k_CRegy);
 int return_CRbin_CR_species_ID(int k_CRegy);
 double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy);
 double return_CRbin_gamma_factor(int target, int k_CRegy);
+#ifndef GIZMO_GPU_COMPILER
 double gamma_eos_of_crs_in_bin(int k_CRegy);
+#endif
 double return_CRbin_beta_factor(int target, int k_CRegy);
 void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double return_CRbin_CRmass_in_mp(int target, int k_CRegy);
@@ -453,7 +457,9 @@ void st_turbdrive_init_ouseq(void);
 void st_turbdrive_calc_phases(void);
 double st_return_driving_scale(void);
 #endif
+#ifndef GIZMO_GPU_COMPILER /* array-arg version provided by predict_functions.h as KOKKOS_INLINE_FUNCTION in GPU TUs */
 double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P);
+#endif
 GIZMO_GPU_FUNCTION inline double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P) { return evaluate_NH_from_GradRho(const_cast<MyFloat*>(gradrho.data), rkern, rho, numngb_ndim, include_h, target, pp); }
 double evaluate_time_since_t_initial_in_Gyr(double t_initial);
 

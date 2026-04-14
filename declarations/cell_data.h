@@ -496,7 +496,7 @@ extern struct gas_cell_data
         }
     }
 
-    inline double flux_limiter(int k_freq) const { /*!< radiation flux limiter for band k_freq */
+    GIZMO_GPU_FUNCTION inline double flux_limiter(int k_freq) const { /*!< radiation flux limiter for band k_freq */
 #ifdef RT_FLUXLIMITER
         return Rad_Flux_Limiter[k_freq];
 #endif
