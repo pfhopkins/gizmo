@@ -6,7 +6,7 @@
 %
 InitCondFile                       evrard_ics
 OutputDir                          output
-PartAllocFactor                    5
+PartAllocFactor                    10
 TimeMax                            0.8
 TimeBetSnapshot                    0.1
 MaxSizeTimestep                    0.001
