@@ -1454,10 +1454,12 @@ void hydro_gradient_calc(void)
     timewait = timewait1 + timewait2;
     timecomm = timecommsumm1 + timecommsumm2;
 
+#ifndef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY /* GPU path: timing fed from accel.cc instead */
     CPU_Step[CPU_DENSCOMPUTE] += timecomp;
     CPU_Step[CPU_DENSWAIT] += timewait;
     CPU_Step[CPU_DENSCOMM] += timecomm;
     CPU_Step[CPU_DENSMISC] += timeall - (timecomp + timewait + timecomm);
+#endif
 }
 
 

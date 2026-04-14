@@ -481,9 +481,6 @@ void ghost_exchange(double safety_factor)
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, t_ghost_total);
-        PRINT_STATUS("  ghost breakdown: tiles=%.4f meta_xchg=%.4f overlap=%.4f pack+MPI=%.4f writeback_setup=%.4f",
-                     t_ghost_tiles, t_ghost_meta, t_ghost_overlap, t_ghost_mpi,
-                     t_ghost_total - t_ghost_tiles - t_ghost_meta - t_ghost_overlap - t_ghost_mpi);
     }
     /* Warn if ghost particles used >80% of available headroom */
     if(NumPart > 0.8 * All.MaxPart) {

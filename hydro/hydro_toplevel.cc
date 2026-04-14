@@ -849,13 +849,9 @@ void hydro_force(void)
     double t_postloop = timediff(t_postloop_start, my_second());
     /* collect timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
+#ifndef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY /* GPU path: timing fed from accel.cc instead */
     CPU_Step[CPU_HYDCOMPUTE] += timecomp; CPU_Step[CPU_HYDWAIT] += timewait; CPU_Step[CPU_HYDCOMM] += timecomm;
-    double hydmisc_total = timeall - (timecomp + timewait + timecomm);
-    double t_xchange_serial = t_xchange_all - (timecomp + timewait + timecomm); /* serial overhead inside xchange loop */
-    CPU_Step[CPU_HYDMISC] += hydmisc_total;
-    if(ThisTask == 0) {
-        printf("  hydro_force breakdown: preloop=%.4f malloc=%.4f xchange_serial=%.4f demalloc=%.4f postloop=%.4f hydmisc_total=%.4f\n",
-               t_preloop, t_malloc, t_xchange_serial, t_demalloc, t_postloop, hydmisc_total);
-    }
+    CPU_Step[CPU_HYDMISC] += timeall - (timecomp + timewait + timecomm);
+#endif
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

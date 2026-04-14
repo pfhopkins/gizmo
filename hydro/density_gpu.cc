@@ -252,15 +252,6 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         }
     }
 
-    double t_dens_csr = timediff(t_dens_gpu_start, my_second());
-
-    if(ThisTask == 0) {
-        printf("  GPU density: %d active particles, %d neighbor pairs (%.1f avg) [csr=%.4f reuse=%d]\n",
-               num_active, gnl.total_pairs,
-               num_active > 0 ? (double)gnl.total_pairs / num_active : 0.0,
-               t_dens_csr, reuse_csr);
-        fflush(stdout);
-    }
     t_dens_gpu_phase = my_second();
 
     /* GPU density accumulation kernel */
@@ -411,11 +402,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
     }
 
-    double t_dens_scatter = timediff(t_dens_gpu_phase, my_second());
-    if(ThisTask == 0 && num_active > 1000) {
-        printf("    density_gpu internal: csr=%.4f kernel=%.4f scatter=%.4f total=%.4f\n",
-               t_dens_csr, t_dens_kernel, t_dens_scatter,
-               timediff(t_dens_gpu_start, my_second()));
+    if(0) { /* density_gpu internal timing — disabled, use cpu.txt for production profiling */
         fflush(stdout);
     }
 }
@@ -457,12 +444,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     /* Allocate output array in SharedSpace */
     struct GasGraddata_out_ *d_out = (struct GasGraddata_out_ *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct GasGraddata_out_));
 
-    if(ThisTask == 0) {
-        printf("  GPU gradient: %d active particles, %d neighbor pairs (%.1f avg)\n",
-               num_active, csr_total_pairs,
-               num_active > 0 ? (double)csr_total_pairs / num_active : 0.0);
-        fflush(stdout);
-    }
+    PRINT_STATUS("  GPU gradient: %d active, %d pairs", num_active, csr_total_pairs);
 
     /* GPU gradient accumulation kernel */
     {
@@ -634,12 +616,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     /* Output array in SharedSpace */
     struct hydro_data_out *d_out = (struct hydro_data_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct hydro_data_out));
 
-    if(ThisTask == 0) {
-        printf("  GPU hydro: %d active particles, %d neighbor pairs (%.1f avg)\n",
-               num_active, csr_total_pairs,
-               num_active > 0 ? (double)csr_total_pairs / num_active : 0.0);
-        fflush(stdout);
-    }
+    PRINT_STATUS("  GPU hydro: %d active, %d pairs", num_active, csr_total_pairs);
 
     /* GPU hydro force kernel */
     {

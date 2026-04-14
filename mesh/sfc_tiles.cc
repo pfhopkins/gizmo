@@ -359,13 +359,5 @@ void build_neighbor_list_sfc(struct particle_data *P, struct gas_cell_data *Cell
     myfree(tiles);
     myfree(pool);
 
-    double t_sfc_end = my_second();
-    if(ThisTask == 0) {
-        double dt_bvh = timediff(t_sfc_start, t_sfc_bvh_end) - t_sfc_tiles; /* BVH = (start→bvh_end) - tiles */
-        PRINT_STATUS("  symlist breakdown: tiles=%.4f BVH=%.4f pass1_count=%.4f pass2_fill=%.4f total=%.4f",
-                     t_sfc_tiles, dt_bvh,
-                     timediff(t_sfc_bvh_end, t_sfc_pass1_end),
-                     timediff(t_sfc_pass1_end, t_sfc_end),
-                     timediff(t_sfc_start, t_sfc_end));
-    }
+    /* timing variables available for debugging if needed, but not printed in production */
 }

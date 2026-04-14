@@ -924,13 +924,12 @@ void density(void)
     /* collect some timing information */
     double t_postloop = timediff(t_postloop_start, my_second());
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
+#ifndef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY /* GPU path: timing fed from accel.cc instead */
     CPU_Step[CPU_DENSCOMPUTE] += timecomp; CPU_Step[CPU_DENSWAIT] += timewait;
     CPU_Step[CPU_DENSCOMM] += timecomm; CPU_Step[CPU_DENSMISC] += timeall - (timecomp + timewait + timecomm);
+#endif
     if(ThisTask == 0) {
-        PRINT_STATUS("  density tree walk: total=%.4f s (compute=%.4f wait=%.4f comm=%.4f)", timeall, timecomp, timewait, timecomm);
-        double t_hiter_total = timeall - t_postloop - t_session_end;
-        PRINT_STATUS("  density breakdown: gpu_eval=%.4f h_check=%.4f session_end=%.4f postloop=%.4f hiter_total=%.4f iters=%d",
-                     t_density_kernel_total, timecomp, t_session_end, t_postloop, t_hiter_total, density_iter_count);
+        PRINT_STATUS("  density computation done (%.4f s, %d iterations)", timeall, density_iter_count);
     }
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

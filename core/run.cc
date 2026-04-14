@@ -396,25 +396,19 @@ void calculate_non_standard_physics(void)
 #endif
 
 #ifdef NUCLEAR_NETWORK
-    {double t0_nuc = my_second();
     nuclear_parent_routine(); // nuclear burning (operator-split, before cooling; fixup is done inside on compact arrays) //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
-    if(ThisTask == 0 && All.Time > All.TimeBegin) {printf("  [BENCH] nuclear=%.4f\n", timediff(t0_nuc, my_second())); fflush(stdout);}}
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
-    {double t0_cool = my_second();
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
-    if(ThisTask == 0 && All.Time > All.TimeBegin) {printf("  [BENCH] cooling=%.4f\n", timediff(t0_cool, my_second())); fflush(stdout);}}
 #endif
 
 
 #ifdef GALSF /* star/sink particle formation */
-    {double t0_sfr = my_second();
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
-    if(ThisTask == 0 && All.Time > All.TimeBegin) {printf("  [BENCH] starformation=%.4f\n", timediff(t0_sfr, my_second())); fflush(stdout);}}
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
@@ -930,6 +924,17 @@ void write_cpu_log(void)
           "   wait       %10.2f  %5.1f%%\n"
           "   misc       %10.2f  %5.1f%%\n"
 #endif
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+	      "hydro/fluids  %10.2f  %5.1f%%\n"
+	      "   density    %10.2f  %5.1f%%\n"
+	      "   ghost_xchg %10.2f  %5.1f%%\n"
+	      "   gradients  %10.2f  %5.1f%%\n"
+	      "   hydro_frc  %10.2f  %5.1f%%\n"
+	      "   symlist    %10.2f  %5.1f%%\n"
+	      "   (unused)   %10.2f  %5.1f%%\n"
+	      "   hmaxupdate %10.2f  %5.1f%%\n"
+          "   misc_hydro %10.2f  %5.1f%%\n"
+#else
 	      "hydro/fluids  %10.2f  %5.1f%%\n"
 	      "   dens+grad  %10.2f  %5.1f%%\n"
 	      "   denscomm   %10.2f  %5.1f%%\n"
@@ -939,6 +944,7 @@ void write_cpu_log(void)
 	      "   hydimbal   %10.2f  %5.1f%%\n"
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   hydmisc    %10.2f  %5.1f%%\n"
+#endif
 	      "domain        %10.2f  %5.1f%%\n"
           "peano         %10.2f  %5.1f%%\n"
 #ifdef FOF

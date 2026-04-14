@@ -201,16 +201,18 @@ void compute_hydro_densities_and_forces(void)
         ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */
 #endif
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
-        if(ThisTask == 0 && All.Time > All.TimeBegin) { /* skip first step (warmup with bad initial h guesses) */
-            printf("  [BENCH] density=%.4f grad=%.4f hydro=%.4f", t_bench_density, t_bench_grad, t_bench_hydro);
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-            printf(" ghost=%.4f symlist=%.4f drift=%.4f hmax=%.4f", t_bench_ghost, t_bench_symlist, t_bench_drift, t_bench_hmax);
-            if(t_bench_ghost_redo > 0) printf(" ghost_redo=%.4f", t_bench_ghost_redo);
-            printf(" density_only=%.4f", t_bench_density_only);
+        /* Feed GPU-path timing into CPU_Step accumulators for cpu.txt output.
+           Repurpose existing slots: DENSCOMPUTE=density, DENSCOMM=ghost, DENSWAIT=gradients,
+           HYDCOMPUTE=hydro, HYDCOMM=symlist. HYDMISC+DENSMISC = misc remainder. */
+        CPU_Step[CPU_DENSCOMPUTE] += t_bench_density;
+        CPU_Step[CPU_DENSCOMM] += t_bench_ghost + t_bench_ghost_redo;
+        CPU_Step[CPU_DENSWAIT] += t_bench_grad;
+        CPU_Step[CPU_HYDCOMPUTE] += t_bench_hydro;
+        CPU_Step[CPU_HYDCOMM] += t_bench_symlist;
+        CPU_Step[CPU_TREEHMAXUPDATE] += t_bench_hmax;
+        CPU_Step[CPU_DENSMISC] += t_bench_drift;
 #endif
-            printf(" total=%.4f\n", t_bench_density + t_bench_grad + t_bench_hydro);
-            fflush(stdout);
-        }
         PRINT_STATUS(" ..hydro force computation done.");
 
     } else {
