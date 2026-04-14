@@ -801,47 +801,34 @@ void hydro_force(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
     /* Neighbor-list path: GPU/Kokkos dispatch over symmetric CSR list */
-    if(1) /* all ranks must take the same path — GPU path handles 0 active particles gracefully */
     {
-        /* Zero ghost accumulator fields before the hydro kernel */
         ghost_writeback_zero_hydro();
-
-        /* Allocate output array */
         struct hydro_data_out *hydro_out = (struct hydro_data_out *) mymalloc("hydro_out",
             (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(struct hydro_data_out));
-
         hydro_evaluate_gpu(P, CellP, NumPart,
                            gizmo_sym_active_indices, gizmo_sym_num_active,
                            gizmo_sym_neighbor_list.offsets,
                            gizmo_sym_neighbor_list.neighbors,
                            gizmo_sym_neighbor_list.total_pairs,
                            (void *)hydro_out);
-
-        /* Scatter results: hydro_data_out is layout-identical to OUTPUT_STRUCT_NAME base */
         for(int aa = 0; aa < gizmo_sym_num_active; aa++)
         {
             int ii = gizmo_sym_active_indices[aa];
             out2particle_hydra((struct OUTPUT_STRUCT_NAME *)&hydro_out[aa], ii, 0, 0);
         }
         myfree(hydro_out);
-
-        /* Reverse-communicate ghost j-particle modifications (dMass, wakeup) */
         ghost_writeback_hydro();
     }
-    else
-    {
-#endif
+#else /* tree-walk path */
     double t_malloc_start = my_second();
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+    #include "../system/code_block_xchange_perform_ops_malloc.h"
     t_malloc = timediff(t_malloc_start, my_second());
     double t_xchange_start = my_second();
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+    #include "../system/code_block_xchange_perform_ops.h"
     t_xchange_all = timediff(t_xchange_start, my_second());
     double t_demalloc_start = my_second();
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    #include "../system/code_block_xchange_perform_ops_demalloc.h"
     t_demalloc = timediff(t_demalloc_start, my_second());
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    } /* close else-branch of neighbor-list vs tree-walk dispatch */
 #endif
 
     double t_postloop_start = my_second();

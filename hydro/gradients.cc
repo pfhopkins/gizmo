@@ -674,7 +674,6 @@ void hydro_gradient_calc(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
         /* Neighbor-list path: use cached symmetric CSR list with GPU/Kokkos dispatch.
            Works for all gradient iterations (0 and >0 for MHD_CONSTRAINED_GRADIENT). */
-        if(1) /* all ranks must enter this branch to avoid MPI collective mismatch */
         {
             struct GasGraddata_out *grad_out = (struct GasGraddata_out *) mymalloc("grad_out",
                 (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(struct GasGraddata_out));
@@ -711,9 +710,7 @@ void hydro_gradient_calc(void)
             }
             myfree(grad_out);
         }
-        else
-        {
-#endif
+#else /* !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY: tree-walk path */
         // now we actually begin the main gradient loop //
         NextParticle = 0;	/* begin with this index into ActiveParticleList */
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
@@ -926,9 +923,7 @@ void hydro_gradient_calc(void)
             tend = my_second(); timewait2 += timediff(tstart, tend);
         }
         while(ndone < NTask);
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-        } /* close else-branch of neighbor-list vs tree-walk dispatch */
-#endif
+#endif /* GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
 
         /* here, we insert intermediate operations on the results, from the iterations we have completed */
