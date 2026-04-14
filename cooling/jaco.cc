@@ -36,7 +36,7 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     double dtime = get_particle_timestep_in_physical(i, pp);
     double Δt = dtime * UNIT_TIME_IN_CGS;
     set_PdV_work_heatingrate(i, dtime, pp, cell);
-    double n_Htot = nH_CGS(i, pp, cell);
+    double n_Htot = cell[i].nHcgs();
     sv->u = cell[i].InternalEnergy * UNIT_SPECEGY_IN_CGS;
     sv->T = cell[i].Temperature;
     pr->u_0 = sv->u;

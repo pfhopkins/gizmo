@@ -30,11 +30,19 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
             F.create_dataset("PartType0/Temperature", data=T)
 
     if plot:  # generate a plot of n_H vs T for the test and benchmark solutions
+        nH_plot_bins = np.logspace(np.log10(nH.min()+1e-30), np.log10(nH.max()), 30)
+        centers = np.sqrt(nH_plot_bins[1:] * nH_plot_bins[:-1])
+
         with h5py.File("test/gmc_cooling/gmc_cooling_exact.hdf5", "r") as F:
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
-        plt.loglog(nH_ref, T_ref, ".", markersize=0.3, color="red", label="Benchmark")
-        plt.loglog(nH, T, ".", markersize=0.3, color="black", label="Test")
+        q_ref = [binned_statistic(nH_ref, T_ref, lambda x: np.percentile(x, q), nH_plot_bins)[0] for q in (16, 50, 84)]
+        q_test = [binned_statistic(nH, T, lambda x: np.percentile(x, q), nH_plot_bins)[0] for q in (16, 50, 84)]
+
+        plt.loglog(centers, q_ref[1], color="red", label="Benchmark")
+        plt.fill_between(centers, q_ref[0], q_ref[2], color="red", alpha=0.2)
+        plt.loglog(centers, q_test[1], color="black", label="Test")
+        plt.fill_between(centers, q_test[0], q_test[2], color="black", alpha=0.2)
         plt.xlabel(r"$n_{\rm H}\,\rm\left(\rm cm^{-3}\right)$")
         plt.ylabel(r"$T (\rm K)$")
         plt.legend(loc=3)

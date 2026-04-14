@@ -361,6 +361,15 @@
 #CHIMES_REDUCED_OUTPUT          # full CHIMES abundance array only output in some snapshots
 #CHIMES_NH_OUTPUT               # write out column densities of gas particles to snapshots
 #CHIMES_INITIALISE_IN_EQM       # initialise CHIMES abundances in equilibrium at the start of the simulation
+## ----------------------------------------------------------------------------------------------------
+# ---- JACO: code-generated microphysics solver. Uses the jaco Python package (https://github.com/mikegrudic/jaco)
+# ----   to generate a backward-Euler Newton-Raphson solver with analytic Jacobian for a user-specified cooling/chemistry model.
+# ----   Set JACO=model_name where model_name is a jaco model module (e.g. wind_comparison, starforge). The build system runs
+# ----   the jaco codegen to produce microphysics_func_jac.cc, jaco_eos.cc, and associated headers in cooling/.
+# ----   When enabled, JACO replaces the default COOLING solver for thermochemistry (the call is made from do_the_cooling_for_particle).
+# ----   Requires the jaco Python package to be installed (pip install jaco). Requires COOLING to be enabled.
+## ----------------------------------------------------------------------------------------------------
+#JACO=model_name            # enable the jaco  microphysics solver with the specified model. requires COOLING.
 ####################################################################################################
 
 

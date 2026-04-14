@@ -178,4 +178,4 @@ MaxNumNgbDeviation      0.05
 AGS_MaxNumNgbDeviation  0.10
 DivBcleaningParabolicSigma   1.0
 DivBcleaningHyperbolicSigma  1.0
-Sink_outflow_particlemass 0.000238419
+Sink_outflow_particlemass 0.0152588

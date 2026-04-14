@@ -417,6 +417,8 @@ MISC_OBJS = sidm/cbe_integrator.o \
 EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
 
+.DEFAULT_GOAL := $(EXEC)
+
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
 JACO_MODEL := $(strip $(shell grep '^\#define JACO' GIZMO_config.h | awk '{print $$3}'))
 ifeq ($(JACO_MODEL),)

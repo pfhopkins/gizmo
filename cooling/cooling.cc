@@ -130,6 +130,37 @@ void cooling_parent_routine(void)
 
 
 
+/* Prepare the PdV work heating rate for the cooling sub-routine. Applies gravity-work correction for
+   finite-volume schemes, limits the magnitude to prevent unphysical overshoots, and converts to CGS.
+   Writes the result back to cell[i].DtInternalEnergy if cooling is not operator-split. */
+void set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, struct gas_cell_data *cell)
+{
+#ifndef COOLING_OPERATOR_SPLIT
+    double DtInternalEnergyEffCGS = cell[i].DtInternalEnergy;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    Vec3<MyDouble> grav_acc = All.cf_a2inv * pp[i].GravAccel;
+#ifdef PMGRID
+    grav_acc += All.cf_a2inv * pp[i].GravPM;
+#endif
+    DtInternalEnergyEffCGS -= All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
+#endif
+    if(DtInternalEnergyEffCGS < 0) {
+        double qfac = DMIN(0,DMAX(DMAX(-0.9, exp(DtInternalEnergyEffCGS*dtime/cell[i].InternalEnergy)-1.), All.MinEgySpec/cell[i].InternalEnergy-1.));
+        DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , qfac*cell[i].InternalEnergy/dtime );
+        double u_gamma_minus_1 = (cell[i].gamma_eos_value()-1.) * cell[i].InternalEnergy, rho = cell[i].Density*All.cf_a3inv, pressure_thermalonly = u_gamma_minus_1 * rho;
+        double vA = cell[i].Alfven_speed(), pressure_total = 0.5*vA*vA*rho + cell[i].Pressure*All.cf_a3inv;
+        if(pressure_thermalonly < 0.05*pressure_total) {
+            double DtInternalEnergyPdV = - u_gamma_minus_1 * (pp[i].Particle_DivVel*All.cf_a2inv);
+            DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , DMIN(DtInternalEnergyPdV, 0));
+        }
+    }
+    DtInternalEnergyEffCGS = DMIN(DtInternalEnergyEffCGS ,  1.e4*cell[i].InternalEnergy/dtime );
+    DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
+    if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;}
+#endif
+}
+
+
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
@@ -162,33 +193,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
 #endif
 
-#ifndef COOLING_OPERATOR_SPLIT
-        double DtInternalEnergyEffCGS = cell[i].DtInternalEnergy;
-        /* do some prep operations on the hydro-step determined heating/cooling rates before passing to the cooling subroutine */
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
-        Vec3<MyDouble> grav_acc = All.cf_a2inv * pp[i].GravAccel;
-#ifdef PMGRID
-        grav_acc += All.cf_a2inv * pp[i].GravPM;
-#endif
-        DtInternalEnergyEffCGS -= All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
-#endif
-        /* limit the magnitude of the hydro dtinternalenergy */
-        if(DtInternalEnergyEffCGS < 0) {
-            double qfac = DMIN(0,DMAX(DMAX(-0.9, exp(DtInternalEnergyEffCGS*dtime/cell[i].InternalEnergy)-1.), All.MinEgySpec/cell[i].InternalEnergy-1.)); // equivalent to saying this wouldn't lower internal energy to below 10% in one timestep
-            DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , qfac*cell[i].InternalEnergy/dtime );
-            double u_gamma_minus_1 = (cell[i].gamma_eos_value()-1.) * cell[i].InternalEnergy, rho = cell[i].Density*All.cf_a3inv, pressure_thermalonly = u_gamma_minus_1 * rho;
-            double vA = cell[i].Alfven_speed(), pressure_total = 0.5*vA*vA*rho + cell[i].Pressure*All.cf_a3inv;
-            if(pressure_thermalonly < 0.05*pressure_total) {
-                double DtInternalEnergyPdV = - u_gamma_minus_1 * (pp[i].Particle_DivVel*All.cf_a2inv); /* change from expansion in PdV term */
-                DtInternalEnergyEffCGS = DMAX(DtInternalEnergyEffCGS , DMIN(DtInternalEnergyPdV, 0)); /* limit to PdV expansion change in limit where the thermal energy is small compared to the total */
-            }
-        }
-        DtInternalEnergyEffCGS = DMIN(DtInternalEnergyEffCGS ,  1.e4*cell[i].InternalEnergy/dtime ); // equivalent to saying we cant massively enhance internal energy in a single timestep from the hydro work terms: should be big, since just numerical [shocks are real!]
-        /* and convert to cgs before use in the cooling sub-routine */
-        DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
-        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;} // if unsplit, send this converted variable to cooling below
-#endif
+        set_PdV_work_heatingrate(i, dtime, pp, cell);
 
 #if !defined(CHIMES)
         ne_in = cell[i].Ne; ne_out = ne_in; /* this variable is not defined if chimes is on */

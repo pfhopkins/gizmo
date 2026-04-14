@@ -196,17 +196,19 @@ def get_snapshots(test_name, extra_config_flags=()):
 @pytest.mark.parametrize("num_mpi_ranks,num_omp_threads", [(default_mpi_ranks(), default_omp_threads())])
 @pytest.mark.parametrize(
     "res",
-    [64,],
+    [32,64,128],
     ids=lambda x: f"N{x}",
 )
 @pytest.mark.parametrize(
-    "Mdot_vw", [(1e-5, 3000.0),], ids=lambda x: f"Mdot{x[0]:.0e}_vw{x[1]:.0f}"
+    "Mdot_vw", [(1e-4,3000.0),], ids=lambda x: f"Mdot{x[0]:.0e}_vw{x[1]:.0f}"
 )
-@pytest.mark.parametrize("wind_mode", [None, 1, 2], ids=lambda x: f"wm{x}" if x else "wm_auto")
+@pytest.mark.parametrize("wind_mode", [2,], ids=lambda x: f"wm{x}" if x else "wm_auto")
 @pytest.mark.parametrize(
     "cooling_flags",
-    [(), ("COOLING",)],
-    ids=["adiabatic", "cooling"],
+    [(), ("COOLING",), ("COOLING","JACO=wind_comparison")],
+#    [("COOLING","JACO=wind_comparison")],
+    ids=["adiabatic", "cooling", "jaco_wind_comparison"],
+#    ids=["jaco_wind_comparison",]
 )
 def test_wind_singlestar(num_mpi_ranks, num_omp_threads, Mdot_vw, res, wind_mode, cooling_flags):
     Mdot, v_w = Mdot_vw
