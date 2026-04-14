@@ -457,9 +457,7 @@ void st_turbdrive_init_ouseq(void);
 void st_turbdrive_calc_phases(void);
 double st_return_driving_scale(void);
 #endif
-#ifndef GIZMO_GPU_COMPILER /* array-arg version provided by predict_functions.h as KOKKOS_INLINE_FUNCTION in GPU TUs */
-double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P);
-#endif
+GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P);
 GIZMO_GPU_FUNCTION inline double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp = P) { return evaluate_NH_from_GradRho(const_cast<MyFloat*>(gradrho.data), rkern, rho, numngb_ndim, include_h, target, pp); }
 double evaluate_time_since_t_initial_in_Gyr(double t_initial);
 
