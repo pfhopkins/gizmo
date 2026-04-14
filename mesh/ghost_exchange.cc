@@ -344,17 +344,25 @@ void ghost_exchange(double safety_factor)
         for(task = 0; task < NTask; task++) { if(send_to[lt * NTask + task]) { tiles_sent++; break; } }
     }
 
-    /* Check space */
+    /* Check space: ghost particles are appended to P[]/CellP[] arrays, which are
+       allocated to All.MaxPart = PartAllocFactor * (TotNumPart / NTask).
+       If there isn't enough room, we MUST exit — silently skipping would produce
+       wrong results (incomplete neighbor data near domain boundaries). */
     if(NumPart + total_recv > All.MaxPart) {
-        if(ThisTask == 0)
-            PRINT_WARNING("Ghost exchange: need %d ghost particles but only %d slots free (MaxPart=%d). Skipping.\n",
-                          total_recv, All.MaxPart - NumPart, All.MaxPart);
-        myfree(send_disp); myfree(recv_disp); myfree(send_count); myfree(recv_count);
-        free(send_to); free(need_from);
-        free(all_meta); free(tile_disp); free(all_ntiles);
-        free(tile_first); free(local_meta); free(pool);
-        NumPart_before_ghost = -1;
-        return;
+        double needed_factor = (double)(NumPart + total_recv) / ((double)All.TotNumPart / NTask);
+        printf("\n=======================================================================\n");
+        printf("ERROR: Ghost exchange requires %d ghost particles on task %d,\n", total_recv, ThisTask);
+        printf("  but only %d free slots available (NumPart=%d, MaxPart=%d).\n",
+               All.MaxPart - NumPart, NumPart, All.MaxPart);
+        printf("  Current PartAllocFactor = %.2f\n", All.PartAllocFactor);
+        printf("  Minimum PartAllocFactor needed = %.2f (recommend %.2f for safety)\n",
+               needed_factor, needed_factor * 1.2);
+        printf("  Fix: increase PartAllocFactor in your parameterfile to at least %.1f\n",
+               needed_factor * 1.2);
+        printf("  (or increase the number of MPI ranks to reduce particles per rank)\n");
+        printf("=======================================================================\n");
+        fflush(stdout);
+        endrun(7701);
     }
 
     /* ================================================================
@@ -463,6 +471,13 @@ void ghost_exchange(double safety_factor)
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, timediff(t_ghost_start, t_ghost_end));
+    /* Warn if ghost particles used >80% of available headroom */
+    if(NumPart > 0.8 * All.MaxPart) {
+        double usage_frac = (double)NumPart / (double)All.MaxPart;
+        PRINT_WARNING("Ghost exchange: particle arrays %.0f%% full (%d/%d). "
+                      "Consider increasing PartAllocFactor (currently %.2f) to avoid running out of space.",
+                      100.0 * usage_frac, NumPart, All.MaxPart, All.PartAllocFactor);
+    }
 
     /* Cleanup: mymalloc in reverse order, then free malloc'd send metadata */
     myfree(send_bdisp); myfree(recv_bdisp); myfree(send_bytes); myfree(recv_bytes);
