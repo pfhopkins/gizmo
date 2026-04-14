@@ -440,21 +440,6 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     
                 } // couple_anything_but_scalar_mass_and_metals
 
-                /* track injected energy for diagnostics (1-loop path) */
-                {
-                    double dKE_1loop = 0;
-                    for(k=0;k<3;k++) {dKE_1loop += 0.5 * Mass_j * Vel_j[k]*Vel_j[k] - 0.5 * Mass_j_0 * Vel_j_0[k]*Vel_j_0[k];}
-                    double dTE_1loop = Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0;
-                    #pragma omp atomic
-                    All.MechFB_Injected_KE += dKE_1loop;
-                    #pragma omp atomic
-                    All.MechFB_Injected_TE += dTE_1loop;
-                    if(InternalEnergy_j_0 < 1.e5 / (0.59 * (2./3.) * U_TO_TEMP_UNITS)) {
-                        #pragma omp atomic
-                        All.MechFB_Injected_TE_cold += dKE_1loop + dTE_1loop;
-                    }
-                }
-
                 /* we updated variables that need to get assigned to element 'j' -- let's do it here in a thread-safe manner */
                 #pragma omp atomic
                 P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime]. done this way to ensure conservation. if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
@@ -794,20 +779,6 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     
                 } // couple_anything_but_scalar_mass_and_metals
 
-                /* track injected energy for diagnostics (2-loop path) */
-                {
-                    double dKE_2loop = 0.5 * Mass_j * (Vel_j[0]*Vel_j[0]+Vel_j[1]*Vel_j[1]+Vel_j[2]*Vel_j[2]) - 0.5 * Mass_j_0 * (Vel_j_0[0]*Vel_j_0[0]+Vel_j_0[1]*Vel_j_0[1]+Vel_j_0[2]*Vel_j_0[2]);
-                    double dTE_2loop = Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0;
-                    #pragma omp atomic
-                    All.MechFB_Injected_KE += dKE_2loop;
-                    #pragma omp atomic
-                    All.MechFB_Injected_TE += dTE_2loop;
-                    if(InternalEnergy_j_0 < 1.e5 / (0.59 * (2./3.) * U_TO_TEMP_UNITS)) {
-                        #pragma omp atomic
-                        All.MechFB_Injected_TE_cold += dKE_2loop + dTE_2loop;
-                    }
-                }
-
                 /* we updated variables that need to get assigned to element 'j' -- let's do it here in a thread-safe manner */
 #pragma omp atomic
                 N_Gas_Couplings_ThisTask++; // note that a cell recieved some feedback
@@ -925,24 +896,6 @@ void mechanical_fb_calc_toplevel(void)
     verify_and_assign_local_mechfb_integrals();
     myfree(LocalGasMechFBInfoTemp); /* free the structure */
 #endif
-    /* reduce and log cumulative injected energy after all fb loops complete */
-    {
-        double step_KE = All.MechFB_Injected_KE, step_TE = All.MechFB_Injected_TE, step_TE_cold = All.MechFB_Injected_TE_cold;
-        double step_KE_total = 0, step_TE_total = 0, step_TE_cold_total = 0;
-        All.MechFB_Injected_KE = 0; All.MechFB_Injected_TE = 0; All.MechFB_Injected_TE_cold = 0;
-        MPI_Reduce(&step_KE, &step_KE_total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&step_TE, &step_TE_total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&step_TE_cold, &step_TE_cold_total, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        if(ThisTask == 0) {
-            All.MechFB_Injected_KE += step_KE_total;
-            All.MechFB_Injected_TE += step_TE_total;
-            All.MechFB_Injected_TE_cold += step_TE_cold_total;
-            char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; FILE *fd;
-            snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "MechFB_EnergyInjected.txt");
-            fd = fopen(buf, "a");
-            if(fd) {fprintf(fd, "%.16g %.16g %.16g %.16g\n", All.Time, All.MechFB_Injected_KE, All.MechFB_Injected_TE, All.MechFB_Injected_TE_cold); fflush(fd); fclose(fd);}
-        }
-    }
 }
 
 
