@@ -2950,6 +2950,7 @@ extern void gizmo_gpu_sync_all_nuclear(void);
 #endif
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 extern void gizmo_gpu_sync_all_density(void);
+extern void gizmo_gpu_sync_all_ngb(void);
 #endif
 #ifdef RT_CHEM_PHOTOION
 extern void gizmo_gpu_sync_all_rt_chem(void);
@@ -2971,6 +2972,7 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
     gizmo_gpu_sync_all_density();
+    gizmo_gpu_sync_all_ngb();
 #endif
 #ifdef RT_CHEM_PHOTOION
     gizmo_gpu_sync_all_rt_chem();
