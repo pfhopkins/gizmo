@@ -8,7 +8,7 @@
 %
 InitCondFile                       sbcluster_ics
 OutputDir                          output
-PartAllocFactor                    5
+PartAllocFactor                    10
 TimeBegin                          0.02
 TimeMax                            1
 ComovingIntegrationOn              1
