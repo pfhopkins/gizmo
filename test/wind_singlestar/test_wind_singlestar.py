@@ -172,24 +172,12 @@ def plot_energy_vs_time(snaps, L_w, output_dir=".", suffix=""):
     E_kin_excess = E_kin - E_kin[0]
     E_therm_excess = E_therm - E_therm[0]
 
-    outdir = Path(snaps[0]).parent
-    logfile = outdir / "MechFB_EnergyInjected.txt"
-    has_log = logfile.exists() and logfile.stat().st_size > 0
-    if has_log:
-        data = np.loadtxt(str(logfile))
-        if data.ndim == 1:
-            data = data.reshape(1, -1)
-        t_log = data[:, 0]
-        cum_inj = data[:, 1] + data[:, 2]  # KE + TE
-
     plt.figure()
     mask = times > 0
     plt.plot(times[mask], E_kin_excess[mask], "bo-", markersize=4, label="KE (gas)")
     plt.plot(times[mask], E_therm_excess[mask], "rs-", markersize=4, label="Thermal (gas)")
     plt.plot(times[mask], E_kin_excess[mask] + E_therm_excess[mask], "k^-", markersize=5, label="KE + Thermal")
     plt.plot(times[mask], E_injected[mask], "g--", linewidth=2, label="Expected (Lw * t)")
-    if has_log:
-        plt.plot(t_log, cum_inj, "m-", linewidth=1.5, alpha=0.7, label="Code-tracked injection")
     plt.xlabel("t (code units)")
     plt.ylabel("Energy (code units)")
     plt.legend(fontsize=9)
