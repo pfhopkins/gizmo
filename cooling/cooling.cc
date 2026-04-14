@@ -133,19 +133,15 @@ KOKKOS_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_
 KOKKOS_FUNCTION double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double find_abundances_and_rates(double logT, double rho, int target, double shieldfac, int return_cooling_mode,
-                                 double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess,
-                                 double *mu_guess, double *LambdaExc_return, double *LambdaIon_return, double *LambdaRec_return, double *LambdaFF_return,
-                                 struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell);
+/* Functions moved to cooling_functions.h for cross-TU GPU callability:
+   find_abundances_and_rates, convert_u_to_temp, convert_temp_to_u,
+   return_local_gammamultiplier, return_uvb_shieldfac, ThermalProperties */
+#define COOLING_FUNCTIONS_OWNER /* we own CoolTables, skip extern declaration */
+#include "cooling_functions.h"
 KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell);
-KOKKOS_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 KOKKOS_FUNCTION void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
@@ -687,8 +683,10 @@ u = Etot/Mtot = SUM_i(N_i E_i) / SUM_i(N_i m_i) over all species i with energy E
 
 Argument cv will return the specific heat capacity at constant volume du/dT
  */
-#define NUM_SPECIES_IN_EOS 5
-KOKKOS_FUNCTION double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
+/* convert_temp_to_u, convert_u_to_temp, find_abundances_and_rates:
+   definitions moved to cooling_functions.h (included above) for cross-TU GPU callability. */
+#if 0 /* REMOVED — now in cooling_functions.h { */
+KOKKOS_FUNCTION double _removed_placeholder_(void) {
     double dummy;
     find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne, nH0, nHp, nHe0, nHep, nHepp, mu, &dummy, &dummy, &dummy,&dummy, pp, cell); // all the thermo variables for this T
     double X = HYDROGEN_MASSFRAC, Y = 1. - X, Z = 0, fmol;
@@ -1153,8 +1151,8 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         return Lambda; /* send it back */
     }
     return 0;
-} // end of find_abundances_and_rates(, pp, cell) //
-
+} // end of find_abundances_and_rates
+#endif /* } END REMOVED BLOCK */
 
 
 /*  this function first computes the self-consistent temperature and abundance ratios, and then it calculates (heating rate-cooling rate)/n_h^2 in cgs units */
@@ -2584,63 +2582,8 @@ KOKKOS_FUNCTION double get_background_radiation_temperature_for_emission_correct
 
 
 
-/*  this function computes the self-consistent temperature and electron fraction */
-KOKKOS_FUNCTION double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
-{
-#if defined(CHIMES)
-    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
-    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; *nHe0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeI]];
-    *nHep_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeII]]; *nHepp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeIII]];
-    double temp = ChimesGasVars[target].temperature;
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
-    return temp;
-#else
-    if(target >= 0) {*ne_guess=cell[target].Ne; *nH0_guess = DMAX(0,DMIN(1,1.-( *ne_guess / 1.2 )));} else {*ne_guess=1.; *nH0_guess=0.;}
-    rho *= UNIT_DENSITY_IN_CGS; u *= UNIT_SPECEGY_IN_CGS;   /* convert to physical cgs units */
-    double temp = convert_u_to_temp(u, rho, target, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, pp, cell);
-#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
-    if(target >= 0) {if(cell[target].DelayTimeHII > 0) {cell[target].Ne = 1.0 + 2.0*yhelium(target, pp); *nH0_guess=0; nHe0_guess=0;}} /* fully ionized [if using older model] */
-    *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
-#endif
-    return temp;
-#endif
-}
-
-
-
-/* function to return the local multiplier relative to the UVB model to account in some local RHD models for local ionizing sources */
-KOKKOS_FUNCTION double return_local_gammamultiplier(int target, struct gas_cell_data *cell)
-{
-#if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
-    if((target >= 0) && (gJH0 > 0))
-    {
-        double local_gammamultiplier = cell[target].Rad_Flux_EUV * 2.29e-10; // converts to GammaHI for typical SED (rad_uv normalized to Habing)
-        local_gammamultiplier = 1.0 + local_gammamultiplier / gJH0; // this needs to live here in cooling.c where gJH0 is declared as a global shared variable!
-        if(!isfinite(local_gammamultiplier)) {local_gammamultiplier=1;} // check for divide-by zero errors
-        return DMAX(1., DMIN(2./gJH0, DMIN(1.e20, local_gammamultiplier))); // set a cap at large number and at value spectrum would have at extremely short distance (~1000 au) from a super-luminous O-star to prevent unphysically high values
-    }
-#endif
-    return 1;
-}
-
-
-/* function to attenuate the UVB to model self-shielding in optically-thin simulations */
-KOKKOS_FUNCTION double return_uvb_shieldfac(int target, double gamma_12, double nHcgs, double logT, struct gas_cell_data *cell)
-{
-#ifdef GALSF_EFFECTIVE_EQS
-    return 1; // self-shielding is implicit in the sub-grid model already //
-#endif
-#if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
-    if(target>=0) {if(cell[target].DelayTimeHII > 0) {return 1;}} // newer HII region model irradiates and removes shielding for regions, but allows cooling function to evolve //
-#endif
-    double NH_SS_z, NH_SS = 0.0123; /* CAFG: H number density above which we assume no ionizing bkg (proper cm^-3): note this is a factor ~2 higher than Schaye and Rahmati normalization, owing to CAFG calibration (lower effective cross-section, owing to different UVB spectrum and potentially clumping factors, etc) */
-    if(gamma_12>0) {NH_SS_z = NH_SS*pow(gamma_12,0.66)*pow(10.,0.173*(logT-4.));} else {NH_SS_z = NH_SS*pow(10.,0.173*(logT-4.));}
-    double q_SS = nHcgs/NH_SS_z;
-#if defined(GALSF_FB_FIRE_STELLAREVOLUTION) && (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
-    return 1./(1.+q_SS*(1.+q_SS/2.*(1.+q_SS/3.*(1.+q_SS/4.*(1.+q_SS/5.*(1.+q_SS/6.*q_SS)))))); // older legacy approximation; this is exp(-q) down to ~1e-5, then a bit shallower, but more than sufficient approximation here //
-#endif
-    return 0.98 / pow(1 + pow(q_SS,1.64), 2.28) + 0.02 / pow(1 + q_SS*(1.+1.e-4*nHcgs*nHcgs*nHcgs*nHcgs), 0.84); // from Rahmati et al. 2012: gives gentler cutoff at high densities. but we need to modify it with the extra 1+(nHcgs/10)^4 denominator term since at very high nH, this cuts off much too-slowly (as nH^-0.84), which means UVB heating can be stronger than molecular cooling even at densities >> 1e4
-}
+/* ThermalProperties, return_local_gammamultiplier, return_uvb_shieldfac:
+   definitions moved to cooling_functions.h for cross-TU GPU callability. */
 
 
 #ifdef CHIMES
