@@ -193,6 +193,20 @@ void compute_hydro_densities_and_forces(void)
         double t_bench_grad = timediff(t_bench_grad_start, my_second());
         PRINT_STATUS(" ..gradient computation done.");
 
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        /* Refresh ghost CellP after gradient computation. The gradient pass updated
+           CellP.Gradients for local particles, but ghost copies still have pre-gradient
+           values from the initial ghost exchange. The hydro pass needs fresh gradients
+           from BOTH sides of each pair for second-order Riemann reconstruction.
+           Re-importing ghosts picks up the updated CellP from the home rank. */
+        if(NTask > 1) {
+            double t_ghostrefresh0 = my_second();
+            ghost_exchange_cleanup();
+            ghost_exchange(ghost_safety);
+            if(ThisTask == 0) {PRINT_STATUS("Ghost CellP refresh after gradients (%.4f s)", timediff(t_ghostrefresh0, my_second()));}
+        }
+#endif
+
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
         special_rt_feedback_injection(); /* do before proper hydro loop */
 #endif
