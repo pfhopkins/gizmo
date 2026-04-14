@@ -25,10 +25,10 @@ MSUN_IN_G = 1.989e33
 RES = 128
 
 
-def make_wind_singlestar_ics(output_file="wind_singlestar_ics.hdf5"):
+def make_wind_singlestar_ics(output_file="wind_singlestar_ics.hdf5", res=RES):
     # Download glass file for particle positions
-    glass_url = f"https://users.flatironinstitute.org/~mgrudic/glass/glass_{RES}.hdf5"
-    glass_file = os.path.join(os.path.dirname(output_file) or ".", f"glass_{RES}.hdf5")
+    glass_url = f"https://users.flatironinstitute.org/~mgrudic/glass/glass_{res}.hdf5"
+    glass_file = os.path.join(os.path.dirname(output_file) or ".", f"glass_{res}.hdf5")
     if not os.path.exists(glass_file):
         print(f"Downloading {glass_url}...")
         urllib.request.urlretrieve(glass_url, glass_file)

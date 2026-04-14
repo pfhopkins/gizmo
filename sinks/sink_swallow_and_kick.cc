@@ -1258,7 +1258,7 @@ double target_mass_for_wind_spawning(int i)
         if((All.Cell_Spawn_Mass_ratio_MS>0.0)&&(P[i].ProtoStellarStage == 5)&&(P[i].wind_mode==1)) {return All.Cell_Spawn_Mass_ratio_MS * P[i].Sink_Formation_Mass;} //use different (probably lower) mass for winds than for jets (will also reduce it for MS jets, but that should be fine)
         else {return All.Sink_outflow_particlemass * P[i].Sink_Formation_Mass;}
 #else // we specify the absolute value
-        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode==1)) {return All.Cell_Spawn_Mass_ratio_MS;} // specified absolute mass resolution for stellar winds
+        if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode==1)) {return (All.Cell_Spawn_Mass_ratio_MS > 0) ? All.Cell_Spawn_Mass_ratio_MS : All.Sink_outflow_particlemass;} // specified absolute mass resolution for stellar winds; fall back to Sink_outflow_particlemass if not set
         else if(P[i].ProtoStellarStage == 6) {return P[i].Sink_Formation_Mass;} // If supernova, use the nominal "average" mass resolution
 #endif
     }

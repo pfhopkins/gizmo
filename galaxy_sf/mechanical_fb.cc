@@ -439,7 +439,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 }
                     
                 } // couple_anything_but_scalar_mass_and_metals
-                
+
                 /* we updated variables that need to get assigned to element 'j' -- let's do it here in a thread-safe manner */
                 #pragma omp atomic
                 P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime]. done this way to ensure conservation. if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
@@ -778,7 +778,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
                     
                 } // couple_anything_but_scalar_mass_and_metals
-                
+
                 /* we updated variables that need to get assigned to element 'j' -- let's do it here in a thread-safe manner */
 #pragma omp atomic
                 N_Gas_Couplings_ThisTask++; // note that a cell recieved some feedback

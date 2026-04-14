@@ -21,7 +21,7 @@ NumFilesWrittenInParallel   1
 
 %---- Output frequency
 TimeOfFirstSnapshot     0.0
-TimeBetSnapshot         0.01
+TimeBetSnapshot         0.001
 TimeBetStatistics       0.05
 
 %---- CPU run-time and checkpointing time-limits
@@ -35,7 +35,7 @@ TimeBegin   0.0
 TimeMax     0.1
 
 %---- Maximum and minimum timesteps allowed
-MaxSizeTimestep         0.1
+MaxSizeTimestep         0.01
 MinSizeTimestep         1.0e-15
 
 %---- System of units: pc, Msun, km/s
@@ -178,4 +178,4 @@ MaxNumNgbDeviation      0.05
 AGS_MaxNumNgbDeviation  0.10
 DivBcleaningParabolicSigma   1.0
 DivBcleaningHyperbolicSigma  1.0
-Sink_outflow_particlemass 1e-2
+Sink_outflow_particlemass 0.000238419
