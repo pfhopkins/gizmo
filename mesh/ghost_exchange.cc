@@ -64,6 +64,7 @@
 static int NumPart_before_ghost = -1;
 static int N_gas_before_ghost = -1;
 static int NumGhostParticles = 0;
+static int PreviousGhostCount = 0; /* ghost count from the most recent completed exchange, for domain headroom */
 
 /* Ghost provenance map: for each ghost particle, the home MPI rank and index.
    Used by ghost_writeback to reverse-communicate j-particle modifications.
@@ -581,6 +582,7 @@ int ghost_exchange_needs_redo(void)
 void ghost_exchange_cleanup(void)
 {
     if(NumPart_before_ghost < 0) return;
+    PreviousGhostCount = NumGhostParticles; /* save for domain decomposition headroom */
     NumPart = NumPart_before_ghost;
     N_gas = N_gas_before_ghost;
     NumGhostParticles = 0;
@@ -596,6 +598,7 @@ void ghost_exchange_cleanup(void)
 
 /* Accessors for ghost provenance data — used by ghost_writeback.cc */
 int ghost_get_num_ghosts(void) { return NumGhostParticles; }
+int ghost_get_previous_count(void) { return PreviousGhostCount; }
 int ghost_get_num_local(void)  { return (NumPart_before_ghost >= 0) ? NumPart_before_ghost : NumPart; }
 int *ghost_get_home_rank(void)  { return ghost_home_rank_map; }
 int *ghost_get_home_index(void) { return ghost_home_index_map; }

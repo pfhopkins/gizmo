@@ -431,6 +431,7 @@ void move_particles(integertime time1);
 void ghost_exchange(double safety_factor);
 void ghost_exchange_cleanup(void);
 int ghost_exchange_needs_redo(void);
+int ghost_get_previous_count(void);
 void find_next_sync_point_and_drift(void);
 void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);

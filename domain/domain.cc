@@ -321,6 +321,26 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 
       maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
       maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+      /* Adaptive ghost headroom: reduce maxLoad by the previous ghost count (with safety margin)
+         so domain decomposition leaves room for ghost particles on boundary ranks.
+         Uses MPI_MAX of per-rank ghost counts as a conservative global estimate. */
+      {
+          int prev_ghost_local = ghost_get_previous_count();
+          int prev_ghost_max;
+          MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+          if(prev_ghost_max > 0) {
+              int ghost_headroom = (int)(prev_ghost_max * 1.3); /* 30% safety margin for h-growth */
+              int maxLoad_new = All.MaxPart - ghost_headroom;
+              if(maxLoad_new < All.MaxPart / 2) {maxLoad_new = All.MaxPart / 2;} /* never reserve more than half */
+              if(maxLoad_new < maxLoad) {
+                  if(ThisTask == 0) {PRINT_STATUS("Domain: ghost headroom %d (prev_max=%d * 1.3), maxLoad %d -> %d",
+                                                   ghost_headroom, prev_ghost_max, maxLoad, maxLoad_new);}
+                  maxLoad = maxLoad_new;
+              }
+          }
+      }
+#endif
 
       report_memory_usage(&HighMark_domain, "DOMAIN");
 
@@ -536,6 +556,19 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
     maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+    {   /* adaptive ghost headroom (same logic as full decomposition above) */
+        int prev_ghost_local = ghost_get_previous_count();
+        int prev_ghost_max;
+        MPI_Allreduce(&prev_ghost_local, &prev_ghost_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(prev_ghost_max > 0) {
+            int ghost_headroom = (int)(prev_ghost_max * 1.3);
+            int maxLoad_new = All.MaxPart - ghost_headroom;
+            if(maxLoad_new < All.MaxPart / 2) {maxLoad_new = All.MaxPart / 2;}
+            if(maxLoad_new < maxLoad) {maxLoad = maxLoad_new;}
+        }
+    }
+#endif
 
     /* re-split and re-assign */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
