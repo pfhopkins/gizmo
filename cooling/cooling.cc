@@ -69,32 +69,45 @@ static __managed__ struct global_data_all_processes All_dev;
 
 #ifdef COOLING
 
-/* these are variables of the cooling tables. they are static but this shouldnt be a problem for shared-memory structure because
-    they are only defined once in a global operation, then locked for particle-by-particle operations */
-/* requires the cooling table TREECOOL, which is included in the GIZMO source in the cooling directory */
-#define NCOOLTAB  2000 /* defines size of cooling table */
+/* Cooling tables consolidated into a single struct (cooling_tables.h).
+   With GPU offload: __managed__ so device kernels can access directly.
+   Without: plain static. Pointer members point to separately allocated memory. */
+#include "cooling_tables.h"
 
 #if !defined(CHIMES)
-/* Cooling table scalars and UV background constants.
-   With Kokkos+CUDA (OPENMP_GPU_OFFLOAD), declared __managed__ so they live in CUDA unified
-   memory and are accessible from both host and device code without explicit copies.
-   Without GPU offload, plain static variables as before.
-   Note: __managed__ implies __device__, so these ARE the device copies — no shadow needed. */
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-__managed__ static double Tmin = -1.0, Tmax = 9.0, deltaT;
-__managed__ static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep;
-#ifdef COOL_METAL_LINES_BY_SPECIES
-__managed__ static float *SpCoolTable0, *SpCoolTable1;
-#endif
-__managed__ static double J_UV = 0, gJH0 = 0, gJHep = 0, gJHe0 = 0, epsH0 = 0, epsHep = 0, epsHe0 = 0;
+__managed__ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL, 0,0,0,0,0,0,0};
 #else
-static double Tmin = -1.0, Tmax = 9.0, deltaT;
-static double *BetaH0, *BetaHep, *Betaff, *AlphaHp, *AlphaHep, *Alphad, *AlphaHepp, *GammaeH0, *GammaeHe0, *GammaeHep;
-#ifdef COOL_METAL_LINES_BY_SPECIES
-static float *SpCoolTable0, *SpCoolTable1;
+struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL, 0,0,0,0,0,0,0};
 #endif
-static double J_UV = 0, gJH0 = 0, gJHep = 0, gJHe0 = 0, epsH0 = 0, epsHep = 0, epsHe0 = 0;
-#endif /* OPENMP_GPU_OFFLOAD */
+
+/* Convenience aliases so existing code doesn't need bulk renaming yet.
+   These will be removed once cooling functions move to cooling_functions.h
+   and access CoolTables directly. */
+#define Tmin      CoolTables.Tmin
+#define Tmax      CoolTables.Tmax
+#define deltaT    CoolTables.deltaT
+#define BetaH0    CoolTables.BetaH0
+#define BetaHep   CoolTables.BetaHep
+#define Betaff    CoolTables.Betaff
+#define AlphaHp   CoolTables.AlphaHp
+#define AlphaHep  CoolTables.AlphaHep
+#define Alphad    CoolTables.Alphad
+#define AlphaHepp CoolTables.AlphaHepp
+#define GammaeH0  CoolTables.GammaeH0
+#define GammaeHe0 CoolTables.GammaeHe0
+#define GammaeHep CoolTables.GammaeHep
+#define J_UV      CoolTables.J_UV
+#define gJH0      CoolTables.gJH0
+#define gJHep     CoolTables.gJHep
+#define gJHe0     CoolTables.gJHe0
+#define epsH0     CoolTables.epsH0
+#define epsHep    CoolTables.epsHep
+#define epsHe0    CoolTables.epsHe0
+#ifdef COOL_METAL_LINES_BY_SPECIES
+#define SpCoolTable0 CoolTables.SpCoolTable0
+#define SpCoolTable1 CoolTables.SpCoolTable1
+#endif
 #endif /* !CHIMES */
 
 #if defined(CHIMES)
