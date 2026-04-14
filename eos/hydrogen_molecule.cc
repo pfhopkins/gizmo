@@ -10,13 +10,9 @@ Equations follow Boley 2007, ApJ, 656, L89
 #include <math.h>
 
 /* All function bodies are now in hydrogen_molecule_functions.h (single source of truth).
-   Redefine KOKKOS_INLINE_FUNCTION to produce non-inline, externally-visible symbols.
-   On GPU builds: __host__ __device__ so the device linker can resolve them.
-   On CPU builds: plain (no annotation). */
+   Define KOKKOS_INLINE_FUNCTION as empty here so the functions are non-inline,
+   providing externally-visible symbols for non-GPU TUs that link via proto.h.
+   GPU TUs get the inline versions from cell_data.h -> hydrogen_molecule_functions.h. */
 #undef KOKKOS_INLINE_FUNCTION
-#ifdef GIZMO_GPU_COMPILER
-#define KOKKOS_INLINE_FUNCTION __host__ __device__
-#else
 #define KOKKOS_INLINE_FUNCTION
-#endif
 #include "hydrogen_molecule_functions.h"

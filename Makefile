@@ -448,11 +448,12 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o eos/hydrogen_molecule.o hydro/density_gpu.o mesh/gpu_neighbor_list.o radiation/rt_chem.o turb/turb_driving.o
+GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o mesh/gpu_neighbor_list.o radiation/rt_chem.o turb/turb_driving.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
+				eos/hydrogen_molecule.o \
 				eos/cosmic_ray_fluid/cosmic_ray_alfven.o \
 				eos/cosmic_ray_fluid/cosmic_ray_utilities.o \
 				solids/elastic_physics.o \
@@ -628,8 +629,6 @@ nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics.cc $(INCL) $(CONFI
 hydro/density_gpu.o: hydro/density_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 mesh/gpu_neighbor_list.o: mesh/gpu_neighbor_list.cc $(INCL) $(CONFIG) compile_time_info.cc
-	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-eos/hydrogen_molecule.o: eos/hydrogen_molecule.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 radiation/rt_chem.o: radiation/rt_chem.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
