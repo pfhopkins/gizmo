@@ -1520,17 +1520,10 @@ void InitCool(void)
     LoadMultiSpeciesTables();
 #endif
 #ifdef OPENMP_GPU_OFFLOAD
-    /* upload cooling tables to GPU device after initialization; these are read-only during the cooling loop */
-    #pragma omp target enter data map(to: BetaH0[0:NCOOLTAB+1], BetaHep[0:NCOOLTAB+1], Betaff[0:NCOOLTAB+1])
-    #pragma omp target enter data map(to: AlphaHp[0:NCOOLTAB+1], AlphaHep[0:NCOOLTAB+1], Alphad[0:NCOOLTAB+1], AlphaHepp[0:NCOOLTAB+1])
-    #pragma omp target enter data map(to: GammaeH0[0:NCOOLTAB+1], GammaeHe0[0:NCOOLTAB+1], GammaeHep[0:NCOOLTAB+1])
-#ifdef COOL_METAL_LINES_BY_SPECIES
-    {long SpCoolTable_size = (long)NUM_LIVE_SPECIES_FOR_COOLTABLES * 41L * 176L;
-    #pragma omp target enter data map(to: SpCoolTable0[0:SpCoolTable_size])
-    if(All.ComovingIntegrationOn) {
-        #pragma omp target enter data map(to: SpCoolTable1[0:SpCoolTable_size])
-    }}
-#endif
+    /* Cooling tables are allocated via Kokkos SharedSpace (__managed__ / UVM),
+       so they are automatically accessible from device. No explicit
+       #pragma omp target enter data needed (and the CoolTables #define aliases
+       are incompatible with the OMP map syntax). */
 #endif
 #endif // CHIMES
 }

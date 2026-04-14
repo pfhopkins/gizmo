@@ -83,7 +83,7 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
     {
         printf("NEGATIVE n_photons_per_volume: %g %d\n", n_photons_vol, i);
         printf("Rad_E_gamma %g mass %g All.cf_a3inv %g\n", cell[i].Rad_E_gamma[0], pp[i].Mass, All.cf_a3inv);
-        fflush(stdout); endrun(111);
+        endrun(111);
         return;
     }
     A = dtime * gamma_HI * nH * cell[i].Ne;
@@ -115,7 +115,7 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
     if(nHII < 0 || nHII > 1 || isnan(nHII))
     {
         printf("ERROR nHII %g\n", nHII);
-        fflush(stdout); endrun(333);
+        endrun(333);
         return;
     }
     cell[i].Ne = nHII;
@@ -150,7 +150,7 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
     nHeII /= 1.0 + G + F + D + J + ((G + F - E) / (1.0 + E)) * (D + L);
     if(nHeII < 0 || nHeII > 1 || isnan(nHeII))
     {
-        printf("ERROR nHeII %g\n", nHeII); fflush(stdout);
+        printf("ERROR nHeII %g\n", nHeII);
         endrun(333);
         return;
     }
@@ -158,7 +158,7 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
     nHeIII /= 1.0 + E;
     if(nHeIII < 0 || nHeIII > 1 || isnan(nHeIII))
     {
-        printf("ERROR nHeIII %g\n", nHeIII); fflush(stdout);
+        printf("ERROR nHeIII %g\n", nHeIII);
         endrun(333);
         return;
     }
