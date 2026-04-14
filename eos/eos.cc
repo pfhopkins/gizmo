@@ -23,39 +23,6 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 
-/* CoolTables + aliases for set_eos_pressure (now in cooling_functions.h) */
-#ifdef COOLING
-#if !defined(CHIMES)
-#include "../cooling/cooling_tables.h"
-extern struct cooling_tables_t CoolTables;
-#define Tmin      CoolTables.Tmin
-#define Tmax      CoolTables.Tmax
-#define deltaT    CoolTables.deltaT
-#define BetaH0    CoolTables.BetaH0
-#define BetaHep   CoolTables.BetaHep
-#define Betaff    CoolTables.Betaff
-#define AlphaHp   CoolTables.AlphaHp
-#define AlphaHep  CoolTables.AlphaHep
-#define Alphad    CoolTables.Alphad
-#define AlphaHepp CoolTables.AlphaHepp
-#define GammaeH0  CoolTables.GammaeH0
-#define GammaeHe0 CoolTables.GammaeHe0
-#define GammaeHep CoolTables.GammaeHep
-#define J_UV      CoolTables.J_UV
-#define gJH0      CoolTables.gJH0
-#define gJHep     CoolTables.gJHep
-#define gJHe0     CoolTables.gJHe0
-#define epsH0     CoolTables.epsH0
-#define epsHep    CoolTables.epsHep
-#define epsHe0    CoolTables.epsHe0
-#ifdef COOL_METAL_LINES_BY_SPECIES
-#define SpCoolTable0 CoolTables.SpCoolTable0
-#define SpCoolTable1 CoolTables.SpCoolTable1
-#endif
-#endif
-#endif
-#include "../cooling/cooling_functions.h"
-
 /* GPU-safe isfinite/isnan overrides (see cooling.cc for explanation) */
 #ifdef GIZMO_GPU_COMPILER
 #undef isfinite
@@ -125,6 +92,39 @@ double return_user_desired_target_pressure(int i)
 #undef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION
 #include "eos_functions.h"
+
+/* CoolTables extern + aliases for cooling_functions.h (set_eos_pressure etc.) */
+#ifdef COOLING
+#if !defined(CHIMES)
+#include "../cooling/cooling_tables.h"
+extern struct cooling_tables_t CoolTables;
+#define Tmin      CoolTables.Tmin
+#define Tmax      CoolTables.Tmax
+#define deltaT    CoolTables.deltaT
+#define BetaH0    CoolTables.BetaH0
+#define BetaHep   CoolTables.BetaHep
+#define Betaff    CoolTables.Betaff
+#define AlphaHp   CoolTables.AlphaHp
+#define AlphaHep  CoolTables.AlphaHep
+#define Alphad    CoolTables.Alphad
+#define AlphaHepp CoolTables.AlphaHepp
+#define GammaeH0  CoolTables.GammaeH0
+#define GammaeHe0 CoolTables.GammaeHe0
+#define GammaeHep CoolTables.GammaeHep
+#define J_UV      CoolTables.J_UV
+#define gJH0      CoolTables.gJH0
+#define gJHep     CoolTables.gJHep
+#define gJHe0     CoolTables.gJHe0
+#define epsH0     CoolTables.epsH0
+#define epsHep    CoolTables.epsHep
+#define epsHe0    CoolTables.epsHe0
+#ifdef COOL_METAL_LINES_BY_SPECIES
+#define SpCoolTable0 CoolTables.SpCoolTable0
+#define SpCoolTable1 CoolTables.SpCoolTable1
+#endif
+#endif
+#endif
+#include "../cooling/cooling_functions.h"
 
 #ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
