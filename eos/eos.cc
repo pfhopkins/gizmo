@@ -97,7 +97,11 @@ double return_user_desired_target_pressure(int i)
 #ifdef COOLING
 #if !defined(CHIMES)
 #include "../cooling/cooling_tables.h"
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
+extern __managed__ struct cooling_tables_t CoolTables;
+#else
 extern struct cooling_tables_t CoolTables;
+#endif
 #define Tmin      CoolTables.Tmin
 #define Tmax      CoolTables.Tmax
 #define deltaT    CoolTables.deltaT
