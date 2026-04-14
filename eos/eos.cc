@@ -128,12 +128,11 @@ extern struct cooling_tables_t CoolTables;
 #endif
 #endif
 #endif
-#include "../cooling/cooling_functions.h"
-
 #ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
 #endif
-/* ---- END device-compilable EOS functions ---- */
+/* ---- END device-compilable EOS/cooling functions ---- */
+#include "../cooling/cooling_functions.h"
 
 
 
