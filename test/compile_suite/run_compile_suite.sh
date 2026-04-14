@@ -279,7 +279,7 @@ echo "GIZMO Compile Suite — $(date)"
 echo "Base flags: $BASE_FLAGS"
 echo "Configs: ${#CONFIGS[@]}"
 echo "GPU mode: $GPU_MODE"
-if [[ $RESUME -eq 1 ]]; then echo "Resume mode: skipping ${#DONE_CONFIGS[@]} already-passed configs"; fi
+if [[ $RESUME -eq 1 ]]; then echo "Resume mode: skipping already-passed configs"; fi
 echo "============================================================"
 
 for i in "${!CONFIGS[@]}"; do
