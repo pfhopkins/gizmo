@@ -27,6 +27,7 @@ static __managed__ struct global_data_all_processes All_dev;
 #include "sfc_tiles.h"
 #include "sfc_tiles_functions.h"
 #include "gpu_neighbor_list.h"
+#include "neighbor_list.h"
 
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 
@@ -197,6 +198,36 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
     }
 }
 
+/* High-level wrapper: build a symmetric neighbor list on GPU and return it
+   in the mymalloc-based neighbor_list_t format expected by gradient/hydro.
+   Called from accel.cc (which is NOT compiled by nvcc). */
+void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_total,
+                                       int *active_indices, int num_active,
+                                       neighbor_list_t *out)
+{
+    /* Copy P to SharedSpace for GPU kernel access */
+    struct particle_data *P_shared = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+    memcpy(P_shared, P_host, num_total * sizeof(struct particle_data));
+
+    /* Build GPU CSR */
+    gpu_neighbor_list_t gpu_nl;
+    gpu_ngb_list_build(P_shared, num_total, active_indices, num_active,
+                       NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, NULL);
+
+    /* Copy CSR into mymalloc neighbor_list_t */
+    out->num_active = num_active;
+    out->total_pairs = gpu_nl.total_pairs;
+    out->offsets = (int *) mymalloc("ngb_offsets", (num_active + 1) * sizeof(int));
+    out->neighbors = (int *) mymalloc("ngb_neighbors", (gpu_nl.total_pairs > 0 ? gpu_nl.total_pairs : 1) * sizeof(int));
+    memcpy(out->offsets, gpu_nl.offsets, (num_active + 1) * sizeof(int));
+    memcpy(out->neighbors, gpu_nl.neighbors, gpu_nl.total_pairs * sizeof(int));
+
+    /* Free GPU temporaries */
+    gpu_ngb_list_free(&gpu_nl, NULL);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_shared);
+}
+
+
 /* ---- GPU All_dev sync function ---- */
 void gizmo_gpu_sync_all_ngb(void) {
 #if defined(GIZMO_GPU_COMPILER)
@@ -216,6 +247,7 @@ void gpu_spatial_index_free(gpu_spatial_index_t *) {}
 void gpu_ngb_list_build(struct particle_data *, int, int *, int, int, int,
                         gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
 void gpu_ngb_list_free(gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
+void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *) {}
 void gizmo_gpu_sync_all_ngb(void) {}
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

@@ -11,8 +11,8 @@
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #if defined(OPENMP_GPU_OFFLOAD)
-#include <Kokkos_Core.hpp>
-#include "../mesh/gpu_neighbor_list.h"
+extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
+    int *active_indices, int num_active, neighbor_list_t *out);
 #endif
 #endif
 
@@ -120,27 +120,8 @@ void compute_hydro_densities_and_forces(void)
 
             double t_sym_start = my_second();
 #if defined(OPENMP_GPU_OFFLOAD)
-            /* GPU path: copy P to SharedSpace, build CSR via GPU parallel_for,
-               then copy CSR back to mymalloc-based neighbor_list_t. */
-            {
-                struct particle_data *P_shared = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(NumPart * sizeof(struct particle_data));
-                memcpy(P_shared, P, NumPart * sizeof(struct particle_data));
-
-                gpu_neighbor_list_t gpu_sym;
-                gpu_ngb_list_build(P_shared, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active,
-                                   NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_sym, NULL);
-
-                /* Copy GPU CSR into mymalloc neighbor_list_t for gradient/hydro consumers */
-                gizmo_sym_neighbor_list.num_active = gizmo_sym_num_active;
-                gizmo_sym_neighbor_list.total_pairs = gpu_sym.total_pairs;
-                gizmo_sym_neighbor_list.offsets = (int *) mymalloc("ngb_offsets", (gizmo_sym_num_active + 1) * sizeof(int));
-                gizmo_sym_neighbor_list.neighbors = (int *) mymalloc("ngb_neighbors", (gpu_sym.total_pairs > 0 ? gpu_sym.total_pairs : 1) * sizeof(int));
-                memcpy(gizmo_sym_neighbor_list.offsets, gpu_sym.offsets, (gizmo_sym_num_active + 1) * sizeof(int));
-                memcpy(gizmo_sym_neighbor_list.neighbors, gpu_sym.neighbors, gpu_sym.total_pairs * sizeof(int));
-
-                gpu_ngb_list_free(&gpu_sym, NULL);
-                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_shared);
-            }
+            /* GPU path: build CSR via GPU parallel_for, copy back to mymalloc neighbor_list_t */
+            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list);
 #else
             build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
 #endif
