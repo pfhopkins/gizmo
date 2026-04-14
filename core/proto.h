@@ -8,6 +8,11 @@
 #endif
 #ifdef JACO
 #include "../cooling/microphysics_func_jac.h"
+void call_jaco(struct particle_data *p, struct gas_cell_data *c);
+void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell);
+void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct gas_cell_data *cell);
+int jaco_solve(SolveVars *sv, const Params *pr, double tol);
+double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
 #endif
 #ifdef SINK_PARTICLES
 #include "../sinks/sink.h"
@@ -794,12 +799,14 @@ void hydro_force(void);
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef JACO
-void call_jaco(int i);
-void jaco_do_cooling(int i);
-void jaco_set_eos_pressure(int i);
-void gizmo_to_jaco(int i, SolveVars *sv, Params *pr);
-void jaco_to_gizmo(int i, SolveVars *sv);
-int jaco_solve(SolveVars *sv, Params *pr, double tol);
+void call_jaco(struct particle_data *pp, struct gas_cell_data *cell);
+void jaco_do_cooling(struct particle_data *pp, struct gas_cell_data *cell);
+void gizmo_to_jaco(SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell);
+void jaco_to_gizmo(const SolveVars *sv, struct gas_cell_data *cell);
+int jaco_solve(SolveVars *sv, const Params *pr, double tol);
+double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
+double jaco_T_to_u(double T, const Params *pr, double *cv_out);
+double jaco_u_to_T(double u, const Params *pr);
 #endif
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);

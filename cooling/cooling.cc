@@ -134,7 +134,7 @@ void cooling_parent_routine(void)
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef JACO
-    call_jaco(i); return;
+    call_jaco(&pp[i], &cell[i]); return;
 #endif
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
 #ifdef TRANSPORT_SUBCYCLE_COOLING

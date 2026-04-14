@@ -418,7 +418,12 @@ EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
 
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
-EOSCOOL_OBJS += cooling/jaco.o cooling/microphysics_func_jac.o
+JACO_MODEL := $(strip $(shell grep '^\#define JACO' GIZMO_config.h | awk '{print $$3}'))
+ifeq ($(JACO_MODEL),)
+JACO_MODEL := wind_comparison
+endif
+JACO_GENERATED = cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h cooling/jaco_interp.h
+EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_eos.o cooling/microphysics_func_jac.o
 endif
 
 ## combine all the objects above
@@ -447,6 +452,9 @@ INCL    += 	declarations/allvars.h \
 
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
 INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h
+JACO_PYTHON ?= python3
+$(JACO_GENERATED): $(CONFIG)
+	$(JACO_PYTHON) -m jaco.codegen.gizmo.gizmo $(JACO_MODEL) --language c --ext .cc --output-dir cooling
 endif
 
 
@@ -539,5 +547,6 @@ compile_time_info.cc: $(CONFIG)
 
 clean:
 	rm -f $(OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
+	rm -f cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h cooling/jaco_interp.h
 
 
