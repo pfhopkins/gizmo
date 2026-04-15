@@ -247,14 +247,14 @@ void compute_hydro_densities_and_forces(void)
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #ifndef TRANSPORT_SUBCYCLE
-        /* Free symmetric neighbor list — no longer needed after hydro_force.
-           When TRANSPORT_SUBCYCLE is enabled, keep the list for RT subcycle steps
-           (freed via gizmo_sym_neighbor_list_free after transport subcycling in run.cc). */
+        /* Free symmetric neighbor list and remove ghost particles — no longer needed after hydro_force.
+           When TRANSPORT_SUBCYCLE is enabled, keep BOTH the symlist AND ghost particles alive
+           for RT subcycle steps (the symlist references ghost particle indices, so ghosts
+           must persist as long as the symlist is in use). Both are cleaned up via
+           gizmo_sym_neighbor_list_free + ghost_exchange_cleanup after transport subcycling in run.cc. */
         gizmo_sym_neighbor_list_free();
+        ghost_exchange_cleanup();
 #endif
-#endif
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        ghost_exchange_cleanup(); /* remove ghost particles — must be before any particle count-dependent operations */
 #endif
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY

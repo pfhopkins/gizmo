@@ -388,6 +388,7 @@ void calculate_non_standard_physics(void)
     } /* end transport subcycle loop */
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
     gizmo_sym_neighbor_list_free(); /* free the symmetric neighbor list kept alive for subcycle steps */
+    ghost_exchange_cleanup(); /* remove ghost particles deferred from accel.cc — must happen after symlist is freed */
 #endif
     /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
        the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
