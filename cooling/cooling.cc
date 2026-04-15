@@ -186,7 +186,7 @@ void cooling_parent_routine(void)
      * than N_active × struct_size, further reducing UVM pressure.
      */
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD && 0) { /* DIAGNOSTIC: force CPU path to test if GPU kernel is the problem */
+  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_COOL_BATCH_SIZE = 32768;
     /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
 
@@ -342,8 +342,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         ne_in = cell[i].Ne; ne_out = ne_in; /* this variable is not defined if chimes is on */
 #endif
         unew = DoCooling(uold, cell[i].Density * All.cf_a3inv, dtime, ne_in, &ne_out, i, pp, cell);
-        if(i == 0) {printf("[COOL_DIAG] i=0: uold=%.6e unew=%.6e rho=%.6e dt=%.6e ne=%.6e Tmin=%.4f Tmax=%.4f deltaT=%.6e gJH0=%.6e J_UV=%.6e cf_a3inv=%.6e MinEgySpec=%.6e\n",
-            uold, unew, cell[i].Density * All.cf_a3inv, dtime, ne_out, Tmin, Tmax, deltaT, gJH0, J_UV, All.cf_a3inv, All.MinEgySpec);}
 #if !defined(CHIMES)
         cell[i].Ne = ne_out; /* update the free electron variable */
 #endif
