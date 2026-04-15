@@ -2422,11 +2422,17 @@ void chimes_gizmo_exit(void)
 void gizmo_kokkos_initialize(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
 #if defined(__CUDACC__)
-    {cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, 32768);
-     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,32768) failed: %s\n", cudaGetErrorString(_e)); fflush(stdout);}}
+    {size_t stack_size = 65536; /* 64KB per thread — cooling kernel is deeply nested:
+         DoCooling → CoolingRateFromU → convert_u_to_temp → find_abundances_and_rates
+         plus metal cooling table lookups. 32KB may overflow on some GPU architectures. */
+     cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, stack_size);
+     if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,%zu) failed: %s\n", stack_size, cudaGetErrorString(_e)); fflush(stdout);}
+     else {printf("[GPU] CUDA thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
 #elif defined(__HIPCC__)
-    {hipError_t _e = hipDeviceSetLimit(hipLimitStackSize, 32768);
-     if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,32768) failed: %s\n", hipGetErrorString(_e)); fflush(stdout);}}
+    {size_t stack_size = 65536;
+     hipError_t _e = hipDeviceSetLimit(hipLimitStackSize, stack_size);
+     if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,%zu) failed: %s\n", stack_size, hipGetErrorString(_e)); fflush(stdout);}
+     else {printf("[GPU] HIP thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
 #endif
 }
 void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
