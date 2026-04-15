@@ -170,18 +170,6 @@ void compute_hydro_densities_and_forces(void)
         compute_stellar_feedback();
 #endif
 
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Refresh ghost CellP before gradient computation. Ghost copies have pre-density,
-           pre-feedback, pre-DiffFilter CellP values from the initial ghost exchange. The
-           gradient pass reads CellP[j].Density, Velocity_bar, etc. from ghost neighbors
-           and needs converged values. Re-importing picks up all post-density updates. */
-        if(NTask > 1) {
-            double t_ghostrefresh0 = my_second();
-            ghost_exchange_cleanup();
-            ghost_exchange(ghost_safety);
-            if(ThisTask == 0) {PRINT_STATUS("Ghost CellP refresh before gradients (%.4f s)", timediff(t_ghostrefresh0, my_second()));}
-        }
-#endif
         double t_bench_grad_start = my_second();
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #ifdef MHD_MODIFIED_GRADIENT
