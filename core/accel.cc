@@ -117,20 +117,19 @@ void compute_hydro_densities_and_forces(void)
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Build symmetric neighbor list (r < max(h_i, h_j)) with converged h values.
            This list is reused by gradients, volume corrections, and hydro force —
-           built once here, freed after hydro_force completes. */
+           built here, rebuilt after each ghost refresh. */
+        /* When TURB_DIFF_DYNAMIC is enabled, the gradient pass needs neighbors out to
+           TurbDynamicDiffFac * h_i for hat-kernel computations. Build the symlist with
+           the wider search radius so those pairs are included. */
+        double sym_search_fac = 1.0;
+#ifdef TURB_DIFF_DYNAMIC
+        sym_search_fac = DMAX(sym_search_fac, All.TurbDynamicDiffFac);
+#endif
         {
             gizmo_sym_num_active = 0;
             for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
             gizmo_sym_active_indices = (int *) mymalloc("sym_active", (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
             {int aa = 0; for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
-
-            /* When TURB_DIFF_DYNAMIC is enabled, the gradient pass needs neighbors out to
-               TurbDynamicDiffFac * h_i for hat-kernel computations. Build the symlist with
-               the wider search radius so those pairs are included. */
-            double sym_search_fac = 1.0;
-#ifdef TURB_DIFF_DYNAMIC
-            sym_search_fac = DMAX(sym_search_fac, All.TurbDynamicDiffFac);
-#endif
             double t_sym_start = my_second();
 #if defined(OPENMP_GPU_OFFLOAD)
             /* GPU path: build CSR via GPU parallel_for, copy back to mymalloc neighbor_list_t */
@@ -170,6 +169,28 @@ void compute_hydro_densities_and_forces(void)
         compute_stellar_feedback();
 #endif
 
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+        /* Refresh ghost CellP before gradient computation. The density pass, DiffFilter,
+           and feedback updated CellP (Density, Pressure, Velocity_bar, Mass, etc.) for
+           local particles, but ghost copies still have pre-density values. The gradient
+           pass computes gradients of these quantities and needs converged values from
+           BOTH sides of each pair. Must also rebuild the symmetric CSR neighbor list
+           since ghost particle indices may change after cleanup+re-exchange. */
+        if(NTask > 1) {
+            double t_ghostrefresh0 = my_second();
+            free_neighbor_list(&gizmo_sym_neighbor_list); /* free old CSR (ghost indices now stale) */
+            ghost_exchange_cleanup();
+            ghost_exchange(ghost_safety);
+#if defined(OPENMP_GPU_OFFLOAD)
+            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, sym_search_fac);
+#else
+            build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
+#endif
+            if(ThisTask == 0) {PRINT_STATUS("Ghost refresh + CSR rebuild before gradients: %d pairs (%.4f s)",
+                                            gizmo_sym_neighbor_list.total_pairs, timediff(t_ghostrefresh0, my_second()));}
+        }
+#endif
+
         double t_bench_grad_start = my_second();
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #ifdef MHD_MODIFIED_GRADIENT
@@ -196,14 +217,21 @@ void compute_hydro_densities_and_forces(void)
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Refresh ghost CellP after gradient computation. The gradient pass updated
            CellP.Gradients for local particles, but ghost copies still have pre-gradient
-           values from the initial ghost exchange. The hydro pass needs fresh gradients
-           from BOTH sides of each pair for second-order Riemann reconstruction.
-           Re-importing ghosts picks up the updated CellP from the home rank. */
+           values. The hydro pass needs fresh gradients from BOTH sides of each pair
+           for second-order Riemann reconstruction. Must also rebuild the CSR neighbor
+           list since ghost particle indices may change after cleanup+re-exchange. */
         if(NTask > 1) {
             double t_ghostrefresh0 = my_second();
+            free_neighbor_list(&gizmo_sym_neighbor_list); /* free old CSR (ghost indices now stale) */
             ghost_exchange_cleanup();
             ghost_exchange(ghost_safety);
-            if(ThisTask == 0) {PRINT_STATUS("Ghost CellP refresh after gradients (%.4f s)", timediff(t_ghostrefresh0, my_second()));}
+#if defined(OPENMP_GPU_OFFLOAD)
+            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, sym_search_fac);
+#else
+            build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
+#endif
+            if(ThisTask == 0) {PRINT_STATUS("Ghost refresh + CSR rebuild after gradients: %d pairs (%.4f s)",
+                                            gizmo_sym_neighbor_list.total_pairs, timediff(t_ghostrefresh0, my_second()));}
         }
 #endif
 
