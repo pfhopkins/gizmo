@@ -99,63 +99,16 @@ double return_user_desired_target_pressure(int i)
 #define KOKKOS_INLINE_FUNCTION
 #include "eos_functions.h"
 
-/* CoolTables extern + aliases for cooling_functions.h (set_eos_pressure etc.) */
-#ifdef COOLING
-#if !defined(CHIMES)
-#include "../cooling/cooling_tables.h"
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-extern __managed__ struct cooling_tables_t CoolTables;
-#else
-extern struct cooling_tables_t CoolTables;
-#endif
-#define Tmin      CoolTables.Tmin
-#define Tmax      CoolTables.Tmax
-#define deltaT    CoolTables.deltaT
-#define BetaH0    CoolTables.BetaH0
-#define BetaHep   CoolTables.BetaHep
-#define Betaff    CoolTables.Betaff
-#define AlphaHp   CoolTables.AlphaHp
-#define AlphaHep  CoolTables.AlphaHep
-#define Alphad    CoolTables.Alphad
-#define AlphaHepp CoolTables.AlphaHepp
-#define GammaeH0  CoolTables.GammaeH0
-#define GammaeHe0 CoolTables.GammaeHe0
-#define GammaeHep CoolTables.GammaeHep
-#define J_UV      CoolTables.J_UV
-#define gJH0      CoolTables.gJH0
-#define gJHep     CoolTables.gJHep
-#define gJHe0     CoolTables.gJHe0
-#define epsH0     CoolTables.epsH0
-#define epsHep    CoolTables.epsHep
-#define epsHe0    CoolTables.epsHe0
-#ifdef COOL_METAL_LINES_BY_SPECIES
-#define SpCoolTable0 CoolTables.SpCoolTable0
-#define SpCoolTable1 CoolTables.SpCoolTable1
-#endif
-#endif
-#endif
 #ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
 #endif
-/* Include cooling_functions.h for set_eos_pressure and the cooling chain.
-   Use __host__ (not __device__) to provide externally-visible host symbols
-   without triggering device linking of CoolingRateFromU and other cooling.cc
-   functions. GPU TUs that need device-callable versions include the header
-   directly with proper KOKKOS_INLINE_FUNCTION. */
-#undef KOKKOS_INLINE_FUNCTION
-#ifdef GIZMO_GPU_COMPILER
-#define KOKKOS_INLINE_FUNCTION __host__
-#else
-#define KOKKOS_INLINE_FUNCTION
-#endif
-#include "../cooling/cooling_functions.h"
-
 
 /* set_eos_pressure — compute pressure and soundspeed from EOS.
-   This function must remain in eos.cc (NOT inlined from a header) because
-   nvcc inlining with __managed__ All_dev context produces wrong results
-   on CUDA. All host callers (density.cc, predict.cc, cooling.cc scatter
-   loop, etc.) link against this single external symbol. */
+   Calls ThermalProperties (in cooling.cc via cooling_functions.h) by external
+   linkage. Do NOT include cooling_functions.h here — doing so creates __host__
+   non-inline strong symbols for ThermalProperties/convert_u_to_temp/
+   find_abundances_and_rates that override cooling.cc's inline versions at link
+   time, producing wrong results on CUDA (bisected to commits f8d2619f..63474bcd). */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; cell[i].Gamma = gamma_eos_index;

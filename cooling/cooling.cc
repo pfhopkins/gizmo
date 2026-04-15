@@ -135,8 +135,19 @@ KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, d
 KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 /* Functions moved to cooling_functions.h for cross-TU GPU callability:
    find_abundances_and_rates, convert_u_to_temp, convert_temp_to_u,
-   return_local_gammamultiplier, return_uvb_shieldfac, ThermalProperties */
-#define COOLING_FUNCTIONS_OWNER /* we own CoolTables, skip extern declaration */
+   return_local_gammamultiplier, return_uvb_shieldfac, ThermalProperties.
+   Include with NON-INLINE KOKKOS_INLINE_FUNCTION to produce externally-visible
+   host symbols that non-GPU TUs (eos.cc, density.cc, etc.) can link against.
+   On CUDA, __host__ __device__ (without inline) still allows the GPU kernel
+   in this TU to call these functions. The compiler can still inline them
+   within this TU even without the inline keyword. */
+#undef KOKKOS_INLINE_FUNCTION
+#ifdef GIZMO_GPU_COMPILER
+#define KOKKOS_INLINE_FUNCTION __host__ __device__
+#else
+#define KOKKOS_INLINE_FUNCTION
+#endif
+#define COOLING_FUNCTIONS_OWNER
 #include "cooling_functions.h"
 KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1094,6 +1105,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     return Q;
 } // ends CoolingRate
 /* ---- END device-compilable cooling functions (do_the_cooling_for_particle through CoolingRate) ---- */
+
 
 
 void InitCoolMemory(void)
