@@ -186,7 +186,7 @@ void cooling_parent_routine(void)
      * than N_active × struct_size, further reducing UVM pressure.
      */
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
-  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD && 0) { /* DIAGNOSTIC: force CPU path to test if GPU kernel is the problem */
     static const int GPU_COOL_BATCH_SIZE = 32768;
     /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
 
