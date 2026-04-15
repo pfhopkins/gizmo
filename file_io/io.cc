@@ -1020,6 +1020,28 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0_NUV:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].G0_NUV;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_RESOLVEDISM_G0_OPT:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].G0_OPT;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_RESOLVEDISM_CR_ZETA:
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             for(n = 0; n < pc; pindex++)
@@ -2303,6 +2325,8 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_NUV:
+        case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
         case IO_RESOLVEDISM_UV_LUM:
         case IO_RESOLVEDISM_LW_LUM:
@@ -2747,6 +2771,8 @@ int get_values_per_blockelement(enum iofields blocknr)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_NUV:
+        case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
         case IO_RESOLVEDISM_UV_LUM:
         case IO_RESOLVEDISM_LW_LUM:
@@ -3108,6 +3134,8 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_NUV:
+        case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
             for(i = 0; i < 6; i++) {if(i != 0) {typelist[i] = 0;}}
             return ngas;
@@ -3497,7 +3525,7 @@ int blockpresent(enum iofields blocknr)
 
         case IO_ELEMENT_ABUNDANCE:
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            if(RestartFlag >= 2) return 1; /* only read from snapshots, not ICs; init.cc sets values for RestartFlag==0 */
+            return 1;
 #endif
             break;
 
@@ -3509,6 +3537,8 @@ int blockpresent(enum iofields blocknr)
 
         case IO_RESOLVEDISM_G0:
         case IO_RESOLVEDISM_G0_LW:
+        case IO_RESOLVEDISM_G0_NUV:
+        case IO_RESOLVEDISM_G0_OPT:
         case IO_RESOLVEDISM_CR_ZETA:
         case IO_RESOLVEDISM_UV_LUM:
         case IO_RESOLVEDISM_LW_LUM:
@@ -4186,6 +4216,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_RESOLVEDISM_G0_LW:
             strncpy(label, "G0LW", 4);
             break;
+        case IO_RESOLVEDISM_G0_NUV:
+            strncpy(label, "GNUV", 4);
+            break;
+        case IO_RESOLVEDISM_G0_OPT:
+            strncpy(label, "GOPT", 4);
+            break;
         case IO_RESOLVEDISM_CR_ZETA:
             strncpy(label, "CRZT", 4);
             break;
@@ -4694,6 +4730,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_RESOLVEDISM_G0_LW:
             strcpy(buf, "G0_LW");
+            break;
+        case IO_RESOLVEDISM_G0_NUV:
+            strcpy(buf, "G0_NUV");
+            break;
+        case IO_RESOLVEDISM_G0_OPT:
+            strcpy(buf, "G0_OPT");
             break;
         case IO_RESOLVEDISM_CR_ZETA:
             strcpy(buf, "CR_IonizationRate");

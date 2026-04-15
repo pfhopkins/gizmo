@@ -248,6 +248,8 @@ extern struct gas_cell_data
     MyFloat OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, ~0.4-3.4 eV */
     MyFloat G0;                           /*!< FUV radiation field in Habing units (from tree walk) */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units (from tree walk) */
+    MyFloat G0_NUV;                       /*!< NUV radiation field in Habing units (~3.4-6 eV) */
+    MyFloat G0_OPT;                       /*!< OPT radiation field in Habing units (~0.4-3.4 eV) */
     MyFloat CR_ionization_rate;           /*!< cosmic ray ionization rate [s^-1] */
 #endif
 #ifdef GALSF_RESOLVEDISM_FB

@@ -275,6 +275,8 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     CellP[target].G0_LW = G0_LW;
     COOLR.G0_NUV = G0_NUV_val;
     COOLR.G0_OPT = G0_OPT_val;
+    CellP[target].G0_NUV = G0_NUV_val;
+    CellP[target].G0_OPT = G0_OPT_val;
     /* G0_dust: FUV part only; NUV/OPT shielded separately in calc_dust_temp */
     COOLR.G0_dust = G0_tot;
 

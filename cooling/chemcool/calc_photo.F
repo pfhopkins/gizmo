@@ -93,7 +93,7 @@ c
 
 #if defined CO_SHIELDING && defined NEEDS_CO_RATES
       integer ipos
-      REAL theta_H2, theta_CO, dth, DNact, NCO
+      REAL theta_H2, theta_CO, dth, DNact, NCO, NH2
 #endif
 
       REAL fshield_HD

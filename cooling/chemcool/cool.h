@@ -414,6 +414,11 @@ c     Do not indent the next line!
       parameter (yn_adiabatic = ADIABATIC_DENSITY_THRESHOLD)
 #endif
 
+#ifdef DEBUG_EVOLVE
+      integer n_co_clips, n_co_rejects
+      common /co_clip_counter/ n_co_clips, n_co_rejects
+#endif
+
       integer nradsource
       integer max_nrad
       parameter (max_nrad = 10000)

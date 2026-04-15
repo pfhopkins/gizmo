@@ -1343,6 +1343,18 @@
 #elif CHEMISTRYNETWORK == 17
 #define TRAC_NUM 7
 #endif
+#if defined(TURB_DIFF_METALS)
+/* Include CHEMCOOL tracked abundances (H2, H+, CO, ...) in turbulent diffusion
+   so that TracAbund is diffused consistently with ElementAbundance. Without this,
+   diffusion can move carbon out of a cell while leaving CO behind, causing
+   CO > abundc and crashing DVODE. */
+#undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_ELEMENTS+NUM_RESOLVEDISM_DUST+TRAC_NUM)
+#else
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (TRAC_NUM)
+#endif
+#endif
 #endif /* CHEMCOOL */
 
 

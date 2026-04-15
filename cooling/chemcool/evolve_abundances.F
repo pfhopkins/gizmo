@@ -242,7 +242,7 @@ c
           tdust    = tdust_old
           dt       = dt / 2d0
           if (dt .lt. 1d-8) then
-            print*, "Excessively small timestep!" 
+            print*, "Excessively small timestep!"
             print*, "dt, dt_est, t_start, t_end = "
             print*, dt, dt_est, t_start, t_end
             print*, "ID: ", id_current
@@ -493,8 +493,14 @@ c
         if (J .ne. itmp .and. y(J) .gt. max_abundance(J)) then
           diff = y(J) - max_abundance(J)
           if (diff .lt. RTOL * y(J)) then
+#ifdef DEBUG_EVOLVE
+            if (J .eq. ico) n_co_clips = n_co_clips + 1
+#endif
             y(J) = max_abundance(J)
           else
+#ifdef DEBUG_EVOLVE
+            if (J .eq. ico) n_co_rejects = n_co_rejects + 1
+#endif
 #ifdef DEBUG_EVOLVE
             print*, "Excess abundance for ID ", id_current, y
 #endif

@@ -661,6 +661,18 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_RESOLVEDISM_G0_NUV:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {CellP[offset + n].G0_NUV = *fp++;}
+#endif
+            break;
+
+        case IO_RESOLVEDISM_G0_OPT:
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            for(n = 0; n < pc; n++) {CellP[offset + n].G0_OPT = *fp++;}
+#endif
+            break;
+
         case IO_RESOLVEDISM_CR_ZETA:
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             for(n = 0; n < pc; n++) {CellP[offset + n].CR_ionization_rate = *fp++;}

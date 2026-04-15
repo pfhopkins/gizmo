@@ -1105,11 +1105,31 @@ double return_resolvedism_species_for_diffusion(int i, int k)
 #endif
     if(k < 0) return -1;
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-    if(k < NUM_RESOLVEDISM_ELEMENTS) return P[i].ElementAbundance[k];
+    if(k < NUM_RESOLVEDISM_ELEMENTS) {
+#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
+        /* Return free C/O (subtract CO-locked fraction) to match input packing */
+        if(k == ELEM_C || k == ELEM_O) {
+            double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
+            double CO_locked = CellP[i].TracAbund[2] * ((k == ELEM_C) ? 12.0 : 16.0) * X_H;
+            return DMAX(P[i].ElementAbundance[k] - CO_locked, 0);
+        }
+#endif
+        return P[i].ElementAbundance[k];
+    }
     k -= NUM_RESOLVEDISM_ELEMENTS;
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
     if(k < NUM_RESOLVEDISM_DUST) return CellP[i].Dust[k];
+    k -= NUM_RESOLVEDISM_DUST;
+#endif
+#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
+    if(k < TRAC_NUM) {
+        /* Return mass fraction (not abundance ratio) to match input packing.
+           X_k = (n_k/n_H) * A_k * X_H.  Network 5: H2=2, H+=1, CO=28 */
+        static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0};
+        double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
+        return CellP[i].TracAbund[k] * trac_molwt[k] * X_H;
+    }
 #endif
     return -1;
 }

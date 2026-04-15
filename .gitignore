@@ -11,3 +11,8 @@ Makefile.systype
 stella.params
 
 ketju-integrator/
+
+# Test binaries
+test/unit/test_diffusion_co
+test/unit/test_dvode_co
+test/unit/test_enrichment
