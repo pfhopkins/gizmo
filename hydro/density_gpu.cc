@@ -41,6 +41,16 @@
 #include "gradient_functions.h"
 #include "hydro_structs.h"
 #include "../system/eigen_symmetric.h"
+/* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
+ * return 0 on device.  reimann.h uses isnan() extensively for Riemann solver
+ * fallback logic — without this override, NaN pressures are never detected
+ * and garbage values propagate through the hydro fluxes. */
+#ifdef GIZMO_GPU_COMPILER
+#undef isfinite
+#undef isnan
+#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
+#define isnan(x) ((double)(x) != (double)(x))
+#endif
 #ifndef HYDRO_SPH
 #include "reimann.h"
 #endif

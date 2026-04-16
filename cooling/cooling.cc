@@ -187,25 +187,11 @@ void cooling_parent_routine(void)
             compact_P[j]    = P[cool_indices[batch_start + j]];
             compact_Cell[j] = CellP[cool_indices[batch_start + j]];
         }
-        /* DEBUG: print RT fields for first particle of first batch */
-        if(batch_start == 0 && batch_n > 0) {
-            int gi = cool_indices[0];
-            printf("[GATHER_RT] id=%llu Tdust=%.6e Trad=%.6e RadE_IR=%.6e Density=%.6e Mass=%.6e Ne=%.6e HI=%.6e HII=%.6e\n",
-                   (unsigned long long)P[gi].ID, CellP[gi].Dust_Temperature, CellP[gi].Radiation_Temperature,
-                   CellP[gi].Rad_E_gamma[RT_FREQ_BIN_INFRARED], CellP[gi].Density, CellP[gi].Mass, CellP[gi].Ne, CellP[gi].HI, CellP[gi].HII);
-            fflush(stdout);
-        }
-
         /* Dispatch batch to GPU */
         {
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
             Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
-                if(j == 0) { /* DEBUG: print same fields as seen by GPU kernel */
-                    printf("[KERNEL_RT] Tdust=%.6e Trad=%.6e RadE_IR=%.6e Density=%.6e Mass=%.6e Ne=%.6e HI=%.6e HII=%.6e\n",
-                           kc[0].Dust_Temperature, kc[0].Radiation_Temperature,
-                           kc[0].Rad_E_gamma[RT_FREQ_BIN_INFRARED], kc[0].Density, kc[0].Mass, kc[0].Ne, kc[0].HI, kc[0].HII);
-                }
                 do_the_cooling_for_particle(j, kp, kc);
             });
             Kokkos::fence();
@@ -1008,19 +994,6 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
      this system, and we should overwrite it with whatever we get here. */
 #ifdef RT_INFRARED
     if(target >= 0) {LambdaDust = rt_ir_lambdadust(target, T, pp, cell);} /* This updates Dust_Temperature and Lambda_RadiativeCooling_toRHDBins */
-    /* DEBUG: print RT computed values for first particle in first batch */
-    if(target == 0) {
-        double dbg_kappa_ir = rt_kappa(target, RT_FREQ_BIN_INFRARED, pp, cell);
-        double dbg_absrate_ir = rt_absorption_rate(target, RT_FREQ_BIN_INFRARED, pp, cell);
-        double dbg_d2m = return_dust_to_metals_ratio_vs_solar(target, 0, pp, cell);
-        double dbg_kappa_adapt = rt_kappa_adaptive_IR_band(target, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, 0, 0, pp, cell);
-        double dbg_planck = dust_planck_mean_opacity(cell[target].Radiation_Temperature, cell[target].Dust_Temperature);
-        double dbg_dt = get_particle_timestep_in_physical(target, pp);
-        printf("[KERNEL_RTCALC] T=%.6e Tdust=%.6e Trad=%.6e LambdaDust=%.6e kappa_ir=%.6e absrate_ir=%.6e d2m=%.6e kappa_adapt=%.6e planck=%.6e dt=%.6e Lambda_IR_bin=%.6e\n",
-               T, cell[target].Dust_Temperature, cell[target].Radiation_Temperature,
-               LambdaDust, dbg_kappa_ir, dbg_absrate_ir, dbg_d2m, dbg_kappa_adapt, dbg_planck, dbg_dt,
-               cell[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED]);
-    }
 #endif
     if(LambdaDust>0) {Lambda += LambdaDust;} /* add the -positive- Lambda-dust associated with cooling */
     if(LambdaDust<0) {Heat -= LambdaDust;} // Dust collisional heating (Tdust > Tgas) //
