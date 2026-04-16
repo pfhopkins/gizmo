@@ -542,9 +542,9 @@ void log_turb_temp(void)
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
 #ifdef OPENMP_GPU_OFFLOAD
-GPU_ALL_INIT_FUNC(turb)
+GPU_ALL_SYNC_FUNC(turb)
 #else
-void gizmo_gpu_init_all_turb(struct global_data_all_processes *p) { (void)p; }
+void gizmo_gpu_sync_all_turb(struct global_data_all_processes *p) { (void)p; }
 #endif
 
 

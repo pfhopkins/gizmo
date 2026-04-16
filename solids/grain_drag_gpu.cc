@@ -289,12 +289,12 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_INIT_FUNC(grain)
+GPU_ALL_SYNC_FUNC(grain)
 
 #else /* stubs */
 
 void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                              int *, int) {}
-void gizmo_gpu_init_all_grain(struct global_data_all_processes *p) { (void)p; }
+void gizmo_gpu_sync_all_grain(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* GRAIN_FLUID && OPENMP_GPU_OFFLOAD */

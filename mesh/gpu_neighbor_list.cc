@@ -232,7 +232,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_INIT_FUNC(ngb)
+GPU_ALL_SYNC_FUNC(ngb)
 
 #else /* !OPENMP_GPU_OFFLOAD || !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
@@ -243,6 +243,6 @@ void gpu_ngb_list_build(struct particle_data *, int, int *, int, int, int,
                         gpu_neighbor_list_t *, gpu_spatial_index_t *, double) {}
 void gpu_ngb_list_free(gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
 void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *, double) {}
-void gizmo_gpu_init_all_ngb(struct global_data_all_processes *p) { (void)p; }
+void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

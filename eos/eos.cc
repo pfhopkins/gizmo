@@ -503,5 +503,5 @@ void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particl
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
 #ifdef OPENMP_GPU_OFFLOAD
-GPU_ALL_INIT_FUNC(eos)
+GPU_ALL_SYNC_FUNC(eos)
 #endif

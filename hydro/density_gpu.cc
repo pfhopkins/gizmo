@@ -56,7 +56,7 @@
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_INIT_FUNC(density)
+GPU_ALL_SYNC_FUNC(density)
 
 
 /* ================================================================
@@ -838,6 +838,6 @@ void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                            int, int *, int, int *, int *, int, void *, int) {}
 void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                         int, int *, int, int *, int *, int, void *) {}
-void gizmo_gpu_init_all_density(struct global_data_all_processes *p) { (void)p; }
+void gizmo_gpu_sync_all_density(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
