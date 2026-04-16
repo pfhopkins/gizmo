@@ -16,38 +16,41 @@
  * Must precede allvars.h so #define All suppresses the extern declaration. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
-#include "../core/proto.h"
-#include "./cooling.h"
-/* EOS functions (yhelium, Get_Gas_Molecular_Mass_Fraction,
- * Get_Gas_Mean_Molecular_Weight_mu) — single source in eos_functions.h */
-#include "../eos/eos_functions.h"
-#include "../eos/hydrogen_molecule_functions.h"
-/* Timestep functions — single source in timestep_functions.h */
-#include "../core/timestep_functions.h"
-/* evaluate_NH_from_GradRho — single source in predict_functions.h */
-#include "../core/predict_functions.h"
-/* return_dust_to_metals_ratio_vs_solar now in eos_functions.h (included above) */
-/* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
-#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
-/* Simple steady-state chemistry — single source in simple_chemistry.h */
-#include "./simple_chemistry.h"
-/* RT utility functions (rt_utilities.cc is not GPU_OBJS) */
-#include "../radiation/rt_functions.h"
-/* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
- * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
- * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,
- * set_eos_pressure calls are guarded with #ifndef GIZMO_GPU_COMPILER inside
- * do_the_cooling_for_particle, and the scatter pass calls it on the host. */
-
+/* On CUDA, nvcc uses the FIRST declaration's execution-space attributes.
+   proto.h declares RT functions as host-only (no __device__).  If proto.h
+   is seen first, device calls get stubs returning 0.  Fix: include the RT
+   function DEFINITIONS (rt_functions.h with KOKKOS_INLINE_FUNCTION bodies)
+   BEFORE proto.h.  rt_functions.h and its dependencies (eos_functions.h)
+   need a few forward declarations that normally come from proto.h/cooling.h. */
 /* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
  * return 0 on device (making every value appear non-finite).  Override with
- * pure-arithmetic macros AFTER all #includes so they take precedence. */
+ * pure-arithmetic macros BEFORE any _functions.h headers that use them. */
 #ifdef GIZMO_GPU_COMPILER
 #undef isfinite
 #undef isnan
 #define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
 #define isnan(x) ((double)(x) != (double)(x))
 #endif
+GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
+double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
+#include "../eos/eos_functions.h"
+#include "../eos/hydrogen_molecule_functions.h"
+#include "../core/timestep_functions.h"
+KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
+#include "../radiation/rt_functions.h"
+#include "../core/proto.h"
+#include "./cooling.h"
+/* evaluate_NH_from_GradRho — single source in predict_functions.h */
+#include "../core/predict_functions.h"
+/* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+/* Simple steady-state chemistry — single source in simple_chemistry.h */
+#include "./simple_chemistry.h"
+/* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
+ * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
+ * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,
+ * set_eos_pressure calls are guarded with #ifndef GIZMO_GPU_COMPILER inside
+ * do_the_cooling_for_particle, and the scatter pass calls it on the host. */
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
