@@ -496,14 +496,20 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
     for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {in->Metallicity[k_offset+k] = P[i].ElementAbundance[k];}
 #if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
-    {/* Diffuse only free C and O (subtract CO-locked fraction) so that
-        turbulent diffusion cannot move carbon/oxygen that is bound in CO
-        molecules independently of the CO itself. */
+    {/* Diffuse only free C, free O, and free H (subtract locked fractions) so that
+        turbulent diffusion cannot move atoms bound in molecules (CO) or ions (H+, H2)
+        independently of the species they belong to.
+        Free H = total H - H_in_H2 - H_in_H+ (neutral atomic H only).
+        Free C = total C - C_in_CO.   Free O = total O - O_in_CO. */
      double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
      double CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
      double CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
      in->Metallicity[k_offset+ELEM_C] = DMAX(P[i].ElementAbundance[ELEM_C] - CO_locked_C, 0);
-     in->Metallicity[k_offset+ELEM_O] = DMAX(P[i].ElementAbundance[ELEM_O] - CO_locked_O, 0);}
+     in->Metallicity[k_offset+ELEM_O] = DMAX(P[i].ElementAbundance[ELEM_O] - CO_locked_O, 0);
+     /* Free H: subtract H locked in H2 and H+ */
+     double H2_locked_H = CellP[i].TracAbund[0] * 2.0 * X_H;  /* H2: 2 H atoms per molecule */
+     double HP_locked_H = CellP[i].TracAbund[1] * 1.0 * X_H;  /* H+: 1 H atom per ion */
+     in->Metallicity[k_offset+ELEM_H] = DMAX(P[i].ElementAbundance[ELEM_H] - H2_locked_H - HP_locked_H, 0);}
 #endif
     k_offset += NUM_RESOLVEDISM_ELEMENTS;
 #endif
@@ -876,32 +882,54 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 #if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
-            {/* Strip old CO-locked C/O before applying diffusion deltas.
-                Dyield[C/O] are free-C/O fluxes, so we must apply them to
-                free fractions, not total.  Skip C/O in the generic loop. */
+            {/* Unpack diffusion deltas for H, C, O and TracAbund (H2, H+, CO).
+                All Dyield fields carry free-component fluxes (locked fractions subtracted
+                at pack time).  We apply deltas to the free fractions, update TracAbund,
+                then reconstruct totals: H = free_H + H2_locked + HP_locked,
+                C = free_C + CO_locked_C,  O = free_O + CO_locked_O.
+                This ensures H+ can never exceed total H — they are additive, not independent. */
              double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
+
+             /* --- Strip locked fractions from totals to get current free values --- */
              double old_CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
              double old_CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
+             double old_H2_locked_H = CellP[i].TracAbund[0] * 2.0 * X_H;
+             double old_HP_locked_H = CellP[i].TracAbund[1] * 1.0 * X_H;
              double free_C = DMAX(P[i].ElementAbundance[ELEM_C] - old_CO_locked_C, 0);
              double free_O = DMAX(P[i].ElementAbundance[ELEM_O] - old_CO_locked_O, 0);
+             double free_H = DMAX(P[i].ElementAbundance[ELEM_H] - old_H2_locked_H - old_HP_locked_H, 0);
+
+             /* --- Apply free-fraction diffusion deltas --- */
              free_C = DMAX(free_C + CellP[i].Dyield[k_offset+ELEM_C] / P[i].Mass, 0.01*free_C);
              free_O = DMAX(free_O + CellP[i].Dyield[k_offset+ELEM_O] / P[i].Mass, 0.01*free_O);
+             free_H = DMAX(free_H + CellP[i].Dyield[k_offset+ELEM_H] / P[i].Mass, 0.01*free_H);
+
+             /* --- Update remaining elements (skip H, C, O — handled above) --- */
              for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {
-                 if(k == ELEM_C || k == ELEM_O) continue;
+                 if(k == ELEM_H || k == ELEM_C || k == ELEM_O) continue;
                  P[i].ElementAbundance[k] = DMAX(P[i].ElementAbundance[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*P[i].ElementAbundance[k]);}
-             /* Update TracAbund, then reconstruct total C/O = free + new CO-locked */
+
+             /* --- Update TracAbund species masses, then reconstruct totals and abundance ratios --- */
              static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0};
              int trac_offset = k_offset + NUM_RESOLVEDISM_ELEMENTS;
 #if defined(GALSF_RESOLVEDISM_DUST)
              trac_offset += NUM_RESOLVEDISM_DUST;
 #endif
+             /* Compute updated species masses (in mass-fraction units) */
+             double trac_mf[TRAC_NUM];
              for(k=0;k<TRAC_NUM;k++) {
-                 double da = CellP[i].Dyield[trac_offset+k] / (P[i].Mass * trac_molwt[k] * X_H);
-                 CellP[i].TracAbund[k] = DMAX(CellP[i].TracAbund[k] + da, 0.01*CellP[i].TracAbund[k]);}
-             double new_CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
-             double new_CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
-             P[i].ElementAbundance[ELEM_C] = free_C + new_CO_locked_C;
-             P[i].ElementAbundance[ELEM_O] = free_O + new_CO_locked_O;}
+                 double mf_old = CellP[i].TracAbund[k] * trac_molwt[k] * X_H;
+                 trac_mf[k] = DMAX(mf_old + CellP[i].Dyield[trac_offset+k] / P[i].Mass, 0.01 * mf_old);}
+
+             /* Reconstruct element totals from free + locked components */
+             P[i].ElementAbundance[ELEM_H] = free_H + trac_mf[0] + trac_mf[1];  /* free_H + H2_mf + HP_mf */
+             P[i].ElementAbundance[ELEM_C] = free_C + trac_mf[2] * (12.0/28.0); /* free_C + CO_locked_C */
+             P[i].ElementAbundance[ELEM_O] = free_O + trac_mf[2] * (16.0/28.0); /* free_O + CO_locked_O */
+
+             /* Convert species masses back to abundance ratios using NEW X_H */
+             double X_H_new = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
+             for(k=0;k<TRAC_NUM;k++) {
+                 CellP[i].TracAbund[k] = trac_mf[k] / (trac_molwt[k] * X_H_new);}}
 #else
             for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {P[i].ElementAbundance[k] = DMAX(P[i].ElementAbundance[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*P[i].ElementAbundance[k]);}
 #endif
@@ -918,6 +946,7 @@ void hydro_final_operations_and_cleanup(void)
              for(k=0;k<TRAC_NUM;k++) {
                  double da = CellP[i].Dyield[k_offset+k] / (P[i].Mass * trac_molwt[k] * X_H);
                  CellP[i].TracAbund[k] = DMAX(CellP[i].TracAbund[k] + da, 0.01*CellP[i].TracAbund[k]);}}
+
 #endif
             }
 #endif

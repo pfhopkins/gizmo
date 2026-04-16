@@ -528,8 +528,20 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     if(mode == 1 || mode == 2) timestep = 0.0;
 
     /* Evolve abundances */
-    if(skip_evolve_abundances == 0)
+    if(skip_evolve_abundances == 0) {
+        /* DEBUG: check if H+ is already >1 before entering the Fortran solver */
+        if(abundances[IHP] > 1.0) {
+            printf("CHEMCOOL_DEBUG: H+ > 1 ON ENTRY: ID=%llu H+=%.10e H2=%.10e CO=%.10e abundc=%.6e abundo=%.6e yn=%.4e\n",
+                (unsigned long long)P[target].ID, abundances[IHP], abundances[IH2],
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
+                abundances[ICO],
+#else
+                0.0,
+#endif
+                COOLR.abundc, COOLR.abundo, yn);
+        }
         EVOLVE_ABUNDANCES(&timestep, &dl, &yn, &divv, &energy, abundances, &column_est);
+    }
 
     /* Compute cooling rate */
     double cooling_rate = 0.;

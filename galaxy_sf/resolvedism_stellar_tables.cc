@@ -583,31 +583,88 @@ void resolvedism_load_stellar_tables(void)
 
         /* --- Test 8: Remnant mass sanity --- */
         {
-            int nfail = 0;
+            int nfail = 0, nprint = 0;
             for(int iz = 0; iz < STBL_NZ; iz++) {
                 for(int im = 0; im < STBL_NM; im++) {
                     double M = StellarTbl.M[im];
                     int rt = StellarTbl.remnant_type[IDX2(iz, im)];
                     double rm = StellarTbl.remnant_mass[IDX2(iz, im)];
+                    double Z = pow(10., StellarTbl.log_Z[iz]);
                     /* Remnant mass must be < M_init */
                     if(rm > M * 1.01) {
-                        if(nfail < 3) printf("  WARNING: remnant_mass=%.2f > M_init=%.2f at Z=%.4f (type=%d)\n", rm, M, pow(10., StellarTbl.log_Z[iz]), rt);
-                        nfail++;
+                        if(nprint < 3) printf("  WARNING: remnant_mass=%.2f > M_init=%.2f at Z=%.4f (type=%d)\n", rm, M, Z, rt);
+                        nfail++; nprint++;
                     }
                     /* Remnant mass must be > 0 for non-PISN */
-                    if(rt != 5 && rm <= 0 && M >= 0.5) {
-                        if(nfail < 6) printf("  WARNING: remnant_mass=0 for non-PISN M=%.2f Z=%.4f type=%d\n", M, pow(10., StellarTbl.log_Z[iz]), rt);
-                        nfail++;
+                    if(rt != REM_PISN && rm <= 0 && M >= 0.5) {
+                        if(nprint < 6) printf("  WARNING: remnant_mass=0 for non-PISN M=%.2f Z=%.4f type=%d\n", M, Z, rt);
+                        nfail++; nprint++;
                     }
                     /* PISN must have rm=0 */
-                    if(rt == 5 && rm > 0.01) {
-                        if(nfail < 9) printf("  WARNING: PISN with remnant_mass=%.2f at M=%.1f Z=%.4f\n", rm, M, pow(10., StellarTbl.log_Z[iz]));
-                        nfail++;
+                    if(rt == REM_PISN && rm > 0.01) {
+                        if(nprint < 9) printf("  WARNING: PISN with remnant_mass=%.2f at M=%.1f Z=%.4f\n", rm, M, Z);
+                        nfail++; nprint++;
+                    }
+                    /* PPISN remnant must be massive BH (>30 Msun) */
+                    if(rt == REM_PPISN && rm < 30.0) {
+                        if(nprint < 12) printf("  WARNING: PPISN with remnant_mass=%.2f < 30 Msun at M=%.1f Z=%.4f\n", rm, M, Z);
+                        nfail++; nprint++;
+                    }
+                    /* Remnant mass continuity: check jump to next mass grid point */
+                    if(im > 0) {
+                        int rt_prev = StellarTbl.remnant_type[IDX2(iz, im-1)];
+                        double rm_prev = StellarTbl.remnant_mass[IDX2(iz, im-1)];
+                        /* Only check continuity within same remnant type and for explosive types */
+                        if(rt == rt_prev && rt != REM_WD && rt != REM_FSN && rt != REM_DBH && rm_prev > 1.0 && rm > 1.0) {
+                            double ratio = rm / rm_prev;
+                            if(ratio < 0.1 || ratio > 10.0) {
+                                if(nprint < 15) printf("  WARNING: remnant mass jump %.2f->%.2f (x%.1f) between M=%.1f->%.1f at Z=%.4f type=%d\n",
+                                    rm_prev, rm, ratio, StellarTbl.M[im-1], M, Z, rt);
+                                nfail++; nprint++;
+                            }
+                        }
                     }
                 }
             }
             if(nfail > 0) { printf("  WARNING: %d remnant mass inconsistencies\n", nfail); n_warn++; }
             else printf("  [PASS] Remnant mass consistent for all (Z,M): 0 < rem < M_init (PISN=0)\n");
+        }
+
+        /* --- Test 8b: Ejecta metallicity sanity --- */
+        {
+            int nfail = 0, nprint = 0;
+            for(int iz = 0; iz < STBL_NZ; iz++) {
+                double Z_birth = pow(10., StellarTbl.log_Z[iz]);
+                for(int im = 0; im < STBL_NM; im++) {
+                    double M = StellarTbl.M[im];
+                    int rt = StellarTbl.remnant_type[IDX2(iz, im)];
+                    double rm = StellarTbl.remnant_mass[IDX2(iz, im)];
+                    if(rt == REM_FSN || rt == REM_DBH) continue; /* no yields */
+                    if(rt == REM_PISN) continue; /* PISN are legitimately metal-rich (full disruption) */
+                    if(M < 8.0) continue; /* only check massive stars */
+                    double Mej = M - rm;
+                    if(Mej < 0.1) continue;
+                    /* Compute total metal yield mass */
+                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
+                    double metal_yield = 0;
+                    for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
+                        double ny = StellarTbl.net_yields[IDX3(iz, im, kk)];
+                        /* Apply same clip as injection code */
+                        double X_birth_k = (kk < ELEM_C) ? 0.0 : (StellarTbl.Z[iz] / 0.014) * 0.0134; /* approx */
+                        double M_elem_ej = ny + X_birth_k * Mej;
+                        if(M_elem_ej > 0) metal_yield += M_elem_ej;
+                    }
+                    double Z_ej = metal_yield / Mej;
+                    /* Ejecta metallicity should not exceed 50% — no physical star does this */
+                    if(Z_ej > 0.5) {
+                        if(nprint < 5) printf("  WARNING: ejecta Z=%.3f (%.0fx solar) at M=%.1f Z=%.4f type=%d rem=%.1f Mej=%.1f\n",
+                            Z_ej, Z_ej/0.014, M, Z_birth, rt, rm, Mej);
+                        nfail++; nprint++;
+                    }
+                }
+            }
+            if(nfail > 0) { printf("  WARNING: %d entries with ejecta Z > 50%%\n", nfail); n_warn++; }
+            else printf("  [PASS] Ejecta metallicity < 50%% for all massive star entries\n");
         }
 
         /* --- Test 9: Net yield mass conservation: sum over all elements ≈ 0 --- */
