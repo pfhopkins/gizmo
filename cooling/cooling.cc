@@ -81,33 +81,8 @@ __managed__ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,N
 struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL, 0,0,0,0,0,0,0};
 #endif
 
-/* Convenience aliases so existing code doesn't need bulk renaming yet.
-   These will be removed once cooling functions move to cooling_functions.h
-   and access CoolTables directly. */
-#define Tmin      CoolTables.Tmin
-#define Tmax      CoolTables.Tmax
-#define deltaT    CoolTables.deltaT
-#define BetaH0    CoolTables.BetaH0
-#define BetaHep   CoolTables.BetaHep
-#define Betaff    CoolTables.Betaff
-#define AlphaHp   CoolTables.AlphaHp
-#define AlphaHep  CoolTables.AlphaHep
-#define Alphad    CoolTables.Alphad
-#define AlphaHepp CoolTables.AlphaHepp
-#define GammaeH0  CoolTables.GammaeH0
-#define GammaeHe0 CoolTables.GammaeHe0
-#define GammaeHep CoolTables.GammaeHep
-#define J_UV      CoolTables.J_UV
-#define gJH0      CoolTables.gJH0
-#define gJHep     CoolTables.gJHep
-#define gJHe0     CoolTables.gJHe0
-#define epsH0     CoolTables.epsH0
-#define epsHep    CoolTables.epsHep
-#define epsHe0    CoolTables.epsHe0
-#ifdef COOL_METAL_LINES_BY_SPECIES
-#define SpCoolTable0 CoolTables.SpCoolTable0
-#define SpCoolTable1 CoolTables.SpCoolTable1
-#endif
+/* CoolTables fields are accessed directly as CoolTables.Tmin, CoolTables.gJH0, etc.
+   No convenience aliases — they caused linker symbol ownership bugs on CUDA. */
 #endif /* !CHIMES */
 
 #if defined(CHIMES)
@@ -731,7 +706,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     double LambdaRec, LambdaRecHp, LambdaRecHep, LambdaRecHepp, LambdaRecHepd, T, T_cmb_radeff, shieldfac, LambdaMol, LambdaMetal, LambdaPElec, LambdaDust, Heat_Ion_from_UVB, Heat_Ion_from_RHD;
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
     Lambda=0; Heat=0; LambdaMol=0; LambdaFF=0; LambdaRec=0; LambdaExc=0; LambdaIon=0; LambdaMetal=0; LambdaCompton=0; LambdaPElec=0; LambdaDust=0; Heat_Ion_from_UVB=0; Heat_Ion_from_RHD=0; /* make sure these are all initialized to zero */
-    if(logT <= Tmin) {logT = Tmin + 0.5 * deltaT;}	/* floor at Tmin */
+    if(logT <= CoolTables.Tmin) {logT = CoolTables.Tmin + 0.5 * CoolTables.deltaT;}	/* floor at CoolTables.Tmin */
     if(!isfinite(rho)) {return 0;}
     T = pow(10.0, logT);
     T_cmb_radeff = get_background_radiation_temperature_for_emission_corrections(target, cell); /* CMB temperature, used below */
@@ -753,7 +728,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     }
 #endif
     double local_gammamultiplier = return_local_gammamultiplier(target, cell);
-    shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*gJH0/1.0e-12, nHcgs, logT, cell);
+    shieldfac = return_uvb_shieldfac(target, local_gammamultiplier*CoolTables.gJH0/1.0e-12, nHcgs, logT, cell);
     
 #if defined(COOL_LOW_TEMPERATURES)
     double Tdust = 30.; /* set variables needed for dust heating/cooling. if dust cooling not calculated, default to 0 */
@@ -769,7 +744,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(RT_CHEM_PHOTOION) || defined(RT_PHOTOELECTRIC)
     double cx_to_kappa = HYDROGEN_MASSFRAC / PROTONMASS_CGS * UNIT_MASS_IN_CGS; // pre-factor for converting cross sections into opacities
 #endif
-    if(logT < Tmax)
+    if(logT < CoolTables.Tmax)
     {
         /* get ionization states for H and He with associated ionization, collision, recombination, and free-free heating/cooling */
         Lambda += find_abundances_and_rates(logT, rho, target, shieldfac, 1, &n_elec, &nH0, &nHp, &nHe0, &nHep, &nHepp, &mu, &LambdaExc, &LambdaIon, &LambdaRec, &LambdaFF, pp, cell); /* adds all of these to our running total for cooling */
@@ -780,9 +755,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #ifdef COOL_METAL_LINES_BY_SPECIES
         /* can restrict to low-densities where not self-shielded, but let shieldfac (in ne) take care of this self-consistently */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-        if(J_UV != 0)
+        if(CoolTables.J_UV != 0)
 #else
-        if((J_UV != 0)&&(logT > 4.00))
+        if((CoolTables.J_UV != 0)&&(logT > 4.00))
 #endif
         {
             /* cooling rates tabulated for each species from Wiersma, Schaye, & Smith tables (2008) */
@@ -848,7 +823,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* in the above Lambda_Metals expression, the column density expression attempts to account for the optically-thick correction in a slab. this is largely redundant (not exactly, b/c this is specific for CO-type molecules) with our optically-thick cooling module already included below, so we will not double-count it here [coefficient set to zero]. But it's included so you can easily turn it back on, if desired, instead of using the module below. */
             double Lambda_H2_thick = (6.7e-19*exp(-DMIN(5.86/T3,EXPmax)) + 1.6e-18*exp(-DMIN(11.7/T3,EXPmax)) + 3.e-24*exp(-DMIN(0.51/T3,EXPmax)) + 9.5e-22*pow(T3,3.76)*exp(-DMIN(0.0022/(T3*T3*T3),EXPmax))/(1.+0.12*pow(T3,2.1))) / nHcgs; // super-critical H2-H cooling rate [per H2 molecule]
             double Lambda_HD_thin = ((1.555e-25 + 1.272e-26*pow(T,0.77))*exp(-DMIN(128./T,EXPmax)) + (2.406e-25 + 1.232e-26*pow(T,0.92))*exp(-DMIN(255./T,EXPmax))) * exp(-DMIN(T3*T3/25.,EXPmax)); // optically-thin HD cooling rate [assuming all D locked into HD at temperatures where this is relevant], per molecule
-            double f_molec = 0.5 * Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), pp, cell); // [0.5*f_molec for H2/HD cooling b/c cooling rates above are per molecule, not per nucleon]
+            double f_molec = 0.5 * Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), pp, cell); // [0.5*f_molec for H2/HD cooling b/c cooling rates above are per molecule, not per nucleon]
 
             double q = logT - 3., Y_Hefrac=DMAX(0.,DMIN(1.,Z[1])), X_Hfrac=DMAX(0.,DMIN(1.,1.-Y_Hefrac-Z[0])); // variable used below
             double Lambda_H2_thin = DMAX(nH0-2.*f_molec,0) * X_Hfrac * pow(10., DMAX(-103. + 97.59*logT - 48.05*logT*logT + 10.8*logT*logT*logT - 0.9032*logT*logT*logT*logT , -50.)); // sub-critical H2 cooling rate from H2-H collisions [per H2 molecule]; this from Galli & Palla 1998
@@ -884,9 +859,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 
 #if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
         // here we account for the fact that the local spectrum is softer than the UVB which includes AGN and is hardened by absorption within galaxies. we do this by simply lowering the effective heating rate [mean photon energy absorbed per ionization], which captures the leading-order effect //
-        if(J_UV != 0) {Heat_Ion_from_UVB = shieldfac / nHcgs * ((nH0 * epsH0 + nHe0 * epsHe0 + nHep * epsHep) + gJH0*(local_gammamultiplier-1.)*(nH0*2.9 + nHe0*0.44 + nHep*4.2e-4)*1.6e-12);} // this assumes an approximately IMF-averaged mean O-star Teff ~ 40000 K -- note the weights here for this correspond to mean energy per H ionization, so for H is just some energy in eV, but for He is weighted by relative ionization rate: softer spectrum translates to steeper dropoff of these terms
+        if(CoolTables.J_UV != 0) {Heat_Ion_from_UVB = shieldfac / nHcgs * ((nH0 * CoolTables.epsH0 + nHe0 * CoolTables.epsHe0 + nHep * CoolTables.epsHep) + CoolTables.gJH0*(local_gammamultiplier-1.)*(nH0*2.9 + nHe0*0.44 + nHep*4.2e-4)*1.6e-12);} // this assumes an approximately IMF-averaged mean O-star Teff ~ 40000 K -- note the weights here for this correspond to mean energy per H ionization, so for H is just some energy in eV, but for He is weighted by relative ionization rate: softer spectrum translates to steeper dropoff of these terms
 #else
-        if(J_UV != 0) {Heat_Ion_from_UVB = local_gammamultiplier * (nH0 * epsH0 + nHe0 * epsHe0 + nHep * epsHep) / nHcgs * shieldfac;} // shieldfac allows for self-shielding from background
+        if(CoolTables.J_UV != 0) {Heat_Ion_from_UVB = local_gammamultiplier * (nH0 * CoolTables.epsH0 + nHe0 * CoolTables.epsHe0 + nHep * CoolTables.epsHep) / nHcgs * shieldfac;} // shieldfac allows for self-shielding from background
 #endif
         Heat += Heat_Ion_from_UVB;
         
@@ -964,7 +939,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         }
 #endif
     }
-  else				/* here we're outside of tabulated rates, T>Tmax K */
+  else				/* here we're outside of tabulated rates, T>CoolTables.Tmax K */
     {
         /* at high T (fully ionized); only free-free and Compton cooling are present.  Assumes no heating. */
         Heat = LambdaExc = LambdaExcH0 = LambdaExcHep = LambdaIon = LambdaIonH0 = LambdaIonHe0 = LambdaIonHep = LambdaRec = LambdaRecHp = LambdaRecHep = LambdaRecHepp = LambdaRecHepd = 0;
@@ -1092,7 +1067,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(target>=0) {cell[target].NetHeatingRateQ = Q;}
 #endif
 #ifdef OUTPUT_MOLECULAR_FRACTION
-    if(target>=0) {cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), pp, cell);}
+    if(target>=0) {cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), pp, cell);}
 #endif
 
 #ifndef COOLING_OPERATOR_SPLIT
@@ -1119,20 +1094,20 @@ void InitCoolMemory(void)
 #else
 #define COOLMEM(name, type, n) name = (type *) mymalloc(#name, (n) * sizeof(type))
 #endif
-    COOLMEM(BetaH0,    double, NCOOLTAB + 1);
-    COOLMEM(BetaHep,   double, NCOOLTAB + 1);
-    COOLMEM(AlphaHp,   double, NCOOLTAB + 1);
-    COOLMEM(AlphaHep,  double, NCOOLTAB + 1);
-    COOLMEM(Alphad,    double, NCOOLTAB + 1);
-    COOLMEM(AlphaHepp, double, NCOOLTAB + 1);
-    COOLMEM(GammaeH0,  double, NCOOLTAB + 1);
-    COOLMEM(GammaeHe0, double, NCOOLTAB + 1);
-    COOLMEM(GammaeHep, double, NCOOLTAB + 1);
-    COOLMEM(Betaff,    double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.BetaH0,    double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.BetaHep,   double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.AlphaHp,   double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.AlphaHep,  double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.Alphad,    double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.AlphaHepp, double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.GammaeH0,  double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.GammaeHe0, double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.GammaeHep, double, NCOOLTAB + 1);
+    COOLMEM(CoolTables.Betaff,    double, NCOOLTAB + 1);
 #ifdef COOL_METAL_LINES_BY_SPECIES
     long i_nH=41; long i_T=176; long kspecies=(long)NUM_LIVE_SPECIES_FOR_COOLTABLES;
-    COOLMEM(SpCoolTable0, float, kspecies*i_nH*i_T);
-    if(All.ComovingIntegrationOn) { COOLMEM(SpCoolTable1, float, kspecies*i_nH*i_T); }
+    COOLMEM(CoolTables.SpCoolTable0, float, kspecies*i_nH*i_T);
+    if(All.ComovingIntegrationOn) { COOLMEM(CoolTables.SpCoolTable1, float, kspecies*i_nH*i_T); }
 #endif
 #undef COOLMEM
 }
@@ -1144,29 +1119,29 @@ void MakeCoolingTable(void)
         Hydrogen, Helium III recombination rates and collisional ionization cross-sections are updated */
 {
     int i; double T,Tfact;
-    if(All.MinGasTemp > 0.0) {Tmin = log10(All.MinGasTemp);} else {Tmin=-1.0;} // set minimum temperature in this table to some very low value if zero, where none of the cooling approximations above make sense
-    deltaT = (Tmax - Tmin) / NCOOLTAB;
+    if(All.MinGasTemp > 0.0) {CoolTables.Tmin = log10(All.MinGasTemp);} else {CoolTables.Tmin=-1.0;} // set minimum temperature in this table to some very low value if zero, where none of the cooling approximations above make sense
+    CoolTables.deltaT = (CoolTables.Tmax - CoolTables.Tmin) / NCOOLTAB;
     /* minimum internal energy for neutral gas */
     for(i = 0; i <= NCOOLTAB; i++)
     {
-        BetaH0[i] = BetaHep[i] = Betaff[i] = AlphaHp[i] = AlphaHep[i] = AlphaHepp[i] = Alphad[i] = GammaeH0[i] = GammaeHe0[i] = GammaeHep[i] = 0;
-        T = pow(10.0, Tmin + deltaT * i);
+        CoolTables.BetaH0[i] = CoolTables.BetaHep[i] = CoolTables.Betaff[i] = CoolTables.AlphaHp[i] = CoolTables.AlphaHep[i] = CoolTables.AlphaHepp[i] = CoolTables.Alphad[i] = CoolTables.GammaeH0[i] = CoolTables.GammaeHe0[i] = CoolTables.GammaeHep[i] = 0;
+        T = pow(10.0, CoolTables.Tmin + CoolTables.deltaT * i);
         Tfact = 1.0 / (1 + sqrt(T / 1.0e5));
-        if(118348. / T < 70.) {BetaH0[i] = 7.5e-19 * exp(-118348 / T) * Tfact;}
-        if(473638. / T < 70.) {BetaHep[i] = 5.54e-17 * pow(T, -0.397) * exp(-473638 / T) * Tfact;}
+        if(118348. / T < 70.) {CoolTables.BetaH0[i] = 7.5e-19 * exp(-118348 / T) * Tfact;}
+        if(473638. / T < 70.) {CoolTables.BetaHep[i] = 5.54e-17 * pow(T, -0.397) * exp(-473638 / T) * Tfact;}
 
-        Betaff[i] = 1.43e-27 * sqrt(T) * (1.1 + 0.34 * exp(-(5.5 - log10(T)) * (5.5 - log10(T)) / 3));
-        //AlphaHp[i] = 8.4e-11 * pow(T / 1000, -0.2) / (1. + pow(T / 1.0e6, 0.7)) / sqrt(T);	/* old Cen92 fit */
-        //AlphaHep[i] = 1.5e-10 * pow(T, -0.6353); /* old Cen92 fit */
-        //AlphaHepp[i] = 4. * AlphaHp[i];	/* old Cen92 fit */
-        AlphaHp[i] = 7.982e-11 / ( sqrt(T/3.148) * pow((1.0+sqrt(T/3.148)), 0.252) * pow((1.0+sqrt(T/7.036e5)), 1.748) ); /* Verner & Ferland (1996) [more accurate than Cen92] */
-        AlphaHep[i]= 9.356e-10 / ( sqrt(T/4.266e-2) * pow((1.0+sqrt(T/4.266e-2)), 0.2108) * pow((1.0+sqrt(T/3.676e7)), 1.7892) ); /* Verner & Ferland (1996) [more accurate than Cen92] */
-        AlphaHepp[i] = 2. * 7.982e-11 / ( sqrt(T/(4.*3.148)) * pow((1.0+sqrt(T/(4.*3.148))), 0.252) * pow((1.0+sqrt(T/(4.*7.036e5))), 1.748) ); /* Verner & Ferland (1996) : ~ Z*alphaHp[1,T/Z^2] */
+        CoolTables.Betaff[i] = 1.43e-27 * sqrt(T) * (1.1 + 0.34 * exp(-(5.5 - log10(T)) * (5.5 - log10(T)) / 3));
+        //CoolTables.AlphaHp[i] = 8.4e-11 * pow(T / 1000, -0.2) / (1. + pow(T / 1.0e6, 0.7)) / sqrt(T);	/* old Cen92 fit */
+        //CoolTables.AlphaHep[i] = 1.5e-10 * pow(T, -0.6353); /* old Cen92 fit */
+        //CoolTables.AlphaHepp[i] = 4. * CoolTables.AlphaHp[i];	/* old Cen92 fit */
+        CoolTables.AlphaHp[i] = 7.982e-11 / ( sqrt(T/3.148) * pow((1.0+sqrt(T/3.148)), 0.252) * pow((1.0+sqrt(T/7.036e5)), 1.748) ); /* Verner & Ferland (1996) [more accurate than Cen92] */
+        CoolTables.AlphaHep[i]= 9.356e-10 / ( sqrt(T/4.266e-2) * pow((1.0+sqrt(T/4.266e-2)), 0.2108) * pow((1.0+sqrt(T/3.676e7)), 1.7892) ); /* Verner & Ferland (1996) [more accurate than Cen92] */
+        CoolTables.AlphaHepp[i] = 2. * 7.982e-11 / ( sqrt(T/(4.*3.148)) * pow((1.0+sqrt(T/(4.*3.148))), 0.252) * pow((1.0+sqrt(T/(4.*7.036e5))), 1.748) ); /* Verner & Ferland (1996) : ~ Z*alphaHp[1,T/Z^2] */
 
-        if(470000.0 / T < 70) {Alphad[i] = 1.9e-3 * pow(T, -1.5) * exp(-470000 / T) * (1. + 0.3 * exp(-94000 / T));}
-        if(157809.1 / T < 70) {GammaeH0[i] = 5.85e-11 * sqrt(T) * exp(-157809.1 / T) * Tfact;}
-        if(285335.4 / T < 70) {GammaeHe0[i] = 2.38e-11 * sqrt(T) * exp(-285335.4 / T) * Tfact;}
-        if(631515.0 / T < 70) {GammaeHep[i] = 5.68e-12 * sqrt(T) * exp(-631515.0 / T) * Tfact;}
+        if(470000.0 / T < 70) {CoolTables.Alphad[i] = 1.9e-3 * pow(T, -1.5) * exp(-470000 / T) * (1. + 0.3 * exp(-94000 / T));}
+        if(157809.1 / T < 70) {CoolTables.GammaeH0[i] = 5.85e-11 * sqrt(T) * exp(-157809.1 / T) * Tfact;}
+        if(285335.4 / T < 70) {CoolTables.GammaeHe0[i] = 2.38e-11 * sqrt(T) * exp(-285335.4 / T) * Tfact;}
+        if(631515.0 / T < 70) {CoolTables.GammaeHep[i] = 5.68e-12 * sqrt(T) * exp(-631515.0 / T) * Tfact;}
     }
 }
 
@@ -1208,7 +1183,7 @@ void ReadMultiSpeciesTables(int iT)
     for(i=0;i<kspecies;i++) {
         for(j=0;j<i_nH;j++) {
             for(k=0;k<i_Temp;k++) {
-                r=fread(&SpCoolTable0[i*i_nH*i_Temp + j*i_Temp + k],sizeof(float),1,fdcool);
+                r=fread(&CoolTables.SpCoolTable0[i*i_nH*i_Temp + j*i_Temp + k],sizeof(float),1,fdcool);
                 if(r!=1) {printf(" Reached Cooling EOF! \n");
                 }
             }}}
@@ -1232,7 +1207,7 @@ void ReadMultiSpeciesTables(int iT)
         for(i=0;i<kspecies;i++) {
             for(j=0;j<i_nH;j++) {
                 for(k=0;k<i_Temp;k++) {
-                    r=fread(&SpCoolTable1[i*i_nH*i_Temp + j*i_Temp + k],sizeof(float),1,fdcool);
+                    r=fread(&CoolTables.SpCoolTable1[i*i_nH*i_Temp + j*i_Temp + k],sizeof(float),1,fdcool);
                     if(r!=1) {printf(" Reached Cooling EOF! \n");
                     }
                 }}}
@@ -1315,14 +1290,14 @@ void IonizeParamsTable(void)
         redshift = 0;
 #endif
         /*
-         gJHe0 = gJHep = gJH0 = epsHe0 = epsHep = epsH0 = J_UV = 0;
+         CoolTables.gJHe0 = CoolTables.gJHep = CoolTables.gJH0 = CoolTables.epsHe0 = CoolTables.epsHep = CoolTables.epsH0 = CoolTables.J_UV = 0;
          return;
          */
     }
 
     logz = log10(redshift + 1.0);
     ilow = 0;
-    if(nheattab <= 0) {gJHe0 = gJHep = gJH0 = epsHe0 = epsHep = epsH0 = J_UV = 0; return;}
+    if(nheattab <= 0) {CoolTables.gJHe0 = CoolTables.gJHep = CoolTables.gJH0 = CoolTables.epsHe0 = CoolTables.epsHep = CoolTables.epsH0 = CoolTables.J_UV = 0; return;}
     for(i=0; i<nheattab; i++) {if(inlogz[i] < logz) {ilow = i;} else {break;}}
     ihi = i + 1;
     if(ilow >= nheattab) {ihi = i;}
@@ -1330,17 +1305,17 @@ void IonizeParamsTable(void)
     dzhi = inlogz[ihi] - logz;
     if((logz > inlogz[nheattab - 1]) || (gH0[ilow] == 0) || (gH0[ihi] == 0) || (ilow > nheattab))
     {
-        gJHe0 = gJHep = gJH0 = epsHe0 = epsHep = epsH0 = J_UV = 0;
+        CoolTables.gJHe0 = CoolTables.gJHep = CoolTables.gJH0 = CoolTables.epsHe0 = CoolTables.epsHep = CoolTables.epsH0 = CoolTables.J_UV = 0;
         return;
     }
-    else {J_UV = 1.e-21;}		/* irrelevant as long as it's not 0 */
+    else {CoolTables.J_UV = 1.e-21;}		/* irrelevant as long as it's not 0 */
 
-    gJH0 = JAMPL * pow(10., (dzhi * log10(gH0[ilow]) + dzlow * log10(gH0[ihi])) / (dzlow + dzhi));
-    gJHe0 = JAMPL * pow(10., (dzhi * log10(gHe[ilow]) + dzlow * log10(gHe[ihi])) / (dzlow + dzhi));
-    gJHep = JAMPL * pow(10., (dzhi * log10(gHep[ilow]) + dzlow * log10(gHep[ihi])) / (dzlow + dzhi));
-    epsH0 = JAMPL * pow(10., (dzhi * log10(eH0[ilow]) + dzlow * log10(eH0[ihi])) / (dzlow + dzhi));
-    epsHe0 = JAMPL * pow(10., (dzhi * log10(eHe[ilow]) + dzlow * log10(eHe[ihi])) / (dzlow + dzhi));
-    epsHep = JAMPL * pow(10., (dzhi * log10(eHep[ilow]) + dzlow * log10(eHep[ihi])) / (dzlow + dzhi));
+    CoolTables.gJH0 = JAMPL * pow(10., (dzhi * log10(gH0[ilow]) + dzlow * log10(gH0[ihi])) / (dzlow + dzhi));
+    CoolTables.gJHe0 = JAMPL * pow(10., (dzhi * log10(gHe[ilow]) + dzlow * log10(gHe[ihi])) / (dzlow + dzhi));
+    CoolTables.gJHep = JAMPL * pow(10., (dzhi * log10(gHep[ilow]) + dzlow * log10(gHep[ihi])) / (dzlow + dzhi));
+    CoolTables.epsH0 = JAMPL * pow(10., (dzhi * log10(eH0[ilow]) + dzlow * log10(eH0[ihi])) / (dzlow + dzhi));
+    CoolTables.epsHe0 = JAMPL * pow(10., (dzhi * log10(eHe[ilow]) + dzlow * log10(eHe[ihi])) / (dzlow + dzhi));
+    CoolTables.epsHep = JAMPL * pow(10., (dzhi * log10(eHep[ilow]) + dzlow * log10(eHep[ihi])) / (dzlow + dzhi));
 
     return;
 }
@@ -1348,7 +1323,7 @@ void IonizeParamsTable(void)
 
 void SetZeroIonization(void)
 {
-    gJHe0 = gJHep = gJH0 = 0; epsHe0 = epsHep = epsH0 = 0; J_UV = 0;
+    CoolTables.gJHe0 = CoolTables.gJHep = CoolTables.gJH0 = 0; CoolTables.epsHe0 = CoolTables.epsHep = CoolTables.epsH0 = 0; CoolTables.J_UV = 0;
 }
 
 
@@ -1364,28 +1339,28 @@ void IonizeParamsFunction(void)
     double Jold = -1.0;
     double redshift;
 
-    J_UV = 0.;
-    gJHe0 = gJHep = gJH0 = 0.;
-    epsHe0 = epsHep = epsH0 = 0.;
+    CoolTables.J_UV = 0.;
+    CoolTables.gJHe0 = CoolTables.gJHep = CoolTables.gJH0 = 0.;
+    CoolTables.epsHe0 = CoolTables.epsHep = CoolTables.epsH0 = 0.;
 
 
     if(All.ComovingIntegrationOn)	/* analytically compute params from power law J_nu */
     {
         redshift = 1 / All.Time - 1;
 
-        if(redshift >= 6) {J_UV = 0.;}
+        if(redshift >= 6) {CoolTables.J_UV = 0.;}
         else
         {
-            if(redshift >= 3) {J_UV = 4e-22 / (1 + redshift);}
+            if(redshift >= 3) {CoolTables.J_UV = 4e-22 / (1 + redshift);}
             else
             {
-                if(redshift >= 2) {J_UV = 1e-22;}
-                else {J_UV = 1.e-22 * pow(3.0 / (1 + redshift), -3.0);}
+                if(redshift >= 2) {CoolTables.J_UV = 1e-22;}
+                else {CoolTables.J_UV = 1.e-22 * pow(3.0 / (1 + redshift), -3.0);}
             }
         }
-        if(J_UV == Jold) {return;}
-        Jold = J_UV;
-        if(J_UV == 0) {return;}
+        if(CoolTables.J_UV == Jold) {return;}
+        Jold = CoolTables.J_UV;
+        if(CoolTables.J_UV == 0) {return;}
 
 
         a0 = 6.30e-18;
@@ -1411,27 +1386,27 @@ void IonizeParamsFunction(void)
             eint += fac * (tinv - 1.) * at;
         }
 
-        gJH0 = a0 * gint / planck;
-        epsH0 = a0 * eint * (e0_H / planck);
-        gJHep = gJH0 * pow(e0_H / e0_Hep, UVALPHA) / 4.0;
-        epsHep = epsH0 * pow((e0_H / e0_Hep), UVALPHA - 1.) / 4.0;
+        CoolTables.gJH0 = a0 * gint / planck;
+        CoolTables.epsH0 = a0 * eint * (e0_H / planck);
+        CoolTables.gJHep = CoolTables.gJH0 * pow(e0_H / e0_Hep, UVALPHA) / 4.0;
+        CoolTables.epsHep = CoolTables.epsH0 * pow((e0_H / e0_Hep), UVALPHA - 1.) / 4.0;
 
         at = 7.83e-18;
         beta = 1.66;
         s = 2.05;
 
-        gJHe0 = (at / planck) * pow((e0_H / e0_He), UVALPHA) *
+        CoolTables.gJHe0 = (at / planck) * pow((e0_H / e0_He), UVALPHA) *
         (beta / (UVALPHA + s) + (1. - beta) / (UVALPHA + s + 1));
-        epsHe0 = (e0_He / planck) * at * pow(e0_H / e0_He, UVALPHA) *
+        CoolTables.epsHe0 = (e0_He / planck) * at * pow(e0_H / e0_He, UVALPHA) *
         (beta / (UVALPHA + s - 1) + (1 - 2 * beta) / (UVALPHA + s) - (1 - beta) / (UVALPHA + s + 1));
 
         pi = M_PI;
-        gJH0 *= 4. * pi * J_UV;
-        gJHep *= 4. * pi * J_UV;
-        gJHe0 *= 4. * pi * J_UV;
-        epsH0 *= 4. * pi * J_UV;
-        epsHep *= 4. * pi * J_UV;
-        epsHe0 *= 4. * pi * J_UV;
+        CoolTables.gJH0 *= 4. * pi * CoolTables.J_UV;
+        CoolTables.gJHep *= 4. * pi * CoolTables.J_UV;
+        CoolTables.gJHe0 *= 4. * pi * CoolTables.J_UV;
+        CoolTables.epsH0 *= 4. * pi * CoolTables.J_UV;
+        CoolTables.epsHep *= 4. * pi * CoolTables.J_UV;
+        CoolTables.epsHe0 *= 4. * pi * CoolTables.J_UV;
     }
 }
 #endif // !(CHIMES)
@@ -1591,16 +1566,16 @@ double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long ind
     long x1y0 = index_x1y0 + k_index;
     long x1y1 = index_x1y1 + k_index;
     double i1, i2, j1, j2, w1, w2, u1;
-    i1 = SpCoolTable0[x0y0];
-    i2 = SpCoolTable0[x0y1];
-    j1 = SpCoolTable0[x1y0];
-    j2 = SpCoolTable0[x1y1];
+    i1 = CoolTables.SpCoolTable0[x0y0];
+    i2 = CoolTables.SpCoolTable0[x0y1];
+    j1 = CoolTables.SpCoolTable0[x1y0];
+    j2 = CoolTables.SpCoolTable0[x1y1];
     if(dz > 0)
     {
-        i1 = mdz * i1 + dz * SpCoolTable1[x0y0];
-        i2 = mdz * i2 + dz * SpCoolTable1[x0y1];
-        j1 = mdz * j1 + dz * SpCoolTable1[x1y0];
-        j2 = mdz * j2 + dz * SpCoolTable1[x1y1];
+        i1 = mdz * i1 + dz * CoolTables.SpCoolTable1[x0y0];
+        i2 = mdz * i2 + dz * CoolTables.SpCoolTable1[x0y1];
+        j1 = mdz * j1 + dz * CoolTables.SpCoolTable1[x1y0];
+        j2 = mdz * j2 + dz * CoolTables.SpCoolTable1[x1y1];
     }
     w1 = i1*(1-dy) + i2*dy;
     w2 = j1*(1-dy) + j2*dy;
@@ -1670,7 +1645,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     xH0 = DMIN(DMAX(nh0, 0.),1.); // get neutral fraction [given by call to this program]
     if(xH0 <= MIN_REAL_NUMBER) {cell[i].MolecularMassFraction_perNeutralH=cell[i].MolecularMassFraction=0; return;} // no neutral gas, no molecules!
     x_e = DMIN(DMAX(xn_e, 0.),2.); // get free electron ratio [number per H nucleon]
-    double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i, cell)*gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T, cell), urad_from_uvb_in_G0=sqrt(shieldfac)*(gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
+    double log_T=log10(T), ln_T=log(T), gamma_12=return_local_gammamultiplier(i, cell)*CoolTables.gJH0/1.0e-12, shieldfac=return_uvb_shieldfac(i,gamma_12,nH_cgs,log_T, cell), urad_from_uvb_in_G0=sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10); // estimate UVB contribution if we have partial shielding, to full photo-dissociation rates //
 #ifdef METALS
     f_dustgas_solar=(pp[i].Metallicity[0]/All.SolarAbundances[0])*return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // this is only used for the dust-phase formation rates below, so just the dust term here
 #endif
@@ -1944,7 +1919,7 @@ KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, stru
     MyFloat G0 = 0.;
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
     G0 += cell[target].Rad_Flux_UV;
-    if(gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (gJH0 / 2.29e-10);} // uvb contribution //
+    if(CoolTables.gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (CoolTables.gJH0 / 2.29e-10);} // uvb contribution //
 #endif
     double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target, pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
 #ifdef RT_PHOTOELECTRIC
