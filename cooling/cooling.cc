@@ -517,6 +517,8 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     u = u_upper = u_lower =  u_old; /* initialize values */
     #define ROOTFIND_FUNCTION(du) du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt // control the *relative* error on the *change* in u
     double du_net = ROOTFIND_FUNCTION(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
+    if(target == 0) {printf("[DOCOOL_INIT] u_old=%.10e rho=%.10e dt=%.10e ne=%.10e du_net=%.10e Tdust=%.10e Trad=%.10e RadE_IR=%.10e\n",
+        u_old, rho, dt, ne_guess, du_net, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, cell[target].Rad_E_gamma[RT_FREQ_BIN_INFRARED]);}
 
     /* bracketing */
     double u_step_fac = 1.1;
