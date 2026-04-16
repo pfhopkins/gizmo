@@ -187,12 +187,25 @@ void cooling_parent_routine(void)
             compact_P[j]    = P[cool_indices[batch_start + j]];
             compact_Cell[j] = CellP[cool_indices[batch_start + j]];
         }
+        /* DEBUG: print RT fields for first particle of first batch */
+        if(batch_start == 0 && batch_n > 0) {
+            int gi = cool_indices[0];
+            printf("[GATHER_RT] id=%llu Tdust=%.6e Trad=%.6e RadE_IR=%.6e Density=%.6e Mass=%.6e Ne=%.6e HI=%.6e HII=%.6e\n",
+                   (unsigned long long)P[gi].ID, CellP[gi].Dust_Temperature, CellP[gi].Radiation_Temperature,
+                   CellP[gi].Rad_E_gamma[RT_FREQ_BIN_INFRARED], CellP[gi].Density, CellP[gi].Mass, CellP[gi].Ne, CellP[gi].HI, CellP[gi].HII);
+            fflush(stdout);
+        }
 
         /* Dispatch batch to GPU */
         {
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
             Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
+                if(j == 0) { /* DEBUG: print same fields as seen by GPU kernel */
+                    printf("[KERNEL_RT] Tdust=%.6e Trad=%.6e RadE_IR=%.6e Density=%.6e Mass=%.6e Ne=%.6e HI=%.6e HII=%.6e\n",
+                           kc[0].Dust_Temperature, kc[0].Radiation_Temperature,
+                           kc[0].Rad_E_gamma[RT_FREQ_BIN_INFRARED], kc[0].Density, kc[0].Mass, kc[0].Ne, kc[0].HI, kc[0].HII);
+                }
                 do_the_cooling_for_particle(j, kp, kc);
             });
             Kokkos::fence();
