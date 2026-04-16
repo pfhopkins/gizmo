@@ -996,6 +996,27 @@ int merge_particles_ij(int i, int j)
 #if defined(GALSF_RESOLVEDISM_DUST)
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[j].Dust[k] = wt_j*CellP[j].Dust[k] + wt_i*CellP[i].Dust[k];} /* dust-mass conserving */
 #endif
+#if defined(CHEMCOOL)
+    {/* TracAbund is n_X/n_H (abundance ratio). Convert to mass fractions
+        using pre-merge X_H, mass-weight, then convert back using merged X_H.
+        Must be done BEFORE ElementAbundance merge so we have pre-merge X_H for j. */
+     static const double trac_molwt[] = {2.0, 1.0, 28.0};
+     double X_H_i = DMAX(P[i].ElementAbundance[0], 1e-10);
+     double X_H_j = DMAX(P[j].ElementAbundance[0], 1e-10); /* pre-merge */
+     double X_H_new = wt_j * X_H_j + wt_i * X_H_i;         /* what merged X_H will be */
+     for(k=0;k<TRAC_NUM;k++) {
+         double mf_i = CellP[i].TracAbund[k] * trac_molwt[k] * X_H_i;
+         double mf_j = CellP[j].TracAbund[k] * trac_molwt[k] * X_H_j;
+         double mf_merged = wt_j * mf_j + wt_i * mf_i;
+         CellP[j].TracAbund[k] = mf_merged / (trac_molwt[k] * DMAX(X_H_new, 1e-10));
+     }
+     CellP[j].DustTemp = wt_j*CellP[j].DustTemp + wt_i*CellP[i].DustTemp;
+     CellP[j].Temp = wt_j*CellP[j].Temp + wt_i*CellP[i].Temp;
+    }
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {P[j].ElementAbundance[k] = wt_j*P[j].ElementAbundance[k] + wt_i*P[i].ElementAbundance[k];} /* element-mass conserving */
+#endif
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
