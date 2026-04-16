@@ -80,6 +80,11 @@ void resolvedism_determine_SNe(void)
         if(table_age <= 0) continue; /* PMS: no winds yet */
         double log_age = log10(DMAX(table_age, 100.0));
         double M_new = stellar_M_current(logM, logZ, log_age);
+        /* Clamp: M_current must not drop below M_preSN while the star is alive.
+           The table has M_current=0 for ages beyond the lifetime, which would
+           cause the wind accumulator to swallow the entire star mass. */
+        double M_preSN_floor = stellar_M_preSN(logM, logZ);
+        if(M_new < M_preSN_floor) M_new = M_preSN_floor;
 
         if(P[i].M_current_old > 0 && M_new < P[i].M_current_old) {
             double dM = P[i].M_current_old - M_new; /* wind mass lost this step [Msun] */
