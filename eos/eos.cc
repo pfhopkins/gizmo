@@ -10,14 +10,9 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror: same pattern as cooling.cc — must precede allvars.h. */
-#ifdef OPENMP_GPU_OFFLOAD
-#include "../declarations/global_data_all_struct.h"
-#endif
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev  /* redirect All -> managed copy for ALL nvcc-compiled code (host+device) */
-#endif
+/* GPU All mirror: per-TU managed pointer to shared UVM allocation.
+ * Must precede allvars.h so #define All suppresses the extern declaration. */
+#include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -506,14 +501,7 @@ void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particl
 #endif
 
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-void gizmo_gpu_sync_all_eos(void) {
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    All_dev = All;
-#pragma pop_macro("All")
-}
-#elif defined(OPENMP_GPU_OFFLOAD)
-void gizmo_gpu_sync_all_eos(void) {} /* no-op: no __managed__ copy with OpenMP backend */
+/* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
+#ifdef OPENMP_GPU_OFFLOAD
+GPU_ALL_INIT_FUNC(eos)
 #endif

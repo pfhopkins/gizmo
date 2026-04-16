@@ -21,14 +21,8 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror — same pattern as cooling.cc.  Must precede allvars.h. */
-#ifdef OPENMP_GPU_OFFLOAD
-#include "../declarations/global_data_all_struct.h"
-#endif
-#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__))
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev
-#endif
+/* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
+#include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -289,17 +283,11 @@ void nuclear_parent_routine(void)
 }
 
 
-/* Sync the __managed__ All_dev copy for this TU (called from gizmo_gpu_sync_all in cooling.cc) */
-#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDACC__) || defined(__HIPCC__))
-void gizmo_gpu_sync_all_nuclear(void) {
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    All_dev = All;
-#pragma pop_macro("All")
-}
-#elif defined(OPENMP_GPU_OFFLOAD)
-void gizmo_gpu_sync_all_nuclear(void) {}
+/* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
+#ifdef OPENMP_GPU_OFFLOAD
+GPU_ALL_INIT_FUNC(nuclear)
+#else
+void gizmo_gpu_init_all_nuclear(struct global_data_all_processes *p) { (void)p; }
 #endif
 
 #endif /* NUCLEAR_NETWORK */

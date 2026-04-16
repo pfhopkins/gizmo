@@ -19,14 +19,8 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror */
-#ifdef OPENMP_GPU_OFFLOAD
-#include "../declarations/global_data_all_struct.h"
-#endif
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev
-#endif
+/* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
+#include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -421,16 +415,8 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
 }
 
 
-/* ---- GPU All_dev sync function ---- */
-void gizmo_gpu_sync_all_difffilter(void) {
-#if defined(GIZMO_GPU_COMPILER)
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    All_dev = All;
-#pragma pop_macro("All")
-#endif
-}
+/* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
+GPU_ALL_INIT_FUNC(difffilter)
 
 #else /* stubs */
 
@@ -439,6 +425,6 @@ void difffilter_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                               int, int *, int, int *, int *, int,
                               void *, void *, void *, int) {}
-void gizmo_gpu_sync_all_difffilter(void) {}
+void gizmo_gpu_init_all_difffilter(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* TURB_DIFF_DYNAMIC && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

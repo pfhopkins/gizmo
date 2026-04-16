@@ -14,13 +14,8 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-#ifdef OPENMP_GPU_OFFLOAD
-#include "../declarations/global_data_all_struct.h"
-#endif
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev
-#endif
+/* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
+#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -236,16 +231,8 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
 }
 
 
-/* ---- GPU All_dev sync function ---- */
-void gizmo_gpu_sync_all_ngb(void) {
-#if defined(GIZMO_GPU_COMPILER)
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    All_dev = All;
-#pragma pop_macro("All")
-#endif
-}
+/* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
+GPU_ALL_INIT_FUNC(ngb)
 
 #else /* !OPENMP_GPU_OFFLOAD || !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
@@ -256,6 +243,6 @@ void gpu_ngb_list_build(struct particle_data *, int, int *, int, int, int,
                         gpu_neighbor_list_t *, gpu_spatial_index_t *, double) {}
 void gpu_ngb_list_free(gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
 void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *, double) {}
-void gizmo_gpu_sync_all_ngb(void) {}
+void gizmo_gpu_init_all_ngb(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

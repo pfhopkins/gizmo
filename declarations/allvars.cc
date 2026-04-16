@@ -264,8 +264,9 @@ void *CommBuffer;		/*!< points to communication buffer, which is used at a few p
  * it allows the introduction of new global variables in a simple way. The only thing to do is to introduce
  * them into this structure.
  */
-/* All is always defined here as a plain host global.  GPU TUs (cooling.cc, eos.cc)
-   maintain their own TU-local __managed__ All_dev copies synced before kernel launch. */
+/* All is defined here as a plain host global.  GPU TUs access a shared UVM copy
+   (allocated in gizmo_gpu_alloc_all) via per-TU managed pointers; gizmo_gpu_sync_all
+   memcpys this host All → the UVM copy each timestep. */
 struct global_data_all_processes All;
 
 

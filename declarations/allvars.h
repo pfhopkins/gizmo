@@ -392,11 +392,9 @@ extern struct Subfind_DensityOtherPropsEval_data_out
    all existing code that includes allvars.h sees the type as before. */
 #include "global_data_all_struct.h"
 
-/* In GPU TUs (cooling.cc, eos.cc), All is #defined to All_dev (a static
- * __managed__ variable).  Suppress the extern declaration so the macro doesn't
- * expand it to "extern ... All_dev" which would conflict with the static defn.
- * The guard uses 'All' as a defined-macro test rather than __CUDA_ARCH__
- * (which nvcc_wrapper does not reliably define). */
+/* In GPU TUs, gpu_all_mirror.h #defines All to (*All_ptr) — a per-TU managed
+ * pointer to a shared UVM allocation.  The #ifndef guard suppresses the extern
+ * declaration so the macro doesn't expand it incorrectly. */
 #ifndef All
 extern struct global_data_all_processes All;
 #endif

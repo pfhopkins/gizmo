@@ -19,14 +19,8 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror */
-#ifdef OPENMP_GPU_OFFLOAD
-#include "../declarations/global_data_all_struct.h"
-#endif
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev
-#endif
+/* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
+#include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -42,30 +36,7 @@ extern __managed__ struct cooling_tables_t CoolTables;
 #else
 extern struct cooling_tables_t CoolTables;
 #endif
-#define Tmin      CoolTables.Tmin
-#define Tmax      CoolTables.Tmax
-#define deltaT    CoolTables.deltaT
-#define BetaH0    CoolTables.BetaH0
-#define BetaHep   CoolTables.BetaHep
-#define Betaff    CoolTables.Betaff
-#define AlphaHp   CoolTables.AlphaHp
-#define AlphaHep  CoolTables.AlphaHep
-#define Alphad    CoolTables.Alphad
-#define AlphaHepp CoolTables.AlphaHepp
-#define GammaeH0  CoolTables.GammaeH0
-#define GammaeHe0 CoolTables.GammaeHe0
-#define GammaeHep CoolTables.GammaeHep
-#define J_UV      CoolTables.J_UV
-#define gJH0      CoolTables.gJH0
-#define gJHep     CoolTables.gJHep
-#define gJHe0     CoolTables.gJHe0
-#define epsH0     CoolTables.epsH0
-#define epsHep    CoolTables.epsHep
-#define epsHe0    CoolTables.epsHe0
-#ifdef COOL_METAL_LINES_BY_SPECIES
-#define SpCoolTable0 CoolTables.SpCoolTable0
-#define SpCoolTable1 CoolTables.SpCoolTable1
-#endif
+/* cooling_functions.h now uses CoolTables.fieldname directly — no aliases needed */
 #include "../cooling/cooling_functions.h"
 #endif
 
@@ -317,21 +288,13 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
 }
 
 
-/* ---- GPU All_dev sync function ---- */
-void gizmo_gpu_sync_all_grain(void) {
-#if defined(GIZMO_GPU_COMPILER)
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    All_dev = All;
-#pragma pop_macro("All")
-#endif
-}
+/* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
+GPU_ALL_INIT_FUNC(grain)
 
 #else /* stubs */
 
 void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                              int *, int) {}
-void gizmo_gpu_sync_all_grain(void) {}
+void gizmo_gpu_init_all_grain(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* GRAIN_FLUID && OPENMP_GPU_OFFLOAD */

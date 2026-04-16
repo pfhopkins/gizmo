@@ -12,16 +12,9 @@
 #include <Kokkos_Core.hpp>
 #endif
 
-/* GPU All mirror: include global_data_all_struct.h BEFORE allvars.h so that
- * GIZMO_GPU_COMPILER is defined and inline __device__ __host__ methods in
- * cell_data.h/particle_data.h see All_dev via the #define All All_dev macro. */
-#ifdef OPENMP_GPU_OFFLOAD
-#include "../declarations/global_data_all_struct.h"
-#endif
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER) && !defined(CHIMES)
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev  /* redirect All -> managed copy for ALL GPU-compiled code (host+device) */
-#endif
+/* GPU All mirror: per-TU managed pointer to shared UVM allocation.
+ * Must precede allvars.h so #define All suppresses the extern declaration. */
+#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
@@ -98,7 +91,7 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 
-/* All_dev and #define All All_dev are defined at the top of this file, before includes. */
+/* All is redirected to a shared UVM allocation via gpu_all_mirror.h (included above). */
 
 /* forward declarations for functions used before their definitions.
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
@@ -174,7 +167,7 @@ void cooling_parent_routine(void)
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_COOL_BATCH_SIZE = 32768;
-    /* All_dev sync now handled by gizmo_gpu_sync_all() called from begrun/run */
+    /* All sync handled by gizmo_gpu_sync_all() called from begrun/run */
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
     struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
@@ -2421,53 +2414,106 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
 #endif
 }
 void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
-extern void gizmo_gpu_sync_all_eos(void);
+
+/* ---- Shared UVM allocation for All ----
+   One copy of the struct in Kokkos::SharedSpace (= CUDA UVM on GPU, host memory on OpenMP).
+   Each GPU TU has a per-TU static __managed__ pointer (All_ptr) set at init time.
+   gizmo_gpu_sync_all() copies the host All → shared allocation once per timestep. */
+
+static struct global_data_all_processes *shared_all_uvm = nullptr;
+
+/* Per-TU init function declarations */
+extern void gizmo_gpu_init_all_cooling(struct global_data_all_processes *);
+extern void gizmo_gpu_init_all_eos(struct global_data_all_processes *);
 #ifdef NUCLEAR_NETWORK
-extern void gizmo_gpu_sync_all_nuclear(void);
+extern void gizmo_gpu_init_all_nuclear(struct global_data_all_processes *);
 #endif
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-extern void gizmo_gpu_sync_all_density(void);
-extern void gizmo_gpu_sync_all_ngb(void);
+extern void gizmo_gpu_init_all_density(struct global_data_all_processes *);
+extern void gizmo_gpu_init_all_ngb(struct global_data_all_processes *);
 #endif
 #ifdef RT_CHEM_PHOTOION
-extern void gizmo_gpu_sync_all_rt_chem(void);
+extern void gizmo_gpu_init_all_rt_chem(struct global_data_all_processes *);
 #endif
 #ifdef TURB_DRIVING
-extern void gizmo_gpu_sync_all_turb(void);
+extern void gizmo_gpu_init_all_turb(struct global_data_all_processes *);
 #endif
 #ifdef TURB_DIFF_DYNAMIC
-extern void gizmo_gpu_sync_all_difffilter(void);
+extern void gizmo_gpu_init_all_difffilter(struct global_data_all_processes *);
 #endif
 #ifdef GRAIN_FLUID
-extern void gizmo_gpu_sync_all_grain(void);
+extern void gizmo_gpu_init_all_grain(struct global_data_all_processes *);
 #endif
+
+void gizmo_gpu_alloc_all(void) {
+    shared_all_uvm = (struct global_data_all_processes *)
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(struct global_data_all_processes));
+    memset(shared_all_uvm, 0, sizeof(struct global_data_all_processes));
+    /* Set every TU's All_ptr to the shared allocation */
+    gizmo_gpu_init_all_cooling(shared_all_uvm);
+    gizmo_gpu_init_all_eos(shared_all_uvm);
+#ifdef NUCLEAR_NETWORK
+    gizmo_gpu_init_all_nuclear(shared_all_uvm);
+#endif
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+    gizmo_gpu_init_all_density(shared_all_uvm);
+    gizmo_gpu_init_all_ngb(shared_all_uvm);
+#endif
+#ifdef RT_CHEM_PHOTOION
+    gizmo_gpu_init_all_rt_chem(shared_all_uvm);
+#endif
+#ifdef TURB_DRIVING
+    gizmo_gpu_init_all_turb(shared_all_uvm);
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+    gizmo_gpu_init_all_difffilter(shared_all_uvm);
+#endif
+#ifdef GRAIN_FLUID
+    gizmo_gpu_init_all_grain(shared_all_uvm);
+#endif
+    printf("[GPU] All struct allocated in SharedSpace (%zu bytes), %d TU pointers set\n",
+           sizeof(struct global_data_all_processes),
+           2  /* cooling + eos, always present */
+#ifdef NUCLEAR_NETWORK
+           + 1
+#endif
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+           + 2
+#endif
+#ifdef RT_CHEM_PHOTOION
+           + 1
+#endif
+#ifdef TURB_DRIVING
+           + 1
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+           + 1
+#endif
+#ifdef GRAIN_FLUID
+           + 1
+#endif
+           );
+    fflush(stdout);
+}
+
+void gizmo_gpu_free_all(void) {
+    if(shared_all_uvm) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(shared_all_uvm);
+        shared_all_uvm = nullptr;
+    }
+}
+
 void gizmo_gpu_sync_all(void) {
-#if defined(GIZMO_GPU_COMPILER)
+    /* Copy host All → shared UVM allocation.  One memcpy replaces 9+ per-TU copies.
+       All TU pointers already point to shared_all_uvm, so they see the update. */
 #pragma push_macro("All")
 #undef All
     extern struct global_data_all_processes All;
-    All_dev = All;
+    memcpy(shared_all_uvm, &All, sizeof(struct global_data_all_processes));
 #pragma pop_macro("All")
-#endif
-    gizmo_gpu_sync_all_eos();
-#ifdef NUCLEAR_NETWORK
-    gizmo_gpu_sync_all_nuclear();
-#endif
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-    gizmo_gpu_sync_all_density();
-    gizmo_gpu_sync_all_ngb();
-#endif
-#ifdef RT_CHEM_PHOTOION
-    gizmo_gpu_sync_all_rt_chem();
-#endif
-#ifdef TURB_DRIVING
-    gizmo_gpu_sync_all_turb();
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-    gizmo_gpu_sync_all_difffilter();
-#endif
-#ifdef GRAIN_FLUID
-    gizmo_gpu_sync_all_grain();
-#endif
+    Kokkos::fence("gizmo_gpu_sync_all");
 }
+
+/* This TU's own init function */
+GPU_ALL_INIT_FUNC(cooling)
 #endif /* OPENMP_GPU_OFFLOAD */

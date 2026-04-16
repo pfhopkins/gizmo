@@ -47,6 +47,7 @@ int main(int argc, char **argv)
   MPI_Comm_size(MPI_COMM_WORLD, &NTask);
 #ifdef OPENMP_GPU_OFFLOAD
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
+  gizmo_gpu_alloc_all();  /* allocate shared UVM All and set per-TU pointers */
 #endif
 
 #ifdef IMPOSE_PINNING
@@ -135,6 +136,7 @@ int main(int argc, char **argv)
   run();			/* main simulation loop */
 
 #ifdef OPENMP_GPU_OFFLOAD
+  gizmo_gpu_free_all();  /* free shared UVM All */
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
 #endif
   MPI_Finalize();		/* clean up & finalize MPI */

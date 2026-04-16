@@ -978,5 +978,7 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
 #ifdef OPENMP_GPU_OFFLOAD
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
+void gizmo_gpu_alloc_all(void);
+void gizmo_gpu_free_all(void);
 void gizmo_gpu_sync_all(void);
 #endif
