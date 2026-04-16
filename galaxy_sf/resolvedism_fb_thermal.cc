@@ -97,6 +97,8 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         case REM_PISN:  in->Esne = 1.0e52 / UNIT_ENERGY_IN_CGS; rem_mass = 0; break;
         case REM_PPISN: in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
         case REM_ECSN:  in->Esne = 5.0e50 / UNIT_ENERGY_IN_CGS; break;
+        case REM_FSN:
+        case REM_DBH:   in->Esne = 0; break; /* no explosion energy */
         case REM_CCSN:
         default:        in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
     }
@@ -107,14 +109,22 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
     double metal_mass_solar = 0;
+    double ElemYields_solar[STBL_NELEM];
+    double X_birth_arr[STBL_NELEM];
+    double sum_yields = 0;
+
+    /* First pass: compute per-element yields and birth fractions */
     for(k = 0; k < STBL_NELEM; k++) {
-        double net_y = stellar_sn_yield(logM, logZ, k);
-        double X_birth = 0;
+        /* FSN/DBH: no explosion, residual ejecta is birth composition only.
+           sn_yield = net_yield - wind_yield = 0 - wind_yield = -wind_yield for
+           these types (table builder zeroes net_yields), which would corrupt
+           the injection if used. */
+        double net_y = (rem_type == REM_FSN || rem_type == REM_DBH) ? 0 : stellar_sn_yield(logM, logZ, k);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        X_birth = P[i].ElementAbundance[k];
+        X_birth_arr[k] = P[i].ElementAbundance[k];
 #else
-        if(k == ELEM_H) X_birth = 0.74;
-        else if(k == ELEM_He) X_birth = 0.24;
+        if(k == ELEM_H) X_birth_arr[k] = 0.74;
+        else if(k == ELEM_He) X_birth_arr[k] = 0.24;
         else {
             double Z_birth = DMAX(P[i].BirthMetallicity, 1e-10);
             double solar_frac[STBL_NELEM] = {
@@ -122,15 +132,32 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
                 2.98e-5, 5.91e-4, 5.57e-5, 6.65e-4, 5.16e-6, 3.10e-4, 3.15e-6,
                 7.37e-5, 2.93e-6, 6.44e-5, 3.48e-8, 3.59e-6, 2.30e-7, 1.37e-5,
                 9.17e-6, 1.17e-3, 3.30e-6, 6.99e-5, 7.20e-7, 1.67e-6};
-            X_birth = solar_frac[k] * (Z_birth / 0.014);
+            X_birth_arr[k] = solar_frac[k] * (Z_birth / 0.014);
         }
 #endif
-        double M_elem_ej = net_y + X_birth * Mej_solar;
+        double M_elem_ej = net_y + X_birth_arr[k] * Mej_solar;
         if(M_elem_ej < 0) M_elem_ej = 0;
+        ElemYields_solar[k] = M_elem_ej;
+        sum_yields += M_elem_ej;
+    }
+
+    /* Enforce mass conservation: if clipping negative yields caused
+       sum(ElemYields) != Mej, redistribute the deficit into H.
+       This happens for PPISN entries near the PISN boundary where
+       sn_yield[H] is large negative (more H consumed than available in Mej). */
+    if(Mej_solar > 0 && sum_yields > 0) {
+        double deficit = Mej_solar - sum_yields;
+        if(fabs(deficit) > 1e-6) {
+            ElemYields_solar[ELEM_H] += deficit;
+            if(ElemYields_solar[ELEM_H] < 0) ElemYields_solar[ELEM_H] = 0;
+        }
+    }
+
+    for(k = 0; k < STBL_NELEM; k++) {
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        in->ElemYields[k] = M_elem_ej / UNIT_MASS_IN_SOLAR;
+        in->ElemYields[k] = ElemYields_solar[k] / UNIT_MASS_IN_SOLAR;
 #endif
-        if(k >= ELEM_C) metal_mass_solar += M_elem_ej;
+        if(k >= ELEM_C) metal_mass_solar += ElemYields_solar[k];
     }
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 

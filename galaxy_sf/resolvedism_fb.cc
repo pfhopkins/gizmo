@@ -161,40 +161,6 @@ void resolvedism_determine_SNe(void)
         double rem_mass = 1.4;   /* default: 1.4 Msun NS */
 #endif
 
-        /* FSN/DBH: direct collapse to BH, no explosion */
-        if(rem_type == REM_FSN || rem_type == REM_DBH) {
-            P[i].Mass = rem_mass / UNIT_MASS_IN_SOLAR;
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-            P[i].MstarSampleIMF[0] = 0;
-#endif
-#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
-            P[i].Mstar = 0;
-#endif
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-            P[i].UV_luminosity = 0;
-            P[i].LW_luminosity = 0;
-#ifdef GALSF_RESOLVEDISM_PHOTOION
-            P[i].Lyman_photons_per_sec = 0;
-#endif
-#endif
-            P[i].SNe_ThisTimeStep = -1; /* mark as done, no explosion */
-#ifdef GALSF_RESOLVEDISM_BH_PROMOTION
-            /* Promote to Type 5 sink (stellar-mass BH) */
-            P[i].Type = 5;
-            P[i].SinkSubType = 1;
-            P[i].Sink_Mass = P[i].Mass;
-            P[i].Sink_Formation_Mass = P[i].Mass;
-            P[i].Sink_Mdot = 0;
-            P[i].Sink_TimeBinGasNeighbor = 0;
-            P[i].SwallowID = 0;
-            P[i].IndexMapToTempStruc = -1;
-            P[i].KernelRadius = All.ForceSoftening[5];
-            TreeReconstructFlag = 1;
-#endif
-            n_collapse_local++;
-            continue;
-        }
-
         /* Force-dump any remaining accumulated wind mass before the SN/AGB event.
            This ensures wind mass tracked by M_current but not yet injected to gas
            gets properly returned before the explosion yields are computed. */
@@ -203,6 +169,24 @@ void resolvedism_determine_SNe(void)
             P[i].SNe_ThisTimeStep = 3; /* wind dump first — SN will fire next timestep */
             n_wind_local++;
             continue; /* skip SN flagging this step */
+        }
+#else
+        /* Without winds, the star retains M_init at death.  The difference
+           M_particle - M_preSN is envelope mass that winds would have removed.
+           Dump it now at birth composition before the SN/AGB yields are applied,
+           so that the SN ejecta mass (M_preSN - rem_mass) is correct. */
+        {
+            double M_preSN_local = stellar_M_preSN(logM, logZ);
+            double M_particle_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+            double M_wind_return = M_particle_solar - M_preSN_local;
+            if(M_wind_return > 0.01) {
+                /* Load the excess into WindMassAccum and flag for momentum-pass dump */
+                P[i].WindMassAccum = M_wind_return;
+                P[i].WindMomentumAccum = 0; /* no momentum — quiet mass return */
+                P[i].SNe_ThisTimeStep = 3;  /* wind dump first — SN/collapse next timestep */
+                n_wind_local++;
+                continue;
+            }
         }
 #endif
         /* Determine flag: 1 = explosive SN (ECSN/CCSN/PISN/PPISN), 2 = AGB/WD death */
@@ -672,8 +656,8 @@ void resolvedism_inject_sn_energy(void)
             }
 #endif
 #ifdef GALSF_RESOLVEDISM_BH_PROMOTION
-            /* PPISN: explosive SN that still leaves a BH remnant — promote after ejecta injection */
-            if(rem_type == REM_PPISN) {
+            /* BH-producing channels: promote to sink after ejecta injection */
+            if(rem_type == REM_PPISN || rem_type == REM_FSN || rem_type == REM_DBH) {
                 P[i].Type = 5;
                 P[i].SinkSubType = 1;
                 P[i].Sink_Mass = P[i].Mass;
@@ -707,9 +691,16 @@ void resolvedism_inject_sn_energy(void)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         P[i].UV_luminosity = 0;
         P[i].LW_luminosity = 0;
+        P[i].NUV_luminosity = 0;
+        P[i].OPT_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
         P[i].Lyman_photons_per_sec = 0;
 #endif
+#endif
+#ifdef GALSF_RESOLVEDISM_WINDS
+        P[i].WindMassAccum = 0;
+        P[i].WindMomentumAccum = 0;
+        P[i].M_current_old = 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
         P[i].Mstar = 0;
