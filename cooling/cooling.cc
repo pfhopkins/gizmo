@@ -1008,6 +1008,19 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
      this system, and we should overwrite it with whatever we get here. */
 #ifdef RT_INFRARED
     if(target >= 0) {LambdaDust = rt_ir_lambdadust(target, T, pp, cell);} /* This updates Dust_Temperature and Lambda_RadiativeCooling_toRHDBins */
+    /* DEBUG: print RT computed values for first particle in first batch */
+    if(target == 0) {
+        double dbg_kappa_ir = rt_kappa(target, RT_FREQ_BIN_INFRARED, pp, cell);
+        double dbg_absrate_ir = rt_absorption_rate(target, RT_FREQ_BIN_INFRARED, pp, cell);
+        double dbg_d2m = return_dust_to_metals_ratio_vs_solar(target, 0, pp, cell);
+        double dbg_kappa_adapt = rt_kappa_adaptive_IR_band(target, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, 0, 0, pp, cell);
+        double dbg_planck = dust_planck_mean_opacity(cell[target].Radiation_Temperature, cell[target].Dust_Temperature);
+        double dbg_dt = get_particle_timestep_in_physical(target, pp);
+        printf("[KERNEL_RTCALC] T=%.6e Tdust=%.6e Trad=%.6e LambdaDust=%.6e kappa_ir=%.6e absrate_ir=%.6e d2m=%.6e kappa_adapt=%.6e planck=%.6e dt=%.6e Lambda_IR_bin=%.6e\n",
+               T, cell[target].Dust_Temperature, cell[target].Radiation_Temperature,
+               LambdaDust, dbg_kappa_ir, dbg_absrate_ir, dbg_d2m, dbg_kappa_adapt, dbg_planck, dbg_dt,
+               cell[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED]);
+    }
 #endif
     if(LambdaDust>0) {Lambda += LambdaDust;} /* add the -positive- Lambda-dust associated with cooling */
     if(LambdaDust<0) {Heat -= LambdaDust;} // Dust collisional heating (Tdust > Tgas) //
