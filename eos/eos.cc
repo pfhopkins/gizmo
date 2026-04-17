@@ -106,27 +106,34 @@ double return_user_desired_target_pressure(int i)
    time, producing wrong results on CUDA (bisected to commits f8d2619f..63474bcd). */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; cell[i].Gamma = gamma_eos_index;
+    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0; 
+    if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
+    cell[i].Gamma = gamma_eos_index;
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
 
 #ifdef COOLING
-    double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-    temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
-    cell[i].Gamma = cell[i].gamma_eos_value();
+    if(All.Time <= All.TimeBegin) {
+        temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS; /* use whatever was initialized already, because this hasn't been fully iterated in the cooling routine yet */
+    } else {
+        double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
+        temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
+        cell[i].Gamma = cell[i].gamma_eos_value();
+
+        /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
+        {
+            static int eos_diag_n = 0;
+            if(eos_diag_n < 5) {
+                printf("[EOS_DIAG] call=%d i=%d u0=%.6e rho=%.6e ne_out=%.6e mu=%.6e T=%.6e gamma=%.6e cf_a3inv=%.10e\n",
+                    eos_diag_n, i, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, ne, mu_meanwt, temp, gamma_eos_index, All.cf_a3inv);
+                fflush(stdout);
+            }
+            eos_diag_n++;
+        }
+    }
 #else
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
 #endif
     cell[i].Temperature = temp;
-    /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
-    {
-        static int eos_diag_n = 0;
-        if(eos_diag_n < 5) {
-            printf("[EOS_DIAG] call=%d i=%d u0=%.6e rho=%.6e ne_out=%.6e mu=%.6e T=%.6e gamma=%.6e cf_a3inv=%.10e\n",
-                eos_diag_n, i, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, ne, mu_meanwt, temp, gamma_eos_index, All.cf_a3inv);
-            fflush(stdout);
-        }
-        eos_diag_n++;
-    }
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
