@@ -354,20 +354,23 @@
                 double du_new = 0.5 * (PdV_i - PdV_j + facenorm_pm * (face_vel_i+face_vel_j));
                 // more detailed check for intermediate cases //
                 double cnum2 = CellP[j].ConditionNumber*CellP[j].ConditionNumber;
+                double epsilon_threshold_entropic_eos_ratio = 1.001; // if the pressure ratio across the face is larger than this, we should be more careful about using the entropic energy equation, even if SM is small, because the face correction can be large in this case //
                 if(SM_over_ceff > epsilon_entropic_eos_small && cnum2 < cnumcrit2)
                 {
-                    if(Pressure_i/local.Density != Pressure_j/CellP[j].Density)
+                    if(Pressure_i/local.Density > epsilon_threshold_entropic_eos_ratio * Pressure_j/CellP[j].Density)
                     {
-                        if(Pressure_i/local.Density > Pressure_j/CellP[j].Density)
-                        {
-                            double dtoj = -du_old + facenorm_pm * face_vel_j;
-                            if(dtoj > 0) {use_entropic_energy_equation=0;} else
-                                {if(dtoj < 0) {if(dtoj > -du_new+facenorm_pm*face_vel_j) {use_entropic_energy_equation=0;}}}
-                        } else {
-                            double dtoi = +du_old - facenorm_pm * face_vel_i;
-                            if(dtoi > 0) {use_entropic_energy_equation=0;} else
-                                {if(dtoi < 0) {if(dtoi > +du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}}
-                        }
+                        double dtoj = -du_old + facenorm_pm * face_vel_j;
+                        if(dtoj > 0) {use_entropic_energy_equation=0;} else
+                            {if(dtoj < 0) {if(dtoj > -du_new+facenorm_pm*face_vel_j) {use_entropic_energy_equation=0;}}}
+                    } else if(epsilon_threshold_entropic_eos_ratio * Pressure_i/local.Density < Pressure_j/CellP[j].Density) {
+                        double dtoi = +du_old - facenorm_pm * face_vel_i;
+                        if(dtoi > 0) {use_entropic_energy_equation=0;} else
+                            {if(dtoi < 0) {if(dtoi > +du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}}
+                    } else {
+                        double dtoj = -du_old + facenorm_pm * face_vel_j;
+                        double dtoi = +du_old - facenorm_pm * face_vel_i;
+                        if(dtoj < 0) {if(dtoj > -du_new+facenorm_pm*face_vel_j) {use_entropic_energy_equation=0;}}
+                        if(dtoi < 0) {if(dtoi > +du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}                            
                     }
                 }
                 if(cnum2 >= cnumcrit2) {use_entropic_energy_equation=1;}
