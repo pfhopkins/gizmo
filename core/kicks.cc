@@ -89,7 +89,7 @@ void do_second_halfstep_kick(void)
                 ti_step = P[i].integertime_step();
                 tstart = P[i].Ti_begstep + ti_step / 2;	/* midpoint of step */
                 tend = P[i].Ti_begstep + ti_step;	/* end of step */
-                (i, tstart, tend, P[i].Ti_current, 1);
+                do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
                 set_predicted_quantities_for_extra_physics(i);
             }
         }
@@ -199,7 +199,7 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
 
 
-void (int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
+void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
     Vec3<double> dp; double dt_entr, dt_gravkick, dt_hydrokick;
     double mass_old, mass_pred, mass_new;
@@ -332,15 +332,9 @@ void (int i, integertime tstart, integertime tend, integertime tcurrent, int mod
             int kfreq; double erad_tot=0,emin=0,enew=0,demin=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE;  for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma[kfreq];}
             if(erad_tot > 0) // do some checks if this helps or hurts (identical setup in predict) - seems relatively ok for now, in new form
             {
-                double u_before_radblock = CellP[i].InternalEnergy;
                 demin=0.025*CellP[i].InternalEnergy; emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
                 dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin;}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergy = dEnt; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma[kfreq] *= 1 + dErad/erad_tot;}
-                /* KICK_RADBLOCK_DIAG */
-                {static int krbd_n=0; if(krbd_n<5 && fabs(CellP[i].InternalEnergy - u_before_radblock) > 1e-10*fabs(u_before_radblock)) {
-                    printf("[KICK_RADBLOCK] i=%d mode=%d u_before=%.10e u_after=%.10e du_tot=%.6e dEnt_in=%.6e erad=%.6e dErad=%.6e rsol=%.6e demin=%.6e emin=%.6e enew=%.6e\n",
-                        i, mode, u_before_radblock, CellP[i].InternalEnergy, du_tot, dEnt, erad_tot, dErad, rsol_fac, demin, emin, enew);
-                    fflush(stdout); krbd_n++;}}
             } else {
                 if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
             }
