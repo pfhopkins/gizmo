@@ -254,7 +254,10 @@ double dust_dEdt(int i, double T, double Tdust, double dust_absorption_rate, dou
 #endif
     double fac_abs = 1.; /* this will rescale the estimated absorption by the new dust-to-gas ratio */
     if(fdustmet_init > 0.) {fac_abs = return_dust_to_metals_ratio_vs_solar(i,Tdust, pp, cell) / fdustmet_init;}
-    return LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
+    double result_dedt = LambdaDust_fac * (T-Tdust) + fac_abs*dust_absorption_rate - dust_emission;
+    if(i==0) {printf("[DUST_DEDT] i=%d T=%.4e Td=%.4e nH=%.4e LDfac=%.6e kap_em=%.6e d_em=%.6e d_abs=%.6e fac_abs=%.4e result=%.6e\n",
+        i, T, Tdust, nHcgs, LambdaDust_fac, kappa_emission, dust_emission, dust_absorption_rate, fac_abs, result_dedt);}
+    return result_dedt;
 }
 
 
