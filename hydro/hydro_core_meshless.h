@@ -376,9 +376,10 @@
                 /* HYDRO_ENTROPIC_DIAG */
                 if(P[target].ID == 1000) {
                     static int hentr_step=0; if(hentr_step < 1) {
-                        printf("[HYDRO_ENTROPIC] ID=1000 j_ID=%llu n=%d use=%d du_new=%.10e du_old=%.10e diff=%.10e PM=%.6e SM=%.6e FaceB2=%.6e PdV_i=%.6e PdV_j=%.6e Fp_after=%.10e\n",
+                        printf("[HYDRO_ENTROPIC] ID=1000 j_ID=%llu n=%d use=%d du_new=%.10e du_old=%.10e diff=%.10e PM=%.6e SM=%.6e FaceB2=%.6e PdV_i=%.6e PdV_j=%.6e Fp=%.10e cnum2=%.6e cnumcrit2=%.6e SM_ceff=%.6e Pi_ri=%.8e Pj_rj=%.8e\n",
                             (unsigned long long)P[j].ID, n, use_entropic_energy_equation, du_new, du_old, du_new-du_old,
-                            Riemann_out.P_M, Riemann_out.S_M, Riemann_out.Face_B.norm_sq(), PdV_i, PdV_j, Fluxes.p);
+                            Riemann_out.P_M, Riemann_out.S_M, Riemann_out.Face_B.norm_sq(), PdV_i, PdV_j, Fluxes.p,
+                            cnum2, cnumcrit2, SM_over_ceff, Pressure_i/local.Density, Pressure_j/CellP[j].Density);
                         if(n == numngb-1) {hentr_step++;}
                     }
                 }
