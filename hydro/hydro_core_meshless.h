@@ -373,7 +373,8 @@
                 if(cnum2 >= cnumcrit2) {use_entropic_energy_equation=1;}
                 // alright, if we've come this far, we need to subtract -off- the thermal energy part of the flux, and replace it //
                 if(use_entropic_energy_equation) {Fluxes.p += du_new - du_old;}
-                /* HYDRO_ENTROPIC_DIAG */
+                /* HYDRO_ENTROPIC_DIAG — only in tree-walk path (not GPU kernel) */
+#ifndef GIZMO_GPU_COMPILER
                 if(P[target].ID == 1000) {
                     static int hentr_step=0; if(hentr_step < 1) {
                         printf("[HYDRO_ENTROPIC] ID=1000 j_ID=%llu n=%d use=%d du_new=%.10e du_old=%.10e diff=%.10e PM=%.6e SM=%.6e FaceB2=%.6e PdV_i=%.6e PdV_j=%.6e Fp=%.10e cnum2=%.6e cnumcrit2=%.6e SM_ceff=%.6e Pi_ri=%.8e Pj_rj=%.8e\n",
@@ -383,6 +384,7 @@
                         if(n == numngb-1) {hentr_step++;}
                     }
                 }
+#endif
             }
 #endif // closes adiabatic flow face correction check //
 
