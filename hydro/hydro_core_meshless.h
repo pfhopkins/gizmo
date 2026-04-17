@@ -373,6 +373,15 @@
                 if(cnum2 >= cnumcrit2) {use_entropic_energy_equation=1;}
                 // alright, if we've come this far, we need to subtract -off- the thermal energy part of the flux, and replace it //
                 if(use_entropic_energy_equation) {Fluxes.p += du_new - du_old;}
+                /* HYDRO_ENTROPIC_DIAG */
+                if(P[target].ID == 1000) {
+                    static int hentr_step=0; if(hentr_step < 1) {
+                        printf("[HYDRO_ENTROPIC] ID=1000 j_ID=%llu n=%d use=%d du_new=%.10e du_old=%.10e diff=%.10e PM=%.6e SM=%.6e FaceB2=%.6e PdV_i=%.6e PdV_j=%.6e Fp_after=%.10e\n",
+                            (unsigned long long)P[j].ID, n, use_entropic_energy_equation, du_new, du_old, du_new-du_old,
+                            Riemann_out.P_M, Riemann_out.S_M, Riemann_out.Face_B.norm_sq(), PdV_i, PdV_j, Fluxes.p);
+                        if(n == numngb-1) {hentr_step++;}
+                    }
+                }
             }
 #endif // closes adiabatic flow face correction check //
 
