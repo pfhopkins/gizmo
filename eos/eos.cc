@@ -117,6 +117,16 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
 #endif
     cell[i].Temperature = temp;
+    /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
+    {
+        static int eos_diag_n = 0;
+        if(eos_diag_n < 5) {
+            printf("[EOS_DIAG] call=%d i=%d u0=%.6e rho=%.6e ne_out=%.6e mu=%.6e T=%.6e gamma=%.6e cf_a3inv=%.10e\n",
+                eos_diag_n, i, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, ne, mu_meanwt, temp, gamma_eos_index, All.cf_a3inv);
+            fflush(stdout);
+        }
+        eos_diag_n++;
+    }
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
