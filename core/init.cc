@@ -845,6 +845,7 @@ void init(void)
     {
         int k __attribute__((unused)) = 0;
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
+        CellP[i].Temperature = 0.59 * (5./3.-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy; /* initialize temperature guess for EOS (fully-ionized primordial monatomic gas); will be recomputed by set_eos_pressure but needed as initial guess for gamma_eos_value() when EOS_SUBSTELLAR_ISM is active */
         CellP[i].recent_refinement_flag = 0; // always initialize to zero, no recent refinements
 
         // re-match the predicted and initial velocities and B-field values, just to be sure //

@@ -937,7 +937,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
+#ifdef INPUT_READ_EOSTEMP
                    && blocknr != IO_EOSTEMP
+#endif
 #ifdef EOS_CARRIES_ABAR
                    && blocknr != IO_EOSABAR
 #endif
