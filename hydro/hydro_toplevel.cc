@@ -806,6 +806,23 @@ void hydro_force(void)
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
+    /* HYDRO_PRIM_DIAG: print core primitives BEFORE neighbor loop for target IDs */
+    {static int hpd_n=0; if(hpd_n < 3) { hpd_n++;
+        for(int _ii=0; _ii<NumPart; _ii++) { if(P[_ii].Type==0 && (P[_ii].ID==1 || P[_ii].ID==100 || P[_ii].ID==1000)) {
+            printf("[HYDRO_PRIM] ID=%llu rho=%.10e P=%.10e cs=%.10e Mass=%.10e h=%.10e T=%.6e Gamma=%.6e DtU_pre=%.10e\n",
+                (unsigned long long)P[_ii].ID, CellP[_ii].Density, CellP[_ii].Pressure, CellP[_ii].effective_soundspeed(),
+                P[_ii].Mass, P[_ii].KernelRadius, CellP[_ii].Temperature, CellP[_ii].Gamma, CellP[_ii].DtInternalEnergy);
+            printf("[HYDRO_PRIM] ID=%llu v=%.8e/%.8e/%.8e B=%.8e/%.8e/%.8e NV_T=%.6e/%.6e/%.6e\n",
+                (unsigned long long)P[_ii].ID, CellP[_ii].VelPred[0], CellP[_ii].VelPred[1], CellP[_ii].VelPred[2],
+                CellP[_ii].BPred[0], CellP[_ii].BPred[1], CellP[_ii].BPred[2],
+                CellP[_ii].NV_T[0][0], CellP[_ii].NV_T[1][1], CellP[_ii].NV_T[2][2]);
+            printf("[HYDRO_PRIM] ID=%llu grad_rho=%.8e/%.8e/%.8e grad_P=%.8e/%.8e/%.8e u=%.10e\n",
+                (unsigned long long)P[_ii].ID, CellP[_ii].Gradients.Density[0], CellP[_ii].Gradients.Density[1], CellP[_ii].Gradients.Density[2],
+                CellP[_ii].Gradients.Pressure[0], CellP[_ii].Gradients.Pressure[1], CellP[_ii].Gradients.Pressure[2],
+                CellP[_ii].InternalEnergyPred);
+        }}
+        fflush(stdout);
+    }}
     double t_preloop = timediff(t_preloop_start, my_second());
     double t_malloc = 0, t_xchange_all = 0, t_demalloc = 0;
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
@@ -841,6 +858,15 @@ void hydro_force(void)
     t_demalloc = timediff(t_demalloc_start, my_second());
 #endif
 
+    /* HYDRO_RAWDTU_DIAG: print raw DtU from neighbor loop BEFORE post-loop corrections */
+    {static int hraw_n=0; if(hraw_n < 3) { hraw_n++;
+        for(int _ii=0; _ii<NumPart; _ii++) { if(P[_ii].Type==0 && (P[_ii].ID==1 || P[_ii].ID==100 || P[_ii].ID==1000)) {
+            printf("[HYDRO_RAWDTU] ID=%llu DtU_raw=%.10e Acc=%.8e/%.8e/%.8e MaxSig=%.8e\n",
+                (unsigned long long)P[_ii].ID, CellP[_ii].DtInternalEnergy,
+                CellP[_ii].HydroAccel[0], CellP[_ii].HydroAccel[1], CellP[_ii].HydroAccel[2], CellP[_ii].MaxSignalVel);
+        }}
+        fflush(stdout);
+    }}
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
     double t_postloop = timediff(t_postloop_start, my_second());
