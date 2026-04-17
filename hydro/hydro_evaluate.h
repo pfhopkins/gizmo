@@ -376,6 +376,15 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 if(Fluxes.rho > 0) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
 #endif
 #endif
+                /* HYDRO_PAIR_DIAG: per-pair flux diagnostic for tracked particle IDs.
+                   Print Fluxes.p and Fluxes.v AFTER Riemann+conduction+viscosity+RT but BEFORE accumulation.
+                   Also print key neighbor quantities to check for corrupted EOS values. */
+                if(P[target].ID == 1000 && n < 5) {
+                    printf("[HYDRO_PAIR] ID_i=1000 j_ID=%llu n=%d Fp=%.10e Fv=%.8e/%.8e/%.8e cs_j=%.6e u_j=%.6e P_j=%.6e rho_j=%.6e T_j=%.6e gamma_j=%.6e\n",
+                        (unsigned long long)P[j].ID, n, Fluxes.p, Fluxes.v[0], Fluxes.v[1], Fluxes.v[2],
+                        kernel.sound_j, CellP[j].InternalEnergyPred, CellP[j].Pressure, CellP[j].Density, CellP[j].Temperature, CellP[j].Gamma);
+                    fflush(stdout);
+                }
                 out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
 #ifdef MAGNETIC
