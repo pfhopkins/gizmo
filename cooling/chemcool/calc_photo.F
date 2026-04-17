@@ -205,8 +205,8 @@ c
          if (AV .gt. 0d0) then
             f_dust = dexp(-AV * (2d-21 / AV_conversion_factor))
             chi_isrf = chi(AV)
-            chi_NUV = dexp(-AV * (1.3d-21 / AV_conversion_factor))
-            chi_OPT = dexp(-AV * (0.5d-21 / AV_conversion_factor))
+            chi_NUV = dexp(-AV * (1.18d-21 / AV_conversion_factor))
+            chi_OPT = dexp(-AV * (1.69d-22 / AV_conversion_factor))
 #ifdef DEBUGDUSTTEMP
             if (yn .gt. 1e5 ) print *, 
      &         "DUST T DEBUG (n, AV, NH, chi):",
@@ -274,8 +274,8 @@ c
       elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then        
 #if defined RAYTRACE || defined TREE_RAD
          sigma_dust = 2d-21 * dust_to_gas_ratio
-         sigma_NUV  = 1.3d-21 * dust_to_gas_ratio
-         sigma_OPT  = 0.5d-21 * dust_to_gas_ratio
+         sigma_NUV  = 1.18d-21 * dust_to_gas_ratio
+         sigma_OPT  = 1.69d-22 * dust_to_gas_ratio
          chi_NUV    = 0d0
          chi_OPT    = 0d0
          f_dust     = 0d0
