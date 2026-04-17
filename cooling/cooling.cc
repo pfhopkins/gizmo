@@ -187,6 +187,15 @@ void cooling_parent_routine(void)
             compact_P[j]    = P[cool_indices[batch_start + j]];
             compact_Cell[j] = CellP[cool_indices[batch_start + j]];
         }
+
+        /* GPU_RT_DIAG: save pre-cooling state for a few particles to compare GPU vs CPU */
+        static int gpu_rt_diag_count = 0;
+        static const int GPU_RT_DIAG_NPART = 5; /* compare this many particles */
+        struct particle_data saved_P[GPU_RT_DIAG_NPART];
+        struct gas_cell_data saved_Cell[GPU_RT_DIAG_NPART];
+        int diag_n = (batch_start == 0 && gpu_rt_diag_count < 20) ? DMIN(GPU_RT_DIAG_NPART, batch_n) : 0;
+        for(int dd = 0; dd < diag_n; dd++) { saved_P[dd] = compact_P[dd]; saved_Cell[dd] = compact_Cell[dd]; }
+
         /* Dispatch batch to GPU */
         {
             struct particle_data *kp = compact_P;
@@ -200,6 +209,49 @@ void cooling_parent_routine(void)
 #elif defined(__HIPCC__)
             {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] error batch [%d..%d] N=%d: %s\n", batch_start, batch_start+batch_n-1, batch_n, hipGetErrorString(_ce)); fflush(stdout);}}
 #endif
+        }
+
+        /* GPU_RT_DIAG: compare GPU output with CPU re-run on same inputs.
+         * The GPU kernel (device code) may use FMA and CUDA math; the host re-run
+         * uses the host compiler's math. Differences reveal GPU-specific divergence. */
+        if(diag_n > 0) {
+            gpu_rt_diag_count++;
+            /* Make a fresh copy of the saved inputs for CPU re-run */
+            struct particle_data *cpu_P = (struct particle_data *) malloc(diag_n * sizeof(struct particle_data));
+            struct gas_cell_data *cpu_Cell = (struct gas_cell_data *) malloc(diag_n * sizeof(struct gas_cell_data));
+            memcpy(cpu_P, saved_P, diag_n * sizeof(struct particle_data));
+            memcpy(cpu_Cell, saved_Cell, diag_n * sizeof(struct gas_cell_data));
+            for(int dd = 0; dd < diag_n; dd++) {
+                do_the_cooling_for_particle(dd, cpu_P, cpu_Cell);
+            }
+            for(int dd = 0; dd < diag_n; dd++) {
+                /* GPU output (now in compact_Cell/compact_P after fence) */
+                double rdiff_u  = fabs(compact_Cell[dd].InternalEnergy - cpu_Cell[dd].InternalEnergy) / (fabs(cpu_Cell[dd].InternalEnergy) + 1e-30);
+                double rdiff_ne = fabs(compact_Cell[dd].Ne - cpu_Cell[dd].Ne) / (fabs(cpu_Cell[dd].Ne) + 1e-30);
+                printf("[GPU_RT_DIAG] step=%d part=%d  u: gpu=%.15e cpu=%.15e rdiff=%.4e\n",
+                    gpu_rt_diag_count, dd, compact_Cell[dd].InternalEnergy, cpu_Cell[dd].InternalEnergy, rdiff_u);
+                printf("[GPU_RT_DIAG]   Ne: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
+                    compact_Cell[dd].Ne, cpu_Cell[dd].Ne, rdiff_ne);
+#if defined(RT_INFRARED)
+                double rdiff_Trad = fabs(compact_Cell[dd].Radiation_Temperature - cpu_Cell[dd].Radiation_Temperature) / (fabs(cpu_Cell[dd].Radiation_Temperature) + 1e-30);
+                double rdiff_Tdust = fabs(compact_Cell[dd].Dust_Temperature - cpu_Cell[dd].Dust_Temperature) / (fabs(cpu_Cell[dd].Dust_Temperature) + 1e-30);
+                printf("[GPU_RT_DIAG]   Trad: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
+                    compact_Cell[dd].Radiation_Temperature, cpu_Cell[dd].Radiation_Temperature, rdiff_Trad);
+                printf("[GPU_RT_DIAG]   Tdust: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
+                    compact_Cell[dd].Dust_Temperature, cpu_Cell[dd].Dust_Temperature, rdiff_Tdust);
+#endif
+#if defined(RT_EVOLVE_ENERGY)
+                for(int kk=0; kk<N_RT_FREQ_BINS; kk++) {
+                    double rdiff_E = fabs(compact_Cell[dd].Rad_E_gamma[kk] - cpu_Cell[dd].Rad_E_gamma[kk]) / (fabs(cpu_Cell[dd].Rad_E_gamma[kk]) + 1e-30);
+                    if(rdiff_E > 1e-10) { /* only print if meaningful difference */
+                        printf("[GPU_RT_DIAG]   k=%d  RadE: gpu=%.12e cpu=%.12e rdiff=%.4e\n",
+                            kk, compact_Cell[dd].Rad_E_gamma[kk], cpu_Cell[dd].Rad_E_gamma[kk], rdiff_E);
+                    }
+                }
+#endif
+            }
+            free(cpu_P); free(cpu_Cell);
+            fflush(stdout);
         }
 
         /* Scatter batch back and call set_eos_pressure on host

@@ -338,6 +338,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
 
     T_old = Tdust; double dEdt_old = dEdt; Tdust = Tdust_guess; dEdt = dEdt_guess; // For our second guess we take the backeting value opposite of the initial guess.
     double dT_dustgas = T-Tdust;
+    if(i==0) {printf("[TDUST_ITER] i=%d T=%.8e Tdust_guess=%.8e T_lower=%.8e T_upper=%.8e dEdt_guess=%.6e bracket_iters=%d\n", i, T, Tdust_guess, T_lower, T_upper, dEdt_guess, n_iter);}
     do  // secant method iterations with bisection as a backup; usually converges to machine epsilon in 4-5 iterations
     {
         dT_dustgas = T - Tdust;
@@ -349,11 +350,13 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
         if(fac < 0.5) { // accept the secant iteration if it is converging more rapidly
             T_old=Tdust;
             Tdust=T_secant;
+            if(i==0) {printf("[TDUST_ITER]   iter=%d SECANT Tdust=%.10e dEdt=%.6e fac=%.4e T_lo=%.8e T_hi=%.8e\n", n_iter, Tdust, dEdt, fac, T_lower, T_upper);}
         } else { // if secant isn't working do bisection iteration instead; guaranteed to reduce the error
             T_old = Tdust;
             Tdust = sqrt(T_lower*T_upper);
             dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
             fac = 0.5;
+            if(i==0) {printf("[TDUST_ITER]   iter=%d BISECT Tdust=%.10e dEdt=%.6e T_lo=%.8e T_hi=%.8e\n", n_iter, Tdust, dEdt, T_lower, T_upper);}
         }
         if(dEdt>0) {T_lower=Tdust;} else {T_upper=Tdust;} // either way, update upper and lower bounds
         n_iter++;
@@ -362,6 +365,7 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
             if(n_iter > MAXITER){break;}
         }
     } while(fabs(dT_dustgas - (T-Tdust)) > 1.e-3 * fabs(T-Tdust)); // sufficient to converge dust cooling to 10^-3 tolerance, at this point uncertainties in dust properties will dominate the error budget
+    if(i==0) {printf("[TDUST_ITER] FINAL i=%d Tdust=%.10e n_iter=%d\n", i, Tdust, n_iter);}
 
 #endif
 
@@ -734,17 +738,20 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
 
     if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)(long long)i /* particle index */, T, T_lower,T_upper, dE_lower, dE_upper);}
 
+    if(i==0) {printf("[LAMBDADUST] i=%d T=%.8e Tdust_bracket=[%.8e,%.8e] dE_bracket=[%.6e,%.6e] n_bracket=%d\n", i, T, T_lower, T_upper, dE_lower, dE_upper, n_iter);}
     if(dE!=0){
         double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T;
         double ROOTFUNC_a = dE_lower; double ROOTFUNC_b = dE_upper;
         double ROOTFIND_REL_X_tol = dTdust_tol, ROOTFIND_ABS_X_tol=0.;
         #include "../system/bracketed_rootfind.h"
         Tdust = ROOTFIND_X_new+T;
+        if(i==0) {printf("[LAMBDADUST] i=%d rootfind Tdust=%.10e ROOTFIND_ITER=%d\n", i, Tdust, ROOTFIND_ITER);}
     }
     double LambdaDust = 0;
 #ifdef COOLING
     LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
 #endif
+    if(i==0) {printf("[LAMBDADUST] FINAL i=%d Tdust=%.10e LambdaDust=%.10e Trad_CW=%.10e\n", i, Tdust, LambdaDust, cell[i].Radiation_Temperature_CoolingWeighted);}
     cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += LambdaDust;
     cell[i].Dust_Temperature = Tdust;
     return LambdaDust;
