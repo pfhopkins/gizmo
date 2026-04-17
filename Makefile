@@ -187,6 +187,33 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Vista_CPU")
+## Pure-CPU build on Vista Grace ARM — no CUDA, no Kokkos, no OPENMP_GPU_OFFLOAD.
+## Load modules: gcc openmpi hdf5 fftw3 gsl  (do NOT load nvidia/cuda/kokkos)
+CC       =  mpicc
+CXX      =  mpicxx -std=c++17
+FC       =  mpif90
+OPTIMIZE = -O2 -Wall
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+CHIMESINCL = -I$(TACC_SUNDIALS_INC)
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
+endif
+GSL_INCL = -I$(TACC_GSL_INC)
+GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas
+FFTW_INCL= -I$(TACC_FFTW3_INC)
+FFTW_LIBS= -L$(TACC_FFTW3_LIB)
+HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
+HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## No OPENMP_GPU_OFFLOAD — everything runs on Grace ARM CPU via g++
+endif
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"CaltechHPC")
 CC       =  mpicc
 CXX      =  mpic++
