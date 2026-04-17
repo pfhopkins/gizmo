@@ -115,11 +115,20 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 
     /* First pass: compute per-element yields and birth fractions */
     for(k = 0; k < STBL_NELEM; k++) {
-        /* FSN/DBH: no explosion, residual ejecta is birth composition only.
-           sn_yield = net_yield - wind_yield = 0 - wind_yield = -wind_yield for
-           these types (table builder zeroes net_yields), which would corrupt
-           the injection if used. */
-        double net_y = (rem_type == REM_FSN || rem_type == REM_DBH) ? 0 : stellar_sn_yield(logM, logZ, k);
+        /* FSN/DBH: no explosion — ejecta is birth composition only (net_y = 0).
+           Without winds: use net_yield (wind+SN combined) since wind yields
+           were never injected during the star's life.
+           With winds: use sn_yield (net-wind) since wind yields already injected. */
+        double net_y;
+        if(rem_type == REM_FSN || rem_type == REM_DBH) {
+            net_y = 0;
+        } else {
+#ifdef GALSF_RESOLVEDISM_WINDS
+            net_y = stellar_sn_yield(logM, logZ, k);
+#else
+            net_y = stellar_net_yield(logM, logZ, k);
+#endif
+        }
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         X_birth_arr[k] = P[i].ElementAbundance[k];
 #else

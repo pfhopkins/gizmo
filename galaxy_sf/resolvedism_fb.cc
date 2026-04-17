@@ -175,25 +175,11 @@ void resolvedism_determine_SNe(void)
             n_wind_local++;
             continue; /* skip SN flagging this step */
         }
-#else
-        /* Without winds, the star retains M_init at death.  The difference
-           M_particle - M_preSN is envelope mass that winds would have removed.
-           Dump it now at birth composition before the SN/AGB yields are applied,
-           so that the SN ejecta mass (M_preSN - rem_mass) is correct. */
-        {
-            double M_preSN_local = stellar_M_preSN(logM, logZ);
-            double M_particle_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
-            double M_wind_return = M_particle_solar - M_preSN_local;
-            if(M_wind_return > 0.01) {
-                /* Load the excess into WindMassAccum and flag for momentum-pass dump */
-                P[i].WindMassAccum = M_wind_return;
-                P[i].WindMomentumAccum = 0; /* no momentum — quiet mass return */
-                P[i].SNe_ThisTimeStep = 3;  /* wind dump first — SN/collapse next timestep */
-                n_wind_local++;
-                continue;
-            }
-        }
 #endif
+        /* Without winds: M_particle = M_init at death. The full Mej = M_init - rem_mass
+           is injected through the thermal pass. The sn_yield accounts for nucleosynthesis
+           on the M_preSN - rem_mass portion; the extra M_init - M_preSN portion gets
+           birth composition automatically via X_birth * Mej in the yield formula. */
         /* Determine flag: 1 = explosive SN (ECSN/CCSN/PISN/PPISN), 2 = AGB/WD death */
         if(rem_type == REM_WD) {
             P[i].SNe_ThisTimeStep = 2; /* AGB: mass+metals, no energy */
