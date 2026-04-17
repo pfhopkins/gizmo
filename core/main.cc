@@ -47,6 +47,35 @@ int main(int argc, char **argv)
   MPI_Comm_size(MPI_COMM_WORLD, &NTask);
 #ifdef OPENMP_GPU_OFFLOAD
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
+  /* Check if CUDA/Kokkos init changed CPU floating-point mode (FTZ/DAZ).
+     On ARM (aarch64), check FPCR bits 24 (FZ) and 19 (FZ16).
+     On x86, check MXCSR bits 15 (FZ) and 6 (DAZ). */
+  {
+#if defined(__aarch64__)
+      unsigned long fpcr;
+      __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
+      int fz = !!(fpcr & (1UL << 24));   /* flush-to-zero */
+      int fz16 = !!(fpcr & (1UL << 19)); /* flush-to-zero for half-precision */
+      if(ThisTask == 0) {printf("[FP_MODE] FPCR after Kokkos init: 0x%016lx  FZ=%d FZ16=%d\n", fpcr, fz, fz16); fflush(stdout);}
+      if(fz) {
+          fpcr &= ~(1UL << 24); /* clear FZ bit to restore IEEE denormal handling */
+          __asm__ __volatile__("msr fpcr, %0" :: "r"(fpcr));
+          __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
+          if(ThisTask == 0) {printf("[FP_MODE] FPCR after FZ fix: 0x%016lx  FZ=%d\n", fpcr, !!(fpcr & (1UL << 24))); fflush(stdout);}
+      }
+#elif defined(__x86_64__)
+      unsigned int mxcsr;
+      __asm__ __volatile__("stmxcsr %0" : "=m"(mxcsr));
+      int ftz = !!(mxcsr & (1U << 15));
+      int daz = !!(mxcsr & (1U << 6));
+      if(ThisTask == 0) {printf("[FP_MODE] MXCSR after Kokkos init: 0x%08x  FTZ=%d DAZ=%d\n", mxcsr, ftz, daz); fflush(stdout);}
+      if(ftz || daz) {
+          mxcsr &= ~((1U << 15) | (1U << 6)); /* clear FTZ and DAZ */
+          __asm__ __volatile__("ldmxcsr %0" :: "m"(mxcsr));
+          if(ThisTask == 0) {printf("[FP_MODE] MXCSR after FTZ/DAZ fix: restored IEEE denormals\n"); fflush(stdout);}
+      }
+#endif
+  }
 #endif
 
 #ifdef IMPOSE_PINNING
