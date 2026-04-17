@@ -89,7 +89,7 @@ void do_second_halfstep_kick(void)
                 ti_step = P[i].integertime_step();
                 tstart = P[i].Ti_begstep + ti_step / 2;	/* midpoint of step */
                 tend = P[i].Ti_begstep + ti_step;	/* end of step */
-                do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
+                (i, tstart, tend, P[i].Ti_current, 1);
                 set_predicted_quantities_for_extra_physics(i);
             }
         }
@@ -199,7 +199,7 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
 
 
-void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
+void (int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
     Vec3<double> dp; double dt_entr, dt_gravkick, dt_hydrokick;
     double mass_old, mass_pred, mass_new;

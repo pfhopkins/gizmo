@@ -538,7 +538,13 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TRANSPORT_SUBCYCLE
                 CellP[i].Dt_Rad_E_gamma_Work[kfreq] += (2.*f_kappa_abs-1.)*work_band; // save work term separately for subcycle restoration
 #endif
-                CellP[i].DtInternalEnergy -= (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED) * 2.*f_kappa_abs*work_band / P[i].Mass; // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
+                double du_radwork = (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED) * 2.*f_kappa_abs*work_band / P[i].Mass;
+                CellP[i].DtInternalEnergy -= du_radwork; // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
+                /* HYDRO_RADWORK_DIAG: trace radiation work contribution to DtInternalEnergy */
+                {static int hrd_n=0; if(hrd_n < 10 && i < 5 && fabs(du_radwork) > 1e-15) {
+                    printf("[HYDRO_RADWORK] i=%d k=%d DtU_before=%.10e du_radwork=%.10e f_kappa=%.6e work_band=%.6e rsol_amp=%.1f Rad_Kappa=%.6e flux_mag=%.6e erad=%.6e\n",
+                        i, kfreq, CellP[i].DtInternalEnergy+du_radwork, du_radwork, f_kappa_abs, work_band, C_LIGHT_CODE/C_LIGHT_CODE_REDUCED, CellP[i].Rad_Kappa[kfreq], flux_mag, erad_i);
+                    hrd_n++;}}
             }
             /* now actually set the frequency-integrated cell values as needed */
 #ifdef RT_RAD_PRESSURE_OUTPUT
@@ -547,6 +553,10 @@ void hydro_final_operations_and_cleanup(void)
             CellP[i].HydroAccel += radacc; // physical units, as desired
 #endif
 #endif
+            /* HYDRO_DTU_DIAG: print final DtInternalEnergy after all corrections for first few particles */
+            {static int hdtu_n=0; if(hdtu_n < 5 && i < 5) {
+                printf("[HYDRO_DTU] i=%d DtU_final=%.10e u=%.10e\n", i, CellP[i].DtInternalEnergy, CellP[i].InternalEnergyPred);
+                hdtu_n++;}}
 #ifdef RT_RADPRESSURE_IN_HYDRO
             int kfreq; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {
                 double fac = (1./3.) * CellP[i].flux_limiter(kfreq) * CellP[i].Rad_E_gamma_Pred[kfreq] * P[i].Particle_DivVel*All.cf_a2inv * (1.-2.*rt_absorb_frac_albedo(i, kfreq, P, CellP));
