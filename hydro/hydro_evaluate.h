@@ -386,6 +386,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         kernel.sound_j, CellP[j].InternalEnergyPred, CellP[j].Pressure, CellP[j].Density, CellP[j].Temperature, CellP[j].Gamma);
                     if(n == numngb-1) {hpp_step++; printf("[HYDRO_PAIR_TOTAL] ID=1000 total_DtU=%.10e total_Acc=%.8e/%.8e/%.8e numngb=%d\n", out.DtInternalEnergy, out.Acc[0], out.Acc[1], out.Acc[2], numngb); fflush(stdout);}
                 }}
+                #endif /* GIZMO_DEBUG_RT_COOLING */
                 out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
 #ifdef MAGNETIC
@@ -416,11 +417,13 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     du_dedner += du_ded_k;
                 }
                 /* HYDRO_MAGDTU_DIAG: per-pair magnetic+Dedner DtU corrections */
+#ifdef GIZMO_DEBUG_RT_COOLING
                 {static int hmag_step=0; if(P[target].ID == 1000 && hmag_step < 1) {
                     printf("[HYDRO_MAGDTU] ID_i=1000 j_ID=%llu n=%d du_mag=%.10e du_ded=%.10e b2_i=%.6e wt=%.6e phi=%.6e DtU=%.10e\n",
                         (unsigned long long)P[j].ID, n, du_mag_pres, du_dedner, kernel.b2_i, wt_face_sum, Riemann_out.phi_normal_mean, out.DtInternalEnergy);
                     if(n == numngb-1) {hmag_step++;}
                 }}
+#endif
 #endif
 #ifdef MHD_NON_IDEAL
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;

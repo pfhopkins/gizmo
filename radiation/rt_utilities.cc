@@ -575,6 +575,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     printf("[KICK_IR] ID=%llu mode=%d e0=%.6e dt_e_gamma=%.6e a0_abs=%.6e E_abs_toIR=%.6e T_gas=%.6e Trad=%.6e Tdust_in=%.6e dt_entr=%.6e vol_inv=%.6e\n",
                         (unsigned long long)pp[i].ID, mode, e0, dt_e_gamma_band, a0_abs, E_abs_tot_toIR, T_gas, cell[i].Radiation_Temperature, cell[i].Dust_Temperature, dt_entr, vol_inv_phys);
                 }
+                #endif /* GIZMO_DEBUG_RT_COOLING */
                 if((mode==0) && (dt_e_gamma_band!=0) && (dt_entr>0)) // only update temperatures on kick operations //
                 {
                     // advected radiation changes temperature of radiation field, before absorption //
@@ -594,12 +595,14 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                 cell[i].Dust_Temperature = rt_eqm_dust_temp(i, T_gas, total_absorption_rate * vol_inv_phys * C_LIGHT_CODE / C_LIGHT_CODE_REDUCED, pp, cell);
 #endif
                 if(cell[i].Dust_Temperature < T_min) {cell[i].Dust_Temperature = T_min;}
+#ifdef GIZMO_DEBUG_RT_COOLING
                 if(kick_ir_diag_n <= 30 && mode==0 && (pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000)) {
                     printf("[KICK_IR] ID=%llu AFTER: Tdust=%.6e Trad=%.6e total_abs_rate=%.6e abs_input=%.6e\n",
                         (unsigned long long)pp[i].ID, cell[i].Dust_Temperature, cell[i].Radiation_Temperature,
                         total_absorption_rate, total_absorption_rate * vol_inv_phys * C_LIGHT_CODE / C_LIGHT_CODE_REDUCED);
                     fflush(stdout);
                 }
+#endif
                 double Tdust_eff = cell[i].Dust_Temperature, Trad_eff = cell[i].Radiation_Temperature;
                 double kappa_gas = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,-1,-1, pp, cell), kappa_total = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,0,0, pp, cell);
                 IRBand_opacity_fraction_from_gas_absorption = kappa_gas / (kappa_total + MIN_REAL_NUMBER); /* gas absorption opacity only, relative to total opacity (all sources+scattering) */

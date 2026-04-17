@@ -342,6 +342,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                     printf("[KICK_RADBLOCK] ID=%llu mode=%d u_before=%.10e u_after=%.10e du_tot=%.6e dEnt=%.6e erad=%.6e DtU=%.6e dt=%.6e CoolSplit=%d\n",
                         (unsigned long long)P[i].ID, mode, u_before_radblock, CellP[i].InternalEnergy, du_tot, dEnt, erad_tot, CellP[i].DtInternalEnergy, dt_hydrokick, CellP[i].CoolingIsOperatorSplitThisTimestep);
                     fflush(stdout); krbd_n++;}}
+                #endif /* GIZMO_DEBUG_RT_COOLING */
             } else {
                 if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
             }
