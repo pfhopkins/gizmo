@@ -1298,9 +1298,16 @@ def _resample_track_onto_tau_grid(track, tau_grid):
                                          left=log_vals[0], right=log_vals[-1])
 
     # Linear quantities
-    for key in ['M_current', 'v_wind']:
+    for key in ['v_wind']:
         vals = track[key][mask]
         result[key] = np.interp(tau_grid, tau_track, vals, left=vals[0], right=vals[-1])
+
+    # M_current as fractional mass (M/M_init) — interpolating fractions avoids
+    # overshoot when the log-mass interpolation weight f != linear-mass weight
+    M_cur_vals = track['M_current'][mask]
+    M_init_track = M_cur_vals[0] if M_cur_vals[0] > 0 else 1.0
+    M_frac = M_cur_vals / M_init_track
+    result['M_frac'] = np.interp(tau_grid, tau_track, M_frac, left=1.0, right=M_frac[-1])
 
     # Surface abundances
     surf = track['surface'][mask]
@@ -1339,7 +1346,7 @@ def _resample_track_onto_tau_grid(track, tau_grid):
     return result
 
 
-def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
+def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
     """
     Interpolate between two raw tracks in fractional-lifetime (tau) space,
     then map back to physical age and resample onto log_age_grid.
@@ -1349,6 +1356,7 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
     M_current.
 
     f: interpolation weight (0 = t_lo, 1 = t_hi) in log-mass space.
+    M_target: target initial mass (Msun) — used to convert M_frac back to M_current.
     """
     N_TAU = 1024  # fine tau grid for interpolation
     tau_grid = np.linspace(0.0, 1.0, N_TAU)
@@ -1379,9 +1387,18 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
         val[only_hi] = hi[only_hi]
         interp[key] = val
 
-    # Linear quantities
-    for key in ['M_current', 'v_wind']:
+    # Linear quantities (except M_current — handled via M_frac below)
+    for key in ['v_wind']:
         interp[key] = r_lo[key] + f * (r_hi[key] - r_lo[key])
+
+    # M_current: interpolate as mass fraction, then scale to M_target
+    interp['M_frac'] = r_lo['M_frac'] + f * (r_hi['M_frac'] - r_lo['M_frac'])
+    if M_target is not None and M_target > 0:
+        interp['M_current'] = interp['M_frac'] * M_target
+    else:
+        # Fallback: linear interpolation of absolute mass (old behavior)
+        M_lo_init = r_lo['M_frac'][0] * r_lo.get('lifetime', 1.0)  # won't be used
+        interp['M_current'] = r_lo.get('M_current', interp['M_frac']) + f * (r_hi.get('M_current', interp['M_frac']) - r_lo.get('M_current', interp['M_frac']))
 
     # Surface abundances
     surf_lo, surf_hi = r_lo['surface'], r_hi['surface']
@@ -1397,8 +1414,12 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid):
     lifetime = np.exp(np.log(r_lo['lifetime']) + f * (np.log(r_hi['lifetime']) - np.log(r_lo['lifetime'])))
     interp['lifetime'] = lifetime
 
-    # Scalars
-    interp['M_preSN_scalar'] = r_lo['M_preSN_scalar'] + f * (r_hi['M_preSN_scalar'] - r_lo['M_preSN_scalar'])
+    # M_preSN from interpolated M_frac at tau=1 (death) — consistent with the
+    # M_current track and avoids log-vs-linear overshoot
+    if M_target is not None and M_target > 0:
+        interp['M_preSN_scalar'] = interp['M_frac'][-1] * M_target
+    else:
+        interp['M_preSN_scalar'] = r_lo['M_preSN_scalar'] + f * (r_hi['M_preSN_scalar'] - r_lo['M_preSN_scalar'])
     interp['M_CO_core'] = r_lo['M_CO_core'] + f * (r_hi['M_CO_core'] - r_lo['M_CO_core'])
     interp['M_He_core'] = r_lo['M_He_core'] + f * (r_hi['M_He_core'] - r_lo['M_He_core'])
     # PMS duration: interpolate in log-space
@@ -1635,7 +1656,7 @@ def _interpolate_to_mass(track_loader, index, key_prefix, M_target, M_min, log_a
 
     # Both tracks exist: interpolate in fractional-lifetime (tau) space
     f = (np.log10(M_target) - np.log10(M_lo)) / (np.log10(M_hi) - np.log10(M_lo))
-    return _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid)
+    return _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=M_target)
 
 
 def interpolate_boost_to_mass(boost_index, grid_name, M_target, log_age_grid):
@@ -1888,10 +1909,14 @@ def _parse_parsec2_init_comp(ejecta_dir):
     in the same column order as the data (H, HE3, HE4, ..., ZN).
     """
     # Column indices matching ELEM_COLS_P2 in load_parsec2_ejecta
+    # Must match ELEM_COLS_P2 in load_parsec2_ejecta — all 27 tracked elements
     INIT_COLS = {
         'H': [7], 'He': [8, 9], 'C': [12, 13], 'N': [14, 15], 'O': [16, 17, 18],
         'F': [19], 'Ne': [20, 21, 22], 'Na': [23], 'Mg': [24, 25, 26],
-        'Al': [27, 28], 'Si': [29, 30], 'S': [32], 'Ca': [36], 'Ti': [38], 'Fe': [42],
+        'Al': [27, 28], 'Si': [29, 30], 'P': [31], 'S': [32], 'Cl': [33],
+        'Ar': [34], 'K': [35], 'Ca': [36], 'Sc': [37], 'Ti': [38], 'V': [39],
+        'Cr': [40], 'Mn': [41], 'Fe': [42], 'Co': [43], 'Ni': [44],
+        'Cu': [45], 'Zn': [46],
     }
     result = {}
     for zdir in sorted(glob(os.path.join(ejecta_dir, 'ejecta_Z*'))):
@@ -1964,8 +1989,11 @@ def load_parsec2_ejecta(ejecta_dir):
             yields = {}
             for elem, cols in ELEM_COLS_P2.items():
                 yields[elem] = sum(float(parts[c]) for c in cols)
-            # Ni56 → Fe (radioactive decay)
-            yields['Fe'] += float(parts[44])  # col 44 = NI
+            # Ni56 → Fe (radioactive decay): in SN ejecta nearly all Ni is
+            # Ni56 which decays to Fe56 (t½ = 6 d).  Move Ni into Fe and zero
+            # the Ni slot to avoid double-counting.
+            yields['Fe'] += yields['Ni']
+            yields['Ni'] = 0.0
             # Per-isotope yields (1:1 with PARSEC2 columns)
             ISOTOPE_COLS_P2 = {
                 'H': 7, 'He3': 8, 'He4': 9, 'Li7': 10, 'Be7': 11,
@@ -1991,6 +2019,7 @@ def load_parsec2_ejecta(ejecta_dir):
                 'M_HE': float(parts[2]),
                 'M_CO': float(parts[3]),
                 'M_rem': float(parts[4]),
+                'M_bar': float(parts[5]),
                 'sn_type_str': sn_type_str,
                 'sn_type': SNT_MAP.get(sn_type_str, 3),
             }
@@ -2034,8 +2063,8 @@ def load_parsec2_wind_ejecta(ejecta_dir):
             yields = {}
             for elem, cols in ELEM_COLS_WIND.items():
                 yields[elem] = sum(float(parts[c]) for c in cols)
-            # Ni → Fe (radioactive decay in wind is negligible, but include for consistency)
-            yields['Fe'] += float(parts[41])  # col 41 = NI in wind files
+            # No Ni56→Fe decay in winds: wind Ni is stable Ni from the
+            # stellar envelope, not explosive nucleosynthesis product.
             data[(Z, M_init)] = {
                 'yields': yields,
                 'M_fin': float(parts[1]),
@@ -2293,6 +2322,13 @@ def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
     Interpolate PARSEC v2 ejecta to target mass M.
     Returns (net_yields_dict, rem_mass, sn_type) or None if no data.
     Converts total ejected → net yields using initial composition.
+
+    Net yields use the *baryonic* remnant mass (M_bar) so that
+    sum(net_yield) = 0.  The ejecta isotope masses in the PARSEC files
+    satisfy sum(isotopes) = M_init - M_bar, not M_init - M_rem(grav).
+    The simulation keeps M_rem(grav) for the remnant particle and
+    injects M_init - M_rem(grav) of ejecta; the extra (M_bar - M_grav)
+    goes in at birth composition, which is mass-conserving.
     """
     if not p2_Ms:
         return None
@@ -2301,14 +2337,14 @@ def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
     # Clamp or interpolate
     if M <= p2_Ms[0]:
         d = p2_ejecta[(Z_p2, p2_Ms[0])]
-        M_ej = p2_Ms[0] - d['M_rem']
+        M_ej = p2_Ms[0] - d['M_bar']
         net = {}
         for elem in TRACKED_ELEMENTS:
             net[elem] = d['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej
         return net, d['M_rem'], d['sn_type']
     if M >= p2_Ms[-1]:
         d = p2_ejecta[(Z_p2, p2_Ms[-1])]
-        M_ej = p2_Ms[-1] - d['M_rem']
+        M_ej = p2_Ms[-1] - d['M_bar']
         net = {}
         for elem in TRACKED_ELEMENTS:
             net[elem] = d['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej
@@ -2331,8 +2367,8 @@ def _interp_p2_yields(p2_ejecta, Z_p2, M, p2_Ms, init_comp):
         if sn_type == 5:
             M_rem = 0.0
 
-    M_ej_lo = M_lo - d_lo['M_rem']
-    M_ej_hi = M_hi - d_hi['M_rem']
+    M_ej_lo = M_lo - d_lo['M_bar']
+    M_ej_hi = M_hi - d_hi['M_bar']
     net = {}
     for elem in TRACKED_ELEMENTS:
         y_lo = d_lo['yields'].get(elem, 0.0) - X_init.get(elem, 0.0) * M_ej_lo
@@ -2534,23 +2570,29 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                     rem_mass[iz, im] = np.interp(M, lim25_masses, lim25_remnants)
 
                 yield_src[iz, im] = 2
-                M_ej = M - rem_mass[iz, im]
 
-                # Base yields from Limongi+2025 (total ejected at solar Z)
-                # For elements not in Limongi, use NuGrid M=12 absolute yields
+                # Limongi's own ejecta mass (from their remnant masses) — use
+                # this for the net yield conversion so that yields stay internally
+                # consistent even when our grid's M_ej differs (e.g. M=8 extrapolation).
+                lim25_mej = [m - r for m, r in zip(lim25_masses, lim25_remnants)]
+                M_ej_lim = np.interp(M, lim25_masses, lim25_mej)
+
+                # Base yields from Limongi+2025 (total ejected at solar Z).
+                # Elements not in Limongi: net_yield = 0 → returned at birth
+                # composition (X_birth * Mej in the C injection formula).
                 for ie, elem in enumerate(TRACKED_ELEMENTS):
                     if elem in lim25_elements:
                         # Limongi+2025: interpolate in mass, convert total→net
                         y_total = np.interp(M, lim25_masses, lim25_yields[elem])
-                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej
-                    else:
-                        # NuGrid M=12 fallback: scale net yield by ejecta ratio
-                        y_net = nugrid_net_solar.get(elem, 0.0) * (M_ej / max(nugrid_12_Mej, 0.1))
+                        y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej_lim
 
-                    # Z-scaling from NuGrid for non-solar metallicities
-                    if Z_ng is not None and abs(log_Z - np.log10(0.014)) > 0.15:
-                        scale = nugrid_z_scale.get(Z_ng, {}).get(elem, 1.0)
-                        y_net *= scale
+                        # Z-scaling from NuGrid for non-solar metallicities
+                        if Z_ng is not None and abs(log_Z - np.log10(0.014)) > 0.15:
+                            scale = nugrid_z_scale.get(Z_ng, {}).get(elem, 1.0)
+                            y_net *= scale
+                    else:
+                        # Not in Limongi — return at ambient (birth) composition
+                        y_net = 0.0
 
                     yields[iz, im, ie] = y_net
 
@@ -2872,6 +2914,29 @@ def build_all(base_dir, output_file):
     # ── Scale yields for BH/PPISN fallback ──
     scale_yields_for_fallback(yields, rem_type, rem_mass, M_preSN, M_grid, yield_src=yield_src)
 
+    # ── Override M_preSN from ejecta data for PARSEC v2 entries ──
+    # The PARSEC v2 track files and ejecta files can disagree on M_fin (pre-SN
+    # mass) due to different wind prescriptions.  The ejecta data is authoritative
+    # since it's self-consistent with the yields.  Override M_preSN from ejecta
+    # when the discrepancy exceeds 1 Msun.
+    p2_ejecta_mfin = load_parsec2_ejecta(os.path.join(base_dir, 'parsec2_vms'))
+    p2_Zs = sorted(set(k[0] for k in p2_ejecta_mfin.keys()))
+    n_overridden = 0
+    for iz in range(N_Z):
+        Z_p2 = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - np.log10(max(Z_grid[iz], 1e-12)))) if p2_Zs else None
+        for im in range(N_M):
+            if yield_src[iz, im] != 4:
+                continue  # only PARSEC v2
+            key = (Z_p2, M_grid[im])
+            if key not in p2_ejecta_mfin:
+                continue
+            M_fin_ejecta = p2_ejecta_mfin[key]['M_fin']
+            if abs(M_preSN[iz, im] - M_fin_ejecta) > 1.0:
+                M_preSN[iz, im] = M_fin_ejecta
+                n_overridden += 1
+    if n_overridden > 0:
+        print(f"  Overrode {n_overridden} M_preSN from ejecta data (track/ejecta disagreement)")
+
     # ── Enforce mass conservation ──
     # For WD remnants (AGB progenitors, M < 8): no continuous winds in simulation,
     # so particle mass at death ≈ M_init. Set M_preSN = M_init so that
@@ -2883,9 +2948,15 @@ def build_all(base_dir, output_file):
             if rem_type[iz, im] == 0:  # WD
                 M_preSN[iz, im] = M_grid[im]
                 n_fixed += 1
-            elif M_preSN[iz, im] > 0 and rem_mass[iz, im] > M_preSN[iz, im]:
-                rem_mass[iz, im] = M_preSN[iz, im]
-                n_fixed += 1
+            else:
+                # Clamp M_preSN <= M_init (track interpolation can overshoot
+                # at low Z where PARSEC grid masses differ from ours)
+                if M_preSN[iz, im] > M_grid[im]:
+                    M_preSN[iz, im] = M_grid[im]
+                    n_fixed += 1
+                if M_preSN[iz, im] > 0 and rem_mass[iz, im] > M_preSN[iz, im]:
+                    rem_mass[iz, im] = M_preSN[iz, im]
+                    n_fixed += 1
     if n_fixed > 0:
         print(f"  Fixed {n_fixed} M_preSN/remnant_mass entries for mass conservation")
 
@@ -2911,12 +2982,13 @@ def build_all(base_dir, output_file):
             ds.attrs['shape'] = '(N_Z, N_M, N_age)'
 
         # Structural evolution datasets
+        # logL (log10 L/Lsun) and log_Mdot dropped: Gizmo doesn't load them —
+        # L_bol in erg/s is used for radiation, and Mdot is derived from
+        # M_current finite differences in C at runtime.
         for name, data, units in [
-            ('logL',        logL,       'log10(L/L_sun)'),
             ('logTeff',     logTeff,    'log10(T_eff / K)'),
             ('logR_cm',     logR_cm,    'log10(R / cm)'),
             ('M_current',   M_current,  'Msun'),
-            ('log_Mdot',    log_Mdot,   'log10(dM/dt in Msun/yr), derived from M_current for consistency'),
             ('v_wind',      v_wind_arr, 'km/s, terminal wind velocity'),
         ]:
             ds = f.create_dataset(name, data=data, **comp)
@@ -2927,12 +2999,8 @@ def build_all(base_dir, output_file):
         ds.attrs['units'] = 'mass fractions, (N_Z, N_M, N_age, N_elements)'
         ds.attrs['elements'] = TRACKED_ELEMENTS
 
-        ds = f.create_dataset('phase', data=phase_arr, **comp)
-        ds.attrs['encoding'] = PHASE_NAMES
-        ds.attrs['shape'] = '(N_Z, N_M, N_age)'
-        ds.attrs['usage'] = ('Use to distinguish MS winds (fast, hot) from AGB winds '
-                             '(slow, dense, dust-rich). AGB phase=5 is where '
-                             'envelope ejection and PN formation occur.')
+        # phase (3D phase-at-age array) dropped: C code uses phase_transitions
+        # group (8 timestamps per Z,M) via stellar_phase_at_age() instead.
 
         # Phase transition times (2D: Z × M)
         grp = f.create_group('phase_transitions')
@@ -3009,18 +3077,8 @@ def build_all(base_dir, output_file):
         ds.attrs['source'] = 'Iwamoto+ 1999, W7 model'
         ds.attrs['note'] = 'Complete disruption of Chandrasekhar-mass C/O WD'
 
-        # Type Ia DTD parameters
-        grp = f.create_group('type_ia_dtd')
-        for k, v in TYPE_IA_DTD.items():
-            grp.attrs[k] = v
-        grp.attrs['description'] = ('Delay time distribution: P(t) ~ t^slope for t > t_min. '
-                                    'Rate normalized to rate_per_Msun Ia per Msun formed '
-                                    '(Maoz & Mannucci 2012).')
-
-        # Magnetar parameters (parametric prescription for C code)
-        grp = f.create_group('magnetar')
-        for k, v in MAGNETAR_PARAMS.items():
-            grp.attrs[k] = v
+        # type_ia_dtd and magnetar groups dropped: Type Ia DTD is hardcoded
+        # in C (IA_RATE_PER_MSUN etc.), and magnetar channel is not wired up.
 
         # Global attributes
         f.attrs['description'] = 'Unified stellar evolution + yield tables for GIZMO'
@@ -3138,8 +3196,8 @@ def verify(output_file):
             print(f"\nType Ia yields (Msun/event): "
                   f"Fe={ia[elems.index('Fe')]:.3f}, Si={ia[elems.index('Si')]:.3f}, "
                   f"O={ia[elems.index('O')]:.3f}")
-            print(f"Type Ia DTD: rate={f['type_ia_dtd'].attrs['rate_per_Msun']:.1e}/Msun, "
-                  f"t_min={f['type_ia_dtd'].attrs['t_min_Myr']:.0f} Myr")
+            print(f"Type Ia DTD: rate={TYPE_IA_DTD['rate_per_Msun']:.1e}/Msun, "
+                  f"t_min={TYPE_IA_DTD['t_min_Myr']:.0f} Myr")
 
         # Z-dependence of BH mass
         print(f"\nBH mass vs Z for M~120 Msun:")
