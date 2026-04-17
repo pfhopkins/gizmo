@@ -853,10 +853,8 @@ c
 c We assume that the visual/IR/sub-mm background scales linearly with the UV background.
 c In the future, we should make these independently configurable.
 c 
-c Per-band shielded dust heating: FUV*chi_isrf + NUV*chi_NUV + OPT*chi_OPT
-        field_strength = (G0_dust * chi_isrf
-     $                  + G0_NUV * chi_NUV
-     $                  + G0_OPT * chi_OPT) / 1.7
+c Dust ISRF heating from FUV only (6-13.6 eV)
+        field_strength = G0_dust * chi_isrf / 1.7
         if (isrf_option .eq. 1) then
            isrf_heat  = 5.8d-24 * yn * field_strength
         else

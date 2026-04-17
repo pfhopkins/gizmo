@@ -18,7 +18,7 @@ extern "C" {
                crtab[NCRTAB], crphot[NCRPHOT],
                phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
                deff, abundc, abundo, abundsi, abundD,
-               abundM, abundN, G0, G0_LW, G0_dust, G0_NUV, G0_OPT,
+               abundM, abundN, G0, G0_LW, G0_dust,
                f_rsc, phi_pah,
                dust_to_gas_ratio, AV_conversion_factor,
                cosmic_ray_ion_rate, redshift, AV_ext,
@@ -37,7 +37,6 @@ extern "C" {
                dm_density,
                rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
                rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-               chi_NUV, chi_OPT,
                cr_energy_density;
     } COOLR;
 
@@ -54,8 +53,6 @@ extern "C" {
         double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         double fac_uv[NPIX];
-        double fac_nuv[NPIX];
-        double fac_opt[NPIX];
 #endif
         double column_density_projection[NPIX];
         double column_density_projection_h2[NPIX];
@@ -231,26 +228,18 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #endif
 
 
-    COOLR.G0_NUV = 0;
-    COOLR.G0_OPT = 0;
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    /* Per-band Habing/ISRF energy densities [erg/cm^3] from Draine (1978) + Mathis+ (1983).
-       Each band's G0=1 corresponds to the local solar neighborhood energy density in that band.
-       FUV (8-13.6 eV):  5.03e-14  (Draine 1978, 95% of original 6-13.6 eV Habing field)
-       LW  (11.2-13.6):  2.11e-14  (subset of FUV, H2 photodissociation)
-       NUV (3.4-8 eV):   1.04e-13  (Mathis 3.4-5 eV + Draine 5-8 eV)
-       OPT (0.4-3.4 eV): 7.07e-13  (Mathis+ 1983 diluted blackbodies) */
-    double u_Hab_FUV = 5.03e-14;
+    /* Habing/ISRF energy densities [erg/cm^3] (Draine 1978, Mathis+ 1983).
+       FUV (6-13.6 eV):  5.29e-14  (Habing 1968, used for tree-ray PE heating)
+       LW  (11.2-13.6):  2.11e-14  (H2 photodissociation band, from Draine spectrum)
+       NUV and OPT: computed on tree but not used for heating currently. */
+    double u_Hab_FUV = 5.29e-14;
     double u_Hab_LW  = 2.11e-14;
-    double u_Hab_NUV = 1.04e-13;
-    double u_Hab_OPT = 7.07e-13;
     double fac_flux2energy = All.cf_a2inv / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)); /* luminosity flux to energy density */
 
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;
-    double NUV_flux_tot = 0.0;
-    double OPT_flux_tot = 0.0;
     double UV_flux_min_pix = 0.324e-2/NPIX / (fac_flux2energy / u_Hab_FUV);
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix;
     for(i = 0; i < NPIX; i++) {
@@ -258,14 +247,10 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         CellP[target].LW_flux[i] = DMAX(CellP[target].LW_flux[i], LW_flux_min_pix);
         UV_flux_tot += CellP[target].UV_flux[i];
         LW_flux_tot += CellP[target].LW_flux[i];
-        NUV_flux_tot += CellP[target].NUV_flux[i];
-        OPT_flux_tot += CellP[target].OPT_flux[i];
     }
 
-    double G0_tot     = UV_flux_tot  * fac_flux2energy / u_Hab_FUV * All.G0;
-    double G0_LW      = LW_flux_tot  * fac_flux2energy / u_Hab_LW  * All.G0;
-    double G0_NUV_val = NUV_flux_tot * fac_flux2energy / u_Hab_NUV * All.G0;
-    double G0_OPT_val = OPT_flux_tot * fac_flux2energy / u_Hab_OPT * All.G0;
+    double G0_tot = UV_flux_tot * fac_flux2energy / u_Hab_FUV * All.G0;
+    double G0_LW  = LW_flux_tot * fac_flux2energy / u_Hab_LW  * All.G0;
 
     /* For cosmological runs: add metagalactic FUV background floor from TREECOOL */
     if(All.ComovingIntegrationOn) {
@@ -280,11 +265,6 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     CellP[target].G0 = G0_tot;
     COOLR.G0_LW = G0_LW;
     CellP[target].G0_LW = G0_LW;
-    COOLR.G0_NUV = G0_NUV_val;
-    COOLR.G0_OPT = G0_OPT_val;
-    CellP[target].G0_NUV = G0_NUV_val;
-    CellP[target].G0_OPT = G0_OPT_val;
-    /* G0_dust: FUV part only; NUV/OPT shielded separately in calc_dust_temp */
     COOLR.G0_dust = G0_tot;
 
 #ifdef COSMIC_RAY_FLUID
@@ -318,8 +298,9 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #if defined(RADTRANSFER)
     { /* M1 RT active: compute G0, G0_LW, and photoionization rates from radiation field */
         double rho_code = CellP[target].Density * All.cf_a3inv;
-        /* Per-band Habing normalizations [erg/cm^3] — same values as tree-ray path */
-        double u_Hab_FUV = 5.03e-14, u_Hab_LW = 2.11e-14, u_Hab_NUV = 1.04e-13, u_Hab_OPT = 7.07e-13;
+        /* Habing normalizations for M1 RT bands [erg/cm^3].
+           FUV = 8-13.6 eV (narrower than tree-ray 6-13.6), LW = 11.2-13.6 eV */
+        double u_Hab_FUV_M1 = 5.03e-14, u_Hab_LW = 2.11e-14;
 
         /* Convert Rad_E_gamma (extensive: total energy per particle) to physical energy density (erg/cm^3):
            u_rad = Rad_E_gamma / V_i = Rad_E_gamma * Density / Mass  [code energy/volume]
@@ -336,23 +317,11 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #else
         double u_LW_cgs  = 0;
 #endif
-        /* G0: FUV field (8-13.6 eV, already includes LW) in per-band Habing units */
-        COOLR.G0    = DMAX(u_PE_cgs / u_Hab_FUV, 1e-6);
+        /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units */
+        COOLR.G0    = DMAX(u_PE_cgs / u_Hab_FUV_M1, 1e-6);
         /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units */
         COOLR.G0_LW = DMAX(u_LW_cgs / u_Hab_LW, 0.0);
-
-        /* Per-band G0 for NUV and OPT (each in their own Habing units) */
-        double u_NUV_cgs = 0, u_OPT_cgs = 0;
-#if defined(RT_NUV)
-        u_NUV_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_NUV] * fac_to_cgs;
-#endif
-#if defined(RT_OPTICAL_NIR)
-        u_OPT_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_OPTICAL_NIR] * fac_to_cgs;
-#endif
-        COOLR.G0_NUV = u_NUV_cgs / u_Hab_NUV;
-        COOLR.G0_OPT = u_OPT_cgs / u_Hab_OPT;
-        /* G0_dust: FUV component only (NUV/OPT added with shielding in cool_util.F) */
-        COOLR.G0_dust = DMAX(u_PE_cgs / u_Hab_FUV, 1e-6);
+        COOLR.G0_dust = COOLR.G0;
 
 #if defined(RT_CHEM_PHOTOION)
         /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]
@@ -463,8 +432,6 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
         PROJECT.column_density_projection[i] = NH;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         PROJECT.fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;
-        PROJECT.fac_nuv[i] = (NUV_flux_tot > 0) ? CellP[target].NUV_flux[i] / NUV_flux_tot : 1.0 / NPIX;
-        PROJECT.fac_opt[i] = (OPT_flux_tot > 0) ? CellP[target].OPT_flux[i] / OPT_flux_tot : 1.0 / NPIX;
 #endif
     }
 #endif

@@ -397,7 +397,14 @@ void gravity_tree(void)
                 if(P[place].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[place].ProjectionH2[kp] += GravDataOut[j].ProjectionH2[kp]; CellP[place].ProjectionCO[kp] += GravDataOut[j].ProjectionCO[kp];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                if(P[place].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[place].UV_flux[kp] += GravDataOut[j].UV_flux[kp]; CellP[place].LW_flux[kp] += GravDataOut[j].LW_flux[kp]; CellP[place].NUV_flux[kp] += GravDataOut[j].NUV_flux[kp]; CellP[place].OPT_flux[kp] += GravDataOut[j].OPT_flux[kp];}}
+                if(P[place].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[place].UV_flux[kp] += GravDataOut[j].UV_flux[kp]; CellP[place].LW_flux[kp] += GravDataOut[j].LW_flux[kp];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                    CellP[place].NUV_flux[kp] += GravDataOut[j].NUV_flux[kp];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                    CellP[place].OPT_flux[kp] += GravDataOut[j].OPT_flux[kp];
+#endif
+                }}
 #endif
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA

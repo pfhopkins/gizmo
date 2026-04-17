@@ -244,12 +244,20 @@ extern struct gas_cell_data
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyFloat UV_flux[NPIX];                /*!< HEALPix FUV flux per pixel from stars, 8-13.6 eV */
     MyFloat LW_flux[NPIX];               /*!< HEALPix LW flux per pixel from stars, 11.2-13.6 eV (subset of FUV) */
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyFloat NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel from stars, 3.4-8 eV */
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyFloat OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
+#endif
     MyFloat G0;                           /*!< FUV radiation field in Habing units, 8-13.6 eV */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units, 11.2-13.6 eV */
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyFloat G0_NUV;                       /*!< NUV radiation field in Habing units, 3.4-8 eV */
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyFloat G0_OPT;                       /*!< OPT radiation field in Habing units, 0.4-3.4 eV */
+#endif
     MyFloat CR_ionization_rate;           /*!< cosmic ray ionization rate [s^-1] */
 #endif
 #ifdef GALSF_RESOLVEDISM_FB

@@ -485,8 +485,12 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         MyFloat uv_luminosity = 0;
         MyFloat lw_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         MyFloat nuv_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         MyFloat opt_luminosity = 0;
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         cr_injection = 0;
@@ -577,8 +581,12 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                         uv_luminosity += Nodes[p].uv_luminosity;
                         lw_luminosity += Nodes[p].lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                         nuv_luminosity += Nodes[p].nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                         opt_luminosity += Nodes[p].opt_luminosity;
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                         cr_injection += Nodes[p].cr_injection;
@@ -678,7 +686,14 @@ void force_update_node_recursive(int no, int sib, int father)
                     }
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                    if(pa->Type == 4 || pa->Type == 5) {uv_luminosity += P[p].UV_luminosity; lw_luminosity += P[p].LW_luminosity; nuv_luminosity += P[p].NUV_luminosity; opt_luminosity += P[p].OPT_luminosity;}
+                    if(pa->Type == 4 || pa->Type == 5) {uv_luminosity += P[p].UV_luminosity; lw_luminosity += P[p].LW_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                        nuv_luminosity += P[p].NUV_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                        opt_luminosity += P[p].OPT_luminosity;
+#endif
+                    }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     cr_injection += cr_get_source_injection_rate(p);
@@ -879,8 +894,12 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[no].uv_luminosity = uv_luminosity;
         Nodes[no].lw_luminosity = lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         Nodes[no].nuv_luminosity = nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         Nodes[no].opt_luminosity = opt_luminosity;
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         Nodes[no].cr_injection = cr_injection;
@@ -1683,9 +1702,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double treecol_UV_flux[NPIX] = {0};
     double treecol_LW_flux[NPIX] = {0};
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     double treecol_NUV_flux[NPIX] = {0};
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     double treecol_OPT_flux[NPIX] = {0};
-    double uv_lum = 0, lw_lum = 0, nuv_lum = 0, opt_lum = 0;
+#endif
+    double uv_lum = 0, lw_lum = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+    double nuv_lum = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+    double opt_lum = 0;
+#endif
 #endif
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
@@ -1916,8 +1945,14 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                uv_lum = 0; lw_lum = 0; nuv_lum = 0; opt_lum = 0;
-                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity; nuv_lum = P[no].NUV_luminosity; opt_lum = P[no].OPT_luminosity;}
+                uv_lum = 0; lw_lum = 0;
+                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;}
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                nuv_lum = 0; if(P[no].Type == 4 || P[no].Type == 5) {nuv_lum = P[no].NUV_luminosity;}
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                opt_lum = 0; if(P[no].Type == 4 || P[no].Type == 5) {opt_lum = P[no].OPT_luminosity;}
+#endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
                 {int ki,kj; for(ki=0;ki<3;ki++) {for(kj=0;kj<3;kj++) {j_zeta_tidal_tensorps_prevstep[ki][kj]=P[no].tidal_tensorps_prevstep[ki][kj];}}}
@@ -2215,8 +2250,12 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = nop->uv_luminosity;
                 lw_lum = nop->lw_luminosity;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 nuv_lum = nop->nuv_luminosity;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                 opt_lum = nop->opt_luminosity;
+#endif
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                 r_source = sqrt(pow(nop->u.d.s[0] - center[0],2) + pow(nop->u.d.s[1] - center[1],2) + pow(nop->u.d.s[2] - center[2],2));
@@ -2586,7 +2625,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                if((uv_lum > 0 || lw_lum > 0 || nuv_lum > 0 || opt_lum > 0) && r2 > 0)
+                if((uv_lum > 0 || lw_lum > 0) && r2 > 0)
                 {
                     long iheal;
                     double vec_hp[3] = {dx, dy, dz};
@@ -2594,8 +2633,12 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     double inv_r2 = 1.0 / r2;
                     treecol_UV_flux[iheal] += uv_lum * inv_r2;
                     treecol_LW_flux[iheal] += lw_lum * inv_r2;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                     treecol_NUV_flux[iheal] += nuv_lum * inv_r2;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                     treecol_OPT_flux[iheal] += opt_lum * inv_r2;
+#endif
                 }
 #endif
 #endif
@@ -2768,7 +2811,14 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; CellP[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].UV_flux[kp] = treecol_UV_flux[kp]; CellP[target].LW_flux[kp] = treecol_LW_flux[kp]; CellP[target].NUV_flux[kp] = treecol_NUV_flux[kp]; CellP[target].OPT_flux[kp] = treecol_OPT_flux[kp];}}
+        if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].UV_flux[kp] = treecol_UV_flux[kp]; CellP[target].LW_flux[kp] = treecol_LW_flux[kp];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            CellP[target].NUV_flux[kp] = treecol_NUV_flux[kp];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            CellP[target].OPT_flux[kp] = treecol_OPT_flux[kp];
+#endif
+        }}
 #endif
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
@@ -2862,7 +2912,14 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; GravDataResult[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].UV_flux[kp] = treecol_UV_flux[kp]; GravDataResult[target].LW_flux[kp] = treecol_LW_flux[kp]; GravDataResult[target].NUV_flux[kp] = treecol_NUV_flux[kp]; GravDataResult[target].OPT_flux[kp] = treecol_OPT_flux[kp];}}
+        {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].UV_flux[kp] = treecol_UV_flux[kp]; GravDataResult[target].LW_flux[kp] = treecol_LW_flux[kp];
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+            GravDataResult[target].NUV_flux[kp] = treecol_NUV_flux[kp];
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+            GravDataResult[target].OPT_flux[kp] = treecol_OPT_flux[kp];
+#endif
+        }}
 #endif
 #endif
 #ifdef RT_OTVET

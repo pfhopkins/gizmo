@@ -662,13 +662,13 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_RESOLVEDISM_G0_NUV:
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             for(n = 0; n < pc; n++) {CellP[offset + n].G0_NUV = *fp++;}
 #endif
             break;
 
         case IO_RESOLVEDISM_G0_OPT:
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             for(n = 0; n < pc; n++) {CellP[offset + n].G0_OPT = *fp++;}
 #endif
             break;

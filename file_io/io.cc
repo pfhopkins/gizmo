@@ -1021,7 +1021,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_RESOLVEDISM_G0_NUV:
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1032,7 +1032,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_RESOLVEDISM_G0_OPT:
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {

@@ -1171,8 +1171,12 @@ extern struct gravdata_out
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyDouble UV_flux[NPIX];               /*!< HEALPix FUV flux per pixel, 8-13.6 eV */
     MyDouble LW_flux[NPIX];               /*!< HEALPix LW flux per pixel, 11.2-13.6 eV (subset of FUV) */
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-8 eV */
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyDouble OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
+#endif
 #endif
 #ifdef SINK_COMPTON_HEATING
     MyDouble Rad_Flux_AGN;
@@ -1569,8 +1573,12 @@ extern ALIGN(32) struct NODE
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
   MyFloat uv_luminosity;        /*!< total FUV luminosity in tree node, 8-13.6 eV */
   MyFloat lw_luminosity;        /*!< total LW luminosity in tree node, 11.2-13.6 eV (subset of FUV) */
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
   MyFloat nuv_luminosity;       /*!< total NUV luminosity in tree node, 3.4-8 eV */
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
   MyFloat opt_luminosity;       /*!< total optical+NIR luminosity in tree node, 0.4-3.4 eV */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/
