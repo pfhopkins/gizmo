@@ -405,15 +405,16 @@ static GIZMO_GPU_FUNCTION void HLLC_Riemann_solver(struct Input_vec_Riemann Riem
     Riemann_out->Fluxes.v = Riemann_out->P_M * n_unit; /* becomes extremely simple for MFM in this frame */
     Riemann_out->Fluxes.p = Riemann_out->P_M * Riemann_out->S_M; /* becomes extremely simple for MFM in this frame */
 #ifdef SAVE_FACE_DENSITY
-    if((Riemann_out->S_M==0) || ((Riemann_out->P_M<=0)&&(!isnan(Riemann_out->P_M))))
+    {double tol_s_fd = 1.e-12 * (fabs(S_L) + fabs(S_R) + MIN_REAL_NUMBER);
+    if((fabs(Riemann_out->S_M) < tol_s_fd) || ((Riemann_out->P_M<=0)&&(!isnan(Riemann_out->P_M))))
     {
         Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho);
     } else {
         Riemann_out->Face_Density = 0.5 * (Riemann_vec.L.rho*(S_L-v_line_L)/(S_L-Riemann_out->S_M) +
                                            Riemann_vec.R.rho*(S_R-v_line_R)/(S_R-Riemann_out->S_M));
-        if(Riemann_out->S_M==S_L) {Riemann_out->Face_Density=Riemann_vec.L.rho;}
-        if(Riemann_out->S_M==S_R) {Riemann_out->Face_Density=Riemann_vec.R.rho;}
-    }
+        if(fabs(Riemann_out->S_M-S_L) < tol_s_fd) {Riemann_out->Face_Density=Riemann_vec.L.rho;}
+        if(fabs(Riemann_out->S_M-S_R) < tol_s_fd) {Riemann_out->Face_Density=Riemann_vec.R.rho;}
+    }}
 #endif
 #endif
 }
@@ -458,11 +459,12 @@ static GIZMO_GPU_FUNCTION void Riemann_solver_Rusanov(struct Input_vec_Riemann R
     Riemann_out->Fluxes.p = 0.5 * (f_rho_left * h_L + f_rho_right * h_R + S_plus * (Riemann_vec.R.p - Riemann_vec.L.p));
 #endif
 #ifdef SAVE_FACE_DENSITY
+    {double tol_s_rs = 1.e-12 * (fabs(S_L) + fabs(S_R) + MIN_REAL_NUMBER);
     Riemann_out->Face_Density = 0.5 * (Riemann_vec.L.rho*(S_L-v_line_L)/(S_L-Riemann_out->S_M) +
                                        Riemann_vec.R.rho*(S_R-v_line_R)/(S_R-Riemann_out->S_M));
-    if(Riemann_out->S_M==S_L) {Riemann_out->Face_Density=Riemann_vec.L.rho;}
-    if(Riemann_out->S_M==S_R) {Riemann_out->Face_Density=Riemann_vec.R.rho;}
-    if((Riemann_out->P_M<=0)&&(!isnan(Riemann_out->P_M))) {Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho);}
+    if(fabs(Riemann_out->S_M-S_L) < tol_s_rs) {Riemann_out->Face_Density=Riemann_vec.L.rho;}
+    if(fabs(Riemann_out->S_M-S_R) < tol_s_rs) {Riemann_out->Face_Density=Riemann_vec.R.rho;}
+    if((Riemann_out->P_M<=0)&&(!isnan(Riemann_out->P_M))) {Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho);}}
 #endif
     return;
 }
@@ -597,14 +599,15 @@ static GIZMO_GPU_FUNCTION void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec,
     if((P_M <= 0)||(isnan(P_M))) return;
     
     double nfac,eK,dv2=0,v_line_frame=0;
-    if((S_M==S_L)||(S_M==S_R)||(S_M==v_line_frame))
+    {double tol_s = 1.e-12 * (fabs(S_L) + fabs(S_R) + MIN_REAL_NUMBER); /* tolerance-based comparison to avoid exact FP equality sensitivity */
+    if((fabs(S_M-S_L)<tol_s)||(fabs(S_M-S_R)<tol_s)||(fabs(S_M-v_line_frame)<tol_s))
     {
         /* trap for this case, which gives NAN below but is actually very simple */
         Riemann_out->Fluxes.rho = 0;
         Riemann_out->Fluxes.p = Riemann_out->P_M * Riemann_out->S_M;
         Riemann_out->Fluxes.v = Riemann_out->P_M * n_unit;
         return;
-    }
+    }}
     if(v_line_frame < S_L)
     {
         Riemann_out->Fluxes.rho = Riemann_vec.L.rho * (v_line_L - v_line_frame);
