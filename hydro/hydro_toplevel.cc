@@ -807,7 +807,7 @@ void hydro_force(void)
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
     /* HYDRO_PRIM_DIAG: print core primitives BEFORE neighbor loop for target IDs */
-    {static int hpd_n=0; if(hpd_n < 3) { hpd_n++;
+    {static int hpd_n=0; if(hpd_n < 10) { hpd_n++;
         for(int _ii=0; _ii<NumPart; _ii++) { if(P[_ii].Type==0 && (P[_ii].ID==1 || P[_ii].ID==100 || P[_ii].ID==1000)) {
             printf("[HYDRO_PRIM] ID=%llu rho=%.10e P=%.10e cs=%.10e Mass=%.10e h=%.10e T=%.6e Gamma=%.6e DtU_pre=%.10e\n",
                 (unsigned long long)P[_ii].ID, CellP[_ii].Density, CellP[_ii].Pressure, CellP[_ii].effective_soundspeed(),
@@ -870,7 +870,7 @@ void hydro_force(void)
 #endif
 
     /* HYDRO_RAWDTU_DIAG: print raw DtU from neighbor loop BEFORE post-loop corrections */
-    {static int hraw_n=0; if(hraw_n < 3) { hraw_n++;
+    {static int hraw_n=0; if(hraw_n < 10) { hraw_n++;
         for(int _ii=0; _ii<NumPart; _ii++) { if(P[_ii].Type==0 && (P[_ii].ID==1 || P[_ii].ID==100 || P[_ii].ID==1000)) {
             printf("[HYDRO_RAWDTU] ID=%llu DtU_raw=%.10e Acc=%.8e/%.8e/%.8e MaxSig=%.8e\n",
                 (unsigned long long)P[_ii].ID, CellP[_ii].DtInternalEnergy,

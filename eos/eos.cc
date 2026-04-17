@@ -122,7 +122,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
         /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
         {
             static int eos_diag_n = 0;
-            if(eos_diag_n < 15 && (pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000)) {
+            if(eos_diag_n < 30 && (pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000)) {
                 printf("[EOS_DIAG] ID=%llu call=%d u0=%.6e rho=%.6e ne_out=%.6e mu=%.6e T=%.6e gamma=%.6e cf_a3inv=%.10e\n",
                     (unsigned long long)pp[i].ID, eos_diag_n, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, ne, mu_meanwt, temp, gamma_eos_index, All.cf_a3inv);
                 fflush(stdout);

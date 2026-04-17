@@ -40,6 +40,13 @@ static void rt_step_checksum(const char *label) {
             sum_u += CellP[i].InternalEnergy;
             sum_ne += CellP[i].Ne;
             ngas++;
+            /* RT_PART: per-particle tracking for specific IDs */
+            if(P[i].ID == 1 || P[i].ID == 100 || P[i].ID == 1000) {
+                printf("[RT_PART] %-20s ID=%llu T=%.6e Tdust=%.6e Trad=%.6e u=%.10e Ne=%.6e RadE_IR=%.6e P=%.6e\n",
+                    label, (unsigned long long)P[i].ID, CellP[i].Temperature, CellP[i].Dust_Temperature,
+                    CellP[i].Radiation_Temperature, CellP[i].InternalEnergy, CellP[i].Ne,
+                    CellP[i].Rad_E_gamma[RT_FREQ_BIN_INFRARED], CellP[i].Pressure);
+            }
         }
     }
     if(ThisTask == 0) {
@@ -93,7 +100,7 @@ void run(void)
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
 #define RT_STEP_DIAG_ACTIVE
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-        if(rt_step_diag_count < 30) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
+        if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
 #endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION
@@ -103,7 +110,7 @@ void run(void)
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-        if(rt_step_diag_count <= 30) rt_step_checksum("after_kick1");
+        if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
 #endif
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
@@ -165,7 +172,7 @@ void run(void)
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-        if(rt_step_diag_count <= 30) rt_step_checksum("after_hydro");
+        if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
 
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
@@ -178,7 +185,7 @@ void run(void)
         
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-        if(rt_step_diag_count <= 30) rt_step_checksum("after_kick2");
+        if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
 #endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
@@ -373,7 +380,7 @@ void calculate_non_standard_physics(void)
 #endif
     }
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-    if(rt_step_diag_count <= 30) rt_step_checksum("after_rt_source");
+    if(rt_step_diag_count <= 50) rt_step_checksum("after_rt_source");
 #endif
 #endif
 #if defined(RT_DIFFUSION_CG) /* use the CG method to solve the RT diffusion equation implicitly for all particles; do only on full timesteps, requires synchronous timestepping right now */
@@ -454,7 +461,7 @@ void calculate_non_standard_physics(void)
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-        if(rt_step_diag_count <= 30) rt_step_checksum("after_cooling");
+        if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
 #undef RT_STEP_DIAG_ACTIVE
 #endif
 
