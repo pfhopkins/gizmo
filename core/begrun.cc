@@ -527,6 +527,13 @@ void begrun(void)
     {All.Ti_nextoutput = find_next_outputtime(All.Ti_Current);}
 
   All.TimeLastRestartFile = CPUThisRun;
+
+#ifdef OPENMP_GPU_OFFLOAD
+  gizmo_gpu_sync_all();  /* re-sync All to GPU after ALL initialization (init, InitCool, rt_set_simple_inits, etc.).
+                            The early sync at line 100 runs before init() sets All.SolarAbundances and other fields.
+                            Without this re-sync, GPU TUs see stale All_dev with SolarAbundances[0]==0,
+                            causing division-by-zero in gas_dust_heating_coeff on the first kick. */
+#endif
 }
 
 
