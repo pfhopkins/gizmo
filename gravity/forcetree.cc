@@ -2591,11 +2591,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     long iheal;
                     double vec_hp[3] = {dx, dy, dz};
                     vec2pix_ring(NSIDE, vec_hp, &iheal);
-                    double inv_4pi_r2 = 1.0 / (4.0*M_PI*r2);
-                    treecol_UV_flux[iheal] += uv_lum * inv_4pi_r2;
-                    treecol_LW_flux[iheal] += lw_lum * inv_4pi_r2;
-                    treecol_NUV_flux[iheal] += nuv_lum * inv_4pi_r2;
-                    treecol_OPT_flux[iheal] += opt_lum * inv_4pi_r2;
+                    double inv_r2 = 1.0 / r2;
+                    treecol_UV_flux[iheal] += uv_lum * inv_r2;
+                    treecol_LW_flux[iheal] += lw_lum * inv_r2;
+                    treecol_NUV_flux[iheal] += nuv_lum * inv_r2;
+                    treecol_OPT_flux[iheal] += opt_lum * inv_r2;
                 }
 #endif
 #endif

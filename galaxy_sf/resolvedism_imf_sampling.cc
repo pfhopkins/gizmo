@@ -109,9 +109,11 @@ void finalize_sampled_star(int i, double M_drawn)
             double table_age = star_age_yr - stellar_t_PMS(logM, logZ);
             if(table_age > 0) {
                 double log_age = log10(DMAX(table_age, 100.0));
-                P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
-                P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
+                /* Band definitions (consistent for tree-ray and M1 RT):
+                   OPT = 0.4-3.4 eV, NUV = 3.4-8 eV, FUV = 8-13.6 eV, LW = 11.2-13.6 eV (subset of FUV) */
+                P[i].UV_luminosity  = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
                 P[i].NUV_luminosity = pow(10., stellar_log_L_NUV(logM, logZ, log_age));
+                P[i].LW_luminosity  = pow(10., stellar_log_L_LW(logM, logZ, log_age));
                 P[i].OPT_luminosity = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                 P[i].Lyman_photons_per_sec = pow(10., stellar_log_Q_ion(logM, logZ, log_age));

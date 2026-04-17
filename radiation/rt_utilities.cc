@@ -361,19 +361,19 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum)
 #endif
 
 #if defined(RT_PHOTOELECTRIC)
-    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pow(10.0, stellar_log_L_FUV(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 6-11.2 eV */
+    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pow(10.0, stellar_log_L_FUV_M1(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 8-13.6 eV (FUV, includes LW) */
 #endif
 
 #if defined(RT_LYMAN_WERNER)
-    lum[RT_FREQ_BIN_LYMAN_WERNER] = pow(10.0, stellar_log_L_LW(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 11.2-13.6 eV */
+    lum[RT_FREQ_BIN_LYMAN_WERNER] = pow(10.0, stellar_log_L_LW(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 11.2-13.6 eV (subset of FUV) */
 #endif
 
 #if defined(RT_NUV)
-    lum[RT_FREQ_BIN_NUV] = pow(10.0, stellar_log_L_NUV(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* ~3.4-6 eV */
+    lum[RT_FREQ_BIN_NUV] = pow(10.0, stellar_log_L_NUV(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 3.4-8 eV */
 #endif
 
 #if defined(RT_OPTICAL_NIR)
-    lum[RT_FREQ_BIN_OPTICAL_NIR] = pow(10.0, stellar_log_L_OPT_NIR(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* ~0.4-3.4 eV */
+    lum[RT_FREQ_BIN_OPTICAL_NIR] = pow(10.0, stellar_log_L_OPT_NIR(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 0.4-3.4 eV */
 #endif
 
 #if defined(RT_INFRARED)

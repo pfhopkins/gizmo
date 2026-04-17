@@ -147,8 +147,10 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.logR_cm         = (float *)mymalloc("stbl_logRcm",  n3d * sizeof(float));
 
     /* Non-ionizing band luminosities — always needed for G0_VARIABLE / tree-based fluxes */
-    StellarTbl.log_L_NUV       = (float *)mymalloc("stbl_logLNUV",  n3d * sizeof(float));
-    StellarTbl.log_L_OPT_NIR   = (float *)mymalloc("stbl_logLOPT",  n3d * sizeof(float));
+    StellarTbl.log_L_NUV       = (float *)mymalloc("stbl_logLNUV",    n3d * sizeof(float));
+    StellarTbl.log_L_NUV_lo    = (float *)mymalloc("stbl_logLNUVlo",  n3d * sizeof(float));
+    StellarTbl.log_L_FUV_M1    = (float *)mymalloc("stbl_logLFUVM1",  n3d * sizeof(float));
+    StellarTbl.log_L_OPT_NIR   = (float *)mymalloc("stbl_logLOPT",    n3d * sizeof(float));
 
     /* Ionizing sub-band luminosities for M1 RT */
 #ifdef RADTRANSFER
@@ -218,6 +220,8 @@ void resolvedism_load_stellar_tables(void)
 
         /* Non-ionizing band luminosities — always needed */
         read_hdf5_dataset_as_float(file, "log_L_NUV",      StellarTbl.log_L_NUV,       n3d);
+        read_hdf5_dataset_as_float(file, "log_L_NUV_lo",   StellarTbl.log_L_NUV_lo,    n3d);
+        read_hdf5_dataset_as_float(file, "log_L_FUV_M1",   StellarTbl.log_L_FUV_M1,    n3d);
         read_hdf5_dataset_as_float(file, "log_L_OPT_NIR",  StellarTbl.log_L_OPT_NIR,   n3d);
 
         /* Ionizing sub-band luminosities (only for M1 RT) */
@@ -1055,6 +1059,16 @@ double stellar_log_L_ion_He2(double logM, double logZ, double log_age)
 double stellar_log_L_NUV(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.log_L_NUV, logM, logZ, log_age);
+}
+
+double stellar_log_L_NUV_lo(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_NUV_lo, logM, logZ, log_age);
+}
+
+double stellar_log_L_FUV_M1(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_FUV_M1, logM, logZ, log_age);
 }
 
 double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age)
