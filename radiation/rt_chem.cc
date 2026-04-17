@@ -168,6 +168,16 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
 
 void rt_get_sigma(void)
 {
+    /* rt_get_sigma sets All.rt_ion_sigma_HI etc. — global initialization fields that must
+       be written to the HOST All, not All_dev. Since rt_chem.cc is a GPU TU with
+       #define All All_dev, we must temporarily restore the host All for this function.
+       Otherwise the values go to All_dev, then gizmo_gpu_sync_all() overwrites All_dev
+       with host zeros, and non-GPU code reads zero opacities. */
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+#endif
     /* first initialize all bands, so non-ionizing bands don't cause problems */
     int k;
     for(k=0;k<N_RT_FREQ_BINS;k++)
@@ -276,6 +286,9 @@ void rt_get_sigma(void)
     for(i = 0; i < N_RT_FREQ_BINS; i++) {All.rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
 
     if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",All.rt_ion_sigma_HI[i]/fac, All.rt_ion_G_HI[i]/fac_two,All.rt_ion_sigma_HeI[i]/fac, All.rt_ion_G_HeI[i]/fac_two,All.rt_ion_sigma_HeII[i]/fac, All.rt_ion_G_HeII[i]/fac_two);}}
+#endif
+#ifdef OPENMP_GPU_OFFLOAD
+#pragma pop_macro("All")
 #endif
 }
 
