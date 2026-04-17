@@ -567,6 +567,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #ifdef RT_INFRARED
             if(kf == RT_FREQ_BIN_INFRARED)
             {
+                #ifdef GIZMO_DEBUG_RT_COOLING
                 /* KICK_IR_DIAG: trace dust/radiation temperature computation */
                 static int kick_ir_diag_n = 0;
                 if(mode==0 && kick_ir_diag_n < 30 && (pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000)) {

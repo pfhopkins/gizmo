@@ -336,6 +336,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 demin=0.025*CellP[i].InternalEnergy; emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
                 dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin;}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergy = dEnt; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma[kfreq] *= 1 + dErad/erad_tot;}
+                #ifdef GIZMO_DEBUG_RT_COOLING
                 /* KICK_RADBLOCK_DIAG — by particle ID */
                 {static int krbd_n=0; if(krbd_n<30 && (P[i].ID==1 || P[i].ID==100 || P[i].ID==1000)) {
                     printf("[KICK_RADBLOCK] ID=%llu mode=%d u_before=%.10e u_after=%.10e du_tot=%.6e dEnt=%.6e erad=%.6e DtU=%.6e dt=%.6e CoolSplit=%d\n",

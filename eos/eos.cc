@@ -119,6 +119,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
         cell[i].Gamma = cell[i].gamma_eos_value();
 
+        #ifdef GIZMO_DEBUG_RT_COOLING
         /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
         {
             static int eos_diag_n = 0;
@@ -129,6 +130,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
             }
             eos_diag_n++;
         }
+        #endif /* GIZMO_DEBUG_RT_COOLING */
     }
 #else
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;

@@ -376,6 +376,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 if(Fluxes.rho > 0) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
 #endif
 #endif
+                #ifdef GIZMO_DEBUG_RT_COOLING
                 /* HYDRO_PAIR_DIAG: per-pair flux diagnostic for tracked particle IDs.
                    Print Fluxes.p and Fluxes.v AFTER Riemann+conduction+viscosity+RT but BEFORE accumulation.
                    Also print key neighbor quantities to check for corrupted EOS values. */

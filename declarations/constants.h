@@ -1,5 +1,10 @@
 /* values of various constants to be parsed as part of global definitions */
 
+/* GIZMO_DEBUG_RT_COOLING: enable comprehensive RT/cooling/hydro diagnostics.
+   Prints per-particle and per-pair tracking for debugging GPU vs CPU divergence.
+   Uncomment to activate. See project memory for full list of diagnostic tags. */
+//#define GIZMO_DEBUG_RT_COOLING
+
 /* Minimum number of active particles for GPU offload to be worthwhile.
  * Below this threshold, the kernel launch + memory transfer overhead exceeds
  * the GPU compute benefit, so we fall back to the CPU (OpenMP) path.

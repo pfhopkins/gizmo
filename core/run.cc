@@ -98,7 +98,9 @@ void run(void)
         find_timesteps();		/* find-timesteps */
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
+#ifdef GIZMO_DEBUG_RT_COOLING
 #define RT_STEP_DIAG_ACTIVE
+#endif
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
         if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
 #endif

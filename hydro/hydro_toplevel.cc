@@ -806,6 +806,7 @@ void hydro_force(void)
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
+    #ifdef GIZMO_DEBUG_RT_COOLING
     /* HYDRO_PRIM_DIAG: print core primitives BEFORE neighbor loop for target IDs */
     {static int hpd_n=0; if(hpd_n < 10) { hpd_n++;
         for(int _ii=0; _ii<NumPart; _ii++) { if(P[_ii].Type==0 && (P[_ii].ID==1 || P[_ii].ID==100 || P[_ii].ID==1000)) {
