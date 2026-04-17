@@ -28,6 +28,7 @@
 
 /* RT_STEP_DIAG: checksum function for bisecting RT divergence */
 #if defined(RT_INFRARED)
+static int rt_step_diag_count = 0;
 static void rt_step_checksum(const char *label) {
     double sum_RadE = 0, sum_Trad = 0, sum_u = 0, sum_Tdust = 0, sum_ne = 0;
     int ngas = 0;
@@ -92,7 +93,6 @@ void run(void)
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
 #define RT_STEP_DIAG_ACTIVE
 #if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
-        static int rt_step_diag_count = 0;
         if(rt_step_diag_count < 30) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
 #endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
