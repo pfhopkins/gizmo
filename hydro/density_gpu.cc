@@ -814,6 +814,136 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     /* Copy output back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct hydro_data_out));
 
+    /* HYDRO_RT_DIAG: re-run a few particles on CPU host and compare Dt_Rad_E_gamma.
+     * This proves whether the hydro kernel's RT flux computation differs GPU vs CPU. */
+#if defined(RT_SOLVER_EXPLICIT) && (N_RT_FREQ_BINS > 0)
+    {
+        static int hydro_rt_diag_count = 0;
+        if(hydro_rt_diag_count < 20) {
+            hydro_rt_diag_count++;
+            int ndiag = DMIN(3, num_active);
+            for(int dd = 0; dd < ndiag; dd++) {
+                int aa = dd; /* compact active index */
+                int ii = active[aa]; /* real particle index */
+
+                /* Re-do the gather + accumulation on CPU host */
+                struct INPUT_STRUCT_NAME local;
+                memset(&local, 0, sizeof(local));
+                local.Pos = kp[ii].Pos; local.KernelRadius = kp[ii].KernelRadius;
+                local.Mass = kp[ii].Mass; local.Density = kc[ii].Density;
+                local.Pressure = kc[ii].Pressure; local.ConditionNumber = kc[ii].ConditionNumber;
+#ifdef MHD_CONSTRAINED_GRADIENT
+                if(kc[ii].FlagForConstrainedGradients == 0) {local.ConditionNumber *= -1;}
+#endif
+                local.FaceClosureError = kc[ii].FaceClosureError;
+                local.InternalEnergyPred = kc[ii].InternalEnergyPred;
+                local.SoundSpeed = kc[ii].effective_soundspeed();
+                local.dt_hydrostep_i = get_particle_timestep_in_physical(ii, kp);
+                local.DrkernNgbFactor = kp[ii].DrkernNgbFactor;
+                local.Gradients.Density = kc[ii].Gradients.Density;
+                local.Gradients.Pressure = kc[ii].Gradients.Pressure;
+                local.Gradients.Velocity = kc[ii].Gradients.Velocity;
+                local.NV_T = kc[ii].NV_T; local.TimeBin = kp[ii].TimeBin;
+                local.Vel = kc[ii].VelPred;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                local.ParticleVel = kc[ii].VelPred;
+#endif
+#ifdef MAGNETIC
+                local.BPred = kc[ii].Bfield();
+                local.Gradients.B = kc[ii].Gradients.B;
+#ifdef DIVBCLEANING_DEDNER
+                local.PhiPred = kc[ii].PhiPred / kp[ii].Mass;
+                local.Gradients.Phi = kc[ii].Gradients.Phi;
+#endif
+#endif
+#ifdef DOGRAD_INTERNAL_ENERGY
+                local.Gradients.InternalEnergy = kc[ii].Gradients.InternalEnergy;
+#endif
+#ifdef RT_SOLVER_EXPLICIT
+                for(int k=0;k<N_RT_FREQ_BINS;k++) {
+                    local.Rad_E_gamma[k] = kc[ii].Rad_E_gamma_Pred[k];
+                    local.Rad_Kappa[k] = kc[ii].Rad_Kappa[k];
+                    local.RT_DiffusionCoeff[k] = rt_diffusion_coefficient(ii, k, kc);
+#if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
+                    local.ET[k] = kc[ii].ET[k];
+#endif
+#ifdef RT_EVOLVE_FLUX
+                    local.Rad_Flux[k] = kc[ii].Rad_Flux_Pred[k];
+#endif
+                }
+#ifdef RT_INFRARED
+                local.Radiation_Temperature = kc[ii].Radiation_Temperature;
+#endif
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR)
+                for(int k=0;k<N_RT_FREQ_BINS;k++) {local.Gradients.Rad_E_gamma_ET[k] = kc[ii].Gradients.Rad_E_gamma_ET[k];}
+#endif
+#endif
+                struct OUTPUT_STRUCT_NAME cpu_out;
+                memset(&cpu_out, 0, sizeof(cpu_out));
+                struct kernel_hydra cpu_kernel;
+                memset(&cpu_kernel, 0, sizeof(cpu_kernel));
+                struct Conserved_var_Riemann cpu_Fluxes;
+                cpu_kernel.h_i = local.KernelRadius;
+                cpu_kernel.sound_i = local.SoundSpeed;
+                cpu_kernel.spec_egy_u_i = local.InternalEnergyPred;
+                cpu_out.MaxSignalVel = cpu_kernel.sound_i;
+#ifdef MAGNETIC
+                {
+                    double fac_mp = 1.0 / All.cf_atime;
+                    cpu_kernel.b2_i = local.BPred.norm_sq();
+                    cpu_kernel.alfven2_i = cpu_kernel.b2_i * fac_mp / local.Density;
+                    cpu_kernel.alfven2_i = DMIN(cpu_kernel.alfven2_i, 1000. * cpu_kernel.sound_i * cpu_kernel.sound_i);
+                }
+#endif
+                for(int idx = offsets[aa]; idx < offsets[aa + 1]; idx++) {
+                    int j = neighbors[idx];
+                    memset(&cpu_Fluxes, 0, sizeof(cpu_Fluxes));
+                    hydro_accumulate_neighbor(&local, &cpu_out, &cpu_kernel, &cpu_Fluxes, j,
+                                              local.dt_hydrostep_i, kp, kc, kTimeBinActive, kNeedWakeup);
+                }
+                /* Compare GPU vs CPU Dt_Rad_E_gamma */
+                for(int k=0; k<N_RT_FREQ_BINS; k++) {
+                    double gpu_val = out_host[dd].Dt_Rad_E_gamma[k];
+                    double cpu_val = cpu_out.Dt_Rad_E_gamma[k];
+                    double rdiff = fabs(gpu_val - cpu_val) / (fabs(cpu_val) + 1e-30);
+                    if(rdiff > 1e-10 || (hydro_rt_diag_count <= 3)) {
+                        printf("[HYDRO_RT_DIAG] step=%d part=%d k=%d  DtRadE: gpu=%.12e cpu=%.12e rdiff=%.4e\n",
+                            hydro_rt_diag_count, dd, k, gpu_val, cpu_val, rdiff);
+                    }
+                }
+#ifdef RT_EVOLVE_FLUX
+                for(int k=0; k<N_RT_FREQ_BINS; k++) {
+                    for(int kd=0; kd<3; kd++) {
+                        double gpu_val = out_host[dd].Dt_Rad_Flux[k][kd];
+                        double cpu_val = cpu_out.Dt_Rad_Flux[k][kd];
+                        double rdiff = fabs(gpu_val - cpu_val) / (fabs(cpu_val) + 1e-30);
+                        if(rdiff > 1e-6) {
+                            printf("[HYDRO_RT_DIAG] step=%d part=%d k=%d d=%d  DtRadFlux: gpu=%.12e cpu=%.12e rdiff=%.4e\n",
+                                hydro_rt_diag_count, dd, k, kd, gpu_val, cpu_val, rdiff);
+                        }
+                    }
+                }
+#endif
+                /* Also compare non-RT hydro outputs for sanity */
+                {
+                    double rdiff_acc = 0;
+                    for(int k=0; k<3; k++) {
+                        double d = fabs(out_host[dd].Acc[k] - cpu_out.Acc[k]);
+                        rdiff_acc += d*d;
+                    }
+                    rdiff_acc = sqrt(rdiff_acc) / (sqrt(cpu_out.Acc.norm_sq()) + 1e-30);
+                    double rdiff_dtu = fabs(out_host[dd].DtInternalEnergy - cpu_out.DtInternalEnergy) / (fabs(cpu_out.DtInternalEnergy) + 1e-30);
+                    if(hydro_rt_diag_count <= 3) {
+                        printf("[HYDRO_RT_DIAG] step=%d part=%d  Acc_rdiff=%.4e  DtU_rdiff=%.4e\n",
+                            hydro_rt_diag_count, dd, rdiff_acc, rdiff_dtu);
+                    }
+                }
+            }
+            fflush(stdout);
+        }
+    }
+#endif
+
     /* Copy wakeup flag back */
     if(*d_NeedToWakeup) NeedToWakeupParticles_local = 1;
 
