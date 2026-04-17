@@ -228,8 +228,8 @@ void cooling_parent_routine(void)
                 /* GPU output (now in compact_Cell/compact_P after fence) */
                 double rdiff_u  = fabs(compact_Cell[dd].InternalEnergy - cpu_Cell[dd].InternalEnergy) / (fabs(cpu_Cell[dd].InternalEnergy) + 1e-30);
                 double rdiff_ne = fabs(compact_Cell[dd].Ne - cpu_Cell[dd].Ne) / (fabs(cpu_Cell[dd].Ne) + 1e-30);
-                printf("[GPU_RT_DIAG] step=%d part=%d  u: gpu=%.15e cpu=%.15e rdiff=%.4e\n",
-                    gpu_rt_diag_count, dd, compact_Cell[dd].InternalEnergy, cpu_Cell[dd].InternalEnergy, rdiff_u);
+                printf("[GPU_RT_DIAG] step=%d ID=%llu  u: gpu=%.15e cpu=%.15e rdiff=%.4e\n",
+                    gpu_rt_diag_count, (unsigned long long)compact_P[dd].ID, compact_Cell[dd].InternalEnergy, cpu_Cell[dd].InternalEnergy, rdiff_u);
                 printf("[GPU_RT_DIAG]   Ne: gpu=%.10e cpu=%.10e rdiff=%.4e\n",
                     compact_Cell[dd].Ne, cpu_Cell[dd].Ne, rdiff_ne);
 #if defined(RT_INFRARED)
@@ -569,8 +569,8 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     u = u_upper = u_lower =  u_old; /* initialize values */
     #define ROOTFIND_FUNCTION(du) du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt // control the *relative* error on the *change* in u
     double du_net = ROOTFIND_FUNCTION(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
-    if(target == 0) {printf("[DOCOOL_INIT] u_old=%.10e rho=%.10e dt=%.10e ne=%.10e du_net=%.10e Tdust=%.10e Trad=%.10e RadE_IR=%.10e\n",
-        u_old, rho, dt, ne_guess, du_net, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, cell[target].Rad_E_gamma[RT_FREQ_BIN_INFRARED]);}
+    if(pp[target].ID == 1 || pp[target].ID == 100 || pp[target].ID == 1000) {printf("[DOCOOL_INIT] ID=%llu u_old=%.10e rho=%.10e dt=%.10e ne=%.10e du_net=%.10e Tdust=%.10e Trad=%.10e RadE_IR=%.10e\n",
+        (unsigned long long)pp[target].ID, u_old, rho, dt, ne_guess, du_net, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, cell[target].Rad_E_gamma[RT_FREQ_BIN_INFRARED]);}
 
     /* bracketing */
     double u_step_fac = 1.1;
