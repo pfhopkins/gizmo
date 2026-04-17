@@ -541,9 +541,9 @@ void hydro_final_operations_and_cleanup(void)
                 double du_radwork = (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED) * 2.*f_kappa_abs*work_band / P[i].Mass;
                 CellP[i].DtInternalEnergy -= du_radwork; // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
                 /* HYDRO_RADWORK_DIAG: trace radiation work contribution to DtInternalEnergy */
-                {static int hrd_n=0; if(hrd_n < 10 && i < 5 && fabs(du_radwork) > 1e-15) {
-                    printf("[HYDRO_RADWORK] i=%d k=%d DtU_before=%.10e du_radwork=%.10e f_kappa=%.6e work_band=%.6e rsol_amp=%.1f Rad_Kappa=%.6e flux_mag=%.6e erad=%.6e\n",
-                        i, kfreq, CellP[i].DtInternalEnergy+du_radwork, du_radwork, f_kappa_abs, work_band, C_LIGHT_CODE/C_LIGHT_CODE_REDUCED, CellP[i].Rad_Kappa[kfreq], flux_mag, erad_i);
+                {static int hrd_n=0; if(hrd_n < 20 && (P[i].ID == 1 || P[i].ID == 100 || P[i].ID == 1000)) {
+                    printf("[HYDRO_RADWORK] ID=%llu k=%d DtU_before=%.10e du_radwork=%.10e f_kappa=%.6e work_band=%.6e Rad_Kappa=%.6e flux_mag=%.6e erad=%.6e\n",
+                        (unsigned long long)P[i].ID, kfreq, CellP[i].DtInternalEnergy+du_radwork, du_radwork, f_kappa_abs, work_band, CellP[i].Rad_Kappa[kfreq], flux_mag, erad_i);
                     hrd_n++;}}
             }
             /* now actually set the frequency-integrated cell values as needed */
@@ -553,9 +553,9 @@ void hydro_final_operations_and_cleanup(void)
             CellP[i].HydroAccel += radacc; // physical units, as desired
 #endif
 #endif
-            /* HYDRO_DTU_DIAG: print final DtInternalEnergy after all corrections for first few particles */
-            {static int hdtu_n=0; if(hdtu_n < 5 && i < 5) {
-                printf("[HYDRO_DTU] i=%d DtU_final=%.10e u=%.10e\n", i, CellP[i].DtInternalEnergy, CellP[i].InternalEnergyPred);
+            /* HYDRO_DTU_DIAG: print final DtInternalEnergy after all corrections — by particle ID */
+            {static int hdtu_n=0; if(hdtu_n < 15 && (P[i].ID == 1 || P[i].ID == 100 || P[i].ID == 1000)) {
+                printf("[HYDRO_DTU] ID=%llu DtU_final=%.10e u=%.10e\n", (unsigned long long)P[i].ID, CellP[i].DtInternalEnergy, CellP[i].InternalEnergyPred);
                 hdtu_n++;}}
 #ifdef RT_RADPRESSURE_IN_HYDRO
             int kfreq; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {
