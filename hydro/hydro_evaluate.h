@@ -379,12 +379,12 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 /* HYDRO_PAIR_DIAG: per-pair flux diagnostic for tracked particle IDs.
                    Print Fluxes.p and Fluxes.v AFTER Riemann+conduction+viscosity+RT but BEFORE accumulation.
                    Also print key neighbor quantities to check for corrupted EOS values. */
-                if(P[target].ID == 1000 && n < 5) {
+                {static int hpp_step=0; if(P[target].ID == 1000 && hpp_step < 1) {
                     printf("[HYDRO_PAIR] ID_i=1000 j_ID=%llu n=%d Fp=%.10e Fv=%.8e/%.8e/%.8e cs_j=%.6e u_j=%.6e P_j=%.6e rho_j=%.6e T_j=%.6e gamma_j=%.6e\n",
                         (unsigned long long)P[j].ID, n, Fluxes.p, Fluxes.v[0], Fluxes.v[1], Fluxes.v[2],
                         kernel.sound_j, CellP[j].InternalEnergyPred, CellP[j].Pressure, CellP[j].Density, CellP[j].Temperature, CellP[j].Gamma);
-                    fflush(stdout);
-                }
+                    if(n == numngb-1) {hpp_step++; printf("[HYDRO_PAIR_TOTAL] ID=1000 total_DtU=%.10e total_Acc=%.8e/%.8e/%.8e numngb=%d\n", out.DtInternalEnergy, out.Acc[0], out.Acc[1], out.Acc[2], numngb); fflush(stdout);}
+                }}
                 out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
 #ifdef MAGNETIC
@@ -402,14 +402,24 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * resistivity_heatflux;
 #else
                 double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_i);
-                out.DtInternalEnergy += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+                double du_mag_pres = FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+                out.DtInternalEnergy += du_mag_pres;
 #ifdef DIVBCLEANING_DEDNER
+                double du_dedner = 0;
                 for(k=0; k<3; k++)
                 {
                     out.DtB_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_db * Face_Area_Vec[k];
                     out.DtB[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
-                    out.DtInternalEnergy += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+                    double du_ded_k = FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+                    out.DtInternalEnergy += du_ded_k;
+                    du_dedner += du_ded_k;
                 }
+                /* HYDRO_MAGDTU_DIAG: per-pair magnetic+Dedner DtU corrections */
+                {static int hmag_step=0; if(P[target].ID == 1000 && hmag_step < 1) {
+                    printf("[HYDRO_MAGDTU] ID_i=1000 j_ID=%llu n=%d du_mag=%.10e du_ded=%.10e b2_i=%.6e wt=%.6e phi=%.6e DtU=%.10e\n",
+                        (unsigned long long)P[j].ID, n, du_mag_pres, du_dedner, kernel.b2_i, wt_face_sum, Riemann_out.phi_normal_mean, out.DtInternalEnergy);
+                    if(n == numngb-1) {hmag_step++;}
+                }}
 #endif
 #ifdef MHD_NON_IDEAL
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
