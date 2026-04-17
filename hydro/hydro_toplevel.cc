@@ -820,7 +820,18 @@ void hydro_force(void)
                 (unsigned long long)P[_ii].ID, CellP[_ii].Gradients.Density[0], CellP[_ii].Gradients.Density[1], CellP[_ii].Gradients.Density[2],
                 CellP[_ii].Gradients.Pressure[0], CellP[_ii].Gradients.Pressure[1], CellP[_ii].Gradients.Pressure[2],
                 CellP[_ii].InternalEnergyPred);
+            printf("[HYDRO_PRIM] ID=%llu Kappa_Cond=%.10e Eta_Shear=%.10e grad_u=%.8e/%.8e/%.8e grad_cs=%.8e/%.8e/%.8e dt=%.10e\n",
+                (unsigned long long)P[_ii].ID, CellP[_ii].Kappa_Conduction, CellP[_ii].Eta_ShearViscosity,
+                CellP[_ii].Gradients.InternalEnergy[0], CellP[_ii].Gradients.InternalEnergy[1], CellP[_ii].Gradients.InternalEnergy[2],
+                CellP[_ii].Gradients.SoundSpeed[0], CellP[_ii].Gradients.SoundSpeed[1], CellP[_ii].Gradients.SoundSpeed[2],
+                get_particle_timestep_in_physical(_ii, P));
         }}
+        /* Also print global Temperature/Pressure/SoundSpeed sums to detect if ANY particle differs */
+        {double sum_T=0, sum_P=0, sum_cs=0, sum_gamma=0; int ng=0;
+        for(int _jj=0; _jj<NumPart; _jj++) { if(P[_jj].Type==0 && P[_jj].Mass>0) {
+            sum_T += CellP[_jj].Temperature; sum_P += CellP[_jj].Pressure;
+            sum_cs += CellP[_jj].effective_soundspeed(); sum_gamma += CellP[_jj].Gamma; ng++;}}
+        printf("[HYDRO_GLOB] ngas=%d sum_T=%.10e sum_P=%.10e sum_cs=%.10e sum_Gamma=%.10e\n", ng, sum_T, sum_P, sum_cs, sum_gamma);}
         fflush(stdout);
     }}
     double t_preloop = timediff(t_preloop_start, my_second());
