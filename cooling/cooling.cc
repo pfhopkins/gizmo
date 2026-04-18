@@ -1061,10 +1061,6 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target>=0) {cell[target].CoolingRate = Lambda; cell[target].HeatingRate = Heat;}
 #endif
-#if 0 //defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES)
-    if(target >= 0) {cell[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV]=0; cell[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] = -Q;} // for these runs want to do it all with our dedicated band //
-#endif
-    
 #if defined(COOL_LOW_TEMPERATURES) && !defined(COOL_LOWTEMP_THIN_ONLY)
     /* if we are in the optically thick limit, we need to modify the cooling/heating rates according to the appropriate limits;
         this flag does so by using a simple approximation. we consider the element as if it were a slab, with a column density

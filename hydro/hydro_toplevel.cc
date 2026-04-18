@@ -731,11 +731,6 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
-#if 0 /* disabled: adding nuclear edot to DtInternalEnergy causes runaway pressure extrapolation in the predict step, which drives divV and shrinks kernel radii catastrophically */
-#ifdef NUCLEAR_NETWORK
-            CellP[i].DtInternalEnergy += CellP[i].NuclearEnergyGenerationRate;
-#endif
-#endif
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};

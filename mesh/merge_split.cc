@@ -251,17 +251,6 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 #endif
  */
 
-#if 0 //defined(SINK_CALC_DISTANCES) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES) && !defined(SINGLE_STAR_SINK_DYNAMICS)
-    double r_pc = P[i].Min_Distance_to_Sink * All.cf_atime * UNIT_LENGTH_IN_PC;
-    if(r_pc>0 && isfinite(r_pc) && r_pc<MAX_REAL_NUMBER) {
-        double dx0_pc = 0.01*r_pc, dxmin_pc = 1., dxmax_pc = 1000. / All.cf_atime; // set min/max/median value desired
-        double dx = DMIN(DMAX(dx0_pc,dxmin_pc),dxmax_pc) / (All.cf_atime * UNIT_LENGTH_IN_PC); // set target dx in code units
-        double m_target = CellP[i].Density * dx*dx*dx; // equivalent cell mass
-        ref_factor = DMIN( m_target/(All.MaxMassForParticleSplit/3.) , 1.); // return this target mass or unity
-        return ref_factor;
-    }
-#endif
-
     return ref_factor;
 }
 

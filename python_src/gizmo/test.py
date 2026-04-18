@@ -146,6 +146,11 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     # results that get amplified by the divergence-cleaning feedback loop.
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
+    # Silence Kokkos "OMP_PROC_BIND not set" warnings.  `false` is the documented
+    # unit-testing value; for production runs on a managed cluster the launcher
+    # (e.g. ibrun on TACC) pins ranks to cpusets, so binding is already handled.
+    environ.setdefault("OMP_PROC_BIND", "false")
+    environ.setdefault("OMP_PLACES", "threads")
     paramsfile = f"{test_name}.params"
     bind_opts = "--bind-to none" if num_openmp_threads > 0 else ""
     system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus {bind_opts} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")

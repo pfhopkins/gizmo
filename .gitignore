@@ -3,6 +3,27 @@
 GIZMO_config.h
 compile_time_info.cc
 /Config.sh
+/Config.sh.*
+/Makefile.systype.*
+/compiler_test_stdout
+/compiler_test_stderr
+
+# Loose test/run artifacts in repo root (rsync'd-back snapshots, one-off logs)
+/TREECOOL
+/ewald_spc_table_*.dat
+/spcool_tables/
+/*_ics.hdf5
+/output/
+/run_*.log
+/makeout
+/makeerr
+/makelog
+/tstlog
+
+# compile_suite artifacts
+/compile_suite_errors/
+/compile_suite_output.log
+/compile_suite_results.txt
 
 # Test artifacts
 test/*/output/

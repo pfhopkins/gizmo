@@ -2359,7 +2359,8 @@ void read_parameter_file(char *fname)
 
                 snprintf(buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", fname, "-usedvalues");
                 snprintf(buf2, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "parameters-usedvalues");
-                snprintf(buf3, DEFAULT_PATH_BUFFERSIZE_TOUSE, "cp %s %s", buf1, buf2);
+                /* silence cp stderr when output dir does not yet exist; mkdir -p ensures the dest exists */
+                snprintf(buf3, DEFAULT_PATH_BUFFERSIZE_TOUSE, "mkdir -p %s 2>/dev/null; cp %s %s 2>/dev/null", All.OutputDir, buf1, buf2);
                 int ret; ret = system(buf3);
             }
         }
