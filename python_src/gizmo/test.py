@@ -35,7 +35,10 @@ def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
 
 def clean_test_outputs(test_name: str, extra_config_flags=()):
     """Remove this variant's output directory, plot PNGs, and log files from a previous test run.
-    Other variants' output directories (including the baseline plain "output") are left untouched."""
+    Other variants' output directories (including the baseline plain "output") are left untouched.
+    No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     test_dir = f"test/{test_name}"
     output_dir = variant_output_dir(test_name, extra_config_flags)
     if path.isdir(output_dir):
@@ -60,10 +63,29 @@ def default_mpi_ranks(max_ranks=None):
     return max(n, 1)
 
 
+_KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
+
+
+def _current_systype():
+    """Read active SYSTYPE from Makefile.systype (first uncommented SYSTYPE=... line)."""
+    try:
+        with open("Makefile.systype") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("SYSTYPE=") and not line.startswith("#"):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return ""
+
+
 def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
     """Sets environment variables and runs a script for building gizmo for a given test.
     If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building.
-    extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",))."""
+    extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",)).
+    On Kokkos systypes (MacBookCellar_Kokkos, Vista) auto-appends GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+    if absent, so the Kokkos neighbor-list code path is actually exercised (the non-flag legacy tree
+    walk is retained only for backward compat)."""
     system("rm -f GIZMO test/*/GIZMO")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
@@ -73,6 +95,17 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
         with open("Config.sh", "a") as f:
             for flag in extra_config_flags:
                 f.write(f"\n{flag}\n")
+    if _current_systype() in _KOKKOS_SYSTYPES:
+        with open("Config.sh") as f:
+            cfg = f.read()
+        needs_flag = not any(
+            line.strip().startswith("GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY")
+            and not line.strip().startswith("#")
+            for line in cfg.splitlines()
+        )
+        if needs_flag:
+            with open("Config.sh", "a") as f:
+                f.write("\nGIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY\n")
     system("make clean && make -j8")
     if not path.isfile("GIZMO"):
         raise FileNotFoundError("Did not successfully build GIZMO")
@@ -167,7 +200,13 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
-    output/ (if any) is temporarily stashed aside so it isn't overwritten by the variant run."""
+    output/ (if any) is temporarily stashed aside so it isn't overwritten by the variant run.
+
+    Set env var GIZMO_TEST_SKIP_BUILD_RUN=1 to reuse snapshots already present in
+    test/<name>/output/ — useful for validating a remote (e.g. Vista GPU) run against
+    the pytest assertions + plots without rebuilding/rerunning locally."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     stash_baseline_output(test_name, extra_config_flags)
