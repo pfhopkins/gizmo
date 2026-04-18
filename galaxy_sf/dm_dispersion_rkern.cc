@@ -7,6 +7,10 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/ghost_symlist_lifecycle.h"
+#endif
+#include "dm_dispersion_gpu.h"
 
 /*! \file dm_dispersion_rkern
  *  \brief smoothing length and velocity dispersion calculation for dark matter particles around gas particles
@@ -122,13 +126,60 @@ void disp_density(void)
     Right = (MyFloat *) mymalloc("Right", NumPart * sizeof(MyFloat));
     /* initialize anything we need to about the active particles before their loop */
     for (int i : ActiveParticleList) {if(disp_density_isactive(i)) {CellP[i].NumNgbDM = 0; Left[i] = Right[i] = 0;}}
-    
+
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* GPU neighbor-list path: prep DM ghosts once (ghost_exchange.cc's effective
+       hmax already includes KernelRadiusDM via Infra-3), then per-iteration
+       build a fresh cross-type CSR (gas→DM) and accumulate on GPU. */
+    /* Timing accounting locals that the code_block_xchange malloc header would
+       otherwise define at this scope (kept here so the post-loop CPU_Step
+       accumulators below work unchanged). */
+    double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
+    CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
+    double disp_ghost_safety = gizmo_ghost_safety_factor();
+    gizmo_density_prep_ghosts(disp_ghost_safety);
+#else
     /* allocate buffers to arrange communication */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+#endif
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+        /* Build per-iteration active list + radii, run GPU kernel, scatter back */
+        int nl_num_active = 0;
+        for (int ii : ActiveParticleList) {if(disp_density_isactive(ii)) nl_num_active++;}
+        int *nl_active = (int *) mymalloc("disp_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("disp_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
+        {int aa = 0; for (int ii : ActiveParticleList) {
+            if(disp_density_isactive(ii)) {
+                nl_active[aa] = ii;
+                nl_radii[aa] = CellP[ii].KernelRadiusDM;
+                aa++;
+            }
+        }}
+        /* Zero per-iteration accumulators (only for currently-active gas; inactive kept finalized) */
+        for(int aa = 0; aa < nl_num_active; aa++) {
+            int ii = nl_active[aa];
+            CellP[ii].NumNgbDM = 0; CellP[ii].DM_Vx = 0; CellP[ii].DM_Vy = 0; CellP[ii].DM_Vz = 0; CellP[ii].DM_VelDisp = 0;
+        }
+        /* Launch GPU kernel */
+        struct dispdens_gpu_out *nl_outs = (struct dispdens_gpu_out *) mymalloc("disp_nl_outs",
+            (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct dispdens_gpu_out));
+        disp_density_evaluate_gpu(P, NumPart, nl_active, nl_num_active, nl_radii, nl_outs);
+        /* Scatter results */
+        for(int aa = 0; aa < nl_num_active; aa++) {
+            int ii = nl_active[aa];
+            CellP[ii].NumNgbDM  = nl_outs[aa].Ngb;
+            CellP[ii].DM_Vx     = nl_outs[aa].DM_Vx;
+            CellP[ii].DM_Vy     = nl_outs[aa].DM_Vy;
+            CellP[ii].DM_Vz     = nl_outs[aa].DM_Vz;
+            CellP[ii].DM_VelDisp = nl_outs[aa].DM_Vel_Disp;
+        }
+        myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
+#else
         #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+#endif
 
         /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
@@ -216,12 +267,22 @@ void disp_density(void)
             iter++;
             if(iter > 0 && ThisTask == 0) {if(iter > 10) printf("DM disp: ngb iteration %d: need to repeat for %d%09d particles.\n", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
             if(iter > MAXITER) {printf("DM disp: failed to converge in neighbour iteration in disp_density()\n"); fflush(stdout); endrun(1155);}
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+            /* If KernelRadiusDM grew beyond the exchanged ghost hmax, re-exchange
+               so next iteration sees the full DM neighbor pool. */
+            gizmo_density_redo_ghosts_if_needed(disp_ghost_safety);
+#endif
         }
     }
     while(ntot > 0);
-    
+
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* Tear down ghosts imported at the top of the neighbor-list path */
+    if(NTask > 1) {ghost_exchange_cleanup();}
+#else
     /* iteration is done - de-malloc everything now */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+#endif
     myfree(Right); myfree(Left);
 
     /* mark as active again */

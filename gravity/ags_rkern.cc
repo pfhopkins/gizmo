@@ -3,10 +3,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <map>
+#include <vector>
 #include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/ghost_symlist_lifecycle.h"
+#endif
+#include "ags_density_gpu.h"
 
 /*! \file ags_rkern.c
  *  \brief kernel length determination for non-gas particles
@@ -260,12 +266,68 @@ void ags_density(void)
             P[i].wakeup = 0;
       }}
 
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* GPU neighbor-list path — bitmask partition + per-group cross-type CSR.
+       Same timing locals the code_block_xchange_perform_ops_malloc.h would define. */
+    double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
+    CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
+    double ags_ghost_safety = gizmo_ghost_safety_factor();
+    gizmo_density_prep_ghosts(ags_ghost_safety);
+#else
     /* allocate buffers to arrange communication */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+#endif
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+        /* Partition active AGS particles by their shared neighbor-type bitmask.
+           In typical cosmological use only one bitmask is active (e.g. DM→DM),
+           so this yields one group and one GPU kernel pass. */
+        std::map<int, std::vector<int>> bitmask_groups;
+        for (int ii : ActiveParticleList) {
+            if(ags_density_isactive(ii)) {
+                int bm = ags_gravity_kernel_shared_BITFLAG(P[ii].Type);
+                if(bm != 0) bitmask_groups[bm].push_back(ii);
+            }
+        }
+        /* Zero per-iteration accumulators for all AGS-active particles */
+        for(auto& kv : bitmask_groups) {
+            for(int ii : kv.second) {
+                P[ii].NumNgb = 0; P[ii].DrkernNgbFactor = 0; P[ii].AGS_zeta = 0;
+                P[ii].AGS_vsig = 0; P[ii].Particle_DivVel = 0;
+#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
+                for(int a=0;a<3;a++) for(int b=0;b<3;b++) P[ii].NV_T[a][b] = 0;
+#endif
+            }
+        }
+        /* Launch one GPU kernel per bitmask group */
+        for(auto& kv : bitmask_groups) {
+            int bm = kv.first;
+            std::vector<int>& ilist = kv.second;
+            int nl_num_active = (int)ilist.size();
+            int *nl_active = (int *) mymalloc("ags_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
+            double *nl_radii = (double *) mymalloc("ags_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
+            for(int a=0;a<nl_num_active;a++) {nl_active[a] = ilist[a]; nl_radii[a] = P[ilist[a]].AGS_KernelRadius;}
+            struct ags_density_gpu_out *nl_outs = (struct ags_density_gpu_out *) mymalloc(
+                "ags_nl_outs", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct ags_density_gpu_out));
+            ags_density_evaluate_gpu(P, CellP, NumPart, nl_active, nl_num_active, nl_radii, bm, nl_outs);
+            for(int a=0;a<nl_num_active;a++) {
+                int ii = nl_active[a];
+                P[ii].NumNgb          += nl_outs[a].Ngb;
+                P[ii].DrkernNgbFactor += nl_outs[a].DrkernNgb;
+                P[ii].AGS_zeta        += nl_outs[a].AGS_zeta;
+                if(nl_outs[a].AGS_vsig > P[ii].AGS_vsig) P[ii].AGS_vsig = nl_outs[a].AGS_vsig;
+                P[ii].Particle_DivVel += nl_outs[a].Particle_DivVel;
+#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
+                for(int u=0;u<3;u++) for(int v=0;v<3;v++) P[ii].NV_T[u][v] += nl_outs[a].NV_T[u][v];
+#endif
+            }
+            myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
+        }
+#else
         #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+#endif
 
       /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
@@ -510,12 +572,20 @@ void ags_density(void)
             iter++;
             if(iter > 10 && ThisTask == 0) {printf("AGS-ngb iteration %d: need to repeat for %d%09d particles.\n", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
             if(iter > MAXITER) {printf("ags-failed to converge in neighbour iteration in density()\n"); fflush(stdout); endrun(1155);}
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+            /* If AGS_KernelRadius grew beyond the exchanged ghost hmax, re-exchange */
+            gizmo_density_redo_ghosts_if_needed(ags_ghost_safety);
+#endif
         }
     }
     while(ntot > 0);
 
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    if(NTask > 1) {ghost_exchange_cleanup();}
+#else
     /* iteration is done - de-malloc everything now */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+#endif
     myfree(Right); myfree(Left);
     
     /* mark as active again */

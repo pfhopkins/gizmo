@@ -81,7 +81,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int search_mode, int type_bitmask,
                         gpu_neighbor_list_t *gnl,
                         gpu_spatial_index_t *cached_idx,
-                        double search_radius_factor)
+                        double search_radius_factor,
+                        const double *search_radii_host)
 {
     gnl->num_active = num_active;
 
@@ -109,6 +110,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
     memcpy(gnl->d_active, active_indices_host, num_active * sizeof(int));
 
+    /* Optional explicit per-active search radii (for loops with a different kernel
+       than P[i].KernelRadius, e.g. KernelRadiusDM or AGS_Hsml). NULL → use P[i].KernelRadius. */
+    double *d_radii = NULL;
+    if(search_radii_host) {
+        d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(double));
+        memcpy(d_radii, search_radii_host, num_active * sizeof(double));
+    }
+
     /* Allocate CSR offsets */
     gnl->offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
 
@@ -127,12 +136,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
 
         double sr_fac = search_radius_factor;
+        const double *radii = d_radii; /* NULL → fall back to P[i].KernelRadius */
         Kokkos::parallel_for("ngb_count", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
             double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
-            int cnt = search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius * sr_fac,
+            double h_i = (radii ? radii[aa] : P_shared[i].KernelRadius) * sr_fac;
+            int cnt = search_neighbors_sfc_gpu(P_shared, i, h_i,
                                                tiles, ntiles, pool, smode,
                                                bvh, bvh_root, NULL, pf, bs, bh);
             offsets[aa] = cnt;
@@ -169,18 +180,23 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double bh0 = gnl->box_halves[0], bh1 = gnl->box_halves[1], bh2 = gnl->box_halves[2];
 
         double sr_fac = search_radius_factor;
+        const double *radii = d_radii; /* NULL → fall back to P[i].KernelRadius */
         Kokkos::parallel_for("ngb_fill", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
             double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
-            search_neighbors_sfc_gpu(P_shared, i, P_shared[i].KernelRadius * sr_fac,
+            double h_i = (radii ? radii[aa] : P_shared[i].KernelRadius) * sr_fac;
+            search_neighbors_sfc_gpu(P_shared, i, h_i,
                                      tiles, ntiles, pool, smode,
                                      bvh, bvh_root, &neighbors[offsets[aa]],
                                      pf, bs, bh);
         });
         Kokkos::fence();
     }
+
+    /* Free the temporary radii mirror (if we allocated one) */
+    if(d_radii) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
 }
 
 
@@ -231,6 +247,41 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
 }
 
 
+/* Cross-type variant: i-side is the caller's active_indices (any type), j-side
+   is filtered by j_type_bitmask. Caller supplies per-active search radii (so
+   e.g. KernelRadiusDM or AGS_Hsml can be used instead of P[i].KernelRadius).
+   Returns a neighbor_list_t in the mymalloc format, same as the symmetric
+   variant — consumers look identical. */
+void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_total,
+                                        int *i_active_indices, int num_active,
+                                        const double *i_search_radii_host,
+                                        int j_type_bitmask, int search_mode,
+                                        neighbor_list_t *out)
+{
+    /* Copy P to SharedSpace for GPU kernel access */
+    struct particle_data *P_shared = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+    memcpy(P_shared, P_host, num_total * sizeof(struct particle_data));
+
+    /* Build GPU CSR with explicit per-i radii and j-side type filter */
+    gpu_neighbor_list_t gpu_nl;
+    gpu_ngb_list_build(P_shared, num_total, i_active_indices, num_active,
+                       search_mode, j_type_bitmask, &gpu_nl, NULL,
+                       1.0 /* search_radius_factor */, i_search_radii_host);
+
+    /* Copy CSR into mymalloc neighbor_list_t */
+    out->num_active = num_active;
+    out->total_pairs = gpu_nl.total_pairs;
+    out->offsets = (int *) mymalloc("ngb_offsets", (num_active + 1) * sizeof(int));
+    out->neighbors = (int *) mymalloc("ngb_neighbors", (gpu_nl.total_pairs > 0 ? gpu_nl.total_pairs : 1) * sizeof(int));
+    memcpy(out->offsets, gpu_nl.offsets, (num_active + 1) * sizeof(int));
+    memcpy(out->neighbors, gpu_nl.neighbors, gpu_nl.total_pairs * sizeof(int));
+
+    /* Free GPU temporaries */
+    gpu_ngb_list_free(&gpu_nl, NULL);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_shared);
+}
+
+
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
 GPU_ALL_SYNC_FUNC(ngb)
 
@@ -240,9 +291,10 @@ GPU_ALL_SYNC_FUNC(ngb)
 void gpu_spatial_index_build(struct particle_data *, int, int, gpu_spatial_index_t *) {}
 void gpu_spatial_index_free(gpu_spatial_index_t *) {}
 void gpu_ngb_list_build(struct particle_data *, int, int *, int, int, int,
-                        gpu_neighbor_list_t *, gpu_spatial_index_t *, double) {}
+                        gpu_neighbor_list_t *, gpu_spatial_index_t *, double, const double *) {}
 void gpu_ngb_list_free(gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
 void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *, double) {}
+void gpu_build_cross_type_neighbor_list(struct particle_data *, int, int *, int, const double *, int, int, neighbor_list_t *) {}
 void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

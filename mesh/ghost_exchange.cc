@@ -152,6 +152,24 @@ void ghost_exchange(double safety_factor)
     tile_meta_t *local_meta = (tile_meta_t *) malloc(local_ntiles * sizeof(tile_meta_t));
     int *tile_first = (int *) malloc(local_ntiles * sizeof(int)); /* index into pool[] */
 
+    /* Per-particle effective search radius: the largest kernel any enabled loop
+       will use when centred on this particle. Gas KernelRadius is always
+       included; additional fields are pulled in under their compile flags so
+       ghost bboxes cover the widest search any active kernel needs (e.g. DM
+       dispersion's KernelRadiusDM, adaptive-gravsoft's AGS_KernelRadius). */
+    auto effective_ghost_radius = [](int j) -> double {
+        double h = P[j].KernelRadius;
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+        if(P[j].Type == 0 && j < N_gas) {
+            if((double)CellP[j].KernelRadiusDM > h) h = CellP[j].KernelRadiusDM;
+        }
+#endif
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+        if((double)P[j].AGS_KernelRadius > h) h = P[j].AGS_KernelRadius;
+#endif
+        return h;
+    };
+
     for(int t = 0; t < local_ntiles; t++)
     {
         int start = t * tile_target;
@@ -163,7 +181,7 @@ void ghost_exchange(double safety_factor)
 
         int j0 = pool[start];
         for(k = 0; k < 3; k++) local_meta[t].lo[k] = local_meta[t].hi[k] = P[j0].Pos[k];
-        if(P[j0].KernelRadius > local_meta[t].hmax) local_meta[t].hmax = P[j0].KernelRadius;
+        {double h0 = effective_ghost_radius(j0); if(h0 > local_meta[t].hmax) local_meta[t].hmax = h0;}
 
         for(int s = 1; s < count; s++) {
             int j = pool[start + s];
@@ -171,7 +189,8 @@ void ghost_exchange(double safety_factor)
                 if(P[j].Pos[k] < local_meta[t].lo[k]) local_meta[t].lo[k] = P[j].Pos[k];
                 if(P[j].Pos[k] > local_meta[t].hi[k]) local_meta[t].hi[k] = P[j].Pos[k];
             }
-            if(P[j].KernelRadius > local_meta[t].hmax) local_meta[t].hmax = P[j].KernelRadius;
+            double hj = effective_ghost_radius(j);
+            if(hj > local_meta[t].hmax) local_meta[t].hmax = hj;
         }
     }
 
@@ -532,12 +551,24 @@ int ghost_exchange_needs_redo(void)
     double *current_hmax = (double *) malloc(ntiles * sizeof(double));
     memset(current_hmax, 0, ntiles * sizeof(double));
 
+    /* Must use the SAME effective radius as ghost_exchange() saved during its
+       tile build, otherwise growth in e.g. KernelRadiusDM or AGS_KernelRadius
+       would not trigger a re-exchange. Keep this in sync with ghost_exchange(). */
     int p = 0;
     for(i = 0; i < nlocal; i++) {
         if(P[i].Mass <= 0) continue;
         int t = p / tile_target;
         if(t >= ntiles) t = ntiles - 1;
-        if(P[i].KernelRadius > current_hmax[t]) current_hmax[t] = P[i].KernelRadius;
+        double hi = P[i].KernelRadius;
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+        if(P[i].Type == 0 && i < N_gas) {
+            if((double)CellP[i].KernelRadiusDM > hi) hi = CellP[i].KernelRadiusDM;
+        }
+#endif
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+        if((double)P[i].AGS_KernelRadius > hi) hi = P[i].AGS_KernelRadius;
+#endif
+        if(hi > current_hmax[t]) current_hmax[t] = hi;
         p++;
     }
 

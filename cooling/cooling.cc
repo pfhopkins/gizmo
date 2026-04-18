@@ -2494,6 +2494,12 @@ extern void gizmo_gpu_sync_all_difffilter(struct global_data_all_processes *);
 #ifdef GRAIN_FLUID
 extern void gizmo_gpu_sync_all_grain(struct global_data_all_processes *);
 #endif
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+extern void gizmo_gpu_sync_all_dispdensity(struct global_data_all_processes *);
+#endif
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+extern void gizmo_gpu_sync_all_agsdensity(struct global_data_all_processes *);
+#endif
 
 void gizmo_gpu_sync_all(void) {
     /* Get pointer to host All (undo the #define All All_dev redirect) */
@@ -2523,6 +2529,12 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef GRAIN_FLUID
     gizmo_gpu_sync_all_grain(host_all);
+#endif
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+    gizmo_gpu_sync_all_dispdensity(host_all);
+#endif
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+    gizmo_gpu_sync_all_agsdensity(host_all);
 #endif
 }
 

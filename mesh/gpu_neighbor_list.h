@@ -72,16 +72,34 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx);
    search_mode: NGB_SEARCH_ONEWAY or NGB_SEARCH_SYMMETRIC.
    type_bitmask: which particle types to include in the search pool.
    search_radius_factor: multiplier on KernelRadius for the search sphere
-     (default 1.0; set >1 for loops like TURB_DIFF_DYNAMIC that search wider). */
+     (default 1.0; set >1 for loops like TURB_DIFF_DYNAMIC that search wider).
+   search_radii_host: optional per-active-particle explicit search radii
+     (size num_active). NULL → use P[active[aa]].KernelRadius * search_radius_factor
+     (current behavior). Non-NULL → use search_radii_host[aa] * search_radius_factor
+     (for loops with a different per-particle kernel, e.g. KernelRadiusDM or
+     AGS_Hsml). */
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
                         gpu_neighbor_list_t *gnl,
                         gpu_spatial_index_t *cached_idx,
-                        double search_radius_factor = 1.0);
+                        double search_radius_factor = 1.0,
+                        const double *search_radii_host = NULL);
 
 /* Free CSR arrays + active indices. Does NOT free tiles/BVH/pool if they
    belong to the cached spatial index (use gpu_spatial_index_free for those). */
 void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx);
+
+/* Cross-type high-level wrapper: i-list is caller-supplied active indices of
+   any type(s); j-side is filtered by j_type_bitmask. Caller supplies explicit
+   per-active search radii (for loops whose kernel isn't P[i].KernelRadius —
+   e.g. KernelRadiusDM, AGS_Hsml). Returns a neighbor_list_t in the mymalloc
+   format used by the existing symlist API. */
+struct neighbor_list_t; /* forward decl from mesh/neighbor_list.h */
+void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_total,
+                                        int *i_active_indices, int num_active,
+                                        const double *i_search_radii_host,
+                                        int j_type_bitmask, int search_mode,
+                                        neighbor_list_t *out);
 
 #endif /* GPU_NEIGHBOR_LIST_H */
