@@ -27,7 +27,7 @@
 
 
 /* RT_STEP_DIAG: checksum function for bisecting RT divergence */
-#if defined(RT_INFRARED)
+#if defined(RT_INFRARED) && defined(COOLING)
 static int rt_step_diag_count = 0;
 static void rt_step_checksum(const char *label) {
     double sum_RadE = 0, sum_Trad = 0, sum_u = 0, sum_Tdust = 0, sum_ne = 0;

@@ -27,15 +27,17 @@
 #include "../declarations/gpu_dispatch_templates.h"
 GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
+/* Forward decls for symbols called by eos_functions.h / rt_functions.h under
+   various FIRE / COOL_MOLECFRAC / SINGLE_STAR flag combinations.  Must be declared
+   before the including headers so overload resolution inside their inline bodies
+   succeeds.  Bodies live in proto.h / predict_functions.h / this TU's body. */
+KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
+GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
 #include "../eos/eos_functions.h"
 #include "../eos/hydrogen_molecule_functions.h"
 #include "../core/timestep_functions.h"
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
-/* forward decls of evaluate_NH_from_GradRho (array + Vec3 overloads) — used inside
-   rt_functions.h's dust_dEdt() when COOLING && !RT_INFRARED.  Bodies live in
-   core/predict_functions.h and core/proto.h respectively; we only declare here. */
-GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
-GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
 #include "../radiation/rt_functions.h"
 #include "../core/proto.h"
 #include "./cooling.h"
