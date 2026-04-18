@@ -29,13 +29,9 @@
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/sfc_tiles_functions.h"
 
-/* GPU-safe isfinite/isnan */
-#ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x)==(double)(x)) && ((double)(x)-(double)(x)==0.0))
-#define isnan(x) ((double)(x) != (double)(x))
-#endif
+#include "../declarations/gpu_numeric_macros.h"
+#include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 
 
 #if defined(TURB_DIFF_DYNAMIC) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
@@ -53,6 +49,7 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
                              int num_total, int *active_indices_host, int num_active,
                              void *out_host_void)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(difffilter);
     struct DiffFilter_out *out_host = (struct DiffFilter_out *)out_host_void;
 
     /* Copy P and CellP to SharedSpace for GPU kernel access */
@@ -84,7 +81,7 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
         struct DiffFilter_out *kout = d_out;
         double TurbDynDiffFac = All.TurbDynamicDiffFac;
 
-        Kokkos::parallel_for("difffilter_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+        gizmo_gpu_kernel_launch("DiffFilter", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
 
             /* Load searching particle data (particle2in equivalent) */
@@ -172,14 +169,7 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
             kout[aa].FilterWidth_bar = out_FilterWidth_bar;
             kout[aa].MaxDistance_for_grad = out_MaxDistance_for_grad;
         });
-        Kokkos::fence();
     }
-
-#if defined(__CUDACC__)
-    {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] DiffFilter error N=%d: %s\n", num_active, cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-    {hipError_t _he = hipGetLastError(); if(_he != hipSuccess) {printf("[GPU] DiffFilter error N=%d: %s\n", num_active, hipGetErrorString(_he)); fflush(stdout);}}
-#endif
 
     /* Copy results back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct DiffFilter_out));
@@ -242,6 +232,7 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
                               void *in_host_void, void *out0_host_void, void *out_iter_host_void,
                               int dynamic_iteration)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(difffilter);
     struct DynDiff_gpu_in *in_host = (struct DynDiff_gpu_in *)in_host_void;
     struct DynDiff_gpu_out0 *out0_host = (struct DynDiff_gpu_out0 *)out0_host_void;
     struct DynDiff_gpu_out_iter *out_iter_host = (struct DynDiff_gpu_out_iter *)out_iter_host_void;
@@ -287,7 +278,7 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
         double TurbDynDiffFac = All.TurbDynamicDiffFac;
         double TurbDynDiffSmoothing = All.TurbDynamicDiffSmoothing;
 
-        Kokkos::parallel_for("dynamicdiff_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+        gizmo_gpu_kernel_launch("DynamicDiff", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
             struct DynDiff_gpu_in local = kin[aa];
 
@@ -390,14 +381,7 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
                 }
             } /* end neighbor loop */
         });
-        Kokkos::fence();
     }
-
-#if defined(__CUDACC__)
-    {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] DynamicDiff error N=%d: %s\n", num_active, cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-    {hipError_t _he = hipGetLastError(); if(_he != hipSuccess) {printf("[GPU] DynamicDiff error N=%d: %s\n", num_active, hipGetErrorString(_he)); fflush(stdout);}}
-#endif
 
     /* Copy results back to host */
     memcpy(out0_host, d_out0, num_active * sizeof(struct DynDiff_gpu_out0));

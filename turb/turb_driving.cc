@@ -18,6 +18,8 @@
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #include "../core/proto.h"
 
 /* This file contains the routines for driven turbulence/stirring; use for things
@@ -373,6 +375,7 @@ void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* routine to actually calculate the turbulent acceleration 'driving field' force on every resolution element */
 void add_turb_accel()
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(turb);
     set_turb_ampl();
     double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
 
@@ -409,15 +412,9 @@ void add_turb_accel()
             struct gas_cell_data *kc = compact_Cell;
             const double *km = gpu_mode, *ka = gpu_aka, *kb = gpu_akb, *kamp = gpu_ampl;
             int nm = StNModes; double fs = fac_sol;
-            Kokkos::parallel_for("turb_accel_loop", N_active, KOKKOS_LAMBDA(int j) {
+            gizmo_gpu_kernel_launch("turb_accel", N_active, KOKKOS_LAMBDA(int j) {
                 add_turb_accel_for_particle(j, kp, kc, km, ka, kb, kamp, nm, fs);
             });
-            Kokkos::fence();
-#if defined(__CUDACC__)
-            {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] turb_accel error N=%d: %s\n", N_active, cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-            {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] turb_accel error N=%d: %s\n", N_active, hipGetErrorString(_ce)); fflush(stdout);}}
-#endif
         }
 
         /* Scatter back */

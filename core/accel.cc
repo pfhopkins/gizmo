@@ -7,15 +7,6 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-#include "../mesh/neighbor_list.h"
-#include "../mesh/sfc_tiles.h"
-#if defined(OPENMP_GPU_OFFLOAD)
-extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
-    int *active_indices, int num_active, neighbor_list_t *out,
-    double search_radius_factor = 1.0);
-#endif
-#endif
 
 /*! \file accel.c
  *  \brief driver routines to carry out force computation
@@ -66,29 +57,9 @@ void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
     {
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        double t_bench_ghost = 0, t_bench_symlist = 0, t_bench_drift = 0, t_bench_ghost_redo = 0;
-        /* Ghost exchange safety factor: inflate when TURB_DIFF_DYNAMIC needs wider search */
-        double ghost_safety = 1.0;
-#ifdef TURB_DIFF_DYNAMIC
-        ghost_safety = DMAX(ghost_safety, All.TurbDynamicDiffFac);
-#endif
-        {double t0 = my_second();
-        /* Drift ALL particles to current time before any neighbor operations.
-           This eliminates lazy drifting during the tree walk — required for
-           GPU neighbor finding (no critical sections) and for halo exchange
-           (halo particles must be at current positions before exchange). */
-        move_particles(All.Ti_Current);
-        t_bench_drift = timediff(t0, my_second());
-        /* Ghost exchange: import boundary particles from neighboring MPI ranks.
-           Use safety_factor > 1 on first timestep (restartflag=0) since initial h values
-           are guesses that may grow significantly during density iteration. */
-        double t_ghost0 = my_second();
-        ghost_exchange(ghost_safety);
-        t_bench_ghost = timediff(t_ghost0, my_second());}
-#endif
-
         PRINT_STATUS("Start hydrodynamics computation...");
+        /* density() internally handles ghost_exchange prep + redo (neighbor-list path)
+           via the ghost_symlist_lifecycle helpers. Same for gradients and hydro_force. */
         double t_bench_density_start = my_second();
         density();		/* computes density, and pressure */
         double t_bench_density_only = timediff(t_bench_density_start, my_second());
@@ -99,32 +70,6 @@ void compute_hydro_densities_and_forces(void)
         force_update_hmax();	/* update kernel lengths in tree */
         double t_bench_hmax = timediff(t_hmax_start, my_second());
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
-
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Check if h grew beyond the ghost pool during density iteration.
-           If so, re-exchange with converged hmax to ensure complete ghost pool.
-           The tree walk result (P[i].NumNgb) is independent of ghosts, so no
-           need to re-run density — just need correct ghosts for the cell-list
-           (and later GPU dispatch). */
-        if(ghost_exchange_needs_redo()) {
-            double t_redo0 = my_second();
-            ghost_exchange_cleanup();
-            ghost_exchange(ghost_safety);
-            t_bench_ghost_redo = timediff(t_redo0, my_second());
-        }
-#endif
-
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Allocate active index array (persists through all CSR builds this step) */
-        double sym_search_fac = 1.0;
-#ifdef TURB_DIFF_DYNAMIC
-        sym_search_fac = DMAX(sym_search_fac, All.TurbDynamicDiffFac);
-#endif
-        gizmo_sym_num_active = 0;
-        for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
-        gizmo_sym_active_indices = (int *) mymalloc("sym_active", (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
-        {int aa = 0; for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
-#endif
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
@@ -142,31 +87,6 @@ void compute_hydro_densities_and_forces(void)
 #endif
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
         compute_stellar_feedback();
-#endif
-
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Ghost refresh before gradients: the density pass updated local CellP (Density,
-           KernelRadius, Pressure, etc.) but ghost copies still have pre-density values.
-           Re-exchange to get converged density and h from the home rank. Then build the
-           symmetric CSR neighbor list with correct max(h_i, h_j) for all pairs.
-           The CSR MUST be built AFTER this refresh — ghost h_j values change during
-           density iteration and the symmetric search radius depends on them. */
-        if(NTask > 1) {
-            double t_ghostrefresh0 = my_second();
-            ghost_exchange_cleanup();
-            ghost_exchange(ghost_safety);
-            if(ThisTask == 0) {PRINT_STATUS("Ghost refresh before gradients (%.4f s)", timediff(t_ghostrefresh0, my_second()));}
-        }
-        {
-            double t_sym_start = my_second();
-#if defined(OPENMP_GPU_OFFLOAD)
-            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, sym_search_fac);
-#else
-            build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
-#endif
-            if(ThisTask == 0) {PRINT_STATUS("Symmetric neighbor list: %d active, %d pairs (%.4f s)",
-                                            gizmo_sym_num_active, gizmo_sym_neighbor_list.total_pairs, timediff(t_sym_start, my_second()));}
-        }
 #endif
 
         double t_bench_grad_start = my_second();
@@ -192,27 +112,6 @@ void compute_hydro_densities_and_forces(void)
         double t_bench_grad = timediff(t_bench_grad_start, my_second());
         PRINT_STATUS(" ..gradient computation done.");
 
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Refresh ghost CellP after gradient computation. The gradient pass updated
-           CellP.Gradients for local particles, but ghost copies still have pre-gradient
-           values. The hydro pass needs fresh gradients from BOTH sides of each pair
-           for second-order Riemann reconstruction. Rebuild the CSR since ghost h_j
-           hasn't changed (gradients don't modify h) but ghost indices may shift. */
-        if(NTask > 1) {
-            double t_ghostrefresh0 = my_second();
-            free_neighbor_list(&gizmo_sym_neighbor_list);
-            ghost_exchange_cleanup();
-            ghost_exchange(ghost_safety);
-#if defined(OPENMP_GPU_OFFLOAD)
-            gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, sym_search_fac);
-#else
-            build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
-#endif
-            if(ThisTask == 0) {PRINT_STATUS("Ghost refresh + CSR rebuild after gradients: %d pairs (%.4f s)",
-                                            gizmo_sym_neighbor_list.total_pairs, timediff(t_ghostrefresh0, my_second()));}
-        }
-#endif
-
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
         special_rt_feedback_injection(); /* do before proper hydro loop */
 #endif
@@ -223,28 +122,15 @@ void compute_hydro_densities_and_forces(void)
         double t_bench_hydro_start = my_second();
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-#ifndef TRANSPORT_SUBCYCLE
-        /* Free symmetric neighbor list and remove ghost particles — no longer needed after hydro_force.
-           When TRANSPORT_SUBCYCLE is enabled, keep BOTH the symlist AND ghost particles alive
-           for RT subcycle steps (the symlist references ghost particle indices, so ghosts
-           must persist as long as the symlist is in use). Both are cleaned up via
-           gizmo_sym_neighbor_list_free + ghost_exchange_cleanup after transport subcycling in run.cc. */
-        gizmo_sym_neighbor_list_free();
-        ghost_exchange_cleanup();
-#endif
-#endif
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-        /* Feed GPU-path timing into CPU_Step accumulators for cpu.txt output.
-           Repurpose existing slots: DENSCOMPUTE=density, DENSCOMM=ghost, DENSWAIT=gradients,
-           HYDCOMPUTE=hydro, HYDCOMM=symlist. HYDMISC+DENSMISC = misc remainder. */
+        /* Feed GPU-path kernel timings into CPU_Step accumulators for cpu.txt output.
+           drift+ghost+redo feeds are done inside density()/gradients()/hydro_force() via
+           the ghost_symlist_lifecycle helpers. */
         CPU_Step[CPU_DENSCOMPUTE] += t_bench_density_only;
-        CPU_Step[CPU_DENSCOMM] += t_bench_ghost + t_bench_ghost_redo;
         CPU_Step[CPU_DENSWAIT] += t_bench_grad;
         CPU_Step[CPU_HYDCOMPUTE] += t_bench_hydro;
         CPU_Step[CPU_TREEHMAXUPDATE] += t_bench_hmax;
-        CPU_Step[CPU_DENSMISC] += t_bench_drift;
 #endif
         PRINT_STATUS(" ..hydro force computation done.");
 

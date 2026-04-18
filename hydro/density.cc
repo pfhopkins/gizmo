@@ -12,6 +12,7 @@
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #endif
+#include "../mesh/ghost_symlist_lifecycle.h"
 #ifdef OPENMP_GPU_OFFLOAD
 extern void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int, int *, int);
 extern void density_gpu_session_begin(struct particle_data *, struct gas_cell_data *, int);
@@ -270,6 +271,10 @@ void density(void)
 {
     /* initialize variables used below, in particlar the structures we need to call throughout the iteration */
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second(); MyFloat *Left, *Right; double fac, fac_lim, desnumngb, desnumngbdev; long long ntot;
+    /* Neighbor-list path: drift all particles to current time and import ghost particles before
+       any neighbour ops. Helpers are no-ops on the tree-walk build and on NTask==1. */
+    double gsl_safety = gizmo_ghost_safety_factor();
+    gizmo_density_prep_ghosts(gsl_safety);
     double t_density_kernel_total = 0, t_density_hiter_total = 0; int density_iter_count = 0;
     int i, npleft, iter=0, redo_particle, particle_set_to_minrkern_flag = 0, particle_set_to_maxrkern_flag = 0;
     Left = (MyFloat *) mymalloc("Left", NumPart * sizeof(MyFloat));
@@ -931,6 +936,9 @@ void density(void)
     if(ThisTask == 0) {
         PRINT_STATUS("  density computation done (%.4f s, %d iterations)", timeall, density_iter_count);
     }
+    /* Neighbor-list path: if h grew past the ghost pool during iteration, re-exchange with
+       converged hmax so any downstream neighbor op has a complete ghost set. */
+    gizmo_density_redo_ghosts_if_needed(gsl_safety);
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 

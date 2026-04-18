@@ -22,21 +22,20 @@
    function DEFINITIONS (rt_functions.h with KOKKOS_INLINE_FUNCTION bodies)
    BEFORE proto.h.  rt_functions.h and its dependencies (eos_functions.h)
    need a few forward declarations that normally come from proto.h/cooling.h. */
-/* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
- * return 0 on device (making every value appear non-finite).  Override with
- * pure-arithmetic macros BEFORE any _functions.h headers that use them. */
-#ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
-#define isnan(x) ((double)(x) != (double)(x))
-#endif
+#include "../declarations/gpu_numeric_macros.h"
+#include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 #include "../eos/eos_functions.h"
 #include "../eos/hydrogen_molecule_functions.h"
 #include "../core/timestep_functions.h"
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
+/* forward decls of evaluate_NH_from_GradRho (array + Vec3 overloads) — used inside
+   rt_functions.h's dust_dEdt() when COOLING && !RT_INFRARED.  Bodies live in
+   core/predict_functions.h and core/proto.h respectively; we only declare here. */
+GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
+GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
 #include "../radiation/rt_functions.h"
 #include "../core/proto.h"
 #include "./cooling.h"
@@ -138,6 +137,7 @@ double chimes_convert_u_to_temp(double u, double rho, int target, struct particl
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
+    GIZMO_GPU_ENSURE_ALL_FRESH(cooling); /* local re-sync of All_dev — cheap insurance against stale mid-step reads */
     /* Step 1: Determine indices of active gas particles eligible for cooling. */
     std::vector<int> cool_indices;
     cool_indices.reserve(ActiveParticleList.size());
@@ -170,7 +170,6 @@ void cooling_parent_routine(void)
 #if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_COOL_BATCH_SIZE = 32768;
-    /* All sync handled by gizmo_gpu_sync_all() called from begrun/run */
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
     struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
@@ -200,15 +199,9 @@ void cooling_parent_routine(void)
         {
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
-            Kokkos::parallel_for("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
+            gizmo_gpu_kernel_launch("cooling_loop", batch_n, KOKKOS_LAMBDA(int j) {
                 do_the_cooling_for_particle(j, kp, kc);
-            });
-            Kokkos::fence();
-#if defined(__CUDACC__)
-            {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] error batch [%d..%d] N=%d: %s\n", batch_start, batch_start+batch_n-1, batch_n, cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-            {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] error batch [%d..%d] N=%d: %s\n", batch_start, batch_start+batch_n-1, batch_n, hipGetErrorString(_ce)); fflush(stdout);}}
-#endif
+            }, batch_start);
         }
 
         /* GPU_RT_DIAG: compare GPU output with CPU re-run on same inputs.
@@ -569,8 +562,10 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     u = u_upper = u_lower =  u_old; /* initialize values */
     #define ROOTFIND_FUNCTION(du) du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt // control the *relative* error on the *change* in u
     double du_net = ROOTFIND_FUNCTION(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
+#ifdef GIZMO_DEBUG_RT_COOLING
     if(pp[target].ID == 1 || pp[target].ID == 100 || pp[target].ID == 1000) {printf("[DOCOOL_INIT] ID=%llu u_old=%.10e rho=%.10e dt=%.10e ne=%.10e du_net=%.10e Tdust=%.10e Trad=%.10e RadE_IR=%.10e\n",
         (unsigned long long)pp[target].ID, u_old, rho, dt, ne_guess, du_net, cell[target].Dust_Temperature, cell[target].Radiation_Temperature, cell[target].Rad_E_gamma[RT_FREQ_BIN_INFRARED]);}
+#endif
 
     /* bracketing */
     double u_step_fac = 1.1;

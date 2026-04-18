@@ -29,6 +29,18 @@
 static __managed__ struct global_data_all_processes All_dev;
 #define All All_dev
 
+/* Helper: return a pointer to the host-side All (bypassing the #define All All_dev
+   redirect in this TU).  Uses push_macro/pop_macro to locally undo the redirect so
+   the extern declaration resolves to the real global symbol, then restores it. */
+static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
+#pragma push_macro("All")
+#undef All
+    extern struct global_data_all_processes All;
+    struct global_data_all_processes *p = &All;
+#pragma pop_macro("All")
+    return p;
+}
+
 /* Macro to generate the per-TU sync function that copies host All -> All_dev.
    gizmo_gpu_sync_all() in cooling.cc calls each TU's sync function.
    Usage: place GPU_ALL_SYNC_FUNC(cooling) at file scope in each GPU TU. */
@@ -37,6 +49,18 @@ static __managed__ struct global_data_all_processes All_dev;
         All_dev = *host_all; \
     }
 
+/* Freshness guard for the top of a GPU dispatch function.  Ensures this TU's
+   All_dev mirror matches host All right now (idempotent; trivial cost — a single
+   struct copy).  Use this instead of assuming gizmo_gpu_sync_all() at the top of
+   the timestep covers all mid-step All.* mutations; the guard makes the
+   invariant local and self-enforcing.
+   The extern declaration at block scope lets the guard appear above the TU's
+   GPU_ALL_SYNC_FUNC(name) definition (which lives at end of file). */
+#define GIZMO_GPU_ENSURE_ALL_FRESH(name) do { \
+    extern void gizmo_gpu_sync_all_##name(struct global_data_all_processes *); \
+    gizmo_gpu_sync_all_##name(gizmo_gpu_host_all_ptr()); \
+} while(0)
+
 #elif defined(OPENMP_GPU_OFFLOAD)
 
 /* Kokkos OpenMP backend — All is the regular extern from allvars.h.
@@ -44,10 +68,14 @@ static __managed__ struct global_data_all_processes All_dev;
 #define GPU_ALL_SYNC_FUNC(name) \
     void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
 
+/* Freshness guard — no-op on host Kokkos backend (All is already live). */
+#define GIZMO_GPU_ENSURE_ALL_FRESH(name) ((void)0)
+
 #else
 
 /* No GPU offload at all — no-op. */
 #define GPU_ALL_SYNC_FUNC(name)
+#define GIZMO_GPU_ENSURE_ALL_FRESH(name) ((void)0)
 
 #endif
 

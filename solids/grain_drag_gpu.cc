@@ -40,13 +40,9 @@ extern struct cooling_tables_t CoolTables;
 #include "../cooling/cooling_functions.h"
 #endif
 
-/* GPU-safe isfinite/isnan */
-#ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x)==(double)(x)) && ((double)(x)-(double)(x)==0.0))
-#define isnan(x) ((double)(x) != (double)(x))
-#endif
+#include "../declarations/gpu_numeric_macros.h"
+#include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 
 
 #if defined(GRAIN_FLUID) && defined(OPENMP_GPU_OFFLOAD)
@@ -238,6 +234,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                              int *active_indices, int num_active)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(grain);
     struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct gas_cell_data));
     memset(compact_Cell, 0, num_active * sizeof(struct gas_cell_data));
@@ -255,17 +252,10 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     {
         struct particle_data *kp = compact_P;
         struct gas_cell_data *kc = compact_Cell;
-        Kokkos::parallel_for("grain_drag_loop", num_active, KOKKOS_LAMBDA(int j) {
+        gizmo_gpu_kernel_launch("grain_drag", num_active, KOKKOS_LAMBDA(int j) {
             grain_drag_kernel(j, kp, kc);
         });
-        Kokkos::fence();
     }
-
-#if defined(__CUDACC__)
-    {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] grain_drag error N=%d: %s\n", num_active, cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-    {hipError_t _he = hipGetLastError(); if(_he != hipSuccess) {printf("[GPU] grain_drag error N=%d: %s\n", num_active, hipGetErrorString(_he)); fflush(stdout);}}
-#endif
 
     /* Scatter back only the fields that the kernel modifies */
     for(int j = 0; j < num_active; j++) {

@@ -17,6 +17,7 @@
 extern void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                   int, int *, int, int *, int *, int, void *, int);
 #endif
+#include "../mesh/ghost_symlist_lifecycle.h"
 
 
 
@@ -568,6 +569,10 @@ void construct_gradient(Vec3<MyDouble>& grad, int i)
 void hydro_gradient_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time(); double t0 = my_second();
+    /* Neighbor-list path: allocate active-index array, refresh ghosts, build symmetric CSR.
+       The CSR is reused by hydro_force. Helper is a no-op on the tree-walk build. */
+    double gsl_safety = gizmo_ghost_safety_factor();
+    gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
     int i, j, k, k1, ndone, ndone_flag, recvTask, place, save_NextParticle;
     double timeall = 0, timecomp1 = 0, timecomp2 = 0, timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0;
     double timecomp, timecomm, timewait, tstart, tend, t1;
@@ -1455,6 +1460,9 @@ void hydro_gradient_calc(void)
     CPU_Step[CPU_DENSCOMM] += timecomm;
     CPU_Step[CPU_DENSMISC] += timeall - (timecomp + timewait + timecomm);
 #endif
+    /* Neighbor-list path: refresh ghosts so hydro_force sees converged gradients on both
+       sides of each pair, and rebuild the symmetric CSR. No-op on tree-walk build. */
+    gizmo_gradients_refresh_symlist(gsl_safety, gsl_safety);
 }
 
 

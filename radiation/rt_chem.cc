@@ -18,15 +18,9 @@
 /* Timestep functions — single source in timestep_functions.h */
 #include "../core/timestep_functions.h"
 
-/* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
- * return 0 on device (making every value appear non-finite).  Override with
- * arithmetic equivalents that compile to PTX intrinsics on device. */
-#ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x)==(double)(x)) && ((double)(x)-(double)(x)==0.0))
-#define isnan(x) ((double)(x) != (double)(x))
-#endif
+#include "../declarations/gpu_numeric_macros.h"
+#include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 
 
 #ifdef RT_CHEM_PHOTOION
@@ -298,6 +292,7 @@ void rt_get_sigma(void)
  * CPU path uses compact arrays with OpenMP. */
 void rt_update_chemistry(void)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(rt_chem);
     /* Build index of active gas particles */
     int N_active = 0;
     for(int i : ActiveParticleList) {if(P[i].Type == 0) N_active++;}
@@ -321,15 +316,9 @@ void rt_update_chemistry(void)
         {
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
-            Kokkos::parallel_for("rt_chem_loop", batch_n, KOKKOS_LAMBDA(int j) {
+            gizmo_gpu_kernel_launch("rt_chem_loop", batch_n, KOKKOS_LAMBDA(int j) {
                 rt_update_chemistry_for_particle(j, kp, kc);
             });
-            Kokkos::fence();
-#if defined(__CUDACC__)
-            {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] rt_chem error N=%d: %s\n", batch_n, cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-            {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] rt_chem error N=%d: %s\n", batch_n, hipGetErrorString(_ce)); fflush(stdout);}}
-#endif
         }
 
         /* Scatter batch back */

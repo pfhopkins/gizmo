@@ -18,13 +18,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 
-/* GPU-safe isfinite/isnan overrides (see cooling.cc for explanation) */
-#ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
-#define isnan(x) ((double)(x) != (double)(x))
-#endif
+#include "../declarations/gpu_numeric_macros.h"
 
 /*! Routines for gas equation-of-state terms (collects things like calculation of gas pressure)
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.

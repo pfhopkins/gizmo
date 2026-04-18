@@ -839,9 +839,8 @@ void init(void)
 
 
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    if(NTask > 1) {move_particles(All.Ti_Current); ghost_exchange(1.0);}
-#endif
+    /* density() handles its own ghost prep/redo internally via ghost_symlist_lifecycle.
+       Here we only need the post-density cleanup since no gradients/hydro follow. */
     density();
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     if(NTask > 1) {ghost_exchange_cleanup();}
@@ -1200,9 +1199,8 @@ void setup_smoothinglengths(void)
     if(RestartFlag==0 || RestartFlag==2) {for(i=0;i<NumPart;i++) {P[i].KernelRadius *= pow(2.,1./NUMDIMS);}} /* very rough correction assuming comparable numbers of dust and gas elements */
 #endif
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    if(NTask > 1) {move_particles(All.Ti_Current); ghost_exchange(1.0);}
-#endif
+    /* density() handles its own ghost prep/redo internally via ghost_symlist_lifecycle.
+       Here we only need the post-density cleanup since no gradients/hydro follow. */
     density();
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     if(NTask > 1) {ghost_exchange_cleanup();}

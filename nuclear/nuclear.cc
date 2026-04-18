@@ -29,12 +29,10 @@
 #include "../core/timestep_functions.h"
 #include "nuclear.h"
 
-/* GPU-safe isfinite/isnan overrides */
+#include "../declarations/gpu_numeric_macros.h"
+#include "../declarations/gpu_dispatch_templates.h"
+
 #ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
-#define isnan(x) ((double)(x) != (double)(x))
 /* Include nuclear_physics.cc directly so nvcc compiles it in the same TU.
    Without -rdc, cross-TU device function calls cause 'unresolved extern' at
    PTX assembly.  On CPU builds, nuclear_physics.o is compiled separately. */
@@ -188,6 +186,7 @@ KOKKOS_FUNCTION void nuclear_fixup_mass_fractions(int j, struct particle_data *p
 void nuclear_parent_routine(void)
 {
     PRINT_STATUS("Nuclear burning update");
+    GIZMO_GPU_ENSURE_ALL_FRESH(nuclear);
 
     /* Step 1: determine active gas particles eligible for burning */
     std::vector<int> burn_indices;
@@ -225,15 +224,14 @@ void nuclear_parent_routine(void)
         {
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
-            Kokkos::parallel_for("nuclear_burn", batch_n, KOKKOS_LAMBDA(int j) {
+            gizmo_gpu_kernel_launch("nuclear_burn", batch_n, KOKKOS_LAMBDA(int j) {
                 if (kp[j].Type != 0 || kc[j].Mass <= 0) return;
                 struct nuclear_input  in  = pack_nuclear_input(j, kp, kc);
                 if (in.dt <= 0) return;
                 struct nuclear_output out;
                 int ierr = CallNuclearNetwork(&in, &out);
                 if (ierr == 0) { unpack_nuclear_output(j, &out, kp, kc); }
-            });
-            Kokkos::fence();
+            }, batch_start);
         }
 
         /* Scatter */

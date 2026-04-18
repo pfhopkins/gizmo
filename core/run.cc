@@ -438,8 +438,11 @@ void calculate_non_standard_physics(void)
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-    gizmo_sym_neighbor_list_free(); /* free the symmetric neighbor list kept alive for subcycle steps */
-    ghost_exchange_cleanup(); /* remove ghost particles deferred from accel.cc — must happen after symlist is freed */
+    /* TRANSPORT_SUBCYCLE path: symlist + ghosts were kept alive past hydro_force
+       (gizmo_hydro_cleanup_symlist_and_ghosts() skipped itself under this flag).
+       Free them now that the RT subcycle loop is done. */
+    gizmo_sym_neighbor_list_free();
+    ghost_exchange_cleanup();
 #endif
     /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
        the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second

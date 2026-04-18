@@ -41,16 +41,9 @@
 #include "gradient_functions.h"
 #include "hydro_structs.h"
 #include "../system/eigen_symmetric.h"
-/* GPU-safe isfinite/isnan: glibc versions are host-only; nvcc stubs them to
- * return 0 on device.  reimann.h uses isnan() extensively for Riemann solver
- * fallback logic — without this override, NaN pressures are never detected
- * and garbage values propagate through the hydro fluxes. */
-#ifdef GIZMO_GPU_COMPILER
-#undef isfinite
-#undef isnan
-#define isfinite(x) (((double)(x) == (double)(x)) && ((double)(x) - (double)(x) == 0.0))
-#define isnan(x) ((double)(x) != (double)(x))
-#endif
+#include "../declarations/gpu_numeric_macros.h"
+#include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #ifndef HYDRO_SPH
 #include "reimann.h"
 #endif
@@ -146,6 +139,7 @@ void density_gpu_session_end(void)
 void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                           int num_total, int *active_indices_host, int num_active)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(density);
     double t_dens_gpu_start = my_second(), t_dens_gpu_phase;
     struct particle_data *P_gpu;
     struct gas_cell_data *CellP_gpu;
@@ -260,7 +254,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         struct particle_data *kp = P_gpu;
         struct gas_cell_data *kc = CellP_gpu;
 
-        Kokkos::parallel_for("density_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+        gizmo_gpu_kernel_launch("density_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
 
             /* When reusing cached CSR, map particle index to its row in the original CSR */
@@ -363,14 +357,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 #endif
             }
 #endif
-        }); /* end KOKKOS_LAMBDA */
-        Kokkos::fence();
-
-#if defined(__CUDACC__)
-        {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] density kernel error: %s\n", cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-        {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] density kernel error: %s\n", hipGetErrorString(_ce)); fflush(stdout);}}
-#endif
+        }); /* end gizmo_gpu_kernel_launch */
     }
 
     if(reuse_csr) {
@@ -421,6 +408,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
                            int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
                            void *out_host_void, int gradient_iteration)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(density);
     struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
 
     /* Allocate SharedSpace copies */
@@ -452,7 +440,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
         struct GasGraddata_out_ *kout = d_out;
         int grad_iter = gradient_iteration;
 
-        Kokkos::parallel_for("gradient_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+        gizmo_gpu_kernel_launch("gradient_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
 
             /* particle2in equivalent: load searching particle data */
@@ -553,14 +541,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
 
             /* Store output for this particle */
             kout[aa] = out;
-        }); /* end KOKKOS_LAMBDA */
-        Kokkos::fence();
-
-#if defined(__CUDACC__)
-        {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] gradient kernel error: %s\n", cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-        {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] gradient kernel error: %s\n", hipGetErrorString(_ce)); fflush(stdout);}}
-#endif
+        }); /* end gizmo_gpu_kernel_launch */
     }
 
     /* Copy output back to host */
@@ -585,6 +566,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                         int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
                         void *out_host_void)
 {
+    GIZMO_GPU_ENSURE_ALL_FRESH(density);
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
 
     /* Allocate SharedSpace copies */
@@ -625,7 +607,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         int *kTimeBinActive = d_TimeBinActive;
         int *kNeedWakeup = d_NeedToWakeup;
 
-        Kokkos::parallel_for("hydro_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+        gizmo_gpu_kernel_launch("hydro_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
 
             /* particle2in equivalent: load searching particle data */
@@ -801,14 +783,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
             /* Store output for this particle */
             kout[aa] = out;
-        }); /* end KOKKOS_LAMBDA */
-        Kokkos::fence();
-
-#if defined(__CUDACC__)
-        {cudaError_t _ce = cudaGetLastError(); if(_ce != cudaSuccess) {printf("[GPU] hydro kernel error: %s\n", cudaGetErrorString(_ce)); fflush(stdout);}}
-#elif defined(__HIPCC__)
-        {hipError_t _ce = hipGetLastError(); if(_ce != hipSuccess) {printf("[GPU] hydro kernel error: %s\n", hipGetErrorString(_ce)); fflush(stdout);}}
-#endif
+        }); /* end gizmo_gpu_kernel_launch */
     }
 
     /* Copy output back to host */

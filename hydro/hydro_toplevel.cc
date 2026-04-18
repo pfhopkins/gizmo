@@ -14,6 +14,7 @@
 extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                int, int *, int, int *, int *, int, void *);
 #endif
+#include "../mesh/ghost_symlist_lifecycle.h"
 
 /*! \file hydro_toplevel.c
  *  \brief This contains the "primary" hydro loop, where the hydro fluxes are computed.
@@ -895,5 +896,8 @@ void hydro_force(void)
     CPU_Step[CPU_HYDCOMPUTE] += timecomp; CPU_Step[CPU_HYDWAIT] += timewait; CPU_Step[CPU_HYDCOMM] += timecomm;
     CPU_Step[CPU_HYDMISC] += timeall - (timecomp + timewait + timecomm);
 #endif
+    /* Neighbor-list path: free symlist + remove ghosts (skipped under TRANSPORT_SUBCYCLE;
+       those are cleaned up after the subcycle loop in run.cc). No-op on tree-walk build. */
+    gizmo_hydro_cleanup_symlist_and_ghosts();
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

@@ -1,0 +1,153 @@
+/* ghost_symlist_lifecycle.h — ghost-exchange + symmetric-CSR lifecycle helpers.
+ *
+ * These helpers absorb the ghost_exchange / symlist setup-and-teardown that
+ * used to be copy-pasted at every call site of density(), hydro_gradient_calc(),
+ * and hydro_force() (in accel.cc, init.cc, run.cc).  The three top-level
+ * functions now include the lifecycle inline, so any caller gets the correct
+ * sequencing automatically — you cannot forget to prep or clean up.
+ *
+ * All helpers are no-ops when GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is not set,
+ * and are internally guarded against NTask==1 where appropriate.  The
+ * TRANSPORT_SUBCYCLE path keeps the symlist + ghosts alive past hydro_force;
+ * that cleanup stays at its existing site in run.cc (see gizmo_cleanup_*).
+ *
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
+ */
+#ifndef GHOST_SYMLIST_LIFECYCLE_H
+#define GHOST_SYMLIST_LIFECYCLE_H
+
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+
+#include "neighbor_list.h"
+#include "sfc_tiles.h"
+
+#if defined(OPENMP_GPU_OFFLOAD)
+extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
+    int *active_indices, int num_active, neighbor_list_t *out,
+    double search_radius_factor);
+#endif
+
+/* Shared search/ghost-inflation factor (only grows when TURB_DIFF_DYNAMIC
+   widens the dynamic-diffusion kernel). */
+static inline double gizmo_ghost_safety_factor(void)
+{
+    double f = 1.0;
+#ifdef TURB_DIFF_DYNAMIC
+    f = DMAX(f, All.TurbDynamicDiffFac);
+#endif
+    return f;
+}
+
+/* Prologue for density(): drift all particles to current time and import
+   ghost particles from neighbouring ranks.  Unconditional — both underlying
+   routines early-out for NTask==1. */
+static inline void gizmo_density_prep_ghosts(double safety)
+{
+    double t0 = my_second();
+    move_particles(All.Ti_Current);
+    double t_drift = timediff(t0, my_second());
+    double t1 = my_second();
+    ghost_exchange(safety);
+    double t_ghost = timediff(t1, my_second());
+    CPU_Step[CPU_DENSMISC] += t_drift;
+    CPU_Step[CPU_DENSCOMM] += t_ghost;
+}
+
+/* Epilogue for density(): if h grew beyond the ghost pool during density
+   iteration, re-exchange with the converged hmax so subsequent neighbour
+   ops have a complete ghost set.  Internally guarded (NTask==1 returns 0). */
+static inline void gizmo_density_redo_ghosts_if_needed(double safety)
+{
+    if(ghost_exchange_needs_redo()) {
+        double t0 = my_second();
+        ghost_exchange_cleanup();
+        ghost_exchange(safety);
+        CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
+    }
+}
+
+/* Prologue for hydro_gradient_calc(): allocate the per-step active-index
+   array, refresh ghost CellP with converged density/h, and build the
+   symmetric CSR neighbor list used by gradients and hydro_force. */
+static inline void gizmo_gradients_prep_symlist(double safety, double search_fac)
+{
+    /* active-index allocation (persists across gradients + hydro) */
+    gizmo_sym_num_active = 0;
+    for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
+    gizmo_sym_active_indices = (int *) mymalloc("sym_active",
+        (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
+    {int aa = 0; for(int ii : ActiveParticleList) {
+        if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
+
+    /* refresh ghosts so they carry converged Density/KernelRadius from their
+       home rank (the density pass modified local values only). */
+    if(NTask > 1) {
+        double t_refresh = my_second();
+        ghost_exchange_cleanup();
+        ghost_exchange(safety);
+        if(ThisTask == 0) {PRINT_STATUS("Ghost refresh before gradients (%.4f s)", timediff(t_refresh, my_second()));}
+    }
+
+    /* build the symmetric CSR list (max(h_i,h_j) search radius) */
+    double t_sym = my_second();
+#if defined(OPENMP_GPU_OFFLOAD)
+    gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, search_fac);
+#else
+    build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
+#endif
+    if(ThisTask == 0) {PRINT_STATUS("Symmetric neighbor list: %d active, %d pairs (%.4f s)",
+                                    gizmo_sym_num_active, gizmo_sym_neighbor_list.total_pairs, timediff(t_sym, my_second()));}
+}
+
+/* Epilogue for hydro_gradient_calc(): refresh ghosts again so hydro_force
+   sees updated CellP.Gradients on both sides of each pair, and rebuild the
+   CSR (ghost indices may shift after re-exchange). */
+static inline void gizmo_gradients_refresh_symlist(double safety, double search_fac)
+{
+    if(NTask > 1) {
+        double t_refresh = my_second();
+        free_neighbor_list(&gizmo_sym_neighbor_list);
+        ghost_exchange_cleanup();
+        ghost_exchange(safety);
+#if defined(OPENMP_GPU_OFFLOAD)
+        gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, search_fac);
+#else
+        build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
+#endif
+        if(ThisTask == 0) {PRINT_STATUS("Ghost refresh + CSR rebuild after gradients: %d pairs (%.4f s)",
+                                        gizmo_sym_neighbor_list.total_pairs, timediff(t_refresh, my_second()));}
+    }
+}
+
+/* Epilogue for hydro_force(): free the symlist and remove ghost particles.
+   Skipped when TRANSPORT_SUBCYCLE is active — in that case the symlist and
+   ghosts stay alive for RT subcycle steps and are freed at the end of the
+   subcycle loop in run.cc. */
+static inline void gizmo_hydro_cleanup_symlist_and_ghosts(void)
+{
+#ifndef TRANSPORT_SUBCYCLE
+    gizmo_sym_neighbor_list_free();
+    ghost_exchange_cleanup();
+#endif
+}
+
+/* init.cc only: density() was called for initial h-convergence, no subsequent
+   gradients/hydro in this context, so just tear down ghosts. */
+static inline void gizmo_density_init_cleanup(void)
+{
+    if(NTask > 1) {ghost_exchange_cleanup();}
+}
+
+#else  /* !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY — all no-ops */
+
+static inline double gizmo_ghost_safety_factor(void) {return 1.0;}
+static inline void gizmo_density_prep_ghosts(double s) {(void)s;}
+static inline void gizmo_density_redo_ghosts_if_needed(double s) {(void)s;}
+static inline void gizmo_gradients_prep_symlist(double s, double sf) {(void)s; (void)sf;}
+static inline void gizmo_gradients_refresh_symlist(double s, double sf) {(void)s; (void)sf;}
+static inline void gizmo_hydro_cleanup_symlist_and_ghosts(void) {}
+static inline void gizmo_density_init_cleanup(void) {}
+
+#endif /* GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+
+#endif /* GHOST_SYMLIST_LIFECYCLE_H */
