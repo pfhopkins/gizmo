@@ -27,7 +27,7 @@
 
 
 /* RT_STEP_DIAG: checksum function for bisecting RT divergence */
-#if defined(RT_INFRARED) && defined(COOLING)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
 static int rt_step_diag_count = 0;
 static void rt_step_checksum(const char *label) {
     double sum_RadE = 0, sum_Trad = 0, sum_u = 0, sum_Tdust = 0, sum_ne = 0;
@@ -98,10 +98,7 @@ void run(void)
         find_timesteps();		/* find-timesteps */
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
-#ifdef GIZMO_DEBUG_RT_COOLING
-#define RT_STEP_DIAG_ACTIVE
-#endif
-#if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
 #endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
@@ -111,7 +108,7 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
-#if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
 #endif
 
@@ -173,7 +170,7 @@ void run(void)
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
-#if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
 
@@ -186,7 +183,7 @@ void run(void)
 #endif
         
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
-#if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
 #endif
 
@@ -381,7 +378,7 @@ void calculate_non_standard_physics(void)
         if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
 #endif
     }
-#if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
     if(rt_step_diag_count <= 50) rt_step_checksum("after_rt_source");
 #endif
 #endif
@@ -465,9 +462,8 @@ void calculate_non_standard_physics(void)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
-#if defined(RT_INFRARED) && defined(RT_STEP_DIAG_ACTIVE)
+#if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
-#undef RT_STEP_DIAG_ACTIVE
 #endif
 
 

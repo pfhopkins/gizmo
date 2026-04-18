@@ -189,6 +189,7 @@ void cooling_parent_routine(void)
             compact_Cell[j] = CellP[cool_indices[batch_start + j]];
         }
 
+#ifdef GIZMO_DEBUG_RT_COOLING
         /* GPU_RT_DIAG: save pre-cooling state for a few particles to compare GPU vs CPU */
         static int gpu_rt_diag_count = 0;
         static const int GPU_RT_DIAG_NPART = 5; /* compare this many particles */
@@ -196,6 +197,7 @@ void cooling_parent_routine(void)
         struct gas_cell_data saved_Cell[GPU_RT_DIAG_NPART];
         int diag_n = (batch_start == 0 && gpu_rt_diag_count < 20) ? DMIN(GPU_RT_DIAG_NPART, batch_n) : 0;
         for(int dd = 0; dd < diag_n; dd++) { saved_P[dd] = compact_P[dd]; saved_Cell[dd] = compact_Cell[dd]; }
+#endif /* GIZMO_DEBUG_RT_COOLING */
 
         /* Dispatch batch to GPU */
         {
@@ -206,6 +208,7 @@ void cooling_parent_routine(void)
             }, batch_start);
         }
 
+#ifdef GIZMO_DEBUG_RT_COOLING
         /* GPU_RT_DIAG: compare GPU output with CPU re-run on same inputs.
          * The GPU kernel (device code) may use FMA and CUDA math; the host re-run
          * uses the host compiler's math. Differences reveal GPU-specific divergence. */
@@ -248,6 +251,7 @@ void cooling_parent_routine(void)
             free(cpu_P); free(cpu_Cell);
             fflush(stdout);
         }
+#endif /* GIZMO_DEBUG_RT_COOLING */
 
         /* Scatter batch back and call set_eos_pressure on host
          * (skipped on-device to avoid doubling device stack depth) */
