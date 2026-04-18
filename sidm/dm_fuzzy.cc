@@ -3,10 +3,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <map>
+#include <vector>
 #include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#include "../mesh/ghost_symlist_lifecycle.h"
+#endif
+#include "dm_fuzzy_gpu.h"
 
 /*! \file dm_fuzzy.c
  *  \brief routines needed for fuzzy-DM implementation
@@ -475,12 +481,105 @@ void DMGrad_gradient_calc(void)
 
     /* allocate memory shared across all loops */
     DMGradDataPasser = (struct temporary_dmgradients_data_topass *) mymalloc("DMGradDataPasser",NumPart * sizeof(struct temporary_dmgradients_data_topass));
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* GPU neighbor-list path: import DM ghosts once, keep alive across both
+       gradient iterations (ghost content doesn't change between passes).
+       Declare the scope locals the code_block_xchange header would otherwise
+       provide (loop_iteration + timing accumulators). */
+    int loop_iteration = 0;
+    double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
+    CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
+    double dmgrad_ghost_safety = gizmo_ghost_safety_factor();
+    gizmo_density_prep_ghosts(dmgrad_ghost_safety);
+#else
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+#endif
 
     /* loop over the number of iterations needed to actually compute the gradients fully */
     for(loop_iteration=0; loop_iteration<2; loop_iteration++) // need 2 iterations to compute gradients-of-gradients
     {
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+        /* Partition active DMGrad particles by shared AGS neighbor-type bitmask.
+           DM_FUZZY activates only for Type==1, so this yields at most one group. */
+        std::map<int, std::vector<int>> bitmask_groups;
+        for (int ii : ActiveParticleList) {
+            if(ags_density_isactive(ii)) {
+                int bm = ags_gravity_kernel_shared_BITFLAG(P[ii].Type);
+                if(bm != 0) bitmask_groups[bm].push_back(ii);
+            }
+        }
+        /* Zero per-iteration accumulators on i-side for all active particles */
+        for(auto& kv : bitmask_groups) {
+            for(int ii : kv.second) {
+                if(loop_iteration <= 0) {
+                    DMGradDataPasser[ii].Maxima.AGS_Density = 0; DMGradDataPasser[ii].Minima.AGS_Density = 0;
+                    for(int k=0;k<3;k++) P[ii].AGS_Gradients_Density[k] = 0;
+#if (DM_FUZZY > 0)
+                    for(int k=0;k<3;k++) {P[ii].AGS_Gradients_Psi_Re[k] = 0; P[ii].AGS_Gradients_Psi_Im[k] = 0;}
+#endif
+                } else {
+                    for(int k=0;k<3;k++) {
+                        DMGradDataPasser[ii].Maxima.AGS_Gradients_Density[k] = 0;
+                        DMGradDataPasser[ii].Minima.AGS_Gradients_Density[k] = 0;
+                        for(int k2=0;k2<3;k2++) P[ii].AGS_Gradients2_Density[k2][k] = 0;
+#if (DM_FUZZY > 0)
+                        for(int k2=0;k2<3;k2++) {P[ii].AGS_Gradients2_Psi_Re[k2][k] = 0; P[ii].AGS_Gradients2_Psi_Im[k2][k] = 0;}
+#endif
+                    }
+                }
+            }
+        }
+        /* Launch one GPU kernel per bitmask group */
+        for(auto& kv : bitmask_groups) {
+            int bm = kv.first;
+            std::vector<int>& ilist = kv.second;
+            int nl_num_active = (int)ilist.size();
+            int *nl_active = (int *) mymalloc("dmg_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
+            double *nl_radii = (double *) mymalloc("dmg_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
+            struct dmgrad_gpu_in *nl_in = (struct dmgrad_gpu_in *) mymalloc("dmg_nl_in",
+                (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct dmgrad_gpu_in));
+            for(int a=0;a<nl_num_active;a++) {
+                int ii = ilist[a];
+                nl_active[a] = ii;
+                nl_radii[a] = P[ii].AGS_KernelRadius;
+                nl_in[a].AGS_Density = P[ii].AGS_Density;
+                for(int k=0;k<3;k++) nl_in[a].AGS_Gradients_Density[k] = P[ii].AGS_Gradients_Density[k];
+#if (DM_FUZZY > 0)
+                nl_in[a].AGS_Psi_Re = P[ii].AGS_Psi_Re_Pred * P[ii].AGS_Density / P[ii].Mass;
+                for(int k=0;k<3;k++) nl_in[a].AGS_Gradients_Psi_Re[k] = P[ii].AGS_Gradients_Psi_Re[k];
+                nl_in[a].AGS_Psi_Im = P[ii].AGS_Psi_Im_Pred * P[ii].AGS_Density / P[ii].Mass;
+                for(int k=0;k<3;k++) nl_in[a].AGS_Gradients_Psi_Im[k] = P[ii].AGS_Gradients_Psi_Im[k];
+#endif
+            }
+            struct dmgrad_gpu_out *nl_outs = (struct dmgrad_gpu_out *) mymalloc("dmg_nl_outs",
+                (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct dmgrad_gpu_out));
+            dmgrad_evaluate_gpu(P, NumPart, nl_active, nl_num_active, nl_radii, nl_in, bm, loop_iteration, nl_outs);
+            /* Scatter back */
+            for(int a=0;a<nl_num_active;a++) {
+                int ii = nl_active[a];
+                if(loop_iteration <= 0) {
+                    if(nl_outs[a].max_rho > DMGradDataPasser[ii].Maxima.AGS_Density) DMGradDataPasser[ii].Maxima.AGS_Density = nl_outs[a].max_rho;
+                    if(nl_outs[a].min_rho < DMGradDataPasser[ii].Minima.AGS_Density) DMGradDataPasser[ii].Minima.AGS_Density = nl_outs[a].min_rho;
+                    for(int k=0;k<3;k++) P[ii].AGS_Gradients_Density[k] += nl_outs[a].grad_rho[k];
+#if (DM_FUZZY > 0)
+                    for(int k=0;k<3;k++) {P[ii].AGS_Gradients_Psi_Re[k] += nl_outs[a].grad_psi_re[k]; P[ii].AGS_Gradients_Psi_Im[k] += nl_outs[a].grad_psi_im[k];}
+#endif
+                } else {
+                    for(int k=0;k<3;k++) {
+                        if(nl_outs[a].max_grho[k] > DMGradDataPasser[ii].Maxima.AGS_Gradients_Density[k]) DMGradDataPasser[ii].Maxima.AGS_Gradients_Density[k] = nl_outs[a].max_grho[k];
+                        if(nl_outs[a].min_grho[k] < DMGradDataPasser[ii].Minima.AGS_Gradients_Density[k]) DMGradDataPasser[ii].Minima.AGS_Gradients_Density[k] = nl_outs[a].min_grho[k];
+                        for(int k2=0;k2<3;k2++) P[ii].AGS_Gradients2_Density[k2][k] += nl_outs[a].grad2_rho[k2][k];
+#if (DM_FUZZY > 0)
+                        for(int k2=0;k2<3;k2++) {P[ii].AGS_Gradients2_Psi_Re[k2][k] += nl_outs[a].grad2_psi_re[k2][k]; P[ii].AGS_Gradients2_Psi_Im[k2][k] += nl_outs[a].grad2_psi_im[k2][k];}
+#endif
+                    }
+                }
+            }
+            myfree(nl_outs); myfree(nl_in); myfree(nl_radii); myfree(nl_active);
+        }
+#else
         #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+#endif
 
         /* do post-loop operations on the results */
         int i;
@@ -526,7 +625,11 @@ void DMGrad_gradient_calc(void)
     } // end of loop_iteration
 
     /* de-allocate memory and collect timing information */
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    if(NTask > 1) {ghost_exchange_cleanup();}
+#else
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+#endif
     myfree(DMGradDataPasser); /* free the temporary structure we created for the MinMax and additional data passing */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp; CPU_Step[CPU_AGSDENSWAIT] += timewait; CPU_Step[CPU_AGSDENSCOMM] += timecomm;

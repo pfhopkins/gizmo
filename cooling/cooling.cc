@@ -2500,6 +2500,9 @@ extern void gizmo_gpu_sync_all_dispdensity(struct global_data_all_processes *);
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 extern void gizmo_gpu_sync_all_agsdensity(struct global_data_all_processes *);
 #endif
+#ifdef DM_FUZZY
+extern void gizmo_gpu_sync_all_dmgrad(struct global_data_all_processes *);
+#endif
 
 void gizmo_gpu_sync_all(void) {
     /* Get pointer to host All (undo the #define All All_dev redirect) */
@@ -2535,6 +2538,9 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
     gizmo_gpu_sync_all_agsdensity(host_all);
+#endif
+#ifdef DM_FUZZY
+    gizmo_gpu_sync_all_dmgrad(host_all);
 #endif
 }
 
