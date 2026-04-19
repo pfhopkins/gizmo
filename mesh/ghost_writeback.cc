@@ -437,3 +437,102 @@ void ghost_writeback_agsforce(void)
     if(agsforce_ghost_NInt0) { free(agsforce_ghost_NInt0); agsforce_ghost_NInt0 = NULL; }
 #endif
 }
+
+
+/* --- SwallowTime variant ------------------------------------------------- */
+/* SwallowTime exists only when SINGLE_STAR_SINK_DYNAMICS is enabled. */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+
+struct ghost_delta_swallowtime_t {
+    int home_index;
+    MyFloat SwallowTime;
+};
+
+static MyFloat *swallowtime_ghost0 = NULL;
+
+
+void ghost_writeback_zero_swallowtime(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+    if(num_ghosts <= 0) return;
+
+    swallowtime_ghost0 = (MyFloat *) malloc(num_ghosts * sizeof(MyFloat));
+    for(int g = 0; g < num_ghosts; g++) {
+        swallowtime_ghost0[g] = P[num_local + g].SwallowTime;
+    }
+}
+
+
+void ghost_writeback_swallowtime(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+
+    if(!swallowtime_ghost0 || NTask <= 1 || num_ghosts <= 0) {
+        if(swallowtime_ghost0) { free(swallowtime_ghost0); swallowtime_ghost0 = NULL; }
+        return;
+    }
+
+    int *home_rank  = ghost_get_home_rank();
+    int *home_index = ghost_get_home_index();
+
+    int *delta_send_count = (int *) calloc(NTask, sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        if(P[num_local + g].SwallowTime < swallowtime_ghost0[g]) { delta_send_count[home_rank[g]]++; }
+    }
+    int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
+    delta_send_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1]; }
+    int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
+
+    struct ghost_delta_swallowtime_t *send_buf = (struct ghost_delta_swallowtime_t *)
+        malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_swallowtime_t));
+    int *pack_offset = (int *) malloc(NTask * sizeof(int));
+    memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        if(P[j].SwallowTime >= swallowtime_ghost0[g]) continue;
+        int task = home_rank[g];
+        int off = pack_offset[task]++;
+        send_buf[off].home_index = home_index[g];
+        send_buf[off].SwallowTime = P[j].SwallowTime;
+    }
+    free(pack_offset);
+
+    int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
+    MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
+    delta_recv_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1]; }
+    int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
+
+    struct ghost_delta_swallowtime_t *recv_buf = (struct ghost_delta_swallowtime_t *)
+        malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_swallowtime_t));
+
+    int delta_size = sizeof(struct ghost_delta_swallowtime_t);
+    int *send_bytes = (int *) malloc(NTask * sizeof(int));
+    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
+    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
+    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        send_bytes[t] = delta_send_count[t] * delta_size;
+        recv_bytes[t] = delta_recv_count[t] * delta_size;
+        send_bdisp[t] = delta_send_disp[t] * delta_size;
+        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
+    }
+    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
+                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    free(send_buf); free(delta_send_count); free(delta_send_disp);
+
+    for(int d = 0; d < total_recv; d++) {
+        int idx = recv_buf[d].home_index;
+        if(recv_buf[d].SwallowTime < P[idx].SwallowTime) { P[idx].SwallowTime = recv_buf[d].SwallowTime; }
+    }
+
+    free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+    free(swallowtime_ghost0); swallowtime_ghost0 = NULL;
+}
+
+#endif /* SINGLE_STAR_SINK_DYNAMICS */

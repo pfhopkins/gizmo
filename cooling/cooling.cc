@@ -2509,6 +2509,9 @@ extern void gizmo_gpu_sync_all_agsforce(struct global_data_all_processes *);
 #ifdef DM_FUZZY
 extern void gizmo_gpu_sync_all_dmgrad(struct global_data_all_processes *);
 #endif
+#ifdef SINK_PARTICLES
+extern void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *);
+#endif
 
 void gizmo_gpu_sync_all(void) {
     /* Get pointer to host All (undo the #define All All_dev redirect) */
@@ -2548,6 +2551,9 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef DM_FUZZY
     gizmo_gpu_sync_all_dmgrad(host_all);
+#endif
+#ifdef SINK_PARTICLES
+    gizmo_gpu_sync_all_sinkenv(host_all);
 #endif
 }
 

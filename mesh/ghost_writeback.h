@@ -47,6 +47,17 @@ void ghost_writeback_wakeup(void);
 void ghost_writeback_zero_agsforce(void);
 void ghost_writeback_agsforce(void);
 
+/* SwallowTime variant: reverse-communicates minimum SwallowTime written to
+ * ghost particles by the sink_environment GPU kernel (under
+ * SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS).  Zero snapshots the
+ * pre-kernel values; swallowtime sends any ghost whose SwallowTime decreased
+ * back to its home rank and applies a min there.
+ * Only compiled when SINGLE_STAR_SINK_DYNAMICS is enabled (field only exists then). */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+void ghost_writeback_zero_swallowtime(void);
+void ghost_writeback_swallowtime(void);
+#endif
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);
