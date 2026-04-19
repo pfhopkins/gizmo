@@ -42,6 +42,11 @@
 
 #if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 
+/* Named struct (file scope) for TimeBinActive device-capture. CUDA nvcc
+   rejects unnamed-type captures in __device__ lambdas ("type local to a
+   function"), so we lift this out of the function body. */
+struct ags_density_tba_cap_t { int v[TIMEBINS]; };
+
 void ags_density_evaluate_gpu(struct particle_data *P_host,
                               struct gas_cell_data *CellP_host,
                               int num_total,
@@ -101,8 +106,10 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
         int *need_wakeup = d_need_wakeup;
 
         /* Lambda captures tba by value (int[TIMEBINS]) via a wrapper struct to
-           avoid the "variable-length array capture" issue with plain C arrays. */
-        struct {int v[TIMEBINS];} tba_cap;
+           avoid the "variable-length array capture" issue with plain C arrays.
+           The struct is declared at file scope (not locally here) because CUDA
+           nvcc refuses local types in device-lambda captures. */
+        ags_density_tba_cap_t tba_cap;
         for(int k = 0; k < TIMEBINS; k++) tba_cap.v[k] = tba_host[k];
 
         gizmo_gpu_kernel_launch("ags_density_kernel", num_active, KOKKOS_LAMBDA(int aa) {

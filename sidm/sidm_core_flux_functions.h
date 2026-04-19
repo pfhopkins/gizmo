@@ -45,14 +45,15 @@ SidmScatterResult sidm_core_flux_compute_pair(
     struct particle_data *P,
     const KernelT &kernel,
     OutT &out,
-    const MyDouble *geofactor_table)
+    const MyDouble *geofactor_table,
+    const int *timebin_active)
 {
     SidmScatterResult r;
     r.scattered = 0;
     r.dv_sidm = {0, 0, 0};
     r.set_wakeup_j = 0;
 #ifdef DM_SIDM
-    double Pj_dtime = get_particle_timestep_in_physical(j);
+    double Pj_dtime = get_particle_timestep_in_physical(j, P);
     if(!( ((1 << local.Type) & (DM_SIDM)) && ((1 << P[j].Type) & (DM_SIDM))
           && (local.ID != P[j].ID) && (local.dtime <= Pj_dtime) )) {
         return r;
@@ -80,7 +81,7 @@ SidmScatterResult sidm_core_flux_compute_pair(
 
     /* scatter happens */
     r.scattered = 1;
-    if(!(TimeBinActive[P[j].TimeBin])) {
+    if(!(timebin_active[P[j].TimeBin])) {
         if(WAKEUP * local.dtime < Pj_dtime) { r.set_wakeup_j = 1; }
     }
     Vec3<double> kick;

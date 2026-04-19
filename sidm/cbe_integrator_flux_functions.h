@@ -36,7 +36,8 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     int j,
     struct particle_data *P,
     const KernelT &kernel,
-    OutT &out)
+    OutT &out,
+    const int *timebin_active)
 {
     CbeFluxResult r; r.set_wakeup_j = 0;
 #ifdef CBE_INTEGRATOR
@@ -146,7 +147,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     }
     vsig /= Face_Area_Norm * All.cf_atime;
     if(vsig > out.AGS_vsig) { out.AGS_vsig = vsig; }
-    if(!(TimeBinActive[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {
+    if(!(timebin_active[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {
         if(vsig > WAKEUP * P[j].AGS_vsig) { r.set_wakeup_j = 1; }
     }
 #else

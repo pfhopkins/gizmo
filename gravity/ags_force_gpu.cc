@@ -56,6 +56,11 @@
 #include "../sidm/dm_fuzzy_flux_functions.h"
 #include "../sidm/sidm_core_flux_functions.h"
 
+/* File-scope named struct for TimeBinActive device-capture. CUDA nvcc rejects
+   local/unnamed types in device-lambda captures, so we lift the capture
+   wrapper out to file scope here. */
+struct ags_force_tba_cap_t { int v[TIMEBINS]; };
+
 
 /* GPU-kernel local struct that mirrors the AGSForce INPUT_STRUCT_NAME field set,
    filled on-device from kp[ii]. Keeps the flux-pair templates happy without
@@ -144,20 +149,13 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
     MyDouble *d_geofactor = (MyDouble *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
         GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
     memcpy(d_geofactor, GeoFactorTable, GEOFACTOR_TABLE_LENGTH * sizeof(MyDouble));
+#endif
 
     /* TimeBinActive is needed by sidm_core_flux_compute_pair and by the
-       CBE wakeup test. Capture-by-value via a wrapper struct (plain C arrays
-       don't capture cleanly in Kokkos lambdas). */
-    struct {int v[TIMEBINS];} tba_cap;
+       CBE wakeup test. Capture-by-value via the file-scope wrapper struct
+       (nvcc requires a named, non-local type on device-lambda captures). */
+    ags_force_tba_cap_t tba_cap;
     for(int k = 0; k < TIMEBINS; k++) tba_cap.v[k] = TimeBinActive[k];
-#else
-    struct {int v[TIMEBINS];} tba_cap;
-    for(int k = 0; k < TIMEBINS; k++) tba_cap.v[k] = TimeBinActive[k];
-#endif
-#if defined(CBE_INTEGRATOR)
-    double time_val = All.Time;
-    double time_begin = All.TimeBegin;
-#endif
 
     /* Sticky device flag for NeedToWakeupParticles_local (reduced on host). */
     int *d_need_wakeup = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
@@ -273,7 +271,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 
 #if defined(CBE_INTEGRATOR)
                 {
-                    CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(local, j, kp, kernel, out);
+                    CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(local, j, kp, kernel, out, tba_cap.v);
                     if(cbe_r.set_wakeup_j) {
                         Kokkos::atomic_store(&kp[j].wakeup, (short int)-1);
                         Kokkos::atomic_store(need_wakeup, 1);
@@ -287,7 +285,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 
 #if defined(DM_SIDM)
                 {
-                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, kp, kernel, out, geofactor);
+                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, kp, kernel, out, geofactor, tba_cap.v);
                     if(sidm_r.scattered) {
                         if(sidm_r.set_wakeup_j) {
                             Kokkos::atomic_store(&kp[j].wakeup, (short int)-1);

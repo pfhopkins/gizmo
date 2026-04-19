@@ -958,7 +958,7 @@ int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecoun
                 }
                 
                 {
-                    CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(local, j, P, kernel, out);
+                    CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(local, j, P, kernel, out, TimeBinActive);
                     if(cbe_r.set_wakeup_j) {
                         #pragma omp atomic write
                         P[j].wakeup = -1;
@@ -969,7 +969,7 @@ int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecoun
                 dm_fuzzy_flux_compute_pair(local, j, P, kernel, out);
 #ifdef DM_SIDM
                 {
-                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, P, kernel, out, GeoFactorTable);
+                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, P, kernel, out, GeoFactorTable, TimeBinActive);
                     if(sidm_r.scattered) {
                         if(sidm_r.set_wakeup_j) {
                             #pragma omp atomic write
