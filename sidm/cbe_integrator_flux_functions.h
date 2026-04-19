@@ -22,6 +22,9 @@
 #ifndef CBE_INTEGRATOR_FLUX_FUNCTIONS_H
 #define CBE_INTEGRATOR_FLUX_FUNCTIONS_H
 
+#include "../gravity/ags_functions.h"
+#include "cbe_integrator_functions.h"
+
 struct CbeFluxResult {
     int set_wakeup_j;  /* 1 if P[j].wakeup should be set to -1 */
 };
@@ -37,7 +40,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
 {
     CbeFluxResult r; r.set_wakeup_j = 0;
 #ifdef CBE_INTEGRATOR
-    double V_i = local.V_i, V_j = get_particle_volume_ags(j);
+    double V_i = local.V_i, V_j = get_particle_volume_ags_P(j, P);
     double rho_i = local.Mass / V_i * All.cf_a3inv;
     double rho_j = P[j].Mass / V_j * All.cf_a3inv;
     double psi_i, psi_j;

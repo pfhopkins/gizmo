@@ -11,11 +11,15 @@
 #include "../sidm/dm_fuzzy_flux_functions.h"
 #include "../sidm/sidm_core_flux_functions.h"
 #include "../sidm/cbe_integrator_flux_functions.h"
+#ifdef GRAIN_COLLISIONS
+#include "../solids/grain_helper_functions.h"
+#endif
 #include "../mesh/kernel.h"
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/ghost_symlist_lifecycle.h"
 #endif
 #include "ags_density_gpu.h"
+#include "ags_functions.h"
 #include "../mesh/ghost_writeback.h"
 
 /*! \file ags_rkern.c
@@ -699,39 +703,12 @@ double ags_return_minsoft(int i)
 }
 
 
-/* routine to return effective particle sizes (inter-particle separation) based on AGS_KernelRadius saved values */
-double INLINE_FUNC Get_Particle_Size_AGS(int i)
-{
-    /* in previous versions of the code, we took NumNgb^(1/NDIMS) here; however, now we
-     take that when NumNgb is computed (at the end of the density routine), so we
-     don't have to re-compute it each time. That makes this function fast enough to
-     call -inside- of loops (e.g. hydro computations) */
-#if (NUMDIMS == 1)
-    return 2.00000 * P[i].AGS_KernelRadius / P[i].NumNgb; // (2)^(1/1)
-#endif
-#if (NUMDIMS == 2)
-    return 1.77245 * P[i].AGS_KernelRadius / P[i].NumNgb; // (pi)^(1/2)
-#endif
-#if (NUMDIMS == 3)
-    return 1.61199 * P[i].AGS_KernelRadius / P[i].NumNgb; // (4pi/3)^(1/3)
-#endif
-}
-
-
-/* --------------------------------------------------------------------------
- very quick sub-routine to get the particle densities from their volumes
- -------------------------------------------------------------------------- */
-double get_particle_volume_ags(int j)
-{
-    double L_j = Get_Particle_Size_AGS(j);
-#if (NUMDIMS==1)
-    return L_j;
-#elif (NUMDIMS==2)
-    return L_j*L_j;
-#else
-    return L_j*L_j*L_j;
-#endif
-}
+/* CPU wrappers around the GPU-callable _P forms in ags_functions.h. The
+   wrappers exist so existing CPU call sites that rely on the global P stay
+   untouched, while GPU kernels and the flux_functions.h templates call the
+   _P forms with an explicit particle_data pointer. */
+double INLINE_FUNC Get_Particle_Size_AGS(int i) { return Get_Particle_Size_AGS_P(i, P); }
+double get_particle_volume_ags(int j) { return get_particle_volume_ags_P(j, P); }
 
 
 #ifdef AGS_FACE_CALCULATION_IS_ACTIVE
@@ -853,7 +830,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->dtime_sidm = P[i].dtime_sidm;
     in->ID = P[i].ID;
 #ifdef GRAIN_COLLISIONS
-    in->Grain_CrossSection_PerUnitMass = return_grain_cross_section_per_unit_mass(i);
+    in->Grain_CrossSection_PerUnitMass = return_grain_cross_section_per_unit_mass_P(i, P);
 #endif
 #endif
 }
@@ -989,8 +966,9 @@ int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecoun
                     }
                 }
                 dm_fuzzy_flux_compute_pair(local, j, P, kernel, out);
+#ifdef DM_SIDM
                 {
-                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, P, kernel, out);
+                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, P, kernel, out, GeoFactorTable);
                     if(sidm_r.scattered) {
                         if(sidm_r.set_wakeup_j) {
                             #pragma omp atomic write
@@ -1008,6 +986,7 @@ int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecoun
                         P[j].NInteractions++;
                     }
                 }
+#endif
 
             } // numngb_inbox loop
         } // while(startnode)

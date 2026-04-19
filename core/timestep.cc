@@ -6,6 +6,12 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(DM_SIDM)
+#include "../sidm/sidm_helper_functions.h"
+#ifdef GRAIN_COLLISIONS
+#include "../solids/grain_helper_functions.h"
+#endif
+#endif
 
 /*! \file timestep.c
  *  routines for assigning new timesteps
@@ -928,9 +934,9 @@ integertime get_timestep(int p,		/*!< particle index */
             double vsig_fac = P[p].AGS_vsig*All.cf_atime/sqrt(3.);
             Vec3<double> dV = {vsig_fac, vsig_fac, vsig_fac}; // convert signal vel to velocity dispersion for estimating rates
 #ifdef GRAIN_COLLISIONS
-            double p_dt = prob_of_grain_interaction(return_grain_cross_section_per_unit_mass(p),P[p].Mass,0.,P[p].AGS_KernelRadius,dV,dt,p); // probability of interacting with another grain super-particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
+            double p_dt = prob_of_grain_interaction_tab(return_grain_cross_section_per_unit_mass_P(p, P), P[p].Mass, 0., P[p].AGS_KernelRadius, dV, dt, p, P, GeoFactorTable); // probability of interacting with another grain super-particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
 #else
-            double p_dt = prob_of_interaction(P[p].Mass,0.,P[p].AGS_KernelRadius,dV,dt); // probability of interacting with another DM particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
+            double p_dt = prob_of_interaction_tab(P[p].Mass, 0., P[p].AGS_KernelRadius, dV, dt, GeoFactorTable); // probability of interacting with another DM particle well within kernel, assuming same mass, H, and V~signalvel, for current timestep dt
 #endif
             if(p_dt > p_target) {dt *= p_target / p_dt;}
         }

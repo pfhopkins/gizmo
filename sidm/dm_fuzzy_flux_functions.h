@@ -17,6 +17,9 @@
 #ifndef DM_FUZZY_FLUX_FUNCTIONS_H
 #define DM_FUZZY_FLUX_FUNCTIONS_H
 
+#include "../gravity/ags_functions.h"
+#include "dm_fuzzy_functions.h"
+
 #ifndef DM_FUZZY_USE_SIMPLER_HLL_SOLVER
 #define DM_FUZZY_USE_SIMPLER_HLL_SOLVER 0    /* which HLL solver for DM_FUZZY=0: =1 simpler & more diffusive */
 #endif
@@ -35,7 +38,7 @@ void dm_fuzzy_flux_compute_pair(
 
     /* effective face geometry and velocity */
     double V_i = local.V_i;
-    double V_j = get_particle_volume_ags(j);
+    double V_j = get_particle_volume_ags_P(j, P);
     double wt_i = V_i, wt_j = V_j;
     double Face_Area_Norm = 0, vface_i_minus_j = 0;
     Vec3<double> Face_Area_Vec = {0,0,0};
@@ -97,8 +100,11 @@ void dm_fuzzy_flux_compute_pair(
 
 #else  /* DM_FUZZY > 0: scalar-field formulation */
     double h_2m = 0.5 * All.ScalarField_hbar_over_mass;
-    double Psi_Re_R, Psi_Re_L, d_Psi_Re_R[3], d_Psi_Re_L[3], v_face[3];
-    double Psi_Im_R, Psi_Im_L, d_Psi_Im_R[3], d_Psi_Im_L[3];
+    /* dm_fuzzy_reconstruct_and_slopelimit leaves the du_R/du_L outputs
+       untouched (see behaviour note in dm_fuzzy_functions.h). Zero here
+       so GPU and CPU agree deterministically. */
+    double Psi_Re_R = 0, Psi_Re_L = 0, d_Psi_Re_R[3] = {0,0,0}, d_Psi_Re_L[3] = {0,0,0}, v_face[3] = {0,0,0};
+    double Psi_Im_R = 0, Psi_Im_L = 0, d_Psi_Im_R[3] = {0,0,0}, d_Psi_Im_L[3] = {0,0,0};
     double Flux_Re = 0, Flux_Im = 0, Flux_M = 0;
 
     for(int k=0; k<3; k++) { v_face[k] = 0.5 * (local.Vel[k] + P[j].Vel[k]) / All.cf_atime; }

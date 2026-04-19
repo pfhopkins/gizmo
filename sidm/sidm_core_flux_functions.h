@@ -24,6 +24,13 @@
 #ifndef SIDM_CORE_FLUX_FUNCTIONS_H
 #define SIDM_CORE_FLUX_FUNCTIONS_H
 
+#include "../declarations/allvars.h"
+#include "../declarations/gpu_rng.h"
+#include "sidm_helper_functions.h"
+#ifdef GRAIN_COLLISIONS
+#include "../solids/grain_helper_functions.h"
+#endif
+
 struct SidmScatterResult {
     int scattered;          /* 1 if a scatter occurred this pair */
     Vec3<double> dv_sidm;   /* to add to P[j].Vel[k] (atomic); P[j].dp[k] += dv_sidm[k]*P[j].Mass */
@@ -37,7 +44,8 @@ SidmScatterResult sidm_core_flux_compute_pair(
     int j,
     struct particle_data *P,
     const KernelT &kernel,
-    OutT &out)
+    OutT &out,
+    const MyDouble *geofactor_table)
 {
     SidmScatterResult r;
     r.scattered = 0;
@@ -54,17 +62,21 @@ SidmScatterResult sidm_core_flux_compute_pair(
 
     double h_si = 0.5 * (kernel.h_i + kernel.h_j);
     double m_si = 0.5 * (local.Mass + P[j].Mass);
-    /* the CPU-only helpers take dV by non-const ref (they don't mutate, but the
-       signatures pre-date const-correctness); pass a local copy. */
     Vec3<double> dv_local = kernel.dv;
 #ifdef GRAIN_COLLISIONS
-    double prob = prob_of_grain_interaction(local.Grain_CrossSection_PerUnitMass, local.Mass, kernel.r, h_si, dv_local, local.dtime, j);
+    double prob = prob_of_grain_interaction_tab(local.Grain_CrossSection_PerUnitMass, local.Mass, kernel.r, h_si, dv_local, local.dtime, j, P, geofactor_table);
 #else
-    double prob = prob_of_interaction(m_si, kernel.r, h_si, dv_local, local.dtime);
+    double prob = prob_of_interaction_tab(m_si, kernel.r, h_si, dv_local, local.dtime, geofactor_table);
 #endif
     if(prob > 0.2) { out.dtime_sidm = DMIN(out.dtime_sidm, local.dtime * (0.2 / prob)); }
 
-    if(gsl_rng_uniform(random_generator) >= prob) { return r; }
+    /* counter-based RNG, symmetric (i,j) key: both sides of the pair see the
+       same stream. Counter = Ti_Current << 8 | tag_nibble (0 = threshold,
+       1 = scatter direction — see declarations/gpu_rng.h). */
+    uint64_t rng_key = (uint64_t)local.ID ^ (uint64_t)P[j].ID;
+    uint64_t rng_ctr_threshold = ((uint64_t)All.Ti_Current << 8) | 0;
+    uint64_t rng_ctr_direction = ((uint64_t)All.Ti_Current << 8) | 1;
+    if(gizmo_gpu_rand_double(rng_key, rng_ctr_threshold) >= prob) { return r; }
 
     /* scatter happens */
     r.scattered = 1;
@@ -72,7 +84,7 @@ SidmScatterResult sidm_core_flux_compute_pair(
         if(WAKEUP * local.dtime < Pj_dtime) { r.set_wakeup_j = 1; }
     }
     Vec3<double> kick;
-    calculate_interact_kick(dv_local, kick, m_si);
+    calculate_interact_kick_rng(dv_local, kick, m_si, rng_key, rng_ctr_direction);
     for(int k=0; k<3; k++) {
         double dv_sidm = (local.Mass / m_si) * kick[k];
         out.sidm_kick[k] -= (P[j].Mass / m_si) * kick[k];

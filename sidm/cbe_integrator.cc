@@ -200,61 +200,9 @@ P[i].CBE_basis_moments[j][8] = S0*vhat[0]*vhat[2]; P[i].CBE_basis_moments[j][9] 
 
 
 
-/* this computes the actual single-sided fluxes at the face, integrating over a distribution function to use the moments */
-double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS], double vface_dot_A, double vface[3], double Area[3], double moments_ngb[CBE_INTEGRATOR_NMOMENTS], double fluxes[CBE_INTEGRATOR_NMOMENTS])
-{
-    // couple dot-products must be pre-computed for fluxes //
-    double m_inv = 1. / moments[0]; // need for weighting, below [e.g. v_x = moments[1] / moments[0]]
-    double v[3], f00_vsig=1; v[0] = m_inv*moments[1]; v[1] = m_inv*moments[2]; v[2] = m_inv*moments[3]; // get velocities
-    double vsig = v[0]*Area[0] + v[1]*Area[1] + v[2]*Area[2] - vface_dot_A; // v_alpha . A_face
-    if(fabs(vsig) <= 0) return 0; // trap for invalid velocity
-    fluxes[0] = vsig * moments[0]; // calculate and assign mass flux
-    int k; for(k=1;k<CBE_INTEGRATOR_NMOMENTS;k++) {fluxes[k] =  (m_inv * moments[k]) * fluxes[0];} // specific flux carried just by mass flux
-
-    // now need to deal with the (more complicated) stress/second-moment terms //
-#if (CBE_INTEGRATOR_NMOMENTS > 4)
-    {
-        double dv2 = (v[0]-vface[0])*(v[0]-vface[0]) + (v[1]-vface[1])*(v[1]-vface[1]) + (v[2]-vface[2])*(v[2]-vface[2]); // magnitude of velocity in face frame
-        double c_eff_over_vsig_A = sqrt(m_inv*(moments[4]+moments[5]+moments[6]) / dv2); // ratio of c_eff [effective 'signal velocity' in dotted into face direction from stress tensor] to bulk velocity dotted same
-        double SM_vsig = 1 + c_eff_over_vsig_A*c_eff_over_vsig_A/(1 + c_eff_over_vsig_A); // star-state wavespeed [from HLLC-type Reimann solver] over v_effective
-        double f00_SdotA = 1 - c_eff_over_vsig_A/(SM_vsig + c_eff_over_vsig_A); // groups numerical diffusivity terms that apply to the stress tensor terms below
-        f00_vsig = (SM_vsig * (1 + c_eff_over_vsig_A)) / (SM_vsig + c_eff_over_vsig_A); // groups numerical diffusivity terms that apply to the mass flux
-        /*
-        double S0 = m_inv * (moments[4]+moments[5]+moments[6]); // trace[S] = total velocity dispersion //
-        double ANorm=sqrt(Area[0]*Area[0]+Area[1]*Area[1]+Area[2]*Area[2]), vsig_mag=fabs(vsig)/ANorm, cos_vsig_A=vsig_mag/sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]); // get dot product of velocity and face
-        double c_eff = sqrt(S0) * cos_vsig_A; // effective 'signal velocity' in dotted into face direction from stress tensor, for numerical dissipation
-        double S_M = vsig_mag + c_eff*c_eff/(vsig_mag + c_eff); // star-state wavespeed [from HLLC-type Reimann solver]
-        double f00_SdotA = 1 - c_eff/(c_eff + S_M); // groups numerical diffusivity terms that apply to the stress tensor terms below
-        f00_vsig = (S_M * (v0_mag + c_eff)) / (v0_mag * (S_M + c_eff)); // groups numerical diffusivity terms that apply to the mass flux
-        */
-        /*
-        double S[6]; // dispersion part of stress tensor (need to subtract mean-v parts if not doing so in pre-step)
-        // note that we are actually evolving S, although we will compute the -flux- of T, the conserved quantity //
-        S[0] = m_inv*moments[4];// - v[0]*v[0]; // xx
-        S[1] = m_inv*moments[5];// - v[1]*v[1]; // yy
-        S[2] = m_inv*moments[6];// - v[2]*v[2]; // zz
-        S[3] = m_inv*moments[7];// - v[0]*v[1]; // xy
-        S[4] = m_inv*moments[8];// - v[0]*v[2]; // xz
-        S[5] = m_inv*moments[9];// - v[1]*v[2]; // yz
-        */
-        double S_dot_A[3]; // stress tensor dotted into face. note our moments 4-9 are the -dispersions- not T (otherwise need to convert here)
-        S_dot_A[0] = f00_SdotA * (moments[4]*Area[0] + moments[7]*Area[1] + moments[8]*Area[2]); // (S_alpha . A_face)_x * mass
-        S_dot_A[1] = f00_SdotA * (moments[7]*Area[0] + moments[5]*Area[1] + moments[9]*Area[2]); // (S_alpha . A_face)_y * mass
-        S_dot_A[2] = f00_SdotA * (moments[8]*Area[0] + moments[9]*Area[1] + moments[6]*Area[2]); // (S_alpha . A_face)_z * mass
-        //S_dot_A[0]=S_dot_A[1]=S_dot_A[2]=0;//
-        fluxes[1] += S_dot_A[0]; // add momentum flux from stress tensor - x
-        fluxes[2] += S_dot_A[1]; // add momentum flux from stress tensor - y
-        fluxes[3] += S_dot_A[2]; // add momentum flux from stress tensor - z
-        fluxes[4] += 2.*v[0]*S_dot_A[0] + fluxes[0]*v[0]*v[0]; // add stress flux from stress tensor -- xx
-        fluxes[5] += 2.*v[1]*S_dot_A[1] + fluxes[0]*v[1]*v[1]; // add stress flux from stress tensor -- yy
-        fluxes[6] += 2.*v[2]*S_dot_A[2] + fluxes[0]*v[2]*v[2]; // add stress flux from stress tensor -- zz
-        fluxes[7] += v[0]*S_dot_A[1] + v[1]*S_dot_A[0] + fluxes[0]*v[0]*v[1]; // add stress flux from stress tensor -- xy
-        fluxes[8] += v[0]*S_dot_A[2] + v[2]*S_dot_A[0] + fluxes[0]*v[0]*v[2]; // add stress flux from stress tensor -- xz
-        fluxes[9] += v[1]*S_dot_A[2] + v[2]*S_dot_A[1] + fluxes[0]*v[1]*v[2]; // add stress flux from stress tensor -- yz
-    }
-#endif
-    return vsig * f00_vsig;
-}
+/* do_cbe_flux_computation moved to sidm/cbe_integrator_functions.h as a
+   KOKKOS_INLINE_FUNCTION so both the CPU tree-walk and the B2 AGSForce
+   GPU kernel can call the same body. */
 
 
 

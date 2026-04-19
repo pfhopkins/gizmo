@@ -388,44 +388,17 @@ void grain_backrx(void)
 
 
 
-#ifdef GRAIN_COLLISIONS /* these routines [combined with the DM_SIDM modules] allow for arbitrary grain-grain scattering-sticking-destruction-type interactions */
-
-/*! This function returns the cross-section per unit mass of the grains represented by a single 'super-particle'. Modify this appropriately for your assumed grain
-    physics. Here we are simply assuming hard-sphere scattering. */
-double return_grain_cross_section_per_unit_mass(int i)
-{   /* All.DM_InteractionCrossSection just serves here as a renormalization parameter, optionally */
-    return All.DM_InteractionCrossSection * 0.75 / (P[i].Grain_Size * All.Grain_Internal_Density); // this will be in cgs units, in our standard convention //
-}
-
-/*! This routine determines the probability of a grain-grain interaction within the kernel. Note that the function 'g_geo' does all the accounting for the kernel
-    structure and finite size -- the rest of this can be initialized as a normal scattering rate (~density*cross_section_per_unit_mass*velocity)
-    where here 'All.DM_InteractionCrossSection' is the cross-section read in from the params file, and other params like DM_InteractionVelocityScale
-    allow the user to control the collision velocity dependence. This function should be appropriately modified to the actual grain physics being represented.
-    Here, the default assumption is simple hard-sphere scattering with a constant cross section per unit grain mass, set by the grain size */
-double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, Vec3<double>& dV, double dt, int j_ngb)
-{
-    double dVmag = sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]) / All.cf_atime; // velocity in physical
-    double rho_eff = 0.5*(mass + P[j_ngb].Mass) / (h_si*h_si*h_si) * All.cf_a3inv; // density in physical
-    double cx_eff = g_geo(r/h_si) * (mass*cx_per_unitmass + P[j_ngb].Mass*return_grain_cross_section_per_unit_mass(j_ngb)) / (mass + P[j_ngb].Mass); // mass-weighted effective cross section (physical) scaled to cgs
-    double units = UNIT_SURFDEN_IN_CGS; // needed to convert everything to cgs
-    if(All.DM_InteractionVelocityScale>0) {double x=dVmag/All.DM_InteractionVelocityScale; cx_eff/=1+x*x*x*x;} // take velocity dependence
-    return rho_eff * cx_eff * dVmag * dt * units; // dimensionless probability
-}
-
-/*! This routine sets the kicks for each grain after it has been decided that they will interact. By default at present this results only in velocity 'kicks',
-    but one can modify this function to allow other types of interactions. By default, it will assume elastic collisions,
-    and an algorithm that conserves energy and momentum but picks a random direction so it does not conserves angular momentum. */
-void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m)
-{
-    double dVmag = (1-All.DM_DissipationFactor)*sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]);
-    if(dVmag<0) {dVmag=0;}
-    if(All.DM_KickPerCollision>0) {double v0=All.DM_KickPerCollision; dVmag=sqrt(dVmag*dVmag+v0*v0);}
-    double cos_theta = 2.0*gsl_rng_uniform(random_generator)-1.0, sin_theta = sqrt(1.-cos_theta*cos_theta), phi = gsl_rng_uniform(random_generator)*2.0*M_PI;
-    kick[0] = 0.5*(dV[0] + dVmag*sin_theta*cos(phi));
-    kick[1] = 0.5*(dV[1] + dVmag*sin_theta*sin(phi));
-    kick[2] = 0.5*(dV[2] + dVmag*cos_theta);
-}
-
+#ifdef GRAIN_COLLISIONS
+/* return_grain_cross_section_per_unit_mass / prob_of_grain_interaction /
+   calculate_interact_kick were host-only functions with implicit global-P
+   access and GSL RNG. They have been moved to:
+     - solids/grain_helper_functions.h (return_grain_cross_section_per_unit_mass_P,
+       prob_of_grain_interaction_tab)
+     - sidm/sidm_helper_functions.h (calculate_interact_kick_rng)
+   as KOKKOS_INLINE_FUNCTION forms that thread particle_data and the
+   GeoFactorTable as explicit args and use the counter-based gpu_rng.
+   CPU callers pass `GeoFactorTable` directly; the B2 AGSForce GPU kernel
+   passes a SharedSpace mirror. */
 #endif
 
 

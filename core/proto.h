@@ -911,16 +911,16 @@ void apply_excision();
 #endif
 
 #ifdef DM_SIDM
-double prob_of_interaction(double mass, double r, double h_si, Vec3<double>&  dV, double dt);
-double g_geo(double r);
-void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m);
+/* prob_of_interaction / g_geo / calculate_interact_kick moved to
+   sidm/sidm_helper_functions.h (KOKKOS_INLINE_FUNCTION). Only the
+   host-only tabulation and initialization helpers remain here. */
 void init_geofactor_table(void);
 double geofactor_integ(double x, void * params);
 double geofactor_angle_integ(double u, void * params);
 void init_self_interactions();
 #ifdef GRAIN_COLLISIONS
-double return_grain_cross_section_per_unit_mass(int i);
-double prob_of_grain_interaction(double cx_per_unitmass, double mass, double r, double h_si, Vec3<double>& dV, double dt, int j_ngb);
+/* return_grain_cross_section_per_unit_mass / prob_of_grain_interaction moved
+   to solids/grain_helper_functions.h. */
 #endif
 #endif
 
@@ -931,8 +931,8 @@ void special_rt_feedback_injection(void);
 #ifdef CBE_INTEGRATOR
 void do_cbe_initialization(void);
 void do_cbe_drift_kick(int i, double dt);
-double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS], double vface_dot_A, double vface[3], double Area[3],
-                               double moments_ngb[CBE_INTEGRATOR_NMOMENTS], double fluxes[CBE_INTEGRATOR_NMOMENTS]);
+/* do_cbe_flux_computation moved to sidm/cbe_integrator_functions.h
+   (KOKKOS_INLINE_FUNCTION). */
 void do_postgravity_cbe_calcs(int i);
 #endif
 
@@ -944,21 +944,8 @@ double do_cbe_nvt_inversion_for_faces(int i);
 void do_dm_fuzzy_initialization(void);
 void do_dm_fuzzy_drift_kick(int pindex, double dt_entr, int mode);
 void DMGrad_gradient_calc(void);
-void do_dm_fuzzy_flux_computation(double HLLwt, double dt, double prev_a, Vec3<double>& dv,
-                                  double GradRho_L[3], double GradRho_R[3],
-                                  double GradRho2_L[3][3], double GradRho2_R[3][3],
-                                  double rho_L, double rho_R, double dv_Right_minus_Left,
-                                  Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential_L, double AGS_Numerical_QuantumPotential_R, double *dt_egy_Numerical_QuantumPotential);
-void do_dm_fuzzy_flux_computation_old(double HLLwt, double dt, double m0, double prev_a, Vec3<double>& dp, Vec3<double>& dv,
-                                  double GradRho_L[3], double GradRho_R[3],
-                                  double GradRho2_L[3][3], double GradRho2_R[3][3],
-                                  double rho_L, double rho_R, double dv_Right_minus_Left,
-                                  Vec3<double>& Area, Vec3<double>& fluxes, double AGS_Numerical_QuantumPotential, double *dt_egy_Numerical_QuantumPotential);
-void dm_fuzzy_reconstruct_and_slopelimit_sub(double *u_R_f, double *u_L_f, double q_R, const Vec3<double>& dq_R_0, double q_L, const Vec3<double>& dq_L_0, const Vec3<double>& dx);
-void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_L, double du_L[3],
-                                         double q_R, Vec3<double> dq_R, const Mat3<double>& d2q_R,
-                                         double q_L, Vec3<double> dq_L, const Mat3<double>& d2q_L,
-                                         const Vec3<double>& dx);
+/* do_dm_fuzzy_flux_computation / _old / dm_fuzzy_reconstruct_and_slopelimit
+   moved to sidm/dm_fuzzy_functions.h (KOKKOS_INLINE_FUNCTION). */
 #endif
 
 
