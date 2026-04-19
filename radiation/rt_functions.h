@@ -16,6 +16,8 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
+#include "../system/bracketed_rootfind_functions.h"
+
 /* ========================================================================
  * dust_planck_mean_opacity — Semenov 2003 table interpolation
  * (moved from radiation/rt_dust_opacity.cc)
@@ -330,17 +332,9 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
     if(T_upper==Tmax && dEdt_upper > 0) {return Tmax;}
     if(T_lower>=Tmax) {return Tmax;}
 
-#if (0) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES)  // PFH: still testing which option is better, but the new rootfind struggles here, in hyper-zoom-in runs when given dust close to max temperature (raising max temp resolves the failure to converge or Nan's but then jumps to very high solutions somewhat randomly, where it shouldnt. The old secant routine below appears stable and more robust in this particular instance for now.
-    #define ROOTFIND_FUNCTION(dTdust) dust_dEdt(i,T,T+dTdust,dust_absorption_rate,fdustmet_init, pp, cell); // here we want to converge on a relative tolerance for Tdust-Tgas
-    if(dEdt!=0)
-    {
-        double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T, ROOTFUNC_a = dEdt_lower, ROOTFUNC_b = dEdt_upper, ROOTFIND_REL_X_tol = 1e-6, ROOTFIND_ABS_X_tol=0.;
-        #include "../system/bracketed_rootfind.h"
-        Tdust = ROOTFIND_X_new + T;
-        if(ROOTFIND_ITER > MAXITER || isnan(Tdust)){PRINT_WARNING("WARNING: Particle %lld did not converge to desired Tdust tolerance (iter=%d, Tdust=%g, Tgas=%g)\n",(long long)(long long)i /* particle index */,ROOTFIND_ITER,Tdust,T);}
-    }
-#else
-
+    /* secant-method Tdust iteration (a Brent-style bracketed rootfind here was
+       tested but became unreliable in hyper-zoom-in runs with dust near max
+       temperature; the secant method below is more robust for this case). */
     T_old = Tdust; double dEdt_old = dEdt; Tdust = Tdust_guess; dEdt = dEdt_guess; // For our second guess we take the backeting value opposite of the initial guess.
     double dT_dustgas = T-Tdust;
 #ifdef GIZMO_DEBUG_RT_COOLING
@@ -378,8 +372,6 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
     } while(fabs(dT_dustgas - (T-Tdust)) > 1.e-3 * fabs(T-Tdust)); // sufficient to converge dust cooling to 10^-3 tolerance, at this point uncertainties in dust properties will dominate the error budget
 #ifdef GIZMO_DEBUG_RT_COOLING
     if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[TDUST_ITER] ID=%llu FINAL Tdust=%.10e n_iter=%d\n", (unsigned long long)pp[i].ID, Tdust, n_iter);}
-#endif
-
 #endif
 
     return Tdust;
@@ -707,10 +699,12 @@ KOKKOS_INLINE_FUNCTION
 double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_cell_data *cell){
     double Tdust, T_lower, T_upper, dE, dE1, dE2, dE_lower, dE_upper, dE_guess, dTdust_tol=1e-6;
     double Tdust_fixedpoint_1, Tdust_fixedpoint_2, dummy;
-    #define ROOTFIND_FUNCTION_INNER(dTdust) dust_dE_cooling(i, T, T+dTdust, &Tdust_fixedpoint_1, &Tdust_fixedpoint_2, pp, cell)
+    auto dust_dE_rootfn = [&](double dTdust) {
+        return dust_dE_cooling(i, T, T+dTdust, &Tdust_fixedpoint_1, &Tdust_fixedpoint_2, pp, cell);
+    };
     if((All.Time==0 )|| (!isfinite(cell[i].Dust_Temperature))) {Tdust=T;} else {Tdust = DMIN(MAX_DUST_TEMP, cell[i].Dust_Temperature);}
 
-    dE = dE_guess = ROOTFIND_FUNCTION_INNER(Tdust-T);
+    dE = dE_guess = dust_dE_rootfn(Tdust-T);
     if(Tdust_fixedpoint_1 <= 0) {Tdust_fixedpoint_1 = T;}
     if(Tdust_fixedpoint_1 > MAX_DUST_TEMP) {Tdust_fixedpoint_1 = MAX_DUST_TEMP;}
     if(Tdust_fixedpoint_2 > MAX_DUST_TEMP) {Tdust_fixedpoint_2 = MAX_DUST_TEMP;}
@@ -729,7 +723,7 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
         dE_upper = dE_guess; 
         while(dE < 0) {
             Tdust *= scalefac; 
-            dE = ROOTFIND_FUNCTION_INNER(Tdust-T);
+            dE = dust_dE_rootfn(Tdust-T);
             if(dE==0){break;}
             scalefac *= 0.9; 
             n_iter++;
@@ -740,7 +734,7 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
         double scalefac = DMIN(1.1, 1+fixedpoint_error);
         while(dE > 0 && Tdust < MAX_DUST_TEMP) {
             Tdust *= scalefac; Tdust = DMIN(Tdust,MAX_DUST_TEMP);
-            dE = ROOTFIND_FUNCTION_INNER(Tdust-T); 
+            dE = dust_dE_rootfn(Tdust-T); 
             if(dE==0){break;}
             scalefac *= 1.1; 
             n_iter++;
@@ -755,13 +749,10 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
     if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[LAMBDADUST] ID=%llu T=%.8e Tdust_bracket=[%.8e,%.8e] dE_bracket=[%.6e,%.6e] n_bracket=%d\n", (unsigned long long)pp[i].ID, T, T_lower, T_upper, dE_lower, dE_upper, n_iter);}
 #endif
     if(dE!=0){
-        double ROOTFIND_X_a = T_lower-T, ROOTFIND_X_b = T_upper-T;
-        double ROOTFUNC_a = dE_lower; double ROOTFUNC_b = dE_upper;
-        double ROOTFIND_REL_X_tol = dTdust_tol, ROOTFIND_ABS_X_tol=0.;
-        #include "../system/bracketed_rootfind.h"
-        Tdust = ROOTFIND_X_new+T;
+        BrentRootfindResult rfr = brent_rootfind(dust_dE_rootfn, T_lower-T, T_upper-T, dE_lower, dE_upper, dTdust_tol, 0., MAXITER);
+        Tdust = rfr.x + T;
 #ifdef GIZMO_DEBUG_RT_COOLING
-        if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[LAMBDADUST] ID=%llu rootfind Tdust=%.10e ROOTFIND_ITER=%d\n", (unsigned long long)pp[i].ID, Tdust, ROOTFIND_ITER);}
+        if(pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000) {printf("[LAMBDADUST] ID=%llu rootfind Tdust=%.10e iter=%d\n", (unsigned long long)pp[i].ID, Tdust, rfr.iter);}
 #endif
     }
     double LambdaDust = 0;
