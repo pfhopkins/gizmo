@@ -16,6 +16,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #endif
 #include "ags_density_gpu.h"
+#include "../mesh/ghost_writeback.h"
 
 /*! \file ags_rkern.c
  *  \brief kernel length determination for non-gas particles
@@ -314,7 +315,12 @@ void ags_density(void)
             for(int a=0;a<nl_num_active;a++) {nl_active[a] = ilist[a]; nl_radii[a] = P[ilist[a]].AGS_KernelRadius;}
             struct ags_density_gpu_out *nl_outs = (struct ags_density_gpu_out *) mymalloc(
                 "ags_nl_outs", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct ags_density_gpu_out));
+            /* zero P[j].wakeup on ghosts so post-kernel non-zero values are pure deltas
+               to reverse-communicate to home ranks (the kernel writes wakeup atomically
+               when a ghost satisfies the wakeup condition). */
+            ghost_writeback_zero_wakeup();
             ags_density_evaluate_gpu(P, CellP, NumPart, nl_active, nl_num_active, nl_radii, bm, nl_outs);
+            ghost_writeback_wakeup();
             for(int a=0;a<nl_num_active;a++) {
                 int ii = nl_active[a];
                 P[ii].NumNgb          += nl_outs[a].Ngb;

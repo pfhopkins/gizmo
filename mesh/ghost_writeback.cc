@@ -157,3 +157,98 @@ void ghost_writeback_hydro(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
 }
+
+
+/* --- Wakeup-only variant ------------------------------------------------- */
+
+struct ghost_delta_wakeup_t {
+    int home_index;
+    short int wakeup;
+};
+
+
+void ghost_writeback_zero_wakeup(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local = ghost_get_num_local();
+    if(num_ghosts <= 0) return;
+    for(int g = 0; g < num_ghosts; g++) { P[num_local + g].wakeup = 0; }
+}
+
+
+void ghost_writeback_wakeup(void)
+{
+    if(NTask <= 1) return;
+
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local = ghost_get_num_local();
+    int *home_rank  = ghost_get_home_rank();
+    int *home_index = ghost_get_home_index();
+
+    int *delta_send_count = (int *) calloc(NTask, sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        if(P[num_local + g].wakeup != 0) { delta_send_count[home_rank[g]]++; }
+    }
+    int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
+    delta_send_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1]; }
+    int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
+
+    struct ghost_delta_wakeup_t *send_buf = (struct ghost_delta_wakeup_t *)
+        malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_wakeup_t));
+    int *pack_offset = (int *) malloc(NTask * sizeof(int));
+    memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        if(P[j].wakeup == 0) continue;
+        int task = home_rank[g];
+        int off = pack_offset[task]++;
+        send_buf[off].home_index = home_index[g];
+        send_buf[off].wakeup = P[j].wakeup;
+    }
+    free(pack_offset);
+
+    int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
+    MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
+    delta_recv_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1]; }
+    int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
+
+    struct ghost_delta_wakeup_t *recv_buf = (struct ghost_delta_wakeup_t *)
+        malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_wakeup_t));
+
+    int delta_size = sizeof(struct ghost_delta_wakeup_t);
+    int *send_bytes = (int *) malloc(NTask * sizeof(int));
+    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
+    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
+    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        send_bytes[t] = delta_send_count[t] * delta_size;
+        recv_bytes[t] = delta_recv_count[t] * delta_size;
+        send_bdisp[t] = delta_send_disp[t] * delta_size;
+        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
+    }
+    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
+                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    free(send_buf); free(delta_send_count); free(delta_send_disp);
+
+    int wakeups_applied = 0;
+    for(int d = 0; d < total_recv; d++) {
+        int idx = recv_buf[d].home_index;
+        if(recv_buf[d].wakeup > P[idx].wakeup) {
+            P[idx].wakeup = recv_buf[d].wakeup;
+            wakeups_applied++;
+        }
+    }
+    if(wakeups_applied > 0) { NeedToWakeupParticles_local = 1; }
+
+    if(ThisTask == 0 && (total_send > 0 || total_recv > 0)) {
+        printf("  Ghost writeback (wakeup): sent %d deltas, received %d deltas, %d wakeups applied\n",
+               total_send, total_recv, wakeups_applied);
+        fflush(stdout);
+    }
+
+    free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+}

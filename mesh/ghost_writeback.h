@@ -27,6 +27,17 @@ void ghost_writeback_zero_hydro(void);
  * and apply the deltas. Call after the hydro force loop, before cleanup. */
 void ghost_writeback_hydro(void);
 
+/* Wakeup-only variant, for use around GPU neighbor-list kernels that
+ * atomically write P[j].wakeup but no other j-side state (e.g. the AGS
+ * density kernel). Usage pattern:
+ *   ghost_writeback_zero_wakeup();
+ *   [run GPU kernel with atomic P[j].wakeup writes]
+ *   ghost_writeback_wakeup();
+ * Safe to call in addition to ghost_writeback_hydro on the same timestep —
+ * each call zeroes + reverse-communicates independently. */
+void ghost_writeback_zero_wakeup(void);
+void ghost_writeback_wakeup(void);
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);
