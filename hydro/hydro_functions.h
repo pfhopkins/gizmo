@@ -33,6 +33,9 @@
 #include "../solids/elastic_stress_tensor_force_functions.h"
 #include "../turb/turbulent_diffusion_functions.h"
 #include "../turb/chimes_turbulent_ion_diffusion_functions.h"
+#include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion_functions.h"
+#include "../radiation/rt_direct_ray_transport_functions.h"
+#include "../radiation/rt_diffusion_explicit_functions.h"
 
 /* Requires: allvars.h, proto.h, kernel.h, reimann.h included before this header.
    Also requires: Conserved_var_Riemann, kernel_hydra, INPUT_STRUCT_NAME, OUTPUT_STRUCT_NAME
@@ -331,16 +334,42 @@ void hydro_accumulate_neighbor(
                                   face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
     chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                        face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+    {
+        /* Riemann_out / face_area_dot_vel exist only under !HYDRO_SPH; local
+           shims default to zero so the function signature stays the same. */
+        double riemann_S_M_val = 0, face_area_dot_vel_val = 0;
+#ifndef HYDRO_SPH
+        riemann_S_M_val = Riemann_out.S_M;
+        face_area_dot_vel_val = face_area_dot_vel;
+#endif
+        const double *cr_pressure_j_ptr = nullptr;
 #ifdef COSMIC_RAY_FLUID
-#include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
+        cr_pressure_j_ptr = CosmicRayPressure_j;
 #endif
+        cosmic_ray_diffusion_compute_pair(local, j, P, CellP, VelPred_j, kernel,
+                                          Face_Area_Vec, Face_Area_Norm, V_i, V_j,
+                                          Particle_Size_i, Particle_Size_j,
+                                          face_vel_i, face_vel_j,
+                                          face_area_dot_vel_val, riemann_S_M_val,
+                                          cr_pressure_j_ptr, bhat, dt_hydrostep, Fluxes, out);
+    }
+    {
+        const double *tau_c_i_ptr = nullptr;
 #if defined(RT_SOLVER_EXPLICIT) && (N_RT_FREQ_BINS > 0)
-#if defined(RT_EVOLVE_INTENSITIES)
-#include "../radiation/rt_direct_ray_transport.h"
-#else
-#include "../radiation/rt_diffusion_explicit.h"
+        tau_c_i_ptr = tau_c_i;
 #endif
+        Vec3<MyDouble> particle_vel_j_for_rt = {};
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        particle_vel_j_for_rt = ParticleVel_j;
 #endif
+        rt_direct_ray_transport_compute_pair(local, P[j], CellP[j], VelPred_j, particle_vel_j_for_rt,
+                                             Face_Area_Vec, Face_Area_Norm, V_i, V_j, Particle_Size_j,
+                                             tau_c_i_ptr, dt_hydrostep, out);
+        rt_diffusion_explicit_compute_pair(local, j, P, CellP, VelPred_j, particle_vel_j_for_rt,
+                                           kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                           V_i, V_j, Particle_Size_i, Particle_Size_j,
+                                           face_vel_i, face_vel_j, tau_c_i_ptr, dt_hydrostep, out);
+    }
 
     /* ---- Flux assignment to particle i ---- */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME

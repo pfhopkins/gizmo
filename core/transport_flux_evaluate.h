@@ -101,44 +101,25 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 kernel.sound_j = CellP[j].effective_soundspeed();
                 kernel.vsig = kernel.sound_i + kernel.sound_j; /* sum of sound speeds, same as hydro pass line 190 */
 
-                /* variables needed by rt_diffusion_explicit.h */
-                double c_light_eff = C_LIGHT_CODE_REDUCED;
-                double rsol_corr = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                Vec3<double> v_frame = 0.5*(local.ParticleVel + P[j].Vel)/All.cf_atime;
-#else
-                Vec3<double> v_frame = 0.5*(local.Vel + CellP[j].VelPred)/All.cf_atime;
-#endif
                 Vec3<MyDouble> VelPred_j = CellP[j].VelPred;
+                Vec3<MyDouble> ParticleVel_j = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                Vec3<MyDouble> ParticleVel_j = P[j].Vel;
+                ParticleVel_j = P[j].Vel;
 #endif
 
-#if defined(RT_INFRARED)
-                double Fluxes_Rad_E_gamma_T_weighted_IR = 0;
+                {
+                    const double *tau_c_i_ptr = nullptr;
+#if defined(RT_SOLVER_EXPLICIT) && (N_RT_FREQ_BINS > 0)
+                    tau_c_i_ptr = tau_c_i;
 #endif
-                double Fluxes_Rad_E_gamma[N_RT_FREQ_BINS];
-#ifdef MAGNETIC
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.1
-#else
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.5
-#endif
-#if !defined(MAGNETIC) || defined(GALSF) || defined(COOLING) || defined(SINK_PARTICLES)
-#define HLL_DIFFUSION_OVERSHOOT_FACTOR 0.005
-#else
-#define HLL_DIFFUSION_OVERSHOOT_FACTOR 1.0
-#endif
-
-#ifdef RT_SOLVER_EXPLICIT
-#if defined(RT_EVOLVE_INTENSITIES)
-#include "../radiation/rt_direct_ray_transport.h"
-#else
-#include "../radiation/rt_diffusion_explicit.h"
-#endif
-#endif
-
-#undef HLL_DIFFUSION_COMPROMISE_FACTOR
-#undef HLL_DIFFUSION_OVERSHOOT_FACTOR
+                    rt_direct_ray_transport_compute_pair(local, P[j], CellP[j], VelPred_j, ParticleVel_j,
+                                                         Face_Area_Vec, Face_Area_Norm, V_i, V_j, Particle_Size_j,
+                                                         tau_c_i_ptr, dt_hydrostep, out);
+                    rt_diffusion_explicit_compute_pair(local, j, P, CellP, VelPred_j, ParticleVel_j,
+                                                       kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                                       V_i, V_j, Particle_Size_i, Particle_Size_j,
+                                                       face_vel_i, face_vel_j, tau_c_i_ptr, dt_hydrostep, out);
+                }
 
             } /* for(n = 0; n < numngb; n++) */
         } /* while(startnode >= 0) inner */
