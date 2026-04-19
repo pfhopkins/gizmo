@@ -32,11 +32,7 @@
 
 #include <mpi.h>
 #include <stdio.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_integration.h>
-#include <gsl/gsl_spline.h>
-#include <gsl/gsl_errno.h>
+#include "gizmo_rng.h"
 #include <hdf5.h>
 
 #ifdef _OPENMP
@@ -228,7 +224,7 @@ extern double Max_Unspawned_MassUnits_fromSink;
 
 extern long long Ntype[6];	/*!< total number of particles of each type */
 extern int NtypeLocal[6];	/*!< local number of particles of each type */
-extern gsl_rng *random_generator;	/*!< the random number generator used */
+extern gizmo_rng_t random_generator;	/*!< the random number generator used */
 extern int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
@@ -272,7 +268,7 @@ extern double* StAkb; // phases (imag part)
 extern double* StMode; // k vectors
 extern int StNModes; // total number of modes
 extern integertime StTPrev; // time of last update (to determine when next will be)
-extern gsl_rng* StRng; // random number generator key
+extern gizmo_rng_t StRng; // random number generator key
 #endif
 
 

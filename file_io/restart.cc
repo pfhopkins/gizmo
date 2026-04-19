@@ -9,7 +9,6 @@
 #include <sys/types.h>
 #include <sys/file.h>
 #include <unistd.h>
-#include <gsl/gsl_rng.h>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -262,11 +261,11 @@ void restart(int modus)
 	    }
 
 	  /* write state of random number generator */
-	  byten(gsl_rng_state(random_generator), gsl_rng_size(random_generator), modus);
+	  byten(random_generator.s, sizeof(random_generator.s), modus);
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
 #ifdef TURB_DRIVING
-      byten(gsl_rng_state(StRng), gsl_rng_size(StRng), modus);
+      byten(StRng.s, sizeof(StRng.s), modus);
 	  byten(&StNModes, sizeof(StNModes), modus);
 	  byten(StOUPhases, StNModes*6*sizeof(double),modus);
 	  byten(StAmpl, StNModes*3*sizeof(double),modus);

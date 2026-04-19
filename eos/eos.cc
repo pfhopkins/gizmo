@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
 #ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #endif

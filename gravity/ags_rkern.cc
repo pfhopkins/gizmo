@@ -5,7 +5,6 @@
 #include <math.h>
 #include <map>
 #include <vector>
-#include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../sidm/dm_fuzzy_flux_functions.h"

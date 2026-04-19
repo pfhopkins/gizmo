@@ -3,10 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
-#include <gsl/gsl_eigen.h>
+#include "../declarations/gpu_rng.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -723,10 +720,7 @@ void update_stellarnumber_and_timedistribofstarformation(void)
 #endif
                 double n_expected_total = f_m * P[i].Mass * UNIT_MASS_IN_SOLAR; // default f_m above is 1 O-star per 100 Msun [more exactly calculated here as number of stars per solar mass with mass > 8 Msun, from our adopted Kroupa IMF from 0.01-100 Msun]
                 double dn_expected_in_dt = n_expected_total * d_tau; // expected number to spawn in this particular interval
-                gsl_rng *random_generator_for_massivestars; // allocate rng
-                random_generator_for_massivestars = gsl_rng_alloc(gsl_rng_ranlxd1); // setup generator
-                gsl_rng_set(random_generator_for_massivestars, P[i].ID + 49531 + All.NumCurrentTiStep); // seed random number
-                unsigned int n_to_add = gsl_ran_poisson(random_generator_for_massivestars, dn_expected_in_dt); // actually draw the number
+                unsigned int n_to_add = (unsigned int)gizmo_gpu_rand_poisson((uint64_t)P[i].ID, (uint64_t)(49531 + All.NumCurrentTiStep) << 8, dn_expected_in_dt);
                 if(n_to_add > 0) // hey, new stars!
                 {
                     P[i].IMF_WeightedMeanStellarFormationTime = (P[i].IMF_NumMassiveStars * P[i].StellarAge + n_to_add * All.Time) / (P[i].IMF_NumMassiveStars + n_to_add); // update the effective stellar age (so e.g. if we lose stars, this can keep updating)

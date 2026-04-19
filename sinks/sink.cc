@@ -3,10 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
 #include "../declarations/allvars.h"
+#include "../declarations/gpu_rng.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 
@@ -223,7 +221,6 @@ void set_sink_mdot(int i, int n, double dt)
 #endif
 #ifdef SINK_SUBGRIDBHVARIABILITY
     long nsubgridvar; int jsub; double varsg1,varsg2,omega_ri,n0_sgrid_elements,norm_subgrid,time_var_subgridvar;
-    gsl_rng *random_generator_forbh;
 #endif
 #ifdef SINK_ENFORCE_EDDINGTON_LIMIT
     double meddington = sink_eddington_mdot(P[n].Sink_Mass);
@@ -474,16 +471,13 @@ void set_sink_mdot(int i, int n, double dt)
         /* this line just allows 'resetting' the time constants every so often, while generally keeping them steady */
         double fac;
         if(All.ComovingIntegrationOn) {fac=omega_ri * (evaluate_time_since_t_initial_in_Gyr(0.001)/(UNIT_TIME_IN_GYR));} else {fac=omega_ri * All.Time;} /* All.Time is physical time, this is good */
-        random_generator_forbh=gsl_rng_alloc(gsl_rng_ranlxd1);
-        gsl_rng_set(random_generator_forbh, nsubgridvar);
         if(n0_sgrid_elements >= 1) {
             for(jsub=1;jsub<=n0_sgrid_elements;jsub++) {
-                varsg1=gsl_rng_uniform(random_generator_forbh);
-                varsg2=gsl_ran_ugaussian(random_generator_forbh);
+                varsg1=gizmo_gpu_rand_double((uint64_t)nsubgridvar, (uint64_t)jsub);
+                varsg2=gizmo_gpu_rand_gaussian((uint64_t)nsubgridvar, (uint64_t)(100+jsub));
                 time_var_subgridvar=fac*pow(omega_ri*dt,-((float)jsub)/n0_sgrid_elements) + 2.*M_PI*varsg1;
                 mdot *= exp( norm_subgrid*cos(time_var_subgridvar)*varsg2 );
             }}
-        gsl_rng_free(random_generator_forbh);
     } // if(mdot > 0)
 #endif
 

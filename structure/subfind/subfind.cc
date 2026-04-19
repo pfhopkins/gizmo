@@ -6,7 +6,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <gsl/gsl_rng.h>
 
 /*!
 * This file was originally part of the GADGET3 code developed by Volker Springel.

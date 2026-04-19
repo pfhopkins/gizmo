@@ -3,9 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
+#include "../declarations/gpu_rng.h"
 #include "../system/eigen_symmetric.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -105,11 +103,8 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 #endif
 
 #ifdef GALSF_SFR_IMF_SAMPLING
-    gsl_rng *random_generator_for_massivestars;
-    random_generator_for_massivestars = gsl_rng_alloc(gsl_rng_ranlxd1);
-    gsl_rng_set(random_generator_for_massivestars, P[i].ID + 121 + All.NumCurrentTiStep);
     double mu = 0.0115 * P[i].Mass * UNIT_MASS_IN_SOLAR; // 1 O-star per 100 Msun [more exactly calculated here as number of stars per solar mass with mass > 8 Msun, from our adopted Kroupa IMF from 0.01-100 Msun]
-    unsigned int kk = gsl_ran_poisson(random_generator_for_massivestars, mu);
+    unsigned int kk = (unsigned int)gizmo_gpu_rand_poisson((uint64_t)P[i].ID, (uint64_t)(121 + All.NumCurrentTiStep) << 8, mu);
     P[i_star].IMF_NumMassiveStars = (double)kk;
 #ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
     P[i_star].IMF_NumMassiveStars = 0; // set to zero, these will increase with time now
@@ -470,9 +465,7 @@ void star_formation_parent_routine(void)
                         P[i].Sink_Mass = All.SeedSinkMass;
                         if(All.SeedSinkMassSigma > 0)
                         {
-                            gsl_rng *random_generator_forbh; /* generate gaussian random number for random BH seed mass */
-                            random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1); gsl_rng_set(random_generator_forbh, P[i].ID + 17 + All.NumCurrentTiStep);
-                            P[i].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gsl_ran_gaussian(random_generator_forbh, All.SeedSinkMassSigma) );
+                            P[i].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian((uint64_t)P[i].ID, (uint64_t)(17 + All.NumCurrentTiStep)) * All.SeedSinkMassSigma );
                         }
                         P[i].Sink_Formation_Mass = P[i].Mass; // save the mass we had at the time of sink formation, because we will use this later to understand how the sink has grown
                         if(p>1) P[i].Sink_Mass *= p; /* assume multiple seeds in particle merge */

@@ -100,4 +100,26 @@ GIZMO_RNG_INLINE double gizmo_gpu_rand_range(uint64_t key, uint64_t counter, dou
     return low + (high - low) * gizmo_gpu_rand_double(key, counter);
 }
 
+
+/* Poisson draw with mean lambda.
+ *   lambda < 30: Knuth's exact algorithm — draws uniforms at counter+1, +2, ...
+ *                Callers must reserve counter..counter+~3*lambda+1 in their
+ *                stream to avoid counter collisions with sibling draws.
+ *   lambda >= 30: Normal approximation — single Gaussian draw (two uniforms
+ *                 at counter*2 and counter*2+1 via gizmo_gpu_rand_gaussian).
+ *
+ * Useful for stochastic IMF sampling, sink formation, etc. on GPU. */
+GIZMO_RNG_INLINE uint64_t gizmo_gpu_rand_poisson(uint64_t key, uint64_t counter, double lambda)
+{
+    if(lambda <= 0) return 0;
+    if(lambda < 30.0) {
+        double L = exp(-lambda), p = 1.0;
+        uint64_t k = 0, c = counter;
+        do { k++; c++; p *= gizmo_gpu_rand_double(key, c); } while(p > L && k < 10000);
+        return k - 1;
+    }
+    double x = gizmo_gpu_rand_gaussian(key, counter) * sqrt(lambda) + lambda;
+    return (x > 0) ? (uint64_t)(x + 0.5) : 0;
+}
+
 #endif /* GIZMO_GPU_RNG_H */

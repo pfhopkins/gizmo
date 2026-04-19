@@ -4,8 +4,7 @@
 #include <math.h>
 #include <time.h>
 #include <mpi.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_integration.h>
+#include "../declarations/gizmo_quadrature.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -41,31 +40,20 @@
  *  as a function of the two particle separations. It populates a table with the results of the numerical integration */
 void init_geofactor_table(void)
 {
-    int i; double result, abserr,r;
-    gsl_function F; gsl_integration_workspace *workspace; workspace = gsl_integration_workspace_alloc(GSLWORKSIZE);
+    int i; double r;
     for(i = 0; i < GEOFACTOR_TABLE_LENGTH; i++)
     {
-        r =  2.0/GEOFACTOR_TABLE_LENGTH * (i + 1);
-        F.function = &geofactor_integ;
-        F.params = &r;
-        gsl_integration_qag(&F, 0.0, 1.0, 0, 1.0e-8, GSLWORKSIZE, GSL_INTEG_GAUSS41,workspace, &result, &abserr);
-        GeoFactorTable[i] = 2*M_PI*result;
+        r = 2.0/GEOFACTOR_TABLE_LENGTH * (i + 1);
+        GeoFactorTable[i] = 2*M_PI * gizmo_gl20_integrate(&geofactor_integ, 0.0, 1.0, &r);
     }
-    gsl_integration_workspace_free(workspace);
 }
 
 /*! This function returns the integrand of the numerical integration done on init_geofactor_table(). */
 double geofactor_integ(double x, void * params)
 {
-    double result, abserr, r, newparams[2];
-    r = *(double *) params; newparams[0] = r; newparams[1] = x;
-    gsl_function F; gsl_integration_workspace *workspace; workspace = gsl_integration_workspace_alloc(GSLWORKSIZE);
-    F.function = &geofactor_angle_integ; F.params = newparams;
-    
-    gsl_integration_qag(&F, -1.0, 1.0, 0, 1.0e-8, GSLWORKSIZE, GSL_INTEG_GAUSS41,workspace, &result, &abserr);
-    gsl_integration_workspace_free(workspace);
-    
-    /*! This function returns the value W(x). The values of the density kernel as a funtion of x=r/h */
+    double r = *(double *) params, newparams[2];
+    newparams[0] = r; newparams[1] = x;
+    double result = gizmo_gl20_integrate(&geofactor_angle_integ, -1.0, 1.0, newparams);
     double wk=0; if(x<1) kernel_main(x, 1, 1, &wk, &wk, -1);
     return x*x*wk*result;
 }

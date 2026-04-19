@@ -17,7 +17,6 @@
 #include <unistd.h>
 #include <time.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"

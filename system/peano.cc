@@ -8,7 +8,6 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
-#include <gsl/gsl_heapsort.h>
 
 
 

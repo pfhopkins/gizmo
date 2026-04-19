@@ -4,9 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <string.h>
-#include <gsl/gsl_errno.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
+#include "../declarations/gpu_rng.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -257,11 +255,8 @@ void powerspec_turb(int filenr)
 
   RandomValue = (float *) mymalloc("RndField", N_gas * sizeof(float));
 
-  gsl_rng *random_gen = gsl_rng_alloc(gsl_rng_ranlxd1);
-  gsl_rng_set(random_gen, 42 + ThisTask);	/* start-up seed */
-
   for(i=0; i < N_gas; i++)
-    RandomValue[i] = gsl_ran_gaussian (random_gen, 1.0);
+    RandomValue[i] = (float)gizmo_gpu_rand_gaussian((uint64_t)(42 + ThisTask), (uint64_t)i);
 
   powerspec_turb_obtain_fields();
  

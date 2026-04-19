@@ -9,8 +9,7 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
+#include "../declarations/gizmo_rng.h"
 #ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #endif
@@ -39,7 +38,7 @@ double* StAkb; // phases (imag part)
 double* StMode; // k vectors
 int StNModes; // total number of modes
 integertime StTPrev; // time of last update (to determine when next will be)
-gsl_rng* StRng; // random number generator key
+gizmo_rng_t StRng; // random number generator key
 
 
 /* routine to initialize the different modes and their relative amplitudes and other global variables needed for the turbulence driving routines */
@@ -183,8 +182,7 @@ void init_turb(void)
     }
     int i; for(i=0; i<StNModes; i++) {StAmpl[i] *= sqrt(1./amplitude_integrated_allmodes);} // normalize total driving amplitude across all modes here
     StTPrev = -1; // mark some arbitrarily old time as last update of turb driving fields
-    StRng = gsl_rng_alloc(gsl_rng_ranlxd1); // allocate seed variables
-    gsl_rng_set(StRng, All.TurbDriving_Global_DrivingRandomNumberKey); // initialize seed
+    gizmo_rng_init(&StRng, (uint64_t)All.TurbDriving_Global_DrivingRandomNumberKey);
     int j; for(j=0;j<100;j++) {double tmp; tmp=st_turbdrive_get_gaussian_random_variable();} // cycle past initial seed
     st_turbdrive_init_ouseq(); // initialize variable for phases
     st_turbdrive_calc_phases(); // initialize phases
@@ -254,7 +252,7 @@ void st_update_ouseq(void)
 /* routine to return gaussian random number with zero mean and unity variance */
 double st_turbdrive_get_gaussian_random_variable(void)
 {
-    double r0 = gsl_rng_uniform(StRng), r1 = gsl_rng_uniform(StRng);
+    double r0 = gizmo_rng_uniform(&StRng), r1 = gizmo_rng_uniform(&StRng);
     return sqrt(2. * log(1. / r0) ) * cos(2. * M_PI * r1);
 }
 

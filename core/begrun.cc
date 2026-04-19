@@ -6,7 +6,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <gsl/gsl_rng.h>
 #include <ctype.h>
 
 #include "../declarations/allvars.h"
@@ -189,9 +188,7 @@ void begrun(void)
 
 
 
-  random_generator = gsl_rng_alloc(gsl_rng_ranlxd1);
-
-  gsl_rng_set(random_generator, 42 + ThisTask);	/* start-up seed */
+  gizmo_rng_init(&random_generator, (uint64_t)(42 + ThisTask));
 
 #ifdef PMGRID
   if(RestartFlag != 3 && RestartFlag != 4) {long_range_init();}

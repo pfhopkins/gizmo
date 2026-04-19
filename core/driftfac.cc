@@ -3,8 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_integration.h>
+#include "../declarations/gizmo_quadrature.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -60,35 +59,17 @@ double growthfactor_integ(double a, void *param)
 
 void init_drift_table(void)
 {
-#define WORKSIZE 100000
   int i;
-  double result, abserr;
-
-  gsl_function F;
-  gsl_integration_workspace *workspace;
-
   logTimeBegin = log(All.TimeBegin);
   logTimeMax = log(All.TimeMax);
 
-  workspace = gsl_integration_workspace_alloc(WORKSIZE);
-
   for(i = 0; i < DRIFT_TABLE_LENGTH; i++)
     {
-
-      F.function = &drift_integ;
-      gsl_integration_qag(&F, exp(logTimeBegin),
-			  exp(logTimeBegin + ((logTimeMax - logTimeBegin) / DRIFT_TABLE_LENGTH) * (i + 1)), 0,
-			  1.0e-8, WORKSIZE, GSL_INTEG_GAUSS41, workspace, &result, &abserr);
-      DriftTable[i] = result;
-
-
-      F.function = &gravkick_integ;
-      gsl_integration_qag(&F, exp(logTimeBegin),
-			  exp(logTimeBegin + ((logTimeMax - logTimeBegin) / DRIFT_TABLE_LENGTH) * (i + 1)), 0,
-			  1.0e-8, WORKSIZE, GSL_INTEG_GAUSS41, workspace, &result, &abserr);
-      GravKickTable[i] = result;
+      double a0 = exp(logTimeBegin);
+      double a1 = exp(logTimeBegin + ((logTimeMax - logTimeBegin) / DRIFT_TABLE_LENGTH) * (i + 1));
+      DriftTable[i]   = gizmo_gl20_integrate(&drift_integ,   a0, a1, NULL);
+      GravKickTable[i] = gizmo_gl20_integrate(&gravkick_integ, a0, a1, NULL);
     }
-  gsl_integration_workspace_free(workspace);
 }
 
 

@@ -8,7 +8,6 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #include <signal.h>
-#include <gsl/gsl_rng.h>
 #include "../system/eigen_symmetric.h"
 
 #include "../declarations/allvars.h"

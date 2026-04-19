@@ -3,8 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
-#include <gsl/gsl_rng.h>
+#include "../declarations/gpu_rng.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -1569,9 +1568,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // Need to curtail Mach number for grain velocities to be below coagulation threshold
         Mach=1; 
     }
-    gsl_rng *random_generator_fordust; /* generate uniform random number for grain impact angle */
-    random_generator_fordust = gsl_rng_alloc(gsl_rng_ranlxd1); 
-    gsl_rng_set(random_generator_fordust, pp[i].ID + 11 + All.NumCurrentTiStep);
+    uint64_t dust_rng_key = (uint64_t)pp[i].ID, dust_rng_ctr = (uint64_t)(11 + All.NumCurrentTiStep);
 
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {
         if (cell[i].ISMDustChem_Dust_Species[k] <= 0) {continue;} // No dust nothin to do
@@ -1604,7 +1601,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // In my case the mechanical feedback routine is producing very large injection masses that don't match up with the expected yields! 
         // Using a new random number generator fixes this for now. Will need to investigate.
         //cos_imp_angle = 2.0*(get_random_number((MyIDType) (pp[i].ID+5+k))-0.5); 
-        cos_imp_angle = 2.0*gsl_rng_uniform(random_generator_fordust)-1.0;
+        cos_imp_angle = 2.0*gizmo_gpu_rand_double(dust_rng_key, dust_rng_ctr++)-1.0;
         
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
             for (bin_k=0;bin_k<NUM_ISMDUSTCHEM_SIZE_BINS;bin_k++) {
@@ -1715,7 +1712,6 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
             k_cycle++;
         }
     }
-    gsl_rng_free(random_generator_fordust);
 #endif
 }
 

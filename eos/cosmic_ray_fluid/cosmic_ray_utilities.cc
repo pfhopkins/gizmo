@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
 /* Function bodies now in cosmic_ray_functions.h (single source of truth).

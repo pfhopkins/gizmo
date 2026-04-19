@@ -8,7 +8,6 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #include <signal.h>
-#include <gsl/gsl_rng.h>
 
 
 #include "../declarations/allvars.h"
@@ -31,7 +30,7 @@
 /* get random number -- old format took ID as seed to generate reliably identical numbers from a table, but this is not safe for large simulations */
 double get_random_number(MyIDType id)
 {
-    return gsl_rng_uniform(random_generator);
+    return gizmo_rng_uniform(&random_generator);
 }
 
 /* returns the number of cpu-ticks in seconds that have elapsed. (or the wall-clock time) */

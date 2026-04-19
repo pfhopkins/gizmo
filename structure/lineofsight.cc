@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <gsl/gsl_math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 

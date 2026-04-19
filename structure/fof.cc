@@ -5,12 +5,10 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <gsl/gsl_math.h>
 #include <inttypes.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
+#include "../declarations/gpu_rng.h"
 
 /*! \file fof.c
  *  \brief parallel FoF group finder
@@ -1726,8 +1724,7 @@ void fof_make_sink_particles(void)
   long nexport, nimport;
   int recvTask, level;
   int *import_indices, *export_indices;
-  gsl_rng *random_generator_forbh;
-  double random_number_forbh=0, unitmass_in_msun;
+  double unitmass_in_msun;
 
   for(n = 0; n < NTask; n++)
     Send_count[n] = 0;
@@ -1819,10 +1816,7 @@ void fof_make_sink_particles(void)
         if(All.SeedSinkMassSigma > 0)
         {
             /* compute gaussian random number: mean=0, sigma=All.SeedSinkMassSigma */
-            random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1);
-            gsl_rng_set(random_generator_forbh, P[import_indices[n]].ID + 17 + All.NumCurrentTiStep);
-            random_number_forbh = gsl_ran_gaussian(random_generator_forbh, All.SeedSinkMassSigma);
-            P[import_indices[n]].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + random_number_forbh );
+            P[import_indices[n]].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian((uint64_t)P[import_indices[n]].ID, (uint64_t)(17 + All.NumCurrentTiStep)) * All.SeedSinkMassSigma );
             unitmass_in_msun = UNIT_MASS_IN_SOLAR;
             if( P[import_indices[n]].Sink_Mass < 100./unitmass_in_msun )
                 P[import_indices[n]].Sink_Mass = 100./unitmass_in_msun;      // enforce lower limit of Mseed = 100 x Msun
