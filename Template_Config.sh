@@ -142,8 +142,8 @@
 ## -----------------------------------------------------------------------------------------------------
 # ---------------------------------------- Adaptive Grav. Softening (including Lagrangian conservation terms!)
 #ADAPTIVE_GRAVSOFT_FORGAS       # allows variable softening length for gas particles (scaled with local inter-element separation), so gravity traces same density field seen by hydro
-#ADAPTIVE_GRAVSOFT_FORALL=1+2   # enable adaptive gravitational softening lengths for designated particle types (ADAPTIVE_GRAVSOFT_FORGAS should be disabled). the softening is set to the distance
-                                # enclosing a neighbor number set in the parameter file. flag value = bitflag like PM_PLACEHIGHRESREGION, which determines which particle types are adaptive (others use fixed softening). cite Hopkins et al., arXiv:1702.06148
+#ADAPTIVE_GRAVSOFT_FORALL=2     # enable adaptive gravitational softening lengths for designated particle types (ADAPTIVE_GRAVSOFT_FORGAS will be automatically enabled). the softening is set to the distance
+                                # enclosing a neighbor number set in the parameter file. flag value = bitflag like PM_PLACEHIGHRESREGION, which determines which non-gas particle types are adaptive (others use fixed softening). cite Hopkins et al., arXiv:1702.06148
 #ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION=2 # enable adaptive gravitational softening lengths for designated particle types (value = bitflag like ADAPTIVE_GRAVSOFT_FORALL), but setting the softening to the tidal-tensor based value instead of nearest-neighbor values, following Hopkins et al. (arXiv:2212.06851). this is cross-compatible with ADAPTIVE_GRAVSOFT_FORGAS, or even ADAPTIVE_GRAVSOFT_FORALL so long as the same particle type does not appear in both.
 ## -----------------------------------------------------------------------------------------------------
 #SELFGRAVITY_OFF                # turn off self-gravity (compatible with GRAVITY_ANALYTIC)

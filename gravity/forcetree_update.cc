@@ -444,7 +444,9 @@ void force_update_hmax(void)
         while(no >= 0)
         {
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-            double htmp = DMIN(P[i].AGS_KernelRadius, All.MaxKernelRadius);
+            double kernrad_temp = P[i].AGS_KernelRadius;
+            if(P[i].Type == 0) {kernrad_temp = P[i].KernelRadius;}
+            double htmp = DMIN(kernrad_temp, All.MaxKernelRadius);
 #else
             double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
 #endif
@@ -489,7 +491,9 @@ void force_update_hmax(void)
         {
             force_drift_node(no, All.Ti_Current);
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-            double htmp = DMIN(P[i].AGS_KernelRadius, All.MaxKernelRadius);
+            double kernrad_temp = P[i].AGS_KernelRadius;
+            if(P[i].Type == 0) {kernrad_temp = P[i].KernelRadius;}
+            double htmp = DMIN(kernrad_temp, All.MaxKernelRadius);
 #else
             double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
 #endif

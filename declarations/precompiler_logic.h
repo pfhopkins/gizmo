@@ -150,6 +150,9 @@
 #endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
+#if !defined(ADAPTIVE_GRAVSOFT_FORGAS)
+#define ADAPTIVE_GRAVSOFT_FORGAS            /*! default choice is adaptive force softening for gas, but not stars [since ambiguously defined] */
+#endif
 #define ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING /* comment out to revert to behavior of taking 'greater' softening in pairwise kernel interactions with adaptive softenings enabled. really only needed currently for this particular AGS model given how it computes zeta terms (could be made optional with one more loop for those as well) */
 #endif
 
@@ -185,7 +188,7 @@
 #define GALSF_FB_FIRE_RT_LONGRANGE          /*! continuous acceleration from starlight (uses luminosity tree) to propagate FIRE RT */
 #define GALSF_FB_FIRE_AGE_TRACERS 16        /*! tracks a set of passive scalars corresponding to stellar ages for chemical evolution model postprocessing */
 
-#if !(defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL))
+#if !defined(ADAPTIVE_GRAVSOFT_FORGAS)
 #define ADAPTIVE_GRAVSOFT_FORGAS            /*! default choice is adaptive force softening for gas, but not stars [since ambiguously defined] */
 #endif
 
