@@ -28,6 +28,9 @@
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
 #include "conduction_functions.h"
+#include "viscosity_functions.h"
+#include "nonideal_mhd_functions.h"
+#include "../solids/elastic_stress_tensor_force_functions.h"
 #include "../turb/turbulent_diffusion_functions.h"
 #include "../turb/chimes_turbulent_ion_diffusion_functions.h"
 
@@ -125,8 +128,12 @@ void hydro_accumulate_neighbor(
     double CosmicRayPressure_j[N_CR_PARTICLE_BINS];
     for(k=0; k<N_CR_PARTICLE_BINS; k++) {CosmicRayPressure_j[k] = Get_Gas_CosmicRayPressure(j, k, CellP);}
 #endif
+    /* BPred_j declared unconditionally so nonideal_mhd can take it as a plain
+       arg; zero-init when MAGNETIC is off (function body guards with MHD_NON_IDEAL
+       which implies MAGNETIC, so the zero is never actually consumed). */
+    Vec3<double> BPred_j = {};
 #ifdef MAGNETIC
-    Vec3<double> BPred_j = CellP[j].Bfield();
+    BPred_j = CellP[j].Bfield();
     NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos, P[j].Pos, BPred_j, -1);
 #ifdef DIVBCLEANING_DEDNER
     double PhiPred_j = CellP[j].PhiPred / P[j].Mass;
@@ -222,8 +229,11 @@ void hydro_accumulate_neighbor(
        is enabled; declared unconditionally so turb-diffusion functions can take
        it as a plain argument (value is 0 when not set). */
     double mdot_estimated = 0;
+    /* tensile_correction_factor: only non-trivial under Tillotson/elastic/ANEOS;
+       declared unconditionally so the elastic function can take it as a plain arg. */
+    double tensile_correction_factor = 0;
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
-    double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
+    tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
 
     double V_i = local.Mass / local.Density;
@@ -303,12 +313,12 @@ void hydro_accumulate_neighbor(
 #endif
 
     /* ---- Physics sub-modules ---- */
-#ifdef EOS_ELASTIC
-#include "../solids/elastic_stress_tensor_force.h"
-#endif
-#ifdef MHD_NON_IDEAL
-#include "nonideal_mhd.h"
-#endif
+    elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
+                                             Face_Area_Vec, Face_Area_Norm,
+                                             tensile_correction_factor, dt_hydrostep, Fluxes);
+    nonideal_mhd_compute_pair(local, P[j], CellP[j], BPred_j, kernel, rinv,
+                              Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
+                              dt_hydrostep, Fluxes);
     /* Per-pair physics sub-modules. Functions guard their bodies with the
        relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
     double face_density_for_diffusion = 0;
@@ -317,9 +327,9 @@ void hydro_accumulate_neighbor(
 #endif
     conduction_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                             v_hll, bhat, bhat_mag, dt_hydrostep, Fluxes);
-#ifdef VISCOSITY
-#include "viscosity.h"
-#endif
+    viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
+                           Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
+                           dt_hydrostep, Fluxes);
     {
         MyFloat dyield_j_delta[NUM_METAL_SPECIES];
         turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,

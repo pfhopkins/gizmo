@@ -23,6 +23,9 @@
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
 #include "conduction_functions.h"
+#include "viscosity_functions.h"
+#include "nonideal_mhd_functions.h"
+#include "../solids/elastic_stress_tensor_force_functions.h"
 #include "../turb/turbulent_diffusion_functions.h"
 #include "../turb/chimes_turbulent_ion_diffusion_functions.h"
 
@@ -199,8 +202,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double CosmicRayPressure_j[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {CosmicRayPressure_j[k] = Get_Gas_CosmicRayPressure(j, k, CellP);} /* compute this for use below */
                 //double Streaming_Loss_Term = 0; // alternative evaluation of streaming+diffusion losses: still experimental //
 #endif
+                /* BPred_j declared unconditionally so nonideal_mhd can take it as a plain arg. */
+                Vec3<double> BPred_j = {};
 #ifdef MAGNETIC
-                Vec3<double> BPred_j = CellP[j].Bfield(); /* defined j b-field in appropriate units for everything */
+                BPred_j = CellP[j].Bfield(); /* defined j b-field in appropriate units for everything */
                 NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,BPred_j,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
 #ifdef DIVBCLEANING_DEDNER
                 double PhiPred_j = Get_Gas_PhiField(j); /* define j phi-field in appropriate units */
@@ -240,8 +245,11 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                    is enabled; declared unconditionally so turb-diffusion functions can take
                    it as a plain argument (value is 0 when not set). */
                 double mdot_estimated = 0;
+                /* tensile_correction_factor: declared unconditionally so the elastic
+                   function can take it as a plain arg (value 0 when flags off). */
+                double tensile_correction_factor = 0;
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
-                double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
+                tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
                 
                 /* --------------------------------------------------------------------------------- */
@@ -325,26 +333,23 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #define HLL_DIFFUSION_OVERSHOOT_FACTOR  1.0
 #endif
 
-#ifdef EOS_ELASTIC
-#include "../solids/elastic_stress_tensor_force.h"
-#endif
-
-#ifdef MHD_NON_IDEAL
-#include "nonideal_mhd.h"
-#endif
-
                 /* Per-pair physics sub-modules. Functions guard their bodies with the
                    relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
                 double face_density_for_diffusion = 0;
 #if defined(SAVE_FACE_DENSITY) && !defined(HYDRO_SPH)
                 face_density_for_diffusion = Riemann_out.Face_Density;
 #endif
+                elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
+                                                         Face_Area_Vec, Face_Area_Norm,
+                                                         tensile_correction_factor, dt_hydrostep, Fluxes);
+                nonideal_mhd_compute_pair(local, P[j], CellP[j], BPred_j, kernel, rinv,
+                                          Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
+                                          dt_hydrostep, Fluxes);
                 conduction_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                         v_hll, bhat, bhat_mag, dt_hydrostep, Fluxes);
-
-#ifdef VISCOSITY
-#include "viscosity.h"
-#endif
+                viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
+                                       Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
+                                       dt_hydrostep, Fluxes);
 
                 {
                     MyFloat dyield_j_delta[NUM_METAL_SPECIES];
