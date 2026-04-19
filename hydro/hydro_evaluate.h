@@ -12,12 +12,10 @@
 /* --------------------------------------------------------------------------------- */
 /*!   -- this subroutine writes to shared memory [updating -some- essential neighbor values, setting wakeups, etc.]:
   this should ideally be avoided whenever possible; need to protect these write operations for openmp below.
-  note that the 'j_is_active_for_fluxes' flag much more aggressively
-  does this, but that is restricted to ONLY be active when OPENMP is not active [see notes in gradients.c,
-  given the locks necessary to preserve thread safety, there is no performance improvement using this
-  method in openmp runs]. So those can be ignored, since they will only ever occur when the routine
-  is ensured safe. but we do have other flags set for manifest conservation in some hydro solvers,
-  for wakeups, and other key routines. those must all be protected if openmp is used -- */
+  the legacy 'j_is_active_for_fluxes' symmetric-dispatch path has been removed; each particle now
+  accumulates all fluxes as the i-side and conservation is preserved by the symmetric neighbor
+  list visiting each pair from both directions. the remaining shared writes
+  (MFV dMass conservation, wakeups) are either guarded by a timestep criterion or use OMP atomics. */
 /* --------------------------------------------------------------------------------- */
 
 #include "hydro_pair_types.h"
@@ -161,7 +159,6 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 dt_hydrostep_j = get_particle_timestep_in_physical(j);
                 dt_hydrostep = DMAX(dt_hydrostep_i , dt_hydrostep_j); // this is used for flux-limiting, so we always want to be more conservative and use the larger timestep //
                 double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1; // these, by default, won't do anything, but will be used below in final flux assignment
-                int j_is_active_for_fluxes = 0;
                 kernel.dp = local.Pos - P[j].Pos;
                 nearest_xyz(kernel.dp); /* find the closest image in the given box size  */
                 r2 = kernel.dp.norm_sq();
@@ -239,7 +236,6 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
                 double KE = kernel.dv.norm_sq();
                 if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
-                if(j_is_active_for_fluxes) {if(KE > CellP[j].MaxKineticEnergyNgb) CellP[j].MaxKineticEnergyNgb = KE;}
 #endif
                 /* mdot_estimated: set inside MFM/MFV Riemann core when TURB_DIFF_METALS
                    is enabled; declared unconditionally so turb-diffusion functions can take
@@ -351,34 +347,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                                        Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                                        dt_hydrostep, Fluxes);
 
-                {
-                    MyFloat dyield_j_delta[NUM_METAL_SPECIES];
-                    turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                                  face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
-                                                  out, dyield_j_delta);
-#ifdef TURB_DIFF_METALS
-                    /* Original fragment wrote CellP[j].Dyield without atomic when
-                       j_is_active_for_fluxes; that path is only taken when OPENMP
-                       is off, so direct write is safe here too. */
-                    if(j_is_active_for_fluxes) {
-                        for(int km=0; km<NUM_METAL_SPECIES; km++) {
-                            CellP[j].Dyield[km] += FluxCorrectionFactor_to_j * dyield_j_delta[km];
-                        }
-                    }
-#endif
-                }
-                {
-                    MyDouble chimes_nions_j_delta[CHIMES_TOTSIZE];
-                    chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                                       face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
-                                                       out, chimes_nions_j_delta);
-#ifdef CHIMES_TURB_DIFF_IONS
-                    for(int kc=0; kc<ChimesGlobalVars.totalNumberOfSpecies; kc++) {
-                        #pragma omp atomic
-                        CellP[j].ChimesNIons[kc] += chimes_nions_j_delta[kc];
-                    }
-#endif
-                }
+                turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                              face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+                chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                                   face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
 
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
@@ -401,15 +373,15 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 if(dmass_holder > 0) {dmass_limiter=P[j].Mass;} else {dmass_limiter=local.Mass;}
                 dmass_limiter *= 0.1;
                 if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
-                if((local.dt_hydrostep_i < dt_hydrostep_j) || (local.dt_hydrostep_i==dt_hydrostep_j && j_is_active_for_fluxes==1)) {
+                if(local.dt_hydrostep_i < dt_hydrostep_j) {
                     out.dMass += FluxCorrectionFactor_to_i * dmass_holder;
                     #pragma omp atomic
-                    CellP[j].dMass -= FluxCorrectionFactor_to_j * dmass_holder; // here to ensure machine-accurate conservation with different timesteps we need to set this: careful to be thread-safe
+                    CellP[j].dMass -= FluxCorrectionFactor_to_j * dmass_holder; // machine-accurate mass conservation across different timesteps: thread-safe
                 }
-                if(local.dt_hydrostep_i==dt_hydrostep_j && j_is_active_for_fluxes==0) {
+                if(local.dt_hydrostep_i == dt_hydrostep_j) {
                     out.dMass += FluxCorrectionFactor_to_i * 0.5*dmass_holder;
                     #pragma omp atomic
-                    CellP[j].dMass -= FluxCorrectionFactor_to_j * 0.5*dmass_holder; // here to ensure machine-accurate conservation with different timesteps we need to set this: careful to be thread-safe
+                    CellP[j].dMass -= FluxCorrectionFactor_to_j * 0.5*dmass_holder;
                 }
                  /* this gets subtracted here to ensure the exchange is exact */
                 out.DtMass += FluxCorrectionFactor_to_i * Fluxes.rho;
@@ -475,56 +447,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 #endif // magnetic //
 
-                /* if this is particle j's active timestep, you should sent them the time-derivative information as well, for their subsequent drift operations */
-                if(j_is_active_for_fluxes)
-                {
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                    CellP[j].DtMass -= FluxCorrectionFactor_to_j * Fluxes.rho;
-                    CellP[j].GravWorkTerm -= gravwork * FluxCorrectionFactor_to_j;
-#ifdef METALS       /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
-                    if(Fluxes.rho < 0) {CellP[j].Dyield[k] = FluxCorrectionFactor_to_j * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
-#endif
-#endif
-                    CellP[j].HydroAccel -= FluxCorrectionFactor_to_j * Fluxes.v;
-                    CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * Fluxes.p;
-#ifdef MAGNETIC
-#ifndef HYDRO_SPH
-                    CellP[j].Face_Area -= Face_Area_Vec;
-#endif
-#ifndef FREEZE_HYDRO
-                    CellP[j].DtB -= FluxCorrectionFactor_to_j * Fluxes.B;
-                    CellP[j].divB -= Fluxes.B_normal_corrected;
-#if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME) // mass-based phi-flux
-                    CellP[j].DtPhi -= FluxCorrectionFactor_to_j * Fluxes.phi;
-#endif
-#ifdef HYDRO_SPH
-                    CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * dot(magfluxv, VelPred_j) / All.cf_atime;
-                    CellP[j].DtInternalEnergy += FluxCorrectionFactor_to_j * resistivity_heatflux;
-#else
-                    double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_j);
-                    CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
-#ifdef DIVBCLEANING_DEDNER
-                    for(k=0; k<3; k++)
-                    {
-                        CellP[j].DtB_PhiCorr[k] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_db * Face_Area_Vec[k];
-                        CellP[j].DtB[k] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
-                        CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * BPred_j[k]*All.cf_a2inv;
-                    }
-#endif
-#ifdef MHD_NON_IDEAL
-                    CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * dot(BPred_j, bflux_from_nonideal_effects) * All.cf_a2inv;
-#endif
-#endif
-#endif
-#endif // magnetic //
-                } // j_is_active_for_fluxes
-
-
                 /* --------------------------------------------------------------------------------- */
                 /* don't forget to save the signal velocity for time-stepping! */
                 /* --------------------------------------------------------------------------------- */
                 if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
-                if(j_is_active_for_fluxes) {if(kernel.vsig > CellP[j].MaxSignalVel) CellP[j].MaxSignalVel = kernel.vsig;}
                 if(!(TimeBinActive[P[j].TimeBin]))
                 {
                     if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel) {

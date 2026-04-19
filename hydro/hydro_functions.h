@@ -11,9 +11,9 @@
  * __device__ __host__ inline; all sub-includes (reimann.h, hydro_core_meshless.h,
  * etc.) are compiled into device code.
  *
- * NOTE: This header does NOT handle j-particle writes (j_is_active_for_fluxes path).
- * Conservation is maintained because the symmetric neighbor list visits each pair
- * from both sides — each particle processes all fluxes as the i-side.
+ * NOTE: Conservation is maintained because the symmetric neighbor list visits
+ * each pair from both sides — each particle processes all fluxes as the i-side
+ * (the legacy j_is_active_for_fluxes / symmetric-dispatch path has been removed).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -52,8 +52,7 @@
 
 
 /* Per-neighbor-pair hydro flux accumulation for particle i.
- * This is the inner body of hydro_force_evaluate() from hydro_evaluate.h,
- * without the j-particle write-back (j_is_active_for_fluxes path).
+ * This is the inner body of hydro_force_evaluate() from hydro_evaluate.h.
  *
  * Arguments mirror those available in the original loop:
  *   local   — input data for particle i
@@ -95,7 +94,6 @@ void hydro_accumulate_neighbor(
     double dt_hydrostep_j = get_particle_timestep_in_physical(j, P);
     double dt_hydrostep = DMAX(dt_hydrostep_i, dt_hydrostep_j);
     double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1;
-    int j_is_active_for_fluxes = 0; /* GPU: always 0 — each side accumulates its own fluxes */
 
     kernel.dp = local.Pos - P[j].Pos;
     nearest_xyz(kernel.dp);
@@ -330,20 +328,10 @@ void hydro_accumulate_neighbor(
     viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
                            Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                            dt_hydrostep, Fluxes);
-    {
-        MyFloat dyield_j_delta[NUM_METAL_SPECIES];
-        turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                      face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
-                                      out, dyield_j_delta);
-        /* GPU/hydro_functions.h path: j_is_active_for_fluxes == 0 always,
-           so no j-side apply loop. CPU tree-walk in hydro_evaluate.h applies. */
-    }
-    {
-        MyDouble chimes_nions_j_delta[CHIMES_TOTSIZE];
-        chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                           face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
-                                           out, chimes_nions_j_delta);
-    }
+    turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                  face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+    chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                       face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
 #endif
@@ -414,9 +402,9 @@ void hydro_accumulate_neighbor(
     /* ---- J-particle writes (Kokkos atomics for thread safety) ---- */
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    /* MFV mass conservation: machine-accurate two-sided mass exchange.
-       With j_is_active_for_fluxes=0 (dead code, always 0 in modern GIZMO),
-       FluxCorrectionFactor_to_j=1, and we use the timestep-conditional logic. */
+    /* MFV mass conservation: machine-accurate two-sided mass exchange, using
+       timestep-conditional logic to avoid double-counting when both i and j
+       evaluate the same pair. */
     {
         double dmass_holder = Fluxes.rho * dt_hydrostep_i, dmass_limiter;
         if(dmass_holder > 0) {dmass_limiter = P[j].Mass;} else {dmass_limiter = local.Mass;}
@@ -427,7 +415,7 @@ void hydro_accumulate_neighbor(
             /* i has shorter timestep: both sides get full flux */
             HYDRO_ATOMIC_ADD(&CellP[j].dMass, (MyDouble)(-dmass_holder));
         } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
-            /* equal timesteps, j_is_active_for_fluxes=0: half flux */
+            /* equal timesteps: each side applies half so the pair sums to full */
             HYDRO_ATOMIC_ADD(&CellP[j].dMass, (MyDouble)(-0.5 * dmass_holder));
         }
         /* if dt_i > dt_j: j will handle this pair when it's active */

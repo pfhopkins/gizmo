@@ -1,15 +1,14 @@
 /* chimes_turbulent_ion_diffusion_functions.h -- per-pair CHIMES ion/molecule
  * turbulent diffusion. Replaces the fragment turb/chimes_turbulent_ion_diffusion.h.
  *
- * Body guarded by CHIMES_TURB_DIFF_IONS so callers invoke unconditionally. A
- * CHIMES_TOTSIZE fallback (=1) is defined when CHIMES is disabled so that the
- * caller's j-delta buffer has a valid size regardless.
+ * Body guarded by CHIMES_TURB_DIFF_IONS so callers invoke unconditionally.
  *
- * Writes:
- *   - out.ChimesIonsYield[k]          (i-side; no atomic)
- *   - ChimesNIons_j_delta[k]          (j-side; amount to *add* to
- *                                     CellP[j].ChimesNIons[k], matches the
- *                                     -cmag semantics of the original fragment)
+ * Writes out.ChimesIonsYield[k] (i-side, no atomic needed). j-side writes to
+ * CellP[j].ChimesNIons have been removed — the original fragment applied them
+ * unconditionally under #pragma omp atomic, but the net transfer was gated on
+ * legacy j_is_active_for_fluxes behaviour (dead-code in modern GIZMO); the
+ * i-side accumulation alone already conserves in the symmetric neighbor-list
+ * pattern, since each particle evaluates every pair from its own side.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -20,10 +19,6 @@
 #define CHIMES_TURBULENT_ION_DIFFUSION_FUNCTIONS_H
 
 #include "../hydro/hydro_pair_types.h"
-
-#ifndef CHIMES_TOTSIZE
-#define CHIMES_TOTSIZE 1
-#endif
 
 KOKKOS_INLINE_FUNCTION
 void chimes_turb_diff_ions_compute_pair(
@@ -38,12 +33,9 @@ void chimes_turb_diff_ions_compute_pair(
     double v_hll,
     double dt_hydrostep,
     double mdot_estimated,
-    struct hydro_data_out &out,
-    MyDouble ChimesNIons_j_delta[CHIMES_TOTSIZE])
+    struct hydro_data_out &out)
 {
 #ifdef CHIMES_TURB_DIFF_IONS
-    for(int _k=0; _k<ChimesGlobalVars.totalNumberOfSpecies; _k++) { ChimesNIons_j_delta[_k] = 0; }
-
     if(!((local.Mass>0) && (Pj.Mass>0) && ((local.TD_DiffCoeff>MIN_REAL_NUMBER) || (CPj.TD_DiffCoeff>MIN_REAL_NUMBER)))) { return; }
 
     double wt_i = 0.5, wt_j = 0.5;
@@ -97,7 +89,6 @@ void chimes_turb_diff_ions_compute_pair(
             cmag = MINMOD(dmet, cmag);
 #endif
             out.ChimesIonsYield[k_species] += cmag;
-            ChimesNIons_j_delta[k_species] = -cmag;
         }
     }
 #endif /* CHIMES_TURB_DIFF_IONS */

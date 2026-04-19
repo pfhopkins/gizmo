@@ -4,12 +4,11 @@
  * by TURB_DIFF_METALS so callers can invoke the function unconditionally; when
  * the flag is off the function compiles to a no-op.
  *
- * Writes:
- *   - out.Dyield[k]            (i-side; no atomic, per-thread accumulator)
- *   - Dyield_j_delta[k]        (j-side; caller applies atomically when
- *                              j_is_active_for_fluxes — on GPU this is always 0)
+ * Writes out.Dyield[k] (i-side, per-thread accumulator, no atomic needed).
+ * j-side writes have been removed — they were gated on the legacy
+ * j_is_active_for_fluxes flag which is always 0 in modern GIZMO.
  *
- * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h included.
+ * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -32,12 +31,9 @@ void turb_diff_metals_compute_pair(
     double v_hll,
     double dt_hydrostep,
     double mdot_estimated,
-    struct hydro_data_out &out,
-    MyFloat Dyield_j_delta[NUM_METAL_SPECIES])
+    struct hydro_data_out &out)
 {
 #ifdef TURB_DIFF_METALS
-    for(int _k=0; _k<NUM_METAL_SPECIES; _k++) { Dyield_j_delta[_k] = 0; }
-
     if(!((local.Mass>0) && (Pj.Mass>0) && ((local.TD_DiffCoeff>MIN_REAL_NUMBER) || (CPj.TD_DiffCoeff>MIN_REAL_NUMBER)))) { return; }
 
     double wt_i = 0.5, wt_j = 0.5;
@@ -93,7 +89,6 @@ void turb_diff_metals_compute_pair(
             cmag = MINMOD(dmet, cmag);
 #endif
             out.Dyield[k_species] += cmag;
-            Dyield_j_delta[k_species] = -cmag;
         }
     }
 #endif /* TURB_DIFF_METALS */

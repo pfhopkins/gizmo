@@ -101,8 +101,6 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 kernel.sound_j = CellP[j].effective_soundspeed();
                 kernel.vsig = kernel.sound_i + kernel.sound_j; /* sum of sound speeds, same as hydro pass line 190 */
 
-                /* determine if j should also accumulate (symmetric flux application) */
-                int j_is_active_for_fluxes = 0; /* disabled: each particle accumulates its own fluxes via its own evaluation */
                 double FluxCorrectionFactor_to_i = 1.0, FluxCorrectionFactor_to_j = 1.0;
 
                 /* variables needed by rt_diffusion_explicit.h */

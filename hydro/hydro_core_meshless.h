@@ -433,7 +433,6 @@
                             double mach_RH = (mach2_RH > 1.0) ? sqrt(mach2_RH) : 1.0;
                             if(mach_RH > 1.0) {
                                 if(mach_RH > out.MaxShockMachNumber) {out.MaxShockMachNumber = (MyFloat)mach_RH;}
-                                if(j_is_active_for_fluxes && mach_RH > CellP[j].ShockMachNumber) {CellP[j].ShockMachNumber = (MyFloat)mach_RH;}
                             }
                         }
                     }
