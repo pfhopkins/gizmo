@@ -6,6 +6,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef RT_SOURCE_INJECTION
+#include "rt_source_injection_gpu.h"
+#endif
 
 /*! \file rt_source_injection.c
  *  \brief inject luminosity from point sources to neighboring gas particles
@@ -336,9 +339,13 @@ void rt_source_injection(void)
 {
     PRINT_STATUS(" ..injecting radiation onto grid for RHD steps");
     rt_source_injection_initial_operations_preloop(); /* operations before the main loop */
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    rt_source_injection_evaluate_gpu(P, CellP, NumPart);
+#else
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+#endif
     CPU_Step[CPU_RTNONFLUXOPS] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

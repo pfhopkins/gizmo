@@ -97,5 +97,40 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
     return bound;
 }
 
+/* GPU-callable version of sink_fb_angleweight_localcoupling.
+ * Takes explicit particle refs instead of indices for device use. */
+KOKKOS_INLINE_FUNCTION
+static double sink_fb_angleweight_localcoupling_gpu(
+    const struct particle_data& kp_j,
+    const struct gas_cell_data& kc_j,
+    double cos_theta, double r, double H_kernel)
+{
+    if(r <= 0 || H_kernel <= 0) return 0;
+    double H_j = kp_j.KernelRadius;
+    if((r >= H_j && r >= H_kernel) || (H_j <= 0) || (kp_j.Mass <= 0) || (kc_j.Density <= 0)) return 0;
+    double hinv=1./H_kernel, hinv_j=1./H_j, hinv3_j=hinv_j*hinv_j*hinv_j;
+    double wk_j=0, dwk_j=0, u_j=r*hinv_j, hinv4_j=hinv_j*hinv3_j;
+    double V_j = kp_j.Mass / kc_j.Density;
+    double hinv3=hinv*hinv*hinv, hinv4=hinv*hinv3, wk=0, dwk=0;
+    double u = r * hinv;
+    if(u < 1) { kernel_main(u, hinv3, hinv4, &wk, &dwk, 0); }
+    if(u_j < 1) { kernel_main(u_j, hinv3_j, hinv4_j, &wk_j, &dwk_j, 0); }
+    double V_i = 4.*M_PI/3. * H_kernel*H_kernel*H_kernel / (All.DesNumNgb * All.SinkNgbFactor);
+    if(V_i < 0 || V_i != V_i) { V_i = 0; }
+    if(V_j < 0 || V_j != V_j) { V_j = 0; }
+    double face_area = fabs(V_i*V_i*dwk + V_j*V_j*dwk_j);
+    wk = 0.5 * (1. - 1./sqrt(1. + face_area / (M_PI*r*r)));
+#if defined(SINK_FB_VOLUMEWEIGHTED)
+    wk = 0.5 * (V_j/V_i) * (V_i*wk + V_j*wk_j);
+#endif
+#if defined(SINK_FB_COLLIMATED)
+    double costheta2=cos_theta*cos_theta, eps_width_jet=0.35;
+    eps_width_jet *= eps_width_jet;
+    wk *= eps_width_jet * (eps_width_jet + costheta2) / ((eps_width_jet + 1) * (eps_width_jet + (1-costheta2)));
+#endif
+    if(wk <= 0 || wk != wk) return 0;
+    return wk;
+}
+
 #endif /* SINK_PARTICLES */
 #endif /* SINK_FUNCTIONS_H */
