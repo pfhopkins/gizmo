@@ -18,6 +18,7 @@ extern void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *
                                   int, int *, int, int *, int *, int, void *, int);
 #endif
 #include "../mesh/ghost_symlist_lifecycle.h"
+#include "compute_finitevol_faces_functions.h"
 
 
 
@@ -1610,7 +1611,14 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 #if defined(MHD_CONSTRAINED_GRADIENT)
                 double V_j = P[j].Mass / CellP[j].Density, Face_Area_Norm, cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber*local.ConditionNumber; Vec3<double> Face_Area_Vec;
 
-#include "compute_finitevol_faces.h" /* insert code block for computing Face_Area_Vec, Face_Area_Norm, n_unit, etc. */
+                {
+                    double rinv_fv = 1.0 / (MIN_REAL_NUMBER + kernel.r);
+                    double Vi_inv_corr_unused, Vj_inv_corr_unused;
+                    compute_finitevol_faces(local, CellP[j], kernel, rinv_fv, r2, V_i, V_j,
+                                            Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                            Face_Area_Vec, Face_Area_Norm,
+                                            Vi_inv_corr_unused, Vj_inv_corr_unused);
+                }
                 
                 for(k=0;k<3;k++){
                     if(gradient_iteration == 0)

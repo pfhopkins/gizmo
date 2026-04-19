@@ -44,7 +44,10 @@
     /* ------------------------------------------------------------------------------------------------------------------- */
     /* now we're ready to compute the volume integral of the fluxes (or equivalently an 'effective area'/face orientation) */
     /* ------------------------------------------------------------------------------------------------------------------- */
-#include "compute_finitevol_faces.h" /* insert code block for computing Face_Area_Vec, Face_Area_Norm, etc. */
+    double Vi_inv_corr, Vj_inv_corr;
+    compute_finitevol_faces(local, CellP[j], kernel, rinv, r2, V_i, V_j,
+                            Particle_Size_i, Particle_Size_j, cnumcrit2,
+                            Face_Area_Vec, Face_Area_Norm, Vi_inv_corr, Vj_inv_corr);
 
     if(Face_Area_Norm == 0)
     {

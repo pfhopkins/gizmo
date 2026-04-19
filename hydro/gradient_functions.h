@@ -24,6 +24,7 @@
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
+#include "compute_finitevol_faces_functions.h"
 
 #ifndef MINMAX_CHECK
 #define MINMAX_CHECK(x,xmin,xmax) ((x<xmin)?(xmin=x):((x>xmax)?(xmax=x):(1)))
@@ -269,15 +270,11 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
         int k, k2;
         double rinv = 1.0 / (MIN_REAL_NUMBER + kernel->r);
 
-        /* compute_finitevol_faces.h expects 'kernel' and 'local' as value types (not pointers),
-           so create local references to match its syntax */
-        auto &kernel_ref = *kernel;
-        auto &local_ref = *local;
-        #define kernel kernel_ref
-        #define local local_ref
-#include "compute_finitevol_faces.h"
-        #undef kernel
-        #undef local
+        double Vi_inv_corr_unused, Vj_inv_corr_unused;
+        compute_finitevol_faces(*local, CellP[j], *kernel, rinv, r2, V_i, V_j,
+                                Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                Face_Area_Vec, Face_Area_Norm,
+                                Vi_inv_corr_unused, Vj_inv_corr_unused);
 
         for(k=0;k<3;k++)
         {

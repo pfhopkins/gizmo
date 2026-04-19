@@ -7,6 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "compute_finitevol_faces_functions.h"
 
 /*! \file mg_gradient_correction.cc
  *  \brief Modified-gradient (MG) method for exact div(B)=0 correction.
@@ -228,8 +229,12 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                 Vec3<double> Face_Area_Vec;
                 double Particle_Size_i = pow(local.Mass/local.Density, 1./NUMDIMS);
                 double Particle_Size_j = P[j].Get_Particle_Size();
-
-                #include "compute_finitevol_faces.h"
+                double rinv_fv = 1.0 / (MIN_REAL_NUMBER + kernel.r);
+                double Vi_inv_corr_unused, Vj_inv_corr_unused;
+                compute_finitevol_faces(local, CellP[j], kernel, rinv_fv, r2, V_i, V_j,
+                                        Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                        Face_Area_Vec, Face_Area_Norm,
+                                        Vi_inv_corr_unused, Vj_inv_corr_unused);
 
                 if(Face_Area_Norm <= 0) continue;
 

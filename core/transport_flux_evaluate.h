@@ -78,9 +78,15 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 double V_j = P[j].Mass / CellP[j].Density;
                 double Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime;
 
-                /* compute MFM face area — include the standard face area computation */
+                /* compute MFM face area — standard face area computation */
                 double rinv_soft = rinv;
-#include "../hydro/compute_finitevol_faces.h"
+                {
+                    double Vi_inv_corr_unused, Vj_inv_corr_unused;
+                    compute_finitevol_faces(local, CellP[j], kernel, rinv, r2, V_i, V_j,
+                                            Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                            Face_Area_Vec, Face_Area_Norm,
+                                            Vi_inv_corr_unused, Vj_inv_corr_unused);
+                }
                 if(Face_Area_Norm <= 0) continue;
 
                 /* timestep for flux limiting */

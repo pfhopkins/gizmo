@@ -21,6 +21,7 @@
 /* --------------------------------------------------------------------------------- */
 
 #include "hydro_pair_types.h"
+#include "compute_finitevol_faces_functions.h"
 #include "conduction_functions.h"
 #include "../turb/turbulent_diffusion_functions.h"
 #include "../turb/chimes_turbulent_ion_diffusion_functions.h"
