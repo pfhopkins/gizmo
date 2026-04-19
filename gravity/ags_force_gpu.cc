@@ -44,6 +44,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 
+#include "../core/timestep_functions.h"
 #include "ags_force_gpu.h"
 #include "ags_functions.h"
 
