@@ -93,7 +93,6 @@ void hydro_accumulate_neighbor(
 
     double dt_hydrostep_j = get_particle_timestep_in_physical(j, P);
     double dt_hydrostep = DMAX(dt_hydrostep_i, dt_hydrostep_j);
-    double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1;
 
     kernel.dp = local.Pos - P[j].Pos;
     nearest_xyz(kernel.dp);
@@ -353,47 +352,47 @@ void hydro_accumulate_neighbor(
         /* Timestep-conditional mass flux for machine-accurate conservation */
         double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
         if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
-            out.dMass += FluxCorrectionFactor_to_i * dmass_holder;
+            out.dMass += dmass_holder;
         } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
-            out.dMass += FluxCorrectionFactor_to_i * 0.5 * dmass_holder;
+            out.dMass += 0.5 * dmass_holder;
         }
-        out.DtMass += FluxCorrectionFactor_to_i * Fluxes.rho;
+        out.DtMass += Fluxes.rho;
         Vec3<double> gravwork = kernel.dp * Fluxes.rho;
-        out.GravWorkTerm += gravwork * FluxCorrectionFactor_to_i;
+        out.GravWorkTerm += gravwork;
 #ifdef METALS
-        if(Fluxes.rho > 0) { for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;} }
+        if(Fluxes.rho > 0) { for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;} }
 #endif
     }
 #endif
-    out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
-    out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
+    out.Acc += Fluxes.v;
+    out.DtInternalEnergy += Fluxes.p;
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
     out.Face_Area += Face_Area_Vec;
 #endif
 #ifndef FREEZE_HYDRO
-    out.DtB += FluxCorrectionFactor_to_i * Fluxes.B;
+    out.DtB += Fluxes.B;
     out.divB += Fluxes.B_normal_corrected;
 #if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    out.DtPhi += FluxCorrectionFactor_to_i * Fluxes.phi;
+    out.DtPhi += Fluxes.phi;
 #endif
 #ifdef HYDRO_SPH
-    out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(magfluxv, local.Vel) / All.cf_atime;
-    out.DtInternalEnergy += FluxCorrectionFactor_to_i * resistivity_heatflux;
+    out.DtInternalEnergy += dot(magfluxv, local.Vel) / All.cf_atime;
+    out.DtInternalEnergy += resistivity_heatflux;
 #else
     {
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
-        out.DtInternalEnergy += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+        out.DtInternalEnergy += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
     }
 #ifdef DIVBCLEANING_DEDNER
     for(k=0; k<3; k++) {
-        out.DtB_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_db * Face_Area_Vec[k];
-        out.DtB[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
-        out.DtInternalEnergy += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k] * All.cf_a2inv;
+        out.DtB_PhiCorr[k] += Riemann_out.phi_normal_db * Face_Area_Vec[k];
+        out.DtB[k] += Riemann_out.phi_normal_mean * Face_Area_Vec[k];
+        out.DtInternalEnergy += Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k] * All.cf_a2inv;
     }
 #endif
 #ifdef MHD_NON_IDEAL
-    out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
+    out.DtInternalEnergy += dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
 #endif
 #endif
 #endif

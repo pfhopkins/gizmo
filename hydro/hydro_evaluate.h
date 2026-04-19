@@ -158,7 +158,6 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 /* check if I need to compute this pair-wise interaction from "i" to "j", or skip it and let it be computed from "j" to "i" */
                 dt_hydrostep_j = get_particle_timestep_in_physical(j);
                 dt_hydrostep = DMAX(dt_hydrostep_i , dt_hydrostep_j); // this is used for flux-limiting, so we always want to be more conservative and use the larger timestep //
-                double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1; // these, by default, won't do anything, but will be used below in final flux assignment
                 kernel.dp = local.Pos - P[j].Pos;
                 nearest_xyz(kernel.dp); /* find the closest image in the given box size  */
                 r2 = kernel.dp.norm_sq();
@@ -374,21 +373,21 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 dmass_limiter *= 0.1;
                 if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
                 if(local.dt_hydrostep_i < dt_hydrostep_j) {
-                    out.dMass += FluxCorrectionFactor_to_i * dmass_holder;
+                    out.dMass += dmass_holder;
                     #pragma omp atomic
-                    CellP[j].dMass -= FluxCorrectionFactor_to_j * dmass_holder; // machine-accurate mass conservation across different timesteps: thread-safe
+                    CellP[j].dMass -= dmass_holder; // machine-accurate mass conservation across different timesteps: thread-safe
                 }
                 if(local.dt_hydrostep_i == dt_hydrostep_j) {
-                    out.dMass += FluxCorrectionFactor_to_i * 0.5*dmass_holder;
+                    out.dMass += 0.5*dmass_holder;
                     #pragma omp atomic
-                    CellP[j].dMass -= FluxCorrectionFactor_to_j * 0.5*dmass_holder;
+                    CellP[j].dMass -= 0.5*dmass_holder;
                 }
                  /* this gets subtracted here to ensure the exchange is exact */
-                out.DtMass += FluxCorrectionFactor_to_i * Fluxes.rho;
+                out.DtMass += Fluxes.rho;
                 Vec3<double> gravwork = kernel.dp * Fluxes.rho;
-                out.GravWorkTerm += gravwork * FluxCorrectionFactor_to_i;
+                out.GravWorkTerm += gravwork;
 #ifdef METALS   /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
-                if(Fluxes.rho > 0) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
+                if(Fluxes.rho > 0) {out.Dyield[k] += (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
 #endif
 #endif
                 #ifdef GIZMO_DEBUG_RT_COOLING
@@ -402,32 +401,32 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     if(n == numngb-1) {hpp_step++; printf("[HYDRO_PAIR_TOTAL] ID=1000 total_DtU=%.10e total_Acc=%.8e/%.8e/%.8e numngb=%d\n", out.DtInternalEnergy, out.Acc[0], out.Acc[1], out.Acc[2], numngb); fflush(stdout);}
                 }}
                 #endif /* GIZMO_DEBUG_RT_COOLING */
-                out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
-                out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
+                out.Acc += Fluxes.v;
+                out.DtInternalEnergy += Fluxes.p;
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
                 out.Face_Area += Face_Area_Vec;
 #endif
 #ifndef FREEZE_HYDRO
-                out.DtB += FluxCorrectionFactor_to_i * Fluxes.B;
+                out.DtB += Fluxes.B;
                 out.divB += Fluxes.B_normal_corrected;
 #if defined(DIVBCLEANING_DEDNER) && defined(HYDRO_MESHLESS_FINITE_VOLUME) // mass-based phi-flux
-                out.DtPhi += FluxCorrectionFactor_to_i * Fluxes.phi;
+                out.DtPhi += Fluxes.phi;
 #endif
 #ifdef HYDRO_SPH
-                out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(magfluxv, local.Vel) / All.cf_atime;
-                out.DtInternalEnergy += FluxCorrectionFactor_to_i * resistivity_heatflux;
+                out.DtInternalEnergy += dot(magfluxv, local.Vel) / All.cf_atime;
+                out.DtInternalEnergy += resistivity_heatflux;
 #else
                 double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_i);
-                double du_mag_pres = FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+                double du_mag_pres = 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
                 out.DtInternalEnergy += du_mag_pres;
 #ifdef DIVBCLEANING_DEDNER
                 double du_dedner = 0;
                 for(k=0; k<3; k++)
                 {
-                    out.DtB_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_db * Face_Area_Vec[k];
-                    out.DtB[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
-                    double du_ded_k = FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+                    out.DtB_PhiCorr[k] += Riemann_out.phi_normal_db * Face_Area_Vec[k];
+                    out.DtB[k] += Riemann_out.phi_normal_mean * Face_Area_Vec[k];
+                    double du_ded_k = Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
                     out.DtInternalEnergy += du_ded_k;
                     du_dedner += du_ded_k;
                 }
@@ -441,7 +440,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 #endif
 #ifdef MHD_NON_IDEAL
-                out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
+                out.DtInternalEnergy += dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
 #endif
 #endif
 #endif

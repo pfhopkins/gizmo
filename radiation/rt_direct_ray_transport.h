@@ -29,7 +29,7 @@ if(local.Mass>0 && P[j].Mass>0 && dt_hydrostep>0 && Face_Area_Norm>0)
         {
             double scalar_ij = 0.5*(local.Rad_Intensity_Pred[k_freq][k_angle]*V_i_invphys + CellP[j].Rad_Intensity_Pred[k_freq][k_angle]*V_j_invphys); // physical
             double cmag = scalar_ij * (vfluid_minus_vface_dotA + a_tau*cminusv_n_dotA[k_angle]); // 0th-order flux
-            out.Dt_Rad_Intensity[k_freq][k_angle] += FluxCorrectionFactor_to_i * cmag;
+            out.Dt_Rad_Intensity[k_freq][k_angle] += cmag;
         }
     }
 }

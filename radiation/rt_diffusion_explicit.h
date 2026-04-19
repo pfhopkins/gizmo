@@ -323,12 +323,12 @@
 #endif
     
     // assign the actual fluxes //
-    for(k=0;k<N_RT_FREQ_BINS;k++) {out.Dt_Rad_E_gamma[k] += FluxCorrectionFactor_to_i * Fluxes_Rad_E_gamma[k];}
+    for(k=0;k<N_RT_FREQ_BINS;k++) {out.Dt_Rad_E_gamma[k] += Fluxes_Rad_E_gamma[k];}
 #if defined(RT_INFRARED)
-    out.Dt_Rad_E_gamma_T_weighted_IR += FluxCorrectionFactor_to_i * Fluxes_Rad_E_gamma_T_weighted_IR;
+    out.Dt_Rad_E_gamma_T_weighted_IR += Fluxes_Rad_E_gamma_T_weighted_IR;
 #endif
 #ifdef RT_EVOLVE_FLUX
-    for(k=0;k<N_RT_FREQ_BINS;k++) {out.Dt_Rad_Flux[k] += FluxCorrectionFactor_to_i * Fluxes_Rad_Flux[k];}
+    for(k=0;k<N_RT_FREQ_BINS;k++) {out.Dt_Rad_Flux[k] += Fluxes_Rad_Flux[k];}
 #endif
     
 }
