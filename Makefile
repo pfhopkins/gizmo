@@ -129,15 +129,13 @@ HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(TACC_MKL_INC)
 MKL_LIBS = -L$(TACC_MKL_LIB) -mkl=sequential
-GSL_INCL = -I$(TACC_GSL_INC)
-GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas
 FFTW_INCL= -I$(TACC_FFTW3_INC)
 FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
-## compiles with module set: intel/19 impi hdf5 fftw3 gsl valgrind python3
+## compiles with module set: intel/19 impi hdf5 fftw3 valgrind python3
 endif
 
 
@@ -154,7 +152,7 @@ endif
 ## cooling.cc and eos/eos.cc are compiled via nvcc_wrapper → nvcc for device code.
 ## TACC's kokkos/4.5.01-cuda module sets TACC_KOKKOS_DIR/INC/LIB/BIN.
 ## We set flags manually (no Makefile.kokkos — TACC's Kokkos is CMake-installed).
-## Load modules: nvidia/25.9 cuda kokkos/4.5.01-cuda openmpi hdf5/2.0.0 fftw3 gsl
+## Load modules: nvidia/25.9 cuda kokkos/4.5.01-cuda openmpi hdf5/2.0.0 fftw3
 KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
 ## Compile flags: Kokkos includes + CUDA relaxed-constexpr/lambda extensions + sm_90 arch
 KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
@@ -174,8 +172,6 @@ CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
 MKL_INCL = #-I$(TACC_MKL_INC)
 MKL_LIBS = #-L$(TACC_MKL_LIB) -lmkl_rt
-GSL_INCL = -I$(TACC_GSL_INC)
-GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas
 FFTW_INCL= -I$(TACC_FFTW3_INC)
 FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
@@ -189,7 +185,7 @@ endif
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Vista_CPU")
 ## Pure-CPU build on Vista Grace ARM — no CUDA, no Kokkos, no OPENMP_GPU_OFFLOAD.
-## Load modules: gcc openmpi hdf5 fftw3 gsl  (do NOT load nvidia/cuda/kokkos)
+## Load modules: gcc openmpi hdf5 fftw3  (do NOT load nvidia/cuda/kokkos)
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
@@ -201,8 +197,6 @@ ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
-GSL_INCL = -I$(TACC_GSL_INC)
-GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas
 FFTW_INCL= -I$(TACC_FFTW3_INC)
 FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
@@ -228,15 +222,13 @@ HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
 MKL_INCL = -I$(CPATH)
 MKL_LIBS = -L$(LIBRARY_PATH) -mkl=sequential
-GSL_INCL = -I$(CPATH)
-GSL_LIBS = -L$(LIBRARY_PATH)
 FFTW_INCL= -I$(CPATH)
 FFTW_LIBS= -L$(LIBRARY_PATH)
 HDF5INCL = -I$(CPATH) -DH5_USE_16_API
 HDF5LIB  = -L$(LIBRARY_PATH) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
-# Compiles with following modules:   1) intel/20.1    2) hdf5/1.10.1   3) gsl/2.4       4) fftw/3.3.7
+# Compiles with following modules:   1) intel/20.1    2) hdf5/1.10.1   3) fftw/3.3.7
 endif
 
 #----------------------------------------------------------------------------------------------
@@ -254,8 +246,6 @@ endif
 # All the library paths are already setup
 MKL_INCL =
 MKL_LIBS = -mkl=sequential
-GSL_INCL = -I/N/soft/sles15sp6/gsl/gnu/2.8/include
-GSL_LIBS = -L/N/soft/sles15sp6/gsl/gnu/2.8/lib
 FFTW_INCL=
 FFTW_LIBS=
 HDF5INCL =
@@ -267,7 +257,7 @@ OPT += -DUSE_MPI_IN_PLACE -DH5_USE_16_API -DNO_ISEND_IRECV_IN_DOMAIN -DHDF5_DISA
 ## modules to load: (August 2025)
 ## module swap PrgEnv-gnu PrgEnv-intel
 ## module swap cray-mpich-ucx/9.0.0 cray-mpich-ucx/8.1.32  # currently defaults to a pre-release mpi version
-## module load gsl cray-fftw cray-hdf5
+## module load cray-fftw cray-hdf5
 ## srun --cpus-per-task=$SLURM_CPUS_PER_TASK --ntasks-per-node=$SLURM_NTASKS_PER_NODE --nodes=$SLURM_JOB_NUM_NODES ./GIZMO ./gizmo_parameters.txt
 endif
 
@@ -279,8 +269,6 @@ OPTIMIZE = -Ofast
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
 endif
-GSL_INCL = -I$(GSLHOME)/include
-GSL_LIBS = -L$(GSLHOME)/lib
 FFTW_INCL= -I$(FFTWHOME)/include
 FFTW_LIBS= -L$(FFTWHOME)/lib
 HDF5INCL = -I$(HDF5HOME)/include -DH5_USE_16_API
@@ -288,14 +276,14 @@ HDF5LIB  = -L$(HDF5HOME)/lib -lhdf5 -lz
 MPICHLIB = #
 OPT     += #
 ## modules to load
-## module load slurm intel openmpi_ib fftw/2.1.5 gsl hdf5
+## module load slurm intel openmpi_ib fftw/2.1.5 hdf5
 ## run job with
 ## mpirun -v -x LD_LIBRARY_PATH ./GIZMO params.txt
 endif
 
 #----------------------------------------------------------------------------------------------
 # Environment for building GIZMO on a macbook with libraries installed via homebrew. But note
-# that the specific GSL and HDF5 versions are hardcoded here...
+# that the specific HDF5 version is hardcoded here...
 ifeq ($(SYSTYPE),"MacBookCellar")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
@@ -324,8 +312,6 @@ else
 MKL_INCL = #
 MKL_LIBS = #
 endif
-GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include #-I$(PORTINCLUDE)
-GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib #-L$(PORTLIB)
 FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
 FFTW_LIBS= -L/opt/homebrew/Cellar/fftw/3.3.10_3/lib
 HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | tail -n 1)
@@ -370,8 +356,6 @@ CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
 endif
 MKL_INCL = #
 MKL_LIBS = #
-GSL_INCL = -I/opt/homebrew/Cellar/gsl/2.8/include
-GSL_LIBS = -L/opt/homebrew/Cellar/gsl/2.8/lib
 FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
 FFTW_LIBS= -L/opt/homebrew/Cellar/fftw/3.3.10_3/lib
 HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | tail -n 1)
@@ -398,15 +382,13 @@ OPTIMIZE += -fopenmp # openmp required compiler flags
 endif
 MKL_INCL = #
 MKL_LIBS = #
-GSL_INCL = -I/usr/include
-GSL_LIBS = -L/usr/lib 
 FFTW_INCL= -I/usr/include
 FFTW_LIBS= -L/usr/lib
 HDF5INCL = -I/usr/include/hdf5/openmpi -DH5_USE_16_API
 HDF5LIB  = -L/usr/lib/x86_64-linux-gnu/hdf5/openmpi/ -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION
-## to get required packages: sudo apt install libhdf5-openmpi-dev libgsl-dev libopenmpi-dev
+## to get required packages: sudo apt install libhdf5-openmpi-dev libopenmpi-dev
 endif
 
 #----------------------------
@@ -420,8 +402,6 @@ OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=native -g -Wall
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -fopenmp
 endif
-GSL_INCL = -I$(GSL_BASE)/include
-GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
 FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
 FFTW_INCL= -I$(FFTW3_BASE)/include
 FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
@@ -617,7 +597,7 @@ endif
 
 
 # linking libraries (includes machine-dependent options above)
-CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
+CFLAGS = $(OPTIONS) $(FFTW_INCL) $(HDF5INCL) \
          $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
 
 
@@ -643,7 +623,7 @@ endif
 endif
 
 
-LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
+LIBS = $(HDF5LIB) -g $(MPICHLIB) \
 	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 

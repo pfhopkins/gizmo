@@ -599,13 +599,11 @@ First, get a copy of the source code from the [Public Code Site](https://github.
 
 You should follow the how-to guides from the websites telling you how to use and pull code from the Git repository (allowing you to see all versions, fork your own for modifications without interfering with the main branch, and merge changes/updates in an orderly manner).
 
-The code requires a few common libraries to run. On most clusters, these are considered standard and can be loaded through some sort of module system. Consult your local sysadmin or the user guide for your machine for details. For many of the computers at national centers (or if you're at any of the schools where many of our other users are located), the Makefile within the source code will already have notes specifically telling you how to load the modules for that machine. For example, on the TACC "Frontera" machine, you just need to include the line "module load intel impi hdf5 fftw3 gsl" in your `.bashrc` or `.bash_profile` file (or enter it into the command line before compiling), then link to the libraries in the Makefile as is currently done (open the Makefile and search "Frontera" to see these instructions -- there are similar instructions for all other pre-programmed machines within the Makefile, so take a look).
+The code requires a few common libraries to run. On most clusters, these are considered standard and can be loaded through some sort of module system. Consult your local sysadmin or the user guide for your machine for details. For many of the computers at national centers (or if you’re at any of the schools where many of our other users are located), the Makefile within the source code will already have notes specifically telling you how to load the modules for that machine. For example, on the TACC "Frontera" machine, you just need to include the line "module load intel impi hdf5 fftw3" in your `.bashrc` or `.bash_profile` file (or enter it into the command line before compiling), then link to the libraries in the Makefile as is currently done (open the Makefile and search "Frontera" to see these instructions -- there are similar instructions for all other pre-programmed machines within the Makefile, so take a look).
 
-The necessary libraries are: MPI, GSL, FFTW (version 3), and HDF5: 
+The necessary libraries are: MPI, FFTW (version 3), and HDF5:
 
 + **MPI** - the ‘Message Passing Interface’ (version 1.0 or higher). Many vendor supplied versions exist, in addition to excellent open source implementations, e.g. MPICH ([`http://www-unix.mcs.anl.gov/mpi/mpich`](http://www-unix.mcs.anl.gov/mpi/mpich)), or OpenMPI ([`https://www.open-mpi.org`](https://www.open-mpi.org)).  
-
-+ **GSL** - the GNU scientific library. This open-source package can be obtained at [`http://www.gnu.org/software/gsl`](http://www.gnu.org/software/gsl), for example. This is used for numerical integration for pre-computing various tables.  
 
 + **FFTW** - the ‘Fastest Fourier Transform in the West’. This open-source package can be obtained at [`http://www.fftw.org`](http://www.fftw.org). Note that the MPI-capable version FFTW is required. Older versions of GIZMO worked with FFTW2 or 3, but FFTW2 has not been supported for some time so new versions work only with FFTW3 (needed for more recent compilers and machines). Version 3.x changes many of the calling and naming conventions, so make sure version 3 modules are loaded so the syntax of the code is appropriately matched (otherwise it will crash or fail to compile). Thanks to Takashi Okamoto for coding the FFTW3 compatibility. FFTW is only needed for simulations that use the TreePM algorithm. FFTW needs to be compiled with parallel support enabled. This can be achieved by passing the option - -enable-mpi to its configure script. You also need to match the appropriate prefix (single or double precision or "noprefix", to the compiled version of FFTW): flags for the appropriate prefix are in the Config.sh file, or can be directly included in the Makefile.  
 
@@ -624,13 +622,11 @@ The GIZMO code package includes various .c and .h files, folders with different 
         CXX      =  mpicxx -std=c++17 # mpi c++ compiler
         FC       =  mpif90 -nofor_main # option if fortran compiler is needed (entirely for optional libraries)
         OPTIMIZE = -ggdb -O2 -xCORE-AVX2 -Wno-unknown-pragmas -Wall -Wno-format-security -qopenmp  # compiler speed and warnings
-        GSL_INCL = -I$(TACC_GSL_INC) # GSL include (TACC uses the shorthand TACC_X_INC for module-loaded libraries)
-        GSL_LIBS = -L$(TACC_GSL_LIB) -lgsl -lgslcblas # GSL libraries
         FFTW_INCL= -I$(TACC_FFTW3_INC) # FFTW include location
         FFTW_LIBS= -L$(TACC_FFTW3_LIB) # FFTW library location
         HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API # HDF5 include: the flag is for backwards-compatibility with older HDF5 calling conventions
         HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz # HDF5 library
-        ## compiles with module set: intel/19 impi hdf5 fftw3 gsl
+        ## compiles with module set: intel/19 impi hdf5 fftw3
         endif # closes the "Frontera" compilation options
 
     Once the parameters for your machine have been entered into the Makefile, you should not ever need to modify it again, unless you modify the source code and add files which need to be compiled (advanced users only!)
@@ -666,10 +662,10 @@ Here is a typical example SLURM script (most modern systems use this or PBS as t
     export OMP_NUM_THREADS=2
     source $HOME/.bashrc
     module purge
-    module load intel impi hdf5 fftw3 gsl
+    module load intel impi hdf5 fftw3
     ibrun ./GIZMO ./params.txt 0 1>gizmo.out 2>gizmo.err
 
-This is a script submitting job-name `TEST`, requesting it go in the `NORMAL` queue, run on `100` nodes, with `16` MPI tasks per node, running for 1 hour (time in HH:MM:SS format), charged to allocation `ALLOCATIONNAME`. We've set it to use 2 OPENMP threads. We've also used the module system of the machine to load the relevant shared libraries (intel compiler, intel-MPI, hdf5, fftw, and gsl here). We can also load the modules through our personal .bashrc file, so including both calls here is a bit redundant. Then we submit the job, using `ibrun` (this is like `mpirun` above: different compilers and machines have different calls for running MPI executables), to call our compiled `GIZMO` executable in the local directory, with parameterfile `params.txt` in the same directory, restartflag `0` (start from ICs). The `1>gizmo.out 2>gizmo.err` are standard bash prompts that redirect stdout and stderr to files with those names, respectively (otherwise the machine will decide their default names, which you may prefer). Note that on different machines, the modules will be different, as will the `ibrun`/`mpirun` call, as will some of the required flags. Some machines will use `#PBS` instead of `#SBATCH`. You need to read the machine user guide to know how to submit on a particular machine. Also read the SBATCH or PBS (whichever you are using) manual page to learn what all the different flag options are. Finally, you could name this script something like `runscript` and submit it with the command `sbatch runscript`. 
+This is a script submitting job-name `TEST`, requesting it go in the `NORMAL` queue, run on `100` nodes, with `16` MPI tasks per node, running for 1 hour (time in HH:MM:SS format), charged to allocation `ALLOCATIONNAME`. We've set it to use 2 OPENMP threads. We've also used the module system of the machine to load the relevant shared libraries (intel compiler, intel-MPI, hdf5, and fftw here). We can also load the modules through our personal .bashrc file, so including both calls here is a bit redundant. Then we submit the job, using `ibrun` (this is like `mpirun` above: different compilers and machines have different calls for running MPI executables), to call our compiled `GIZMO` executable in the local directory, with parameterfile `params.txt` in the same directory, restartflag `0` (start from ICs). The `1>gizmo.out 2>gizmo.err` are standard bash prompts that redirect stdout and stderr to files with those names, respectively (otherwise the machine will decide their default names, which you may prefer). Note that on different machines, the modules will be different, as will the `ibrun`/`mpirun` call, as will some of the required flags. Some machines will use `#PBS` instead of `#SBATCH`. You need to read the machine user guide to know how to submit on a particular machine. Also read the SBATCH or PBS (whichever you are using) manual page to learn what all the different flag options are. Finally, you could name this script something like `runscript` and submit it with the command `sbatch runscript`.
 
 
 
