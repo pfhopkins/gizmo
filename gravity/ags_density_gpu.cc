@@ -58,11 +58,18 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
     GIZMO_GPU_ENSURE_ALL_FRESH(agsdensity);
     struct ags_density_gpu_out *out_host = (struct ags_density_gpu_out *)out_host_void;
 
-    /* Copy P + CellP to SharedSpace (CellP needed for VelPred when neighbor is gas) */
+    /* Copy P to SharedSpace. CellP is only needed when there are gas particles
+       (VelPred is read when neighbor.Type == 0). For N-body / DM-only runs
+       (TotN_gas == 0) CellP is NULL and the memcpy would dereference — skip
+       the allocation + copy entirely. The kernel below gates its CellP access
+       on kp[j].Type == 0, so a NULL kc pointer is safe there. */
     struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
     memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    struct gas_cell_data *CellP_gpu = NULL;
+    if(All.TotN_gas > 0) {
+        CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
+        memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    }
 
     /* Build cross-type CSR: i = caller's active indices (all in one bitmask group),
        j = whatever j_type_bitmask selects. One-way, explicit per-i radii. */
@@ -210,7 +217,7 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     gpu_ngb_list_free(&gnl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
+    if(CellP_gpu) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 }
 

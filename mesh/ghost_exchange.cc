@@ -443,15 +443,21 @@ void ghost_exchange(double safety_factor)
     MPI_Alltoallv(send_P, send_bytes, send_bdisp, MPI_BYTE,
                   &P[NumPart], recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
 
-    for(task = 0; task < NTask; task++) {
-        recv_bytes[task] = recv_count[task] * sizeof(struct gas_cell_data);
-        send_bytes[task] = send_count[task] * sizeof(struct gas_cell_data);
-        recv_bdisp[task] = recv_disp[task] * sizeof(struct gas_cell_data);
-        send_bdisp[task] = send_disp[task] * sizeof(struct gas_cell_data);
+    /* CellP exchange: only meaningful when the simulation has any gas
+       particles globally. With TotN_gas==0 (N-body / DM-only runs), CellP
+       is allocated to size 0, so writing to &CellP[NumPart] would dereference
+       an out-of-bounds pointer. Skip the CellP alltoallv in that case —
+       no gas ghosts can exist if no gas exists anywhere. */
+    if(All.TotN_gas > 0) {
+        for(task = 0; task < NTask; task++) {
+            recv_bytes[task] = recv_count[task] * sizeof(struct gas_cell_data);
+            send_bytes[task] = send_count[task] * sizeof(struct gas_cell_data);
+            recv_bdisp[task] = recv_disp[task] * sizeof(struct gas_cell_data);
+            send_bdisp[task] = send_disp[task] * sizeof(struct gas_cell_data);
+        }
+        MPI_Alltoallv(send_CellP, send_bytes, send_bdisp, MPI_BYTE,
+                      &CellP[NumPart], recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
     }
-
-    MPI_Alltoallv(send_CellP, send_bytes, send_bdisp, MPI_BYTE,
-                  &CellP[NumPart], recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
 
     /* Update counts */
     NumGhostParticles = total_recv;

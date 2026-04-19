@@ -269,6 +269,12 @@ int density_evaluate(int target, int mode, int *exportflag, int *exportnodecount
  */
 void density(void)
 {
+    /* DM-only / N-body runs can have zero gas globally. Everything below operates
+       on gas particles (and their CellP data); skipping when TotN_gas == 0 avoids
+       a NULL-CellP memcpy in density_gpu_session_begin, a 0-sized MaxPartGas
+       trip in read_ic, and wasted work allocating Left/Right for NumPart. This
+       is the single global guard; individual callers don't need to duplicate it. */
+    if(All.TotN_gas <= 0) return;
     /* initialize variables used below, in particlar the structures we need to call throughout the iteration */
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second(); MyFloat *Left, *Right; double fac, fac_lim, desnumngb, desnumngbdev; long long ntot;
     /* Neighbor-list path: drift all particles to current time and import ghost particles before
