@@ -5,6 +5,9 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef CBE_INTEGRATOR
+#include "../sidm/cbe_integrator_gpu.h"
+#endif
 
 /*!
  * This file was originally part of the GADGET3 code developed by
@@ -57,6 +60,24 @@ void do_first_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
+#if defined(CBE_INTEGRATOR) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    {
+        int n = (int)ActiveParticleList.size();
+        int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
+        double *cbe_dt     = (double *)mymalloc("cbe_kick_dt",  (n>0?n:1)*sizeof(double));
+        int k = 0;
+        for(int _a = 0; _a < n; _a++) {
+            int ii = ActiveParticleList[_a];
+            if(P[ii].Mass > 0) {
+                cbe_active[k] = ii;
+                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
+                k++;
+            }
+        }
+        cbe_drift_kick_evaluate_gpu(P, NumPart, cbe_active, k, cbe_dt);
+        myfree(cbe_dt); myfree(cbe_active);
+    }
+#endif
 }
 
 void do_second_halfstep_kick(void)
@@ -94,7 +115,25 @@ void do_second_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
-    
+#if defined(CBE_INTEGRATOR) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    {
+        int n = (int)ActiveParticleList.size();
+        int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
+        double *cbe_dt     = (double *)mymalloc("cbe_kick_dt",  (n>0?n:1)*sizeof(double));
+        int k = 0;
+        for(int _a = 0; _a < n; _a++) {
+            int ii = ActiveParticleList[_a];
+            if(P[ii].Mass > 0) {
+                cbe_active[k] = ii;
+                cbe_dt[k] = (double)(P[ii].integertime_step()/2) * unit_integertime_in_physical(ii);
+                k++;
+            }
+        }
+        cbe_drift_kick_evaluate_gpu(P, NumPart, cbe_active, k, cbe_dt);
+        myfree(cbe_dt); myfree(cbe_active);
+    }
+#endif
+
 #ifdef TURB_DRIVING
     do_turb_driving_step_second_half();
 #endif
@@ -428,7 +467,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
         do_dm_fuzzy_drift_kick(i, dt_entr, 0); /* kicks for fuzzy-dm integration */
 #endif
 #ifdef CBE_INTEGRATOR
+#if !(defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD))
         do_cbe_drift_kick(i, dt_entr); /* kicks for cbe integration of phase-space distribution function */
+#endif
 #endif
         
     } // if(TimeBinActive[P[i].TimeBin]) //

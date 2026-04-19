@@ -86,114 +86,13 @@ if(j > 1)
 
 /* drift-kick updates to distribution functions */
 // we evolve conserved quantities directly (in physical units): minor conversion in fluxes required later //
+#include "cbe_integrator_functions.h"
+
 void do_cbe_drift_kick(int i, double dt)
 {
-    int j, k;
-    double moment[CBE_INTEGRATOR_NMOMENTS]={0}, dmoment[CBE_INTEGRATOR_NMOMENTS]={0}, minv=1./P[i].Mass;
-    Vec3<double> v0 = {};
-    // evaluate total fluxes //
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
-        {
-            moment[k] += P[i].CBE_basis_moments[j][k];
-            dmoment[k] += dt*P[i].CBE_basis_moments_dt[j][k];
-        }
-    }
-    // define the current velocity, force-sync update to match it //
-    v0 = P[i].Vel / All.cf_atime; // physical units //
-    double biggest_dm = 1.e10;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        double q = (dt*P[i].CBE_basis_moments_dt[j][0] - P[i].CBE_basis_moments[j][0]*minv*dmoment[0]) / (P[i].CBE_basis_moments[j][0] * (1.+minv*dmoment[0]));
-        if(!isnan(q)) {if(q < biggest_dm) {biggest_dm=q;}}
-    }
-    double nfac = 1; // normalization factor for fluxes below //
-    double threshold_dm;
-    threshold_dm = -0.75; // maximum allowed fractional change in m //
-    if(biggest_dm < threshold_dm) {nfac = threshold_dm/biggest_dm;} // re-normalize flux so it doesn't overshoot //
-    // ok now do the actual update //
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        P[i].CBE_basis_moments[j][0] += nfac * (dt*P[i].CBE_basis_moments_dt[j][0] - P[i].CBE_basis_moments[j][0]*minv*dmoment[0]); // update mass (strictly ensuring total mass matches updated particle)
-        for(k=1;k<4;k++) {P[i].CBE_basis_moments[j][k] += nfac * (dt*P[i].CBE_basis_moments_dt[j][k] - P[i].CBE_basis_moments[j][0]*minv*dmoment[k]);} // update momentum (strictly ensuring total momentum matches updated particle)
-#if (CBE_INTEGRATOR_NMOMENTS > 4)
-        {
-            // second moments need some checking //
-            for(k=4;k<CBE_INTEGRATOR_NMOMENTS;k++) {P[i].CBE_basis_moments[j][k] += nfac * (dt*P[i].CBE_basis_moments_dt[j][k]);} // pure dispersion, no re-normalization here
-        }
-
-        // now a series of checks for ensuring the second-moments retain positive-definite higher-order moments (positive-definite determinants, etc)
-        double eps_tmp = 1.e-8;
-        for(k=4;k<7;k++) {if(P[i].CBE_basis_moments[j][k] < MIN_REAL_NUMBER) {P[i].CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
-        double xyMax = sqrt(P[i].CBE_basis_moments[j][4]*P[i].CBE_basis_moments[j][5]) * (1.-eps_tmp); // xy < sqrt[xx*yy]
-        double xzMax = sqrt(P[i].CBE_basis_moments[j][4]*P[i].CBE_basis_moments[j][6]) * (1.-eps_tmp); // xz < sqrt[xx*zz]
-        double yzMax = sqrt(P[i].CBE_basis_moments[j][5]*P[i].CBE_basis_moments[j][6]) * (1.-eps_tmp); // yz < sqrt[yy*zz]
-        if(P[i].CBE_basis_moments[j][7] > xyMax) {P[i].CBE_basis_moments[j][7] = xyMax;}
-        if(P[i].CBE_basis_moments[j][8] > xzMax) {P[i].CBE_basis_moments[j][8] = xzMax;}
-        if(P[i].CBE_basis_moments[j][9] > yzMax) {P[i].CBE_basis_moments[j][9] = yzMax;}
-        if(P[i].CBE_basis_moments[j][7] < -xyMax) {P[i].CBE_basis_moments[j][7] = -xyMax;}
-        if(P[i].CBE_basis_moments[j][8] < -xzMax) {P[i].CBE_basis_moments[j][8] = -xzMax;}
-        if(P[i].CBE_basis_moments[j][9] < -yzMax) {P[i].CBE_basis_moments[j][9] = -yzMax;}
-        double crossnorm = 1;
-        double detSMatrix_Diag = P[i].CBE_basis_moments[j][4]*P[i].CBE_basis_moments[j][5]*P[i].CBE_basis_moments[j][6];
-        double detSMatrix_Cross = 2.*P[i].CBE_basis_moments[j][7]*P[i].CBE_basis_moments[j][8]*P[i].CBE_basis_moments[j][9]
-        - (  P[i].CBE_basis_moments[j][4]*P[i].CBE_basis_moments[j][9]*P[i].CBE_basis_moments[j][9]
-           + P[i].CBE_basis_moments[j][5]*P[i].CBE_basis_moments[j][8]*P[i].CBE_basis_moments[j][8]
-           + P[i].CBE_basis_moments[j][6]*P[i].CBE_basis_moments[j][7]*P[i].CBE_basis_moments[j][7] );
-        if(detSMatrix_Diag <= 0)
-        {
-            crossnorm=0; for(k=4;k<7;k++) {if(P[i].CBE_basis_moments[j][k] < MIN_REAL_NUMBER) {P[i].CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
-        } else {
-            if(detSMatrix_Diag + detSMatrix_Cross <= 0)
-            {
-                double crossmin = -detSMatrix_Diag * (1.-eps_tmp);
-                crossnorm = crossmin / detSMatrix_Cross;
-            }
-        }
-        if(crossnorm < 1) {for(k=7;k<10;k++) {P[i].CBE_basis_moments[j][k] *= crossnorm;}}
-
-// simplify to 1D dispersion along direction of motion
-if(2==2)
-{
-double S0 = P[i].CBE_basis_moments[j][4]+P[i].CBE_basis_moments[j][5]+P[i].CBE_basis_moments[j][6], vhat[3]={0}, vmag=0;
-for(k=0;k<3;k++) {vhat[k] = P[i].CBE_basis_moments[j][k+1]; vmag += vhat[k]*vhat[k];}
-if(vmag > 0)
-{
-vmag = 1./sqrt(vmag); for(k=0;k<3;k++) {vhat[k] *= vmag;}
-P[i].CBE_basis_moments[j][4] = S0*vhat[0]*vhat[0]; P[i].CBE_basis_moments[j][5] = S0*vhat[1]*vhat[1];
-P[i].CBE_basis_moments[j][6] = S0*vhat[2]*vhat[2]; P[i].CBE_basis_moments[j][7] = S0*vhat[0]*vhat[1];
-P[i].CBE_basis_moments[j][8] = S0*vhat[0]*vhat[2]; P[i].CBE_basis_moments[j][9] = S0*vhat[1]*vhat[2];
-}
-}
-
-#endif
-    }
-    
-    /* need to deal with cases where one of the basis functions becomes extremely small --
-        below simply takes the biggest and splits it (with small perturbation to velocities
-        for degeneracy-breaking purposes) */
-    double mmax=-1, mmin=1.e10*P[i].Mass; int jmin=-1,jmax=-1;
-    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
-    {
-        double m=P[i].CBE_basis_moments[j][0];
-        if(m<mmin) {mmin=m; jmin=j;}
-        if(m>mmax) {mmax=m; jmax=j;}
-    }
-    if((mmin < 1.e-5 * mmax) && (jmin >= 0) && (jmax >= 0) && (All.Time > All.TimeBegin))
-    {
-        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
-        {
-            double dq = 0.5*P[i].CBE_basis_moments[jmax][k];
-            if(k>0 && k<4) {dq *= 1. + 0.001*(get_random_number(ThisTask+i+32*jmax+12427*k)-0.5);}
-            P[i].CBE_basis_moments[jmax][k] -= dq;
-            P[i].CBE_basis_moments[jmin][k] += dq; // since we're just splitting mass, this is ok, since these are all mass-weighted quantities
-        }
-    }
-    
+    do_cbe_drift_kick_kernel(P[i], dt);
     return;
 }
-
 
 
 

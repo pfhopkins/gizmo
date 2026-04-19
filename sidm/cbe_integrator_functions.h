@@ -63,6 +63,89 @@ double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS],
 #endif
     return vsig * f00_vsig;
 }
+
+
+/* GPU-callable per-particle drift-kick update for the CBE integrator.
+ * Mirrors do_cbe_drift_kick() in cbe_integrator.cc but takes an explicit
+ * particle ref so it runs in both CPU and GPU (Kokkos) contexts.
+ * get_random_number() replaced by counter-based gpu_rng (same statistics,
+ * deterministic per particle-ID + timestep). */
+#include "../declarations/gpu_rng.h"
+
+KOKKOS_INLINE_FUNCTION
+static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt)
+{
+    int j, k;
+    double moment[CBE_INTEGRATOR_NMOMENTS]={0}, dmoment[CBE_INTEGRATOR_NMOMENTS]={0}, minv=1./pi.Mass;
+    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
+        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
+        { moment[k] += pi.CBE_basis_moments[j][k]; dmoment[k] += dt*pi.CBE_basis_moments_dt[j][k]; }
+    double biggest_dm = 1.e10;
+    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
+    {
+        double q = (dt*pi.CBE_basis_moments_dt[j][0] - pi.CBE_basis_moments[j][0]*minv*dmoment[0]) / (pi.CBE_basis_moments[j][0] * (1.+minv*dmoment[0]));
+        if(!isnan(q)) {if(q < biggest_dm) {biggest_dm=q;}}
+    }
+    double nfac = 1, threshold_dm = -0.75;
+    if(biggest_dm < threshold_dm) {nfac = threshold_dm/biggest_dm;}
+    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
+    {
+        pi.CBE_basis_moments[j][0] += nfac * (dt*pi.CBE_basis_moments_dt[j][0] - pi.CBE_basis_moments[j][0]*minv*dmoment[0]);
+        for(k=1;k<4;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k] - pi.CBE_basis_moments[j][0]*minv*dmoment[k]);}
+#if (CBE_INTEGRATOR_NMOMENTS > 4)
+        for(k=4;k<CBE_INTEGRATOR_NMOMENTS;k++) {pi.CBE_basis_moments[j][k] += nfac * (dt*pi.CBE_basis_moments_dt[j][k]);}
+        double eps_tmp = 1.e-8;
+        for(k=4;k<7;k++) {if(pi.CBE_basis_moments[j][k] < MIN_REAL_NUMBER) {pi.CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
+        double xyMax = sqrt(pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][5]) * (1.-eps_tmp);
+        double xzMax = sqrt(pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][6]) * (1.-eps_tmp);
+        double yzMax = sqrt(pi.CBE_basis_moments[j][5]*pi.CBE_basis_moments[j][6]) * (1.-eps_tmp);
+        if(pi.CBE_basis_moments[j][7] > xyMax) {pi.CBE_basis_moments[j][7] = xyMax;}
+        if(pi.CBE_basis_moments[j][8] > xzMax) {pi.CBE_basis_moments[j][8] = xzMax;}
+        if(pi.CBE_basis_moments[j][9] > yzMax) {pi.CBE_basis_moments[j][9] = yzMax;}
+        if(pi.CBE_basis_moments[j][7] < -xyMax) {pi.CBE_basis_moments[j][7] = -xyMax;}
+        if(pi.CBE_basis_moments[j][8] < -xzMax) {pi.CBE_basis_moments[j][8] = -xzMax;}
+        if(pi.CBE_basis_moments[j][9] < -yzMax) {pi.CBE_basis_moments[j][9] = -yzMax;}
+        double crossnorm = 1;
+        double detSMatrix_Diag = pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][5]*pi.CBE_basis_moments[j][6];
+        double detSMatrix_Cross = 2.*pi.CBE_basis_moments[j][7]*pi.CBE_basis_moments[j][8]*pi.CBE_basis_moments[j][9]
+            - (  pi.CBE_basis_moments[j][4]*pi.CBE_basis_moments[j][9]*pi.CBE_basis_moments[j][9]
+               + pi.CBE_basis_moments[j][5]*pi.CBE_basis_moments[j][8]*pi.CBE_basis_moments[j][8]
+               + pi.CBE_basis_moments[j][6]*pi.CBE_basis_moments[j][7]*pi.CBE_basis_moments[j][7] );
+        if(detSMatrix_Diag <= 0) {
+            crossnorm=0; for(k=4;k<7;k++) {if(pi.CBE_basis_moments[j][k]<MIN_REAL_NUMBER) {pi.CBE_basis_moments[j][k]=MIN_REAL_NUMBER;}}
+        } else if(detSMatrix_Diag + detSMatrix_Cross <= 0) {
+            crossnorm = (-detSMatrix_Diag * (1.-eps_tmp)) / detSMatrix_Cross;
+        }
+        if(crossnorm < 1) {for(k=7;k<10;k++) {pi.CBE_basis_moments[j][k] *= crossnorm;}}
+        /* simplify to 1D dispersion along direction of motion */
+        if(2==2) {
+            double S0 = pi.CBE_basis_moments[j][4]+pi.CBE_basis_moments[j][5]+pi.CBE_basis_moments[j][6], vhat[3]={0}, vmag=0;
+            for(k=0;k<3;k++) {vhat[k]=pi.CBE_basis_moments[j][k+1]; vmag+=vhat[k]*vhat[k];}
+            if(vmag > 0) {
+                vmag = 1./sqrt(vmag); for(k=0;k<3;k++) {vhat[k]*=vmag;}
+                pi.CBE_basis_moments[j][4]=S0*vhat[0]*vhat[0]; pi.CBE_basis_moments[j][5]=S0*vhat[1]*vhat[1];
+                pi.CBE_basis_moments[j][6]=S0*vhat[2]*vhat[2]; pi.CBE_basis_moments[j][7]=S0*vhat[0]*vhat[1];
+                pi.CBE_basis_moments[j][8]=S0*vhat[0]*vhat[2]; pi.CBE_basis_moments[j][9]=S0*vhat[1]*vhat[2];
+            }
+        }
+#endif
+    }
+    /* split the largest basis into the smallest when one becomes degenerate */
+    double mmax=-1, mmin=1.e10*pi.Mass; int jmin=-1,jmax=-1;
+    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
+    { double m=pi.CBE_basis_moments[j][0]; if(m<mmin){mmin=m;jmin=j;} if(m>mmax){mmax=m;jmax=j;} }
+    if((mmin < 1.e-5 * mmax) && (jmin >= 0) && (jmax >= 0) && (All.Time > All.TimeBegin))
+    {
+        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
+        {
+            double dq = 0.5*pi.CBE_basis_moments[jmax][k];
+            if(k>0 && k<4) {dq *= 1. + 0.001*(gizmo_gpu_rand_double(pi.ID ^ ((uint64_t)jmax*65537ULL) ^ ((uint64_t)k*131071ULL), (uint64_t)All.Ti_Current) - 0.5);}
+            pi.CBE_basis_moments[jmax][k] -= dq;
+            pi.CBE_basis_moments[jmin][k] += dq;
+        }
+    }
+}
+
 #endif /* CBE_INTEGRATOR */
 
 #endif /* CBE_INTEGRATOR_FUNCTIONS_H */
