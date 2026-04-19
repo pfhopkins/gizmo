@@ -92,9 +92,9 @@ extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 
 
 static double fac_mu, fac_vsic_fix;
-#ifdef MAGNETIC
+/* fac_magnetic_pressure is lifted out of #ifdef MAGNETIC so per-pair hydro
+   functions can take it as a plain argument; zero when MAGNETIC is off. */
 static double fac_magnetic_pressure;
-#endif
 
 
 /* --------------------------------------------------------------------------------- */

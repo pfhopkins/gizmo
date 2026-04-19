@@ -8,6 +8,9 @@
 #include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../sidm/dm_fuzzy_flux_functions.h"
+#include "../sidm/sidm_core_flux_functions.h"
+#include "../sidm/cbe_integrator_flux_functions.h"
 #include "../mesh/kernel.h"
 #ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/ghost_symlist_lifecycle.h"
@@ -970,15 +973,35 @@ int AGSForce_evaluate(int target, int mode, int *exportflag, int *exportnodecoun
                     if(All.ComovingIntegrationOn) {kernel.dv[k] += All.cf_hubble_a * kernel.dp[k]/All.cf_a2inv;}
                 }
                 
-#ifdef CBE_INTEGRATOR
-#include "../sidm/cbe_integrator_flux_computation.h"
-#endif
-#ifdef DM_FUZZY
-#include "../sidm/dm_fuzzy_flux_computation.h"
-#endif
-#if defined(DM_SIDM)
-#include "../sidm/sidm_core_flux_computation.h"
-#endif
+                {
+                    CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(local, j, P, kernel, out);
+                    if(cbe_r.set_wakeup_j) {
+                        #pragma omp atomic write
+                        P[j].wakeup = -1;
+                        #pragma omp atomic write
+                        NeedToWakeupParticles_local = 1;
+                    }
+                }
+                dm_fuzzy_flux_compute_pair(local, j, P, kernel, out);
+                {
+                    SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, P, kernel, out);
+                    if(sidm_r.scattered) {
+                        if(sidm_r.set_wakeup_j) {
+                            #pragma omp atomic write
+                            P[j].wakeup = -1;
+                            #pragma omp atomic write
+                            NeedToWakeupParticles_local = 1;
+                        }
+                        for(int kv=0; kv<3; kv++) {
+                            #pragma omp atomic
+                            P[j].Vel[kv] += sidm_r.dv_sidm[kv];
+                            #pragma omp atomic
+                            P[j].dp[kv] += sidm_r.dv_sidm[kv] * P[j].Mass;
+                        }
+                        #pragma omp atomic
+                        P[j].NInteractions++;
+                    }
+                }
 
             } // numngb_inbox loop
         } // while(startnode)
