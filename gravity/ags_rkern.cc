@@ -294,12 +294,19 @@ void ags_density(void)
            In typical cosmological use only one bitmask is active (e.g. DM→DM),
            so this yields one group and one GPU kernel pass. */
         std::map<int, std::vector<int>> bitmask_groups;
+        uint64_t local_bm_presence = 0;
         for (int ii : ActiveParticleList) {
             if(ags_density_isactive(ii)) {
                 int bm = ags_gravity_kernel_shared_BITFLAG(P[ii].Type);
-                if(bm != 0) bitmask_groups[bm].push_back(ii);
+                if(bm > 0 && bm < 64) { bitmask_groups[bm].push_back(ii); local_bm_presence |= (1ULL << bm); }
             }
         }
+        /* Symmetrise bitmask key set across all ranks so every rank enters the
+           same number of ghost_writeback_wakeup() MPI collectives. Without this,
+           a rank whose local particles all converged has bitmask_groups={} and
+           skips the collective, deadlocking the other ranks. */
+        uint64_t global_bm_presence = local_bm_presence;
+        if(NTask > 1) MPI_Allreduce(&local_bm_presence, &global_bm_presence, 1, MPI_UINT64_T, MPI_BOR, MPI_COMM_WORLD);
         /* Zero per-iteration accumulators for all AGS-active particles */
         for(auto& kv : bitmask_groups) {
             for(int ii : kv.second) {
@@ -310,10 +317,11 @@ void ags_density(void)
 #endif
             }
         }
-        /* Launch one GPU kernel per bitmask group */
-        for(auto& kv : bitmask_groups) {
-            int bm = kv.first;
-            std::vector<int>& ilist = kv.second;
+        /* Launch one GPU kernel per bitmask group (iterate global union so all
+           ranks always call ghost_writeback_wakeup the same number of times). */
+        for(int bm = 1; bm < 64; bm++) {
+            if(!(global_bm_presence & (1ULL << bm))) continue;
+            std::vector<int>& ilist = bitmask_groups[bm];  /* empty if rank has none */
             int nl_num_active = (int)ilist.size();
             int *nl_active = (int *) mymalloc("ags_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
             double *nl_radii = (double *) mymalloc("ags_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
@@ -632,7 +640,7 @@ void ags_density(void)
         }
     }
     myfree(AGS_Prev);
-    
+
     /* collect some timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp; CPU_Step[CPU_AGSDENSWAIT] += timewait;
@@ -1021,12 +1029,16 @@ void AGSForce_calc(void)
     gizmo_density_prep_ghosts(ags_ghost_safety);
 
     std::map<int, std::vector<int>> bitmask_groups;
+    uint64_t local_bm_presence_f = 0;
     for (int ii : ActiveParticleList) {
         if(AGSForce_isactive(ii)) {
             int bm = ags_gravity_kernel_shared_BITFLAG(P[ii].Type);
-            if(bm != 0) bitmask_groups[bm].push_back(ii);
+            if(bm > 0 && bm < 64) { bitmask_groups[bm].push_back(ii); local_bm_presence_f |= (1ULL << bm); }
         }
     }
+    /* Symmetrise across ranks so all ranks call ghost_writeback_agsforce the same number of times. */
+    uint64_t global_bm_presence_f = local_bm_presence_f;
+    if(NTask > 1) MPI_Allreduce(&local_bm_presence_f, &global_bm_presence_f, 1, MPI_UINT64_T, MPI_BOR, MPI_COMM_WORLD);
 
     /* Zero per-iteration i-side accumulators for active AGSForce particles.
        These correspond to the OUTPUTFUNCTION_NAME fields that use mode==0
@@ -1050,9 +1062,10 @@ void AGSForce_calc(void)
         }
     }
 
-    for(auto& kv : bitmask_groups) {
-        int bm = kv.first;
-        std::vector<int>& ilist = kv.second;
+    /* Iterate global bitmask union so all ranks call ghost_writeback_agsforce the same number of times. */
+    for(int bm = 1; bm < 64; bm++) {
+        if(!(global_bm_presence_f & (1ULL << bm))) continue;
+        std::vector<int>& ilist = bitmask_groups[bm];  /* empty if rank has none */
         int nl_num_active = (int)ilist.size();
         int *nl_active = (int *) mymalloc("agsforce_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
         double *nl_radii = (double *) mymalloc("agsforce_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
