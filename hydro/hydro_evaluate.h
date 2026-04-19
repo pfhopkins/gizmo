@@ -19,6 +19,12 @@
   is ensured safe. but we do have other flags set for manifest conservation in some hydro solvers,
   for wakeups, and other key routines. those must all be protected if openmp is used -- */
 /* --------------------------------------------------------------------------------- */
+
+#include "hydro_pair_types.h"
+#include "conduction_functions.h"
+#include "../turb/turbulent_diffusion_functions.h"
+#include "../turb/chimes_turbulent_ion_diffusion_functions.h"
+
 int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)
 {
     int j, k, n, startnode, numngb, kernel_mode, listindex;
@@ -229,9 +235,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
                 if(j_is_active_for_fluxes) {if(KE > CellP[j].MaxKineticEnergyNgb) CellP[j].MaxKineticEnergyNgb = KE;}
 #endif
-#ifdef TURB_DIFF_METALS
+                /* mdot_estimated: set inside MFM/MFV Riemann core when TURB_DIFF_METALS
+                   is enabled; declared unconditionally so turb-diffusion functions can take
+                   it as a plain argument (value is 0 when not set). */
                 double mdot_estimated = 0;
-#endif
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
                 double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
@@ -290,9 +297,13 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 Face_Area_Vec = kernel.dp * (Face_Area_Norm / kernel.r);
 #endif
 
+                /* bhat/bhat_mag declared unconditionally so per-pair physics functions
+                   can take them as plain args without needing #ifdef MAGNETIC in signatures. */
+                Vec3<double> bhat = {};
+                double bhat_mag = 0;
 #ifdef MAGNETIC
-                Vec3<double> bhat = 0.5 * (local.BPred + BPred_j) * All.cf_a2inv;
-                double bhat_mag = bhat.norm_sq();
+                bhat = 0.5 * (local.BPred + BPred_j) * All.cf_a2inv;
+                bhat_mag = bhat.norm_sq();
                 if(bhat_mag>0) {bhat_mag=sqrt(bhat_mag); bhat /= bhat_mag;}
                 v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(magneticspeed_i,magneticspeed_j);
 #define B_dot_grad_weights(grad_i,grad_j) {if(bhat_mag<=0) {b_hll=1;} else {double q_tmp_sum=0,b_tmp_sum=0; for(k=0;k<3;k++) {\
@@ -321,21 +332,47 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #include "nonideal_mhd.h"
 #endif
 
-#ifdef CONDUCTION
-#include "conduction.h"
+                /* Per-pair physics sub-modules. Functions guard their bodies with the
+                   relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
+                double face_density_for_diffusion = 0;
+#if defined(SAVE_FACE_DENSITY) && !defined(HYDRO_SPH)
+                face_density_for_diffusion = Riemann_out.Face_Density;
 #endif
+                conduction_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                        v_hll, bhat, bhat_mag, dt_hydrostep, Fluxes);
 
 #ifdef VISCOSITY
 #include "viscosity.h"
 #endif
 
-#ifdef TURB_DIFFUSION
-#include "../turb/turbulent_diffusion.h"
+                {
+                    MyFloat dyield_j_delta[NUM_METAL_SPECIES];
+                    turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                                  face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
+                                                  out, dyield_j_delta);
+#ifdef TURB_DIFF_METALS
+                    /* Original fragment wrote CellP[j].Dyield without atomic when
+                       j_is_active_for_fluxes; that path is only taken when OPENMP
+                       is off, so direct write is safe here too. */
+                    if(j_is_active_for_fluxes) {
+                        for(int km=0; km<NUM_METAL_SPECIES; km++) {
+                            CellP[j].Dyield[km] += FluxCorrectionFactor_to_j * dyield_j_delta[km];
+                        }
+                    }
 #endif
-
+                }
+                {
+                    MyDouble chimes_nions_j_delta[CHIMES_TOTSIZE];
+                    chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                                       face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
+                                                       out, chimes_nions_j_delta);
 #ifdef CHIMES_TURB_DIFF_IONS
-#include "../turb/chimes_turbulent_ion_diffusion.h"
+                    for(int kc=0; kc<ChimesGlobalVars.totalNumberOfSpecies; kc++) {
+                        #pragma omp atomic
+                        CellP[j].ChimesNIons[kc] += chimes_nions_j_delta[kc];
+                    }
 #endif
+                }
 
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"

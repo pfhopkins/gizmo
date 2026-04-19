@@ -25,6 +25,11 @@
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
 
+#include "hydro_pair_types.h"
+#include "conduction_functions.h"
+#include "../turb/turbulent_diffusion_functions.h"
+#include "../turb/chimes_turbulent_ion_diffusion_functions.h"
+
 /* Requires: allvars.h, proto.h, kernel.h, reimann.h included before this header.
    Also requires: Conserved_var_Riemann, kernel_hydra, INPUT_STRUCT_NAME, OUTPUT_STRUCT_NAME
    defined (from hydro_toplevel.cc via code_block_xchange_initialize.h).
@@ -212,9 +217,10 @@ void hydro_accumulate_neighbor(
     double KE = kernel.dv.norm_sq();
     if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
 #endif
-#ifdef TURB_DIFF_METALS
+    /* mdot_estimated is set inside the MFM/MFV Riemann core when TURB_DIFF_METALS
+       is enabled; declared unconditionally so turb-diffusion functions can take
+       it as a plain argument (value is 0 when not set). */
     double mdot_estimated = 0;
-#endif
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
@@ -257,10 +263,14 @@ void hydro_accumulate_neighbor(
 #endif
 
     /* HLL diffusion setup: bhat, v_hll, B_dot_grad_weights.
-       MUST come AFTER core solver because face_vel_i/j are computed there. */
+       MUST come AFTER core solver because face_vel_i/j are computed there.
+       bhat/bhat_mag are declared unconditionally so per-pair physics functions
+       can take them as plain arguments without #ifdef MAGNETIC in the signature. */
+    Vec3<double> bhat = {};
+    double bhat_mag = 0;
 #ifdef MAGNETIC
-    Vec3<double> bhat = 0.5 * (local.BPred + BPred_j) * All.cf_a2inv;
-    double bhat_mag = bhat.norm_sq();
+    bhat = 0.5 * (local.BPred + BPred_j) * All.cf_a2inv;
+    bhat_mag = bhat.norm_sq();
     if(bhat_mag>0) {bhat_mag=sqrt(bhat_mag); bhat /= bhat_mag;}
     v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(magneticspeed_i,magneticspeed_j);
 #define B_dot_grad_weights(grad_i,grad_j) {if(bhat_mag<=0) {b_hll=1;} else {double q_tmp_sum=0,b_tmp_sum=0; for(k=0;k<3;k++) {\
@@ -298,18 +308,31 @@ void hydro_accumulate_neighbor(
 #ifdef MHD_NON_IDEAL
 #include "nonideal_mhd.h"
 #endif
-#ifdef CONDUCTION
-#include "conduction.h"
+    /* Per-pair physics sub-modules. Functions guard their bodies with the
+       relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
+    double face_density_for_diffusion = 0;
+#if defined(SAVE_FACE_DENSITY) && !defined(HYDRO_SPH)
+    face_density_for_diffusion = Riemann_out.Face_Density;
 #endif
+    conduction_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                            v_hll, bhat, bhat_mag, dt_hydrostep, Fluxes);
 #ifdef VISCOSITY
 #include "viscosity.h"
 #endif
-#ifdef TURB_DIFFUSION
-#include "../turb/turbulent_diffusion.h"
-#endif
-#ifdef CHIMES_TURB_DIFF_IONS
-#include "../turb/chimes_turbulent_ion_diffusion.h"
-#endif
+    {
+        MyFloat dyield_j_delta[NUM_METAL_SPECIES];
+        turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                      face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
+                                      out, dyield_j_delta);
+        /* GPU/hydro_functions.h path: j_is_active_for_fluxes == 0 always,
+           so no j-side apply loop. CPU tree-walk in hydro_evaluate.h applies. */
+    }
+    {
+        MyDouble chimes_nions_j_delta[CHIMES_TOTSIZE];
+        chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
+                                           face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated,
+                                           out, chimes_nions_j_delta);
+    }
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion.h"
 #endif
