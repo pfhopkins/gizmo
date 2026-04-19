@@ -20,6 +20,7 @@
 
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
+#include "hydro_core_meshless_functions.h"
 #include "conduction_functions.h"
 #include "viscosity_functions.h"
 #include "nonideal_mhd_functions.h"
@@ -192,6 +193,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 kernel.dv = local.Vel - VelPred_j;
                 kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
                 double Particle_Size_j; Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime; /* physical units */
+                V_j = P[j].Mass / CellP[j].Density; /* neighbor volume, needed by sub-module functions below */
 
                 /* --------------------------------------------------------------------------------- */
                 /* sound speed, relative velocity, and signal velocity computation */
@@ -201,13 +203,15 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double CosmicRayPressure_j[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {CosmicRayPressure_j[k] = Get_Gas_CosmicRayPressure(j, k, CellP);} /* compute this for use below */
                 //double Streaming_Loss_Term = 0; // alternative evaluation of streaming+diffusion losses: still experimental //
 #endif
-                /* BPred_j declared unconditionally so nonideal_mhd can take it as a plain arg. */
+                /* BPred_j / PhiPred_j declared unconditionally so the hydro_core and
+                   nonideal_mhd functions can take them as plain args. */
                 Vec3<double> BPred_j = {};
+                double PhiPred_j = 0;
 #ifdef MAGNETIC
                 BPred_j = CellP[j].Bfield(); /* defined j b-field in appropriate units for everything */
                 NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos,P[j].Pos,BPred_j,-1); /* in a shearing box, wrap magnetic fields for shearing boxes if needed [literally does nothing if not shearing box here] */
 #ifdef DIVBCLEANING_DEDNER
-                double PhiPred_j = Get_Gas_PhiField(j); /* define j phi-field in appropriate units */
+                PhiPred_j = Get_Gas_PhiField(j); /* define j phi-field in appropriate units */
 #endif
                 kernel.b2_j = BPred_j.norm_sq();
                 kernel.alfven2_j = kernel.b2_j * fac_magnetic_pressure / CellP[j].Density;
@@ -283,7 +287,25 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef HYDRO_SPH
 #include "hydro_core_sph.h"
 #else
-#include "hydro_core_meshless.h"
+                {
+                    const double *cr_pressure_j_ptr = nullptr;
+#ifdef COSMIC_RAY_FLUID
+                    cr_pressure_j_ptr = CosmicRayPressure_j;
+#endif
+                    Vec3<MyDouble> particle_vel_j_for_core = {};
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                    particle_vel_j_for_core = ParticleVel_j;
+#endif
+                    hydro_core_meshless_compute_pair(local, j, P, CellP, VelPred_j, particle_vel_j_for_core,
+                                                     BPred_j, PhiPred_j, kernel, rinv, r2, V_i, V_j,
+                                                     Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                                     fac_magnetic_pressure, tensile_correction_factor,
+                                                     epsilon_entropic_eos_big, epsilon_entropic_eos_small,
+                                                     cr_pressure_j_ptr,
+                                                     Face_Area_Vec, Face_Area_Norm,
+                                                     face_vel_i, face_vel_j, face_area_dot_vel,
+                                                     mdot_estimated, Riemann_vec, Riemann_out, Fluxes, out);
+                }
 #endif
 
 #ifdef FREEZE_HYDRO

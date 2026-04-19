@@ -27,6 +27,7 @@
 
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
+#include "hydro_core_meshless_functions.h"
 #include "conduction_functions.h"
 #include "viscosity_functions.h"
 #include "nonideal_mhd_functions.h"
@@ -132,11 +133,12 @@ void hydro_accumulate_neighbor(
        arg; zero-init when MAGNETIC is off (function body guards with MHD_NON_IDEAL
        which implies MAGNETIC, so the zero is never actually consumed). */
     Vec3<double> BPred_j = {};
+    double PhiPred_j = 0;
 #ifdef MAGNETIC
     BPred_j = CellP[j].Bfield();
     NGB_SHEARBOX_BOUNDARY_BCORR_(local.Pos, P[j].Pos, BPred_j, -1);
 #ifdef DIVBCLEANING_DEDNER
-    double PhiPred_j = CellP[j].PhiPred / P[j].Mass;
+    PhiPred_j = CellP[j].PhiPred / P[j].Mass;
 #endif
 #endif
 
@@ -158,8 +160,11 @@ void hydro_accumulate_neighbor(
     double cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber * local.ConditionNumber;
     double fac_mu = 1.0 / All.cf_atime;
     double fac_vsic_fix = All.cf_hubble_a; /* needed by SPH viscosity limiter */
+    /* fac_magnetic_pressure lifted out of #ifdef MAGNETIC so hydro_core functions
+       can take it as a plain arg; value is 0 when MAGNETIC is off (unused there). */
+    double fac_magnetic_pressure = 0;
 #ifdef MAGNETIC
-    double fac_magnetic_pressure = 1.0 / All.cf_atime; /* B*B*fac = pressure units */
+    fac_magnetic_pressure = 1.0 / All.cf_atime;
 #if defined(HYDRO_SPH)
     Vec3<double> magfluxv = {}; double resistivity_heatflux = 0;
     kernel.mf_i = local.Mass * fac_magnetic_pressure / (local.Density * local.Density);
@@ -171,9 +176,12 @@ void hydro_accumulate_neighbor(
     for(k = 0; k < 3; k++) mm_i[k][k] -= 0.5 * kernel.b2_i;
 #endif
 #endif
-#ifdef HYDRO_MESHLESS_FINITE_MASS
+    /* Entropic-energy-equation thresholds: declared unconditionally so the
+       hydro_core_meshless function can take them as plain args. Values only
+       active under HYDRO_MESHLESS_FINITE_MASS; harmless defaults otherwise. */
     double epsilon_entropic_eos_big = 0.5;
     double epsilon_entropic_eos_small = 1.e-3;
+#ifdef HYDRO_MESHLESS_FINITE_MASS
 #if defined(FORCE_ENTROPIC_EOS_BELOW)
     epsilon_entropic_eos_small = FORCE_ENTROPIC_EOS_BELOW;
 #elif !defined(SELFGRAVITY_OFF)
@@ -258,7 +266,25 @@ void hydro_accumulate_neighbor(
 #ifdef HYDRO_SPH
 #include "hydro_core_sph.h"
 #else
-#include "hydro_core_meshless.h"
+    {
+        const double *cr_pressure_j_ptr = nullptr;
+#ifdef COSMIC_RAY_FLUID
+        cr_pressure_j_ptr = CosmicRayPressure_j;
+#endif
+        Vec3<MyDouble> particle_vel_j_for_core = {};
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        particle_vel_j_for_core = ParticleVel_j;
+#endif
+        hydro_core_meshless_compute_pair(local, j, P, CellP, VelPred_j, particle_vel_j_for_core,
+                                         BPred_j, PhiPred_j, kernel, rinv, r2, V_i, V_j,
+                                         Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                         fac_magnetic_pressure, tensile_correction_factor,
+                                         epsilon_entropic_eos_big, epsilon_entropic_eos_small,
+                                         cr_pressure_j_ptr,
+                                         Face_Area_Vec, Face_Area_Norm,
+                                         face_vel_i, face_vel_j, face_area_dot_vel,
+                                         mdot_estimated, Riemann_vec, Riemann_out, Fluxes, out);
+    }
 #endif
 
 #ifdef FREEZE_HYDRO
