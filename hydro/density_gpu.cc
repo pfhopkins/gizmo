@@ -607,7 +607,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         int *kTimeBinActive = d_TimeBinActive;
         int *kNeedWakeup = d_NeedToWakeup;
 
-        gizmo_gpu_kernel_launch("hydro_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+        Kokkos::parallel_for("hydro_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
 
             /* particle2in equivalent: load searching particle data */
@@ -776,14 +776,17 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             {
                 int j = neighbors[idx];
                 memset(&Fluxes, 0, sizeof(Fluxes));
-                hydro_accumulate_neighbor(&local, &out, &kernel, &Fluxes, j,
+                hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
                                           kTimeBinActive, kNeedWakeup);
             }
 
             /* Store output for this particle */
             kout[aa] = out;
-        }); /* end gizmo_gpu_kernel_launch */
+        }); /* end KOKKOS_LAMBDA */
+        Kokkos::fence();
+
+        gizmo_gpu_check_last_error("hydro kernel", num_active);
     }
 
     /* Copy output back to host */

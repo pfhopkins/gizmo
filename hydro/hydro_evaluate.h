@@ -36,7 +36,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 {
     int j, k, n, startnode, numngb, kernel_mode, listindex;
     double hinv_i,hinv3_i,hinv4_i,hinv_j,hinv3_j,hinv4_j,V_i,V_j,dt_hydrostep_i,dt_hydrostep_j,dt_hydrostep,r2,rinv,rinv_soft,u,Particle_Size_i;
-    double v_hll,k_hll,b_hll; v_hll=k_hll=0,b_hll=1;
+    double v_hll = 0;
     struct kernel_hydra kernel;
     struct INPUT_STRUCT_NAME local;
     struct OUTPUT_STRUCT_NAME out;
@@ -337,22 +337,8 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 bhat_mag = bhat.norm_sq();
                 if(bhat_mag>0) {bhat_mag=sqrt(bhat_mag); bhat /= bhat_mag;}
                 v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(magneticspeed_i,magneticspeed_j);
-#define B_dot_grad_weights(grad_i,grad_j) {if(bhat_mag<=0) {b_hll=1;} else {double q_tmp_sum=0,b_tmp_sum=0; for(k=0;k<3;k++) {\
-                                           double q_tmp=0.5*(grad_i[k]+grad_j[k]); q_tmp_sum+=q_tmp*q_tmp; b_tmp_sum+=bhat[k]*q_tmp;}\
-                                           if((b_tmp_sum!=0)&&(q_tmp_sum>0)) {b_hll=fabs(b_tmp_sum)/sqrt(q_tmp_sum); b_hll*=b_hll;} else {b_hll=0;}}}
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.1
 #else
                 v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(kernel.sound_i,kernel.sound_j);
-#define B_dot_grad_weights(grad_i,grad_j) {b_hll=1;}
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.5
-#endif
-#define HLL_correction(ui,uj,wt,kappa) (k_hll = v_hll * (wt) * kernel.r * All.cf_atime / fabs(kappa),\
-                                        k_hll = (0.2 + k_hll) / (0.2 + k_hll + k_hll*k_hll),\
-                                        -1.0*k_hll*Face_Area_Norm*v_hll*((ui)-(uj)))
-#if !defined(MAGNETIC) || defined(GALSF) || defined(COOLING) || defined(SINK_PARTICLES)
-#define HLL_DIFFUSION_OVERSHOOT_FACTOR  0.005
-#else
-#define HLL_DIFFUSION_OVERSHOOT_FACTOR  1.0
 #endif
 
                 /* Per-pair physics sub-modules. Functions guard their bodies with the

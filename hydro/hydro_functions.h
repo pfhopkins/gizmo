@@ -56,39 +56,18 @@
 #endif
 
 
-/* Per-neighbor-pair hydro flux accumulation for particle i.
- * This is the inner body of hydro_force_evaluate() from hydro_evaluate.h.
- *
- * Arguments mirror those available in the original loop:
- *   local   — input data for particle i
- *   out     — output accumulator for particle i
- *   kernel  — kernel workspace (dp, r, wk, etc.)
- *   Fluxes  — Riemann flux workspace (zeroed per pair)
- *   j       — neighbor particle index
- *   dt_hydrostep_i — particle i's timestep
- *   P, CellP — particle arrays
- *
- * The function computes: kernel evaluation, face reconstruction, Riemann solve,
- * and flux accumulation into 'out'. All sub-includes (hydro_core_meshless.h,
- * reimann.h, conduction.h, viscosity.h, etc.) are included inline. */
+/* Per-neighbor-pair hydro flux accumulation for particle i: kernel evaluation,
+ * face reconstruction, Riemann solve, and flux accumulation into 'out'. */
 KOKKOS_INLINE_FUNCTION
 void hydro_accumulate_neighbor(
-    struct INPUT_STRUCT_NAME *local_ptr_arg,
-    struct OUTPUT_STRUCT_NAME *out_ptr_arg,
-    struct kernel_hydra *kernel_ptr_arg,
-    struct Conserved_var_Riemann *Fluxes_ptr_arg,
+    struct INPUT_STRUCT_NAME &local,
+    struct OUTPUT_STRUCT_NAME &out,
+    struct kernel_hydra &kernel,
+    struct Conserved_var_Riemann &Fluxes,
     int j, double dt_hydrostep_i,
     struct particle_data *P, struct gas_cell_data *CellP,
     int *TimeBinActive_arr, int *NeedToWakeup_flag)
 {
-    /* Sub-includes (hydro_core_meshless.h, reimann.h, conduction.h, etc.) expect
-       local, out, kernel, Fluxes as value types with . access. Create references
-       from the pointer arguments, then #define the names so all sub-includes work. */
-    auto &local = *local_ptr_arg;
-    auto &out = *out_ptr_arg;
-    auto &kernel = *kernel_ptr_arg;
-    auto &Fluxes = *Fluxes_ptr_arg;
-
     int k;
     if(P[j].Mass <= 0) return;
     if(CellP[j].Density <= 0) return;
@@ -252,7 +231,7 @@ void hydro_accumulate_neighbor(
     double Face_Area_Norm = 0;
     Vec3<double> Face_Area_Vec;
     double face_vel_i = 0, face_vel_j = 0;
-    double v_hll = 0, k_hll = 0, b_hll = 1;
+    double v_hll = 0;
     int kernel_mode = 0;
 
     memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
@@ -317,32 +296,8 @@ void hydro_accumulate_neighbor(
     bhat_mag = bhat.norm_sq();
     if(bhat_mag>0) {bhat_mag=sqrt(bhat_mag); bhat /= bhat_mag;}
     v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(magneticspeed_i,magneticspeed_j);
-#define B_dot_grad_weights(grad_i,grad_j) {if(bhat_mag<=0) {b_hll=1;} else {double q_tmp_sum=0,b_tmp_sum=0; for(k=0;k<3;k++) {\
-                                           double q_tmp=0.5*(grad_i[k]+grad_j[k]); q_tmp_sum+=q_tmp*q_tmp; b_tmp_sum+=bhat[k]*q_tmp;}\
-                                           if((b_tmp_sum!=0)&&(q_tmp_sum>0)) {b_hll=fabs(b_tmp_sum)/sqrt(q_tmp_sum); b_hll*=b_hll;} else {b_hll=0;}}}
-#ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.1
-#endif
 #else
     v_hll = 0.5*fabs(face_vel_i-face_vel_j) + DMAX(kernel.sound_i,kernel.sound_j);
-#ifndef B_dot_grad_weights
-#define B_dot_grad_weights(grad_i,grad_j) {b_hll=1;}
-#endif
-#ifndef HLL_DIFFUSION_COMPROMISE_FACTOR
-#define HLL_DIFFUSION_COMPROMISE_FACTOR 1.5
-#endif
-#endif
-#ifndef HLL_correction
-#define HLL_correction(ui,uj,wt,kappa) (k_hll = v_hll * (wt) * kernel.r * All.cf_atime / fabs(kappa),\
-                                        k_hll = (0.2 + k_hll) / (0.2 + k_hll + k_hll*k_hll),\
-                                        -1.0*k_hll*Face_Area_Norm*v_hll*((ui)-(uj)))
-#endif
-#ifndef HLL_DIFFUSION_OVERSHOOT_FACTOR
-#if !defined(MAGNETIC) || defined(GALSF) || defined(COOLING) || defined(SINK_PARTICLES)
-#define HLL_DIFFUSION_OVERSHOOT_FACTOR  0.005
-#else
-#define HLL_DIFFUSION_OVERSHOOT_FACTOR  1.0
-#endif
 #endif
 
     /* ---- Physics sub-modules ---- */
