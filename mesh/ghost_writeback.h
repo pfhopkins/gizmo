@@ -38,6 +38,15 @@ void ghost_writeback_hydro(void);
 void ghost_writeback_zero_wakeup(void);
 void ghost_writeback_wakeup(void);
 
+/* AGSForce variant: reverse-communicates the full AGS j-side delta set
+ *   (Vel[3], dp[3], NInteractions, wakeup) — everything the CPU tree-walk
+ * wrote into neighbors inside the AGSForce loop. Zero is called before
+ * the GPU kernel; the scatter version runs after, before cleanup. Only
+ * the fields that exist in the current build are packed (the dp/
+ * NInteractions fields live under #ifdef DM_SIDM). */
+void ghost_writeback_zero_agsforce(void);
+void ghost_writeback_agsforce(void);
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);

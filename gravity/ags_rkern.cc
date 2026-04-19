@@ -19,6 +19,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #endif
 #include "ags_density_gpu.h"
+#include "ags_force_gpu.h"
 #include "ags_functions.h"
 #include "../mesh/ghost_writeback.h"
 
@@ -1010,9 +1011,100 @@ void AGSForce_calc(void)
     /* need to zero values for active particles (which will be re-calculated) before they are added below */
     //for (int i : ActiveParticleList) {int k1,k2; for(k1=0;k1<CBE_INTEGRATOR_NBASIS;k1++) {for(k2=0;k2<CBE_INTEGRATOR_NMOMENTS;k2++) {P[i].CBE_basis_moments_dt[k1][k2] = 0;}}}
 #endif
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* GPU neighbor-list path for AGSForce_calc. Partition active particles
+       (isactive == 1) by their shared neighbor-type bitmask and launch the
+       GPU kernel once per group, same pattern as ags_density(). */
+    double timeall = 0, timecomp = 0, timecomm = 0, timewait = 0, t0 = 0;
+    CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
+    double ags_ghost_safety = gizmo_ghost_safety_factor();
+    gizmo_density_prep_ghosts(ags_ghost_safety);
+
+    std::map<int, std::vector<int>> bitmask_groups;
+    for (int ii : ActiveParticleList) {
+        if(AGSForce_isactive(ii)) {
+            int bm = ags_gravity_kernel_shared_BITFLAG(P[ii].Type);
+            if(bm != 0) bitmask_groups[bm].push_back(ii);
+        }
+    }
+
+    /* Zero per-iteration i-side accumulators for active AGSForce particles.
+       These correspond to the OUTPUTFUNCTION_NAME fields that use mode==0
+       ASSIGN (not ASSIGN_ADD). */
+    for(auto& kv : bitmask_groups) {
+        for(int ii : kv.second) {
+#ifdef DM_FUZZY
+            P[ii].AGS_Dt_Numerical_QuantumPotential = 0;
+#if (DM_FUZZY > 0)
+            P[ii].AGS_Dt_Psi_Re = P[ii].AGS_Dt_Psi_Im = P[ii].AGS_Dt_Psi_Mass = 0;
+#endif
+#endif
+#if defined(CBE_INTEGRATOR)
+            P[ii].AGS_vsig = 0;
+            for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
+                for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
+                    P[ii].CBE_basis_moments_dt[k1][k2] = 0;
+                }
+            }
+#endif
+        }
+    }
+
+    for(auto& kv : bitmask_groups) {
+        int bm = kv.first;
+        std::vector<int>& ilist = kv.second;
+        int nl_num_active = (int)ilist.size();
+        int *nl_active = (int *) mymalloc("agsforce_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("agsforce_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
+        for(int a = 0; a < nl_num_active; a++) { nl_active[a] = ilist[a]; nl_radii[a] = P[ilist[a]].AGS_KernelRadius; }
+        struct ags_force_gpu_out *nl_outs = (struct ags_force_gpu_out *) mymalloc(
+            "agsforce_nl_outs", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct ags_force_gpu_out));
+
+        /* Snapshot ghost Vel/dp/NInteractions + zero wakeup so post-kernel
+           values become pure deltas to reverse-communicate. */
+        ghost_writeback_zero_agsforce();
+        ags_force_evaluate_gpu(P, NumPart, nl_active, nl_num_active, nl_radii, bm, nl_outs);
+        ghost_writeback_agsforce();
+
+        /* Scatter i-side accumulators into P[ii] (match CPU OUTPUT semantics). */
+        for(int a = 0; a < nl_num_active; a++) {
+            int ii = nl_active[a];
+#if defined(DM_SIDM)
+            for(int k = 0; k < 3; k++) {
+                P[ii].Vel[k] += nl_outs[a].sidm_kick[k];
+                P[ii].dp[k]  += nl_outs[a].sidm_kick[k] * P[ii].Mass;
+            }
+            if(nl_outs[a].dtime_sidm < P[ii].dtime_sidm) P[ii].dtime_sidm = nl_outs[a].dtime_sidm;
+            P[ii].NInteractions += nl_outs[a].si_count;
+#endif
+#ifdef DM_FUZZY
+            for(int k = 0; k < 3; k++) P[ii].GravAccel[k] += nl_outs[a].acc[k];
+            P[ii].AGS_Dt_Numerical_QuantumPotential += nl_outs[a].AGS_Dt_Numerical_QuantumPotential;
+#if (DM_FUZZY > 0)
+            P[ii].AGS_Dt_Psi_Re   += nl_outs[a].AGS_Dt_Psi_Re;
+            P[ii].AGS_Dt_Psi_Im   += nl_outs[a].AGS_Dt_Psi_Im;
+            P[ii].AGS_Dt_Psi_Mass += nl_outs[a].AGS_Dt_Psi_Mass;
+#endif
+#endif
+#if defined(CBE_INTEGRATOR)
+            if(nl_outs[a].AGS_vsig > P[ii].AGS_vsig) P[ii].AGS_vsig = nl_outs[a].AGS_vsig;
+            for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
+                for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
+                    P[ii].CBE_basis_moments_dt[k1][k2] += nl_outs[a].CBE_basis_moments_dt[k1][k2];
+                }
+            }
+#endif
+        }
+        myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
+    }
+
+    if(NTask > 1) { ghost_exchange_cleanup(); }
+    timecomp += timediff(t0, my_second());
+#else
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+#endif
     /* do final operations on results: these are operations that can be done after the complete set of iterations */
 #ifdef CBE_INTEGRATOR
         for (int i : ActiveParticleList) {do_postgravity_cbe_calcs(i);} // do any final post-tree-walk calcs from the CBE integrator here //
