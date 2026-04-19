@@ -21,6 +21,7 @@
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
 #include "hydro_core_meshless_functions.h"
+#include "hydro_core_sph_functions.h"
 #include "conduction_functions.h"
 #include "viscosity_functions.h"
 #include "nonideal_mhd_functions.h"
@@ -102,21 +103,15 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 #endif
 
+    /* magfluxv / resistivity_heatflux lifted out of MAGNETIC+HYDRO_SPH so the
+       hydro_core_sph function can take them as output args. Zero otherwise. */
+    Vec3<double> magfluxv = {};
+    double resistivity_heatflux = 0;
 #ifdef MAGNETIC
     kernel.b2_i = local.BPred.norm_sq();
 #if defined(HYDRO_SPH)
-    Vec3<double> magfluxv = {}; double resistivity_heatflux=0;
     kernel.mf_i = local.Mass * fac_magnetic_pressure / (local.Density * local.Density);
     kernel.mf_j = local.Mass * fac_magnetic_pressure;
-    // PFH: comoving factors here to convert from B*B/rho to P/rho for accelerations //
-    double mm_i[3][3], mm_j[3][3];
-    for(k = 0; k < 3; k++)
-    {
-        for(j = 0; j < 3; j++)
-            mm_i[k][j] = local.BPred[k] * local.BPred[j];
-    }
-    for(k = 0; k < 3; k++)
-        mm_i[k][k] -= 0.5 * kernel.b2_i;
 #endif
     kernel.alfven2_i = kernel.b2_i * fac_magnetic_pressure / local.Density;
     kernel.alfven2_i = DMIN(kernel.alfven2_i, 1000. * kernel.sound_i*kernel.sound_i);
@@ -199,6 +194,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 /* sound speed, relative velocity, and signal velocity computation */
                 kernel.sound_j = CellP[j].effective_soundspeed();
                 kernel.vsig = kernel.sound_i + kernel.sound_j;
+                /* magneticspeed_i/j declared unconditionally so hydro_core_sph can take them
+                   as plain args; zero under !MAGNETIC (unused on that path). */
+                double magneticspeed_i = 0, magneticspeed_j = 0;
 #ifdef COSMIC_RAY_FLUID
                 double CosmicRayPressure_j[N_CR_PARTICLE_BINS]; for(k=0;k<N_CR_PARTICLE_BINS;k++) {CosmicRayPressure_j[k] = Get_Gas_CosmicRayPressure(j, k, CellP);} /* compute this for use below */
                 //double Streaming_Loss_Term = 0; // alternative evaluation of streaming+diffusion losses: still experimental //
@@ -219,11 +217,11 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double vcsa2_j = kernel.sound_j*kernel.sound_j + kernel.alfven2_j;
                 double Bpro2_j = dot(BPred_j, kernel.dp) / kernel.r;
                 Bpro2_j *= Bpro2_j;
-                double magneticspeed_j = sqrt(0.5 * (vcsa2_j + sqrt(DMAX((vcsa2_j*vcsa2_j -
+                magneticspeed_j = sqrt(0.5 * (vcsa2_j + sqrt(DMAX((vcsa2_j*vcsa2_j -
                         4 * kernel.sound_j*kernel.sound_j * Bpro2_j*fac_magnetic_pressure/CellP[j].Density), 0))));
                 double Bpro2_i = dot(local.BPred, kernel.dp) / kernel.r;
                 Bpro2_i *= Bpro2_i;
-                double magneticspeed_i = sqrt(0.5 * (vcsa2_i + sqrt(DMAX((vcsa2_i*vcsa2_i -
+                magneticspeed_i = sqrt(0.5 * (vcsa2_i + sqrt(DMAX((vcsa2_i*vcsa2_i -
                         4 * kernel.sound_i*kernel.sound_i * Bpro2_i*fac_magnetic_pressure/local.Density), 0))));
                 kernel.vsig = magneticspeed_i + magneticspeed_j;
                 Bpro2_i /= kernel.b2_i; Bpro2_j /= kernel.b2_j;
@@ -285,7 +283,11 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     the code has been compiled in */
                 /* --------------------------------------------------------------------------------- */
 #ifdef HYDRO_SPH
-#include "hydro_core_sph.h"
+                hydro_core_sph_compute_pair(local, j, P, CellP, VelPred_j, BPred_j, PhiPred_j,
+                                            kernel, r2, V_j,
+                                            magneticspeed_i, magneticspeed_j,
+                                            fac_mu, fac_vsic_fix, tensile_correction_factor,
+                                            dt_hydrostep, magfluxv, resistivity_heatflux, Fluxes);
 #else
                 {
                     const double *cr_pressure_j_ptr = nullptr;

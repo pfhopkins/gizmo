@@ -28,6 +28,7 @@
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
 #include "hydro_core_meshless_functions.h"
+#include "hydro_core_sph_functions.h"
 #include "conduction_functions.h"
 #include "viscosity_functions.h"
 #include "nonideal_mhd_functions.h"
@@ -163,17 +164,16 @@ void hydro_accumulate_neighbor(
     /* fac_magnetic_pressure lifted out of #ifdef MAGNETIC so hydro_core functions
        can take it as a plain arg; value is 0 when MAGNETIC is off (unused there). */
     double fac_magnetic_pressure = 0;
+    /* magfluxv / resistivity_heatflux lifted out of MAGNETIC+HYDRO_SPH so the
+       hydro_core_sph function can take them as output args. Used only under
+       that combination; zero-initialised otherwise. */
+    Vec3<double> magfluxv = {};
+    double resistivity_heatflux = 0;
 #ifdef MAGNETIC
     fac_magnetic_pressure = 1.0 / All.cf_atime;
 #if defined(HYDRO_SPH)
-    Vec3<double> magfluxv = {}; double resistivity_heatflux = 0;
     kernel.mf_i = local.Mass * fac_magnetic_pressure / (local.Density * local.Density);
     kernel.mf_j = local.Mass * fac_magnetic_pressure;
-    double mm_i[3][3], mm_j[3][3];
-    for(k = 0; k < 3; k++) {
-        for(int k2 = 0; k2 < 3; k2++) mm_i[k][k2] = local.BPred[k] * local.BPred[k2];
-    }
-    for(k = 0; k < 3; k++) mm_i[k][k] -= 0.5 * kernel.b2_i;
 #endif
 #endif
     /* Entropic-energy-equation thresholds: declared unconditionally so the
@@ -201,6 +201,9 @@ void hydro_accumulate_neighbor(
 #endif
 
     /* MHD signal velocity: full fast magnetosonic wave speed computation */
+    /* magneticspeed_i/j declared unconditionally so hydro_core_sph can take
+       them as plain args; zero under !MAGNETIC (unused on that path). */
+    double magneticspeed_i = 0, magneticspeed_j = 0;
 #ifdef MAGNETIC
     kernel.b2_j = BPred_j.norm_sq();
     kernel.alfven2_j = kernel.b2_j * fac_magnetic_pressure / CellP[j].Density;
@@ -208,10 +211,10 @@ void hydro_accumulate_neighbor(
     double vcsa2_j = kernel.sound_j*kernel.sound_j + kernel.alfven2_j;
     double vcsa2_i = kernel.sound_i*kernel.sound_i + kernel.alfven2_i;
     double Bpro2_j = dot(BPred_j, kernel.dp) / kernel.r; Bpro2_j *= Bpro2_j;
-    double magneticspeed_j = sqrt(0.5 * (vcsa2_j + sqrt(DMAX((vcsa2_j*vcsa2_j -
+    magneticspeed_j = sqrt(0.5 * (vcsa2_j + sqrt(DMAX((vcsa2_j*vcsa2_j -
             4 * kernel.sound_j*kernel.sound_j * Bpro2_j*fac_magnetic_pressure/CellP[j].Density), 0))));
     double Bpro2_i = dot(local.BPred, kernel.dp) / kernel.r; Bpro2_i *= Bpro2_i;
-    double magneticspeed_i = sqrt(0.5 * (vcsa2_i + sqrt(DMAX((vcsa2_i*vcsa2_i -
+    magneticspeed_i = sqrt(0.5 * (vcsa2_i + sqrt(DMAX((vcsa2_i*vcsa2_i -
             4 * kernel.sound_i*kernel.sound_i * Bpro2_i*fac_magnetic_pressure/local.Density), 0))));
     kernel.vsig = magneticspeed_i + magneticspeed_j;
     Bpro2_i /= kernel.b2_i; Bpro2_j /= kernel.b2_j;
@@ -264,7 +267,11 @@ void hydro_accumulate_neighbor(
 
     /* ---- Core hydro solver (face reconstruction + Riemann) ---- */
 #ifdef HYDRO_SPH
-#include "hydro_core_sph.h"
+    hydro_core_sph_compute_pair(local, j, P, CellP, VelPred_j, BPred_j, PhiPred_j,
+                                kernel, r2, V_j,
+                                magneticspeed_i, magneticspeed_j,
+                                fac_mu, fac_vsic_fix, tensile_correction_factor,
+                                dt_hydrostep, magfluxv, resistivity_heatflux, Fluxes);
 #else
     {
         const double *cr_pressure_j_ptr = nullptr;
