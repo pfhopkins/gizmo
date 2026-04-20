@@ -74,6 +74,21 @@ void ghost_writeback_zero_sinkfeed(void);
 void ghost_writeback_sinkfeed(void);
 #endif
 
+/* MechFB variant: reverse communication for mechanical_fb GPU kernel per-gas
+ * MechFBGasDelta accumulator. Unlike the snapshot-based patterns above,
+ * the MechFBGasDelta buffer is allocated fresh and zeroed each top-level
+ * invocation, so the FULL ghost entry IS the delta — no snapshot needed.
+ * Input: ghost_full_buf[num_local .. num_local+num_ghost) holds ghost deltas.
+ *        home_buf[0..n_gas) is the home-rank destination (already contains
+ *        home-cell deltas from the kernel). MPI reduces ghost→home and
+ *        accumulates into home_buf[home_index]. */
+#ifdef GALSF_FB_MECHANICAL
+struct MechFBGasDelta;
+void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
+                             struct MechFBGasDelta *home_buf,
+                             int n_gas);
+#endif
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);

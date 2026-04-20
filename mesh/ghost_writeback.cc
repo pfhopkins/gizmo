@@ -11,6 +11,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "ghost_writeback.h"
+#ifdef GALSF_FB_MECHANICAL
+#include "../galaxy_sf/mechanical_fb_types.h"  /* for struct MechFBGasDelta */
+#endif
 
 
 /* Compact delta struct for hydro j-writes.
@@ -875,3 +878,134 @@ void ghost_writeback_sinkfeed(void)
 }
 
 #endif /* SINK_PARTICLES */
+
+
+/* --- MechFB variant ------------------------------------------------------ */
+/* Reverse communication for mechanical_fb GPU kernel per-gas delta accumulator.
+ * MechFBGasDelta buffer is fresh-zeroed per top-level invocation, so the full
+ * ghost entry IS the delta — no pre-kernel snapshot needed.
+ *
+ * Input: ghost_full_buf is the full device-side buffer (shared memory) of size
+ *        num_local + num_ghost; entries [num_local..num_local+num_ghost) hold
+ *        ghost-side deltas that need to ship home. home_buf is the caller's
+ *        N_gas-sized home-rank buffer (already contains home-cell deltas from
+ *        the kernel). We pack non-trivial ghost entries, Alltoallv them to
+ *        home ranks, and accumulate into home_buf[home_index]. */
+
+#ifdef GALSF_FB_MECHANICAL
+
+struct ghost_delta_mechfb_t {
+    int home_index;
+    int N_injected;
+    double m_injected, p_injected[3], KE_injected, TE_injected;
+    double Z_injected[NUM_METAL_SPECIES];
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    double Mass_Where_Dust_Shocked;
+#endif
+};
+
+void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
+                             struct MechFBGasDelta *home_buf,
+                             int n_gas)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+    if(NTask <= 1 || num_ghosts <= 0) return;
+
+    int *home_rank  = ghost_get_home_rank();
+    int *home_index = ghost_get_home_index();
+
+    /* First pass: count non-trivial ghost entries per home-rank. */
+    int *delta_send_count = (int *) calloc(NTask, sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        if(ghost_full_buf[j].N_injected > 0) { delta_send_count[home_rank[g]]++; }
+    }
+
+    int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
+    delta_send_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1]; }
+    int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
+
+    struct ghost_delta_mechfb_t *send_buf = (struct ghost_delta_mechfb_t *)
+        malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_mechfb_t));
+    int *pack_offset = (int *) malloc(NTask * sizeof(int));
+    memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
+
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        if(ghost_full_buf[j].N_injected <= 0) continue;
+        int task = home_rank[g];
+        int off  = pack_offset[task]++;
+        send_buf[off].home_index   = home_index[g];
+        send_buf[off].N_injected   = ghost_full_buf[j].N_injected;
+        send_buf[off].m_injected   = ghost_full_buf[j].m_injected;
+        send_buf[off].p_injected[0] = ghost_full_buf[j].p_injected[0];
+        send_buf[off].p_injected[1] = ghost_full_buf[j].p_injected[1];
+        send_buf[off].p_injected[2] = ghost_full_buf[j].p_injected[2];
+        send_buf[off].KE_injected  = ghost_full_buf[j].KE_injected;
+        send_buf[off].TE_injected  = ghost_full_buf[j].TE_injected;
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+            send_buf[off].Z_injected[k] = ghost_full_buf[j].Z_injected[k];
+        }
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        send_buf[off].Mass_Where_Dust_Shocked = ghost_full_buf[j].Mass_Where_Dust_Shocked;
+#endif
+    }
+    free(pack_offset);
+
+    int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
+    MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
+    delta_recv_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1]; }
+    int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
+
+    struct ghost_delta_mechfb_t *recv_buf = (struct ghost_delta_mechfb_t *)
+        malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_mechfb_t));
+
+    int delta_size = sizeof(struct ghost_delta_mechfb_t);
+    int *send_bytes = (int *) malloc(NTask * sizeof(int));
+    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
+    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
+    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        send_bytes[t] = delta_send_count[t] * delta_size;
+        recv_bytes[t] = delta_recv_count[t] * delta_size;
+        send_bdisp[t] = delta_send_disp[t] * delta_size;
+        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
+    }
+    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
+                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    free(send_buf); free(delta_send_count); free(delta_send_disp);
+
+    /* Accumulate received deltas into home_buf */
+    for(int d = 0; d < total_recv; d++) {
+        int idx = recv_buf[d].home_index;
+        if(idx < 0 || idx >= n_gas) continue;  /* safety */
+        home_buf[idx].N_injected   += recv_buf[d].N_injected;
+        home_buf[idx].m_injected   += recv_buf[d].m_injected;
+        home_buf[idx].p_injected[0] += recv_buf[d].p_injected[0];
+        home_buf[idx].p_injected[1] += recv_buf[d].p_injected[1];
+        home_buf[idx].p_injected[2] += recv_buf[d].p_injected[2];
+        home_buf[idx].KE_injected  += recv_buf[d].KE_injected;
+        home_buf[idx].TE_injected  += recv_buf[d].TE_injected;
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+            home_buf[idx].Z_injected[k] += recv_buf[d].Z_injected[k];
+        }
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        home_buf[idx].Mass_Where_Dust_Shocked += recv_buf[d].Mass_Where_Dust_Shocked;
+#endif
+    }
+
+    if(ThisTask == 0 && (total_send > 0 || total_recv > 0)) {
+        printf("  Ghost writeback (mechfb): sent %d deltas, received %d deltas\n",
+               total_send, total_recv);
+        fflush(stdout);
+    }
+
+    free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+}
+
+#endif /* GALSF_FB_MECHANICAL */

@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
 
 /* Routines for mechanical feedback/enrichment models: stellar winds, supernovae, etc
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -120,15 +121,10 @@ void determine_where_SNe_occur(void)
 
 
 /* this is a temporary structure for quantities used ONLY in the loops below,
- for example for ensuring conservation if there are many overlapping events */
-static struct temporary_mech_fb_data_tohold
-{
-    int N_injected; double m_injected, p_injected[3], KE_injected, TE_injected, Z_injected[NUM_METAL_SPECIES];
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-    double Mass_Where_Dust_Shocked;
-#endif
-}
-*LocalGasMechFBInfoTemp;
+ for example for ensuring conservation if there are many overlapping events.
+ Struct type MechFBGasDelta is defined in mechanical_fb_functions.h so the
+ GPU port (B8) can share the exact layout. */
+static struct MechFBGasDelta *LocalGasMechFBInfoTemp;
 
 
 
@@ -874,11 +870,49 @@ void mechanical_fb_calc_toplevel(void)
     PRINT_STATUS("Start mechanical feedback computation...");
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME
     /* allocate temporary stucture which will hold the total change, to compare when done to check for non-linear effects if too many cells act at once */
-    LocalGasMechFBInfoTemp = (struct temporary_mech_fb_data_tohold *) mymalloc("LocalGasMechFBInfoTemp",N_gas * sizeof(struct temporary_mech_fb_data_tohold)); /* allocate */
+    LocalGasMechFBInfoTemp = (struct MechFBGasDelta *) mymalloc("LocalGasMechFBInfoTemp",N_gas * sizeof(struct MechFBGasDelta)); /* allocate */
     N_Gas_Couplings_ThisTask = 0; /* initialize this to zero [default to assume no coupled feedback] */
-    int i; for(i=0;i<N_gas;i++) {if(P[i].Type==0) {memset(&LocalGasMechFBInfoTemp[i], 0, sizeof(struct temporary_mech_fb_data_tohold));}} /* zero it out before loops */
+    int i; for(i=0;i<N_gas;i++) {if(P[i].Type==0) {memset(&LocalGasMechFBInfoTemp[i], 0, sizeof(struct MechFBGasDelta));}} /* zero it out before loops */
+
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
+       neighbor list across modes. See galaxy_sf/mechanical_fb_gpu.cc. */
+    {
+#include "../galaxy_sf/mechanical_fb_gpu.h"
+        /* Build SUPERSET active list: any star active in ANY mode is included.
+           The per-mode mask inside the kernel skips stars not active in that mode. */
+        int num_active = 0;
+        for(int ii : ActiveParticleList) {
+            int any = 0;
+            for(int mm = -2; mm <= 3 && !any; mm++) {
+                if(addFB_evaluate_active_check(ii, mm)) any = 1;
+            }
+            if(any) num_active++;
+        }
+        int *nl_active = (int *) mymalloc("mechfb_nl_active",
+            (num_active > 0 ? num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("mechfb_nl_radii",
+            (num_active > 0 ? num_active : 1) * sizeof(double));
+        {int aa = 0; for(int ii : ActiveParticleList) {
+            int any = 0;
+            for(int mm = -2; mm <= 3 && !any; mm++) {
+                if(addFB_evaluate_active_check(ii, mm)) any = 1;
+            }
+            if(any) { nl_active[aa] = ii; nl_radii[aa] = (double)P[ii].KernelRadius; aa++; }
+        }}
+        int n_coup_gpu = 0;
+        mechanical_fb_evaluate_gpu(P, CellP, NumPart,
+                                    LocalGasMechFBInfoTemp, N_gas,
+                                    nl_active, num_active, nl_radii, &n_coup_gpu);
+        N_Gas_Couplings_ThisTask = n_coup_gpu;
+        myfree(nl_radii); myfree(nl_active);
+    }
+#else
     mechanical_fb_calc(-2); /* compute weights for coupling [first weight-calculation pass] */
 #endif
+#endif /* GALSF_USE_SNE_ONELOOP_SCHEME */
+
+#if !(defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)) || defined(GALSF_USE_SNE_ONELOOP_SCHEME)
     mechanical_fb_calc(-1); /* compute weights for coupling [second weight-calculation pass] */
     mechanical_fb_calc(0); /* actually do the mechanical feedback coupling */
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -890,6 +924,8 @@ void mechanical_fb_calc_toplevel(void)
     mechanical_fb_calc(3); /* additional loop for stellar age tracers */
 #endif
 #endif
+#endif /* CPU path condition */
+
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME
     verify_and_assign_local_mechfb_integrals();
     myfree(LocalGasMechFBInfoTemp); /* free the structure */
