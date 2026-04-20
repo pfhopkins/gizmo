@@ -372,6 +372,29 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
 void grain_backrx(void)
 {
     PRINT_STATUS(" ..assigning grain back-reaction to gas");
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    {
+#include "../solids/grain_physics_gpu.h"
+        /* Build LOCAL active grain list (i-type restricted by GRAIN_PTYPES). */
+        int num_active = 0;
+        for(int i : ActiveParticleList) {
+            if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) num_active++;
+        }
+        int *nl_active = (int *) mymalloc("grainbackrx_nl_active",
+            (num_active > 0 ? num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("grainbackrx_nl_radii",
+            (num_active > 0 ? num_active : 1) * sizeof(double));
+        {int aa = 0; for(int i : ActiveParticleList) {
+            if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) {
+                nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
+            }
+        }}
+        grain_backrx_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
+        myfree(nl_radii); myfree(nl_active);
+        CPU_Step[CPU_DRAGFORCE] += measure_time();
+        return;
+    }
+#endif
      //grain_backrx_initial_operations_preloop(); /* do initial pre-processing operations as needed before main loop [nothing needed here] */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
@@ -527,6 +550,34 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
 void interpolate_fluxes_opacities_gasgrains(void)
 {
     PRINT_STATUS(" ..assigning opacities to gas from the grain distribution, and interpolating radiation fields to grains");
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    {
+#include "../solids/grain_physics_gpu.h"
+        int num_gas = 0, num_grain = 0;
+        for(int i : ActiveParticleList) {
+            if(P[i].TimeBin < 0 || P[i].Mass <= 0 || P[i].KernelRadius <= 0) continue;
+            if(P[i].Type == 0) num_gas++;
+            if((1 << P[i].Type) & (GRAIN_PTYPES)) num_grain++;
+        }
+        int ng = (num_gas > 0 ? num_gas : 1), nr = (num_grain > 0 ? num_grain : 1);
+        int *nl_active_gas   = (int *)    mymalloc("gasgrainrt_nl_gas_active",   ng * sizeof(int));
+        double *nl_radii_gas = (double *) mymalloc("gasgrainrt_nl_gas_radii",    ng * sizeof(double));
+        int *nl_active_grain   = (int *)    mymalloc("gasgrainrt_nl_grain_active", nr * sizeof(int));
+        double *nl_radii_grain = (double *) mymalloc("gasgrainrt_nl_grain_radii",  nr * sizeof(double));
+        {int ag = 0, ar = 0; for(int i : ActiveParticleList) {
+            if(P[i].TimeBin < 0 || P[i].Mass <= 0 || P[i].KernelRadius <= 0) continue;
+            if(P[i].Type == 0) { nl_active_gas[ag] = i; nl_radii_gas[ag] = (double)P[i].KernelRadius; ag++; }
+            if((1 << P[i].Type) & (GRAIN_PTYPES)) { nl_active_grain[ar] = i; nl_radii_grain[ar] = (double)P[i].KernelRadius; ar++; }
+        }}
+        interpolate_fluxes_opacities_gasgrains_evaluate_gpu(P, CellP, NumPart,
+            nl_active_gas, num_gas, nl_radii_gas,
+            nl_active_grain, num_grain, nl_radii_grain);
+        myfree(nl_radii_grain); myfree(nl_active_grain);
+        myfree(nl_radii_gas); myfree(nl_active_gas);
+        CPU_Step[CPU_DRAGFORCE] += measure_time();
+        return;
+    }
+#endif
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
