@@ -191,6 +191,13 @@ c
         ABORT(12)
       endif
 c
+c Initialize chemistry composition common block from compile-time macro.
+c With GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE the C++ side overwrites these
+c per-particle; otherwise they stay at these primordial-consistent defaults.
+c
+      abhe     = ABHE
+      X_H_chem = 1d0 / (1d0 + 4d0 * ABHE)
+c
 c H2 ortho-para ratio (N.B. Only used for OI fine structure cooling)
 c
       opratio = 2.4d0

@@ -48,6 +48,14 @@ extern "C" {
             isrf_option;
     } COOLI;
 
+    /* Mirrors Fortran common /chem_comp/ in cool.h. Defaults initialized
+     * in coolinmo from ABHE macro. With GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE,
+     * overwritten per-particle below before each EVOLVE_ABUNDANCES call. */
+    extern struct {
+        double abhe;
+        double X_H_chem;
+    } CHEM_COMP;
+
 #if defined(TREE_RAD) || defined(TREE_RAD_H2)
     extern struct {
         double diffuse_dust_heat;
@@ -402,7 +410,17 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     for(i = 0; i < TRAC_NUM; i++) {
         abundances[i] = CellP[target].TracAbund[i];
     }
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+    {
+        double X_H_local  = DMAX(P[target].ElementAbundance[ELEM_H],  1e-10);
+        double X_He_local = DMAX(P[target].ElementAbundance[ELEM_He], 0.0);
+        CHEM_COMP.X_H_chem = X_H_local;
+        CHEM_COMP.abhe     = X_He_local / (4.0 * X_H_local);
+        yn = rho * X_H_local / PROTONMASS_CGS; /* H nuclei density, exact w/ metals */
+    }
+#else
     yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS); /* number density of hydrogen only */
+#endif
 
     rpar[0] = yn;
     rpar[1] = dl;
@@ -428,7 +446,11 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
 #ifdef TREE_RAD
     for(i = 0; i < NPIX; i++) {
         columni = CellP[target].Projection[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+        NH = columni * CHEM_COMP.X_H_chem / PROTONMASS_CGS;
+#else
         NH = columni / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
+#endif
         PROJECT.column_density_projection[i] = NH;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         PROJECT.fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;

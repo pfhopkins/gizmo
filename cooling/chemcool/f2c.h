@@ -6,6 +6,7 @@
 
 #define COOLR coolr
 #define COOLI cooli
+#define CHEM_COMP chem_comp
 #define COOLINMO coolinmo
 #define CHEMINMO cheminmo
 #define INIT_TOLERANCES init_tolerances
@@ -30,6 +31,7 @@
 
 #define COOLR coolr_
 #define COOLI cooli_
+#define CHEM_COMP chem_comp_
 #define COOLINMO coolinmo_
 #define CHEMINMO cheminmo_
 #define INIT_TOLERANCES init_tolerances_

@@ -8,13 +8,13 @@
  * -- 0.079 corresponds to an He mass fraction of approx 0.24 
  * -- 0.100  "     "         "         "       "     "   0.286 */
 #ifndef ABHE
-#if CHEMISTRYNETWORK == 1
-#define ABHE 0.079
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+#define ABHE 0.079      /* primordial: Y = 0.24, matches HYDROGEN_MASSFRAC=0.76 */
 #else
 #ifdef HII_TEST
 #define ABHE 0.0
 #else
-#define ABHE 0.1
+#define ABHE 0.1        /* evolved ISM: Y = 0.286, matches HYDROGEN_MASSFRAC=0.7065 */
 #endif
 #endif
 #endif

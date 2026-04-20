@@ -17,10 +17,17 @@ c /*from param.h in ZEUSMP for FORTRAN files*/
 #include "chemcool_consts.h"
 #ifdef CHEMCOOL
 c
-c He:H ratio by number (=> ratio by mass is 4*abhe)
+c He:H ratio by number (=> ratio by mass is 4*abhe).
+c H mass fraction X_H (n_H*m_p/rho). Runtime-variable common-block
+c variables; default values are set in coolinmo from the ABHE macro
+c (giving primordial consistency: X_H = 1/(1+4*ABHE)). With
+c GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE enabled, these are overwritten
+c per-particle by the C++ side from ElementAbundance[H/He] before each
+c evolve_abundances call; otherwise they stay at the compile-time
+c defaults and the chemistry behaves exactly as before.
 c
-      REAL abhe
-      parameter(abhe = ABHE)
+      REAL abhe, X_H_chem
+      common /chem_comp/ abhe, X_H_chem
 c
 c Symbolic constants representing the slot in the abundance vector passed
 c to DVODE occupied by each species. The same ordering is used in 
