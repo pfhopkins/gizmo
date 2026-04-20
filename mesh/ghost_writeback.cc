@@ -731,3 +731,147 @@ void ghost_writeback_thermalfb(void)
 }
 
 #endif /* GALSF_FB_THERMAL */
+
+
+/* --- SinkFeed variant ---------------------------------------------------- */
+/* Snapshot-based reverse communication for sink_feed_evaluate j-writes.
+ * Fields: P[j].SwallowID (set-if-zero at home), and optionally
+ * CellP[j].Injected_Sink_Energy (additive, SINK_THERMALFEEDBACK). */
+
+#ifdef SINK_PARTICLES
+
+struct ghost_delta_sinkfeed_t {
+    int home_index;
+    MyIDType SwallowID;
+#ifdef SINK_THERMALFEEDBACK
+    MyFloat dInjected_Sink_Energy;
+#endif
+};
+
+struct ghost_snap_sinkfeed_t {
+    MyIDType SwallowID;
+#ifdef SINK_THERMALFEEDBACK
+    MyFloat Injected_Sink_Energy;
+#endif
+};
+
+static struct ghost_snap_sinkfeed_t *sinkfeed_snap = NULL;
+
+
+void ghost_writeback_zero_sinkfeed(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+    if(num_ghosts <= 0) return;
+
+    sinkfeed_snap = (struct ghost_snap_sinkfeed_t *)
+        malloc(num_ghosts * sizeof(struct ghost_snap_sinkfeed_t));
+
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        sinkfeed_snap[g].SwallowID = P[j].SwallowID;
+#ifdef SINK_THERMALFEEDBACK
+        sinkfeed_snap[g].Injected_Sink_Energy = CellP[j].Injected_Sink_Energy;
+#endif
+    }
+}
+
+
+void ghost_writeback_sinkfeed(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+
+    if(!sinkfeed_snap || NTask <= 1 || num_ghosts <= 0) {
+        if(sinkfeed_snap) { free(sinkfeed_snap); sinkfeed_snap = NULL; }
+        return;
+    }
+
+    int *home_rank  = ghost_get_home_rank();
+    int *home_index = ghost_get_home_index();
+
+    int *delta_send_count = (int *) calloc(NTask, sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        int changed = (P[j].SwallowID != sinkfeed_snap[g].SwallowID);
+#ifdef SINK_THERMALFEEDBACK
+        changed |= (CellP[j].Injected_Sink_Energy != sinkfeed_snap[g].Injected_Sink_Energy);
+#endif
+        if(changed) { delta_send_count[home_rank[g]]++; }
+    }
+    int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
+    delta_send_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1]; }
+    int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
+
+    struct ghost_delta_sinkfeed_t *send_buf = (struct ghost_delta_sinkfeed_t *)
+        malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_sinkfeed_t));
+    int *pack_offset = (int *) malloc(NTask * sizeof(int));
+    memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
+
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        int changed = (P[j].SwallowID != sinkfeed_snap[g].SwallowID);
+#ifdef SINK_THERMALFEEDBACK
+        changed |= (CellP[j].Injected_Sink_Energy != sinkfeed_snap[g].Injected_Sink_Energy);
+#endif
+        if(!changed) continue;
+
+        int task = home_rank[g];
+        int off  = pack_offset[task]++;
+        send_buf[off].home_index = home_index[g];
+        send_buf[off].SwallowID  = P[j].SwallowID;
+#ifdef SINK_THERMALFEEDBACK
+        send_buf[off].dInjected_Sink_Energy =
+            CellP[j].Injected_Sink_Energy - sinkfeed_snap[g].Injected_Sink_Energy;
+#endif
+    }
+    free(pack_offset);
+
+    int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
+    MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
+    delta_recv_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) { delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1]; }
+    int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
+
+    struct ghost_delta_sinkfeed_t *recv_buf = (struct ghost_delta_sinkfeed_t *)
+        malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_sinkfeed_t));
+
+    int delta_size = sizeof(struct ghost_delta_sinkfeed_t);
+    int *send_bytes = (int *) malloc(NTask * sizeof(int));
+    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
+    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
+    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        send_bytes[t] = delta_send_count[t] * delta_size;
+        recv_bytes[t] = delta_recv_count[t] * delta_size;
+        send_bdisp[t] = delta_send_disp[t] * delta_size;
+        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
+    }
+    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
+                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    free(send_buf); free(delta_send_count); free(delta_send_disp);
+
+    for(int d = 0; d < total_recv; d++) {
+        int idx = recv_buf[d].home_index;
+        if(recv_buf[d].SwallowID > 0 && P[idx].SwallowID == 0) {
+            P[idx].SwallowID = recv_buf[d].SwallowID;
+        }
+#ifdef SINK_THERMALFEEDBACK
+        CellP[idx].Injected_Sink_Energy += recv_buf[d].dInjected_Sink_Energy;
+#endif
+    }
+
+    if(ThisTask == 0 && (total_send > 0 || total_recv > 0)) {
+        printf("  Ghost writeback (sinkfeed): sent %d deltas, received %d deltas\n",
+               total_send, total_recv);
+        fflush(stdout);
+    }
+
+    free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+    free(sinkfeed_snap); sinkfeed_snap = NULL;
+}
+
+#endif /* SINK_PARTICLES */

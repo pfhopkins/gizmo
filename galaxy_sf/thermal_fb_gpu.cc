@@ -29,6 +29,7 @@
 #include "../declarations/macros.h"
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_symlist_lifecycle.h"
 
 #if defined(GALSF_FB_THERMAL) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 
@@ -85,7 +86,7 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     /* Prep ghosts (check guard from TRANSPORT_SUBCYCLE pitfall) */
     int imported_ghosts = 0;
     if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(P_host, CellP_host, num_total);
+        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
         imported_ghosts = 1;
     }
 

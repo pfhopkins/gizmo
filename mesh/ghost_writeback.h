@@ -66,6 +66,14 @@ void ghost_writeback_zero_thermalfb(void);
 void ghost_writeback_thermalfb(void);
 #endif
 
+/* SinkFeed variant: snapshot-based reverse communication for sink_feed_evaluate
+ * j-particle writes (SwallowID, and optionally Injected_Sink_Energy).
+ * Call zero before the GPU kernel; writeback after the scatter memcpy. */
+#ifdef SINK_PARTICLES
+void ghost_writeback_zero_sinkfeed(void);
+void ghost_writeback_sinkfeed(void);
+#endif
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);

@@ -360,6 +360,15 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 
 void sink_feed_loop(void)
 {
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    {
+#include "../sinks/sink_feed_gpu.h"
+        int num_total = NumPart;
+        sink_feed_evaluate_gpu(P, CellP, num_total);
+        CPU_Step[CPU_SINKS] += measure_time();
+        return;
+    }
+#endif
 #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
 #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
 #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */

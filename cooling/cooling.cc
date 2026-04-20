@@ -2521,6 +2521,9 @@ extern void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *
 #ifdef GALSF_FB_THERMAL
 extern void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *);
 #endif
+#ifdef SINK_PARTICLES
+extern void gizmo_gpu_sync_all_sinkfeed(struct global_data_all_processes *);
+#endif
 
 void gizmo_gpu_sync_all(void) {
     /* Get pointer to host All (undo the #define All All_dev redirect) */
@@ -2563,6 +2566,7 @@ void gizmo_gpu_sync_all(void) {
 #endif
 #ifdef SINK_PARTICLES
     gizmo_gpu_sync_all_sinkenv(host_all);
+    gizmo_gpu_sync_all_sinkfeed(host_all);
 #endif
 #ifdef CBE_INTEGRATOR
     gizmo_gpu_sync_all_cbeintegrator(host_all);
