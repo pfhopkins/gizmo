@@ -197,6 +197,56 @@ KOKKOS_INLINE_FUNCTION double evaluate_cr_transport_reductionfactor(int target, 
 #endif
 }
 
+/* routine which determines the fraction of injected CR energy per 'bin' of CR energy.
+    source type [0=SNe; 1=stellar winds; 2-4=unused; 5=sink/AGN]; shock_vel in code units;
+    return_index_in_bin=0 returns the energy fraction, =1 returns the injection spectral slope. */
+KOKKOS_INLINE_FUNCTION double CR_energy_spectrum_injection_fraction(
+    int k_CRegy, int source_type, double shock_vel, int return_index_in_bin,
+    int target, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double f_bin = 1./N_CR_PARTICLE_BINS;
+#if (N_CR_PARTICLE_BINS > 1)
+#if (N_CR_PARTICLE_BINS == 2)
+    double f_bin_v[2]={0.95 , 0.05}; f_bin=f_bin_v[k_CRegy];
+#endif
+#if (N_CR_PARTICLE_BINS > 2)
+    double f_elec = 0.02;
+    double inj_slope = 4.25;
+    double R_break_e = 1.0;
+    double inj_slope_lowE_e = 4.2;
+#if !defined(CRFLUID_ALT_RSOL_FORM)
+    inj_slope_lowE_e=4.25;
+#endif
+    double R=return_CRbin_CR_rigidity_in_GV(-1,k_CRegy); int species=return_CRbin_CR_species_ID(k_CRegy);
+    if(species > -200 && R < R_break_e) {inj_slope = inj_slope_lowE_e;}
+    double EGeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy);
+    f_bin = EGeV * pow(R/R_break_e , 3.-inj_slope) * log(All.CR_global_max_rigidity_in_bin[k_CRegy] / All.CR_global_min_rigidity_in_bin[k_CRegy]);
+    if(return_index_in_bin) {return 2.-inj_slope;}
+    double f_norm = 1.e-20;
+    if(species == -1) {f_norm = f_elec;}
+    if(species == +1) {f_norm = 1.-f_elec;}
+    if(species == -2) {f_norm = 1.e-10 * f_elec;}
+    if(species > 1 && species != 7)
+    {
+        double Zfac=0, Zfac_ISM=pp[target].Metallicity[0]/All.SolarAbundances[0], mu_wt=return_CRbin_CRmass_in_mp(-1,k_CRegy), Z_cr=fabs(return_CRbin_CR_charge_in_e(-1,k_CRegy)), Mism_over_Mej=1;
+        Zfac = Zfac_ISM;
+        if(source_type == 1) {Zfac = (Mism_over_Mej*Zfac_ISM + 1.4*DMIN(Zfac_ISM,1.))/(Mism_over_Mej*HYDROGEN_MASSFRAC + HYDROGEN_MASSFRAC);}
+        if(source_type == 0) {if(shock_vel>5000./UNIT_VEL_IN_KMS) {Zfac=(Mism_over_Mej*Zfac_ISM + 9.70)/(Mism_over_Mej*HYDROGEN_MASSFRAC + 0.025);} else {Zfac=(Mism_over_Mej*Zfac_ISM + 13.645)/(Mism_over_Mej*HYDROGEN_MASSFRAC + 0.441);}}
+        if(species == 2) {Zfac *= 3.7e-9;}
+        if(species == 3) {Zfac *= 2.4e-3;}
+        if(species == 4) {Zfac *= 1.4e-10;}
+        if(species == 5) {Zfac *= 1.4e-20;}
+        if(species == 6) {Zfac *= 0.0094;}
+        f_norm = Zfac * pow(mu_wt/Z_cr , inj_slope-3.) / mu_wt;
+    }
+    f_bin *= f_norm;
+#endif
+#endif
+    if(return_index_in_bin) {return 0;}
+    return f_bin;
+}
+
+
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
 
 /* quick boolean to determine if we should use relativistic or non-relativistic scalings for a given bin, in our cooling subroutines where we need this to be true across the bin */

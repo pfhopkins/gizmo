@@ -18,14 +18,11 @@
 #endif
 
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
+#if defined(COSMIC_RAY_FLUID)
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"  /* KOKKOS_INLINE CR helpers */
+#endif
 
 #ifdef GALSF_FB_MECHANICAL
-
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD) && \
-    defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && \
-    !defined(GALSF_USE_SNE_ONELOOP_SCHEME)
-#error "B8 Phase 1 GPU mechanical_fb port does not support COSMIC_RAY_FLUID + GALSF_FB_FIRE_STELLAREVOLUTION — use the Phase 2 build when available"
-#endif
 
 /* Per-source (star) input to kernel. Host packs once per mode via
  * particle2in_addFB_fromstars + P[i].Area_weighted_sum. */
@@ -63,7 +60,62 @@ struct MechFBSourceMode
     double kernel_zero;
     int feedback_type_is_SNe;
     int retain_thermal_flag;
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+    double CR_energy_to_inject;  /* total CR energy budget for this source in this mode */
+#endif
 };
+
+
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+/* Phase 2 kernel-callable CR injection: writes per-bin CR energy / number / direction
+ * deltas into MechFBGasDelta via Kokkos atomics instead of CellP directly.
+ * Host scatter (in verify_and_assign_local_mechfb_integrals) normalizes direction and
+ * applies to CellP[].CosmicRayEnergy/Pred/Number/Flux/FluxPred. */
+KOKKOS_INLINE_FUNCTION
+static void inject_cosmic_rays_into_delta(
+    double CR_energy_to_inject, double injection_velocity, int source_type,
+    int target, const double *dir,
+    struct particle_data *P_arr, struct gas_cell_data *cell,
+    struct MechFBGasDelta *gas_delta)
+{
+    if(CR_energy_to_inject <= 0) return;
+    double f_injected[N_CR_PARTICLE_BINS]; f_injected[0] = 1;
+#if (N_CR_PARTICLE_BINS > 1)
+    double sum_in = 0.0;
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
+        f_injected[k] = CR_energy_spectrum_injection_fraction(k, source_type, injection_velocity, 0, target, P_arr, cell);
+        sum_in += f_injected[k];
+    }
+    if(sum_in > 0.0) { for(int k = 0; k < N_CR_PARTICLE_BINS; k++) f_injected[k] /= sum_in; }
+    else             { for(int k = 0; k < N_CR_PARTICLE_BINS; k++) f_injected[k] = 1.0 / N_CR_PARTICLE_BINS; }
+#endif
+    double sum_dEcr = 0.0;
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++)
+    {
+        double dEcr = evaluate_cr_transport_reductionfactor(target, k, 0, cell) * CR_energy_to_inject * f_injected[k];
+        if(dEcr <= 0) continue;
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+        double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k);
+        double egy_slopemode = 1;
+        double xm = All.CR_global_min_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k];
+        double xp = All.CR_global_max_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k];
+        double xm_e = xm, xp_e = xp;
+        if(CR_check_if_bin_is_nonrelativistic(k)) { egy_slopemode = 2; xm_e = xm*xm; xp_e = xp*xp; }
+        double slope_inj = CR_energy_spectrum_injection_fraction(k, source_type, injection_velocity, 1, target, P_arr, cell);
+        double gamma_one = slope_inj + 1.0;
+        double xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
+        double ntot_inj = (dEcr / E_GeV) * ((gamma_one + egy_slopemode) / gamma_one) *
+                          (xp_gamma_one - xm_gamma_one) / (xp_gamma_one*xp_e - xm_gamma_one*xm_e);
+        Kokkos::atomic_add(&gas_delta[target].CR_number_injected[k], ntot_inj);
+#endif
+        Kokkos::atomic_add(&gas_delta[target].CR_energy_injected[k], dEcr);
+        sum_dEcr += dEcr;
+    }
+    if(sum_dEcr > 0) {
+        for(int c = 0; c < 3; c++) Kokkos::atomic_add(&gas_delta[target].CR_dir_weighted[c], sum_dEcr * dir[c]);
+    }
+}
+#endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
 
 
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME
@@ -145,6 +197,22 @@ static void mechanical_fb_per_source_setup(
         m.momentum_to_couple_term_units = p_coupled;
         m.U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS;
     }
+
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+    /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
+     * for this source at current velocity, subtracting it from the ejecta KE. */
+    m.CR_energy_to_inject = 0;
+    if(v_ejecta_eff_init > 1000.0 / UNIT_VEL_IN_KMS)
+    {
+        double post_cr_corr = sqrt(1.0 - All.CosmicRay_SNeFraction);
+        v_ejecta_eff_init *= post_cr_corr;
+        m.CR_energy_to_inject = (All.CosmicRay_SNeFraction / (1.0 - All.CosmicRay_SNeFraction)) *
+                                 0.5 * (double)local.Msne * v_ejecta_eff_init * v_ejecta_eff_init;
+        /* also reduce Energy_injected_codeunits correspondingly (CPU version does
+         * this implicitly via v_ejecta_eff *= post_cr_corr; we recompute). */
+        Energy_injected_codeunits = 0.5 * (double)local.Msne * v_ejecta_eff_init * v_ejecta_eff_init;
+    }
+#endif
 
     m.Esne51 = Energy_injected_codeunits / unit_egy_SNe;
     double r2max = 2.0 / unitlength_in_kpc;
@@ -331,8 +399,20 @@ static void mechanical_fb_pair_kernel(
     double KE_initial = 0, KE_final = 0;
     if(couple_anything_but_scalar_mass_and_metals)
     {
-        /* Phase 1: CR injection (CPU mechanical_fb.cc line 756-759) intentionally
-         * omitted. #error at top catches misconfigured builds. */
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+        /* Phase 2: CR injection via delta struct (host scatter applies in
+         * verify_and_assign_local_mechfb_integrals). */
+        {
+            double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+            double cr_to_inject = pnorm * m.CR_energy_to_inject;
+#else
+            double cr_to_inject = 0;
+#endif
+            inject_cosmic_rays_into_delta(cr_to_inject, (double)local.SNe_v_ejecta, loop_iteration,
+                                           j, crdir, P, CellP, gas_delta);
+        }
+#endif
         double mom_prefactor = All.cf_atime * m.momentum_to_couple_term_units / Mass_j;
         if(mom_prefactor > 0) {
             for(int k = 0; k < 3; k++) {

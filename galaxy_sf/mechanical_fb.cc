@@ -855,6 +855,54 @@ void verify_and_assign_local_mechfb_integrals(void)
                     P[j].Vel[k] += dv; CellP[j].VelPred[k] += dv; P[j].dp[k] += f0*dp[k]; /* update velocities */
                 }
             }
+#if defined(COSMIC_RAY_FLUID)
+            /* Apply CR deltas accumulated by the B8 Phase 2 GPU kernel. On CPU-only
+             * builds, the existing inject_cosmic_rays in the pair loop writes
+             * directly to CellP, so these delta fields remain zero and this block
+             * is a no-op. */
+            {
+                double cr_tot = 0;
+                for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) cr_tot += LocalGasMechFBInfoTemp[j].CR_energy_injected[kb];
+                if(cr_tot > 0) {
+                    /* compute unit injection direction from weighted sum */
+                    double dmag_sq = 0;
+                    for(int c = 0; c < 3; c++) dmag_sq += LocalGasMechFBInfoTemp[j].CR_dir_weighted[c] * LocalGasMechFBInfoTemp[j].CR_dir_weighted[c];
+                    double dmag = sqrt(dmag_sq);
+                    double dir_hat[3];
+                    if(dmag > 0) { for(int c = 0; c < 3; c++) dir_hat[c] = LocalGasMechFBInfoTemp[j].CR_dir_weighted[c] / dmag; }
+                    else         { dir_hat[0] = 0; dir_hat[1] = 0; dir_hat[2] = 1; }
+#ifdef MAGNETIC
+                    /* project onto B, keeping sign from requested direction */
+                    {
+                        double B_dot_d = 0;
+                        for(int c = 0; c < 3; c++) B_dot_d += dir_hat[c] * CellP[j].BPred[c];
+                        for(int c = 0; c < 3; c++) dir_hat[c] = B_dot_d * CellP[j].BPred[c];
+                        double bmag_sq = 0;
+                        for(int c = 0; c < 3; c++) bmag_sq += dir_hat[c] * dir_hat[c];
+                        double bmag = sqrt(bmag_sq);
+                        if(bmag > 0) { for(int c = 0; c < 3; c++) dir_hat[c] /= bmag; }
+                        else         { dir_hat[0] = 0; dir_hat[1] = 0; dir_hat[2] = 1; }
+                    }
+#endif
+                    /* apply per-bin energy / number / flux */
+                    for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {
+                        double dEcr = LocalGasMechFBInfoTemp[j].CR_energy_injected[kb];
+                        if(dEcr <= 0) continue;
+                        CellP[j].CosmicRayEnergy[kb]     += dEcr;
+                        CellP[j].CosmicRayEnergyPred[kb] += dEcr;
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+                        CellP[j].CosmicRay_Number_in_Bin[kb] += LocalGasMechFBInfoTemp[j].CR_number_injected[kb];
+#endif
+                        double flux_mag = dEcr * CRFLUID_REDUCED_C_CODE(kb);
+                        for(int c = 0; c < 3; c++) {
+                            double dflux = flux_mag * dir_hat[c];
+                            CellP[j].CosmicRayFlux[kb][c]     += dflux;
+                            CellP[j].CosmicRayFluxPred[kb][c] += dflux;
+                        }
+                    }
+                }
+            }
+#endif /* COSMIC_RAY_FLUID */
             ndone++; /* note another cell accounted for */
             if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
         }

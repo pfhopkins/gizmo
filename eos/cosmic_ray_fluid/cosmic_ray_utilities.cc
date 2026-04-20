@@ -170,56 +170,9 @@ void CR_spectrum_define_bins(void)
 #endif
 
 
-/* routine which determines the fraction of injected CR energy per 'bin' of CR energy.
-    so it can be used, we send the CR bin, the source type [0=SNe; 1=stellar winds; 2-4=unused now; 5=sink/AGN;],
-    the target gas cell, the shock velocity (used to scale if desired),
-    and a flag indicating the option to return the spectral slope/index */
-double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell)
-{
-    double f_bin = 1./N_CR_PARTICLE_BINS; /* uniformly distributed */
-#if (N_CR_PARTICLE_BINS > 1)    /* insert physics here */
-#if (N_CR_PARTICLE_BINS == 2) /* one-bin protons, one electrons */
-    double f_bin_v[2]={0.95 , 0.05}; f_bin=f_bin_v[k_CRegy]; // 5% of injection into e-, roughly motivated by observed spectra and nearby SNRs
-#endif
-#if (N_CR_PARTICLE_BINS > 2) /* multi-bin spectrum for p and e-: inset assumptions about injection spectrum here! */
-    double f_elec = 0.02; // fraction of the energy to put into e- as opposed to p+ at injection [early experiments with 'observed'  fraction ~ 1% give lower e-/p+ actually observed in the end, so tentative favoring closer to equal at injection? but not run to z=0, so U_rad high from CMB; still experimenting here]
-    double inj_slope = 4.25; // injection slope with j(p) ~ p^(-inj_slope), so dN/dp ~ p^(2-inj_slope)
-    double R_break_e = 1.0; // location of spectral break for injection e- spectrum, in GV
-    double inj_slope_lowE_e = 4.2; // injection slope with j(p) ~ p^(-inj_slope), so dN/dp ~ p^(2-inj_slope), for electrons below R_break_e
-#if !defined(CRFLUID_ALT_RSOL_FORM)
-    inj_slope_lowE_e=4.25; // slightly better fit with this scheme, though a bit marginal compared to using the above defaults (also tried R_break_e=2.0; inj_slope=4.30; , similar, but no significant improvement)
-#endif
-    double R=return_CRbin_CR_rigidity_in_GV(-1,k_CRegy); int species=return_CRbin_CR_species_ID(k_CRegy); // get bin-centered R and species type
-    //if(species < 0 && R < R_break_e) {inj_slope = inj_slope_lowE_e;} // follow model injection spectra favored in Strong et al. 2011 (A+A, 534, A54), who argue the low-energy e- injection spectrum must break to a lower slope by ~1 independent of propagation and re-acceleration model
-    if(species > -200 && R < R_break_e) {inj_slope = inj_slope_lowE_e;} // follow model injection spectra favored in Strong et al. 2011 (A+A, 534, A54), who argue the low-energy e- injection spectrum must break to a lower slope by ~1 independent of propagation and re-acceleration model
-    double EGeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy); // get bin-centered E_GeV for normalizing total energy in bin
-    f_bin = EGeV * pow(R/R_break_e , 3.-inj_slope) * log(All.CR_global_max_rigidity_in_bin[k_CRegy] / All.CR_global_min_rigidity_in_bin[k_CRegy]); // normalize accounting for slope, isotropic spectrum, logarithmic bin width [which can vary], and energy per N
-
-    if(return_index_in_bin) {return 2.-inj_slope;} // this is the index corresponding to our dN/dp ~ p^gamma
-    double f_norm = 1.e-20; // default to very little energy
-    if(species == -1) {f_norm = f_elec;} // e-
-    if(species == +1) {f_norm = 1.-f_elec;} // p
-    if(species == -2) {f_norm = 1.e-10 * f_elec;} // e+ (assuming negligible e+ injection to start)
-    if(species > 1 && species != 7) // heavy elements need to scale injection rates appropriately
-    {
-        double Zfac=0, Zfac_ISM=pp[target].Metallicity[0]/All.SolarAbundances[0], mu_wt=return_CRbin_CRmass_in_mp(-1,k_CRegy), Z_cr=fabs(return_CRbin_CR_charge_in_e(-1,k_CRegy)), Mism_over_Mej=1; // scale heavier elements to the metallicity of the gas into which CRs are being accelerated
-        Zfac = Zfac_ISM; // assume abundance of ejecta is identical to ambient ISM into which its being ejected
-        if(source_type == 1) {Zfac = (Mism_over_Mej*Zfac_ISM + 1.4*DMIN(Zfac_ISM,1.))/(Mism_over_Mej*HYDROGEN_MASSFRAC + HYDROGEN_MASSFRAC);} // stellar outflows. using FIRE-3 yields this is exact after IMF-integrating for Z_ism=Z_star, for CNO; basically get slight enhancement, but not much, b/c these are OB winds; even including AGB, would only move factor to 3.4 from 1.4, which is halved, so not much effect at all.
-        if(source_type == 0) {if(shock_vel>5000./UNIT_VEL_IN_KMS) {Zfac=(Mism_over_Mej*Zfac_ISM + 9.70)/(Mism_over_Mej*HYDROGEN_MASSFRAC + 0.025);} else {Zfac=(Mism_over_Mej*Zfac_ISM + 13.645)/(Mism_over_Mej*HYDROGEN_MASSFRAC + 0.441);}} // shock_vel here tells us if its a 1a [faster] or CCSNe. for CCSNe, use Iwamoto 1999 and Nomoto 2006 to get abundances of ejecta in CNO, integrated over IMF and species of interest. for both, assume acceleration efficiency is maximized at highest mach numbers after shock actually develops, so swept-up ISM mass is ~ejecta mass
-        // now scale to mass fraction for solar abundances which gives the units we work with above
-        if(species == 2) {Zfac *= 3.7e-9;} // B (for standard elements initialize to solar ratios assuming similar energy/nucleon)
-        if(species == 3) {Zfac *= 2.4e-3;} // C
-        if(species == 4) {Zfac *= 1.4e-10;} // Be7+9 (stable)
-        if(species == 5) {Zfac *= 1.4e-20;} // Be10 (radioactive)
-        if(species == 6) {Zfac *= 0.0094;} // CNO (combined bin)
-        f_norm = Zfac * pow(mu_wt/Z_cr , inj_slope-3.) / mu_wt; // approximate injection factor for a constant-beta distribution at a given R_GV needed below
-    }
-    f_bin *= f_norm; // normalize injection depending on the species (e- or p+, etc)
-#endif
-#endif
-    if(return_index_in_bin) {return 0;}
-    return f_bin;
-}
+/* CR_energy_spectrum_injection_fraction: body moved to
+ * eos/cosmic_ray_fluid/cosmic_ray_functions.h as KOKKOS_INLINE_FUNCTION
+ * so the GPU mechanical_fb kernel (B8 Phase 2) can call it on device. */
 
 
 /* routine which gives diffusion coefficient as a function of energy for the 'constant diffusion coefficient' models:

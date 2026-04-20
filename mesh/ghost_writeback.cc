@@ -902,6 +902,13 @@ struct ghost_delta_mechfb_t {
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     double Mass_Where_Dust_Shocked;
 #endif
+#if defined(COSMIC_RAY_FLUID)
+    double CR_energy_injected[N_CR_PARTICLE_BINS];
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+    double CR_number_injected[N_CR_PARTICLE_BINS];
+#endif
+    double CR_dir_weighted[3];
+#endif
 };
 
 void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
@@ -951,6 +958,19 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         send_buf[off].Mass_Where_Dust_Shocked = ghost_full_buf[j].Mass_Where_Dust_Shocked;
 #endif
+#if defined(COSMIC_RAY_FLUID)
+        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
+            send_buf[off].CR_energy_injected[k] = ghost_full_buf[j].CR_energy_injected[k];
+        }
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
+            send_buf[off].CR_number_injected[k] = ghost_full_buf[j].CR_number_injected[k];
+        }
+#endif
+        send_buf[off].CR_dir_weighted[0] = ghost_full_buf[j].CR_dir_weighted[0];
+        send_buf[off].CR_dir_weighted[1] = ghost_full_buf[j].CR_dir_weighted[1];
+        send_buf[off].CR_dir_weighted[2] = ghost_full_buf[j].CR_dir_weighted[2];
+#endif
     }
     free(pack_offset);
 
@@ -996,6 +1016,19 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
         }
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         home_buf[idx].Mass_Where_Dust_Shocked += recv_buf[d].Mass_Where_Dust_Shocked;
+#endif
+#if defined(COSMIC_RAY_FLUID)
+        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
+            home_buf[idx].CR_energy_injected[k] += recv_buf[d].CR_energy_injected[k];
+        }
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
+            home_buf[idx].CR_number_injected[k] += recv_buf[d].CR_number_injected[k];
+        }
+#endif
+        home_buf[idx].CR_dir_weighted[0] += recv_buf[d].CR_dir_weighted[0];
+        home_buf[idx].CR_dir_weighted[1] += recv_buf[d].CR_dir_weighted[1];
+        home_buf[idx].CR_dir_weighted[2] += recv_buf[d].CR_dir_weighted[2];
 #endif
     }
 
