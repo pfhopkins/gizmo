@@ -1,0 +1,50 @@
+% FIRE cosmological run — RT source injection (B5) activation test
+% Base: fire ICs (m11i dwarf at z~2.9), same as the fire test.
+% Added: RT_M1 + RT_COMOVING + RT_SOURCES=48 + 5 RT bands + RT_CHEM_PHOTOION=1
+% Type-4 stellar particles (pre-existing + newly formed) emit into the RT bands,
+% activating rt_source_injection_evaluate via rt_source_injection_gpu.cc.
+%
+% -- ICs
+Initial_Conditions_File             ./fire_rtsources_ics
+Box_Size_In_Code_Units              58480
+Cosmological_Simulation_On          1
+Initial_Simulation_Time             0.2564103
+Final_Simulation_Time               0.2568
+ScaleFac_Between_Snapshots          1.0001
+Maximum_Timestep_Allowed            0.05
+MinSizeTimestep                     1e-15
+Omega_Matter                        0.31
+Omega_Lambda                        0.69
+Omega_Baryon                        0.048
+Hubble_Param_Little_h               0.68
+UnitLength_in_cm                    3.08568e21
+UnitMass_in_g                       1.989e43
+UnitVelocity_in_cm_per_s            1.0e5
+% -- softenings
+Softening_Type0                     0.001
+Softening_Type0_MaxPhysLimit        0.0001
+Softening_Type1                     0.025
+Softening_Type1_MaxPhysLimit        0.0025
+Softening_Type2                     25
+Softening_Type2_MaxPhysLimit        0.25
+Softening_Type3                     4
+Softening_Type3_MaxPhysLimit        0.4
+Softening_Type4                     0.025
+Softening_Type4_MaxPhysLimit        0.0025
+Softening_Type5                     0.01
+Softening_Type5_MaxPhysLimit        0.001
+% -- BH physics options
+Cell_Spawn_Mass_ratio               0.01
+SeedSinkPerUnitMass                 2e-6
+SinkEddingtonFactor                 1e3
+% -- RT options (reduced speed of light for test stability)
+% RT_SPEEDOFLIGHT_REDUCTION=0.001: aggressive RSOL to ensure field propagates
+% within a few steps; safe for short activation test (not a physical RT test).
+% -- platform/runtime options
+Max_Memory_Per_MPI_Task_in_MB       30000
+MPI_Buffersize_in_MB                200
+ParticleNumberMembalance_Limit      3.5
+TreeRebuild_ActiveFraction          0.002
+Effective_Kernel_NeighborNumber     32
+MaxSimulationWallTime_in_Seconds    1e9
+Output_Directory                    output
