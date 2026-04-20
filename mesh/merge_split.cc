@@ -1000,7 +1000,11 @@ int merge_particles_ij(int i, int j)
     {/* TracAbund is n_X/n_H (abundance ratio). Convert to mass fractions
         using pre-merge X_H, mass-weight, then convert back using merged X_H.
         Must be done BEFORE ElementAbundance merge so we have pre-merge X_H for j. */
+#if (CHEMISTRYNETWORK == 17)
+     static const double trac_molwt[] = {2.0, 1.0, 28.0, 4.0, 4.0, 2.0, 3.0};
+#else
      static const double trac_molwt[] = {2.0, 1.0, 28.0};
+#endif
      double X_H_i = DMAX(P[i].ElementAbundance[0], 1e-10);
      double X_H_j = DMAX(P[j].ElementAbundance[0], 1e-10); /* pre-merge */
      double X_H_new = wt_j * X_H_j + wt_i * X_H_i;         /* what merged X_H will be */
@@ -1016,6 +1020,9 @@ int merge_particles_ij(int i, int j)
 #endif
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
     for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {P[j].ElementAbundance[k] = wt_j*P[j].ElementAbundance[k] + wt_i*P[i].ElementAbundance[k];} /* element-mass conserving */
+#endif
+#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
+    P[j].DeuteriumAbundance = wt_j*P[j].DeuteriumAbundance + wt_i*P[i].DeuteriumAbundance; /* D mass conserving */
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID

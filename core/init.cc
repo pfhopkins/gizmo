@@ -457,6 +457,18 @@ void init(void)
         } // ElementAbundance init
 #endif
 
+#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
+        /* D mass fraction = (D/H number ratio) * (m_D/m_H) * X_H = abundD * 2 * X_H */
+        if (P[i].Type == 0) {
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            double X_H_init = P[i].ElementAbundance[0];
+#else
+            double X_H_init = HYDROGEN_MASSFRAC;
+#endif
+            P[i].DeuteriumAbundance = All.DeutAbund * 2.0 * X_H_init;
+        }
+#endif
+
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     if (P[i].Type == 0) {Initialize_ISMDustChem_Particle_Variables(i);}
 #endif

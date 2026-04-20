@@ -1347,12 +1347,18 @@
 /* Include CHEMCOOL tracked abundances (H2, H+, CO, ...) in turbulent diffusion
    so that TracAbund is diffused consistently with ElementAbundance. Without this,
    diffusion can move carbon out of a cell while leaving CO behind, causing
-   CO > abundc and crashing DVODE. */
+   CO > abundc and crashing DVODE. Network 17 also tracks D (deuterium) as a
+   separate scalar since D+ and HD lock D atoms and can't exceed the D pool. */
+#if (CHEMISTRYNETWORK == 17)
+#define NUM_D_DIFFUSE 1
+#else
+#define NUM_D_DIFFUSE 0
+#endif
 #undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_ELEMENTS+NUM_RESOLVEDISM_DUST+TRAC_NUM)
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_ELEMENTS+NUM_RESOLVEDISM_DUST+TRAC_NUM+NUM_D_DIFFUSE)
 #else
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (TRAC_NUM)
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (TRAC_NUM+NUM_D_DIFFUSE)
 #endif
 #endif
 #endif /* CHEMCOOL */

@@ -128,6 +128,9 @@ extern ALIGN(32) struct particle_data
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyFloat ElementAbundance[NUM_RESOLVEDISM_ELEMENTS]; /*!< per-species mass fractions: 27 elements (H-Zn) or 40 isotopes */
 #endif
+#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
+    MyFloat DeuteriumAbundance;       /*!< total D mass fraction (free + D+ + HD), for diffusion of D pool in network 17 */
+#endif
 #ifdef GALSF_RESOLVEDISM_WINDS
     MyFloat WindMassAccum;       /*!< accumulated wind mass since last injection [Msun] */
     MyFloat WindMomentumAccum;   /*!< accumulated wind momentum magnitude [Msun * km/s] */
