@@ -24,6 +24,9 @@
 #include <set>
 #include <unordered_map>
 #include <queue>
+#include <utility>
+#include <cfloat>
+#include <queue>
 #include <functional>
 
 #include "../declarations/allvars.h"
@@ -268,49 +271,138 @@ static double region_cost_estimate(int region_index)
     return 20.0 * N * N;
 }
 
-static void allocate_compute_tasks_for_regions(void)
+/* Number of sequential rounds chosen by allocate_compute_tasks_for_regions.
+ * Each region is assigned a round index (compute_sequence_position) and
+ * ketju_run_integration iterates over rounds in outer loop, so regions in
+ * the same round run in parallel while tasks move to the next round only
+ * after all regions in the current round finish. Matches the multi-round
+ * scheduler used by GADGET4-KETJU / gadget_tnt_new for better load balance. */
+static int g_ketju_num_sequential_runs = 0;
+
+/* Bucket regions into `num_runs` rounds using a longest-processing-time (LPT)
+ * heuristic: repeatedly place the most-expensive unassigned region into the
+ * least-loaded bucket. Each bucket is capped at NTask regions so every
+ * region gets at least one task. */
+static std::vector<std::vector<int>> lpt_bucket_regions(int num_runs)
 {
-    int n_regions = ActiveRegions.size();
-    if(n_regions == 0) return;
+    int n_regions = (int)ActiveRegions.size();
+    typedef std::pair<double, int> cost_pair;   /* (cost, index) */
 
-    /* collect costs and sort regions by cost (most expensive first) */
-    typedef std::pair<double, int> cost_idx;
-    std::priority_queue<cost_idx> cost_pq;
-    for(int r = 0; r < n_regions; r++) {
-        cost_pq.push({region_cost_estimate(r), r});
+    /* max-heap over regions by cost */
+    std::priority_queue<cost_pair> region_pq;
+    for(int r = 0; r < n_regions; r++) region_pq.push({region_cost_estimate(r), r});
+
+    /* min-heap over buckets by accumulated cost */
+    std::priority_queue<cost_pair, std::vector<cost_pair>, std::greater<cost_pair>> bucket_pq;
+    for(int b = 0; b < num_runs; b++) bucket_pq.push({0.0, b});
+
+    std::vector<std::vector<int>> buckets(num_runs);
+    while(!region_pq.empty() && !bucket_pq.empty()) {
+        double rc = region_pq.top().first;
+        int    r  = region_pq.top().second;
+        region_pq.pop();
+        double bc = bucket_pq.top().first;
+        int    b  = bucket_pq.top().second;
+        bucket_pq.pop();
+        buckets[b].push_back(r);
+        /* only push this bucket back if it can still fit more regions */
+        if((int)buckets[b].size() < NTask)
+            bucket_pq.push({bc + rc, b});
     }
+    return buckets;
+}
 
-    /* greedy allocation: assign tasks proportional to cost */
-    double total_cost = 0;
-    for(int r = 0; r < n_regions; r++) total_cost += region_cost_estimate(r);
-    if(total_cost <= 0) total_cost = 1.0;
+/* Estimate wall-time for a given bucketing: sum over buckets of the
+ * max (region_cost / tasks_allocated_to_region). Scaling is cut off at
+ * N_particles / particles_per_task_scaling_limit because the integrator
+ * stops getting faster past that point. */
+static double estimate_total_time_for(const std::vector<std::vector<int>>& buckets)
+{
+    const int ppts_limit = 7; /* see Mannerkoski+2022 scaling data */
+    double total = 0;
+    for(const auto& bucket : buckets) {
+        if(bucket.empty()) continue;
+        double bucket_cost = 0;
+        for(int r : bucket) bucket_cost += region_cost_estimate(r);
+        if(bucket_cost <= 0) bucket_cost = 1.0;
 
+        double bucket_max = 0;
+        for(int r : bucket) {
+            double frac = region_cost_estimate(r) / bucket_cost;
+            int n_tasks = DMAX(1, (int)(frac * NTask + 0.5));
+            int npart = ActiveRegions[r].total_particle_count;
+            int max_useful = DMAX(1, npart / ppts_limit);
+            if(n_tasks > max_useful) n_tasks = max_useful;
+            double t_reg = region_cost_estimate(r) / (double)n_tasks;
+            if(t_reg > bucket_max) bucket_max = t_reg;
+        }
+        total += bucket_max;
+    }
+    return total;
+}
+
+/* Assign MPI task ranges to the regions in one bucket, proportional to cost. */
+static void assign_tasks_for_bucket(const std::vector<int>& bucket_regions, int seq_pos)
+{
+    if(bucket_regions.empty()) return;
+    double bucket_cost = 0;
+    for(int r : bucket_regions) bucket_cost += region_cost_estimate(r);
+    if(bucket_cost <= 0) bucket_cost = 1.0;
+
+    int min_per_task = (int)DMAX(All.KetjuMinParticlesPerTask, 2);
     int tasks_used = 0;
-    std::vector<cost_idx> sorted_regions;
-    while(!cost_pq.empty()) { sorted_regions.push_back(cost_pq.top()); cost_pq.pop(); }
-
-    for(size_t i = 0; i < sorted_regions.size(); i++) {
-        int r = sorted_regions[i].second;
-        double frac = sorted_regions[i].first / total_cost;
+    for(size_t i = 0; i < bucket_regions.size(); i++) {
+        int r = bucket_regions[i];
+        double frac = region_cost_estimate(r) / bucket_cost;
         int n_tasks = DMAX(1, (int)(frac * NTask + 0.5));
 
-        /* ensure minimum particles per task */
-        int min_per_task = (int)DMAX(All.KetjuMinParticlesPerTask, 2);
+        /* respect minimum particles per task */
         if(ActiveRegions[r].total_particle_count > 0) {
             int max_tasks = ActiveRegions[r].total_particle_count / min_per_task;
             if(max_tasks < 1) max_tasks = 1;
             if(n_tasks > max_tasks) n_tasks = max_tasks;
         }
 
-        /* don't exceed available tasks */
+        /* don't exceed available tasks in this bucket */
         if(tasks_used + n_tasks > NTask) n_tasks = NTask - tasks_used;
         if(n_tasks < 1) n_tasks = 1;
 
-        ActiveRegions[r].compute_info.first_task_index = tasks_used;
-        ActiveRegions[r].compute_info.final_task_index = tasks_used + n_tasks - 1;
-        ActiveRegions[r].compute_info.compute_sequence_position = 0; /* all parallel for now */
+        ActiveRegions[r].compute_info.first_task_index          = tasks_used;
+        ActiveRegions[r].compute_info.final_task_index          = tasks_used + n_tasks - 1;
+        ActiveRegions[r].compute_info.compute_sequence_position = seq_pos;
         tasks_used += n_tasks;
     }
+}
+
+static void allocate_compute_tasks_for_regions(void)
+{
+    int n_regions = (int)ActiveRegions.size();
+    if(n_regions == 0) { g_ketju_num_sequential_runs = 0; return; }
+
+    /* Sweep num_runs from the minimum (limited by NTask per bucket) upward
+     * and pick the one with the smallest estimated total wall-time. We
+     * exit early when adding another round stops improving the estimate
+     * (the cost surface is empirically monotone past the optimum). */
+    int min_runs = (n_regions + NTask - 1) / NTask;
+    if(min_runs < 1) min_runs = 1;
+
+    double best_time = DBL_MAX;
+    std::vector<std::vector<int>> best_buckets;
+    for(int num_runs = min_runs; num_runs <= n_regions; num_runs++) {
+        auto buckets = lpt_bucket_regions(num_runs);
+        double t = estimate_total_time_for(buckets);
+        if(t < best_time) {
+            best_time   = t;
+            best_buckets = std::move(buckets);
+        } else {
+            break;
+        }
+    }
+
+    for(size_t s = 0; s < best_buckets.size(); s++) {
+        assign_tasks_for_bucket(best_buckets[s], (int)s);
+    }
+    g_ketju_num_sequential_runs = (int)best_buckets.size();
 }
 
 static void update_region_costs(void)
@@ -1853,8 +1945,14 @@ void ketju_run_integration(void)
 {
     if(ActiveRegions.empty()) return;
 
+    /* Outer loop over sequential rounds. Within a round, regions run in
+     * parallel on disjoint task ranges; rounds run back-to-back so that
+     * expensive regions can use all tasks first before smaller regions. */
+    int n_rounds = g_ketju_num_sequential_runs > 0 ? g_ketju_num_sequential_runs : 1;
+    for(int seq = 0; seq < n_rounds; seq++) {
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
         KetjuRegion &reg = ActiveRegions[r];
+        if(reg.compute_info.compute_sequence_position != seq) continue;
         if(reg.total_particle_count < 2) continue;
 
         /* Subcycling: use the MAXIMUM active timebin among chain members.
@@ -1892,6 +1990,7 @@ void ketju_run_integration(void)
         integrate_region(reg, dt_physical);
         scatter_results(reg);
     }
+    } /* end for(seq) */
 
     /* update cost estimates for next step's load balancing */
     update_region_costs();
