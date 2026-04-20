@@ -1177,15 +1177,27 @@ double return_resolvedism_species_for_diffusion(int i, int k)
     if(k < 0) return -1;
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
     if(k < NUM_RESOLVEDISM_ELEMENTS) {
-#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
+#if defined(TURB_DIFF_METALS)
+        double dust_locked = 0;
+#if defined(GALSF_RESOLVEDISM_DUST)
+        if      (k == ELEM_C ) dust_locked = CellP[i].Dust[0];
+        else if (k == ELEM_O ) dust_locked = CellP[i].Dust[1];
+        else if (k == ELEM_Mg) dust_locked = CellP[i].Dust[2];
+        else if (k == ELEM_Si) dust_locked = CellP[i].Dust[3];
+        else if (k == ELEM_Fe) dust_locked = CellP[i].Dust[4];
+#endif
+#if defined(CHEMCOOL)
         /* Return free C/O (subtract CO-locked fraction) to match input packing */
         if(k == ELEM_C || k == ELEM_O) {
             double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
             double CO_locked = CellP[i].TracAbund[2] * ((k == ELEM_C) ? 12.0 : 16.0) * X_H;
-            return DMAX(P[i].ElementAbundance[k] - CO_locked, 0);
+            return DMAX(P[i].ElementAbundance[k] - CO_locked - dust_locked, 0);
         }
 #endif
+        return DMAX(P[i].ElementAbundance[k] - dust_locked, 0);
+#else
         return P[i].ElementAbundance[k];
+#endif
     }
     k -= NUM_RESOLVEDISM_ELEMENTS;
 #endif

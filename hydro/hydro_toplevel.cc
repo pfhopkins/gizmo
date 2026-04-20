@@ -525,6 +525,16 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #endif
     }
 #endif
+#if defined(GALSF_RESOLVEDISM_DUST) && defined(TURB_DIFF_METALS)
+    /* Subtract dust-locked atoms from element pools so they don't diffuse
+       twice (once via Dust[k] below, once via ElementAbundance[k] above).
+       Dust slots: 0=C, 1=O, 2=Mg, 3=Si, 4=Fe (see precompiler_logic.h). */
+    in->Metallicity[k_offset+ELEM_C ] = DMAX(in->Metallicity[k_offset+ELEM_C ] - CellP[i].Dust[0], 0);
+    in->Metallicity[k_offset+ELEM_O ] = DMAX(in->Metallicity[k_offset+ELEM_O ] - CellP[i].Dust[1], 0);
+    in->Metallicity[k_offset+ELEM_Mg] = DMAX(in->Metallicity[k_offset+ELEM_Mg] - CellP[i].Dust[2], 0);
+    in->Metallicity[k_offset+ELEM_Si] = DMAX(in->Metallicity[k_offset+ELEM_Si] - CellP[i].Dust[3], 0);
+    in->Metallicity[k_offset+ELEM_Fe] = DMAX(in->Metallicity[k_offset+ELEM_Fe] - CellP[i].Dust[4], 0);
+#endif
     k_offset += NUM_RESOLVEDISM_ELEMENTS;
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
