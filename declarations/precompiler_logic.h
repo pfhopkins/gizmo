@@ -183,9 +183,16 @@
 
 #define GALSF_FB_MECHANICAL                 /*! top-level switch for mechanical feedback modules */
 #define GALSF_FB_FIRE_STELLAREVOLUTION (FIRE_PHYSICS_DEFAULTS) /*! turns on default FIRE processes+lookup tables including gas return, SNe, R-process, etc. this carries a number matching the defaults set you choose */
+#if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
+/* Sub-grid FIRE RT modules: only enabled when no explicit RT solver is active.
+   When a real RT method (RT_M1, RT_OTVET, RT_FLUXLIMITEDDIFFUSION, or RT_LOCALRAYGRID)
+   is on, photoionization / local radiation pressure / long-range starlight propagation
+   are handled by the explicit solver — enabling both produces duplicate symbols and
+   double-counted physics. */
 #define GALSF_FB_FIRE_RT_HIIHEATING         /*! gas within HII regions around young stars is photo-heated to 10^4 K - local stromgren approximation */
 #define GALSF_FB_FIRE_RT_LOCALRP            /*! turn on local radiation pressure coupling to gas - account for local multiple-scattering and isotropic local absorption */
 #define GALSF_FB_FIRE_RT_LONGRANGE          /*! continuous acceleration from starlight (uses luminosity tree) to propagate FIRE RT */
+#endif
 #define GALSF_FB_FIRE_AGE_TRACERS 16        /*! tracks a set of passive scalars corresponding to stellar ages for chemical evolution model postprocessing */
 
 #if !defined(ADAPTIVE_GRAVSOFT_FORGAS)
