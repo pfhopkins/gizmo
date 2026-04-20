@@ -340,7 +340,28 @@ void rt_source_injection(void)
     PRINT_STATUS(" ..injecting radiation onto grid for RHD steps");
     rt_source_injection_initial_operations_preloop(); /* operations before the main loop */
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
-    rt_source_injection_evaluate_gpu(P, CellP, NumPart);
+    {
+        /* Build LOCAL active-source list from ActiveParticleList; iterating
+           NumPart here would include ghost imports and double-deposit. */
+        int num_active = 0;
+        for(int i : ActiveParticleList) { if(rt_sourceinjection_active_check(i)) num_active++; }
+        int *nl_active = (int *) mymalloc("rtsrc_nl_active",
+            (num_active > 0 ? num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("rtsrc_nl_radii",
+            (num_active > 0 ? num_active : 1) * sizeof(double));
+        {int aa = 0; for(int i : ActiveParticleList) {
+            if(rt_sourceinjection_active_check(i)) {
+                nl_active[aa] = i;
+                double sr = (double)P[i].KernelRadius;
+#ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
+                sr *= 3.0; /* matches dispatcher: RT_SINK_ANGLEWEIGHT checks P[j].KernelRadius too */
+#endif
+                nl_radii[aa] = sr; aa++;
+            }
+        }}
+        rt_source_injection_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
+        myfree(nl_radii); myfree(nl_active);
+    }
 #else
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */

@@ -363,8 +363,21 @@ void sink_feed_loop(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
     {
 #include "../sinks/sink_feed_gpu.h"
-        int num_total = NumPart;
-        sink_feed_evaluate_gpu(P, CellP, num_total);
+        /* Build LOCAL active-source list from ActiveParticleList; iterating
+           NumPart here would include ghost imports and double-deposit. */
+        int num_active = 0;
+        for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
+        int *nl_active = (int *) mymalloc("sinkfeed_nl_active",
+            (num_active > 0 ? num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("sinkfeed_nl_radii",
+            (num_active > 0 ? num_active : 1) * sizeof(double));
+        {int aa = 0; for(int i : ActiveParticleList) {
+            if(sink_isactive(i)) {
+                nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
+            }
+        }}
+        sink_feed_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
+        myfree(nl_radii); myfree(nl_active);
         CPU_Step[CPU_SINKS] += measure_time();
         return;
     }

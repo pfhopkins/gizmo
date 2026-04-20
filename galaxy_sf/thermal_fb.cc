@@ -238,8 +238,21 @@ void thermal_fb_calc(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
     {
 #include "../galaxy_sf/thermal_fb_gpu.h"
-        int num_total = NumPart;
-        thermal_fb_evaluate_gpu(P, CellP, num_total);
+        /* Build LOCAL active-source list from ActiveParticleList; iterating
+           NumPart here would include ghost imports and double-deposit. */
+        int num_active = 0;
+        for(int i : ActiveParticleList) { if(addthermalFB_evaluate_active_check(i)) num_active++; }
+        int *nl_active = (int *) mymalloc("thermalfb_nl_active",
+            (num_active > 0 ? num_active : 1) * sizeof(int));
+        double *nl_radii = (double *) mymalloc("thermalfb_nl_radii",
+            (num_active > 0 ? num_active : 1) * sizeof(double));
+        {int aa = 0; for(int i : ActiveParticleList) {
+            if(addthermalFB_evaluate_active_check(i)) {
+                nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
+            }
+        }}
+        thermal_fb_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
+        myfree(nl_radii); myfree(nl_active);
         CPU_Step[CPU_SNIIHEATING] += measure_time();
         return;
     }

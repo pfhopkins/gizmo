@@ -63,25 +63,18 @@ static void thermal_fb_local_fill(int i,
 
 void thermal_fb_evaluate_gpu(struct particle_data *P_host,
                                struct gas_cell_data *CellP_host,
-                               int num_total)
+                               int num_total,
+                               int *i_active_host, int num_active,
+                               const double *src_radii_host)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(thermalfb);
 
-    /* Collect active sources */
-    std::vector<int>    active_src;
-    std::vector<double> src_radii;
-    for(int i = 0; i < num_total; i++) {
-        if(P_host[i].Type != 4) continue;
-        if(P_host[i].Mass <= 0) continue;
-        if(P_host[i].KernelRadius <= 0) continue;
-        if(P_host[i].NumNgb <= 0) continue;
-        if(P_host[i].SNe_ThisTimeStep <= 0) continue;
-        if(P_host[i].DensityAroundParticle <= 0) continue;
-        active_src.push_back(i);
-        src_radii.push_back((double)P_host[i].KernelRadius);
-    }
-    int num_src = (int)active_src.size();
-    if(num_src == 0) return;
+    /* Caller supplies LOCAL active-source indices (built from ActiveParticleList +
+       addthermalFB_evaluate_active_check). Iterating num_total here would include
+       ghost-imported sources and double-deposit on multi-rank runs.
+       Note: do NOT early-return when num_active==0; ghost prep and ghost_writeback
+       are MPI collectives — every rank must participate even with no local sources. */
+    int num_src = num_active;
 
     /* Prep ghosts (check guard from TRANSPORT_SUBCYCLE pitfall) */
     int imported_ghosts = 0;
@@ -90,10 +83,10 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
         imported_ghosts = 1;
     }
 
-    /* Fill per-source input structs */
-    std::vector<struct ThermalFBLocalIn> src_local(num_src);
+    /* Fill per-source input structs (size guarded so std::vector(0) is well-defined) */
+    std::vector<struct ThermalFBLocalIn> src_local(num_src > 0 ? num_src : 1);
     for(int a = 0; a < num_src; a++) {
-        thermal_fb_local_fill(active_src[a], P_host, CellP_host, &src_local[a]);
+        thermal_fb_local_fill(i_active_host[a], P_host, CellP_host, &src_local[a]);
     }
 
     /* Copy P and CellP to SharedSpace */
@@ -110,22 +103,23 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     /* Snapshot ghost fields before kernel for delta writeback */
     ghost_writeback_zero_thermalfb();
 
-    /* Copy per-source input to SharedSpace */
+    /* Copy per-source input to SharedSpace (1-element backstop when num_src==0) */
+    int alloc_n = (num_src > 0) ? num_src : 1;
     struct ThermalFBLocalIn *d_local = (struct ThermalFBLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_src * sizeof(struct ThermalFBLocalIn));
-    memcpy(d_local, src_local.data(), num_src * sizeof(struct ThermalFBLocalIn));
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(struct ThermalFBLocalIn));
+    if(num_src > 0) memcpy(d_local, src_local.data(), num_src * sizeof(struct ThermalFBLocalIn));
 
     /* Output: M_coupled per source */
     struct ThermalFBOut *d_out = (struct ThermalFBOut *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_src * sizeof(struct ThermalFBOut));
-    memset(d_out, 0, num_src * sizeof(struct ThermalFBOut));  /* zero M_coupled */
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(struct ThermalFBOut));
+    memset(d_out, 0, alloc_n * sizeof(struct ThermalFBOut));  /* zero M_coupled */
 
     /* Build cross-type neighbor list: Type 4 sources → gas (j_type_bitmask = 1) */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_all,
-                       active_src.data(), num_src,
+                       i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                       &gnl, NULL, 1.0, src_radii.data());
+                       &gnl, NULL, 1.0, src_radii_host);
 
     PRINT_STATUS("  GPU thermal_fb: %d sources, %d pairs", num_src, gnl.total_pairs);
 
@@ -174,7 +168,7 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     memcpy(h_out.data(), d_out, num_src * sizeof(struct ThermalFBOut));
 
     for(int a = 0; a < num_src; a++) {
-        int i = active_src[a];
+        int i = i_active_host[a];
         double M_coupled = h_out[a].M_coupled;
         if(M_coupled > 0 && P_host[i].Mass > 0) {
             for(int k = 0; k < 3; k++) {
@@ -200,9 +194,11 @@ GPU_ALL_SYNC_FUNC(thermalfb)
 
 void thermal_fb_evaluate_gpu(struct particle_data *p,
                                struct gas_cell_data *cp,
-                               int num_total)
+                               int num_total,
+                               int *i_active_host, int num_active,
+                               const double *src_radii_host)
 {
-    (void)p; (void)cp; (void)num_total;
+    (void)p; (void)cp; (void)num_total; (void)i_active_host; (void)num_active; (void)src_radii_host;
 }
 void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *p) { (void)p; }
 

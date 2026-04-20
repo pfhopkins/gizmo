@@ -77,39 +77,21 @@ static void rt_src_local_fill(int i,
 
 void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
                                        struct gas_cell_data *CellP_host,
-                                       int num_total)
+                                       int num_total,
+                                       int *i_active_host, int num_active,
+                                       const double *src_radii_host)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(rtsrcinjection);
 
-    /* Collect active source particles (non-gas with nonzero kernel/luminosity) */
-    std::vector<int> active_src;
-    std::vector<double> src_radii;
-    active_src.reserve(64);
-    src_radii.reserve(64);
-    for(int i=0; i<num_total; i++) {
-        if(P_host[i].Type == 0) continue;
-        if(P_host[i].Mass <= 0) continue;
-        if(P_host[i].KernelRadius <= 0) continue;
-        if(P_host[i].KernelSum_Around_RT_Source <= 0) continue;
-#ifdef SINK_INTERACT_ON_GAS_TIMESTEP
-        if(P_host[i].Type == 5 && !P_host[i].do_gas_search_this_timestep) continue;
-#endif
-        double lum[N_RT_FREQ_BINS];
-        if(rt_get_source_luminosity(i, -1, lum, P_host, CellP_host) == 0) continue;
-        active_src.push_back(i);
-        double sr = P_host[i].KernelRadius;
-#ifdef RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-        sr *= 3.0; /* conservative: RT_SINK_ANGLEWEIGHT checks P[j].KernelRadius too */
-#endif
-        src_radii.push_back(sr);
-    }
-    int num_src = (int)active_src.size();
-    if(num_src == 0) return;
+    /* Caller supplies LOCAL active-source indices (built from ActiveParticleList +
+       rt_sourceinjection_active_check). Iterating num_total here would include
+       ghost-imported sources and double-deposit on multi-rank runs. */
+    int num_src = num_active;
 
-    /* Build per-source input structs on CPU */
-    std::vector<struct RtSrcLocalIn> src_local(num_src);
+    /* Build per-source input structs on CPU (1-element backstop when num_src==0) */
+    std::vector<struct RtSrcLocalIn> src_local(num_src > 0 ? num_src : 1);
     for(int a=0; a<num_src; a++) {
-        rt_src_local_fill(active_src[a], P_host, CellP_host, &src_local[a]);
+        rt_src_local_fill(i_active_host[a], P_host, CellP_host, &src_local[a]);
     }
 
     /* Copy P and CellP to SharedSpace */
@@ -120,18 +102,19 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     memcpy(P_gpu,     P_host,     num_total * sizeof(struct particle_data));
     memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
 
-    /* Copy per-source local input to SharedSpace */
+    /* Copy per-source local input to SharedSpace (1-element backstop when num_src==0) */
+    int alloc_n = (num_src > 0) ? num_src : 1;
     struct RtSrcLocalIn *d_local = (struct RtSrcLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_src * sizeof(struct RtSrcLocalIn));
-    memcpy(d_local, src_local.data(), num_src * sizeof(struct RtSrcLocalIn));
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(struct RtSrcLocalIn));
+    if(num_src > 0) memcpy(d_local, src_local.data(), num_src * sizeof(struct RtSrcLocalIn));
 
     /* Build cross-type neighbor list: sources → gas (j_type_bitmask=1).
        Uses gpu_ngb_list_build directly (same pattern as ags_force_gpu.cc). */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total,
-                       active_src.data(), num_src,
+                       i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                       &gnl, NULL, 1.0, src_radii.data());
+                       &gnl, NULL, 1.0, src_radii_host);
 
     PRINT_STATUS("  GPU rt_source_injection: %d sources, %d pairs", num_src, gnl.total_pairs);
 
@@ -188,9 +171,11 @@ GPU_ALL_SYNC_FUNC(rtsrcinjection)
 
 void rt_source_injection_evaluate_gpu(struct particle_data *p,
                                        struct gas_cell_data *cp,
-                                       int num_total)
+                                       int num_total,
+                                       int *i_active_host, int num_active,
+                                       const double *src_radii_host)
 {
-    (void)p; (void)cp; (void)num_total;
+    (void)p; (void)cp; (void)num_total; (void)i_active_host; (void)num_active; (void)src_radii_host;
 }
 void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *p) { (void)p; }
 
