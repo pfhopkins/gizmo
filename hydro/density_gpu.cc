@@ -90,9 +90,10 @@ static gpu_spatial_index_t density_cached_spatial_index = {NULL, NULL, NULL, 0, 
      density_gpu_session_end()    — free SharedSpace arrays
    ================================================================ */
 
-/* Persistent SharedSpace arrays for density h-iteration loop */
-static struct particle_data *density_P_gpu = NULL;
-static struct gas_cell_data *density_CellP_gpu = NULL;
+/* P/CellP storage migrated to decomp-scoped arena (system/gpu_particles_arena.h, Step 13 Phase 1).
+ * density_session_num_total tracks the size acquired for THIS density h-iteration loop;
+ * it gates the cached-CSR reuse logic below. */
+#include "../system/gpu_particles_arena.h"
 static int density_session_num_total = 0;
 
 /* Cached oversized CSR neighbor list for h-iteration reuse.
@@ -109,10 +110,7 @@ static int density_cached_gnl_valid = 0;
 void density_gpu_session_begin(struct particle_data *P_host, struct gas_cell_data *CellP_host, int num_total)
 {
     density_session_num_total = num_total;
-    density_P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    density_CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(density_P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(density_CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     density_cached_gnl_valid = 0;
 }
 
@@ -126,8 +124,8 @@ void density_gpu_session_end(void)
     if(density_csr_max_h) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_max_h); density_csr_max_h = NULL;}
     if(density_csr_offset_lookup) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_offset_lookup); density_csr_offset_lookup = NULL;}
     gpu_spatial_index_free(&density_cached_spatial_index); /* free cached tiles+BVH */
-    if(density_CellP_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_CellP_gpu); density_CellP_gpu = NULL;}
-    if(density_P_gpu) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_P_gpu); density_P_gpu = NULL;}
+    /* Note: do NOT release the arena here — it is decomp-scoped and may be consumed
+     * by gradient/hydro/etc. after density returns. */
     density_session_num_total = 0;
 }
 
@@ -143,11 +141,12 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     double t_dens_gpu_start = my_second(), t_dens_gpu_phase;
     struct particle_data *P_gpu;
     struct gas_cell_data *CellP_gpu;
-    int session_active = (density_P_gpu != NULL && density_session_num_total == num_total);
+    int session_active = (gpu_particles_arena_valid() && density_session_num_total == num_total
+                          && gpu_particles_arena_capacity() >= num_total);
 
     if(session_active) {
-        P_gpu = density_P_gpu;
-        CellP_gpu = density_CellP_gpu;
+        P_gpu = gpu_particles_arena_P();
+        CellP_gpu = gpu_particles_arena_CellP();
         /* Sync KernelRadius from host for active particles (h changed during iteration) */
         for(int aa = 0; aa < num_active; aa++) {
             int ii = active_indices_host[aa];
