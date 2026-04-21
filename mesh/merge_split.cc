@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../system/gpu_particles_arena.h"
 
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
@@ -417,6 +418,9 @@ void merge_and_split_particles(void)
     All.TotN_gas += (long long)MPI_n_particles_gas_split;
     Gas_split = n_particles_gas_split; // specific to the local processor //
     NumPart += (n_particles_split - n_particles_gas_split); // specific to the local processor; note the gas split number will be added below, this is just non-gas splits //
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate(); /* NumPart and P[] indices changed; arena stale */
+#endif
 }
 
 

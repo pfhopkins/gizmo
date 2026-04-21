@@ -11,6 +11,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "ghost_writeback.h"
+#include "../system/gpu_particles_arena.h"
 #ifdef GALSF_FB_MECHANICAL
 #include "../galaxy_sf/mechanical_fb_types.h"  /* for struct MechFBGasDelta */
 #endif
@@ -159,6 +160,9 @@ void ghost_writeback_hydro(void)
     }
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate(); /* host CellP/P deltas applied; arena stale */
+#endif
 }
 
 

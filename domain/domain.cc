@@ -7,6 +7,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/gpu_particles_arena.h"
 
 
 /*! \file domain.c
@@ -422,6 +423,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   DomainTask = (int *) (TopNodes + NTopnodes);
   force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
   reconstruct_timebins();
+#ifdef OPENMP_GPU_OFFLOAD
+  gpu_particles_arena_invalidate(); /* P[] reordered across ranks; arena stale */
+#endif
 }
 
 
