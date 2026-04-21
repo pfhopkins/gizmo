@@ -157,12 +157,19 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
 
 
 def get_cooling_tables(test_directory="."):
-    """Downloads spcool_tables.tar.gz and copies TREECOOL to test directory"""
+    """Downloads spcool_tables.tar.gz and copies TREECOOL to test directory.
+    Idempotent: skips steps whose targets already exist (supports symlinks as well as
+    real files/dirs), so tests that share cooling data with sibling tests via symlinks
+    don't trigger unnecessary downloads."""
 
-    url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
-    urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
-    system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
-    system(f"cp cooling/TREECOOL {test_directory}")
+    spcool_dir = f"{test_directory}/spcool_tables"
+    if not (path.isdir(spcool_dir) or path.islink(spcool_dir)):
+        url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
+        urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
+        system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
+    treecool_dst = f"{test_directory}/TREECOOL"
+    if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
+        system(f"cp cooling/TREECOOL {test_directory}")
 
 
 _BASELINE_STASH = "__output_baseline_stash__"
