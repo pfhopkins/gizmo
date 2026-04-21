@@ -93,6 +93,13 @@ struct SinkSwallowOut
     int n_sink_swallowed;
     int n_star_swallowed;
     int n_dm_swallowed;
+    /* Per-bin deltas for TimeBin_Sink_* — accumulated in GPU kernel for the
+     * sink-sink merger path (Type-5 swallow) and applied on host in scatter,
+     * since TimeBin_Sink_* are plain host globals not accessible from CUDA. */
+    MyDouble delta_TimeBin_Sink_mass[TIMEBINS];
+    MyDouble delta_TimeBin_Sink_dynamicalmass[TIMEBINS];
+    MyDouble delta_TimeBin_Sink_Mdot[TIMEBINS];
+    MyDouble delta_TimeBin_Sink_Medd[TIMEBINS];
 };
 
 
@@ -262,11 +269,11 @@ static void sink_swallow_pair_kernel(
             out.Sink_CountProgs += P[j].Sink_CountProgs;
 #endif
             int bin = P[j].TimeBin;
-            Kokkos::atomic_add(&TimeBin_Sink_mass[bin],          -(double)P[j].Sink_Mass);
-            Kokkos::atomic_add(&TimeBin_Sink_dynamicalmass[bin], -Mass_j);
-            Kokkos::atomic_add(&TimeBin_Sink_Mdot[bin],          -(double)P[j].Sink_Mdot);
+            Kokkos::atomic_add(&out.delta_TimeBin_Sink_mass[bin],          -(double)P[j].Sink_Mass);
+            Kokkos::atomic_add(&out.delta_TimeBin_Sink_dynamicalmass[bin], -Mass_j);
+            Kokkos::atomic_add(&out.delta_TimeBin_Sink_Mdot[bin],          -(double)P[j].Sink_Mdot);
             if((double)P[j].Sink_Mass > 0) {
-                Kokkos::atomic_add(&TimeBin_Sink_Medd[bin], -(double)P[j].Sink_Mdot / (double)P[j].Sink_Mass);
+                Kokkos::atomic_add(&out.delta_TimeBin_Sink_Medd[bin], -(double)P[j].Sink_Mdot / (double)P[j].Sink_Mass);
             }
             Mass_j = 0;
 #ifdef SINK_ALPHADISK_ACCRETION

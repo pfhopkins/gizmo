@@ -123,6 +123,13 @@ static void sink_swallow_apply_out(const struct SinkSwallowOut *out, int i)
 #ifdef GALSF
     if(P[i].StellarAge > out->Accreted_Age) P[i].StellarAge = out->Accreted_Age;
 #endif
+    /* Apply per-bin TimeBin_Sink_* deltas accumulated during sink-sink mergers. */
+    for(int b = 0; b < TIMEBINS; b++) {
+        TimeBin_Sink_mass[b]          += out->delta_TimeBin_Sink_mass[b];
+        TimeBin_Sink_dynamicalmass[b] += out->delta_TimeBin_Sink_dynamicalmass[b];
+        TimeBin_Sink_Mdot[b]          += out->delta_TimeBin_Sink_Mdot[b];
+        TimeBin_Sink_Medd[b]          += out->delta_TimeBin_Sink_Medd[b];
+    }
 }
 
 

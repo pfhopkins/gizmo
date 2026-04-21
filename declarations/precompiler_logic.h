@@ -238,7 +238,7 @@
 #define COSMIC_RAY_FLUID            /*! use 'explicit' CR integration in one of the code formulations */
 #endif // closes whether to do cr fluid or subgrid
 #if !defined(CRFLUID_EVOLVE_SPECTRUM) /*! check to enable flags for which CR spectrum or single-bin to evolve */
-#if (FIRE_CRS >= 0) || (FIRE_CRS <= 1)
+#if (FIRE_CRS >= 0) && (FIRE_CRS <= 1)
 #define CRFLUID_EVOLVE_SPECTRUM 1   /*! evolve proton + electron spectrum */
 #endif
 #if (FIRE_CRS >= 2)

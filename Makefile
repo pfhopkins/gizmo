@@ -682,6 +682,15 @@ declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
+# Vista NVC++ 25.5 ICE workaround: gen_llvm_expr() unknown opcode at -O2 inside
+# addFB_evaluate in mechanical_fb.cc. Compile at -O1 for Vista only; CPU-only
+# code (GPU path lives in mechanical_fb_gpu.cc), negligible performance impact.
+# This explicit rule comes AFTER the $(OBJS) static pattern rule so it overrides it.
+ifeq ($(SYSTYPE),"Vista")
+galaxy_sf/mechanical_fb.o: galaxy_sf/mechanical_fb.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(CXX) $(subst -O2,-O1,$(CFLAGS)) -c $< -o $@
+endif
+
 compile_time_info.cc: $(CONFIG)
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
