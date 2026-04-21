@@ -13,9 +13,6 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef OPENMP_GPU_OFFLOAD
-#include <Kokkos_Core.hpp>
-#endif
 
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
@@ -275,23 +272,15 @@ void merge_and_split_particles(void)
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
 
     // TO: need initialization
-    /* Kokkos::parallel_for on host exec-space when available; plain loop otherwise.
-     * Note: the main search loop (below) uses ngb_treefind_variable_targeted which
-     * writes to the global Ngblist buffer — NOT thread-safe. It remains serial until
-     * Ngblist is made thread_local. */
-#ifdef OPENMP_GPU_OFFLOAD
-    {
-        struct flags_merg_split *ptmp = Ptmp;
-        Kokkos::parallel_for(Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, NumPart),
-            [ptmp](int idx) { ptmp[idx].flag = 0; ptmp[idx].target_index = -1; });
-        Kokkos::fence();
-    }
-#else
+    /* Note: the main search loop (below) uses ngb_treefind_variable_targeted which
+     * writes to the global Ngblist buffer — NOT thread-safe. It remains serial. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for (i = 0; i < NumPart; i++) {
       Ptmp[i].flag = 0;
       Ptmp[i].target_index = -1;
     }
-#endif
 
     for (i = 0; i < NumPart; i++)
     {
