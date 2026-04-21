@@ -768,8 +768,10 @@ void density(void)
      won't save much b/c the real cost is in the neighbor loop for each particle, but it's something )
      -- also, some results (for example, viscosity suppression below) should not be calculated unless
      the quantities are 'stabilized' at their final values -- */
-    for (int i : ActiveParticleList)
-    {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) { int i = ActiveParticleList[_apl];
         if(density_isactive(i))
         {
             if(P[i].Type == 0 && P[i].Mass > 0)
@@ -929,7 +931,7 @@ void density(void)
         if(P[i].Type==0) {if(P[i].ID==All.SpawnedWindCellID && CellP[i].IniDen<0) {CellP[i].IniDen=CellP[i].Density; CellP[i].BPred=CellP[i].B=CellP[i].IniB*((All.UnitMagneticField_in_gauss/UNIT_B_IN_GAUSS)*(P[i].Mass/(All.cf_a2inv*CellP[i].Density)));}}
 #endif
         
-    } // for (int i : ActiveParticleList)
+    } // for (_apl over ActiveParticleList)
 
     /* collect some timing information */
     double t_postloop = timediff(t_postloop_start, my_second());
@@ -1003,7 +1005,10 @@ int cellcorrections_evaluate(int target, int mode, int *exportflag, int *exportn
 /* final operations for after the updates are computed */
 void cellcorrections_final_operations_and_cleanup(void)
 {
-    int i; for (int i : ActiveParticleList) { /* check all active elements */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) { int i = ActiveParticleList[_apl]; /* check all active elements */
         CONDITIONFUNCTION_FOR_EVALUATION /* ensures only the ones which met our criteria above are actually treated here */
         {
             if(CellP[i].Volume_1 > 0) {CellP[i].Density = P[i].Mass / CellP[i].Volume_1;} else {CellP[i].Volume_1 = CellP[i].Volume_0;} // set the updated density. other variables that need volumes will all scale off this, so we can rely on it to inform everything else [if bad value here, revert to the 0th-order volume quadrature]
