@@ -398,12 +398,11 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 /* --------------------------------------------------------------------------------- */
 void hydro_final_operations_and_cleanup(void)
 {
-    int i,k;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
-    { int i = ActiveParticleList[_apl];
+    { int i = ActiveParticleList[_apl]; int k = 0; /* k is declared here (not at function scope) so it is thread-private under OpenMP — a shared k would race between threads and corrupt CR bin index */
         if(P[i].Type == 0 && P[i].Mass > 0)
         {
             double dt; dt = get_particle_timestep_in_physical(i);
@@ -714,12 +713,12 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 
     /* need to zero out all numbers that can be set -EITHER- by an active particle in the domain, or by one of the neighbors we will get sent */
-    int i, k;
+    int i;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic) private(i)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
-    {   int i = ActiveParticleList[_apl];
+    {   int i = ActiveParticleList[_apl]; int k = 0; /* thread-private k — same OMP race fix as hydro_final_operations_and_cleanup */
         if(P[i].Type==0)
         {
             CellP[i].MaxSignalVel = MIN_REAL_NUMBER;
