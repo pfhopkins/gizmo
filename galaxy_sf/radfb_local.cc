@@ -11,10 +11,19 @@
     photo-ionization terms. written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
+#if defined(GALSF_FB_FIRE_RT_LOCALRP) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#include "radfb_local_gpu.h"
+#endif
+
 #if defined(GALSF_FB_FIRE_RT_LOCALRP) /* first the radiation pressure coupled in the immediate vicinity of the star */
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
 void radiation_pressure_winds_consolidated(void)
 {
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    radiation_pressure_winds_gpu(P, CellP, NumPart,
+                                 ActiveParticleList.data(), (int)ActiveParticleList.size());
+    return;
+#endif
     double age_threshold_in_gyr = 0.15; // don't bother for older populations, they contribute negligibly here //
 #if defined(SINGLE_STAR_SINK_DYNAMICS) || (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
     age_threshold_in_gyr = 1.0e10; // for the single-star problems, or updated algorithm [where it adds little expense], we want to include everything, for completeness //
@@ -211,6 +220,10 @@ void radiation_pressure_winds_consolidated(void)
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
 
 
+/* NOTE: HII_heating_singledomain outer loop cannot be wrapped in Kokkos::parallel_for
+ * because the inner greedy search calls ngb_treefind_variable_targeted, which writes
+ * to the global Ngblist buffer.  Making Ngblist thread_local in allvars.cc would
+ * unblock this; deferred until that change is made. */
 void HII_heating_singledomain(void)    /* this version of the HII routine only communicates with particles on the same processor */
 {
 #ifdef RT_CHEM_PHOTOION

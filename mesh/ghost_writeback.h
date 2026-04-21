@@ -105,6 +105,13 @@ void ghost_writeback_zero_sinkswallow(void);
 void ghost_writeback_sinkswallow(void);
 #endif
 
+/* RadFBRP variant: snapshot-based reverse communication for
+ * radiation_pressure_winds GPU kernel j-particle writes (Vel, VelPred, dp). */
+#ifdef GALSF_FB_FIRE_RT_LOCALRP
+void ghost_writeback_zero_radfbrp(void);
+void ghost_writeback_radfbrp(void);
+#endif
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);
