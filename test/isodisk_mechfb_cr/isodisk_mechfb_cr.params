@@ -22,3 +22,4 @@ BiniY                              1e-9
 BiniZ                              1e-8
 MaxMemSize                         2000
 CosmicRayDiffusionCoeff            690.0
+SeedSinkPerUnitMass                1e-4
