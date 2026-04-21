@@ -522,6 +522,10 @@ void pmforce_periodic(int mode, int *typelist)
 	{
 	  /* multiply with Green's function for the potential */
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) \
+  private(x,z,kx,ky,kz,k2,smth,fx,fy,fz,ff,ip)
+#endif
 	  for(y = slabstart_y; y < slabstart_y + nslab_y; y++)
 	    for(x = 0; x < PMGRID; x++)
 	      for(z = 0; z < PMGRID / 2 + 1; z++)
@@ -696,6 +700,10 @@ void pmforce_periodic(int mode, int *typelist)
 	      if(dim == 0)
 		pm_periodic_transposeA(rhogrid, forcegrid);	/* compute the transpose of the potential field */
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) \
+  private(x,z,yl,yr,yll,yrr,zl,zr,zll,zrr)
+#endif
 	      for(xx = slabstart_x; xx < (slabstart_x + nslab_x); xx++)
 		for(y = 0; y < PMGRID; y++)
 		  for(z = 0; z < PMGRID; z++)

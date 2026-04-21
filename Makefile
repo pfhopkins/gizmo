@@ -170,6 +170,21 @@ ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+## TODO: set TACC_HYPRE_GPU_DIR when a CUDA-enabled Hypre module is available on Vista.
+## Load a CUDA-Hypre build (e.g. `module load hypre/cuda`) and set paths below.
+## The code auto-detects GPU via HYPRE_USING_CUDA defined in Hypre headers.
+ifdef TACC_HYPRE_GPU_DIR
+HYPRE_INCL = -I$(TACC_HYPRE_GPU_DIR)/include
+HYPRE_LIBS = -L$(TACC_HYPRE_GPU_DIR)/lib -lHYPRE
+else
+## Fallback: use TACC_HYPRE_DIR if set by a CPU Hypre module
+ifdef TACC_HYPRE_DIR
+HYPRE_INCL = -I$(TACC_HYPRE_DIR)/include
+HYPRE_LIBS = -L$(TACC_HYPRE_DIR)/lib -lHYPRE
+endif
+endif
+endif
 MKL_INCL = #-I$(TACC_MKL_INC)
 MKL_LIBS = #-L$(TACC_MKL_LIB) -lmkl_rt
 FFTW_INCL= -I$(TACC_FFTW3_INC)

@@ -513,6 +513,11 @@ void powerspec_turb_calc_and_bin_spectrum(fftw_plan fplan, fftw_real *field, int
   
   fft_of_field = (fftw_complex *) field;
 
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) schedule(static) \
+  reduction(+:SumPower[0:BINS_PS]) reduction(+:CountModes[0:BINS_PS]) \
+  private(z,zz,kx,ky,kz,k2,ip)
+#endif
   for(y = slabstart_y; y < slabstart_y + nslab_y; y++)
     for(x = 0; x < TURB_DRIVING_SPECTRUMGRID; x++)
       for(z = 0; z < TURB_DRIVING_SPECTRUMGRID; z++)
@@ -520,7 +525,7 @@ void powerspec_turb_calc_and_bin_spectrum(fftw_plan fplan, fftw_real *field, int
 	  zz = z;
 	  if(z >= TURB_DRIVING_SPECTRUMGRID / 2 + 1)
 	    zz = TURB_DRIVING_SPECTRUMGRID - z;
-	  
+
 	  if(x > TURB_DRIVING_SPECTRUMGRID / 2)
 	    kx = x - TURB_DRIVING_SPECTRUMGRID;
 	  else
@@ -535,24 +540,24 @@ void powerspec_turb_calc_and_bin_spectrum(fftw_plan fplan, fftw_real *field, int
 	    kz = z;
 
 	  k2 = kx * kx + ky * ky + kz * kz;
-	  
+
 	  ip = TURB_DRIVING_SPECTRUMGRID * (TURB_DRIVING_SPECTRUMGRID / 2 + 1) * (y - slabstart_y) + (TURB_DRIVING_SPECTRUMGRID / 2 + 1) * x + zz;
-	  
+
 	  double po = (cmplx_re(fft_of_field[ip]) * cmplx_re(fft_of_field[ip])
 		       + cmplx_im(fft_of_field[ip]) * cmplx_im(fft_of_field[ip])) / pow(TURB_DRIVING_SPECTRUMGRID, 6);
-	  	  
+
 	  if(k2 > 0)
 	    {
 	      if(k2 < (TURB_DRIVING_SPECTRUMGRID / 2.0) * (TURB_DRIVING_SPECTRUMGRID / 2.0))
 		{
 		  double k = sqrt(k2) * 2 * M_PI / All.BoxSize;
-		  
+
 		  if(k >= K0 && k < K1)
 		    {
 		      int bin = log(k / K0) * binfac;
-		      
+
 		      SumPower[bin] += po;
-		      
+
 		      if(flag)
 			CountModes[bin] += 1;
 		    }

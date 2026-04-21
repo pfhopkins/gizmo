@@ -1104,6 +1104,11 @@ static void mg_solve_hypre(void)
     HYPRE_BigInt ilower = (HYPRE_BigInt)global_offset;
     HYPRE_BigInt iupper = (HYPRE_BigInt)(global_offset + N_gas - 1);
 
+#if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP)
+    HYPRE_SetMemoryLocation(HYPRE_MEMORY_DEVICE);
+    HYPRE_SetExecutionPolicy(HYPRE_EXEC_DEVICE);
+#endif
+
     /* project RHS to zero mean (graph Laplacian null-space removal) */
     long long ngas_active_local = 0;
     double bsum_local = 0;
@@ -1204,7 +1209,11 @@ static void mg_solve_hypre(void)
     HYPRE_BoomerAMGCreate(&precond);
     HYPRE_BoomerAMGSetPrintLevel(precond, 0);
     HYPRE_BoomerAMGSetCoarsenType(precond, 6);  /* Falgout coarsening */
-    HYPRE_BoomerAMGSetRelaxType(precond, 6);     /* symmetric Gauss-Seidel */
+#if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP)
+    HYPRE_BoomerAMGSetRelaxType(precond, 18);   /* L1-scaled hybrid GS (GPU-parallel) */
+#else
+    HYPRE_BoomerAMGSetRelaxType(precond, 6);    /* symmetric Gauss-Seidel (CPU) */
+#endif
     HYPRE_BoomerAMGSetNumSweeps(precond, 1);
     HYPRE_BoomerAMGSetMaxLevels(precond, 25);
     HYPRE_BoomerAMGSetMaxIter(precond, 1);       /* 1 V-cycle per PCG iteration */
@@ -1244,6 +1253,11 @@ static void mg_solve_hypre(void)
     HYPRE_IJVectorDestroy(x_vec);
     free(x_vals); free(rhs_vals); free(row_inds);
     free(col_vals); free(col_inds); free(task_offsets);
+
+#if defined(HYPRE_USING_CUDA) || defined(HYPRE_USING_HIP)
+    HYPRE_SetMemoryLocation(HYPRE_MEMORY_HOST);
+    HYPRE_SetExecutionPolicy(HYPRE_EXEC_HOST);
+#endif
 }
 #endif /* !defined(MHD_MODIFIED_GRADIENT_CG_ONLY) && !defined(MHD_MODIFIED_GRADIENT_USE_PARDISO) */
 

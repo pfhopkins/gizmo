@@ -267,6 +267,10 @@ void add_along_lines_of_sight(void)
     }
 
 
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic,16) \
+  private(dx,dy,dz,r,r2,ne,nh0,nHeII,utherm,temp,u,wk,dwk,weight,h3inv,z0,z1,bin,iz0,iz1,iz)
+#endif
   for(n = 0; n < N_gas; n++)
     {
       if(P[n].Type == 0)
@@ -306,7 +310,7 @@ void add_along_lines_of_sight(void)
 		      u = r / P[n].KernelRadius;
 		      h3inv = 1.0 / (P[n].KernelRadius * P[n].KernelRadius * P[n].KernelRadius);
               kernel_main(u, h3inv, 1, &wk, &dwk, -1);
-                
+
 		      bin = iz;
 		      while(bin >= PIXELS)
                   bin -= PIXELS;
@@ -314,7 +318,7 @@ void add_along_lines_of_sight(void)
                   bin += PIXELS;
 
 #ifdef COOLING
-              utherm = DMAX(All.MinEgySpec, CellP[i].InternalEnergyPred);
+              utherm = DMAX(All.MinEgySpec, CellP[n].InternalEnergyPred);
               double mu_in = 1, nHe0, nHepp, nhp;
               temp = ThermalProperties(utherm, CellP[n].Density * All.cf_a3inv, n, &mu_in, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
 #else
@@ -323,21 +327,51 @@ void add_along_lines_of_sight(void)
 
 		      /* do total gas */
 		      weight = P[n].Mass * wk;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->Rho[bin] += weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->Metallicity[bin] += P[n].Metallicity[0] * weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->Temp[bin] += temp * weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->Vpec[bin] += P[n].Vel[Los->zaxis] * weight;
 
 		      /* do neutral hydrogen */
 		      weight = nh0 * HYDROGEN_MASSFRAC * P[n].Mass * wk;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->RhoHI[bin] += weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->TempHI[bin] += temp * weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->VpecHI[bin] += P[n].Vel[Los->zaxis] * weight;
 
 		      /* do HeII */
 		      weight = 4 * nHeII * HYDROGEN_MASSFRAC * P[n].Mass * wk;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->RhoHeII[bin] += weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->TempHeII[bin] += temp * weight;
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
 		      Los->VpecHeII[bin] += P[n].Vel[Los->zaxis] * weight;
 		    }
 		}
