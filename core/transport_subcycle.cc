@@ -25,6 +25,8 @@ extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 #ifdef TRANSPORT_SUBCYCLE
 
 #include "transport_subcycle.h"
+#include "../radiation/rt_direct_ray_transport_functions.h"
+#include "../radiation/rt_diffusion_explicit_functions.h"
 
 /* ======================================================================================== */
 /* ===== CODE_BLOCK_XCHANGE SETUP FOR TRANSPORT FLUX EXCHANGE ============================= */
