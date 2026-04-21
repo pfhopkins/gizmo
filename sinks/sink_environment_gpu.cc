@@ -261,6 +261,102 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 }
 
+/* ========================================================================
+ * Stage E2 — sink_environment_second: Bulge-Disk aggregator (pure, no j-writes)
+ * ======================================================================== */
+#if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
+
+void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
+                                           struct gas_cell_data *CellP_host,
+                                           int num_total,
+                                           int *i_active_host, int num_active,
+                                           const double *i_radii_host,
+                                           const MyFloat (*i_Jgas_host)[3],
+                                           const MyFloat (*i_Jstar_host)[3],
+                                           int j_type_bitmask,
+                                           struct sink_env_second_gpu_out *out_host)
+{
+    (void)CellP_host;
+    GIZMO_GPU_ENSURE_ALL_FRESH(sinkenv);
+
+    struct particle_data *P_gpu = (struct particle_data *)
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
+    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+
+    gpu_neighbor_list_t gnl;
+    gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
+                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
+                       1.0, i_radii_host);
+
+    int alloc_n = (num_active > 0) ? num_active : 1;
+    struct sink_env_second_gpu_out *d_out = (struct sink_env_second_gpu_out *)
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(struct sink_env_second_gpu_out));
+
+    /* Stage per-source J vectors into SharedSpace so the kernel can read them. */
+    double (*d_Jgas)[3]  = (double (*)[3]) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(double[3]));
+    double (*d_Jstar)[3] = (double (*)[3]) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(double[3]));
+    for(int a = 0; a < num_active; a++) {
+        for(int k = 0; k < 3; k++) {
+            d_Jgas[a][k]  = (double)i_Jgas_host[a][k];
+            d_Jstar[a][k] = (double)i_Jstar_host[a][k];
+        }
+    }
+
+    PRINT_STATUS("  GPU sink_environment_second: %d active, %d pairs", num_active, gnl.total_pairs);
+
+    int comoving_on = All.ComovingIntegrationOn;
+
+    {
+        int  *offsets   = gnl.offsets;
+        int  *neighbors = gnl.neighbors;
+        int  *active    = gnl.d_active;
+        struct particle_data *kp   = P_gpu;
+        double (*dJg)[3]  = d_Jgas;
+        double (*dJs)[3]  = d_Jstar;
+        struct sink_env_second_gpu_out *kout = d_out;
+
+        gizmo_gpu_kernel_launch("sink_env_second_kernel", num_active, KOKKOS_LAMBDA(int aa) {
+            int ii = active[aa];
+            memset(&kout[aa], 0, sizeof(struct sink_env_second_gpu_out));
+            if(!(kp[ii].Mass > 0)) return;
+
+            Vec3<double> pos_i = kp[ii].Pos;
+            Vec3<double> vel_i = kp[ii].Vel;
+            Vec3<double> Jgas_i{dJg[aa][0], dJg[aa][1], dJg[aa][2]};
+            Vec3<double> Jstar_i{dJs[aa][0], dJs[aa][1], dJs[aa][2]};
+
+            int start = offsets[aa], end = offsets[aa + 1];
+            for(int nn = start; nn < end; nn++) {
+                int j = neighbors[nn];
+                if(kp[j].Mass <= 0 || kp[j].KernelRadius <= 0 || kp[j].Type == 5) continue;
+                Vec3<double> dP = kp[j].Pos - pos_i;
+                Vec3<double> dv = kp[j].Vel - vel_i;
+                nearest_xyz(dP, -1);
+                NGB_SHEARBOX_BOUNDARY_VELCORR_(pos_i, kp[j].Pos, dv, -1);
+                Vec3<double> J_tmp = cross(dP, dv);
+                if(kp[j].Type == 0) {
+                    if(dot(J_tmp, Jgas_i) < 0) { kout[aa].MgasBulge_in_Kernel += 2 * kp[j].Mass; }
+                }
+                if(kp[j].Type == 4 ||
+                   ((kp[j].Type == 2 || kp[j].Type == 3) && !comoving_on)) {
+                    if(dot(J_tmp, Jstar_i) < 0) { kout[aa].MstarBulge_in_Kernel += 2 * kp[j].Mass; }
+                }
+            }
+        });
+    }
+
+    memcpy(out_host, d_out, num_active * sizeof(struct sink_env_second_gpu_out));
+
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_Jstar);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_Jgas);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
+    gpu_ngb_list_free(&gnl, NULL);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+}
+
+#endif /* SINK_GRAVACCRETION == 0 */
+
+
 GPU_ALL_SYNC_FUNC(sinkenv)
 
 #else /* stubs when disabled */
@@ -268,6 +364,12 @@ GPU_ALL_SYNC_FUNC(sinkenv)
 void sink_environment_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                    int, int *, int, const double *, int,
                                    struct sink_env_gpu_out *) {}
+#if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
+void sink_environment_second_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
+                                           int, int *, int, const double *,
+                                           const MyFloat (*)[3], const MyFloat (*)[3],
+                                           int, struct sink_env_second_gpu_out *) {}
+#endif
 void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

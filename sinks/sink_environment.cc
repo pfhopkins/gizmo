@@ -468,6 +468,54 @@ int sink_environment_second_evaluate(int target, int mode, int *exportflag, int 
 
 void sink_environment_second_loop(void)
 {
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* Stage E2: GPU path — pure aggregator, no j-writes, same active set + radii +
+     * j_type_bitmask as the first environment pass. */
+    CPU_Step[CPU_SINKS] += measure_time();
+    bool sinkenv2_imported_ghosts = (ghost_get_num_ghosts() == 0);
+    if(sinkenv2_imported_ghosts) {
+        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+    }
+
+    int num_active = 0;
+    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
+    int alloc_n = (num_active > 0 ? num_active : 1);
+    int    *nl_active   = (int *)    mymalloc("sinkenv2_nl_active", alloc_n * sizeof(int));
+    double *nl_radii    = (double *) mymalloc("sinkenv2_nl_radii",  alloc_n * sizeof(double));
+    MyFloat (*nl_Jgas)[3]  = (MyFloat (*)[3]) mymalloc("sinkenv2_Jgas",  alloc_n * sizeof(MyFloat[3]));
+    MyFloat (*nl_Jstar)[3] = (MyFloat (*)[3]) mymalloc("sinkenv2_Jstar", alloc_n * sizeof(MyFloat[3]));
+    struct sink_env_second_gpu_out *nl_outs = (struct sink_env_second_gpu_out *)
+        mymalloc("sinkenv2_outs", alloc_n * sizeof(struct sink_env_second_gpu_out));
+
+    {int aa = 0; for(int i : ActiveParticleList) {
+        if(!sink_isactive(i)) continue;
+        int t = P[i].IndexMapToTempStruc;
+        nl_active[aa] = i;
+        nl_radii[aa]  = P[i].KernelRadius;
+        for(int k = 0; k < 3; k++) {
+            nl_Jgas[aa][k]  = SinkTempInfo[t].Jgas_in_Kernel[k];
+            nl_Jstar[aa][k] = SinkTempInfo[t].Jstar_in_Kernel[k];
+        }
+        aa++;
+    }}
+
+    sink_environment_second_evaluate_gpu(P, CellP, NumPart,
+                                          nl_active, num_active, nl_radii,
+                                          nl_Jgas, nl_Jstar,
+                                          SINK_NEIGHBOR_BITFLAG, nl_outs);
+
+    for(int a = 0; a < num_active; a++) {
+        int i = nl_active[a];
+        int t = P[i].IndexMapToTempStruc;
+        SinkTempInfo[t].MgasBulge_in_Kernel  += nl_outs[a].MgasBulge_in_Kernel;
+        SinkTempInfo[t].MstarBulge_in_Kernel += nl_outs[a].MstarBulge_in_Kernel;
+    }
+
+    myfree(nl_outs); myfree(nl_Jstar); myfree(nl_Jgas); myfree(nl_radii); myfree(nl_active);
+    if(sinkenv2_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
+    CPU_Step[CPU_SINKS] += measure_time();
+    return;
+#endif
 #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
 #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
 #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */

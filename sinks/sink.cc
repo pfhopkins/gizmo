@@ -7,6 +7,8 @@
 #include "../declarations/gpu_rng.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_symlist_lifecycle.h"
 
 
 /*! \file sink.c
@@ -35,6 +37,13 @@ void sink_accretion(void)
 {
     if(All.TimeStep == 0.) return; /* no evolution */
     PRINT_STATUS("Sink operations begin...");
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+    /* D1/S-SYNC defense-in-depth: force ghost reset at pipeline entry so each
+     * sink GPU loop's import/cleanup cycle re-imports fresh ghosts from home,
+     * ensuring writeback-resolved values (SwallowTime after env, SwallowID
+     * after feed) propagate back to ghost copies before the next loop reads. */
+    if(ghost_get_num_ghosts() > 0) { ghost_exchange_cleanup(); }
+#endif
 #if defined(SINK_GRAVCAPTURE_NONGAS)
     long i; for(i = 0; i < NumPart; i++) {P[i].SwallowID = 0;} /* zero out accretion */ // This zero-out loop is effectively performed in density.c now, only on -gas- particles that are actually going to be looked at this timestep, to reduce overhead when only a few particles are active. But it still needs to be done for non-gas particles.
 #endif
