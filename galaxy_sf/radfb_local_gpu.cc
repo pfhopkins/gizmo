@@ -20,6 +20,7 @@
 #endif
 
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -178,13 +179,10 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
-    /* Copy P and CellP to SharedSpace */
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct gas_cell_data));
-    memcpy(P_gpu,     P_host,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_all * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_all, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Snapshot ghost Vel/VelPred/dp for writeback */
     ghost_writeback_zero_radfbrp();
@@ -296,11 +294,12 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
         PRINT_STATUS(" ..GPU RadFB: Nsources=%g dP_coupled=%g", totMPI_n, totMPI_mom);
     }
 
+    /* Full P+CellP scatter syncs arena→host; per-source NewStar_Momentum loop
+     * above mutates P_host directly, so invalidate to cover that. */
     gpu_ngb_list_free(&gnl, NULL);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 
     if(imported_ghosts) { ghost_exchange_cleanup(); }
 }
