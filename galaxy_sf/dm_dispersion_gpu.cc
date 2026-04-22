@@ -22,6 +22,7 @@
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -50,9 +51,9 @@ void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
     GIZMO_GPU_ENSURE_ALL_FRESH(dispdensity);
     struct dispdens_gpu_out *out_host = (struct dispdens_gpu_out *)out_host_void;
 
-    /* Copy P to SharedSpace (CellP not needed: kernel only reads P.Vel of DM j) */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    /* Step 13 Phase 1 arena. P-only kernel (CellP not used). */
+    gpu_particles_arena_acquire(num_total, P_host, NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
 
     /* Build cross-type CSR list: i = gas active indices, j filtered to DM.
        Per-i search radius is the caller's KernelRadiusDM (one-way, no symm). */
@@ -116,11 +117,11 @@ void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
     /* Copy results back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct dispdens_gpu_out));
 
-    /* Free GPU allocations */
+    /* Read-only on arena; out post-scattered by caller — invalidate. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     gpu_ngb_list_free(&gnl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */

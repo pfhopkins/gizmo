@@ -21,6 +21,7 @@
 #endif
 
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -55,9 +56,9 @@ void dmgrad_evaluate_gpu(struct particle_data *P_host, int num_total,
     GIZMO_GPU_ENSURE_ALL_FRESH(dmgrad);
     struct dmgrad_gpu_out *out_host = (struct dmgrad_gpu_out *)out_host_void;
 
-    /* Copy P to SharedSpace (no CellP accesses — DM-only loop) */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    /* Step 13 Phase 1 arena. P-only kernel (DM-only loop). */
+    gpu_particles_arena_acquire(num_total, P_host, NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
 
     /* Build cross-type CSR: i = caller's group, j_type_bitmask filters j-side */
     gpu_neighbor_list_t gnl;
@@ -186,11 +187,12 @@ void dmgrad_evaluate_gpu(struct particle_data *P_host, int num_total,
 
     memcpy(out_host, d_out, num_active * sizeof(struct dmgrad_gpu_out));
 
+    /* Read-only on arena; out post-scattered by caller — invalidate. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_in);
     gpu_ngb_list_free(&gnl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 GPU_ALL_SYNC_FUNC(dmgrad)

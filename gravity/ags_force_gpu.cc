@@ -34,6 +34,7 @@
 #endif
 
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -122,10 +123,10 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(agsforce);
 
-    /* Copy P to SharedSpace (neighbors + i both read from this; j-writes go via
-       Kokkos atomics to the SharedSpace mirror, then memcpy back at the end). */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    /* Step 13 Phase 1 arena. P-only kernel; pass NULL CellP. j-writes go via
+     * Kokkos atomics to the arena P, then full P scatter back at the end. */
+    gpu_particles_arena_acquire(num_total, P_host, NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
 
     /* SIDM inflates search radius 3x (matches CPU AGSForce tree-walk). */
     double sr_fac = 1.0;
@@ -312,6 +313,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
     memcpy(P_host, P_gpu, num_total * sizeof(struct particle_data));
     if(*d_need_wakeup) NeedToWakeupParticles_local = 1;
 
+    /* Full P scatter syncs arena→host (P-side); CellP unmodified by this kernel. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_need_wakeup);
 #if defined(DM_SIDM)
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_geofactor);
@@ -319,7 +321,6 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     gpu_ngb_list_free(&gnl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 }
 
 

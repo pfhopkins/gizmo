@@ -26,6 +26,7 @@
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -58,18 +59,11 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
     GIZMO_GPU_ENSURE_ALL_FRESH(agsdensity);
     struct ags_density_gpu_out *out_host = (struct ags_density_gpu_out *)out_host_void;
 
-    /* Copy P to SharedSpace. CellP is only needed when there are gas particles
-       (VelPred is read when neighbor.Type == 0). For N-body / DM-only runs
-       (TotN_gas == 0) CellP is NULL and the memcpy would dereference — skip
-       the allocation + copy entirely. The kernel below gates its CellP access
-       on kp[j].Type == 0, so a NULL kc pointer is safe there. */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = NULL;
-    if(All.TotN_gas > 0) {
-        CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-        memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
-    }
+    /* Step 13 Phase 1 arena. CellP only needed when there's gas; pass NULL otherwise.
+     * The kernel gates kc[] access on kp[j].Type == 0 so a NULL kc is safe. */
+    gpu_particles_arena_acquire(num_total, P_host, (All.TotN_gas > 0) ? CellP_host : NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = (All.TotN_gas > 0) ? gpu_particles_arena_CellP() : NULL;
 
     /* Build cross-type CSR: i = caller's active indices (all in one bitmask group),
        j = whatever j_type_bitmask selects. One-way, explicit per-i radii. */
@@ -213,12 +207,12 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
     memcpy(out_host, d_out, num_active * sizeof(struct ags_density_gpu_out));
     if(*d_need_wakeup) NeedToWakeupParticles_local = 1;
 
+    /* Read-only on arena; out post-scattered by caller — invalidate. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_need_wakeup);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     gpu_ngb_list_free(&gnl, NULL);
-    if(CellP_gpu) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 /* Per-TU init function */

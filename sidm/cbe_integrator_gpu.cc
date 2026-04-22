@@ -18,6 +18,7 @@
 #endif
 
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -37,9 +38,9 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
 {
     if(num_active <= 0) return;
 
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    /* Step 13 Phase 1 arena. P-only kernel; pass NULL for CellP. */
+    gpu_particles_arena_acquire(num_total, P_host, NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
 
     int *d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
         num_active * sizeof(int));
@@ -58,9 +59,9 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
 
     memcpy(P_host, P_gpu, num_total * sizeof(struct particle_data));
 
+    /* Full P scatter syncs arena→host (P-side); CellP unmodified by this kernel. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_dt);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 
     printf("  GPU cbe_drift_kick: %d active\n", num_active);
 }
