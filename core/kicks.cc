@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/gpu_particles_arena.h"
 #ifdef CBE_INTEGRATOR
 #include "../sidm/cbe_integrator_gpu.h"
 #endif
@@ -78,6 +79,9 @@ void do_first_halfstep_kick(void)
         myfree(cbe_dt); myfree(cbe_active);
     }
 #endif
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate(); /* host Vel/Entropy kicked; arena stale */
+#endif
 }
 
 void do_second_halfstep_kick(void)
@@ -136,6 +140,9 @@ void do_second_halfstep_kick(void)
 
 #ifdef TURB_DRIVING
     do_turb_driving_step_second_half();
+#endif
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate(); /* host Vel/Entropy kicked; arena stale */
 #endif
 }
 

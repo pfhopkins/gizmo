@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/gpu_particles_arena.h"
 
 /*! Routines for the drift/predict step */
 
@@ -253,6 +254,9 @@ void move_particles(integertime time1)
 #pragma omp parallel for schedule(dynamic)
 #endif
     for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate(); /* host Pos/VelPred drifted; arena stale */
+#endif
 }
 
 

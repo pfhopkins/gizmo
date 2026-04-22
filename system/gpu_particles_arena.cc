@@ -35,8 +35,28 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
     if(min_capacity <= 0) {min_capacity = 1;}
 
     if(arena_P && arena_CellP && arena_capacity_ >= min_capacity) {
-        /* Reuse existing allocation. Re-memcpy host state — UVM keeps pages
-         * device-resident if no host write has dirtied them since last kernel. */
+        if(arena_valid_) {
+#ifdef GIZMO_GPU_ARENA_DEBUG
+            /* Debug guard: arena claims to be in sync with host; verify by byte-compare.
+             * If a host mutation site forgot to call gpu_particles_arena_invalidate(),
+             * this aborts at the offending kernel call rather than yielding silent
+             * stale-data corruption downstream. */
+            if(memcmp(arena_P, P_host, min_capacity * sizeof(struct particle_data)) != 0 ||
+               memcmp(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data)) != 0) {
+                printf("gpu_particles_arena_acquire: arena_valid_==1 but host data differs from arena.\n"
+                       "  Some host mutation site missed calling gpu_particles_arena_invalidate().\n"
+                       "  Capacity = %d. Aborting.\n", min_capacity);
+                endrun(913002);
+            }
+#endif
+            /* Fast path: arena holds the latest host state already (no invalidate
+             * fired since the previous acquire). Skip memcpy entirely — the win
+             * compounds across kernels in a single timestep. */
+            return;
+        }
+        /* Slow path: arena is stale (some host mutation site invalidated us).
+         * Re-seed from host. UVM keeps pages device-resident if they weren't
+         * dirtied on the device side since last access. */
         memcpy(arena_P,     P_host,     min_capacity * sizeof(struct particle_data));
         memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));
         arena_valid_ = 1;
