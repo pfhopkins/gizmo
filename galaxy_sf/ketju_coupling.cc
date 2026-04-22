@@ -363,7 +363,18 @@ static void assign_tasks_for_bucket(const std::vector<int>& bucket_regions, int 
             if(n_tasks > max_tasks) n_tasks = max_tasks;
         }
 
-        /* don't exceed available tasks in this bucket */
+        /* don't exceed available tasks in this bucket. If the bucket is
+         * already full (tasks_used >= NTask) we still need to assign this
+         * region somewhere valid — co-locate it on the last task. Without
+         * this clamp the indices go out of bounds (e.g. range=[4,4] on
+         * NTask=4) and MPI_Group_incl/MPI_Comm_create_group return a
+         * corrupt group → segfault in MPI_Group_intersection later. */
+        if(tasks_used >= NTask) {
+            ActiveRegions[r].compute_info.first_task_index          = NTask - 1;
+            ActiveRegions[r].compute_info.final_task_index          = NTask - 1;
+            ActiveRegions[r].compute_info.compute_sequence_position = seq_pos;
+            continue;
+        }
         if(tasks_used + n_tasks > NTask) n_tasks = NTask - tasks_used;
         if(n_tasks < 1) n_tasks = 1;
 
@@ -407,17 +418,39 @@ static void allocate_compute_tasks_for_regions(void)
 
 static void update_region_costs(void)
 {
-    /* after integration, store actual cost for next step */
-    for(size_t r = 0; r < ActiveRegions.size(); r++) {
+    /* After integration, store actual cost for next step. The cost is only
+     * known on each region's compute_root (it has the integrator), but the
+     * map MUST be globally consistent — otherwise next step's
+     * region_cost_estimate / allocate_compute_tasks_for_regions returns
+     * different compute_info.first/final_task_index on different tasks,
+     * which then produces different compute groups and deadlocks
+     * MPI_Comm_create_group inside compute_tasks.init.
+     *
+     * Pack one cost per region into a dense array indexed by region, then
+     * MPI_Allreduce(MAX). Non-roots contribute 0 → the compute_root's value
+     * wins. */
+    int n_regions = (int)ActiveRegions.size();
+    if(n_regions == 0) return;
+
+    std::vector<double> local_costs(n_regions, 0.0);
+    for(int r = 0; r < n_regions; r++) {
         if(!ActiveRegions[r].compute_tasks.is_root()) continue;
         if(!ActiveRegions[r].integrator) continue;
         if(ActiveRegions[r].centers.empty()) continue;
 
+        local_costs[r] = (double)(ActiveRegions[r].integrator->perf->successful_steps +
+                                  ActiveRegions[r].integrator->perf->failed_steps) *
+                         ActiveRegions[r].total_particle_count * ActiveRegions[r].total_particle_count;
+    }
+
+    std::vector<double> global_costs(n_regions, 0.0);
+    MPI_Allreduce(local_costs.data(), global_costs.data(), n_regions, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    for(int r = 0; r < n_regions; r++) {
+        if(ActiveRegions[r].centers.empty()) continue;
+        if(global_costs[r] <= 0) continue;
         MyIDType key = ActiveRegions[r].centers[0].ID;
-        double cost = (double)(ActiveRegions[r].integrator->perf->successful_steps +
-                               ActiveRegions[r].integrator->perf->failed_steps) *
-                      ActiveRegions[r].total_particle_count * ActiveRegions[r].total_particle_count;
-        region_previous_cost[key] = cost;
+        region_previous_cost[key] = global_costs[r];
     }
 }
 
@@ -1443,8 +1476,17 @@ static int scatter_particle_task_cmp(const void *a, const void *b)
 static void scatter_results(KetjuRegion &reg)
 {
     int n = reg.total_particle_count;
-    if(!reg.affected_tasks.is_member()) return; /* only affected tasks participate */
-    MPI_Bcast(&n, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
+    bool is_affected     = reg.affected_tasks.is_member();
+    bool is_compute_root = (ThisTask == reg.compute_tasks.root_sim);
+    bool needs_forward   = (reg.compute_tasks.root_sim != reg.affected_tasks.root_sim);
+
+    /* compute_root must participate to pack and Send the result to affected_root,
+     * even if it is not itself a member of the affected_tasks group. */
+    if(!is_affected && !(is_compute_root && needs_forward)) return;
+
+    if(is_affected) {
+        MPI_Bcast(&n, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
+    }
     if(n < 2) return;
 
     int n_aff = reg.affected_tasks.size;
@@ -1513,6 +1555,9 @@ static void scatter_results(KetjuRegion &reg)
                      MPI_BYTE, reg.compute_tasks.root_sim, 998, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
     }
+
+    /* compute_root that is not in affected_tasks has finished its job (Send done) */
+    if(!is_affected) return;
 
     /* ---- Phase 3: affected root sorts by Task, Scattervs to affected tasks ---- */
 
@@ -2034,11 +2079,12 @@ void ketju_finish_step(void)
     CachedRegions.clear();
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
         CachedRegionInfo ci;
-        /* collect sorted (ID,Task) keys for staleness check next step */
-        ci.sorted_particle_keys.reserve(ActiveRegions[r].total_particle_count);
-        for(auto &p : ActiveRegions[r].all_particles)
-            ci.sorted_particle_keys.push_back({p.ID, p.Task, p.Index});
-        std::sort(ci.sorted_particle_keys.begin(), ci.sorted_particle_keys.end());
+        /* Collect sorted (ID,Task,Index) keys for staleness check next step.
+         * MUST be globally consistent on every task — using ActiveRegions[r].all_particles
+         * is wrong because it is only populated on the affected_root after Gatherv,
+         * leaving the cached keys empty on every other task and causing split decisions
+         * (some tasks setup_integrator_reuse, others setup_integrator) → MPI deadlock. */
+        ci.sorted_particle_keys = gather_sorted_region_keys(ActiveRegions[r].local_member_indices);
 
         /* transfer communicator ownership — avoid free in KetjuRegion destructor */
         ci.affected_tasks = ActiveRegions[r].affected_tasks;
