@@ -46,6 +46,7 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
                 printf("gpu_particles_arena_acquire: arena_valid_==1 but host data differs from arena.\n"
                        "  Some host mutation site missed calling gpu_particles_arena_invalidate().\n"
                        "  Capacity = %d. Aborting.\n", min_capacity);
+                fflush(stdout);
                 endrun(913002);
             }
 #endif

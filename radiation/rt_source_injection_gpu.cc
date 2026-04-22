@@ -89,6 +89,10 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
        ghost-imported sources and double-deposit on multi-rank runs. */
     int num_src = num_active;
 
+    /* Pre-fill modifies P_host (clears Sink_accreted_photon_energy) — must
+       invalidate first so the subsequent acquire sees the updated host state. */
+    gpu_particles_arena_invalidate();
+
     /* Build per-source input structs on CPU (1-element backstop when num_src==0) */
     std::vector<struct RtSrcLocalIn> src_local(num_src > 0 ? num_src : 1);
     for(int a=0; a<num_src; a++) {
@@ -157,7 +161,9 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     memcpy(P_host,    P_gpu,     num_total * sizeof(struct particle_data));
     memcpy(CellP_host, CellP_gpu, num_total * sizeof(struct gas_cell_data));
 
-    /* Full P+CellP scatter syncs arena→host; arena stays consistent. */
+    /* CPU-side RT ops after return (Rad_E_gamma updates etc.) mutate host;
+       invalidate so the next GPU acquire does a fresh copy. */
+    gpu_particles_arena_invalidate();
     gpu_ngb_list_free(&gnl, NULL);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
 }
