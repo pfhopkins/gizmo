@@ -293,7 +293,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
     for(int a = 0; a < num_active; a++) {
         int i = d_idx[a];
         if(!d_failed[a]) {
-            P[i].GravAccel = d_acc[a] * All.G;
+            /* Write raw force sum (no G factor): the post-walk loop in
+             * gravity_tree() does P[i].GravAccel *= All.G unconditionally
+             * for every active particle, so applying G here would
+             * double-multiply (silent in tests with GravityConstantInternal=1
+             * but wrong for any G != 1). */
+            P[i].GravAccel = d_acc[a];
             ProcessedFlag[i] = 1;
             costtotal_added += d_ninter[a];
             nsucceeded++;
