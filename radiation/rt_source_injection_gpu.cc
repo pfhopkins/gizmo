@@ -18,6 +18,7 @@
 #endif
 
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -94,13 +95,10 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
         rt_src_local_fill(i_active_host[a], P_host, CellP_host, &src_local[a]);
     }
 
-    /* Copy P and CellP to SharedSpace */
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(P_gpu,     P_host,     num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Copy per-source local input to SharedSpace (1-element backstop when num_src==0) */
     int alloc_n = (num_src > 0) ? num_src : 1;
@@ -159,10 +157,9 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     memcpy(P_host,    P_gpu,     num_total * sizeof(struct particle_data));
     memcpy(CellP_host, CellP_gpu, num_total * sizeof(struct gas_cell_data));
 
+    /* Full P+CellP scatter syncs arena→host; arena stays consistent. */
     gpu_ngb_list_free(&gnl, NULL);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 }
 
 GPU_ALL_SYNC_FUNC(rtsrcinjection)

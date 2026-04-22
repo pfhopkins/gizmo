@@ -21,6 +21,7 @@
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -52,11 +53,10 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     GIZMO_GPU_ENSURE_ALL_FRESH(difffilter);
     struct DiffFilter_out *out_host = (struct DiffFilter_out *)out_host_void;
 
-    /* Copy P and CellP to SharedSpace for GPU kernel access */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Build wider CSR neighbor list: search radius = TurbDynamicDiffFac * h_i */
     gpu_neighbor_list_t gnl;
@@ -174,11 +174,10 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     /* Copy results back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct DiffFilter_out));
 
-    /* Free GPU allocations */
+    /* Read-only on arena; out_host post-scattered by caller into CellP — invalidate. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     gpu_ngb_list_free(&gnl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 
@@ -237,11 +236,10 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
     struct DynDiff_gpu_out0 *out0_host = (struct DynDiff_gpu_out0 *)out0_host_void;
     struct DynDiff_gpu_out_iter *out_iter_host = (struct DynDiff_gpu_out_iter *)out_iter_host_void;
 
-    /* Copy P and CellP to SharedSpace */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Copy CSR to SharedSpace */
     int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
@@ -388,14 +386,14 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
     memcpy(out_iter_host, d_out_iter, num_active * sizeof(struct DynDiff_gpu_out_iter));
 
     /* Free GPU allocations */
+    /* Read-only on arena; out post-scattered by caller — invalidate. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out_iter);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out0);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_in);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 

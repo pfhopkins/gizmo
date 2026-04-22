@@ -18,6 +18,7 @@
 #endif
 
 #include "../declarations/gpu_all_mirror.h"
+#include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -72,12 +73,10 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct gas_cell_data));
-    memcpy(P_gpu, P_host, num_all * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_all * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_all, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     int alloc_n = (num_src > 0) ? num_src : 1;
     struct GrainBackrxLocalIn *d_local = (struct GrainBackrxLocalIn *)
@@ -130,10 +129,9 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
 
     ghost_writeback_grainbackrx();
 
+    /* Full scatter syncs arena→host; ghost_writeback_grainbackrx invalidates. */
     gpu_ngb_list_free(&gnl, NULL);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 
     if(imported_ghosts) ghost_exchange_cleanup();
 }
@@ -190,12 +188,10 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct gas_cell_data));
-    memcpy(P_gpu,     P_host,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_all * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_all, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* -------------------- Direction 1: gas → grains -------------------- */
     {
@@ -330,8 +326,8 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
     memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
     memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    /* Full scatter syncs arena→host; defensive invalidate for any caller post-mods. */
+    gpu_particles_arena_invalidate();
 
     if(imported_ghosts) ghost_exchange_cleanup();
 }
