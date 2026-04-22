@@ -377,7 +377,7 @@ HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | ta
 HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API
 HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz
 MPICHLIB = #
-OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION -DOPENMP_GPU_OFFLOAD
+OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION -DOPENMP_GPU_OFFLOAD -DGIZMO_GPU_ARENA_DEBUG
 endif
 
 #----------------------------
@@ -477,7 +477,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o mesh/gpu_neighbor_list.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_gpu.o solids/grain_drag_gpu.o galaxy_sf/dm_dispersion_gpu.o gravity/ags_density_gpu.o gravity/ags_force_gpu.o sidm/dm_fuzzy_gpu.o sinks/sink_environment_gpu.o sidm/cbe_integrator_gpu.o radiation/rt_source_injection_gpu.o galaxy_sf/thermal_fb_gpu.o sinks/sink_feed_gpu.o galaxy_sf/mechanical_fb_gpu.o solids/grain_physics_gpu.o sinks/sink_swallow_and_kick_gpu.o galaxy_sf/radfb_local_gpu.o system/gpu_particles_arena.o
+GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o mesh/gpu_neighbor_list.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_gpu.o solids/grain_drag_gpu.o galaxy_sf/dm_dispersion_gpu.o gravity/ags_density_gpu.o gravity/ags_force_gpu.o sidm/dm_fuzzy_gpu.o sinks/sink_environment_gpu.o sidm/cbe_integrator_gpu.o radiation/rt_source_injection_gpu.o galaxy_sf/thermal_fb_gpu.o sinks/sink_feed_gpu.o galaxy_sf/mechanical_fb_gpu.o solids/grain_physics_gpu.o sinks/sink_swallow_and_kick_gpu.o galaxy_sf/radfb_local_gpu.o system/gpu_particles_arena.o gravity/gpu_gravity_tree.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -694,6 +694,8 @@ sinks/sink_swallow_and_kick_gpu.o: sinks/sink_swallow_and_kick_gpu.cc $(INCL) $(
 galaxy_sf/radfb_local_gpu.o: galaxy_sf/radfb_local_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/gpu_particles_arena.o: system/gpu_particles_arena.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+gravity/gpu_gravity_tree.o: gravity/gpu_gravity_tree.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 declarations/allvars_gpu.o: declarations/allvars_gpu.cu declarations/global_data_all_struct.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
