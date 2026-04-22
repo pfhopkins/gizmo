@@ -37,20 +37,31 @@
 extern int Ewald_iter;
 extern double Costtotal;
 
+#ifdef PMGRID
+/* Short-range tables live as file-scope (non-static) globals in forcetree.cc.
+ * NTAB matches the #define there. */
+#define GIZMO_GPU_GRAVTREE_NTAB 1000
+extern float shortrange_table[GIZMO_GPU_GRAVTREE_NTAB];
+extern float shortrange_table_potential[GIZMO_GPU_GRAVTREE_NTAB];
+#endif
+
 /* Compile-time gating: Tier 1a supports ONLY the core walk. Any of these
  * payloads requires the walk kernel to compute extra terms that haven't been
  * ported yet — they land in Tier 1b, 2, or 3. Gating here keeps the kernel
  * code readable and prevents silent wrong-physics on configs we haven't
  * validated. */
-#if defined(PMGRID)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support PMGRID (added in Tier 1b)."
-#endif
+/* PMGRID: short-range cutoff (rcut2) + tabulated short-range factor are
+ * supported in Tier 1b.  shortrange_table / shortrange_table_potential are
+ * declared extern below; on Kokkos OMP they live in host memory and are
+ * directly accessible from the kernel.  True device offload (CUDA) will
+ * require mirroring the tables — flagged for a Phase 4 follow-up. */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #error "GIZMO_GPU_GRAVTREE Tier 1a does not support ADAPTIVE_GRAVSOFT_* (added in Tier 1b)."
 #endif
-#if defined(EVALPOTENTIAL) || defined(OUTPUT_POTENTIAL)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support EVALPOTENTIAL / OUTPUT_POTENTIAL (added in Tier 1b)."
-#endif
+/* OUTPUT_POTENTIAL alone (without EVALPOTENTIAL) routes through compute_potential()
+ * in core/run.cc, which is a separate CPU-only walk and therefore unaffected by
+ * GIZMO_GPU_GRAVTREE. EVALPOTENTIAL adds inline-with-the-walk potential
+ * accumulation, ported in this tier. */
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
 #error "GIZMO_GPU_GRAVTREE Tier 1a does not support TIDAL_TENSOR / JERK in gravtree (Tier 3)."
 #endif
@@ -83,19 +94,28 @@ extern double Costtotal;
 /* Device-side walk for a single target particle. Returns 1 on success
  * (acc written), 0 on failure (hit pseudo-particle — host must run CPU walk
  * for this target). Closely mirrors force_treeevaluate() mode=0 with all
- * payload branches stripped. */
+ * payload branches stripped.
+ *
+ * pot_out: always populated with the raw potential sum.  When EVALPOTENTIAL
+ * is not defined, the host scatter-back ignores it and the value is
+ * effectively dead — left in the signature so the kernel body stays the
+ * same regardless of compile-time gating. */
 static KOKKOS_INLINE_FUNCTION int
 gpu_gravtree_walk_one(int target,
                       int maxPart, int maxNodes,
                       struct particle_data *P_dev,
                       const struct gpu_gravity_tree_soa_t *s,
+#ifdef PMGRID
+                      double rcut, double rcut2, double asmthfac,
+#endif
                       Vec3<double> &acc_out,
-                      int &ninter_out)
+                      int &ninter_out,
+                      double &pot_out)
 {
     Vec3<double> pos = P_dev[target].Pos;
     int ptype = P_dev[target].Type;
     double pmass = P_dev[target].Mass;
-    if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; return 1;}
+    if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
 
     /* Tier-1a softening: reduces to All.ForceSoftening[ptype] under the
      * compile-time gating above (no ADAPTIVE_GRAVSOFT_*). Using All. */
@@ -104,6 +124,7 @@ gpu_gravtree_walk_one(int target,
 
     Vec3<double> acc = {0,0,0};
     int ninter = 0;
+    double pot = 0.0;
 
     int no = maxPart;   /* root */
 
@@ -137,6 +158,25 @@ gpu_gravtree_walk_one(int target,
             dr[1] = s_node[1] - pos[1];
             dr[2] = s_node[2] - pos[2];
             r2 = dr.norm_sq();
+
+#ifdef PMGRID
+            /* TreePM: if the node center-of-mass lies beyond rcut, check the
+             * geometric center too (corner-of-cell vs softened force radius).
+             * If the entire cell is outside rcut + 0.5*len, accept and skip
+             * to sibling without ever computing the short-range force.
+             * Mirrors forcetree.cc:1873-1882 with periodic wrap omitted
+             * (Tier 1b gate: GRAVITY_NOT_PERIODIC). */
+            if(r2 > rcut2)
+            {
+                double eff_dist = rcut + 0.5 * len_node;
+                double dcx = fabs(center_node[0] - pos[0]);
+                double dcy = fabs(center_node[1] - pos[1]);
+                double dcz = fabs(center_node[2] - pos[2]);
+                if(dcx > eff_dist || dcy > eff_dist || dcz > eff_dist) {
+                    no = s->sibling[idx]; continue;
+                }
+            }
+#endif
 
             /* Basic softening-radius check (non-ADAPTIVE branch from forcetree.cc:1888). */
             if(h < msoft_node) {
@@ -180,19 +220,50 @@ gpu_gravtree_walk_one(int target,
         {
             double r = sqrt(r2);
             double fac_accel;
+#ifdef EVALPOTENTIAL
+            double fac_pot;
+#endif
             if((r >= h) && (r >= h_p)) {
                 fac_accel = mass / (r2 * r);
+#ifdef EVALPOTENTIAL
+                fac_pot   = -mass / r;
+#endif
             } else {
                 double h_grav = h;
                 if(h_p > h_grav) {h_grav = h_p;} /* MAX-symmetrize (non-AVERAGING branch) */
                 double h_inv = 1.0 / h_grav;
                 double h3_inv = h_inv * h_inv * h_inv;
                 double u = r * h_inv;
-                fac_accel = mass * kernel_gravity(u, h_inv, h3_inv, 1);
+                fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
+#ifdef EVALPOTENTIAL
+                fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
+#endif
             }
+#ifdef PMGRID
+            /* TreePM short-range: tabulated error-function complementary
+             * factor multiplies both the force and (if EVALPOTENTIAL) the
+             * potential.  Samples past tabindex=NTAB represent r > rcut
+             * where the long-range (PM) force takes over and the tree walk
+             * contributes nothing. */
+            int tabindex = (int) (asmthfac * r);
+            if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
+                fac_accel *= shortrange_table[tabindex];
+#ifdef EVALPOTENTIAL
+                fac_pot   *= shortrange_table_potential[tabindex];
+#endif
+            } else {
+                fac_accel = 0.0;
+#ifdef EVALPOTENTIAL
+                fac_pot   = 0.0;
+#endif
+            }
+#endif
             acc[0] += fac_accel * dr[0];
             acc[1] += fac_accel * dr[1];
             acc[2] += fac_accel * dr[2];
+#ifdef EVALPOTENTIAL
+            pot    += fac_pot;
+#endif
             ninter++;
         }
 
@@ -208,6 +279,7 @@ gpu_gravtree_walk_one(int target,
 
     acc_out = acc;
     ninter_out = ninter;
+    pot_out = pot;
     return 1;
 }
 
@@ -258,7 +330,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
     int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
     int *d_ninter = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
-    if(!d_idx || !d_failed || !d_acc || !d_ninter) {
+    double *d_pot = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(double));
+    if(!d_idx || !d_failed || !d_acc || !d_ninter || !d_pot) {
         printf("gpu_gravtree_walk_primary: kokkos_malloc failed\n");
         endrun(913201);
     }
@@ -269,16 +342,27 @@ extern "C" int gpu_gravtree_walk_primary(void)
     int maxNodes_snap = MaxNodes;
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
 
+#ifdef PMGRID
+    double rcut_snap     = All.Rcut[0];
+    double rcut2_snap    = rcut_snap * rcut_snap;
+    double asmthfac_snap = 0.5 / All.Asmth[0] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
+#endif
+
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
         int ninter;
+        double pot;
         int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap,
                                         P_dev, &soa_snap,
-                                        acc, ninter);
+#ifdef PMGRID
+                                        rcut_snap, rcut2_snap, asmthfac_snap,
+#endif
+                                        acc, ninter, pot);
         if(ok) {
             d_acc[a] = acc;
             d_ninter[a] = ninter;
+            d_pot[a] = pot;
             d_failed[a] = 0;
         } else {
             d_failed[a] = 1;
@@ -299,6 +383,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
              * double-multiply (silent in tests with GravityConstantInternal=1
              * but wrong for any G != 1). */
             P[i].GravAccel = d_acc[a];
+#ifdef EVALPOTENTIAL
+            /* Same convention: write raw potential sum.  Post-walk loop in
+             * gravity_tree() does P[i].Potential *= All.G and adds the
+             * cosmological/PM corrections. */
+            P[i].Potential = d_pot[a];
+#endif
             ProcessedFlag[i] = 1;
             costtotal_added += d_ninter[a];
             nsucceeded++;
@@ -319,6 +409,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * Nodes_base on the next call (analogous to the particle arena pattern). */
     gpu_gravity_tree_invalidate();
 
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_pot);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ninter);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_acc);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_failed);

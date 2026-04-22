@@ -80,8 +80,11 @@ static int last;
 
 /*! length of look-up table for short-range force kernel in TreePM algorithm */
 #define NTAB 1000
-/*! variables for short-range lookup table */
-static float shortrange_table[NTAB], shortrange_table_potential[NTAB];
+/*! variables for short-range lookup table.  Non-static so the GPU gravity
+ *  walk in gpu_gravtree.cc can read them via extern declarations.  Sized at
+ *  NTAB floats = 4 KB each — fine to leave in host memory on Kokkos OMP;
+ *  for true device offload they will need mirroring (Phase 4 follow-up). */
+float shortrange_table[NTAB], shortrange_table_potential[NTAB];
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 static float shortrange_table_tidal[NTAB];
 #endif
