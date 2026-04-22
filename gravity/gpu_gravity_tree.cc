@@ -37,7 +37,9 @@ static void free_arrays_(void)
     if(soa_.bitflags) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.bitflags); soa_.bitflags = NULL;}
     if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
     if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
+    if(soa_.nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode_aux); soa_.nextnode_aux = NULL;}
     soa_.nnodes = 0;
+    soa_.nextnode_aux_size = 0;
 }
 
 static int alloc_arrays_(int n)
@@ -114,6 +116,21 @@ extern "C" void gpu_gravity_tree_release(void)
     free_arrays_();
     soa_capacity_ = 0;
     soa_valid_    = 0;
+}
+
+extern "C" void gpu_gravity_tree_set_nextnode(int n, int *Nextnode_host)
+{
+    if(n <= 0) {return;}
+    if(soa_.nextnode_aux_size < n) {
+        if(soa_.nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode_aux);}
+        soa_.nextnode_aux = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
+        if(!soa_.nextnode_aux) {
+            printf("gpu_gravity_tree_set_nextnode: kokkos_malloc failed (n=%d)\n", n);
+            endrun(913102);
+        }
+        soa_.nextnode_aux_size = n;
+    }
+    memcpy(soa_.nextnode_aux, Nextnode_host, n * sizeof(int));
 }
 
 extern "C" struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void) {return soa_valid_ ? &soa_ : NULL;}

@@ -58,6 +58,13 @@ struct gpu_gravity_tree_soa_t {
     MyFloat        *maxsoft;
     long           *N_part;
     int             nnodes;     /* number of valid entries */
+    /* Nextnode[] mirror — used for particle-level traversal: when the walk
+     * lands on `no < MaxPart`, advance via nextnode_aux[no]. Sized for
+     * MaxPart + NTopnodes so the pseudo-particle region is addressable
+     * (though Tier-1 GPU walk aborts on pseudo-particle rather than
+     * following it). */
+    int            *nextnode_aux;
+    int             nextnode_aux_size;
 };
 
 /* Acquire SoA mirror sized for at least min_nodes. Reuses existing storage
@@ -70,6 +77,11 @@ struct gpu_gravity_tree_soa_t {
 void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
+
+/* Mirror Nextnode[0..n) into the SoA's nextnode_aux field. Callers must call
+ * acquire() before invoking this, so the node arrays exist. Separate from
+ * acquire() because Nextnode has different size and lifetime semantics. */
+void gpu_gravity_tree_set_nextnode(int n, int *Nextnode_host);
 
 /* Mark the mirror stale. Next acquire() reseeds from host. Call after:
  * force_treebuild, force_update_node_recursive (when moments change), and

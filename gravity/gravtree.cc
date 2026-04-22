@@ -8,6 +8,7 @@
 #include <sys/sem.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "gpu_gravtree.h"
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
@@ -162,6 +163,15 @@ void gravity_tree(void)
         NextParticle = 0;	/* begin with this index */
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
         BufferCollisionFlag = 0; /* set to zero before operations begin */
+
+        /* Step 13 Phase 4 Tier 1a: speculative GPU pre-pass. Walks the local
+         * tree on GPU for each active particle; on success, writes GravAccel
+         * and marks ProcessedFlag so the CPU primary loop below skips it. On
+         * pseudo-particle hit, leaves the particle untouched for the CPU
+         * loop + MPI export machinery to handle unchanged. No-op when
+         * GIZMO_GPU_GRAVTREE is not defined. */
+        gpu_gravtree_walk_primary();
+
         do /* primary point-element loop */
         {
             iter++;
