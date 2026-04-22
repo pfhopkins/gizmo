@@ -23,6 +23,12 @@ typedef unsigned long long MyIDType;
 typedef double   MyFloat;
 typedef double  MyDouble;
 
+#ifdef GIZMO_MIXED_PRECISION_GRAVITY
+typedef float  MyGravFloat;
+#else
+typedef double MyGravFloat;
+#endif
+
 #ifdef OUTPUT_IN_DOUBLEPRECISION
 typedef double MyOutputFloat;
 #else

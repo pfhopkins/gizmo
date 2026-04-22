@@ -3447,10 +3447,51 @@ void force_treeallocate(int maxnodes, int maxpart)
     {
         first_flag = 1;
         if(ThisTask == 0)
+        {
             printf
             ("Allocated %g MByte for tree, and %g Mbyte for top-leaves.  (presently allocated %g MB)\n",
              allbytes / (1024.0 * 1024.0), allbytes_topleaves / (1024.0 * 1024.0),
              AllocatedBytes / (1024.0 * 1024.0));
+            /* Step 13 Phase 2: gravity-node sizing audit. Lists active payload #ifdefs
+             * that inflate NODE/extNODE; informs the compact-node variants in Phase 6. */
+            printf("Gravity tree node sizes: sizeof(NODE)=%zu B, sizeof(extNODE)=%zu B; "
+                   "MyGravFloat=%zu B (mixed-precision gravity %s). Active payload flags:",
+                   sizeof(struct NODE), sizeof(struct extNODE), sizeof(MyGravFloat),
+#ifdef GIZMO_MIXED_PRECISION_GRAVITY
+                   "ON"
+#else
+                   "OFF"
+#endif
+                   );
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            printf(" GRAVTREE_CALCULATE_GAS_MASS_IN_NODE");
+#endif
+#ifdef RT_USE_GRAVTREE
+            printf(" RT_USE_GRAVTREE");
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+            printf(" CHIMES_STELLAR_FLUXES");
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+            printf(" RT_SEPARATELY_TRACK_LUMPOS");
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+            printf(" SINK_PHOTONMOMENTUM");
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            printf(" COSMIC_RAY_SUBGRID_LEBRON");
+#endif
+#ifdef SINK_CALC_DISTANCES
+            printf(" SINK_CALC_DISTANCES");
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+            printf(" ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION");
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+            printf(" DM_SCALARFIELD_SCREENING");
+#endif
+            printf("\n");
+        }
         for(i = 0; i < NTAB; i++)
         {
             u = 3.0 / NTAB * (i + 0.5);
