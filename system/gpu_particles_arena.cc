@@ -14,6 +14,10 @@
 #include <Kokkos_Core.hpp>
 #endif
 
+/* GPU All mirror: must precede allvars.h so nvc++ sees `All` (=All_dev) when it
+ * eagerly parses templates in declarations/allvars.h that reference it. Matches
+ * the include order in hydro/density_gpu.cc and other GPU TUs. */
+#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "gpu_particles_arena.h"
 
