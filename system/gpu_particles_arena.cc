@@ -42,7 +42,7 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
              * this aborts at the offending kernel call rather than yielding silent
              * stale-data corruption downstream. */
             if(memcmp(arena_P, P_host, min_capacity * sizeof(struct particle_data)) != 0 ||
-               memcmp(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data)) != 0) {
+               (CellP_host && memcmp(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data)) != 0)) {
                 printf("gpu_particles_arena_acquire: arena_valid_==1 but host data differs from arena.\n"
                        "  Some host mutation site missed calling gpu_particles_arena_invalidate().\n"
                        "  Capacity = %d. Aborting.\n", min_capacity);
@@ -56,9 +56,10 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
         }
         /* Slow path: arena is stale (some host mutation site invalidated us).
          * Re-seed from host. UVM keeps pages device-resident if they weren't
-         * dirtied on the device side since last access. */
+         * dirtied on the device side since last access. CellP_host may be NULL
+         * for N-body callers (no gas); arena_CellP storage exists but is unused. */
         memcpy(arena_P,     P_host,     min_capacity * sizeof(struct particle_data));
-        memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));
+        if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
         arena_valid_ = 1;
         return;
     }
@@ -74,7 +75,7 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
         endrun(913001);
     }
     memcpy(arena_P,     P_host,     min_capacity * sizeof(struct particle_data));
-    memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));
+    if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
     arena_capacity_ = min_capacity;
     arena_valid_    = 1;
 }
