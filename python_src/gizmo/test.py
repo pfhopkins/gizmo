@@ -99,7 +99,10 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",)).
     On Kokkos systypes (MacBookCellar_Kokkos, Vista) auto-appends GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
     if absent, so the Kokkos neighbor-list code path is actually exercised (the non-flag legacy tree
-    walk is retained only for backward compat)."""
+    walk is retained only for backward compat).
+    No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     system("rm -f GIZMO test/*/GIZMO")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
@@ -154,7 +157,10 @@ def download_test_files(test_name: str):
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped
-    via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT."""
+    via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT.
+    No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
     # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
