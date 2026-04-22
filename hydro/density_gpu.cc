@@ -125,7 +125,10 @@ void density_gpu_session_end(void)
     if(density_csr_offset_lookup) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_offset_lookup); density_csr_offset_lookup = NULL;}
     gpu_spatial_index_free(&density_cached_spatial_index); /* free cached tiles+BVH */
     /* Note: do NOT release the arena here — it is decomp-scoped and may be consumed
-     * by gradient/hydro/etc. after density returns. */
+     * by gradient/hydro/etc. after density returns. But DO invalidate: the host
+     * postloop in density.cc (NV_T inversion, NumNgb normalization, etc.) mutates
+     * P/CellP after the kernel scatter, so arena state is stale by session_end. */
+    gpu_particles_arena_invalidate();
     density_session_num_total = 0;
 }
 
@@ -410,11 +413,12 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     GIZMO_GPU_ENSURE_ALL_FRESH(density);
     struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
 
-    /* Allocate SharedSpace copies */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
+     * SharedSpace alloc+memcpy of P/CellP. Acquire is a no-op fast path when
+     * the arena is already valid from a prior kernel in this step. */
+    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Copy CSR neighbor list to SharedSpace */
     int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
@@ -546,13 +550,14 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     /* Copy output back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct GasGraddata_out_));
 
-    /* Cleanup SharedSpace */
+    /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
+     * Invalidate: gradients.cc post-scatters d_out values into host CellP.Gradients
+     * after we return, so host will diverge from arena before the next kernel. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 
@@ -568,11 +573,11 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     GIZMO_GPU_ENSURE_ALL_FRESH(density);
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
 
-    /* Allocate SharedSpace copies */
-    struct particle_data *P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
+    /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
+     * SharedSpace alloc+memcpy. Fast path skips memcpy when arena is valid. */
+    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Copy CSR neighbor list to SharedSpace */
     int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
@@ -804,15 +809,18 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #endif
     }
 
-    /* Cleanup SharedSpace */
+    /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
+     * The scatter above syncs wakeup+dMass; any other arena-side writes by
+     * the kernel may be unscattered, so invalidate to force the next kernel
+     * to re-acquire from host. (ghost_writeback_hydro already invalidates,
+     * but be defensive in case hydro is invoked again before that runs.) */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_NeedToWakeup);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_TimeBinActive);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 
