@@ -28,6 +28,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/neighbor_list.h"
@@ -52,16 +53,10 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(sinkenv);
 
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
-
-    struct gas_cell_data *CellP_gpu = NULL;
-    if(All.TotN_gas > 0) {
-        CellP_gpu = (struct gas_cell_data *)
-            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct gas_cell_data));
-        memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
-    }
+    /* Step 13 Phase 1 arena: pass CellP_host=NULL when no gas; arena handles. */
+    gpu_particles_arena_acquire(num_total, P_host, (All.TotN_gas > 0) ? CellP_host : NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = (All.TotN_gas > 0) ? gpu_particles_arena_CellP() : NULL;
 
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
@@ -250,15 +245,17 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
         });
     }
 
-    /* Copy outputs + any j-side SwallowTime atomics back to host */
+    /* Copy outputs + any j-side SwallowTime atomics back to host.
+     * Full P scatter syncs arena→host for P; CellP unscattered, so host
+     * sink_environment.cc post-scatter of out_host into CellP fields makes
+     * arena stale — invalidate before next kernel acquires. */
     memcpy(out_host, d_out, num_active * sizeof(struct sink_env_gpu_out));
     memcpy(P_host, P_gpu, num_total * sizeof(struct particle_data));
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     gpu_ngb_list_free(&gnl, NULL);
-    if(CellP_gpu) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 /* ========================================================================
@@ -276,12 +273,12 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
                                            int j_type_bitmask,
                                            struct sink_env_second_gpu_out *out_host)
 {
-    (void)CellP_host;
     GIZMO_GPU_ENSURE_ALL_FRESH(sinkenv);
 
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
+    /* Step 13 Phase 1 arena. CellP unused by this kernel; pass NULL. */
+    gpu_particles_arena_acquire(num_total, P_host, NULL);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    (void)CellP_host;
 
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
@@ -345,13 +342,15 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
         });
     }
 
+    /* Read-only kernel on P; out_host is post-scattered by host sink_environment.cc
+     * into P/CellP, so invalidate so the next acquire re-syncs from host. */
     memcpy(out_host, d_out, num_active * sizeof(struct sink_env_second_gpu_out));
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_Jstar);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_Jgas);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     gpu_ngb_list_free(&gnl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
+    gpu_particles_arena_invalidate();
 }
 
 #endif /* SINK_GRAVACCRETION == 0 */

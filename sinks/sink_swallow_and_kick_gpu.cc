@@ -24,6 +24,7 @@
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../system/gpu_particles_arena.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/gpu_neighbor_list.h"
@@ -151,12 +152,10 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
-    struct particle_data *P_gpu = (struct particle_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct particle_data));
-    struct gas_cell_data *CellP_gpu = (struct gas_cell_data *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct gas_cell_data));
-    memcpy(P_gpu,     P_host,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_gpu, CellP_host, num_all * sizeof(struct gas_cell_data));
+    /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_acquire(num_all, P_host, CellP_host);
+    struct particle_data *P_gpu = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     int alloc_n = (num_active > 0) ? num_active : 1;
     struct SinkSwallowLocalIn *d_local = (struct SinkSwallowLocalIn *)
@@ -275,10 +274,10 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
     gpu_ngb_list_free(&gnl, NULL);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
+    /* Full P+CellP scatter syncs arena→host; ghost_writeback_sinkswallow above
+     * already invalidates for any host changes it applied. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(CellP_gpu);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
 
     if(imported_ghosts) ghost_exchange_cleanup();
 }
