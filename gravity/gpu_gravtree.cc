@@ -45,6 +45,43 @@ extern float shortrange_table[GIZMO_GPU_GRAVTREE_NTAB];
 extern float shortrange_table_potential[GIZMO_GPU_GRAVTREE_NTAB];
 #endif
 
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+/* GPU-callable mirror of ForceSoftening_KernelRadius() that takes a
+ * particle_data pointer (so we can use P_dev in the kernel without touching
+ * the global P[]).  Tier 1b scope: only the FORGAS / FORALL branches are
+ * implemented — the GALSF/SINGLE_STAR/MAX_SOFT_HARD_LIMIT/TIDAL paths are
+ * gated off above and will land with later tiers. */
+static KOKKOS_INLINE_FUNCTION
+double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
+{
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    if((1 << Pp[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return Pp[p].AGS_KernelRadius;}
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+    if(Pp[p].Type == 0) {return Pp[p].KernelRadius;}
+#endif
+    return All.ForceSoftening[Pp[p].Type];
+}
+
+/* Source-particle AGS_zeta access — exists with FORGAS or FORALL.  When
+ * neither flag enables AGS for the type, the field still exists but the
+ * caller will gate the use via add_ags_zeta_terms_secondary. */
+static KOKKOS_INLINE_FUNCTION
+double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
+{
+    return Pp[p].AGS_zeta;
+}
+#endif
+
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+/* Forward decl of the (file-scope, non-static) helper in ags_rkern.cc.
+ * On Kokkos OMP this resolves at link time and the kernel runs on host
+ * threads, so direct call is fine.  CUDA offload would require either
+ * porting to a header-defined inline or a __device__ duplicate; flagged
+ * for a Phase 4 follow-up. */
+extern int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary);
+#endif
+
 /* Compile-time gating: Tier 1a supports ONLY the core walk. Any of these
  * payloads requires the walk kernel to compute extra terms that haven't been
  * ported yet — they land in Tier 1b, 2, or 3. Gating here keeps the kernel
@@ -55,8 +92,21 @@ extern float shortrange_table_potential[GIZMO_GPU_GRAVTREE_NTAB];
  * declared extern below; on Kokkos OMP they live in host memory and are
  * directly accessible from the kernel.  True device offload (CUDA) will
  * require mirroring the tables — flagged for a Phase 4 follow-up. */
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support ADAPTIVE_GRAVSOFT_* (added in Tier 1b)."
+/* ADAPTIVE_GRAVSOFT_FORGAS is supported in Tier 1b.3.  The walk kernel
+ * also has the FORALL code paths in place, BUT precompiler_logic.h:152-156
+ * auto-defines ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING whenever
+ * FORALL is set, and SYMMETRIZE is not yet ported (defers to Tier 1c).
+ * So the FORALL branch is unreachable in practice — the SYMMETRIZE gate
+ * below catches it.  ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION pairs with
+ * COMPUTE_TIDAL_TENSOR_IN_GRAVTREE (Tier 3) and is gated separately. */
+#if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
+#error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION (lands with Tier 3 tidal tensor)."
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+#error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING (auto-defined by ADAPTIVE_GRAVSOFT_FORALL — port in Tier 1c)."
+#endif
+#if defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "GIZMO_GPU_GRAVTREE does not yet support type-specific softening overrides used by ForceSoftening_KernelRadius (defer)."
 #endif
 /* OUTPUT_POTENTIAL alone (without EVALPOTENTIAL) routes through compute_potential()
  * in core/run.cc, which is a separate CPU-only walk and therefore unaffected by
@@ -117,9 +167,27 @@ gpu_gravtree_walk_one(int target,
     double pmass = P_dev[target].Mass;
     if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
 
-    /* Tier-1a softening: reduces to All.ForceSoftening[ptype] under the
-     * compile-time gating above (no ADAPTIVE_GRAVSOFT_*). Using All. */
+    /* Target softening: starts as the per-type floor, replaced by the
+     * adaptive kernel radius if AGS is active for this type.  The CPU walk
+     * (forcetree.cc:1545,1556-1571) does the same: look up the kernel
+     * radius, and if it's larger than the floor, take the AGS_zeta
+     * correction; otherwise clamp to the floor and skip zeta. */
     double soft = All.ForceSoftening[ptype];
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+    double zeta = 0.0;
+    {
+        double soft_adapt = gpu_force_softening_kernel_radius(P_dev, target);
+        if(soft_adapt > soft) {
+            soft = soft_adapt;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+            if(ptype == 0) {zeta = gpu_get_ags_zeta(P_dev, target);}
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+            if((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) {zeta = gpu_get_ags_zeta(P_dev, target);}
+#endif
+        }
+    }
+#endif
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
 
     Vec3<double> acc = {0,0,0};
@@ -133,6 +201,10 @@ gpu_gravtree_walk_one(int target,
         double h = soft, h_p = -1.0;
         Vec3<double> dr;
         double r2, mass;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+        int ptype_sec = -1;     /* secondary (source) type; -1 means "node" */
+        double zeta_sec = 0.0;  /* secondary AGS_zeta */
+#endif
 
         if(no < maxPart) /* particle leaf */
         {
@@ -140,6 +212,17 @@ gpu_gravtree_walk_one(int target,
             /* GRAVITY_NEAREST_XYZ is a no-op under GRAVITY_NOT_PERIODIC (Tier-1a gate). */
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+            /* Source softening is now adaptive (per-particle).  Mirrors the
+             * particle-leaf block in forcetree.cc:1773-1779. */
+            h_p = gpu_force_softening_kernel_radius(P_dev, no);
+            ptype_sec = P_dev[no].Type;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+            if(ptype_sec == 0) {zeta_sec = gpu_get_ags_zeta(P_dev, no);}
+#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
+            zeta_sec = gpu_get_ags_zeta(P_dev, no);
+#endif
+#endif
         }
         else if(no >= maxPart + maxNodes) /* pseudo-particle — remote */
         {
@@ -237,6 +320,46 @@ gpu_gravtree_walk_one(int target,
                 fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
 #ifdef EVALPOTENTIAL
                 fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+                /* AGS zeta correction term: ensures conservative forces with
+                 * adaptive gravitational softening (Price & Monaghan 2007 style).
+                 * Mirrors forcetree.cc:2109-2140.  Both 'primary' (target zeta)
+                 * and 'secondary' (source zeta) contributions are added when
+                 * the kernel-shared BITFLAG check passes. */
+                double fac_corr = 0.0;
+                int add_primary = 1, add_secondary = 1;
+                double u_p = (h_p > 0) ? (r / h_p) : 0.0;
+                if(r <= 0.0 || pmass <= 0.0 || mass <= 0.0 || ptype_sec < 0) {
+                    add_primary = 0; add_secondary = 0;
+                }
+                if(zeta == 0.0 || u >= 1.0 || h <= 0.0) {add_primary = 0;}
+                if(zeta_sec == 0.0 || u_p >= 1.0 || h_p <= 0.0) {add_secondary = 0;}
+                if(ptype != 0 || ptype_sec != 0) {
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+                    int bm_pri = ags_gravity_kernel_shared_BITFLAG((short int)ptype);
+                    int bm_sec = ags_gravity_kernel_shared_BITFLAG((short int)ptype_sec);
+                    if(!((1 << ptype)     & (ADAPTIVE_GRAVSOFT_FORALL)) ||
+                       !((1 << ptype_sec) & bm_pri)) {add_primary = 0;}
+                    if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) ||
+                       !((1 << ptype)     & bm_sec)) {add_secondary = 0;}
+#else
+                    add_primary = 0; add_secondary = 0;  /* FORGAS only: gas-gas only */
+#endif
+                }
+                if(add_primary) {
+                    double dWdr, wp;
+                    kernel_main(u, h3_inv, h3_inv * h_inv, &wp, &dWdr, 1);
+                    fac_corr += -(zeta / pmass) * dWdr / r;
+                }
+                if(add_secondary) {
+                    double dWdr, wp;
+                    double h_p_inv  = 1.0 / h_p;
+                    double h_p3_inv = h_p_inv * h_p_inv * h_p_inv;
+                    kernel_main(u_p, h_p3_inv, h_p3_inv * h_p_inv, &wp, &dWdr, 1);
+                    fac_corr += -(zeta_sec / pmass) * dWdr / r;
+                }
+                if(!isnan(fac_corr)) {fac_accel += fac_corr;}
 #endif
             }
 #ifdef PMGRID
