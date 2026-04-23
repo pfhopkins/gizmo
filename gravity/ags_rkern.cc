@@ -280,6 +280,10 @@ void ags_density(void)
     double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
     CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
     double ags_ghost_safety = gizmo_ghost_safety_factor();
+    /* Clear any ghost particles left by density() before starting the AGS ghost
+     * exchange.  Without this, density ghosts compound into the AGS base count
+     * and the ghost_exchange repeatedly requests 2x+ the local count each redo. */
+    if(NTask > 1) {ghost_exchange_cleanup();}
     gizmo_density_prep_ghosts(ags_ghost_safety);
 #else
     /* allocate buffers to arrange communication */

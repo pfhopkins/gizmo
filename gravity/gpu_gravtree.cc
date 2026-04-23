@@ -92,18 +92,13 @@ extern int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary);
  * declared extern below; on Kokkos OMP they live in host memory and are
  * directly accessible from the kernel.  True device offload (CUDA) will
  * require mirroring the tables — flagged for a Phase 4 follow-up. */
-/* ADAPTIVE_GRAVSOFT_FORGAS is supported in Tier 1b.3.  The walk kernel
- * also has the FORALL code paths in place, BUT precompiler_logic.h:152-156
- * auto-defines ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING whenever
- * FORALL is set, and SYMMETRIZE is not yet ported (defers to Tier 1c).
- * So the FORALL branch is unreachable in practice — the SYMMETRIZE gate
- * below catches it.  ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION pairs with
- * COMPUTE_TIDAL_TENSOR_IN_GRAVTREE (Tier 3) and is gated separately. */
+/* Tier 1c: ADAPTIVE_GRAVSOFT_FORALL + SYMMETRIZE_FORCE_BY_AVERAGING are now
+ * supported.  FORALL auto-defines SYMMETRIZE (precompiler_logic.h:152-156);
+ * both are handled in the in-kernel force branch below.
+ * ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION pairs with COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+ * (Tier 3) and is gated separately. */
 #if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION (lands with Tier 3 tidal tensor)."
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-#error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING (auto-defined by ADAPTIVE_GRAVSOFT_FORALL — port in Tier 1c)."
 #endif
 #if defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 #error "GIZMO_GPU_GRAVTREE does not yet support type-specific softening overrides used by ForceSoftening_KernelRadius (defer)."
@@ -189,6 +184,12 @@ gpu_gravtree_walk_one(int target,
     }
 #endif
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
+
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    /* Cache once per target — mirrors forcetree.cc:1590.  Reused below for
+     * both the AVERAGING-symmetrize decision and the zeta correction gates. */
+    const int ags_bitflag_primary = ags_gravity_kernel_shared_BITFLAG((short int)ptype);
+#endif
 
     Vec3<double> acc = {0,0,0};
     int ninter = 0;
@@ -312,16 +313,59 @@ gpu_gravtree_walk_one(int target,
                 fac_pot   = -mass / r;
 #endif
             } else {
-                double h_grav = h;
-                if(h_p > h_grav) {h_grav = h_p;} /* MAX-symmetrize (non-AVERAGING branch) */
-                double h_inv = 1.0 / h_grav;
+#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+                /* AVERAGING-symmetrize branch (mirrors forcetree.cc:2087-2110).
+                 * Evaluate at primary softening first, then optionally blend
+                 * with evaluation at h_p based on (primary,secondary) AGS
+                 * type-pair bitmask. */
+                double h_inv  = 1.0 / h;
                 double h3_inv = h_inv * h_inv * h_inv;
-                double u = r * h_inv;
+                double u      = r * h_inv;
                 fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
 #ifdef EVALPOTENTIAL
                 fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
 #endif
+                if(h_p > 0) {
+                    int symmetrize_by_averaging = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+                    if(ptype_sec >= 0 && ((1 << ptype_sec) & ags_bitflag_primary)) {
+                        symmetrize_by_averaging = 1;
+                    }
+#endif
+                    /* SINGLE_STAR_SINK_DYNAMICS (forcetree.cc:2093-2095) is
+                     * gated off at compile time in Tier 1a/1b; no effect here. */
+                    double prefac_corr_p    = 1.0;
+                    double prefac_corr_orig = 1.0;
+                    if(symmetrize_by_averaging == 0) {prefac_corr_p = 2.0; prefac_corr_orig = 0.0;}
+                    if((symmetrize_by_averaging == 1) || (h_p > h)) {
+                        double h_p_inv  = 1.0 / h_p;
+                        double h_p3_inv = h_p_inv * h_p_inv * h_p_inv;
+                        double u_p      = r * h_p_inv;
+                        double fac_p    = mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, 1);
+                        fac_accel = 0.5 * (prefac_corr_orig * fac_accel + prefac_corr_p * fac_p);
+#ifdef EVALPOTENTIAL
+                        double fac_pot_p = mass * kernel_gravity(u_p, h_p_inv, h_p3_inv, -1);
+                        fac_pot          = 0.5 * (prefac_corr_orig * fac_pot   + prefac_corr_p * fac_pot_p);
+#endif
+                    }
+                }
+#else  /* MAX-symmetrize (non-AVERAGING) */
+                double h_grav = h;
+                if(h_p > h_grav) {h_grav = h_p;}
+                double h_inv  = 1.0 / h_grav;
+                double h3_inv = h_inv * h_inv * h_inv;
+                double u      = r * h_inv;
+                fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
+#ifdef EVALPOTENTIAL
+                fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
+#endif
+#endif  /* SYMMETRIZE_FORCE_BY_AVERAGING */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+                /* Re-derive inside-kernel primary softening factors for zeta
+                 * below.  Under SYMMETRIZE these already use h (primary); under
+                 * MAX they use h_grav=max(h,h_p) — the zeta correction gates on
+                 * u>=1 which is consistent either way because the kernel_main
+                 * lookup below uses h_inv/h3_inv from the primary eval. */
                 /* AGS zeta correction term: ensures conservative forces with
                  * adaptive gravitational softening (Price & Monaghan 2007 style).
                  * Mirrors forcetree.cc:2109-2140.  Both 'primary' (target zeta)
@@ -337,10 +381,9 @@ gpu_gravtree_walk_one(int target,
                 if(zeta_sec == 0.0 || u_p >= 1.0 || h_p <= 0.0) {add_secondary = 0;}
                 if(ptype != 0 || ptype_sec != 0) {
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    int bm_pri = ags_gravity_kernel_shared_BITFLAG((short int)ptype);
                     int bm_sec = ags_gravity_kernel_shared_BITFLAG((short int)ptype_sec);
                     if(!((1 << ptype)     & (ADAPTIVE_GRAVSOFT_FORALL)) ||
-                       !((1 << ptype_sec) & bm_pri)) {add_primary = 0;}
+                       !((1 << ptype_sec) & ags_bitflag_primary)) {add_primary = 0;}
                     if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) ||
                        !((1 << ptype)     & bm_sec)) {add_secondary = 0;}
 #else
