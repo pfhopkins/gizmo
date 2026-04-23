@@ -14,6 +14,12 @@
 
 #ifdef COSMIC_RAY_FLUID
 
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+KOKKOS_INLINE_FUNCTION double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell);
+#endif
+
 KOKKOS_INLINE_FUNCTION double cosmicrayfluid_rsol_corrfac(int k) {
 #if defined(CRFLUID_ALT_RSOL_FORM)
     return ((CRFLUID_REDUCED_C_CODE(k))/(C_LIGHT_CODE));
@@ -48,11 +54,7 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_C
     double Rv[2]={1.8, 0.6}; R=Rv[k_CRegy]; // approximate peak energies of each from Cummings et al. 2016 Fig 15
 #endif
 #if (N_CR_PARTICLE_BINS > 2)
-#ifndef GIZMO_GPU_COMPILER
     if(target >= 0) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, CellP);} else {R=All.CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
-#else
-    R=All.CR_global_rigidity_at_bin_center[k_CRegy]; // GPU fallback: spectral-slope-weighted mean not available on device
-#endif
 #endif
     return R;
 }
@@ -295,6 +297,29 @@ KOKKOS_INLINE_FUNCTION double CR_return_slope_from_number_and_energy_in_bin(doub
     badval=-2; if(fabs(slope_gamma - badval) < tol) {if(slope_gamma<badval) {slope_gamma=badval-tol;} else {slope_gamma=badval+tol;}}
     badval=-3; if(fabs(slope_gamma - badval) < tol) {if(slope_gamma<badval) {slope_gamma=badval-tol;} else {slope_gamma=badval+tol;}}
     return slope_gamma; // ok, safe to return
+}
+
+/* return number of CRs in bin, in our strange code units, where the 'number' has units of E_code / GeV. to convert to real number need to multiply by this but that can cause lots of overflow issues so we work with this unit */
+KOKKOS_INLINE_FUNCTION double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell)
+{
+    return cell[target].CosmicRay_Number_in_Bin[k_bin];
+}
+
+/* return the CR bin spectral slope, depending on what we use as our evolved variable -- note this is the slope of the 1D CR distribution function, df/dp ~ p^alpha, so e.g. N_cr = integral[dp * df/dp] */
+KOKKOS_INLINE_FUNCTION double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell)
+{
+    //return cell[target].CosmicRay_PwrLaw_Slopes_in_Bin[k_bin]; // evolving slopes directly
+    return CR_return_slope_from_number_and_energy_in_bin(cell[target].CosmicRayEnergy[k_bin], cell[target].CosmicRay_Number_in_Bin[k_bin], return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_bin), k_bin); // calculate if not evolving directly
+}
+
+/* return mean rigidity in GV per CR for CRs in bin */
+KOKKOS_INLINE_FUNCTION double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell)
+{
+    double slope = CR_return_spectral_slope_target(target, k_bin, cell);
+    double gamma_one = 1. + slope;
+    double R0 = All.CR_global_rigidity_at_bin_center[k_bin], xm = All.CR_global_min_rigidity_in_bin[k_bin] / R0, xp = All.CR_global_max_rigidity_in_bin[k_bin] / R0, xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
+    double gamma_fac = (gamma_one/(gamma_one+1.)) * (xp_gamma_one*xp - xm_gamma_one*xm) / (xp_gamma_one - xm_gamma_one); // dimensionless term from weighted integral over the bin
+    return R0 * gamma_fac; // returns value appropriately weighted over the bin
 }
 
 /* return solution for the distance in dimensionless terms from the bin edge for CRs which can propagate to the edge with the dimensionless rate factor given */

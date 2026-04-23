@@ -820,19 +820,8 @@ void CR_initialize_multibin_quantities(void)
 /* CR_check_if_bin_is_nonrelativistic: definition now in cosmic_ray_functions.h */
 
 
-/* return number of CRs in bin, in our strange code units, where the 'number' has units of E_code / GeV. to convert to real number need to multiply by this but that can cause lots of overflow issues so we work with this unit */
-double CR_return_effective_number_in_bin_in_codeunits(int target, int k_bin, struct gas_cell_data *cell)
-{
-    return cell[target].CosmicRay_Number_in_Bin[k_bin];
-}
-
-
-/* return the CR bin spectral slope, depending on what we use as our evolved variable -- note this is the slope of the 1D CR distribution function, df/dp ~ p^alpha, so e.g. N_cr = integral[dp * df/dp] */
-double CR_return_spectral_slope_target(int target, int k_bin, struct gas_cell_data *cell)
-{
-    //return cell[target].CosmicRay_PwrLaw_Slopes_in_Bin[k_bin]; // evolving slopes directly
-    return CR_return_slope_from_number_and_energy_in_bin(cell[target].CosmicRayEnergy[k_bin], cell[target].CosmicRay_Number_in_Bin[k_bin], return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_bin), k_bin); // calculate if not evolving directly
-}
+/* CR_return_effective_number_in_bin_in_codeunits,
+   CR_return_spectral_slope_target: definitions now in cosmic_ray_functions.h */
 
 
 /* return true number of CRs in bin, in actual units */
@@ -868,15 +857,7 @@ double CR_return_mean_energy_in_bin_in_GeV(int target, int k_bin, struct gas_cel
 }
 
 
-/* return mean rigidity in GV per CR for CRs in bin */
-double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell)
-{
-    double slope = CR_return_spectral_slope_target(target, k_bin, cell);
-    double gamma_one = 1. + slope;
-    double R0 = All.CR_global_rigidity_at_bin_center[k_bin], xm = All.CR_global_min_rigidity_in_bin[k_bin] / R0, xp = All.CR_global_max_rigidity_in_bin[k_bin] / R0, xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
-    double gamma_fac = (gamma_one/(gamma_one+1.)) * (xp_gamma_one*xp - xm_gamma_one*xm) / (xp_gamma_one - xm_gamma_one); // dimensionless term from weighted integral over the bin
-    return R0 * gamma_fac; // returns value appropriately weighted over the bin
-}
+/* CR_return_mean_rigidity_in_bin_in_GV: definition now in cosmic_ray_functions.h */
 
 
 /* sort function if we need to sort CR bins by rigidity from lowest to highest for future compatibility */
@@ -1022,4 +1003,3 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
 #endif
     return d_CR; // return final value
 }
-
