@@ -1,14 +1,15 @@
-/* gpu_gravtree.cc — Step 13 Phase 4 Tier 1a
+/* gpu_gravtree.cc — Step 13 Phase 4 Tier 1a / Phase 2-A
  *
- * Core gravity walk on GPU, no optional payloads. See gpu_gravtree.h for
- * architectural notes (speculative GPU + CPU fallback on pseudo-particle).
+ * GPU gravity walk (mode=0 primary-tree path).  Tier 1a–1c: core walk with
+ * PMGRID, ADAPTIVE_GRAVSOFT_FORALL, SYMMETRIZE, EVALPOTENTIAL.  Phase 2-A:
+ * RT cluster payloads (RT_USE_GRAVTREE, GALSF_FB_FIRE_RT_LONGRANGE,
+ * CHIMES_STELLAR_FLUXES, RT_USE_TREECOL_FOR_NH).
  *
- * Walk structure extracted verbatim from force_treeevaluate() (mode=0 path)
- * in forcetree.cc:1435-2603, stripped of all #ifdef payload branches. When
- * a thread encounters a pseudo-particle (no >= MaxPart + MaxNodes), it sets
- * failed[i]=1 and exits without writing P[i].GravAccel; the host leaves
- * ProcessedFlag[i] unset so the existing CPU primary loop + MPI export
- * machinery handles that particle unchanged.
+ * rt_get_source_luminosity() is not GPU-callable; it is pre-computed on CPU
+ * for all local particles into a SharedSpace array (d_src_lum) before kernel
+ * launch.  Node stellar luminosities come from the Phase 2-I SoA extension.
+ * rt_kappa() is KOKKOS_INLINE_FUNCTION and runs on device for RT_LEBRON
+ * fac_stellum initialisation.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -46,11 +47,7 @@ extern float shortrange_table_potential[GIZMO_GPU_GRAVTREE_NTAB];
 #endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-/* GPU-callable mirror of ForceSoftening_KernelRadius() that takes a
- * particle_data pointer (so we can use P_dev in the kernel without touching
- * the global P[]).  Tier 1b scope: only the FORGAS / FORALL branches are
- * implemented — the GALSF/SINGLE_STAR/MAX_SOFT_HARD_LIMIT/TIDAL paths are
- * gated off above and will land with later tiers. */
+/* GPU-callable mirror of ForceSoftening_KernelRadius(). */
 static KOKKOS_INLINE_FUNCTION
 double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
 {
@@ -63,9 +60,6 @@ double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
     return All.ForceSoftening[Pp[p].Type];
 }
 
-/* Source-particle AGS_zeta access — exists with FORGAS or FORALL.  When
- * neither flag enables AGS for the type, the field still exists but the
- * caller will gate the use via add_ags_zeta_terms_secondary. */
 static KOKKOS_INLINE_FUNCTION
 double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 {
@@ -74,14 +68,7 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 #endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-/* Device-callable replica of ags_gravity_kernel_shared_BITFLAG (ags_rkern.cc).
- * The original is __host__-only (a plain C function); calling it from a
- * KOKKOS_INLINE_FUNCTION triggers nvcc warning 20011 and fails on real CUDA
- * devices where host function addresses are unreachable from GPU code.
- * This inline reproduces exactly the same logic using only compile-time
- * constants and All.* data (accessible via UVM on GH200 / SharedSpace).
- * The configs that reach GIZMO_GPU_GRAVTREE are gated by #error above to
- * exclude TIDAL_CRITERION; GALSF + SIDM branches are included for completeness. */
+/* Device-callable replica of ags_gravity_kernel_shared_BITFLAG (ags_rkern.cc). */
 static KOKKOS_INLINE_FUNCTION int
 gpu_ags_kernel_shared_BITFLAG(int ptype)
 {
@@ -104,76 +91,80 @@ gpu_ags_kernel_shared_BITFLAG(int ptype)
 }
 #endif
 
-/* Compile-time gating: Tier 1a supports ONLY the core walk. Any of these
- * payloads requires the walk kernel to compute extra terms that haven't been
- * ported yet — they land in Tier 1b, 2, or 3. Gating here keeps the kernel
- * code readable and prevents silent wrong-physics on configs we haven't
- * validated. */
-/* PMGRID: short-range cutoff (rcut2) + tabulated short-range factor are
- * supported in Tier 1b.  shortrange_table / shortrange_table_potential are
- * declared extern below; on Kokkos OMP they live in host memory and are
- * directly accessible from the kernel.  True device offload (CUDA) will
- * require mirroring the tables — flagged for a Phase 4 follow-up. */
-/* Tier 1c: ADAPTIVE_GRAVSOFT_FORALL + SYMMETRIZE_FORCE_BY_AVERAGING are now
- * supported.  FORALL auto-defines SYMMETRIZE (precompiler_logic.h:152-156);
- * both are handled in the in-kernel force branch below.
- * ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION pairs with COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
- * (Tier 3) and is gated separately. */
+/* Phase 2-A: RT payload data passed to the GPU walk kernel.
+ * src_lum[p * N_RT_FREQ_BINS + kf] = per-particle luminosity precomputed on
+ * CPU via rt_get_source_luminosity().  Only populated when RT_USE_GRAVTREE is
+ * active.  Sized for [NumPart * N_RT_FREQ_BINS] in SharedSpace. */
+#ifdef RT_USE_GRAVTREE
+#include "../radiation/rt_functions.h"
+struct gpu_rt_walk_data_t {
+    MyFloat *src_lum;             /* [NumPart * N_RT_FREQ_BINS] */
+#ifdef CHIMES_STELLAR_FLUXES
+    double  *src_lum_G0;          /* [NumPart * CHIMES_LOCAL_UV_NBINS] */
+    double  *src_lum_ion;         /* [NumPart * CHIMES_LOCAL_UV_NBINS] */
+#endif
+};
+#endif
+
+/* -------------------------------------------------------------------------
+ * Compile-time payload gates.
+ * Tier 1c + Phase 2-A flags are now unlocked.  Everything else that hasn't
+ * been ported remains #error'd so wrong-physics on those configs is caught
+ * at compile time rather than producing silent incorrect results.
+ * ---------------------------------------------------------------------- */
 #if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
-#error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION (lands with Tier 3 tidal tensor)."
+#error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION (Tier 3)."
 #endif
 #if defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-#error "GIZMO_GPU_GRAVTREE does not yet support type-specific softening overrides used by ForceSoftening_KernelRadius (defer)."
+#error "GIZMO_GPU_GRAVTREE does not yet support type-specific softening overrides (defer)."
 #endif
-/* OUTPUT_POTENTIAL alone (without EVALPOTENTIAL) routes through compute_potential()
- * in core/run.cc, which is a separate CPU-only walk and therefore unaffected by
- * GIZMO_GPU_GRAVTREE. EVALPOTENTIAL adds inline-with-the-walk potential
- * accumulation, ported in this tier. */
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support TIDAL_TENSOR / JERK in gravtree (Tier 3)."
-#endif
-#if defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support RT payloads in gravtree (Tier 2)."
+#error "GIZMO_GPU_GRAVTREE does not yet support TIDAL_TENSOR / JERK in gravtree (Tier 3)."
 #endif
 #if defined(SINK_CALC_DISTANCES) || defined(SINK_PHOTONMOMENTUM) || defined(SINK_DYNFRICTION_FROMTREE) || defined(SINK_COMPTON_HEATING)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support SINK_* payloads in gravtree (Tier 2)."
+#error "GIZMO_GPU_GRAVTREE does not yet support SINK_* payloads (Phase 2-B/2-C)."
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support SINGLE_STAR_* payloads (Tier 2)."
+#error "GIZMO_GPU_GRAVTREE does not yet support SINGLE_STAR_* payloads (Phase 2-B)."
 #endif
-#if defined(COSMIC_RAY_SUBGRID_LEBRON) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(CHIMES_STELLAR_FLUXES)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support CR/FIRE/CHIMES payloads (Tier 2/3)."
+#if defined(COSMIC_RAY_SUBGRID_LEBRON)
+#error "GIZMO_GPU_GRAVTREE does not yet support COSMIC_RAY_SUBGRID_LEBRON (Phase 2-D)."
 #endif
-#if defined(DM_SCALARFIELD_SCREENING) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(COUNT_MASS_IN_GRAVTREE) || defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support DM/spherical/mass-count payloads (Tier 3)."
+#if defined(DM_SCALARFIELD_SCREENING) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(COUNT_MASS_IN_GRAVTREE)
+#error "GIZMO_GPU_GRAVTREE does not yet support DM/spherical/mass-count payloads (Tier 3)."
 #endif
 #if defined(HERMITE_INTEGRATION) || defined(ADAPTIVE_TREEFORCE_UPDATE) || defined(NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE)
-#error "GIZMO_GPU_GRAVTREE Tier 1a does not support HERMITE / ATFU / NEIGHBORS_MUST_BE_COMPUTED (Phase 5 / Tier 3)."
+#error "GIZMO_GPU_GRAVTREE does not yet support HERMITE / ATFU / NEIGHBORS_MUST_BE_COMPUTED (Tier 3)."
 #endif
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
-#error "GIZMO_GPU_GRAVTREE Tier 1a requires non-periodic gravity (BOX_PERIODIC + GRAVITY_NOT_PERIODIC, or no BOX_PERIODIC). Periodic Ewald walk ports in a later tier."
+#error "GIZMO_GPU_GRAVTREE requires non-periodic gravity (Ewald walk ports in a later tier)."
 #endif
 #if defined(SELFGRAVITY_OFF)
-#error "GIZMO_GPU_GRAVTREE requires self-gravity to be enabled (SELFGRAVITY_OFF disables the walk entirely)."
+#error "GIZMO_GPU_GRAVTREE requires self-gravity to be enabled."
 #endif
 
 
-/* Device-side walk for a single target particle. Returns 1 on success
- * (acc written), 0 on failure (hit pseudo-particle — host must run CPU walk
- * for this target). Closely mirrors force_treeevaluate() mode=0 with all
- * payload branches stripped.
+/* -------------------------------------------------------------------------
+ * gpu_gravtree_walk_one — device-side walk for a single target particle.
  *
- * pot_out: always populated with the raw potential sum.  When EVALPOTENTIAL
- * is not defined, the host scatter-back ignores it and the value is
- * effectively dead — left in the signature so the kernel body stays the
- * same regardless of compile-time gating. */
+ * Returns 1 on success (acc written), 0 on failure (pseudo-particle hit;
+ * host must run CPU walk for this target).  Mirrors force_treeevaluate()
+ * mode=0 with SINK/CR/DM/tidal payload branches stripped (gated above).
+ * Phase 2-A RT payloads (RT_USE_GRAVTREE, treecol, CHIMES, FIRE longrange)
+ * are included here; they accumulate into CellP_dev[target] which the host
+ * scatter loop copies back to CellP[].
+ * ---------------------------------------------------------------------- */
 static KOKKOS_INLINE_FUNCTION int
 gpu_gravtree_walk_one(int target,
                       int maxPart, int maxNodes,
                       struct particle_data *P_dev,
+                      struct gas_cell_data *CellP_dev,
                       const struct gpu_gravity_tree_soa_t *s,
 #ifdef PMGRID
                       double rcut, double rcut2, double asmthfac,
+#endif
+#ifdef RT_USE_GRAVTREE
+                      const struct gpu_rt_walk_data_t *rt_data,
 #endif
                       Vec3<double> &acc_out,
                       int &ninter_out,
@@ -184,11 +175,6 @@ gpu_gravtree_walk_one(int target,
     double pmass = P_dev[target].Mass;
     if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
 
-    /* Target softening: starts as the per-type floor, replaced by the
-     * adaptive kernel radius if AGS is active for this type.  The CPU walk
-     * (forcetree.cc:1545,1556-1571) does the same: look up the kernel
-     * radius, and if it's larger than the floor, take the AGS_zeta
-     * correction; otherwise clamp to the floor and skip zeta. */
     double soft = All.ForceSoftening[ptype];
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
     double zeta = 0.0;
@@ -208,9 +194,65 @@ gpu_gravtree_walk_one(int target,
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
 
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    /* Cache once per target — mirrors forcetree.cc:1590.  Reused below for
-     * both the AVERAGING-symmetrize decision and the zeta correction gates. */
     const int ags_bitflag_primary = gpu_ags_kernel_shared_BITFLAG(ptype);
+#endif
+
+    /* ------------------------------------------------------------------ *
+     * RT cluster local accumulators (Phase 2-A).  All gated by the same   *
+     * #ifdefs as the CPU walk in forcetree.cc.                             *
+     * ------------------------------------------------------------------ */
+#ifdef RT_USE_TREECOL_FOR_NH
+    const double angular_bin_size = 4.0 * M_PI / RT_USE_TREECOL_FOR_NH;
+    double treecol_angular_bins[RT_USE_TREECOL_FOR_NH];
+    {int kb; for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++) {treecol_angular_bins[kb]=0.0;}}
+#endif
+
+#ifdef RT_USE_GRAVTREE
+    double mass_stellarlum[N_RT_FREQ_BINS];
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {mass_stellarlum[kf]=0.0;}}
+#ifdef CHIMES_STELLAR_FLUXES
+    double chimes_mass_stellarlum_G0[CHIMES_LOCAL_UV_NBINS];
+    double chimes_mass_stellarlum_ion[CHIMES_LOCAL_UV_NBINS];
+    double chimes_flux_G0[CHIMES_LOCAL_UV_NBINS];
+    double chimes_flux_ion[CHIMES_LOCAL_UV_NBINS];
+    {int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {chimes_mass_stellarlum_G0[kc]=0; chimes_mass_stellarlum_ion[kc]=0; chimes_flux_G0[kc]=0; chimes_flux_ion[kc]=0;}}
+#endif
+    Vec3<double> d_stellarlum = {};
+    /* Mirror CPU's valid_gas_particle_for_rt gate (forcetree.cc:1595) */
+    const int valid_gas_particle_for_rt = (ptype == 0 && soft > 0 && pmass > 0) ? 1 : 0;
+#ifdef RT_OTVET
+    SymmetricTensor2<double> RT_ET[N_RT_FREQ_BINS];
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {RT_ET[kf] = {};}}
+#endif
+#endif /* RT_USE_GRAVTREE */
+
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+    double incident_flux_uv = 0.0, incident_flux_euv = 0.0;
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+    double Rad_E_gamma[N_RT_FREQ_BINS];
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {Rad_E_gamma[kf]=0.0;}}
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+    Vec3<double> Rad_Flux[N_RT_FREQ_BINS];
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {Rad_Flux[kf]={};}}
+#endif
+
+    /* RT_LEBRON radiation-pressure coupling factor (forcetree.cc:1596-1604).
+     * Pre-computed once per target before the walk loop because it only
+     * depends on the target's properties.  Skipped when save-flux mode is
+     * active (flux is stored and converted to RP after the walk by the caller). */
+#if defined(RT_USE_GRAVTREE) && defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+    double fac_stellum[N_RT_FREQ_BINS];
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {fac_stellum[kf]=0.0;}}
+    if(valid_gas_particle_for_rt) {
+        double h_eff_phys = soft * pow(VOLUME_NORM_COEFF_FOR_NDIMS / (double)All.DesNumNgb, 1.0/NUMDIMS) * All.cf_atime;
+        double sigma_particle = pmass / (h_eff_phys * h_eff_phys);
+        double fac_stellum_0 = -All.PhotonMomentum_Coupled_Fraction / (4.0*M_PI * C_LIGHT_CODE_REDUCED * sigma_particle * All.G);
+        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
+            fac_stellum[kf] = fac_stellum_0 * (1.0 - exp(-rt_kappa(-1, kf, P_dev, CellP_dev) * sigma_particle));
+        }
+    }
 #endif
 
     Vec3<double> acc = {0,0,0};
@@ -225,19 +267,19 @@ gpu_gravtree_walk_one(int target,
         Vec3<double> dr;
         double r2, mass;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-        int ptype_sec = -1;     /* secondary (source) type; -1 means "node" */
-        double zeta_sec = 0.0;  /* secondary AGS_zeta */
+        int ptype_sec = -1;
+        double zeta_sec = 0.0;
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        double gasmass = 0.0;
 #endif
 
         if(no < maxPart) /* particle leaf */
         {
             dr = P_dev[no].Pos - pos;
-            /* GRAVITY_NEAREST_XYZ is a no-op under GRAVITY_NOT_PERIODIC (Tier-1a gate). */
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-            /* Source softening is now adaptive (per-particle).  Mirrors the
-             * particle-leaf block in forcetree.cc:1773-1779. */
             h_p = gpu_force_softening_kernel_radius(P_dev, no);
             ptype_sec = P_dev[no].Type;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
@@ -245,6 +287,23 @@ gpu_gravtree_walk_one(int target,
 #elif defined(ADAPTIVE_GRAVSOFT_FORALL)
             zeta_sec = gpu_get_ags_zeta(P_dev, no);
 #endif
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            gasmass = (P_dev[no].Type == 0) ? P_dev[no].Mass : 0.0;
+#endif
+#ifdef RT_USE_GRAVTREE
+            if(valid_gas_particle_for_rt) {
+                d_stellarlum = dr;
+                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
+                    mass_stellarlum[kf] = rt_data->src_lum[(long)no * N_RT_FREQ_BINS + kf];
+                }
+#ifdef CHIMES_STELLAR_FLUXES
+                for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
+                    chimes_mass_stellarlum_G0[kf] = rt_data->src_lum_G0[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_ion[kf] = rt_data->src_lum_ion[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
+                }
+#endif
+            }
 #endif
         }
         else if(no >= maxPart + maxNodes) /* pseudo-particle — remote */
@@ -266,12 +325,6 @@ gpu_gravtree_walk_one(int target,
             r2 = dr.norm_sq();
 
 #ifdef PMGRID
-            /* TreePM: if the node center-of-mass lies beyond rcut, check the
-             * geometric center too (corner-of-cell vs softened force radius).
-             * If the entire cell is outside rcut + 0.5*len, accept and skip
-             * to sibling without ever computing the short-range force.
-             * Mirrors forcetree.cc:1873-1882 with periodic wrap omitted
-             * (Tier 1b gate: GRAVITY_NOT_PERIODIC). */
             if(r2 > rcut2)
             {
                 double eff_dist = rcut + 0.5 * len_node;
@@ -284,12 +337,10 @@ gpu_gravtree_walk_one(int target,
             }
 #endif
 
-            /* Basic softening-radius check (non-ADAPTIVE branch from forcetree.cc:1888). */
             if(h < msoft_node) {
                 if(r2 < msoft_node * msoft_node) {no = s->nextnode[idx]; continue;}
             }
 
-            /* Opening criterion — Barnes-Hut OR relative, matching CPU walk. */
             if(All.ErrTolTheta)
             {
                 if(len_node * len_node > r2 * All.ErrTolTheta * All.ErrTolTheta) {
@@ -298,16 +349,13 @@ gpu_gravtree_walk_one(int target,
             }
             else
             {
-                /* inside softening */
                 if((r2 < (soft + 0.6*len_node)*(soft + 0.6*len_node)) ||
                    (r2 < (msoft_node + 0.6*len_node)*(msoft_node + 0.6*len_node))) {
                     no = s->nextnode[idx]; continue;
                 }
-                /* relative acc-based check */
                 if(mass_node * len_node * len_node > r2 * r2 * aold) {
                     no = s->nextnode[idx]; continue;
                 }
-                /* inside-the-cell check (non-periodic: absolute values) */
                 double dcx = fabs(center_node[0] - pos[0]);
                 double dcy = fabs(center_node[1] - pos[1]);
                 double dcz = fabs(center_node[2] - pos[2]);
@@ -316,9 +364,32 @@ gpu_gravtree_walk_one(int target,
                 }
             }
 
-            /* Node accepted for force accumulation. */
+            /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            gasmass = s->gasmass[idx];
+#endif
+#ifdef RT_USE_GRAVTREE
+            if(valid_gas_particle_for_rt) {
+                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
+                    mass_stellarlum[kf] = s->stellar_lum[idx * N_RT_FREQ_BINS + kf];
+                }
+#ifdef CHIMES_STELLAR_FLUXES
+                for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
+                    chimes_mass_stellarlum_G0[kf] = s->chimes_stellar_lum_G0[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
+                    chimes_mass_stellarlum_ion[kf] = s->chimes_stellar_lum_ion[(long)idx * CHIMES_LOCAL_UV_NBINS + kf];
+                }
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+                d_stellarlum[0] = s->rt_source_lum_s[idx][0] - pos[0];
+                d_stellarlum[1] = s->rt_source_lum_s[idx][1] - pos[1];
+                d_stellarlum[2] = s->rt_source_lum_s[idx][2] - pos[2];
+#else
+                d_stellarlum = dr;
+#endif
+            }
+#endif
         }
 
         /* Force kernel — common path for accepted particles and closed nodes. */
@@ -336,10 +407,6 @@ gpu_gravtree_walk_one(int target,
 #endif
             } else {
 #if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-                /* AVERAGING-symmetrize branch (mirrors forcetree.cc:2087-2110).
-                 * Evaluate at primary softening first, then optionally blend
-                 * with evaluation at h_p based on (primary,secondary) AGS
-                 * type-pair bitmask. */
                 double h_inv  = 1.0 / h;
                 double h3_inv = h_inv * h_inv * h_inv;
                 double u      = r * h_inv;
@@ -354,8 +421,6 @@ gpu_gravtree_walk_one(int target,
                         symmetrize_by_averaging = 1;
                     }
 #endif
-                    /* SINGLE_STAR_SINK_DYNAMICS (forcetree.cc:2093-2095) is
-                     * gated off at compile time in Tier 1a/1b; no effect here. */
                     double prefac_corr_p    = 1.0;
                     double prefac_corr_orig = 1.0;
                     if(symmetrize_by_averaging == 0) {prefac_corr_p = 2.0; prefac_corr_orig = 0.0;}
@@ -383,23 +448,20 @@ gpu_gravtree_walk_one(int target,
 #endif
 #endif  /* SYMMETRIZE_FORCE_BY_AVERAGING */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-                /* Re-derive inside-kernel primary softening factors for zeta
-                 * below.  Under SYMMETRIZE these already use h (primary); under
-                 * MAX they use h_grav=max(h,h_p) — the zeta correction gates on
-                 * u>=1 which is consistent either way because the kernel_main
-                 * lookup below uses h_inv/h3_inv from the primary eval. */
-                /* AGS zeta correction term: ensures conservative forces with
-                 * adaptive gravitational softening (Price & Monaghan 2007 style).
-                 * Mirrors forcetree.cc:2109-2140.  Both 'primary' (target zeta)
-                 * and 'secondary' (source zeta) contributions are added when
-                 * the kernel-shared BITFLAG check passes. */
                 double fac_corr = 0.0;
                 int add_primary = 1, add_secondary = 1;
                 double u_p = (h_p > 0) ? (r / h_p) : 0.0;
+#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+                double h_inv_for_zeta = 1.0 / h, h3_inv_for_zeta = h_inv_for_zeta*h_inv_for_zeta*h_inv_for_zeta;
+                double u_for_zeta = r * h_inv_for_zeta;
+#else
+                double h_inv_for_zeta = 1.0 / h_grav, h3_inv_for_zeta = h_inv_for_zeta*h_inv_for_zeta*h_inv_for_zeta;
+                double u_for_zeta = u;
+#endif
                 if(r <= 0.0 || pmass <= 0.0 || mass <= 0.0 || ptype_sec < 0) {
                     add_primary = 0; add_secondary = 0;
                 }
-                if(zeta == 0.0 || u >= 1.0 || h <= 0.0) {add_primary = 0;}
+                if(zeta == 0.0 || u_for_zeta >= 1.0 || h <= 0.0) {add_primary = 0;}
                 if(zeta_sec == 0.0 || u_p >= 1.0 || h_p <= 0.0) {add_secondary = 0;}
                 if(ptype != 0 || ptype_sec != 0) {
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
@@ -409,12 +471,12 @@ gpu_gravtree_walk_one(int target,
                     if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) ||
                        !((1 << ptype)     & bm_sec)) {add_secondary = 0;}
 #else
-                    add_primary = 0; add_secondary = 0;  /* FORGAS only: gas-gas only */
+                    add_primary = 0; add_secondary = 0;
 #endif
                 }
                 if(add_primary) {
                     double dWdr, wp;
-                    kernel_main(u, h3_inv, h3_inv * h_inv, &wp, &dWdr, 1);
+                    kernel_main(u_for_zeta, h3_inv_for_zeta, h3_inv_for_zeta * h_inv_for_zeta, &wp, &dWdr, 1);
                     fac_corr += -(zeta / pmass) * dWdr / r;
                 }
                 if(add_secondary) {
@@ -428,11 +490,6 @@ gpu_gravtree_walk_one(int target,
 #endif
             }
 #ifdef PMGRID
-            /* TreePM short-range: tabulated error-function complementary
-             * factor multiplies both the force and (if EVALPOTENTIAL) the
-             * potential.  Samples past tabindex=NTAB represent r > rcut
-             * where the long-range (PM) force takes over and the tree walk
-             * contributes nothing. */
             int tabindex = (int) (asmthfac * r);
             if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
                 fac_accel *= shortrange_table[tabindex];
@@ -453,17 +510,154 @@ gpu_gravtree_walk_one(int target,
             pot    += fac_pot;
 #endif
             ninter++;
-        }
 
-        /* Advance. GravCost updates (if TakeLevel >= 0) are skipped on GPU —
-         * host dispatcher falls back to CPU walk when TakeLevel >= 0, so
-         * skipping here is safe. */
+            /* ------------------------------------------------------------ *
+             * RT cluster payloads (Phase 2-A).  Structure mirrors           *
+             * forcetree.cc:2290-2392 (outside the PMGRID tabindex gate,     *
+             * so fac_accel is already 0 when tabindex >= NTAB — correct for  *
+             * treecol; RT_USE_GRAVTREE computes its own fac_rt from          *
+             * d_stellarlum independently).                                   *
+             * ------------------------------------------------------------ */
+#ifdef RT_USE_TREECOL_FOR_NH
+            if(gasmass > 0.0)
+            {
+                int bin;
+                if((fabs(dr[0]) > fabs(dr[1])) && (fabs(dr[0]) > fabs(dr[2]))) {
+                    bin = (dr[0] > 0) ? 0 : 1;
+                } else if(fabs(dr[1]) > fabs(dr[2])) {
+                    bin = (dr[1] > 0) ? 2 : 3;
+                } else {
+                    bin = (dr[2] > 0) ? 4 : 5;
+                }
+                treecol_angular_bins[bin] += fac_accel * gasmass * r / (angular_bin_size * mass);
+            }
+#endif
+
+#ifdef RT_USE_GRAVTREE
+            if(valid_gas_particle_for_rt)
+            {
+                /* Compute fac_rt from d_stellarlum (may differ from dr when
+                 * RT_SEPARATELY_TRACK_LUMPOS; otherwise d_stellarlum == dr). */
+                double r2_rt = d_stellarlum.norm_sq(), r_rt = sqrt(r2_rt);
+                double fac_rt;
+                if(r_rt >= soft) {
+                    fac_rt = 1.0 / (r2_rt * r_rt);
+                } else {
+                    double h_inv_rt = 1.0/soft, h3_inv_rt = h_inv_rt*h_inv_rt*h_inv_rt;
+                    double u_rt = r_rt * h_inv_rt;
+                    fac_rt = kernel_gravity(u_rt, h_inv_rt, h3_inv_rt, 1);
+                }
+                if((soft > r_rt) && (soft > 0)) {fac_rt *= (r2_rt / (soft * soft));}
+                double fac_intensity = fac_rt * r_rt * All.cf_a2inv / (4.0 * M_PI);
+
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+                {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {Rad_E_gamma[kf] += fac_intensity * mass_stellarlum[kf];}}
+#endif
+
+#ifdef CHIMES_STELLAR_FLUXES
+                {
+                    double chimes_fac = fac_intensity / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+                    int ck; for(ck=0; ck<CHIMES_LOCAL_UV_NBINS; ck++) {
+                        chimes_flux_G0[ck]  += chimes_fac * chimes_mass_stellarlum_G0[ck];
+                        chimes_flux_ion[ck] += chimes_fac * chimes_mass_stellarlum_ion[ck];
+                    }
+                }
+#endif
+
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+                incident_flux_uv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV];
+                if((mass_stellarlum[RT_FREQ_BIN_FIRE_IR] < mass_stellarlum[RT_FREQ_BIN_FIRE_UV]) &&
+                   (mass_stellarlum[RT_FREQ_BIN_FIRE_IR] > 0))
+                {
+                    incident_flux_euv += fac_intensity * mass_stellarlum[RT_FREQ_BIN_FIRE_UV] *
+                        (All.PhotonMomentum_fUV + (1 - All.PhotonMomentum_fUV) *
+                         ((mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + mass_stellarlum[RT_FREQ_BIN_FIRE_IR]) /
+                          (mass_stellarlum[RT_FREQ_BIN_FIRE_UV] + 2042.6 * mass_stellarlum[RT_FREQ_BIN_FIRE_IR])));
+                } else {
+                    double m_lum_total = 0;
+                    int ks_q; for(ks_q=0; ks_q<N_RT_FREQ_BINS; ks_q++) {m_lum_total += mass_stellarlum[ks_q];}
+                    incident_flux_euv += All.PhotonMomentum_fUV * fac_intensity * m_lum_total;
+                }
+#endif
+
+#ifdef RT_OTVET
+                if(r_rt > 0)
+                {
+                    int kf_rt; for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {
+                        double fac_otvet = mass_stellarlum[kf_rt] * fac_rt / (1.0e-37 + r_rt);
+                        RT_ET[kf_rt] += fac_otvet * outer_product(d_stellarlum);
+                    }
+                }
+#endif
+
+#ifdef RT_LEBRON
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+                if(r_rt * UNIT_LENGTH_IN_KPC * All.cf_atime > 50.0) {fac_rt = 0.0;}
+#endif
+                {
+                    int kf_rt; double lum_force_fac = 0.0;
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+                    double fac_flux = -fac_rt * All.cf_a2inv / (4.0 * M_PI);
+                    for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {Rad_Flux[kf_rt] += mass_stellarlum[kf_rt] * fac_flux * d_stellarlum;}
+#else
+                    for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {lum_force_fac += mass_stellarlum[kf_rt] * fac_stellum[kf_rt];}
+#endif
+                    if(lum_force_fac > 0) {acc += (fac_rt * lum_force_fac) * d_stellarlum;}
+                }
+#endif /* RT_LEBRON */
+
+            } /* if(valid_gas_particle_for_rt) */
+#endif /* RT_USE_GRAVTREE */
+
+        } /* if((r2>0)&&(mass>0)) */
+
         if(no < maxPart) {
             no = s->nextnode_aux[no];
         } else {
             no = s->sibling[no - maxPart];
         }
+    } /* while(no >= 0) */
+
+    /* ------------------------------------------------------------------ *
+     * Post-walk: write RT outputs to CellP_dev / P_dev.  The host scatter  *
+     * loop in gpu_gravtree_walk_primary copies these to CellP[] / P[].    *
+     * ------------------------------------------------------------------ */
+#ifdef RT_USE_TREECOL_FOR_NH
+    {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = treecol_angular_bins[k];}}
+#endif
+#ifdef RT_USE_GRAVTREE
+#ifdef RT_OTVET
+    if(valid_gas_particle_for_rt) {
+        int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP_dev[target].ET[k] = RT_ET[k];}
+    } else if(ptype == 0) {
+        int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP_dev[target].ET[k] = {};}
     }
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+    if(valid_gas_particle_for_rt) {
+        CellP_dev[target].Rad_Flux_UV  = incident_flux_uv;
+        CellP_dev[target].Rad_Flux_EUV = incident_flux_euv;
+    }
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+    if(valid_gas_particle_for_rt) {
+        int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {
+            CellP_dev[target].Chimes_G0[kc]          = chimes_flux_G0[kc];
+            CellP_dev[target].Chimes_fluxPhotIon[kc] = chimes_flux_ion[kc];
+        }
+    }
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+    if(valid_gas_particle_for_rt) {
+        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_E_gamma[kf] = Rad_E_gamma[kf];}
+    }
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+    if(valid_gas_particle_for_rt) {
+        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_Flux[kf] = Rad_Flux[kf];}
+    }
+#endif
+#endif /* RT_USE_GRAVTREE */
 
     acc_out = acc;
     ninter_out = ninter;
@@ -475,22 +669,12 @@ gpu_gravtree_walk_one(int target,
 extern "C" int gpu_gravtree_walk_primary(void)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(gravtree);
-    /* Skip when the tree is in cost-measurement mode — GravCost accumulation
-     * needs atomic ops we haven't wired yet. The CPU walk handles those
-     * iterations. TakeLevel / ActiveParticleList / ProcessedFlag come from
-     * allvars.h; Ewald_iter / Costtotal from the file-scope externs above. */
     if(TakeLevel >= 0) {return 0;}
-
-    /* Ewald-iter iterations handle periodic corrections — guarded off at
-     * compile time above, but belt-and-suspenders: skip when Ewald_iter>0. */
     if(Ewald_iter > 0) {return 0;}
 
     int num_active_total = (int) ActiveParticleList.size();
     if(num_active_total <= 0) {return 0;}
 
-    /* Build local-work index list: only particles we haven't processed yet.
-     * (In the first pass this is all of them, but gravity_tree() may re-enter
-     * after a buffer-fill; ProcessedFlag respects that.) */
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
     int num_active = 0;
     for(int a = 0; a < num_active_total; a++) {
@@ -499,21 +683,75 @@ extern "C" int gpu_gravtree_walk_primary(void)
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
 
-    /* Acquire Phase 1 arena (P_dev in SharedSpace) + Phase 3 tree SoA. */
+    /* Acquire Phase 1 arena (P_dev + CellP_dev in SharedSpace) */
     gpu_particles_arena_acquire(NumPart, P, CellP);
-    struct particle_data *P_dev = gpu_particles_arena_P();
+    struct particle_data    *P_dev    = gpu_particles_arena_P();
+    struct gas_cell_data    *CellP_dev = gpu_particles_arena_CellP();
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
-    /* Nextnode[] is sized (MaxPart + NTopnodes) in force_treeallocate. */
     gpu_gravity_tree_set_nextnode(All.MaxPart + NTopnodes, Nextnode);
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-    if(!P_dev || !soa) {
+    if(!P_dev || !CellP_dev || !soa) {
         printf("gpu_gravtree_walk_primary: failed to acquire arena or tree SoA\n");
         endrun(913200);
     }
 
-    /* Scratch: failed flag + result arrays in SharedSpace. */
+    /* ------------------------------------------------------------------ *
+     * Phase 2-A: pre-compute per-particle source luminosities on CPU.     *
+     * rt_get_source_luminosity() is not device-callable; this loop        *
+     * mirrors what the CPU walk does per leaf-particle interaction, but    *
+     * amortised to once per particle before the GPU kernel launch.         *
+     * ------------------------------------------------------------------  */
+#ifdef RT_USE_GRAVTREE
+    MyFloat *d_src_lum = NULL;
+#ifdef CHIMES_STELLAR_FLUXES
+    double *d_src_lum_G0 = NULL, *d_src_lum_ion = NULL;
+#endif
+    {
+        long sz = (long)NumPart * N_RT_FREQ_BINS * sizeof(MyFloat);
+        d_src_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+        if(!d_src_lum) {printf("gpu_gravtree_walk_primary: d_src_lum alloc failed\n"); endrun(913202);}
+        memset(d_src_lum, 0, sz);
+#ifdef CHIMES_STELLAR_FLUXES
+        long szc = (long)NumPart * CHIMES_LOCAL_UV_NBINS * sizeof(double);
+        d_src_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
+        d_src_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(szc);
+        if(!d_src_lum_G0 || !d_src_lum_ion) {printf("gpu_gravtree_walk_primary: CHIMES lum alloc failed\n"); endrun(913203);}
+        memset(d_src_lum_G0,  0, szc);
+        memset(d_src_lum_ion, 0, szc);
+#endif
+        for(int p = 0; p < NumPart; p++) {
+            if(P[p].Mass <= 0) {continue;}
+            double lum[N_RT_FREQ_BINS];
+#ifdef CHIMES_STELLAR_FLUXES
+            double lum_G0[CHIMES_LOCAL_UV_NBINS], lum_ion[CHIMES_LOCAL_UV_NBINS];
+            int active_check = rt_get_source_luminosity_chimes(p, 1, lum, lum_G0, lum_ion, P, CellP);
+#else
+            int active_check = rt_get_source_luminosity(p, 1, lum, P, CellP);
+#endif
+            if(active_check) {
+                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
+                    d_src_lum[(long)p * N_RT_FREQ_BINS + kf] = (MyFloat)lum[kf];
+                }
+#ifdef CHIMES_STELLAR_FLUXES
+                for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
+                    d_src_lum_G0[(long)p * CHIMES_LOCAL_UV_NBINS + kf]  = lum_G0[kf];
+                    d_src_lum_ion[(long)p * CHIMES_LOCAL_UV_NBINS + kf] = lum_ion[kf];
+                }
+#endif
+            }
+        }
+    }
+    struct gpu_rt_walk_data_t rt_data_snap;
+    rt_data_snap.src_lum = d_src_lum;
+#ifdef CHIMES_STELLAR_FLUXES
+    rt_data_snap.src_lum_G0  = d_src_lum_G0;
+    rt_data_snap.src_lum_ion = d_src_lum_ion;
+#endif
+#endif /* RT_USE_GRAVTREE */
+
+    /* Scratch arrays for per-target results */
     int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
@@ -536,15 +774,22 @@ extern "C" int gpu_gravtree_walk_primary(void)
     double asmthfac_snap = 0.5 / All.Asmth[0] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
 #endif
 
+#ifdef RT_USE_GRAVTREE
+    const struct gpu_rt_walk_data_t rt_data_dev = rt_data_snap;
+#endif
+
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
         int ninter;
         double pot;
         int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap,
-                                        P_dev, &soa_snap,
+                                        P_dev, CellP_dev, &soa_snap,
 #ifdef PMGRID
                                         rcut_snap, rcut2_snap, asmthfac_snap,
+#endif
+#ifdef RT_USE_GRAVTREE
+                                        &rt_data_dev,
 #endif
                                         acc, ninter, pot);
         if(ok) {
@@ -558,43 +803,64 @@ extern "C" int gpu_gravtree_walk_primary(void)
     });
     Kokkos::fence();
 
-    /* Scatter successes back to host; mark ProcessedFlag. Failed particles
-     * are left untouched so the CPU primary loop picks them up. */
+    /* Scatter successes back to host; copy RT CellP fields from device mirror */
     int nsucceeded = 0;
     double costtotal_added = 0;
     for(int a = 0; a < num_active; a++) {
         int i = d_idx[a];
         if(!d_failed[a]) {
-            /* Write raw force sum (no G factor): the post-walk loop in
-             * gravity_tree() does P[i].GravAccel *= All.G unconditionally
-             * for every active particle, so applying G here would
-             * double-multiply (silent in tests with GravityConstantInternal=1
-             * but wrong for any G != 1). */
             P[i].GravAccel = d_acc[a];
 #ifdef EVALPOTENTIAL
-            /* Same convention: write raw potential sum.  Post-walk loop in
-             * gravity_tree() does P[i].Potential *= All.G and adds the
-             * cosmological/PM corrections. */
             P[i].Potential = d_pot[a];
 #endif
+
+            /* RT scatter-back: copy outputs written into the SharedSpace
+             * device mirrors back to host P[]/CellP[].  On UVM systems this
+             * is effectively a same-pointer copy (no-op performance-wise),
+             * but kept explicit for correctness on non-UVM targets. */
+#ifdef RT_USE_TREECOL_FOR_NH
+            {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P[i].ColumnDensityBins[k] = P_dev[i].ColumnDensityBins[k];}}
+#endif
+#ifdef RT_USE_GRAVTREE
+#ifdef RT_OTVET
+            if(P[i].Type == 0) {
+                int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP[i].ET[k] = CellP_dev[i].ET[k];}
+            }
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                CellP[i].Rad_Flux_UV  = CellP_dev[i].Rad_Flux_UV;
+                CellP[i].Rad_Flux_EUV = CellP_dev[i].Rad_Flux_EUV;
+            }
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {
+                    CellP[i].Chimes_G0[kc]          = CellP_dev[i].Chimes_G0[kc];
+                    CellP[i].Chimes_fluxPhotIon[kc]  = CellP_dev[i].Chimes_fluxPhotIon[kc];
+                }
+            }
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP[i].Rad_E_gamma[kf] = CellP_dev[i].Rad_E_gamma[kf];}
+            }
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP[i].Rad_Flux[kf] = CellP_dev[i].Rad_Flux[kf];}
+            }
+#endif
+#endif /* RT_USE_GRAVTREE */
+
             ProcessedFlag[i] = 1;
             costtotal_added += d_ninter[a];
             nsucceeded++;
         }
     }
-    /* Feed ninteractions into Costtotal so diagnostics stay consistent. */
     Costtotal += costtotal_added;
 
-    /* Mark the particle arena stale: we wrote GravAccel into host P[],
-     * so the arena no longer mirrors host P[]. Next acquire() will re-copy. */
     gpu_particles_arena_invalidate();
-
-    /* Mark the tree SoA stale: the CPU walk that follows may call
-     * force_drift_node() which updates Nodes[no].u.d.s and .mass in-place
-     * (Nodes_base is the live array).  Without invalidation here the SoA
-     * would serve frozen (pre-drift) node COM positions on the next timestep.
-     * This forces gpu_gravity_tree_acquire() to reseed from the then-current
-     * Nodes_base on the next call (analogous to the particle arena pattern). */
     gpu_gravity_tree_invalidate();
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_pot);
@@ -602,6 +868,15 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_acc);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_failed);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_idx);
+
+#ifdef RT_USE_GRAVTREE
+#ifdef CHIMES_STELLAR_FLUXES
+    if(d_src_lum_ion) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_ion);}
+    if(d_src_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_G0);}
+#endif
+    if(d_src_lum) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum);}
+#endif
+
     myfree(idx_host);
 
     return nsucceeded;
@@ -611,8 +886,6 @@ GPU_ALL_SYNC_FUNC(gravtree)
 
 #else /* !GIZMO_GPU_GRAVTREE || !OPENMP_GPU_OFFLOAD */
 
-/* No-op stub when the flag is not set. Keeps the caller in gravity_tree()
- * simple — it can unconditionally call gpu_gravtree_walk_primary(). */
 extern "C" int gpu_gravtree_walk_primary(void) {return 0;}
 
 #endif
