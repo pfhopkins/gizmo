@@ -74,12 +74,34 @@ double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 #endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-/* Forward decl of the (file-scope, non-static) helper in ags_rkern.cc.
- * On Kokkos OMP this resolves at link time and the kernel runs on host
- * threads, so direct call is fine.  CUDA offload would require either
- * porting to a header-defined inline or a __device__ duplicate; flagged
- * for a Phase 4 follow-up. */
-extern int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary);
+/* Device-callable replica of ags_gravity_kernel_shared_BITFLAG (ags_rkern.cc).
+ * The original is __host__-only (a plain C function); calling it from a
+ * KOKKOS_INLINE_FUNCTION triggers nvcc warning 20011 and fails on real CUDA
+ * devices where host function addresses are unreachable from GPU code.
+ * This inline reproduces exactly the same logic using only compile-time
+ * constants and All.* data (accessible via UVM on GH200 / SharedSpace).
+ * The configs that reach GIZMO_GPU_GRAVTREE are gated by #error above to
+ * exclude TIDAL_CRITERION; GALSF + SIDM branches are included for completeness. */
+static KOKKOS_INLINE_FUNCTION int
+gpu_ags_kernel_shared_BITFLAG(int ptype)
+{
+    if(!((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL))) {return 0;}
+    if(ptype == 0) {return 1;}
+#if (ADAPTIVE_GRAVSOFT_FORALL & 32) && defined(SINK_PARTICLES)
+    if(ptype == 5) {return 1;}
+#endif
+#if defined(GALSF) && ((ADAPTIVE_GRAVSOFT_FORALL & 16) || (ADAPTIVE_GRAVSOFT_FORALL & 8) || (ADAPTIVE_GRAVSOFT_FORALL & 4))
+    if(All.ComovingIntegrationOn) {
+        if(ptype == 4) {return 17;}
+    } else {
+        if(ptype == 4 || ptype == 2 || ptype == 3) {return 29;}
+    }
+#endif
+#ifdef DM_SIDM
+    if((1 << ptype) & (DM_SIDM)) {return DM_SIDM;}
+#endif
+    return (1 << ptype);
+}
 #endif
 
 /* Compile-time gating: Tier 1a supports ONLY the core walk. Any of these
@@ -188,7 +210,7 @@ gpu_gravtree_walk_one(int target,
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     /* Cache once per target — mirrors forcetree.cc:1590.  Reused below for
      * both the AVERAGING-symmetrize decision and the zeta correction gates. */
-    const int ags_bitflag_primary = ags_gravity_kernel_shared_BITFLAG((short int)ptype);
+    const int ags_bitflag_primary = gpu_ags_kernel_shared_BITFLAG(ptype);
 #endif
 
     Vec3<double> acc = {0,0,0};
@@ -381,7 +403,7 @@ gpu_gravtree_walk_one(int target,
                 if(zeta_sec == 0.0 || u_p >= 1.0 || h_p <= 0.0) {add_secondary = 0;}
                 if(ptype != 0 || ptype_sec != 0) {
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    int bm_sec = ags_gravity_kernel_shared_BITFLAG((short int)ptype_sec);
+                    int bm_sec = gpu_ags_kernel_shared_BITFLAG(ptype_sec);
                     if(!((1 << ptype)     & (ADAPTIVE_GRAVSOFT_FORALL)) ||
                        !((1 << ptype_sec) & ags_bitflag_primary)) {add_primary = 0;}
                     if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) ||
