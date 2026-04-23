@@ -48,15 +48,23 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_CR_charge_in_e(int target, int k_CReg
     return 1;
 }
 
-KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy) {
+KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy, struct gas_cell_data *cell) {
     double R = 1;
 #if (N_CR_PARTICLE_BINS == 2)
     double Rv[2]={1.8, 0.6}; R=Rv[k_CRegy]; // approximate peak energies of each from Cummings et al. 2016 Fig 15
 #endif
 #if (N_CR_PARTICLE_BINS > 2)
-    if(target >= 0) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, CellP);} else {R=All.CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
+    if(target >= 0 && cell) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, cell);} else {R=All.CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
 #endif
     return R;
+}
+
+KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy) {
+#ifdef __CUDA_ARCH__
+    return return_CRbin_CR_rigidity_in_GV(target, k_CRegy, nullptr);
+#else
+    return return_CRbin_CR_rigidity_in_GV(target, k_CRegy, CellP);
+#endif
 }
 
 KOKKOS_INLINE_FUNCTION double return_CRbin_CRmass_in_mp(int target, int k_CRegy) {
@@ -73,26 +81,50 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_CRmass_in_mp(int target, int k_CRegy)
     if(Z_abs > 1.5) {return 2.*Z_abs;} else {return 1;}
 }
 
-KOKKOS_INLINE_FUNCTION double return_CRbin_beta_factor(int target, int k_CRegy) {
+KOKKOS_INLINE_FUNCTION double return_CRbin_beta_factor(int target, int k_CRegy, struct gas_cell_data *cell) {
     double m_cr_mp = return_CRbin_CRmass_in_mp(target, k_CRegy);
-    double q = return_CRbin_CR_rigidity_in_GV(target, k_CRegy) * 1.06579 * fabs(return_CRbin_CR_charge_in_e(target, k_CRegy)) / m_cr_mp;
+    double q = return_CRbin_CR_rigidity_in_GV(target, k_CRegy, cell) * 1.06579 * fabs(return_CRbin_CR_charge_in_e(target, k_CRegy)) / m_cr_mp;
     double gamma = sqrt(1.+q*q), beta = q/gamma;
     return beta;
 }
 
-KOKKOS_INLINE_FUNCTION double return_CRbin_gamma_factor(int target, int k_CRegy) {
+KOKKOS_INLINE_FUNCTION double return_CRbin_beta_factor(int target, int k_CRegy) {
+#ifdef __CUDA_ARCH__
+    return return_CRbin_beta_factor(target, k_CRegy, nullptr);
+#else
+    return return_CRbin_beta_factor(target, k_CRegy, CellP);
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION double return_CRbin_gamma_factor(int target, int k_CRegy, struct gas_cell_data *cell) {
     double m_cr_mp = return_CRbin_CRmass_in_mp(target, k_CRegy);
-    double q = return_CRbin_CR_rigidity_in_GV(target, k_CRegy) * 1.06579 * fabs(return_CRbin_CR_charge_in_e(target, k_CRegy)) / m_cr_mp;
+    double q = return_CRbin_CR_rigidity_in_GV(target, k_CRegy, cell) * 1.06579 * fabs(return_CRbin_CR_charge_in_e(target, k_CRegy)) / m_cr_mp;
     return sqrt(1.+q*q);
 }
 
-KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy) {
+KOKKOS_INLINE_FUNCTION double return_CRbin_gamma_factor(int target, int k_CRegy) {
+#ifdef __CUDA_ARCH__
+    return return_CRbin_gamma_factor(target, k_CRegy, nullptr);
+#else
+    return return_CRbin_gamma_factor(target, k_CRegy, CellP);
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy, struct gas_cell_data *cell) {
     double m_cr_mp = return_CRbin_CRmass_in_mp(target, k_CRegy);
-    double R_GV = return_CRbin_CR_rigidity_in_GV(target, k_CRegy), Z = fabs(return_CRbin_CR_charge_in_e(target, k_CRegy));
+    double R_GV = return_CRbin_CR_rigidity_in_GV(target, k_CRegy, cell), Z = fabs(return_CRbin_CR_charge_in_e(target, k_CRegy));
     double q = R_GV*Z*1.06579/m_cr_mp;
     double gamma = sqrt(1.+q*q), beta = q/gamma;
     double KE_fac = DMAX(0.,(1.-sqrt(DMAX(0.,1.-beta*beta)))) / DMAX(beta,MIN_REAL_NUMBER); if(beta < 0.01) {KE_fac = 0.5*beta;}
     return R_GV * Z * KE_fac;
+}
+
+KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy) {
+#ifdef __CUDA_ARCH__
+    return return_CRbin_kinetic_energy_in_GeV(target, k_CRegy, nullptr);
+#else
+    return return_CRbin_kinetic_energy_in_GeV(target, k_CRegy, CellP);
+#endif
 }
 
 KOKKOS_INLINE_FUNCTION double gamma_eos_of_crs_in_bin(int k_CRegy)
@@ -165,7 +197,7 @@ KOKKOS_INLINE_FUNCTION double CR_get_streaming_loss_rate_coefficient(int target,
     double v_flux_eff=cell[target].CosmicRayFluxPred[k_CRegy].norm_sq(); int k; // need magnitude of flux vector
     if(v_flux_eff > 0) {v_flux_eff=sqrt(v_flux_eff) / (MIN_REAL_NUMBER + cell[target].CosmicRayEnergyPred[k_CRegy]);} else {v_flux_eff=0;} // effective speed of CRs = |F|/E
     int target_for_cr_gamma = target; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = target, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
-    double gamma_0=return_CRbin_gamma_factor(target_for_cr_gamma,k_CRegy), gamma_fac=gamma_0/(gamma_0-1.), beta_fac=return_CRbin_beta_factor(target_for_cr_gamma,k_CRegy); // lorentz factor here, needed in next line, because the loss term here scales with -total- energy, not kinetic energy
+    double gamma_0=return_CRbin_gamma_factor(target_for_cr_gamma,k_CRegy, cell), gamma_fac=gamma_0/(gamma_0-1.), beta_fac=return_CRbin_beta_factor(target_for_cr_gamma,k_CRegy, cell); // lorentz factor here, needed in next line, because the loss term here scales with -total- energy, not kinetic energy
     if(beta_fac<0.1) {gamma_fac=2./(beta_fac*beta_fac) -0.5 - 0.125*beta_fac*beta_fac;} // avoid accidental nan
     streamfac = (vA * (beta_fac*beta_fac) / fabs(3.*cell[target].CosmicRayDiffusionCoeff[k_CRegy])) * ((gamma_fac) * return_CRbin_nuplusminus_asymmetry(target,k_CRegy, cell) * v_flux_eff/cosmicrayfluid_rsol_corrfac(k_CRegy) - (3.*(GAMMA_COSMICRAY(k_CRegy)-1.) + (gamma_fac)) * vA * (2./3.) * return_cosmic_ray_anisotropic_closure_function_threechi(target,k_CRegy, cell)); // this is (vA/[3kappa])*(F - 2*chifac*vA*(ecr+3*Pcr))/ecr, using the 'full F' [corrected back from rsol, b/c rsol correction moves outside this for loss terms]
     return streamfac; // probably want to limit to make sure above doesn't take on too extreme a value... also above, initially only had positive term since this removes energy from CRs when streaming super-Alfvenically, but when streaming sub-Alfvenically, could this become a source term with energy going into CRs? seems problematic if vA very high, but then scattering would work inefficiently... so plausible, but really need to be careful again about magnitude...
@@ -832,14 +864,14 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses(int target, double n_elec, dou
         double CR_coolrate, Z, species_ID; CR_coolrate=0; Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy)); species_ID=return_CRbin_CR_species_ID(k_CRegy);
         if(species_ID > 0) {
 #if (N_CR_PARTICLE_BINS > 2)
-            double E_GeV=return_CRbin_kinetic_energy_in_GeV(target,k_CRegy), beta=return_CRbin_beta_factor(target,k_CRegy);
+            double E_GeV=return_CRbin_kinetic_energy_in_GeV(target,k_CRegy, cell), beta=return_CRbin_beta_factor(target,k_CRegy, cell);
             CR_coolrate += b_coulomb_ion_per_GeV * ((Z*Z)/(beta*E_GeV)) * nHcgs;
             if(E_GeV>=0.28) {CR_coolrate += a_hadronic * nHcgs;}
 #else
             CR_coolrate = (0.87*a_hadronic + 0.53*b_coulomb_ion_per_GeV) * nHcgs;
 #endif
         } else {
-            double E_GeV=return_CRbin_kinetic_energy_in_GeV(target,k_CRegy), E_rest=0.000511, gamma=1.+E_GeV/E_rest;
+            double E_GeV=return_CRbin_kinetic_energy_in_GeV(target,k_CRegy, cell), E_rest=0.000511, gamma=1.+E_GeV/E_rest;
             CR_coolrate += n_elec * nHcgs * 1.39e-16 * DMAX(log(2.*gamma)-0.33,0);
             double b_muG = cell[target].Bfield_microGauss(), U_mag_ev=0.0248342*b_muG*b_muG, U_rad_ev = cell[target].Urad_eVcm3();
             CR_coolrate += 5.2e-20 * gamma * (U_mag_ev + U_rad_ev);
@@ -927,7 +959,7 @@ KOKKOS_INLINE_FUNCTION double CR_gas_heating(int target, double n_elec, double n
         double e_cr_units = cell[target].CosmicRayEnergyPred[k_CRegy] * e_CR_units_0;
         if(return_CRbin_CR_species_ID(k_CRegy) > 0)
         {
-            double E_GeV = return_CRbin_kinetic_energy_in_GeV(target,k_CRegy), beta = return_CRbin_beta_factor(target,k_CRegy), Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy));
+            double E_GeV = return_CRbin_kinetic_energy_in_GeV(target,k_CRegy, cell), beta = return_CRbin_beta_factor(target,k_CRegy, cell), Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy));
             double T_eff_fullion = 0.59*(5./3.-1.)*U_TO_TEMP_UNITS*cell[target].InternalEnergyPred, xm = 0.0286*sqrt(T_eff_fullion/2.e6);
             e_heat += b_coulomb_ion_per_GeV * ((Z*Z*beta*beta)/((beta*beta*beta+xm*xm*xm)*E_GeV)) * e_cr_units; // all protons Coulomb-heat, can be rapid for low-E
             if(E_GeV>=0.28) {e_heat += f_heat_hadronic * a_hadronic * e_cr_units;} // only GeV CRs or higher trigger above threshold for collisions

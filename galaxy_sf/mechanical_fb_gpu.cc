@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <vector>
 #ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #endif
@@ -93,6 +92,25 @@ static void mech_fb_apply_aws_out(const struct MechFBOut *out, int i, int loop_i
     for(int k = kmin; k < kmax; k++) P[i].Area_weighted_sum[k] = out->Area_weighted_sum[k];
 }
 
+/* Host/device mirror of out2particle_addFB() for coupling modes. Apply the
+ * source mass loss immediately after each mode so later modes pack from the
+ * updated source state, matching the CPU ordering semantics. */
+static void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
+                                          struct gas_cell_data *CellP_arr,
+                                          int i,
+                                          MyFloat M_coupled)
+{
+    if(P_arr[i].Mass <= 0) return;
+    for(int k = 0; k < 3; k++) P_arr[i].dp[k] -= M_coupled * P_arr[i].Vel[k];
+    P_arr[i].Mass -= M_coupled;
+    if(P_arr[i].Mass < 0 || P_arr[i].Mass != P_arr[i].Mass) P_arr[i].Mass = 0;
+    if(P_arr[i].Type == 0) CellP_arr[i].Mass = P_arr[i].Mass;
+#ifdef SINGLE_STAR_FB_WINDS
+    P_arr[i].Sink_Mass -= M_coupled;
+    if(P_arr[i].Sink_Mass < 0 || P_arr[i].Sink_Mass != P_arr[i].Sink_Mass) P_arr[i].Sink_Mass = 0;
+#endif
+}
+
 
 void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                                  struct gas_cell_data *CellP_host,
@@ -140,9 +158,6 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     struct MechFBGasDelta *d_gas = (struct MechFBGasDelta *)
         Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(struct MechFBGasDelta));
     memset(d_gas, 0, num_all * sizeof(struct MechFBGasDelta));
-
-    /* Per-star accumulator for M_coupled across modes >= 0 (for mass-loss apply). */
-    std::vector<double> m_coupled_total(num_src > 0 ? num_src : 1, 0.0);
 
     /* Build ONE neighbor list; reused across all 6 modes. */
     gpu_neighbor_list_t gnl;
@@ -230,14 +245,21 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
 
         /* Host: consume per-source output. For weighting modes (-2, -1), write
            Area_weighted_sum back into P[i] so the NEXT mode's local_fill sees
-           the updated value. For coupling modes (>= 0), accumulate M_coupled. */
+           the updated value. For coupling modes (>= 0), immediately apply
+           source mass loss so later modes pack from the updated source state. */
         if(loop_iteration < 0) {
             for(int aa = 0; aa < num_src; aa++) {
                 mech_fb_apply_aws_out(&d_out[aa], i_active_host[aa], loop_iteration);
             }
         } else {
             for(int aa = 0; aa < num_src; aa++) {
-                m_coupled_total[aa] += (double)d_out[aa].M_coupled;
+                int i = i_active_host[aa];
+                MyFloat M_coupled = d_out[aa].M_coupled;
+                if(M_coupled <= 0) continue;
+                mech_fb_apply_source_mass_out(P_host, CellP_host, i, M_coupled);
+                if(P_gpu != P_host || CellP_gpu != CellP_host) {
+                    mech_fb_apply_source_mass_out(P_gpu, CellP_gpu, i, M_coupled);
+                }
             }
         }
     } /* per-mode loop */
@@ -256,24 +278,6 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
        gas_delta_host is the home destination. */
     ghost_writeback_mechfb(d_gas, gas_delta_host, n_gas);
 
-    /* Apply per-source mass loss from M_coupled accumulated across modes >= 0.
-       (CPU does this incrementally inside out2particle_addFB; we defer to after
-       all modes so conservation is preserved under multiple event types.) */
-    for(int aa = 0; aa < num_src; aa++) {
-        int i = i_active_host[aa];
-        double M_coupled = m_coupled_total[aa];
-        if(M_coupled > 0 && P_host[i].Mass > 0) {
-            for(int k = 0; k < 3; k++) P_host[i].dp[k] -= M_coupled * P_host[i].Vel[k];
-            P_host[i].Mass -= M_coupled;
-            if(P_host[i].Mass < 0 || P_host[i].Mass != P_host[i].Mass) P_host[i].Mass = 0;
-            if(P_host[i].Type == 0) CellP_host[i].Mass = P_host[i].Mass;
-#ifdef SINGLE_STAR_FB_WINDS
-            P_host[i].Sink_Mass -= M_coupled;
-            if(P_host[i].Sink_Mass < 0 || P_host[i].Sink_Mass != P_host[i].Sink_Mass) P_host[i].Sink_Mass = 0;
-#endif
-        }
-    }
-
     /* Count gas cells that received coupling, matching N_Gas_Couplings_ThisTask. */
     int n_coup = 0;
     for(int j = 0; j < n_gas; j++) if(gas_delta_host[j].N_injected > 0) n_coup++;
@@ -286,8 +290,8 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
-    /* Note: lines 264+ above mutate P_host directly (m_coupled_total mass loss);
-     * those host writes need invalidation too — defensive call here covers them. */
+    /* Per-mode source updates above mutate host particle state directly, so
+     * invalidate the arena before any later GPU consumer can assume freshness. */
     gpu_particles_arena_invalidate();
 
     if(imported_ghosts) ghost_exchange_cleanup();
