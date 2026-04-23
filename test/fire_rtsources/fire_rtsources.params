@@ -44,6 +44,7 @@ SinkEddingtonFactor                 1e3
 Max_Memory_Per_MPI_Task_in_MB       30000
 MPI_Buffersize_in_MB                200
 ParticleNumberMembalance_Limit      3.5
+TreeAllocFactor                     10.0
 TreeRebuild_ActiveFraction          0.002
 Effective_Kernel_NeighborNumber     32
 MaxSimulationWallTime_in_Seconds    1e9
