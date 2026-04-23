@@ -38,6 +38,46 @@ static void free_arrays_(void)
     if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
     if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
     if(soa_.nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode_aux); soa_.nextnode_aux = NULL;}
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    if(soa_.gasmass)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.gasmass);        soa_.gasmass        = NULL;}
+#endif
+#ifdef RT_USE_GRAVTREE
+    if(soa_.stellar_lum)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.stellar_lum);    soa_.stellar_lum    = NULL;}
+#ifdef CHIMES_STELLAR_FLUXES
+    if(soa_.chimes_stellar_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.chimes_stellar_lum_G0);  soa_.chimes_stellar_lum_G0  = NULL;}
+    if(soa_.chimes_stellar_lum_ion) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.chimes_stellar_lum_ion); soa_.chimes_stellar_lum_ion = NULL;}
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    if(soa_.rt_source_lum_s)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.rt_source_lum_s);  soa_.rt_source_lum_s  = NULL;}
+    if(soa_.rt_source_lum_vs) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.rt_source_lum_vs); soa_.rt_source_lum_vs = NULL;}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    if(soa_.sink_lum)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_lum);       soa_.sink_lum       = NULL;}
+    if(soa_.sink_lum_grad)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_lum_grad);  soa_.sink_lum_grad  = NULL;}
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    if(soa_.cr_injection)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.cr_injection);   soa_.cr_injection   = NULL;}
+#endif
+#ifdef SINK_CALC_DISTANCES
+    if(soa_.sink_mass)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_mass);      soa_.sink_mass      = NULL;}
+    if(soa_.sink_pos)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_pos);       soa_.sink_pos       = NULL;}
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+    if(soa_.sink_vel)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_vel);       soa_.sink_vel       = NULL;}
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    if(soa_.sink_acc)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sink_acc);       soa_.sink_acc       = NULL;}
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    if(soa_.N_SINK)         {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_SINK);         soa_.N_SINK         = NULL;}
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    if(soa_.MaxFeedbackVel) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.MaxFeedbackVel); soa_.MaxFeedbackVel = NULL;}
+#endif
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
+    if(soa_.node_vs)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.node_vs);        soa_.node_vs        = NULL;}
+#endif
     soa_.nnodes = 0;
     soa_.nextnode_aux_size = 0;
 }
@@ -58,10 +98,62 @@ static int alloc_arrays_(int n)
         printf("gpu_gravity_tree: kokkos_malloc failed for %d nodes\n", n);
         return 0;
     }
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    soa_.gasmass = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    if(!soa_.gasmass) {printf("gpu_gravity_tree: gasmass alloc failed (%d)\n", n); return 0;}
+#endif
+#ifdef RT_USE_GRAVTREE
+    soa_.stellar_lum = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * N_RT_FREQ_BINS * sizeof(MyFloat));
+    if(!soa_.stellar_lum) {printf("gpu_gravity_tree: stellar_lum alloc failed (%d)\n", n); return 0;}
+#ifdef CHIMES_STELLAR_FLUXES
+    soa_.chimes_stellar_lum_G0  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    soa_.chimes_stellar_lum_ion = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * CHIMES_LOCAL_UV_NBINS * sizeof(double));
+    if(!soa_.chimes_stellar_lum_G0 || !soa_.chimes_stellar_lum_ion) {printf("gpu_gravity_tree: chimes lum alloc failed (%d)\n", n); return 0;}
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    soa_.rt_source_lum_s  = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    soa_.rt_source_lum_vs = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.rt_source_lum_s || !soa_.rt_source_lum_vs) {printf("gpu_gravity_tree: rt_source_lum alloc failed (%d)\n", n); return 0;}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    soa_.sink_lum      = (MyFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    soa_.sink_lum_grad = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.sink_lum || !soa_.sink_lum_grad) {printf("gpu_gravity_tree: sink_lum alloc failed (%d)\n", n); return 0;}
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    soa_.cr_injection = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    if(!soa_.cr_injection) {printf("gpu_gravity_tree: cr_injection alloc failed (%d)\n", n); return 0;}
+#endif
+#ifdef SINK_CALC_DISTANCES
+    soa_.sink_mass = (MyFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    soa_.sink_pos  = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.sink_mass || !soa_.sink_pos) {printf("gpu_gravity_tree: sink_mass/pos alloc failed (%d)\n", n); return 0;}
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+    soa_.sink_vel = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.sink_vel) {printf("gpu_gravity_tree: sink_vel alloc failed (%d)\n", n); return 0;}
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    soa_.sink_acc = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.sink_acc) {printf("gpu_gravity_tree: sink_acc alloc failed (%d)\n", n); return 0;}
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    soa_.N_SINK = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
+    if(!soa_.N_SINK) {printf("gpu_gravity_tree: N_SINK alloc failed (%d)\n", n); return 0;}
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    soa_.MaxFeedbackVel = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    if(!soa_.MaxFeedbackVel) {printf("gpu_gravity_tree: MaxFeedbackVel alloc failed (%d)\n", n); return 0;}
+#endif
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
+    soa_.node_vs = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.node_vs) {printf("gpu_gravity_tree: node_vs alloc failed (%d)\n", n); return 0;}
+#endif
     return 1;
 }
 
-static void seed_from_aos_(int n, struct NODE *Nodes_host, struct extNODE * /*Extnodes_host*/)
+static void seed_from_aos_(int n, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
 {
     /* Copy the fields the walk reads. Kept as a straight host-side loop;
      * SharedSpace pages migrate device-side on first kernel touch. The Vec3
@@ -77,6 +169,50 @@ static void seed_from_aos_(int n, struct NODE *Nodes_host, struct extNODE * /*Ex
         soa_.bitflags[k] = Nodes_host[k].u.d.bitflags;
         soa_.maxsoft[k]  = Nodes_host[k].maxsoft;
         soa_.N_part[k]   = Nodes_host[k].N_part;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        soa_.gasmass[k]  = Nodes_host[k].gasmass;
+#endif
+#ifdef RT_USE_GRAVTREE
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+            soa_.stellar_lum[k * N_RT_FREQ_BINS + b] = Nodes_host[k].stellar_lum[b];
+        }
+#ifdef CHIMES_STELLAR_FLUXES
+        for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
+            soa_.chimes_stellar_lum_G0 [k * CHIMES_LOCAL_UV_NBINS + b] = Nodes_host[k].chimes_stellar_lum_G0[b];
+            soa_.chimes_stellar_lum_ion[k * CHIMES_LOCAL_UV_NBINS + b] = Nodes_host[k].chimes_stellar_lum_ion[b];
+        }
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        soa_.rt_source_lum_s[k]  = Nodes_host[k].rt_source_lum_s;
+        if(Extnodes_host) {soa_.rt_source_lum_vs[k] = Extnodes_host[k].rt_source_lum_vs;}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        soa_.sink_lum[k]      = Nodes_host[k].sink_lum;
+        soa_.sink_lum_grad[k] = Nodes_host[k].sink_lum_grad;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        soa_.cr_injection[k]  = Nodes_host[k].cr_injection;
+#endif
+#ifdef SINK_CALC_DISTANCES
+        soa_.sink_mass[k] = Nodes_host[k].sink_mass;
+        soa_.sink_pos[k]  = Nodes_host[k].sink_pos;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+        soa_.sink_vel[k]  = Nodes_host[k].sink_vel;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+        soa_.sink_acc[k]  = Nodes_host[k].sink_acc;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+        soa_.N_SINK[k]    = Nodes_host[k].N_SINK;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+        soa_.MaxFeedbackVel[k] = Nodes_host[k].MaxFeedbackVel;
+#endif
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
+        if(Extnodes_host) {soa_.node_vs[k] = Extnodes_host[k].vs;}
+#endif
     }
     soa_.nnodes = n;
 }

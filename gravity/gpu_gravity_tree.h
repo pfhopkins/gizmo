@@ -65,6 +65,52 @@ struct gpu_gravity_tree_soa_t {
      * following it). */
     int            *nextnode_aux;
     int             nextnode_aux_size;
+
+    /* --- Phase 2-I optional payloads: gated by the same flags as the AoS
+     *     NODE definition in allvars.h. Each block is present iff the host
+     *     NODE carries the field; downstream Phase 2-A/B/C/D walk kernels
+     *     consume these. Fields absent from the SoA under current Tier 1c
+     *     configs (evrard_forall) → bitwise unchanged. */
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    MyFloat        *gasmass;          /* [nnodes] */
+#endif
+#ifdef RT_USE_GRAVTREE
+    MyFloat        *stellar_lum;      /* flat [nnodes * N_RT_FREQ_BINS] */
+#ifdef CHIMES_STELLAR_FLUXES
+    double         *chimes_stellar_lum_G0;  /* flat [nnodes * CHIMES_LOCAL_UV_NBINS] */
+    double         *chimes_stellar_lum_ion; /* flat [nnodes * CHIMES_LOCAL_UV_NBINS] */
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Vec3<MyFloat>  *rt_source_lum_s;  /* from NODE */
+    Vec3<MyFloat>  *rt_source_lum_vs; /* from extNODE */
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    MyFloat        *sink_lum;
+    Vec3<MyFloat>  *sink_lum_grad;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    MyFloat        *cr_injection;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    MyFloat        *sink_mass;
+    Vec3<MyFloat>  *sink_pos;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+    Vec3<MyFloat>  *sink_vel;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    Vec3<MyFloat>  *sink_acc;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+    int            *N_SINK;
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    MyFloat        *MaxFeedbackVel;
+#endif
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
+    Vec3<MyFloat>  *node_vs;          /* mirror of Extnodes[].vs for dyn-friction */
+#endif
 };
 
 /* Acquire SoA mirror sized for at least min_nodes. Reuses existing storage
