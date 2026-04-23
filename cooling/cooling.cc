@@ -133,6 +133,28 @@ KOKKOS_FUNCTION double GetCoolingRateWSpecies(double nHcgs, double logT, double 
 KOKKOS_FUNCTION double GetLambdaSpecies(long kspecies, long NCOOLTAB_LOCAL, long ki, long kip, long kj, double dki, double dkj, double tmin, double tdiff);
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell);
+#ifdef COOL_MOLECFRAC_NONEQM
+    update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
+#endif
+
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) /* count off time which has passed since ionization 'clock' */
+    if(cell[i].DelayTimeHII > 0) {
+        cell[i].DelayTimeHII -= dtime;
+#if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
+        if(cell[i].DelayTimeHII <= 0) {cell[i].DelayTimeHII = -DMAX(fabs(cell[i].DelayTimeHII),fabs(dtime));} // in new versions, allow this to run over to a negative number as a flag to reset the value at the beginning of the -next- timestep
+#endif
+    }
+#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
+    if(cell[i].DelayTimeHII < 0) {cell[i].DelayTimeHII = 0;} // older versions simply dont allow negative values here
+#endif
+#endif
+}
+#endif
+
 /* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost.
    Uses a gather-dispatch-scatter pattern with compact arrays so that the cooling chain operates on contiguous memory
    indexed 0..N_active-1, enabling future GPU offloading. */
@@ -261,6 +283,13 @@ void cooling_parent_routine(void)
             CellP[i] = compact_Cell[j];
             P[i]     = compact_P[j];
             set_eos_pressure(i, P, CellP);
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+            double dtime = get_particle_timestep_in_physical(i, P);
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+            dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
+#endif
+            if((dtime>0)&&(CellP[i].Mass>0)&&(P[i].Type==0)) {finish_cooling_host_deferred_dust_updates(i, dtime, P, CellP);}
+#endif
         }
     }
 
@@ -480,10 +509,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #ifndef GIZMO_GPU_COMPILER
-        update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell); /* deferred to scatter pass on GPU (large module, post-cooling) */
+        finish_cooling_host_deferred_dust_updates(i, dtime, pp, cell); /* deferred to scatter pass on GPU (large module, post-cooling) */
 #endif
-#endif
-
+#else
 #ifdef COOL_MOLECFRAC_NONEQM
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
 #endif
@@ -497,6 +525,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         }
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
         if(cell[i].DelayTimeHII < 0) {cell[i].DelayTimeHII = 0;} // older versions simply dont allow negative values here
+#endif
 #endif
 #endif
 
