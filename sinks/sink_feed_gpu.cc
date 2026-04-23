@@ -230,7 +230,7 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
 
                 Vec3<double> dpos = kp[j].Pos - loc.Pos;
                 Vec3<double> dvel = kp[j].Vel - loc.Vel;
-                nearest_xyz(dpos);
+                nearest_xyz(dpos, -1);
                 NGB_SHEARBOX_BOUNDARY_VELCORR_(loc.Pos, kp[j].Pos, dvel, -1);
                 double r2 = dpos.norm_sq();
                 if(r2 <= 0) continue;
