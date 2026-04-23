@@ -184,14 +184,19 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #define IMAX(a,b) ((a) > (b) ? (a) : (b))
 #define IMIN(a,b) ((a) < (b) ? (a) : (b))
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
-/* GPU-safe endrun/PRINT_WARNING: we use GIZMO_GPU_COMPILER (not __CUDA_ARCH__
-   which is unreliable with nvcc_wrapper and absent on AMD/HIP).
-   endrun just prints (no MPI_Abort which segfaults from device, no bare
-   'return' which is UB in non-void functions).  The function continues
-   with bad data but won't crash the kernel — errors are caught post-kernel. */
+#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
+/* GPU-device endrun/PRINT_WARNING.  Device code cannot call MPI_Abort, but it
+   must not continue after a fatal physics/error path.  Print the source
+   location, then trap the kernel so the host post-kernel error check sees the
+   failure. */
+#if defined(__CUDA_ARCH__)
+#define GIZMO_GPU_DEVICE_TRAP() asm volatile("trap;")
+#else
+#define GIZMO_GPU_DEVICE_TRAP() __builtin_trap()
+#endif
 #define endrun(x) do { \
     printf("ENDRUN: file '%s', line %d, error %d\n", __FILE__, __LINE__, (x)); \
+    GIZMO_GPU_DEVICE_TRAP(); \
     } while(0)
 #define PRINT_WARNING(...) do { printf(__VA_ARGS__); printf("\n"); } while(0)
 #else
