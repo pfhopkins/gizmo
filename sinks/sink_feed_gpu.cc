@@ -102,6 +102,9 @@ static void sink_feed_local_fill(int i,
                                                   (double)P_host[i].Sink_Mass, -1)
                                     * (double)loc->Dt);
 #endif
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    loc->Sink_eligible_for_binary_merge_away = is_star_eligible_for_binary_merge_away(i);
+#endif
 }
 
 
@@ -137,10 +140,34 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    std::vector<double> softening_kernel_radius_host(num_all);
+    for(int n = 0; n < num_all; n++) {
+        softening_kernel_radius_host[n] = ForceSoftening_KernelRadius(n);
+    }
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    std::vector<int> sink_binary_merge_eligible_host(num_all, 0);
+    for(int n = 0; n < num_all; n++) {
+        if(P_host[n].Mass > 0 && P_host[n].Type == 5) {
+            sink_binary_merge_eligible_host[n] = is_star_eligible_for_binary_merge_away(n);
+        }
+    }
+#endif
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
+
+    double *d_softening_kernel_radius = (double *)
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(double));
+    memcpy(d_softening_kernel_radius, softening_kernel_radius_host.data(), num_all * sizeof(double));
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    int *d_sink_binary_merge_eligible = (int *)
+        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_all * sizeof(int));
+    memcpy(d_sink_binary_merge_eligible, sink_binary_merge_eligible_host.data(), num_all * sizeof(int));
+#else
+    int *d_sink_binary_merge_eligible = NULL;
+#endif
 
     /* Snapshot ghost fields before kernel */
     ghost_writeback_zero_sinkfeed();
@@ -182,6 +209,8 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
         struct SinkFeedOut     *out_arr   = d_out;
         struct particle_data   *kp = P_gpu;
         struct gas_cell_data   *kc = CellP_gpu;
+        double *softening_kernel_radius = d_softening_kernel_radius;
+        int *sink_binary_merge_eligible = d_sink_binary_merge_eligible;
 
         Kokkos::parallel_for("sink_feed", num_src, KOKKOS_LAMBDA(int aa) {
             const struct SinkFeedLocalIn& loc = local_arr[aa];
@@ -207,7 +236,9 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
                 if(r2 <= 0) continue;
 
                 sink_feed_pair_kernel(loc, j, kp, kc, r2, dpos, dvel,
-                                      myout, mass_markedswallow, rng_step);
+                                      myout, mass_markedswallow, rng_step,
+                                      softening_kernel_radius,
+                                      sink_binary_merge_eligible);
             }
 
             /* Write i-side outputs — no race: each aa writes to its own slot */
@@ -261,6 +292,10 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
      * acquire re-syncs from any host changes it applied. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_softening_kernel_radius);
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_sink_binary_merge_eligible);
+#endif
 
     if(imported_ghosts) { ghost_exchange_cleanup(); }
 }

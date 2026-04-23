@@ -97,6 +97,36 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
     return bound;
 }
 
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+KOKKOS_INLINE_FUNCTION
+static void sink_apply_binary_merge_away_limits(int local_eligible,
+                                                int neighbor_eligible,
+                                                double soft_j,
+                                                double local_kernel_radius,
+                                                double neighbor_kernel_radius,
+                                                double local_mass,
+                                                double neighbor_mass,
+                                                double sink_radius,
+                                                int *allow_sink_merger,
+                                                double *max_rmerge,
+                                                double *max_mmerge)
+{
+    if(local_eligible == 0) *allow_sink_merger = 0;
+    if(neighbor_eligible == 0) *allow_sink_merger = 0;
+    *max_mmerge = 10. * neighbor_mass;
+    *max_rmerge = DMAX(*max_rmerge, soft_j);
+    *max_rmerge = DMAX(*max_rmerge, DMIN(local_kernel_radius, neighbor_kernel_radius));
+    *max_rmerge = DMIN(*max_rmerge, 10. * sink_radius);
+    {
+        double dt_min_orbit_yr = 100.;
+        double rmax_dt = 0.000485 / (All.cf_atime * UNIT_LENGTH_IN_PC) *
+            pow(((neighbor_mass + local_mass) * UNIT_MASS_IN_SOLAR / 100.) *
+                (dt_min_orbit_yr * dt_min_orbit_yr / (100. * 100.)), 1./3.);
+        *max_rmerge = DMAX(*max_rmerge, rmax_dt);
+    }
+}
+#endif
+
 /* GPU-callable version of sink_fb_angleweight_localcoupling.
  * Takes explicit particle refs instead of indices for device use. */
 KOKKOS_INLINE_FUNCTION

@@ -7,6 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "sink_functions.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -213,15 +214,13 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                                 double max_rmerge = 1.0*sink_radius; // default STARFORGE behavior: only merge away stuff that is within the softening radius; sink_radius=SinkParticle_GravityKernelRadius
                                 double max_mmerge = 10.*P[j].Sink_Formation_Mass; // default STARFORGE behavior: only merge away stuff no more massive than a few gas cells
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
-                                if(local.Sink_eligible_for_binary_merge_away == 0) {allow_sink_merger = 0;}
-                                if(is_star_eligible_for_binary_merge_away(j) == 0) {allow_sink_merger = 0;}
-                                max_mmerge = 10.*P[j].Mass; // makes it so there is no mass limit - even extremely massive stars can be merged
-                                max_rmerge = DMAX(max_rmerge, ForceSoftening_KernelRadius(j));
-                                max_rmerge = DMAX(max_rmerge, DMIN(local.KernelRadius, P[j].KernelRadius));
-                                max_rmerge = DMIN(max_rmerge, 10.*sink_radius);
-                                double dt_min_orbit_yr = 100.; // 'target' minimum orbital time of the binary in yr
-                                double rmax_dt = 0.000485/(All.cf_atime*UNIT_LENGTH_IN_PC) * pow(((P[j].Mass+local.Mass)*UNIT_MASS_IN_SOLAR/100.) * (dt_min_orbit_yr*dt_min_orbit_yr/(100.*100.)),1./3.); // ensures the binary period satisfies this
-                                max_rmerge = DMAX( max_rmerge , rmax_dt);
+                                sink_apply_binary_merge_away_limits(local.Sink_eligible_for_binary_merge_away,
+                                                                    is_star_eligible_for_binary_merge_away(j),
+                                                                    ForceSoftening_KernelRadius(j),
+                                                                    local.KernelRadius, P[j].KernelRadius,
+                                                                    local.Mass, P[j].Mass,
+                                                                    sink_radius, &allow_sink_merger,
+                                                                    &max_rmerge, &max_mmerge);
 #else
                                 if(sink_check_boundedness(j,vrel,vesc,r,sink_radius) != 1) {allow_sink_merger = 0;} // stricter criterion
 #endif

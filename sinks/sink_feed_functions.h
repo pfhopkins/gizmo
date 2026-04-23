@@ -54,6 +54,9 @@ struct SinkFeedLocalIn {
 #ifdef SINK_THERMALFEEDBACK
     MyFloat thermal_energy;  /* precomputed: sink_lum_bol(Mdot,Sink_Mass,-1)*Dt */
 #endif
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    int Sink_eligible_for_binary_merge_away;
+#endif
 };
 
 struct SinkFeedOut {
@@ -77,13 +80,16 @@ static void sink_feed_pair_kernel(const struct SinkFeedLocalIn& local,
                                   const Vec3<double>& dvel,
                                   struct SinkFeedOut& out,
                                   double& mass_markedswallow,
-                                  uint64_t rng_step)
+                                  uint64_t rng_step,
+                                  const double * KOKKOS_RESTRICT softening_kernel_radius,
+                                  const int * KOKKOS_RESTRICT sink_binary_merge_eligible)
 {
     if(kp[j].Mass <= 0) return;
 
     double h_i = (double)local.KernelRadius;
     double h_i2 = h_i * h_i;
-    double heff_j = DMAX((double)kp[j].KernelRadius, SinkParticle_GravityKernelRadius);
+    double soft_j = softening_kernel_radius ? softening_kernel_radius[j] : SinkParticle_GravityKernelRadius;
+    double heff_j = DMAX((double)kp[j].KernelRadius, soft_j);
     if(r2 >= h_i2 && r2 >= heff_j * heff_j) return;
 
     double r = sqrt(r2);
@@ -135,9 +141,13 @@ static void sink_feed_pair_kernel(const struct SinkFeedLocalIn& local,
             double max_rmerge = 1.0 * sink_radius;
             double max_mmerge = 10. * kp[j].Sink_Formation_Mass;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
-            /* binary-merge logic skipped in GPU path: is_star_eligible_for_binary_merge_away
-               is not GPU-callable; that branch handles rare Type5-Type5 events only */
-            allow_sink_merger = 0;
+            sink_apply_binary_merge_away_limits(local.Sink_eligible_for_binary_merge_away,
+                                                sink_binary_merge_eligible ? sink_binary_merge_eligible[j] : 0,
+                                                soft_j, (double)local.KernelRadius,
+                                                (double)kp[j].KernelRadius,
+                                                (double)local.Mass, (double)kp[j].Mass,
+                                                sink_radius, &allow_sink_merger,
+                                                &max_rmerge, &max_mmerge);
 #else
             if(!sink_check_boundedness_gpu(kp[j], kc[j], vrel, vesc, r, sink_radius)) allow_sink_merger = 0;
 #endif
