@@ -628,6 +628,10 @@ void find_next_sync_point_and_drift(void)
   for(n = 0, prev = -1; n < TIMEBINS; n++)
     {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current);}}}
 
+#ifdef OPENMP_GPU_OFFLOAD
+  refresh_timestep_dilation_factors_for_gpu();
+#endif
+
 }
 
 

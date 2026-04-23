@@ -2532,6 +2532,7 @@ void gizmo_gpu_sync_all(void) {
     extern struct global_data_all_processes All;
     struct global_data_all_processes *host_all = &All;
 #pragma pop_macro("All")
+    refresh_timestep_dilation_factors_for_gpu();
     /* Sync every TU's __managed__ All_dev from host All */
     gizmo_gpu_sync_all_cooling(host_all);
     gizmo_gpu_sync_all_eos(host_all);

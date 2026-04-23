@@ -2,8 +2,9 @@
  * timestep utility functions.  Single source of truth for both CPU and GPU.
  *
  * timestep_dilation_factor forwards to return_timestep_dilation_factor on
- * CPU when USE_TIMESTEP_DILATION_FOR_ZOOMS is enabled; on GPU that function
- * uses host-only tree data so we fall back to 1.
+ * CPU when USE_TIMESTEP_DILATION_FOR_ZOOMS is enabled.  GPU kernels read the
+ * host-computed particle cache; the host function remains the physics source
+ * of truth.
  *
  * Include order: after allvars.h, proto.h. */
 #pragma once
@@ -19,7 +20,9 @@ double timestep_dilation_factor(int i, int mode, struct particle_data *pp)
 #ifndef GIZMO_GPU_COMPILER
     return return_timestep_dilation_factor(i, mode, pp);
 #else
-    return 1; // GPU fallback: return_timestep_dilation_factor uses host-only tree data (Nodes)
+    if(i < 0) {return 1;}
+    if(mode != 0) {endrun(929101); return 1;}
+    return pp[i].TimestepDilationFactor;
 #endif
 #else
     return 1;

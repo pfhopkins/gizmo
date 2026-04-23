@@ -1469,6 +1469,20 @@ double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp
 #endif
 }
 
+void refresh_timestep_dilation_factors_for_gpu(void)
+{
+#if defined(OPENMP_GPU_OFFLOAD) && defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+    if(P == NULL || NumPart <= 0) {return;}
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < NumPart; i++)
+    {
+        P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, 0, P);
+    }
+#endif
+}
+
 /* timestep_dilation_factor, unit_integertime_in_physical, get_physical_timestep_from_timebin,
    get_particle_timestep_in_physical: definitions now in timestep_functions.h (single source of truth).
    Include with non-inline linkage to provide externally-visible symbols. */

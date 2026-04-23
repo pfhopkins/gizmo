@@ -17,6 +17,9 @@ extern ALIGN(32) struct particle_data
     
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+    MyDouble TimestepDilationFactor; /*!< host-computed timestep dilation factor cached for GPU kernels */
+#endif
     
     ALIGN(32) Vec3<MyDouble> Pos;   /*!< particle position at its current time */
     MyDouble Mass;                  /*!< particle mass */
@@ -372,4 +375,3 @@ extern ALIGN(32) struct particle_data
 #ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
 #endif
-
