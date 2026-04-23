@@ -54,7 +54,8 @@ int bbox_overlaps_sphere_gpu(double box_lo[3], double box_hi[3],
 
 
 /* Process a single tile's particles against particle i. Returns neighbor count.
- * Explicit periodic wrapping via box_sizes/box_halves arrays. */
+ * Uses the canonical neighbor periodic macros so shearing/long/reflected/outflow
+ * boundary behavior matches the CPU SFC neighbor search. */
 KOKKOS_INLINE_FUNCTION
 int check_tile_particles_gpu(struct particle_data *P, int i, double h_i, double h2_i,
                              sfc_tile_t *tile, int *pool, int search_mode,
@@ -62,19 +63,19 @@ int check_tile_particles_gpu(struct particle_data *P, int i, double h_i, double 
                              const double box_sizes[3], const double box_halves[3],
                              const int periodic_flags[3])
 {
+    (void)box_sizes;
+    (void)box_halves;
+    (void)periodic_flags;
+    MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
     for(int s = 0; s < tile->count; s++)
     {
         int j = pool[tile->first + s];
-        double dx = P[i].Pos[0] - P[j].Pos[0];
-        double dy = P[i].Pos[1] - P[j].Pos[1];
-        double dz = P[i].Pos[2] - P[j].Pos[2];
-
-        /* periodic wrapping */
-        if(periodic_flags[0]) { if(dx > box_halves[0]) dx -= box_sizes[0]; else if(dx < -box_halves[0]) dx += box_sizes[0]; }
-        if(periodic_flags[1]) { if(dy > box_halves[1]) dy -= box_sizes[1]; else if(dy < -box_halves[1]) dy += box_sizes[1]; }
-        if(periodic_flags[2]) { if(dz > box_halves[2]) dz -= box_sizes[2]; else if(dz < -box_halves[2]) dz += box_sizes[2]; }
-
-        double adx = fabs(dx);
+        double dx_raw = P[i].Pos[0] - P[j].Pos[0];
+        double dy_raw = P[i].Pos[1] - P[j].Pos[1];
+        double dz_raw = P[i].Pos[2] - P[j].Pos[2];
+        double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+        double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+        double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
 
         double pair_search_r2;
         if(search_mode == NGB_SEARCH_ONEWAY) {
@@ -85,7 +86,7 @@ int check_tile_particles_gpu(struct particle_data *P, int i, double h_i, double 
         }
 
         if(adx > h_i && (search_mode == NGB_SEARCH_ONEWAY || adx * adx > pair_search_r2)) continue;
-        double r2 = dx * dx + dy * dy + dz * dz;
+        double r2 = adx * adx + ady * ady + adz * adz;
         if(r2 < pair_search_r2) {
             if(store_neighbors) store_neighbors[count] = j;
             count++;
