@@ -3,7 +3,7 @@ Initial_Conditions_File             ./fire_ics
 Box_Size_In_Code_Units              58480
 Cosmological_Simulation_On          1
 Initial_Simulation_Time             0.2564103
-Final_Simulation_Time               0.257
+Final_Simulation_Time               0.2568
 ScaleFac_Between_Snapshots          1.0001
 Maximum_Timestep_Allowed            0.05
 Omega_Matter                        0.31
@@ -31,7 +31,7 @@ Cell_Spawn_Mass_ratio               0.01
 SeedSinkPerUnitMass                 2e-6
 SinkEddingtonFactor                 1e3
 % -- platform/runtime options
-Max_Memory_Per_MPI_Task_in_MB       9000
+Max_Memory_Per_MPI_Task_in_MB       30000
 MPI_Buffersize_in_MB                200
 ParticleNumberMembalance_Limit      3.5
 TreeRebuild_ActiveFraction          0.002
