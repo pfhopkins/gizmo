@@ -29,6 +29,7 @@
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
+#include "forcetree.h"
 
 #include "../mesh/kernel.h"
 
@@ -674,6 +675,24 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     int num_active_total = (int) ActiveParticleList.size();
     if(num_active_total <= 0) {return 0;}
+
+    /* The CPU walk (forcetree.cc) JIT-drifts particles and nodes whose
+     * Ti_current is stale, at the point of encounter in the walk. Without
+     * this, inactive particles (outside the currently active timebin) hold
+     * stale positions since GIZMO only drifts active bins per sync-point
+     * (run.cc:629) and only rebuilds the tree occasionally. The GPU walk
+     * cannot call these host-only helpers from inside the Kokkos kernel,
+     * so we apply the drift once up-front here: drift all particles, then
+     * drift all nodes whose Ti_current lags All.Ti_Current. After this the
+     * GPU SoA mirror is invalidated so the walk reads fresh positions and
+     * moments. Cost is O(NumPart + Numnodestree) arithmetic per call. */
+    move_particles(All.Ti_Current); /* drifts all P[], invalidates arena */
+    for(int no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
+        if(Nodes[no].Ti_current != All.Ti_Current) {
+            force_drift_node(no, All.Ti_Current);
+        }
+    }
+    gpu_gravity_tree_invalidate(); /* force SoA re-seed from drifted Nodes[] */
 
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
     int num_active = 0;
