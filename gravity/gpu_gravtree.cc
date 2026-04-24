@@ -122,12 +122,15 @@ struct gpu_rt_walk_data_t {
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
 #error "GIZMO_GPU_GRAVTREE does not yet support TIDAL_TENSOR / JERK in gravtree (Tier 3)."
 #endif
-#if defined(SINK_CALC_DISTANCES) || defined(SINK_PHOTONMOMENTUM) || defined(SINK_DYNFRICTION_FROMTREE) || defined(SINK_COMPTON_HEATING)
-#error "GIZMO_GPU_GRAVTREE does not yet support SINK_* payloads (Phase 2-B/2-C)."
+#if defined(SINK_PHOTONMOMENTUM) || defined(SINK_DYNFRICTION_FROMTREE) || defined(SINK_COMPTON_HEATING)
+#error "GIZMO_GPU_GRAVTREE does not yet support SINK_PHOTONMOMENTUM / SINK_DYNFRICTION_FROMTREE / SINK_COMPTON_HEATING (Phase 2-C)."
 #endif
-#if defined(SINGLE_STAR_STARFORGE_DEFAULTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-#error "GIZMO_GPU_GRAVTREE does not yet support SINGLE_STAR_* payloads (Phase 2-B)."
+#if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
+#error "GIZMO_GPU_GRAVTREE does not yet support SPECIAL_POINT_MOTION payloads (deferred)."
 #endif
+/* SINK_CALC_DISTANCES, SINGLE_STAR_SINK_DYNAMICS, SINGLE_STAR_TIMESTEPPING,
+ * SINGLE_STAR_FIND_BINARIES, SINGLE_STAR_FB_TIMESTEPLIMIT, SINGLE_STAR_STARFORGE_DEFAULTS:
+ * ported in Phase 2-B. */
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
 #error "GIZMO_GPU_GRAVTREE does not yet support COSMIC_RAY_SUBGRID_LEBRON (Phase 2-D)."
 #endif
@@ -197,6 +200,30 @@ gpu_gravtree_walk_one(int target,
 
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     const int ags_bitflag_primary = gpu_ags_kernel_shared_BITFLAG(ptype);
+#endif
+
+    /* ------------------------------------------------------------------ *
+     * Phase 2-B: SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.  *
+     * Mirrors forcetree.cc:1509-1526.                                     *
+     * ------------------------------------------------------------------ */
+#ifdef SINGLE_STAR_TIMESTEPPING
+    Vec3<double> vel = P_dev[target].Vel;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    double Min_Distance_to_Sink2 = MAX_REAL_NUMBER;
+    Vec3<double> Min_xyz_to_Sink = {MAX_REAL_NUMBER, MAX_REAL_NUMBER, MAX_REAL_NUMBER};
+#endif
+#ifdef SINGLE_STAR_TIMESTEPPING
+    double Min_Sink_Approach_Time = MAX_REAL_NUMBER;
+    double Min_Sink_Freefall_time = MAX_REAL_NUMBER;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    double Min_Sink_FeedbackTime = MAX_REAL_NUMBER;
+#endif
+#ifdef SINGLE_STAR_FIND_BINARIES
+    double Min_Sink_OrbitalTime = MAX_REAL_NUMBER;
+    double comp_Mass_local = 0.0;
+    Vec3<double> comp_dx_local = {0,0,0}, comp_dv_local = {0,0,0};
 #endif
 
     /* ------------------------------------------------------------------ *
@@ -308,6 +335,59 @@ gpu_gravtree_walk_one(int target,
 #endif
             }
 #endif
+            /* Phase 2-B: sink-distance + timestepping tracking on particle leafs.
+             * Mirrors forcetree.cc:1669-1732. Only fires when source is a sink
+             * particle (Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES). */
+#ifdef SINK_CALC_DISTANCES
+            if((r2 > 0) && (mass > 0) && (P_dev[no].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES))
+            {
+                if(r2 < Min_Distance_to_Sink2) {
+                    Min_Distance_to_Sink2 = r2;
+                    Min_xyz_to_Sink = dr;
+                }
+#ifdef SINGLE_STAR_TIMESTEPPING
+                Vec3<double> sink_dv = P_dev[no].Vel - vel;
+                double vSqr = sink_dv.norm_sq();
+                double M_total = P_dev[no].Mass + pmass;
+                double r2soft = SinkParticle_GravityKernelRadius;
+                if(r2soft < soft) {r2soft = soft;}
+                r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
+                r2soft = r2 + r2soft * r2soft;
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+                if(ptype == 0) {
+                    double tSqr_fb = r2soft / (P_dev[no].MaxFeedbackVel * P_dev[no].MaxFeedbackVel + MIN_REAL_NUMBER);
+                    if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
+                }
+#endif
+                double tSqr = r2soft / (vSqr + MIN_REAL_NUMBER);
+                double tff4 = r2soft * r2soft * r2soft / (M_total * M_total);
+                if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
+                if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
+#ifdef SINGLE_STAR_FIND_BINARIES
+                if(ptype == 5) {
+                    double r_p5 = sqrt(r2);
+                    double specific_energy = 0.5 * vSqr - All.G * M_total / r_p5;
+                    if(r2 < SinkParticle_GravityKernelRadius * SinkParticle_GravityKernelRadius) {
+                        double hinv_p5 = 1.0 / SinkParticle_GravityKernelRadius;
+                        specific_energy = 0.5 * vSqr + All.G * M_total *
+                            kernel_gravity(r_p5*hinv_p5, hinv_p5, hinv_p5*hinv_p5*hinv_p5, -1);
+                    }
+                    if(specific_energy < 0) {
+                        double semimajor_axis = -All.G * M_total / (2.0 * specific_energy);
+                        double t_orbital = 2.0 * M_PI *
+                            sqrt(semimajor_axis*semimajor_axis*semimajor_axis / (All.G * M_total));
+                        if(t_orbital < Min_Sink_OrbitalTime) {
+                            Min_Sink_OrbitalTime = t_orbital;
+                            comp_Mass_local = P_dev[no].Mass;
+                            comp_dx_local = dr;
+                            comp_dv_local = sink_dv;
+                        }
+                    }
+                }
+#endif /* SINGLE_STAR_FIND_BINARIES */
+#endif /* SINGLE_STAR_TIMESTEPPING */
+            }
+#endif /* SINK_CALC_DISTANCES */
         }
         else if(no >= maxPart + maxNodes) /* pseudo-particle — remote */
         {
@@ -367,6 +447,15 @@ gpu_gravtree_walk_one(int target,
                 if(dcx < 0.60 * len_node && dcy < 0.60 * len_node && dcz < 0.60 * len_node) {
                     no = s->nextnode[idx]; continue;
                 }
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+                /* Force star-star nodes to open inside the direct-gravity radius. */
+                if(ptype == 5) {
+                    double r_direct = (double)SINGLE_STAR_DIRECT_GRAVITY_RADIUS / UNIT_LENGTH_IN_AU + 0.6*len_node;
+                    if((s->N_SINK[idx] > 0) && (r2 < r_direct * r_direct)) {
+                        no = s->nextnode[idx]; continue;
+                    }
+                }
+#endif
             }
 
             /* Node accepted — load payload fields */
@@ -398,6 +487,58 @@ gpu_gravtree_walk_one(int target,
 #endif
             }
 #endif
+            /* Phase 2-B: node-side sink distance + timestepping accumulators.
+             * Mirrors forcetree.cc:1993-2050. Runs only when the closed node
+             * has non-zero sink mass (i.e., contains at least one sink). */
+#ifdef SINK_CALC_DISTANCES
+            if(s->sink_mass[idx] > 0)
+            {
+                Vec3<double> sink_dr;
+                sink_dr[0] = s->sink_pos[idx][0] - pos[0];
+                sink_dr[1] = s->sink_pos[idx][1] - pos[1];
+                sink_dr[2] = s->sink_pos[idx][2] - pos[2];
+                double sink_r2 = sink_dr.norm_sq();
+                if(sink_r2 < Min_Distance_to_Sink2) {
+                    Min_Distance_to_Sink2 = sink_r2;
+                    Min_xyz_to_Sink = sink_dr;
+                }
+#ifdef SINGLE_STAR_TIMESTEPPING
+                Vec3<double> sink_dv = s->sink_vel[idx] - vel;
+                double vSqr = sink_dv.norm_sq();
+                double M_total = s->sink_mass[idx] + pmass;
+                double r2soft = SinkParticle_GravityKernelRadius;
+                if(r2soft < soft) {r2soft = soft;}
+                r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
+                r2soft = r2 + r2soft * r2soft;
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+                if(ptype == 0) {
+                    double tSqr_fb = r2soft / (s->MaxFeedbackVel[idx] * s->MaxFeedbackVel[idx] + MIN_REAL_NUMBER);
+                    if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
+                }
+#endif
+                double tSqr = r2soft / (vSqr + MIN_REAL_NUMBER);
+                double tff4 = r2soft * r2soft * r2soft / (M_total * M_total);
+                if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
+                if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
+#ifdef SINGLE_STAR_FIND_BINARIES
+                if(ptype == 5 && s->N_SINK[idx] == 1) {
+                    double specific_energy = 0.5 * vSqr - All.G * M_total / sqrt(r2);
+                    if(specific_energy < 0) {
+                        double semimajor_axis = -All.G * M_total / (2.0 * specific_energy);
+                        double t_orbital = 2.0 * M_PI *
+                            sqrt(semimajor_axis*semimajor_axis*semimajor_axis / (All.G * M_total));
+                        if(t_orbital < Min_Sink_OrbitalTime) {
+                            Min_Sink_OrbitalTime = t_orbital;
+                            comp_Mass_local = s->sink_mass[idx];
+                            comp_dx_local = sink_dr;
+                            comp_dv_local = sink_dv;
+                        }
+                    }
+                }
+#endif /* SINGLE_STAR_FIND_BINARIES */
+#endif /* SINGLE_STAR_TIMESTEPPING */
+            }
+#endif /* SINK_CALC_DISTANCES */
         }
 
         /* Force kernel — common path for accepted particles and closed nodes. */
@@ -428,6 +569,10 @@ gpu_gravtree_walk_one(int target,
                     if(ptype_sec >= 0 && ((1 << ptype_sec) & ags_bitflag_primary)) {
                         symmetrize_by_averaging = 1;
                     }
+#endif
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+                    /* sinks: only gas-gas keeps averaging (forcetree.cc:2093-2095) */
+                    if((ptype != 0) || (ptype_sec != 0)) {symmetrize_by_averaging = 0;}
 #endif
                     double prefac_corr_p    = 1.0;
                     double prefac_corr_orig = 1.0;
@@ -668,6 +813,31 @@ gpu_gravtree_walk_one(int target,
 #endif
 #endif /* RT_USE_GRAVTREE */
 
+    /* Phase 2-B: sink-distance / single-star timestepping outputs.
+     * Mirrors forcetree.cc:2499-2526 (mode=0). Scatter from P_dev back to P[]
+     * happens in the host post-walk loop (primary driver). */
+#ifdef SINK_CALC_DISTANCES
+    P_dev[target].Min_Distance_to_Sink = sqrt(Min_Distance_to_Sink2);
+    P_dev[target].Min_xyz_to_Sink = Min_xyz_to_Sink;
+#ifdef SINGLE_STAR_FIND_BINARIES
+    P_dev[target].is_in_a_binary = 0;
+    P_dev[target].Min_Sink_OrbitalTime = Min_Sink_OrbitalTime;
+    if(Min_Sink_OrbitalTime < MAX_REAL_NUMBER) {
+        P_dev[target].is_in_a_binary = 1;
+        P_dev[target].comp_Mass = comp_Mass_local;
+        P_dev[target].comp_dx = comp_dx_local;
+        P_dev[target].comp_dv = comp_dv_local;
+    }
+#endif
+#ifdef SINGLE_STAR_TIMESTEPPING
+    P_dev[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
+    P_dev[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time) / All.G);
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    P_dev[target].Min_Sink_FeedbackTime = sqrt(Min_Sink_FeedbackTime);
+#endif
+#endif
+#endif /* SINK_CALC_DISTANCES */
+
     acc_out = acc;
     ninter_out = ninter;
     pot_out = pot;
@@ -886,6 +1056,28 @@ extern "C" int gpu_gravtree_walk_primary(void)
             }
 #endif
 #endif /* RT_USE_GRAVTREE */
+
+            /* Phase 2-B: sink-distance / single-star timestepping scatter-back */
+#ifdef SINK_CALC_DISTANCES
+            P[i].Min_Distance_to_Sink = P_dev[i].Min_Distance_to_Sink;
+            P[i].Min_xyz_to_Sink      = P_dev[i].Min_xyz_to_Sink;
+#ifdef SINGLE_STAR_FIND_BINARIES
+            P[i].is_in_a_binary       = P_dev[i].is_in_a_binary;
+            P[i].Min_Sink_OrbitalTime = P_dev[i].Min_Sink_OrbitalTime;
+            if(P[i].is_in_a_binary) {
+                P[i].comp_Mass = P_dev[i].comp_Mass;
+                P[i].comp_dx   = P_dev[i].comp_dx;
+                P[i].comp_dv   = P_dev[i].comp_dv;
+            }
+#endif
+#ifdef SINGLE_STAR_TIMESTEPPING
+            P[i].Min_Sink_Approach_Time = P_dev[i].Min_Sink_Approach_Time;
+            P[i].Min_Sink_Freefall_time = P_dev[i].Min_Sink_Freefall_time;
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+            P[i].Min_Sink_FeedbackTime  = P_dev[i].Min_Sink_FeedbackTime;
+#endif
+#endif
+#endif /* SINK_CALC_DISTANCES */
 
             ProcessedFlag[i] = 1;
             costtotal_added += d_ninter[a];
