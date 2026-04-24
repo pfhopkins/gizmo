@@ -126,6 +126,17 @@ struct gpu_rt_walk_data_t {
  *               or P[p].GradRho otherwise.  Used for angle-weighted
  *               luminosity at particle leafs.  Node-level sink_lum /
  *               sink_lum_grad already live in the SoA (Phase 2-I). */
+/* Phase 2-D: COSMIC_RAY_SUBGRID_LEBRON payload.  cr_get_source_injection_rate
+ * is not GPU-callable so per-particle injection is precomputed on host.
+ * t_max_cr = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/
+ * UNIT_TIME_IN_GYR, passed as scalar (independent of target). */
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+struct gpu_cr_walk_data_t {
+    MyFloat *cr_inject;       /* [NumPart] */
+    double   t_max_cr;        /* scalar, in code time units */
+};
+#endif
+
 #ifdef SINK_PHOTONMOMENTUM
 struct gpu_sink_walk_data_t {
     MyFloat       *bh_lum;    /* [NumPart] */
@@ -191,9 +202,9 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
 /* SINK_CALC_DISTANCES, SINGLE_STAR_SINK_DYNAMICS, SINGLE_STAR_TIMESTEPPING,
  * SINGLE_STAR_FIND_BINARIES, SINGLE_STAR_FB_TIMESTEPLIMIT, SINGLE_STAR_STARFORGE_DEFAULTS:
  * ported in Phase 2-B. */
-#if defined(COSMIC_RAY_SUBGRID_LEBRON)
-#error "GIZMO_GPU_GRAVTREE does not yet support COSMIC_RAY_SUBGRID_LEBRON (Phase 2-D)."
-#endif
+/* COSMIC_RAY_SUBGRID_LEBRON: ported in Phase 2-D. Reads SoA cr_injection at
+ * node accepts + per-particle precomputed d_cr_inject at leaf nodes (since
+ * cr_get_source_injection_rate is not GPU-callable). */
 #if defined(DM_SCALARFIELD_SCREENING) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(COUNT_MASS_IN_GRAVTREE)
 #error "GIZMO_GPU_GRAVTREE does not yet support DM/spherical/mass-count payloads (Tier 3)."
 #endif
@@ -233,6 +244,9 @@ gpu_gravtree_walk_one(int target,
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                       const struct gpu_sink_walk_data_t *sink_data,
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+                      const struct gpu_cr_walk_data_t *cr_data,
 #endif
                       Vec3<double> &acc_out,
                       int &ninter_out,
@@ -279,6 +293,10 @@ gpu_gravtree_walk_one(int target,
 #endif
 #ifdef SINK_COMPTON_HEATING
     double incident_flux_agn = 0.0;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    double SubGrid_CosmicRayEnergyDensity = 0.0;
+    double cr_injection = 0.0; /* per-interaction; reset in leaf/node blocks */
 #endif
 #ifdef SINK_CALC_DISTANCES
     double Min_Distance_to_Sink2 = MAX_REAL_NUMBER;
@@ -425,6 +443,10 @@ gpu_gravtree_walk_one(int target,
                 }
 #endif
             }
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            /* Mirror forcetree.cc:1734-1736 leaf CR source injection. */
+            cr_injection = (double) cr_data->cr_inject[no];
 #endif
             /* Phase 2-B: sink-distance + timestepping tracking on particle leafs.
              * Mirrors forcetree.cc:1669-1732. Only fires when source is a sink
@@ -591,6 +613,10 @@ gpu_gravtree_walk_one(int target,
                                                                  d_stellarlum[0], d_stellarlum[1], d_stellarlum[2]);
 #endif
             }
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            /* Mirror forcetree.cc:1956-1957 node-aggregated CR injection. */
+            cr_injection = (double) s->cr_injection[idx];
 #endif
             /* Phase 2-B: node-side sink distance + timestepping accumulators.
              * Mirrors forcetree.cc:1993-2050. Runs only when the closed node
@@ -830,6 +856,33 @@ gpu_gravtree_walk_one(int target,
             }
 #endif
 
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            /* Mirror forcetree.cc:2300-2311. CR sub-grid LEBRON energy density
+             * accumulation at the post-opening stage. All.Time>All.TimeBegin
+             * and t_max_cr>0 are host-side checks; cr_data->t_max_cr is 0 at
+             * t=TimeBegin which makes r_max=0 and the exp() factor zero, so
+             * the block is a no-op on the first step even without the gate. */
+            if(ptype == 0 && r > 0 && cr_injection > 0 && cr_data->t_max_cr > 0)
+            {
+                double kappa_0 = All.CosmicRay_Subgrid_Kappa_0;
+                double vst_0   = All.CosmicRay_Subgrid_Vstream_0;
+                double r_phys  = sqrt(r*r + soft*soft/4.0) * All.cf_atime;
+                double t_max   = cr_data->t_max_cr;
+                double r_max   = 0.5 * t_max * vst_0 * (1.0 + sqrt(1.0 + 16.0*kappa_0/(vst_0*vst_0*t_max)));
+#ifdef PMGRID
+                double r_max_pm = 0.5 * rcut * All.cf_atime;
+                if(r_max_pm < r_max) {r_max = r_max_pm;}
+#endif
+                double denom = 4.0 * M_PI * r_phys * (kappa_0 + vst_0*r_phys);
+                double expo  = r_phys*r_phys / (1.e-6*r_phys*r_phys + r_max*r_max);
+                if(expo > 50.0) {expo = 50.0;}
+                double fac_cr_distance = exp(-expo) / denom;
+                if(fac_cr_distance > 0) {
+                    SubGrid_CosmicRayEnergyDensity += fac_cr_distance * cr_injection / All.cf_a3inv;
+                }
+            }
+#endif
+
 #ifdef RT_USE_GRAVTREE
             if(valid_gas_particle_for_rt)
             {
@@ -974,6 +1027,11 @@ gpu_gravtree_walk_one(int target,
     }
 #endif
 #endif /* RT_USE_GRAVTREE */
+
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    /* Mirror forcetree.cc:2478-2480. */
+    if(ptype == 0) {CellP_dev[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;}
+#endif
 
     /* Phase 2-B: sink-distance / single-star timestepping outputs.
      * Mirrors forcetree.cc:2499-2526 (mode=0). Scatter from P_dev back to P[]
@@ -1142,6 +1200,32 @@ extern "C" int gpu_gravtree_walk_primary(void)
     sink_data_snap.bh_angle = d_bh_angle;
 #endif /* SINK_PHOTONMOMENTUM */
 
+    /* Phase 2-D: precompute per-particle CR source injection rate.
+     * cr_get_source_injection_rate() is CPU-only. */
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    MyFloat *d_cr_inject = NULL;
+    double   t_max_cr    = 0.0;
+    {
+        long sz = (long)NumPart * sizeof(MyFloat);
+        d_cr_inject = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+        if(!d_cr_inject) {printf("gpu_gravtree_walk_primary: cr_inject alloc failed\n"); endrun(913211);}
+        memset(d_cr_inject, 0, sz);
+        if(All.Time > All.TimeBegin) {
+            double t_gyr = evaluate_time_since_t_initial_in_Gyr(All.TimeBegin);
+            if(t_gyr > 1.0) {t_gyr = 1.0;}
+            t_max_cr = t_gyr / UNIT_TIME_IN_GYR;
+        }
+        for(int p = 0; p < NumPart; p++) {
+            if(P[p].Type != 0 || P[p].Mass <= 0) continue;
+            double rate = cr_get_source_injection_rate(p, P, CellP);
+            d_cr_inject[p] = (MyFloat) rate;
+        }
+    }
+    struct gpu_cr_walk_data_t cr_data_snap;
+    cr_data_snap.cr_inject = d_cr_inject;
+    cr_data_snap.t_max_cr  = t_max_cr;
+#endif /* COSMIC_RAY_SUBGRID_LEBRON */
+
     /* Scratch arrays for per-target results */
     int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
@@ -1178,6 +1262,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef SINK_PHOTONMOMENTUM
     const struct gpu_sink_walk_data_t sink_data_dev = sink_data_snap;
 #endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    const struct gpu_cr_walk_data_t cr_data_dev = cr_data_snap;
+#endif
 
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -1194,6 +1281,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                                         &sink_data_dev,
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+                                        &cr_data_dev,
 #endif
                                         acc, ninter, pot);
         if(ok) {
@@ -1261,6 +1351,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
             }
 #endif
 #endif /* RT_USE_GRAVTREE */
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                CellP[i].SubGrid_CosmicRayEnergyDensity = CellP_dev[i].SubGrid_CosmicRayEnergyDensity;
+            }
+#endif
 
             /* Phase 2-B: sink-distance / single-star timestepping scatter-back */
 #ifdef SINK_CALC_DISTANCES
@@ -1310,6 +1405,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef SINK_PHOTONMOMENTUM
     if(d_bh_angle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_angle);}
     if(d_bh_lum)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_lum);}
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    if(d_cr_inject){Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_cr_inject);}
 #endif
 #ifdef PMGRID
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_sp);
