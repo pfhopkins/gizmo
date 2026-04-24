@@ -40,6 +40,19 @@ extern "C" {
  * stay simple. */
 int gpu_gravtree_walk_primary(void);
 
+/* GPU Ewald-correction walk. Called from gravity_tree() when Ewald_iter==1
+ * (pure-tree periodic, BOX_PERIODIC && !GRAVITY_NOT_PERIODIC && !PMGRID).
+ * Mirrors force_treeevaluate_ewald_correction mode=0: walks the local tree a
+ * second time, accumulates the periodic-image correction via trilinear
+ * interpolation of the fcorrx/y/z look-up tables, and adds the result to
+ * P[i].GravAccel.
+ *
+ * Only the local tree walk runs on GPU. Pseudo-particle hits leave
+ * ProcessedFlag unset, so the CPU Ewald secondary loop finishes those via
+ * MPI export.  No-op when GIZMO_GPU_GRAVTREE is not defined or the build
+ * lacks OPENMP_GPU_OFFLOAD. Returns number of successfully walked targets. */
+int gpu_ewald_walk_primary(void);
+
 #ifdef __cplusplus
 }
 #endif

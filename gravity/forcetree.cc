@@ -101,6 +101,19 @@ static MyFloat fcorry[EN + 1][EN + 1][EN + 1];
 static MyFloat fcorrz[EN + 1][EN + 1][EN + 1];
 static MyFloat potcorr[EN + 1][EN + 1][EN + 1];
 static double fac_intp;
+#if !defined(GRAVITY_NOT_PERIODIC)
+/* Accessor for gpu_gravtree.cc — see forcetree.h. */
+void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_out,
+                            const MyFloat **fcorrz_out, const MyFloat **potcorr_out,
+                            double *fac_intp_out)
+{
+    *fcorrx_out  = &fcorrx[0][0][0];
+    *fcorry_out  = &fcorry[0][0][0];
+    *fcorrz_out  = &fcorrz[0][0][0];
+    *potcorr_out = &potcorr[0][0][0];
+    *fac_intp_out = fac_intp;
+}
+#endif
 #endif
 
 

@@ -223,9 +223,10 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  *                             in gpu_ewald_walk_primary (dispatched from
  *                             gravtree.cc after the primary walk).
  *   GRAVITY_NOT_PERIODIC    → non-periodic box, Ewald not relevant. */
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-#error "GIZMO_GPU_GRAVTREE: pure-tree periodic gravity (BOX_PERIODIC without PMGRID) requires the GPU Ewald walk — not yet enabled. Build with PMGRID, or with GRAVITY_NOT_PERIODIC, or wait for the Ewald port."
-#endif
+/* Pure-tree periodic gravity (BOX_PERIODIC && !GRAVITY_NOT_PERIODIC && !PMGRID)
+ * is supported via the GPU Ewald walk (gpu_ewald_walk_primary), dispatched
+ * from gravtree.cc on the Ewald_iter==1 pass. Implementation later in this
+ * file. */
 #if defined(SELFGRAVITY_OFF)
 #error "GIZMO_GPU_GRAVTREE requires self-gravity to be enabled."
 #endif
@@ -1433,8 +1434,295 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
 GPU_ALL_SYNC_FUNC(gravtree)
 
+
+/* ========================================================================= *
+ * Phase 2-E: GPU Ewald-correction walk (pure-tree periodic gravity).         *
+ *                                                                            *
+ * Mirrors force_treeevaluate_ewald_correction() mode=0 (forcetree.cc:2631).  *
+ * Runs as a second pass over active targets when Ewald_iter==1, after the    *
+ * primary walk has completed its Ewald_iter==0 pass. Adds the periodic-image *
+ * correction to P[target].GravAccel via trilinear interpolation of the Ewald *
+ * lookup tables (fcorrx/y/z), with the same opening criteria and            *
+ * nearest-image wrapping as the CPU walk. No optional payloads (monopole     *
+ * only), no softening kernel.                                                *
+ * ========================================================================= */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+
+/* SharedSpace mirrors of the four Ewald correction tables. Seeded once from
+ * the CPU-side static tables in forcetree.cc via gizmo_get_ewald_tables().
+ * Flat layout: index [i*(EN+1)^2 + j*(EN+1) + k] with EN = GIZMO_EWALD_EN. */
+static MyFloat *g_d_fcorrx   = NULL;
+static MyFloat *g_d_fcorry   = NULL;
+static MyFloat *g_d_fcorrz   = NULL;
+static MyFloat *g_d_potcorr  = NULL;
+static double   g_ewald_fac_intp = 0.0;
+static int      g_ewald_tables_ready = 0;
+
+static void gpu_ewald_tables_acquire(void)
+{
+    if(g_ewald_tables_ready) return;
+    const MyFloat *fx, *fy, *fz, *fp;
+    double fi;
+    gizmo_get_ewald_tables(&fx, &fy, &fz, &fp, &fi);
+    long n  = (long)(GIZMO_EWALD_EN + 1) * (GIZMO_EWALD_EN + 1) * (GIZMO_EWALD_EN + 1);
+    long sz = n * sizeof(MyFloat);
+    g_d_fcorrx  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+    g_d_fcorry  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+    g_d_fcorrz  = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+    g_d_potcorr = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz);
+    if(!g_d_fcorrx || !g_d_fcorry || !g_d_fcorrz || !g_d_potcorr) {
+        printf("gpu_ewald_tables_acquire: kokkos_malloc failed\n");
+        endrun(914101);
+    }
+    memcpy(g_d_fcorrx,  fx, sz);
+    memcpy(g_d_fcorry,  fy, sz);
+    memcpy(g_d_fcorrz,  fz, sz);
+    memcpy(g_d_potcorr, fp, sz);
+    g_ewald_fac_intp = fi;
+    g_ewald_tables_ready = 1;
+}
+
+/* Device-side Ewald walk for a single target. Returns 1 on success (acc
+ * written), 0 if a pseudo-particle was encountered (defer to CPU). */
+static KOKKOS_INLINE_FUNCTION int
+gpu_ewald_walk_one(int target,
+                   int maxPart, int maxNodes,
+                   struct particle_data *P_dev,
+                   const struct gpu_gravity_tree_soa_t *s,
+                   const MyFloat *fcorrx, const MyFloat *fcorry, const MyFloat *fcorrz,
+                   double fac_intp, double boxsize, double boxhalf,
+                   double errtoltheta, double errtolforceacc,
+                   Vec3<double> &acc_out)
+{
+    Vec3<double> pos = P_dev[target].Pos;
+    double aold = errtolforceacc * P_dev[target].OldAcc;
+    Vec3<double> acc = {0.0, 0.0, 0.0};
+    const int EN       = GIZMO_EWALD_EN;
+    const int stride1  = EN + 1;
+    const int stride2  = stride1 * stride1;
+
+    int no = maxPart; /* root node */
+    while(no >= 0)
+    {
+        double mass = 0.0;
+        Vec3<double> dr = {0.0, 0.0, 0.0};
+        int is_leaf = 0;
+        int idx = 0;
+        if(no < maxPart) /* particle leaf */
+        {
+            dr[0] = P_dev[no].Pos[0] - pos[0];
+            dr[1] = P_dev[no].Pos[1] - pos[1];
+            dr[2] = P_dev[no].Pos[2] - pos[2];
+            mass  = P_dev[no].Mass;
+            is_leaf = 1;
+        }
+        else if(no >= maxPart + maxNodes) /* pseudo-particle — defer to CPU */
+        {
+            return 0;
+        }
+        else /* internal node */
+        {
+            idx = no - maxPart;
+            /* skip single-particle node (open it to its daughter chain) */
+            if(!(s->bitflags[idx] & (1 << BITFLAG_MULTIPLEPARTICLES))) {
+                no = s->nextnode[idx];
+                continue;
+            }
+            mass  = s->mass[idx];
+            dr[0] = s->s[idx][0] - pos[0];
+            dr[1] = s->s[idx][1] - pos[1];
+            dr[2] = s->s[idx][2] - pos[2];
+        }
+
+        /* nearest-image wrap on the displacement (mirrors GRAVITY_NEAREST_XYZ) */
+        if(dr[0] >  boxhalf) dr[0] -= boxsize; else if(dr[0] < -boxhalf) dr[0] += boxsize;
+        if(dr[1] >  boxhalf) dr[1] -= boxsize; else if(dr[1] < -boxhalf) dr[1] += boxsize;
+        if(dr[2] >  boxhalf) dr[2] -= boxsize; else if(dr[2] < -boxhalf) dr[2] += boxsize;
+
+        if(is_leaf) {
+            no = s->nextnode_aux[no];
+        } else {
+            /* Opening check + periodic-boundary skip (mirrors forcetree.cc:2769-2842) */
+            double r2  = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2];
+            if(r2 <= 0) r2 = 1e-300;
+            double len = s->len[idx];
+            int openflag = 0;
+            if(errtoltheta) {
+                if(len * len > r2 * errtoltheta * errtoltheta) openflag = 1;
+            } else {
+                if(mass * len * len > r2 * r2 * aold) {
+                    openflag = 1;
+                } else {
+                    double cx = s->center[idx][0] - pos[0]; if(cx >  boxhalf) cx -= boxsize; else if(cx < -boxhalf) cx += boxsize;
+                    double cy = s->center[idx][1] - pos[1]; if(cy >  boxhalf) cy -= boxsize; else if(cy < -boxhalf) cy += boxsize;
+                    double cz = s->center[idx][2] - pos[2]; if(cz >  boxhalf) cz -= boxsize; else if(cz < -boxhalf) cz += boxsize;
+                    double adx = (cx < 0) ? -cx : cx;
+                    double ady = (cy < 0) ? -cy : cy;
+                    double adz = (cz < 0) ? -cz : cz;
+                    if(adx < 0.60*len && ady < 0.60*len && adz < 0.60*len) openflag = 1;
+                }
+            }
+            if(openflag) {
+                /* short-cut: if the node is entirely on one side of the periodic
+                 * boundary along any axis, we can safely skip it without opening */
+                double ux = s->center[idx][0] - pos[0]; if(ux >  boxhalf) ux -= boxsize; else if(ux < -boxhalf) ux += boxsize;
+                if(((ux < 0) ? -ux : ux) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
+                double uy = s->center[idx][1] - pos[1]; if(uy >  boxhalf) uy -= boxsize; else if(uy < -boxhalf) uy += boxsize;
+                if(((uy < 0) ? -uy : uy) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
+                double uz = s->center[idx][2] - pos[2]; if(uz >  boxhalf) uz -= boxsize; else if(uz < -boxhalf) uz += boxsize;
+                if(((uz < 0) ? -uz : uz) > 0.5*(boxsize - len)) { no = s->nextnode[idx]; continue; }
+                /* cell too large → must refine */
+                if(len > 0.20 * boxsize) { no = s->nextnode[idx]; continue; }
+            }
+            no = s->sibling[idx];
+        }
+
+        /* Trilinear interpolation of the Ewald correction table. */
+        double signx, signy, signz, adrx, adry, adrz;
+        if(dr[0] < 0) { adrx = -dr[0]; signx = +1.0; } else { adrx = dr[0]; signx = -1.0; }
+        if(dr[1] < 0) { adry = -dr[1]; signy = +1.0; } else { adry = dr[1]; signy = -1.0; }
+        if(dr[2] < 0) { adrz = -dr[2]; signz = +1.0; } else { adrz = dr[2]; signz = -1.0; }
+        double u = adrx * fac_intp; int i = (int) u; if(i >= EN) i = EN - 1; u -= i;
+        double v = adry * fac_intp; int j = (int) v; if(j >= EN) j = EN - 1; v -= j;
+        double w = adrz * fac_intp; int k = (int) w; if(k >= EN) k = EN - 1; w -= k;
+        double f1 = (1-u)*(1-v)*(1-w);
+        double f2 = (1-u)*(1-v)*(w);
+        double f3 = (1-u)*(v)  *(1-w);
+        double f4 = (1-u)*(v)  *(w);
+        double f5 = (u)  *(1-v)*(1-w);
+        double f6 = (u)  *(1-v)*(w);
+        double f7 = (u)  *(v)  *(1-w);
+        double f8 = (u)  *(v)  *(w);
+#define GIZMO_EW_IDX3(ii,jj,kk) ((ii)*stride2 + (jj)*stride1 + (kk))
+        acc[0] += mass * signx * (fcorrx[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
+                                  fcorrx[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
+                                  fcorrx[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
+                                  fcorrx[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
+                                  fcorrx[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
+                                  fcorrx[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
+                                  fcorrx[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
+                                  fcorrx[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
+        acc[1] += mass * signy * (fcorry[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
+                                  fcorry[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
+                                  fcorry[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
+                                  fcorry[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
+                                  fcorry[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
+                                  fcorry[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
+                                  fcorry[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
+                                  fcorry[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
+        acc[2] += mass * signz * (fcorrz[GIZMO_EW_IDX3(i,  j,  k  )] * f1 +
+                                  fcorrz[GIZMO_EW_IDX3(i,  j,  k+1)] * f2 +
+                                  fcorrz[GIZMO_EW_IDX3(i,  j+1,k  )] * f3 +
+                                  fcorrz[GIZMO_EW_IDX3(i,  j+1,k+1)] * f4 +
+                                  fcorrz[GIZMO_EW_IDX3(i+1,j,  k  )] * f5 +
+                                  fcorrz[GIZMO_EW_IDX3(i+1,j,  k+1)] * f6 +
+                                  fcorrz[GIZMO_EW_IDX3(i+1,j+1,k  )] * f7 +
+                                  fcorrz[GIZMO_EW_IDX3(i+1,j+1,k+1)] * f8);
+#undef GIZMO_EW_IDX3
+    }
+
+    acc_out = acc;
+    return 1;
+}
+
+extern "C" int gpu_ewald_walk_primary(void)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH(gravtree);
+    if(TakeLevel >= 0) {return 0;}
+    if(Ewald_iter == 0) {return 0;}
+#ifdef PMGRID
+    return 0; /* Ewald walk not needed under TreePM (gravtree.cc:734 gate) */
+#else
+    int num_active_total = (int) ActiveParticleList.size();
+    if(num_active_total <= 0) {return 0;}
+
+    /* Particles have already been drifted by the primary walk (Ewald_iter==0);
+     * the tree SoA mirror is still valid. Just re-acquire (cache-hit). */
+    int min_nodes = MaxNodes + 1;
+    gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
+    gpu_gravity_tree_set_nextnode(All.MaxPart + NTopnodes, Nextnode);
+    const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa) {return 0;}
+
+    gpu_particles_arena_acquire(NumPart, P, CellP);
+    struct particle_data *P_dev = gpu_particles_arena_P();
+    if(!P_dev) {return 0;}
+
+    gpu_ewald_tables_acquire();
+
+    int *idx_host = (int *) mymalloc("gpu_ewald_idx", num_active_total * sizeof(int));
+    int num_active = 0;
+    for(int a = 0; a < num_active_total; a++) {
+        int i = ActiveParticleList[a];
+        if(P[i].Mass <= 0) continue;
+        if(!ProcessedFlag[i]) {idx_host[num_active++] = i;}
+    }
+    if(num_active == 0) { myfree(idx_host); return 0; }
+
+    int *d_idx    = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
+    int *d_failed = (int *)          Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
+    Vec3<double> *d_acc = (Vec3<double> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(Vec3<double>));
+    if(!d_idx || !d_failed || !d_acc) {printf("gpu_ewald_walk_primary: kokkos_malloc failed\n"); endrun(914102);}
+    memcpy(d_idx, idx_host, num_active * sizeof(int));
+    memset(d_failed, 0, num_active * sizeof(int));
+
+    /* snapshot scalars */
+    const int maxPart        = All.MaxPart;
+    const int maxNodes_snap  = MaxNodes;
+    const double boxsize     = All.BoxSize;
+    const double boxhalf     = 0.5 * All.BoxSize;
+    const double fac_intp    = g_ewald_fac_intp;
+    const double errtoltheta = All.ErrTolTheta;
+    const double errtolforceacc = All.ErrTolForceAcc;
+    const MyFloat *fcorrx_dev = g_d_fcorrx;
+    const MyFloat *fcorry_dev = g_d_fcorry;
+    const MyFloat *fcorrz_dev = g_d_fcorrz;
+    const struct gpu_gravity_tree_soa_t soa_snap = *soa;
+
+    Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
+        int target = d_idx[a];
+        Vec3<double> acc;
+        int ok = gpu_ewald_walk_one(target, maxPart, maxNodes_snap,
+                                     P_dev, &soa_snap,
+                                     fcorrx_dev, fcorry_dev, fcorrz_dev,
+                                     fac_intp, boxsize, boxhalf,
+                                     errtoltheta, errtolforceacc,
+                                     acc);
+        if(ok) {d_acc[a] = acc; d_failed[a] = 0;}
+        else   {d_failed[a] = 1;}
+    });
+    Kokkos::fence();
+
+    int nsucceeded = 0;
+    for(int a = 0; a < num_active; a++) {
+        if(!d_failed[a]) {
+            int target = idx_host[a];
+            P[target].GravAccel[0] += d_acc[a][0];
+            P[target].GravAccel[1] += d_acc[a][1];
+            P[target].GravAccel[2] += d_acc[a][2];
+            ProcessedFlag[target] = 1;
+            nsucceeded++;
+        }
+    }
+
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_acc);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_failed);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_idx);
+    myfree(idx_host);
+    return nsucceeded;
+#endif /* !PMGRID */
+}
+
+#else /* !(BOX_PERIODIC && !GRAVITY_NOT_PERIODIC) */
+
+extern "C" int gpu_ewald_walk_primary(void) {return 0;}
+
+#endif
+
+
 #else /* !GIZMO_GPU_GRAVTREE || !OPENMP_GPU_OFFLOAD */
 
 extern "C" int gpu_gravtree_walk_primary(void) {return 0;}
+extern "C" int gpu_ewald_walk_primary(void)   {return 0;}
 
 #endif

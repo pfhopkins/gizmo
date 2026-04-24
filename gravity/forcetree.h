@@ -101,6 +101,19 @@ int ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat rkern, int t
 			  int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
 inline int ngb_treefind_variable_threads(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist) { return ngb_treefind_variable_threads(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist); }
 
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#define GIZMO_EWALD_EN 64  /* must match EN in forcetree.cc (size of Ewald correction look-up table octant) */
+/* Ewald correction table accessor. Returns flat pointers of length (EN+1)^3
+ * to the four static look-up tables (fcorrx/y/z/potcorr) inside forcetree.cc,
+ * plus fac_intp (= 2*EN/All.BoxSize). Used by gpu_gravtree.cc to mirror the
+ * tables into SharedSpace once after ewald_init(). */
+void gizmo_get_ewald_tables(const MyFloat **fcorrx_out,
+                            const MyFloat **fcorry_out,
+                            const MyFloat **fcorrz_out,
+                            const MyFloat **potcorr_out,
+                            double *fac_intp_out);
+#endif
+
 #endif
 
 

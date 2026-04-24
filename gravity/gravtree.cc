@@ -164,13 +164,15 @@ void gravity_tree(void)
         memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
         BufferCollisionFlag = 0; /* set to zero before operations begin */
 
-        /* Step 13 Phase 4 Tier 1a: speculative GPU pre-pass. Walks the local
-         * tree on GPU for each active particle; on success, writes GravAccel
-         * and marks ProcessedFlag so the CPU primary loop below skips it. On
-         * pseudo-particle hit, leaves the particle untouched for the CPU
-         * loop + MPI export machinery to handle unchanged. No-op when
-         * GIZMO_GPU_GRAVTREE is not defined. */
-        gpu_gravtree_walk_primary();
+        /* Step 13 Phase 4: speculative GPU pre-pass. Walks the local tree
+         * on GPU for each active particle; on success, writes GravAccel
+         * and marks ProcessedFlag so the CPU primary loop below skips it.
+         * On pseudo-particle hit, leaves the particle untouched for the
+         * CPU loop + MPI export machinery to handle unchanged. Ewald_iter
+         * splits primary (==0) vs Ewald-correction (==1) walks; both are
+         * no-ops when GIZMO_GPU_GRAVTREE is not defined. */
+        if(Ewald_iter == 0) {gpu_gravtree_walk_primary();}
+        else                {gpu_ewald_walk_primary();}
 
         do /* primary point-element loop */
         {
