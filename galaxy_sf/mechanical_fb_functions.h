@@ -353,7 +353,7 @@ static void mechanical_fb_pair_kernel(
     double mj_preshock = Mass_j;
     double massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + Mass_j);
 
-    int couple_anything_but_scalar_mass_and_metals = 1;
+    volatile int couple_anything_but_scalar_mass_and_metals = 1; /* volatile: nvc++ folds to initial value otherwise */
     /* rho update (local copy, used for dust shock below) */
     if((double)P[j].KernelRadius <= 0) {
         if(rho_j > 0) rho_j *= (1 + dM_ejecta_in / Mass_j);

@@ -161,7 +161,7 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
                     if(TimeBin_j < 0) TimeBin_j = -TimeBin_j - 1;
                     if(vsig > AGS_vsig) AGS_vsig = vsig;
 #if defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
-                    int wakeup_condition = 0;
+                    volatile int wakeup_condition = 0; /* volatile: nvc++ folds to initial value otherwise */
                     if(!(tba_cap.v[TimeBin_j]) && (time_val > time_begin) && (vsig > WAKEUP * kp[j].AGS_vsig)) {
                         wakeup_condition = 1;
                     }

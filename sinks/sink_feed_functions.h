@@ -133,7 +133,7 @@ static void sink_feed_pair_kernel(const struct SinkFeedLocalIn& local,
         if(((local.ID != kp[j].ID) || (r2 > 0)) &&
            (SwallowID_j == 0) && (kp[j].Sink_Mass < local.Sink_Mass)) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-            int allow_sink_merger = 1;
+            volatile int allow_sink_merger = 1; /* volatile: nvc++ folds to initial value otherwise */
             if(r >= 1.0001 * kp[j].Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                 allow_sink_merger = 0;
             if(kp[j].Mass > local.Mass)                    allow_sink_merger = 0;
@@ -164,7 +164,7 @@ static void sink_feed_pair_kernel(const struct SinkFeedLocalIn& local,
     /* ---- grav-capture check (non-Type5) ---- */
 #if defined(SINK_GRAVCAPTURE_GAS) || defined(SINK_GRAVCAPTURE_NONGAS)
     if(kp[j].Type != 5 && SwallowID_j < local.ID) {
-        int do_gravcap = 1;
+        volatile int do_gravcap = 1; /* volatile: nvc++ folds to initial value otherwise */
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         {
             double eps = DMAX(r, DMAX(heff_j, ags_h_i) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER);
