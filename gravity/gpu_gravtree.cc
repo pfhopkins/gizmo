@@ -211,8 +211,20 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
 #if defined(HERMITE_INTEGRATION) || defined(ADAPTIVE_TREEFORCE_UPDATE) || defined(NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE)
 #error "GIZMO_GPU_GRAVTREE does not yet support HERMITE / ATFU / NEIGHBORS_MUST_BE_COMPUTED (Tier 3)."
 #endif
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
-#error "GIZMO_GPU_GRAVTREE requires non-periodic gravity (Ewald walk ports in a later tier)."
+/* Periodic boundary handling:
+ *   BOX_PERIODIC + PMGRID   → TreePM.  Long-range forces come from PM; the tree
+ *                             walk is short-range-only (rcut-truncated via the
+ *                             shortrange-force tables already wired in).  The
+ *                             CPU never calls force_treeevaluate_ewald_correction
+ *                             in this case (see gravtree.cc:734 gate).  The GPU
+ *                             primary walk is therefore already correct.
+ *   BOX_PERIODIC + !PMGRID  → pure-tree periodic.  Requires the second Ewald-
+ *                             correction walk; the GPU port of that walk lives
+ *                             in gpu_ewald_walk_primary (dispatched from
+ *                             gravtree.cc after the primary walk).
+ *   GRAVITY_NOT_PERIODIC    → non-periodic box, Ewald not relevant. */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+#error "GIZMO_GPU_GRAVTREE: pure-tree periodic gravity (BOX_PERIODIC without PMGRID) requires the GPU Ewald walk — not yet enabled. Build with PMGRID, or with GRAVITY_NOT_PERIODIC, or wait for the Ewald port."
 #endif
 #if defined(SELFGRAVITY_OFF)
 #error "GIZMO_GPU_GRAVTREE requires self-gravity to be enabled."
