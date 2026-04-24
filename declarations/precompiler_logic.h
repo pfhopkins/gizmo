@@ -245,7 +245,7 @@
 #define CRFLUID_EVOLVE_SPECTRUM 2   /*! evolve full set of 10 different CR species */
 #endif
 #endif // closes which spectrum check
-#if !defined(CRFLUID_DIFFUSION_MODEL)
+#if !defined(CRFLUID_DIFFUSION_MODEL) && !defined(COSMIC_RAY_SUBGRID_LEBRON)
 #if (FIRE_CRS <= 0)
 #define CRFLUID_DIFFUSION_MODEL 0   /*! constant diffusivity (set by params file) */
 #else
@@ -254,7 +254,7 @@
 //#define CRFLUID_SET_SC_MODEL (7)    /*! set mode for SC model using best-estimate of fQLT and fCAS, and best model for extrinsic driving of CRs */
 //#define CRFLUID_SET_ET_MODEL (-1)   /*! set mode for ET model using best-estimate of fturb from Alfven-wave scattering */
 #endif
-#endif // closes which diffusion model[s] to enable
+#endif // closes which diffusion model[s] to enable (not meaningful when only the sub-grid LEBRON model is active)
 #endif // FIRE_CRS
 
 #if defined(FIRE_BHS)
