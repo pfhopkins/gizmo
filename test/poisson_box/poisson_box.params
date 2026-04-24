@@ -1,6 +1,6 @@
 %-------------------------------------------------------------------------
 %  Poisson-random uniform box -- ghost exchange / neighbor list test
-%  Compile with: BOX_PERIODIC, MAGNETIC, COOLING, METALS,
+%  Compile with: BOX_PERIODIC, MAGNETIC, MHD_B_SET_IN_PARAMS, COOLING, METALS,
 %                COOL_METAL_LINES_BY_SPECIES, SINGLE_STAR_STARFORGE_DEFAULTS
 %  (matches current Config.sh on gpu_kokkos_ngbtest branch)
 %-------------------------------------------------------------------------
