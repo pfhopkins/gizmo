@@ -1,0 +1,99 @@
+%---- Phase 2-E Ewald GPU validation (1 step, np=2)
+%---- Config: BOX_PERIODIC (no PMGRID, no GRAVITY_NOT_PERIODIC) -> Ewald walk fires
+InitCondFile  poisson_box_50_ics
+OutputDir     output_phase2e_gpu
+
+ICFormat    3
+SnapFormat  3
+RestartFile                 restart
+SnapshotFileBase            snapshot
+OutputListOn                0
+OutputListFilename          output_times.txt
+NumFilesPerSnapshot         1
+NumFilesWrittenInParallel   1
+
+TimeOfFirstSnapshot     0.0
+TimeBetSnapshot         0.001
+TimeBetStatistics       0.001
+
+TimeLimitCPU            3600
+CpuTimeBetRestartFile   3600
+ResubmitOn              0
+ResubmitCommand         my-scriptfile
+
+TimeBegin   0.0
+TimeMax     0.001
+
+MaxSizeTimestep         0.001
+MinSizeTimestep         1.0e-15
+
+UnitLength_in_cm            3.09e+18
+UnitMass_in_g               1.99e+33
+UnitVelocity_in_cm_per_s    1.00e+05
+UnitMagneticField_in_gauss  1.00e+00
+GravityConstantInternal     1e-100
+
+ComovingIntegrationOn   0
+BoxSize                 100.0
+Omega0                  0.0
+OmegaLambda             0.0
+OmegaBaryon             0.0
+HubbleParam             1.0
+
+MaxMemSize          5000
+PartAllocFactor     10.0
+BufferSize          500
+
+TreeDomainUpdateFrequency   0.005
+
+InitGasTemp     1e4
+MinGasTemp      2.73
+
+DesNumNgb               32
+MaxHsml                 1.0e10
+MinGasHsmlFractional    0
+
+SofteningGas    1e-10
+SofteningHalo   0.020
+SofteningDisk   0.150
+SofteningBulge  0.500
+SofteningStars  0.100
+SofteningBndry  0.100
+SofteningGasMaxPhys     0.0005
+SofteningHaloMaxPhys    0.010
+SofteningDiskMaxPhys    0.075
+SofteningBulgeMaxPhys   0.250
+SofteningStarsMaxPhys   0.0005
+SofteningBndryMaxPhys   0.0005
+AGS_DesNumNgb           32
+
+BiniX   1.0e-8
+BiniY   1.0e-8
+BiniZ   1.0e-8
+
+ConductionCoeff             1.0
+ShearViscosityCoeff         1.0
+BulkViscosityCoeff          1.0
+TurbDiffusionCoefficient    1.0
+CosmicRayDiffusionCoeff     1.0
+
+Grain_Internal_Density          1.0
+Grain_Size_Min                  1.e-6
+Grain_Size_Max                  1.e-4
+Grain_Size_Spectrum_Powerlaw    0.5
+
+CritPhysDensity     1.0e+10
+SfEffPerFreeFall    1.0
+
+InitMetallicity             1.0
+InitStellarAge              0.0
+
+ErrTolTheta                  0.5
+ErrTolForceAcc               0.0025
+ErrTolIntAccuracy        0.01
+CourantFac               0.2
+MaxRMSDisplacementFac    0.125
+MaxNumNgbDeviation      0.05
+AGS_MaxNumNgbDeviation  0.10
+DivBcleaningParabolicSigma   1.0
+DivBcleaningHyperbolicSigma  1.0
