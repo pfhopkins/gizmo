@@ -191,8 +191,20 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  * below — enabled for Phase 2-D. */
 /* ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (type-0 softening cap) handled inline
  * in gpu_force_softening_kernel_radius below — enabled for Phase 2-C. */
-#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-#error "GIZMO_GPU_GRAVTREE does not yet support TIDAL_TENSOR / JERK in gravtree (Tier 3)."
+/* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE + COMPUTE_JERK_IN_GRAVTREE: ported in Phase 5
+ * (ATFU). Tidal tensor accumulation + jerk both mirror forcetree.cc:2081-2292.
+ * Three sub-cases remain out-of-scope and are #error'd below:
+ *   - PMGRID short-range tidal table (shortrange_table_tidal not mirrored)
+ *   - AGS_SYMMETRIZE_FORCE_BY_AVERAGING tidal averaging branch
+ *   - GRAVITY_SPHERICAL_SYMMETRY + ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION corners */
+#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) && defined(PMGRID)
+#error "GIZMO_GPU_GRAVTREE + COMPUTE_TIDAL_TENSOR + PMGRID: shortrange_table_tidal mirror not implemented (Phase 5 scope)."
+#endif
+#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) && defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+#error "GIZMO_GPU_GRAVTREE + COMPUTE_TIDAL_TENSOR + AGS_SYMMETRIZE_BY_AVERAGING: tidal averaging branch not implemented (Phase 5 scope)."
+#endif
+#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) && (defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) || defined(GRAVITY_SPHERICAL_SYMMETRY))
+#error "GIZMO_GPU_GRAVTREE + COMPUTE_TIDAL_TENSOR + TIDAL_CRITERION/SPHERICAL: specialized branches not implemented (Phase 5 scope)."
 #endif
 /* SINK_PHOTONMOMENTUM, SINK_COMPTON_HEATING, SINK_DYNFRICTION_FROMTREE:
  * ported in Phase 2-C. */
@@ -208,9 +220,13 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
 #if defined(DM_SCALARFIELD_SCREENING) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(COUNT_MASS_IN_GRAVTREE)
 #error "GIZMO_GPU_GRAVTREE does not yet support DM/spherical/mass-count payloads (Tier 3)."
 #endif
-#if defined(HERMITE_INTEGRATION) || defined(ADAPTIVE_TREEFORCE_UPDATE) || defined(NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE)
-#error "GIZMO_GPU_GRAVTREE does not yet support HERMITE / ATFU / NEIGHBORS_MUST_BE_COMPUTED (Tier 3)."
+#if defined(HERMITE_INTEGRATION) || defined(NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE)
+#error "GIZMO_GPU_GRAVTREE does not yet support HERMITE / NEIGHBORS_MUST_BE_COMPUTED (Tier 3)."
 #endif
+/* ADAPTIVE_TREEFORCE_UPDATE: Phase 5.  Pre-walk skip-flag filtering in the
+ * dispatcher + jerk accumulation in the walk kernel.  Skip-flag particles
+ * (needs_new_treeforce()==0) bypass the GPU walk and use the CPU post-loop
+ * jerk extrapolation path at gravtree.cc:512-520 (GravAccel += GravJerk*dt). */
 /* Periodic boundary handling:
  *   BOX_PERIODIC + PMGRID   → TreePM.  Long-range forces come from PM; the tree
  *                             walk is short-range-only (rcut-truncated via the
@@ -298,8 +314,14 @@ gpu_gravtree_walk_one(int target,
      * Phase 2-B: SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.  *
      * Mirrors forcetree.cc:1509-1526.                                     *
      * ------------------------------------------------------------------ */
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     Vec3<double> vel = P_dev[target].Vel;
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+    Vec3<double> jerk_acc = {0,0,0};
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    SymmetricTensor2<double> tidal_acc = {};
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
     double target_sink_mass = (ptype == 5) ? P_dev[target].Sink_Mass : 0.0;
@@ -400,8 +422,10 @@ gpu_gravtree_walk_one(int target,
         double h = soft, h_p = -1.0;
         Vec3<double> dr;
         double r2, mass;
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
         Vec3<double> dv = {0,0,0};
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
         double m_j_eff_for_df = 0.0;
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
@@ -417,8 +441,10 @@ gpu_gravtree_walk_one(int target,
             dr = P_dev[no].Pos - pos;
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
             dv = P_dev[no].Vel - vel;
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
             m_j_eff_for_df = mass;
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
@@ -587,10 +613,12 @@ gpu_gravtree_walk_one(int target,
             /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
             dv[0] = (double) s->node_vs[idx][0] - vel[0];
             dv[1] = (double) s->node_vs[idx][1] - vel[1];
             dv[2] = (double) s->node_vs[idx][2] - vel[2];
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
             {
                 long np = s->N_part[idx];
                 m_j_eff_for_df = (np > 0) ? (mass / (double)np) : 0.0;
@@ -693,10 +721,17 @@ gpu_gravtree_walk_one(int target,
 #ifdef EVALPOTENTIAL
             double fac_pot;
 #endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            double fac_tidal = 0.0, fac2_tidal = 0.0; /* mirrors forcetree.cc:1489; populated in branches below */
+#endif
             if((r >= h) && (r >= h_p)) {
                 fac_accel = mass / (r2 * r);
 #ifdef EVALPOTENTIAL
                 fac_pot   = -mass / r;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                /* forcetree.cc:2082 Newtonian branch */
+                fac_tidal = fac_accel; fac2_tidal = 3.0 * mass / (r2 * r2 * r);
 #endif
             } else {
 #if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
@@ -742,6 +777,10 @@ gpu_gravtree_walk_one(int target,
                 fac_accel = mass * kernel_gravity(u, h_inv, h3_inv,  1);
 #ifdef EVALPOTENTIAL
                 fac_pot   = mass * kernel_gravity(u, h_inv, h3_inv, -1);
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                /* forcetree.cc:2097 softened branch */
+                fac_tidal = fac_accel; fac2_tidal = mass * kernel_gravity(u, h_inv, h3_inv, 2);
 #endif
 #endif  /* SYMMETRIZE_FORCE_BY_AVERAGING */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
@@ -805,6 +844,30 @@ gpu_gravtree_walk_one(int target,
             acc[2] += fac_accel * dr[2];
 #ifdef EVALPOTENTIAL
             pot    += fac_pot;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            /* forcetree.cc:2276-2281 non-PMGRID tidal tensor accumulation. */
+            tidal_acc[0][0] += (-fac_tidal + dr[0] * dr[0] * fac2_tidal);
+            tidal_acc[0][1] += ( dr[0] * dr[1] * fac2_tidal);
+            tidal_acc[0][2] += ( dr[0] * dr[2] * fac2_tidal);
+            tidal_acc[1][1] += (-fac_tidal + dr[1] * dr[1] * fac2_tidal);
+            tidal_acc[1][2] += ( dr[1] * dr[2] * fac2_tidal);
+            tidal_acc[2][2] += (-fac_tidal + dr[2] * dr[2] * fac2_tidal);
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+            /* forcetree.cc:2289-2290.  Note: under ATFU the CPU skips the
+             * `if(ptype>0)` gate to include gas in jerk accumulation. */
+            {
+                double dv_dot_dr = dv[0]*dr[0] + dv[1]*dr[1] + dv[2]*dr[2];
+#ifndef ADAPTIVE_TREEFORCE_UPDATE
+                if(ptype > 0)
+#endif
+                {
+                    jerk_acc[0] += fac_accel * dv[0] - dv_dot_dr * fac2_tidal * dr[0];
+                    jerk_acc[1] += fac_accel * dv[1] - dv_dot_dr * fac2_tidal * dr[1];
+                    jerk_acc[2] += fac_accel * dv[2] - dv_dot_dr * fac2_tidal * dr[2];
+                }
+            }
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
             /* Mirror forcetree.cc:2167-2190. Dynamical-friction correction
@@ -1071,6 +1134,13 @@ gpu_gravtree_walk_one(int target,
 #endif
 #endif /* SINK_CALC_DISTANCES */
 
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    P_dev[target].tidal_tensorps = tidal_acc;
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+    P_dev[target].GravJerk = jerk_acc;
+#endif
+
     acc_out = acc;
     ninter_out = ninter;
     pot_out = pot;
@@ -1109,7 +1179,15 @@ extern "C" int gpu_gravtree_walk_primary(void)
     int num_active = 0;
     for(int a = 0; a < num_active_total; a++) {
         int i = ActiveParticleList[a];
-        if(!ProcessedFlag[i]) {idx_host[num_active++] = i;}
+        if(ProcessedFlag[i]) {continue;}
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+        /* Phase 5: exclude particles whose cached GravAccel+Jerk will be
+         * extrapolated in the CPU post-loop (gravtree.cc:512-520).  The
+         * CPU primary walk's line 733 check also skips these, so leaving
+         * ProcessedFlag unset here is correct. */
+        if(!needs_new_treeforce(i)) {continue;}
+#endif
+        idx_host[num_active++] = i;
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
 
@@ -1368,6 +1446,14 @@ extern "C" int gpu_gravtree_walk_primary(void)
             if(P[i].Type == 0 && P[i].Mass > 0) {
                 CellP[i].SubGrid_CosmicRayEnergyDensity = CellP_dev[i].SubGrid_CosmicRayEnergyDensity;
             }
+#endif
+
+            /* Phase 5: tidal tensor + GravJerk scatter-back (ATFU/jerk path). */
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            P[i].tidal_tensorps = P_dev[i].tidal_tensorps;
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+            P[i].GravJerk = P_dev[i].GravJerk;
 #endif
 
             /* Phase 2-B: sink-distance / single-star timestepping scatter-back */
@@ -1655,7 +1741,11 @@ extern "C" int gpu_ewald_walk_primary(void)
     for(int a = 0; a < num_active_total; a++) {
         int i = ActiveParticleList[a];
         if(P[i].Mass <= 0) continue;
-        if(!ProcessedFlag[i]) {idx_host[num_active++] = i;}
+        if(ProcessedFlag[i]) continue;
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+        if(!needs_new_treeforce(i)) continue;
+#endif
+        idx_host[num_active++] = i;
     }
     if(num_active == 0) { myfree(idx_host); return 0; }
 

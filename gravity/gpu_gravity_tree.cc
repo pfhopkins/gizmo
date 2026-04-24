@@ -75,7 +75,7 @@ static void free_arrays_(void)
     if(soa_.MaxFeedbackVel) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.MaxFeedbackVel); soa_.MaxFeedbackVel = NULL;}
 #endif
 #endif
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     if(soa_.node_vs)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.node_vs);        soa_.node_vs        = NULL;}
 #endif
     soa_.nnodes = 0;
@@ -146,7 +146,7 @@ static int alloc_arrays_(int n)
     if(!soa_.MaxFeedbackVel) {printf("gpu_gravity_tree: MaxFeedbackVel alloc failed (%d)\n", n); return 0;}
 #endif
 #endif
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     soa_.node_vs = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
     if(!soa_.node_vs) {printf("gpu_gravity_tree: node_vs alloc failed (%d)\n", n); return 0;}
 #endif
@@ -210,7 +210,7 @@ static void seed_from_aos_(int n, struct NODE *Nodes_host, struct extNODE *Extno
         soa_.MaxFeedbackVel[k] = Nodes_host[k].MaxFeedbackVel;
 #endif
 #endif
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
         if(Extnodes_host) {soa_.node_vs[k] = Extnodes_host[k].vs;}
 #endif
     }

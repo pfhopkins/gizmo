@@ -108,7 +108,7 @@ struct gpu_gravity_tree_soa_t {
     MyFloat        *MaxFeedbackVel;
 #endif
 #endif
-#ifdef SINK_DYNFRICTION_FROMTREE
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     Vec3<MyFloat>  *node_vs;          /* mirror of Extnodes[].vs for dyn-friction */
 #endif
 };
