@@ -1,0 +1,25 @@
+% Isolated disk galaxy — mechanical_fb (B8) activation test
+InitCondFile                       isodisk_mechfb_ics_seeded
+OutputDir                          output_cpu_phase2d
+TimeMax                            1e-5
+TimeBetSnapshot                    1e-5
+MaxSizeTimestep                    0.001
+DesNumNgb                          32
+UnitLength_in_cm                   3.085678e21
+UnitMass_in_g                      1.989e43
+UnitVelocity_in_cm_per_s           1e5
+UnitMagneticField_in_gauss         1
+Softening_Type0                    1.e-5
+Softening_Type1                    0.05
+Softening_Type2                    0.05
+Softening_Type3                    0.05
+Softening_Type4                    0.001
+Softening_Type5                    0.001
+InitMetallicity                    0.1
+InitStellarAge                     1.0
+BiniX                              1e-9
+BiniY                              1e-9
+BiniZ                              1e-8
+MaxMemSize                         2000
+CosmicRayDiffusionCoeff            690.0
+SeedSinkPerUnitMass                1e-4
