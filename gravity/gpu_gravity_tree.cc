@@ -26,6 +26,14 @@ static struct gpu_gravity_tree_soa_t soa_ = {0};
 static int soa_capacity_ = 0;
 static int soa_valid_    = 0;
 
+/* Phase 6.0: per-node dirty tracking. dirty_[k]==1 means Nodes[MaxPart+k]
+ * needs its SoA slot re-copied on the next acquire(). any_dirty_ is a
+ * fast-path scalar so acquire() can early-exit when nothing changed.
+ * dirty_count_ is for diagnostics only. */
+static unsigned char *dirty_    = NULL;
+static int            any_dirty_   = 0;
+static int            dirty_count_ = 0;
+
 static void free_arrays_(void)
 {
     if(soa_.center)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.center);   soa_.center   = NULL;}
@@ -78,6 +86,9 @@ static void free_arrays_(void)
 #if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     if(soa_.node_vs)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.node_vs);        soa_.node_vs        = NULL;}
 #endif
+    if(dirty_) {free(dirty_); dirty_ = NULL;}
+    any_dirty_   = 0;
+    dirty_count_ = 0;
     soa_.nnodes = 0;
     soa_.nextnode_aux_size = 0;
 }
@@ -150,16 +161,19 @@ static int alloc_arrays_(int n)
     soa_.node_vs = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
     if(!soa_.node_vs) {printf("gpu_gravity_tree: node_vs alloc failed (%d)\n", n); return 0;}
 #endif
+    dirty_ = (unsigned char *) calloc((size_t) n, sizeof(unsigned char));
+    if(!dirty_) {printf("gpu_gravity_tree: dirty_ alloc failed (%d)\n", n); return 0;}
     return 1;
 }
 
-static void seed_from_aos_(int n, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
+static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
 {
-    /* Copy the fields the walk reads. Kept as a straight host-side loop;
-     * SharedSpace pages migrate device-side on first kernel touch. The Vec3
-     * fields (center, s) currently live inside Nodes[] as Vec3<MyFloat>;
+    /* Copy the fields the walk reads for a single node index k. Used by both
+     * the full-seed loop (fresh allocation) and the partial-seed pass (dirty
+     * nodes only). SharedSpace pages migrate device-side on first kernel
+     * touch. The Vec3 fields (center, s) live inside Nodes[] as Vec3<MyFloat>;
      * straight assignment works because the SoA mirror uses the same type. */
-    for(int k = 0; k < n; k++) {
+    {
         soa_.center[k]   = Nodes_host[k].center;
         soa_.len[k]      = Nodes_host[k].len;
         soa_.s[k]        = Nodes_host[k].u.d.s;
@@ -214,7 +228,34 @@ static void seed_from_aos_(int n, struct NODE *Nodes_host, struct extNODE *Extno
         if(Extnodes_host) {soa_.node_vs[k] = Extnodes_host[k].vs;}
 #endif
     }
-    soa_.nnodes = n;
+}
+
+/* Seed every node in [0..n) and mark all clean. Used on fresh allocation. */
+static void seed_full_(int n, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
+{
+    for(int k = 0; k < n; k++) {
+        seed_node_(k, Nodes_host, Extnodes_host);
+        if(dirty_) {dirty_[k] = 0;}
+    }
+    soa_.nnodes    = n;
+    any_dirty_     = 0;
+    dirty_count_   = 0;
+}
+
+/* Seed only nodes marked dirty in [0..n). Used after per-node mark_dirty
+ * fires (e.g. pre-walk drift loop touched some nodes but not others). */
+static void seed_dirty_(int n, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
+{
+    if(!dirty_) {seed_full_(n, Nodes_host, Extnodes_host); return;}
+    for(int k = 0; k < n; k++) {
+        if(dirty_[k]) {
+            seed_node_(k, Nodes_host, Extnodes_host);
+            dirty_[k] = 0;
+        }
+    }
+    soa_.nnodes    = n;
+    any_dirty_     = 0;
+    dirty_count_   = 0;
 }
 
 extern "C" void gpu_gravity_tree_acquire(int min_nodes,
@@ -224,12 +265,16 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
     if(min_nodes <= 0) {min_nodes = 1;}
 
     if(soa_capacity_ >= min_nodes && soa_.center) {
-        if(soa_valid_) {
-            /* Mirror is in sync — fast path, no copy. */
+        if(soa_valid_ && !any_dirty_) {
+            /* Mirror fully in sync — fast path, no copy. */
             return;
         }
-        /* Reseed in place. */
-        if(Nodes_host) {seed_from_aos_(min_nodes, Nodes_host, Extnodes_host);}
+        /* Partial reseed for dirty nodes only (or full reseed if the mirror
+         * was hard-invalidated via soa_valid_=0). */
+        if(Nodes_host) {
+            if(!soa_valid_) {seed_full_(min_nodes, Nodes_host, Extnodes_host);}
+            else             {seed_dirty_(min_nodes, Nodes_host, Extnodes_host);}
+        }
         soa_valid_ = 1;
         return;
     }
@@ -238,13 +283,47 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
     free_arrays_();
     if(!alloc_arrays_(min_nodes)) {endrun(913101);}
     soa_capacity_ = min_nodes;
-    if(Nodes_host) {seed_from_aos_(min_nodes, Nodes_host, Extnodes_host);}
+    if(Nodes_host) {seed_full_(min_nodes, Nodes_host, Extnodes_host);}
     soa_valid_ = 1;
+}
+
+extern "C" void gpu_gravity_tree_mark_dirty(int no)
+{
+    /* no is an absolute Nodes[] index (>= All.MaxPart). Convert to the SoA
+     * [0..capacity) range. Out-of-range, pre-allocation, or stale-invalidate
+     * states are silently ignored — the next acquire() will DTRT either way. */
+    if(!dirty_ || soa_capacity_ <= 0) {return;}
+    int k = no - All.MaxPart;
+    if(k < 0 || k >= soa_capacity_) {return;}
+    if(dirty_[k] == 0) {
+        dirty_[k] = 1;
+        dirty_count_++;
+    }
+    any_dirty_ = 1;
+}
+
+extern "C" void gpu_gravity_tree_mark_all_dirty(void)
+{
+    /* Topology rebuild (force_treebuild) or full moment refresh
+     * (force_refresh_node_moments) — every slot needs re-copy. Use the
+     * stronger soa_valid_=0 signal so acquire() takes the full-seed path. */
+    soa_valid_   = 0;
+    any_dirty_   = 1;
+    if(dirty_ && soa_capacity_ > 0) {
+        memset(dirty_, 1, (size_t) soa_capacity_);
+        dirty_count_ = soa_capacity_;
+    }
 }
 
 extern "C" void gpu_gravity_tree_invalidate(void)
 {
-    soa_valid_ = 0;
+    /* Back-compat alias. Removed in Phase 6.8. */
+    gpu_gravity_tree_mark_all_dirty();
+}
+
+extern "C" int gpu_gravity_tree_dirty_count(void)
+{
+    return any_dirty_ ? dirty_count_ : 0;
 }
 
 extern "C" void gpu_gravity_tree_release(void)

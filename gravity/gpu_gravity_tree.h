@@ -114,12 +114,14 @@ struct gpu_gravity_tree_soa_t {
 };
 
 /* Acquire SoA mirror sized for at least min_nodes. Reuses existing storage
- * when capacity suffices and the mirror is still valid (no invalidate fired
- * since previous acquire). Otherwise (re)allocates and seeds from the AoS.
+ * when capacity suffices, and does a per-node partial reseed for any node
+ * marked dirty since the last acquire. Nothing is copied for clean nodes.
+ * On first allocation or capacity growth, all nodes are marked dirty and
+ * the full [0..min_nodes) range is seeded.
  *
  * Nodes_host and Extnodes_host must be the *base* pointers (= Nodes_base /
- * Extnodes_base); the [0..min_nodes) range is read. Pass NULL for the host
- * pointers only on first allocation if you want to defer the copy. */
+ * Extnodes_base); dirty indices [0..min_nodes) are read. Pass NULL for the
+ * host pointers only on first allocation if you want to defer the copy. */
 void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
@@ -129,9 +131,21 @@ void gpu_gravity_tree_acquire(int min_nodes,
  * acquire() because Nextnode has different size and lifetime semantics. */
 void gpu_gravity_tree_set_nextnode(int n, int *Nextnode_host);
 
-/* Mark the mirror stale. Next acquire() reseeds from host. Call after:
- * force_treebuild, force_update_node_recursive (when moments change), and
- * domain decomp. */
+/* Mark a single node dirty (absolute Nodes[] index, i.e. >= All.MaxPart).
+ * Next acquire() will re-copy just this node's fields. Called from the
+ * pre-walk drift loop in gpu_gravtree.cc for each node whose Ti_current
+ * advanced (force_drift_node mutated s/len/vs/hmax/etc). No-op if the
+ * index is out of range or the SoA has not yet been allocated. */
+void gpu_gravity_tree_mark_dirty(int no);
+
+/* Mark every node dirty. Called after force_treebuild (topology rebuild
+ * invalidates everything) and force_refresh_node_moments (all moments
+ * zeroed + re-accumulated). */
+void gpu_gravity_tree_mark_all_dirty(void);
+
+/* Back-compat alias — identical to mark_all_dirty. Retained for callers
+ * that haven't been updated. Will be removed in Phase 6.8 once the Phase-3
+ * stopgap is retired. */
 void gpu_gravity_tree_invalidate(void);
 
 /* Free SharedSpace storage. Called at shutdown (and from force_treefree if
@@ -143,6 +157,10 @@ void gpu_gravity_tree_release(void);
 struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void);
 int gpu_gravity_tree_capacity(void);
 int gpu_gravity_tree_valid(void);
+
+/* Diagnostic — returns the count of dirty nodes queued for the next acquire
+ * reseed. Used by 6.0 baseline benchmarks to measure reseed volume per call. */
+int gpu_gravity_tree_dirty_count(void);
 
 #ifdef __cplusplus
 }

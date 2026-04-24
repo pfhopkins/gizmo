@@ -10,6 +10,9 @@
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
 #endif
+#ifdef OPENMP_GPU_OFFLOAD
+#include "gpu_gravity_tree.h"
+#endif
 
 /*! \file forcetree.c
  *  \brief gravitational tree and code for Ewald correction
@@ -153,6 +156,10 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TimeOfLastTreeConstruction = All.Time;
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.0: topology rebuilt — entire SoA mirror is stale. */
+    gpu_gravity_tree_mark_all_dirty();
+#endif
     return Numnodestree;
 }
 
@@ -4083,6 +4090,12 @@ void force_refresh_node_moments(void)
     /* Step 5: sync pseudo-particle data across MPI ranks */
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
+
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.0: moments were zeroed + re-accumulated for every node — entire
+     * SoA mirror is stale. */
+    gpu_gravity_tree_mark_all_dirty();
+#endif
 
     PRINT_STATUS(" ..tree node moments refreshed.");
 }

@@ -1168,12 +1168,18 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * GPU SoA mirror is invalidated so the walk reads fresh positions and
      * moments. Cost is O(NumPart + Numnodestree) arithmetic per call. */
     move_particles(All.Ti_Current); /* drifts all P[], invalidates arena */
+    /* Phase 6.0: per-node dirty-mark instead of unconditional invalidate. Only
+     * nodes whose Ti_current lagged (and thus got mutated by force_drift_node)
+     * need their SoA slot re-copied. The tree-rebuild / moment-refresh paths
+     * separately mark everything dirty via force_treebuild +
+     * force_refresh_node_moments hooks. On ATFU substeps where only a tiny
+     * subset of nodes drifted, this avoids the O(MaxNodes) copy entirely. */
     for(int no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
         if(Nodes[no].Ti_current != All.Ti_Current) {
             force_drift_node(no, All.Ti_Current);
+            gpu_gravity_tree_mark_dirty(no);
         }
     }
-    gpu_gravity_tree_invalidate(); /* force SoA re-seed from drifted Nodes[] */
 
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
     int num_active = 0;
