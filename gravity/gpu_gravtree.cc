@@ -47,11 +47,14 @@ extern float shortrange_table[GIZMO_GPU_GRAVTREE_NTAB];
 extern float shortrange_table_potential[GIZMO_GPU_GRAVTREE_NTAB];
 #endif
 
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 /* GPU-callable mirror of ForceSoftening_KernelRadius(). */
 static KOKKOS_INLINE_FUNCTION
 double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
 {
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+    if(Pp[p].Type == 4) {return Pp[p].StarParticleEffectiveSize;}
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     if((1 << Pp[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return Pp[p].AGS_KernelRadius;}
 #endif
@@ -169,9 +172,12 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
 #if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION (Tier 3)."
 #endif
-#if defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-#error "GIZMO_GPU_GRAVTREE does not yet support type-4 softening overrides (defer)."
+#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "GIZMO_GPU_GRAVTREE does not yet support SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM type-4 softening override (defer)."
 #endif
+/* GALSF_MERGER_STARCLUSTER_PARTICLES (type-4 star cluster softening via
+ * StarParticleEffectiveSize) handled inline in gpu_force_softening_kernel_radius
+ * below — enabled for Phase 2-D. */
 /* ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (type-0 softening cap) handled inline
  * in gpu_force_softening_kernel_radius below — enabled for Phase 2-C. */
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
@@ -237,21 +243,23 @@ gpu_gravtree_walk_one(int target,
     double pmass = P_dev[target].Mass;
     if(pmass <= 0) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
 
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+    double soft = gpu_force_softening_kernel_radius(P_dev, target);
+#else
     double soft = All.ForceSoftening[ptype];
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
     double zeta = 0.0;
-    {
-        double soft_adapt = gpu_force_softening_kernel_radius(P_dev, target);
-        if(soft_adapt > soft) {
-            soft = soft_adapt;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-            if(ptype == 0) {zeta = gpu_get_ags_zeta(P_dev, target);}
+    if(ptype == 0) {
+        if(soft > All.ForceSoftening[ptype]) { zeta = gpu_get_ags_zeta(P_dev, target); }
+        else { soft = All.ForceSoftening[ptype]; zeta = 0; }
+    }
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-            if((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) {zeta = gpu_get_ags_zeta(P_dev, target);}
+    if(soft > All.ForceSoftening[ptype]) { zeta = gpu_get_ags_zeta(P_dev, target); }
+    else { soft = All.ForceSoftening[ptype]; zeta = 0; }
 #endif
-        }
-    }
 #endif
     double aold = All.ErrTolForceAcc * P_dev[target].OldAcc;
 
@@ -382,7 +390,7 @@ gpu_gravtree_walk_one(int target,
             dv = P_dev[no].Vel - vel;
             m_j_eff_for_df = mass;
 #endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
             h_p = gpu_force_softening_kernel_radius(P_dev, no);
             ptype_sec = P_dev[no].Type;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
