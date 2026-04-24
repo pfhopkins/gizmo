@@ -55,8 +55,15 @@ double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     if((1 << Pp[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return Pp[p].AGS_KernelRadius;}
 #endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-    if(Pp[p].Type == 0) {return Pp[p].KernelRadius;}
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(SELFGRAVITY_OFF)
+    if(Pp[p].Type == 0) {
+#if defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT)
+        double cap = ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT / All.cf_atime;
+        return (Pp[p].KernelRadius < cap) ? Pp[p].KernelRadius : cap;
+#else
+        return Pp[p].KernelRadius;
+#endif
+    }
 #endif
     return All.ForceSoftening[Pp[p].Type];
 }
@@ -107,6 +114,52 @@ struct gpu_rt_walk_data_t {
 };
 #endif
 
+/* Phase 2-C: sink radiation payload.  Pre-computed on CPU before the kernel
+ * launches because sink_lum_bol() (and, under SINGLE_STAR_SINK_DYNAMICS,
+ * calculate_individual_stellar_luminosity()) are not GPU-callable.
+ * bh_lum[p]   = sink_lum_bol(P[p].Sink_Mdot, P[p].Sink_Mass, p) when P[p]
+ *               is a valid type-5 sink with Mdot>0, else 0.
+ * bh_angle[p] = P[p].Sink_Specific_AngMom (if SINK_FOLLOW_ACCRETED_ANGMOM)
+ *               or P[p].GradRho otherwise.  Used for angle-weighted
+ *               luminosity at particle leafs.  Node-level sink_lum /
+ *               sink_lum_grad already live in the SoA (Phase 2-I). */
+#ifdef SINK_PHOTONMOMENTUM
+struct gpu_sink_walk_data_t {
+    MyFloat       *bh_lum;    /* [NumPart] */
+    Vec3<MyFloat> *bh_angle;  /* [NumPart] */
+};
+
+/* Device-callable replica of sink_fb_angleweight (sinks/sink.cc:199). */
+static KOKKOS_INLINE_FUNCTION double
+gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
+                        double dx, double dy, double dz)
+{
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    return sink_lum_input;
+#else
+    if(sink_lum_input <= 0) return 0.0;
+    double r2 = dx*dx + dy*dy + dz*dz;
+    if(r2 <= 0) return 0.0;
+    double cf = All.cf_atime;
+    if(r2 * (UNIT_LENGTH_IN_PC*UNIT_LENGTH_IN_PC) * (cf*cf) < 1.0) return 0.0; /* no force at < 1pc */
+#if defined(SINK_FB_COLLIMATED)
+    double sa_ns = (double)sink_angle[0]*sink_angle[0] + (double)sink_angle[1]*sink_angle[1] + (double)sink_angle[2]*sink_angle[2];
+    double cos_theta;
+    if(sa_ns > 0) {
+        cos_theta = fabs((dx*(double)sink_angle[0] + dy*(double)sink_angle[1] + dz*(double)sink_angle[2]) / sqrt(r2 * sa_ns));
+        if(!isfinite(cos_theta)) {cos_theta = 1.0;}
+    } else {
+        cos_theta = 1.0;
+    }
+    double wt_normalized = 0.0847655 * exp(4.5*cos_theta*cos_theta);
+    return sink_lum_input * wt_normalized;
+#else
+    return sink_lum_input;
+#endif
+#endif /* SINGLE_STAR_SINK_DYNAMICS */
+}
+#endif /* SINK_PHOTONMOMENTUM */
+
 /* -------------------------------------------------------------------------
  * Compile-time payload gates.
  * Tier 1c + Phase 2-A flags are now unlocked.  Everything else that hasn't
@@ -116,15 +169,16 @@ struct gpu_rt_walk_data_t {
 #if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #error "GIZMO_GPU_GRAVTREE does not yet support ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION (Tier 3)."
 #endif
-#if defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-#error "GIZMO_GPU_GRAVTREE does not yet support type-specific softening overrides (defer)."
+#if defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "GIZMO_GPU_GRAVTREE does not yet support type-4 softening overrides (defer)."
 #endif
+/* ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (type-0 softening cap) handled inline
+ * in gpu_force_softening_kernel_radius below — enabled for Phase 2-C. */
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
 #error "GIZMO_GPU_GRAVTREE does not yet support TIDAL_TENSOR / JERK in gravtree (Tier 3)."
 #endif
-#if defined(SINK_PHOTONMOMENTUM) || defined(SINK_DYNFRICTION_FROMTREE) || defined(SINK_COMPTON_HEATING)
-#error "GIZMO_GPU_GRAVTREE does not yet support SINK_PHOTONMOMENTUM / SINK_DYNFRICTION_FROMTREE / SINK_COMPTON_HEATING (Phase 2-C)."
-#endif
+/* SINK_PHOTONMOMENTUM, SINK_COMPTON_HEATING, SINK_DYNFRICTION_FROMTREE:
+ * ported in Phase 2-C. */
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
 #error "GIZMO_GPU_GRAVTREE does not yet support SPECIAL_POINT_MOTION payloads (deferred)."
 #endif
@@ -171,6 +225,9 @@ gpu_gravtree_walk_one(int target,
 #ifdef RT_USE_GRAVTREE
                       const struct gpu_rt_walk_data_t *rt_data,
 #endif
+#ifdef SINK_PHOTONMOMENTUM
+                      const struct gpu_sink_walk_data_t *sink_data,
+#endif
                       Vec3<double> &acc_out,
                       int &ninter_out,
                       double &pot_out)
@@ -206,8 +263,14 @@ gpu_gravtree_walk_one(int target,
      * Phase 2-B: SINK_CALC_DISTANCES + SINGLE_STAR_* local accumulators.  *
      * Mirrors forcetree.cc:1509-1526.                                     *
      * ------------------------------------------------------------------ */
-#ifdef SINGLE_STAR_TIMESTEPPING
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<double> vel = P_dev[target].Vel;
+#endif
+#ifdef SINK_DYNFRICTION_FROMTREE
+    double target_sink_mass = (ptype == 5) ? P_dev[target].Sink_Mass : 0.0;
+#endif
+#ifdef SINK_COMPTON_HEATING
+    double incident_flux_agn = 0.0;
 #endif
 #ifdef SINK_CALC_DISTANCES
     double Min_Distance_to_Sink2 = MAX_REAL_NUMBER;
@@ -247,6 +310,9 @@ gpu_gravtree_walk_one(int target,
     {int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {chimes_mass_stellarlum_G0[kc]=0; chimes_mass_stellarlum_ion[kc]=0; chimes_flux_G0[kc]=0; chimes_flux_ion[kc]=0;}}
 #endif
     Vec3<double> d_stellarlum = {};
+#ifdef SINK_PHOTONMOMENTUM
+    double mass_sinklumwt_forradfb = 0.0; /* per-interaction; reset in leaf/node blocks */
+#endif
     /* Mirror CPU's valid_gas_particle_for_rt gate (forcetree.cc:1595) */
     volatile int valid_gas_particle_for_rt = (ptype == 0 && soft > 0 && pmass > 0) ? 1 : 0; /* volatile: nvc++ constant-propagates this to 0 inside the walk loop otherwise */
 #ifdef RT_OTVET
@@ -295,6 +361,10 @@ gpu_gravtree_walk_one(int target,
         double h = soft, h_p = -1.0;
         Vec3<double> dr;
         double r2, mass;
+#ifdef SINK_DYNFRICTION_FROMTREE
+        Vec3<double> dv = {0,0,0};
+        double m_j_eff_for_df = 0.0;
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
         int ptype_sec = -1;
         double zeta_sec = 0.0;
@@ -308,6 +378,10 @@ gpu_gravtree_walk_one(int target,
             dr = P_dev[no].Pos - pos;
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
+#ifdef SINK_DYNFRICTION_FROMTREE
+            dv = P_dev[no].Vel - vel;
+            m_j_eff_for_df = mass;
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
             h_p = gpu_force_softening_kernel_radius(P_dev, no);
             ptype_sec = P_dev[no].Type;
@@ -331,6 +405,15 @@ gpu_gravtree_walk_one(int target,
                 for(kf=0; kf<CHIMES_LOCAL_UV_NBINS; kf++) {
                     chimes_mass_stellarlum_G0[kf] = rt_data->src_lum_G0[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
                     chimes_mass_stellarlum_ion[kf] = rt_data->src_lum_ion[(long)no * CHIMES_LOCAL_UV_NBINS + kf];
+                }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+                /* Mirror forcetree.cc:1756-1767: per-sink-leaf angle-weighted luminosity. */
+                mass_sinklumwt_forradfb = 0.0;
+                if(P_dev[no].Type == 5) {
+                    double bhlum_t = (double) sink_data->bh_lum[no];
+                    mass_sinklumwt_forradfb = gpu_sink_fb_angleweight(bhlum_t, sink_data->bh_angle[no],
+                                                                     dr[0], dr[1], dr[2]);
                 }
 #endif
             }
@@ -461,6 +544,15 @@ gpu_gravtree_walk_one(int target,
             /* Node accepted — load payload fields */
             h_p = msoft_node;
             mass = mass_node;
+#ifdef SINK_DYNFRICTION_FROMTREE
+            dv[0] = (double) s->node_vs[idx][0] - vel[0];
+            dv[1] = (double) s->node_vs[idx][1] - vel[1];
+            dv[2] = (double) s->node_vs[idx][2] - vel[2];
+            {
+                long np = s->N_part[idx];
+                m_j_eff_for_df = (np > 0) ? (mass / (double)np) : 0.0;
+            }
+#endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass = s->gasmass[idx];
 #endif
@@ -484,6 +576,11 @@ gpu_gravtree_walk_one(int target,
                 d_stellarlum[2] = s->rt_source_lum_s[idx][2] - pos[2];
 #else
                 d_stellarlum = dr;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+                /* Mirror forcetree.cc:1977-1979: node-aggregated sink angle-weighted luminosity. */
+                mass_sinklumwt_forradfb = gpu_sink_fb_angleweight((double) s->sink_lum[idx], s->sink_lum_grad[idx],
+                                                                 d_stellarlum[0], d_stellarlum[1], d_stellarlum[2]);
 #endif
             }
 #endif
@@ -662,6 +759,45 @@ gpu_gravtree_walk_one(int target,
 #ifdef EVALPOTENTIAL
             pot    += fac_pot;
 #endif
+#ifdef SINK_DYNFRICTION_FROMTREE
+            /* Mirror forcetree.cc:2167-2190. Dynamical-friction correction
+             * applied only to type-5 sinks acting on gravity sources. */
+            if((fac_accel > MIN_REAL_NUMBER) && (ptype == 5) && (mass > MIN_REAL_NUMBER)) {
+                double dv2 = dv.norm_sq();
+                if((dv2 > MIN_REAL_NUMBER) && (target_sink_mass > MIN_REAL_NUMBER)) {
+                    double dv0 = sqrt(dv2);
+                    Vec3<double> dv_h = dv / dv0;
+                    double rdotvhat = dot(dr, dv_h);
+                    Vec3<double> b_im = dr - rdotvhat * dv_h;
+                    double b_impact = b_im.norm();
+                    double a_im = (b_impact * All.cf_atime) * (dv2 * All.cf_a2inv) / (All.G * target_sink_mass);
+                    double fac_df = fac_accel * b_impact * a_im / (1.0 + a_im * a_im);
+                    {
+                        double m_j = m_j_eff_for_df;
+                        if((m_j > 0) && (target_sink_mass > 14.251 * m_j)) {
+                            double corr = (-1.0 + 3.0 / log10(target_sink_mass / m_j)) / 1.6;
+                            if(corr < 0) corr = 0;
+                            if(corr > 1) corr = 1;
+                            fac_df *= corr;
+                        }
+                    }
+                    if((m_j_eff_for_df <= MIN_REAL_NUMBER) || (b_impact <= MIN_REAL_NUMBER) || (dv2 <= MIN_REAL_NUMBER)) {
+                        fac_df = 0;
+                    }
+                    /* parallel deflection component */
+                    acc[0] += fac_df * dv_h[0];
+                    acc[1] += fac_df * dv_h[1];
+                    acc[2] += fac_df * dv_h[2];
+                    /* perpendicular deflection component (residual after subtracting homogeneous) */
+                    double fac_df_p = -fac_df / (b_impact * a_im + MIN_REAL_NUMBER);
+                    if(fabs(fac_df_p) < MAX_REAL_NUMBER && isfinite(fac_df_p)) {
+                        acc[0] += fac_df_p * b_im[0];
+                        acc[1] += fac_df_p * b_im[1];
+                        acc[2] += fac_df_p * b_im[2];
+                    }
+                }
+            }
+#endif /* SINK_DYNFRICTION_FROMTREE */
             ninter++;
 
             /* ------------------------------------------------------------ *
@@ -705,6 +841,12 @@ gpu_gravtree_walk_one(int target,
 
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
                 {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {Rad_E_gamma[kf] += fac_intensity * mass_stellarlum[kf];}}
+#ifdef SINK_PHOTONMOMENTUM
+                Rad_E_gamma[RT_FREQ_BIN_FIRE_IR] += fac_intensity * mass_sinklumwt_forradfb;
+#endif
+#endif
+#ifdef SINK_COMPTON_HEATING
+                incident_flux_agn += fac_intensity * mass_sinklumwt_forradfb; /* L/(4pi r^2) analog */
 #endif
 
 #ifdef CHIMES_STELLAR_FLUXES
@@ -752,8 +894,15 @@ gpu_gravtree_walk_one(int target,
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
                     double fac_flux = -fac_rt * All.cf_a2inv / (4.0 * M_PI);
                     for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {Rad_Flux[kf_rt] += mass_stellarlum[kf_rt] * fac_flux * d_stellarlum;}
+#ifdef SINK_PHOTONMOMENTUM
+                    Rad_Flux[RT_FREQ_BIN_FIRE_IR] += mass_sinklumwt_forradfb * fac_flux * d_stellarlum;
+#endif
 #else
                     for(kf_rt=0; kf_rt<N_RT_FREQ_BINS; kf_rt++) {lum_force_fac += mass_stellarlum[kf_rt] * fac_stellum[kf_rt];}
+#if defined(SINK_PHOTONMOMENTUM) && !defined(RT_DISABLE_RAD_PRESSURE)
+                    lum_force_fac += (All.Sink_Rad_MomentumFactor / (MIN_REAL_NUMBER + All.PhotonMomentum_Coupled_Fraction))
+                                     * mass_sinklumwt_forradfb * fac_stellum[N_RT_FREQ_BINS-1];
+#endif
 #endif
                     if(lum_force_fac > 0) {acc += (fac_rt * lum_force_fac) * d_stellarlum;}
                 }
@@ -804,6 +953,11 @@ gpu_gravtree_walk_one(int target,
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
     if(valid_gas_particle_for_rt) {
         int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_E_gamma[kf] = Rad_E_gamma[kf];}
+    }
+#endif
+#ifdef SINK_COMPTON_HEATING
+    if(valid_gas_particle_for_rt) {
+        CellP_dev[target].Rad_Flux_AGN = incident_flux_agn;
     }
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
@@ -948,6 +1102,38 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 #endif /* RT_USE_GRAVTREE */
 
+    /* Phase 2-C: precompute per-particle bolometric sink luminosity and
+     * angle vector for leaf-level SINK_PHOTONMOMENTUM contributions.
+     * sink_lum_bol() (and, for SINGLE_STAR_SINK_DYNAMICS,
+     * calculate_individual_stellar_luminosity()) are not GPU-callable. */
+#ifdef SINK_PHOTONMOMENTUM
+    MyFloat       *d_bh_lum   = NULL;
+    Vec3<MyFloat> *d_bh_angle = NULL;
+    {
+        long sz_lum  = (long)NumPart * sizeof(MyFloat);
+        long sz_ang  = (long)NumPart * sizeof(Vec3<MyFloat>);
+        d_bh_lum   = (MyFloat *)       Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_lum);
+        d_bh_angle = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sz_ang);
+        if(!d_bh_lum || !d_bh_angle) {printf("gpu_gravtree_walk_primary: bh_lum alloc failed\n"); endrun(913210);}
+        memset(d_bh_lum,   0, sz_lum);
+        memset(d_bh_angle, 0, sz_ang);
+        for(int p = 0; p < NumPart; p++) {
+            if(P[p].Type != 5 || P[p].Mass <= 0) continue;
+            if(P[p].DensityAroundParticle <= 0 || P[p].Sink_Mdot <= 0) continue;
+            double bhlum = sink_lum_bol(P[p].Sink_Mdot, P[p].Sink_Mass, p);
+            d_bh_lum[p] = (MyFloat) bhlum;
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+            d_bh_angle[p] = P[p].Sink_Specific_AngMom;
+#else
+            d_bh_angle[p] = P[p].GradRho;
+#endif
+        }
+    }
+    struct gpu_sink_walk_data_t sink_data_snap;
+    sink_data_snap.bh_lum   = d_bh_lum;
+    sink_data_snap.bh_angle = d_bh_angle;
+#endif /* SINK_PHOTONMOMENTUM */
+
     /* Scratch arrays for per-target results */
     int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
@@ -981,6 +1167,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #ifdef RT_USE_GRAVTREE
     const struct gpu_rt_walk_data_t rt_data_dev = rt_data_snap;
 #endif
+#ifdef SINK_PHOTONMOMENTUM
+    const struct gpu_sink_walk_data_t sink_data_dev = sink_data_snap;
+#endif
 
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
@@ -994,6 +1183,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 #ifdef RT_USE_GRAVTREE
                                         &rt_data_dev,
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+                                        &sink_data_dev,
 #endif
                                         acc, ninter, pot);
         if(ok) {
@@ -1055,6 +1247,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP[i].Rad_Flux[kf] = CellP_dev[i].Rad_Flux[kf];}
             }
 #endif
+#ifdef SINK_COMPTON_HEATING
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                CellP[i].Rad_Flux_AGN = CellP_dev[i].Rad_Flux_AGN;
+            }
+#endif
 #endif /* RT_USE_GRAVTREE */
 
             /* Phase 2-B: sink-distance / single-star timestepping scatter-back */
@@ -1101,6 +1298,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(d_src_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_G0);}
 #endif
     if(d_src_lum) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum);}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    if(d_bh_angle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_angle);}
+    if(d_bh_lum)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_bh_lum);}
 #endif
 #ifdef PMGRID
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_sp);
