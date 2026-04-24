@@ -163,6 +163,7 @@ gpu_gravtree_walk_one(int target,
                       const struct gpu_gravity_tree_soa_t *s,
 #ifdef PMGRID
                       double rcut, double rcut2, double asmthfac,
+                      const float *shortrange_tab, const float *shortrange_pot_tab,
 #endif
 #ifdef RT_USE_GRAVTREE
                       const struct gpu_rt_walk_data_t *rt_data,
@@ -220,7 +221,7 @@ gpu_gravtree_walk_one(int target,
 #endif
     Vec3<double> d_stellarlum = {};
     /* Mirror CPU's valid_gas_particle_for_rt gate (forcetree.cc:1595) */
-    const int valid_gas_particle_for_rt = (ptype == 0 && soft > 0 && pmass > 0) ? 1 : 0;
+    volatile int valid_gas_particle_for_rt = (ptype == 0 && soft > 0 && pmass > 0) ? 1 : 0; /* volatile: nvc++ constant-propagates this to 0 inside the walk loop otherwise */
 #ifdef RT_OTVET
     SymmetricTensor2<double> RT_ET[N_RT_FREQ_BINS];
     {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {RT_ET[kf] = {};}}
@@ -293,7 +294,8 @@ gpu_gravtree_walk_one(int target,
             gasmass = (P_dev[no].Type == 0) ? P_dev[no].Mass : 0.0;
 #endif
 #ifdef RT_USE_GRAVTREE
-            if(valid_gas_particle_for_rt) {
+            /* Load leaf luminosity unconditionally (matching node path; valid_gas gate in force kernel). */
+            {
                 d_stellarlum = dr;
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
                     mass_stellarlum[kf] = rt_data->src_lum[(long)no * N_RT_FREQ_BINS + kf];
@@ -339,7 +341,9 @@ gpu_gravtree_walk_one(int target,
 #endif
 
             if(h < msoft_node) {
-                if(r2 < msoft_node * msoft_node) {no = s->nextnode[idx]; continue;}
+                if(r2 < msoft_node * msoft_node) {
+                    no = s->nextnode[idx]; continue;
+                }
             }
 
             if(All.ErrTolTheta)
@@ -372,7 +376,10 @@ gpu_gravtree_walk_one(int target,
             gasmass = s->gasmass[idx];
 #endif
 #ifdef RT_USE_GRAVTREE
-            if(valid_gas_particle_for_rt) {
+            /* Load node stellar luminosity unconditionally (CPU does the same — no valid_gas gate here).
+             * The nvc++ compiler miscompiles if(const int) in device code, so we also dropped 'const'
+             * on valid_gas_particle_for_rt.  RT accumulation is still gated in the force kernel below. */
+            {
                 int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {
                     mass_stellarlum[kf] = s->stellar_lum[idx * N_RT_FREQ_BINS + kf];
                 }
@@ -493,9 +500,9 @@ gpu_gravtree_walk_one(int target,
 #ifdef PMGRID
             int tabindex = (int) (asmthfac * r);
             if(tabindex >= 0 && tabindex < GIZMO_GPU_GRAVTREE_NTAB) {
-                fac_accel *= shortrange_table[tabindex];
+                fac_accel *= shortrange_tab[tabindex];
 #ifdef EVALPOTENTIAL
-                fac_pot   *= shortrange_table_potential[tabindex];
+                fac_pot   *= shortrange_pot_tab[tabindex];
 #endif
             } else {
                 fac_accel = 0.0;
@@ -627,6 +634,7 @@ gpu_gravtree_walk_one(int target,
     {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = treecol_angular_bins[k];}}
 #endif
 #ifdef RT_USE_GRAVTREE
+    /* Use valid_gas_particle_for_rt (non-const int) throughout: nvc++ miscompiles raw boolean expressions in device code */
 #ifdef RT_OTVET
     if(valid_gas_particle_for_rt) {
         int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP_dev[target].ET[k] = RT_ET[k];}
@@ -791,6 +799,13 @@ extern "C" int gpu_gravtree_walk_primary(void)
     double rcut_snap     = All.Rcut[0];
     double rcut2_snap    = rcut_snap * rcut_snap;
     double asmthfac_snap = 0.5 / All.Asmth[0] * (GIZMO_GPU_GRAVTREE_NTAB / 3.0);
+    /* shortrange_table is a host global (forcetree.cc); copy to SharedSpace so
+     * the CUDA kernel can read it from device code. */
+    float *d_st  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
+    float *d_sp  = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
+    if(!d_st || !d_sp) {printf("gpu_gravtree_walk_primary: shortrange table alloc failed\n"); endrun(913205);}
+    memcpy(d_st, shortrange_table,           GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
+    memcpy(d_sp, shortrange_table_potential, GIZMO_GPU_GRAVTREE_NTAB * sizeof(float));
 #endif
 
 #ifdef RT_USE_GRAVTREE
@@ -805,7 +820,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap,
                                         P_dev, CellP_dev, &soa_snap,
 #ifdef PMGRID
-                                        rcut_snap, rcut2_snap, asmthfac_snap,
+                                        rcut_snap, rcut2_snap, asmthfac_snap, d_st, d_sp,
 #endif
 #ifdef RT_USE_GRAVTREE
                                         &rt_data_dev,
@@ -894,6 +909,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(d_src_lum_G0)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum_G0);}
 #endif
     if(d_src_lum) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_src_lum);}
+#endif
+#ifdef PMGRID
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_sp);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_st);
 #endif
 
     myfree(idx_host);
