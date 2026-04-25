@@ -172,7 +172,11 @@ int force_treebuild(int npart, struct unbind_data *mp)
      *      legacy CPU walks.  Clobbers u.suns via union, but suns_backup
      *      in SoA is the truth.  Runs last so prior steps reading SoA see
      *      consistent state. */
-    gpu_gravity_tree_mark_all_dirty();
+    /* Phase 6.8a: no mark_all_dirty here.  After force_treebuild_single
+     * the SoA is authoritative for inside-topleaf topology; the finalize
+     * kernels below write soa->father / soa->sibling / soa->bitflags from
+     * suns_backup, no AoS-seed needed.  topnode-range center/len was already
+     * pulled into SoA by gpu_nextnode_backup_suns inside force_treebuild_single. */
     if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(913320);}
     if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(913321);}
     /* Phase 6.8f: GPU kernel resets GravCost + ephemeral fields for all
@@ -267,8 +271,10 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     {
         force_insert_pseudo_particles();
 
-        gpu_gravity_tree_mark_all_dirty();
-        gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
+        /* Phase 6.8a: the old mark_all_dirty + acquire pair triggered seed_full_
+         * to copy AoS topnode center/len into SoA before BFS.  That seeding now
+         * happens inside gpu_nextnode_backup_suns below (single GPU kernel reads
+         * UVM AoS, writes SoA suns_backup + center + len for [0..numnodes)). */
         if(gpu_peano_walk_acquire() != 0) {return -1;}
         /* Snapshot topnode u.suns -> SoA suns_backup.  At this point u.suns
          * for intermediate topnodes is populated by force_create_empty_nodes;

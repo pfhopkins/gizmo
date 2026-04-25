@@ -160,21 +160,13 @@ void gpu_gravity_tree_acquire(int min_nodes,
 void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n);
 
 /* Mark a single node dirty (absolute Nodes[] index, i.e. >= All.MaxPart).
- * Next acquire() will re-copy just this node's fields. Called from the
- * pre-walk drift loop in gpu_gravtree.cc for each node whose Ti_current
- * advanced (force_drift_node mutated s/len/vs/hmax/etc). No-op if the
- * index is out of range or the SoA has not yet been allocated. */
+ * Phase 6.8a: this is the ONLY surviving AoS->SoA reseed mechanism.  Sole
+ * caller is the pre-walk drift loop in gpu_gravtree.cc:~1182, which fires
+ * once per node that force_drift_node mutated (s/len/vs/hmax/etc).  The
+ * next gpu_gravity_tree_acquire() runs seed_dirty_ to re-copy only the
+ * marked nodes -- O(active drifted), not O(MaxNodes).  No-op if index is
+ * out of range or the SoA has not yet been allocated. */
 void gpu_gravity_tree_mark_dirty(int no);
-
-/* Mark every node dirty. Called after force_treebuild (topology rebuild
- * invalidates everything) and force_refresh_node_moments (all moments
- * zeroed + re-accumulated). */
-void gpu_gravity_tree_mark_all_dirty(void);
-
-/* Back-compat alias — identical to mark_all_dirty. Retained for callers
- * that haven't been updated. Will be removed in Phase 6.8 once the Phase-3
- * stopgap is retired. */
-void gpu_gravity_tree_invalidate(void);
 
 /* Free SharedSpace storage. Called at shutdown (and from force_treefree if
  * the tree is being torn down without a follow-up rebuild — but typically

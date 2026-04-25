@@ -1495,7 +1495,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Costtotal += costtotal_added;
 
     gpu_particles_arena_invalidate();
-    gpu_gravity_tree_invalidate();
+    /* Phase 6.8a: no gpu_gravity_tree_invalidate here.  The next force_treebuild
+     * fully repopulates the SoA via the build pipeline (gpu_nextnode_backup_suns
+     * + finalize kernels).  Pre-walk drift before the next walk uses per-node
+     * mark_dirty + seed_dirty_, not a blanket invalidate. */
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_pot);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ninter);
