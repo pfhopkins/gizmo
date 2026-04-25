@@ -186,20 +186,16 @@ KOKKOS_INLINE_FUNCTION peanokey gpu_peano_and_morton_key(uint64_t  x,
 }
 
 /* Walk the TopNodes tree using the Peano-Hilbert key and return the
- * DomainNodeIndex[topleaf] for the resulting topleaf.  Mirrors
- * gravity/forcetree.cc lines 243-250.
+ * topleaf id (0..NTopleaves).  Mirrors gravity/forcetree.cc lines 243-249.
  *
  *   tn         -- device-accessible TopNodes mirror
- *   dni        -- device-accessible DomainNodeIndex mirror
  *   key        -- particle's Peano-Hilbert key
  *
- * Returns the absolute Nodes[] index of the topleaf node (always >=
- * All.MaxPart for valid input).  Invariant: TopNodes[no].Daughter < 0 marks
- * a leaf in the topnode tree; navigate via TopNodes[no].Leaf to get the
- * topleaf index, then DomainNodeIndex[topleaf] for the Nodes[] slot. */
-KOKKOS_INLINE_FUNCTION int gpu_topleaf_node_for_key(const struct topnode_data *tn,
-                                                    const int                 *dni,
-                                                    peanokey                   key)
+ * Returns leaf id; caller can index DomainNodeIndex[leaf] for the absolute
+ * Nodes[] slot if needed.  Invariant: tn[no].Daughter < 0 marks a leaf
+ * in the topnode tree. */
+KOKKOS_INLINE_FUNCTION int gpu_topleaf_for_key(const struct topnode_data *tn,
+                                               peanokey                   key)
 {
     int no = 0;
     while(tn[no].Daughter >= 0) {
@@ -209,8 +205,7 @@ KOKKOS_INLINE_FUNCTION int gpu_topleaf_node_for_key(const struct topnode_data *t
         int      child= (int)(rel / step);
         no = tn[no].Daughter + child;
     }
-    int leaf = tn[no].Leaf;
-    return dni[leaf];
+    return tn[no].Leaf;
 }
 
 #endif /* OPENMP_GPU_OFFLOAD */

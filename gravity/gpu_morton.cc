@@ -40,12 +40,9 @@ static int        g_morton_keys_cap = 0;
 
 }  /* anonymous namespace */
 
-extern "C" int gpu_morton_compute_global_keys(int npart)
+extern "C" struct Morton128 *gpu_morton_keys_acquire(int npart)
 {
-    if(npart <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(morton);
-
-    /* Allocate / grow the shared-space key buffer if needed. */
+    if(npart <= 0) {return g_morton_keys;}
     if(g_morton_keys_cap < npart) {
         if(g_morton_keys) {
             Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_morton_keys);
@@ -56,10 +53,19 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
         if(!g_morton_keys) {
             printf("gpu_morton: keys alloc failed (npart=%d)\n", npart);
             g_morton_keys_cap = 0;
-            return 1;
+            return NULL;
         }
         g_morton_keys_cap = npart;
     }
+    return g_morton_keys;
+}
+
+extern "C" int gpu_morton_compute_global_keys(int npart)
+{
+    if(npart <= 0) {return 0;}
+    GIZMO_GPU_ENSURE_ALL_FRESH(morton);
+
+    if(!gpu_morton_keys_acquire(npart)) {return 1;}
 
     /* Acquire the particles arena.  Caller is expected to have an active
      * arena already (this is called from inside the gravity-tree build,

@@ -52,6 +52,13 @@ extern "C" {
  * pre-wrapped by domain decomp before reaching the tree build. */
 int gpu_morton_compute_global_keys(int npart);
 
+/* Acquire a writable handle to the internal Morton key buffer, ensuring
+ * capacity for at least `npart` entries.  Allocates / grows on demand.
+ * Returns a SharedSpace pointer suitable for kernel writes (e.g. from
+ * gpu_topology_build's combined Peano+Morton compute).  Returns NULL on
+ * allocation failure. */
+struct Morton128 *gpu_morton_keys_acquire(int npart);
+
 /* Sort `indices_inout[0..count)` in-place by Morton key, where the key for
  * a given index `i = indices_inout[j]` is the previously computed
  * gpu_morton_keys()[i].  `indices_inout` must point to SharedSpace memory.
