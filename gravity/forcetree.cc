@@ -253,9 +253,10 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
         gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
         if(gpu_peano_walk_acquire() != 0) {return -1;}
         /* Snapshot topnode u.suns -> SoA suns_backup.  At this point u.suns
-         * for topnode internal nodes is populated by force_create_empty_nodes
-         * and force_insert_pseudo_particles; topleaf u.suns are -1 (BFS
-         * will overwrite the topleaf-range entries in suns_backup). */
+         * for intermediate topnodes is populated by force_create_empty_nodes;
+         * force_insert_pseudo_particles set u.suns[0] for foreign topleafs;
+         * local topleaf u.suns are uninitialized (BFS will overwrite their
+         * suns_backup entries with the local particle subtree topology). */
         gpu_nextnode_backup_suns(numnodes);
 
         if(gpu_topology_build_data_path(npart) != 0) {return -1;}
@@ -273,9 +274,15 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
         int topnode_end = numnodes;
         numnodes = new_numnodes;
 
-        /* Writeback GPU-built suns / center / len to AoS so the existing
-         * post-loop force_update_node_recursive walk works unchanged. */
-        if(gpu_topology_writeback_to_aos(topnode_end, numnodes) != 0) {return -1;}
+        /* Writeback GPU-built suns / center / len to AoS for the FULL range
+         * (0..numnodes), not just the new BFS nodes (topnode_end..numnodes).
+         * The topleaf nodes (0..topnode_end) have their soa->suns_backup entries
+         * updated by BFS to hold the local-particle subtree root indices.
+         * Without flushing these back to AoS, force_update_node_recursive reads
+         * the stale (uninitialized) topleaf suns, never reaches local particles,
+         * and Father[i] is never set -- causing an infinite loop in
+         * setup_smoothinglengths which walks Nodes[Father[i]].u.d.father. */
+        if(gpu_topology_writeback_to_aos(0, numnodes) != 0) {return -1;}
     }
 #else
     nfreep = &Nodes[nfree];
@@ -435,14 +442,14 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     gpu_nextnode_backup_suns(numnodes);
 #endif
     force_update_node_recursive(All.MaxPart, -1, -1);
-    
+
     if(last >= All.MaxPart)
     {
         if(last >= All.MaxPart + MaxNodes) {Nextnode[last - MaxNodes] = -1;}    /* a pseudo-particle */
         else {Nodes[last].u.d.nextnode = -1;}
     }
     else {Nextnode[last] = -1;}
-    
+
     return numnodes;
 }
 
