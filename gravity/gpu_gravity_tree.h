@@ -108,8 +108,25 @@ struct gpu_gravity_tree_soa_t {
     MyFloat        *MaxFeedbackVel;
 #endif
 #endif
-#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-    Vec3<MyFloat>  *node_vs;          /* mirror of Extnodes[].vs for dyn-friction */
+    /* Unconditional Extnodes mirrors — Phase 6.1a. Needed by the GPU moment
+     * kernel (6.2/6.3) which replaces force_update_node_recursive; these are
+     * always computed during moment accumulation regardless of which physics
+     * flags are on. The prior SINK_DYNFRICTION_FROMTREE/COMPUTE_JERK_IN_GRAVTREE
+     * guard on node_vs was removed — vs is now always present. */
+    Vec3<MyFloat>  *node_vs;          /* mirror of Extnodes[].vs */
+    MyFloat        *hmax;             /* Extnodes[].hmax — gas kernel extent */
+    MyFloat        *vmax;             /* Extnodes[].vmax */
+    MyFloat        *divVmax;          /* Extnodes[].divVmax */
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    /* 6-component symmetric tensor moment: [xx,yy,zz,xy,xz,yz]. Flat layout
+     * [nnodes * 6]. Accumulated by GPU moment kernel starting in Phase 6.3;
+     * walk consumption is Tier 3 (walk guard unchanged, see Phase-4 handoff). */
+    MyFloat        *tidal_tensorps;
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    MyFloat        *mass_dm;
+    Vec3<MyFloat>  *s_dm;
+    Vec3<MyFloat>  *vs_dm;            /* from Extnodes */
 #endif
 };
 

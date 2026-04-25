@@ -83,8 +83,18 @@ static void free_arrays_(void)
     if(soa_.MaxFeedbackVel) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.MaxFeedbackVel); soa_.MaxFeedbackVel = NULL;}
 #endif
 #endif
-#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+    /* Unconditional Extnodes mirrors (Phase 6.1a). */
     if(soa_.node_vs)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.node_vs);        soa_.node_vs        = NULL;}
+    if(soa_.hmax)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.hmax);           soa_.hmax           = NULL;}
+    if(soa_.vmax)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vmax);           soa_.vmax           = NULL;}
+    if(soa_.divVmax)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.divVmax);        soa_.divVmax        = NULL;}
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    if(soa_.tidal_tensorps) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.tidal_tensorps); soa_.tidal_tensorps = NULL;}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    if(soa_.mass_dm)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.mass_dm);        soa_.mass_dm        = NULL;}
+    if(soa_.s_dm)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.s_dm);           soa_.s_dm           = NULL;}
+    if(soa_.vs_dm)          {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vs_dm);          soa_.vs_dm          = NULL;}
 #endif
     if(dirty_) {free(dirty_); dirty_ = NULL;}
     any_dirty_   = 0;
@@ -157,9 +167,26 @@ static int alloc_arrays_(int n)
     if(!soa_.MaxFeedbackVel) {printf("gpu_gravity_tree: MaxFeedbackVel alloc failed (%d)\n", n); return 0;}
 #endif
 #endif
-#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+    /* Unconditional Extnodes mirrors (Phase 6.1a). */
     soa_.node_vs = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
-    if(!soa_.node_vs) {printf("gpu_gravity_tree: node_vs alloc failed (%d)\n", n); return 0;}
+    soa_.hmax    = (MyFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    soa_.vmax    = (MyFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    soa_.divVmax = (MyFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    if(!soa_.node_vs || !soa_.hmax || !soa_.vmax || !soa_.divVmax) {
+        printf("gpu_gravity_tree: unconditional extnode mirrors alloc failed (n=%d)\n", n);
+        return 0;
+    }
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    soa_.tidal_tensorps = (MyFloat *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * 6 * sizeof(MyFloat));
+    if(!soa_.tidal_tensorps) {printf("gpu_gravity_tree: tidal_tensorps alloc failed (%d)\n", n); return 0;}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    soa_.mass_dm = (MyFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyFloat));
+    soa_.s_dm    = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    soa_.vs_dm   = (Vec3<MyFloat> *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(Vec3<MyFloat>));
+    if(!soa_.mass_dm || !soa_.s_dm || !soa_.vs_dm) {
+        printf("gpu_gravity_tree: DM_SCALARFIELD mirrors alloc failed (n=%d)\n", n); return 0;
+    }
 #endif
     dirty_ = (unsigned char *) calloc((size_t) n, sizeof(unsigned char));
     if(!dirty_) {printf("gpu_gravity_tree: dirty_ alloc failed (%d)\n", n); return 0;}
@@ -224,8 +251,22 @@ static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Ex
         soa_.MaxFeedbackVel[k] = Nodes_host[k].MaxFeedbackVel;
 #endif
 #endif
-#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-        if(Extnodes_host) {soa_.node_vs[k] = Extnodes_host[k].vs;}
+        if(Extnodes_host) {
+            /* Unconditional Extnodes mirrors (Phase 6.1a). */
+            soa_.node_vs[k] = Extnodes_host[k].vs;
+            soa_.hmax[k]    = Extnodes_host[k].hmax;
+            soa_.vmax[k]    = Extnodes_host[k].vmax;
+            soa_.divVmax[k] = Extnodes_host[k].divVmax;
+#ifdef DM_SCALARFIELD_SCREENING
+            soa_.vs_dm[k]   = Extnodes_host[k].vs_dm;
+#endif
+        }
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        {int kk; for(kk=0;kk<6;kk++) {soa_.tidal_tensorps[k*6+kk] = Nodes_host[k].tidal_tensorps_prevstep.data[kk];}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        soa_.mass_dm[k] = Nodes_host[k].mass_dm;
+        soa_.s_dm[k]    = Nodes_host[k].s_dm;
 #endif
     }
 }
