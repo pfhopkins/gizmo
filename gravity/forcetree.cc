@@ -12,10 +12,9 @@
 #endif
 #ifdef OPENMP_GPU_OFFLOAD
 #include "gpu_gravity_tree.h"
-#ifdef OPENMP_GPU_OFFLOAD
 #include "gpu_peano_walk.h"
 #include "gpu_topology_build.h"
-#endif
+#include "gpu_topology_finalize.h"
 #endif
 
 /*! \file forcetree.c
@@ -157,21 +156,44 @@ int force_treebuild(int npart, struct unbind_data *mp)
     }
     while(flag == -1);
 #ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 6.3: replace force_update_node_recursive's moment portion with
-     * the GPU moment-refresh kernel.  force_treebuild_single still runs
-     * force_update_node_recursive internally (for Father pointers and the
-     * nextnode-thread side effect — Phase 6.4 separates the latter); the GPU
-     * pass then overwrites the AoS moments with values computed on device.
-     * Topology was just rebuilt, so the SoA mirror is stale; mark_all_dirty
-     * before acquire so seed_full reads the freshly-built AoS. */
+    /* Phase 6.6: GPU finalize stage replaces force_update_node_recursive's
+     * sibling/father/Father[] outputs.  Order matters:
+     *   1. mark_all_dirty + acquire (topology was just rebuilt; SoA stale).
+     *   2. finalize_father: writes soa->father for all internal nodes
+     *      (covers topnodes — emit_bfs only set inside-topleaf), and
+     *      writes Father[i] for every particle child.  Must run before
+     *      moment_refresh (which reads soa->father in its dependency walk).
+     *   3. finalize_sibling: writes soa->sibling for all internal nodes.
+     *      Must run before nextnode_thread (which reads soa->sibling).
+     *   4. moment_refresh: writes moments + Extnodes/N_part/maxsoft/bitflags.
+     *   5. nextnode_thread: writes nextnode + Nextnode[] from suns_backup.
+     *   6. writeback_d_to_aos: pushes soa->sibling/father into AoS u.d for
+     *      legacy CPU walks.  Clobbers u.suns via union, but suns_backup
+     *      in SoA is the truth.  Runs last so prior steps reading SoA see
+     *      consistent state. */
     gpu_gravity_tree_mark_all_dirty();
+    if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(913320);}
+    if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(913321);}
+    /* Reset GravCost + ephemeral fields for all nodes.  On the CPU path FUNR
+     * does this via Nodes[no].GravCost=0 (forcetree.cc:910) and step-1 zero
+     * passes.  The GPU path bypasses FUNR, so we must reset explicitly here
+     * before gpu_moment_refresh accumulates new moments into AoS. */
+    for(int _no = All.MaxPart; _no < All.MaxPart + Numnodestree; _no++) {
+        Nodes[_no].GravCost      = 0;
+        Nodes[_no].Ti_current    = All.Ti_Current;
+        Extnodes[_no].dp         = {};
+        Extnodes[_no].Ti_lastkicked = All.Ti_Current;
+        Extnodes[_no].Flag       = GlobFlag;
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Extnodes[_no].rt_source_lum_dp = {};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        Extnodes[_no].dp_dm      = {};
+#endif
+    }
     if(gpu_moment_refresh(-1) != 0) {endrun(913311);}
-    /* Phase 6.4: GPU nextnode-threading kernel.  Recomputes Nodes[].u.d.nextnode
-     * and Nextnode[] from suns_backup (snapshotted in force_treebuild_single
-     * before force_update_node_recursive overwrote suns).  CPU's nextnode
-     * threading inside force_update_node_recursive still ran; this overwrites
-     * with bit-identical GPU values.  Phase 6.5/6.8 retires the CPU pass. */
     if(gpu_nextnode_thread() != 0) {endrun(913312);}
+    if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(913322);}
 #endif
     force_flag_localnodes();
     force_exchange_pseudodata();
@@ -238,11 +260,11 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
      *   4. gpu_topology_emit_bfs: BFS from each topleaf root, emits
      *      inside-topleaf internal-node topology into SoA suns_backup,
      *      center, len, father.
-     *   5. Writeback inside-topleaf range AoS u.suns/center/len so that
-     *      force_update_node_recursive (still running -- 6.7 retires it)
-     *      can walk the AoS and set sibling/father/moments.  Phase 6.4's
-     *      gpu_nextnode_backup_suns and Phase 6.2's gpu_moment_refresh
-     *      then re-derive nextnode and overwrite the moments on device.
+     *   5. Writeback inside-topleaf range AoS u.suns/center/len.  Phase 6.6
+     *      retired force_update_node_recursive; this writeback now exists so
+     *      that any non-GPU CPU consumer of AoS u.suns sees complete topology
+     *      between force_treebuild_single and the final
+     *      gpu_topology_writeback_d_to_aos in force_treebuild.
      *
      * On overflow (rc=1), return -1 so force_treebuild's outer loop grows
      * TreeAllocFactor and retries -- same contract as the CPU path. */
@@ -435,12 +457,19 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     /* now compute the multipole moments recursively */
     last = -1;
 #ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 6.4: snapshot suns[] for each internal node into the SoA before
-     * force_update_node_recursive overwrites the union with the d struct.
-     * gpu_nextnode_thread (called later from force_treebuild) reads this
-     * backup to recompute DFS-order nextnode links in parallel. */
-    gpu_nextnode_backup_suns(numnodes);
-#endif
+    /* Phase 6.6: force_update_node_recursive retired on GPU build.  The GPU
+     * finalize stage in force_treebuild (gpu_topology_finalize_father,
+     * gpu_topology_finalize_sibling, gpu_moment_refresh, gpu_nextnode_thread)
+     * now produces all of FUNR's outputs (sibling, father, Father[], moments,
+     * nextnode).  The Nextnode[last]=-1 tail fixup is redundant: sibling
+     * for the root is -1, which propagates through the DFS chain in
+     * gpu_nextnode_thread to give the last DFS particle Nextnode[] = -1
+     * automatically.  The second gpu_nextnode_backup_suns is removed too:
+     * snapshot #1 (in the GPU build block above) plus emit_bfs's direct
+     * SoA writes give complete suns_backup coverage, and nothing clobbers
+     * AoS u.suns until gpu_topology_writeback_d_to_aos at the very end of
+     * force_treebuild (by which point all SoA readers are done). */
+#else
     force_update_node_recursive(All.MaxPart, -1, -1);
 
     if(last >= All.MaxPart)
@@ -449,6 +478,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
         else {Nodes[last].u.d.nextnode = -1;}
     }
     else {Nextnode[last] = -1;}
+#endif
 
     return numnodes;
 }
@@ -1326,7 +1356,7 @@ void force_treeupdate_pseudos(int no)
         }
         else
             endrun(6767);        /* may not happen */
-        
+
         p = Nodes[p].u.d.sibling;
     }
     
@@ -3556,12 +3586,28 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(8267342);
     }
     allbytes += bytes;
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.6: Father[] is UVM (SharedSpace) so the GPU father kernel can
+     * write into it directly and host readers (setup_smoothinglengths etc.)
+     * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
+     * mymalloc accounting; the matching gpu_father_free lives in force_treefree. */
+    bytes = (size_t)maxpart * sizeof(int);
+    Father = gpu_father_alloc(maxpart);
+    if(!Father)
+    {
+        printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
+               maxpart, bytes / (1024.0 * 1024.0));
+        endrun(438965237);
+    }
+    /* Don't add to allbytes — kokkos_malloc accounting is separate. */
+#else
     if(!(Father = (int *) mymalloc("Father", bytes = (maxpart) * sizeof(int))))
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB)\n", maxpart, bytes / (1024.0 * 1024.0));
         endrun(438965237);
     }
     allbytes += bytes;
+#endif
     if(first_flag == 0)
     {
         first_flag = 1;
@@ -3631,7 +3677,11 @@ void force_treefree(void)
 {
     if(tree_allocated_flag)
     {
+#ifdef OPENMP_GPU_OFFLOAD
+        if(Father) {gpu_father_free(Father); Father = NULL;}
+#else
         myfree(Father);
+#endif
         myfree(Nextnode);
         myfree(Extnodes_base);
         myfree(Nodes_base);

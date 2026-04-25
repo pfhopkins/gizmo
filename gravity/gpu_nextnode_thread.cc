@@ -3,9 +3,9 @@
  * GPU kernel that recomputes the DFS-pre-order `nextnode` link for each
  * internal node, and `Nextnode` for each particle / pseudo-particle, in
  * parallel.  Replaces the CPU's serial `last`-side-effect threading inside
- * force_update_node_recursive (which still runs to set sibling/father; the
- * GPU pass overwrites only the nextnode portion until Phase 6.5/6.8 retires
- * the CPU build entirely).
+ * force_update_node_recursive.  Phase 6.6 retired FUNR on the GPU build:
+ * sibling/father now come from gpu_topology_finalize_{father,sibling}
+ * which run before this kernel.  On the non-GPU build FUNR still runs.
  *
  * Algorithm (one thread per internal node N):
  *
