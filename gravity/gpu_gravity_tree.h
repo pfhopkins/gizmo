@@ -44,18 +44,23 @@ extern "C" {
  * using the base array, or by absolute Nodes[] index after applying the
  * NTopnodes offset — Phase 4 will pick a convention and lock it in). */
 struct gpu_gravity_tree_soa_t {
-    /* Geometric / opening criterion */
+    /* Geometric / opening criterion — KEEP MyFloat (double) always. Node
+     * center and sidelength drive the opening criterion directly; reducing
+     * precision here would lose geometric accuracy independent of flag state. */
     Vec3<MyFloat>  *center;     /* geometric center of node */
     MyFloat        *len;        /* sidelength */
-    /* Multipole (currently monopole) */
-    Vec3<MyFloat>  *s;          /* center of mass */
-    MyFloat        *mass;       /* total mass */
-    /* Walk traversal */
+    /* Multipole (currently monopole) — Phase 6.1b: MyGravFloat (= float when
+     * GIZMO_MIXED_PRECISION_GRAVITY is set, double otherwise). Force-kernel
+     * accumulators and moment storage. Narrowing cast happens at seed time
+     * from the MyFloat-typed NODE. */
+    Vec3<MyGravFloat> *s;       /* center of mass */
+    MyGravFloat       *mass;    /* total mass */
+    /* Walk traversal — integer bookkeeping, untouched by precision flag. */
     int            *sibling;
     int            *nextnode;
     unsigned int   *bitflags;
     /* Force kernel */
-    MyFloat        *maxsoft;
+    MyGravFloat    *maxsoft;
     long           *N_part;
     int             nnodes;     /* number of valid entries */
     /* Nextnode[] mirror — used for particle-level traversal: when the walk
@@ -68,44 +73,43 @@ struct gpu_gravity_tree_soa_t {
 
     /* --- Phase 2-I optional payloads: gated by the same flags as the AoS
      *     NODE definition in allvars.h. Each block is present iff the host
-     *     NODE carries the field; downstream Phase 2-A/B/C/D walk kernels
-     *     consume these. Fields absent from the SoA under current Tier 1c
-     *     configs (evrard_forall) → bitwise unchanged. */
+     *     NODE carries the field. Moment/force storage → MyGravFloat (6.1b).
+     *     CHIMES arrays stay double — chemistry tolerances force it. */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    MyFloat        *gasmass;          /* [nnodes] */
+    MyGravFloat    *gasmass;          /* [nnodes] */
 #endif
 #ifdef RT_USE_GRAVTREE
-    MyFloat        *stellar_lum;      /* flat [nnodes * N_RT_FREQ_BINS] */
+    MyGravFloat    *stellar_lum;      /* flat [nnodes * N_RT_FREQ_BINS] */
 #ifdef CHIMES_STELLAR_FLUXES
-    double         *chimes_stellar_lum_G0;  /* flat [nnodes * CHIMES_LOCAL_UV_NBINS] */
-    double         *chimes_stellar_lum_ion; /* flat [nnodes * CHIMES_LOCAL_UV_NBINS] */
+    double         *chimes_stellar_lum_G0;  /* flat [nnodes * CHIMES_LOCAL_UV_NBINS] — keep double */
+    double         *chimes_stellar_lum_ion; /* flat [nnodes * CHIMES_LOCAL_UV_NBINS] — keep double */
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    Vec3<MyFloat>  *rt_source_lum_s;  /* from NODE */
-    Vec3<MyFloat>  *rt_source_lum_vs; /* from extNODE */
+    Vec3<MyGravFloat> *rt_source_lum_s;  /* from NODE */
+    Vec3<MyGravFloat> *rt_source_lum_vs; /* from extNODE */
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-    MyFloat        *sink_lum;
-    Vec3<MyFloat>  *sink_lum_grad;
+    MyGravFloat       *sink_lum;
+    Vec3<MyGravFloat> *sink_lum_grad;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    MyFloat        *cr_injection;
+    MyGravFloat    *cr_injection;
 #endif
 #ifdef SINK_CALC_DISTANCES
-    MyFloat        *sink_mass;
-    Vec3<MyFloat>  *sink_pos;
+    MyGravFloat       *sink_mass;
+    Vec3<MyGravFloat> *sink_pos;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-    Vec3<MyFloat>  *sink_vel;
+    Vec3<MyGravFloat> *sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-    Vec3<MyFloat>  *sink_acc;
+    Vec3<MyGravFloat> *sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
     int            *N_SINK;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-    MyFloat        *MaxFeedbackVel;
+    MyGravFloat    *MaxFeedbackVel;
 #endif
 #endif
     /* Unconditional Extnodes mirrors — Phase 6.1a. Needed by the GPU moment
@@ -113,20 +117,20 @@ struct gpu_gravity_tree_soa_t {
      * always computed during moment accumulation regardless of which physics
      * flags are on. The prior SINK_DYNFRICTION_FROMTREE/COMPUTE_JERK_IN_GRAVTREE
      * guard on node_vs was removed — vs is now always present. */
-    Vec3<MyFloat>  *node_vs;          /* mirror of Extnodes[].vs */
-    MyFloat        *hmax;             /* Extnodes[].hmax — gas kernel extent */
-    MyFloat        *vmax;             /* Extnodes[].vmax */
-    MyFloat        *divVmax;          /* Extnodes[].divVmax */
+    Vec3<MyGravFloat> *node_vs;       /* mirror of Extnodes[].vs */
+    MyGravFloat       *hmax;          /* Extnodes[].hmax — gas kernel extent */
+    MyGravFloat       *vmax;          /* Extnodes[].vmax */
+    MyGravFloat       *divVmax;       /* Extnodes[].divVmax */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     /* 6-component symmetric tensor moment: [xx,yy,zz,xy,xz,yz]. Flat layout
      * [nnodes * 6]. Accumulated by GPU moment kernel starting in Phase 6.3;
      * walk consumption is Tier 3 (walk guard unchanged, see Phase-4 handoff). */
-    MyFloat        *tidal_tensorps;
+    MyGravFloat       *tidal_tensorps;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-    MyFloat        *mass_dm;
-    Vec3<MyFloat>  *s_dm;
-    Vec3<MyFloat>  *vs_dm;            /* from Extnodes */
+    MyGravFloat       *mass_dm;
+    Vec3<MyGravFloat> *s_dm;
+    Vec3<MyGravFloat> *vs_dm;         /* from Extnodes */
 #endif
 };
 
