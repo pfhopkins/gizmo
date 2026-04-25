@@ -199,17 +199,26 @@ static int alloc_arrays_(int n)
     return 1;
 }
 
+/* Element-wise Vec3 cross-type cast.  Needed for SoA fields retyped to
+ * MyGravFloat (Phase 6.1b) when GIZMO_MIXED_PRECISION_GRAVITY makes
+ * MyGravFloat=float while the AoS NODE/extNODE fields stay Vec3<MyFloat>
+ * (=double).  In flag-OFF builds it collapses to a same-type copy. */
+template<typename Tdst, typename Tsrc>
+static inline Vec3<Tdst> vec3_cast_(const Vec3<Tsrc>& v) {
+    return Vec3<Tdst>{(Tdst)v[0], (Tdst)v[1], (Tdst)v[2]};
+}
+
 static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
 {
     /* Copy the fields the walk reads for a single node index k. Used by both
      * the full-seed loop (fresh allocation) and the partial-seed pass (dirty
      * nodes only). SharedSpace pages migrate device-side on first kernel
-     * touch. The Vec3 fields (center, s) live inside Nodes[] as Vec3<MyFloat>;
-     * straight assignment works because the SoA mirror uses the same type. */
+     * touch.  Vec3 fields use vec3_cast_ for the MyFloat -> MyGravFloat
+     * narrowing in mixed-precision builds. */
     {
         soa_.center[k]   = Nodes_host[k].center;
         soa_.len[k]      = Nodes_host[k].len;
-        soa_.s[k]        = Nodes_host[k].u.d.s;
+        soa_.s[k]        = vec3_cast_<MyGravFloat>(Nodes_host[k].u.d.s);
         soa_.mass[k]     = Nodes_host[k].u.d.mass;
         soa_.sibling[k]  = Nodes_host[k].u.d.sibling;
         soa_.nextnode[k] = Nodes_host[k].u.d.nextnode;
@@ -232,24 +241,24 @@ static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Ex
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        soa_.rt_source_lum_s[k]  = Nodes_host[k].rt_source_lum_s;
-        if(Extnodes_host) {soa_.rt_source_lum_vs[k] = Extnodes_host[k].rt_source_lum_vs;}
+        soa_.rt_source_lum_s[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].rt_source_lum_s);
+        if(Extnodes_host) {soa_.rt_source_lum_vs[k] = vec3_cast_<MyGravFloat>(Extnodes_host[k].rt_source_lum_vs);}
 #endif
 #ifdef SINK_PHOTONMOMENTUM
         soa_.sink_lum[k]      = Nodes_host[k].sink_lum;
-        soa_.sink_lum_grad[k] = Nodes_host[k].sink_lum_grad;
+        soa_.sink_lum_grad[k] = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_lum_grad);
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         soa_.cr_injection[k]  = Nodes_host[k].cr_injection;
 #endif
 #ifdef SINK_CALC_DISTANCES
         soa_.sink_mass[k] = Nodes_host[k].sink_mass;
-        soa_.sink_pos[k]  = Nodes_host[k].sink_pos;
+        soa_.sink_pos[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_pos);
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-        soa_.sink_vel[k]  = Nodes_host[k].sink_vel;
+        soa_.sink_vel[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_vel);
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-        soa_.sink_acc[k]  = Nodes_host[k].sink_acc;
+        soa_.sink_acc[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_acc);
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
         soa_.N_SINK[k]    = Nodes_host[k].N_SINK;
@@ -260,12 +269,12 @@ static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Ex
 #endif
         if(Extnodes_host) {
             /* Unconditional Extnodes mirrors (Phase 6.1a). */
-            soa_.node_vs[k] = Extnodes_host[k].vs;
+            soa_.node_vs[k] = vec3_cast_<MyGravFloat>(Extnodes_host[k].vs);
             soa_.hmax[k]    = Extnodes_host[k].hmax;
             soa_.vmax[k]    = Extnodes_host[k].vmax;
             soa_.divVmax[k] = Extnodes_host[k].divVmax;
 #ifdef DM_SCALARFIELD_SCREENING
-            soa_.vs_dm[k]   = Extnodes_host[k].vs_dm;
+            soa_.vs_dm[k]   = vec3_cast_<MyGravFloat>(Extnodes_host[k].vs_dm);
 #endif
         }
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -273,7 +282,7 @@ static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Ex
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         soa_.mass_dm[k] = Nodes_host[k].mass_dm;
-        soa_.s_dm[k]    = Nodes_host[k].s_dm;
+        soa_.s_dm[k]    = vec3_cast_<MyGravFloat>(Nodes_host[k].s_dm);
 #endif
     }
 }

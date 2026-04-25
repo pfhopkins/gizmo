@@ -548,7 +548,7 @@ gpu_gravtree_walk_one(int target,
         else /* tree node */
         {
             int idx = no - maxPart;
-            Vec3<MyFloat> s_node = s->s[idx];
+            Vec3<MyFloat> s_node = Vec3<MyFloat>{(MyFloat)s->s[idx][0], (MyFloat)s->s[idx][1], (MyFloat)s->s[idx][2]};
             MyFloat len_node = s->len[idx];
             MyFloat msoft_node = s->maxsoft[idx];
             MyFloat mass_node = s->mass[idx];
@@ -675,7 +675,9 @@ gpu_gravtree_walk_one(int target,
                     Min_xyz_to_Sink = sink_dr;
                 }
 #ifdef SINGLE_STAR_TIMESTEPPING
-                Vec3<double> sink_dv = s->sink_vel[idx] - vel;
+                Vec3<double> sink_dv = Vec3<double>{(double)s->sink_vel[idx][0] - vel[0],
+                                                    (double)s->sink_vel[idx][1] - vel[1],
+                                                    (double)s->sink_vel[idx][2] - vel[2]};
                 double vSqr = sink_dv.norm_sq();
                 double M_total = s->sink_mass[idx] + pmass;
                 double r2soft = SinkParticle_GravityKernelRadius;
