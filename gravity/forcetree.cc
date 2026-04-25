@@ -152,12 +152,25 @@ int force_treebuild(int npart, struct unbind_data *mp)
         }
     }
     while(flag == -1);
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.3: replace force_update_node_recursive's moment portion with
+     * the GPU moment-refresh kernel.  force_treebuild_single still runs
+     * force_update_node_recursive internally (for Father pointers and the
+     * nextnode-thread side effect — Phase 6.4 separates the latter); the GPU
+     * pass then overwrites the AoS moments with values computed on device.
+     * Topology was just rebuilt, so the SoA mirror is stale; mark_all_dirty
+     * before acquire so seed_full reads the freshly-built AoS. */
+    gpu_gravity_tree_mark_all_dirty();
+    if(gpu_moment_refresh(-1) != 0) {endrun(913311);}
+#endif
     force_flag_localnodes();
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TimeOfLastTreeConstruction = All.Time;
 #ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 6.0: topology rebuilt — entire SoA mirror is stale. */
+    /* force_flag_localnodes + force_exchange_pseudodata + force_treeupdate_pseudos
+     * all mutate AoS after the GPU moment pass; mark dirty so the next acquire
+     * reseeds with those mutations. */
     gpu_gravity_tree_mark_all_dirty();
 #endif
     return Numnodestree;
