@@ -82,15 +82,13 @@ extern "C" int gpu_nextnode_thread(void)
     if(!soa) {printf("gpu_nextnode_thread: SoA null\n"); return 1;}
     if(!soa->suns_backup) {printf("gpu_nextnode_thread: suns_backup null — must call gpu_nextnode_backup_suns first\n"); return 1;}
 
-    /* Ensure nextnode_aux is allocated for the particle / pseudo-particle
-     * range [0..MaxPart+NTopnodes).  If it isn't (or is too small), allocate
-     * here in SharedSpace; we'll write to it from the device kernel. */
+    /* Phase 6.8e: soa->nextnode_aux is aliased to UVM Nextnode[] (owned by
+     * force_treeallocate, sized MaxPart+NTopnodes).  Just sanity-check it. */
     int aux_size = MaxPart + NTopnodes_;
-    if(soa->nextnode_aux_size < aux_size || !soa->nextnode_aux) {
-        if(soa->nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa->nextnode_aux);}
-        soa->nextnode_aux = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)aux_size * sizeof(int));
-        if(!soa->nextnode_aux) {printf("gpu_nextnode_thread: nextnode_aux alloc failed (%d)\n", aux_size); return 1;}
-        soa->nextnode_aux_size = aux_size;
+    if(!soa->nextnode_aux || soa->nextnode_aux_size < aux_size) {
+        printf("gpu_nextnode_thread: nextnode_aux alias missing or undersized (have=%d, need=%d)\n",
+               soa->nextnode_aux_size, aux_size);
+        return 1;
     }
 
     /* Capture raw SoA pointers for the lambda. */
@@ -147,15 +145,12 @@ extern "C" int gpu_nextnode_thread(void)
     });
     Kokkos::fence();
 
-    /* Host-side write-back to AoS.  Internal node nextnode + particle /
-     * pseudo Nextnode arrays are read by the legacy CPU tree walks; keep
-     * them in sync until Phase 6.8 retires the CPU walk path. */
+    /* Phase 6.8e: Nextnode[] is aliased to soa->nextnode_aux (same UVM
+     * buffer); the kernel above already wrote it.  Only the internal-node
+     * AoS u.d.nextnode still needs a host writeback (Phase 6.8f converts
+     * this to a GPU kernel once Nodes_base reads/writes are GPU-direct). */
     for(int k = 0; k < n; k++) {
         Nodes_base[k].u.d.nextnode = nextnode_soa[k];
-    }
-    int aux_total = MaxPart + NTopnodes_;
-    for(int i = 0; i < aux_total; i++) {
-        Nextnode[i] = aux_soa[i];
     }
 
     return 0;

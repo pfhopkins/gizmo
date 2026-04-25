@@ -3571,6 +3571,39 @@ void force_treeallocate(int maxnodes, int maxpart)
     DomainNodeIndex = (int *) mymalloc("DomainNodeIndex", bytes = NTopleaves * sizeof(int));
     allbytes_topleaves += bytes;
     MaxNodes = maxnodes;
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.8d: Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
+     * kernels can read/write them directly.  Same pattern as Father[] (6.6) and
+     * Nextnode[] (6.8e below).  Skip mymalloc accounting; kokkos_malloc has its
+     * own. */
+    bytes = (size_t)(MaxNodes + 1) * sizeof(struct NODE);
+    Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes);
+    if(!Nodes_base)
+    {
+        printf("failed to allocate %d tree-nodes (%g MB) in SharedSpace.\n", MaxNodes, bytes / (1024.0 * 1024.0));
+        endrun(3);
+    }
+    bytes = (size_t)(MaxNodes + 1) * sizeof(struct extNODE);
+    Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes);
+    if(!Extnodes_base)
+    {
+        printf("failed to allocate %d tree-extnodes (%g MB) in SharedSpace.\n", MaxNodes, bytes / (1024.0 * 1024.0));
+        endrun(3);
+    }
+    Nodes = Nodes_base - All.MaxPart;
+    Extnodes = Extnodes_base - All.MaxPart;
+    /* Phase 6.8e: Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
+     * this pointer (no separate buffer, no per-walk memcpy). */
+    bytes = (size_t)(maxpart + NTopnodes) * sizeof(int);
+    Nextnode = (int *) gpu_tree_alloc_bytes(bytes);
+    if(!Nextnode)
+    {
+        printf("Failed to allocate %d 'Nextnode' (%g MB) in SharedSpace\n",
+               maxpart + NTopnodes, bytes / (1024.0 * 1024.0));
+        endrun(8267342);
+    }
+    gpu_gravity_tree_alias_nextnode(Nextnode, maxpart + NTopnodes);
+#else
     if(!(Nodes_base = (struct NODE *) mymalloc("Nodes_base", bytes = (MaxNodes + 1) * sizeof(struct NODE))))
     {
         printf("failed to allocate memory for %d tree-nodes (%g MB).\n", MaxNodes, bytes / (1024.0 * 1024.0));
@@ -3594,6 +3627,7 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(8267342);
     }
     allbytes += bytes;
+#endif
 #ifdef OPENMP_GPU_OFFLOAD
     /* Phase 6.6: Father[] is UVM (SharedSpace) so the GPU father kernel can
      * write into it directly and host readers (setup_smoothinglengths etc.)
@@ -3686,13 +3720,20 @@ void force_treefree(void)
     if(tree_allocated_flag)
     {
 #ifdef OPENMP_GPU_OFFLOAD
-        if(Father) {gpu_father_free(Father); Father = NULL;}
+        /* Phase 6.8d/e: SharedSpace (UVM) frees for GPU-addressable tree
+         * storage.  Order is reverse-of-alloc (LIFO discipline preserved for
+         * the residual mymalloc'd DomainNodeIndex). */
+        if(Father)        {gpu_father_free(Father); Father = NULL;}
+        gpu_gravity_tree_alias_nextnode(NULL, 0);  /* clear SoA alias before free */
+        if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
+        if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
+        if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
 #else
         myfree(Father);
-#endif
         myfree(Nextnode);
         myfree(Extnodes_base);
         myfree(Nodes_base);
+#endif
         myfree(DomainNodeIndex);
         tree_allocated_flag = 0;
     }

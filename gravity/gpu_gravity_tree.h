@@ -153,10 +153,11 @@ void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
 
-/* Mirror Nextnode[0..n) into the SoA's nextnode_aux field. Callers must call
- * acquire() before invoking this, so the node arrays exist. Separate from
- * acquire() because Nextnode has different size and lifetime semantics. */
-void gpu_gravity_tree_set_nextnode(int n, int *Nextnode_host);
+/* Phase 6.8e: Nextnode[] is allocated in SharedSpace by force_treeallocate
+ * (forcetree.cc).  This setter aliases soa->nextnode_aux to that pointer; no
+ * separate buffer, no per-walk memcpy.  Pass NULL/0 from force_treefree to
+ * clear the alias before the underlying buffer is freed. */
+void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n);
 
 /* Mark a single node dirty (absolute Nodes[] index, i.e. >= All.MaxPart).
  * Next acquire() will re-copy just this node's fields. Called from the

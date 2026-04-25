@@ -46,7 +46,11 @@ static void free_arrays_(void)
     if(soa_.bitflags) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.bitflags); soa_.bitflags = NULL;}
     if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
     if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
-    if(soa_.nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode_aux); soa_.nextnode_aux = NULL;}
+    /* Phase 6.8e: nextnode_aux is an alias to Nextnode[] (UVM, owned by
+     * forcetree.cc).  Do NOT free or clear here — the alias persists across
+     * SoA realloc cycles and is set/cleared exclusively by
+     * gpu_gravity_tree_alias_nextnode().  free_arrays_ runs whenever capacity
+     * changes, but the alias outlives that. */
     if(soa_.suns_backup)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.suns_backup);  soa_.suns_backup  = NULL;}
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     if(soa_.gasmass)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.gasmass);        soa_.gasmass        = NULL;}
@@ -102,7 +106,8 @@ static void free_arrays_(void)
     any_dirty_   = 0;
     dirty_count_ = 0;
     soa_.nnodes = 0;
-    soa_.nextnode_aux_size = 0;
+    /* Phase 6.8e: do NOT touch nextnode_aux / nextnode_aux_size here — the
+     * alias is owned by force_treeallocate and outlives SoA realloc cycles. */
 }
 
 static int alloc_arrays_(int n)
@@ -393,19 +398,13 @@ extern "C" void gpu_gravity_tree_release(void)
     soa_valid_    = 0;
 }
 
-extern "C" void gpu_gravity_tree_set_nextnode(int n, int *Nextnode_host)
+extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)
 {
-    if(n <= 0) {return;}
-    if(soa_.nextnode_aux_size < n) {
-        if(soa_.nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode_aux);}
-        soa_.nextnode_aux = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
-        if(!soa_.nextnode_aux) {
-            printf("gpu_gravity_tree_set_nextnode: kokkos_malloc failed (n=%d)\n", n);
-            endrun(913102);
-        }
-        soa_.nextnode_aux_size = n;
-    }
-    memcpy(soa_.nextnode_aux, Nextnode_host, n * sizeof(int));
+    /* Phase 6.8e: alias soa->nextnode_aux to the SharedSpace Nextnode[] owned
+     * by force_treeallocate.  No separate buffer, no per-walk memcpy.  Called
+     * once per (allocate / free) cycle from forcetree.cc. */
+    soa_.nextnode_aux      = Nextnode_host;
+    soa_.nextnode_aux_size = n;
 }
 
 extern "C" struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void) {return soa_valid_ ? &soa_ : NULL;}

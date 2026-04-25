@@ -1206,7 +1206,8 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
-    gpu_gravity_tree_set_nextnode(All.MaxPart + NTopnodes, Nextnode);
+    /* Phase 6.8e: soa->nextnode_aux aliases UVM Nextnode[] (set by
+     * force_treeallocate); no per-walk memcpy needed. */
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!P_dev || !CellP_dev || !soa) {
         printf("gpu_gravtree_walk_primary: failed to acquire arena or tree SoA\n");
@@ -1731,10 +1732,10 @@ extern "C" int gpu_ewald_walk_primary(void)
     if(num_active_total <= 0) {return 0;}
 
     /* Particles have already been drifted by the primary walk (Ewald_iter==0);
-     * the tree SoA mirror is still valid. Just re-acquire (cache-hit). */
+     * the tree SoA mirror is still valid. Just re-acquire (cache-hit).  Phase
+     * 6.8e: soa->nextnode_aux aliases UVM Nextnode[]; no per-walk memcpy. */
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
-    gpu_gravity_tree_set_nextnode(All.MaxPart + NTopnodes, Nextnode);
     const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {return 0;}
 

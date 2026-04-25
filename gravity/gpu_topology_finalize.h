@@ -59,6 +59,16 @@ int gpu_topology_writeback_d_to_aos(int n);
 int  *gpu_father_alloc(int maxpart);   /* returns NULL on failure */
 void  gpu_father_free(int *p);
 
+/* Phase 6.8: extend the same UVM-allocator pattern to Nodes_base, Extnodes_base
+ * and Nextnode.  After 6.8d/e all four tree-storage arrays live in SharedSpace,
+ * so GPU kernels can read/write them directly and the Phase-6 host writeback
+ * loops over node-count are replaced with single-pass GPU kernels (Phase 6.8f).
+ *
+ * NODE / extNODE struct definitions live in forcetree.h (which this TU
+ * includes); the helpers take byte counts so callers stay struct-agnostic. */
+void *gpu_tree_alloc_bytes(size_t bytes);  /* generic SharedSpace alloc */
+void  gpu_tree_free_bytes(void *p);        /* matching free */
+
 #ifdef __cplusplus
 }
 #endif

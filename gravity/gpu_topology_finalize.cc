@@ -204,6 +204,21 @@ extern "C" void gpu_father_free(int *p)
     if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
 }
 
+/* Phase 6.8: generic SharedSpace alloc/free for Nodes_base, Extnodes_base,
+ * Nextnode (and any future tree-storage array that needs to be GPU-addressable).
+ * Pattern matches gpu_father_alloc/free; struct sizes are computed at call site
+ * in forcetree.cc which has the NODE/extNODE definitions in scope. */
+extern "C" void *gpu_tree_alloc_bytes(size_t bytes)
+{
+    if(bytes == 0) {return NULL;}
+    return Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bytes);
+}
+
+extern "C" void gpu_tree_free_bytes(void *p)
+{
+    if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+}
+
 GPU_ALL_SYNC_FUNC(topo_finalize_father)
 GPU_ALL_SYNC_FUNC(topo_finalize_sibling)
 
