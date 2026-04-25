@@ -46,6 +46,7 @@
 
 #ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
+#include "../declarations/gpu_rng.h"
 
 /* Octree depth limit driven by 126-bit Morton (42 bits per axis = 42 levels).
  * Beyond this depth, all keys in a sub-range that haven't separated must be
@@ -232,6 +233,73 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
         child_starts[next_octant] = n;
         next_octant++;
     }
+}
+
+/* In-place reshuffle of a sorted_idx range using random per-particle octants
+ * (collocation handler).  Mirrors CPU forcetree.cc:267-273 random subnode
+ * assignment when Nodes[th].len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING *
+ * split_scale: each particle gets a random octant from get_random_number(P[i].ID).
+ *
+ *   sorted_idx_range[0..count) -- in-place: read particle indices, write
+ *                                 reshuffled by random octant.
+ *   P_id_of(idx)               -- functor returning P[idx].ID for the RNG seed.
+ *   counter                    -- RNG counter (e.g. parent_depth) so each
+ *                                 BFS level samples an independent stream.
+ *   child_starts[0..8]         -- output octant boundaries.
+ *
+ * Uses a thread-local scratch of fixed size MAX_COLLOC_RANGE.  If the range
+ * exceeds this, returns -1 (caller signals failure; user must use a different
+ * IC or upgrade scratch budget).  On success returns 0. */
+#define GIZMO_GPU_MORTON_COLLOC_SCRATCH 512
+
+template <class IDFunc>
+KOKKOS_INLINE_FUNCTION int gpu_morton_split_8way_random_inplace(
+    int           *sorted_idx_range,
+    int            count,
+    IDFunc         id_of,
+    uint64_t       counter,
+    int            child_starts[9])
+{
+    if(count <= 0) {
+        for(int k = 0; k < 9; k++) {child_starts[k] = 0;}
+        return 0;
+    }
+    if(count > GIZMO_GPU_MORTON_COLLOC_SCRATCH) {return -1;}
+
+    int      idx_buf[GIZMO_GPU_MORTON_COLLOC_SCRATCH];
+    unsigned char oct_buf[GIZMO_GPU_MORTON_COLLOC_SCRATCH];
+    int      counts[8] = {0,0,0,0,0,0,0,0};
+
+    /* 1. Snapshot input + assign random octant per particle, count occupants. */
+    for(int j = 0; j < count; j++) {
+        int idx = sorted_idx_range[j];
+        idx_buf[j] = idx;
+        uint64_t pid = (uint64_t) id_of(idx);
+        double   r   = gizmo_gpu_rand_double(pid, counter);
+        int      o   = (int)(8.0 * r);
+        if(o < 0) {o = 0;}
+        if(o > 7) {o = 7;}
+        oct_buf[j] = (unsigned char)o;
+        counts[o]++;
+    }
+
+    /* 2. Exclusive scan -> child_starts. */
+    int sum = 0;
+    for(int k = 0; k < 8; k++) {
+        child_starts[k] = sum;
+        sum += counts[k];
+    }
+    child_starts[8] = sum;
+
+    /* 3. Scatter back into sorted_idx_range using cursors per octant. */
+    int cursors[8];
+    for(int k = 0; k < 8; k++) {cursors[k] = child_starts[k];}
+    for(int j = 0; j < count; j++) {
+        int o = (int)oct_buf[j];
+        sorted_idx_range[cursors[o]] = idx_buf[j];
+        cursors[o]++;
+    }
+    return 0;
 }
 
 #endif /* OPENMP_GPU_OFFLOAD */

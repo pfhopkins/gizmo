@@ -201,7 +201,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     if(new_node_count_out) {*new_node_count_out = start_node_index;}
 
     /* Dependencies. */
-    const int       *sidx = gpu_topology_build_sorted_idx();
+    int             *sidx = (int *) gpu_topology_build_sorted_idx();  /* writable for collocation reshuffle */
     const int       *tsta = gpu_topology_build_topleaf_start();
     const int       *tcnt = gpu_topology_build_topleaf_count();
     const Morton128 *keys = gpu_morton_keys();
@@ -210,6 +210,11 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         printf("gpu_topology_emit_bfs: data-path / peano-walk scratch null\n");
         return 3;
     }
+
+    /* For collocation RNG: need P_dev[].ID lookup inside the kernel. */
+    gpu_particles_arena_acquire(NumPart, P, CellP);
+    struct particle_data *P_dev = gpu_particles_arena_P();
+    if(!P_dev) {printf("gpu_topology_emit_bfs: P_dev null\n"); return 3;}
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {printf("gpu_topology_emit_bfs: SoA null\n"); return 3;}
@@ -306,10 +311,38 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
             MyFloat       lh = (MyFloat)(0.25 * (double)pl);  /* offset of child center from parent center */
             MyFloat       cl = (MyFloat)(0.5  * (double)pl);  /* child len */
 
-            /* 8-way split on Morton bits at depth = parent_depth (= split level). */
+            /* 8-way split.  Default: Morton bits at split level = parent_depth.
+             * Collocation: if the range is fully collocated (LCP >= 126),
+             * Morton-bit split would put everything in one octant -> infinite
+             * recursion.  Reshuffle by random per-particle octant instead,
+             * matching CPU forcetree.cc:267-273 semantics.  Each BFS level
+             * uses parent_depth as the RNG counter, so re-rolls every level. */
             int child_starts[9];
-            gpu_morton_split_8way(sidx, keys, w.range_first, w.range_last,
-                                  w.parent_depth, child_starts);
+            int range_count = w.range_last - w.range_first;
+            int do_random = 0;
+            if(range_count > 1) {
+                int lo_idx = sidx[w.range_first];
+                int hi_idx = sidx[w.range_last - 1];
+                int lcp = gpu_morton_lcp_bits(keys[lo_idx], keys[hi_idx]);
+                if(lcp >= 126) {do_random = 1;}
+            }
+            if(do_random) {
+                auto id_of = [P_dev] KOKKOS_FUNCTION (int idx) -> uint64_t {
+                    return (uint64_t) P_dev[idx].ID;
+                };
+                int rrc = gpu_morton_split_8way_random_inplace(
+                    sidx + w.range_first, range_count, id_of,
+                    (uint64_t) w.parent_depth, child_starts);
+                if(rrc < 0) {
+                    /* Range too large for thread-local scratch (rare).
+                     * Signal failure; would need a global-scratch path. */
+                    Kokkos::atomic_fetch_max(fail, 5);
+                    return;
+                }
+            } else {
+                gpu_morton_split_8way(sidx, keys, w.range_first, w.range_last,
+                                      w.parent_depth, child_starts);
+            }
 
             for(int k = 0; k < 8; k++) {
                 int rf = w.range_first + child_starts[k];
@@ -321,17 +354,10 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                     /* Single particle: store its index directly as a leaf. */
                     slot_value = sidx[rf];
                 } else if(cnt > 1) {
-                    /* Detect collocation: top-vs-bottom LCP at full depth. */
-                    int lo_idx = sidx[rf];
-                    int hi_idx = sidx[rl - 1];
-                    int lcp = gpu_morton_lcp_bits(keys[lo_idx], keys[hi_idx]);
-                    if(lcp >= 126) {
-                        /* All-collocated -- 6.5c4 will RNG-randomize.
-                         * For 6.5c3 just signal failure. */
-                        Kokkos::atomic_fetch_max(fail, 2);
-                        continue;
-                    }
-                    /* Allocate a new internal node from the device counter. */
+                    /* Allocate a new internal node from the device counter.
+                     * Collocation in the sub-range is OK -- the next BFS
+                     * level on this child will trigger the random reshuffle
+                     * at its parent boundary check. */
                     int new_soa = Kokkos::atomic_fetch_add(ncount, 1);
                     if(new_soa >= max_nodes) {
                         Kokkos::atomic_fetch_max(fail, 1);
