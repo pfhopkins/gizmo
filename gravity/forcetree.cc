@@ -1353,6 +1353,13 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.bitflags &= (~((1 << BITFLAG_MULTIPLEPARTICLES)));    /* this clears the bits */
     Nodes[no].u.d.bitflags |= multiple_flag;
     Nodes[no].maxsoft = maxsoft;
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.2: surgical SoA invalidation. force_treeupdate_pseudos has
+     * just rewritten the AoS moments at `no` from its (foreign-pseudo)
+     * children's SoA-derived contributions. Mark this node dirty so the
+     * next gpu_gravity_tree_acquire reseeds only its slot. */
+    gpu_gravity_tree_mark_dirty(no);
+#endif
 }
 
 
@@ -3828,6 +3835,36 @@ void force_refresh_node_moments(void)
     int i, k, no;
     PRINT_STATUS("Refreshing tree node moments (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
 
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.2: GPU moment-refresh kernel computes local-tree node
+     * moments + writes back to AoS. After this returns, Nodes[] /
+     * Extnodes[] are in the same state CPU steps 1-4 below would
+     * produce, so the CPU pseudo-particle path can run unchanged. */
+    {
+        /* Reset GravCost/Ti_current/Flag/Ti_lastkicked/dp/dp_dm/dp_stellarlum
+         * fields that the GPU kernel does not own. These mirror the
+         * non-moment lines in CPU step 1 (forcetree.cc:3837..3848). */
+        for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
+            Nodes[no].GravCost = 0;
+            Nodes[no].Ti_current = All.Ti_Current;
+            Extnodes[no].dp = {};
+            Extnodes[no].Ti_lastkicked = All.Ti_Current;
+            Extnodes[no].Flag = GlobFlag;
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+            Extnodes[no].rt_source_lum_dp = {};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+            Extnodes[no].dp_dm = {};
+#endif
+        }
+        if(gpu_moment_refresh(-1) != 0) {endrun(913310);}
+        force_exchange_pseudodata();
+        force_treeupdate_pseudos(All.MaxPart);
+        PRINT_STATUS(" ..tree node moments refreshed (GPU).");
+        return;
+    }
+#endif
+
     /* Step 1: zero all node moment fields (preserving structural fields: nextnode, sibling, father) */
     for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
     {
@@ -4091,11 +4128,10 @@ void force_refresh_node_moments(void)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
 
-#ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 6.0: moments were zeroed + re-accumulated for every node — entire
-     * SoA mirror is stale. */
-    gpu_gravity_tree_mark_all_dirty();
-#endif
+    /* CPU path (no GPU offload): no SoA mirror exists; no invalidate needed.
+     * GPU path returned earlier and the GPU kernel writes back to AoS, with
+     * surgical mark_dirty() hooks in force_treeupdate_pseudos covering the
+     * ancestor chains — see Phase 6.2 design. */
 
     PRINT_STATUS(" ..tree node moments refreshed.");
 }

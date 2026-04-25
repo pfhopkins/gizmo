@@ -184,6 +184,28 @@ int gpu_gravity_tree_valid(void);
  * reseed. Used by 6.0 baseline benchmarks to measure reseed volume per call. */
 int gpu_gravity_tree_dirty_count(void);
 
+/* Phase 6.2: GPU moment-refresh kernel. Computes local-tree node moments
+ * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional
+ * payloads) directly on the device, using dependency-counter atomics on
+ * device-local scratch and bulk seed of the SharedSpace SoA.
+ *
+ * After the kernel returns, the SoA is fully populated for nodes
+ * [MaxPart, MaxPart+Numnodestree) AND the Nodes[]/Extnodes[] AoS arrays
+ * are written back so that the CPU pseudo-particle path
+ * (force_exchange_pseudodata + force_treeupdate_pseudos) sees identical
+ * values to what it would have produced.
+ *
+ * `active_root_node` reserved for Phase 9 subtree-hint optimization. Initial
+ * callers pass -1 (= whole tree from MaxPart..MaxPart+Numnodestree).
+ *
+ * Returns 0 on success, nonzero on failure (allocation, bad state, etc). */
+int gpu_moment_refresh(int active_root_node);
+
+/* Bulk write SoA[k=0..n) back into Nodes[MaxPart+k] / Extnodes[MaxPart+k].
+ * Invokes from gpu_moment_refresh(); declared here so unit-test scaffolding
+ * could call it directly. Caller must have a valid SoA acquired. */
+void gpu_moment_writeback_to_aos(int n);
+
 #ifdef __cplusplus
 }
 #endif
