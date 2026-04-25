@@ -28,6 +28,7 @@
 #include "gpu_morton_functions.h"
 #include "gpu_peano_walk.h"
 #include "gpu_peano_walk_functions.h"
+#include "gpu_gravity_tree.h"
 #include "gpu_topology_build.h"
 
 #if defined(OPENMP_GPU_OFFLOAD)
@@ -180,6 +181,215 @@ extern "C" int gpu_topology_build_data_path(int npart)
     return 0;
 }
 
+/* ---------------- 6.5c3 BFS topology emission ---------------------- */
+
+namespace {
+
+/* Per-internal-node BFS unit. */
+struct BfsItem {
+    int parent_soa;   /* parent's SoA index (= Nodes[] absolute - MaxPart) */
+    int range_first;  /* particle range [range_first, range_last) in sorted_idx */
+    int range_last;
+    int parent_depth; /* octree depth of parent (root = 0); split bits read at this level */
+};
+
+}  /* anonymous namespace */
+
+extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH(topobuild);
+    if(new_node_count_out) {*new_node_count_out = start_node_index;}
+
+    /* Dependencies. */
+    const int       *sidx = gpu_topology_build_sorted_idx();
+    const int       *tsta = gpu_topology_build_topleaf_start();
+    const int       *tcnt = gpu_topology_build_topleaf_count();
+    const Morton128 *keys = gpu_morton_keys();
+    const int       *dni  = gpu_peano_walk_domain_node_index();
+    if(!sidx || !tsta || !tcnt || !keys || !dni) {
+        printf("gpu_topology_emit_bfs: data-path / peano-walk scratch null\n");
+        return 3;
+    }
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa) {printf("gpu_topology_emit_bfs: SoA null\n"); return 3;}
+
+    /* Capture SoA pointers for kernel use. */
+    Vec3<MyFloat> *soa_center  = soa->center;
+    MyFloat       *soa_len     = soa->len;
+    int           *soa_father  = soa->father;
+    int           *soa_suns    = soa->suns_backup;
+    if(!soa_center || !soa_len || !soa_father || !soa_suns) {
+        printf("gpu_topology_emit_bfs: SoA core fields not allocated\n");
+        return 3;
+    }
+
+    int ntl       = NTopleaves;
+    int max_nodes = MaxNodes;
+    int max_part  = All.MaxPart;
+
+    /* SharedSpace single-int counters: easy host/device coordination. */
+    int *sz_curr = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    int *sz_next = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    int *ncount  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    int *fail    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+    if(!sz_curr || !sz_next || !ncount || !fail) {
+        printf("gpu_topology_emit_bfs: counter alloc failed\n");
+        if(sz_curr) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+        if(sz_next) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+        if(ncount)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+        if(fail)    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+        return 3;
+    }
+    *sz_curr = 0; *sz_next = 0; *ncount = start_node_index; *fail = 0;
+
+    /* Worklist Views in device-local memory.  Sized at max_nodes upper
+     * bound; in practice the worklist size at any one level is <= live
+     * leaf count, much smaller. */
+    using ExSpace  = Kokkos::DefaultExecutionSpace;
+    using MemSpace = ExSpace::memory_space;
+    Kokkos::View<BfsItem*, MemSpace> wl_a("bfs_wl_a", max_nodes);
+    Kokkos::View<BfsItem*, MemSpace> wl_b("bfs_wl_b", max_nodes);
+
+    /* Initial population: for each topleaf with >= 1 particle, push a
+     * BfsItem.  Compute parent_depth from the topleaf's len. */
+    const double dlen = DomainLen;
+    Kokkos::parallel_for("topo_bfs_init", ntl, KOKKOS_LAMBDA(int t) {
+        int count = tcnt[t];
+        if(count < 1) {return;}
+        int parent_abs = dni[t];
+        int parent_soa = parent_abs - max_part;
+        if(parent_soa < 0 || parent_soa >= max_nodes) {return;}
+
+        /* Topleaf depth = log2(DomainLen / topleaf_len), exact integer. */
+        double len_d = (double)soa_len[parent_soa];
+        int depth = 0;
+        if(len_d > 0.0) {
+            double r = dlen / len_d;
+            while(r > 1.5 && depth < 64) {depth++; r *= 0.5;}
+        }
+
+        BfsItem w;
+        w.parent_soa   = parent_soa;
+        w.range_first  = tsta[t];
+        w.range_last   = tsta[t] + count;
+        w.parent_depth = depth;
+        int slot = Kokkos::atomic_fetch_add(sz_curr, 1);
+        if(slot < max_nodes) {wl_a(slot) = w;}
+        else {Kokkos::atomic_fetch_max(fail, 1);}
+    });
+    Kokkos::fence();
+
+    if(*fail) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+        int rc = *fail; Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+        printf("gpu_topology_emit_bfs: worklist overflow at init\n");
+        return rc;
+    }
+
+    /* BFS loop: each iteration processes wl_curr, populates wl_next. */
+    Kokkos::View<BfsItem*, MemSpace> wl_curr = wl_a;
+    Kokkos::View<BfsItem*, MemSpace> wl_next = wl_b;
+    int level_guard = 0;
+    while(*sz_curr > 0 && *fail == 0 && level_guard < GIZMO_GPU_MORTON_MAX_DEPTH + 4) {
+        int curr_size = *sz_curr;
+        *sz_next = 0;
+
+        Kokkos::parallel_for("topo_bfs_level", curr_size, KOKKOS_LAMBDA(int i) {
+            BfsItem w = wl_curr(i);
+
+            /* Read parent geometry from SoA. */
+            Vec3<MyFloat> pc = soa_center[w.parent_soa];
+            MyFloat       pl = soa_len[w.parent_soa];
+            MyFloat       lh = (MyFloat)(0.25 * (double)pl);  /* offset of child center from parent center */
+            MyFloat       cl = (MyFloat)(0.5  * (double)pl);  /* child len */
+
+            /* 8-way split on Morton bits at depth = parent_depth (= split level). */
+            int child_starts[9];
+            gpu_morton_split_8way(sidx, keys, w.range_first, w.range_last,
+                                  w.parent_depth, child_starts);
+
+            for(int k = 0; k < 8; k++) {
+                int rf = w.range_first + child_starts[k];
+                int rl = w.range_first + child_starts[k+1];
+                int cnt = rl - rf;
+                int slot_value = -1;
+
+                if(cnt == 1) {
+                    /* Single particle: store its index directly as a leaf. */
+                    slot_value = sidx[rf];
+                } else if(cnt > 1) {
+                    /* Detect collocation: top-vs-bottom LCP at full depth. */
+                    int lo_idx = sidx[rf];
+                    int hi_idx = sidx[rl - 1];
+                    int lcp = gpu_morton_lcp_bits(keys[lo_idx], keys[hi_idx]);
+                    if(lcp >= 126) {
+                        /* All-collocated -- 6.5c4 will RNG-randomize.
+                         * For 6.5c3 just signal failure. */
+                        Kokkos::atomic_fetch_max(fail, 2);
+                        continue;
+                    }
+                    /* Allocate a new internal node from the device counter. */
+                    int new_soa = Kokkos::atomic_fetch_add(ncount, 1);
+                    if(new_soa >= max_nodes) {
+                        Kokkos::atomic_fetch_max(fail, 1);
+                        continue;
+                    }
+                    /* Initialize child node geometry + suns + father. */
+                    Vec3<MyFloat> cc;
+                    cc[0] = pc[0] + ((k & 1) ? lh : -lh);
+                    cc[1] = pc[1] + ((k & 2) ? lh : -lh);
+                    cc[2] = pc[2] + ((k & 4) ? lh : -lh);
+                    soa_center[new_soa] = cc;
+                    soa_len[new_soa]    = cl;
+                    soa_father[new_soa] = w.parent_soa + max_part;
+                    long sb = (long)new_soa * 8;
+                    for(int s = 0; s < 8; s++) {soa_suns[sb + s] = -1;}
+
+                    slot_value = max_part + new_soa;
+
+                    /* Push child BFS entry. */
+                    BfsItem nw;
+                    nw.parent_soa   = new_soa;
+                    nw.range_first  = rf;
+                    nw.range_last   = rl;
+                    nw.parent_depth = w.parent_depth + 1;
+                    int slot = Kokkos::atomic_fetch_add(sz_next, 1);
+                    if(slot < max_nodes) {wl_next(slot) = nw;}
+                    else {Kokkos::atomic_fetch_max(fail, 1);}
+                }
+                /* Write parent.suns[k]. */
+                long pb = (long)w.parent_soa * 8;
+                soa_suns[pb + k] = slot_value;
+            }
+        });
+        Kokkos::fence();
+
+        /* Swap worklists. */
+        Kokkos::View<BfsItem*, MemSpace> tmp = wl_curr; wl_curr = wl_next; wl_next = tmp;
+        int *tmpp = sz_curr; sz_curr = sz_next; sz_next = tmpp;
+        level_guard++;
+    }
+
+    int rc = (*fail == 0) ? 0 : *fail;
+    int new_total = *ncount;
+    if(new_node_count_out) {*new_node_count_out = new_total;}
+
+    /* After ping-pong swaps, sz_curr / sz_next still refer to the two
+     * originally-allocated pointers (in some order); free both. */
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+
+    if(level_guard >= GIZMO_GPU_MORTON_MAX_DEPTH + 4 && rc == 0) {
+        printf("gpu_topology_emit_bfs: BFS exceeded depth guard (level=%d) -- possible infinite recursion\n", level_guard);
+        return 4;
+    }
+    return rc;
+}
 extern "C" const int *gpu_topology_build_sorted_idx(void)        { return g_sorted_idx;       }
 extern "C" const int *gpu_topology_build_topleaf_start(void)     { return g_topleaf_start;    }
 extern "C" const int *gpu_topology_build_topleaf_count(void)     { return g_topleaf_count;    }

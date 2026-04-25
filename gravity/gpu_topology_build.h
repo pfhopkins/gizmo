@@ -50,6 +50,33 @@ const int *gpu_topology_build_topleaf_start(void);   /* [NTopleaves + 1] */
 const int *gpu_topology_build_topleaf_count(void);   /* [NTopleaves]     */
 const int *gpu_topology_build_particle_topleaf(void);/* [npart] -- inverse */
 
+/* Phase 6.5c3 BFS topology emission: take the Morton-sorted-per-topleaf
+ * data laid out by gpu_topology_build_data_path and emit internal-node
+ * topology (center, len, father, suns_backup) directly into the
+ * gpu_gravity_tree SoA mirror.
+ *
+ * Pre-conditions:
+ *   - gpu_topology_build_data_path has populated sorted_idx / topleaf_*.
+ *   - gpu_gravity_tree_acquire has seeded SoA from CPU AoS for the topnode
+ *     range (topleaves' geometry already there from force_create_empty_nodes
+ *     + seed_from_aos).
+ *   - Numnodestree (host) holds the post-topnode-skeleton end of the SoA;
+ *     new GPU-built nodes start at this offset.
+ *
+ * On success: SoA holds the full inside-topleaf topology.  *new_node_count
+ * is set to the new value of Numnodestree (= old value + #nodes emitted).
+ *
+ * Return codes:
+ *    0   success
+ *    1   MaxNodes overflow during emission (6.5c4 will add retry path)
+ *    2   collocation detected: a sub-range of >1 particles share full LCP
+ *        (= 126 bits).  6.5c4 will add the RNG-fallback branch.
+ *    >=3 other failure (allocation, missing dependencies, etc.).
+ *
+ * `start_node_index` -- the SoA index at which the BFS may begin allocating
+ * new internal nodes (= Numnodestree at call time). */
+int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out);
+
 /* Free internal SharedSpace scratch.  Idempotent. */
 void gpu_topology_build_release(void);
 

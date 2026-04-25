@@ -191,8 +191,13 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_octant_at_depth(const Morton128 &key, int 
  *
  *   sorted_idx[range_first..range_last)   particle indices in sorted order
  *   keys[i]                                Morton128 key for particle index i
- *   depth                                  octree depth of the parent node
- *                                          (octant bits read from depth+1)
+ *   split_level                            octree level whose 3 octant bits
+ *                                          discriminate the children being
+ *                                          produced.  Equivalently: the depth
+ *                                          of the parent node whose children
+ *                                          we are placing.  level 0 picks
+ *                                          among the 8 children of the root
+ *                                          (top 3 bits of full 126-bit code).
  *
  * Output:
  *   child_starts[0..8] -- offsets relative to range_first.  Octant k spans
@@ -206,7 +211,7 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
                                                   const Morton128 *keys,
                                                   int              range_first,
                                                   int              range_last,
-                                                  int              depth,
+                                                  int              split_level,
                                                   int              child_starts[9])
 {
     int n = range_last - range_first;
@@ -215,10 +220,9 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
     if(n <= 0) {return;}
 
     int next_octant = 0;
-    int child_depth = depth + 1;
     for(int j = 0; j < n; j++) {
-        int      idx = sorted_idx[range_first + j];
-        int      oct = gpu_morton_octant_at_depth(keys[idx], child_depth);
+        int idx = sorted_idx[range_first + j];
+        int oct = gpu_morton_octant_at_depth(keys[idx], split_level);
         while(next_octant <= oct) {
             child_starts[next_octant] = j;
             next_octant++;
