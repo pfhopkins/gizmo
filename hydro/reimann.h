@@ -1243,7 +1243,7 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
     /* P_M = (PT_L*rho_wt_R - PT_R*rho_wt_L + rho_wt_L*rho_wt_R*(vxR - vxL)) / (rho_wt_R - rho_wt_L); */
     
     /* trap for vacuum solution, important! */
-    int within_sampled_vacuum = 0; // no vacuum (default)
+    volatile int within_sampled_vacuum = 0; // volatile: nvc++ may otherwise fold this runtime gate to its initializer in device code
     if((vxR - vxL) > c_eff) {P_M = MIN_REAL_NUMBER; within_sampled_vacuum = 1;}
     
     /* now we need to check if these guesses are reasonable; otherwise, use a different wavespeed estimate */

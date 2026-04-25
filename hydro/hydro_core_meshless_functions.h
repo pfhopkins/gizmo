@@ -136,7 +136,7 @@ void hydro_core_meshless_compute_pair(
     double vdotf2_phys = face_vel_i - face_vel_j;
     if(vdotf2_phys < 0) { v2_approach = DMAX(v2_approach, vdotf2_phys * vdotf2_phys); }
 
-    int recon_mode = 1;
+    volatile int recon_mode = 1; /* volatile: nvc++ may otherwise fold this runtime gate to its initializer inside device code */
 #if defined(GALSF) || defined(COOLING)
     if(fabs(vdotr2_phys) * UNIT_VEL_IN_KMS > 1000.) { recon_mode = 0; }
 #endif
@@ -371,7 +371,7 @@ void hydro_core_meshless_compute_pair(
 #ifdef MAGNETIC
             Riemann_out.P_M -= 0.5 * Riemann_out.Face_B.norm_sq();
 #endif
-            int use_entropic_energy_equation = 1;
+            volatile int use_entropic_energy_equation = 1; /* volatile: nvc++ may otherwise fold this runtime gate to its initializer inside device code */
             double facenorm_pm = Riemann_out.P_M * Face_Area_Norm;
             double PdV_fac = Riemann_out.P_M * vdotr2_phys / All.cf_a2inv;
             double PdV_i = kernel.dwk_i * V_i * V_i * local.DrkernNgbFactor * PdV_fac;

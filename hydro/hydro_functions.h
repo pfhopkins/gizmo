@@ -50,9 +50,11 @@
 #ifdef OPENMP_GPU_OFFLOAD
 #define HYDRO_ATOMIC_ADD(ptr, val) Kokkos::atomic_add(ptr, val)
 #define HYDRO_ATOMIC_STORE(ptr, val) Kokkos::atomic_store(ptr, val)
+#define HYDRO_ATOMIC_MAX(ptr, val) Kokkos::atomic_max(ptr, val)
 #else
 #define HYDRO_ATOMIC_ADD(ptr, val) (*(ptr) += (val))
 #define HYDRO_ATOMIC_STORE(ptr, val) (*(ptr) = (val))
+#define HYDRO_ATOMIC_MAX(ptr, val) do { if((val) > *(ptr)) { *(ptr) = (val); } } while(0)
 #endif
 
 
@@ -447,7 +449,7 @@ void hydro_accumulate_neighbor(
     {
         if(kernel.vsig > WAKEUP * CellP[j].MaxSignalVel) {
             short int wakeup_val = (short int)(local.TimeBin + 1);
-            HYDRO_ATOMIC_STORE(&P[j].wakeup, wakeup_val);
+            HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);
         }
     }
