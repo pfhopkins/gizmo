@@ -1,7 +1,14 @@
-/* gpu_morton.cc — Step 13 Phase 6.5a
+/* gpu_morton.cc -- Step 13 Phase 6.5a/6.5c0
  *
- * Morton encoding + parallel sort infrastructure for the GPU tree-build
- * insertion kernel.  See gpu_morton.h for the API and integration plan.
+ * 128-bit Morton encoding (42 bits/axis) + parallel sort infrastructure for
+ * the GPU tree-build insertion kernel.  See gpu_morton.h for the API and
+ * integration plan.
+ *
+ * Phase 6.5c0 upgrade: keys store as Morton128 = (uint64_t hi, uint64_t lo)
+ * to match GIZMO's CPU build precision (BITS_PER_DIMENSION = 42).  Encoding
+ * uses the same IEEE-754 mantissa-bit-trick as the host
+ * domain_double_to_int (domain/domain.cc:2711) for bit-equivalent integer
+ * coordinate extraction.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -28,8 +35,8 @@
 
 namespace {
 
-static uint64_t *g_morton_keys     = NULL;  /* SharedSpace, [g_morton_keys_cap] */
-static int       g_morton_keys_cap = 0;
+static Morton128 *g_morton_keys     = NULL;  /* SharedSpace, [g_morton_keys_cap] */
+static int        g_morton_keys_cap = 0;
 
 }  /* anonymous namespace */
 
@@ -44,8 +51,8 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
             Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_morton_keys);
             g_morton_keys = NULL;
         }
-        g_morton_keys = (uint64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
-            (long)npart * sizeof(uint64_t));
+        g_morton_keys = (Morton128 *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
+            (long)npart * sizeof(Morton128));
         if(!g_morton_keys) {
             printf("gpu_morton: keys alloc failed (npart=%d)\n", npart);
             g_morton_keys_cap = 0;
@@ -65,29 +72,32 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
     }
 
     /* Capture domain bounds.  DomainCorner / DomainLen are host globals not
-     * mirrored in All_dev; pass by value into the kernel. */
+     * mirrored in All_dev; pass by value into the kernel.  Match host
+     * convention from domain.cc:496-498 / forcetree.cc:236-238: feed
+     * domain_double_to_int the value (Pos - DomainCorner)/DomainLen + 1.0
+     * (in [1.0, 2.0)), and let the IEEE-754 mantissa-bit-trick extract
+     * 42 bits of fractional position. */
     const double dc0 = DomainCorner[0];
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
     const double inv_dlen = (dlen > 0.0) ? (1.0 / dlen) : 0.0;
-    const uint32_t MAX21 = (1u << 21) - 1u;
 
-    uint64_t *keys = g_morton_keys;
+    Morton128 *keys = g_morton_keys;
     Kokkos::parallel_for("morton_encode_global", npart, KOKKOS_LAMBDA(int i) {
-        double rx = (P_dev[i].Pos[0] - dc0) * inv_dlen;
-        double ry = (P_dev[i].Pos[1] - dc1) * inv_dlen;
-        double rz = (P_dev[i].Pos[2] - dc2) * inv_dlen;
-        if(rx < 0.0) {rx = 0.0;} if(rx > 1.0) {rx = 1.0;}
-        if(ry < 0.0) {ry = 0.0;} if(ry > 1.0) {ry = 1.0;}
-        if(rz < 0.0) {rz = 0.0;} if(rz > 1.0) {rz = 1.0;}
-        uint32_t ix = (uint32_t)(rx * (double)MAX21);
-        uint32_t iy = (uint32_t)(ry * (double)MAX21);
-        uint32_t iz = (uint32_t)(rz * (double)MAX21);
-        if(ix > MAX21) {ix = MAX21;}
-        if(iy > MAX21) {iy = MAX21;}
-        if(iz > MAX21) {iz = MAX21;}
-        keys[i] = gpu_morton_encode63(ix, iy, iz);
+        double fx = (P_dev[i].Pos[0] - dc0) * inv_dlen;
+        double fy = (P_dev[i].Pos[1] - dc1) * inv_dlen;
+        double fz = (P_dev[i].Pos[2] - dc2) * inv_dlen;
+        /* Clamp into [0, 1) so that (frac + 1.0) lies in [1.0, 2.0).
+         * Domain decomp pre-wraps periodic cases; this clamp protects
+         * against rare boundary FP drift. */
+        if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
+        if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
+        if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
+        uint64_t ix = gpu_morton_double_to_int42(fx + 1.0);
+        uint64_t iy = gpu_morton_double_to_int42(fy + 1.0);
+        uint64_t iz = gpu_morton_double_to_int42(fz + 1.0);
+        keys[i] = gpu_morton_encode128(ix, iy, iz);
     });
     Kokkos::fence();
     return 0;
@@ -109,20 +119,28 @@ extern "C" int gpu_morton_sort_indices(int count, int *indices_inout)
     using MemSpace = ExSpace::memory_space;
 
     /* Device-local scratch: gather (key, value) pairs and sort. */
-    Kokkos::View<uint64_t*, MemSpace> keys_work("morton_sort_keys", count);
-    Kokkos::View<int*,      MemSpace> vals_work("morton_sort_vals", count);
+    Kokkos::View<Morton128*, MemSpace> keys_work("morton_sort_keys", count);
+    Kokkos::View<int*,       MemSpace> vals_work("morton_sort_vals", count);
 
-    int            keys_cap = g_morton_keys_cap;
-    const uint64_t *keys_src = g_morton_keys;
+    int              keys_cap = g_morton_keys_cap;
+    const Morton128 *keys_src = g_morton_keys;
     Kokkos::parallel_for("morton_sort_gather", count, KOKKOS_LAMBDA(int j) {
         int idx = indices_inout[j];
-        uint64_t k = (idx >= 0 && idx < keys_cap) ? keys_src[idx] : (uint64_t)0;
+        Morton128 k;
+        if(idx >= 0 && idx < keys_cap) {
+            k = keys_src[idx];
+        } else {
+            k.hi = 0; k.lo = 0;
+        }
         keys_work(j) = k;
         vals_work(j) = idx;
     });
     Kokkos::fence();
 
-    Kokkos::Experimental::sort_by_key(ExSpace(), keys_work, vals_work);
+    /* Comparator overload of sort_by_key: lexicographic on (hi, lo).
+     * Falls back from radix to merge-sort on the CUDA backend (still
+     * deterministic + stable). */
+    Kokkos::Experimental::sort_by_key(ExSpace(), keys_work, vals_work, Morton128Less{});
     Kokkos::fence();
 
     Kokkos::parallel_for("morton_sort_scatter", count, KOKKOS_LAMBDA(int j) {
@@ -132,7 +150,7 @@ extern "C" int gpu_morton_sort_indices(int count, int *indices_inout)
     return 0;
 }
 
-extern "C" const uint64_t *gpu_morton_keys(void)
+extern "C" const struct Morton128 *gpu_morton_keys(void)
 {
     return g_morton_keys;
 }
