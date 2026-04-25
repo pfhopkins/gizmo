@@ -22,6 +22,7 @@
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_morton.h"
+#include "gpu_morton_functions.h"
 
 #if defined(OPENMP_GPU_OFFLOAD)
 
@@ -29,23 +30,6 @@ namespace {
 
 static uint64_t *g_morton_keys     = NULL;  /* SharedSpace, [g_morton_keys_cap] */
 static int       g_morton_keys_cap = 0;
-
-/* 21-bit-per-axis bit-spread for 63-bit Morton interleaving. */
-KOKKOS_INLINE_FUNCTION uint64_t morton_spread21(uint64_t v) {
-    v &= 0x1FFFFFull;                                    /* keep low 21 bits */
-    v = (v | (v << 32)) & 0x1F00000000FFFFull;
-    v = (v | (v << 16)) & 0x1F0000FF0000FFull;
-    v = (v | (v <<  8)) & 0x100F00F00F00F00Full;
-    v = (v | (v <<  4)) & 0x10C30C30C30C30C3ull;
-    v = (v | (v <<  2)) & 0x1249249249249249ull;
-    return v;
-}
-
-KOKKOS_INLINE_FUNCTION uint64_t morton_encode63(uint32_t x, uint32_t y, uint32_t z) {
-    return morton_spread21((uint64_t)x)
-         | (morton_spread21((uint64_t)y) << 1)
-         | (morton_spread21((uint64_t)z) << 2);
-}
 
 }  /* anonymous namespace */
 
@@ -103,7 +87,7 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
         if(ix > MAX21) {ix = MAX21;}
         if(iy > MAX21) {iy = MAX21;}
         if(iz > MAX21) {iz = MAX21;}
-        keys[i] = morton_encode63(ix, iy, iz);
+        keys[i] = gpu_morton_encode63(ix, iy, iz);
     });
     Kokkos::fence();
     return 0;
