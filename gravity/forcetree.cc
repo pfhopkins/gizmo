@@ -203,12 +203,18 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_flag_localnodes();
 #endif
     force_exchange_pseudodata();
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.7b: scatter the just-received foreign pseudo moments from AoS
+     * into SoA so the SoA topleaf slots are authoritative for the upcoming
+     * gpu_topnode_moment_resum (6.7c). */
+    if(gpu_scatter_pseudo_to_soa() != 0) {endrun(913341);}
+#endif
     force_treeupdate_pseudos(All.MaxPart);
     TimeOfLastTreeConstruction = All.Time;
 #ifdef OPENMP_GPU_OFFLOAD
-    /* force_exchange_pseudodata + force_treeupdate_pseudos still mutate AoS;
-     * mark dirty so the next acquire reseeds.  Removed in Phase 6.7c once
-     * those two are replaced by gpu_scatter_pseudo_to_soa + gpu_topnode_moment_resum. */
+    /* force_treeupdate_pseudos still mutates AoS; mark dirty so the next
+     * acquire reseeds.  Removed in Phase 6.7c once it is replaced by
+     * gpu_topnode_moment_resum. */
     gpu_gravity_tree_mark_all_dirty();
 #endif
     return Numnodestree;
@@ -4003,7 +4009,9 @@ void force_refresh_node_moments(void)
 #endif
         }
         if(gpu_moment_refresh(-1) != 0) {endrun(913310);}
+        if(gpu_force_flag_localnodes() != 0) {endrun(913340);}
         force_exchange_pseudodata();
+        if(gpu_scatter_pseudo_to_soa() != 0) {endrun(913341);}
         force_treeupdate_pseudos(All.MaxPart);
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
         return;
