@@ -269,6 +269,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 {
     (void) active_root_node; /* Phase 9 hook; unused for now */
     if(Numnodestree <= 0) {return 0;}
+    /* Sync this TU's All_dev mirror from host All before any All.* read on
+     * device or under the per-TU All->All_dev redirect.  Without this,
+     * All.MaxPart and friends read as 0 in this TU. */
+    GIZMO_GPU_ENSURE_ALL_FRESH(moment_refresh);
 
     int n          = Numnodestree;       /* number of internal nodes [0..n) in SoA */
     int MaxPart    = All.MaxPart;
@@ -358,7 +362,13 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     Vec3<MyFloat> *center_soa = soa->center;
 
     /* ---------------- Kernel 1: zero scratch + pending ----------------- */
-    Kokkos::deep_copy(pending,      0);
+    /* pending is initialized to 1 (resident-thread slot) here; kernel 2
+     * adds one more for each internal-node child.  In kernel 4 each thread
+     * claims its starting node with atomic_fetch_sub; only the last to
+     * arrive (prev==1) proceeds upward.  This prevents the race where a
+     * late resident thread double-propagates a node already claimed by the
+     * bottom-up walk. */
+    Kokkos::deep_copy(pending,      1);
     Kokkos::deep_copy(scr_mass,     (MyGravFloat) 0);
     Kokkos::deep_copy(scr_Npart,    (long) 0);
     Kokkos::deep_copy(scr_hmax,     (MyGravFloat) 0);
@@ -551,14 +561,15 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     });
 
     /* ---------------- Kernel 4: bottom-up walk via father chain -------- */
-    /* Each thread starts at node k. Precondition: pending[k] is the count
-     * of internal-node children. Leaves (pending==0) walk up first; each
-     * step decrements the parent's pending and the LAST decrementer wins
-     * the right to continue (CAS-like ownership transfer). */
+    /* pending[k] = 1 + num_internal_node_children(k).  Each thread claims
+     * its starting node k0 via atomic_fetch_sub; only the last to arrive
+     * (prev==1) owns the node and propagates it upward.  The +1 prevents
+     * the race where a late resident thread and the bottom-up walk both
+     * see pending==0 and double-count the node. */
     Kokkos::parallel_for("mr_walk_up", n, KOKKOS_LAMBDA(int k0) {
+        if(Kokkos::atomic_fetch_sub(&pending(k0), 1) != 1) {return;}
         int curr = k0;
         while(true) {
-            if(Kokkos::atomic_fetch_add(&pending(curr), 0) != 0) {return;}
             int f = father_soa[curr];
             if(f < MaxPart || f >= MaxPart + n) {return;}
             int kp = f - MaxPart;
@@ -884,5 +895,7 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
 #endif
     }
 }
+
+GPU_ALL_SYNC_FUNC(moment_refresh)
 
 #endif /* OPENMP_GPU_OFFLOAD */
