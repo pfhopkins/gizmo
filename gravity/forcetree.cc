@@ -12,6 +12,10 @@
 #endif
 #ifdef OPENMP_GPU_OFFLOAD
 #include "gpu_gravity_tree.h"
+#ifdef OPENMP_GPU_OFFLOAD
+#include "gpu_peano_walk.h"
+#include "gpu_topology_build.h"
+#endif
 #endif
 
 /*! \file forcetree.c
@@ -223,10 +227,61 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     
     if(force_create_empty_nodes(All.MaxPart, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
     /* if a high-resolution region in a global tree is used, we need to generate an additional set empty nodes to make sure that we have a complete top-level tree for the high-resolution inset */
+
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Step 13 Phase 6.5d: GPU tree-build replaces the per-particle CPU
+     * insertion loop for inside-topleaf topology.  Order on GPU compile:
+     *   1. force_insert_pseudo_particles (modifies foreign-topleaf u.suns).
+     *   2. Acquire SoA + Peano-walk mirrors.
+     *   3. gpu_topology_build_data_path: per-particle Peano walk + Morton
+     *      sort within each topleaf.
+     *   4. gpu_topology_emit_bfs: BFS from each topleaf root, emits
+     *      inside-topleaf internal-node topology into SoA suns_backup,
+     *      center, len, father.
+     *   5. Writeback inside-topleaf range AoS u.suns/center/len so that
+     *      force_update_node_recursive (still running -- 6.7 retires it)
+     *      can walk the AoS and set sibling/father/moments.  Phase 6.4's
+     *      gpu_nextnode_backup_suns and Phase 6.2's gpu_moment_refresh
+     *      then re-derive nextnode and overwrite the moments on device.
+     *
+     * On overflow (rc=1), return -1 so force_treebuild's outer loop grows
+     * TreeAllocFactor and retries -- same contract as the CPU path. */
+    {
+        force_insert_pseudo_particles();
+
+        gpu_gravity_tree_mark_all_dirty();
+        gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
+        if(gpu_peano_walk_acquire() != 0) {return -1;}
+        /* Snapshot topnode u.suns -> SoA suns_backup.  At this point u.suns
+         * for topnode internal nodes is populated by force_create_empty_nodes
+         * and force_insert_pseudo_particles; topleaf u.suns are -1 (BFS
+         * will overwrite the topleaf-range entries in suns_backup). */
+        gpu_nextnode_backup_suns(numnodes);
+
+        if(gpu_topology_build_data_path(npart) != 0) {return -1;}
+        int new_numnodes = numnodes;
+        int rc = gpu_topology_emit_bfs(numnodes, &new_numnodes);
+        if(rc == 1) {
+            /* MaxNodes overflow -- bail out, force_treebuild retries with
+             * larger TreeAllocFactor (line 149-151 of this file). */
+            return -1;
+        }
+        if(rc != 0) {
+            printf("force_treebuild_single: gpu_topology_emit_bfs failed rc=%d\n", rc);
+            return -1;
+        }
+        int topnode_end = numnodes;
+        numnodes = new_numnodes;
+
+        /* Writeback GPU-built suns / center / len to AoS so the existing
+         * post-loop force_update_node_recursive walk works unchanged. */
+        if(gpu_topology_writeback_to_aos(topnode_end, numnodes) != 0) {return -1;}
+    }
+#else
     nfreep = &Nodes[nfree];
     parent = -1;            /* note: will not be used below before it is changed */
     morton_list = (peanokey *) mymalloc("morton_list", NumPart * sizeof(peanokey));
-    
+
     /* now we insert all particles */
     for(k = 0; k < npart; k++)
     {
@@ -365,10 +420,11 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     }
     
     myfree(morton_list);
-    
+
     /* insert the pseudo particles that represent the mass distribution of other domains */
     force_insert_pseudo_particles();
-    
+#endif  /* end of CPU per-particle path -- GPU path already did pseudo-insert above */
+
     /* now compute the multipole moments recursively */
     last = -1;
 #ifdef OPENMP_GPU_OFFLOAD

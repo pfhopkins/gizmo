@@ -416,6 +416,37 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     }
     return rc;
 }
+extern "C" int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx)
+{
+    if(last_soa_idx <= first_soa_idx) {return 0;}
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa) {return 1;}
+    Vec3<MyFloat> *soa_center  = soa->center;
+    MyFloat       *soa_len     = soa->len;
+    int           *soa_suns    = soa->suns_backup;
+    if(!soa_center || !soa_len || !soa_suns) {return 1;}
+
+    /* Host loop -- Nodes_base is host malloc, SoA is SharedSpace UVM.  Use
+     * OpenMP for parallelism on platforms where it's available; the loop
+     * body is read SoA UVM, write AoS host. */
+    #pragma omp parallel for
+    for(int k = first_soa_idx; k < last_soa_idx; k++) {
+        long sb = (long)k * 8;
+        Nodes_base[k].u.suns[0] = soa_suns[sb + 0];
+        Nodes_base[k].u.suns[1] = soa_suns[sb + 1];
+        Nodes_base[k].u.suns[2] = soa_suns[sb + 2];
+        Nodes_base[k].u.suns[3] = soa_suns[sb + 3];
+        Nodes_base[k].u.suns[4] = soa_suns[sb + 4];
+        Nodes_base[k].u.suns[5] = soa_suns[sb + 5];
+        Nodes_base[k].u.suns[6] = soa_suns[sb + 6];
+        Nodes_base[k].u.suns[7] = soa_suns[sb + 7];
+        Nodes_base[k].len       = soa_len[k];
+        Nodes_base[k].center    = soa_center[k];
+    }
+    return 0;
+}
+
 extern "C" const int *gpu_topology_build_sorted_idx(void)        { return g_sorted_idx;       }
 extern "C" const int *gpu_topology_build_topleaf_start(void)     { return g_topleaf_start;    }
 extern "C" const int *gpu_topology_build_topleaf_count(void)     { return g_topleaf_count;    }

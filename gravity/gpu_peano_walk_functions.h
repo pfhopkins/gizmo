@@ -156,32 +156,29 @@ KOKKOS_INLINE_FUNCTION peanokey gpu_peano_and_morton_key(uint64_t  x,
                                                          int       bits,
                                                          Morton128 *morton_out)
 {
+    /* Morton key: direct encode via the proven gpu_morton_encode128.  The
+     * bit-by-bit shift-into-(hi,lo) approach attempted earlier was wrong:
+     * shifting lo left by 3 doesn't carry cleanly across the 64-bit
+     * boundary in 3-bit chunks (the boundary cuts mid-octant after iter
+     * 21).  encode128's split-then-encode-each-half approach is well-defined
+     * and matches lexicographic ordering on the natural 126-bit code. */
+    if(morton_out) {
+        *morton_out = gpu_morton_encode128(x, y, z);
+    }
+
+    /* Peano-Hilbert key: bit-by-bit with rotation lookup, mirroring
+     * system/peano.cc:331 exactly.  Iterates from highest input bit down. */
     unsigned char rotation = 0;
     peanokey      key      = 0;
-    Morton128     morton   = {0, 0};
-
-    /* mask iterates from high bit (position bits-1) downward.  At each step,
-     * append 3 bits to both keys.  For bits = 42 the loop runs 42 times,
-     * producing 126-bit keys in 128-bit storage. */
     for(int b = bits - 1; b >= 0; b--) {
         uint64_t mb = ((uint64_t)1) << b;
         unsigned char pix = (unsigned char)(((x & mb) ? 4 : 0)
                                           | ((y & mb) ? 2 : 0)
                                           | ((z & mb) ? 1 : 0));
-
-        /* Peano key: shift up 3, OR in subpix3 lookup. */
         key = (peanokey)(key << 3);
         key = (peanokey)(key | (peanokey)gpu_peano_subpix3[rotation][pix]);
         rotation = gpu_peano_rottable3[rotation][pix];
-
-        /* Morton key (Z-order, no rotation): shift up 3, OR in (z|y|x) bits.
-         * Maintain (hi, lo) lexicographically: shift hi left 3 bits, bringing
-         * in the top 3 bits of lo; shift lo left 3 bits and OR in pix. */
-        uint64_t carry = morton.lo >> (64 - 3);
-        morton.hi = (morton.hi << 3) | carry;
-        morton.lo = (morton.lo << 3) | (uint64_t)pix;
     }
-    if(morton_out) {*morton_out = morton;}
     return key;
 }
 

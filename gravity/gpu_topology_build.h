@@ -77,6 +77,21 @@ const int *gpu_topology_build_particle_topleaf(void);/* [npart] -- inverse */
  * new internal nodes (= Numnodestree at call time). */
 int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out);
 
+/* Phase 6.5d helper: copy GPU-built topology (suns_backup, center, len)
+ * back into the AoS Nodes_base[] array for the SoA index range
+ * [first_soa_idx, last_soa_idx).  Required while force_update_node_recursive
+ * still walks AoS u.suns to set sibling/father for the whole tree (Phase
+ * 6.7+ retires force_update_node_recursive on the GPU compile path,
+ * eliminating this writeback).
+ *
+ * Runs as an OMP host loop -- Nodes_base is host malloc, not SharedSpace.
+ * The SoA fields live in SharedSpace UVM so reads incur first-touch page
+ * faults but no explicit copy.  Cost is bounded by the number of GPU-built
+ * inside-topleaf internal nodes and is one-time per tree-build.
+ *
+ * Returns 0 on success. */
+int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx);
+
 /* Free internal SharedSpace scratch.  Idempotent. */
 void gpu_topology_build_release(void);
 
