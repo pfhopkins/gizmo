@@ -47,6 +47,7 @@ static void free_arrays_(void)
     if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
     if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
     if(soa_.nextnode_aux) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode_aux); soa_.nextnode_aux = NULL;}
+    if(soa_.suns_backup)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.suns_backup);  soa_.suns_backup  = NULL;}
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     if(soa_.gasmass)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.gasmass);        soa_.gasmass        = NULL;}
 #endif
@@ -119,8 +120,10 @@ static int alloc_arrays_(int n)
     soa_.bitflags = (unsigned int      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(unsigned int));
     soa_.maxsoft  = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
     soa_.N_part   = (long              *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(long));
+    soa_.suns_backup = (int             *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((long)n * 8 * sizeof(int));
     if(!soa_.center || !soa_.len || !soa_.s || !soa_.mass || !soa_.sibling ||
-       !soa_.nextnode || !soa_.father || !soa_.bitflags || !soa_.maxsoft || !soa_.N_part) {
+       !soa_.nextnode || !soa_.father || !soa_.bitflags || !soa_.maxsoft || !soa_.N_part ||
+       !soa_.suns_backup) {
         printf("gpu_gravity_tree: kokkos_malloc failed for %d nodes\n", n);
         return 0;
     }
@@ -408,5 +411,35 @@ extern "C" void gpu_gravity_tree_set_nextnode(int n, int *Nextnode_host)
 extern "C" struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void) {return soa_valid_ ? &soa_ : NULL;}
 extern "C" int gpu_gravity_tree_capacity(void)                       {return soa_capacity_;}
 extern "C" int gpu_gravity_tree_valid(void)                          {return soa_valid_;}
+
+/* Phase 6.4: snapshot Nodes_base[k].u.suns[0..7] for k in [0..n) into the
+ * SoA's suns_backup buffer.  Called from force_treebuild_single right
+ * before force_update_node_recursive overwrites the union with the d struct.
+ * If the SoA hasn't been allocated yet (first acquire after a fresh
+ * allocation), set up minimal scaffolding so the buffer exists.  Otherwise
+ * just refresh the contents from current AoS. */
+extern "C" void gpu_nextnode_backup_suns(int n)
+{
+    if(n <= 0) {return;}
+    /* Allocate at MaxNodes+1 (full-tree capacity), not just n (=Numnodestree).
+     * If we only allocated at n, the subsequent gpu_gravity_tree_acquire(MaxNodes+1)
+     * inside gpu_nextnode_thread would see soa_capacity_ < MaxNodes+1, call
+     * free_arrays_(), and destroy the suns_backup we store below — corrupting
+     * the nextnode kernel's input on the first treebuild. */
+    int cap = (MaxNodes > 0) ? MaxNodes + 1 : n;
+    if(soa_capacity_ < cap || !soa_.suns_backup) {
+        free_arrays_();
+        if(!alloc_arrays_(cap)) {endrun(913401);}
+        soa_capacity_ = cap;
+        soa_valid_ = 0;
+        any_dirty_ = 1;
+        if(dirty_) {memset(dirty_, 1, (size_t) soa_capacity_); dirty_count_ = soa_capacity_;}
+    }
+    for(int k = 0; k < n; k++) {
+        for(int j = 0; j < 8; j++) {
+            soa_.suns_backup[(long)k * 8 + j] = Nodes_base[k].u.suns[j];
+        }
+    }
+}
 
 #endif /* OPENMP_GPU_OFFLOAD */

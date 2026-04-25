@@ -71,6 +71,11 @@ struct gpu_gravity_tree_soa_t {
      * following it). */
     int            *nextnode_aux;
     int             nextnode_aux_size;
+    /* Phase 6.4: build-time suns[8] per internal node, snapshotted before
+     * force_update_node_recursive overwrites the union with the d struct.
+     * Sized [capacity * 8].  The GPU nextnode-threading kernel reads from
+     * here to reconstruct DFS-order links in parallel. */
+    int            *suns_backup;
 
     /* --- Phase 2-I optional payloads: gated by the same flags as the AoS
      *     NODE definition in allvars.h. Each block is present iff the host
@@ -205,6 +210,20 @@ int gpu_moment_refresh(int active_root_node);
  * Invokes from gpu_moment_refresh(); declared here so unit-test scaffolding
  * could call it directly. Caller must have a valid SoA acquired. */
 void gpu_moment_writeback_to_aos(int n);
+
+/* Phase 6.4: snapshot Nodes_base[k].u.suns[0..7] for k in [0..n) into the
+ * SoA's suns_backup buffer.  MUST be called BEFORE force_update_node_recursive
+ * overwrites the union with the d struct.  Idempotent; safe to call multiple
+ * times during the force_treebuild retry loop (each call refreshes from AoS).
+ * Allocates the suns_backup buffer on first use if needed. */
+void gpu_nextnode_backup_suns(int n);
+
+/* Phase 6.4: GPU nextnode-threading kernel.  Recomputes the DFS pre-order
+ * `nextnode` link for each internal node (in soa->nextnode + AoS Nodes[].u.d.nextnode)
+ * and `Nextnode` for each particle / pseudo-particle (in soa->nextnode_aux + AoS Nextnode[]).
+ * Inputs: SoA's suns_backup (populated via gpu_nextnode_backup_suns), sibling[].
+ * Returns 0 on success, nonzero on failure. */
+int gpu_nextnode_thread(void);
 
 #ifdef __cplusplus
 }

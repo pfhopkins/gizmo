@@ -162,6 +162,12 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * before acquire so seed_full reads the freshly-built AoS. */
     gpu_gravity_tree_mark_all_dirty();
     if(gpu_moment_refresh(-1) != 0) {endrun(913311);}
+    /* Phase 6.4: GPU nextnode-threading kernel.  Recomputes Nodes[].u.d.nextnode
+     * and Nextnode[] from suns_backup (snapshotted in force_treebuild_single
+     * before force_update_node_recursive overwrote suns).  CPU's nextnode
+     * threading inside force_update_node_recursive still ran; this overwrites
+     * with bit-identical GPU values.  Phase 6.5/6.8 retires the CPU pass. */
+    if(gpu_nextnode_thread() != 0) {endrun(913312);}
 #endif
     force_flag_localnodes();
     force_exchange_pseudodata();
@@ -365,6 +371,13 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     
     /* now compute the multipole moments recursively */
     last = -1;
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 6.4: snapshot suns[] for each internal node into the SoA before
+     * force_update_node_recursive overwrites the union with the d struct.
+     * gpu_nextnode_thread (called later from force_treebuild) reads this
+     * backup to recompute DFS-order nextnode links in parallel. */
+    gpu_nextnode_backup_suns(numnodes);
+#endif
     force_update_node_recursive(All.MaxPart, -1, -1);
     
     if(last >= All.MaxPart)
