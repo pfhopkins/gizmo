@@ -15,6 +15,7 @@
 #include "gpu_peano_walk.h"
 #include "gpu_topology_build.h"
 #include "gpu_topology_finalize.h"
+#include "gpu_pseudo_update.h"
 #endif
 
 /*! \file forcetree.c
@@ -194,15 +195,20 @@ int force_treebuild(int npart, struct unbind_data *mp)
     if(gpu_moment_refresh(-1) != 0) {endrun(913311);}
     if(gpu_nextnode_thread() != 0) {endrun(913312);}
     if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(913322);}
-#endif
+    /* Phase 6.7a: set TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS bitflags in SoA
+     * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
+     * which still run on CPU in 6.7a). */
+    if(gpu_force_flag_localnodes() != 0) {endrun(913340);}
+#else
     force_flag_localnodes();
+#endif
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TimeOfLastTreeConstruction = All.Time;
 #ifdef OPENMP_GPU_OFFLOAD
-    /* force_flag_localnodes + force_exchange_pseudodata + force_treeupdate_pseudos
-     * all mutate AoS after the GPU moment pass; mark dirty so the next acquire
-     * reseeds with those mutations. */
+    /* force_exchange_pseudodata + force_treeupdate_pseudos still mutate AoS;
+     * mark dirty so the next acquire reseeds.  Removed in Phase 6.7c once
+     * those two are replaced by gpu_scatter_pseudo_to_soa + gpu_topnode_moment_resum. */
     gpu_gravity_tree_mark_all_dirty();
 #endif
     return Numnodestree;
