@@ -42,6 +42,7 @@ static void free_arrays_(void)
     if(soa_.mass)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.mass);     soa_.mass     = NULL;}
     if(soa_.sibling)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.sibling);  soa_.sibling  = NULL;}
     if(soa_.nextnode) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.nextnode); soa_.nextnode = NULL;}
+    if(soa_.father)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.father);   soa_.father   = NULL;}
     if(soa_.bitflags) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.bitflags); soa_.bitflags = NULL;}
     if(soa_.maxsoft)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.maxsoft);  soa_.maxsoft  = NULL;}
     if(soa_.N_part)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.N_part);   soa_.N_part   = NULL;}
@@ -114,11 +115,12 @@ static int alloc_arrays_(int n)
     soa_.mass     = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
     soa_.sibling  = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
     soa_.nextnode = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
+    soa_.father   = (int               *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(int));
     soa_.bitflags = (unsigned int      *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(unsigned int));
     soa_.maxsoft  = (MyGravFloat       *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(MyGravFloat));
     soa_.N_part   = (long              *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(n * sizeof(long));
     if(!soa_.center || !soa_.len || !soa_.s || !soa_.mass || !soa_.sibling ||
-       !soa_.nextnode || !soa_.bitflags || !soa_.maxsoft || !soa_.N_part) {
+       !soa_.nextnode || !soa_.father || !soa_.bitflags || !soa_.maxsoft || !soa_.N_part) {
         printf("gpu_gravity_tree: kokkos_malloc failed for %d nodes\n", n);
         return 0;
     }
@@ -211,6 +213,7 @@ static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Ex
         soa_.mass[k]     = Nodes_host[k].u.d.mass;
         soa_.sibling[k]  = Nodes_host[k].u.d.sibling;
         soa_.nextnode[k] = Nodes_host[k].u.d.nextnode;
+        soa_.father[k]   = Nodes_host[k].u.d.father;
         soa_.bitflags[k] = Nodes_host[k].u.d.bitflags;
         soa_.maxsoft[k]  = Nodes_host[k].maxsoft;
         soa_.N_part[k]   = Nodes_host[k].N_part;

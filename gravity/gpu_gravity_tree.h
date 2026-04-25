@@ -58,6 +58,7 @@ struct gpu_gravity_tree_soa_t {
     /* Walk traversal — integer bookkeeping, untouched by precision flag. */
     int            *sibling;
     int            *nextnode;
+    int            *father;     /* parent node index (Phase 6.2: needed by GPU moment-refresh dependency-counter walk) */
     unsigned int   *bitflags;
     /* Force kernel */
     MyGravFloat    *maxsoft;
