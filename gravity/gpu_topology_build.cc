@@ -430,23 +430,27 @@ extern "C" int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx
     int           *soa_suns    = soa->suns_backup;
     if(!soa_center || !soa_len || !soa_suns) {return 1;}
 
-    /* Host loop -- Nodes_base is host malloc, SoA is SharedSpace UVM.  Use
-     * OpenMP for parallelism on platforms where it's available; the loop
-     * body is read SoA UVM, write AoS host. */
-    #pragma omp parallel for
-    for(int k = first_soa_idx; k < last_soa_idx; k++) {
+    /* Phase 6.8f: GPU kernel writeback (was host OMP loop).  Nodes_base is
+     * UVM since 6.8d, so device-side writes work directly.  All stores are
+     * independent per-k. */
+    struct NODE *Nodes_uvm = Nodes_base;
+    int range = last_soa_idx - first_soa_idx;
+    int base_k = first_soa_idx;
+    Kokkos::parallel_for("topo_writeback_to_aos", range, KOKKOS_LAMBDA(int j) {
+        int k = base_k + j;
         long sb = (long)k * 8;
-        Nodes_base[k].u.suns[0] = soa_suns[sb + 0];
-        Nodes_base[k].u.suns[1] = soa_suns[sb + 1];
-        Nodes_base[k].u.suns[2] = soa_suns[sb + 2];
-        Nodes_base[k].u.suns[3] = soa_suns[sb + 3];
-        Nodes_base[k].u.suns[4] = soa_suns[sb + 4];
-        Nodes_base[k].u.suns[5] = soa_suns[sb + 5];
-        Nodes_base[k].u.suns[6] = soa_suns[sb + 6];
-        Nodes_base[k].u.suns[7] = soa_suns[sb + 7];
-        Nodes_base[k].len       = soa_len[k];
-        Nodes_base[k].center    = soa_center[k];
-    }
+        Nodes_uvm[k].u.suns[0] = soa_suns[sb + 0];
+        Nodes_uvm[k].u.suns[1] = soa_suns[sb + 1];
+        Nodes_uvm[k].u.suns[2] = soa_suns[sb + 2];
+        Nodes_uvm[k].u.suns[3] = soa_suns[sb + 3];
+        Nodes_uvm[k].u.suns[4] = soa_suns[sb + 4];
+        Nodes_uvm[k].u.suns[5] = soa_suns[sb + 5];
+        Nodes_uvm[k].u.suns[6] = soa_suns[sb + 6];
+        Nodes_uvm[k].u.suns[7] = soa_suns[sb + 7];
+        Nodes_uvm[k].len       = soa_len[k];
+        Nodes_uvm[k].center    = soa_center[k];
+    });
+    Kokkos::fence();
     return 0;
 }
 

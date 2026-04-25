@@ -145,13 +145,14 @@ extern "C" int gpu_nextnode_thread(void)
     });
     Kokkos::fence();
 
-    /* Phase 6.8e: Nextnode[] is aliased to soa->nextnode_aux (same UVM
-     * buffer); the kernel above already wrote it.  Only the internal-node
-     * AoS u.d.nextnode still needs a host writeback (Phase 6.8f converts
-     * this to a GPU kernel once Nodes_base reads/writes are GPU-direct). */
-    for(int k = 0; k < n; k++) {
-        Nodes_base[k].u.d.nextnode = nextnode_soa[k];
-    }
+    /* Phase 6.8e: Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
+     * Phase 6.8f: internal-node Nodes[].u.d.nextnode writeback runs on the
+     * device now that Nodes_base is UVM (6.8d). */
+    struct NODE *Nodes_uvm = Nodes_base;
+    Kokkos::parallel_for("nx_writeback_aos", n, KOKKOS_LAMBDA(int k) {
+        Nodes_uvm[k].u.d.nextnode = nextnode_soa[k];
+    });
+    Kokkos::fence();
 
     return 0;
 }

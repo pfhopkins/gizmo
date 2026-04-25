@@ -175,23 +175,11 @@ int force_treebuild(int npart, struct unbind_data *mp)
     gpu_gravity_tree_mark_all_dirty();
     if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(913320);}
     if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(913321);}
-    /* Reset GravCost + ephemeral fields for all nodes.  On the CPU path FUNR
-     * does this via Nodes[no].GravCost=0 (forcetree.cc:910) and step-1 zero
-     * passes.  The GPU path bypasses FUNR, so we must reset explicitly here
-     * before gpu_moment_refresh accumulates new moments into AoS. */
-    for(int _no = All.MaxPart; _no < All.MaxPart + Numnodestree; _no++) {
-        Nodes[_no].GravCost      = 0;
-        Nodes[_no].Ti_current    = All.Ti_Current;
-        Extnodes[_no].dp         = {};
-        Extnodes[_no].Ti_lastkicked = All.Ti_Current;
-        Extnodes[_no].Flag       = GlobFlag;
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Extnodes[_no].rt_source_lum_dp = {};
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        Extnodes[_no].dp_dm      = {};
-#endif
-    }
+    /* Phase 6.8f: GPU kernel resets GravCost + ephemeral fields for all
+     * nodes.  On the CPU path FUNR does this work inline; on the GPU path
+     * FUNR is retired (6.6) so the kernel takes its place.  Replaces a
+     * host loop over Numnodestree -- the worst sparse-active scaling. */
+    if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(913323);}
     if(gpu_moment_refresh(-1) != 0) {endrun(913311);}
     if(gpu_nextnode_thread() != 0) {endrun(913312);}
     if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(913322);}

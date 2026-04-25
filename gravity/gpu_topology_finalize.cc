@@ -173,22 +173,56 @@ extern "C" int gpu_topology_writeback_d_to_aos(int n)
     if(!soa->sibling)    {printf("gpu_topology_writeback_d_to_aos: sibling null\n"); return 1;}
     if(!soa->father)     {printf("gpu_topology_writeback_d_to_aos: father null\n");  return 1;}
 
-    int *sibling_soa = soa->sibling;
-    int *father_soa  = soa->father;
+    int          *sibling_soa = soa->sibling;
+    int          *father_soa  = soa->father;
+    struct NODE  *Nodes_uvm   = Nodes_base;   /* UVM under OPENMP_GPU_OFFLOAD (6.8d) */
 
-    /* Host loop: writes Nodes_base[k].u.d.{sibling,father}.  This clobbers
-     * Nodes_base[k].u.suns via the union — safe because soa->suns_backup
-     * is the SoA truth and any subsequent SoA reseed pulls from it.  The
-     * legacy CPU tree-walks (gravtree.cc) read u.d.sibling/.father.
-     *
-     * OMP-parallel: independent stores into different node slots.  Reads
-     * touch SoA UVM pages — first-touch fault on host is a one-time cost
-     * per page that pays for itself across the full writeback. */
-#pragma omp parallel for schedule(static)
-    for(int k = 0; k < n; k++) {
-        Nodes_base[k].u.d.sibling = sibling_soa[k];
-        Nodes_base[k].u.d.father  = father_soa[k];
-    }
+    /* Phase 6.8f: GPU kernel writeback (was host OMP loop).  With Nodes_base
+     * UVM-resident, the same parallel writes happen device-side without an
+     * extra page-touch on host.  Independent stores per node slot — no
+     * synchronization needed.  The legacy CPU tree-walks (gravtree.cc) read
+     * Nodes[].u.d.sibling/.father; they pull pages back to host on first
+     * post-build touch. */
+    Kokkos::parallel_for("topo_writeback_d_to_aos", n, KOKKOS_LAMBDA(int k) {
+        Nodes_uvm[k].u.d.sibling = sibling_soa[k];
+        Nodes_uvm[k].u.d.father  = father_soa[k];
+    });
+    Kokkos::fence();
+    return 0;
+}
+
+extern "C" int gpu_node_reset_ephemeral(int n)
+{
+    if(n <= 0) {return 0;}
+    GIZMO_GPU_ENSURE_ALL_FRESH(node_reset_ephemeral);
+
+    int MaxPart = All.MaxPart;
+    /* Snapshot scalars to locals: KOKKOS_LAMBDA captures via [=] but the
+     * GIZMO_GPU_ENSURE_ALL_FRESH guarantee for All_dev is per-call, so use
+     * locals to avoid cross-platform device-symbol footguns. */
+    integertime ti_current = All.Ti_Current;
+    int         glob_flag  = GlobFlag;
+
+    struct NODE    *Nodes_uvm    = Nodes_base;     /* UVM (6.8d) */
+    struct extNODE *Extnodes_uvm = Extnodes_base;
+
+    Kokkos::parallel_for("node_reset_ephemeral", n, KOKKOS_LAMBDA(int k) {
+        /* k is the SoA index; absolute Nodes[] index is MaxPart + k.
+         * Nodes_base/Extnodes_base are the unshifted arrays (Nodes ==
+         * Nodes_base - MaxPart), so we index directly with k. */
+        Nodes_uvm[k].GravCost          = 0;
+        Nodes_uvm[k].Ti_current        = ti_current;
+        Extnodes_uvm[k].dp             = {};
+        Extnodes_uvm[k].Ti_lastkicked  = ti_current;
+        Extnodes_uvm[k].Flag           = glob_flag;
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Extnodes_uvm[k].rt_source_lum_dp = {};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        Extnodes_uvm[k].dp_dm          = {};
+#endif
+    });
+    Kokkos::fence();
     return 0;
 }
 
@@ -221,5 +255,6 @@ extern "C" void gpu_tree_free_bytes(void *p)
 
 GPU_ALL_SYNC_FUNC(topo_finalize_father)
 GPU_ALL_SYNC_FUNC(topo_finalize_sibling)
+GPU_ALL_SYNC_FUNC(node_reset_ephemeral)
 
 #endif /* OPENMP_GPU_OFFLOAD */

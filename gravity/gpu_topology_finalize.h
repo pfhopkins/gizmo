@@ -52,6 +52,14 @@ int gpu_topology_finalize_sibling(int n);
  * [0, n).  Idempotent.  Returns 0 on success. */
 int gpu_topology_writeback_d_to_aos(int n);
 
+/* Phase 6.8f: GPU kernel that resets per-node ephemeral fields (GravCost,
+ * Ti_current, dp, Ti_lastkicked, Flag, optional payloads) after topology
+ * finalize and before moment_refresh accumulates fresh moments.  Operates
+ * on the absolute Nodes[] index range [MaxPart .. MaxPart+n).  On the CPU
+ * path FUNR does this work inline; on the GPU path FUNR is retired
+ * (Phase 6.6) so this kernel takes its place.  Returns 0 on success. */
+int gpu_node_reset_ephemeral(int n);
+
 /* Phase 6.6: Father[] is UVM (SharedSpace) on GPU build so the GPU father
  * kernel can write into it directly and host readers page-fault on touch.
  * These wrappers keep the kokkos_malloc/free out of forcetree.cc (non-GPU TU
