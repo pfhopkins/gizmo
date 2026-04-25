@@ -327,7 +327,10 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 if(lcp >= 126) {do_random = 1;}
             }
             if(do_random) {
-                auto id_of = [P_dev] KOKKOS_FUNCTION (int idx) -> uint64_t {
+                /* Inner lambda must NOT use KOKKOS_FUNCTION (extended __host__ __device__
+                 * lambda) -- nvcc forbids nesting extended lambdas inside each other.
+                 * Plain capture is implicitly __device__ inside the outer KOKKOS_LAMBDA. */
+                auto id_of = [P_dev] (int idx) -> uint64_t {
                     return (uint64_t) P_dev[idx].ID;
                 };
                 int rrc = gpu_morton_split_8way_random_inplace(
