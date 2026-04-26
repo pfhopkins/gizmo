@@ -34,6 +34,7 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 #include <float.h>
@@ -66,6 +67,88 @@
 #define LET_EDGE_SENTINEL_ENCODE(orig) (LET_EDGE_SENTINEL_BASE - (orig))
 #define LET_EDGE_SENTINEL_IS_ENCODED(v)  ((v) < LET_EDGE_SENTINEL_BASE)
 #define LET_EDGE_SENTINEL_DECODE(v)      (LET_EDGE_SENTINEL_BASE - (v))
+
+/* ----------------------------------------------------------------------
+ * Phase 9.5: active-only LET helpers
+ *
+ * Each rank computes a per-topleaf bitmap (one bit per topleaf, NTopleaves
+ * total) where bit tl == 1 iff topleaf tl is owned by ThisTask AND at least
+ * one particle in ActiveParticleList lives in tl.  Bitmaps are MPI_Allgathered
+ * so every rank sees every other rank's active-topleaf set.  In the pack
+ * loop, sender S short-circuits packing for receiver R when R's bitmap is
+ * all zero (R has no active particles -> R does not need any LET data).
+ *
+ * Particle -> topleaf lookup uses Father[i] -> ancestor chain until the
+ * first BITFLAG_TOPLEVEL node, which is necessarily a topleaf (only
+ * topleaves contain particles; internal topnodes have only topnode children).
+ * ---------------------------------------------------------------------- */
+static inline int let_bitmap_word_count(int n_topleaves)
+{
+    return (n_topleaves + 63) / 64;
+}
+
+static inline int let_bitmap_test(const uint64_t *b, int tl)
+{
+    return (int) ((b[tl >> 6] >> (tl & 63)) & 1ULL);
+}
+
+static inline int let_bitmap_any_set(const uint64_t *b, int n_words)
+{
+    if(!b) return 1;  /* NULL bitmap -> conservative: assume some bits set */
+    for(int w = 0; w < n_words; w++) if(b[w]) return 1;
+    return 0;
+}
+
+extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
+{
+    memset(bitmap, 0, (size_t)n_words * sizeof(uint64_t));
+    if(NTopleaves <= 0) return;
+
+    /* Build inverse lookup: Nodes[no] -> topleaf index (or -1) for MY topleaves only. */
+    int *my_tl_lookup = (int *) mymalloc("LET_my_tl_lookup", (size_t)MaxNodes * sizeof(int));
+    for(int j = 0; j < MaxNodes; j++) my_tl_lookup[j] = -1;
+    for(int t = 0; t < NTopleaves; t++)
+    {
+        if(DomainTask[t] != ThisTask) continue;
+        int no = DomainNodeIndex[t];
+        if(no >= All.MaxPart && no < All.MaxPart + MaxNodes)
+            my_tl_lookup[no - All.MaxPart] = t;
+    }
+
+    /* Fallback: if ActiveParticleList is empty (e.g. tree rebuilt before
+     * make_list_of_active_particles ran for the current step), set all MY
+     * topleaves' bits.  Preserves Phase 9.4 conservative behavior. */
+    if(ActiveParticleList.empty())
+    {
+        for(int t = 0; t < NTopleaves; t++)
+        {
+            if(DomainTask[t] != ThisTask) continue;
+            bitmap[t >> 6] |= (1ULL << (t & 63));
+        }
+        myfree(my_tl_lookup);
+        return;
+    }
+
+    for(size_t k = 0; k < ActiveParticleList.size(); k++)
+    {
+        int i = ActiveParticleList[k];
+        if(i < 0 || i >= NumPart) continue;
+        if(P[i].Mass <= 0) continue;
+        int no = Father[i];
+        int guard = 0;
+        while(no >= All.MaxPart && no < All.MaxPart + MaxNodes && guard++ < 1024)
+        {
+            int tl = my_tl_lookup[no - All.MaxPart];
+            if(tl >= 0)
+            {
+                bitmap[tl >> 6] |= (1ULL << (tl & 63));
+                break;
+            }
+            no = Nodes[no].u.d.father;
+        }
+    }
+    myfree(my_tl_lookup);
+}
 
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
@@ -104,7 +187,12 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
         for(int k = 0; k < 3; k++) {out->bbox_min[k] = out->bbox_max[k] = 0.0;}
     }
 
-    /* Per-particle bounds */
+    /* Per-particle bounds — scan all NumPart (not just active).
+     * We ship the worst-case bounds over ALL our particles so other ranks
+     * can decide which nodes are essential for any particle we might ever
+     * need.  Restricting to active particles would tighten bounds but risks
+     * under-shipping for TREECOL/RT which may run on active particles that
+     * have wide softening or low OldAcc not reflected in the active subset. */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->has_sink = 0;
@@ -575,10 +663,19 @@ extern "C" int let_pack_for_rank(int R,
                                   int *out_capacity,
                                   struct LETSubtreeHeader **out_hdr_buf,
                                   int *out_hdr_capacity,
-                                  int *out_hdr_count)
+                                  int *out_hdr_count,
+                                  const uint64_t *receiver_active_bitmap,
+                                  int bitmap_n_words)
 {
     int count = 0;
     int hdr_count = 0;
+    /* Phase 9.5: short-circuit when receiver R has zero active particles.
+     * R cannot use any LET nodes we'd ship; skip the entire local-tree walk. */
+    if(receiver_active_bitmap && !let_bitmap_any_set(receiver_active_bitmap, bitmap_n_words))
+    {
+        *out_hdr_count = 0;
+        return 0;
+    }
     /* Walk the LOCAL tree from each topnode that's NOT in R's domain.  Topnodes
      * in R's domain are R's own data; they won't help R (and would create a
      * self-reference if shipped). */
@@ -1007,6 +1104,22 @@ extern "C" int let_run_exchange(void)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
+    /* Phase 9.5: compute local active-topleaf bitmap and Allgather across
+     * ranks.  Then pass MY bitmap into the payload (for tighter bbox/bounds)
+     * and EACH RECEIVER R's bitmap into let_pack_for_rank(R) (for short-
+     * circuit when R is fully inactive this step). */
+    int bitmap_n_words = let_bitmap_word_count(NTopleaves);
+    if(bitmap_n_words < 1) bitmap_n_words = 1;
+    uint64_t *my_active_bitmap = (uint64_t *) mymalloc("LET_my_active_bitmap",
+        (size_t) bitmap_n_words * sizeof(uint64_t));
+    let_compute_local_active_bitmap(my_active_bitmap, bitmap_n_words);
+
+    uint64_t *all_active_bitmaps = (uint64_t *) mymalloc("LET_all_active_bitmaps",
+        (size_t) NTask * (size_t) bitmap_n_words * sizeof(uint64_t));
+    MPI_Allgather(my_active_bitmap, bitmap_n_words, MPI_UINT64_T,
+                  all_active_bitmaps, bitmap_n_words, MPI_UINT64_T,
+                  MPI_COMM_WORLD);
+
     struct LETPerRankPayload my_payload;
     let_compute_local_payload(&my_payload);
 
@@ -1030,9 +1143,11 @@ extern "C" int let_run_exchange(void)
     {
         if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
         int cap = 0, hcap = 0, hcnt = 0;
+        const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
         send_count[r] = let_pack_for_rank(r, all_payloads,
                                            &send_per_rank[r], &cap,
-                                           &send_hdr_per_rank[r], &hcap, &hcnt);
+                                           &send_hdr_per_rank[r], &hcap, &hcnt,
+                                           r_bitmap, bitmap_n_words);
         send_hdr_count[r] = hcnt;
     }
 
@@ -1053,6 +1168,8 @@ extern "C" int let_run_exchange(void)
     myfree(send_hdr_per_rank);
     myfree(send_per_rank);
     myfree(all_payloads);
+    myfree(all_active_bitmaps);
+    myfree(my_active_bitmap);
     return 0;
 }
 

@@ -25,6 +25,7 @@
 #ifndef GIZMO_LET_DATA_H
 #define GIZMO_LET_DATA_H
 
+#include <stdint.h>
 #include "../declarations/allvars.h"
 
 /* ----------------------------------------------------------------------
@@ -183,10 +184,18 @@ extern "C" {
 #endif
 
 /*! Compute this rank's LETPerRankPayload from local particle state.  Called
- *  once per gravity-tree build, just before the LET exchange.  Scans the
- *  local active-particle list for OldAcc/softening/sink bounds and the
- *  topleaf bbox.  Caller-supplied buffer must be sized sizeof(LETPerRankPayload). */
+ *  once per gravity-tree build, just before the LET exchange.  Scans all
+ *  NumPart for OldAcc/softening/sink bounds and all MY topleaf bboxes.
+ *  Full-particle scan (not just active) preserves correctness for RT/TREECOL
+ *  walks that use foreign-tree column-density estimates. */
 void let_compute_local_payload(struct LETPerRankPayload *out);
+
+/*! Phase 9.5: compute this rank's active-topleaf bitmap.  bitmap is sized
+ *  n_words = (NTopleaves+63)/64 uint64_t.  Bit tl is set iff topleaf tl is
+ *  owned by this rank AND at least one particle in ActiveParticleList lives
+ *  in it.  If ActiveParticleList is empty, all of MY topleaves' bits are set
+ *  (conservative fallback).  Bits for topleaves owned by other ranks are 0. */
+void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words);
 
 /*! MPI_Allgather all ranks' LETPerRankPayload into a buffer indexed by rank
  *  (so payload[r] gives rank r's payload).  Returns 0 on success. */
@@ -203,7 +212,9 @@ int  let_pack_for_rank(int R,
                        int *out_capacity,
                        struct LETSubtreeHeader **out_hdr_buf,
                        int *out_hdr_capacity,
-                       int *out_hdr_count);
+                       int *out_hdr_count,
+                       const uint64_t *receiver_active_bitmap,
+                       int bitmap_n_words);
 
 /*! Two-phase MPI exchange + local install in one scope.  Phase 1 Alltoalls
  *  per-rank node-counts and header-counts; Phase 2 Alltoallvs the
