@@ -102,6 +102,23 @@ void run(void)
         if(rt_step_diag_count < 50) { rt_step_diag_count++; rt_step_checksum("after_find_timesteps"); }
 #endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
+        /* Phase 9.6: auto-rebuild guardrail.  force_add_element_to_tree
+         * insertions stale the LET / pseudo-particle moments shipped on
+         * the last full build.  When the global insertion count exceeds
+         * 1% of TotNumPart, force a full rebuild on the next step.
+         * Mass+CoM remain conserved so the bound is conservative; tighten
+         * if a workload exposes drift in moment-sensitive diagnostics. */
+        long long add_elem_calls_global = 0;
+        MPI_Allreduce(&ForceAddElementToTree_CallsSinceBuild, &add_elem_calls_global,
+                      1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(add_elem_calls_global > (long long)(0.01 * All.TotNumPart))
+        {
+            if(ThisTask == 0)
+                printf("Phase 9.6 LET guardrail: %lld force_add_element_to_tree insertions since last build "
+                       "(> 1%% of TotNumPart=%lld) -- forcing tree rebuild this step.\n",
+                       add_elem_calls_global, (long long) All.TotNumPart);
+            TreeReconstructFlag_local = 1;
+        }
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */

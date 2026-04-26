@@ -143,6 +143,8 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
+    /* Phase 9.6: reset force_add_element insertion counter at each full build. */
+    ForceAddElementToTree_CallsSinceBuild = 0;
     do
     {
         Numnodestree = force_treebuild_single(npart, mp);
@@ -1560,6 +1562,11 @@ void force_add_element_to_tree(int iparent, int ichild)
     double vmax = Extnodes[Father[iparent]].vmax;
     int k; for(k=0; k<3; k++) {if(fabs(P[ichild].Vel[k]) > vmax) {vmax = fabs(P[ichild].Vel[k]);}}
     Extnodes[Father[iparent]].vmax = vmax;
+    /* Phase 9.6 diagnostic: each insertion stales the LET / pseudo-particle
+     * moments shipped on the last full build.  Mass+CoM remain conserved at
+     * the insertion site, but ancestor topnodes (and any rank's foreign view
+     * of them) carry the pre-insertion moments until the next rebuild. */
+    ForceAddElementToTree_CallsSinceBuild++;
 }
 
 
