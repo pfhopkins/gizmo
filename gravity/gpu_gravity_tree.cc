@@ -209,6 +209,16 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
 {
     if(min_nodes <= 0) {min_nodes = 1;}
 
+    /* Phase 9.2-pre: extend SoA capacity to cover the LET foreign-node range
+     * [MaxNodes, MaxNodes+MaxForeignNodes).  Foreign nodes installed by
+     * let_unpack_and_install are scattered into SoA at slot_base + j with
+     * absolute index = MaxPart + MaxNodes + slot, so SoA index =
+     * (MaxNodes + slot).  At default LETAllocFactor=0, MaxForeignNodes==0
+     * and this is a no-op. */
+    if(MaxForeignNodes > 0) {
+        min_nodes += MaxForeignNodes;
+    }
+
     if(soa_capacity_ >= min_nodes && soa_.center) {
         return;   /* fast path: capacity already sufficient */
     }
@@ -259,6 +269,8 @@ extern "C" void gpu_nextnode_backup_suns(int n)
      * free_arrays_(), and destroy the suns_backup we store below — corrupting
      * the nextnode kernel's input on the first treebuild. */
     int cap = (MaxNodes > 0) ? MaxNodes + 1 : n;
+    /* Phase 9.2-pre: include LET foreign-node range. */
+    if(MaxForeignNodes > 0) {cap += MaxForeignNodes;}
     if(soa_capacity_ < cap || !soa_.suns_backup) {
         free_arrays_();
         if(!alloc_arrays_(cap)) {endrun(913401);}

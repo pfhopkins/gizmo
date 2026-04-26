@@ -614,6 +614,130 @@ extern "C" int gpu_topnode_moment_resum(void)
     return 0;
 }
 
+/* ===================================================================== */
+/* Phase 9.2-pre — gpu_scatter_foreign_to_soa                            */
+/*                                                                        */
+/* Mirror foreign-node AoS Nodes[]/Extnodes[] fields into SoA for the     */
+/* range [slot_base_abs, slot_base_abs + count).  Called from             */
+/* let_unpack_and_install once per sender after the AoS install +         */
+/* pointer-remap pass.  Walk reads ALL of these fields from SoA, so we    */
+/* must cover every conditional payload that gpu_scatter_pseudo_to_soa    */
+/* covers.  Topology fields (sibling/nextnode/father/bitflags) come       */
+/* directly from the AoS (already remapped to absolute indices in         */
+/* let_unpack_and_install Pass 1).                                        */
+/* ===================================================================== */
+extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH(pseudo_update);
+    if(count <= 0) {return 0;}
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa) {printf("gpu_scatter_foreign_to_soa: SoA null\n"); return 1;}
+
+    int MaxPart_ = All.MaxPart;
+
+    for(int j = 0; j < count; j++) {
+        int no = slot_base_abs + j;
+        int k  = no - MaxPart_;     /* SoA index = (MaxNodes + slot_local) */
+
+        /* Geometric */
+        soa->center[k] = Nodes[no].center;
+        soa->len[k]    = Nodes[no].len;
+
+        /* Moment scalars */
+        soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
+        soa->N_part[k]  = Nodes[no].N_part;
+        soa->maxsoft[k] = (MyGravFloat) Nodes[no].maxsoft;
+        soa->hmax[k]    = (MyGravFloat) Extnodes[no].hmax;
+        soa->vmax[k]    = (MyGravFloat) Extnodes[no].vmax;
+        soa->divVmax[k] = (MyGravFloat) Extnodes[no].divVmax;
+        soa->bitflags[k] = Nodes[no].u.d.bitflags;
+
+        /* Moment vectors */
+        soa->s[k]        = {(MyGravFloat) Nodes[no].u.d.s[0],
+                            (MyGravFloat) Nodes[no].u.d.s[1],
+                            (MyGravFloat) Nodes[no].u.d.s[2]};
+        soa->node_vs[k]  = {(MyGravFloat) Extnodes[no].vs[0],
+                            (MyGravFloat) Extnodes[no].vs[1],
+                            (MyGravFloat) Extnodes[no].vs[2]};
+
+        /* Topology (already in absolute indices after Pass 1 remap) */
+        soa->sibling[k]  = Nodes[no].u.d.sibling;
+        soa->nextnode[k] = Nodes[no].u.d.nextnode;
+        soa->father[k]   = Nodes[no].u.d.father;
+
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        soa->gasmass[k]  = (MyGravFloat) Nodes[no].gasmass;
+#endif
+#ifdef RT_USE_GRAVTREE
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+            soa->stellar_lum[(long)k * N_RT_FREQ_BINS + b] =
+                (MyGravFloat) Nodes[no].stellar_lum[b];
+        }
+#ifdef CHIMES_STELLAR_FLUXES
+        for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
+            soa->chimes_stellar_lum_G0 [(long)k * CHIMES_LOCAL_UV_NBINS + b] =
+                Nodes[no].chimes_stellar_lum_G0[b];
+            soa->chimes_stellar_lum_ion[(long)k * CHIMES_LOCAL_UV_NBINS + b] =
+                Nodes[no].chimes_stellar_lum_ion[b];
+        }
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        soa->rt_source_lum_s[k]  = {(MyGravFloat) Nodes[no].rt_source_lum_s[0],
+                                     (MyGravFloat) Nodes[no].rt_source_lum_s[1],
+                                     (MyGravFloat) Nodes[no].rt_source_lum_s[2]};
+        soa->rt_source_lum_vs[k] = {(MyGravFloat) Extnodes[no].rt_source_lum_vs[0],
+                                     (MyGravFloat) Extnodes[no].rt_source_lum_vs[1],
+                                     (MyGravFloat) Extnodes[no].rt_source_lum_vs[2]};
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        soa->sink_lum[k]      = (MyGravFloat) Nodes[no].sink_lum;
+        soa->sink_lum_grad[k] = {(MyGravFloat) Nodes[no].sink_lum_grad[0],
+                                  (MyGravFloat) Nodes[no].sink_lum_grad[1],
+                                  (MyGravFloat) Nodes[no].sink_lum_grad[2]};
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        soa->cr_injection[k] = (MyGravFloat) Nodes[no].cr_injection;
+#endif
+#ifdef SINK_CALC_DISTANCES
+        soa->sink_mass[k] = (MyGravFloat) Nodes[no].sink_mass;
+        soa->sink_pos[k]  = {(MyGravFloat) Nodes[no].sink_pos[0],
+                              (MyGravFloat) Nodes[no].sink_pos[1],
+                              (MyGravFloat) Nodes[no].sink_pos[2]};
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+        soa->N_SINK[k]    = Nodes[no].N_SINK;
+        soa->sink_vel[k]  = {(MyGravFloat) Nodes[no].sink_vel[0],
+                              (MyGravFloat) Nodes[no].sink_vel[1],
+                              (MyGravFloat) Nodes[no].sink_vel[2]};
+#ifdef SPECIAL_POINT_MOTION
+        soa->sink_acc[k]  = {(MyGravFloat) Nodes[no].sink_acc[0],
+                              (MyGravFloat) Nodes[no].sink_acc[1],
+                              (MyGravFloat) Nodes[no].sink_acc[2]};
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+        soa->MaxFeedbackVel[k] = (MyGravFloat) Nodes[no].MaxFeedbackVel;
+#endif
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        for(int t = 0; t < 6; t++) {
+            soa->tidal_tensorps[(long)k * 6 + t] = (MyGravFloat) Nodes[no].tidal_tensorps[t];
+        }
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+        soa->mass_dm[k] = (MyGravFloat) Nodes[no].mass_dm;
+        soa->s_dm[k]    = {(MyGravFloat) Nodes[no].s_dm[0],
+                           (MyGravFloat) Nodes[no].s_dm[1],
+                           (MyGravFloat) Nodes[no].s_dm[2]};
+        soa->vs_dm[k]   = {(MyGravFloat) Extnodes[no].vs_dm[0],
+                           (MyGravFloat) Extnodes[no].vs_dm[1],
+                           (MyGravFloat) Extnodes[no].vs_dm[2]};
+#endif
+    }
+    return 0;
+}
+
 /* Per-TU All_dev sync stub (no-op on Kokkos path). */
 GPU_ALL_SYNC_FUNC(pseudo_update)
 

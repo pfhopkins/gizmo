@@ -41,6 +41,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "let_data.h"
+#include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
 #ifdef OPENMP_GPU_OFFLOAD
 
@@ -894,6 +895,11 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
             /* Redirect local topleaf at the foreign subtree root */
             Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
         }
+
+        /* Pass 3: AoS -> SoA scatter for the foreign-node range we just
+         * installed.  GPU walk reads node fields via SoA only; without this
+         * the foreign nodes would have garbage SoA entries. */
+        gpu_scatter_foreign_to_soa(slot_base, rcount);
 
         Numforeignnodes += rcount;
         node_off += rcount;

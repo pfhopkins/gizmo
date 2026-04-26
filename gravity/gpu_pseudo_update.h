@@ -41,6 +41,15 @@ int gpu_force_flag_localnodes(void);
  * CPU loop.  Returns 0 on success. */
 int gpu_scatter_pseudo_to_soa(void);
 
+/* Phase 9.2-pre: After let_unpack_and_install copies a foreign sender's
+ * NODE+extNODE bytes into the AoS foreign-node range, mirror the same
+ * data into the SoA so the GPU walk can read foreign nodes via SoA.
+ * `slot_base_abs` is the absolute Node index of the first foreign node
+ * for this sender (= MaxPart + MaxNodes + Numforeignnodes_at_start_of_sender),
+ * `count` is the number of consecutive foreign nodes to scatter.
+ * Returns 0 on success. */
+int gpu_scatter_foreign_to_soa(int slot_base_abs, int count);
+
 /* Phase 6.7c: Re-sum ancestor topnode moments directly in SoA after the
  * foreign pseudo data is in place (i.e. after gpu_scatter_pseudo_to_soa).
  * Recursive CPU walk of the topnode tree (all NTopnodes nodes; typically
