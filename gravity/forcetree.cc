@@ -198,6 +198,11 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * this point — no mark_all_dirty needed. */
     if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(913341);}
     if(gpu_topnode_moment_resum() != 0)     {endrun(913342);}
+    /* Phase 9.2c: ship Locally Essential Tree subtrees to all remote ranks
+     * (no-op when MaxForeignNodes==0, i.e. All.LETAllocFactor==0).  Must
+     * run AFTER topnode-resum since LET needs final topleaf moments to
+     * compute the per-rank essential set. */
+    if(let_run_exchange() != 0)             {endrun(913343);}
 #else
     force_treeupdate_pseudos(All.MaxPart);
 #endif
