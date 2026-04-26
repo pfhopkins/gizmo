@@ -89,6 +89,7 @@ extern "C" void gpu_force_update_tree(void)
 
     /* Re-acquire particles arena (invalidated at end of gpu_gravtree_walk_primary).
      * On UVM systems this is a same-pointer re-registration (cheap). */
+    gpu_particles_arena_set_site("gpu_force_update_domainlist");
     gpu_particles_arena_acquire(NumPart, P, CellP);
 
     /* Stage 1: drift all stale nodes to Ti_Current (reuse Phase 7.a kernel). */

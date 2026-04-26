@@ -635,6 +635,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     int N          = NumPart;
 
     /* ---------------- 1. arenas / SoA / per-particle precompute -------- */
+    gpu_particles_arena_set_site("gpu_moment_refresh(pre-precompute)");
     gpu_particles_arena_acquire(N, P, CellP);
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {printf("gpu_moment_refresh: arena P_dev null\n"); return 1;}

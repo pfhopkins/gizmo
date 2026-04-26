@@ -9,6 +9,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "gpu_gravtree.h"
+#ifdef OPENMP_GPU_OFFLOAD
+#include "../system/gpu_particles_arena.h"
+#endif
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
@@ -650,7 +653,12 @@ void gravity_tree(void)
 #endif
 
     } /* end of loop over active particles*/
-
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Post-processing wrote GravAccel (×G) and OldAcc to host P[]; arena
+     * seeded before this loop no longer matches host — invalidate so the
+     * next gpu_particles_arena_acquire re-seeds from the updated host. */
+    gpu_particles_arena_invalidate();
+#endif
 
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 

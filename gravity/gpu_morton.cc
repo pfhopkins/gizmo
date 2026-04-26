@@ -70,6 +70,7 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
     /* Acquire the particles arena.  Caller is expected to have an active
      * arena already (this is called from inside the gravity-tree build,
      * which arena-acquires earlier), but the call is idempotent. */
+    gpu_particles_arena_set_site("gpu_morton_compute_global_keys");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {

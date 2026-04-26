@@ -110,6 +110,7 @@ static int density_cached_gnl_valid = 0;
 void density_gpu_session_begin(struct particle_data *P_host, struct gas_cell_data *CellP_host, int num_total)
 {
     density_session_num_total = num_total;
+    gpu_particles_arena_set_site("density_gpu_session_begin");
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     density_cached_gnl_valid = 0;
 }
@@ -416,6 +417,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
      * SharedSpace alloc+memcpy of P/CellP. Acquire is a no-op fast path when
      * the arena is already valid from a prior kernel in this step. */
+    gpu_particles_arena_set_site("density_gpu_gradients");
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
@@ -575,6 +577,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
     /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
      * SharedSpace alloc+memcpy. Fast path skips memcpy when arena is valid. */
+    gpu_particles_arena_set_site("density_gpu_hydro");
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();

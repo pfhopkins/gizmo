@@ -125,6 +125,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 
     /* Step 13 Phase 1 arena. P-only kernel; pass NULL CellP. j-writes go via
      * Kokkos atomics to the arena P, then full P scatter back at the end. */
+    gpu_particles_arena_set_site("ags_force_gpu");
     gpu_particles_arena_acquire(num_total, P_host, NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
 

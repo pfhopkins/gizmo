@@ -1195,6 +1195,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     if(num_active <= 0) {myfree(idx_host); return 0;}
 
     /* Acquire Phase 1 arena (P_dev + CellP_dev in SharedSpace) */
+    gpu_particles_arena_set_site("gpu_gravtree_walk_primary");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data    *P_dev    = gpu_particles_arena_P();
     struct gas_cell_data    *CellP_dev = gpu_particles_arena_CellP();
@@ -1738,6 +1739,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa) {return 0;}
 
+    gpu_particles_arena_set_site("gpu_gravtree_walk_ewald");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {return 0;}

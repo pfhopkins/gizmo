@@ -295,6 +295,7 @@ extern "C" void gpu_assign_gravcost(int takelevel)
      * which caused a NULL-deref crash on the third gravity_tree() call (after hydro
      * ran and fired gpu_particles_arena_invalidate()).  Acquiring here is cheap when
      * already valid (fast path in arena code), and correct when stale. */
+    gpu_particles_arena_set_site("gpu_assign_gravcost");
     gpu_particles_arena_acquire(NumPart, P, CellP);
 
     struct particle_data *Pp = gpu_particles_arena_P();

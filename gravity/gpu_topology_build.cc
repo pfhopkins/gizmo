@@ -68,6 +68,7 @@ extern "C" int gpu_topology_build_data_path(int npart)
     Morton128 *keys = gpu_morton_keys_acquire(npart);
     if(!keys) {return 1;}
 
+    gpu_particles_arena_set_site("gpu_topology_build_data_path");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {printf("gpu_topology_build: P_dev null\n"); return 1;}
@@ -212,6 +213,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     }
 
     /* For collocation RNG: need P_dev[].ID lookup inside the kernel. */
+    gpu_particles_arena_set_site("gpu_topology_emit_bfs");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {printf("gpu_topology_emit_bfs: P_dev null\n"); return 3;}

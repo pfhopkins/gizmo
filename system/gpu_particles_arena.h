@@ -46,6 +46,10 @@ void gpu_particles_arena_acquire(int min_capacity,
  * change, ghost-exchange host-side writeback. */
 void gpu_particles_arena_invalidate(void);
 
+/* DIAGNOSTIC: tag the upcoming acquire with a short descriptive string so
+ * that GIZMO_GPU_ARENA_DEBUG mismatch messages identify the call site. */
+void gpu_particles_arena_set_site(const char *site);
+
 /* Free all SharedSpace storage. Called at shutdown. */
 void gpu_particles_arena_release(void);
 

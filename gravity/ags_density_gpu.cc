@@ -61,6 +61,7 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
 
     /* Step 13 Phase 1 arena. CellP only needed when there's gas; pass NULL otherwise.
      * The kernel gates kc[] access on kp[j].Type == 0 so a NULL kc is safe. */
+    gpu_particles_arena_set_site("ags_density_gpu");
     gpu_particles_arena_acquire(num_total, P_host, (All.TotN_gas > 0) ? CellP_host : NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = (All.TotN_gas > 0) ? gpu_particles_arena_CellP() : NULL;
