@@ -145,6 +145,7 @@ void init(void)
     All.TopNodeAllocFactor = 0.1; /* for optimization on startup this needs to be increased for these extreme dynamic range runs */
 #endif
     All.TreeAllocFactor = 0.45; /* this will also iteratively increase to fit the particle distribution */
+    All.LETAllocFactor = 0.0;   /* Step 13 Phase 9: foreign-node headroom factor for the Locally Essential Tree.  MaxForeignNodes = ceil(LETAllocFactor * MaxNodes).  DEFAULT 0.0 during the LET bootstrap (sub-phase 9.0); pseudo-particle index sites across gravtree/ngb/subfind/twopoint still use the legacy [MaxPart+MaxNodes, +NTopleaves) range.  Bumped to 1.0 in sub-phase 9.1 once all pseudo-particle creation/detection sites have been updated to use (MaxPart + MaxNodes + MaxForeignNodes) as the pseudo-particle base.  If foreign-node count exceeds capacity at runtime, endrun() will instruct user to increase this and restart (matches TreeAllocFactor failure semantics).  Future option (b) — graceful shrink + temporary fallback to legacy export — documented but not wired in unless practical memory limits require it. */
     /* To construct the BH-tree for N particles, somewhat less than N
      internal tree-nodes are necessary for ‘normal’ particle distributions.
      TreeAllocFactor sets the number of internal tree-nodes allocated in units of the particle number.

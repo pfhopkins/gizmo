@@ -3559,37 +3559,57 @@ void force_treeallocate(int maxnodes, int maxpart)
     allbytes_topleaves += bytes;
     MaxNodes = maxnodes;
 #ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 9 LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
+     * Index map (single source of truth):
+     *   [0,                                     MaxPart)                                  -> particles
+     *   [MaxPart,                               MaxPart+MaxNodes)                         -> local tree nodes
+     *   [MaxPart+MaxNodes,                      MaxPart+MaxNodes+MaxForeignNodes)         -> foreign tree nodes (LET unpack)
+     *   [MaxPart+MaxNodes+MaxForeignNodes,      MaxPart+MaxNodes+MaxForeignNodes+NTopleaves) -> pseudo-particles
+     * SoA slot for any node index `no` (local OR foreign): idx = no - MaxPart (same formula).
+     * MaxForeignNodes = ceil(All.LETAllocFactor * MaxNodes).  Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
+     * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
+    MaxForeignNodes = (int) ceil(All.LETAllocFactor * (double) MaxNodes);
+    if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
+    Numforeignnodes = 0;
+    long long total_node_slots = (long long) MaxNodes + (long long) MaxForeignNodes + 1LL;
     /* Phase 6.8d: Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
      * kernels can read/write them directly.  Same pattern as Father[] (6.6) and
      * Nextnode[] (6.8e below).  Skip mymalloc accounting; kokkos_malloc has its
-     * own. */
-    bytes = (size_t)(MaxNodes + 1) * sizeof(struct NODE);
+     * own.  Phase 9: extended by MaxForeignNodes for foreign-tree storage. */
+    bytes = (size_t) total_node_slots * sizeof(struct NODE);
     Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes);
     if(!Nodes_base)
     {
-        printf("failed to allocate %d tree-nodes (%g MB) in SharedSpace.\n", MaxNodes, bytes / (1024.0 * 1024.0));
+        printf("failed to allocate %d local + %d foreign (LETAllocFactor=%g) tree-nodes (%g MB) in SharedSpace.\n",
+               MaxNodes, MaxForeignNodes, All.LETAllocFactor, bytes / (1024.0 * 1024.0));
         endrun(3);
     }
-    bytes = (size_t)(MaxNodes + 1) * sizeof(struct extNODE);
+    bytes = (size_t) total_node_slots * sizeof(struct extNODE);
     Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes);
     if(!Extnodes_base)
     {
-        printf("failed to allocate %d tree-extnodes (%g MB) in SharedSpace.\n", MaxNodes, bytes / (1024.0 * 1024.0));
+        printf("failed to allocate %d local + %d foreign tree-extnodes (%g MB) in SharedSpace.\n",
+               MaxNodes, MaxForeignNodes, bytes / (1024.0 * 1024.0));
         endrun(3);
     }
     Nodes = Nodes_base - All.MaxPart;
     Extnodes = Extnodes_base - All.MaxPart;
     /* Phase 6.8e: Nextnode also in SharedSpace; soa->nextnode_aux is aliased to
-     * this pointer (no separate buffer, no per-walk memcpy). */
-    bytes = (size_t)(maxpart + NTopnodes) * sizeof(int);
+     * this pointer (no separate buffer, no per-walk memcpy).
+     * Phase 9: indexed via Nextnode[no - MaxNodes - MaxForeignNodes] for pseudo-particles
+     * after the foreign range; foreign nodes carry their next-sibling pointers in NODE.u.d
+     * directly so they don't consume Nextnode[] slots, but we extend the buffer so the
+     * pseudo-particle range stays in bounds after the index shift. */
+    long long nextnode_slots = (long long) maxpart + (long long) NTopnodes + (long long) MaxForeignNodes;
+    bytes = (size_t) nextnode_slots * sizeof(int);
     Nextnode = (int *) gpu_tree_alloc_bytes(bytes);
     if(!Nextnode)
     {
-        printf("Failed to allocate %d 'Nextnode' (%g MB) in SharedSpace\n",
-               maxpart + NTopnodes, bytes / (1024.0 * 1024.0));
+        printf("Failed to allocate %lld 'Nextnode' slots (%g MB) in SharedSpace\n",
+               nextnode_slots, bytes / (1024.0 * 1024.0));
         endrun(8267342);
     }
-    gpu_gravity_tree_alias_nextnode(Nextnode, maxpart + NTopnodes);
+    gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
 #else
     if(!(Nodes_base = (struct NODE *) mymalloc("Nodes_base", bytes = (MaxNodes + 1) * sizeof(struct NODE))))
     {
