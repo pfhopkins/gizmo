@@ -140,15 +140,14 @@ struct gpu_gravity_tree_soa_t {
 #endif
 };
 
-/* Acquire SoA mirror sized for at least min_nodes. Reuses existing storage
- * when capacity suffices, and does a per-node partial reseed for any node
- * marked dirty since the last acquire. Nothing is copied for clean nodes.
- * On first allocation or capacity growth, all nodes are marked dirty and
- * the full [0..min_nodes) range is seeded.
- *
- * Nodes_host and Extnodes_host must be the *base* pointers (= Nodes_base /
- * Extnodes_base); dirty indices [0..min_nodes) are read. Pass NULL for the
- * host pointers only on first allocation if you want to defer the copy. */
+/* Acquire SoA mirror sized for at least min_nodes.  Phase 7.a: simplified to
+ * a pure capacity-grow / pointer-grab.  No AoS->SoA seeding ever happens
+ * here — the build pipeline (gpu_nextnode_backup_suns -> emit_bfs ->
+ * finalize_father -> finalize_sibling -> moment_refresh -> nextnode_thread)
+ * populates the SoA end-to-end, and the GPU drift kernel
+ * (gpu_force_drift_nodes) writes both UVM AoS and the SoA mirror in one
+ * pass.  Nodes_host / Extnodes_host are unused (kept in the signature for
+ * source compatibility; pass Nodes_base / Extnodes_base or NULL). */
 void gpu_gravity_tree_acquire(int min_nodes,
                               struct NODE    *Nodes_host,
                               struct extNODE *Extnodes_host);
@@ -158,15 +157,6 @@ void gpu_gravity_tree_acquire(int min_nodes,
  * separate buffer, no per-walk memcpy.  Pass NULL/0 from force_treefree to
  * clear the alias before the underlying buffer is freed. */
 void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n);
-
-/* Mark a single node dirty (absolute Nodes[] index, i.e. >= All.MaxPart).
- * Phase 6.8a: this is the ONLY surviving AoS->SoA reseed mechanism.  Sole
- * caller is the pre-walk drift loop in gpu_gravtree.cc:~1182, which fires
- * once per node that force_drift_node mutated (s/len/vs/hmax/etc).  The
- * next gpu_gravity_tree_acquire() runs seed_dirty_ to re-copy only the
- * marked nodes -- O(active drifted), not O(MaxNodes).  No-op if index is
- * out of range or the SoA has not yet been allocated. */
-void gpu_gravity_tree_mark_dirty(int no);
 
 /* Free SharedSpace storage. Called at shutdown (and from force_treefree if
  * the tree is being torn down without a follow-up rebuild — but typically
@@ -178,9 +168,13 @@ struct gpu_gravity_tree_soa_t *gpu_gravity_tree_soa(void);
 int gpu_gravity_tree_capacity(void);
 int gpu_gravity_tree_valid(void);
 
-/* Diagnostic — returns the count of dirty nodes queued for the next acquire
- * reseed. Used by 6.0 baseline benchmarks to measure reseed volume per call. */
-int gpu_gravity_tree_dirty_count(void);
+/* Phase 7.a: GPU pre-walk drift kernel — replaces the host loop in
+ * gpu_gravtree_walk_primary that called force_drift_node + mark_dirty per
+ * stale-Ti_current node.  Mutates Nodes[]/Extnodes[] (UVM) and SoA mirrors
+ * in a single kernel; no AoS->SoA reseed afterwards.  Returns 0 on success,
+ * nonzero on internal error (SoA not ready). */
+int gpu_force_drift_nodes(integertime time1);
+void gpu_force_drift_release(void);
 
 /* Phase 6.2: GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional

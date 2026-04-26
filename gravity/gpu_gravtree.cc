@@ -1166,21 +1166,16 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * (run.cc:629) and only rebuilds the tree occasionally. The GPU walk
      * cannot call these host-only helpers from inside the Kokkos kernel,
      * so we apply the drift once up-front here: drift all particles, then
-     * drift all nodes whose Ti_current lags All.Ti_Current. After this the
-     * GPU SoA mirror is invalidated so the walk reads fresh positions and
-     * moments. Cost is O(NumPart + Numnodestree) arithmetic per call. */
+     * drift all nodes whose Ti_current lags All.Ti_Current.  Phase 7.a:
+     * the node drift loop is now a single GPU kernel that mutates UVM
+     * Nodes/Extnodes AND the SoA mirror in one pass — no host loop, no
+     * AoS->SoA reseed afterwards.  Cost is O(active drifted nodes) with
+     * GPU parallelism over Numnodestree (early-out when Ti_current matches). */
     move_particles(All.Ti_Current); /* drifts all P[], invalidates arena */
-    /* Phase 6.0: per-node dirty-mark instead of unconditional invalidate. Only
-     * nodes whose Ti_current lagged (and thus got mutated by force_drift_node)
-     * need their SoA slot re-copied. The tree-rebuild / moment-refresh paths
-     * separately mark everything dirty via force_treebuild +
-     * force_refresh_node_moments hooks. On ATFU substeps where only a tiny
-     * subset of nodes drifted, this avoids the O(MaxNodes) copy entirely. */
-    for(int no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
-        if(Nodes[no].Ti_current != All.Ti_Current) {
-            force_drift_node(no, All.Ti_Current);
-            gpu_gravity_tree_mark_dirty(no);
-        }
+    /* SoA must exist before the drift kernel — it writes mirror fields. */
+    gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
+    if(gpu_force_drift_nodes(All.Ti_Current) != 0) {
+        endrun(929702);
     }
 
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
@@ -1495,10 +1490,10 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Costtotal += costtotal_added;
 
     gpu_particles_arena_invalidate();
-    /* Phase 6.8a: no gpu_gravity_tree_invalidate here.  The next force_treebuild
-     * fully repopulates the SoA via the build pipeline (gpu_nextnode_backup_suns
-     * + finalize kernels).  Pre-walk drift before the next walk uses per-node
-     * mark_dirty + seed_dirty_, not a blanket invalidate. */
+    /* No SoA invalidate: the next force_treebuild fully repopulates the SoA
+     * via the build pipeline; the next pre-walk drift mutates only the
+     * stale-Ti_current nodes via gpu_force_drift_nodes (UVM AoS + SoA in one
+     * kernel).  No host-side reseed scaffolding remains. */
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_pot);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ninter);

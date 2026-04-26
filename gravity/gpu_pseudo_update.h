@@ -8,9 +8,10 @@
  *   6.7b  gpu_scatter_pseudo_to_soa()    post-exchange AoS→SoA scatter
  *   6.7c  gpu_topnode_moment_resum()     replaces force_treeupdate_pseudos()
  *
- * After all three are wired up the gpu_gravity_tree_mark_all_dirty() call
- * at the end of force_treebuild (forcetree.cc:206) is removed: the SoA
- * stays authoritative throughout without a full reseed.
+ * Phase 6.8a removed the trailing gpu_gravity_tree_mark_all_dirty() call;
+ * Phase 7.a removed the entire mark_dirty/dirty_/seed_dirty_ machinery.
+ * The SoA stays authoritative throughout: build kernels populate it, the
+ * GPU drift kernel updates it in-place per stale-Ti_current node.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */

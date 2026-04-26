@@ -26,14 +26,6 @@ static struct gpu_gravity_tree_soa_t soa_ = {0};
 static int soa_capacity_ = 0;
 static int soa_valid_    = 0;
 
-/* Phase 6.0: per-node dirty tracking. dirty_[k]==1 means Nodes[MaxPart+k]
- * needs its SoA slot re-copied on the next acquire(). any_dirty_ is a
- * fast-path scalar so acquire() can early-exit when nothing changed.
- * dirty_count_ is for diagnostics only. */
-static unsigned char *dirty_    = NULL;
-static int            any_dirty_   = 0;
-static int            dirty_count_ = 0;
-
 static void free_arrays_(void)
 {
     if(soa_.center)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.center);   soa_.center   = NULL;}
@@ -102,9 +94,6 @@ static void free_arrays_(void)
     if(soa_.s_dm)           {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.s_dm);           soa_.s_dm           = NULL;}
     if(soa_.vs_dm)          {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(soa_.vs_dm);          soa_.vs_dm          = NULL;}
 #endif
-    if(dirty_) {free(dirty_); dirty_ = NULL;}
-    any_dirty_   = 0;
-    dirty_count_ = 0;
     soa_.nnodes = 0;
     /* Phase 6.8e: do NOT touch nextnode_aux / nextnode_aux_size here — the
      * alias is owned by force_treeallocate and outlives SoA realloc cycles. */
@@ -202,141 +191,26 @@ static int alloc_arrays_(int n)
         printf("gpu_gravity_tree: DM_SCALARFIELD mirrors alloc failed (n=%d)\n", n); return 0;
     }
 #endif
-    dirty_ = (unsigned char *) calloc((size_t) n, sizeof(unsigned char));
-    if(!dirty_) {printf("gpu_gravity_tree: dirty_ alloc failed (%d)\n", n); return 0;}
     return 1;
 }
 
-/* Element-wise Vec3 cross-type cast.  Needed for SoA fields retyped to
- * MyGravFloat (Phase 6.1b) when GIZMO_MIXED_PRECISION_GRAVITY makes
- * MyGravFloat=float while the AoS NODE/extNODE fields stay Vec3<MyFloat>
- * (=double).  In flag-OFF builds it collapses to a same-type copy. */
-template<typename Tdst, typename Tsrc>
-static inline Vec3<Tdst> vec3_cast_(const Vec3<Tsrc>& v) {
-    return Vec3<Tdst>{(Tdst)v[0], (Tdst)v[1], (Tdst)v[2]};
-}
-
-static inline void seed_node_(int k, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
-{
-    /* Copy the fields the walk reads for a single node index k. Used by both
-     * the full-seed loop (fresh allocation) and the partial-seed pass (dirty
-     * nodes only). SharedSpace pages migrate device-side on first kernel
-     * touch.  Vec3 fields use vec3_cast_ for the MyFloat -> MyGravFloat
-     * narrowing in mixed-precision builds. */
-    {
-        soa_.center[k]   = Nodes_host[k].center;
-        soa_.len[k]      = Nodes_host[k].len;
-        soa_.s[k]        = vec3_cast_<MyGravFloat>(Nodes_host[k].u.d.s);
-        soa_.mass[k]     = Nodes_host[k].u.d.mass;
-        soa_.sibling[k]  = Nodes_host[k].u.d.sibling;
-        soa_.nextnode[k] = Nodes_host[k].u.d.nextnode;
-        soa_.father[k]   = Nodes_host[k].u.d.father;
-        soa_.bitflags[k] = Nodes_host[k].u.d.bitflags;
-        soa_.maxsoft[k]  = Nodes_host[k].maxsoft;
-        soa_.N_part[k]   = Nodes_host[k].N_part;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        soa_.gasmass[k]  = Nodes_host[k].gasmass;
-#endif
-#ifdef RT_USE_GRAVTREE
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-            soa_.stellar_lum[k * N_RT_FREQ_BINS + b] = Nodes_host[k].stellar_lum[b];
-        }
-#ifdef CHIMES_STELLAR_FLUXES
-        for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
-            soa_.chimes_stellar_lum_G0 [k * CHIMES_LOCAL_UV_NBINS + b] = Nodes_host[k].chimes_stellar_lum_G0[b];
-            soa_.chimes_stellar_lum_ion[k * CHIMES_LOCAL_UV_NBINS + b] = Nodes_host[k].chimes_stellar_lum_ion[b];
-        }
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        soa_.rt_source_lum_s[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].rt_source_lum_s);
-        if(Extnodes_host) {soa_.rt_source_lum_vs[k] = vec3_cast_<MyGravFloat>(Extnodes_host[k].rt_source_lum_vs);}
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        soa_.sink_lum[k]      = Nodes_host[k].sink_lum;
-        soa_.sink_lum_grad[k] = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_lum_grad);
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        soa_.cr_injection[k]  = Nodes_host[k].cr_injection;
-#endif
-#ifdef SINK_CALC_DISTANCES
-        soa_.sink_mass[k] = Nodes_host[k].sink_mass;
-        soa_.sink_pos[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_pos);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-        soa_.sink_vel[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_vel);
-#endif
-#if defined(SPECIAL_POINT_MOTION)
-        soa_.sink_acc[k]  = vec3_cast_<MyGravFloat>(Nodes_host[k].sink_acc);
-#endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
-        soa_.N_SINK[k]    = Nodes_host[k].N_SINK;
-#endif
-#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-        soa_.MaxFeedbackVel[k] = Nodes_host[k].MaxFeedbackVel;
-#endif
-#endif
-        if(Extnodes_host) {
-            /* Unconditional Extnodes mirrors (Phase 6.1a). */
-            soa_.node_vs[k] = vec3_cast_<MyGravFloat>(Extnodes_host[k].vs);
-            soa_.hmax[k]    = Extnodes_host[k].hmax;
-            soa_.vmax[k]    = Extnodes_host[k].vmax;
-            soa_.divVmax[k] = Extnodes_host[k].divVmax;
-#ifdef DM_SCALARFIELD_SCREENING
-            soa_.vs_dm[k]   = vec3_cast_<MyGravFloat>(Extnodes_host[k].vs_dm);
-#endif
-        }
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        {int kk; for(kk=0;kk<6;kk++) {soa_.tidal_tensorps[k*6+kk] = Nodes_host[k].tidal_tensorps_prevstep.data[kk];}}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        soa_.mass_dm[k] = Nodes_host[k].mass_dm;
-        soa_.s_dm[k]    = vec3_cast_<MyGravFloat>(Nodes_host[k].s_dm);
-#endif
-    }
-}
-
-/* Phase 6.8a: seed_full_ is gone.  After the build sequence (Phase 6.6/6.7)
- * the SoA is authoritative; AoS-seeding only happens in two narrow places:
- *   (a) gpu_nextnode_backup_suns at the start of force_treebuild_single
- *       (topnode-range center/len/u.suns, single GPU kernel reading UVM AoS).
- *   (b) seed_dirty_ below — per-node reseed for nodes drifted by the
- *       force_drift_node loop in gpu_gravtree_walk_primary (pre-walk drift).
- *       This is the ONLY caller chain for mark_dirty / dirty_[] / seed_dirty_;
- *       see gpu_gravtree.cc:~1182 for the unique trigger. */
-
-/* Seed only nodes marked dirty in [0..n). Used after per-node mark_dirty
- * fires from the pre-walk drift loop. */
-static void seed_dirty_(int n, struct NODE *Nodes_host, struct extNODE *Extnodes_host)
-{
-    if(!dirty_) {return;}     /* nothing to do — drift loop never ran */
-    for(int k = 0; k < n; k++) {
-        if(dirty_[k]) {
-            seed_node_(k, Nodes_host, Extnodes_host);
-            dirty_[k] = 0;
-        }
-    }
-    soa_.nnodes    = n;
-    any_dirty_     = 0;
-    dirty_count_   = 0;
-}
+/* Phase 7.a: seed_node_ / seed_dirty_ / dirty_[] / mark_dirty / dirty_count_
+ * are all gone.  The GPU build pipeline (gpu_nextnode_backup_suns ->
+ * gpu_topology_emit_bfs -> gpu_topology_finalize_father ->
+ * gpu_topology_finalize_sibling -> gpu_moment_refresh ->
+ * gpu_nextnode_thread) populates the SoA end-to-end inside kernels; the GPU
+ * drift kernel (gpu_force_drift_nodes in gpu_force_drift.cc) writes both
+ * UVM AoS and SoA mirrors in one pass.  No host-side AoS->SoA reseed path
+ * remains.  acquire() is now a pure capacity-grow / pointer-grab. */
 
 extern "C" void gpu_gravity_tree_acquire(int min_nodes,
-                                          struct NODE    *Nodes_host,
-                                          struct extNODE *Extnodes_host)
+                                          struct NODE    * /*Nodes_host*/,
+                                          struct extNODE * /*Extnodes_host*/)
 {
-    /* Phase 6.8a: simplified.  No more seed_full_ / mark_all_dirty.  The build
-     * pipeline (gpu_nextnode_backup_suns -> emit_bfs -> finalize_father ->
-     * finalize_sibling -> moment_refresh -> nextnode_thread) populates the SoA
-     * end-to-end from suns_backup + UVM AoS reads inside kernels.  This entry
-     * point now only handles:
-     *   1. Capacity grow (free + alloc; soa_valid_ stays 1 because the next
-     *      caller in the pipeline is responsible for populating the SoA).
-     *   2. Per-node drift reseed via seed_dirty_ (the only consumer of dirty_[]). */
     if(min_nodes <= 0) {min_nodes = 1;}
 
     if(soa_capacity_ >= min_nodes && soa_.center) {
-        if(any_dirty_ && Nodes_host) {seed_dirty_(min_nodes, Nodes_host, Extnodes_host);}
-        return;   /* fast path: SoA already current */
+        return;   /* fast path: capacity already sufficient */
     }
 
     /* Capacity grew (or first call): allocate.  No seeding -- the build
@@ -349,33 +223,12 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
     soa_valid_    = 1;
 }
 
-extern "C" void gpu_gravity_tree_mark_dirty(int no)
-{
-    /* Phase 6.8a: only caller is the pre-walk drift loop in gpu_gravtree.cc
-     * (force_drift_node mutated s/len/vs/hmax/etc on a single node, before
-     * the GPU walk launches).  The next acquire() runs seed_dirty_ which
-     * pulls only the marked nodes from AoS into SoA -- O(active drifted),
-     * not O(MaxNodes). */
-    if(!dirty_ || soa_capacity_ <= 0) {return;}
-    int k = no - All.MaxPart;
-    if(k < 0 || k >= soa_capacity_) {return;}
-    if(dirty_[k] == 0) {
-        dirty_[k] = 1;
-        dirty_count_++;
-    }
-    any_dirty_ = 1;
-}
-
-extern "C" int gpu_gravity_tree_dirty_count(void)
-{
-    return any_dirty_ ? dirty_count_ : 0;
-}
-
 extern "C" void gpu_gravity_tree_release(void)
 {
     free_arrays_();
     soa_capacity_ = 0;
     soa_valid_    = 0;
+    gpu_force_drift_release();
 }
 
 extern "C" void gpu_gravity_tree_alias_nextnode(int *Nextnode_host, int n)
@@ -410,17 +263,12 @@ extern "C" void gpu_nextnode_backup_suns(int n)
         free_arrays_();
         if(!alloc_arrays_(cap)) {endrun(913401);}
         soa_capacity_ = cap;
-        soa_valid_ = 1;   /* Phase 6.8a: SoA is being populated by build kernels;
+        soa_valid_ = 1;   /* SoA is populated end-to-end by the build kernels;
                            * no AoS-seed needed.  Keep valid so acquire() fast-paths. */
-        any_dirty_ = 0;
-        dirty_count_ = 0;
-        if(dirty_) {memset(dirty_, 0, (size_t) soa_capacity_);}
     }
-    /* Phase 6.8a: seed the topnode range (centers / lengths / suns_backup)
+    /* Seed the topnode range (centers / lengths / suns_backup)
      * directly from UVM AoS into the SoA.  Nodes_base / Extnodes_base are
-     * SharedSpace (6.8d); read/write happens inside the lambda.  This
-     * replaces the seed_full_ chain that the old mark_all_dirty + acquire
-     * pair triggered just before BFS in force_treebuild_single.  emit_bfs
+     * SharedSpace (6.8d); read/write happens inside the lambda.  emit_bfs
      * reads soa->center / soa->len for the topnode range to compute new
      * child centers — without this seed it would read garbage. */
     struct NODE             *Nodes_uvm   = Nodes_base;

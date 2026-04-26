@@ -639,11 +639,11 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     struct particle_data *P_dev = gpu_particles_arena_P();
     if(!P_dev) {printf("gpu_moment_refresh: arena P_dev null\n"); return 1;}
 
-    /* Tree SoA must already be allocated/seeded with topology (CPU build
-     * just ran, mark_all_dirty was called by force_treebuild — the next
-     * acquire reseeds everything from AoS). Topology fields (sibling,
-     * nextnode, father, center, len, bitflags) come from the CPU-built
-     * Nodes[]; we overwrite the moments. */
+    /* Tree SoA storage must already be allocated; the GPU build pipeline
+     * (gpu_nextnode_backup_suns + topology emit/finalize kernels) populated
+     * topology fields (sibling, nextnode, father, center, len, bitflags)
+     * directly in the SoA before this kernel runs.  We overwrite the
+     * moments here. */
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -897,11 +897,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 }
 
 /* =================================================================== */
-/* Bulk SoA → Nodes[]/Extnodes[] AoS write-back. Mechanical inverse of  */
-/* seed_node_ in gpu_gravity_tree.cc. Runs on host (host-side mutation  */
-/* of the AoS arrays so the CPU pseudo path picks up the new moments).  */
-/* SharedSpace pages may need a Kokkos::fence before this; callers are  */
-/* responsible.                                                          */
+/* Bulk SoA → Nodes[]/Extnodes[] AoS write-back.  Runs on host         */
+/* (host-side mutation of the AoS arrays so the CPU pseudo path picks  */
+/* up the new moments).  SharedSpace pages may need a Kokkos::fence    */
+/* before this; callers are responsible.                                */
 /* =================================================================== */
 extern "C" void gpu_moment_writeback_to_aos(int n)
 {

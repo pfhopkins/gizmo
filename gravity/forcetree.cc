@@ -157,26 +157,22 @@ int force_treebuild(int npart, struct unbind_data *mp)
     }
     while(flag == -1);
 #ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 6.6: GPU finalize stage replaces force_update_node_recursive's
+    /* GPU finalize stage replaces force_update_node_recursive's
      * sibling/father/Father[] outputs.  Order matters:
-     *   1. mark_all_dirty + acquire (topology was just rebuilt; SoA stale).
-     *   2. finalize_father: writes soa->father for all internal nodes
+     *   1. finalize_father: writes soa->father for all internal nodes
      *      (covers topnodes — emit_bfs only set inside-topleaf), and
      *      writes Father[i] for every particle child.  Must run before
      *      moment_refresh (which reads soa->father in its dependency walk).
-     *   3. finalize_sibling: writes soa->sibling for all internal nodes.
+     *   2. finalize_sibling: writes soa->sibling for all internal nodes.
      *      Must run before nextnode_thread (which reads soa->sibling).
-     *   4. moment_refresh: writes moments + Extnodes/N_part/maxsoft/bitflags.
-     *   5. nextnode_thread: writes nextnode + Nextnode[] from suns_backup.
-     *   6. writeback_d_to_aos: pushes soa->sibling/father into AoS u.d for
+     *   3. moment_refresh: writes moments + Extnodes/N_part/maxsoft/bitflags.
+     *   4. nextnode_thread: writes nextnode + Nextnode[] from suns_backup.
+     *   5. writeback_d_to_aos: pushes soa->sibling/father into AoS u.d for
      *      legacy CPU walks.  Clobbers u.suns via union, but suns_backup
      *      in SoA is the truth.  Runs last so prior steps reading SoA see
-     *      consistent state. */
-    /* Phase 6.8a: no mark_all_dirty here.  After force_treebuild_single
-     * the SoA is authoritative for inside-topleaf topology; the finalize
-     * kernels below write soa->father / soa->sibling / soa->bitflags from
-     * suns_backup, no AoS-seed needed.  topnode-range center/len was already
-     * pulled into SoA by gpu_nextnode_backup_suns inside force_treebuild_single. */
+     *      consistent state.  topnode-range center/len was already
+     *      pulled into SoA by gpu_nextnode_backup_suns inside
+     *      force_treebuild_single. */
     if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(913320);}
     if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(913321);}
     /* Phase 6.8f: GPU kernel resets GravCost + ephemeral fields for all
@@ -1474,13 +1470,10 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.bitflags &= (~((1 << BITFLAG_MULTIPLEPARTICLES)));    /* this clears the bits */
     Nodes[no].u.d.bitflags |= multiple_flag;
     Nodes[no].maxsoft = maxsoft;
-#ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 6.2: surgical SoA invalidation. force_treeupdate_pseudos has
-     * just rewritten the AoS moments at `no` from its (foreign-pseudo)
-     * children's SoA-derived contributions. Mark this node dirty so the
-     * next gpu_gravity_tree_acquire reseeds only its slot. */
-    gpu_gravity_tree_mark_dirty(no);
-#endif
+    /* Phase 7.a: no GPU SoA hook here — force_treeupdate_pseudos is the CPU
+     * pseudo-path; on GPU builds it is replaced by gpu_topnode_moment_resum
+     * (gpu_pseudo_update.cc) which writes the SoA directly.  This function
+     * compiles on both, but the GPU build never calls it. */
 }
 
 
