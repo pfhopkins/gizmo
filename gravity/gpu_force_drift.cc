@@ -115,7 +115,10 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     drift_table_refresh_();
 
     int      MaxPart        = All.MaxPart;
-    int      n_nodes        = Numnodestree;
+    int      n_local_nodes  = Numnodestree;
+    int      n_foreign_nodes = Numforeignnodes;       /* Phase 9.2b */
+    int      maxNodes_snap  = MaxNodes;               /* Phase 9.2b: foreign-range base */
+    int      n_nodes        = n_local_nodes + n_foreign_nodes;
     integertime ti_target   = time1;
     int      comoving       = (All.ComovingIntegrationOn ? 1 : 0);
     double   timebase_int   = All.Timebase_interval;
@@ -143,8 +146,23 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     Vec3<MyGravFloat> *vs_dm_soa   = soa->vs_dm;
 #endif
 
-    Kokkos::parallel_for("gpu_force_drift_nodes", n_nodes, KOKKOS_LAMBDA(int k) {
-        int no = MaxPart + k;
+    Kokkos::parallel_for("gpu_force_drift_nodes", n_nodes, KOKKOS_LAMBDA(int kk) {
+        /* Phase 9.2b: kk in [0, n_local_nodes) drives local nodes; kk in
+         * [n_local_nodes, n_local_nodes + n_foreign_nodes) drives foreign
+         * nodes installed by LET unpack (slot index in [0, Numforeignnodes)).
+         * SoA index `k` differs from iteration index for foreign nodes:
+         *   local:    k_soa = kk          ; no = MaxPart + kk
+         *   foreign:  k_soa = maxNodes_snap + (kk - n_local_nodes)
+         *             no    = MaxPart + maxNodes_snap + (kk - n_local_nodes) */
+        int k, no;
+        if(kk < n_local_nodes) {
+            k  = kk;
+            no = MaxPart + kk;
+        } else {
+            int slot = kk - n_local_nodes;
+            k  = maxNodes_snap + slot;
+            no = MaxPart + maxNodes_snap + slot;
+        }
         if(Nodes_uvm[no].Ti_current == ti_target) {return;}
 
         /* dilation factor — see compile-time gate at file top. */
