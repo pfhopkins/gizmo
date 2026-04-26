@@ -123,9 +123,10 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     double   logTMax        = drift_table_logTimeMax_;
     const double *dt_table  = drift_table_dev_;
 
-    /* UVM bases (Phase 6.8d).  Index by [MaxPart + k]. */
-    struct NODE     *Nodes_uvm    = Nodes_base;
-    struct extNODE  *Extnodes_uvm = Extnodes_base;
+    /* Use the SHIFTED pointers (Nodes = Nodes_base - MaxPart, Extnodes = Extnodes_base - MaxPart)
+     * so that Nodes_uvm[MaxPart + k] == Nodes_base[k] for all k in [0, Numnodestree). */
+    struct NODE     *Nodes_uvm    = Nodes;
+    struct extNODE  *Extnodes_uvm = Extnodes;
 
     /* SoA mirror handles. */
     MyFloat           *len_soa     = soa->len;
@@ -251,6 +252,7 @@ extern "C" void gpu_force_drift_release(void)
 }
 
 GPU_ALL_SYNC_FUNC(force_drift)
+GPU_ALL_SYNC_FUNC(gpu_assign_gravcost)
 
 
 /* =========================================================================== *
