@@ -1976,11 +1976,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
                 nop = &Nodes[no];
                 int in_foreign = (no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes);
-                /* LET guard: if a foreign node has nextnode < 0 (unreplaced sentinel from unpack),
-                 * following it would exit the walk loop via while(no>=0).  This happens when
-                 * topleaf_sibling == -1 (end-of-walk), which is the common case for the last
-                 * topleaf in the tree.  Force multipole treatment to avoid aborting the foreign
-                 * subtree walk and missing all subsequent nodes. */
+                /* LET guard: if a foreign node has nextnode < 0 (unreplaced -1 sentinel from
+                 * unpack, meaning this is the last topleaf with no sibling), opening the node
+                 * would immediately exit the while(no >= 0) walk and skip its force contribution.
+                 * Force multipole treatment instead so the node's contribution is accumulated. */
                 int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
 
                 if(mode == 1)

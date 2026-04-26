@@ -562,6 +562,13 @@ gpu_gravtree_walk_one(int target,
             dr[2] = s_node[2] - pos[2];
             r2 = dr.norm_sq();
 
+            /* LET guard (mirrors forcetree.cc): if a foreign node has nextnode < 0
+             * (unreplaced -1 sentinel from unpack), opening it would immediately exit
+             * the while(no >= 0) walk, skipping this node's force contribution.
+             * Force multipole treatment instead. */
+            int in_foreign_n = (no >= maxPart + maxNodes);
+            int foreign_force_multipole = (in_foreign_n && (s->nextnode[idx] < 0));
+
 #ifdef PMGRID
             if(r2 > rcut2)
             {
@@ -575,7 +582,7 @@ gpu_gravtree_walk_one(int target,
             }
 #endif
 
-            if(h < msoft_node) {
+            if(!foreign_force_multipole && h < msoft_node) {
                 if(r2 < msoft_node * msoft_node) {
                     no = s->nextnode[idx]; continue;
                 }
@@ -583,31 +590,33 @@ gpu_gravtree_walk_one(int target,
 
             if(All.ErrTolTheta)
             {
-                if(len_node * len_node > r2 * All.ErrTolTheta * All.ErrTolTheta) {
+                if(!foreign_force_multipole && len_node * len_node > r2 * All.ErrTolTheta * All.ErrTolTheta) {
                     no = s->nextnode[idx]; continue;
                 }
             }
             else
             {
-                if((r2 < (soft + 0.6*len_node)*(soft + 0.6*len_node)) ||
-                   (r2 < (msoft_node + 0.6*len_node)*(msoft_node + 0.6*len_node))) {
+                if(!foreign_force_multipole && ((r2 < (soft + 0.6*len_node)*(soft + 0.6*len_node)) ||
+                   (r2 < (msoft_node + 0.6*len_node)*(msoft_node + 0.6*len_node)))) {
                     no = s->nextnode[idx]; continue;
                 }
-                if(mass_node * len_node * len_node > r2 * r2 * aold) {
+                if(!foreign_force_multipole && mass_node * len_node * len_node > r2 * r2 * aold) {
                     no = s->nextnode[idx]; continue;
                 }
                 double dcx = fabs(center_node[0] - pos[0]);
                 double dcy = fabs(center_node[1] - pos[1]);
                 double dcz = fabs(center_node[2] - pos[2]);
-                if(dcx < 0.60 * len_node && dcy < 0.60 * len_node && dcz < 0.60 * len_node) {
+                if(!foreign_force_multipole && dcx < 0.60 * len_node && dcy < 0.60 * len_node && dcz < 0.60 * len_node) {
                     no = s->nextnode[idx]; continue;
                 }
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
                 /* Force star-star nodes to open inside the direct-gravity radius. */
                 if(ptype == 5) {
-                    double r_direct = (double)SINGLE_STAR_DIRECT_GRAVITY_RADIUS / UNIT_LENGTH_IN_AU + 0.6*len_node;
-                    if((s->N_SINK[idx] > 0) && (r2 < r_direct * r_direct)) {
-                        no = s->nextnode[idx]; continue;
+                    if(!foreign_force_multipole && (s->N_SINK[idx] > 0)) {
+                        double r_direct = (double)SINGLE_STAR_DIRECT_GRAVITY_RADIUS / UNIT_LENGTH_IN_AU + 0.6*len_node;
+                        if(r2 < r_direct * r_direct) {
+                            no = s->nextnode[idx]; continue;
+                        }
                     }
                 }
 #endif

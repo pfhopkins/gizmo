@@ -47,11 +47,18 @@ static void arena_print_struct_offsets_(void)
     printf("ARENA_STRUCT_OFFSETS: sizeof(particle_data)=%d  sizeof(gas_cell_data)=%d\n",
            (int)sizeof(struct particle_data), (int)sizeof(struct gas_cell_data));
     /* key particle_data fields */
+#ifdef EVALPOTENTIAL
     printf("  P: GravAccel=%d  Potential=%d  OldAcc=%d  GravCost=%d\n",
            (int)offsetof(struct particle_data, GravAccel),
            (int)offsetof(struct particle_data, Potential),
            (int)offsetof(struct particle_data, OldAcc),
            (int)offsetof(struct particle_data, GravCost));
+#else
+    printf("  P: GravAccel=%d  OldAcc=%d  GravCost=%d\n",
+           (int)offsetof(struct particle_data, GravAccel),
+           (int)offsetof(struct particle_data, OldAcc),
+           (int)offsetof(struct particle_data, GravCost));
+#endif
     printf("  P: Pos=%d  Vel=%d  Mass=%d  Type=%d  ID=%d\n",
            (int)offsetof(struct particle_data, Pos),
            (int)offsetof(struct particle_data, Vel),
