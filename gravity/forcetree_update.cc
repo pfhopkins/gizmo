@@ -9,6 +9,11 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
+#ifdef OPENMP_GPU_OFFLOAD
+/* Phase 7.c: GPU replacement for force_update_tree. */
+extern "C" void gpu_force_update_tree(void);
+#endif
+
 #ifdef OPENMP_TREE_UPDATE
 /* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
 static inline void atomic_max_double(double* addr, double val) {
@@ -38,6 +43,11 @@ static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for ato
 
 void force_update_tree(void)
 {
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 7.c: GPU kick pipeline — drift + kick + MPI apply, all GPU-side except MPI. */
+    gpu_force_update_tree();
+    return;
+#endif
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree");
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */
@@ -261,6 +271,7 @@ void force_finish_kick_nodes(void)
 		 domainVmax_all, counts, offset_vmax, MPI_BYTE, MPI_COMM_WORLD);
 
 
+  /* DIAGNOSTIC: after MPI exchange, print totDomainNumChanged and sum of received dp */
   /* construct momentum kicks in top-level tree */
   for(i = 0; i < totDomainNumChanged; i++)
     {
