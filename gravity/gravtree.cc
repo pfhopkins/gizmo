@@ -198,6 +198,33 @@ void gravity_tree(void)
             }
             tend = my_second(); timetree1 += timediff(tstart, tend);
 
+#ifdef OPENMP_GPU_OFFLOAD
+            /* ============================================================
+             * Phase 9.4 RETIREMENT: CPU gravity export round-trip
+             * ------------------------------------------------------------
+             * Under OPENMP_GPU_OFFLOAD the GPU pre-pass + Locally Essential
+             * Tree (Phase 9.0-9.3) supply all foreign-rank gravity locally,
+             * so the legacy MPI export round-trip is dead.  The block below
+             * (BufferFullFlag compaction, MPI_Alltoall/Sendrecv exchange,
+             * gravity_secondary_loop, scatter-back to P[]) is gated out in
+             * #ifndef OPENMP_GPU_OFFLOAD.  Final deletion is scheduled in
+             * the Step 7 dead-code cleanup; the export infrastructure
+             * (BunchSize, DataIndexTable, DataNodeList, gravdata_in/out)
+             * is kept alive for surviving consumers (mg_gradient_correction,
+             * potential.cc, subfind_potential).  See memory:
+             * project_post_let_porting.md for the full audit.
+             *
+             * If Nexport > 0 here it means a particle's gravity is not
+             * covered by LET -- raise LETAllocFactor in params.
+             * ============================================================ */
+            if(Nexport > 0) {
+                printf("Phase 9.4 LET export retirement: rank %d has Nexport=%d particles needing foreign gravity not covered by LET -- raise LETAllocFactor\n", ThisTask, Nexport);
+                fflush(stdout);
+                endrun(914040);
+            }
+#endif
+
+#ifndef OPENMP_GPU_OFFLOAD
             if(BufferFullFlag) /* we've filled the buffer or reached the end of the list, prepare for communications */
             {
                 int last_nextparticle = NextParticle;
@@ -477,10 +504,12 @@ void gravity_tree(void)
             }
             tend = my_second(); timetree1 += timediff(tstart, tend);
             myfree(GravDataOut); myfree(GravDataIn);
+#endif /* !OPENMP_GPU_OFFLOAD -- close Phase 9.4 retirement gate */
 #ifdef OPENMP_GPU_OFFLOAD
-            /* Export-back loop above wrote P[place].GravAccel (and other P[] fields) while arena
-             * may be valid.  Invalidate here so the next iteration's acquire re-seeds from host
-             * instead of aborting the arena-debug consistency check. */
+            /* Phase 9.4: export-back loop is retired under GPU offload, so the arena
+             * is not invalidated by host-side P[] writes.  Keep this call as a no-op
+             * safety net (it is harmless if arena state is already coherent) so any
+             * surviving consumer that mutates P[] before the next acquire is covered. */
             gpu_particles_arena_invalidate();
 #endif
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
