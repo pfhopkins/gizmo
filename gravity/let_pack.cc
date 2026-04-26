@@ -407,6 +407,21 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
     *capacity = new_cap;
 }
 
+static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacity)
+{
+    if(needed <= *capacity) return;
+    int new_cap = (*capacity == 0) ? 16 : *capacity;
+    while(new_cap < needed) new_cap *= 2;
+    struct LETSubtreeHeader *nb = (struct LETSubtreeHeader *) realloc(*buf, (size_t)new_cap * sizeof(struct LETSubtreeHeader));
+    if(!nb)
+    {
+        printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
+        endrun(914011);
+    }
+    *buf = nb;
+    *capacity = new_cap;
+}
+
 static void pack_recurse(int no, int sib_terminator,
                           const struct LETPerRankPayload *payload,
                           int subtree_root_topleaf_no,  /* unused; kept for future per-subtree edge encoding */
@@ -541,9 +556,13 @@ static void pack_recurse(int no, int sib_terminator,
 extern "C" int let_pack_for_rank(int R,
                                   const struct LETPerRankPayload *all_ranks,
                                   struct LETNodeWire **out_buf,
-                                  int *out_capacity)
+                                  int *out_capacity,
+                                  struct LETSubtreeHeader **out_hdr_buf,
+                                  int *out_hdr_capacity,
+                                  int *out_hdr_count)
 {
     int count = 0;
+    int hdr_count = 0;
     /* Walk the LOCAL tree from each topnode that's NOT in R's domain.  Topnodes
      * in R's domain are R's own data; they won't help R (and would create a
      * self-reference if shipped). */
@@ -571,6 +590,10 @@ extern "C" int let_pack_for_rank(int R,
 
         int sib_term = Nodes[topleaf_no].u.d.sibling;
 
+        /* Record wire offset BEFORE this topleaf's pack, so we can emit a
+         * subtree header covering [wire_offset, *count) on the way out. */
+        int wire_offset_before = count;
+
         /* Walk the topleaf's children via the sibling chain starting from subtree_root */
         int child = subtree_root;
         while(child != sib_term && child >= 0)
@@ -596,7 +619,20 @@ extern "C" int let_pack_for_rank(int R,
             }
             child = next_child;
         }
+
+        /* Emit subtree header if this topleaf shipped any nodes */
+        int subtree_count = count - wire_offset_before;
+        if(subtree_count > 0)
+        {
+            grow_hdr_buf(out_hdr_buf, hdr_count + 1, out_hdr_capacity);
+            (*out_hdr_buf)[hdr_count].topleaf_idx = i;
+            (*out_hdr_buf)[hdr_count].wire_offset = wire_offset_before;
+            (*out_hdr_buf)[hdr_count].count       = subtree_count;
+            (*out_hdr_buf)[hdr_count]._pad0       = 0;
+            hdr_count++;
+        }
     }
+    *out_hdr_count = hdr_count;
     return count;
 }
 
@@ -605,15 +641,26 @@ extern "C" int let_pack_for_rank(int R,
  * ---------------------------------------------------------------------- */
 extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                                    const int *send_count_per_rank,
+                                   struct LETSubtreeHeader **send_hdr_per_rank,
+                                   const int *send_hdr_count_per_rank,
                                    struct LETNodeWire **recv_buf,
                                    int *recv_count_per_rank,
-                                   int *recv_count_total)
+                                   int *recv_count_total,
+                                   struct LETSubtreeHeader **recv_hdr_buf,
+                                   int *recv_hdr_count_per_rank,
+                                   int *recv_hdr_count_total)
 {
-    /* Phase 1: exchange counts */
+    /* Phase 1: exchange node-counts AND header-counts */
     int *send_counts_int = (int *) mymalloc("LET_send_counts", NTask * sizeof(int));
     int *recv_counts_int = (int *) mymalloc("LET_recv_counts", NTask * sizeof(int));
-    for(int r = 0; r < NTask; r++) send_counts_int[r] = send_count_per_rank[r];
+    int *send_hdr_counts = (int *) mymalloc("LET_send_hdr_counts", NTask * sizeof(int));
+    int *recv_hdr_counts = (int *) mymalloc("LET_recv_hdr_counts", NTask * sizeof(int));
+    for(int r = 0; r < NTask; r++) {
+        send_counts_int[r] = send_count_per_rank[r];
+        send_hdr_counts[r] = send_hdr_count_per_rank[r];
+    }
     MPI_Alltoall(send_counts_int, 1, MPI_INT, recv_counts_int, 1, MPI_INT, MPI_COMM_WORLD);
+    MPI_Alltoall(send_hdr_counts, 1, MPI_INT, recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
 
     /* Concatenate per-rank send buffers into one flat send buffer */
     int total_send = 0;
@@ -646,20 +693,63 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
         r_off += recv_counts_int[r];
     }
 
-    /* Phase 2: exchange payloads */
+    /* Phase 2a: exchange node payloads */
     MPI_Alltoallv(flat_send, send_bytes, send_offsets, MPI_BYTE,
                   flat_recv, recv_bytes, recv_offsets, MPI_BYTE,
                   MPI_COMM_WORLD);
 
-    /* Hand back the receive buffer */
+    /* Phase 2b: exchange subtree headers (parallel buffer) */
+    int total_hdr_send = 0, total_hdr_recv = 0;
+    for(int r = 0; r < NTask; r++) {
+        total_hdr_send += send_hdr_counts[r];
+        recv_hdr_count_per_rank[r] = recv_hdr_counts[r];
+        total_hdr_recv += recv_hdr_counts[r];
+    }
+    struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
+        (size_t)total_hdr_send * sizeof(struct LETSubtreeHeader) + 1);
+    struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
+        (size_t)total_hdr_recv * sizeof(struct LETSubtreeHeader) + 1);
+    int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
+    int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
+    int *send_hdr_bytes   = (int *) mymalloc("LET_send_hdr_bytes",   NTask * sizeof(int));
+    int *recv_hdr_bytes   = (int *) mymalloc("LET_recv_hdr_bytes",   NTask * sizeof(int));
+    int hs_off = 0, hr_off = 0;
+    for(int r = 0; r < NTask; r++)
+    {
+        send_hdr_offsets[r] = hs_off * sizeof(struct LETSubtreeHeader);
+        recv_hdr_offsets[r] = hr_off * sizeof(struct LETSubtreeHeader);
+        send_hdr_bytes[r]   = send_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
+        recv_hdr_bytes[r]   = recv_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
+        if(send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
+        {
+            memcpy(flat_hdr_send + hs_off, send_hdr_per_rank[r],
+                   (size_t)send_hdr_counts[r] * sizeof(struct LETSubtreeHeader));
+        }
+        hs_off += send_hdr_counts[r];
+        hr_off += recv_hdr_counts[r];
+    }
+    MPI_Alltoallv(flat_hdr_send, send_hdr_bytes, send_hdr_offsets, MPI_BYTE,
+                  flat_hdr_recv, recv_hdr_bytes, recv_hdr_offsets, MPI_BYTE,
+                  MPI_COMM_WORLD);
+
+    /* Hand back the receive buffers */
     *recv_buf = flat_recv;
     *recv_count_total = total_recv;
+    *recv_hdr_buf = flat_hdr_recv;
+    *recv_hdr_count_total = total_hdr_recv;
 
+    myfree(recv_hdr_bytes);
+    myfree(send_hdr_bytes);
+    myfree(recv_hdr_offsets);
+    myfree(send_hdr_offsets);
+    myfree(flat_hdr_send);
     myfree(recv_bytes);
     myfree(send_bytes);
     myfree(recv_offsets);
     myfree(send_offsets);
     myfree(flat_send);
+    myfree(recv_hdr_counts);
+    myfree(send_hdr_counts);
     myfree(recv_counts_int);
     myfree(send_counts_int);
     return 0;
@@ -696,31 +786,33 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
  * roots, and uses _pad0 as the topleaf-correspondence target.
  * ---------------------------------------------------------------------- */
 
-/* Forward declare to be implemented next */
+/* Phase 9.1e_v2: install nodes per-sender into contiguous foreign slots,
+ * remap intra-sender wire indices to absolute Node indices, resolve
+ * subtree-edge sentinels via per-subtree topleaf, and redirect each affected
+ * local topleaf's u.d.nextnode at the foreign subtree root.
+ *
+ * Key invariants:
+ *   - Within sender r's flat node payload of length recv_count_per_rank[r],
+ *     each LETNodeWire's u.d.{sibling,nextnode} value V is either:
+ *       * V in [0, recv_count_per_rank[r])  -> intra-sender wire index;
+ *         remap to slot_base_r + V.
+ *       * V == LET_EDGE_SENTINEL_BASE       -> subtree-edge: redirect to
+ *         the LOCAL topleaf's u.d.sibling (lookup via the subtree header
+ *         that owns this node's wire range).
+ *       * V == -1 (legacy "end of walk")    -> leave as-is.
+ *       * other negative                    -> leave as-is (defensive).
+ *   - Each subtree header h carries topleaf_idx referring to the SHARED
+ *     DomainNodeIndex[]/DomainTask[] partition (same on every rank).  The
+ *     receiver redirects Nodes[DomainNodeIndex[h.topleaf_idx]].u.d.nextnode
+ *     -> slot_base_r + h.wire_offset.
+ */
 extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
                                        const int *recv_count_per_rank,
-                                       int recv_count_total)
+                                       int recv_count_total,
+                                       const struct LETSubtreeHeader *recv_hdr_buf,
+                                       const int *recv_hdr_count_per_rank,
+                                       int recv_hdr_count_total)
 {
-    /* Phase 9.1e first-cut: install nodes flat, remap pointers within sender.
-     *
-     * Critical limitation in this first-cut implementation: the per-subtree
-     * topleaf-correspondence (which local topleaf does each foreign subtree
-     * belong to?) is not yet carried in the wire data.  Without that, we can
-     * unpack into Nodes_base foreign slots but cannot rewrite the local
-     * topleaf's u.d.nextnode to redirect the walk into the foreign subtree.
-     *
-     * For Phase 9.1 first-cut: install foreign nodes for inspection but do
-     * NOT redirect topleaves.  Walk continues to use legacy export path
-     * for now.  9.1e_v2 will add the topleaf-correspondence and complete
-     * the walk-redirect.
-     *
-     * This limitation means the first-cut LET exchange ships node data but
-     * the walk doesn't yet consume it.  This is the gap that Mac validation
-     * (9.3) would expose -- forces should match Phase 7 reference because
-     * we're still using the legacy export.  Forces will start changing
-     * once 9.2c bumps LETAllocFactor>0 AND the topleaf-redirect lands.
-     */
-
     if(recv_count_total == 0) return 0;
 
     /* Capacity check */
@@ -737,16 +829,77 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
         endrun(914020);
     }
 
-    /* Install: copy NODE+extNODE bytes into Nodes_base[MaxPart+MaxNodes+slot] */
-    for(int i = 0; i < recv_count_total; i++)
+    int node_off = 0;     /* running offset into recv_buf (per-sender) */
+    int hdr_off  = 0;     /* running offset into recv_hdr_buf (per-sender) */
+
+    for(int r = 0; r < NTask; r++)
     {
-        int slot = Numforeignnodes + i;
-        int abs_idx = All.MaxPart + MaxNodes + slot;
-        Nodes[abs_idx]    = recv_buf[i].node;
-        Extnodes[abs_idx] = recv_buf[i].extnode;
-        /* Pointer remap deferred to 9.1e_v2 (needs per-subtree topleaf metadata). */
+        int rcount = recv_count_per_rank[r];
+        int hcount = recv_hdr_count_per_rank[r];
+        if(rcount == 0)
+        {
+            /* skip — no nodes from this sender; should also have no headers */
+            hdr_off += hcount;
+            continue;
+        }
+
+        int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
+
+        /* Pass 1: install nodes (raw byte copy), remap intra-sender refs.
+         * Sentinel resolution (subtree-edge) is done in Pass 2 once we know
+         * which subtree each node belongs to. */
+        for(int j = 0; j < rcount; j++)
+        {
+            int abs_idx = slot_base + j;
+            Nodes[abs_idx]    = recv_buf[node_off + j].node;
+            Extnodes[abs_idx] = recv_buf[node_off + j].extnode;
+
+            int sib  = Nodes[abs_idx].u.d.sibling;
+            int next = Nodes[abs_idx].u.d.nextnode;
+            if(sib  >= 0 && sib  < rcount) Nodes[abs_idx].u.d.sibling  = slot_base + sib;
+            if(next >= 0 && next < rcount) Nodes[abs_idx].u.d.nextnode = slot_base + next;
+            Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
+        }
+
+        /* Pass 2: resolve subtree-edge sentinels per header, and redirect
+         * each affected local topleaf's u.d.nextnode at the foreign subtree
+         * root. */
+        for(int hh = 0; hh < hcount; hh++)
+        {
+            const struct LETSubtreeHeader *h = &recv_hdr_buf[hdr_off + hh];
+            int topleaf_idx = h->topleaf_idx;
+            int wire_off    = h->wire_offset;
+            int wire_cnt    = h->count;
+
+            /* Defensive bounds */
+            if(topleaf_idx < 0 || topleaf_idx >= NTopleaves) continue;
+            if(wire_off < 0 || wire_cnt <= 0 || wire_off + wire_cnt > rcount) continue;
+
+            int local_topleaf_no = DomainNodeIndex[topleaf_idx];
+            if(local_topleaf_no < All.MaxPart || local_topleaf_no >= All.MaxPart + MaxNodes) continue;
+
+            int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
+            int subtree_root    = slot_base + wire_off;
+
+            /* Sentinel resolution within this subtree's range */
+            for(int j = wire_off; j < wire_off + wire_cnt; j++)
+            {
+                int abs_idx = slot_base + j;
+                if(Nodes[abs_idx].u.d.sibling  == LET_EDGE_SENTINEL_BASE)
+                    Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.nextnode == LET_EDGE_SENTINEL_BASE)
+                    Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
+            }
+
+            /* Redirect local topleaf at the foreign subtree root */
+            Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
+        }
+
+        Numforeignnodes += rcount;
+        node_off += rcount;
+        hdr_off  += hcount;
     }
-    Numforeignnodes += recv_count_total;
+
     return 0;
 }
 
@@ -771,32 +924,55 @@ extern "C" int let_run_exchange(void)
     /* Pack per remote rank.  Per-rank send buffers grown via realloc.  */
     struct LETNodeWire **send_per_rank = (struct LETNodeWire **) mymalloc("LET_send_perrank",
         NTask * sizeof(struct LETNodeWire *));
-    int *send_count = (int *) mymalloc("LET_send_count", NTask * sizeof(int));
-    for(int r = 0; r < NTask; r++) {send_per_rank[r] = NULL; send_count[r] = 0;}
+    struct LETSubtreeHeader **send_hdr_per_rank = (struct LETSubtreeHeader **) mymalloc("LET_send_hdr_perrank",
+        NTask * sizeof(struct LETSubtreeHeader *));
+    int *send_count     = (int *) mymalloc("LET_send_count",     NTask * sizeof(int));
+    int *send_hdr_count = (int *) mymalloc("LET_send_hdr_count", NTask * sizeof(int));
+    for(int r = 0; r < NTask; r++) {
+        send_per_rank[r] = NULL; send_count[r] = 0;
+        send_hdr_per_rank[r] = NULL; send_hdr_count[r] = 0;
+    }
 
     for(int r = 0; r < NTask; r++)
     {
-        if(r == ThisTask) {send_count[r] = 0; continue;}
-        int cap = 0;
-        send_count[r] = let_pack_for_rank(r, all_payloads, &send_per_rank[r], &cap);
+        if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
+        int cap = 0, hcap = 0, hcnt = 0;
+        send_count[r] = let_pack_for_rank(r, all_payloads,
+                                           &send_per_rank[r], &cap,
+                                           &send_hdr_per_rank[r], &hcap, &hcnt);
+        send_hdr_count[r] = hcnt;
     }
 
     /* Exchange */
     struct LETNodeWire *recv_flat = NULL;
-    int *recv_count = (int *) mymalloc("LET_recv_count", NTask * sizeof(int));
+    struct LETSubtreeHeader *recv_hdr_flat = NULL;
+    int *recv_count     = (int *) mymalloc("LET_recv_count",     NTask * sizeof(int));
+    int *recv_hdr_count = (int *) mymalloc("LET_recv_hdr_count", NTask * sizeof(int));
     int recv_total = 0;
-    let_exchange_nodes(send_per_rank, send_count, &recv_flat, recv_count, &recv_total);
+    int recv_hdr_total = 0;
+    let_exchange_nodes(send_per_rank, send_count,
+                       send_hdr_per_rank, send_hdr_count,
+                       &recv_flat, recv_count, &recv_total,
+                       &recv_hdr_flat, recv_hdr_count, &recv_hdr_total);
 
     /* Free per-rank send buffers (allocated via realloc, not mymalloc) */
-    for(int r = 0; r < NTask; r++) if(send_per_rank[r]) free(send_per_rank[r]);
+    for(int r = 0; r < NTask; r++) {
+        if(send_per_rank[r]) free(send_per_rank[r]);
+        if(send_hdr_per_rank[r]) free(send_hdr_per_rank[r]);
+    }
 
     /* Unpack */
-    let_unpack_and_install(recv_flat, recv_count, recv_total);
+    let_unpack_and_install(recv_flat, recv_count, recv_total,
+                           recv_hdr_flat, recv_hdr_count, recv_hdr_total);
 
     /* Cleanup */
-    if(recv_flat) myfree(recv_flat);
+    if(recv_hdr_flat) myfree(recv_hdr_flat);
+    if(recv_flat)     myfree(recv_flat);
+    myfree(recv_hdr_count);
     myfree(recv_count);
+    myfree(send_hdr_count);
     myfree(send_count);
+    myfree(send_hdr_per_rank);
     myfree(send_per_rank);
     myfree(all_payloads);
     return 0;

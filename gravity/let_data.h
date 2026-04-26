@@ -122,6 +122,33 @@ struct LETNodeWire {
    we plan to do direct topleaf-nextnode substitution (no sentinel). */
 
 /* ----------------------------------------------------------------------
+ * Per-subtree header (Phase 9.1e_v2)
+ *
+ * Sender emits one LETSubtreeHeader per OUR topleaf shipped to a given
+ * receiver R.  The header tells the receiver:
+ *   - which LOCAL topleaf (DomainNodeIndex[topleaf_idx]) this foreign
+ *     subtree is the contents of, so the receiver can redirect that
+ *     topleaf's u.d.nextnode at the foreign subtree root, AND know which
+ *     local topleaf's sibling each LET_EDGE_SENTINEL_BASE maps to.
+ *   - the range [wire_offset, wire_offset+count) inside the sender's flat
+ *     LETNodeWire payload that contains this subtree.  The first wire
+ *     entry (at wire_offset) is the subtree root.
+ *
+ * All ranks share the same DomainTask[]/DomainNodeIndex[] partition on a
+ * given build, so topleaf_idx is rank-agnostic and well-defined on the
+ * receiver.
+ *
+ * Headers are exchanged in their own parallel MPI_Alltoall+Alltoallv
+ * step, mirroring the node-payload exchange.
+ * ---------------------------------------------------------------------- */
+struct LETSubtreeHeader {
+    int topleaf_idx;    /* index into DomainNodeIndex[]; rank-agnostic */
+    int wire_offset;    /* offset into the sender's flat LETNodeWire array */
+    int count;          /* number of LETNodeWire entries in this subtree */
+    int _pad0;          /* align to 16 B */
+};
+
+/* ----------------------------------------------------------------------
  * Inline helpers (header-only, GPU-callable as needed)
  * ---------------------------------------------------------------------- */
 
@@ -173,18 +200,28 @@ int  let_exchange_payloads(const struct LETPerRankPayload *local,
 int  let_pack_for_rank(int R,
                        const struct LETPerRankPayload *all_ranks,
                        struct LETNodeWire **out_buf,
-                       int *out_capacity);
+                       int *out_capacity,
+                       struct LETSubtreeHeader **out_hdr_buf,
+                       int *out_hdr_capacity,
+                       int *out_hdr_count);
 
 /*! Two-phase MPI exchange:
- *    Phase 1: MPI_Alltoall the per-rank node-counts so receivers can size
- *             their receive buffer.
- *    Phase 2: MPI_Alltoallv the actual LETNodeWire bytes.
- *  Returns total foreign nodes received in *recv_count_total. */
+ *    Phase 1: MPI_Alltoall the per-rank node-counts AND header-counts so
+ *             receivers can size their receive buffers.
+ *    Phase 2: MPI_Alltoallv the actual LETNodeWire bytes AND
+ *             LETSubtreeHeader bytes (parallel exchanges).
+ *  Returns total foreign nodes received in *recv_count_total and
+ *  total subtree headers in *recv_hdr_count_total. */
 int  let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                         const int *send_count_per_rank,
+                        struct LETSubtreeHeader **send_hdr_per_rank,
+                        const int *send_hdr_count_per_rank,
                         struct LETNodeWire **recv_buf,
                         int *recv_count_per_rank,
-                        int *recv_count_total);
+                        int *recv_count_total,
+                        struct LETSubtreeHeader **recv_hdr_buf,
+                        int *recv_hdr_count_per_rank,
+                        int *recv_hdr_count_total);
 
 /*! Install received foreign nodes into Nodes_base[] / Extnodes_base[] /
  *  SoA at slots [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes), build
@@ -199,7 +236,10 @@ int  let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
  *  not implemented unless practical memory limits demand it. */
 int  let_unpack_and_install(const struct LETNodeWire *recv_buf,
                             const int *recv_count_per_rank,
-                            int recv_count_total);
+                            int recv_count_total,
+                            const struct LETSubtreeHeader *recv_hdr_buf,
+                            const int *recv_hdr_count_per_rank,
+                            int recv_hdr_count_total);
 
 /*! Top-level LET exchange.  Called from gravity_tree() after the local tree
  *  is built and force_exchange_pseudodata() has run.  Composes the four
