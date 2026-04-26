@@ -477,7 +477,12 @@ void gravity_tree(void)
             }
             tend = my_second(); timetree1 += timediff(tstart, tend);
             myfree(GravDataOut); myfree(GravDataIn);
-
+#ifdef OPENMP_GPU_OFFLOAD
+            /* Export-back loop above wrote P[place].GravAccel (and other P[] fields) while arena
+             * may be valid.  Invalidate here so the next iteration's acquire re-seeds from host
+             * instead of aborting the arena-debug consistency check. */
+            gpu_particles_arena_invalidate();
+#endif
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */

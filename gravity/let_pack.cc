@@ -46,14 +46,26 @@
 
 #ifdef OPENMP_GPU_OFFLOAD
 
-/* Sentinel value used in NODE.u.d.{sibling,nextnode} during pack to mark
- * "this pointer references a node OUTSIDE the shipped subtree -- redirect
- * to the local topleaf's continuation during unpack."  Distinct from -1
- * (legacy "end of walk") and from any valid node index.  Two-step decode:
- * sentinel <= LET_EDGE_SENTINEL_BASE means "exit foreign subtree"; the
- * specific topleaf is identified by the subtree-root mapping carried
- * outside the wire data (in LETSubtreeMeta below). */
-#define LET_EDGE_SENTINEL_BASE  (-1000000)
+/* Sentinel encoding for out-of-subtree sibling pointers:
+ *
+ *   v == LET_EDGE_SENTINEL_BASE                    -- legacy / nextnode of non-essential nodes:
+ *                                                     resolves to topleaf_sibling (plain exit).
+ *   v <  LET_EDGE_SENTINEL_BASE  (encoded)          -- sibling pointer exits this recursion level.
+ *                                                     The target node index is:
+ *                                                       orig_sib = LET_EDGE_SENTINEL_BASE - v
+ *                                                     Receiver looks up orig_sib in the wire map.
+ *                                                     If found  → slot_base + wire_map[orig_sib]
+ *                                                     If absent → topleaf_sibling (genuine exit).
+ *
+ * Rule: the "last child sibling" sentinel in pack_recurse and the top-level loop must encode the
+ * sib_terminator so the receiver can follow the sibling chain across recursion levels.
+ * Never-followed nextnode sentinels (non-essential nodes, synthesized leaves) stay as
+ * LET_EDGE_SENTINEL_BASE (plain), since they're never decoded.
+ */
+#define LET_EDGE_SENTINEL_BASE         (-1000000)
+#define LET_EDGE_SENTINEL_ENCODE(orig) (LET_EDGE_SENTINEL_BASE - (orig))
+#define LET_EDGE_SENTINEL_IS_ENCODED(v)  ((v) < LET_EDGE_SENTINEL_BASE)
+#define LET_EDGE_SENTINEL_DECODE(v)      (LET_EDGE_SENTINEL_BASE - (v))
 
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
@@ -547,8 +559,10 @@ static void pack_recurse(int no, int sib_terminator,
         (*buf)[my_idx].node.u.d.nextnode = first_child_wire_idx;
         if(last_child_wire_idx >= 0)
         {
-            /* Last child's sibling = sentinel (means "exit subtree") -- already initialized */
-            (*buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_BASE;
+            /* Last child's sibling encodes sib_terminator so the receiver can find the
+             * wire copy of the next sibling at this level (if it was shipped) or fall back
+             * to topleaf_sibling (if it wasn't).  See LET_EDGE_SENTINEL_ENCODE. */
+            (*buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_ENCODE(sib_terminator);
         }
     }
     /* else: no children shipped (e.g., all were particles outside essential range);
@@ -596,15 +610,22 @@ extern "C" int let_pack_for_rank(int R,
          * subtree header covering [wire_offset, *count) on the way out. */
         int wire_offset_before = count;
 
-        /* Walk the topleaf's children via the sibling chain starting from subtree_root */
+        /* Walk the topleaf's children via the sibling chain starting from subtree_root.
+         * Track first/last wire indices so we can link consecutive children's sibling
+         * pointers — without this, the receiver's walk would follow child1.sibling =
+         * LET_EDGE_SENTINEL_BASE and exit after child1, missing child2..childN. */
+        int first_child_wire_idx = -1;
+        int last_child_wire_idx  = -1;
         int child = subtree_root;
         while(child != sib_term && child >= 0)
         {
             int next_child;
+            int child_wire_idx = -1;
             if(child < All.MaxPart)
             {
                 /* Particle directly under topleaf -- synthesize leaf */
                 grow_wire_buf(out_buf, count + 1, out_capacity);
+                child_wire_idx = count;
                 let_synthesize_particle_leaf(child, LET_EDGE_SENTINEL_BASE, &(*out_buf)[count]);
                 count++;
                 next_child = Nextnode[child];
@@ -612,15 +633,29 @@ extern "C" int let_pack_for_rank(int R,
             else if(child < All.MaxPart + MaxNodes)
             {
                 int child_sib = Nodes[child].u.d.sibling;
+                child_wire_idx = count;
                 pack_recurse(child, child_sib, &all_ranks[R], topleaf_no, out_buf, &count, out_capacity);
+                if(count == child_wire_idx) child_wire_idx = -1;  /* pack_recurse added nothing */
                 next_child = child_sib;
             }
             else
             {
                 next_child = Nextnode[child - MaxNodes - MaxForeignNodes];
             }
+            /* Link this child into the top-level sibling chain */
+            if(child_wire_idx >= 0)
+            {
+                if(first_child_wire_idx < 0) first_child_wire_idx = child_wire_idx;
+                if(last_child_wire_idx >= 0)
+                    (*out_buf)[last_child_wire_idx].node.u.d.sibling = child_wire_idx;
+                last_child_wire_idx = child_wire_idx;
+            }
             child = next_child;
         }
+        /* Last top-level child: encode sib_term (= topleaf.sibling) so receiver resolves
+         * via the wire map (falls back to topleaf_sibling since sib_term is never packed). */
+        if(last_child_wire_idx >= 0)
+            (*out_buf)[last_child_wire_idx].node.u.d.sibling = LET_EDGE_SENTINEL_ENCODE(sib_term);
 
         /* Emit subtree header if this topleaf shipped any nodes */
         int subtree_count = count - wire_offset_before;
@@ -852,9 +887,27 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
 
         int slot_base = All.MaxPart + MaxNodes + Numforeignnodes;
 
-        /* Pass 1: install nodes (raw byte copy), remap intra-sender refs.
-         * Sentinel resolution (subtree-edge) is done in Pass 2 once we know
-         * which subtree each node belongs to. */
+        /* Build orig_to_wire[]: maps sender-side node index -> wire index (0-based within this
+         * sender's rcount-wide buffer).  Used to resolve LET_EDGE_SENTINEL_ENCODE sentinels
+         * where the encoded sibling may point to another packed node in the same sender's buffer.
+         * Array is indexed as (remote_id - All.MaxPart); remote_id in [All.MaxPart, All.MaxPart+MaxNodes).
+         * Synthesized particle leaves (remote_id < 0) are not in the map -- their nextnode sentinels
+         * are never followed (len=0 leaf always closed by BH criterion). */
+        int *orig_to_wire = (int *) mymalloc("orig_to_wire", MaxNodes * sizeof(int));
+        for(int jj = 0; jj < MaxNodes; jj++) orig_to_wire[jj] = -1;
+        for(int j = 0; j < rcount; j++)
+        {
+            int rid = recv_buf[node_off + j].remote_id;
+            if(rid >= All.MaxPart && rid < All.MaxPart + MaxNodes)
+                orig_to_wire[rid - All.MaxPart] = j;
+        }
+
+        /* Pass 1: install nodes (raw byte copy), remap intra-sender wire indices,
+         * resolve both plain sentinels (LET_EDGE_SENTINEL_BASE) and encoded sentinels
+         * (LET_EDGE_SENTINEL_ENCODE(orig_sib)) in sibling/nextnode.  We do NOT yet
+         * know topleaf_sibling per node (that requires the header lookup), so encoded
+         * sentinels that fall back (orig_sib not in map) are temporarily marked with
+         * LET_EDGE_SENTINEL_BASE and resolved in Pass 2. */
         for(int j = 0; j < rcount; j++)
         {
             int abs_idx = slot_base + j;
@@ -863,14 +916,37 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
 
             int sib  = Nodes[abs_idx].u.d.sibling;
             int next = Nodes[abs_idx].u.d.nextnode;
-            if(sib  >= 0 && sib  < rcount) Nodes[abs_idx].u.d.sibling  = slot_base + sib;
-            if(next >= 0 && next < rcount) Nodes[abs_idx].u.d.nextnode = slot_base + next;
+
+            /* Remap intra-buffer wire indices first */
+            if(sib  >= 0 && sib  < rcount) { Nodes[abs_idx].u.d.sibling  = slot_base + sib; sib = Nodes[abs_idx].u.d.sibling; }
+            if(next >= 0 && next < rcount) { Nodes[abs_idx].u.d.nextnode = slot_base + next; next = Nodes[abs_idx].u.d.nextnode; }
+
+            /* Resolve encoded sentinel for sibling */
+            if(LET_EDGE_SENTINEL_IS_ENCODED(sib))
+            {
+                int orig_sib = LET_EDGE_SENTINEL_DECODE(sib);
+                if(orig_sib >= All.MaxPart && orig_sib < All.MaxPart + MaxNodes && orig_to_wire[orig_sib - All.MaxPart] >= 0)
+                    Nodes[abs_idx].u.d.sibling = slot_base + orig_to_wire[orig_sib - All.MaxPart];
+                else
+                    Nodes[abs_idx].u.d.sibling = LET_EDGE_SENTINEL_BASE; /* resolved in Pass 2 */
+            }
+            /* Resolve encoded sentinel for nextnode (non-essential / synth leaves -- usually
+             * never followed, but resolve for correctness) */
+            if(LET_EDGE_SENTINEL_IS_ENCODED(next))
+            {
+                int orig_next = LET_EDGE_SENTINEL_DECODE(next);
+                if(orig_next >= All.MaxPart && orig_next < All.MaxPart + MaxNodes && orig_to_wire[orig_next - All.MaxPart] >= 0)
+                    Nodes[abs_idx].u.d.nextnode = slot_base + orig_to_wire[orig_next - All.MaxPart];
+                else
+                    Nodes[abs_idx].u.d.nextnode = LET_EDGE_SENTINEL_BASE;
+            }
+
             Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
         }
+        myfree(orig_to_wire);
 
-        /* Pass 2: resolve subtree-edge sentinels per header, and redirect
-         * each affected local topleaf's u.d.nextnode at the foreign subtree
-         * root. */
+        /* Pass 2: resolve remaining plain sentinels (LET_EDGE_SENTINEL_BASE) to topleaf_sibling,
+         * and redirect each affected local topleaf's u.d.nextnode at the foreign subtree root. */
         for(int hh = 0; hh < hcount; hh++)
         {
             const struct LETSubtreeHeader *h = &recv_hdr_buf[hdr_off + hh];
@@ -888,24 +964,19 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
             int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
             int subtree_root    = slot_base + wire_off;
 
-            /* Sentinel resolution within this subtree's range */
+            /* Resolve remaining plain sentinels (fallbacks + non-essential nextnode) */
             for(int j = wire_off; j < wire_off + wire_cnt; j++)
             {
                 int abs_idx = slot_base + j;
-                if(Nodes[abs_idx].u.d.sibling  == LET_EDGE_SENTINEL_BASE)
-                    Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
-                if(Nodes[abs_idx].u.d.nextnode == LET_EDGE_SENTINEL_BASE)
-                    Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.sibling  == LET_EDGE_SENTINEL_BASE) Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
+                if(Nodes[abs_idx].u.d.nextnode == LET_EDGE_SENTINEL_BASE) Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
             }
 
-            /* Redirect local topleaf at the foreign subtree root (AoS + SoA).
-             * The SoA mirror was populated by the GPU build pipeline pointing
-             * at the pseudo-particle for this topleaf; the walk reads SoA, so
-             * it must also point at the foreign subtree root. */
+            /* Redirect local topleaf at the foreign subtree root (AoS + SoA). */
+            int old_nn = Nodes[local_topleaf_no].u.d.nextnode;
             Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
             gpu_set_soa_nextnode(local_topleaf_no, subtree_root);
         }
-
         /* Pass 3: AoS -> SoA scatter for the foreign-node range we just
          * installed.  GPU walk reads node fields via SoA only; without this
          * the foreign nodes would have garbage SoA entries. */

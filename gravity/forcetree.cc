@@ -1975,7 +1975,14 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
                 /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
                 nop = &Nodes[no];
-                
+                int in_foreign = (no >= maxPart + maxNodes && no < maxPart + maxNodes + maxForeignNodes);
+                /* LET guard: if a foreign node has nextnode < 0 (unreplaced sentinel from unpack),
+                 * following it would exit the walk loop via while(no>=0).  This happens when
+                 * topleaf_sibling == -1 (end-of-walk), which is the common case for the last
+                 * topleaf in the tree.  Force multipole treatment to avoid aborting the foreign
+                 * subtree walk and missing all subsequent nodes. */
+                int foreign_force_multipole = (in_foreign && (nop->u.d.nextnode < 0));
+
                 if(mode == 1)
                 {
                     if(nop->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))    /* we reached a top-level node again, which means that we are done with the branch */
@@ -1995,8 +2002,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 {
                     if(mass) /* open cell */
                     {
-                        no = nop->u.d.nextnode;
-                        continue;
+                        if(!foreign_force_multipole)
+                        {
+                            no = nop->u.d.nextnode;
+                            continue;
+                        }
                     }
                 }
                 if(nop->Ti_current != ti_Current) // add this so that threads arriving here after the the node has been drifted do not have to enter critical at all!
@@ -2031,21 +2041,21 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 double dist_to_open = DMAX(soft , nop->maxsoft) + nop->len*1.73205/2.0;
                 if(dist_to_center2  < dist_to_open*dist_to_open) /* check if any portion the cell lies within the interaction range, then open cell */
                 {
-                    no = nop->u.d.nextnode;
-                    continue;
+                    if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
                 }
 #else
                 if(h < nop->maxsoft) // compare primary softening to node maximum
                 {
-                    if(r2 < nop->maxsoft * nop->maxsoft) {no = nop->u.d.nextnode; continue;} // inside node maxsoft, continue down tree
+                    if(r2 < nop->maxsoft * nop->maxsoft) {
+                        if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
+                    }
                 }
 #endif
                 if(All.ErrTolTheta)    /* check Barnes-Hut opening criterion */
                 {
                     if(nop->len * nop->len > r2 * All.ErrTolTheta * All.ErrTolTheta) /* open cell */
                     {
-                        no = nop->u.d.nextnode;
-                        continue;
+                        if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
                     }
                 }
 #ifndef GRAVITY_HYBRID_OPENING_CRIT
@@ -2057,13 +2067,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         /* force node to open if we are within the gravitational softening length */
                         if((r2 < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (r2 < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len)))
                         {
-                            no = nop->u.d.nextnode;
-                            continue;
+                            if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
                         }
                         if(mass * nop->len * nop->len > r2 * r2 * aold) /* open cell */
                         {
-                            no = nop->u.d.nextnode;
-                            continue;
+                            if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
                         }
                         /* check in addition whether we lie inside the cell */
                         if(GRAVITY_NGB_PERIODIC_BOX_LONG_X(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)
@@ -2072,8 +2080,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                             {
                                 if(GRAVITY_NGB_PERIODIC_BOX_LONG_Z(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)
                                 {
-                                    no = nop->u.d.nextnode;
-                                    continue;
+                                    if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
                                 }
                             }
                         }
@@ -2081,13 +2088,12 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         if(ptype == 5) {
                             if((nop->N_SINK > 0) && (r2 < pow(SINGLE_STAR_DIRECT_GRAVITY_RADIUS/UNIT_LENGTH_IN_AU + 0.6*nop->len,2))) // we are a star looking at another star within the specified radius, open cell to get direct force summation
                             {
-                                no = nop->u.d.nextnode;
-                                continue;
+                                if(!foreign_force_multipole) {no = nop->u.d.nextnode; continue;}
                             }
                         }
 #endif
                     }
-                
+
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
                 zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
@@ -3572,9 +3578,17 @@ void force_treeallocate(int maxnodes, int maxpart)
      *   [MaxPart+MaxNodes,                      MaxPart+MaxNodes+MaxForeignNodes)         -> foreign tree nodes (LET unpack)
      *   [MaxPart+MaxNodes+MaxForeignNodes,      MaxPart+MaxNodes+MaxForeignNodes+NTopleaves) -> pseudo-particles
      * SoA slot for any node index `no` (local OR foreign): idx = no - MaxPart (same formula).
-     * MaxForeignNodes = ceil(All.LETAllocFactor * MaxNodes).  Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
+     * MaxForeignNodes = ceil(LETAllocFactor * (MaxNodes + synth_overhead)) where synth_overhead accounts
+     * for synthesized particle leaves (one entry per particle that is a direct child of an essential
+     * multi-particle node).  Synthesis overhead ≤ NumPart_per_rank per received rank; using
+     * 2 × (All.MaxPart / PartAllocFactor) ≈ 2 × TotNumPart / NTask as headroom covers NTask=2
+     * worst case (both ranks overlap entirely) while staying modest for large NTask.
+     * Numforeignnodes (current count, <= MaxForeignNodes) is reset on each LET exchange.
      * On non-GPU builds the foreign range is empty (MaxForeignNodes = 0); legacy export path is used. */
-    MaxForeignNodes = (int) ceil(All.LETAllocFactor * (double) MaxNodes);
+    {
+        double synth_overhead = 2.0 * (double)All.MaxPart / (double)All.PartAllocFactor;
+        MaxForeignNodes = (int) ceil(All.LETAllocFactor * ((double)MaxNodes + synth_overhead));
+    }
     if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
     Numforeignnodes = 0;
 #if defined(FOF) || defined(SUBFIND)

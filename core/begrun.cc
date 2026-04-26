@@ -1101,6 +1101,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.TreeDomainUpdateFrequency;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "LETAllocFactor");
+      strcpy(alternate_tag[nt], "LET_ForeignNode_HeadroomFactor");
+      addr[nt] = &All.LETAllocFactor;
+      id[nt++] = REAL;
+
 #ifdef MHD_MODIFIED_GRADIENT
       strcpy(tag[nt], "ActiveFractionForMGSweep");
       strcpy(alternate_tag[nt], "MGSweep_ActiveFraction");
@@ -2440,6 +2445,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
+                if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom); set to 0 to disable LET and use legacy export path (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
 #endif

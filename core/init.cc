@@ -145,7 +145,7 @@ void init(void)
     All.TopNodeAllocFactor = 0.1; /* for optimization on startup this needs to be increased for these extreme dynamic range runs */
 #endif
     All.TreeAllocFactor = 0.45; /* this will also iteratively increase to fit the particle distribution */
-    All.LETAllocFactor = 1.0;   /* Step 13 Phase 9: foreign-node headroom factor for the Locally Essential Tree.  MaxForeignNodes = ceil(LETAllocFactor * MaxNodes).  Bumped from 0.0 to 1.0 in sub-phase 9.2c after all LET pack/exchange/unpack/walk infrastructure landed (9.0/9.1pre/9.1b/9.1c+d/9.1e_v2/9.2-pre/9.2/9.2b).  Walk now consumes foreign subtree data on every gravity call; legacy iterative export loop in gravity_tree() is bypassed for the same multipole information.  If foreign-node count exceeds capacity at runtime, endrun() will instruct user to increase this and restart (matches TreeAllocFactor failure semantics).  Future option (b) — graceful shrink + temporary fallback to legacy export — documented but not wired in unless practical memory limits require it. */
+    /* All.LETAllocFactor default (1.0) is set via begrun.cc read_parameter_file default handler; user can override via params file. */
     /* To construct the BH-tree for N particles, somewhat less than N
      internal tree-nodes are necessary for ‘normal’ particle distributions.
      TreeAllocFactor sets the number of internal tree-nodes allocated in units of the particle number.
