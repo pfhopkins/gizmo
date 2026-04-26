@@ -205,23 +205,18 @@ int  let_pack_for_rank(int R,
                        int *out_hdr_capacity,
                        int *out_hdr_count);
 
-/*! Two-phase MPI exchange:
- *    Phase 1: MPI_Alltoall the per-rank node-counts AND header-counts so
- *             receivers can size their receive buffers.
- *    Phase 2: MPI_Alltoallv the actual LETNodeWire bytes AND
- *             LETSubtreeHeader bytes (parallel exchanges).
- *  Returns total foreign nodes received in *recv_count_total and
- *  total subtree headers in *recv_hdr_count_total. */
+/*! Two-phase MPI exchange + local install in one scope.  Phase 1 Alltoalls
+ *  per-rank node-counts and header-counts; Phase 2 Alltoallvs the
+ *  LETNodeWire and LETSubtreeHeader bytes; then directly calls
+ *  let_unpack_and_install on the received buffers before freeing all
+ *  scratch in strict LIFO order.  Inlining the install keeps mymalloc
+ *  stack discipline correct -- earlier draft returned flat_recv /
+ *  flat_hdr_recv to the caller, leaving them mid-stack and triggering
+ *  "not the last allocated block" aborts when intermediates were freed. */
 int  let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                         const int *send_count_per_rank,
                         struct LETSubtreeHeader **send_hdr_per_rank,
-                        const int *send_hdr_count_per_rank,
-                        struct LETNodeWire **recv_buf,
-                        int *recv_count_per_rank,
-                        int *recv_count_total,
-                        struct LETSubtreeHeader **recv_hdr_buf,
-                        int *recv_hdr_count_per_rank,
-                        int *recv_hdr_count_total);
+                        const int *send_hdr_count_per_rank);
 
 /*! Install received foreign nodes into Nodes_base[] / Extnodes_base[] /
  *  SoA at slots [MaxPart+MaxNodes, MaxPart+MaxNodes+Numforeignnodes), build

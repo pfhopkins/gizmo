@@ -40,6 +40,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
 #include "let_data.h"
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
@@ -638,22 +639,24 @@ extern "C" int let_pack_for_rank(int R,
 }
 
 /* ----------------------------------------------------------------------
- * Step 4: MPI exchange of node payloads
+ * Step 4 + 5: MPI exchange + install in one scope.
+ *
+ * GIZMO mymalloc is a strict LIFO stack.  An earlier draft returned
+ * flat_recv / flat_hdr_recv to the caller while freeing intermediates
+ * in this function -- that left the recv buffers mid-stack and
+ * triggered "Wrong call of myfree(): not the last allocated block!"
+ * the moment any caller tried to free anything below them.  Solution:
+ * keep the unpack call inside this scope, so all temporaries can be
+ * released in strict reverse-alloc order before returning.
  * ---------------------------------------------------------------------- */
 extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                                    const int *send_count_per_rank,
                                    struct LETSubtreeHeader **send_hdr_per_rank,
-                                   const int *send_hdr_count_per_rank,
-                                   struct LETNodeWire **recv_buf,
-                                   int *recv_count_per_rank,
-                                   int *recv_count_total,
-                                   struct LETSubtreeHeader **recv_hdr_buf,
-                                   int *recv_hdr_count_per_rank,
-                                   int *recv_hdr_count_total)
+                                   const int *send_hdr_count_per_rank)
 {
     /* Phase 1: exchange node-counts AND header-counts */
-    int *send_counts_int = (int *) mymalloc("LET_send_counts", NTask * sizeof(int));
-    int *recv_counts_int = (int *) mymalloc("LET_recv_counts", NTask * sizeof(int));
+    int *send_counts_int = (int *) mymalloc("LET_send_counts",     NTask * sizeof(int));
+    int *recv_counts_int = (int *) mymalloc("LET_recv_counts",     NTask * sizeof(int));
     int *send_hdr_counts = (int *) mymalloc("LET_send_hdr_counts", NTask * sizeof(int));
     int *recv_hdr_counts = (int *) mymalloc("LET_recv_hdr_counts", NTask * sizeof(int));
     for(int r = 0; r < NTask; r++) {
@@ -663,92 +666,95 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
     MPI_Alltoall(send_counts_int, 1, MPI_INT, recv_counts_int, 1, MPI_INT, MPI_COMM_WORLD);
     MPI_Alltoall(send_hdr_counts, 1, MPI_INT, recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
 
-    /* Concatenate per-rank send buffers into one flat send buffer */
-    int total_send = 0;
-    for(int r = 0; r < NTask; r++) total_send += send_counts_int[r];
-    int total_recv = 0;
-    for(int r = 0; r < NTask; r++) {recv_count_per_rank[r] = recv_counts_int[r]; total_recv += recv_counts_int[r];}
+    int total_send = 0, total_recv = 0;
+    int total_hdr_send = 0, total_hdr_recv = 0;
+    for(int r = 0; r < NTask; r++) {
+        total_send += send_counts_int[r]; total_recv += recv_counts_int[r];
+        total_hdr_send += send_hdr_counts[r]; total_hdr_recv += recv_hdr_counts[r];
+    }
+
+    /* Allocate offsets/bytes for both exchanges, then flat_send / flat_recv
+     * for both data streams.  All temporaries are freed in strict reverse
+     * order at the end of this function. */
+    int *send_offsets     = (int *) mymalloc("LET_send_offsets",     NTask * sizeof(int));
+    int *recv_offsets     = (int *) mymalloc("LET_recv_offsets",     NTask * sizeof(int));
+    int *send_bytes       = (int *) mymalloc("LET_send_bytes",       NTask * sizeof(int));
+    int *recv_bytes       = (int *) mymalloc("LET_recv_bytes",       NTask * sizeof(int));
+    int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
+    int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
+    int *send_hdr_bytes   = (int *) mymalloc("LET_send_hdr_bytes",   NTask * sizeof(int));
+    int *recv_hdr_bytes   = (int *) mymalloc("LET_recv_hdr_bytes",   NTask * sizeof(int));
+
+    int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
+    for(int r = 0; r < NTask; r++)
+    {
+        send_offsets[r]     = s_off  * sizeof(struct LETNodeWire);
+        recv_offsets[r]     = r_off  * sizeof(struct LETNodeWire);
+        send_bytes[r]       = send_counts_int[r] * sizeof(struct LETNodeWire);
+        recv_bytes[r]       = recv_counts_int[r] * sizeof(struct LETNodeWire);
+        send_hdr_offsets[r] = hs_off * sizeof(struct LETSubtreeHeader);
+        recv_hdr_offsets[r] = hr_off * sizeof(struct LETSubtreeHeader);
+        send_hdr_bytes[r]   = send_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
+        recv_hdr_bytes[r]   = recv_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
+        s_off  += send_counts_int[r];
+        r_off  += recv_counts_int[r];
+        hs_off += send_hdr_counts[r];
+        hr_off += recv_hdr_counts[r];
+    }
 
     struct LETNodeWire *flat_send = (struct LETNodeWire *) mymalloc("LET_flat_send",
         (size_t)total_send * sizeof(struct LETNodeWire) + 1);
     struct LETNodeWire *flat_recv = (struct LETNodeWire *) mymalloc("LET_flat_recv",
         (size_t)total_recv * sizeof(struct LETNodeWire) + 1);
-
-    int *send_offsets = (int *) mymalloc("LET_send_offsets", NTask * sizeof(int));
-    int *recv_offsets = (int *) mymalloc("LET_recv_offsets", NTask * sizeof(int));
-    int *send_bytes   = (int *) mymalloc("LET_send_bytes",   NTask * sizeof(int));
-    int *recv_bytes   = (int *) mymalloc("LET_recv_bytes",   NTask * sizeof(int));
-    int s_off = 0, r_off = 0;
-    for(int r = 0; r < NTask; r++)
-    {
-        send_offsets[r] = s_off * sizeof(struct LETNodeWire);
-        recv_offsets[r] = r_off * sizeof(struct LETNodeWire);
-        send_bytes[r]   = send_counts_int[r] * sizeof(struct LETNodeWire);
-        recv_bytes[r]   = recv_counts_int[r] * sizeof(struct LETNodeWire);
-        if(send_counts_int[r] > 0 && send_buf_per_rank[r])
-        {
-            memcpy(flat_send + s_off, send_buf_per_rank[r],
-                   (size_t)send_counts_int[r] * sizeof(struct LETNodeWire));
-        }
-        s_off += send_counts_int[r];
-        r_off += recv_counts_int[r];
-    }
-
-    /* Phase 2a: exchange node payloads */
-    MPI_Alltoallv(flat_send, send_bytes, send_offsets, MPI_BYTE,
-                  flat_recv, recv_bytes, recv_offsets, MPI_BYTE,
-                  MPI_COMM_WORLD);
-
-    /* Phase 2b: exchange subtree headers (parallel buffer) */
-    int total_hdr_send = 0, total_hdr_recv = 0;
-    for(int r = 0; r < NTask; r++) {
-        total_hdr_send += send_hdr_counts[r];
-        recv_hdr_count_per_rank[r] = recv_hdr_counts[r];
-        total_hdr_recv += recv_hdr_counts[r];
-    }
     struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
         (size_t)total_hdr_send * sizeof(struct LETSubtreeHeader) + 1);
     struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
         (size_t)total_hdr_recv * sizeof(struct LETSubtreeHeader) + 1);
-    int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
-    int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
-    int *send_hdr_bytes   = (int *) mymalloc("LET_send_hdr_bytes",   NTask * sizeof(int));
-    int *recv_hdr_bytes   = (int *) mymalloc("LET_recv_hdr_bytes",   NTask * sizeof(int));
-    int hs_off = 0, hr_off = 0;
+
+    /* Concatenate per-rank send buffers */
+    int s_pos = 0, hs_pos = 0;
     for(int r = 0; r < NTask; r++)
     {
-        send_hdr_offsets[r] = hs_off * sizeof(struct LETSubtreeHeader);
-        recv_hdr_offsets[r] = hr_off * sizeof(struct LETSubtreeHeader);
-        send_hdr_bytes[r]   = send_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
-        recv_hdr_bytes[r]   = recv_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
+        if(send_counts_int[r] > 0 && send_buf_per_rank[r])
+        {
+            memcpy(flat_send + s_pos, send_buf_per_rank[r],
+                   (size_t)send_counts_int[r] * sizeof(struct LETNodeWire));
+        }
         if(send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
         {
-            memcpy(flat_hdr_send + hs_off, send_hdr_per_rank[r],
+            memcpy(flat_hdr_send + hs_pos, send_hdr_per_rank[r],
                    (size_t)send_hdr_counts[r] * sizeof(struct LETSubtreeHeader));
         }
-        hs_off += send_hdr_counts[r];
-        hr_off += recv_hdr_counts[r];
+        s_pos  += send_counts_int[r];
+        hs_pos += send_hdr_counts[r];
     }
+
+    /* MPI exchanges (parallel for nodes + headers) */
+    MPI_Alltoallv(flat_send,     send_bytes,     send_offsets,     MPI_BYTE,
+                  flat_recv,     recv_bytes,     recv_offsets,     MPI_BYTE,
+                  MPI_COMM_WORLD);
     MPI_Alltoallv(flat_hdr_send, send_hdr_bytes, send_hdr_offsets, MPI_BYTE,
                   flat_hdr_recv, recv_hdr_bytes, recv_hdr_offsets, MPI_BYTE,
                   MPI_COMM_WORLD);
 
-    /* Hand back the receive buffers */
-    *recv_buf = flat_recv;
-    *recv_count_total = total_recv;
-    *recv_hdr_buf = flat_hdr_recv;
-    *recv_hdr_count_total = total_hdr_recv;
+    /* Install foreign tree contents while flat_recv / flat_hdr_recv are
+     * still alive on the mymalloc stack. */
+    let_unpack_and_install(flat_recv, recv_counts_int, total_recv,
+                            flat_hdr_recv, recv_hdr_counts, total_hdr_recv);
 
+    /* Free everything in strict reverse-alloc order */
+    myfree(flat_hdr_recv);
+    myfree(flat_hdr_send);
+    myfree(flat_recv);
+    myfree(flat_send);
     myfree(recv_hdr_bytes);
     myfree(send_hdr_bytes);
     myfree(recv_hdr_offsets);
     myfree(send_hdr_offsets);
-    myfree(flat_hdr_send);
     myfree(recv_bytes);
     myfree(send_bytes);
     myfree(recv_offsets);
     myfree(send_offsets);
-    myfree(flat_send);
     myfree(recv_hdr_counts);
     myfree(send_hdr_counts);
     myfree(recv_counts_int);
@@ -921,6 +927,12 @@ extern "C" int let_run_exchange(void)
     /* Skip entirely if LETAllocFactor==0 (legacy mode) */
     if(MaxForeignNodes <= 0) return 0;
 
+    /* let_synthesize_particle_leaf and let_compute_local_payload read
+     * P/CellP and may transitively invoke RT/sink/CR helpers that mutate
+     * cached fields in CellP.  Invalidate the GPU particles arena up front
+     * so the next gpu_particles_arena_acquire re-seeds from host. */
+    gpu_particles_arena_invalidate();
+
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
 
@@ -953,17 +965,10 @@ extern "C" int let_run_exchange(void)
         send_hdr_count[r] = hcnt;
     }
 
-    /* Exchange */
-    struct LETNodeWire *recv_flat = NULL;
-    struct LETSubtreeHeader *recv_hdr_flat = NULL;
-    int *recv_count     = (int *) mymalloc("LET_recv_count",     NTask * sizeof(int));
-    int *recv_hdr_count = (int *) mymalloc("LET_recv_hdr_count", NTask * sizeof(int));
-    int recv_total = 0;
-    int recv_hdr_total = 0;
+    /* Exchange + install (let_exchange_nodes inlines let_unpack_and_install
+     * to keep mymalloc LIFO discipline correct). */
     let_exchange_nodes(send_per_rank, send_count,
-                       send_hdr_per_rank, send_hdr_count,
-                       &recv_flat, recv_count, &recv_total,
-                       &recv_hdr_flat, recv_hdr_count, &recv_hdr_total);
+                       send_hdr_per_rank, send_hdr_count);
 
     /* Free per-rank send buffers (allocated via realloc, not mymalloc) */
     for(int r = 0; r < NTask; r++) {
@@ -971,15 +976,7 @@ extern "C" int let_run_exchange(void)
         if(send_hdr_per_rank[r]) free(send_hdr_per_rank[r]);
     }
 
-    /* Unpack */
-    let_unpack_and_install(recv_flat, recv_count, recv_total,
-                           recv_hdr_flat, recv_hdr_count, recv_hdr_total);
-
     /* Cleanup */
-    if(recv_hdr_flat) myfree(recv_hdr_flat);
-    if(recv_flat)     myfree(recv_flat);
-    myfree(recv_hdr_count);
-    myfree(recv_count);
     myfree(send_hdr_count);
     myfree(send_count);
     myfree(send_hdr_per_rank);
