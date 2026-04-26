@@ -184,11 +184,20 @@ extern "C" {
 #endif
 
 /*! Compute this rank's LETPerRankPayload from local particle state.  Called
- *  once per gravity-tree build, just before the LET exchange.  Scans all
- *  NumPart for OldAcc/softening/sink bounds and all MY topleaf bboxes.
- *  Full-particle scan (not just active) preserves correctness for RT/TREECOL
- *  walks that use foreign-tree column-density estimates. */
-void let_compute_local_payload(struct LETPerRankPayload *out);
+ *  once per gravity-tree build, just before the LET exchange.
+ *
+ *  If active_bitmap is non-NULL: bbox spans only ACTIVE topleaves on this
+ *  rank, and per-particle bounds (OldAcc, softening, has_sink) span only
+ *  ActiveParticleList.  This is the Phase 9.5 "tight" mode -- safe iff the
+ *  receiver's walk only consults LET data for its active particles.
+ *
+ *  If active_bitmap is NULL: bbox spans all MY topleaves and per-particle
+ *  bounds span all NumPart.  Phase 9.4 conservative mode -- always safe,
+ *  including for RT/TREECOL walks that may consult foreign-tree column
+ *  density for non-active particles. */
+void let_compute_local_payload(struct LETPerRankPayload *out,
+                               const uint64_t *active_bitmap,
+                               int bitmap_n_words);
 
 /*! Phase 9.5: compute this rank's active-topleaf bitmap.  bitmap is sized
  *  n_words = (NTopleaves+63)/64 uint64_t.  Bit tl is set iff topleaf tl is

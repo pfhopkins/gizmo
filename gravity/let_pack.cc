@@ -153,17 +153,21 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
  * ---------------------------------------------------------------------- */
-extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
+extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
+                                          const uint64_t *active_bitmap,
+                                          int bitmap_n_words)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
      * This is tighter than the union of particle positions and matches what the
-     * walk's min_dist check effectively bounds. */
+     * walk's min_dist check effectively bounds.  If active_bitmap is non-NULL,
+     * restrict to ACTIVE topleaves only (Phase 9.5 tight mode). */
     out->bbox_min[0] = out->bbox_min[1] = out->bbox_min[2] = DBL_MAX;
     out->bbox_max[0] = out->bbox_max[1] = out->bbox_max[2] = -DBL_MAX;
     int found_any = 0;
     for(int i = 0; i < NTopleaves; i++)
     {
         if(DomainTask[i] != ThisTask) continue;
+        if(active_bitmap && !let_bitmap_test(active_bitmap, i)) continue;
         int no = DomainNodeIndex[i];
         if(no < All.MaxPart || no >= All.MaxPart + MaxNodes) continue;
         double cx = (double) Nodes[no].center[0];
@@ -187,18 +191,19 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
         for(int k = 0; k < 3; k++) {out->bbox_min[k] = out->bbox_max[k] = 0.0;}
     }
 
-    /* Per-particle bounds — scan all NumPart (not just active).
-     * We ship the worst-case bounds over ALL our particles so other ranks
-     * can decide which nodes are essential for any particle we might ever
-     * need.  Restricting to active particles would tighten bounds but risks
-     * under-shipping for TREECOL/RT which may run on active particles that
-     * have wide softening or low OldAcc not reflected in the active subset. */
+    /* Per-particle bounds.  If active_bitmap is non-NULL, scan only
+     * ActiveParticleList (Phase 9.5 tight mode).  Otherwise scan all NumPart
+     * (Phase 9.4 conservative mode) -- safer for RT/TREECOL which may run
+     * on non-active particles. */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->has_sink = 0;
 
-    for(int i = 0; i < NumPart; i++)
+    int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
+    for(int kk = 0; kk < n_iter; kk++)
     {
+        int i = (active_bitmap && !ActiveParticleList.empty()) ? ActiveParticleList[kk] : kk;
+        if(i < 0 || i >= NumPart) continue;
         if(P[i].Mass <= 0) continue;
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
@@ -1121,7 +1126,10 @@ extern "C" int let_run_exchange(void)
                   MPI_COMM_WORLD);
 
     struct LETPerRankPayload my_payload;
-    let_compute_local_payload(&my_payload);
+    /* Phase 9.5 Step C: pass MY active bitmap to tighten bbox + scan only
+     * active particles.  May regress TREECOL self-shielding for non-active
+     * particles -- gated by the bitmap pointer (NULL = Phase 9.4 conservative). */
+    let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words);
 
     struct LETPerRankPayload *all_payloads =
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
