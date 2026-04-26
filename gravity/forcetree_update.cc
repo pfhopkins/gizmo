@@ -44,10 +44,10 @@ static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for ato
 void force_update_tree(void)
 {
 #ifdef OPENMP_GPU_OFFLOAD
-    /* Phase 7.c: GPU kick pipeline — drift + kick + MPI apply, all GPU-side except MPI. */
+    /* Phase 7.d: GPU path is the only path — CPU fallback retired. */
     gpu_force_update_tree();
     return;
-#endif
+#else
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree");
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */
@@ -82,9 +82,11 @@ void force_update_tree(void)
     force_finish_kick_nodes();
     myfree(DomainList);
     PRINT_STATUS(" ..Tree has been updated dynamically");
+#endif /* OPENMP_GPU_OFFLOAD */
 }
 
 
+#ifndef OPENMP_GPU_OFFLOAD
 void force_kick_node(int i, Vec3<MyDouble>& dp)
 {
   int j, no; MyFloat v, vmax;
@@ -165,6 +167,7 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
       no = Nodes[no].u.d.father;
     }
 }
+#endif /* !OPENMP_GPU_OFFLOAD */
 
 
 
