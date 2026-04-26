@@ -239,7 +239,6 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #endif
     });
     Kokkos::fence();
-
     return 0;
 }
 
@@ -273,24 +272,38 @@ extern "C" void gpu_assign_gravcost(int takelevel)
     if(NumPart <= 0) return;
     GIZMO_GPU_ENSURE_ALL_FRESH(gpu_assign_gravcost);
 
+    /* Re-seed arena from host P[] if hydro/kicks/predict invalidated it between
+     * gravity calls.  gpu_particles_arena_P() returns NULL when arena_valid_==0,
+     * which caused a NULL-deref crash on the third gravity_tree() call (after hydro
+     * ran and fired gpu_particles_arena_invalidate()).  Acquiring here is cheap when
+     * already valid (fast path in arena code), and correct when stale. */
+    gpu_particles_arena_acquire(NumPart, P, CellP);
+
     struct particle_data *Pp = gpu_particles_arena_P();
     int                  *Fa = Father;   /* UVM since Phase 6.6 */
     struct NODE          *No = Nodes;    /* UVM shifted ptr since Phase 6.8d */
 
+    int _mp = All.MaxPart, _mn = MaxNodes;
     Kokkos::parallel_for("gpu_assign_gravcost", NumPart,
         KOKKOS_LAMBDA(const int i) {
-            Pp[i].GravCost[takelevel] = 0.0f;
+            float gc = 0.0f;
             int no = Fa[i];
             while(no >= 0) {
+                if(no < _mp || no >= _mp + _mn) {break;}  /* guard against corrupt father */
                 double nm = (double)No[no].u.d.mass;
                 if(nm > 0) {
-                    Pp[i].GravCost[takelevel] +=
-                        (float)(No[no].GravCost * (double)Pp[i].Mass / nm);
+                    gc += (float)(No[no].GravCost * (double)Pp[i].Mass / nm);
                 }
                 no = No[no].u.d.father;
             }
+            Pp[i].GravCost[takelevel] = gc;
         });
     Kokkos::fence();
+
+    /* Copy GravCost results from the arena (Pp) back to host P[].  The arena is a
+     * separate SharedSpace allocation from P, so the GPU's writes to Pp[i].GravCost
+     * do not automatically update P[i].GravCost; the host loop below does that. */
+    for(int i = 0; i < NumPart; i++) {P[i].GravCost[takelevel] = Pp[i].GravCost[takelevel];}
 }
 
 #else /* !OPENMP_GPU_OFFLOAD */
