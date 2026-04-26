@@ -50,6 +50,13 @@ int gpu_scatter_pseudo_to_soa(void);
  * Returns 0 on success. */
 int gpu_scatter_foreign_to_soa(int slot_base_abs, int count);
 
+/* Phase 9.2-pre: mirror a single AoS field write into the corresponding SoA
+ * slot.  Used by let_unpack_and_install to redirect a local topleaf's
+ * nextnode at the foreign subtree root inside SoA, since the topleaf's SoA
+ * entry was last populated by the GPU build pipeline (which knew nothing
+ * about LET).  abs_idx is the full Node index. */
+int gpu_set_soa_nextnode(int abs_idx, int new_nextnode);
+
 /* Phase 6.7c: Re-sum ancestor topnode moments directly in SoA after the
  * foreign pseudo data is in place (i.e. after gpu_scatter_pseudo_to_soa).
  * Recursive CPU walk of the topnode tree (all NTopnodes nodes; typically

@@ -738,6 +738,16 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
     return 0;
 }
 
+extern "C" int gpu_set_soa_nextnode(int abs_idx, int new_nextnode)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->nextnode) {return 1;}
+    int k = abs_idx - All.MaxPart;
+    if(k < 0) {return 1;}
+    soa->nextnode[k] = new_nextnode;
+    return 0;
+}
+
 /* Per-TU All_dev sync stub (no-op on Kokkos path). */
 GPU_ALL_SYNC_FUNC(pseudo_update)
 

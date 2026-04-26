@@ -892,8 +892,12 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
                     Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
             }
 
-            /* Redirect local topleaf at the foreign subtree root */
+            /* Redirect local topleaf at the foreign subtree root (AoS + SoA).
+             * The SoA mirror was populated by the GPU build pipeline pointing
+             * at the pseudo-particle for this topleaf; the walk reads SoA, so
+             * it must also point at the foreign subtree root. */
             Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
+            gpu_set_soa_nextnode(local_topleaf_no, subtree_root);
         }
 
         /* Pass 3: AoS -> SoA scatter for the foreign-node range we just
