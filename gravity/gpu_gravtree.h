@@ -38,6 +38,14 @@ extern "C" {
  * GIZMO_GPU_GRAVTREE is not defined or the build lacks OPENMP_GPU_OFFLOAD,
  * this is an unconditional no-op (returns 0) so callers in gravity_tree()
  * stay simple. */
+/* Phase 7.b: GPU gravity-cost assignment.  Replaces the host Father-chain walk
+ * at gravtree.cc:487-495 that accumulates Nodes[].GravCost into
+ * P[i].GravCost[takelevel] for each particle.  Zeros the slot inline before
+ * accumulating (so the CPU zeroing at gravtree.cc:145 is skipped on GPU builds).
+ * All inputs UVM (Father Phase 6.6, Nodes Phase 6.8d, P Phase 1).
+ * No-op stub when OPENMP_GPU_OFFLOAD is not defined. */
+void gpu_assign_gravcost(int takelevel);
+
 int gpu_gravtree_walk_primary(void);
 
 /* GPU Ewald-correction walk. Called from gravity_tree() when Ewald_iter==1

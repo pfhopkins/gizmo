@@ -142,7 +142,10 @@ void gravity_tree(void)
         for(i = 0; i < GRAVCOSTLEVELS; i++) {if(All.LevelToTimeBin[i] == All.HighestActiveTimeBin) {All.LevelToTimeBin[i] = 0;}}
         TakeLevel = -1;
     }
+    /* Phase 7.b: GPU path zeroes P[i].GravCost[TakeLevel] inline inside gpu_assign_gravcost. */
+#ifndef OPENMP_GPU_OFFLOAD
     if(TakeLevel >= 0) {for(i = 0; i < NumPart; i++) {P[i].GravCost[TakeLevel] = 0;}} /* re-zero the cost [will be re-summed] */
+#endif
 
     /* cache which particles need a new tree force BEFORE the tree walk runs: the tree walk can modify
        quantities like Min_Sink_FeedbackTime that needs_new_treeforce() depends on, so re-calling it
@@ -484,6 +487,11 @@ void gravity_tree(void)
     /* assign node cost to particles */
     if(TakeLevel >= 0) {
         sum_top_level_node_costfactors();
+#ifdef OPENMP_GPU_OFFLOAD
+        /* Phase 7.b: GPU kernel zeroes and accumulates P[i].GravCost[TakeLevel]
+         * in one Father-chain walk over all NumPart particles. */
+        gpu_assign_gravcost(TakeLevel);
+#else
         for(i = 0; i < NumPart; i++)
         {
             int no = Father[i];
@@ -493,6 +501,7 @@ void gravity_tree(void)
                 no = Nodes[no].u.d.father;
             }
         }
+#endif
     }
 
 
