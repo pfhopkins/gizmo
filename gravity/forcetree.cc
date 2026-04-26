@@ -213,7 +213,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
  *  All.MaxPart.... All.MaxPart+nodes-1 reference tree nodes. `Nodes_base'
  *  points to the first tree node, while `nodes' is shifted such that
  *  nodes[All.MaxPart] gives the first tree node. Finally, node indices
- *  with values 'All.MaxPart + MaxNodes' and larger indicate "pseudo
+ *  with values 'All.MaxPart + MaxNodes + MaxForeignNodes' and larger indicate "pseudo
  *  particles", i.e. multipole moments of top-level nodes that lie on
  *  different CPUs. If such a node needs to be opened, the corresponding
  *  particle must be exported to that CPU. The 'Extnodes' structure
@@ -472,7 +472,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
 
     if(last >= All.MaxPart)
     {
-        if(last >= All.MaxPart + MaxNodes) {Nextnode[last - MaxNodes] = -1;}    /* a pseudo-particle */
+        if(last >= All.MaxPart + MaxNodes + MaxForeignNodes) {Nextnode[last - MaxNodes - MaxForeignNodes] = -1;}    /* a pseudo-particle (Phase 9: foreign-node range below pseudos) */
         else {Nodes[last].u.d.nextnode = -1;}
     }
     else {Nextnode[last] = -1;}
@@ -562,7 +562,7 @@ void force_insert_pseudo_particles(void)
         index = DomainNodeIndex[i];
         
         if(DomainTask[i] != ThisTask)
-            Nodes[index].u.suns[0] = All.MaxPart + MaxNodes + i;
+            Nodes[index].u.suns[0] = All.MaxPart + MaxNodes + MaxForeignNodes + i;    /* Phase 9: pseudo-particles live above the foreign-node range */
     }
 }
 
@@ -611,8 +611,8 @@ void force_update_node_recursive(int no, int sib, int father)
         {
             if(last >= All.MaxPart)
             {
-                if(last >= All.MaxPart + MaxNodes)    /* a pseudo-particle */
-                    Nextnode[last - MaxNodes] = no;
+                if(last >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* a pseudo-particle (Phase 9: foreign-node range below pseudos) */
+                    Nextnode[last - MaxNodes - MaxForeignNodes] = no;
                 else
                     Nodes[last].u.d.nextnode = no;
             }
@@ -679,7 +679,7 @@ void force_update_node_recursive(int no, int sib, int father)
                 
                 if(p >= All.MaxPart)    /* an internal node or pseudo particle */
                 {
-                    if(p >= All.MaxPart + MaxNodes)    /* a pseudo particle */
+                    if(p >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* a pseudo particle (Phase 9) */
                     {
                         /* nothing to be done here because the mass of the
                          * pseudo-particle is still zero. This will be changed
@@ -987,7 +987,7 @@ void force_update_node_recursive(int no, int sib, int father)
         {
             if(last >= All.MaxPart)
             {
-                if(last >= All.MaxPart + MaxNodes) {Nextnode[last - MaxNodes] = no;} else {Nodes[last].u.d.nextnode = no;}    /* a pseudo-particle */
+                if(last >= All.MaxPart + MaxNodes + MaxForeignNodes) {Nextnode[last - MaxNodes - MaxForeignNodes] = no;} else {Nodes[last].u.d.nextnode = no;}    /* a pseudo-particle (Phase 9) */
             } else {Nextnode[last] = no;}
         }
         last = no;
@@ -1580,7 +1580,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 {
     struct NODE *nop = 0;
     int no, nodesinlist=0, ptype, ninteractions=0, nexp, task, listindex = 0, maxPart = All.MaxPart;
-    long bunchSize = All.BunchSize; int maxNodes = MaxNodes; integertime ti_Current = All.Ti_Current;
+    long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* Phase 9: maxForeignNodes shifts pseudo-particle range above the foreign-node range */
     double soft, r2, mass, r, fac_accel, u, h=0, h_p=0, h_inv, h3_inv, h_p_inv, h_p3_inv, u_p, xtmp, aold; xtmp=0; soft=0;
     Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
     double pmass;
@@ -1925,11 +1925,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             }
             else /* we have an  internal node */
             {
-                if(no >= maxPart + maxNodes) /* pseudo particle -- this will not be used for calculations below, but needs to be parsed here */
+                if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo particle (Phase 9: foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
                 {
                     if(mode == 0)
                     {
-                        if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
+                        if(exportflag[task = DomainTask[no - (maxPart + maxNodes + maxForeignNodes)]] != target)
                         {
                             exportflag[task] = target;
                             exportnodecount[task] = NODELISTLENGTH;
@@ -1961,10 +1961,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                             DataIndexTable[nexp].IndexGet = nexp;
                         }
                         DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                        DomainNodeIndex[no - (maxPart + maxNodes)];
+                        DomainNodeIndex[no - (maxPart + maxNodes + maxForeignNodes)];
                         if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
                     }
-                    no = Nextnode[no - maxNodes];
+                    no = Nextnode[no - maxNodes - maxForeignNodes];
                     continue;
                 }
                 /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
@@ -2826,11 +2826,11 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
             }
             else            /* we have an  internal node */
             {
-                if(no >= All.MaxPart + MaxNodes)    /* pseudo particle */
+                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
                 {
                     if(mode == 0)
                     {
-                        if(exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
+                        if(exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
                         {
                             exportflag[task] = target;
                             exportnodecount[task] = NODELISTLENGTH;
@@ -2864,11 +2864,11 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
                             DataIndexTable[nexp].IndexGet = nexp;
                         }
                         
-                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
+                        DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
                         
                         if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
                     }
-                    no = Nextnode[no - MaxNodes];
+                    no = Nextnode[no - MaxNodes - MaxForeignNodes];
                     continue;
                 }
                 
@@ -3167,11 +3167,11 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
             }
             else
             {
-                if(no >= All.MaxPart + MaxNodes)    /* pseudo particle */
+                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
                 {
                     if(mode == 0)
                     {
-                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
+                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
                         {
                             Exportflag[task] = target;
                             Exportnodecount[task] = NODELISTLENGTH;
@@ -3196,10 +3196,10 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                             nsend_local[task]++;
                         }
                         
-                        DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
+                        DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
                         if(Exportnodecount[task] < NODELISTLENGTH) {DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;}
                     }
-                    no = Nextnode[no - MaxNodes];
+                    no = Nextnode[no - MaxNodes - MaxForeignNodes];
                     continue;
                 }
                 
@@ -3235,11 +3235,11 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
             {
 #ifdef PMGRID
                 /* check whether we can stop walking along this branch */
-                if(no >= All.MaxPart + MaxNodes)    /* pseudo particle */
+                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
                 {
                     if(mode == 0)
                     {
-                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
+                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
                         {
                             Exportflag[task] = target;
                             DataIndexTable[*nexport].Index = target;
@@ -3248,7 +3248,7 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                             nsend_local[task]++;
                         }
                     }
-                    no = Nextnode[no - MaxNodes];
+                    no = Nextnode[no - MaxNodes - MaxForeignNodes];
                     continue;
                 }
                 
@@ -3426,11 +3426,11 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
             }
             else
             {
-                if(no >= All.MaxPart + MaxNodes)    /* pseudo particle */
+                if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)    /* pseudo particle (Phase 9: foreign-node range below pseudos) */
                 {
                     if(mode == 0)
                     {
-                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
+                        if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
                         {
                             Exportflag[task] = target;
                             Exportnodecount[task] = NODELISTLENGTH;
@@ -3455,10 +3455,10 @@ int subfind_force_treeevaluate_potential(int target, int mode, int *nexport, int
                             nsend_local[task]++;
                         }
                         
-                        DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
+                        DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] = DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
                         if(Exportnodecount[task] < NODELISTLENGTH) {DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;}
                     }
-                    no = Nextnode[no - MaxNodes];
+                    no = Nextnode[no - MaxNodes - MaxForeignNodes];
                     continue;
                 }
                 
@@ -3571,6 +3571,29 @@ void force_treeallocate(int maxnodes, int maxpart)
     MaxForeignNodes = (int) ceil(All.LETAllocFactor * (double) MaxNodes);
     if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
     Numforeignnodes = 0;
+#if defined(FOF) || defined(SUBFIND)
+    /* Phase 9 LET incompatibility gate.  FOF and SUBFIND walk the same Nodes_base
+     * as the gravity tree using the legacy `MaxPart+MaxNodes` pseudo-particle
+     * threshold (see structure/fof.cc, structure/subfind/*.cc).  Phase 9 inserts
+     * foreign-node storage in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes),
+     * which would alias with what FOF/SUBFIND treats as pseudo-particles → silent
+     * halo-finding bugs.  Ported in a planned post-9.7 sub-phase; until then,
+     * refuse to run with both LET and FOF/SUBFIND active. */
+    if(MaxForeignNodes > 0)
+    {
+        if(ThisTask == 0)
+        {
+            printf("ERROR: Phase 9 LET (LETAllocFactor=%g, MaxForeignNodes=%d) is incompatible with FOF/SUBFIND.\n"
+                   "       FOF and SUBFIND walk the gravity tree using the legacy pseudo-particle index range\n"
+                   "       and will mis-classify foreign nodes as pseudo-particles.  Either:\n"
+                   "         - Set LETAllocFactor=0 in the parameter file to disable LET (use legacy export); or\n"
+                   "         - Recompile without FOF/SUBFIND.\n"
+                   "       The FOF/SUBFIND port to LET is scheduled as Phase 9.x (post-Vista validation).\n",
+                   All.LETAllocFactor, MaxForeignNodes);
+        }
+        endrun(914005);
+    }
+#endif
     long long total_node_slots = (long long) MaxNodes + (long long) MaxForeignNodes + 1LL;
     /* Phase 6.8d: Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
      * kernels can read/write them directly.  Same pattern as Father[] (6.6) and

@@ -24,7 +24,9 @@
  *
  *   * Apply this successor to E based on E's type:
  *       - particle (E < MaxPart):              Nextnode[E]              = succ
- *       - pseudo  (E >= MaxPart + MaxNodes):   Nextnode[E - MaxNodes]   = succ
+ *       - pseudo  (E >= MaxPart + MaxNodes + MaxForeignNodes):   Nextnode[E - MaxNodes - MaxForeignNodes]   = succ
+ *           (Phase 9: foreign-node range [MaxPart+MaxNodes, +MaxForeignNodes) below pseudos;
+ *            foreign nodes carry their own NODE.u.d.nextnode and don't use Nextnode[])
  *       - internal node (otherwise):           handled by E's own thread
  *         (E's last descendant gets succ via the recursion of sibling[E]
  *         pointers — already set by force_update_node_recursive)
@@ -71,6 +73,7 @@ extern "C" int gpu_nextnode_thread(void)
     int n         = Numnodestree;
     int MaxPart   = All.MaxPart;
     int MaxNodes_ = MaxNodes;
+    int MaxForeignNodes_ = MaxForeignNodes;    /* Phase 9 LET: foreign-node range size */
     int NTopnodes_= NTopnodes;
 
     /* Acquire SoA — must already be allocated by gpu_nextnode_backup_suns
@@ -83,8 +86,8 @@ extern "C" int gpu_nextnode_thread(void)
     if(!soa->suns_backup) {printf("gpu_nextnode_thread: suns_backup null — must call gpu_nextnode_backup_suns first\n"); return 1;}
 
     /* Phase 6.8e: soa->nextnode_aux is aliased to UVM Nextnode[] (owned by
-     * force_treeallocate, sized MaxPart+NTopnodes).  Just sanity-check it. */
-    int aux_size = MaxPart + NTopnodes_;
+     * force_treeallocate, sized MaxPart+NTopnodes+MaxForeignNodes).  Just sanity-check it. */
+    int aux_size = MaxPart + NTopnodes_ + MaxForeignNodes_;
     if(!soa->nextnode_aux || soa->nextnode_aux_size < aux_size) {
         printf("gpu_nextnode_thread: nextnode_aux alias missing or undersized (have=%d, need=%d)\n",
                soa->nextnode_aux_size, aux_size);
@@ -131,11 +134,15 @@ extern "C" int gpu_nextnode_thread(void)
             if(prev_id < MaxPart) {
                 /* particle */
                 aux_soa[prev_id] = succ;
-            } else if(prev_id >= MaxPart + MaxNodes_) {
-                /* pseudo-particle: Nextnode/aux index is id - MaxNodes_ */
-                int idx = prev_id - MaxNodes_;
+            } else if(prev_id >= MaxPart + MaxNodes_ + MaxForeignNodes_) {
+                /* pseudo-particle (Phase 9: foreign-node range below pseudos): Nextnode/aux
+                 * index is id - MaxNodes_ - MaxForeignNodes_ */
+                int idx = prev_id - MaxNodes_ - MaxForeignNodes_;
                 if(idx >= 0 && idx < MaxPart + NTopnodes_) {aux_soa[idx] = succ;}
             }
+            /* Foreign nodes (Phase 9: prev_id in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes))
+             * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
+             * directly from LET unpack.  At present (LETAllocFactor=0) the foreign range is empty. */
             /* internal node: skip — its own thread sets nextnode_soa, and
              * its last DFS descendant gets `succ` via the chain of
              * sibling pointers (already set by force_update_node_recursive). */

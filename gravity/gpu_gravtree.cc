@@ -260,7 +260,7 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  * ---------------------------------------------------------------------- */
 static KOKKOS_INLINE_FUNCTION int
 gpu_gravtree_walk_one(int target,
-                      int maxPart, int maxNodes,
+                      int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9: foreign-node range size; pseudos start at maxPart+maxNodes+maxForeignNodes */
                       struct particle_data *P_dev,
                       struct gas_cell_data *CellP_dev,
                       const struct gpu_gravity_tree_soa_t *s,
@@ -541,7 +541,7 @@ gpu_gravtree_walk_one(int target,
             }
 #endif /* SINK_CALC_DISTANCES */
         }
-        else if(no >= maxPart + maxNodes) /* pseudo-particle — remote */
+        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — remote (Phase 9: foreign-node range below pseudos; foreign nodes treated as internal in the else branch below) */
         {
             return 0; /* host runs CPU walk for this target */
         }
@@ -1336,6 +1336,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     int maxPart = All.MaxPart;
     int maxNodes_snap = MaxNodes;
+    int maxForeignNodes_snap = MaxForeignNodes;    /* Phase 9 LET */
     const struct gpu_gravity_tree_soa_t soa_snap = *soa;
 
 #ifdef PMGRID
@@ -1366,7 +1367,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         Vec3<double> acc;
         int ninter;
         double pot;
-        int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap,
+        int ok = gpu_gravtree_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_snap,
                                         P_dev, CellP_dev, &soa_snap,
 #ifdef PMGRID
                                         rcut_snap, rcut2_snap, asmthfac_snap, d_st, d_sp,
@@ -1579,7 +1580,7 @@ static void gpu_ewald_tables_acquire(void)
  * written), 0 if a pseudo-particle was encountered (defer to CPU). */
 static KOKKOS_INLINE_FUNCTION int
 gpu_ewald_walk_one(int target,
-                   int maxPart, int maxNodes,
+                   int maxPart, int maxNodes, int maxForeignNodes,    /* Phase 9 LET */
                    struct particle_data *P_dev,
                    const struct gpu_gravity_tree_soa_t *s,
                    const MyFloat *fcorrx, const MyFloat *fcorry, const MyFloat *fcorrz,
@@ -1609,7 +1610,7 @@ gpu_ewald_walk_one(int target,
             mass  = P_dev[no].Mass;
             is_leaf = 1;
         }
-        else if(no >= maxPart + maxNodes) /* pseudo-particle — defer to CPU */
+        else if(no >= maxPart + maxNodes + maxForeignNodes) /* pseudo-particle — defer to CPU (Phase 9: foreign-node range below) */
         {
             return 0;
         }
@@ -1764,8 +1765,9 @@ extern "C" int gpu_ewald_walk_primary(void)
     memset(d_failed, 0, num_active * sizeof(int));
 
     /* snapshot scalars */
-    const int maxPart        = All.MaxPart;
-    const int maxNodes_snap  = MaxNodes;
+    const int maxPart            = All.MaxPart;
+    const int maxNodes_snap      = MaxNodes;
+    const int maxForeignNodes_sn = MaxForeignNodes;    /* Phase 9 LET */
     const double boxsize     = All.BoxSize;
     const double boxhalf     = 0.5 * All.BoxSize;
     const double fac_intp    = g_ewald_fac_intp;
@@ -1779,7 +1781,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
-        int ok = gpu_ewald_walk_one(target, maxPart, maxNodes_snap,
+        int ok = gpu_ewald_walk_one(target, maxPart, maxNodes_snap, maxForeignNodes_sn,
                                      P_dev, &soa_snap,
                                      fcorrx_dev, fcorry_dev, fcorrz_dev,
                                      fac_intp, boxsize, boxhalf,
