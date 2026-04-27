@@ -294,8 +294,18 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                        Z_old = 0;
+                        for(int kk = ELEM_C; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) {
+                            double Xk;
+                            #pragma omp atomic read
+                            Xk = P[j].ElementAbundance[kk];
+                            Z_old += Xk;
+                        }
+#else
                         #pragma omp atomic read
                         Z_old = P[j].Metallicity[0];
+#endif
                         double dMZ = wk * local.MetalMass;
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic

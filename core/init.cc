@@ -193,7 +193,7 @@ void init(void)
 
 #ifdef METALS
     for(j=0;j<NUM_METAL_SPECIES;j++) {All.SolarAbundances[j]=0;} // initialize all to zero
-    All.SolarAbundances[0]=0.02;        // all metals (by mass); present photospheric abundances from Asplund et al. 2009 (Z=0.0134, proto-solar=0.0142) in notes;
+    All.SolarAbundances[0]=0.014;       // Asplund+ 2009 present-day solar Z, matches hardcoded value in resolvedism_stellar_tables.cc and chemcool
     //   also Anders+Grevesse 1989 (older, but hugely-cited compilation; their Z=0.0201, proto-solar=0.0213)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     All.SolarAbundances[1]=0.28;    // He  (10.93 in units where log[H]=12, so photospheric mass fraction -> Y=0.2485 [Hydrogen X=0.7381]; Anders+Grevesse Y=0.2485, X=0.7314), with proto-solar Y=0.27
@@ -428,21 +428,23 @@ void init(void)
                Solar proto-solar mass fractions from Asplund+ 2009.
                In isotope mode (40 species), first 27 slots are elements, rest zeroed
                — isotope splitting done at first feedback event or from IC file. */
+            /* Asplund 2009 solar element ratios, rescaled by ×1.0692 so the metal
+               slots (k≥C) sum to exactly Σ = 0.014, matching All.SolarAbundances[0]. */
             static const double solar_elem[27] = {
                 0.7381,   /*  0: H   */    0.2485,   /*  1: He  */
-                2.36e-3,  /*  2: C   */    6.91e-4,  /*  3: N   */
-                5.72e-3,  /*  4: O   */    3.26e-7,  /*  5: F   */
-                1.25e-3,  /*  6: Ne  */    2.98e-5,  /*  7: Na  */
-                5.91e-4,  /*  8: Mg  */    5.57e-5,  /*  9: Al  */
-                6.65e-4,  /* 10: Si  */    5.16e-6,  /* 11: P   */
-                3.10e-4,  /* 12: S   */    3.15e-6,  /* 13: Cl  */
-                7.37e-5,  /* 14: Ar  */    2.93e-6,  /* 15: K   */
-                6.44e-5,  /* 16: Ca  */    3.48e-8,  /* 17: Sc  */
-                3.59e-6,  /* 18: Ti  */    2.30e-7,  /* 19: V   */
-                1.37e-5,  /* 20: Cr  */    9.17e-6,  /* 21: Mn  */
-                1.17e-3,  /* 22: Fe  */    3.30e-6,  /* 23: Co  */
-                6.99e-5,  /* 24: Ni  */    7.20e-7,  /* 25: Cu  */
-                1.67e-6   /* 26: Zn  */
+                2.523e-3, /*  2: C   */    7.388e-4, /*  3: N   */
+                6.116e-3, /*  4: O   */    3.485e-7, /*  5: F   */
+                1.336e-3, /*  6: Ne  */    3.186e-5, /*  7: Na  */
+                6.319e-4, /*  8: Mg  */    5.955e-5, /*  9: Al  */
+                7.110e-4, /* 10: Si  */    5.517e-6, /* 11: P   */
+                3.314e-4, /* 12: S   */    3.368e-6, /* 13: Cl  */
+                7.880e-5, /* 14: Ar  */    3.133e-6, /* 15: K   */
+                6.885e-5, /* 16: Ca  */    3.721e-8, /* 17: Sc  */
+                3.838e-6, /* 18: Ti  */    2.459e-7, /* 19: V   */
+                1.465e-5, /* 20: Cr  */    9.804e-6, /* 21: Mn  */
+                1.251e-3, /* 22: Fe  */    3.528e-6, /* 23: Co  */
+                7.473e-5, /* 24: Ni  */    7.698e-7, /* 25: Cu  */
+                1.785e-6  /* 26: Zn  */
             };
             double Zfrac = All.InitMetallicityinSolar; /* fraction of solar metallicity */
             double Zmetal = 0;

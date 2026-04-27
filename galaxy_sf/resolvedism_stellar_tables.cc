@@ -1165,6 +1165,20 @@ double stellar_type_ia_yield(int elem)
 #endif /* GALSF_RESOLVEDISM_STELLAR_TABLES */
 
 
+/* Return total metal mass fraction Z = Σ ElementAbundance[k≥C].
+   Use this wherever physics needs total Z under GALSF_RESOLVEDISM_METALS_INDIVIDUAL,
+   instead of reading the legacy P[i].Metallicity[0]. */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+double resolvedism_total_Z_from_EA(int i)
+{
+    double Z = 0;
+    int k;
+    for(k = ELEM_C; k < NUM_RESOLVEDISM_ELEMENTS; k++) Z += P[i].ElementAbundance[k];
+    return Z;
+}
+#endif
+
+
 /* Accessor for turbulent diffusion: returns the resolved ISM passive scalar
    (ElementAbundance or Dust) at global index k, or -1 if k is not ours */
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)

@@ -343,9 +343,19 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                     }
 
 #ifdef METALS
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                    double Z_j = 0;
+                    for(int kk = ELEM_C; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) {
+                        double Xk;
+                        #pragma omp atomic read
+                        Xk = P[j].ElementAbundance[kk];
+                        Z_j += Xk;
+                    }
+#else
                     double Z_j;
                     #pragma omp atomic read
                     Z_j = P[j].Metallicity[0];
+#endif
                     out.metal_accreted += dM * Z_j;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -652,7 +662,9 @@ void assign_stellar_masses(void)
         for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++)
             P[i].ElementAbundance[k] = (mass_acc > 0) ? IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k] / mass_acc : 0;
 #endif
-#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        P[i].BirthMetallicity = resolvedism_total_Z_from_EA(i);
+#else
         P[i].BirthMetallicity = P[i].Metallicity[0];
 #endif
 

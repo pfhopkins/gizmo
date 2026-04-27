@@ -229,7 +229,11 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
        DGRnormalized is the dust-to-metal efficiency (1.0 = MW-like ~40% depletion).
        dust_to_gas_ratio is in solar units: 1.0 = DGR_solar ~ 0.01 */
 #ifdef METALS
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+    COOLR.dust_to_gas_ratio = All.DGRnormalized * resolvedism_total_Z_from_EA(target) / All.SolarAbundances[0];
+#else
     COOLR.dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];
+#endif
 #else
     COOLR.dust_to_gas_ratio = All.DGRnormalized;
 #endif

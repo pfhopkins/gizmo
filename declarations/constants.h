@@ -59,12 +59,15 @@
 #endif
 
 
-#if !defined(RT_HYDROGEN_GAS_ONLY) || defined(RT_CHEM_PHOTOION_HE) || !defined(CHEMCOOL)
-#define  HYDROGEN_MASSFRAC 0.76 /*!< mass fraction of hydrogen, relevant only for radiative cooling */
-#elif defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
-#define  HYDROGEN_MASSFRAC 0.76   /*!< primordial (BBN-like), self-consistent with net 17 ABHE=0.079 */
+/* Chemistry-network branches first so they take precedence over RT/non-CHEMCOOL fallbacks. */
+#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17)
+#define  HYDROGEN_MASSFRAC 0.76   /*!< primordial (BBN-like), matches net 1/17 ABHE=0.079 */
+#elif defined(CHEMCOOL) && (CHEMISTRYNETWORK == 5)
+#define  HYDROGEN_MASSFRAC 0.7065 /*!< evolved ISM, matches net 5 ABHE=0.1 */
 #elif defined(CHEMCOOL)
-#define  HYDROGEN_MASSFRAC 0.7065 /*!< evolved ISM, self-consistent with net 5 ABHE=0.1 */
+#define  HYDROGEN_MASSFRAC 0.7065 /*!< CHEMCOOL default (any other net): matches ABHE=0.1 */
+#elif !defined(RT_HYDROGEN_GAS_ONLY) || defined(RT_CHEM_PHOTOION_HE)
+#define  HYDROGEN_MASSFRAC 0.76 /*!< mass fraction of hydrogen, relevant only for radiative cooling */
 #else
 #define  HYDROGEN_MASSFRAC 1.0  /*!< mass fraction of hydrogen, relevant only for radiative cooling */
 #endif

@@ -1380,7 +1380,8 @@ static void handle_mergers(KetjuRegion &reg,
             std::vector<double> merged_metals(buf_size, 0.0);
 
             if(act.task_merged == ThisTask) {
-#ifdef METALS
+#if defined(METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+                /* Legacy Metallicity[] merge — replaced by per-element EA merge under our flag */
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
                     merged_metals[k] = P[act.idx_merged].Metallicity[k];
 #endif
@@ -1403,7 +1404,8 @@ static void handle_mergers(KetjuRegion &reg,
             }
 
             if(act.task_survivor == ThisTask) {
-#ifdef METALS
+#if defined(METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+                /* Legacy Metallicity[] merge — replaced by per-element EA merge under our flag */
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
                     P[act.idx_survivor].Metallicity[k] =
                         (act.M_survivor_old * P[act.idx_survivor].Metallicity[k] +

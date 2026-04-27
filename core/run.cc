@@ -1116,7 +1116,11 @@ void energy_statistics(void)
     double Zmin_gas_loc = 1e30, Zmax_gas_loc = -1e30, Zmin_star_loc = 1e30, Zmax_star_loc = -1e30;
     {int ii; for(ii = 0; ii < NumPart; ii++) {
         if(P[ii].Mass <= 0) continue;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        double Z = resolvedism_total_Z_from_EA(ii);
+#else
         double Z = P[ii].Metallicity[0];
+#endif
         if(P[ii].Type == 0) { if(Z < Zmin_gas_loc) Zmin_gas_loc = Z; if(Z > Zmax_gas_loc) Zmax_gas_loc = Z; }
         if(P[ii].Type == 4) { if(Z < Zmin_star_loc) Zmin_star_loc = Z; if(Z > Zmax_star_loc) Zmax_star_loc = Z; }
     }}

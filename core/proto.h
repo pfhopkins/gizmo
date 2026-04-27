@@ -628,6 +628,10 @@ void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slo
 double return_resolvedism_species_for_diffusion(int i, int k);
 #endif
 
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+double resolvedism_total_Z_from_EA(int i);
+#endif
+
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
 void update_stellarnumber_and_timedistribofstarformation(void);
 #endif
