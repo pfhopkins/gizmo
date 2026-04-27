@@ -41,7 +41,6 @@
  *  B7a — grain_backrx (GRAIN_BACKREACTION)
  * ======================================================================== */
 #if defined(GRAIN_BACKREACTION)
-
 static void grain_backrx_local_fill(int i,
                                      struct particle_data *P_host,
                                      struct GrainBackrxLocalIn *loc)
@@ -52,7 +51,7 @@ static void grain_backrx_local_fill(int i,
     loc->Gas_Density = P_host[i].Gas_Density;
     loc->Grain_AccelTimeMin = P_host[i].Grain_AccelTimeMin;
 }
-
+#endif
 
 void grain_backrx_evaluate_gpu(struct particle_data *P_host,
                                 struct gas_cell_data *CellP_host,
@@ -60,6 +59,7 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
                                 int *i_active_host, int num_active,
                                 const double *src_radii_host)
 {
+#if defined(GRAIN_BACKREACTION)
     GIZMO_GPU_ENSURE_ALL_FRESH(grainphysics);
 
     int num_src = num_active;
@@ -134,16 +134,17 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
 
     if(imported_ghosts) ghost_exchange_cleanup();
-}
-
+#else
+    (void)P_host; (void)CellP_host; (void)num_total;
+    (void)i_active_host; (void)num_active; (void)src_radii_host;
 #endif /* GRAIN_BACKREACTION */
+}
 
 
 /* ========================================================================
  *  B7b — interpolate_fluxes_opacities_gasgrains (RT_OPACITY_FROM_EXPLICIT_GRAINS)
  * ======================================================================== */
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
-
 static void gasgrain_rt_local_fill(int i,
                                     struct particle_data *P_host,
                                     struct GasGrainRTLocalIn *loc)
@@ -167,7 +168,7 @@ static void gasgrain_rt_local_fill(int i,
         }
     }
 }
-
+#endif
 
 void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P_host,
                                                           struct gas_cell_data *CellP_host,
@@ -177,6 +178,7 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
                                                           int *i_active_grain_host, int num_active_grain,
                                                           const double *src_radii_grain_host)
 {
+#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
     GIZMO_GPU_ENSURE_ALL_FRESH(grainphysics);
 
     int imported_ghosts = 0;
@@ -330,26 +332,25 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
     gpu_particles_arena_invalidate();
 
     if(imported_ghosts) ghost_exchange_cleanup();
-}
-
+#else
+    (void)P_host; (void)CellP_host; (void)num_total;
+    (void)i_active_gas_host; (void)num_active_gas; (void)src_radii_gas_host;
+    (void)i_active_grain_host; (void)num_active_grain; (void)src_radii_grain_host;
 #endif /* RT_OPACITY_FROM_EXPLICIT_GRAINS */
+}
 
 
 GPU_ALL_SYNC_FUNC(grainphysics)
 
 #else /* fallback stubs */
 
-#ifdef GRAIN_BACKREACTION
 void grain_backrx_evaluate_gpu(struct particle_data *p, struct gas_cell_data *cp, int num_total,
                                 int *i_active_host, int num_active, const double *src_radii_host)
 { (void)p; (void)cp; (void)num_total; (void)i_active_host; (void)num_active; (void)src_radii_host; }
-#endif
-#ifdef RT_OPACITY_FROM_EXPLICIT_GRAINS
 void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *p, struct gas_cell_data *cp, int num_total,
                                                           int *ig, int ng, const double *rg,
                                                           int *ir, int nr, const double *rr)
 { (void)p; (void)cp; (void)num_total; (void)ig; (void)ng; (void)rg; (void)ir; (void)nr; (void)rr; }
-#endif
 void gizmo_gpu_sync_all_grainphysics(struct global_data_all_processes *p) { (void)p; }
 
 #endif /* GRAIN_FLUID && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */

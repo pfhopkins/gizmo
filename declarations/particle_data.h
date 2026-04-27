@@ -220,16 +220,12 @@ extern ALIGN(32) struct particle_data
 #endif
     
     
+    Vec3<MyFloat> vel_of_nearest_special;
+    Vec3<MyFloat> acc_of_nearest_special;
+    MyFloat weight_sum_for_special_point_smoothing;
 #ifdef SINK_CALC_DISTANCES
     MyFloat Min_Distance_to_Sink;
     Vec3<MyFloat> Min_xyz_to_Sink;
-#ifdef SPECIAL_POINT_MOTION
-    Vec3<MyFloat> vel_of_nearest_special;
-    Vec3<MyFloat> acc_of_nearest_special;
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    MyFloat weight_sum_for_special_point_smoothing;
-#endif
-#endif
 #if defined(SINGLE_STAR_FIND_BINARIES) || (SINGLE_STAR_TIMESTEPPING > 0)
     MyDouble Min_Sink_OrbitalTime; //orbital time for binary
     Vec3<MyDouble> comp_dx; //position offset of binary companion - this will be evolved in the Kepler solution while we use the Pos attribute to track the binary COM

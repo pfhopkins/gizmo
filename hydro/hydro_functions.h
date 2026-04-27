@@ -306,9 +306,10 @@ void hydro_accumulate_neighbor(
     elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
                                              Face_Area_Vec, Face_Area_Norm,
                                              tensile_correction_factor, dt_hydrostep, Fluxes);
+    Vec3<double> bflux_from_nonideal_effects = {};
     nonideal_mhd_compute_pair(local, P[j], CellP[j], BPred_j, kernel, rinv,
                               Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
-                              dt_hydrostep, Fluxes);
+                              dt_hydrostep, Fluxes, bflux_from_nonideal_effects);
     /* Per-pair physics sub-modules. Functions guard their bodies with the
        relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
     double face_density_for_diffusion = 0;

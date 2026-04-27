@@ -55,10 +55,12 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
     double face_vel_i=0, face_vel_j=0, Face_Area_Norm=0; Vec3<double> Face_Area_Vec;
 
+    /* Entropic-energy-equation thresholds: declared unconditionally so the
+       hydro_core_meshless function can take them as plain args. Values only
+       active under HYDRO_MESHLESS_FINITE_MASS; harmless defaults otherwise. */
+    double epsilon_entropic_eos_big = 0.5;
+    double epsilon_entropic_eos_small = 1.e-3;
 #ifdef HYDRO_MESHLESS_FINITE_MASS
-    double epsilon_entropic_eos_big, epsilon_entropic_eos_small;
-    epsilon_entropic_eos_big = 0.5; // can be anything from (small number=more diffusive, less accurate entropy conservation) to ~1.1-1.3 (least diffusive, most noisy)
-    epsilon_entropic_eos_small = 1.e-3; // should be << epsilon_entropic_eos_big
 #if defined(FORCE_ENTROPIC_EOS_BELOW)
     epsilon_entropic_eos_small = FORCE_ENTROPIC_EOS_BELOW; // if set manually
 #elif !defined(SELFGRAVITY_OFF)
@@ -350,9 +352,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
                                                          Face_Area_Vec, Face_Area_Norm,
                                                          tensile_correction_factor, dt_hydrostep, Fluxes);
+                Vec3<double> bflux_from_nonideal_effects = {};
                 nonideal_mhd_compute_pair(local, P[j], CellP[j], BPred_j, kernel, rinv,
                                           Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
-                                          dt_hydrostep, Fluxes);
+                                          dt_hydrostep, Fluxes, bflux_from_nonideal_effects);
                 conduction_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                         v_hll, bhat, bhat_mag, dt_hydrostep, Fluxes);
                 viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,

@@ -30,12 +30,11 @@ void nonideal_mhd_compute_pair(
     const Vec3<double> &bhat,
     double bhat_mag,
     double dt_hydrostep,
-    struct Conserved_var_Riemann &Fluxes)
+    struct Conserved_var_Riemann &Fluxes,
+    Vec3<double> &bflux_from_nonideal_effects)
 {
 #ifdef MHD_NON_IDEAL
     (void)bhat_mag;  /* bhat_mag unused here — bhat already carries magnitude */
-
-    Vec3<double> bflux_from_nonideal_effects = {};
     if(!((local.Mass > 0) && (Pj.Mass > 0) && (dt_hydrostep > 0))) { return; }
 
     double eta_i, eta_j, eta_ohmic, eta_hall, eta_ad;

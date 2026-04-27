@@ -9,15 +9,12 @@
  */
 #pragma once
 
-#ifdef GRAIN_BACKREACTION
 void grain_backrx_evaluate_gpu(struct particle_data *P_host,
                                 struct gas_cell_data *CellP_host,
                                 int num_total,
                                 int *i_active_host, int num_active,
                                 const double *src_radii_host);
-#endif
 
-#ifdef RT_OPACITY_FROM_EXPLICIT_GRAINS
 /* Runs BOTH directions internally (gas→grains and grains→gas). */
 void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P_host,
                                                           struct gas_cell_data *CellP_host,
@@ -26,6 +23,5 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
                                                           const double *src_radii_gas_host,
                                                           int *i_active_grain_host, int num_active_grain,
                                                           const double *src_radii_grain_host);
-#endif
 
 void gizmo_gpu_sync_all_grainphysics(struct global_data_all_processes *p);

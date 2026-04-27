@@ -58,7 +58,7 @@
 #define USE_TIMESTEP_DILATION_FOR_ZOOMS
 #endif
 #if defined(SPECIAL_POINT_WEIGHTED_MOTION) && !defined(SPECIAL_POINT_MOTION)
-#define SPECIAL_POINT_MOTION (SPECIAL_POINT_WEIGHTED_MOTION) /* doesn't seem to be working ??? */
+#define SPECIAL_POINT_MOTION /* flag only; SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES defaults to 5 below */
 #endif
 #if defined(SPECIAL_POINT_MOTION) && !defined(SINK_CALC_DISTANCES)
 #define SINK_CALC_DISTANCES
