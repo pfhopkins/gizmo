@@ -501,11 +501,6 @@ void compute_statistics(void)
 {
     if((All.Time - All.TimeLastStatistics) >= All.TimeBetStatistics)
     {
-#if !defined(EVALPOTENTIAL)          // compute_potential is not defined if EVALPOTENTIAL is on //
-#ifdef COMPUTE_POTENTIAL_ENERGY
-        compute_potential();
-#endif
-#endif
         energy_statistics();	/* compute and output energy statistics */
         All.TimeLastStatistics += All.TimeBetStatistics;
     }
@@ -576,13 +571,13 @@ void find_next_sync_point_and_drift(void)
         move_particles(All.Ti_nextoutput);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
 
-#ifdef OUTPUT_POTENTIAL
-#if !defined(EVALPOTENTIAL) || (defined(EVALPOTENTIAL) && defined(OUTPUT_RECOMPUTE_POTENTIAL))
-        domain_Decomposition(0, 0, 0);
-        compute_potential();
-#endif
-#endif
-
+        /* Phase 10.6: potential is computed by the unified gravity tree walk
+         * (gravtree.cc with EVALPOTENTIAL).  COMPUTE_POTENTIAL_ENERGY and
+         * OUTPUT_POTENTIAL now imply EVALPOTENTIAL via precompiler_logic.h, so
+         * P[i].Potential is current after the most recent gravity walk and
+         * stays drifted continuously under ADAPTIVE_TREEFORCE_UPDATE.  The
+         * legacy compute_potential() (gravity/potential.cc) and
+         * OUTPUT_RECOMPUTE_POTENTIAL flag are retired. */
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
         All.Ti_nextoutput = find_next_outputtime(All.Ti_nextoutput + 1);
     }
@@ -984,9 +979,6 @@ void write_cpu_log(void)
 #ifdef PMGRID
           "pm-gravity    %10.2f  %5.1f%%\n"
 #endif
-#if !defined(EVALPOTENTIAL) && (defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL))
-          "potentialeval %10.2f  %5.1f%%\n"
-#endif
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 	      "ags-nongas    %10.2f  %5.1f%%\n"
 	      "   agsdensity %10.2f  %5.1f%%\n"
@@ -1072,9 +1064,6 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2], (All.CPU_Sum[CPU_TREEWAIT1] + All.CPU_Sum[CPU_TREEWAIT2]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef PMGRID
     All.CPU_Sum[CPU_MESH], (All.CPU_Sum[CPU_MESH]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#if !defined(EVALPOTENTIAL) && (defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL))
-    All.CPU_Sum[CPU_POTENTIAL], (All.CPU_Sum[CPU_POTENTIAL]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
     All.CPU_Sum[CPU_AGSDENSCOMPUTE] + All.CPU_Sum[CPU_AGSDENSWAIT] + All.CPU_Sum[CPU_AGSDENSCOMM] + All.CPU_Sum[CPU_AGSDENSMISC],

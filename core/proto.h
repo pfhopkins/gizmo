@@ -444,7 +444,6 @@ void allocate_memory(void);
 void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
-void compute_potential(void);
 void star_formation_parent_routine(void);
 #if defined(TURB_DRIVING)
 void do_turb_driving_step_first_half(void);

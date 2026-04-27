@@ -1050,8 +1050,14 @@
 #define OUTPUT_DUST_TO_GAS_RATIO // helpful if these special modules are on to see this output and save it for use in analysis
 #endif
 
-#if defined(OUTPUT_POTENTIAL) && !defined(EVALPOTENTIAL)
+/* Phase 10.6: COMPUTE_POTENTIAL_ENERGY / OUTPUT_POTENTIAL / EVALPOTENTIAL are now equivalent.
+ * Any one set implies the others.  The standalone gravity/potential.cc (separate force_treebuild
+ * + export-style force_treeevaluate_potential) is retired; potentials come from the unified
+ * gravity tree walk (gravtree.cc with EVALPOTENTIAL). */
+#if defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
+#ifndef EVALPOTENTIAL
 #define EVALPOTENTIAL
+#endif
 #endif
 
 #if defined(SINK_PARTICLES) && (defined(SINK_REPOSITION_ON_POTMIN) || defined(SINK_SEED_FROM_FOF))

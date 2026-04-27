@@ -457,7 +457,6 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/forcetree_update.o \
                 gravity/gravtree.o \
 				gravity/cosmology.o \
-				gravity/potential.o \
 				gravity/pm_periodic.o \
                 gravity/pm_nonperiodic.o \
                 gravity/longrange.o \
