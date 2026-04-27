@@ -13,12 +13,10 @@
  * top-level call.  The mirror is 1000 doubles (DRIFT_TABLE_LENGTH) so the
  * refresh cost is in the noise.
  *
- * Timestep-dilation policy: GPU drift currently supports configurations where
- * return_timestep_dilation_factor(no, 1) is provably == 1, which is every
- * combination except SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM and
- * SPECIAL_POINT_WEIGHTED_MOTION (both of which need a per-node dilation cache
- * we don't yet build on the GPU side).  Those configs trigger a #error here;
- * see Phase 7 closeout doc for the explicit deferred-work item.
+ * Timestep-dilation policy: GPU drift supports all configurations.  For
+ * SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM and SPECIAL_POINT_WEIGHTED_MOTION the
+ * per-node dilation_dev cache (populated by gpu_force_update_tree) is used;
+ * all other configs are provably dilation==1 and skip the cache lookup.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */

@@ -580,7 +580,7 @@ void get_SNe_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double *
     // just a catch to prevent un-physical yields, need to do this here before handing them off to other routines which may use the yields (currently just the dust routines)
     for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=DMIN(1.,DMAX(0.,yields[k]));}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    ISMDustChem_get_SNe_dust_yields(yields,i,t_gyr,SNeIaFlag,*Msne); // get dust yields
+    ISMDustChem_get_SNe_dust_yields(yields,i,t_gyr,SNeIaFlag,*Msne,P,CellP); // get dust yields
 #endif
 }
 #endif
@@ -672,7 +672,7 @@ void get_wind_yields(double *yields, int i)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     // just a catch to prevent un-physical yields, need to do this here before handing them off to other routines which may use the yields (currently just the dust routines)
     for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=DMIN(1.,DMAX(0.,yields[k]));}    
-    ISMDustChem_get_wind_dust_yields(yields,i); // get dust yields
+    ISMDustChem_get_wind_dust_yields(yields,i,CellP); // get dust yields
 #endif
 }
 #endif

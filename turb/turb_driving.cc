@@ -421,6 +421,7 @@ void add_turb_accel()
             int ii = turb_indices[j];
             CellP[ii] = compact_Cell[j];
         }
+        gpu_particles_arena_invalidate();
 
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);

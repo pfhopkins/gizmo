@@ -603,6 +603,28 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
     PRINT_STATUS("  GPU hydro: %d active, %d pairs", num_active, csr_total_pairs);
 
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    /* Pre-compute ISMDustChem passive scalar diffusion values on host.
+     * return_ismdustchem_species_of_interest_for_diffusion_and_yields() reads
+     * All.* grain tables not mirrored to All_dev, so it is not device-callable. */
+    double *d_ismdc = nullptr;
+    const int n_ismdc = NUM_ISMDUSTCHEM_PASSIVE_SCALARS;
+    if(n_ismdc > 0 && num_active > 0) {
+        double *ismdc_host = new double[(size_t)num_active * n_ismdc];
+        for(int aa = 0; aa < num_active; aa++) {
+            int ii = active_indices_host[aa];
+            for(int ki = 0; ki < n_ismdc; ki++) {
+                ismdc_host[aa * n_ismdc + ki] =
+                    return_ismdustchem_species_of_interest_for_diffusion_and_yields(
+                        ii, ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY + ki, 0, CellP_host);
+            }
+        }
+        d_ismdc = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)num_active * n_ismdc * sizeof(double));
+        memcpy(d_ismdc, ismdc_host, (size_t)num_active * n_ismdc * sizeof(double));
+        delete[] ismdc_host;
+    }
+#endif
+
     /* GPU hydro force kernel */
     {
         int *offsets = d_offsets;
@@ -613,6 +635,10 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         struct hydro_data_out *kout = d_out;
         int *kTimeBinActive = d_TimeBinActive;
         int *kNeedWakeup = d_NeedToWakeup;
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        double *ismdc = d_ismdc;
+        const int ismdc_n = n_ismdc;
+#endif
 
         Kokkos::parallel_for("hydro_kernel", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
@@ -702,7 +728,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             for(int k=0;k<NUM_METAL_SPECIES;k++) {local.Gradients.Metallicity[k] = kc[ii].Gradients.Metallicity[k];}
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-            for(int k=ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY;k<ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+NUM_ISMDUSTCHEM_PASSIVE_SCALARS;k++) {local.Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(ii,k,0, kc);}
+            for(int ki=0;ki<ismdc_n;ki++) {local.Metallicity[ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+ki] = ismdc[aa*ismdc_n+ki];}
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
             for(int k=0;k<ChimesGlobalVars.totalNumberOfSpecies;k++) {local.ChimesNIons[k] = kc[ii].ChimesNIons[k];}
@@ -817,6 +843,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
      * the kernel may be unscattered, so invalidate to force the next kernel
      * to re-acquire from host. (ghost_writeback_hydro already invalidates,
      * but be defensive in case hydro is invoked again before that runs.) */
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    if(d_ismdc) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ismdc); }
+#endif
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_NeedToWakeup);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_TimeBinActive);

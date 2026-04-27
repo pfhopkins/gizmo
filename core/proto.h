@@ -502,10 +502,10 @@ double get_age_tracer_bin_start_time(int k);
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 void Initialize_ISMDustChem_Global_Variables();
-void Initialize_ISMDustChem_Particle_Variables(int i);
+void Initialize_ISMDustChem_Particle_Variables(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell);
-void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double Msne);
-void ISMDustChem_get_wind_dust_yields(double *yields, int i);
+void ISMDustChem_get_SNe_dust_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double Msne, struct particle_data *pp, struct gas_cell_data *cell);
+void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_data *cell);
 double specific_Z_AGB_dust(int spec_indx, double star_age, int z_bound);
 double cumulative_AGB_dust_returns(int dust_type, double star_age, double z);
 void update_dense_molecular_fields(int i, double temp, double rho, double nh0, double ne, struct particle_data *pp, struct gas_cell_data *cell);

@@ -205,10 +205,7 @@ gpu_sink_fb_angleweight(double sink_lum_input, Vec3<MyFloat> sink_angle,
  * in gpu_force_softening_kernel_radius below — enabled for Phase 2-C. */
 /* COMPUTE_TIDAL_TENSOR_IN_GRAVTREE + COMPUTE_JERK_IN_GRAVTREE: ported in Phase 5
  * (ATFU). Tidal tensor accumulation + jerk both mirror forcetree.cc:2081-2292.
- * Three sub-cases remain out-of-scope and are #error'd below:
- *   - PMGRID short-range tidal table (shortrange_table_tidal not mirrored)
- *   - AGS_SYMMETRIZE_FORCE_BY_AVERAGING tidal averaging branch
- *   - GRAVITY_SPHERICAL_SYMMETRY + ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION corners */
+ * All sub-cases are ported; see the entries below for details. */
 /* COMPUTE_TIDAL_TENSOR + PMGRID: ported.  shortrange_table_tidal is mirrored
  * to SharedSpace at the top of gpu_gravtree_walk_primary() and consumed in the
  * tidal accumulation block (mirrors forcetree.cc:2538-2549). */
