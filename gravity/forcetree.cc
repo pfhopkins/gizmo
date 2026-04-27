@@ -190,22 +190,23 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
      * which still run on CPU in 6.7a). */
     if(gpu_force_flag_localnodes() != 0) {endrun(913340);}
-#else
-    force_flag_localnodes();
-#endif
-    force_exchange_pseudodata();
-#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 10.3 (B): post the pseudo-data Iallgathervs first, then run the
+     * LET MPI round concurrently, then wait/unpack pseudo-data and resum.
+     * LET pack reads only LOCAL Nodes/Extnodes (which are already valid from
+     * gpu_moment_refresh above) and does not depend on foreign topleaves; so
+     * the two MPI exchanges can overlap.  Latency drops from sum to max of
+     * the two collectives' wall-times. */
+    force_exchange_pseudodata_issue();
+    if(let_run_exchange() != 0)             {endrun(913343);}
+    force_exchange_pseudodata_complete();
     /* Phase 6.7b+c: scatter foreign pseudo moments AoS→SoA, then re-sum
      * ancestor topnode moments directly in SoA.  SoA is authoritative after
      * this point — no mark_all_dirty needed. */
     if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(913341);}
     if(gpu_topnode_moment_resum() != 0)     {endrun(913342);}
-    /* Phase 9.2c: ship Locally Essential Tree subtrees to all remote ranks
-     * (no-op when MaxForeignNodes==0, i.e. All.LETAllocFactor==0).  Must
-     * run AFTER topnode-resum since LET needs final topleaf moments to
-     * compute the per-rank essential set. */
-    if(let_run_exchange() != 0)             {endrun(913343);}
 #else
+    force_flag_localnodes();
+    force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
 #endif
     TimeOfLastTreeConstruction = All.Time;
@@ -1006,15 +1007,10 @@ void force_update_node_recursive(int no, int sib, int father)
 
 
 
-/*! This function communicates the values of the multipole moments of the
- *  top-level tree-nodes of the domain grid.  This data can then be used to
- *  update the pseudo-particles on each CPU accordingly.
- */
-void force_exchange_pseudodata(void)
-{
-    int i, no, m, ta, recvTask;
-    int *recvcounts, *recvoffset;
-    struct DomainNODE
+/*! Pseudo-particle exchange wire format.  Lifted to file scope (Phase 10.3) so
+ *  the issue/complete halves of force_exchange_pseudodata can share the type
+ *  across the LET overlap window. */
+struct DomainNODE
     {
         Vec3<MyFloat> s;
         Vec3<MyFloat> vs;
@@ -1070,12 +1066,25 @@ void force_exchange_pseudodata(void)
 #ifdef PAD_STRUCTURES
         int pad[3];
 #endif
-    }
-    *DomainMoment;
-    
-    
-    DomainMoment = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
-    
+    };
+
+/*! Phase 10.3: state shared between force_exchange_pseudodata_issue() and
+ *  ..._complete() for the (B) non-blocking-overlap pattern.  let_run_exchange
+ *  runs concurrently with the pseudodata Iallgathervs in the GPU build path. */
+static struct DomainNODE *DomainMoment_pending = NULL;
+static MPI_Request *pseudo_requests_pending = NULL;
+static int *pseudo_recvcounts_pending = NULL;
+static int *pseudo_recvoffset_pending = NULL;
+static int  pseudo_n_requests_pending = 0;
+
+void force_exchange_pseudodata_issue(void)
+{
+    int i, no, m;
+    if(DomainMoment_pending != NULL) {endrun(913401);} /* re-entrant call: bug */
+
+    DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
+    struct DomainNODE *DomainMoment = DomainMoment_pending;
+
     for(m = 0; m < MULTIPLEDOMAINS; m++)
         for(i = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
             i <= DomainEndList[ThisTask * MULTIPLEDOMAINS + m]; i++)
@@ -1140,33 +1149,64 @@ void force_exchange_pseudodata(void)
 #endif
         }
 
-    /* share the pseudo-particle data accross CPUs */
-    recvcounts = (int *) mymalloc("recvcounts", sizeof(int) * NTask);
-    recvoffset = (int *) mymalloc("recvoffset", sizeof(int) * NTask);
-    
+    /* Phase 10.3: post one MPI_Iallgatherv per MULTIPLEDOMAINS slice; the requests
+     * are stored in static pseudo_requests_pending and waited on in _complete().
+     * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
+     * we allocate one set per slice and free them all in _complete(). */
+    pseudo_n_requests_pending = MULTIPLEDOMAINS;
+    pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
+                                  MULTIPLEDOMAINS * sizeof(MPI_Request));
+    pseudo_recvcounts_pending = (int *) mymalloc("pseudo_recvcounts",
+                                  MULTIPLEDOMAINS * NTask * sizeof(int));
+    pseudo_recvoffset_pending = (int *) mymalloc("pseudo_recvoffset",
+                                  MULTIPLEDOMAINS * NTask * sizeof(int));
     for(m = 0; m < MULTIPLEDOMAINS; m++)
     {
-        for(recvTask = 0; recvTask < NTask; recvTask++)
+        int *rc = pseudo_recvcounts_pending + m * NTask;
+        int *ro = pseudo_recvoffset_pending + m * NTask;
+        for(int recvTask = 0; recvTask < NTask; recvTask++)
         {
-            recvcounts[recvTask] =
-            (DomainEndList[recvTask * MULTIPLEDOMAINS + m] - DomainStartList[recvTask * MULTIPLEDOMAINS + m] +
-             1) * sizeof(struct DomainNODE);
-            recvoffset[recvTask] = DomainStartList[recvTask * MULTIPLEDOMAINS + m] * sizeof(struct DomainNODE);
+            rc[recvTask] =
+                (DomainEndList[recvTask * MULTIPLEDOMAINS + m] -
+                 DomainStartList[recvTask * MULTIPLEDOMAINS + m] + 1)
+                * sizeof(struct DomainNODE);
+            ro[recvTask] = DomainStartList[recvTask * MULTIPLEDOMAINS + m]
+                           * sizeof(struct DomainNODE);
         }
-        MPI_Allgatherv(MPI_IN_PLACE, recvcounts[ThisTask], MPI_BYTE, &DomainMoment[0], recvcounts, recvoffset, MPI_BYTE, MPI_COMM_WORLD);
+        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
+                        &pseudo_requests_pending[m]);
     }
-    
-    myfree(recvoffset);
-    myfree(recvcounts);
-    
-    
+}
+
+/*! Waits on the Iallgathervs posted by force_exchange_pseudodata_issue() and
+ *  unpacks the received topleaf moments into the AoS Nodes_base / Extnodes_base.
+ *  GPU build path calls let_run_exchange() in between to overlap MPI; CPU and
+ *  refresh paths call the sync wrapper force_exchange_pseudodata() below. */
+void force_exchange_pseudodata_complete(void)
+{
+    if(DomainMoment_pending == NULL) {endrun(913402);} /* unmatched complete: bug */
+    struct DomainNODE *DomainMoment = DomainMoment_pending;
+
+    MPI_Waitall(pseudo_n_requests_pending, pseudo_requests_pending, MPI_STATUSES_IGNORE);
+
+    /* Free request/count buffers (LIFO order: ro, rc, requests). */
+    myfree(pseudo_recvoffset_pending);
+    myfree(pseudo_recvcounts_pending);
+    myfree(pseudo_requests_pending);
+    pseudo_requests_pending = NULL;
+    pseudo_recvcounts_pending = NULL;
+    pseudo_recvoffset_pending = NULL;
+    pseudo_n_requests_pending = 0;
+
+    int i, no, m, ta;
     for(ta = 0; ta < NTask; ta++)
         if(ta != ThisTask)
             for(m = 0; m < MULTIPLEDOMAINS; m++)
                 for(i = DomainStartList[ta * MULTIPLEDOMAINS + m]; i <= DomainEndList[ta * MULTIPLEDOMAINS + m]; i++)
                 {
                     no = DomainNodeIndex[i];
-                    
+
                     Nodes[no].u.d.s = DomainMoment[i].s;
                     Extnodes[no].vs = DomainMoment[i].vs;
                     Nodes[no].u.d.mass = DomainMoment[i].mass;
@@ -1223,8 +1263,17 @@ void force_exchange_pseudodata(void)
                     Extnodes[no].vs_dm = DomainMoment[i].vs_dm;
 #endif
                 }
-    
+
     myfree(DomainMoment);
+    DomainMoment_pending = NULL;
+}
+
+/*! Synchronous wrapper preserving the pre-Phase-10.3 API for the CPU and
+ *  refresh code paths (which do not have a LET round to overlap with). */
+void force_exchange_pseudodata(void)
+{
+    force_exchange_pseudodata_issue();
+    force_exchange_pseudodata_complete();
 }
 
 
