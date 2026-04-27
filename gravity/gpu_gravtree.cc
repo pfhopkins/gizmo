@@ -447,6 +447,17 @@ gpu_gravtree_walk_one(int target,
     {int kb; for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++) {treecol_angular_bins[kb]=0.0;}}
 #endif
 
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+    /* Mirror forcetree.cc:1891 — total mass enclosed in Rcrit, where Rcrit is
+     * the larger of the target softening and a fixed 0.1 kpc floor. */
+    double m_enc_in_rcrit = 0.0;
+    double r_for_total_menclosed = soft;
+    {
+        double r_floor = 0.1 / (UNIT_LENGTH_IN_KPC * All.cf_atime);
+        if(r_for_total_menclosed < r_floor) r_for_total_menclosed = r_floor;
+    }
+#endif
+
 #ifdef RT_USE_GRAVTREE
     double mass_stellarlum[N_RT_FREQ_BINS];
     {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {mass_stellarlum[kf]=0.0;}}
@@ -1322,6 +1333,12 @@ gpu_gravtree_walk_one(int target,
             }
 #endif
 
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+            /* Mirror forcetree.cc:2573. Per-interaction mass accumulation, where
+             * each visited node contributes its multipole mass when within Rcrit. */
+            if(r < r_for_total_menclosed) {m_enc_in_rcrit += mass;}
+#endif
+
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
             /* Mirror forcetree.cc:2300-2311. CR sub-grid LEBRON energy density
              * accumulation at the post-opening stage. All.Time>All.TimeBegin
@@ -1453,6 +1470,9 @@ gpu_gravtree_walk_one(int target,
      * ------------------------------------------------------------------ */
 #ifdef RT_USE_TREECOL_FOR_NH
     {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = treecol_angular_bins[k];}}
+#endif
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+    P_dev[target].MencInRcrit = m_enc_in_rcrit;
 #endif
 #ifdef RT_USE_GRAVTREE
     /* Use valid_gas_particle_for_rt (non-const int) throughout: nvc++ miscompiles raw boolean expressions in device code */
@@ -1828,6 +1848,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
              * but kept explicit for correctness on non-UVM targets. */
 #ifdef RT_USE_TREECOL_FOR_NH
             {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P[i].ColumnDensityBins[k] = P_dev[i].ColumnDensityBins[k];}}
+#endif
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+            P[i].MencInRcrit = P_dev[i].MencInRcrit;
 #endif
 #ifdef RT_USE_GRAVTREE
 #ifdef RT_OTVET

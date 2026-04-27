@@ -21,6 +21,7 @@
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
+#include "../system/gpu_particles_arena.h"
 
 
 #ifdef RT_CHEM_PHOTOION
@@ -328,6 +329,7 @@ void rt_update_chemistry(void)
             CellP[ii] = compact_Cell[j];
             P[ii]     = compact_P[j];
         }
+        gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);

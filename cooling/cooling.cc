@@ -25,6 +25,7 @@
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
+#include "../system/gpu_particles_arena.h"
 GIZMO_GPU_FUNCTION double sigmoid_sqrt(double x); /* forward decl; defined inline in proto.h */
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell);
 /* Forward decls for symbols called by eos_functions.h / rt_functions.h under
@@ -292,6 +293,7 @@ void cooling_parent_routine(void)
 #endif
         }
     }
+    gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
