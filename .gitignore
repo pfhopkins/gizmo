@@ -19,3 +19,7 @@ test/unit/test_diffusion_net17
 test/unit/test_dvode_co
 test/unit/test_dvode_xh_sensitivity
 test/unit/test_enrichment
+test/unit/test_chemcool_diff_packunpack
+test/unit/test_diffusion_dense_cell_drift
+test/unit/test_yield_invariants
+.claude/
