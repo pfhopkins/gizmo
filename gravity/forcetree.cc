@@ -1548,20 +1548,50 @@ void force_flag_localnodes(void)
 /*! When a new additional resolution element is created, we can put it into the
  *  tree at the position of the spawning element. This is possible
  *  because the Nextnode[] array essentially describes the full tree walk as a
- *  link list. Multipole moments of tree nodes need not be changed.
+ *  link list. Multipole moments of tree nodes need not be changed (the new
+ *  particle inherits the parent's position so mass+CoM are preserved at the
+ *  insertion site; the 9.6 ForceAddElementToTree_CallsSinceBuild guardrail
+ *  bounds drift to ancestor nodes between full rebuilds).
+ *
+ *  Phase 10.2 (Crossing 4 retirement, scope-α): Father/Nextnode/Extnodes are
+ *  UVM (SharedSpace) since Phase 6.6/6.8d/6.8e, so the CPU mutations below
+ *  are GPU-visible without a copy.  We additionally mirror the parent node's
+ *  hmax/vmax/len into the SoA walk view, because the next gpu_force_drift_nodes
+ *  early-outs when the parent's Ti_current already matches All.Ti_Current
+ *  (insertions between drifts at the same Ti_current would otherwise leave
+ *  the SoA stale until the next full rebuild).
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
-    int no;
-    no = Nextnode[iparent];
+    int father = Father[iparent];
+    int no = Nextnode[iparent];
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
-    Father[ichild] = Father[iparent]; // set parent node to be the same
+    Father[ichild] = father; // set parent node to be the same
     // update parent node properties [maximum softening, speed] for opening criteria
-    Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
-    double vmax = Extnodes[Father[iparent]].vmax;
-    int k; for(k=0; k<3; k++) {if(fabs(P[ichild].Vel[k]) > vmax) {vmax = fabs(P[ichild].Vel[k]);}}
-    Extnodes[Father[iparent]].vmax = vmax;
+    MyFloat new_hmax = DMAX(Extnodes[father].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
+    Extnodes[father].hmax = new_hmax;
+    double new_vmax = Extnodes[father].vmax;
+    for(int k = 0; k < 3; k++) {if(fabs(P[ichild].Vel[k]) > new_vmax) {new_vmax = fabs(P[ichild].Vel[k]);}}
+    Extnodes[father].vmax = (MyFloat) new_vmax;
+
+#ifdef OPENMP_GPU_OFFLOAD
+    /* Phase 10.2 (α): keep SoA walk-mirror coherent with the AoS Extnodes
+     * change above.  hmax and vmax are read by the walk's opening criteria
+     * (and vmax drives bbox expansion in subsequent drifts via Nodes[].len).
+     * Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
+     * SoA slot k = father - All.MaxPart for both local nodes (k < MaxNodes) and
+     * foreign nodes (MaxNodes <= k < MaxNodes + MaxForeignNodes). */
+    {
+        struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+        int k_soa = father - All.MaxPart;
+        if(soa && k_soa >= 0 && k_soa < MaxNodes + MaxForeignNodes) {
+            if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
+            if(soa->vmax) {soa->vmax[k_soa] = (MyGravFloat) new_vmax;}
+        }
+    }
+#endif
+
     /* Phase 9.6 diagnostic: each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at
      * the insertion site, but ancestor topnodes (and any rank's foreign view
