@@ -14,10 +14,11 @@
 
 #ifdef SINK_PARTICLES
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD) && \
-    defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
-#error "D1 Phase 1 GPU sink_swallow_and_kick port does not support COSMIC_RAY_FLUID + SINK_COSMIC_RAYS — port the CR injection path in a follow-on (mirrors B8 Phase 2 pattern)."
-#endif
+/* COSMIC_RAY_FLUID + SINK_COSMIC_RAYS: CR injection alongside the SINK_WIND_KICK
+ * branch is now handled in the per-pair GPU kernel via Kokkos::atomic_add on
+ * CellP[j].CosmicRay* fields (see SINK_WIND_KICK block below). The CR-fraction
+ * helpers (CR_energy_spectrum_injection_fraction, evaluate_cr_transport_reductionfactor)
+ * are KOKKOS_INLINE_FUNCTION and GPU-safe -- they take P_arr/cell as args. */
 
 /* Per-source (active sink) input. Mirrors INPUT_STRUCT_NAME in sink_swallow_and_kick.cc:34-56. */
 struct SinkSwallowLocalIn
@@ -324,6 +325,43 @@ static void sink_swallow_pair_kernel(
                 Vec3<double> dir{dpos[0], dpos[1], dpos[2]};
 #if (SINK_WIND_KICK < 0)
                 if(dot(dir, J_dir) > 0) { dir = J_dir; } else { dir = -J_dir; }
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
+                /* Inject cosmic rays alongside the wind kick (mirrors sink_swallow_and_kick.cc:407-410).
+                 * Uses GPU-callable CR helpers + Kokkos::atomic_add on CellP[j] CR fields. */
+                {
+                    double dEcr = All.Sink_CosmicRay_Injection_Efficiency * Mass_j *
+                                  (All.Sink_accreted_fraction / (1.0 - All.Sink_accreted_fraction)) *
+                                  C_LIGHT_CODE * C_LIGHT_CODE;
+                    if(dEcr > 0) {
+                        double f_inj[N_CR_PARTICLE_BINS]; f_inj[0] = 1.0;
+#if (N_CR_PARTICLE_BINS > 1)
+                        double sum_in = 0.0;
+                        for(int kc = 0; kc < N_CR_PARTICLE_BINS; kc++) {
+                            f_inj[kc] = CR_energy_spectrum_injection_fraction(kc, 5, All.Sink_outflow_velocity, 0, j, P, &CellP[j]);
+                            sum_in += f_inj[kc];
+                        }
+                        if(sum_in > 0) { for(int kc = 0; kc < N_CR_PARTICLE_BINS; kc++) f_inj[kc] /= sum_in; }
+                        else           { for(int kc = 0; kc < N_CR_PARTICLE_BINS; kc++) f_inj[kc] = 1.0 / N_CR_PARTICLE_BINS; }
+#endif
+                        Vec3<double> cr_dir = {dir[0], dir[1], dir[2]};
+                        double cr_dir_norm2 = cr_dir.norm_sq();
+                        if(cr_dir_norm2 <= 0) { cr_dir[0] = 0; cr_dir[1] = 0; cr_dir[2] = 1; cr_dir_norm2 = 1; }
+                        double cr_dir_norm = sqrt(cr_dir_norm2);
+                        for(int kc = 0; kc < N_CR_PARTICLE_BINS; kc++) {
+                            double dEcr_k = evaluate_cr_transport_reductionfactor(j, kc, 0, &CellP[j]) * dEcr * f_inj[kc];
+                            if(dEcr_k <= 0) continue;
+                            Kokkos::atomic_add(&CellP[j].CosmicRayEnergy[kc],     dEcr_k);
+                            Kokkos::atomic_add(&CellP[j].CosmicRayEnergyPred[kc], dEcr_k);
+                            double flux_mag = dEcr_k * CRFLUID_REDUCED_C_CODE(kc);
+                            for(int kk = 0; kk < 3; kk++) {
+                                double dflux = flux_mag * cr_dir[kk] / cr_dir_norm;
+                                Kokkos::atomic_add(&CellP[j].CosmicRayFlux[kc][kk],     dflux);
+                                Kokkos::atomic_add(&CellP[j].CosmicRayFluxPred[kc][kk], dflux);
+                            }
+                        }
+                    }
+                }
 #endif
                 double nrm = dir.norm_sq();
                 if(nrm <= 0) { dir[0] = 0; dir[1] = 0; dir[2] = 1; }

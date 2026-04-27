@@ -43,15 +43,26 @@
  */
 
 
-/* function to return the value of the force softening for a given cell/particle, depending on the physics and numerical options */
-double ForceSoftening_KernelRadius(int p)
+/* Compute the force-softening kernel radius for one particle.
+ *
+ * Single source of truth for the per-particle softening logic.  All call sites
+ * (CPU walk, GPU walk, tree-build split-scale, etc.) read the cached result via
+ * ForceSoftening_KernelRadius() / gpu_force_softening_kernel_radius(); this
+ * routine is the only place that performs the actual computation.
+ *
+ * The cache is refreshed once per gravity_tree() call by compute_all_force_softening()
+ * (active-particle loop) and seeded over all particles at startup in init.c.  Inputs
+ * (KernelRadius, AGS_KernelRadius, tidal_tensor_mag_prev, StarParticleEffectiveSize)
+ * only mutate when the particle is active, so cached values for inactive particles
+ * remain correct between active steps. */
+double compute_force_softening_kernel_radius(int p)
 {
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[p].Type == 4) {return P[p].StarParticleEffectiveSize;} // this variable is defined in force softening terms
     //if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass / (0.5*(All.MaxMassForParticleSplit/3.01+All.MinMassForParticleMerger/0.49)),0.333);} // alternative 'adaptive' version for constant-resolution runs
     //if(P[p].Type == 4) {return All.ForceSoftening[4] * pow(P[p].Mass*UNIT_MASS_IN_SOLAR / (GALSF_MERGER_STARCLUSTER_PARTICLES),0.333);}
 #endif
-    
+
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
     if((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return P[p].AGS_KernelRadius;}
 #endif
@@ -75,6 +86,43 @@ double ForceSoftening_KernelRadius(int p)
     return All.ForceSoftening[P[p].Type]; // this is the default if nothing was active above
 }
 
+/* Public accessor: returns the cached value populated by compute_all_force_softening().
+ * Both CPU and GPU walks read this same value, so the softening logic above lives in
+ * exactly one place. */
+double ForceSoftening_KernelRadius(int p)
+{
+    return P[p].ForceSoftening;
+}
+
+/* Refresh the per-particle ForceSoftening cache.  Called from gravity_tree() at
+ * the start of every walk dispatch (active particles only) and from init.c during
+ * startup (all particles).  Inputs to compute_force_softening_kernel_radius() only
+ * change for active particles within a timestep, so an active-particle pass is
+ * sufficient for steady-state operation; the init pass seeds inactive particles
+ * loaded from the IC file or spawned mid-run. */
+void compute_all_force_softening(int mode)
+{
+    /* mode = 0 : active particles only (FirstActiveParticle list)
+     * mode = 1 : every particle in [0, NumPart) -- used at startup / after restart  */
+    if(mode == 1)
+    {
+        int i;
+#pragma omp parallel for schedule(static)
+        for(i = 0; i < NumPart; i++) {P[i].ForceSoftening = compute_force_softening_kernel_radius(i);}
+    }
+    else
+    {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+        for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+        {
+            int i = ActiveParticleList[ii];
+            P[i].ForceSoftening = compute_force_softening_kernel_radius(i);
+        }
+    }
+}
+
 
 
 /*! auxiliary variable used to set-up non-recursive walk */
@@ -94,7 +142,9 @@ static int last;
  *  for true device offload they will need mirroring (Phase 4 follow-up). */
 float shortrange_table[NTAB], shortrange_table_potential[NTAB];
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-static float shortrange_table_tidal[NTAB];
+/* Non-static so the GPU walk in gpu_gravtree.cc can read this via extern (mirrors
+ * the shortrange_table / shortrange_table_potential pattern above). */
+float shortrange_table_tidal[NTAB];
 #endif
 /*! toggles after first tree-memory allocation, has only influence on log-files */
 static int first_flag = 0;

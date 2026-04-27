@@ -13,6 +13,14 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && !defined(GIZMO_GPU_COMPILER)
+/* Forward declaration so this header is self-contained when included from TUs
+ * that don't transitively include proto.h. The full definition lives in
+ * core/timestep.cc and is unconditional (it short-circuits to 1 when
+ * USE_TIMESTEP_DILATION_FOR_ZOOMS is undefined). */
+double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp);
+#endif
+
 KOKKOS_INLINE_FUNCTION
 double timestep_dilation_factor(int i, int mode, struct particle_data *pp)
 {

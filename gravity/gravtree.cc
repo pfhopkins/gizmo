@@ -57,6 +57,17 @@ void gravity_tree(void)
     /* set new softening lengths */
     if(All.ComovingIntegrationOn) {set_softenings();}
 
+    /* Refresh the per-particle ForceSoftening cache for active particles.
+     * Single source of truth shared by CPU walk, GPU walk, and tree-build
+     * split-scale computation in force_treebuild().  Inputs (KernelRadius,
+     * AGS_KernelRadius, tidal_tensor_mag_prev, StarParticleEffectiveSize)
+     * are guaranteed valid here: hydro/AGS density already ran earlier in
+     * the timestep, set_softenings() above just updated All.ForceSoftening[].
+     * Inactive particles retain their cached value from when they were last
+     * active -- inputs only mutate during active processing, so the cached
+     * value is still correct. */
+    compute_all_force_softening(0);
+
     /* construct tree if needed */
 #ifdef HERMITE_INTEGRATION
     if(!HermiteOnlyFlag)

@@ -722,7 +722,7 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
         for(int t = 0; t < 6; t++) {
-            soa->tidal_tensorps[(long)k * 6 + t] = (MyGravFloat) Nodes[no].tidal_tensorps[t];
+            soa->tidal_tensorps[(long)k * 6 + t] = (MyGravFloat) Nodes[no].tidal_tensorps_prevstep.data[t];
         }
 #endif
 #ifdef DM_SCALARFIELD_SCREENING

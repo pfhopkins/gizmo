@@ -46,8 +46,11 @@ else
     echo "[compile_suite] CPU/OpenMP mode: $(grep SYSTYPE Makefile.systype)"
 fi
 
-# Base flags prepended to every config
-BASE_FLAGS="GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY"
+# Base flags prepended to every config: enable the full GPU/Kokkos active code
+# path. After Step 13 Phase 11 (no silent descopes audit), every #error gate that
+# previously blocked these flags is gone -- the GPU walk handles all payload
+# combinations natively, falling back to the same physics as the CPU walk.
+BASE_FLAGS="GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY OPENMP_GPU_OFFLOAD GIZMO_GPU_GRAVTREE OPENMP_TREE_UPDATE"
 
 RESULTS_FILE="compile_suite_results.txt"
 ERRORS_DIR="compile_suite_errors"
@@ -272,6 +275,24 @@ CONFIGS=(
     "HYDRO_PRESSURE_SPH MAGNETIC"
     "EOS_ELASTIC EOS_TILLOTSON MAGNETIC"
     "RT_EVOLVE_INTENSITIES RT_LOCALRAYGRID=1 RT_FREEFREE METALS"
+
+    # --- Step 13 Phase 11 newly-ported gates: regression coverage for previously-blocked flags ---
+    "COUNT_MASS_IN_GRAVTREE COOLING METALS"                                              # N.3a: tree-mass diagnostic + scatter-back
+    "PMGRID=64 OUTPUT_TIDAL_TENSOR BOX_PERIODIC"                                         # N.3b: shortrange_table_tidal mirror, PMGRID + tidal tensor
+    "SPECIAL_POINT_MOTION SINK_PARTICLES SINK_CALC_DISTANCES"                            # N.4a: nearest-special vel/acc accumulation
+    "SPECIAL_POINT_WEIGHTED_MOTION SINK_PARTICLES SINK_CALC_DISTANCES"                   # N.4a: weighted variant + GPU weight function
+    "DM_SCALARFIELD_SCREENING"                                                           # N.4b: Yukawa-screened scalar-field force
+    "DM_SCALARFIELD_SCREENING PMGRID=64 BOX_PERIODIC"                                    # N.4b: PMGRID variant of DM scalar field force
+    "GRAVITY_SPHERICAL_SYMMETRY=0"                                                       # N.4c: shell-theorem force law
+    "GRAVITY_SPHERICAL_SYMMETRY=0 OUTPUT_TIDAL_TENSOR"                                   # N.4c: shell-theorem fac2_tidal override
+    "ADAPTIVE_GRAVSOFT_FORALL=1+2+4+8+16+32 ADAPTIVE_TREEFORCE_UPDATE=0.0625"            # N.5a: TIDAL+AGS_SYMMETRIZE force averaging
+    "ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION=2 ADAPTIVE_GRAVSOFT_FORALL=1+2+4+8+16+32"    # N.5b: tidal-criterion adaptive softening + zeta correction
+    "USE_TIMESTEP_DILATION_FOR_ZOOMS DILATION_FOR_STELLAR_KINEMATICS_ONLY GALSF"         # N.6a: dilation cache (KINEMATICS_ONLY: no per-node compute)
+    "USE_TIMESTEP_DILATION_FOR_ZOOMS SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM=1"                 # N.6a: dilation cache with NUCLEAR_ZOOM (per-node compute path)
+    "SINK_PARTICLES COSMIC_RAY_FLUID GALSF SINK_COSMIC_RAYS SINK_OUTPUT_MOREINFO SINK_WIND_SPAWN=2 SINK_CR_INJECTION_AT_TERMINATION=(0.25)"  # N.6b (note: this duplicates an earlier suite config -- keeping both deliberately to verify the previously-#error'd combo works)
+    "SELFGRAVITY_OFF HYDRO_MESHLESS_FINITE_MASS"                                         # N.1a: stale gate removal verification
+    "SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM=1 GALSF"                                           # N.5b/cache: nuclear-zoom softening via ForceSoftening cache
+    "HERMITE_INTEGRATION=32 SINGLE_STAR_SINK_DYNAMICS"                                   # N.1b: HERMITE unblocked by sphere-box criterion (jerk path)
 )
 
 echo "============================================================"

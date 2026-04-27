@@ -106,32 +106,15 @@ atomic_add_vec3(Vec3<T> *addr, const Vec3<U>& val)
 }
 
 /* ------------------------------------------------------------------ */
-/* GPU-callable mirror of ForceSoftening_KernelRadius (a strict       */
-/* subset — CPU implementation has a few extra branches we don't hit  */
-/* in the moment-accumulation context). For nodes the legacy CPU code */
-/* uses ForceSoftening_KernelRadius(i) so we mirror exactly the gpu_  */
-/* gravtree helper below to keep parity.                              */
+/* GPU-callable accessor for the cached force-softening kernel radius. */
+/* Single source of truth: compute_force_softening_kernel_radius() in  */
+/* forcetree.cc; populated by compute_all_force_softening() at startup */
+/* and at the start of every gravity_tree() call.                      */
 /* ------------------------------------------------------------------ */
 KOKKOS_INLINE_FUNCTION static double
 gpu_force_softening_kernelradius(const struct particle_data *Pp, int p)
 {
-#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
-    if(Pp[p].Type == 4) {return Pp[p].StarParticleEffectiveSize;}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if((1 << Pp[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) {return Pp[p].AGS_KernelRadius;}
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(SELFGRAVITY_OFF)
-    if(Pp[p].Type == 0) {
-#if defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT)
-        double cap = ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT / All.cf_atime;
-        return (Pp[p].KernelRadius < cap) ? Pp[p].KernelRadius : cap;
-#else
-        return Pp[p].KernelRadius;
-#endif
-    }
-#endif
-    return All.ForceSoftening[Pp[p].Type];
+    return Pp[p].ForceSoftening;
 }
 
 /* =================================================================== */

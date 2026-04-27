@@ -121,6 +121,8 @@ static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, 
 static inline double rsol_correction_factor_for_velocity_terms(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {return RT_SPEEDOFLIGHT_REDUCTION;}
 
 double ForceSoftening_KernelRadius(int p);
+double compute_force_softening_kernel_radius(int p); /* internal: source-of-truth softening computation */
+void   compute_all_force_softening(int mode);        /* mode=0 active-only; mode=1 all NumPart (init/restart) */
 GIZMO_GPU_FUNCTION inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(1+x*x));} /* inline for GPU single-TU; definition also in global.cc for non-GPU TUs */
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 

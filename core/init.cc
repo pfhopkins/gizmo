@@ -845,6 +845,16 @@ void init(void)
 #if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     if(NTask > 1) {ghost_exchange_cleanup();}
 #endif
+
+    /* Seed the per-particle ForceSoftening cache for ALL particles loaded from
+     * the IC.  This populates the single-source-of-truth value read by both CPU
+     * and GPU walks via ForceSoftening_KernelRadius() / gpu_force_softening_kernel_radius().
+     * From this point forward, gravity_tree() refreshes only the active list each
+     * call -- inactive particles retain the cached value (their inputs don't mutate
+     * outside active processing). Newly-spawned particles MUST initialize this
+     * field at spawn time (see SINK_WIND_SPAWN, star formation, particle splitting). */
+    compute_all_force_softening(1);
+
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
         int k __attribute__((unused)) = 0;

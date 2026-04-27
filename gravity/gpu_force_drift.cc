@@ -42,12 +42,11 @@
 
 #if defined(OPENMP_GPU_OFFLOAD)
 
-/* --- compile-time gate on supported dilation configurations -------------- */
-#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) \
-    && !defined(DILATION_FOR_STELLAR_KINEMATICS_ONLY) \
-    && (defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) || defined(SPECIAL_POINT_WEIGHTED_MOTION))
-#error "GPU drift kernel (Phase 7.a) does not yet implement node-indexed timestep dilation.  Either enable DILATION_FOR_STELLAR_KINEMATICS_ONLY (which makes mode=1 dilation a no-op), disable USE_TIMESTEP_DILATION_FOR_ZOOMS, or implement the per-node dilation cache.  See handoff_step13_phase7_closeout.md."
-#endif
+/* USE_TIMESTEP_DILATION_FOR_ZOOMS: node-indexed dilation is supported via a
+ * per-call host-pre-compute cache. The dispatcher below allocates a SharedSpace
+ * `dilation_dev` array of length n_local_nodes + n_foreign_nodes, populates it
+ * on the host using return_timestep_dilation_factor(no, 1, P), then the GPU
+ * drift kernel reads the cached value.  No more compile-time gate. */
 
 /* --- DriftTable mirror (cosmological only) ------------------------------- */
 static double *drift_table_dev_ = NULL;   /* SharedSpace, length DRIFT_TABLE_LENGTH */
@@ -119,6 +118,25 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     int      n_foreign_nodes = Numforeignnodes;       /* Phase 9.2b */
     int      maxNodes_snap  = MaxNodes;               /* Phase 9.2b: foreign-range base */
     int      n_nodes        = n_local_nodes + n_foreign_nodes;
+
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+    /* Pre-compute per-node dilation factors on the host (cheap O(n_nodes) loop
+     * with one All.SpecialParticle_Position_ForRefinement comparison per node
+     * for SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM). The GPU kernel then just reads
+     * dilation_dev[kk] -- no GPU-side host-only field access required. */
+    double *dilation_dev = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
+                                (size_t)n_nodes * sizeof(double));
+    if(!dilation_dev) {printf("gpu_force_drift_nodes: dilation_dev alloc failed\n"); endrun(929702);}
+#pragma omp parallel for schedule(static)
+    for(int kk = 0; kk < n_nodes; kk++) {
+        int no_kk;
+        if(kk < n_local_nodes) no_kk = MaxPart + kk;
+        else                   no_kk = MaxPart + maxNodes_snap + (kk - n_local_nodes);
+        dilation_dev[kk] = return_timestep_dilation_factor(no_kk, 1, P);
+    }
+#endif
+
+
     integertime ti_target   = time1;
     int      comoving       = (All.ComovingIntegrationOn ? 1 : 0);
     double   timebase_int   = All.Timebase_interval;
@@ -165,8 +183,12 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
         }
         if(Nodes_uvm[no].Ti_current == ti_target) {return;}
 
-        /* dilation factor — see compile-time gate at file top. */
+        /* Per-node dilation factor (host-pre-computed, see dispatcher above). */
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+        double dilation = dilation_dev[kk];
+#else
         double dilation = 1.0;
+#endif
 
         /* Drift factor matches CPU get_drift_factor(.., .., no, 1). */
         double dt_drift = gpu_node_drift_factor_(Nodes_uvm[no].Ti_current,
@@ -257,6 +279,9 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #endif
     });
     Kokkos::fence();
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
+#endif
     return 0;
 }
 
