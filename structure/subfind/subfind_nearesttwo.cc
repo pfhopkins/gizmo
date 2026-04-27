@@ -474,14 +474,14 @@ int subfind_ngb_treefind_nearesttwo(MyDouble searchcenter[3], double rkern, int 
 	}
       else
 	{
-	  if(no >= All.MaxPart + MaxNodes)	/* pseudo particle */
+	  if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)	/* pseudo particle */
 	    {
 	      if(mode == 1)
 		endrun(12312);
 
 	      if(target >= 0)	/* if no target is given, export will not occur */
 		{
-		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
+		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
 		    {
 		      Exportflag[task] = target;
 		      Exportnodecount[task] = NODELISTLENGTH;
@@ -507,7 +507,7 @@ int subfind_ngb_treefind_nearesttwo(MyDouble searchcenter[3], double rkern, int 
 		    }
 
 		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
+		    DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
 
 		  if(Exportnodecount[task] < NODELISTLENGTH)
 		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;

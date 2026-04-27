@@ -581,14 +581,14 @@ double subfind_ovderdens_treefind(Vec3<double>& searchcenter, MyFloat rkern, int
 	}
       else
 	{
-	  if(no >= All.MaxPart + MaxNodes)	/* pseudo particle */
+	  if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)	/* pseudo particle */
 	    {
 	      if(mode == 1)
 		endrun(12312);
 
 	      if(mode == 0)
 		{
-		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes)]] != target)
+		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
 		    {
 		      Exportflag[task] = target;
 		      Exportnodecount[task] = NODELISTLENGTH;
@@ -614,7 +614,7 @@ double subfind_ovderdens_treefind(Vec3<double>& searchcenter, MyFloat rkern, int
 		    }
 
 		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (All.MaxPart + MaxNodes)];
+		    DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
 
 		  if(Exportnodecount[task] < NODELISTLENGTH)
 		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;

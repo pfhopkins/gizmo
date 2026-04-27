@@ -1010,17 +1010,18 @@ void swap_treewalk_pointers(int i, int j){
                 else if(next == j) { Nextnode[no] = i; previous_node_j = no;}
             }
             no = next;
-        } else if(no < All.MaxPart+MaxNodes)  { // we have a node
+        } else if(no < All.MaxPart + MaxNodes + MaxForeignNodes)  { // we have a local or foreign tree node (Phase 9 LET)
             next = Nodes[no].u.d.nextnode;
             if(next == i) { previous_node_i = no; Nodes[no].u.d.nextnode = j;}
             else if(next == j) { previous_node_j = no; Nodes[no].u.d.nextnode = i;}
             if(Nodes[no].u.d.sibling == i) {Nodes[no].u.d.sibling = j; pre_sibling_i = no;}
             else if(Nodes[no].u.d.sibling == j) { Nodes[no].u.d.sibling = i; pre_sibling_j = no;}
             no = next;
-        } else { // pseudoparticle
-            next = Nextnode[no - MaxNodes];
-            if(next==i) {Nextnode[no-MaxNodes] = j;}
-            else if(next == j) {Nextnode[no-MaxNodes] = i;}
+        } else { // pseudoparticle (Phase 9: index shifted up by MaxForeignNodes)
+            int pseudo_idx = no - MaxNodes - MaxForeignNodes;
+            next = Nextnode[pseudo_idx];
+            if(next==i) {Nextnode[pseudo_idx] = j;}
+            else if(next == j) {Nextnode[pseudo_idx] = i;}
             no = next;
         }
     }

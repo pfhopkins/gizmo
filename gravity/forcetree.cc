@@ -3597,29 +3597,14 @@ void force_treeallocate(int maxnodes, int maxpart)
     }
     if(MaxForeignNodes < 0) {MaxForeignNodes = 0;}
     Numforeignnodes = 0;
-#if defined(FOF) || defined(SUBFIND)
-    /* Phase 9 LET incompatibility gate.  FOF and SUBFIND walk the same Nodes_base
-     * as the gravity tree using the legacy `MaxPart+MaxNodes` pseudo-particle
-     * threshold (see structure/fof.cc, structure/subfind/*.cc).  Phase 9 inserts
-     * foreign-node storage in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes),
-     * which would alias with what FOF/SUBFIND treats as pseudo-particles → silent
-     * halo-finding bugs.  Ported in a planned post-9.7 sub-phase; until then,
-     * refuse to run with both LET and FOF/SUBFIND active. */
-    if(MaxForeignNodes > 0)
-    {
-        if(ThisTask == 0)
-        {
-            printf("ERROR: Phase 9 LET (LETAllocFactor=%g, MaxForeignNodes=%d) is incompatible with FOF/SUBFIND.\n"
-                   "       FOF and SUBFIND walk the gravity tree using the legacy pseudo-particle index range\n"
-                   "       and will mis-classify foreign nodes as pseudo-particles.  Either:\n"
-                   "         - Set LETAllocFactor=0 in the parameter file to disable LET (use legacy export); or\n"
-                   "         - Recompile without FOF/SUBFIND.\n"
-                   "       The FOF/SUBFIND port to LET is scheduled as Phase 9.x (post-Vista validation).\n",
-                   All.LETAllocFactor, MaxForeignNodes);
-        }
-        endrun(914005);
-    }
-#endif
+    /* Phase 10.5: FOF/SUBFIND/twopoint pseudo-particle threshold ported from
+     * `MaxPart+MaxNodes` to `MaxPart+MaxNodes+MaxForeignNodes` (matches the
+     * forcetree.cc/let_pack.cc convention).  FOF/SUBFIND build their own local
+     * trees and never call `let_run_exchange()`, so during their walks
+     * Numforeignnodes==0 and the foreign range is empty; the threshold update
+     * is correct in both regimes (LET-active gravity walks and LET-inactive
+     * halo-finding walks).  The Phase 9 LET-FOF/SUBFIND startup gate is
+     * therefore retired. */
     long long total_node_slots = (long long) MaxNodes + (long long) MaxForeignNodes + 1LL;
     /* Phase 6.8d: Nodes_base / Extnodes_base live in SharedSpace (UVM) so GPU
      * kernels can read/write them directly.  Same pattern as Father[] (6.6) and
