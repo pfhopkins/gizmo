@@ -184,7 +184,6 @@ void powerspec(int flag, int *typeflag);
 double PowerSpec_Efstathiou(double k);
 void powerspec_save(void);
 void foldonitself(int *typelist);
-void dump_potential(void);
 
 
 int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,

@@ -212,6 +212,11 @@ void cooling_parent_routine(void)
             compact_Cell[j] = CellP[cool_indices[batch_start + j]];
         }
 
+/* RETIREMENT NOTE (Step 5 B2): the [GPU_RT_DIAG] A/B comparison blocks below
+ * are dormant under the default build (gated by GIZMO_DEBUG_RT_COOLING).
+ * Retire together with the GIZMO_DEBUG_RT_COOLING flag in the eventual
+ * cleanup pass that retires that flag. Until then they remain available for
+ * GPU↔CPU bit-comparison debugging of the cooling kernel. */
 #ifdef GIZMO_DEBUG_RT_COOLING
         /* GPU_RT_DIAG: save pre-cooling state for a few particles to compare GPU vs CPU */
         static int gpu_rt_diag_count = 0;
