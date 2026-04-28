@@ -235,7 +235,6 @@ int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnode
 void thermal_fb_calc(void)
 {
     PRINT_STATUS(" ..depositing thermal feedback to gas");
-#if defined(OPENMP_GPU_OFFLOAD)
     {
 #include "../galaxy_sf/thermal_fb_gpu.h"
         /* Build LOCAL active-source list from ActiveParticleList; iterating
@@ -254,13 +253,7 @@ void thermal_fb_calc(void)
         thermal_fb_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
         myfree(nl_radii); myfree(nl_active);
         CPU_Step[CPU_SNIIHEATING] += measure_time();
-        return;
     }
-#endif
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-    CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 

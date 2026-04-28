@@ -298,7 +298,6 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
 
 void sink_environment_loop(void)
 {
-#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path: build active-sink index + radius arrays, dispatch
        GPU kernel, scatter outputs into SinkTempInfo. */
     CPU_Step[CPU_SINKS] += measure_time();
@@ -379,11 +378,6 @@ void sink_environment_loop(void)
 
     myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
     if(sinkenv_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
-#else
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-#endif
     /* final operations on results */
     {int i; for(i=0; i<N_active_loc_Sink; i++) {sink_normalize_temp_info_struct_after_environment_loop(i);}}
     CPU_Step[CPU_SINKS] += measure_time(); /* collect timings and reset clock for next timing */
@@ -468,7 +462,6 @@ int sink_environment_second_evaluate(int target, int mode, int *exportflag, int 
 
 void sink_environment_second_loop(void)
 {
-#if defined(OPENMP_GPU_OFFLOAD)
     /* Stage E2: GPU path — pure aggregator, no j-writes, same active set + radii +
      * j_type_bitmask as the first environment pass. */
     CPU_Step[CPU_SINKS] += measure_time();
@@ -514,12 +507,6 @@ void sink_environment_second_loop(void)
     myfree(nl_outs); myfree(nl_Jstar); myfree(nl_Jgas); myfree(nl_radii); myfree(nl_active);
     if(sinkenv2_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
     CPU_Step[CPU_SINKS] += measure_time();
-    return;
-#endif
-#include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-#include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-#include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-CPU_Step[CPU_SINKS] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
