@@ -12,10 +12,10 @@
  *   - If it completes successfully, it writes P[i].GravAccel and sets
  *     ProcessedFlag[i]=1 so the CPU loop skips it.
  *
- * Gated at compile time by GIZMO_GPU_GRAVTREE + OPENMP_GPU_OFFLOAD. The kernel
- * #errors out if any unsupported payload #ifdef is set (PMGRID, ADAPTIVE_GRAVSOFT_*,
- * EVALPOTENTIAL, RT_USE_GRAVTREE, SINK_*, COMPUTE_TIDAL_*, etc.). Those are
- * added in subsequent tier commits within Phase 4.
+ * Gated at compile time by OPENMP_GPU_OFFLOAD. PMGRID, ADAPTIVE_GRAVSOFT_*,
+ * EVALPOTENTIAL, RT/SINK/SINGLE_STAR/CR/TIDAL/JERK payloads, periodic Ewald,
+ * HERMITE/ATFU, and FIRE_BHS MencInRcrit are all supported via the Phase 9-10
+ * LET work.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -35,9 +35,8 @@ extern "C" {
  * existing CPU primary loop handles them as usual.
  *
  * Returns the number of particles that completed successfully on GPU. When
- * GIZMO_GPU_GRAVTREE is not defined or the build lacks OPENMP_GPU_OFFLOAD,
- * this is an unconditional no-op (returns 0) so callers in gravity_tree()
- * stay simple. */
+ * the build lacks OPENMP_GPU_OFFLOAD, this is an unconditional no-op
+ * (returns 0) so callers in gravity_tree() stay simple. */
 /* Phase 7.b: GPU gravity-cost assignment.  Replaces the host Father-chain walk
  * at gravtree.cc:487-495 that accumulates Nodes[].GravCost into
  * P[i].GravCost[takelevel] for each particle.  Zeros the slot inline before
@@ -57,8 +56,8 @@ int gpu_gravtree_walk_primary(void);
  *
  * Only the local tree walk runs on GPU. Pseudo-particle hits leave
  * ProcessedFlag unset, so the CPU Ewald secondary loop finishes those via
- * MPI export.  No-op when GIZMO_GPU_GRAVTREE is not defined or the build
- * lacks OPENMP_GPU_OFFLOAD. Returns number of successfully walked targets. */
+ * MPI export.  No-op when the build lacks OPENMP_GPU_OFFLOAD. Returns
+ * number of successfully walked targets. */
 int gpu_ewald_walk_primary(void);
 
 #ifdef __cplusplus

@@ -187,7 +187,7 @@ void gravity_tree(void)
          * On pseudo-particle hit, leaves the particle untouched for the
          * CPU loop + MPI export machinery to handle unchanged. Ewald_iter
          * splits primary (==0) vs Ewald-correction (==1) walks; both are
-         * no-ops when GIZMO_GPU_GRAVTREE is not defined. */
+         * no-ops when OPENMP_GPU_OFFLOAD is not defined. */
         if(Ewald_iter == 0) {gpu_gravtree_walk_primary();}
         else                {gpu_ewald_walk_primary();}
 
