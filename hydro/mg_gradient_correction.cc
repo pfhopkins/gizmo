@@ -6,6 +6,8 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../mesh/neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
 #include "compute_finitevol_faces_functions.h"
 
 /*! \file mg_gradient_correction.cc
@@ -1494,6 +1496,258 @@ static void mg_solve_pardiso(void)
 /* Public entry point                                                                     */
 /* ==================================================================================== */
 
+/* ==================================================================================== */
+/* Modernized matrix build using gizmo_sym_neighbor_list (Step 5 B6).                    */
+/*                                                                                        */
+/* Replaces the legacy ngb_treefind_pairs_threads + code_block_xchange plumbing with     */
+/* the symmetric CSR walk used elsewhere in the modernized hydro path.                    */
+/*                                                                                        */
+/* Pre-condition: gizmo_sym_active_indices and gizmo_sym_neighbor_list are built and     */
+/* current — refreshed at end of hydro_gradient_calc by gizmo_gradients_refresh_symlist. */
+/* Ghost cells (P/CellP at indices NumPart..NumPart+Nghost-1) carry full converged state */
+/* including Gradients.B, NV_T, ConditionNumber, BPred (full struct exchange in Phase 0). */
+/*                                                                                        */
+/* Each pair appears twice in the symmetric CSR — once in i's neighbor list, once in     */
+/* j's. We accumulate ONLY target's row per visit (single contribution per row per       */
+/* pair). This produces matrix entries equivalent to legacy after mg_dedup_matrix's      */
+/* halving; no dedup needed in modern path.                                               */
+/* ==================================================================================== */
+#if defined(MG_USE_MODERN_BUILD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+static void mg_build_matrix_modern(void)
+{
+    /* Initialize per-particle matrix rows */
+    for(int i = 0; i < N_gas; i++) {
+        MG_Rows[i].Rdiag = 0;
+        MG_Rows[i].rhs = 0;
+        MG_Rows[i].n_local = 0;
+        MG_Rows[i].n_remote = 0;
+    }
+
+    int *ghost_home_rank  = ghost_get_home_rank();
+    int *ghost_home_index = ghost_get_home_index();
+
+    /* Walk symmetric CSR; for each (active i, neighbor j), accumulate i's row only. */
+    for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
+        int i = gizmo_sym_active_indices[aa];
+        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].Density <= 0) continue;
+        if(P[i].KernelRadius <= 0) continue;
+
+        double h_i = P[i].KernelRadius;
+        double h2_i = h_i * h_i;
+        double hinv_i, hinv3_i, hinv4_i;
+        kernel_hinv(h_i, &hinv_i, &hinv3_i, &hinv4_i);
+        double V_i = P[i].Mass / CellP[i].Density;
+        double Bi[3]; for(int k=0;k<3;k++) { Bi[k] = CellP[i].BPred[k] * CellP[i].Density / P[i].Mass; }
+
+        int n_off     = gizmo_sym_neighbor_list.offsets[aa];
+        int n_off_end = gizmo_sym_neighbor_list.offsets[aa+1];
+        for(int nn = n_off; nn < n_off_end; nn++) {
+            int j = gizmo_sym_neighbor_list.neighbors[nn];
+            if(P[j].Type != 0 || P[j].Mass <= 0 || CellP[j].Density <= 0) continue;
+
+            struct { Vec3<double> dp; double r, wk_i, wk_j, dwk_i, dwk_j, h_i; } kernel;
+            kernel.dp = P[i].Pos - P[j].Pos;
+            nearest_xyz(kernel.dp);
+            double r2 = kernel.dp.norm_sq();
+            double h_j = P[j].KernelRadius;
+            if(r2 <= 0 || (r2 >= h2_i && r2 >= h_j * h_j)) continue;
+            kernel.r = sqrt(r2);
+            kernel.h_i = h_i;
+
+            double u;
+            if(kernel.r < h_i) { u = kernel.r * hinv_i; kernel_main(u, hinv3_i, hinv4_i, &kernel.wk_i, &kernel.dwk_i, -1); }
+            else { kernel.wk_i = kernel.dwk_i = 0; }
+            if(kernel.r < h_j) {
+                double hinv_j, hinv3_j, hinv4_j;
+                kernel_hinv(h_j, &hinv_j, &hinv3_j, &hinv4_j);
+                u = kernel.r * hinv_j;
+                kernel_main(u, hinv3_j, hinv4_j, &kernel.wk_j, &kernel.dwk_j, -1);
+            } else { kernel.wk_j = kernel.dwk_j = 0; }
+
+            double V_j = P[j].Mass / CellP[j].Density;
+            double cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER)
+                             - CellP[i].ConditionNumber*CellP[i].ConditionNumber;
+            Vec3<double> Face_Area_Vec;
+            double Face_Area_Norm;
+            double Particle_Size_i = pow(P[i].Mass/CellP[i].Density, 1./NUMDIMS);
+            double Particle_Size_j = P[j].Get_Particle_Size();
+            double rinv_fv = 1.0 / (MIN_REAL_NUMBER + kernel.r);
+            double Vi_inv_corr_unused, Vj_inv_corr_unused;
+            compute_finitevol_faces(CellP[i], CellP[j], kernel, rinv_fv, r2, V_i, V_j,
+                                    Particle_Size_i, Particle_Size_j, cnumcrit2,
+                                    Face_Area_Vec, Face_Area_Norm,
+                                    Vi_inv_corr_unused, Vj_inv_corr_unused);
+
+            if(Face_Area_Norm <= 0) continue;
+
+            /* Same Qnorm2 formula as legacy */
+            double A_dot_dp = dot(Face_Area_Vec, kernel.dp);
+            double Qnorm2 = 0.125 * A_dot_dp * A_dot_dp + 1.0e-60;
+
+            /* Accumulate i's row only (j gets its contribution when iterating j separately) */
+            MG_Rows[i].Rdiag += Qnorm2;
+
+            double Bj[3]; for(int k=0;k<3;k++) { Bj[k] = CellP[j].BPred[k] * CellP[j].Density / P[j].Mass; }
+            double flux = 0;
+            for(int k=0;k<3;k++) {
+                double Bface_i = Bi[k], Bface_j = Bj[k];
+                for(int k2=0;k2<3;k2++) {
+                    Bface_i -= 0.5 * CellP[i].Gradients.B[k][k2] * kernel.dp[k2];
+                    Bface_j += 0.5 * CellP[j].Gradients.B[k][k2] * kernel.dp[k2];
+                }
+                flux += 0.5 * (Bface_i + Bface_j) * Face_Area_Vec[k];
+            }
+            MG_Rows[i].rhs += flux;
+
+            /* Off-diagonal entry: distinguish local vs ghost neighbor */
+            if(j < N_gas) {
+                mg_add_local_entry(i, j, Qnorm2);
+            } else {
+                int ghost_idx = j - NumPart;
+                mg_add_remote_entry(i, ghost_home_rank[ghost_idx], ghost_home_index[ghost_idx], Qnorm2);
+            }
+        }
+    }
+}
+
+
+/* ==================================================================================== */
+/* Validation harness (Step 5 B6.3): runs both legacy and modern paths, compares         */
+/* MG_Rows[] entry-by-entry, asserts max rel-err below tolerance.                        */
+/*                                                                                        */
+/* Activated only when MG_VALIDATE_MODERN is also defined alongside MG_USE_MODERN_BUILD.  */
+/* Default for production use of the modern path: MG_USE_MODERN_BUILD on (legacy gone).   */
+/* For B6 validation phase: both flags on, to compare paths bit-by-bit.                   */
+/* ==================================================================================== */
+#ifdef MG_VALIDATE_MODERN
+static void mg_validate_modern_vs_legacy(void)
+{
+    /* Save modern result */
+    struct mg_row_data *modern_rows = (struct mg_row_data *) calloc(N_gas, sizeof(struct mg_row_data));
+    for(int i = 0; i < N_gas; i++) {
+        modern_rows[i].Rdiag = MG_Rows[i].Rdiag;
+        modern_rows[i].rhs   = MG_Rows[i].rhs;
+        modern_rows[i].n_local  = MG_Rows[i].n_local;
+        modern_rows[i].n_remote = MG_Rows[i].n_remote;
+        if(MG_Rows[i].n_local > 0) {
+            modern_rows[i].local_entries = (struct mg_local_entry *) malloc(MG_Rows[i].n_local * sizeof(struct mg_local_entry));
+            memcpy(modern_rows[i].local_entries, MG_Rows[i].local_entries, MG_Rows[i].n_local * sizeof(struct mg_local_entry));
+        }
+        if(MG_Rows[i].n_remote > 0) {
+            modern_rows[i].remote_entries = (struct mg_remote_entry *) malloc(MG_Rows[i].n_remote * sizeof(struct mg_remote_entry));
+            memcpy(modern_rows[i].remote_entries, MG_Rows[i].remote_entries, MG_Rows[i].n_remote * sizeof(struct mg_remote_entry));
+        }
+        /* Reset MG_Rows for legacy run */
+        MG_Rows[i].Rdiag = 0; MG_Rows[i].rhs = 0;
+        if(MG_Rows[i].local_entries)  { free(MG_Rows[i].local_entries);  MG_Rows[i].local_entries  = NULL; }
+        if(MG_Rows[i].remote_entries) { free(MG_Rows[i].remote_entries); MG_Rows[i].remote_entries = NULL; }
+        MG_Rows[i].alloc_local = 0; MG_Rows[i].alloc_remote = 0;
+        MG_Rows[i].n_local = 0; MG_Rows[i].n_remote = 0;
+    }
+
+    /* Run legacy path */
+    mg_build_matrix();
+    mg_symmetrize_remote_entries();
+    mg_dedup_matrix();
+
+    /* Compare entry-by-entry. Sort each row's entries first (legacy dedup sorts; modern needs sort to match). */
+    const double rel_tol = 1.0e-12;
+    int n_mismatch = 0;
+    double max_relerr_diag = 0, max_relerr_rhs = 0, max_relerr_entry = 0;
+    int worst_diag_i = -1, worst_rhs_i = -1, worst_entry_i = -1;
+
+    for(int i = 0; i < N_gas; i++) {
+        /* Sort modern's local entries by j to match legacy's sort order */
+        if(modern_rows[i].n_local > 1) {
+            qsort(modern_rows[i].local_entries, modern_rows[i].n_local, sizeof(struct mg_local_entry), mg_compare_local);
+        }
+        if(modern_rows[i].n_remote > 1) {
+            qsort(modern_rows[i].remote_entries, modern_rows[i].n_remote, sizeof(struct mg_remote_entry), mg_compare_remote);
+        }
+
+        /* Diagonal */
+        double denom_d = fabs(MG_Rows[i].Rdiag) + 1.0e-30;
+        double err_d = fabs(modern_rows[i].Rdiag - MG_Rows[i].Rdiag) / denom_d;
+        if(err_d > max_relerr_diag) { max_relerr_diag = err_d; worst_diag_i = i; }
+        if(err_d > rel_tol) n_mismatch++;
+
+        /* RHS */
+        double denom_r = fabs(MG_Rows[i].rhs) + 1.0e-30;
+        double err_r = fabs(modern_rows[i].rhs - MG_Rows[i].rhs) / denom_r;
+        if(err_r > max_relerr_rhs) { max_relerr_rhs = err_r; worst_rhs_i = i; }
+        if(err_r > rel_tol) n_mismatch++;
+
+        /* Local entry counts */
+        if(modern_rows[i].n_local != MG_Rows[i].n_local) {
+            if(n_mismatch < 10) printf("[MG_VALIDATE] rank=%d i=%d n_local mismatch: modern=%d legacy=%d\n", ThisTask, i, modern_rows[i].n_local, MG_Rows[i].n_local);
+            n_mismatch++;
+            continue;
+        }
+        for(int n = 0; n < MG_Rows[i].n_local; n++) {
+            if(modern_rows[i].local_entries[n].j != MG_Rows[i].local_entries[n].j) {
+                if(n_mismatch < 10) printf("[MG_VALIDATE] rank=%d i=%d local entry %d j mismatch: modern=%d legacy=%d\n",
+                    ThisTask, i, n, modern_rows[i].local_entries[n].j, MG_Rows[i].local_entries[n].j);
+                n_mismatch++; continue;
+            }
+            double denom = fabs(MG_Rows[i].local_entries[n].Qnorm2) + 1.0e-30;
+            double err = fabs(modern_rows[i].local_entries[n].Qnorm2 - MG_Rows[i].local_entries[n].Qnorm2) / denom;
+            if(err > max_relerr_entry) { max_relerr_entry = err; worst_entry_i = i; }
+            if(err > rel_tol) n_mismatch++;
+        }
+
+        /* Remote entry counts */
+        if(modern_rows[i].n_remote != MG_Rows[i].n_remote) {
+            if(n_mismatch < 10) printf("[MG_VALIDATE] rank=%d i=%d n_remote mismatch: modern=%d legacy=%d\n", ThisTask, i, modern_rows[i].n_remote, MG_Rows[i].n_remote);
+            n_mismatch++;
+            continue;
+        }
+        for(int n = 0; n < MG_Rows[i].n_remote; n++) {
+            if(modern_rows[i].remote_entries[n].remote_task != MG_Rows[i].remote_entries[n].remote_task ||
+               modern_rows[i].remote_entries[n].remote_index != MG_Rows[i].remote_entries[n].remote_index) {
+                if(n_mismatch < 10) printf("[MG_VALIDATE] rank=%d i=%d remote entry %d task/index mismatch\n", ThisTask, i, n);
+                n_mismatch++; continue;
+            }
+            double denom = fabs(MG_Rows[i].remote_entries[n].Qnorm2) + 1.0e-30;
+            double err = fabs(modern_rows[i].remote_entries[n].Qnorm2 - MG_Rows[i].remote_entries[n].Qnorm2) / denom;
+            if(err > max_relerr_entry) { max_relerr_entry = err; worst_entry_i = i; }
+            if(err > rel_tol) n_mismatch++;
+        }
+    }
+
+    /* Reduce stats across ranks */
+    int total_mismatch = 0;
+    double global_max_diag = 0, global_max_rhs = 0, global_max_entry = 0;
+    MPI_Allreduce(&n_mismatch, &total_mismatch, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_relerr_diag, &global_max_diag, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_relerr_rhs, &global_max_rhs, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&max_relerr_entry, &global_max_entry, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    if(ThisTask == 0) {
+        printf("[MG_VALIDATE] modern-vs-legacy comparison: total_mismatch=%d (across all ranks)\n", total_mismatch);
+        printf("[MG_VALIDATE]   max_relerr Rdiag = %.3e (rank=%d worst_local_i=%d)\n", global_max_diag, ThisTask, worst_diag_i);
+        printf("[MG_VALIDATE]   max_relerr rhs   = %.3e (rank=%d worst_local_i=%d)\n", global_max_rhs, ThisTask, worst_rhs_i);
+        printf("[MG_VALIDATE]   max_relerr entry = %.3e (rank=%d worst_local_i=%d)\n", global_max_entry, ThisTask, worst_entry_i);
+        if(total_mismatch > 0) {
+            printf("[MG_VALIDATE] FAIL: %d entries exceed rel-tol=%.1e\n", total_mismatch, rel_tol);
+        } else {
+            printf("[MG_VALIDATE] PASS: all entries within rel-tol=%.1e\n", rel_tol);
+        }
+        fflush(stdout);
+    }
+
+    if(total_mismatch > 0) endrun(85002);
+
+    /* Free modern_rows scratch */
+    for(int i = 0; i < N_gas; i++) {
+        if(modern_rows[i].local_entries)  free(modern_rows[i].local_entries);
+        if(modern_rows[i].remote_entries) free(modern_rows[i].remote_entries);
+    }
+    free(modern_rows);
+}
+#endif /* MG_VALIDATE_MODERN */
+#endif /* MG_USE_MODERN_BUILD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+
+
 void mg_gradient_correction_calc(void)
 {
     if(ThisTask == 0) PRINT_STATUS("Computing MG gradient correction (exact div(B)=0) ...");
@@ -1507,9 +1761,16 @@ void mg_gradient_correction_calc(void)
         MG_Rows[i].remote_entries = NULL;
     }
 
-    /* Phase 1: build sparse matrix via MPI neighbor sweep */
+#if defined(MG_USE_MODERN_BUILD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* Modern path: symmetric CSR walk; ghosts visible directly; no symmetrize/dedup needed. */
+    mg_build_matrix_modern();
+#ifdef MG_VALIDATE_MODERN
+    /* Side-by-side comparison: re-runs legacy and asserts byte-equivalence within tolerance. */
+    mg_validate_modern_vs_legacy();
+#endif
+#else
+    /* Legacy path: ngb_treefind_pairs_threads + code_block_xchange + symmetrize + dedup. */
     mg_build_matrix();
-
     /* Phase 1b: symmetrize cross-boundary entries. After the sweep, task B has
        remote entries "my j has neighbor i on task A" but task A's row i is missing
        the reverse entry. This exchange completes the matrix. */
@@ -1519,6 +1780,7 @@ void mg_gradient_correction_calc(void)
        each side), producing duplicate off-diagonal entries and 2x diagonal/RHS.
        Remove duplicates so the matrix is stored once per pair. */
     mg_dedup_matrix();
+#endif
 
 #if defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
     /* Phase 2: solve via MKL PARDISO direct solver (gather to rank 0) */
