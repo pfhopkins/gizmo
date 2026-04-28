@@ -886,7 +886,6 @@ void subtract_companion_gravity(int i);
 
 
 void hydro_gradient_calc(void);
-int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int gradient_iteration);
 void construct_gradient(Vec3<MyDouble>& grad, int i);
 #ifdef MHD_MODIFIED_GRADIENT
 void mg_gradient_correction_calc(void);

@@ -104,212 +104,15 @@ static double fac_magnetic_pressure;
 #endif
 
 
-/* ok here we define some important variables for our generic communication
-    and flux-exchange structures. these can be changed, and vary across the code, but need to be set! */
-
-#define CORE_FUNCTION_NAME hydro_force_evaluate /* name of the 'core' function doing the actual inter-neighbor operations. this MUST be defined somewhere as "int CORE_FUNCTION_NAME(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)" */
-#define INPUTFUNCTION_NAME particle2in_hydra    /* name of the function which loads the element data needed (for e.g. broadcast to other processors, neighbor search) */
-#define OUTPUTFUNCTION_NAME out2particle_hydra  /* name of the function which takes the data returned from other processors and combines it back to the original elements */
-#define CONDITIONFUNCTION_FOR_EVALUATION if((P[i].Type==0)&&(P[i].Mass>0)) /* function for which elements will be 'active' and allowed to undergo operations. can be a function call, e.g. 'density_is_active(i)', or a direct function call like 'if(P[i].Mass>0)' */
-#include "../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
-
-
-
-
-/* inputs/outputs: hydro_data_in/out from hydro_structs.h, aliased to the xchange macro names.
-   The xchange system expects struct INPUT_STRUCT_NAME / OUTPUT_STRUCT_NAME which expand to
-   hydro_force_evaluate_data_in_ / hydro_force_evaluate_data_out_ via code_block_xchange_initialize.h.
-   We add NodeList to the input (needed by tree walk but not by GPU path). */
-struct INPUT_STRUCT_NAME : public hydro_data_in {
-    int NodeList[NODELISTLENGTH];
-}
-*DATAIN_NAME, *DATAGET_NAME;
-
-struct OUTPUT_STRUCT_NAME : public hydro_data_out {
-}
-*DATARESULT_NAME, *DATAOUT_NAME;
-
-
-
-
-/* --------------------------------------------------------------------------------- */
-/* this subroutine actually loads the particle data into the structure to share between nodes */
-/* --------------------------------------------------------------------------------- */
-static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration);
-static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
-{
-    int k;
-    in->Pos = P[i].Pos;
-    in->Vel = CellP[i].VelPred;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    in->ParticleVel = CellP[i].ParticleVel;
-#endif
-    in->KernelRadius = P[i].KernelRadius;
-    in->Mass = P[i].Mass;
-    in->Density = CellP[i].Density;
-    in->Pressure = CellP[i].Pressure;
-    in->InternalEnergyPred = CellP[i].InternalEnergyPred;
-    in->SoundSpeed = CellP[i].effective_soundspeed();
-    in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
-    in->ConditionNumber = CellP[i].ConditionNumber;
-    in->FaceClosureError = CellP[i].FaceClosureError;
-#ifdef MHD_CONSTRAINED_GRADIENT
-    /* since it is not used elsewhere, we can use the sign of the condition number as a bit
-     to conveniently indicate the status of the parent particle flag, for the constrained gradients */
-    if(CellP[i].FlagForConstrainedGradients == 0) {in->ConditionNumber *= -1;}
-#endif
-    in->DrkernNgbFactor = P[i].DrkernNgbFactor;
-#ifdef HYDRO_SPH
-    in->DrkernHydroSumFactor = CellP[i].DrkernHydroSumFactor;
-#if defined(SPHAV_CD10_VISCOSITY_SWITCH)
-    in->alpha = CellP[i].alpha_limiter * CellP[i].alpha;
-#else
-    in->alpha = CellP[i].alpha_limiter;
-#endif
-#endif
-    
-#ifdef HYDRO_PRESSURE_SPH
-    in->EgyWtRho = CellP[i].EgyWtDensity;
-#endif
-#if defined(KERNEL_CRK_FACES)
-    for(k=0;k<16;k++) {in->Tensor_CRK_Face_Corrections[k] = CellP[i].Tensor_CRK_Face_Corrections[k];}
-#endif
-    
-    in->NV_T = CellP[i].NV_T;
-
-    int j;
-    /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */
-    in->Gradients.Density = CellP[i].Gradients.Density;
-    in->Gradients.Pressure = CellP[i].Gradients.Pressure;
-    in->Gradients.Velocity = CellP[i].Gradients.Velocity;
-#ifdef MAGNETIC
-    in->Gradients.B = CellP[i].Gradients.B;
-#ifdef DIVBCLEANING_DEDNER
-    in->Gradients.Phi = CellP[i].Gradients.Phi;
-#endif
-#endif
-#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-    for(j=0;j<NUM_METAL_SPECIES;j++) {in->Gradients.Metallicity[j] = CellP[i].Gradients.Metallicity[j];}
-#endif
-#ifdef DOGRAD_INTERNAL_ENERGY
-    in->Gradients.InternalEnergy = CellP[i].Gradients.InternalEnergy;
-#endif
-#ifdef DOGRAD_SOUNDSPEED
-    in->Gradients.SoundSpeed = CellP[i].Gradients.SoundSpeed;
-#endif
-#if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
-    for(j=0;j<N_RT_FREQ_BINS;j++) {in->Gradients.Rad_E_gamma_ET[j] = CellP[i].Gradients.Rad_E_gamma_ET[j];}
-#endif
-#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-    for(j=0;j<N_RT_FREQ_BINS;j++) {
-        int k_d; for(k_d=0;k_d<3;k_d++) {in->Gradients.Rad_E_gamma_Grad[j][k_d] = CellP[i].Gradients.Rad_E_gamma_Grad[j][k_d];}
-        int j_d; for(j_d=0;j_d<3;j_d++) {int k_d2; for(k_d2=0;k_d2<3;k_d2++) {in->Gradients.Rad_Flux_Grad[j][j_d][k_d2] = CellP[i].Gradients.Rad_Flux_Grad[j][j_d][k_d2];}}
-    }
-#endif
-    
-#ifdef RT_SOLVER_EXPLICIT
-    for(k=0;k<N_RT_FREQ_BINS;k++)
-    {
-        in->Rad_E_gamma[k] = CellP[i].Rad_E_gamma_Pred[k];
-        in->Rad_Kappa[k] = CellP[i].Rad_Kappa[k];
-        in->RT_DiffusionCoeff[k] = rt_diffusion_coefficient(i,k, CellP);
-#if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-        in->ET[k] = CellP[i].ET[k];
-#endif
-#ifdef RT_EVOLVE_FLUX
-        in->Rad_Flux[k] = CellP[i].Rad_Flux_Pred[k];
-#endif
-#if defined(RT_EVOLVE_INTENSITIES)
-        {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {in->Rad_Intensity_Pred[k][k_dir] = CellP[i].Rad_Intensity_Pred[k][k_dir];}}
-#endif
-    }
-#ifdef RT_INFRARED
-    in->Radiation_Temperature = CellP[i].Radiation_Temperature;
-#endif
-#endif
-    
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-    for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-    for(k=ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY;k<ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+NUM_ISMDUSTCHEM_PASSIVE_SCALARS;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, CellP);}
-#endif
-#endif
-
-#ifdef CHIMES_TURB_DIFF_IONS
-    for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {in->ChimesNIons[k] = CellP[i].ChimesNIons[k]; }
-#endif
-
-#ifdef TURB_DIFFUSION
-    in->TD_DiffCoeff = CellP[i].TD_DiffCoeff;
-#endif
-
-#ifdef CONDUCTION
-    in->Kappa_Conduction = CellP[i].Kappa_Conduction;
-#endif
-
-#ifdef MHD_NON_IDEAL
-    in->Eta_MHD_OhmicResistivity_Coeff = CellP[i].Eta_MHD_OhmicResistivity_Coeff;
-    in->Eta_MHD_HallEffect_Coeff = CellP[i].Eta_MHD_HallEffect_Coeff;
-    in->Eta_MHD_AmbiPolarDiffusion_Coeff = CellP[i].Eta_MHD_AmbiPolarDiffusion_Coeff;
-#endif
-
-
-#ifdef VISCOSITY
-    in->Eta_ShearViscosity = CellP[i].Eta_ShearViscosity;
-    in->Zeta_BulkViscosity = CellP[i].Zeta_BulkViscosity;
-#endif
-
-#ifdef MAGNETIC
-    in->BPred = CellP[i].Bfield();
-#if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
-    in->Balpha = CellP[i].Balpha;
-#endif
-#ifdef DIVBCLEANING_DEDNER
-    in->PhiPred = Get_Gas_PhiField(i);
-#endif
-#ifdef MHD_MODIFIED_GRADIENT
-    in->MG_cgcoeff = CellP[i].MG_cgcoeff;
-#endif
-#endif // MAGNETIC //
-
-#ifdef COSMIC_RAY_FLUID
-    for(j=0;j<N_CR_PARTICLE_BINS;j++)
-    {
-        in->CosmicRayPressure[j] = Get_Gas_CosmicRayPressure(i, j, CellP);
-        in->CosmicRayDiffusionCoeff[j] = CellP[i].CosmicRayDiffusionCoeff[j];
-        in->CosmicRayFlux[j] = CellP[i].CosmicRayFluxPred[j];
-#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-        for(k=0;k<2;k++) {in->CosmicRayAlfvenEnergy[j][k] = CellP[i].CosmicRayAlfvenEnergyPred[j][k];}
-#endif
-#ifdef CRFLUID_EVOLVE_SPECTRUM
-        in->CR_number_to_energy_ratio[j] = CellP[i].CosmicRay_Number_in_Bin[j] / (CellP[i].CosmicRayEnergy[j] + MIN_REAL_NUMBER);
-        in->CR_number_to_energy_ratio[j] *= CellP[i].Flux_Number_to_Energy_Correction_Factor[j];
-#endif
-    }
-#endif
-
-#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
-    in->CompositionType = CellP[i].CompositionType;
-#endif
-#ifdef EOS_ELASTIC
-    {int k_v; for(k=0;k<3;k++) {for(k_v=0;k_v<3;k_v++) {in->Elastic_Stress_Tensor[k][k_v] = CellP[i].Elastic_Stress_Tensor_Pred[k][k_v];}}}
-#endif
-
-#ifdef GALSF_SUBGRID_WINDS
-    in->DelayTime = CellP[i].DelayTime;
-#endif
-
-    in->TimeBin = P[i].TimeBin;
-
-}
-
-
+/* GPU dispatcher consumes hydro_data_in/out directly from hydro_structs.h.
+   The legacy export-buffer scaffolding (code_block_xchange_initialize.h, INPUT_STRUCT_NAME,
+   OUTPUT_STRUCT_NAME, particle2in_hydra, hydro_force_evaluate) was retired in Step 5 Phase D1. */
 
 /* --------------------------------------------------------------------------------- */
 /* this subroutine adds the output variables back to the particle values */
 /* --------------------------------------------------------------------------------- */
-static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration);
-static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
+static inline void out2particle_hydra(struct hydro_data_out *out, int i, int mode, int loop_iteration);
+static inline void out2particle_hydra(struct hydro_data_out *out, int i, int mode, int loop_iteration)
 {
     int k;
     /* these are zero-d out at beginning of hydro loop so should always be added */
@@ -383,11 +186,6 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 #endif
 }
 
-
-/* --------------------------------------------------------------------------------- */
-/* need to link to the file "hydro_evaluate" which actually contains the computation part of the loop! */
-/* --------------------------------------------------------------------------------- */
-#include "hydro_evaluate.h"
 
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
@@ -850,7 +648,7 @@ void hydro_force(void)
         for(int aa = 0; aa < gizmo_sym_num_active; aa++)
         {
             int ii = gizmo_sym_active_indices[aa];
-            out2particle_hydra((struct OUTPUT_STRUCT_NAME *)&hydro_out[aa], ii, 0, 0);
+            out2particle_hydra(&hydro_out[aa], ii, 0, 0);
         }
         myfree(hydro_out);
         ghost_writeback_hydro();
@@ -876,4 +674,3 @@ void hydro_force(void)
        those are cleaned up after the subcycle loop in run.cc). No-op on tree-walk build. */
     gizmo_hydro_cleanup_symlist_and_ghosts();
 }
-#include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

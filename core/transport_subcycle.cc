@@ -27,128 +27,10 @@ extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 #include "../radiation/rt_diffusion_explicit_functions.h"
 
 /* ======================================================================================== */
-/* ===== CODE_BLOCK_XCHANGE SETUP FOR TRANSPORT FLUX EXCHANGE ============================= */
-/* ======================================================================================== */
-
-/* kernel struct — same as hydro_toplevel.cc; definition in hydro_structs.h when GPU path is active */
-
-
-/* define the code_block_xchange names */
-#define CORE_FUNCTION_NAME transport_flux_evaluate
-#define INPUTFUNCTION_NAME particle2in_transport
-#define OUTPUTFUNCTION_NAME out2particle_transport
-#define CONDITIONFUNCTION_FOR_EVALUATION if((P[i].Type==0)&&(P[i].Mass>0))
-#include "../system/code_block_xchange_initialize.h"
-
-
-/* ===== INPUT STRUCT ===== */
-static struct INPUT_STRUCT_NAME
-{
-    MyDouble Pos[3];
-    Vec3<MyFloat> Vel;
-    MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
-    MyFloat Rad_Kappa[N_RT_FREQ_BINS];
-    MyFloat RT_DiffusionCoeff[N_RT_FREQ_BINS];
-    MyDouble Mass;
-    MyFloat Density;
-    MyFloat KernelRadius;
-    MyFloat ConditionNumber;
-    MyFloat SoundSpeed;
-#if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-    SymmetricTensor2<MyDouble> ET[N_RT_FREQ_BINS];
-#endif
-#ifdef RT_EVOLVE_FLUX
-    Vec3<MyFloat> Rad_Flux[N_RT_FREQ_BINS];
-#endif
-#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-    struct { Vec3<MyDouble> Rad_E_gamma_ET[N_RT_FREQ_BINS]; } Gradients;
-#endif
-#ifdef RT_INFRARED
-    MyFloat Radiation_Temperature;
-#endif
-#ifdef MAGNETIC
-    Vec3<MyFloat> BPred;
-#endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    Vec3<MyFloat> ParticleVel;
-#endif
-    SymmetricTensor2<MyDouble> NV_T;  /* gradient matrix for face area computation */
-    int NodeList[NODELISTLENGTH];     /* required by code_block_xchange framework */
-}
-*DATAIN_NAME, *DATAGET_NAME;
-
-/* ===== OUTPUT STRUCT ===== */
-static struct OUTPUT_STRUCT_NAME
-{
-#if defined(RT_EVOLVE_ENERGY)
-    MyFloat Dt_Rad_E_gamma[N_RT_FREQ_BINS];
-#endif
-#if defined(RT_EVOLVE_FLUX)
-    Vec3<MyFloat> Dt_Rad_Flux[N_RT_FREQ_BINS];
-#endif
-#if defined(RT_INFRARED)
-    MyFloat Dt_Rad_E_gamma_T_weighted_IR;
-#endif
-}
-*DATARESULT_NAME, *DATAOUT_NAME;
-
-
-/* ===== PACK INPUT ===== */
-void particle2in_transport(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
-{
-    for(int k=0; k<3; k++) {in->Pos[k] = P[i].Pos[k];}
-    in->Vel = CellP[i].VelPred;
-    in->Mass = P[i].Mass;
-    in->Density = CellP[i].Density;
-    in->KernelRadius = P[i].KernelRadius;
-    in->ConditionNumber = CellP[i].ConditionNumber;
-    in->SoundSpeed = CellP[i].effective_soundspeed();
-    for(int kf=0; kf<N_RT_FREQ_BINS; kf++) {
-        in->Rad_E_gamma[kf] = CellP[i].Rad_E_gamma_Pred[kf];
-        in->Rad_Kappa[kf] = CellP[i].Rad_Kappa[kf];
-        in->RT_DiffusionCoeff[kf] = rt_diffusion_coefficient(i, kf, CellP);
-#if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-        in->ET[kf] = CellP[i].ET[kf];
-#endif
-#ifdef RT_EVOLVE_FLUX
-        in->Rad_Flux[kf] = CellP[i].Rad_Flux_Pred[kf];
-#endif
-#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-        in->Gradients.Rad_E_gamma_ET[kf] = CellP[i].Gradients.Rad_E_gamma_ET[kf];
-#endif
-    }
-#ifdef RT_INFRARED
-    in->Radiation_Temperature = CellP[i].Radiation_Temperature;
-#endif
-#ifdef MAGNETIC
-    in->BPred = CellP[i].BPred;
-#endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    in->ParticleVel = P[i].Vel;
-#endif
-    in->NV_T = CellP[i].NV_T;
-}
-
-
-/* ===== UNPACK OUTPUT ===== */
-void out2particle_transport(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
-{
-    int k;
-#if defined(RT_EVOLVE_ENERGY)
-    for(k=0; k<N_RT_FREQ_BINS; k++) CellP[i].Dt_Rad_E_gamma[k] += out->Dt_Rad_E_gamma[k];
-#endif
-#if defined(RT_EVOLVE_FLUX)
-    for(k=0; k<N_RT_FREQ_BINS; k++) CellP[i].Dt_Rad_Flux[k] += out->Dt_Rad_Flux[k];
-#endif
-#if defined(RT_INFRARED)
-    CellP[i].Dt_Rad_E_gamma_T_weighted_IR += out->Dt_Rad_E_gamma_T_weighted_IR;
-#endif
-}
-
-
-/* ===== CORE FUNCTION: transport flux evaluation ===== */
-/* This is included from a separate file to keep this manageable */
-#include "transport_flux_evaluate.h"
+/* GPU dispatcher (transport_subcycle_exchange_fluxes below) consumes hydro_data_out
+   directly. Legacy CPU-tree scaffolding (code_block_xchange_initialize.h, INPUT_STRUCT_NAME,
+   OUTPUT_STRUCT_NAME, particle2in_transport, out2particle_transport, transport_flux_evaluate)
+   was retired in Step 5 Phase D1. */
 
 
 /* ===== INITIAL OPERATIONS (zero rate arrays) ===== */
@@ -223,7 +105,6 @@ void transport_subcycle_exchange_fluxes(void)
 
     CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 }
-#include "../system/code_block_xchange_finalize.h"
 
 
 /* ======================================================================================== */

@@ -32,7 +32,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "mechanical_fb_gpu.h"
 
-#if defined(GALSF_FB_MECHANICAL) && defined(OPENMP_GPU_OFFLOAD) && \
+#if defined(GALSF_FB_MECHANICAL) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "mechanical_fb_functions.h"
 
