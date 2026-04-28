@@ -76,30 +76,6 @@ static struct mg_ghost_info *MG_GhostList = NULL;
 static int MG_GhostCount = 0;
 
 
-/* ==================================================================================== */
-/* MG sweep: input/output structs for the MPI neighbor loop                              */
-/* ==================================================================================== */
-
-struct MGdata_in {
-    Vec3<MyDouble> Pos;
-    MyFloat Mass;
-    MyFloat KernelRadius;
-    MyFloat Density;
-    MyFloat ConditionNumber;
-    SymmetricTensor2<MyDouble> NV_T;
-    Vec3<MyDouble> BPred;      /* B = BPred * Density/Mass */
-    Mat3<MyDouble> GradB;      /* slope-limited B gradient */
-    int OrigTask;              /* task that owns this particle */
-    int OrigIndex;             /* local index on originating task */
-    int NodeList[NODELISTLENGTH];
-};
-static struct MGdata_in *MGDataIn, *MGDataGet;
-
-struct MGdata_out {
-    MyFloat Rdiag;   /* accumulated diagonal contribution */
-    MyFloat rhs;     /* accumulated RHS contribution */
-};
-static struct MGdata_out *MGDataResult, *MGDataOut;
 
 
 /* ==================================================================================== */
@@ -132,9 +108,14 @@ static inline void mg_add_remote_entry(int i, int remote_task, int remote_index,
 
 
 /* ==================================================================================== */
-/* MG evaluate function: neighbor-pair computation for matrix build                      */
+/* Legacy MG evaluate + primary/secondary wrappers + mg_build_matrix +                   */
+/* mg_symmetrize_remote_entries + mg_dedup_matrix — RETIRED 2026-04-28 (Step 5 B6.5).   */
+/* Modern symmetric-CSR path (mg_build_matrix_modern) is now the only build path.        */
+/* These functions are no longer reachable: mg_gradient_correction_calc calls             */
+/* mg_build_matrix_modern unconditionally; MG_USE_MODERN_BUILD is auto-defined via       */
+/* precompiler_logic.h whenever GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is set.              */
 /* ==================================================================================== */
-
+#if 0 /* RETIRED B6.5 — legacy tree-walk matrix build */
 static void particle2in_MG(struct MGdata_in *in, int i)
 {
     in->Pos = P[i].Pos;
@@ -679,6 +660,7 @@ static void mg_symmetrize_remote_entries(void)
     free(task_pos); free(recv_offsets); free(send_offsets);
     free(recv_counts); free(send_counts);
 }
+#endif /* RETIRED B6.5 — legacy tree-walk matrix build */
 
 
 /* ==================================================================================== */
@@ -833,13 +815,11 @@ static void mg_cleanup_ghost_exchange(void)
 
 
 /* ==================================================================================== */
-/* Deduplicate double-counted matrix entries                                              */
-/*                                                                                        */
-/* The neighbor sweep visits every pair (i,j) twice (once from each side), producing      */
-/* duplicate off-diagonal entries and 2x diagonal/RHS. This pass removes the duplicates   */
-/* so the matrix is stored once per pair, halving memory and mat-vec cost.                 */
+/* mg_compare_local/remote/mg_dedup_matrix — RETIRED 2026-04-28 (Step 5 B6.5).          */
+/* These were used by legacy mg_build_matrix + mg_validate_modern_vs_legacy.             */
+/* Modern path writes each row once per iteration; no deduplication needed.               */
 /* ==================================================================================== */
-
+#if 0 /* RETIRED B6.5 */
 static int mg_compare_local(const void *a, const void *b)
 {
     return ((struct mg_local_entry *)a)->j - ((struct mg_local_entry *)b)->j;
@@ -895,6 +875,7 @@ static void mg_dedup_matrix(void)
         MG_Rows[i].rhs *= 0.5;
     }
 }
+#endif /* RETIRED B6.5 */
 
 
 /* ==================================================================================== */
@@ -1504,22 +1485,15 @@ static void mg_solve_pardiso(void)
 /* ==================================================================================== */
 
 /* ==================================================================================== */
-/* Modernized matrix build using gizmo_sym_neighbor_list (Step 5 B6).                    */
+/* Matrix build via gizmo_sym_neighbor_list (symmetric CSR walk, Step 5 B6).             */
 /*                                                                                        */
-/* Replaces the legacy ngb_treefind_pairs_threads + code_block_xchange plumbing with     */
-/* the symmetric CSR walk used elsewhere in the modernized hydro path.                    */
+/* Pre-condition: gizmo_sym_active_indices + gizmo_sym_neighbor_list are current —       */
+/* refreshed by gizmo_gradients_refresh_symlist at end of hydro_gradient_calc.           */
+/* Ghost cells carry full P/CellP state (Phase 0 full-struct exchange).                  */
 /*                                                                                        */
-/* Pre-condition: gizmo_sym_active_indices and gizmo_sym_neighbor_list are built and     */
-/* current — refreshed at end of hydro_gradient_calc by gizmo_gradients_refresh_symlist. */
-/* Ghost cells (P/CellP at indices NumPart..NumPart+Nghost-1) carry full converged state */
-/* including Gradients.B, NV_T, ConditionNumber, BPred (full struct exchange in Phase 0). */
-/*                                                                                        */
-/* Each pair appears twice in the symmetric CSR — once in i's neighbor list, once in     */
-/* j's. We accumulate ONLY target's row per visit (single contribution per row per       */
-/* pair). This produces matrix entries equivalent to legacy after mg_dedup_matrix's      */
-/* halving; no dedup needed in modern path.                                               */
+/* Each pair appears twice in the CSR; we accumulate ONLY target's row per visit.        */
+/* No dedup needed — each row's contribution is written exactly once per pair.           */
 /* ==================================================================================== */
-#if defined(MG_USE_MODERN_BUILD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
 static void mg_build_matrix_modern(void)
 {
     /* Initialize per-particle matrix rows */
@@ -1625,14 +1599,10 @@ static void mg_build_matrix_modern(void)
 
 
 /* ==================================================================================== */
-/* Validation harness (Step 5 B6.3): runs both legacy and modern paths, compares         */
-/* MG_Rows[] entry-by-entry, asserts max rel-err below tolerance.                        */
-/*                                                                                        */
-/* Activated only when MG_VALIDATE_MODERN is also defined alongside MG_USE_MODERN_BUILD.  */
-/* Default for production use of the modern path: MG_USE_MODERN_BUILD on (legacy gone).   */
-/* For B6 validation phase: both flags on, to compare paths bit-by-bit.                   */
+/* Validation harness (Step 5 B6.3) — RETIRED 2026-04-28 (Step 5 B6.5).                 */
+/* Legacy path is retired; harness no longer needed. Vista field_loop PASS confirmed.    */
 /* ==================================================================================== */
-#ifdef MG_VALIDATE_MODERN
+#if 0 /* RETIRED B6.5 — validation harness against retired legacy */
 static void mg_validate_modern_vs_legacy(void)
 {
     /* Save modern result */
@@ -1757,8 +1727,7 @@ static void mg_validate_modern_vs_legacy(void)
     }
     free(modern_rows);
 }
-#endif /* MG_VALIDATE_MODERN */
-#endif /* MG_USE_MODERN_BUILD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* RETIRED B6.5 — validation harness */
 
 
 void mg_gradient_correction_calc(void)
@@ -1774,26 +1743,7 @@ void mg_gradient_correction_calc(void)
         MG_Rows[i].remote_entries = NULL;
     }
 
-#if defined(MG_USE_MODERN_BUILD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    /* Modern path: symmetric CSR walk; ghosts visible directly; no symmetrize/dedup needed. */
     mg_build_matrix_modern();
-#ifdef MG_VALIDATE_MODERN
-    /* Side-by-side comparison: re-runs legacy and asserts byte-equivalence within tolerance. */
-    mg_validate_modern_vs_legacy();
-#endif
-#else
-    /* Legacy path: ngb_treefind_pairs_threads + code_block_xchange + symmetrize + dedup. */
-    mg_build_matrix();
-    /* Phase 1b: symmetrize cross-boundary entries. After the sweep, task B has
-       remote entries "my j has neighbor i on task A" but task A's row i is missing
-       the reverse entry. This exchange completes the matrix. */
-    mg_symmetrize_remote_entries();
-
-    /* Phase 1c: deduplicate. The neighbor sweep visits every pair twice (once from
-       each side), producing duplicate off-diagonal entries and 2x diagonal/RHS.
-       Remove duplicates so the matrix is stored once per pair. */
-    mg_dedup_matrix();
-#endif
 
 #if defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
     /* Phase 2: solve via MKL PARDISO direct solver (gather to rank 0) */
