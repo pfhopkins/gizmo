@@ -33,7 +33,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 
 
-#if defined(TURB_DIFF_DYNAMIC) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(TURB_DIFF_DYNAMIC) && defined(OPENMP_GPU_OFFLOAD)
 
 /* Output struct: matches the fields accumulated by DiffFilter_evaluate */
 struct DiffFilter_out {
@@ -407,4 +407,4 @@ void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                               void *, void *, void *, int) {}
 void gizmo_gpu_sync_all_difffilter(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* TURB_DIFF_DYNAMIC && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* TURB_DIFF_DYNAMIC && OPENMP_GPU_OFFLOAD */

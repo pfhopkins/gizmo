@@ -3,7 +3,7 @@
  * Active Type-5 (sink) particles scatter accretion events and thermal feedback
  * into surrounding neighbor particles via a Kokkos parallel_for kernel.
  * This replaces the CPU tree-walk inside sink_feed_loop() when
- * GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY and OPENMP_GPU_OFFLOAD are both defined.
+ * OPENMP_GPU_OFFLOAD is defined.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -29,7 +29,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../mesh/ghost_writeback.h"
 
-#if defined(SINK_PARTICLES) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(SINK_PARTICLES) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "sink_feed_functions.h"
 
@@ -312,4 +312,4 @@ void sink_feed_evaluate_gpu(struct particle_data *p,
 }
 void gizmo_gpu_sync_all_sinkfeed(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD */

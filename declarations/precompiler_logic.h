@@ -668,10 +668,8 @@
 #undef MHD_CONSTRAINED_GRADIENT
 #endif
 #define MHD_CONSTRAINED_GRADIENT 1
-/* Under the modern Kokkos build the legacy ngb_treefind_pairs_threads matrix-build
-   path is broken (GPU-built UVM tree). Auto-enable the modern symmetric-CSR path.
-   Vista field_loop validated 2026-04-28 (B6.3 PASS). */
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && !defined(MG_USE_MODERN_BUILD)
+/* Modern symmetric-CSR path is the only supported build (Vista field_loop validated 2026-04-28). */
+#ifndef MG_USE_MODERN_BUILD
 #define MG_USE_MODERN_BUILD 1
 #endif
 #endif

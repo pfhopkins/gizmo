@@ -6,17 +6,10 @@
  * functions now include the lifecycle inline, so any caller gets the correct
  * sequencing automatically — you cannot forget to prep or clean up.
  *
- * All helpers are no-ops when GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is not set,
- * and are internally guarded against NTask==1 where appropriate.  The
- * TRANSPORT_SUBCYCLE path keeps the symlist + ghosts alive past hydro_force;
- * that cleanup stays at its existing site in run.cc (see gizmo_cleanup_*).
- *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef GHOST_SYMLIST_LIFECYCLE_H
 #define GHOST_SYMLIST_LIFECYCLE_H
-
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 
 #include "neighbor_list.h"
 #include "sfc_tiles.h"
@@ -137,17 +130,5 @@ static inline void gizmo_density_init_cleanup(void)
 {
     if(NTask > 1) {ghost_exchange_cleanup();}
 }
-
-#else  /* !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY — all no-ops */
-
-static inline double gizmo_ghost_safety_factor(void) {return 1.0;}
-static inline void gizmo_density_prep_ghosts(double s) {(void)s;}
-static inline void gizmo_density_redo_ghosts_if_needed(double s) {(void)s;}
-static inline void gizmo_gradients_prep_symlist(double s, double sf) {(void)s; (void)sf;}
-static inline void gizmo_gradients_refresh_symlist(double s, double sf) {(void)s; (void)sf;}
-static inline void gizmo_hydro_cleanup_symlist_and_ghosts(void) {}
-static inline void gizmo_density_init_cleanup(void) {}
-
-#endif /* GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
 #endif /* GHOST_SYMLIST_LIFECYCLE_H */

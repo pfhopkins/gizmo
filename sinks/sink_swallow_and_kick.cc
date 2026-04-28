@@ -519,7 +519,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
 void sink_swallow_and_kick_loop(void)
 {
     N_gas_swallowed = N_star_swallowed = N_dm_swallowed = N_sink_swallowed = 0;
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* D1 GPU path — atomic j-writes + ghost writeback; per-source output scatter
      * and MPI_Reduce of swallow counters handled inside the launcher. */
     {

@@ -235,7 +235,7 @@ int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnode
 void thermal_fb_calc(void)
 {
     PRINT_STATUS(" ..depositing thermal feedback to gas");
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     {
 #include "../galaxy_sf/thermal_fb_gpu.h"
         /* Build LOCAL active-source list from ActiveParticleList; iterating

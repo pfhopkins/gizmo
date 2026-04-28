@@ -3,7 +3,7 @@
  * Source particles (Type != 0 with luminosity) scatter radiation into
  * surrounding gas (Type == 0) neighbors via a Kokkos parallel_for kernel.
  * This replaces the CPU tree-walk inside rt_source_injection() when both
- * GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY and OPENMP_GPU_OFFLOAD are defined.
+ * OPENMP_GPU_OFFLOAD is defined.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -27,7 +27,7 @@
 #include "../declarations/macros.h"
 #include "../mesh/gpu_neighbor_list.h"
 
-#if defined(RT_SOURCE_INJECTION) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(RT_SOURCE_INJECTION) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "rt_source_injection_functions.h"
 
@@ -180,4 +180,4 @@ void rt_source_injection_evaluate_gpu(struct particle_data *p,
 }
 void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* RT_SOURCE_INJECTION && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* RT_SOURCE_INJECTION && OPENMP_GPU_OFFLOAD */

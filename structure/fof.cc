@@ -84,7 +84,7 @@ static float *fof_nearest_rkern;
 
 void fof_fof(int num)
 {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && !defined(FOF_PORTED_TO_MODERN_NL)
+#ifndef FOF_PORTED_TO_MODERN_NL
   /* FOF walks the legacy CPU tree (Nextnode[]/Nodes[]) which no longer holds
    * under the modern Kokkos build. ~500-1000 LOC port to gpu_ngb_list_build is
    * needed (linking-length search + adaptive density refinement). Until that

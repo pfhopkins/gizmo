@@ -359,7 +359,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 
 void sink_feed_loop(void)
 {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     {
 #include "../sinks/sink_feed_gpu.h"
         /* Build LOCAL active-source list from ActiveParticleList; iterating

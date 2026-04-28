@@ -39,7 +39,7 @@
 #include "ags_density_gpu.h"
 
 
-#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(OPENMP_GPU_OFFLOAD)
 
 /* Named struct (file scope) for TimeBinActive device-capture. CUDA nvcc
    rejects unnamed-type captures in __device__ lambdas ("type local to a
@@ -223,4 +223,4 @@ void ags_density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, in
                               int *, int, const double *, int, void *) {}
 void gizmo_gpu_sync_all_agsdensity(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE && OPENMP_GPU_OFFLOAD */

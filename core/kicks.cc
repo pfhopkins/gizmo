@@ -61,7 +61,7 @@ void do_first_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
-#if defined(CBE_INTEGRATOR) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(CBE_INTEGRATOR) && defined(OPENMP_GPU_OFFLOAD)
     {
         int n = (int)ActiveParticleList.size();
         int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
@@ -119,7 +119,7 @@ void do_second_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
-#if defined(CBE_INTEGRATOR) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(CBE_INTEGRATOR) && defined(OPENMP_GPU_OFFLOAD)
     {
         int n = (int)ActiveParticleList.size();
         int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
@@ -473,10 +473,8 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #ifdef DM_FUZZY
         do_dm_fuzzy_drift_kick(i, dt_entr, 0); /* kicks for fuzzy-dm integration */
 #endif
-#ifdef CBE_INTEGRATOR
-#if !(defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD))
+#if defined(CBE_INTEGRATOR) && !defined(OPENMP_GPU_OFFLOAD)
         do_cbe_drift_kick(i, dt_entr); /* kicks for cbe integration of phase-space distribution function */
-#endif
 #endif
         
     } // if(TimeBinActive[P[i].TimeBin]) //

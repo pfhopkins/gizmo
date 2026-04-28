@@ -322,7 +322,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 
       maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
       maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
       /* Adaptive ghost headroom: reduce maxLoad by the previous ghost count (with safety margin)
          so domain decomposition leaves room for ghost particles on boundary ranks.
          Uses MPI_MAX of per-rank ghost counts as a conservative global estimate. */
@@ -341,7 +340,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
               }
           }
       }
-#endif
 
       report_memory_usage(&HighMark_domain, "DOMAIN");
 
@@ -560,7 +558,6 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     maxLoad = (int) (All.MaxPart * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
     maxLoadgas = (int) (All.MaxPartGas * REDUC_FAC_FOR_MEMORY_IN_DOMAIN);
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
     {   /* adaptive ghost headroom (same logic as full decomposition above) */
         int prev_ghost_local = ghost_get_previous_count();
         int prev_ghost_max;
@@ -572,7 +569,6 @@ void domain_Decomposition_light(int UseAllTimeBins)
             if(maxLoad_new < maxLoad) {maxLoad = maxLoad_new;}
         }
     }
-#endif
 
     /* re-split and re-assign */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);

@@ -37,7 +37,7 @@
 
 #include "sink_environment_gpu.h"
 
-#if defined(SINK_PARTICLES) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(SINK_PARTICLES) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "sink_functions.h"
 
@@ -369,4 +369,4 @@ void sink_environment_second_evaluate_gpu(struct particle_data *, struct gas_cel
 #endif
 void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD */

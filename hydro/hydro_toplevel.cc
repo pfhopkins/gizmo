@@ -8,12 +8,10 @@
 #include "../core/proto.h"
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #include "../mesh/kernel.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                int, int *, int, int *, int *, int, void *);
-#endif
 #include "../mesh/ghost_symlist_lifecycle.h"
 
 /*! \file hydro_toplevel.c
@@ -837,7 +835,6 @@ void hydro_force(void)
     #endif /* GIZMO_DEBUG_RT_COOLING */
     double t_preloop = timediff(t_preloop_start, my_second());
     double t_malloc = 0, t_xchange_all = 0, t_demalloc = 0;
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
     /* Neighbor-list path: GPU/Kokkos dispatch over symmetric CSR list */
     {
@@ -858,17 +855,6 @@ void hydro_force(void)
         myfree(hydro_out);
         ghost_writeback_hydro();
     }
-#else /* tree-walk path */
-    double t_malloc_start = my_second();
-    #include "../system/code_block_xchange_perform_ops_malloc.h"
-    t_malloc = timediff(t_malloc_start, my_second());
-    double t_xchange_start = my_second();
-    #include "../system/code_block_xchange_perform_ops.h"
-    t_xchange_all = timediff(t_xchange_start, my_second());
-    double t_demalloc_start = my_second();
-    #include "../system/code_block_xchange_perform_ops_demalloc.h"
-    t_demalloc = timediff(t_demalloc_start, my_second());
-#endif
 
 #ifdef GIZMO_DEBUG_RT_COOLING
     /* HYDRO_RAWDTU_DIAG: print raw DtU from neighbor loop BEFORE post-loop corrections */
@@ -886,10 +872,6 @@ void hydro_force(void)
     double t_postloop = timediff(t_postloop_start, my_second());
     /* collect timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
-#ifndef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY /* GPU path: timing fed from accel.cc instead */
-    CPU_Step[CPU_HYDCOMPUTE] += timecomp; CPU_Step[CPU_HYDWAIT] += timewait; CPU_Step[CPU_HYDCOMM] += timecomm;
-    CPU_Step[CPU_HYDMISC] += timeall - (timecomp + timewait + timecomm);
-#endif
     /* Neighbor-list path: free symlist + remove ghosts (skipped under TRANSPORT_SUBCYCLE;
        those are cleaned up after the subcycle loop in run.cc). No-op on tree-walk build. */
     gizmo_hydro_cleanup_symlist_and_ghosts();

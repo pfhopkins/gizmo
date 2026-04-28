@@ -56,8 +56,6 @@ echo ">>> Building GPU path..."
 {
     echo "$BASE_CONFIG"
 } > Config.sh
-# BASE_CONFIG already has GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY from test Config.sh
-grep -q "GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY" Config.sh || echo "GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY" >> Config.sh
 make clean > /dev/null 2>&1
 make -j${NJOBS} > /dev/null 2>&1
 if [[ $? -ne 0 ]]; then echo "ERROR: GPU build failed"; exit 1; fi
@@ -91,7 +89,7 @@ echo "  GPU binary + run directory: $GPU_DIR"
 # BUILD 2: Tree-walk path
 # ================================================================
 echo ">>> Building tree-walk path..."
-echo "$BASE_CONFIG" | grep -v "GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY" > Config.sh
+echo "$BASE_CONFIG" > Config.sh
 make clean > /dev/null 2>&1
 make -j${NJOBS} > /dev/null 2>&1
 if [[ $? -ne 0 ]]; then echo "ERROR: Tree-walk build failed"; exit 1; fi

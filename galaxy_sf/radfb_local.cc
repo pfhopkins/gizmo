@@ -11,11 +11,11 @@
     photo-ionization terms. written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
-#if defined(GALSF_FB_FIRE_RT_LOCALRP) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(GALSF_FB_FIRE_RT_LOCALRP) && defined(OPENMP_GPU_OFFLOAD)
 #include "radfb_local_gpu.h"
 #endif
 
-#if defined(GALSF_FB_FIRE_RT_HIIHEATING) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) && defined(OPENMP_GPU_OFFLOAD)
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -27,7 +27,7 @@
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
 void radiation_pressure_winds_consolidated(void)
 {
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(OPENMP_GPU_OFFLOAD)
     radiation_pressure_winds_gpu(P, CellP, NumPart,
                                  ActiveParticleList.data(), (int)ActiveParticleList.size());
     return;
@@ -246,7 +246,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
     double uion; uion = HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); /* assume fully-ionized gas with gamma=5/3; this is a global variable below */
     MAX_N_ITERATIONS_HIIFB = 5; NITER_HIIFB = 0;
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* Modern path: prebuilt CSR neighbor list. Skip ghosts inside the inner loop
      * to preserve the "singledomain" semantic (only ionize gas on this rank's
      * domain — no MPI export). The legacy ngb_treefind_variable_targeted walked
@@ -613,7 +613,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             } // if(prandom < 2.0*mionizable/P[j].Mass)
         } // if((P[i].Type == 4)||(P[i].Type == 2)||(P[i].Type == 3))
     } // for (int i : ActiveParticleList)
-#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* OPENMP_GPU_OFFLOAD */
 
 
     double totMPI_N_ionizing_part=0,totMPI_Ndot_ionizing=0,totMPI_m_ionized=0,totMPI_avg_RHII=0,totMPI_N_ionized=0;

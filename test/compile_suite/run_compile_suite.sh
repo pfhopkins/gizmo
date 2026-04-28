@@ -1,8 +1,7 @@
 #!/bin/bash
 # run_compile_suite.sh — Test GIZMO compilation under many Config.sh flag combinations.
 #
-# Every config gets GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY prepended so we test the
-# GPU/Kokkos neighbor-list code path.
+# Every config gets OPENMP_GPU_OFFLOAD prepended so we test the GPU/Kokkos code path.
 #
 # Usage:
 #   Local (Kokkos OpenMP):  ./test/compile_suite/run_compile_suite.sh
@@ -46,11 +45,10 @@ else
     echo "[compile_suite] CPU/OpenMP mode: $(grep SYSTYPE Makefile.systype)"
 fi
 
-# Base flags prepended to every config: enable the full GPU/Kokkos active code
-# path. After Step 13 Phase 11 (no silent descopes audit), every #error gate that
-# previously blocked these flags is gone -- the GPU walk handles all payload
-# combinations natively, falling back to the same physics as the CPU walk.
-BASE_FLAGS="GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY OPENMP_GPU_OFFLOAD GIZMO_GPU_GRAVTREE OPENMP_TREE_UPDATE"
+# Base flags prepended to every config: enable the GPU/Kokkos code path.
+# GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY retired in Step 5 C5 (always-on).
+# GIZMO_GPU_GRAVTREE and OPENMP_TREE_UPDATE retired in Step 5 C1/C2.
+BASE_FLAGS="OPENMP_GPU_OFFLOAD"
 
 RESULTS_FILE="compile_suite_results.txt"
 ERRORS_DIR="compile_suite_errors"

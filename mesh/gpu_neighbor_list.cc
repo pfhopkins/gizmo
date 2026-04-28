@@ -24,7 +24,7 @@
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
 
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
                              int type_bitmask, gpu_spatial_index_t *idx)
@@ -302,7 +302,7 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
 GPU_ALL_SYNC_FUNC(ngb)
 
-#else /* !OPENMP_GPU_OFFLOAD || !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#else /* !OPENMP_GPU_OFFLOAD */
 
 /* Stubs when GPU neighbor list is not available */
 void gpu_spatial_index_build(struct particle_data *, int, int, gpu_spatial_index_t *) {}
@@ -314,4 +314,4 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, 
 void gpu_build_cross_type_neighbor_list(struct particle_data *, int, int *, int, const double *, int, int, neighbor_list_t *) {}
 void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* OPENMP_GPU_OFFLOAD */

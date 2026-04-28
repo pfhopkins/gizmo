@@ -8,9 +8,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/ghost_symlist_lifecycle.h"
-#endif
 #include "dm_fuzzy_gpu.h"
 
 /*! \file dm_fuzzy.c
@@ -321,7 +319,7 @@ void DMGrad_gradient_calc(void)
 
     /* allocate memory shared across all loops */
     DMGradDataPasser = (struct temporary_dmgradients_data_topass *) mymalloc("DMGradDataPasser",NumPart * sizeof(struct temporary_dmgradients_data_topass));
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path: import DM ghosts once, keep alive across both
        gradient iterations (ghost content doesn't change between passes).
        Declare the scope locals the code_block_xchange header would otherwise
@@ -338,7 +336,7 @@ void DMGrad_gradient_calc(void)
     /* loop over the number of iterations needed to actually compute the gradients fully */
     for(loop_iteration=0; loop_iteration<2; loop_iteration++) // need 2 iterations to compute gradients-of-gradients
     {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
         /* Partition active DMGrad particles by shared AGS neighbor-type bitmask.
            DM_FUZZY activates only for Type==1, so this yields at most one group. */
         std::map<int, std::vector<int>> bitmask_groups;
@@ -465,7 +463,7 @@ void DMGrad_gradient_calc(void)
     } // end of loop_iteration
 
     /* de-allocate memory and collect timing information */
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     if(NTask > 1) {ghost_exchange_cleanup();}
 #else
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */

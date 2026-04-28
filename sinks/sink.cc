@@ -37,7 +37,7 @@ void sink_accretion(void)
 {
     if(All.TimeStep == 0.) return; /* no evolution */
     PRINT_STATUS("Sink operations begin...");
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* D1/S-SYNC defense-in-depth: force ghost reset at pipeline entry so each
      * sink GPU loop's import/cleanup cycle re-imports fresh ghosts from home,
      * ensuring writeback-resolved values (SwallowTime after env, SwallowID

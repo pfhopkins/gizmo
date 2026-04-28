@@ -122,7 +122,6 @@ void compute_hydro_densities_and_forces(void)
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* Feed GPU-path kernel timings into CPU_Step accumulators for cpu.txt output.
            drift+ghost+redo feeds are done inside density()/gradients()/hydro_force() via
            the ghost_symlist_lifecycle helpers. */
@@ -130,7 +129,6 @@ void compute_hydro_densities_and_forces(void)
         CPU_Step[CPU_DENSWAIT] += t_bench_grad;
         CPU_Step[CPU_HYDCOMPUTE] += t_bench_hydro;
         CPU_Step[CPU_TREEHMAXUPDATE] += t_bench_hmax;
-#endif
         PRINT_STATUS(" ..hydro force computation done.");
 
     } else {

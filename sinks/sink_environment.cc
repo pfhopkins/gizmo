@@ -298,7 +298,7 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
 
 void sink_environment_loop(void)
 {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path: build active-sink index + radius arrays, dispatch
        GPU kernel, scatter outputs into SinkTempInfo. */
     CPU_Step[CPU_SINKS] += measure_time();
@@ -468,7 +468,7 @@ int sink_environment_second_evaluate(int target, int mode, int *exportflag, int 
 
 void sink_environment_second_loop(void)
 {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* Stage E2: GPU path — pure aggregator, no j-writes, same active set + radii +
      * j_type_bitmask as the first environment pass. */
     CPU_Step[CPU_SINKS] += measure_time();

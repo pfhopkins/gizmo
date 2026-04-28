@@ -14,13 +14,11 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/neighbor_list.h"
 #include "../hydro/hydro_structs.h"
 #include "../hydro/compute_finitevol_faces_functions.h"
 extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                int, int *, int, int *, int *, int, void *);
-#endif
 
 #ifdef TRANSPORT_SUBCYCLE
 
@@ -33,27 +31,6 @@ extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 /* ======================================================================================== */
 
 /* kernel struct — same as hydro_toplevel.cc; definition in hydro_structs.h when GPU path is active */
-#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-struct kernel_hydra
-{
-    Vec3<double> dp;
-    double r, vsig, sound_i, sound_j;
-    Vec3<double> dv; double vdotr2;
-    double wk_i, wk_j, dwk_i, dwk_j;
-    double h_i, h_j, dwk_ij, rho_ij_inv;
-    double spec_egy_u_i;
-#ifdef HYDRO_SPH
-    double p_over_rho2_i;
-#endif
-#ifdef MAGNETIC
-    double b2_i, b2_j;
-    double alfven2_i, alfven2_j;
-#ifdef HYDRO_SPH
-    double mf_i, mf_j;
-#endif
-#endif
-};
-#endif
 
 
 /* define the code_block_xchange names */
@@ -199,7 +176,6 @@ void transport_subcycle_exchange_fluxes(void)
     CPU_Step[CPU_MISC] += measure_time();
     transport_flux_initial_operations();
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     /* GPU/neighbor-list path: reuse the hydro GPU kernel with the symmetric CSR list.
        The hydro kernel computes face geometry + RT fluxes (via rt_diffusion_explicit.h);
        we scatter only the RT output fields and discard the hydro force outputs.
@@ -233,12 +209,6 @@ void transport_subcycle_exchange_fluxes(void)
 
         myfree(hydro_out);
     }
-#else
-    /* Tree-walk path: standard MPI/OpenMP neighbor exchange */
-    #include "../system/code_block_xchange_perform_ops_malloc.h"
-    #include "../system/code_block_xchange_perform_ops.h"
-    #include "../system/code_block_xchange_perform_ops_demalloc.h"
-#endif
 
     /* add back the radiation pressure work terms saved during the hydro pass.
        The flux exchange zeroed Dt_Rad_E_gamma and recomputed only transport fluxes;

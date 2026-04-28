@@ -113,7 +113,7 @@ static inline void mg_add_remote_entry(int i, int remote_task, int remote_index,
 /* Modern symmetric-CSR path (mg_build_matrix_modern) is now the only build path.        */
 /* These functions are no longer reachable: mg_gradient_correction_calc calls             */
 /* mg_build_matrix_modern unconditionally; MG_USE_MODERN_BUILD is auto-defined via       */
-/* precompiler_logic.h whenever GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is set.              */
+/* precompiler_logic.h unconditionally (Step 5 C5 retired GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY). */
 /* ==================================================================================== */
 #if 0 /* RETIRED B6.5 — legacy tree-walk matrix build */
 static void particle2in_MG(struct MGdata_in *in, int i)
@@ -374,11 +374,10 @@ static void *MG_evaluate_secondary(void *p)
 
 static void mg_build_matrix(void)
 {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && !defined(MG_USE_MODERN_BUILD)
-    /* Legacy mg_build_matrix() walks the legacy CPU tree (Nextnode[]/Nodes[] CPU
-     * semantics) which no longer hold under the modern Kokkos build. The modern
-     * symmetric-CSR builder lives in mg_build_matrix_modern(); enable it via
-     * MG_USE_MODERN_BUILD. Sunset agenda in handoff_legacy_tree_audit_findings.md. */
+#ifndef MG_USE_MODERN_BUILD
+    /* Legacy mg_build_matrix() uses CPU tree walk; MG_USE_MODERN_BUILD is always
+     * auto-defined in precompiler_logic.h. This endrun guards against any future
+     * scenario where that auto-define is accidentally removed. */
     endrun(990401);
 #endif
     int i, j, k, ndone, ndone_flag, recvTask, place;

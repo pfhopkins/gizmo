@@ -52,7 +52,7 @@
 #undef INPUT_STRUCT_NAME
 #undef OUTPUT_STRUCT_NAME
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
@@ -854,7 +854,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 }
 
 
-#else /* !OPENMP_GPU_OFFLOAD || !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#else /* !OPENMP_GPU_OFFLOAD */
 
 /* Stub: GPU density/gradient/hydro not available */
 void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
@@ -865,4 +865,4 @@ void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                         int, int *, int, int *, int *, int, void *) {}
 void gizmo_gpu_sync_all_density(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* OPENMP_GPU_OFFLOAD */

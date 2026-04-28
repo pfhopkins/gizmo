@@ -373,7 +373,7 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
 void grain_backrx(void)
 {
     PRINT_STATUS(" ..assigning grain back-reaction to gas");
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     {
         /* Build LOCAL active grain list (i-type restricted by GRAIN_PTYPES). */
         int num_active = 0;
@@ -550,7 +550,7 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
 void interpolate_fluxes_opacities_gasgrains(void)
 {
     PRINT_STATUS(" ..assigning opacities to gas from the grain distribution, and interpolating radiation fields to grains");
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     {
         int num_gas = 0, num_grain = 0;
         for(int i : ActiveParticleList) {

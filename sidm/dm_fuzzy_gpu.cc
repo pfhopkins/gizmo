@@ -33,7 +33,7 @@
 #include "dm_fuzzy_gpu.h"
 
 
-#if defined(DM_FUZZY) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(DM_FUZZY) && defined(OPENMP_GPU_OFFLOAD)
 
 /* Device-side min/max helpers that update in place (MINMAX_CHECK equivalent). */
 KOKKOS_INLINE_FUNCTION void dmgrad_minmax(double v, double &mn, double &mx)
@@ -201,4 +201,4 @@ void dmgrad_evaluate_gpu(struct particle_data *, int, int *, int, const double *
                          const struct dmgrad_gpu_in *, int, int, void *) {}
 void gizmo_gpu_sync_all_dmgrad(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* DM_FUZZY && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* DM_FUZZY && OPENMP_GPU_OFFLOAD */

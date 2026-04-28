@@ -842,9 +842,7 @@ void init(void)
     /* density() handles its own ghost prep/redo internally via ghost_symlist_lifecycle.
        Here we only need the post-density cleanup since no gradients/hydro follow. */
     density();
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     if(NTask > 1) {ghost_exchange_cleanup();}
-#endif
 
     /* Seed the per-particle ForceSoftening cache for ALL particles loaded from
      * the IC.  This populates the single-source-of-truth value read by both CPU
@@ -1212,9 +1210,7 @@ void setup_smoothinglengths(void)
     /* density() handles its own ghost prep/redo internally via ghost_symlist_lifecycle.
        Here we only need the post-density cleanup since no gradients/hydro follow. */
     density();
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     if(NTask > 1) {ghost_exchange_cleanup();}
-#endif
 }
 
 

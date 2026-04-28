@@ -6,9 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/ghost_symlist_lifecycle.h"
-#endif
 #include "dm_dispersion_gpu.h"
 
 /*! \file dm_dispersion_rkern
@@ -126,7 +124,7 @@ void disp_density(void)
     /* initialize anything we need to about the active particles before their loop */
     for (int i : ActiveParticleList) {if(disp_density_isactive(i)) {CellP[i].NumNgbDM = 0; Left[i] = Right[i] = 0;}}
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path: prep DM ghosts once (ghost_exchange.cc's effective
        hmax already includes KernelRadiusDM via Infra-3), then per-iteration
        build a fresh cross-type CSR (gas→DM) and accumulate on GPU. */
@@ -144,7 +142,7 @@ void disp_density(void)
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
         /* Build per-iteration active list + radii, run GPU kernel, scatter back */
         int nl_num_active = 0;
         for (int ii : ActiveParticleList) {if(disp_density_isactive(ii)) nl_num_active++;}
@@ -266,7 +264,7 @@ void disp_density(void)
             iter++;
             if(iter > 0 && ThisTask == 0) {if(iter > 10) printf("DM disp: ngb iteration %d: need to repeat for %d%09d particles.\n", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
             if(iter > MAXITER) {printf("DM disp: failed to converge in neighbour iteration in disp_density()\n"); fflush(stdout); endrun(1155);}
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
             /* If KernelRadiusDM grew beyond the exchanged ghost hmax, re-exchange
                so next iteration sees the full DM neighbor pool. */
             gizmo_density_redo_ghosts_if_needed(disp_ghost_safety);
@@ -275,7 +273,7 @@ void disp_density(void)
     }
     while(ntot > 0);
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* Tear down ghosts imported at the top of the neighbor-list path */
     if(NTask > 1) {ghost_exchange_cleanup();}
 #else

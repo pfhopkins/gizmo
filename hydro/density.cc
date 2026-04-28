@@ -7,17 +7,15 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/mesh_motion.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
-#endif
 #include "../mesh/ghost_symlist_lifecycle.h"
 #ifdef OPENMP_GPU_OFFLOAD
 extern void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int, int *, int);
 extern void density_gpu_session_begin(struct particle_data *, struct gas_cell_data *, int);
 extern void density_gpu_session_end(void);
 #endif
-#if defined(HYDRO_VOLUME_CORRECTIONS) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(HYDRO_VOLUME_CORRECTIONS) && defined(OPENMP_GPU_OFFLOAD)
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -329,13 +327,12 @@ void density(void)
 
     /* allocate buffers to arrange communication */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#ifdef OPENMP_GPU_OFFLOAD
     density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
 #endif
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
         /* SFC-tile neighbor list path: build neighbor list from local+ghost pool,
            accumulate density for each active particle using CSR neighbor iteration.
            No MPI export/import needed — ghosts already in P[]. */
@@ -385,9 +382,6 @@ void density(void)
 
             myfree(nl_active);
         }
-#else
-        #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-#endif
 
         /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
@@ -755,7 +749,7 @@ void density(void)
 
     /* iteration is done - de-malloc everything now */
     double t_postproc_start = my_second();
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#ifdef OPENMP_GPU_OFFLOAD
     density_gpu_session_end(); /* free persistent SharedSpace arrays */
 #endif
     double t_session_end = timediff(t_postproc_start, my_second());
@@ -942,10 +936,6 @@ void density(void)
     /* collect some timing information */
     double t_postloop = timediff(t_postloop_start, my_second());
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
-#ifndef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY /* GPU path: timing fed from accel.cc instead */
-    CPU_Step[CPU_DENSCOMPUTE] += timecomp; CPU_Step[CPU_DENSWAIT] += timewait;
-    CPU_Step[CPU_DENSCOMM] += timecomm; CPU_Step[CPU_DENSMISC] += timeall - (timecomp + timewait + timecomm);
-#endif
     if(ThisTask == 0) {
         PRINT_STATUS("  density computation done (%.4f s, %d iterations)", timeall, density_iter_count);
     }
@@ -1028,7 +1018,7 @@ void cellcorrections_calc(void)
     CPU_Step[CPU_DENSMISC] += measure_time(); double t00_truestart = my_second();
     double timeall = 0, timecomp = 0, timewait = 0, timecomm = 0;
     PRINT_STATUS(" ..calculating first-order corrections to cell sizes/faces");
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
     /* Modern path: prebuilt symmetric CSR NL. Walks neighbors per active gas
      * cell and accumulates Volume_1 += V_j^2 * wk(r, h_j). Symmetric search
      * (NGB_SEARCH_SYMMETRIC) ensures r < max(h_i, h_j), then per-pair filter

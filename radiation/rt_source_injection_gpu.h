@@ -1,7 +1,7 @@
 /* rt_source_injection_gpu.h — declarations for the B5 GPU port of
  * rt_source_injection.  The host driver in rt_source_injection.cc calls
  * rt_source_injection_evaluate_gpu() as a drop-in replacement for the
- * CPU tree-walk when GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is active.
+ * CPU tree-walk when OPENMP_GPU_OFFLOAD is active.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */

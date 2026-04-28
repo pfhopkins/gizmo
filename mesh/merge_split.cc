@@ -15,7 +15,7 @@
 #include "../mesh/kernel.h"
 #include "../system/gpu_particles_arena.h"
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -287,7 +287,7 @@ void merge_and_split_particles(void)
       Ptmp[i].target_index = -1;
     }
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
     /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
      * merge_particles_ij/split_particle_i operate on local P[] indices only.
      * Bitmask is OR of all merge/split-eligible types (gas + GALSF stars);
@@ -509,7 +509,7 @@ void merge_and_split_particles(void)
             }
         }
     }
-#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* OPENMP_GPU_OFFLOAD */
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */

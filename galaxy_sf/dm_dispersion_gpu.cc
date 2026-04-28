@@ -35,7 +35,7 @@
 
 
 #if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2) \
-    && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    && defined(OPENMP_GPU_OFFLOAD)
 
 /* DM type filter: the CPU tree-walk code calls ngb_treefind_variable_threads_targeted
    with type_bitmask=2 (i.e. 2^1 = high-res DM). We mirror that exactly. */
@@ -130,4 +130,4 @@ GPU_ALL_SYNC_FUNC(dispdensity)
 void disp_density_evaluate_gpu(struct particle_data *, int, int *, int, const double *, void *) {}
 void gizmo_gpu_sync_all_dispdensity(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 && OPENMP_GPU_OFFLOAD */

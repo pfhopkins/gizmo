@@ -30,7 +30,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "grain_physics_gpu.h"
 
-#if defined(GRAIN_FLUID) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(GRAIN_FLUID) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "grain_physics_functions.h"
 
@@ -351,4 +351,4 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *p
 { (void)p; (void)cp; (void)num_total; (void)ig; (void)ng; (void)rg; (void)ir; (void)nr; (void)rr; }
 void gizmo_gpu_sync_all_grainphysics(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GRAIN_FLUID && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* GRAIN_FLUID && OPENMP_GPU_OFFLOAD */

@@ -618,7 +618,7 @@ void mechanical_fb_calc_toplevel(void)
     N_Gas_Couplings_ThisTask = 0; /* initialize this to zero [default to assume no coupled feedback] */
     int i; for(i=0;i<N_gas;i++) {if(P[i].Type==0) {memset(&LocalGasMechFBInfoTemp[i], 0, sizeof(struct MechFBGasDelta));}} /* zero it out before loops */
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#ifdef OPENMP_GPU_OFFLOAD
     /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
        neighbor list across modes. See galaxy_sf/mechanical_fb_gpu.cc. */
     {
@@ -651,23 +651,9 @@ void mechanical_fb_calc_toplevel(void)
         N_Gas_Couplings_ThisTask = n_coup_gpu;
         myfree(nl_radii); myfree(nl_active);
     }
-#else
-    mechanical_fb_calc(-2); /* compute weights for coupling [first weight-calculation pass] */
 #endif
 
-#if !(defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD))
-    mechanical_fb_calc(-1); /* compute weights for coupling [second weight-calculation pass] */
-    mechanical_fb_calc(0); /* actually do the mechanical feedback coupling */
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
-    mechanical_fb_calc(1); /* additional loop for stellar mass-loss */
-#ifdef GALSF_FB_FIRE_RPROCESS
-    mechanical_fb_calc(2); /* additional loop for R-process */
-#endif
-#ifdef GALSF_FB_FIRE_AGE_TRACERS
-    mechanical_fb_calc(3); /* additional loop for stellar age tracers */
-#endif
-#endif
-#endif /* CPU path condition */
+
 
     verify_and_assign_local_mechfb_integrals();
     myfree(LocalGasMechFBInfoTemp); /* free the structure */

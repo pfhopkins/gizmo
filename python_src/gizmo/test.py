@@ -83,9 +83,7 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     """Sets environment variables and runs a script for building gizmo for a given test.
     If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building.
     extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",)).
-    On Kokkos systypes (MacBookCellar_Kokkos, Vista) auto-appends GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-    if absent, so the Kokkos neighbor-list code path is actually exercised (the non-flag legacy tree
-    walk is retained only for backward compat).
+    GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is retired (Step 5 C5) and no longer appended.
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
@@ -98,17 +96,6 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
         with open("Config.sh", "a") as f:
             for flag in extra_config_flags:
                 f.write(f"\n{flag}\n")
-    if _current_systype() in _KOKKOS_SYSTYPES:
-        with open("Config.sh") as f:
-            cfg = f.read()
-        needs_flag = not any(
-            line.strip().startswith("GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY")
-            and not line.strip().startswith("#")
-            for line in cfg.splitlines()
-        )
-        if needs_flag:
-            with open("Config.sh", "a") as f:
-                f.write("\nGIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY\n")
     system("make clean && make -j8")
     if not path.isfile("GIZMO"):
         raise FileNotFoundError("Did not successfully build GIZMO")

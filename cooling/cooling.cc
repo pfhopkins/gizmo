@@ -2517,7 +2517,7 @@ extern void gizmo_gpu_sync_all_eos(struct global_data_all_processes *);
 #ifdef NUCLEAR_NETWORK
 extern void gizmo_gpu_sync_all_nuclear(struct global_data_all_processes *);
 #endif
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#ifdef OPENMP_GPU_OFFLOAD
 extern void gizmo_gpu_sync_all_density(struct global_data_all_processes *);
 extern void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *);
 #endif
@@ -2573,7 +2573,7 @@ void gizmo_gpu_sync_all(void) {
 #ifdef NUCLEAR_NETWORK
     gizmo_gpu_sync_all_nuclear(host_all);
 #endif
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+#ifdef OPENMP_GPU_OFFLOAD
     gizmo_gpu_sync_all_density(host_all);
     gizmo_gpu_sync_all_ngb(host_all);
 #endif

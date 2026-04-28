@@ -54,7 +54,7 @@ static int Nids;
 
 void subfind(int num)
 {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && !defined(SUBFIND_PORTED_TO_MODERN_NL)
+#ifndef SUBFIND_PORTED_TO_MODERN_NL
   /* SUBFIND main-tree usages (subfind_density.cc, subfind_so.cc) walk the legacy
    * CPU tree which no longer holds under the modern Kokkos build. ~500-1000 LOC
    * port needed (adaptive density iteration + R200 spherical-overdensity).

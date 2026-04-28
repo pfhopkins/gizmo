@@ -18,7 +18,7 @@
 #define  TURB_DRIVING_SPECTRUMGRID2 (2*(TURB_DRIVING_SPECTRUMGRID/2 + 1))
 #include "../gravity/myfftw3.h"
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -661,7 +661,7 @@ double powerspec_turb_obtain_fields(void)
       powerspec_turb_nearest_rkern[n] = All.BoxSize / pow(All.TotN_gas, 1.0/3);
     }
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
     /* Modern path: replicates the legacy GLOBAL nearest-gas search semantic
      * (each FFT slab cell gets the globally-nearest gas particle's data, found
      * across ALL ranks — not just the slab-owning rank's local domain).
@@ -1189,7 +1189,7 @@ double powerspec_turb_obtain_fields(void)
 
   myfree(DataNodeList);
   myfree(DataIndexTable);
-#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* OPENMP_GPU_OFFLOAD */
 
   myfree(powerspec_turb_nearest_rkern);
   myfree(powerspec_turb_nearest_distance);

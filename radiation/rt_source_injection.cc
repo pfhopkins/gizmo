@@ -339,7 +339,7 @@ void rt_source_injection(void)
 {
     PRINT_STATUS(" ..injecting radiation onto grid for RHD steps");
     rt_source_injection_initial_operations_preloop(); /* operations before the main loop */
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     {
         /* Build LOCAL active-source list from ActiveParticleList; iterating
            NumPart here would include ghost imports and double-deposit. */

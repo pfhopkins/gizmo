@@ -36,7 +36,7 @@
 
 #include "sink_swallow_and_kick_gpu.h"
 
-#if defined(SINK_PARTICLES) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(SINK_PARTICLES) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "sink_functions.h"
 #include "sink_swallow_and_kick_functions.h"
@@ -288,4 +288,4 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *, struct gas_cell_
                                          int, int *, int, const double *, int) {}
 void gizmo_gpu_sync_all_sinkswallow(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* SINK_PARTICLES && OPENMP_GPU_OFFLOAD */

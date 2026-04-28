@@ -14,9 +14,7 @@
 #include "../solids/grain_helper_functions.h"
 #endif
 #include "../mesh/kernel.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/ghost_symlist_lifecycle.h"
-#endif
 #include "ags_density_gpu.h"
 #include "ags_force_gpu.h"
 #include "ags_functions.h"
@@ -274,7 +272,7 @@ void ags_density(void)
             P[i].wakeup = 0;
       }}
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path — bitmask partition + per-group cross-type CSR.
        Same timing locals the code_block_xchange_perform_ops_malloc.h would define. */
     double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
@@ -292,7 +290,7 @@ void ags_density(void)
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
         /* Partition active AGS particles by their shared neighbor-type bitmask.
            In typical cosmological use only one bitmask is active (e.g. DM→DM),
            so this yields one group and one GPU kernel pass. */
@@ -597,7 +595,7 @@ void ags_density(void)
             iter++;
             if(iter > 10 && ThisTask == 0) {printf("AGS-ngb iteration %d: need to repeat for %d%09d particles.\n", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
             if(iter > MAXITER) {printf("ags-failed to converge in neighbour iteration in density()\n"); fflush(stdout); endrun(1155);}
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
             /* If AGS_KernelRadius grew beyond the exchanged ghost hmax, re-exchange */
             gizmo_density_redo_ghosts_if_needed(ags_ghost_safety);
 #endif
@@ -605,7 +603,7 @@ void ags_density(void)
     }
     while(ntot > 0);
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     if(NTask > 1) {ghost_exchange_cleanup();}
 #else
     /* iteration is done - de-malloc everything now */
@@ -1022,7 +1020,7 @@ void AGSForce_calc(void)
     /* need to zero values for active particles (which will be re-calculated) before they are added below */
     //for (int i : ActiveParticleList) {int k1,k2; for(k1=0;k1<CBE_INTEGRATOR_NBASIS;k1++) {for(k2=0;k2<CBE_INTEGRATOR_NMOMENTS;k2++) {P[i].CBE_basis_moments_dt[k1][k2] = 0;}}}
 #endif
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path for AGSForce_calc. Partition active particles
        (isactive == 1) by their shared neighbor-type bitmask and launch the
        GPU kernel once per group, same pattern as ags_density(). */

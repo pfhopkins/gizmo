@@ -6,12 +6,10 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/neighbor_list.h"
 extern void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                      int, int *, int, int *, int *, int,
                                      void *, void *, void *, int);
-#endif
 
 
 
@@ -202,22 +200,8 @@ void dynamic_diff_calc(void) {
 
     /* allocate buffers to arrange communication */
     DynamicDiffDataPasser = (struct temporary_data_dyndiff *) mymalloc("DynamicDiffDataPasser", N_gas * sizeof(struct temporary_data_dyndiff));
-#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    long long NTaskTimesNumPart;
-    NTaskTimesNumPart = maxThreads * NumPart;
-    All.BunchSize = (long) ((All.BufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
-                                                             sizeof(struct DynamicDiffdata_in) +
-                                                             sizeof(struct DynamicDiffdata_out) +
-                                                             sizemax(sizeof(struct DynamicDiffdata_in),
-                                                                     sizeof(struct DynamicDiffdata_out))));
-#endif
     CPU_Step[CPU_DYNDIFFMISC] += measure_time();
     t0 = my_second();
-#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    Ngblist.resize(NTaskTimesNumPart);
-    DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
-    DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-#endif
     PRINT_STATUS(" ..begin initializing smoothed quantities.");
 
     /* Because of smoothing operation, we don't zero these out, they get set to their current value */
@@ -252,7 +236,6 @@ void dynamic_diff_calc(void) {
     for (dynamic_iteration = 0; dynamic_iteration < (All.TurbDynamicDiffIterations + 1); dynamic_iteration++) {
         PRINT_STATUS(" ..first loop over active particles (iter = %d)", dynamic_iteration);
 
-#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
         /* GPU/neighbor-list path: use cached symmetric CSR list with wider search radius.
            Follows the same pattern as gradient_evaluate_gpu multi-iteration. */
         {
@@ -342,252 +325,6 @@ void dynamic_diff_calc(void) {
             myfree(dd_in);
             myfree(dd_active);
         }
-#else /* tree-walk path */
-        // now we actually begin the main gradient loop //
-        NextParticle = 0;	/* begin with this index */
-
-        memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
-        BufferCollisionFlag = 0; /* set to zero before operations begin */
-        do {
-            BufferFullFlag = 0;
-            Nexport = 0;
-            save_NextParticle = NextParticle;
-            
-            for (j = 0; j < NTask; j++) {
-                Send_count[j] = 0;
-                Exportflag[j] = -1;
-            }
-            
-            /* do local particles and prepare export list */
-            tstart = my_second();
-            
-#ifdef _OPENMP
-#pragma omp parallel
-#endif
-            {
-#ifdef _OPENMP
-                int mainthreadid = omp_get_thread_num();
-#else
-                int mainthreadid = 0;
-#endif
-                DynamicDiff_evaluate_primary(&mainthreadid, dynamic_iteration);	/* do local particles and prepare export list */
-            }
-            
-            tend = my_second();
-            timecomp1 += timediff(tstart, tend);
-            
-            if (BufferFullFlag) {
-
-                int last_nextparticle = NextParticle;
-                int processed_particles = 0;
-                int first_unprocessedparticle = -1;
-                NextParticle = save_NextParticle; /* figure out where we are */
-                while(NextParticle < (int)ActiveParticleList.size())
-                {
-                    if(NextParticle == last_nextparticle) {break;}
-                    int pindex = ActiveParticleList[NextParticle];
-#ifndef _OPENMP
-                    if(ProcessedFlag[pindex] != 1) {break;}
-#else
-                    if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                    if(ProcessedFlag[pindex] == 1)
-#endif
-                    {
-                        processed_particles++;
-                        ProcessedFlag[pindex] = 2;
-                    }
-                    NextParticle++;
-                }
-#ifdef _OPENMP
-                if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
-                    BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
-                else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
-#endif
-                if(processed_particles <= 0 && NextParticle == save_NextParticle) {
-                    /* in this case, the buffer is too small to process even a single particle */
-                    endrun(113308);
-                }
-                
-                int new_export = 0;
-                
-                for (j = 0, k = 0; j < Nexport; j++) {
-                    if (ProcessedFlag[DataIndexTable[j].Index] != 2) {
-                        if (k < j + 1) k = j + 1;
-                        
-                        for (; k < Nexport; k++) {
-                            if (ProcessedFlag[DataIndexTable[k].Index] == 2) {
-                                int old_index = DataIndexTable[j].Index;
-                                
-                                DataIndexTable[j] = DataIndexTable[k];
-                                DataNodeList[j] = DataNodeList[k];
-                                DataIndexTable[j].IndexGet = j;
-                                new_export++;
-                                
-                                DataIndexTable[k].Index = old_index;
-                                k++;
-                                break;
-                            }
-                        }
-                    }
-                    else {
-                        new_export++;
-                    }                
-                }
-
-                Nexport = new_export;       
-            }
-            
-            n_exported += Nexport;
-            
-            for (j = 0; j < NTask; j++) Send_count[j] = 0;
-            for (j = 0; j < Nexport; j++) Send_count[DataIndexTable[j].Task]++;
-            
-            mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare);
-            
-            tstart = my_second();
-            
-            MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD);
-            
-            tend = my_second();
-            timewait1 += timediff(tstart, tend);
-            
-            for (j = 0, Nimport = 0, Recv_offset[0] = 0, Send_offset[0] = 0; j < NTask; j++) {
-                Nimport += Recv_count[j];
-                
-                if (j > 0) {
-                    Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];
-                    Recv_offset[j] = Recv_offset[j - 1] + Recv_count[j - 1];
-                }
-            }
-            
-            DynamicDiffDataGet = (struct DynamicDiffdata_in *) mymalloc("DynamicDiffDataGet", Nimport * sizeof(struct DynamicDiffdata_in));
-            DynamicDiffDataIn = (struct DynamicDiffdata_in *) mymalloc("DynamicDiffDataIn", Nexport * sizeof(struct DynamicDiffdata_in));
-            
-            /* prepare particle data for export */
-            
-            for (j = 0; j < Nexport; j++) {
-                place = DataIndexTable[j].Index;
-                particle2in_DynamicDiff(&DynamicDiffDataIn[j], place, dynamic_iteration);
-                memcpy(DynamicDiffDataIn[j].NodeList, DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
-            }
-            
-            /* exchange particle data */
-            tstart = my_second();
-            for (ngrp = 1; ngrp < (1 << PTask); ngrp++) {
-                recvTask = ThisTask ^ ngrp;
-                
-                if (recvTask < NTask) {
-                    if (Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) {
-                        MPI_Sendrecv(&DynamicDiffDataIn[Send_offset[recvTask]],
-                                    Send_count[recvTask] * sizeof(struct DynamicDiffdata_in), MPI_BYTE,
-                                    recvTask, TAG_DYNSMAGLOOP_A,
-                                    &DynamicDiffDataGet[Recv_offset[recvTask]],
-                                    Recv_count[recvTask] * sizeof(struct DynamicDiffdata_in), MPI_BYTE,
-                                    recvTask, TAG_DYNSMAGLOOP_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
-                }
-            }
-
-            tend = my_second();
-            timecommsumm1 += timediff(tstart, tend);
-            
-            myfree(DynamicDiffDataIn);
-
-            if (dynamic_iteration == 0) {
-                DynamicDiffDataResult = (struct DynamicDiffdata_out *) mymalloc("DynamicDiffDataResult", Nimport * sizeof(struct DynamicDiffdata_out));
-                DynamicDiffDataOut = (struct DynamicDiffdata_out *) mymalloc("DynamicDiffDataOut", Nexport * sizeof(struct DynamicDiffdata_out));
-            }
- 
-            DynamicDiffDataResult_iter = (struct DynamicDiffdata_out_iter *) mymalloc("DynamicDiffDataResult_iter", Nimport * sizeof(struct DynamicDiffdata_out_iter));
-            DynamicDiffDataOut_iter = (struct DynamicDiffdata_out_iter *) mymalloc("DynamicDiffDataOut_iter", Nexport * sizeof(struct DynamicDiffdata_out_iter));
-            
-            /* now do the particles that were sent to us */
-            tstart = my_second();
-            NextJ = 0;
-            
-#ifdef _OPENMP
-#pragma omp parallel
-#endif
-            {
-#ifdef _OPENMP
-                int mainthreadid = omp_get_thread_num();
-#else
-                int mainthreadid = 0;
-#endif
-                DynamicDiff_evaluate_secondary(&mainthreadid, dynamic_iteration);
-            }
-            
-            tend = my_second();
-            timecomp2 += timediff(tstart, tend);
-            
-            if (NextParticle >= (int)ActiveParticleList.size()) {
-                ndone_flag = 1;
-            }
-            else {
-                ndone_flag = 0;
-            }
-            
-            tstart = my_second();
-            MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-            tend = my_second();
-            timewait2 += timediff(tstart, tend);
-            
-            /* get the result */
-            tstart = my_second();
-            for (ngrp = 1; ngrp < (1 << PTask); ngrp++) {
-                recvTask = ThisTask ^ ngrp;
-                if (recvTask < NTask) {
-                    if (Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) {
-                        /* send the results */
-                        if (dynamic_iteration == 0) {
-                            MPI_Sendrecv(&DynamicDiffDataResult[Recv_offset[recvTask]],
-                                        Recv_count[recvTask] * sizeof(struct DynamicDiffdata_out),
-                                        MPI_BYTE, recvTask, TAG_DYNSMAGLOOP_B,
-                                        &DynamicDiffDataOut[Send_offset[recvTask]],
-                                        Send_count[recvTask] * sizeof(struct DynamicDiffdata_out),
-                                        MPI_BYTE, recvTask, TAG_DYNSMAGLOOP_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        } 
-              
-                        MPI_Sendrecv(&DynamicDiffDataResult_iter[Recv_offset[recvTask]],
-                                        Recv_count[recvTask] * sizeof(struct DynamicDiffdata_out_iter),
-                                        MPI_BYTE, recvTask, TAG_DYNSMAGLOOP_C,
-                                        &DynamicDiffDataOut_iter[Send_offset[recvTask]],
-                                        Send_count[recvTask] * sizeof(struct DynamicDiffdata_out_iter),
-                                        MPI_BYTE, recvTask, TAG_DYNSMAGLOOP_C, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
-                }
-            }
-
-            tend = my_second();
-            timecommsumm2 += timediff(tstart, tend);
-            
-            /* add the result to the local particles */
-            tstart = my_second();
-            for (j = 0; j < Nexport; j++) {
-                place = DataIndexTable[j].Index;
-                if (dynamic_iteration == 0) {
-                    out2particle_DynamicDiff(&DynamicDiffDataOut[j], place, 1, dynamic_iteration);
-                } 
-        
-                out2particle_DynamicDiff_iter(&DynamicDiffDataOut_iter[j], place, 1, dynamic_iteration);
-            }
-
-            tend = my_second();
-            timecomp1 += timediff(tstart, tend);
-
-            myfree(DynamicDiffDataOut_iter);
-            myfree(DynamicDiffDataResult_iter);
-
-            if (dynamic_iteration == 0) {
-                myfree(DynamicDiffDataOut);
-                myfree(DynamicDiffDataResult);
-            }
-      
-            myfree(DynamicDiffDataGet);
-        }
-        while(ndone < NTask);
-#endif /* !GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
         PRINT_STATUS(" ..finished communication, beginning secondary calculations (iter = %d)", dynamic_iteration);
 
         /* The first two iterations were solely to calculate the hat quantities */ 
@@ -786,27 +523,12 @@ void dynamic_diff_calc(void) {
         timewait3 += timediff(tstart, tend); 
     } // closes dynamic_iteration
     
-#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    myfree(DataNodeList);
-    myfree(DataIndexTable);
-#endif
-
     myfree(DynamicDiffDataPasser);
  
     /* collect some timing information */
     t1 = WallclockTime = my_second();
     timeall = timediff(t0, t1);
-#if !defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
-    timecomp = timecomp1 + timecomp2;
-    timewait = timewait1 + timewait2 + timewait3;
-    timecomm = timecommsumm1 + timecommsumm2;
-    CPU_Step[CPU_DYNDIFFCOMPUTE] += timecomp;
-    CPU_Step[CPU_DYNDIFFWAIT] += timewait;
-    CPU_Step[CPU_DYNDIFFCOMM] += timecomm;
-    CPU_Step[CPU_DYNDIFFMISC] += timeall - (timecomp + timewait + timecomm);
-#else
     CPU_Step[CPU_DYNDIFFCOMPUTE] += timeall;
-#endif
     PRINT_STATUS(" ..dynamic diffusion calculations done.");
 }
 

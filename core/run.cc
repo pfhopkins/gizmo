@@ -8,9 +8,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 #include "../mesh/neighbor_list.h"
-#endif
 
 
 /*! \file run.c
@@ -451,13 +449,11 @@ void calculate_non_standard_physics(void)
 
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
     /* TRANSPORT_SUBCYCLE path: symlist + ghosts were kept alive past hydro_force
        (gizmo_hydro_cleanup_symlist_and_ghosts() skipped itself under this flag).
        Free them now that the RT subcycle loop is done. */
     gizmo_sym_neighbor_list_free();
     ghost_exchange_cleanup();
-#endif
     /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
        the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
        KDK half-kick see exactly one sub-step's IR contribution at the final Rad_E_gamma state. */
@@ -998,7 +994,6 @@ void write_cpu_log(void)
           "   wait       %10.2f  %5.1f%%\n"
           "   misc       %10.2f  %5.1f%%\n"
 #endif
-#ifdef GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 	      "hydro/fluids  %10.2f  %5.1f%%\n"
 	      "   density    %10.2f  %5.1f%%\n"
 	      "   ghost_xchg %10.2f  %5.1f%%\n"
@@ -1008,17 +1003,6 @@ void write_cpu_log(void)
 	      "   (unused)   %10.2f  %5.1f%%\n"
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   misc_hydro %10.2f  %5.1f%%\n"
-#else
-	      "hydro/fluids  %10.2f  %5.1f%%\n"
-	      "   dens+grad  %10.2f  %5.1f%%\n"
-	      "   denscomm   %10.2f  %5.1f%%\n"
-	      "   densimbal  %10.2f  %5.1f%%\n"
-	      "   hydrofrc   %10.2f  %5.1f%%\n"
-	      "   hydcomm    %10.2f  %5.1f%%\n"
-	      "   hydimbal   %10.2f  %5.1f%%\n"
-	      "   hmaxupdate %10.2f  %5.1f%%\n"
-          "   hydmisc    %10.2f  %5.1f%%\n"
-#endif
 	      "domain        %10.2f  %5.1f%%\n"
           "peano         %10.2f  %5.1f%%\n"
 #ifdef FOF

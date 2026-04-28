@@ -31,7 +31,7 @@
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 
-#if defined(GALSF_FB_FIRE_RT_LOCALRP) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(GALSF_FB_FIRE_RT_LOCALRP) && defined(OPENMP_GPU_OFFLOAD)
 
 #include "radfb_local_functions.h"
 
@@ -315,4 +315,4 @@ void radiation_pressure_winds_gpu(struct particle_data *p,
 }
 void gizmo_gpu_sync_all_radfbrp(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GALSF_FB_FIRE_RT_LOCALRP && OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* GALSF_FB_FIRE_RT_LOCALRP && OPENMP_GPU_OFFLOAD */

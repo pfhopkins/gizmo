@@ -7,7 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
-#if defined(OUTPUT_TWOPOINT_ENABLED) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#if defined(OUTPUT_TWOPOINT_ENABLED) && defined(OPENMP_GPU_OFFLOAD)
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -78,15 +78,10 @@ void twopoint(void)
     for(i = 0; i < BINS_TP; i++) {Count[i] = 0; CountSpheres[i] = 0;}
     /* allocate buffers to arrange communication */
     RsList = (MyFloat *) mymalloc("RsList", NumPart * sizeof(MyFloat));
-#if !(defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY))
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + 2 * sizeof(struct twopointdata_in)));
-    DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
-    DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-#endif
+
     gizmo_rng_t saved_rng = random_generator;
     gizmo_rng_init(&random_generator, (uint64_t)P[0].ID + (uint64_t)ThisTask);
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#ifdef OPENMP_GPU_OFFLOAD
     /* Modern path: prebuilt CSR NL, per-source rs, all-types search pool.
      *
      * INTERIM IMPLEMENTATION: drops the legacy tree-mass-aggregation
@@ -235,11 +230,9 @@ void twopoint(void)
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         myfree(TwoPointDataGet);
     } while(ndone < NTask);
-#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+#endif /* OPENMP_GPU_OFFLOAD */
     random_generator = saved_rng;
-#if !(defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY))
-    myfree(DataNodeList); myfree(DataIndexTable);
-#endif
+
     myfree(RsList);
 
     /* Now compute the actual correlation function */
