@@ -18,6 +18,9 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../core/proto.h"
+#ifdef OPENMP_GPU_OFFLOAD
+#include "../system/gpu_particles_arena.h"
+#endif
 
 /* This file contains the routines for driven turbulence/stirring; use for things
  like idealized turbulence tests, large-eddy simulations, and the like */
