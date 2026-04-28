@@ -7,6 +7,14 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
+#if defined(OUTPUT_TWOPOINT_ENABLED) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#include <vector>
+#include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_symlist_lifecycle.h"
+#include "../system/gpu_particles_arena.h"
+#endif
+
 /*! \file twopoint.c
  *  \brief computes the two-point mass correlation function on the fly
  */
@@ -70,12 +78,93 @@ void twopoint(void)
     for(i = 0; i < BINS_TP; i++) {Count[i] = 0; CountSpheres[i] = 0;}
     /* allocate buffers to arrange communication */
     RsList = (MyFloat *) mymalloc("RsList", NumPart * sizeof(MyFloat));
+#if !(defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY))
     size_t MyBufferSize = All.BufferSize;
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + 2 * sizeof(struct twopointdata_in)));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
+#endif
     gizmo_rng_t saved_rng = random_generator;
     gizmo_rng_init(&random_generator, (uint64_t)P[0].ID + (uint64_t)ThisTask);
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* Modern path: prebuilt CSR NL, per-source rs, all-types search pool.
+     * Drops the legacy tree-mass-aggregation optimization (counted entire
+     * tree-node masses when a node fit cleanly in a single bin); the modern
+     * path enumerates individual pairs only. The user signed off on this
+     * tradeoff because twopoint runs ~1x per 1e4-1e5 timesteps. Pair-counting
+     * is global (no double-count): each pair (i,j) is counted once on the
+     * rank that owns i; j may be local or ghost. Self pair (j==i) skipped. */
+    {
+        std::vector<int> active_idx;
+        std::vector<double> active_radii;
+        active_idx.reserve(NumPart);
+        active_radii.reserve(NumPart);
+
+        for(i = 0; i < NumPart; i++) {
+            if(gizmo_rng_uniform(&random_generator) < scaled_frac) {
+                p = gizmo_rng_uniform(&random_generator);
+                rs = pow(pow(R0, ALPHA) + p * (pow(R1, ALPHA) - pow(R0, ALPHA)), 1 / ALPHA);
+                bin = (int) ((log(rs) - logR0) * binfac);
+                rs = exp((bin + 1) / binfac + logR0);
+                RsList[i] = rs;
+                for(j = 0; j <= bin; j++) {CountSpheres[j]++;}
+                active_idx.push_back(i);
+                active_radii.push_back((double)rs);
+            }
+        }
+
+        int num_src = (int)active_idx.size();
+        gpu_neighbor_list_t gnl = {};
+        int local_count = ghost_get_num_local();
+        if(local_count <= 0) local_count = NumPart;
+        int ghost_imported = 0;
+        if(num_src > 0) {
+            if(ghost_get_num_ghosts() <= 0) {
+                gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+                ghost_imported = 1;
+            }
+            int num_all = local_count + ghost_get_num_ghosts();
+            if(num_all <= 0) num_all = NumPart;
+            gpu_particles_arena_acquire(num_all, P, CellP);
+            struct particle_data *P_gpu = gpu_particles_arena_P();
+            /* All-types search pool: bitmask = 0xFF covers all 6 standard types. */
+            gpu_ngb_list_build(P_gpu, num_all,
+                               active_idx.data(), num_src,
+                               NGB_SEARCH_ONEWAY, 0xFF /* all types */,
+                               &gnl, NULL, 1.0, active_radii.data());
+        }
+
+        for(int aa = 0; aa < num_src; aa++) {
+            int isrc = active_idx[aa];
+            double rs_local = active_radii[aa];
+            double rs2 = rs_local * rs_local;
+            Vec3<double> pos_i = P[isrc].Pos;
+            int n_off = gnl.offsets[aa], n_off_end = gnl.offsets[aa+1];
+            for(int nn = n_off; nn < n_off_end; nn++) {
+                int jp = gnl.neighbors[nn];
+                if(jp == isrc) continue; /* skip self */
+                double dx_raw = P[jp].Pos[0] - pos_i[0];
+                double dy_raw = P[jp].Pos[1] - pos_i[1];
+                double dz_raw = P[jp].Pos[2] - pos_i[2];
+                MyDouble xtmp = 0;
+                double dx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, -1);
+                double dy = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, -1);
+                double dz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, -1);
+                double r2 = dx*dx + dy*dy + dz*dz;
+                if(r2 >= R0 * R0 && r2 < R1 * R1 && r2 < rs2) {
+                    int bin_local = (int)((log(sqrt(r2)) - logR0) * binfac);
+                    if(bin_local < BINS_TP) Count[bin_local]++;
+                }
+            }
+        }
+
+        if(num_src > 0) {
+            gpu_ngb_list_free(&gnl, NULL);
+            gpu_particles_arena_invalidate();
+        }
+        if(ghost_imported) ghost_exchange_cleanup();
+    }
+#else
     i = 0;            /* begin with this index */
     do
     {
@@ -121,8 +210,12 @@ void twopoint(void)
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         myfree(TwoPointDataGet);
     } while(ndone < NTask);
+#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
     random_generator = saved_rng;
-    myfree(DataNodeList); myfree(DataIndexTable); myfree(RsList);
+#if !(defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY))
+    myfree(DataNodeList); myfree(DataIndexTable);
+#endif
+    myfree(RsList);
 
     /* Now compute the actual correlation function */
     countbuf = (long long int *) mymalloc("countbuf", NTask * BINS_TP * sizeof(long long));
