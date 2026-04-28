@@ -15,6 +15,14 @@
 #include "radfb_local_gpu.h"
 #endif
 
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) && defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#include <vector>
+#include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_symlist_lifecycle.h"
+#include "../system/gpu_particles_arena.h"
+#endif
+
 #if defined(GALSF_FB_FIRE_RT_LOCALRP) /* first the radiation pressure coupled in the immediate vicinity of the star */
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
 void radiation_pressure_winds_consolidated(void)
@@ -236,8 +244,218 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
     double total_N_ionizing_part=0,total_Ndot_ionizing=0,total_m_ionized=0,total_N_ionized=0,avg_RHII=0,mionizable=0,mionized=0,mion_actual=0;
     double RHII,RHIIMAX,R_search,rnearest,stellum,prob,rho_j,prandom,m_available,m_effective,RHII_initial,RHIImultiplier;
     double uion; uion = HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); /* assume fully-ionized gas with gamma=5/3; this is a global variable below */
-    Ngblist.resize(NumPart);
     MAX_N_ITERATIONS_HIIFB = 5; NITER_HIIFB = 0;
+
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* Modern path: prebuilt CSR neighbor list. Skip ghosts inside the inner loop
+     * to preserve the "singledomain" semantic (only ionize gas on this rank's
+     * domain — no MPI export). The legacy ngb_treefind_variable_targeted walked
+     * the legacy CPU tree which no longer holds under the modern Kokkos build. */
+    {
+        std::vector<int> hii_src_idx;
+        std::vector<double> hii_src_radii;
+        hii_src_idx.reserve(64);
+        hii_src_radii.reserve(64);
+
+        /* Pre-pass: identify candidate sources + per-source max search radius
+         * (covers the full possible RHII expansion range, capped at 1.26 RHIIMAX). */
+        for (int ip : ActiveParticleList) {
+#ifdef SINK_HII_HEATING
+            if(!((P[ip].Type == 5)||(((P[ip].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[ip].Type == 2)||(P[ip].Type==3))))))) continue;
+#else
+            if(!((P[ip].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[ip].Type == 2)||(P[ip].Type==3))))) continue;
+#endif
+            if(P[ip].Mass <= 0 || !isfinite(P[ip].Mass)) continue;
+            double dt_i = get_particle_feedback_timestep_in_physical(ip);
+#ifdef SINK_INTERACT_ON_GAS_TIMESTEP
+            if(P[ip].Type == 5) dt_i = P[ip].dt_since_last_gas_search;
+#endif
+            if(dt_i <= 0) continue;
+            double stellum_i = All.HIIRegion_fLum_Coupled * particle_ionizing_luminosity_in_cgs(ip);
+#ifdef CHIMES_HII_REGIONS
+            stellum_i = chimes_ion_luminosity(evaluate_stellar_age_Gyr(ip)*1000., P[ip].Mass*UNIT_MASS_IN_SOLAR) * 4.68e-11;
+#endif
+            if(stellum_i <= 0) continue;
+            if(P[ip].KernelRadius <= 0 || P[ip].DensityAroundParticle <= 0) continue;
+            double h_local = P[ip].KernelRadius;
+            double RHIIMAX_l = 2. * 240.0*pow(stellum_i, 0.5) / (All.cf_atime * UNIT_LENGTH_IN_CGS);
+            if(RHIIMAX_l < 2.0*h_local) RHIIMAX_l = 2.0*h_local;
+            if(RHIIMAX_l > 10.0*h_local) RHIIMAX_l = 10.0*h_local;
+            double R_for_NL = 1.26 * RHIIMAX_l;
+            if(R_for_NL < 0.5*h_local) R_for_NL = 0.5*h_local;
+            hii_src_idx.push_back(ip);
+            hii_src_radii.push_back(R_for_NL);
+        }
+
+        int num_src = (int)hii_src_idx.size();
+        int imported_ghosts = 0;
+        gpu_neighbor_list_t gnl = {};
+        int local_count = 0;
+        if(num_src > 0) {
+            if(ghost_get_num_ghosts() <= 0) {
+                gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+                imported_ghosts = 1;
+            }
+            local_count = ghost_get_num_local();
+            int num_all = local_count + ghost_get_num_ghosts();
+            if(num_all <= 0) num_all = NumPart;
+            gpu_particles_arena_acquire(num_all, P, CellP);
+            struct particle_data *P_gpu = gpu_particles_arena_P();
+            gpu_ngb_list_build(P_gpu, num_all,
+                               hii_src_idx.data(), num_src,
+                               NGB_SEARCH_ONEWAY, 1 /* gas only */,
+                               &gnl, NULL, 1.0, hii_src_radii.data());
+        }
+
+        /* Sequential per-source loop — preserves greedy ionization ordering across
+         * sources (later sources observe DelayTimeHII / InternalEnergy from earlier). */
+        for(int aa = 0; aa < num_src; aa++) {
+            i = hii_src_idx[aa];
+            dt = get_particle_feedback_timestep_in_physical(i);
+#ifdef SINK_INTERACT_ON_GAS_TIMESTEP
+            if(P[i].Type == 5) dt = P[i].dt_since_last_gas_search;
+#endif
+            stellum = All.HIIRegion_fLum_Coupled * particle_ionizing_luminosity_in_cgs(i);
+#ifdef CHIMES_HII_REGIONS
+            stellum = chimes_ion_luminosity(evaluate_stellar_age_Gyr(i)*1000., P[i].Mass*UNIT_MASS_IN_SOLAR) * 4.68e-11;
+#endif
+            pos = P[i].Pos; rho = P[i].DensityAroundParticle; h_i = P[i].KernelRadius;
+            RHII = 4.78e-9*pow(stellum, 0.333)*pow(rho*All.cf_a3inv*UNIT_DENSITY_IN_CGS, -0.66667);
+            RHII /= All.cf_atime * UNIT_LENGTH_IN_CGS;
+            RHIIMAX = 2. * 240.0*pow(stellum, 0.5) / (All.cf_atime*UNIT_LENGTH_IN_CGS);
+            if(RHIIMAX < 2.0*h_i) RHIIMAX = 2.0*h_i;
+            if(RHIIMAX > 10.0*h_i) RHIIMAX = 10.0*h_i;
+            mionizable = VOLUME_NORM_COEFF_FOR_NDIMS*rho*RHII*RHII*RHII;
+            double M_ionizing_emitted = (3.05e10 * PROTONMASS_CGS) * stellum * (dt * UNIT_TIME_IN_CGS);
+            mionizable = DMIN(mionizable, M_ionizing_emitted/UNIT_MASS_IN_CGS);
+            if(RHII > RHIIMAX) RHII = RHIIMAX;
+            if(RHII < 0.3*h_i) RHII = 0.3*h_i;
+            RHII_initial = RHII;
+            total_N_ionizing_part += 1;
+            total_Ndot_ionizing += stellum * (3.05e10/HYDROGEN_MASSFRAC);
+
+            prandom = get_random_number(P[i].ID + 7);
+            if(prandom < 5.0*mionizable/P[i].Mass) {
+                mionized = 0.0; jnearest = -1; rnearest = MAX_REAL_NUMBER; NITER_HIIFB = 0;
+                int nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
+                int nl_n = nl_end - nl_start;
+                int *ngb_list_touse = (int *)alloca((nl_n > 0 ? nl_n : 1) * sizeof(int));
+                int more_iters = 1;
+                do {
+                    double RHII_2 = RHII*RHII;
+                    jnearest = -1; rnearest = MAX_REAL_NUMBER;
+                    R_search = RHII;
+                    if(h_i > 0.5*R_search) R_search = 0.5*h_i;
+                    double R_search_2 = R_search * R_search;
+
+                    /* Walk prebuilt NL slice, filter ghosts (singledomain) + radius. */
+                    numngb = 0;
+                    for(int nn = nl_start; nn < nl_end; nn++) {
+                        int j_cand = gnl.neighbors[nn];
+                        if(j_cand >= local_count) continue; /* skip ghosts */
+                        if(P[j_cand].Type != 0 || P[j_cand].Mass <= 0) continue;
+                        Vec3<double> dpc = pos - P[j_cand].Pos; nearest_xyz(dpc, 1);
+                        if(dpc.norm_sq() > R_search_2) continue;
+                        ngb_list_touse[numngb++] = j_cand;
+                    }
+
+                    if(numngb > 0) {
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+                        qsort(ngb_list_touse, numngb, sizeof(int), compare_densities_for_sort);
+#endif
+                        for(n = 0; n < numngb; n++) {
+                            if(mionized >= mionizable) break;
+                            j = ngb_list_touse[n];
+                            if(P[j].Mass <= 0 || P[j].Type != 0) continue;
+                            if(CellP[j].DelayTimeHII > 0) continue;
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && !defined(CHIMES_HII_REGIONS)
+                            if(CellP[j].Ne > 0.8) continue;
+#endif
+                            if(P[j].Type == 0 && P[j].Mass > 0) {
+                                Vec3<double> dr = pos - P[j].Pos; nearest_xyz(dr, 1);
+                                double r2 = dr.norm_sq();
+                                if(r2 > RHII_2) continue;
+                                double r = sqrt(r2), u = 0;
+                                already_ionized = 0; rho_j = CellP[j].density_for_energy();
+                                if(CellP[j].InternalEnergy < CellP[j].InternalEnergyPred) u = CellP[j].InternalEnergy; else u = CellP[j].InternalEnergyPred;
+                                if(CellP[j].DelayTimeHII > 0) already_ionized = 1;
+#if !defined(CHIMES_HII_REGIONS)
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+                                if((CellP[j].Ne > 0.8) || (u > 50.*uion)) already_ionized = 1;
+#else
+                                if(u > uion) already_ionized = 1;
+#endif
+#endif
+                                if(already_ionized) continue;
+                                do_ionize = 0; prob = 0;
+                                if((r <= RHII) && (already_ionized == 0) && (mionized < mionizable)) {
+                                    m_effective = P[j].Mass*(CellP[j].Density/rho);
+                                    m_available = mionizable - mionized;
+                                    if(m_effective <= m_available) { do_ionize = 1; prob = 1.001; }
+                                    else { prob = m_available/m_effective; if(prandom < prob) do_ionize = 1; }
+                                    if(do_ionize == 1) {
+                                        already_ionized = do_the_local_ionization(j, dt, i);
+                                        total_N_ionized += 1;
+                                        mion_actual += P[j].Mass;
+                                        avg_RHII += P[j].Mass*r*All.cf_atime*UNIT_LENGTH_IN_KPC;
+                                    }
+                                    mionized += prob*m_effective;
+                                }
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+                                if((CellP[j].Density < rnearest) && (already_ionized == 0)) { rnearest = CellP[j].Density; jnearest = j; }
+#else
+                                if((r < rnearest) && (already_ionized == 0)) { rnearest = r; jnearest = j; }
+#endif
+                            }
+                        }
+                    }
+
+                    /* Backstop: ionize jnearest if still photons */
+                    if((mionized < mionizable) && (jnearest >= 0)) {
+                        j = jnearest; m_effective = P[j].Mass*(CellP[j].Density/rho); m_available = mionizable - mionized;
+                        prob = m_available/m_effective; do_ionize = 0;
+                        if(prandom < prob) do_ionize = 1;
+                        if(do_ionize == 1) {
+                            already_ionized = do_the_local_ionization(j, dt, i);
+                            total_N_ionized += 1;
+                            mion_actual += P[j].Mass;
+                            Vec3<double> dr = pos - P[j].Pos; nearest_xyz(dr, 1); double r2 = dr.norm_sq();
+                            avg_RHII += P[j].Mass*sqrt(r2)*All.cf_atime*UNIT_LENGTH_IN_KPC;
+                        }
+                        mionized += prob*m_effective;
+                    }
+
+                    /* RHII expansion (mirrors legacy logic exactly) */
+                    RHIImultiplier = 1.10;
+                    more_iters = 0;
+                    if(mionized < 0.95*mionizable) {
+                        if((RHII >= DMAX(30.0*RHII_initial, RHIIMAX)) || (NITER_HIIFB >= MAX_N_ITERATIONS_HIIFB)) {
+                            mionized = 1.001*mionizable;
+                        } else {
+                            if(mionized <= 0) RHIImultiplier = 2.0;
+                            else {
+                                RHIImultiplier = pow(mionized/mionizable, -0.333);
+                                if(RHIImultiplier > 5.0) RHIImultiplier = 5.0;
+                                if(RHIImultiplier < 1.26) RHIImultiplier = 1.26;
+                            }
+                            RHII *= RHIImultiplier; if(RHII > 1.26*RHIIMAX) RHII = 1.26*RHIIMAX;
+                            more_iters = 1;
+                        }
+                    }
+                    NITER_HIIFB++;
+                } while(more_iters && mionized < mionizable);
+                if(mion_actual > 0) total_m_ionized += mion_actual;
+            }
+        }
+
+        if(num_src > 0) {
+            gpu_ngb_list_free(&gnl, NULL);
+            gpu_particles_arena_invalidate();
+        }
+        if(imported_ghosts) ghost_exchange_cleanup();
+    }
+#else  /* legacy path preserved for non-Kokkos builds; deleted in Phase 5 cleanup */
+    Ngblist.resize(NumPart);
 
     for (int i : ActiveParticleList)
     {
@@ -395,7 +613,8 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             } // if(prandom < 2.0*mionizable/P[j].Mass)
         } // if((P[i].Type == 4)||(P[i].Type == 2)||(P[i].Type == 3))
     } // for (int i : ActiveParticleList)
-    
+#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
+
 
     double totMPI_N_ionizing_part=0,totMPI_Ndot_ionizing=0,totMPI_m_ionized=0,totMPI_avg_RHII=0,totMPI_N_ionized=0;
     MPI_Reduce(&total_N_ionizing_part, &totMPI_N_ionizing_part, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
