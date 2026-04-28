@@ -1606,11 +1606,17 @@ static void mg_build_matrix_modern(void)
             }
             MG_Rows[i].rhs += flux;
 
-            /* Off-diagonal entry: distinguish local vs ghost neighbor */
+            /* Off-diagonal entry: distinguish local vs ghost neighbor.
+             * NOTE: ghost_exchange grows NumPart by total_recv during the active
+             * ghost window, so during this kernel NumPart == num_local + num_ghosts.
+             * Ghost array indices in the symlist are [num_local, num_local+num_ghosts),
+             * so ghost_idx = j - num_local. Using j - NumPart silently reads negative
+             * offsets into ghost_home_rank[] and produces garbage remote_task values
+             * that crash mg_setup_ghost_exchange downstream. */
             if(j < N_gas) {
                 mg_add_local_entry(i, j, Qnorm2);
             } else {
-                int ghost_idx = j - NumPart;
+                int ghost_idx = j - ghost_get_num_local();
                 mg_add_remote_entry(i, ghost_home_rank[ghost_idx], ghost_home_index[ghost_idx], Qnorm2);
             }
         }
