@@ -118,8 +118,6 @@ static void inject_cosmic_rays_into_delta(
 #endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
 
 
-#ifndef GALSF_USE_SNE_ONELOOP_SCHEME
-
 /* Device-callable mirror of mechanical_fb.cc:addFB_evaluate_active_check.
  * Must stay in sync with that CPU routine — it's the star-side filter used
  * both by the CPU code_block_xchange dispatch and the GPU per-mode mask. */
@@ -447,7 +445,5 @@ static void mechanical_fb_pair_kernel(
     Kokkos::atomic_add(&gas_delta[j].Mass_Where_Dust_Shocked, Mass_Where_Dust_Shocked_pair);
 #endif
 }
-
-#endif /* GALSF_USE_SNE_ONELOOP_SCHEME */
 
 #endif /* GALSF_FB_MECHANICAL */

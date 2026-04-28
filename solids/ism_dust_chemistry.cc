@@ -919,7 +919,6 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
 #endif // GALSF_ISMDUSTCHEM_MODEL & 16 || GALSF_ISMDUSTCHEM_MODEL & 32
     // Inject newly created dust from star
     int skip_injection = 1;
-#ifndef GALSF_USE_SNE_ONELOOP_SCHEME 
     // AGB dust routines can give neglible amounts of dust and the feedback routine can cause yields with initially zero dust to have floating point precision errors.
     // To avoid this, only inject dust when the species mass fractional change is greater than a very small number or dust is being injected where none exists.
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
@@ -928,9 +927,6 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             break;
         }
     }
-#else
-    skip_injection=0; // Cant check particle info for FIRE-2 since its not thread-safe
-#endif
     if (~skip_injection) {
         // Z_injection has the total mass injected so need to be careful updating scalars
         for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k]   = (m0/mf)*CellP[j].ISMDustChem_Dust_Metal[k]   + (1./mf)*DMAX(0.,Z_injected[k+NUM_METAL_SPECIES]);}
@@ -1033,13 +1029,6 @@ void ISMDustChem_SNe_sputtering_step(int spec_indx, double *init_bin_N, double *
 /* subroutine to update dust masses from growth via gas-dust accretion and destruction via thermal sputtering (and coagulation and shattering for evolving grain sizes) */
 void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    // First renorm dust due to building numerical error that can arise from stellar feedback. This may no longer be necessary.
-#if defined(GALSF_USE_SNE_ONELOOP_SCHEME)
-    // Renorm dust fields due to building numerical error in stellar feedback routines. 
-    // Has to be done here for FIRE-2 since it requires accessing the final particle mass once the 
-    // entire stellar feedback loop is complete since this cannot be accessed in a thread-safe manner.
-    ISMDustChemEvo_renormalize_dust_fields(i, pp, cell);
-#endif
     int k; double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
     temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
     rho*=UNIT_DENSITY_IN_CGS;

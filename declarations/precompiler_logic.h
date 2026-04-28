@@ -198,7 +198,6 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS <= 2)
-#define GALSF_USE_SNE_ONELOOP_SCHEME // set to use the 'base' FIRE-2 SNe coupling. if commented out, will user newer version that more accurately manages the injected energy with neighbors moving to inject a specific target
 #define GALSF_SFR_CRITERION (0+256) // 0=density threshold, 1=virial criterion (strict), 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024='catch' for un-resolvable densities
 #define GALSF_SFR_VIRIAL_SCALING (-1) // old threshold modification with exception when densities 100x above threshold density
 #endif
@@ -549,7 +548,6 @@
 
 #if (defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE)) && !defined(GALSF_FB_MECHANICAL)
 #define GALSF_FB_MECHANICAL // we will use the mechanical wind module for low mass loss rate stars (spawning leads to issues). enable regardless if either the winds or sne module is active
-#define GALSF_USE_SNE_ONELOOP_SCHEME
 #endif
 
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
