@@ -1,4 +1,4 @@
-/* Built-in aprox13 alpha-chain nuclear reaction network.
+/* Built-in aprox13 alpha-chain nuclear reaction network — header-only.
    13 species: He4, C12, O16, Ne20, Mg24, Si28, S32, Ar36, Ca40, Ti44, Cr48, Fe52, Ni56.
 
    Physics: alpha-capture chain reactions (triple-alpha, C12(a,g)O16, ..., Fe52(a,g)Ni56)
@@ -17,33 +17,26 @@
      - Fowler, Caughlan & Zimmerman 1975, ARAA 13, 69 (FCZ rate formalism)
 
    Thread-safe: all mutable state is stack-local. No global arrays modified.
+
+   Header-only: all functions are KOKKOS_INLINE_FUNCTION; static helpers have
+   internal linkage so each including TU gets its own copy without ODR conflicts.
+   This matches cooling/cooling_functions.h and the codebase's standard
+   header-only device-callable pattern (no nvcc cross-TU device-call linking).
 */
+#ifndef NUCLEAR_PHYSICS_FUNCTIONS_H
+#define NUCLEAR_PHYSICS_FUNCTIONS_H
 
-/* When compiled by nvcc (GPU builds), this file is #included from nuclear.cc
-   to form a single TU (required because nvcc without -rdc can't resolve
-   cross-TU device calls).  When compiled standalone as its own .o (CPU builds
-   via OBJS), it compiles normally.  On GPU builds, the standalone .o must be
-   empty to avoid multiple-definition linker errors. */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC)
-/* GPU build, standalone compilation — skip everything (already in nuclear.o via #include) */
-#else
-
-#ifndef NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC
 #include <cmath>
-#include <cstdio>
 #include <cstring>
-#include <algorithm>
 #include "../declarations/allvars.h"
-#include "../core/proto.h"
 #include "nuclear.h"
-#endif
 
 #ifdef NUCLEAR_NETWORK
 
 /* =========================================================================
    Ye / Abar computation from mass fractions (pure function, used by all solvers).
    ========================================================================= */
-KOKKOS_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES],
+KOKKOS_INLINE_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES],
                              double *Ye_out, double *Abar_out)
 {
     double sum_X_over_A = 0, sum_Z_X_over_A = 0;
@@ -65,13 +58,18 @@ KOKKOS_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_SPECIES]
 /* =========================================================================
    Physical constants (CGS)
    ========================================================================= */
-static constexpr double MeV_to_erg = 1.602176634e-6;
-static constexpr double amu_cgs    = 1.66053906660e-24;
-static constexpr double avo        = 6.02214076e23;
-static constexpr double kerg       = 1.380649e-16;
-static constexpr double hbar_cgs   = 1.054571817e-27;
-static constexpr double clight_cgs = 2.99792458e10;
-static constexpr double pi_val     = 3.14159265358979323846;
+namespace nuclear_aprox13_internal {
+inline constexpr double MeV_to_erg = 1.602176634e-6;
+inline constexpr double amu_cgs    = 1.66053906660e-24;
+inline constexpr double avo        = 6.02214076e23;
+inline constexpr double kerg       = 1.380649e-16;
+inline constexpr double hbar_cgs   = 1.054571817e-27;
+inline constexpr double clight_cgs = 2.99792458e10;
+inline constexpr double pi_val     = 3.14159265358979323846;
+
+inline constexpr int NS = 13;  /* number of species */
+inline constexpr int NR = 12;  /* number of reactions */
+} /* namespace nuclear_aprox13_internal */
 
 /* Q-values [MeV] for the 12 reactions: Q = BE(product) - BE(reactants).
    Computed from AME2020 mass excess values. */
@@ -90,9 +88,6 @@ GIZMO_GPU_DEVICE static constexpr double Q_MeV[] = {
     8.0068,   /* Fe52(a,g)Ni56 */
 };
 
-static constexpr int NS = 13;  /* number of species */
-static constexpr int NR = 12;  /* number of reactions */
-
 /* Species A and Z (from nuclear.h) */
 GIZMO_GPU_DEVICE static constexpr int A_sp[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
 GIZMO_GPU_DEVICE static constexpr int Z_sp[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
@@ -108,8 +103,9 @@ GIZMO_GPU_DEVICE static constexpr int Z_sp[] = {2,  6,  8, 10, 12, 14, 16, 18, 2
 /* Triple-alpha rate: 3 He4 -> C12 (CF88 eqs 15-17).
    Returns the effective 3-body rate coefficient <sigma_v>_3a in cm^6/s.
    The caller (nuclear_rhs) computes: dY_C12/dt = fwd[0] * (rho*NA)^2 * Y_He4^3 / 6 */
-KOKKOS_FUNCTION static double rate_triple_alpha(double T9)
+KOKKOS_INLINE_FUNCTION static double rate_triple_alpha(double T9)
 {
+    using namespace nuclear_aprox13_internal;
     /* Be8 ground state (0+) decay width Gamma_Be8 = 6.8 eV (to 2 He4).
        Decay rate lambda_Be8 = Gamma / hbar in s^-1. */
     static constexpr double Gamma_Be8_eV = 6.8;
@@ -131,21 +127,7 @@ KOKKOS_FUNCTION static double rate_triple_alpha(double T9)
 
     /* Effective 3-body rate coefficient, units [cm^6/s], such that the caller's formula:
          dY_C12/dt = fwd[0] * (rho*NA)^2 * Y_He4^3 / 6
-       gives the correct physical rate.
-
-       Derivation (quasi-equilibrium Be8 picture):
-         n_Be8^eq = n_He4^2 * <sigma_v>_aa / (2 * lambda_Be8)   [from P=D]
-         dn_C12/dt = n_He4 * n_Be8^eq * <sigma_v>_Be8+He4
-                   = n_He4^3 / (2*lambda_Be8) * <sigma_v>_aa * <sigma_v>_Be8+He4
-
-       Converting to dY_C12/dt = dn_C12/dt / (rho*NA):
-         dY_C12/dt = rho^2 * Y^3 * r2a_fwd * raag / (2*lambda_Be8)
-
-       The caller divides by 6 (identical-particle factor for 3-body → caller has /6):
-         fwd[0] * (rho*NA)^2 * Y^3 / 6 = rho^2 * Y^3 * r2a_fwd * raag / (2*lambda_Be8)
-         fwd[0] = 3 * r2a_fwd * raag / (NA^2 * lambda_Be8)
-
-       Numerical check at T9=1: r2a_fwd~2.6e5, raag~4.6, lambda_Be8~1.03e16 → fwd[0]~9.7e-58 cm^6/s */
+       gives the correct physical rate. */
     return 3.0 * r2a_fwd * raag / (avo * avo * lambda_Be8);
 }
 
@@ -154,7 +136,7 @@ KOKKOS_FUNCTION static double rate_triple_alpha(double T9)
    Multiple components are summed for multi-resonance rates. */
 struct rate_coeff { double a[7]; };
 
-KOKKOS_FUNCTION static inline double eval_rate(const struct rate_coeff *r, int ncomp, double T9)
+KOKKOS_INLINE_FUNCTION static double eval_rate(const struct rate_coeff *r, int ncomp, double T9)
 {
     double total = 0;
     double T9i = 1.0 / T9;
@@ -251,8 +233,9 @@ GIZMO_GPU_DEVICE static constexpr struct rate_coeff rfe52ag[] = {
 /* =========================================================================
    Compute all forward and reverse rates at temperature T9
    ========================================================================= */
-KOKKOS_FUNCTION static void compute_rates(double T9, double fwd[NR], double rev[NR])
+KOKKOS_INLINE_FUNCTION static void compute_rates(double T9, double fwd[nuclear_aprox13_internal::NR], double rev[nuclear_aprox13_internal::NR])
 {
+    using namespace nuclear_aprox13_internal;
     if (T9 < 0.01) { memset(fwd, 0, NR*sizeof(double)); memset(rev, 0, NR*sizeof(double)); return; }
 
     /* forward rates */
@@ -269,31 +252,14 @@ KOKKOS_FUNCTION static void compute_rates(double T9, double fwd[NR], double rev[
     fwd[10] = eval_rate(rcr48ag, 2, T9);
     fwd[11] = eval_rate(rfe52ag, 2, T9);
 
-    /* reverse rates from detailed balance.
-       For a + b -> c + gamma:  r_rev = r_fwd * (G_a * G_b / G_c) * (mu_ab / m_u)^(3/2)
-           * (kT / (2*pi*hbar^2))^(3/2) * exp(-Q/(kT))
-       where G_i are nuclear partition functions (~1 for ground-state nuclei below ~5 GK).
-       For triple-alpha (3-body -> 1-body), there are two factors of the thermal de Broglie term.
-
-       We use the standard astrophysical convention:
-         rev_rate = fwd_rate * C * T9^(3/2) * exp(-11.6045 * Q_MeV / T9)
-       where C encodes the mass/spin factors and 11.6045 = 1e9 * kB / MeV. */
+    /* reverse rates from detailed balance (see original .cc commentary). */
 
     double T932 = T9 * sqrt(T9);
     double T9i  = 1.0 / T9;
 
-    /* Detailed balance coefficients C_rev for each reaction.
-       These are from Timmes (1999) / Rauscher & Thielemann (2000):
-       C = (2*J_c+1) / ((2*J_a+1)*(2*J_b+1)) * (A_a*A_b/A_c)^(3/2) * 9.8678e9^(-n+1)
-       For alpha-chain: all nuclei have J=0 (even-even), so spin factor = 1.
-       The mass factor (A_a*A_b/A_c)^(3/2) and the thermal normalization give: */
-
     /* reaction 0: 3a -> C12 (3-body, needs T9^3 and extra density factor) */
-    /* This is special: the reverse rate is the photo-disintegration rate of C12. */
     {
         double Q_over_T9 = 11.6045 * Q_MeV[0] * T9i;
-        /* C_rev for triple-alpha: includes the statistical and mass factors
-           from the two-step Saha equation. Using Timmes' value. */
         rev[0] = 2.003e+20 * T932 * T932 * T932 * exp(-Q_over_T9);
         if (!isfinite(rev[0])) rev[0] = 0.0;
     }
@@ -305,10 +271,8 @@ KOKKOS_FUNCTION static void compute_rates(double T9, double fwd[NR], double rev[
 
         int A_tgt = A_sp[r];       /* target nucleus */
         int A_prod = A_sp[r + 1];  /* product nucleus */
-        /* mass factor: (A_alpha * A_tgt / A_prod)^(3/2) */
         double mfac = pow((4.0 * (double)A_tgt) / (double)A_prod, 1.5);
-        /* thermal de Broglie normalization (astrophysical convention) */
-        double C_rev = mfac * 4.8359e+09; /* standard nuclear statistical weight */
+        double C_rev = mfac * 4.8359e+09;
         rev[r] = fwd[r] * C_rev * T932 * exp(-Q_over_T9);
         if (!isfinite(rev[r])) rev[r] = 0.0;
     }
@@ -317,21 +281,18 @@ KOKKOS_FUNCTION static void compute_rates(double T9, double fwd[NR], double rev[
 
 /* =========================================================================
    Right-hand side: dY/dt for the 13 species.
-   Y_i = X_i / A_i is the molar abundance (moles per gram).
-   Returns dY/dt and energy generation rate edot [erg/g/s].
    ========================================================================= */
-KOKKOS_FUNCTION static void nuclear_rhs(double rho, double T9, const double Y[NS],
-                        double dYdt[NS], double *edot_out)
+KOKKOS_INLINE_FUNCTION static void nuclear_rhs(double rho, double T9, const double Y[nuclear_aprox13_internal::NS],
+                        double dYdt[nuclear_aprox13_internal::NS], double *edot_out)
 {
+    using namespace nuclear_aprox13_internal;
     double fwd[NR], rev[NR];
     compute_rates(T9, fwd, rev);
     memset(dYdt, 0, NS * sizeof(double));
 
     double rhoNA = rho * avo;
 
-    /* reaction 0: triple-alpha: 3 He4 -> C12
-       rate_fwd has units [cm^6/s/mol^2] for the combined 3a rate
-       net rate = (1/6) * rho^2 * NA^2 * Y_a^3 * fwd - rev * Y_C12 */
+    /* reaction 0: triple-alpha: 3 He4 -> C12 */
     double Ya3 = Y[0] * Y[0] * Y[0];
     double r0f = fwd[0] * rhoNA * rhoNA * Ya3 / 6.0;
     double r0r = rev[0] * Y[1]; /* C12 photo-disintegration */
@@ -339,8 +300,7 @@ KOKKOS_FUNCTION static void nuclear_rhs(double rho, double T9, const double Y[NS
     dYdt[0] -= 3.0 * net0;
     dYdt[1] += net0;
 
-    /* reactions 1-11: A_i(a,g)A_{i+1}
-       net rate = rho * NA * Y_a * Y_i * fwd - rev * Y_{i+1} */
+    /* reactions 1-11: A_i(a,g)A_{i+1} */
     for (int r = 1; r < NR; r++) {
         double rf = fwd[r] * rhoNA * Y[0] * Y[r];
         double rr = rev[r] * Y[r + 1];
@@ -350,8 +310,7 @@ KOKKOS_FUNCTION static void nuclear_rhs(double rho, double T9, const double Y[NS
         dYdt[r + 1] += net;
     }
 
-    /* energy generation: edot = N_A * sum(dY_i/dt * Q_reaction_involving_i)
-       equivalently: sum over reactions of (net_rate * Q_reaction) */
+    /* energy generation */
     double edot = net0 * Q_MeV[0];
     for (int r = 1; r < NR; r++) {
         double rf = fwd[r] * rhoNA * Y[0] * Y[r];
@@ -364,11 +323,10 @@ KOKKOS_FUNCTION static void nuclear_rhs(double rho, double T9, const double Y[NS
 
 /* =========================================================================
    Analytic Jacobian: J[i][j] = d(dY_i/dt) / dY_j
-   The alpha-chain Jacobian is sparse: each species couples to its neighbors
-   and to He4. The 13x13 matrix has at most ~40 non-zero entries.
    ========================================================================= */
-KOKKOS_FUNCTION static void nuclear_jacobian(double rho, double T9, const double Y[NS], double J[NS][NS])
+KOKKOS_INLINE_FUNCTION static void nuclear_jacobian(double rho, double T9, const double Y[nuclear_aprox13_internal::NS], double J[nuclear_aprox13_internal::NS][nuclear_aprox13_internal::NS])
 {
+    using namespace nuclear_aprox13_internal;
     double fwd[NR], rev[NR];
     compute_rates(T9, fwd, rev);
     memset(J, 0, NS * NS * sizeof(double));
@@ -377,34 +335,31 @@ KOKKOS_FUNCTION static void nuclear_jacobian(double rho, double T9, const double
 
     /* reaction 0: triple-alpha */
     double Ya2 = Y[0] * Y[0];
-    double df0_dYa = fwd[0] * rhoNA * rhoNA * Ya2 / 2.0; /* d(r0f)/dYa = rhoNA^2 * Ya^2 / 2 */
-    double df0_dYc = -rev[0];                              /* d(r0net)/dYc12 */
+    double df0_dYa = fwd[0] * rhoNA * rhoNA * Ya2 / 2.0;
+    double df0_dYc = -rev[0];
 
-    J[0][0] += -3.0 * df0_dYa;   /* dYa_dot / dYa */
-    J[0][1] += -3.0 * df0_dYc;   /* dYa_dot / dYc12 */
-    J[1][0] +=  df0_dYa;         /* dYc12_dot / dYa */
-    J[1][1] +=  df0_dYc;         /* dYc12_dot / dYc12 */
+    J[0][0] += -3.0 * df0_dYa;
+    J[0][1] += -3.0 * df0_dYc;
+    J[1][0] +=  df0_dYa;
+    J[1][1] +=  df0_dYc;
 
     /* reactions 1-11: A_i(a,g)A_{i+1} */
     for (int r = 1; r < NR; r++) {
-        int i = r;       /* target species index */
-        int ip = r + 1;  /* product species index */
+        int i = r;
+        int ip = r + 1;
 
-        double dfr_dYa = fwd[r] * rhoNA * Y[i];    /* d(rf)/dYa */
-        double dfr_dYi = fwd[r] * rhoNA * Y[0];    /* d(rf)/dYi */
-        double drr_dYp = -rev[r];                    /* d(-rr)/dYp = -rev */
+        double dfr_dYa = fwd[r] * rhoNA * Y[i];
+        double dfr_dYi = fwd[r] * rhoNA * Y[0];
+        double drr_dYp = -rev[r];
 
-        /* dYa_dot/dYa, dYa_dot/dYi, dYa_dot/dYp */
         J[0][0] += -dfr_dYa;
         J[0][i] += -dfr_dYi;
         J[0][ip] += -drr_dYp;
 
-        /* dYi_dot/dYa, dYi_dot/dYi, dYi_dot/dYp */
         J[i][0] += -dfr_dYa;
         J[i][i] += -dfr_dYi;
         J[i][ip] += -drr_dYp;
 
-        /* dYp_dot/dYa, dYp_dot/dYi, dYp_dot/dYp */
         J[ip][0] += dfr_dYa;
         J[ip][i] += dfr_dYi;
         J[ip][ip] += drr_dYp;
@@ -414,23 +369,21 @@ KOKKOS_FUNCTION static void nuclear_jacobian(double rho, double T9, const double
 
 /* =========================================================================
    13x13 dense linear solver (Gaussian elimination with partial pivoting).
-   Solves A * x = b in-place: b is overwritten with x, A is destroyed.
    ========================================================================= */
-KOKKOS_FUNCTION static int solve_13x13(double A[NS][NS], double b[NS])
+KOKKOS_INLINE_FUNCTION static int solve_13x13(double A[nuclear_aprox13_internal::NS][nuclear_aprox13_internal::NS], double b[nuclear_aprox13_internal::NS])
 {
+    using namespace nuclear_aprox13_internal;
     int piv[NS];
     for (int i = 0; i < NS; i++) piv[i] = i;
 
-    /* forward elimination */
     for (int k = 0; k < NS; k++) {
-        /* partial pivoting */
         double maxval = fabs(A[piv[k]][k]);
         int maxrow = k;
         for (int i = k + 1; i < NS; i++) {
             double v = fabs(A[piv[i]][k]);
             if (v > maxval) { maxval = v; maxrow = i; }
         }
-        if (maxval < 1.0e-100) return -1; /* singular */
+        if (maxval < 1.0e-100) return -1;
         if (maxrow != k) { int tmp = piv[k]; piv[k] = piv[maxrow]; piv[maxrow] = tmp; }
 
         double pivot_inv = 1.0 / A[piv[k]][k];
@@ -444,7 +397,6 @@ KOKKOS_FUNCTION static int solve_13x13(double A[NS][NS], double b[NS])
         }
     }
 
-    /* back substitution */
     double x[NS];
     for (int i = NS - 1; i >= 0; i--) {
         x[i] = b[piv[i]];
@@ -460,44 +412,36 @@ KOKKOS_FUNCTION static int solve_13x13(double A[NS][NS], double b[NS])
 
 /* =========================================================================
    Backward-Euler solver with Newton iteration.
-   Solves: Y^{n+1} = Y^n + dt * f(Y^{n+1})
-   Newton: (I - dt*J) * dY = -(Y^{n+1}_guess - Y^n - dt*f(Y^{n+1}_guess))
    ========================================================================= */
-KOKKOS_FUNCTION static int backward_euler_step(double rho, double T9, double dt,
-                               const double Y_old[NS], double Y_new[NS])
+KOKKOS_INLINE_FUNCTION static int backward_euler_step(double rho, double T9, double dt,
+                               const double Y_old[nuclear_aprox13_internal::NS], double Y_new[nuclear_aprox13_internal::NS])
 {
+    using namespace nuclear_aprox13_internal;
     const int max_newton = 10;
     const double tol = 1.0e-8;
 
-    /* initial guess: Y_old (not forward-Euler, which diverges for stiff problems) */
     double dYdt[NS];
     double edot_dummy;
     for (int k = 0; k < NS; k++) { Y_new[k] = Y_old[k]; }
 
-    /* Newton iterations */
     for (int iter = 0; iter < max_newton; iter++) {
-        /* residual: R = Y_new - Y_old - dt * f(Y_new) */
         nuclear_rhs(rho, T9, Y_new, dYdt, &edot_dummy);
         double residual[NS];
         for (int k = 0; k < NS; k++) {
             residual[k] = Y_new[k] - Y_old[k] - dt * dYdt[k];
         }
 
-        /* check convergence: mixed absolute/relative tolerance.
-           For trace species (Y ~ 1e-27), absolute residual < atol is sufficient.
-           For abundant species, relative residual < tol is required. */
         double Y_max = 0;
         for (int k = 0; k < NS; k++) { if (fabs(Y_old[k]) > Y_max) Y_max = fabs(Y_old[k]); }
-        double atol = tol * Y_max;  /* absolute tolerance scaled to largest abundance */
+        double atol = tol * Y_max;
         double rnorm = 0;
         for (int k = 0; k < NS; k++) {
             double scale = fabs(Y_new[k]) + atol;
             double rel = fabs(residual[k]) / scale;
             if (rel > rnorm) rnorm = rel;
         }
-        if (rnorm < tol) return 0; /* converged */
+        if (rnorm < tol) return 0;
 
-        /* Jacobian: M = I - dt * J */
         double Jac[NS][NS];
         nuclear_jacobian(rho, T9, Y_new, Jac);
         double M[NS][NS];
@@ -508,12 +452,10 @@ KOKKOS_FUNCTION static int backward_euler_step(double rho, double T9, double dt,
             M[i][i] += 1.0;
         }
 
-        /* solve M * dY = -residual */
         double rhs[NS];
         for (int k = 0; k < NS; k++) rhs[k] = -residual[k];
-        if (solve_13x13(M, rhs) != 0) return -1; /* singular */
+        if (solve_13x13(M, rhs) != 0) return -1;
 
-        /* update — guard against NaN from ill-conditioned solve */
         bool bad = false;
         for (int k = 0; k < NS; k++) { if (!isfinite(rhs[k])) { bad = true; break; } }
         if (bad) return -1;
@@ -521,18 +463,27 @@ KOKKOS_FUNCTION static int backward_euler_step(double rho, double T9, double dt,
             Y_new[k] += rhs[k];
             if (Y_new[k] < 0) Y_new[k] = 0;
         }
-
     }
 
-    return 1; /* didn't converge — caller should subcycle */
+    return 1;
 }
+
+
+/* =========================================================================
+   NSE composition + check (forward-declared so nuclear_aprox13_solve can call).
+   Defined just below.
+   ========================================================================= */
+KOKKOS_INLINE_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye,
+                             double X_out[NUM_NUCLEAR_SPECIES]);
+KOKKOS_INLINE_FUNCTION int nuclear_check_nse(double T9);
 
 
 /* =========================================================================
    Main solver entry point.
    ========================================================================= */
-KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output *out)
+KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct nuclear_output *out)
 {
+    using namespace nuclear_aprox13_internal;
     double T9 = in->T / 1.0e9;
     double rho_cgs = in->rho * UNIT_DENSITY_IN_CGS;
     double dt_cgs  = in->dt * UNIT_TIME_IN_CGS;
@@ -580,11 +531,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
         }
     }
 
-    /* subcycling strategy: backward-Euler handles stiffness, but the Newton method
-       needs dt_sub to be within a reasonable factor of tau_min (up to ~1e6x).
-       For extreme stiffness (dt/tau > 1e6), first evolve to quasi-equilibrium
-       with a few small steps at dt ~ tau_min * Courant_factor, then take one
-       large backward-Euler step for the remainder. */
     double total_energy = 0;
     memcpy(Y_new, Y_old, sizeof(Y_old));
     double dt_remaining = dt_cgs;
@@ -598,7 +544,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
             double Y_step[NS];
             int ierr = backward_euler_step(rho_cgs, T9, dt_step, Y_new, Y_step);
             if (ierr != 0) {
-                /* Newton failed — retry with 10x smaller substeps */
                 int ns2 = 10;
                 double dt2 = dt_step / ns2;
                 for (int s2 = 0; s2 < ns2; s2++) {
@@ -617,7 +562,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
                 memcpy(Y_new, Y_step, sizeof(Y_new));
             }
             dt_remaining -= dt_step;
-            /* re-evaluate tau to see if we've reached quasi-equilibrium */
             nuclear_rhs(rho_cgs, T9, Y_new, dYdt, &edot_cgs);
             double tau_new = 1e30;
             for (int k = 0; k < NS; k++) {
@@ -626,9 +570,8 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
                     if (t < tau_new) tau_new = t;
                 }
             }
-            if (tau_new > dt_remaining * 0.01) break; /* close enough to equilibrium */
+            if (tau_new > dt_remaining * 0.01) break;
         }
-        /* for the remaining time, composition is quasi-static — just accumulate energy */
         if (dt_remaining > 0) {
             nuclear_rhs(rho_cgs, T9, Y_new, dYdt, &edot_cgs);
             total_energy += edot_cgs * dt_remaining;
@@ -646,7 +589,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
             double Y_step[NS];
             int ierr = backward_euler_step(rho_cgs, T9, dt_sub, Y_new, Y_step);
             if (ierr != 0) {
-                /* retry backward-Euler with 10x smaller substeps */
                 int nsub2 = 10;
                 double dt2 = dt_sub / nsub2;
                 for (int s2 = 0; s2 < nsub2; s2++) {
@@ -657,7 +599,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
                         if (isfinite(edot_cgs)) total_energy += edot_cgs * dt2;
                         memcpy(Y_new, Y2, sizeof(Y_new));
                     }
-                    /* if sub-sub-step also fails, skip it (hold composition fixed) */
                 }
                 continue;
             }
@@ -668,7 +609,7 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
         }
     }
 
-    /* sanitize Y_new: replace any NaN/Inf with the initial value */
+    /* sanitize Y_new */
     for (int k = 0; k < NS; k++) {
         if (!isfinite(Y_new[k]) || Y_new[k] < 0) Y_new[k] = Y_old[k];
     }
@@ -685,21 +626,17 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
 
     nuclear_compute_ye_abar(out->X, &out->Ye, &out->Abar);
 
-    /* energy release from binding energy difference (more robust than accumulated edot*dt) */
+    /* energy release from binding energy difference */
     double de_binding = 0;
     for (int k = 0; k < NS; k++) {
         de_binding += (out->X[k] - in->X[k]) * nuclear_aprox13_BE_per_A[k]
-                    * 1.602176634e-6 * 6.02214076e23; /* MeV/nucleon * MeV_to_erg * N_A */
+                    * 1.602176634e-6 * 6.02214076e23;
     }
     out->de   = de_binding / UNIT_SPECEGY_IN_CGS;
-    /* edot = de/dt, but only meaningful if de is actually significant.
-       if the composition barely changed (near equilibrium), edot should be ~0 */
     out->edot = (dt_cgs > 0 && fabs(de_binding) > 1.0e-10 * fabs(in->rho * UNIT_DENSITY_IN_CGS))
               ? de_binding / dt_cgs / (UNIT_SPECEGY_IN_CGS / UNIT_TIME_IN_CGS) : 0;
 
-    /* recompute burning timescale from the FINAL (post-burn) state, not the initial state.
-       the initial tau_min can be absurdly short (1e-67 s) for conditions where burning is
-       instantaneous, but after equilibrating the composition changes slowly. */
+    /* recompute burning timescale from the FINAL state */
     nuclear_rhs(rho_cgs, T9, Y_new, dYdt, &edot_cgs);
     double tau_final = 1.0e30;
     for (int k = 0; k < NS; k++) {
@@ -711,7 +648,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
     out->burning_timescale = tau_final / UNIT_TIME_IN_CGS;
 
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
-    /* estimate neutrino luminosity from thermal processes at current conditions */
     double nu_lum_cgs[3], nu_emean_mev[3];
     nuclear_neutrino_emission(rho_cgs, T9, out->Ye, nu_lum_cgs, nu_emean_mev);
     for (int f = 0; f < 3; f++) {
@@ -726,7 +662,6 @@ KOKKOS_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in, struct
 
 /* =========================================================================
    Nuclear Statistical Equilibrium (NSE) for high-temperature regime.
-   At T > ~5-7 GK, reactions reach equilibrium faster than any hydro timescale.
    ========================================================================= */
 
 /* Aliases — use constexpr pointers so they're device-accessible */
@@ -734,42 +669,32 @@ GIZMO_GPU_DEVICE static constexpr const double *BE_per_A = nuclear_aprox13_BE_pe
 GIZMO_GPU_DEVICE static constexpr const int *A_species = A_sp;
 GIZMO_GPU_DEVICE static constexpr const int *Z_species = Z_sp;
 
-KOKKOS_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye,
+KOKKOS_INLINE_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye,
                              double X_out[NUM_NUCLEAR_SPECIES])
 {
-    /* initialize to zero */
+    using namespace nuclear_aprox13_internal;
     memset(X_out, 0, NUM_NUCLEAR_SPECIES * sizeof(double));
 
     double kT_MeV = kerg * T9 * 1.0e9 / MeV_to_erg;
-
-    /* for Ye ~ 0.5, the most bound nucleus in the alpha-chain is Ni56 (index 12).
-       The Saha equation for A alpha-particles -> nucleus(A,Z) gives:
-       Y_nucleus / Y_alpha^(A/4) ~ (rho * avo)^(A/4-1) * f(T) * exp(Q/(kT))
-       where Q = BE(nucleus) - (A/4)*BE(He4) is the Q-value. */
 
     /* find the most-bound species */
     int i_peak = NUCLEAR_NI56;
     double Q_peak = BE_per_A[i_peak] * A_species[i_peak] - (A_species[i_peak] / 4.0) * BE_per_A[NUCLEAR_HE4] * 4.0;
 
-    /* effective Saha parameter: large positive = favors heavy nucleus */
     double saha_param = Q_peak / kT_MeV - (A_species[i_peak] / 4.0 - 1.0) * log(rho_cgs * avo / (T9 * T9 * sqrt(T9) * 1.0e27));
 
-    /* smooth transition between He4-dominated and Ni56-dominated regimes */
     double f_heavy;
     if (saha_param > 30.0) {
-        f_heavy = 1.0;  /* strongly favors heavy nucleus */
+        f_heavy = 1.0;
     } else if (saha_param < -30.0) {
-        f_heavy = 0.0;  /* strongly favors alpha particles */
+        f_heavy = 0.0;
     } else {
-        f_heavy = 1.0 / (1.0 + exp(-saha_param));  /* sigmoid transition */
+        f_heavy = 1.0 / (1.0 + exp(-saha_param));
     }
 
-    /* distribute: fraction f_heavy goes to the peak species, rest to He4 */
     X_out[NUCLEAR_HE4] = 1.0 - f_heavy;
     X_out[i_peak]      = f_heavy;
 
-    /* for intermediate temperatures, distribute some mass to Fe52 and Cr48
-       as they are close in binding energy and have non-negligible NSE abundance */
     if (f_heavy > 0.01 && f_heavy < 0.99) {
         double Q_fe52 = BE_per_A[NUCLEAR_FE52] * A_species[NUCLEAR_FE52]
                       - (A_species[NUCLEAR_FE52] / 4.0) * BE_per_A[NUCLEAR_HE4] * 4.0;
@@ -777,8 +702,7 @@ KOKKOS_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Y
                          * log(rho_cgs * avo / (T9 * T9 * sqrt(T9) * 1.0e27));
         double f_fe52 = 1.0 / (1.0 + exp(-saha_fe52));
 
-        /* blend: at intermediate T, redistribute some of the heavy fraction */
-        double blend = 4.0 * f_heavy * (1.0 - f_heavy); /* peaks at f_heavy=0.5 */
+        double blend = 4.0 * f_heavy * (1.0 - f_heavy);
         double x_fe52 = blend * 0.3 * f_fe52;
         double x_ni56 = f_heavy - x_fe52;
         if (x_ni56 < 0) { x_ni56 = 0; x_fe52 = f_heavy; }
@@ -788,7 +712,7 @@ KOKKOS_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Y
         X_out[NUCLEAR_HE4]  = 1.0 - x_ni56 - x_fe52;
     }
 
-    /* ensure normalization */
+    /* normalize */
     double sum = 0;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
         if (X_out[k] < 0) X_out[k] = 0;
@@ -801,13 +725,13 @@ KOKKOS_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Y
 }
 
 
-/* Check if we should use NSE for given conditions.
-   Returns 1 if NSE applies, 0 otherwise. */
-KOKKOS_FUNCTION int nuclear_check_nse(double T9)
+/* Check if we should use NSE for given conditions. */
+KOKKOS_INLINE_FUNCTION int nuclear_check_nse(double T9)
 {
 #ifdef NUCLEAR_NETWORK_NSE_TABLE
     return (T9 * 1.0e9 > All.NuclearNSE_T_threshold);
 #else
+    (void)T9;
     return 0;
 #endif
 }
@@ -815,4 +739,5 @@ KOKKOS_FUNCTION int nuclear_check_nse(double T9)
 
 #endif /* NUCLEAR_NETWORK_SOLVER == 0 */
 #endif /* NUCLEAR_NETWORK */
-#endif /* GPU standalone guard */
+
+#endif /* NUCLEAR_PHYSICS_FUNCTIONS_H */

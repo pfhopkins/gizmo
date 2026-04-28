@@ -33,13 +33,10 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 
-#ifdef GIZMO_GPU_COMPILER
-/* Include nuclear_physics.cc directly so nvcc compiles it in the same TU.
-   Without -rdc, cross-TU device function calls cause 'unresolved extern' at
-   PTX assembly.  On CPU builds, nuclear_physics.o is compiled separately. */
-#define NUCLEAR_PHYSICS_INCLUDED_FROM_NUCLEAR_CC
-#include "nuclear_physics.cc"
-#endif
+/* Header-only device-callable physics — same pattern as cooling/cooling_functions.h.
+   Each TU including this header gets its own KOKKOS_INLINE_FUNCTION copies; no
+   cross-TU device-call linking and no Makefile-level GPU/CPU split needed. */
+#include "nuclear_physics_functions.h"
 
 #ifdef NUCLEAR_NETWORK
 

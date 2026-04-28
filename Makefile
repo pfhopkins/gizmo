@@ -574,11 +574,12 @@ OBJS    += eos/aneos.o
 INCL    += eos/aneos.h
 endif
 
-# nuclear reaction network — nuclear.o and nuclear_physics.o go to GPU_OBJS for Kokkos offload
+# nuclear reaction network — nuclear.o is GPU-compiled; physics functions are header-only
+# (nuclear_physics_functions.h, included by nuclear.cc) so no separate physics .o is needed.
 ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
 GPU_OBJS += nuclear/nuclear.o
-OBJS     += nuclear/nuclear_physics.o nuclear/nuclear_neutrino.o
-INCL     += nuclear/nuclear.h
+OBJS     += nuclear/nuclear_neutrino.o
+INCL     += nuclear/nuclear.h nuclear/nuclear_physics_functions.h
 endif
 ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_skynet.o
@@ -653,7 +654,7 @@ cooling/cooling.o: cooling/cooling.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics.cc $(INCL) $(CONFIG) compile_time_info.cc
+nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics_functions.h $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 hydro/density_gpu.o: hydro/density_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
