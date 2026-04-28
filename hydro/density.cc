@@ -325,8 +325,7 @@ void density(void)
             if((P[i].KernelRadius < 0) || !isfinite(P[i].KernelRadius) || (P[i].KernelRadius > 0.99*maxsoft)) {P[i].KernelRadius = 0.99*maxsoft;} /* don't set to exactly maxsoft because our looping below won't treat this correctly */
         }} /* done with intial zero-out loop */
 
-    /* allocate buffers to arrange communication */
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
+    double timeall=0, timecomp=0;
 #ifdef OPENMP_GPU_OFFLOAD
     density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
 #endif
@@ -753,7 +752,6 @@ void density(void)
     density_gpu_session_end(); /* free persistent SharedSpace arrays */
 #endif
     double t_session_end = timediff(t_postproc_start, my_second());
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
     myfree(Right); myfree(Left);
 
     /* mark as active again */
