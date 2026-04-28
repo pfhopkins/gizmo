@@ -319,24 +319,17 @@ void DMGrad_gradient_calc(void)
 
     /* allocate memory shared across all loops */
     DMGradDataPasser = (struct temporary_dmgradients_data_topass *) mymalloc("DMGradDataPasser",NumPart * sizeof(struct temporary_dmgradients_data_topass));
-#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path: import DM ghosts once, keep alive across both
-       gradient iterations (ghost content doesn't change between passes).
-       Declare the scope locals the code_block_xchange header would otherwise
-       provide (loop_iteration + timing accumulators). */
+       gradient iterations (ghost content doesn't change between passes). */
     int loop_iteration = 0;
     double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
     CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
     double dmgrad_ghost_safety = gizmo_ghost_safety_factor();
     gizmo_density_prep_ghosts(dmgrad_ghost_safety);
-#else
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-#endif
 
     /* loop over the number of iterations needed to actually compute the gradients fully */
     for(loop_iteration=0; loop_iteration<2; loop_iteration++) // need 2 iterations to compute gradients-of-gradients
     {
-#if defined(OPENMP_GPU_OFFLOAD)
         /* Partition active DMGrad particles by shared AGS neighbor-type bitmask.
            DM_FUZZY activates only for Type==1, so this yields at most one group. */
         std::map<int, std::vector<int>> bitmask_groups;
@@ -415,9 +408,6 @@ void DMGrad_gradient_calc(void)
             }
             myfree(nl_outs); myfree(nl_in); myfree(nl_radii); myfree(nl_active);
         }
-#else
-        #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-#endif
 
         /* do post-loop operations on the results */
         int i;
@@ -463,11 +453,7 @@ void DMGrad_gradient_calc(void)
     } // end of loop_iteration
 
     /* de-allocate memory and collect timing information */
-#if defined(OPENMP_GPU_OFFLOAD)
     if(NTask > 1) {ghost_exchange_cleanup();}
-#else
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-#endif
     myfree(DMGradDataPasser); /* free the temporary structure we created for the MinMax and additional data passing */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp; CPU_Step[CPU_AGSDENSWAIT] += timewait; CPU_Step[CPU_AGSDENSCOMM] += timecomm;

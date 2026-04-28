@@ -272,9 +272,7 @@ void ags_density(void)
             P[i].wakeup = 0;
       }}
 
-#if defined(OPENMP_GPU_OFFLOAD)
-    /* GPU neighbor-list path — bitmask partition + per-group cross-type CSR.
-       Same timing locals the code_block_xchange_perform_ops_malloc.h would define. */
+    /* GPU neighbor-list path — bitmask partition + per-group cross-type CSR. */
     double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
     CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
     double ags_ghost_safety = gizmo_ghost_safety_factor();
@@ -283,14 +281,9 @@ void ags_density(void)
      * and the ghost_exchange repeatedly requests 2x+ the local count each redo. */
     if(NTask > 1) {ghost_exchange_cleanup();}
     gizmo_density_prep_ghosts(ags_ghost_safety);
-#else
-    /* allocate buffers to arrange communication */
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-#endif
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
-#if defined(OPENMP_GPU_OFFLOAD)
         /* Partition active AGS particles by their shared neighbor-type bitmask.
            In typical cosmological use only one bitmask is active (e.g. DM→DM),
            so this yields one group and one GPU kernel pass. */
@@ -348,9 +341,6 @@ void ags_density(void)
             }
             myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
         }
-#else
-        #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-#endif
 
       /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
@@ -595,20 +585,13 @@ void ags_density(void)
             iter++;
             if(iter > 10 && ThisTask == 0) {printf("AGS-ngb iteration %d: need to repeat for %d%09d particles.\n", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
             if(iter > MAXITER) {printf("ags-failed to converge in neighbour iteration in density()\n"); fflush(stdout); endrun(1155);}
-#if defined(OPENMP_GPU_OFFLOAD)
             /* If AGS_KernelRadius grew beyond the exchanged ghost hmax, re-exchange */
             gizmo_density_redo_ghosts_if_needed(ags_ghost_safety);
-#endif
         }
     }
     while(ntot > 0);
 
-#if defined(OPENMP_GPU_OFFLOAD)
     if(NTask > 1) {ghost_exchange_cleanup();}
-#else
-    /* iteration is done - de-malloc everything now */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-#endif
     myfree(Right); myfree(Left);
     
     /* mark as active again */
@@ -1020,7 +1003,6 @@ void AGSForce_calc(void)
     /* need to zero values for active particles (which will be re-calculated) before they are added below */
     //for (int i : ActiveParticleList) {int k1,k2; for(k1=0;k1<CBE_INTEGRATOR_NBASIS;k1++) {for(k2=0;k2<CBE_INTEGRATOR_NMOMENTS;k2++) {P[i].CBE_basis_moments_dt[k1][k2] = 0;}}}
 #endif
-#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU neighbor-list path for AGSForce_calc. Partition active particles
        (isactive == 1) by their shared neighbor-type bitmask and launch the
        GPU kernel once per group, same pattern as ags_density(). */
@@ -1114,11 +1096,6 @@ void AGSForce_calc(void)
 
     if(NTask > 1) { ghost_exchange_cleanup(); }
     timecomp += timediff(t0, my_second());
-#else
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-#endif
     /* do final operations on results: these are operations that can be done after the complete set of iterations */
 #ifdef CBE_INTEGRATOR
         for (int i : ActiveParticleList) {do_postgravity_cbe_calcs(i);} // do any final post-tree-walk calcs from the CBE integrator here //

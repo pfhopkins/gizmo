@@ -30,9 +30,7 @@
 void grain_backrx(void);
 #endif
 
-#ifdef OPENMP_GPU_OFFLOAD
 extern void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int *, int);
-#endif
 
 /* function to apply the drag on the grains from surrounding gas properties */
 void apply_grain_dragforce(void)
@@ -40,7 +38,6 @@ void apply_grain_dragforce(void)
     CPU_Step[CPU_MISC] += measure_time();
     int i, k; PRINT_STATUS("Beginning particulate/grain/PIC force evaluation.");
 
-#if defined(OPENMP_GPU_OFFLOAD)
     /* GPU path: gather active particles, dispatch Kokkos kernel, scatter results */
     {
         int N_active = 0;
@@ -51,204 +48,6 @@ void apply_grain_dragforce(void)
         grain_drag_evaluate_gpu(P, CellP, grain_indices, N_active);
         free(grain_indices);
     }
-#else
-    for (int i : ActiveParticleList) /* loop over active particles */
-    {
-        if(!((1 << P[i].Type) & (GRAIN_PTYPES))) {P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;} /* for active elements, set this large to re-set below */
-#ifdef BOX_BND_PARTICLES
-        if(P[i].ID > 0) /* 'frozen' particles are excluded */
-#endif
-        if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].Mass>0)) /* only particles of designated type[s] are eligible for this routine */
-        {
-#ifdef SINK_PARTICLES
-            P[i].SwallowID = 0; /* zero for next cycle */
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-            P[i].SwallowTime = MAX_REAL_NUMBER; /* set to large number to be checked against lower values in next cycle */
-#endif
-#endif
-#if defined(GRAIN_BACKREACTION)
-            P[i].Grain_DeltaMomentum = {}; /* reset momentum to couple back to gas (or else would diverge) */
-#endif
-            double dt = get_particle_timestep_in_physical(i);
-            double vgas_mag = sqrt((P[i].Gas_Velocity - P[i].Vel).norm_sq()) / All.cf_atime; /* convert to physical units */
-            int grain_subtype = 1; /* default assumption about particulate sub-type for operations below */
-#if defined(PIC_MHD)
-            grain_subtype = P[i].MHD_PIC_SubType;
-#endif
-            if((grain_subtype <= 2) && (dt > 0) && (P[i].Gas_Density>0) && (vgas_mag > 0)) /* only bother with particles moving wrt gas with finite gas density and timestep */
-            {
-                double gamma_eff = GAMMA_DEFAULT; // adiabatic index to use below
-                double cs = sqrt( (gamma_eff*(gamma_eff-1)) * P[i].Gas_InternalEnergy);
-                double R_grain_cgs = P[i].Grain_Size, R_grain_code = R_grain_cgs / UNIT_LENGTH_IN_CGS;
-                double rho_gas = P[i].Gas_Density * All.cf_a3inv, rho_grain_physical = All.Grain_Internal_Density, rho_grain_code = rho_grain_physical / UNIT_DENSITY_IN_CGS; // rho_grain in cgs and code units //
-                double x0 = 0.469993*sqrt(gamma_eff) * vgas_mag/cs; // (3/8)*sqrt[pi/2]*|vgas-vgrain|/cs //
-                double tstop_inv = 1.59577/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code); // 2*sqrt[2/pi] * 1/tstop //
-#ifdef GRAIN_LORENTZFORCE /* calculate the grain charge following Draine & Sutin */
-                double cs_cgs = cs * UNIT_VEL_IN_CGS;
-                double tau_draine_sutin = R_grain_cgs * (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (gamma_eff * ELECTRONCHARGE_CGS*ELECTRONCHARGE_CGS);
-                double Z_grain = -DMAX( 1./(1. + sqrt(1.0e-3/tau_draine_sutin)) , 2.5*tau_draine_sutin ); /* note: if grains moving super-sonically with respect to gas, and charge equilibration time is much shorter than the streaming/dynamical timescales, then the charge is slightly reduced, because the ion collision rate is increased while the electron collision rate is increased less (since electrons are moving much faster, we assume the grain is still sub-sonic relative to the electron sound speed. in this case, for the large-grain limit, the Draine & Sutin results can be generalized; the full expressions are messy but can be -approximated- fairly well for Mach numbers ~3-30 by simply suppressing the equilibrium grain charge by a power ~exp[-0.04*mach]  (weak effect, though can be significant for mach>10) */
-                if(isnan(Z_grain)||(Z_grain>=0)) {Z_grain=0;}
-#endif
-#ifdef GRAIN_EPSTEIN_STOKES
-                if(grain_subtype == 0 || grain_subtype == 1)
-                {
-                    double mu = 2.3*PROTONMASS_CGS, temperature = (mu/PROTONMASS_CGS) * (1.4-1.) * U_TO_TEMP_UNITS * P[i].Gas_InternalEnergy; // assume molecular gas (as its the only regime where this is relevant) with gamma=1.4
-                    double cross_section = GRAIN_EPSTEIN_STOKES * 2.0e-15 * (1. + 70./temperature);
-                    cross_section /= UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS;
-                    double n_mol = rho_gas * UNIT_MASS_IN_CGS / mu, mean_free_path = 1 / (n_mol * cross_section); // should be in code units now //
-                    double corr_mfp = R_grain_code / ((9./4.) * mean_free_path);
-                    if(corr_mfp > 1) {tstop_inv /= corr_mfp;}
-                }
-#endif
-#if defined(GRAIN_LORENTZFORCE) && defined(GRAIN_EPSTEIN_STOKES) /* also have charged grains, so we will calculate Coulomb forces as well */
-                if(grain_subtype == 1)
-                {
-                    double a_Coulomb = sqrt(2.*gamma_eff*gamma_eff*gamma_eff/(9.*M_PI));
-                    double tstop_Coulomb_inv = 0.797885/sqrt(gamma_eff) * rho_gas * cs / (R_grain_code * rho_grain_code); // base normalization //
-                    tstop_Coulomb_inv /= (1. + a_Coulomb *(vgas_mag/cs)*(vgas_mag/cs)*(vgas_mag/cs)) * sqrt(1.+x0*x0); // velocity dependence (force becomes weak when super-sonic)
-                    tstop_Coulomb_inv *= (Z_grain/tau_draine_sutin) * (Z_grain/tau_draine_sutin) / 17.; // coulomb attraction terms, assuming ions have charge ~1, and Coulomb logarithm is 17
-                    // don't need super-accuration gas ionization states, just need approximate estimate, which we can make based on temperature //
-                    double T_Kelvin = (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (1.3807e-16 * gamma_eff), f_ion_to_use = 0; // temperature in K
-                    if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);} /* default to a simple approximate guess for ionization, without cooling active */
-#ifdef COOLING  // in this case, have the ability to calculate more accurate ionization fraction
-                    double u_tmp, ne_tmp = 1, nh0_tmp = 0, mu_tmp = 1, temp_tmp, nHeII_tmp, nhp_tmp, nHe0_tmp, nHepp_tmp;
-                    u_tmp = T_Kelvin / (2.3 * U_TO_TEMP_UNITS); // needs to be in code units; 2.3 for mean molecular weight factor and gamma_eos factor //
-                    temp_tmp = ThermalProperties(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp, P, CellP);
-                    f_ion_to_use = DMIN(ne_tmp , 1.);
-#endif
-                    tstop_Coulomb_inv *= f_ion_to_use; // correct for ionization fraction
-                    tstop_inv += tstop_Coulomb_inv; // add both forces
-                }
-#endif // LORENTZ + EPSTEIN/STOKES force (Coulomb computation)
-
-
-                /* this external_forcing parameter includes additional grain-specific forces. note that -anything- which imparts an
-                 identical acceleration onto gas and dust will cancel in the terms in t_stop, and just act like a 'normal' acceleration
-                 on the dust. for this reason the gravitational acceleration doesn't need to enter our 'external_forcing' parameter */
-                double external_forcing[3]={0}, eps=MIN_REAL_NUMBER; P[i].Grain_AccelTimeMin = DMAX(1./(eps+tstop_inv) , sqrt(P[i].Get_Particle_Size()*All.cf_atime/(eps+vgas_mag*tstop_inv)));
-#ifdef GRAIN_LORENTZFORCE
-                if(grain_subtype == 1)
-                {
-                    /* Lorentz force on a grain = Z*e/c * ([v_grain-v_gas] x B) :: this comes from E-field E0 = -v_gas x B,
-                        with force per particle Fp = (1 - R) * (np*E0 + J_p/c x B) / np = (1-R)*(E0 + v_p x B);
-                        we ignore the Hall effect setting R=0 (ignore current carried by the particles themselves in induction) */
-                    double grain_mass = (4.*M_PI/3.) * R_grain_code*R_grain_code*R_grain_code * rho_grain_code; // code units
-                    double lorentz_units = UNIT_B_IN_GAUSS; // code B to Gauss
-                    lorentz_units *= (ELECTRONCHARGE_CGS/C_LIGHT_CGS) * UNIT_VEL_IN_CGS / UNIT_MASS_IN_CGS; // converts acceleration to cgs
-                    lorentz_units /= UNIT_VEL_IN_CGS / UNIT_TIME_IN_CGS; // converts it to code-units acceleration
-
-                    Vec3<double> bhat, efield={}; double bmag=0, efield_coeff=0; /* define unit vectors and B for evolving the lorentz force */
-                    bhat = P[i].Gas_B * All.cf_a2inv; bmag = bhat.norm_sq(); Vec3<double> dv = (P[i].Vel - P[i].Gas_Velocity) / All.cf_atime;
-                    if(bmag>0) {bmag=sqrt(bmag); bhat /= bmag;} else {bmag=0;}
-                    double grain_charge_cinv = Z_grain / grain_mass * lorentz_units;
-#ifdef GRAIN_RDI_TESTPROBLEM
-                    if(All.Grain_Charge_Parameter != 0) {grain_charge_cinv = -All.Grain_Charge_Parameter*sqrt(1.)/((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * pow(All.Grain_Size_Max/P[i].Grain_Size,2);} // set charge manually; this gives 1/t_Lorentz in code units: the sqrt[1] reflects the expected mean density of the box in code units [this is hard-coded for the RDI_testproblem set!] //
-                    //if(fabs(grain_charge_cinv)>0) {grain_charge_cinv /= 1.e-3 + P[i].Gas_Density;} /* this is the 'photoelectric' scaling for isothermal gas; modify for your charge law */
-#endif
-                    /* now apply the boris integrator */
-                    double lorentz_coeff = (0.5*dt) * bmag * grain_charge_cinv; // dimensionless half-timestep term for boris integrator //
-                    Vec3<double> v_m = dv + efield * (0.5*efield_coeff); // half-step from E-field
-                    Vec3<double> vcrosst = cross(v_m, bhat); /* cross-product for rotation */
-                    double tL=1./(eps+0.5*bmag*fabs(grain_charge_cinv)), vgasXB_mag=vcrosst.norm_sq();
-                    P[i].Grain_AccelTimeMin = DMIN(P[i].Grain_AccelTimeMin, DMAX(tL , sqrt(P[i].Get_Particle_Size()*All.cf_atime/(eps+sqrt(vgasXB_mag)/tL))));
-                    Vec3<double> v_t = v_m + vcrosst * lorentz_coeff; // first half-rotation
-                    vcrosst = cross(v_t, bhat);
-                    Vec3<double> v_p = v_m + vcrosst * (2.*lorentz_coeff/(1.+lorentz_coeff*lorentz_coeff)); // second half-rotation
-                    v_p += efield * (0.5*efield_coeff); // half-step from E-field
-                    /* calculate effective acceleration from discrete step in velocity */
-                    Vec3<double> ef_update = (v_p - dv) / dt; for(k=0;k<3;k++) {external_forcing[k] += ef_update[k];} // boris integrator
-                }
-#endif
-
-                double delta_egy=0, delta_mom[3]={0}, xf=0, dt_tinv=dt*tstop_inv, C1=-(1+sqrt(1+x0*x0))/x0;
-                if(dt_tinv < 100.) {double C2 = C1*exp(dt_tinv); xf=-2*C2/(C2*C2-1);}
-                double slow_fac = 1 - xf/x0; /* note that, with an external (gravitational) acceleration, we can still solve this equation for the relevant update */
-                for(k=0; k<3; k++)
-                {
-                    /* measure the imparted energy and momentum as if there were no external acceleration */
-                    double v_init = P[i].Vel[k] / All.cf_atime, v_gas_i = P[i].Gas_Velocity[k] / All.cf_atime; /* physical units */
-                    double vel_new = v_init + slow_fac * (v_gas_i - v_init);
-                    /* now calculate the updated velocity accounting for any external, non-standard accelerations */
-                    double vdrift = 0, dv[3];
-                    if(tstop_inv > 0) {vdrift = external_forcing[k] / (tstop_inv * sqrt(1+x0*x0));}
-                    dv[k] = slow_fac * (v_gas_i - v_init + vdrift);
-                    if(isnan(vdrift)||isnan(slow_fac)) {dv[k] = 0;}
-
-                    vel_new = v_init + dv[k];
-                    delta_mom[k] = P[i].Mass * (vel_new - v_init);
-                    delta_egy += 0.5*P[i].Mass * (vel_new*vel_new - v_init*v_init);
-#ifdef GRAIN_BACKREACTION
-                    P[i].Grain_DeltaMomentum[k] = delta_mom[k] * All.cf_atime; /* converted back to code units here */
-#endif
-                    /* note, we can directly apply this by taking P[i].Vel[k] += dv[k]; but this is not as accurate as our
-                     normal leapfrog integration scheme. we can also account for the -gas- acceleration, by including it like vdrift;
-                     for a constant t_stop, the gas acceleration term appears as P[i].Vel[l] += Gas_Accel[k] * dt + slow_fac * (Gas-Accel[k] / tstop_inv) */
-                    P[i].GravAccel[k] += dv[k] / (dt * All.cf_a2inv); /* we solve the equations with an external acceleration already (external_forcing above): therefore add to forces like gravity that are acting on the gas and dust in the same manner (in terms of acceleration). put into code units */ // currently incompatible with hermite integrator -- need to update to Other_Accel
-                }
-            } // closes check for gas density, dt, vmag > 0, subtype valid
-
-
-#ifdef PIC_MHD
-#ifndef PIC_SPEEDOFLIGHT_REDUCTION
-#define PIC_SPEEDOFLIGHT_REDUCTION (1)
-#endif            
-            if((grain_subtype >= 3) && (dt > 0) && (P[i].Gas_Density>0) && (vgas_mag > 0)) /* only bother with particles moving wrt gas with finite gas density and timestep */
-            {
-                double reduced_C = PIC_SPEEDOFLIGHT_REDUCTION * C_LIGHT_CODE; /* effective speed of light for this part of the code */
-                double charge_to_mass_ratio_dimensionless = All.PIC_Charge_to_Mass_Ratio; /* dimensionless q/m in units of e/mp */
-                /* if(grain_subtype==4) {charge_to_mass_ratio_dimensionless = -1836.15; */ /* e.g. electons */
-                double dt_cgs = dt * UNIT_TIME_IN_CGS; /* convert to cgs for use below */
-                
-                double lorentz_units = 1./C_LIGHT_CGS; /* code velocity to CGS and B to Gauss, times base units e/(mp*c), then convert 'back' to code-units acceleration -- need to make sure this works with definitions below, with everything in cgs (see line for efield_coeff below) */
-#ifdef PIC_MHD_NEW_RSOL_METHOD
-                lorentz_units *= PIC_SPEEDOFLIGHT_REDUCTION; /* the rsol enters by slowing down the forces here, acts as a unit shift for time */
-#endif
-                Vec3<double> bhat={}; double Bmag=0; /* define unit vectors and B for evolving the lorentz force */
-                bhat = P[i].Gas_B * All.cf_a2inv;
-                Bmag = bhat.norm_sq();
-                Vec3<double> beta_true_gas = P[i].Gas_Velocity / (All.cf_atime*C_LIGHT_CODE); /* vector beta [-true- beta here] */
-                if(Bmag>0) {Bmag=sqrt(Bmag); bhat /= Bmag;}
-                else {Bmag=0;} /* take it correctly assuming its non-zero */
-                double Bmag_cgs = Bmag * UNIT_B_IN_GAUSS; /* convert to cgs */
-                double efield_coeff = (0.5*dt_cgs) * (charge_to_mass_ratio_dimensionless * ELECTRONCHARGE_CGS/PROTONMASS_CGS) * Bmag_cgs * lorentz_units; /* dimensionless half-timestep term for boris integrator */
-                Vec3<double> efield = cross(beta_true_gas, bhat) * (-1.0); /* E = -(ugas/c) cross B, but with magnitude of B factored out for units above */
-                Vec3<double> beta_true_cr_0 = P[i].Vel / (All.cf_atime*reduced_C);
-                double beta2_true_cr = beta_true_cr_0.norm_sq(); /* magnitude of velocity [this is reduced from c] */
-                if(beta2_true_cr >= 1) {PRINT_WARNING("VELOCITY HAS EXCEEDED THE SPEED OF LIGHT. BAD.");} /* check against reduced c */
-                double gamma_0=1/sqrt(1-beta2_true_cr);
-                Vec3<double> betagamma_0 = beta_true_cr_0 * gamma_0; /* calculate true gamma, convert to the momentum term ~gamma*beta (this times mc is true scalar momentum) */
-
-                /* now apply the boris integrator */
-                Vec3<double> betagamma_m = betagamma_0 + efield * efield_coeff; /* first half-step from E-field */
-                /* for the integrator, we want to write the equation of motion as dudt = u cross Q. currently have d[beta_gamma]dtau = lorentz_coeff_0 * beta cross bhat, [with lorentz_coeff_0 = efield_coeff identical from above]
-                    so need to multiply RHS by gamma/gamma -> d[beta_gamma]dtau = (lorentz_coeff_0/gamma)* (beta_gamma cross bhat) = lorentz_coeff_tau * (beta_gamma cross bhat).
-                    use 1/sqrt[1+|beta_gamma|^2] = 1/gamma, to convert this appropriately */
-                double lorentz_coeff_tau = efield_coeff / sqrt(1+betagamma_m.norm_sq()); /* lorentz factor at this mid-point jump (recall betagamma_m is a 'beta~v/c' here) is needed to correct the factor for the B-field term */
-                Vec3<double> beta_b_crosst = cross(betagamma_m, bhat); /* cross-product for rotation */
-                Vec3<double> betagamma_t = betagamma_m + beta_b_crosst * lorentz_coeff_tau; /* first half-rotation [generates the intermediate state we need for this integrator] */
-                beta_b_crosst = cross(betagamma_t, bhat);
-                Vec3<double> betagamma_p = betagamma_m + beta_b_crosst * (2.*lorentz_coeff_tau/(1.+lorentz_coeff_tau*lorentz_coeff_tau)); /* second half-rotation */
-                betagamma_p += efield * efield_coeff; /* second half-step from E-field. betagamma_p now contains the final scalar momentum in dimensionless units, i.e. gamma*beta. so this divided by gamma gives final beta */
-                double betagamma2_p=betagamma_p.norm_sq(), gamma_f=sqrt(1+betagamma2_p); /* this converts from betagamma to just gamma */
-                Vec3<double> beta_true_cr_f = betagamma_p / gamma_f; /* convert back to a velocity 'beta_true_cr_f' which is always <= 1 - this is now the 'effective' velocity with which CRs will propagate */
-
-                for(k=0;k<3;k++)
-                {
-#ifdef GRAIN_BACKREACTION
-                    double delta_momentum = P[i].Mass * C_LIGHT_CODE * (beta_true_cr_f[k]*gamma_f - beta_true_cr_0[k]*gamma_0) * All.cf_atime; /* account for lorentz factor in calculating the discrete momentum change here [put into code units] -- this is the 'true' (no RSOL) momentum change */
-#ifdef PIC_MHD_NEW_RSOL_METHOD
-                    delta_momentum /= PIC_SPEEDOFLIGHT_REDUCTION; /* the real force back on the gas is given by the difference in the conserved quantity we would have without an RSOL, Delta[(c/tilde[c]*gamma*beta_vector*mc], which requires multiplying the above by (c/RSOL) */
-#endif
-                    P[i].Grain_DeltaMomentum[k] += delta_momentum; /* save to couple back to gas in loop below */
-#endif
-                    P[i].GravAccel[k] += (beta_true_cr_f[k]-beta_true_cr_0[k]) * reduced_C / (dt * All.cf_a2inv); /* update acceleration with the kick from the full boris push above [put into code units] */ // currently incompatible with hermite integrator -- need to update to Other_Accel
-                }
-            } /* closes check for gas density, dt, vmag > 0, subtype valid */
-#endif
-
-        } /* closes check for particle type, id */
-    } /* closes main particle loop (loop over active particles) */
-#endif /* !OPENMP_GPU_OFFLOAD */
 #if defined(GRAIN_BACKREACTION)
     grain_backrx(); /* call parent routine to assign the back-reaction force among neighbors */
 #endif
@@ -373,7 +172,6 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
 void grain_backrx(void)
 {
     PRINT_STATUS(" ..assigning grain back-reaction to gas");
-#if defined(OPENMP_GPU_OFFLOAD)
     {
         /* Build LOCAL active grain list (i-type restricted by GRAIN_PTYPES). */
         int num_active = 0;
@@ -392,15 +190,7 @@ void grain_backrx(void)
         grain_backrx_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
         myfree(nl_radii); myfree(nl_active);
         CPU_Step[CPU_DRAGFORCE] += measure_time();
-        return;
     }
-#endif
-     //grain_backrx_initial_operations_preloop(); /* do initial pre-processing operations as needed before main loop [nothing needed here] */
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-    //grain_backrx_final_operations_and_cleanup(); /* do final operations on results [nothing needed here] */
-    CPU_Step[CPU_DRAGFORCE] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
@@ -550,7 +340,6 @@ int interpolate_fluxes_opacities_gasgrains_evaluate(int target, int mode, int *e
 void interpolate_fluxes_opacities_gasgrains(void)
 {
     PRINT_STATUS(" ..assigning opacities to gas from the grain distribution, and interpolating radiation fields to grains");
-#if defined(OPENMP_GPU_OFFLOAD)
     {
         int num_gas = 0, num_grain = 0;
         for(int i : ActiveParticleList) {
@@ -574,13 +363,7 @@ void interpolate_fluxes_opacities_gasgrains(void)
         myfree(nl_radii_grain); myfree(nl_active_grain);
         myfree(nl_radii_gas); myfree(nl_active_gas);
         CPU_Step[CPU_DRAGFORCE] += measure_time();
-        return;
     }
-#endif
-    #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
-    #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-    CPU_Step[CPU_DRAGFORCE] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
