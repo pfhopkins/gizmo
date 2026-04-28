@@ -1052,7 +1052,19 @@ void cellcorrections_calc(void)
 
         int num_src = (int)active_idx.size();
         gpu_neighbor_list_t gnl = {};
+        int imported_ghosts = 0;
         if (num_src > 0) {
+            /* Defensive ghost prep: legacy used code_block_xchange MPI export to
+             * pull in cross-rank j-neighbors. Modern path replaces that with
+             * symmetric ghost particles. cellcorrections_calc is called between
+             * density and gradients so ghosts are typically already alive — but
+             * if a future caller invokes this with no ghosts (e.g. standalone
+             * diagnostic), import them here so cross-rank contributions to
+             * Volume_1 are NOT silently dropped. */
+            if (ghost_get_num_ghosts() <= 0) {
+                gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+                imported_ghosts = 1;
+            }
             int local_count = ghost_get_num_local();
             if (local_count <= 0) local_count = NumPart;
             int num_all = local_count + ghost_get_num_ghosts();
@@ -1090,6 +1102,7 @@ void cellcorrections_calc(void)
             gpu_ngb_list_free(&gnl, NULL);
             gpu_particles_arena_invalidate();
         }
+        if (imported_ghosts) ghost_exchange_cleanup();
     }
     timecomp = timediff(t_kern_start, my_second());
 #else
