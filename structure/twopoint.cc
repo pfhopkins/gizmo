@@ -88,12 +88,37 @@ void twopoint(void)
     gizmo_rng_init(&random_generator, (uint64_t)P[0].ID + (uint64_t)ThisTask);
 #if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
     /* Modern path: prebuilt CSR NL, per-source rs, all-types search pool.
-     * Drops the legacy tree-mass-aggregation optimization (counted entire
-     * tree-node masses when a node fit cleanly in a single bin); the modern
-     * path enumerates individual pairs only. The user signed off on this
-     * tradeoff because twopoint runs ~1x per 1e4-1e5 timesteps. Pair-counting
-     * is global (no double-count): each pair (i,j) is counted once on the
-     * rank that owns i; j may be local or ghost. Self pair (j==i) skipped. */
+     *
+     * INTERIM IMPLEMENTATION: drops the legacy tree-mass-aggregation
+     * optimization. The legacy used the gravity tree's node-level mass
+     * moments — when an entire tree node fit cleanly in a single distance
+     * bin, it counted (node->mass / PartMass) particles in one shot without
+     * enumerating individuals. This makes large-radius bins effectively free.
+     * The modern symmetric NL walks individual pair lists with no node-level
+     * aggregation; correct but much slower at large radii.
+     *
+     * FUTURE PROPER PORT: this routine should NOT use the normal symmetric
+     * NL infrastructure at all. Two-point correlation is fundamentally an
+     * "all-against-all long-range" problem with binned distance accumulators
+     * — exactly what the gravity tree already supports. The proper port
+     * walks the modern GRAVITY TREE (Nodes_base / SoA in gravity/forcetree.cc)
+     * with a custom op that, instead of accumulating gravitational potential
+     * via mass moments, accumulates BINNED PAIR COUNT via node->mass for
+     * nodes that fall cleanly within a single radial bin. The walk pattern
+     * is identical to gravtree; only the accumulated quantity differs.
+     * That port preserves the O(N log N) scaling at large radii.
+     *
+     * The user signed off on shipping the interim NL-based implementation
+     * because OUTPUT_TWOPOINT_ENABLED runs ~1x per 1e4-1e5 timesteps, so the
+     * O(N) per-pair cost is tolerable for now. The proper gravity-tree port
+     * is needed before any production run with TotNumPart > ~1e8 enables this
+     * module.
+     *
+     * Pair-counting in the interim implementation is global with no
+     * double-count: each pair (i, j) is counted once on the rank that owns i
+     * (j may be local home gas or imported ghost from another rank's home;
+     * the OTHER rank doesn't have i as a sampled source, so the pair appears
+     * exactly once). Self pair (j == i) skipped. */
     {
         std::vector<int> active_idx;
         std::vector<double> active_radii;
