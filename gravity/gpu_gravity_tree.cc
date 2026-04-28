@@ -10,9 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
-#endif
 
 /* GPU All mirror precedes allvars.h so nvc++ sees `All` (=All_dev) for
  * eagerly-parsed templates referencing it. Matches density_gpu.cc include order. */

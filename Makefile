@@ -199,26 +199,38 @@ endif
 
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Vista_CPU")
-## Pure-CPU build on Vista Grace ARM — no CUDA, no Kokkos, no OPENMP_GPU_OFFLOAD.
-## Load modules: gcc openmpi hdf5 fftw3  (do NOT load nvidia/cuda/kokkos)
+## Vista Grace ARM with Kokkos OpenMP backend (debug oracle for the GPU build).
+## Same source code path as Vista (Kokkos kernels), just dispatched to OpenMP
+## CPU threads instead of CUDA. GIZMO_GPU_COMPILER is NOT defined (no nvcc),
+## so __managed__ All_dev blocks are skipped and All remains the normal extern.
+## Load modules: gcc openmpi hdf5/2.0.0 fftw3 gsl kokkos/4.5.01-omp
+## (i.e. kokkos/4.5.01-omp NOT kokkos/4.5.01-cuda; the rest matches the CUDA build).
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
-ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
-OPTIMIZE += -fopenmp
-endif
+## OpenMP needed for Kokkos OMP backend; -foffload=disable suppresses gcc 15's
+## auto-enabled nvptx GPU offload (we want pure CPU OpenMP threads here).
+OPTIMIZE += -fopenmp -foffload=disable
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
 endif
+## Kokkos paths (TACC module sets TACC_KOKKOS_INC/LIB)
+KOKKOS_INCL     = -I$(TACC_KOKKOS_INC)
+KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
+KOKKOS_LIBS_PATH= -L$(TACC_KOKKOS_LIB) -Wl,-rpath,$(TACC_KOKKOS_LIB)
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
+## GPU TU files: same compiler (mpicxx → gcc), just add Kokkos includes
+GPU_CXX    = mpicxx -std=c++17
+GPU_CFLAGS = $(KOKKOS_INCL)
+GPU_LDFLAGS= $(KOKKOS_LIBS_PATH)
 FFTW_INCL= -I$(TACC_FFTW3_INC)
 FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
-## No OPENMP_GPU_OFFLOAD — everything runs on Grace ARM CPU via g++
 endif
 
 
@@ -296,46 +308,6 @@ OPT     += #
 ## mpirun -v -x LD_LIBRARY_PATH ./GIZMO params.txt
 endif
 
-#----------------------------------------------------------------------------------------------
-# Environment for building GIZMO on a macbook with libraries installed via homebrew. But note
-# that the specific HDF5 version is hardcoded here...
-ifeq ($(SYSTYPE),"MacBookCellar")
-CC       =  mpicc
-CXX      =  mpicxx -std=c++17
-OPTIMIZE = -O3 -funroll-loops -ffast-math -march=native -flto 
-OPTIMIZE += -Wno-unused-command-line-argument ## -g -Wall # compiler warnings
-ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
-#CXX     = mpic++
-CHIMESINCL = -I/usr/local/include/sundials
-CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
-endif
-ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
-OPTIMIZE += -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
-OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
-endif
-ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
-ifneq (MHD_MODIFIED_GRADIENT_CG_ONLY,$(findstring MHD_MODIFIED_GRADIENT_CG_ONLY,$(CONFIGVARS)))
-HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | tail -n 1)
-HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
-HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
-endif
-endif
-ifeq (MHD_MODIFIED_GRADIENT_USE_PARDISO,$(findstring MHD_MODIFIED_GRADIENT_USE_PARDISO,$(CONFIGVARS)))
-MKL_INCL = -I$(MKLROOT)/include
-MKL_LIBS = -L$(MKLROOT)/lib -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
-else
-MKL_INCL = #
-MKL_LIBS = #
-endif
-FFTW_INCL= -I/opt/homebrew/Cellar/fftw/3.3.10_3/include
-FFTW_LIBS= -L/opt/homebrew/Cellar/fftw/3.3.10_3/lib
-HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | tail -n 1)
-HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API  #-I$(PORTINCLUDE) -DH5_USE_16_API
-HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz  #-L$(PORTLIB)
-MPICHLIB = #
-OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION #
-endif
-
 ## MacBookCellar with Kokkos (OpenMP backend) — for testing GPU code paths without a GPU.
 ## Kokkos::parallel_for dispatches to OpenMP threads, SharedSpace = HostSpace.
 ## GPU TU files (cooling.cc, density_gpu.cc, etc.) are compiled with the same mpicxx
@@ -352,6 +324,7 @@ OPTIMIZE += -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
 OPTIMIZE += -L/opt/homebrew/opt/libomp/lib -lomp
 ## Kokkos paths (homebrew)
 KOKKOS_INCL = -I/opt/homebrew/opt/kokkos/include
+KOKKOS_CPPFLAGS = -I/opt/homebrew/opt/kokkos/include
 KOKKOS_LIBS_PATH = -L/opt/homebrew/opt/kokkos/lib
 KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
 ## GPU TU files: same compiler, just add Kokkos includes

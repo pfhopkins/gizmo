@@ -19,10 +19,8 @@
 #include <string.h>
 #include <stdint.h>
 
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Sort.hpp>
-#endif
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"

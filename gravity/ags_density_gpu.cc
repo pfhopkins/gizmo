@@ -20,9 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
-#endif
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"

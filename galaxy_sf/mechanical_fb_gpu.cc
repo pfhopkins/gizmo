@@ -15,9 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
-#endif
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../system/gpu_particles_arena.h"

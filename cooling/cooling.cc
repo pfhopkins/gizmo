@@ -8,9 +8,7 @@
 #include <string.h>
 #include <math.h>
 #include <string>
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
-#endif
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation.
  * Must precede allvars.h so #define All suppresses the extern declaration. */

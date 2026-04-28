@@ -10,9 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
-#endif
 
 /* GPU All mirror: must precede allvars.h so nvc++ sees `All` (=All_dev) when it
  * eagerly parses templates in declarations/allvars.h that reference it. Matches

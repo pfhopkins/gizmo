@@ -10,9 +10,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "../declarations/gizmo_rng.h"
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
-#endif
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
