@@ -15,11 +15,9 @@
 #include "../mesh/kernel.h"
 #include "../system/gpu_particles_arena.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
-#endif
 
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
@@ -287,7 +285,6 @@ void merge_and_split_particles(void)
       Ptmp[i].target_index = -1;
     }
 
-#ifdef OPENMP_GPU_OFFLOAD
     /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
      * merge_particles_ij/split_particle_i operate on local P[] indices only.
      * Bitmask is OR of all merge/split-eligible types (gas + GALSF stars);
@@ -409,107 +406,6 @@ void merge_and_split_particles(void)
             gpu_particles_arena_invalidate();
         }
     }
-#else
-    Ngblist.resize(NumPart);
-    /* Note: the main search loop (below) uses ngb_treefind_variable_targeted which
-     * writes to the global Ngblist buffer — NOT thread-safe. It remains serial. */
-    for (i = 0; i < NumPart; i++)
-    {
-        int Pi_BITFLAG = (1 << (int)P[i].Type); // bitflag for particles of type matching "i", used for restricting neighbor search
-        if (P[i].Mass <= 0) continue;
-#if defined(GALSF)
-        if(((P[i].Type==0)||(P[i].Type==4))&&(TimeBinActive[P[i].TimeBin])) /* if SF active, allow star particles to merge if they get too small */
-#else
-        if((P[i].Type==0)&&(TimeBinActive[P[i].TimeBin])) /* default mode, only gas particles merged */
-#endif
-        {
-            /* we have a gas [or eligible star] particle, ask if it needs to be merged */
-            if(does_particle_need_to_be_merged(i))
-            {
-                /* if merging: do a neighbor loop ON THE SAME DOMAIN to determine the target */
-                startnode=All.MaxPart;
-                numngb_inbox = ngb_treefind_variable_targeted(P[i].Pos,P[i].KernelRadius,-1,&startnode,0,&dummy,&dummy,Pi_BITFLAG); // search for particles of matching type
-                if(numngb_inbox>0)
-                {
-                    target_for_merger = -1;
-                    threshold_val = MAX_REAL_NUMBER;
-                    for(n=0; n<numngb_inbox; n++) /* loop over neighbors */
-                    {
-                        j = Ngblist[n]; double m_eff = P[j].Mass; int do_allow_merger = 0; // boolean flag to check
-                        if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {do_allow_merger = 1;}
-#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
-                        if(P[i].Type==4 && P[j].Type==4) {m_eff=evaluate_starstar_merger_for_starcluster_particle_pair(i,j); if(m_eff<=0) {do_allow_merger=0;} else {do_allow_merger=1;}}
-#endif
-#ifdef SINK_WIND_SPAWN
-                        if(P[i].ID==All.SpawnedWindCellID && P[i].Type==0)
-                        {
-                            if(P[i].Mass>=MASS_THRESHOLD_FOR_WINDPROMO(i))
-                            {
-                                if((P[j].ID != All.SpawnedWindCellID) || (P[j].Mass >= MASS_THRESHOLD_FOR_WINDPROMO(j))) {do_allow_merger *= 1;} else {do_allow_merger = 0;}
-                            } else if(do_allow_merger) {
-                                Vec3<MyDouble> dvel_tmp = P[i].Vel - P[j].Vel; double v2_tmp = dvel_tmp.norm_sq(); double vr_tmp = dot(dvel_tmp, P[i].Pos - P[j].Pos);
-                                if(vr_tmp > 0) {do_allow_merger = 0;}
-                                if(v2_tmp > 0) {v2_tmp=sqrt(v2_tmp*All.cf_a2inv);} else {v2_tmp=0;}
-                                if(v2_tmp >  DMIN(CellP[i].effective_soundspeed(),CellP[j].effective_soundspeed())) {do_allow_merger = 0;}
-#if !defined(SINK_RIAF_SUBEDDINGTON_MODEL) && !defined(SINGLE_STAR_SINK_DYNAMICS) /* if spawning a lot of these, don't want to restrict this so much */
-                                if(P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;} // wind particles can't intermerge
-#if !defined(SINGLE_STAR_FB_JETS) && !defined(SINGLE_STAR_FB_WINDS)
-                                if((v2_tmp > 0.25*All.Sink_outflow_velocity) && (v2_tmp > 0.9*CellP[j].effective_soundspeed())) {do_allow_merger=0;}
-#endif
-#endif
-                            }
-                        }
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-                        /* recall 'i' was already flagged to merge; for this module can get in a timestep trap when BH surrounded only by spawns, keep waking each other up and driving down; put a timestep 'escape' clause explicitly in here -- can tune timestep for different problems of course */
-                        if(P[i].Type==0 && P[j].Type==0) {
-                            if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {
-                                double dti = get_particle_timestep_in_physical(i), dtj=get_particle_timestep_in_physical(j);
-                                double dt0 = 1.e-7;
-                                if(dti<dt0 || dtj<dt0) {do_allow_merger = 1;}
-                            }}
-#endif
-                        if(P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;} /* boost this enough to ensure the spawned element will never chosen if 'real' candidate exists */
-#endif
-                        /* make sure we're not taking the same particle (and that its available to be merged into)! and that its the least-massive available candidate for merging onto */
-                        if((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
-                        if(do_allow_merger) {threshold_val=m_eff; target_for_merger=j;} /* tell the code this can be merged! */
-                    }
-                    if (target_for_merger >= 0) { /* mark as merging pairs */
-                        Ptmp[i].flag = 1; Ptmp[target_for_merger].flag = 3; Ptmp[i].target_index = target_for_merger;
-                    }
-                }
-
-            }
-            /* now ask if the particle needs to be split */
-            else if(does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
-                /* if splitting: do a neighbor loop ON THE SAME DOMAIN to determine the nearest particle (so dont overshoot it) */
-                startnode=All.MaxPart;
-                numngb_inbox = ngb_treefind_variable_targeted(P[i].Pos,P[i].KernelRadius,-1,&startnode,0,&dummy,&dummy,Pi_BITFLAG); // search for particles of matching type
-                if(numngb_inbox>0)
-                {
-                    target_for_merger = -1;
-                    threshold_val = MAX_REAL_NUMBER;
-                    /* loop over neighbors */
-                    for(n=0; n<numngb_inbox; n++)
-                    {
-                        j = Ngblist[n];
-                        /* make sure we're not taking the same particle */
-                        if((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0) && (Ptmp[j].flag == 0)) {
-                            Vec3<double> dp = P[i].Pos - P[j].Pos;
-                            nearest_xyz(dp);
-                            double r2 = dp.norm_sq();
-                            if(r2<threshold_val) {threshold_val=r2; target_for_merger=j;} // position-based //
-                        }
-                    }
-                    if (target_for_merger >= 0) {
-                        Ptmp[i].flag = 2; // mark for splitting
-                        Ptmp[i].target_index = target_for_merger;
-                    }
-                }
-            }
-        }
-    }
-#endif /* OPENMP_GPU_OFFLOAD */
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */
@@ -549,9 +445,7 @@ void merge_and_split_particles(void)
     All.TotN_gas += (long long)MPI_n_particles_gas_split;
     Gas_split = n_particles_gas_split; // specific to the local processor //
     NumPart += (n_particles_split - n_particles_gas_split); // specific to the local processor; note the gas split number will be added below, this is just non-gas splits //
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* NumPart and P[] indices changed; arena stale */
-#endif
 }
 
 
