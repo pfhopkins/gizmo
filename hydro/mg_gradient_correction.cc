@@ -393,6 +393,13 @@ static void *MG_evaluate_secondary(void *p)
 
 static void mg_build_matrix(void)
 {
+#if defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY) && !defined(MG_USE_MODERN_BUILD)
+    /* Legacy mg_build_matrix() walks the legacy CPU tree (Nextnode[]/Nodes[] CPU
+     * semantics) which no longer hold under the modern Kokkos build. The modern
+     * symmetric-CSR builder lives in mg_build_matrix_modern(); enable it via
+     * MG_USE_MODERN_BUILD. Sunset agenda in handoff_legacy_tree_audit_findings.md. */
+    endrun(990401);
+#endif
     int i, j, k, ndone, ndone_flag, recvTask, place;
     long long NTaskTimesNumPart = maxThreads * NumPart;
     double tstart, tend;
