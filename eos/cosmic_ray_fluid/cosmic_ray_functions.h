@@ -54,17 +54,9 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_C
     double Rv[2]={1.8, 0.6}; R=Rv[k_CRegy]; // approximate peak energies of each from Cummings et al. 2016 Fig 15
 #endif
 #if (N_CR_PARTICLE_BINS > 2)
-    if(target >= 0 && cell) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, cell);} else {R=All.CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
+    if(target >= 0) {R=CR_return_mean_rigidity_in_bin_in_GV(target,k_CRegy, cell);} else {R=All.CR_global_rigidity_at_bin_center[k_CRegy];} // this is pre-defined globally for this bin list
 #endif
     return R;
-}
-
-KOKKOS_INLINE_FUNCTION double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy) {
-#ifdef __CUDA_ARCH__
-    return return_CRbin_CR_rigidity_in_GV(target, k_CRegy, nullptr);
-#else
-    return return_CRbin_CR_rigidity_in_GV(target, k_CRegy, CellP);
-#endif
 }
 
 KOKKOS_INLINE_FUNCTION double return_CRbin_CRmass_in_mp(int target, int k_CRegy) {
@@ -88,26 +80,10 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_beta_factor(int target, int k_CRegy, 
     return beta;
 }
 
-KOKKOS_INLINE_FUNCTION double return_CRbin_beta_factor(int target, int k_CRegy) {
-#ifdef __CUDA_ARCH__
-    return return_CRbin_beta_factor(target, k_CRegy, nullptr);
-#else
-    return return_CRbin_beta_factor(target, k_CRegy, CellP);
-#endif
-}
-
 KOKKOS_INLINE_FUNCTION double return_CRbin_gamma_factor(int target, int k_CRegy, struct gas_cell_data *cell) {
     double m_cr_mp = return_CRbin_CRmass_in_mp(target, k_CRegy);
     double q = return_CRbin_CR_rigidity_in_GV(target, k_CRegy, cell) * 1.06579 * fabs(return_CRbin_CR_charge_in_e(target, k_CRegy)) / m_cr_mp;
     return sqrt(1.+q*q);
-}
-
-KOKKOS_INLINE_FUNCTION double return_CRbin_gamma_factor(int target, int k_CRegy) {
-#ifdef __CUDA_ARCH__
-    return return_CRbin_gamma_factor(target, k_CRegy, nullptr);
-#else
-    return return_CRbin_gamma_factor(target, k_CRegy, CellP);
-#endif
 }
 
 KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy, struct gas_cell_data *cell) {
@@ -119,17 +95,9 @@ KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int
     return R_GV * Z * KE_fac;
 }
 
-KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy) {
-#ifdef __CUDA_ARCH__
-    return return_CRbin_kinetic_energy_in_GeV(target, k_CRegy, nullptr);
-#else
-    return return_CRbin_kinetic_energy_in_GeV(target, k_CRegy, CellP);
-#endif
-}
-
 KOKKOS_INLINE_FUNCTION double gamma_eos_of_crs_in_bin(int k_CRegy)
 {
-    return (4. + 1./return_CRbin_gamma_factor(-1,k_CRegy)) / 3.;
+    return (4. + 1./return_CRbin_gamma_factor(-1,k_CRegy,nullptr)) / 3.;
 }
 
 KOKKOS_INLINE_FUNCTION double return_CRbin_M1speed(int k_CRegy)
@@ -251,7 +219,7 @@ KOKKOS_INLINE_FUNCTION double CR_energy_spectrum_injection_fraction(
 #if !defined(CRFLUID_ALT_RSOL_FORM)
     inj_slope_lowE_e=4.25;
 #endif
-    double R=return_CRbin_CR_rigidity_in_GV(-1,k_CRegy); int species=return_CRbin_CR_species_ID(k_CRegy);
+    double R=return_CRbin_CR_rigidity_in_GV(-1,k_CRegy,cell); int species=return_CRbin_CR_species_ID(k_CRegy);
     if(species > -200 && R < R_break_e) {inj_slope = inj_slope_lowE_e;}
     double EGeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k_CRegy);
     f_bin = EGeV * pow(R/R_break_e , 3.-inj_slope) * log(All.CR_global_max_rigidity_in_bin[k_CRegy] / All.CR_global_min_rigidity_in_bin[k_CRegy]);
@@ -922,7 +890,7 @@ KOKKOS_INLINE_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct part
     double ecr_units=(cell[i].Density*All.cf_a3inv/pp[i].Mass)*UNIT_PRESSURE_IN_CGS; int k;
     for(k=0;k<N_CR_PARTICLE_BINS;k++)
     {
-        double T_GeV=return_CRbin_kinetic_energy_in_GeV(-1,k), beta=return_CRbin_beta_factor(-1,k), Z=return_CRbin_CR_charge_in_e(-1,k), gamma=return_CRbin_gamma_factor(-1,k);
+        double T_GeV=return_CRbin_kinetic_energy_in_GeV(-1,k,cell), beta=return_CRbin_beta_factor(-1,k,cell), Z=return_CRbin_CR_charge_in_e(-1,k), gamma=return_CRbin_gamma_factor(-1,k,cell);
         zeta_cr += 3.43e-18 * (Z*Z/T_GeV) * ((1.-0.069*beta*beta+0.14*log(beta*gamma))/beta) * (cell[i].CosmicRayEnergyPred[k]*ecr_units); // cross sections from standard Bethe-Blocke formulation, valid at all CR energies we consider explicitly
     }
 #else

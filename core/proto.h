@@ -284,12 +284,8 @@ double diffusion_coefficient_extrinsic_turbulence(int mode, int target, int k_CR
 double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy, double M_A, double L_scale, double b_muG, double vA_noion, double rho_cgs, double temperature, double cs_thermal, double nh0, double nHe0, double f_ion);
 double return_CRbin_CR_charge_in_e(int target, int k_CRegy);
 int return_CRbin_CR_species_ID(int k_CRegy);
-double return_CRbin_kinetic_energy_in_GeV(int target, int k_CRegy);
-double return_CRbin_gamma_factor(int target, int k_CRegy);
-double return_CRbin_beta_factor(int target, int k_CRegy);
 void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell);
 double return_CRbin_CRmass_in_mp(int target, int k_CRegy);
-double return_CRbin_CR_rigidity_in_GV(int target, int k_CRegy);
 double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_Gas_ion_Alfven_speed_i(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double return_CRbin_nuplusminus_asymmetry(int i, int k_CRegy, struct gas_cell_data *cell);

@@ -56,7 +56,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     }
 
     int target_bin_centering_for_CR_quantities = i; // if this = i, evaluate quantities like R_GV at the CR-energy weighted mean of the bin, if =-1, evaluate them at the bin center instead: important for some subtle effects especially if using numerical derivatives for correction terms
-    double E_CRs_Gev=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy), Z_charge_CR=fabs(return_CRbin_CR_charge_in_e(i,k_CRegy)), M_cr_mp=return_CRbin_CRmass_in_mp(i,k_CRegy); // charge and energy and resonant Alfven wavenumber (in gyro units) of the CR population we're evolving
+    double E_CRs_Gev=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy,cell), Z_charge_CR=fabs(return_CRbin_CR_charge_in_e(i,k_CRegy)), M_cr_mp=return_CRbin_CRmass_in_mp(i,k_CRegy); // charge and energy and resonant Alfven wavenumber (in gyro units) of the CR population we're evolving
         
     // ok, the updates from [0] advection w gas, [1] fluxes, [2] adiabatic, [-] catastrophic (in cooling.c) are all set, just need exchange terms b/t CR and Alfven //
     double EPSILON_SMALL = 1.e-77; // want a very small number here

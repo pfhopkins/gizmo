@@ -110,10 +110,10 @@ void CR_spectrum_define_bins(void)
     /* now pre-calculate the fragmentation factors and radioactive factors, all static up to their nH dependence */
     for(k=0;k<N_CR_PARTICLE_BINS;k++)
     {
-        All.CR_frag_coeff[k]=0; All.CR_rad_decay_coeff[k]=0; double beta_fac=return_CRbin_beta_factor(-1,k), cx_mb_to_coeff=3.0e-17*beta_fac; // cx_mb_to_coeff = (millibarn x c_light) * beta in cgs, to convert units to get \dot[f] = sigma*v*n*f, so prefactor is this times n in cgs
+        All.CR_frag_coeff[k]=0; All.CR_rad_decay_coeff[k]=0; double beta_fac=return_CRbin_beta_factor(-1,k,CellP), cx_mb_to_coeff=3.0e-17*beta_fac; // cx_mb_to_coeff = (millibarn x c_light) * beta in cgs, to convert units to get \dot[f] = sigma*v*n*f, so prefactor is this times n in cgs
         if(All.CR_species_ID_in_bin[k] == -2)
         {
-            double gamma_fac=return_CRbin_gamma_factor(-1,k), gamma_positron=gamma_fac, gamma_minus_1=gamma_positron-1., fac=0; // Dirac expression below considers e- at rest, which is what we're interested in here since it's e+ CRs annihilating (gamma is the gamma of the positron)
+            double gamma_fac=return_CRbin_gamma_factor(-1,k,CellP), gamma_positron=gamma_fac, gamma_minus_1=gamma_positron-1., fac=0; // Dirac expression below considers e- at rest, which is what we're interested in here since it's e+ CRs annihilating (gamma is the gamma of the positron)
             if(gamma_minus_1 > 1.e-2) {fac=((gamma_positron*gamma_positron+4.*gamma_positron+1.)*log(gamma_positron+sqrt(gamma_positron*gamma_positron-1.))/(gamma_positron*gamma_positron-1.) - (gamma_positron+3.)/sqrt(gamma_positron*gamma_positron-1.))/(gamma_positron+1.);} else {fac=1./sqrt(2.*DMAX(gamma_minus_1,1.e-8));} // Dirac expression
             All.CR_frag_coeff[k] = 7.479e-15 * beta_fac * fac; // e+ annihilation with ISM (rest) e- to gamma rays
         }
@@ -163,7 +163,7 @@ void CR_spectrum_define_bins(void)
         
         double r_decay = 0; // default to assume no radioactive decay
         if(All.CR_species_ID_in_bin[k] == 5) {r_decay = 1.455e-14;} // Be10 -> B10
-        if(r_decay > 0) {All.CR_rad_decay_coeff[k] = r_decay / return_CRbin_gamma_factor(-1,k);} // need to account for the fact that relativistic time dilation extends the lifetimes of highly relativistic sources
+        if(r_decay > 0) {All.CR_rad_decay_coeff[k] = r_decay / return_CRbin_gamma_factor(-1,k,CellP);} // need to account for the fact that relativistic time dilation extends the lifetimes of highly relativistic sources
     }
 #endif
 }
@@ -182,7 +182,7 @@ double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_d
     double dimensionless_kappa_relative_to_GV_protons = 1;
 #if (N_CR_PARTICLE_BINS > 1)    /* insert physics here */
     int target_bin_centering_for_CR_quantities = -1; // the correction terms depend on these being evaluated at their bin-centered locations
-    dimensionless_kappa_relative_to_GV_protons = return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy) * pow( All.CR_global_min_rigidity_in_bin[k_CRegy]*All.CR_global_max_rigidity_in_bin[k_CRegy] , 0.5 * 0.6 ); // assume a quasi-empirical scaling here, and for these correction terms its important that the 'bin center' being used for the zero point here is the geometric mean of the bin edges, hence the 0.5 term b/c geometric mean is sqrt[min*max] //
+    dimensionless_kappa_relative_to_GV_protons = return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy,cell) * pow( All.CR_global_min_rigidity_in_bin[k_CRegy]*All.CR_global_max_rigidity_in_bin[k_CRegy] , 0.5 * 0.6 ); // assume a quasi-empirical scaling here, and for these correction terms its important that the 'bin center' being used for the zero point here is the geometric mean of the bin edges, hence the 0.5 term b/c geometric mean is sqrt[min*max] //
 #endif
     return All.CosmicRayDiffusionCoeff * dimensionless_kappa_relative_to_GV_protons;
 }
@@ -208,7 +208,7 @@ double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy,
     double vol_inv = cell[target].Density*All.cf_a3inv / pp[target].Mass, fturb_multiplier=1, f_QLT=1, R_CR_GV, Z_charge_CR, M_cr_mp; Vec3<double> b0={}, p0={};
     int target_bin_centering_for_CR_quantities = target; // if this = target, evaluate quantities like R_GV at the CR-energy weighted mean of the bin, if =-1, evaluate them at the bin center instead: important for some subtle effects especially if using numerical derivatives for correction terms
     target_bin_centering_for_CR_quantities = -1; // the correction terms depend on these being evaluated at their bin-centered locations
-    R_CR_GV=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy); Z_charge_CR=return_CRbin_CR_charge_in_e(target,k_CRegy); M_cr_mp=return_CRbin_CRmass_in_mp(target,k_CRegy);
+    R_CR_GV=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy,cell); Z_charge_CR=return_CRbin_CR_charge_in_e(target,k_CRegy); M_cr_mp=return_CRbin_CRmass_in_mp(target,k_CRegy);
     int k; double n_cgs=rho_cgs/PROTONMASS_CGS, EPSILON_SMALL=1.e-50, e_CR=0, e_B=0, bhat_dot_CR_Pgrad=0, B2=0;
 #ifdef MAGNETIC
     b0=cell[target].BPred*(vol_inv*All.cf_a2inv);
@@ -230,7 +230,7 @@ double diffusion_coefficient_self_confinement(int mode, int target, int k_CRegy,
     e_CR=cell[target].CosmicRayEnergyPred[k_CRegy]*vol_inv; p0=cell[target].Gradients.CosmicRayPressure[k_CRegy]*(All.cf_a3inv/All.cf_atime);
 #endif
     bhat_dot_CR_Pgrad = dot(b0, p0); // dot product of bhat and CR pressure gradient, summed over relevant bins
-    double beta=return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy), Omega_gyro=beta*(0.00898734*b_muG/R_CR_GV) * UNIT_TIME_IN_CGS, r_L=beta*C_LIGHT_CODE/Omega_gyro, kappa_0=r_L*beta*C_LIGHT_CODE; /* all in physical -code- units */
+    double beta=return_CRbin_beta_factor(target_bin_centering_for_CR_quantities,k_CRegy,cell), Omega_gyro=beta*(0.00898734*b_muG/R_CR_GV) * UNIT_TIME_IN_CGS, r_L=beta*C_LIGHT_CODE/Omega_gyro, kappa_0=r_L*beta*C_LIGHT_CODE; /* all in physical -code- units */
     double x_LL = DMAX( r_L / L_scale, EPSILON_SMALL ), vA_code=Get_Gas_ion_Alfven_speed_i(target, pp, cell), k_turb=1./L_scale, k_L=1./r_L;
 
     if(mode==1) {f_QLT = 100;} // multiplier to account for arbitrary deviation from QLT, applies to all damping mechanisms [100 = favored value in our study; or could use fcas = 100]
@@ -292,7 +292,7 @@ double diffusion_coefficient_extrinsic_turbulence(int mode, int target, int k_CR
     {
         int target_bin_centering_for_CR_quantities = target; // if this = target, evaluate quantities like R_GV at the CR-energy weighted mean of the bin, if =-1, evaluate them at the bin center instead: important for some subtle effects especially if using numerical derivatives for correction terms
         target_bin_centering_for_CR_quantities = -1; // the correction terms depend on these being evaluated at their bin-centered locations
-        double R_CR_GV=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy);
+        double R_CR_GV=return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy,cell);
         double n1=rho_cgs/PROTONMASS_CGS, T4=temperature/1.e4, fcasET_colless = 0.04*cs_thermal/vA_noion; /* collisionless [Landau] damping of fast modes */
         double fcasET_viscBrg = 0.03*pow(EPSILON_SMALL + M_A,4./3.)*T4/pow(EPSILON_SMALL + b_muG*h0_kpc*n1*R_CR_GV*T4,1./6.); /* Spitzer/Braginski viscous damping of fast modes */
         double fcasET_viscMol = 0.41*pow(EPSILON_SMALL + M_A,4./3.)*nh0/pow(EPSILON_SMALL + b_muG*h0_kpc*n1*R_CR_GV/(EPSILON_SMALL + T4),1./6.); /* atomic/molecular collisional damping of fast modes */
@@ -406,7 +406,7 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #endif
 #if (CRFLUID_DIFFUSION_MODEL == 8) /* set diffusivity to a universal power-law scaling (constant per-bin), plus constant-streaming-speed correction term as implied by some CGM observations  */
         DiffusionCoeff = diffusion_coefficient_constant(i,k_CRegy, cell); //  this is the input value of the diffusivity, for constant-kappa models
-        double vst_asymptotic_kms=100., vst00=vst_asymptotic_kms/100., beta=return_CRbin_beta_factor(i,k_CRegy), RGV=return_CRbin_CR_rigidity_in_GV(i,k_CRegy), l00=4./UNIT_LENGTH_IN_KPC;
+        double vst_asymptotic_kms=100., vst00=vst_asymptotic_kms/100., beta=return_CRbin_beta_factor(i,k_CRegy,cell), RGV=return_CRbin_CR_rigidity_in_GV(i,k_CRegy,cell), l00=4./UNIT_LENGTH_IN_KPC;
         double lstar = CRPressureGradScaleLength, l0 = l00*(0.1 + beta*sqrt(RGV))/vst00, diff_corrfac = 1. + lstar/l0;
         DiffusionCoeff *= diff_corrfac;
 #endif
@@ -442,7 +442,7 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #if (CRFLUID_DIFFUSION_MODEL == 6) || (CRFLUID_DIFFUSION_MODEL == 7) /* self-confinement-based diffusivity */
         int target_bin_centering_for_CR_quantities = i; // if this = i, evaluate quantities like R_GV at the CR-energy weighted mean of the bin, if =-1, evaluate them at the bin center instead: important for some subtle effects especially if using numerical derivatives for correction terms
         target_bin_centering_for_CR_quantities = -1; // the correction terms depend on these being evaluated at their bin-centered locations
-        double Omega_gyro_ifveqc=(0.00898734*b_muG/return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy)) * UNIT_TIME_IN_CGS, r_L=C_LIGHT_CODE/Omega_gyro_ifveqc, kappa_0=r_L*C_LIGHT_CODE; // some handy numbers for limiting extreme-kappa below. all in -physical- code units //
+        double Omega_gyro_ifveqc=(0.00898734*b_muG/return_CRbin_CR_rigidity_in_GV(target_bin_centering_for_CR_quantities,k_CRegy,cell)) * UNIT_TIME_IN_CGS, r_L=C_LIGHT_CODE/Omega_gyro_ifveqc, kappa_0=r_L*C_LIGHT_CODE; // some handy numbers for limiting extreme-kappa below. all in -physical- code units //
         CR_kappa_streaming = diffusion_coefficient_self_confinement(CRFLUID_SET_SC_MODEL,i,k_CRegy,M_A,L_scale,b_muG,vA_noion,rho_cgs,temperature,cs_thermal,nh0,nHe0,f_ion, pp, cell) / unit_kappa_code;
         if(!isfinite(CR_kappa_streaming)) {CR_kappa_streaming = 1.e30/unit_kappa_code;} /* apply some limiters since its very easy for the routine above to give wildly-large-or-small diffusivity, which wont make a difference compared to just 'small' or 'large', but will mess things up numerically */
         CR_kappa_streaming = DMIN( DMAX( DMIN(DMAX(CR_kappa_streaming,kappa_0) , 1.0e10*GAMMA_COSMICRAY(k_CRegy) * CRPressureGradScaleLength*CRFLUID_REDUCED_C_CODE(k_CRegy)) , 1.e25/unit_kappa_code ) , 1.e34/unit_kappa_code );
@@ -601,7 +601,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         int kCR_p=k_CRegy, kCR_m=k_CRegy-1; // want two neighboring bins with same species
         if(k_CRegy<N_CR_PARTICLE_BINS-1) {if(All.CR_species_ID_in_bin[k_CRegy+1]==All.CR_species_ID_in_bin[k_CRegy]) {kCR_m++; kCR_p++;}} // check if can use this and next, or use this and below
         double xi_pm = sqrt((All.CR_global_min_rigidity_in_bin[kCR_p]*All.CR_global_max_rigidity_in_bin[kCR_p])/(All.CR_global_min_rigidity_in_bin[kCR_m]*All.CR_global_max_rigidity_in_bin[kCR_m])); // bin ratio to next bin for numerical derivative (being careful to follow our convention of defining these at the geometric mean)
-        double beta_k =return_CRbin_beta_factor(-1,k_CRegy), beta_p=return_CRbin_beta_factor(-1,kCR_p), beta_m=return_CRbin_beta_factor(-1,kCR_m); // get beta factors needed to go between scattering rates and diffusivities
+        double beta_k =return_CRbin_beta_factor(-1,k_CRegy,cell), beta_p=return_CRbin_beta_factor(-1,kCR_p,cell), beta_m=return_CRbin_beta_factor(-1,kCR_m,cell); // get beta factors needed to go between scattering rates and diffusivities
         alpha_nu = log((beta_p*beta_p/cell[i].CosmicRayDiffusionCoeff[kCR_p]) / (beta_m*beta_m/cell[i].CosmicRayDiffusionCoeff[kCR_m])) / log(xi_pm); // numerically calculate the slope of the scattering-rate dependence for any functional form
         if(CR_check_if_bin_is_nonrelativistic(k_CRegy)) {alpha_v=1.; alpha_qE=2.;} // correct to non-relativistic values as needed
         if(beta_k<1. && beta_k>0.) {double one_minus_beta2=1.-beta_k*beta_k; alpha_v=one_minus_beta2*one_minus_beta2; alpha_qE=1.+sqrt(one_minus_beta2);} // these are exact in terms of beta, so good approx here using bin-centered beta values
@@ -632,7 +632,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 #endif
         int target_for_CR_beta_factor = i; // if this =1, use energy-weighted mean value in bin for CR beta, otherwise if =-1, use median point of bin
         target_for_CR_beta_factor = -1;
-        double beta_fac = return_CRbin_beta_factor(target_for_CR_beta_factor,k_CRegy); // velocity beta, to account for non-relativistic CRs
+        double beta_fac = return_CRbin_beta_factor(target_for_CR_beta_factor,k_CRegy,cell); // velocity beta, to account for non-relativistic CRs
         double dt_cr_dimless = dt_entr * beta_fac*beta_fac * cr_speed*cr_speed * (1./3.) / (MIN_REAL_NUMBER + fabs(cell[i].CosmicRayDiffusionCoeff[k_CRegy] * rsol_correction_factor));
         dt_cr_dimless = DMIN(dt_cr_dimless , 0.1); // arbitrary limiter here for some additional numerical stability
         if((dt_cr_dimless > 0)&&(dt_cr_dimless < 20.)) {q_cr = exp(-dt_cr_dimless);} // factor for CR interpolation
@@ -791,8 +791,8 @@ void CR_initialize_multibin_quantities(void)
     if(ThisTask==0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) { // print outputs for users
         printf("\n .. bin=%d, charge=%g e, mass=%g mp, rigidity Rmin=%g R0=%g Rmax=%g GV, energy=%g GeV, relativistic?=%d [1=Y/0=N] beta=%g gamma=%g \n",
            k,return_CRbin_CR_charge_in_e(-1,k),return_CRbin_CRmass_in_mp(-1,k),All.CR_global_min_rigidity_in_bin[k],All.CR_global_rigidity_at_bin_center[k],
-           All.CR_global_max_rigidity_in_bin[k],return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k),1-CR_check_if_bin_is_nonrelativistic(k),return_CRbin_beta_factor(-1,k),
-           return_CRbin_gamma_factor(-1,k)); fflush(stdout);
+           All.CR_global_max_rigidity_in_bin[k],return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k),1-CR_check_if_bin_is_nonrelativistic(k),return_CRbin_beta_factor(-1,k,CellP),
+           return_CRbin_gamma_factor(-1,k,CellP)); fflush(stdout);
         printf(" .. LUT for CR slopes in this bin: \n"); printf("  .. j  .. R_egy/num .. gamma \n");
         int j; for(j=0;j<N_CR_SPECTRUM_LUT;j++) {printf("  .. %4d  %5.4g %10.3g \n",j,((double)j)/((double)n_table),All.CR_global_slope_lut[k][j]); fflush(stdout);}
     }}
