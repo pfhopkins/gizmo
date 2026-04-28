@@ -80,7 +80,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         gpu_neighbor_list_t *gnl,
                         gpu_spatial_index_t *cached_idx,
                         double search_radius_factor,
-                        const double *search_radii_host)
+                        const double *search_radii_host,
+                        const double *source_positions_host)
 {
     gnl->num_active = num_active;
 
@@ -116,6 +117,15 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         memcpy(d_radii, search_radii_host, num_active * sizeof(double));
     }
 
+    /* Optional explicit per-active source positions (for sources not backed by
+       P[] entries, e.g. arbitrary grid cells). NULL → read pos from P[active[aa]].
+       Layout in caller's array: source_positions_host[aa*3 + k] for axis k. */
+    double *d_source_pos = NULL;
+    if(source_positions_host) {
+        d_source_pos = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * 3 * sizeof(double));
+        memcpy(d_source_pos, source_positions_host, num_active * 3 * sizeof(double));
+    }
+
     /* Allocate CSR offsets */
     gnl->offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
 
@@ -135,13 +145,17 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
         double sr_fac = search_radius_factor;
         const double *radii = d_radii; /* NULL → fall back to P[i].KernelRadius */
+        const double *src_pos = d_source_pos; /* NULL → fall back to P[active[aa]].Pos */
         Kokkos::parallel_for("ngb_count", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
             double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
             double h_i = (radii ? radii[aa] : P_shared[i].KernelRadius) * sr_fac;
-            int cnt = search_neighbors_sfc_gpu(P_shared, i, h_i,
+            double pos_i[3];
+            if(src_pos) { pos_i[0] = src_pos[aa*3+0]; pos_i[1] = src_pos[aa*3+1]; pos_i[2] = src_pos[aa*3+2]; }
+            else        { pos_i[0] = P_shared[i].Pos[0]; pos_i[1] = P_shared[i].Pos[1]; pos_i[2] = P_shared[i].Pos[2]; }
+            int cnt = search_neighbors_sfc_gpu(P_shared, pos_i, h_i,
                                                tiles, ntiles, pool, smode,
                                                bvh, bvh_root, NULL, pf, bs, bh);
             offsets[aa] = cnt;
@@ -179,13 +193,17 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
         double sr_fac = search_radius_factor;
         const double *radii = d_radii; /* NULL → fall back to P[i].KernelRadius */
+        const double *src_pos = d_source_pos; /* NULL → fall back to P[active[aa]].Pos */
         Kokkos::parallel_for("ngb_fill", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
             double bh[3] = {bh0, bh1, bh2};
             int i = active[aa];
             double h_i = (radii ? radii[aa] : P_shared[i].KernelRadius) * sr_fac;
-            search_neighbors_sfc_gpu(P_shared, i, h_i,
+            double pos_i[3];
+            if(src_pos) { pos_i[0] = src_pos[aa*3+0]; pos_i[1] = src_pos[aa*3+1]; pos_i[2] = src_pos[aa*3+2]; }
+            else        { pos_i[0] = P_shared[i].Pos[0]; pos_i[1] = P_shared[i].Pos[1]; pos_i[2] = P_shared[i].Pos[2]; }
+            search_neighbors_sfc_gpu(P_shared, pos_i, h_i,
                                      tiles, ntiles, pool, smode,
                                      bvh, bvh_root, &neighbors[offsets[aa]],
                                      pf, bs, bh);
@@ -193,8 +211,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         Kokkos::fence();
     }
 
-    /* Free the temporary radii mirror (if we allocated one) */
+    /* Free the temporary mirrors (if we allocated them) */
     if(d_radii) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
+    if(d_source_pos) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);
 }
 
 

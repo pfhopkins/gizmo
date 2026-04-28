@@ -27,8 +27,8 @@
  * periodic_flags[k]: 1 if axis k is periodic, 0 otherwise.
  * box_sizes[k]: box size along axis k (only used if periodic). */
 KOKKOS_INLINE_FUNCTION
-int bbox_overlaps_sphere_gpu(double box_lo[3], double box_hi[3],
-                             double pos[3], double search_r, double search_r2,
+int bbox_overlaps_sphere_gpu(const double box_lo[3], const double box_hi[3],
+                             const double pos[3], double search_r, double search_r2,
                              const int periodic_flags[3], const double box_sizes[3])
 {
     double dist2 = 0;
@@ -53,11 +53,16 @@ int bbox_overlaps_sphere_gpu(double box_lo[3], double box_hi[3],
 }
 
 
-/* Process a single tile's particles against particle i. Returns neighbor count.
- * Uses the canonical neighbor periodic macros so shearing/long/reflected/outflow
- * boundary behavior matches the CPU SFC neighbor search. */
+/* Process a single tile's particles against an arbitrary source position pos_i.
+ * Returns neighbor count. Uses the canonical neighbor periodic macros so
+ * shearing/long/reflected/outflow boundary behavior matches the CPU SFC
+ * neighbor search. The source identity is purely positional — the function
+ * does NOT filter j == anything; callers wanting "skip self" must do so
+ * after consuming the CSR list. (Existing callers don't filter; this matches
+ * the legacy ngb_treefind_* semantic that returns self when source is a
+ * particle and the same particle is in the search pool.) */
 KOKKOS_INLINE_FUNCTION
-int check_tile_particles_gpu(struct particle_data *P, int i, double h_i, double h2_i,
+int check_tile_particles_gpu(struct particle_data *P, const double pos_i[3], double h_i, double h2_i,
                              sfc_tile_t *tile, int *pool, int search_mode,
                              int *store_neighbors, int count,
                              const double box_sizes[3], const double box_halves[3],
@@ -70,9 +75,9 @@ int check_tile_particles_gpu(struct particle_data *P, int i, double h_i, double 
     for(int s = 0; s < tile->count; s++)
     {
         int j = pool[tile->first + s];
-        double dx_raw = P[i].Pos[0] - P[j].Pos[0];
-        double dy_raw = P[i].Pos[1] - P[j].Pos[1];
-        double dz_raw = P[i].Pos[2] - P[j].Pos[2];
+        double dx_raw = pos_i[0] - P[j].Pos[0];
+        double dy_raw = pos_i[1] - P[j].Pos[1];
+        double dz_raw = pos_i[2] - P[j].Pos[2];
         double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
         double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
         double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
@@ -96,11 +101,14 @@ int check_tile_particles_gpu(struct particle_data *P, int i, double h_i, double 
 }
 
 
-/* Search for neighbors of particle i using BVH traversal over tiles.
- * Iterative stack-based traversal (GPU-friendly, no recursion).
- * Returns count; if store_neighbors != NULL, writes indices there. */
+/* Search for neighbors of an arbitrary source position pos_i using BVH
+ * traversal over tiles. Iterative stack-based traversal (GPU-friendly,
+ * no recursion). Returns count; if store_neighbors != NULL, writes indices
+ * there. Decoupled from any specific P[] index so the same routine serves
+ * particle-based sources (gpu_ngb_list_build's default mode) and
+ * arbitrary-position sources (e.g. TURB_DRIVING_SPECTRUMGRID grid cells). */
 KOKKOS_INLINE_FUNCTION
-int search_neighbors_sfc_gpu(struct particle_data *P, int i, double h_i,
+int search_neighbors_sfc_gpu(struct particle_data *P, const double pos_i[3], double h_i,
                              sfc_tile_t *tiles, int ntiles,
                              int *pool, int search_mode,
                              tile_bvh_node_t *bvh, int bvh_root,
@@ -110,7 +118,6 @@ int search_neighbors_sfc_gpu(struct particle_data *P, int i, double h_i,
                              const double box_halves[3])
 {
     double h2_i = h_i * h_i;
-    double pos_i[3] = {P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]};
     int count = 0;
 
     /* Stack-based iterative BVH traversal */
@@ -136,7 +143,7 @@ int search_neighbors_sfc_gpu(struct particle_data *P, int i, double h_i,
         {
             /* Leaf node: process the tile's particles */
             int tile_idx = -(node->left + 1);
-            count = check_tile_particles_gpu(P, i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
+            count = check_tile_particles_gpu(P, pos_i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
                                              store_neighbors, count,
                                              box_sizes, box_halves, periodic_flags);
         }

@@ -68,23 +68,32 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx);
    If cached_idx is non-NULL and valid, reuses its tiles+BVH.
    Otherwise builds a fresh spatial index internally.
    P_shared must be accessible from GPU (SharedSpace or managed memory).
-   active_indices_host: host-side array of particle indices to search FROM.
+   active_indices_host: host-side array of source identifiers, size num_active.
+     Default mode (source_positions_host == NULL): these are P[] indices and
+     source positions are read as P[active[aa]].Pos.
+     Override mode (source_positions_host != NULL): these are caller-defined
+     opaque IDs; pass any sentinel (e.g. 0..num_active-1) since the kernel
+     reads positions from source_positions_host instead.
    search_mode: NGB_SEARCH_ONEWAY or NGB_SEARCH_SYMMETRIC.
-   type_bitmask: which particle types to include in the search pool.
-   search_radius_factor: multiplier on KernelRadius for the search sphere
-     (default 1.0; set >1 for loops like TURB_DIFF_DYNAMIC that search wider).
-   search_radii_host: optional per-active-particle explicit search radii
-     (size num_active). NULL → use P[active[aa]].KernelRadius * search_radius_factor
-     (current behavior). Non-NULL → use search_radii_host[aa] * search_radius_factor
-     (for loops with a different per-particle kernel, e.g. KernelRadiusDM or
-     AGS_Hsml). */
+   type_bitmask: which particle types to include in the search pool (j-side).
+   search_radius_factor: multiplier on per-source radius (default 1.0).
+   search_radii_host: optional per-active-source explicit search radii
+     (size num_active). NULL → use P[active[aa]].KernelRadius * search_radius_factor.
+     REQUIRED when source_positions_host is non-NULL (override sources have no
+     P[] entry to fall back to).
+   source_positions_host: optional per-active-source position array (size
+     num_active * 3, doubles, layout pos[aa*3+k] for axis k). NULL → use
+     P[active[aa]].Pos (current behavior). Non-NULL → arbitrary source
+     positions decoupled from any P[] index (e.g. TURB_DRIVING_SPECTRUMGRID
+     grid cell centers). */
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
                         gpu_neighbor_list_t *gnl,
                         gpu_spatial_index_t *cached_idx,
                         double search_radius_factor = 1.0,
-                        const double *search_radii_host = NULL);
+                        const double *search_radii_host = NULL,
+                        const double *source_positions_host = NULL);
 
 /* Free CSR arrays + active indices. Does NOT free tiles/BVH/pool if they
    belong to the cached spatial index (use gpu_spatial_index_free for those). */

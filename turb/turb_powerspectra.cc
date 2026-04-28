@@ -18,6 +18,14 @@
 #define  TURB_DRIVING_SPECTRUMGRID2 (2*(TURB_DRIVING_SPECTRUMGRID/2 + 1))
 #include "../gravity/myfftw3.h"
 
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#include <vector>
+#include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_symlist_lifecycle.h"
+#include "../system/gpu_particles_arena.h"
+#endif
+
 #if (TURB_DRIVING_SPECTRUMGRID > 1024)
 typedef long long large_array_offset;
 #else
@@ -653,6 +661,156 @@ double powerspec_turb_obtain_fields(void)
       powerspec_turb_nearest_rkern[n] = All.BoxSize / pow(All.TotN_gas, 1.0/3);
     }
 
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* Modern path: per-rank NL with arbitrary-position source override
+     * (gpu_ngb_list_build's source_positions_host). Each rank searches grid
+     * cells in its FFT slab against its local home gas only (ghosts skipped
+     * to avoid stale-field issues — SmoothedVel/Velocity_bar/Vorticity etc.
+     * are not in the canonical ghost-writeback set).
+     *
+     * Limitation vs legacy: the legacy MPI-export path could find the global
+     * nearest gas particle across ALL ranks for any slab cell. The modern
+     * per-rank-local approach assumes the rank's particle domain plus
+     * iterative radius doubling covers its slab cells. For typical
+     * TURB_DRIVING box runs (uniform gas filling), this holds; for highly
+     * non-uniform layouts where FFT slabs are far from a rank's particles
+     * the legacy MAXITER-doubling fallback (now box-spanning) still fires.
+     * If unfound after MAXITER, terminate matches legacy. */
+    {
+        int max_iter = MAXITER;
+        int iter_count = 0;
+        int ghost_imported = 0;
+        if(ghost_get_num_ghosts() <= 0) {
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            ghost_imported = 1;
+        }
+        int num_local = ghost_get_num_local();
+        if(num_local <= 0) num_local = NumPart;
+        int num_all = num_local + ghost_get_num_ghosts();
+        if(num_all <= 0) num_all = NumPart;
+
+        long long npleft;
+        long long ntot;
+        do {
+            /* Build pending-cell active list (cells not yet resolved) */
+            std::vector<int> pending_idx;
+            std::vector<double> pending_pos;
+            std::vector<double> pending_rad;
+            pending_idx.reserve(Ncount);
+            pending_pos.reserve(3 * Ncount);
+            pending_rad.reserve(Ncount);
+            for(large_array_offset nn = 0; nn < Ncount; nn++) {
+                if(powerspec_turb_nearest_distance[nn] > 1.0e29) {
+                    int xx = nn / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+                    int yy = (nn - (large_array_offset)xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+                    int zz = (nn - (large_array_offset)xx * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID
+                                 - (large_array_offset)yy * TURB_DRIVING_SPECTRUMGRID);
+                    int xx_glob = xx + slabstart_x;
+                    pending_idx.push_back((int)nn);
+                    pending_pos.push_back((xx_glob + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_X);
+                    pending_pos.push_back((yy      + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Y);
+                    pending_pos.push_back((zz      + 0.5) / TURB_DRIVING_SPECTRUMGRID * boxSize_Z);
+                    pending_rad.push_back(powerspec_turb_nearest_rkern[nn]);
+                }
+            }
+
+            int num_pending = (int)pending_idx.size();
+            gpu_neighbor_list_t gnl = {};
+            std::vector<int> sentinel_active(num_pending > 0 ? num_pending : 1, 0);
+            if(num_pending > 0) {
+                gpu_particles_arena_acquire(num_all, P, CellP);
+                struct particle_data *P_gpu = gpu_particles_arena_P();
+                gpu_ngb_list_build(P_gpu, num_all,
+                                   sentinel_active.data(), num_pending,
+                                   NGB_SEARCH_ONEWAY, 1 /* gas only */,
+                                   &gnl, NULL, 1.0,
+                                   pending_rad.data(),
+                                   pending_pos.data() /* override */);
+            }
+
+            for(int aa = 0; aa < num_pending; aa++) {
+                large_array_offset n_target = (large_array_offset)pending_idx[aa];
+                double sx = pending_pos[3*aa+0], sy = pending_pos[3*aa+1], sz = pending_pos[3*aa+2];
+                int n_off = gnl.offsets[aa], n_off_end = gnl.offsets[aa+1];
+                int best_index = -1;
+                double best_r2 = MAX_REAL_NUMBER;
+                MyDouble xtmp = 0;
+                for(int kk = n_off; kk < n_off_end; kk++) {
+                    int p_idx = gnl.neighbors[kk];
+                    if(p_idx >= num_local) continue; /* skip ghosts */
+                    if(p_idx >= N_gas) continue;
+                    if(P[p_idx].Type != 0 || P[p_idx].Mass <= 0) continue;
+                    double dx_raw = P[p_idx].Pos[0] - sx;
+                    double dy_raw = P[p_idx].Pos[1] - sy;
+                    double dz_raw = P[p_idx].Pos[2] - sz;
+                    double dx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+                    double dy = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+                    double dz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
+                    double r2 = dx*dx + dy*dy + dz*dz;
+                    if(r2 < best_r2) { best_r2 = r2; best_index = p_idx; }
+                }
+
+                if(best_index >= 0) {
+                    powerspec_turb_nearest_distance[n_target] = sqrt(best_r2);
+                    int ii = n_target / (TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID);
+                    int jj = (n_target - (large_array_offset)ii * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID) / TURB_DRIVING_SPECTRUMGRID;
+                    int kk = (n_target - (large_array_offset)ii * TURB_DRIVING_SPECTRUMGRID * TURB_DRIVING_SPECTRUMGRID
+                                       - (large_array_offset)jj * TURB_DRIVING_SPECTRUMGRID);
+                    int ip = TURB_DRIVING_SPECTRUMGRID2 * (TURB_DRIVING_SPECTRUMGRID * ii + jj) + kk;
+                    int idx = best_index;
+                    velfield[0][ip] = P[idx].Vel[0];
+                    velfield[1][ip] = P[idx].Vel[1];
+                    velfield[2][ip] = P[idx].Vel[2];
+#ifdef TURB_DIFF_DYNAMIC
+                    velbarfield[0][ip] = CellP[idx].Velocity_bar[0];
+                    velbarfield[1][ip] = CellP[idx].Velocity_bar[1];
+                    velbarfield[2][ip] = CellP[idx].Velocity_bar[2];
+                    velhatfield[0][ip] = CellP[idx].Velocity_hat[0];
+                    velhatfield[1][ip] = CellP[idx].Velocity_hat[1];
+                    velhatfield[2][ip] = CellP[idx].Velocity_hat[2];
+#endif
+                    smoothedvelfield[0][ip] = CellP[idx].SmoothedVel[0];
+                    smoothedvelfield[1][ip] = CellP[idx].SmoothedVel[1];
+                    smoothedvelfield[2][ip] = CellP[idx].SmoothedVel[2];
+                    velrhofield[0][ip] = sqrt(CellP[idx].Density) * P[idx].Vel[0];
+                    velrhofield[1][ip] = sqrt(CellP[idx].Density) * P[idx].Vel[1];
+                    velrhofield[2][ip] = sqrt(CellP[idx].Density) * P[idx].Vel[2];
+                    vorticityfield[0][ip] = CellP[idx].Vorticity[0];
+                    vorticityfield[1][ip] = CellP[idx].Vorticity[1];
+                    vorticityfield[2][ip] = CellP[idx].Vorticity[2];
+                    if(CellP[idx].DuDt_diss >= 0) { dis1field[ip] = sqrt(CellP[idx].DuDt_diss); dis2field[ip] = 0; }
+                    else                          { dis1field[ip] = 0; dis2field[ip] = sqrt(-CellP[idx].DuDt_diss); }
+                    randomfield[ip] = RandomValue[idx];
+                    densityfield[ip] = CellP[idx].Density;
+                }
+            }
+
+            if(num_pending > 0) {
+                gpu_ngb_list_free(&gnl, NULL);
+                gpu_particles_arena_invalidate();
+            }
+
+            /* Bookkeeping: mark resolved, double rkern for un-resolved */
+            npleft = 0;
+            for(large_array_offset nnn = 0; nnn < Ncount; nnn++) {
+                if(powerspec_turb_nearest_distance[nnn] > 1.0e29) {
+                    npleft++;
+                    powerspec_turb_nearest_rkern[nnn] *= 2.0;
+                } else {
+                    powerspec_turb_nearest_distance[nnn] = 0; /* skip on subsequent iters */
+                }
+            }
+            sumup_longs(1, &npleft, &ntot);
+            if(ntot > 0) {
+                iter_count++;
+                if(iter_count > 0 && ThisTask == 0) PRINT_STATUS("powespec_vel nearest iteration %d: need to repeat for %lld particles", iter_count, ntot);
+                if(iter_count > max_iter) terminate("failed to converge");
+            }
+        } while(ntot > 0);
+
+        if(ghost_imported) ghost_exchange_cleanup();
+    }
+#else
   /* allocate buffers to arrange communication */
 
   Ngblist.resize(Ncount);
@@ -890,7 +1048,7 @@ double powerspec_turb_obtain_fields(void)
 
   myfree(DataNodeList);
   myfree(DataIndexTable);
-  
+#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
   myfree(powerspec_turb_nearest_rkern);
   myfree(powerspec_turb_nearest_distance);
