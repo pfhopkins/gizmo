@@ -15,6 +15,12 @@
 #include "../mesh/kernel.h"
 #include "../system/gpu_particles_arena.h"
 
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+#include <vector>
+#include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
+#endif
+
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
     If more complicated routines, etc. are to be added to determine when (and how) splitting/merging occurs, they should also be
@@ -268,13 +274,11 @@ void merge_and_split_particles(void)
 
     int target_for_merger,dummy=0,numngb_inbox,startnode,i,j,n; double threshold_val;
     int n_particles_merged,n_particles_split,n_particles_gas_split,MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;
-    Ngblist.resize(NumPart);
+    (void)dummy; (void)numngb_inbox; (void)startnode; (void)n; /* may go unused on modern path */
     Gas_split=0; n_particles_merged=0; n_particles_split=0; n_particles_gas_split=0; MPI_n_particles_merged=0; MPI_n_particles_split=0; MPI_n_particles_gas_split=0;
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
 
     // TO: need initialization
-    /* Note: the main search loop (below) uses ngb_treefind_variable_targeted which
-     * writes to the global Ngblist buffer — NOT thread-safe. It remains serial. */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -283,6 +287,132 @@ void merge_and_split_particles(void)
       Ptmp[i].target_index = -1;
     }
 
+#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY)
+    /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
+     * merge_particles_ij/split_particle_i operate on local P[] indices only.
+     * Bitmask is OR of all merge/split-eligible types (gas + GALSF stars);
+     * type-equality filter inside the per-source loop keeps semantics identical
+     * to legacy ngb_treefind_variable_targeted with bitflag = 1<<P[i].Type. */
+    {
+        std::vector<int> ms_src_idx;
+        std::vector<double> ms_src_radii;
+        ms_src_idx.reserve(64);
+        ms_src_radii.reserve(64);
+
+        int merge_split_types_mask = (1 << 0) /* gas */
+#if defined(GALSF)
+                                   | (1 << 4) /* stars (SF active) */
+#endif
+                                   ;
+
+        for (int ip = 0; ip < NumPart; ip++) {
+            if (P[ip].Mass <= 0) continue;
+#if defined(GALSF)
+            if (!(((P[ip].Type==0)||(P[ip].Type==4)) && TimeBinActive[P[ip].TimeBin])) continue;
+#else
+            if (!((P[ip].Type==0) && TimeBinActive[P[ip].TimeBin])) continue;
+#endif
+            if (!(does_particle_need_to_be_merged(ip) || does_particle_need_to_be_split(ip))) continue;
+            if (P[ip].KernelRadius <= 0) continue;
+            ms_src_idx.push_back(ip);
+            ms_src_radii.push_back(P[ip].KernelRadius);
+        }
+
+        int num_src = (int)ms_src_idx.size();
+        gpu_neighbor_list_t gnl = {};
+        int local_count = ghost_get_num_local();
+        if (local_count <= 0) local_count = NumPart;
+        if (num_src > 0) {
+            int num_all = local_count + ghost_get_num_ghosts();
+            if (num_all <= 0) num_all = NumPart;
+            gpu_particles_arena_acquire(num_all, P, CellP);
+            struct particle_data *P_gpu = gpu_particles_arena_P();
+            gpu_ngb_list_build(P_gpu, num_all,
+                               ms_src_idx.data(), num_src,
+                               NGB_SEARCH_ONEWAY, merge_split_types_mask,
+                               &gnl, NULL, 1.0, ms_src_radii.data());
+        }
+
+        for (int aa = 0; aa < num_src; aa++) {
+            i = ms_src_idx[aa];
+            int nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
+
+            if (does_particle_need_to_be_merged(i)) {
+                target_for_merger = -1;
+                threshold_val = MAX_REAL_NUMBER;
+                for (int nn = nl_start; nn < nl_end; nn++) {
+                    j = gnl.neighbors[nn];
+                    if (j >= local_count) continue; /* skip ghosts (local-only merge) */
+                    if (P[j].Type != P[i].Type) continue;
+                    double m_eff = P[j].Mass; int do_allow_merger = 0;
+                    if ((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {do_allow_merger = 1;}
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+                    if (P[i].Type==4 && P[j].Type==4) {m_eff=evaluate_starstar_merger_for_starcluster_particle_pair(i,j); if(m_eff<=0) {do_allow_merger=0;} else {do_allow_merger=1;}}
+#endif
+#ifdef SINK_WIND_SPAWN
+                    if (P[i].ID==All.SpawnedWindCellID && P[i].Type==0) {
+                        if (P[i].Mass>=MASS_THRESHOLD_FOR_WINDPROMO(i)) {
+                            if ((P[j].ID != All.SpawnedWindCellID) || (P[j].Mass >= MASS_THRESHOLD_FOR_WINDPROMO(j))) {do_allow_merger *= 1;} else {do_allow_merger = 0;}
+                        } else if (do_allow_merger) {
+                            Vec3<MyDouble> dvel_tmp = P[i].Vel - P[j].Vel; double v2_tmp = dvel_tmp.norm_sq(); double vr_tmp = dot(dvel_tmp, P[i].Pos - P[j].Pos);
+                            if (vr_tmp > 0) {do_allow_merger = 0;}
+                            if (v2_tmp > 0) {v2_tmp=sqrt(v2_tmp*All.cf_a2inv);} else {v2_tmp=0;}
+                            if (v2_tmp > DMIN(CellP[i].effective_soundspeed(),CellP[j].effective_soundspeed())) {do_allow_merger = 0;}
+#if !defined(SINK_RIAF_SUBEDDINGTON_MODEL) && !defined(SINGLE_STAR_SINK_DYNAMICS)
+                            if (P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;}
+#if !defined(SINGLE_STAR_FB_JETS) && !defined(SINGLE_STAR_FB_WINDS)
+                            if ((v2_tmp > 0.25*All.Sink_outflow_velocity) && (v2_tmp > 0.9*CellP[j].effective_soundspeed())) {do_allow_merger=0;}
+#endif
+#endif
+                        }
+                    }
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+                    if (P[i].Type==0 && P[j].Type==0) {
+                        if ((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {
+                            double dti = get_particle_timestep_in_physical(i), dtj=get_particle_timestep_in_physical(j);
+                            double dt0 = 1.e-7;
+                            if (dti<dt0 || dtj<dt0) {do_allow_merger = 1;}
+                        }}
+#endif
+                    if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
+#endif
+                    if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+                    if (do_allow_merger) {threshold_val=m_eff; target_for_merger=j;}
+                }
+                if (target_for_merger >= 0) {
+                    Ptmp[i].flag = 1; Ptmp[target_for_merger].flag = 3; Ptmp[i].target_index = target_for_merger;
+                }
+            }
+            else if (does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
+                target_for_merger = -1;
+                threshold_val = MAX_REAL_NUMBER;
+                for (int nn = nl_start; nn < nl_end; nn++) {
+                    j = gnl.neighbors[nn];
+                    if (j >= local_count) continue;
+                    if (P[j].Type != P[i].Type) continue;
+                    if ((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0) && (Ptmp[j].flag == 0)) {
+                        Vec3<double> dp = P[i].Pos - P[j].Pos;
+                        nearest_xyz(dp);
+                        double r2 = dp.norm_sq();
+                        if (r2<threshold_val) {threshold_val=r2; target_for_merger=j;}
+                    }
+                }
+                if (target_for_merger >= 0) {
+                    Ptmp[i].flag = 2;
+                    Ptmp[i].target_index = target_for_merger;
+                }
+            }
+        }
+
+        if (num_src > 0) {
+            gpu_ngb_list_free(&gnl, NULL);
+            gpu_particles_arena_invalidate();
+        }
+    }
+#else
+    Ngblist.resize(NumPart);
+    /* Note: the main search loop (below) uses ngb_treefind_variable_targeted which
+     * writes to the global Ngblist buffer — NOT thread-safe. It remains serial. */
     for (i = 0; i < NumPart; i++)
     {
         int Pi_BITFLAG = (1 << (int)P[i].Type); // bitflag for particles of type matching "i", used for restricting neighbor search
@@ -379,6 +509,7 @@ void merge_and_split_particles(void)
             }
         }
     }
+#endif /* OPENMP_GPU_OFFLOAD && GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY */
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */
