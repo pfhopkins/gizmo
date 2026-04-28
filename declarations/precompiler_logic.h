@@ -179,8 +179,6 @@
 #if !defined(DOMAIN_LIGHTWEIGHT_REPARTITION)
 #define DOMAIN_LIGHTWEIGHT_REPARTITION      /*! enable lightweight domain repartition that reuses the top tree between full decompositions */
 #endif
-#define OPENMP_TREE_UPDATE
-
 #define GALSF_FB_MECHANICAL                 /*! top-level switch for mechanical feedback modules */
 #define GALSF_FB_FIRE_STELLAREVOLUTION (FIRE_PHYSICS_DEFAULTS) /*! turns on default FIRE processes+lookup tables including gas return, SNe, R-process, etc. this carries a number matching the defaults set you choose */
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))

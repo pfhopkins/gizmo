@@ -14,7 +14,6 @@
 extern "C" void gpu_force_update_tree(void);
 #endif
 
-#ifdef OPENMP_TREE_UPDATE
 /* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
 static inline void atomic_max_double(double* addr, double val) {
     uint64_t val_bits; memcpy(&val_bits, &val, sizeof(double));
@@ -26,7 +25,6 @@ static inline void atomic_max_double(double* addr, double val) {
     }
 }
 static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for atomic CAS");
-#endif
 
 
 
@@ -52,7 +50,6 @@ void force_update_tree(void)
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */
 
-#ifdef OPENMP_TREE_UPDATE
     /* Phase 1: drift all ancestor nodes to Ti_Current (serial — force_drift_node has complex read-modify-write) */
     for (int i : ActiveParticleList)
     {
@@ -72,13 +69,6 @@ void force_update_tree(void)
         force_kick_node(i, P[i].dp);
         P[i].dp = {};
     }
-#else
-    for (int i : ActiveParticleList)
-    {
-        force_kick_node(i, P[i].dp);
-        P[i].dp = {};
-    }
-#endif
     force_finish_kick_nodes();
     myfree(DomainList);
     PRINT_STATUS(" ..Tree has been updated dynamically");
@@ -106,11 +96,6 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 
   while(no >= 0)
     {
-#ifndef OPENMP_TREE_UPDATE
-      force_drift_node(no, All.Ti_Current);
-#endif
-
-#ifdef OPENMP_TREE_UPDATE
       for(int k = 0; k < 3; k++) {
           #pragma omp atomic
           Extnodes[no].dp[k] += dp[k];
@@ -142,27 +127,6 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
           }
           break;
       }
-#else
-        Extnodes[no].dp += dp;
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Extnodes[no].rt_source_lum_dp += rt_source_lum_dp;
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        Extnodes[no].dp_dm += dp_dm;
-#endif
-      if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
-      Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
-      Extnodes[no].Ti_lastkicked = All.Ti_Current;
-      if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
-	{
-	  if(Extnodes[no].Flag != GlobFlag)
-	    {
-	      Extnodes[no].Flag = GlobFlag;
-	      DomainList[DomainNumChanged++] = no;
-	    }
-	  break;
-	}
-#endif
 
       no = Nodes[no].u.d.father;
     }
@@ -422,7 +386,6 @@ void force_update_hmax(void)
   DomainNumChanged = 0;
   DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
 
-#ifdef OPENMP_TREE_UPDATE
   /* Phase 1: drift all ancestor nodes (serial — force_drift_node is not thread-safe) */
   for (int i : ActiveParticleList)
   {
@@ -489,51 +452,6 @@ void force_update_hmax(void)
         }
       }
   }
-#else
-  for (int i : ActiveParticleList)
-  {
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(P[i].Mass > 0)
-#else
-    if(P[i].Type == 0 && P[i].Mass > 0)
-#endif
-      {
-        no = Father[i];
-        divVel = P[i].Particle_DivVel;
-
-        while(no >= 0)
-        {
-            force_drift_node(no, All.Ti_Current);
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-            double kernrad_temp = P[i].AGS_KernelRadius;
-            if(P[i].Type == 0) {kernrad_temp = P[i].KernelRadius;}
-            double htmp = DMIN(kernrad_temp, All.MaxKernelRadius);
-#else
-            double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
-#endif
-            if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax)
-            {
-                if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
-                if(divVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = divVel;}
-
-                if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
-                {
-                    if(Extnodes[no].Flag != GlobFlag)
-                    {
-                        Extnodes[no].Flag = GlobFlag;
-                        DomainList[DomainNumChanged++] = no;
-                    }
-                    break;
-                }
-            }
-            else
-                break;
-
-            no = Nodes[no].u.d.father;
-        }
-      }
-  } // for (int i : ActiveParticleList)
-#endif
 
   /* share the hmax-data of the pseudo-particles accross CPUs */
 
