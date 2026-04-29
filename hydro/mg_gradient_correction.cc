@@ -7,6 +7,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
+#include "../mesh/sfc_tiles.h"
 #include "../mesh/ghost_writeback.h"
 #include "compute_finitevol_faces_functions.h"
 
@@ -29,6 +30,12 @@
  */
 
 #ifdef MHD_MODIFIED_GRADIENT
+
+#if defined(OPENMP_GPU_OFFLOAD)
+extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
+    int *active_indices, int num_active, neighbor_list_t *out,
+    double search_radius_factor);
+#endif
 
 #if !defined(MHD_MODIFIED_GRADIENT_CG_ONLY) && !defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
 #include "HYPRE.h"
@@ -1484,16 +1491,18 @@ static void mg_solve_pardiso(void)
 /* ==================================================================================== */
 
 /* ==================================================================================== */
-/* Matrix build via gizmo_sym_neighbor_list (symmetric CSR walk, Step 5 B6).             */
+/* Matrix build via a caller-supplied symmetric CSR walk (Step 5 B6).                   */
 /*                                                                                        */
-/* Pre-condition: gizmo_sym_active_indices + gizmo_sym_neighbor_list are current —       */
-/* refreshed by gizmo_gradients_refresh_symlist at end of hydro_gradient_calc.           */
-/* Ghost cells carry full P/CellP state (Phase 0 full-struct exchange).                  */
+/* Pre-condition: the caller has built an active row list and symmetric neighbor list.   */
+/* For the global MG solve this row list must cover all local gas cells, not just the    */
+/* hydro-active subset, so the Laplacian solve matches the legacy all-gas matrix.        */
+/* Ghost cells carry full P/CellP state from the post-gradient ghost refresh.            */
 /*                                                                                        */
 /* Each pair appears twice in the CSR; we accumulate ONLY target's row per visit.        */
 /* No dedup needed — each row's contribution is written exactly once per pair.           */
 /* ==================================================================================== */
-static void mg_build_matrix_modern(void)
+static void mg_build_matrix_modern(int *mg_active_indices, int mg_num_active,
+                                   const neighbor_list_t *mg_neighbor_list)
 {
     /* Initialize per-particle matrix rows */
     for(int i = 0; i < N_gas; i++) {
@@ -1505,10 +1514,11 @@ static void mg_build_matrix_modern(void)
 
     int *ghost_home_rank  = ghost_get_home_rank();
     int *ghost_home_index = ghost_get_home_index();
+    int num_local = ghost_get_num_local();
 
-    /* Walk symmetric CSR; for each (active i, neighbor j), accumulate i's row only. */
-    for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
-        int i = gizmo_sym_active_indices[aa];
+    /* Walk symmetric CSR; for each row i, accumulate i's row only. */
+    for(int aa = 0; aa < mg_num_active; aa++) {
+        int i = mg_active_indices[aa];
         if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].Density <= 0) continue;
         if(P[i].KernelRadius <= 0) continue;
 
@@ -1519,10 +1529,10 @@ static void mg_build_matrix_modern(void)
         double V_i = P[i].Mass / CellP[i].Density;
         double Bi[3]; for(int k=0;k<3;k++) { Bi[k] = CellP[i].BPred[k] * CellP[i].Density / P[i].Mass; }
 
-        int n_off     = gizmo_sym_neighbor_list.offsets[aa];
-        int n_off_end = gizmo_sym_neighbor_list.offsets[aa+1];
+        int n_off     = mg_neighbor_list->offsets[aa];
+        int n_off_end = mg_neighbor_list->offsets[aa+1];
         for(int nn = n_off; nn < n_off_end; nn++) {
-            int j = gizmo_sym_neighbor_list.neighbors[nn];
+            int j = mg_neighbor_list->neighbors[nn];
             if(P[j].Type != 0 || P[j].Mass <= 0 || CellP[j].Density <= 0) continue;
 
             struct { Vec3<double> dp; double r, wk_i, wk_j, dwk_i, dwk_j, h_i; } kernel;
@@ -1580,20 +1590,49 @@ static void mg_build_matrix_modern(void)
             MG_Rows[i].rhs += flux;
 
             /* Off-diagonal entry: distinguish local vs ghost neighbor.
-             * NOTE: ghost_exchange grows NumPart by total_recv during the active
-             * ghost window, so during this kernel NumPart == num_local + num_ghosts.
-             * Ghost array indices in the symlist are [num_local, num_local+num_ghosts),
-             * so ghost_idx = j - num_local. Using j - NumPart silently reads negative
-             * offsets into ghost_home_rank[] and produces garbage remote_task values
-             * that crash mg_setup_ghost_exchange downstream. */
+             * NOTE: ghost_exchange grows NumPart by total_recv during the ghost
+             * window, so ghost array indices are [num_local, num_local+num_ghosts).
+             * Use num_local from ghost_get_num_local(), not the inflated NumPart. */
             if(j < N_gas) {
                 mg_add_local_entry(i, j, Qnorm2);
             } else {
-                int ghost_idx = j - ghost_get_num_local();
+                int ghost_idx = j - num_local;
                 mg_add_remote_entry(i, ghost_home_rank[ghost_idx], ghost_home_index[ghost_idx], Qnorm2);
             }
         }
     }
+}
+
+
+/* Build the MG-private all-local-gas symmetric CSR.  The hydro CSR deliberately
+ * follows ActiveParticleList, but MG is a global graph solve: inactive local gas
+ * rows must be present so inactive neighbors are not converted into c=0
+ * Dirichlet boundaries. */
+static void mg_build_allgas_neighbor_list(int **mg_active_indices_out, int *mg_num_active_out,
+                                          neighbor_list_t *mg_neighbor_list)
+{
+    int mg_num_active = 0;
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type == 0 && P[i].Mass > 0) mg_num_active++;
+    }
+
+    int *mg_active_indices = (int *) mymalloc("mg_allgas_active",
+        (mg_num_active > 0 ? mg_num_active : 1) * sizeof(int));
+    int aa = 0;
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type == 0 && P[i].Mass > 0) mg_active_indices[aa++] = i;
+    }
+
+#if defined(OPENMP_GPU_OFFLOAD)
+    gpu_build_symmetric_neighbor_list(P, NumPart, mg_active_indices, mg_num_active,
+                                      mg_neighbor_list, 1.0);
+#else
+    build_neighbor_list_sfc(P, CellP, NumPart, mg_active_indices, mg_num_active,
+                            NGB_SEARCH_SYMMETRIC, 1, mg_neighbor_list);
+#endif
+
+    *mg_active_indices_out = mg_active_indices;
+    *mg_num_active_out = mg_num_active;
 }
 
 
@@ -1742,7 +1781,13 @@ void mg_gradient_correction_calc(void)
         MG_Rows[i].remote_entries = NULL;
     }
 
-    mg_build_matrix_modern();
+    int *mg_active_indices = NULL;
+    int mg_num_active = 0;
+    neighbor_list_t mg_neighbor_list = {NULL, NULL, 0, 0};
+    mg_build_allgas_neighbor_list(&mg_active_indices, &mg_num_active, &mg_neighbor_list);
+    mg_build_matrix_modern(mg_active_indices, mg_num_active, &mg_neighbor_list);
+    free_neighbor_list(&mg_neighbor_list);
+    myfree(mg_active_indices);
 
 #if defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
     /* Phase 2: solve via MKL PARDISO direct solver (gather to rank 0) */
