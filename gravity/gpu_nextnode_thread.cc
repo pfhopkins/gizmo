@@ -140,7 +140,7 @@ extern "C" int gpu_nextnode_thread(void)
             }
             /* Foreign nodes (Phase 9: prev_id in [MaxPart+MaxNodes, MaxPart+MaxNodes+MaxForeignNodes))
              * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
-             * directly from LET unpack.  At present (LETAllocFactor=0) the foreign range is empty. */
+             * directly from LET unpack. */
             /* internal node: skip — its own thread sets nextnode_soa, and
              * its last DFS descendant gets `succ` via the chain of
              * sibling pointers (already set by force_update_node_recursive). */

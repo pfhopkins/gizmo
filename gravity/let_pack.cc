@@ -1097,7 +1097,9 @@ extern "C" int let_unpack_and_install(const struct LETNodeWire *recv_buf,
  * ---------------------------------------------------------------------- */
 extern "C" int let_run_exchange(void)
 {
-    /* Skip entirely if LETAllocFactor==0 (legacy mode) */
+    /* Defensive no-op if no foreign-node headroom was allocated.  GPU builds
+     * reject LETAllocFactor<=0 during parameter validation because the legacy
+     * gravity export fallback is retired there. */
     if(MaxForeignNodes <= 0) return 0;
 
     /* let_synthesize_particle_leaf and let_compute_local_payload read

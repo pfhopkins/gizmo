@@ -2445,7 +2445,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
-                if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom); set to 0 to disable LET and use legacy export path (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
+                if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom; increase if LET unpack overflows) (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
 #endif
@@ -2822,6 +2822,12 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n"); endrun(1);}
     }
+#ifdef OPENMP_GPU_OFFLOAD
+    if(All.LETAllocFactor <= 0)
+    {
+        if(ThisTask==0) {printf("LETAllocFactor must be >0 in OPENMP_GPU_OFFLOAD builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n"); endrun(1);}
+    }
+#endif
     if((All.MaxRMSDisplacementFac<=0)||(All.MaxRMSDisplacementFac>0.25))
     {
         if(ThisTask==0) {printf("MaxRMSDisplacementFac must be >0 and <0.25 to ensure stability \n"); endrun(1);}

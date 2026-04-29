@@ -211,8 +211,8 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
      * [MaxNodes, MaxNodes+MaxForeignNodes).  Foreign nodes installed by
      * let_unpack_and_install are scattered into SoA at slot_base + j with
      * absolute index = MaxPart + MaxNodes + slot, so SoA index =
-     * (MaxNodes + slot).  At default LETAllocFactor=0, MaxForeignNodes==0
-     * and this is a no-op. */
+     * (MaxNodes + slot).  Non-GPU builds have MaxForeignNodes==0; GPU
+     * builds require positive LET headroom. */
     if(MaxForeignNodes > 0) {
         min_nodes += MaxForeignNodes;
     }
