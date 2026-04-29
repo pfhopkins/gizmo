@@ -3,12 +3,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
+#include <algorithm>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <inttypes.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../declarations/gpu_rng.h"
+#include "../mesh/neighbor_list.h"
+#include "../mesh/sfc_tiles.h"
+#ifdef OPENMP_GPU_OFFLOAD
+#include "../mesh/gpu_neighbor_list.h"
+#endif
 
 /*! \file fof.c
  *  \brief parallel FoF group finder
@@ -81,20 +88,603 @@ static char *NonlocalFlag;
 static float *fof_nearest_distance;
 static float *fof_nearest_rkern;
 
+#ifdef OPENMP_GPU_OFFLOAD
+
+struct fof_label_t
+{
+  MyIDType id;
+  MyIDType task;
+};
+
+struct fof_remote_edge_t
+{
+  int local_index;
+  int remote_task;
+  int remote_index;
+};
+
+struct fof_label_update_t
+{
+  int index;
+  MyIDType id;
+  MyIDType task;
+};
+
+struct fof_tile_meta_t
+{
+  double lo[3], hi[3];
+  int first, count;
+};
+
+struct fof_import_pool_t
+{
+  std::vector<particle_data> particles;
+  std::vector<int> ghost_home_task;
+  std::vector<int> ghost_home_index;
+  std::vector<MyIDType> ghost_label_id;
+  std::vector<MyIDType> ghost_label_task;
+};
+
+static inline int fof_label_less(const fof_label_t &a, const fof_label_t &b)
+{
+  if(a.id < b.id) return 1;
+  if(a.id > b.id) return 0;
+  return a.task < b.task;
+}
+
+static int fof_dsu_find(std::vector<int> &parent, int x)
+{
+  while(parent[x] != x)
+    {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+  return x;
+}
+
+static void fof_dsu_union(std::vector<int> &parent, std::vector<int> &rank, std::vector<fof_label_t> &root_label, int a, int b)
+{
+  int ra = fof_dsu_find(parent, a);
+  int rb = fof_dsu_find(parent, b);
+  if(ra == rb) return;
+  if(rank[ra] < rank[rb]) std::swap(ra, rb);
+  parent[rb] = ra;
+  if(rank[ra] == rank[rb]) rank[ra]++;
+  if(fof_label_less(root_label[rb], root_label[ra])) root_label[ra] = root_label[rb];
+}
+
+static double fof_aabb_distance2(const double alo[3], const double ahi[3], const double blo[3], const double bhi[3], double max_gap)
+{
+  double dist2 = 0;
+  for(int k = 0; k < 3; k++)
+    {
+      int is_periodic = (k == 0) ? TILE_PERIODIC_X : ((k == 1) ? TILE_PERIODIC_Y : TILE_PERIODIC_Z);
+      double bsize = (k == 0) ? boxSize_X : ((k == 1) ? boxSize_Y : boxSize_Z);
+      double ca = 0.5 * (alo[k] + ahi[k]);
+      double cb = 0.5 * (blo[k] + bhi[k]);
+      double ha = 0.5 * (ahi[k] - alo[k]);
+      double hb = 0.5 * (bhi[k] - blo[k]);
+      double dx = fabs(ca - cb);
+      if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
+      double gap = dx - ha - hb;
+      if(gap <= 0) continue;
+      if(gap > max_gap) return max_gap * max_gap + 1;
+      dist2 += gap * gap;
+    }
+  return dist2;
+}
+
+static void fof_build_tiles_from_indices(const std::vector<int> &indices, std::vector<fof_tile_meta_t> &tiles)
+{
+  tiles.clear();
+  if(indices.empty()) return;
+  int ntiles = (indices.size() + TILE_TARGET_SIZE - 1) / TILE_TARGET_SIZE;
+  tiles.resize(ntiles);
+  for(int t = 0; t < ntiles; t++)
+    {
+      int first = t * TILE_TARGET_SIZE;
+      int count = TILE_TARGET_SIZE;
+      if(first + count > (int)indices.size()) count = indices.size() - first;
+      fof_tile_meta_t &tile = tiles[t];
+      tile.first = first;
+      tile.count = count;
+      int j0 = indices[first];
+      for(int k = 0; k < 3; k++) tile.lo[k] = tile.hi[k] = P[j0].Pos[k];
+      for(int s = 1; s < count; s++)
+        {
+          int j = indices[first + s];
+          for(int k = 0; k < 3; k++)
+            {
+              if(P[j].Pos[k] < tile.lo[k]) tile.lo[k] = P[j].Pos[k];
+              if(P[j].Pos[k] > tile.hi[k]) tile.hi[k] = P[j].Pos[k];
+            }
+        }
+    }
+}
+
+static void fof_allgather_tiles(const std::vector<fof_tile_meta_t> &local_tiles, std::vector<fof_tile_meta_t> &all_tiles,
+                                std::vector<int> &tile_counts, std::vector<int> &tile_offsets)
+{
+  tile_counts.assign(NTask, 0);
+  tile_offsets.assign(NTask, 0);
+  int local_count = local_tiles.size();
+  MPI_Allgather(&local_count, 1, MPI_INT, tile_counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+  int total = 0;
+  for(int task = 0; task < NTask; task++)
+    {
+      tile_offsets[task] = total;
+      total += tile_counts[task];
+    }
+  all_tiles.resize(total);
+  std::vector<int> byte_counts(NTask), byte_offsets(NTask);
+  for(int task = 0; task < NTask; task++)
+    {
+      byte_counts[task] = tile_counts[task] * (int)sizeof(fof_tile_meta_t);
+      byte_offsets[task] = tile_offsets[task] * (int)sizeof(fof_tile_meta_t);
+    }
+  MPI_Allgatherv((void *)(local_tiles.empty() ? NULL : local_tiles.data()), local_count * (int)sizeof(fof_tile_meta_t), MPI_BYTE,
+                 (void *)(all_tiles.empty() ? NULL : all_tiles.data()), byte_counts.data(), byte_offsets.data(), MPI_BYTE, MPI_COMM_WORLD);
+}
+
+static void fof_import_primary_pool(int source_type_mask, double search_radius, int include_labels, fof_import_pool_t &pool)
+{
+  pool.particles.assign(P, P + NumPart);
+  pool.ghost_home_task.clear();
+  pool.ghost_home_index.clear();
+  pool.ghost_label_id.clear();
+  pool.ghost_label_task.clear();
+
+  if(NTask <= 1 || search_radius <= 0) return;
+
+  std::vector<int> source_indices, primary_indices;
+  source_indices.reserve(NumPart);
+  primary_indices.reserve(NumPart);
+  for(int i = 0; i < NumPart; i++)
+    {
+      if(P[i].Mass <= 0) continue;
+      if(((1 << P[i].Type) & source_type_mask)) source_indices.push_back(i);
+      if(((1 << P[i].Type) & MyFOF_PRIMARY_LINK_TYPES)) primary_indices.push_back(i);
+    }
+  if(source_indices.empty()) return;
+
+  std::vector<fof_tile_meta_t> local_source_tiles, local_primary_tiles;
+  std::vector<fof_tile_meta_t> all_source_tiles, all_primary_tiles;
+  std::vector<int> source_counts, source_offsets, primary_counts, primary_offsets;
+  fof_build_tiles_from_indices(source_indices, local_source_tiles);
+  fof_build_tiles_from_indices(primary_indices, local_primary_tiles);
+  fof_allgather_tiles(local_source_tiles, all_source_tiles, source_counts, source_offsets);
+  fof_allgather_tiles(local_primary_tiles, all_primary_tiles, primary_counts, primary_offsets);
+  if(all_primary_tiles.empty()) return;
+
+  std::vector<unsigned char> send_tile(local_primary_tiles.size() * NTask, 0);
+  double r2 = search_radius * search_radius;
+  for(int task = 0; task < NTask; task++)
+    {
+      if(task == ThisTask || source_counts[task] == 0) continue;
+      int s0 = source_offsets[task];
+      for(size_t lt = 0; lt < local_primary_tiles.size(); lt++)
+        {
+          for(int st = 0; st < source_counts[task]; st++)
+            {
+              if(fof_aabb_distance2(local_primary_tiles[lt].lo, local_primary_tiles[lt].hi,
+                                    all_source_tiles[s0 + st].lo, all_source_tiles[s0 + st].hi, search_radius) < r2)
+                {
+                  send_tile[lt * NTask + task] = 1;
+                  break;
+                }
+            }
+        }
+    }
+
+  std::vector<unsigned char> need_tile(all_primary_tiles.size(), 0);
+  for(int task = 0; task < NTask; task++)
+    {
+      if(task == ThisTask || primary_counts[task] == 0) continue;
+      int p0 = primary_offsets[task];
+      for(size_t ls = 0; ls < local_source_tiles.size(); ls++)
+        {
+          for(int pt = 0; pt < primary_counts[task]; pt++)
+            {
+              if(fof_aabb_distance2(local_source_tiles[ls].lo, local_source_tiles[ls].hi,
+                                    all_primary_tiles[p0 + pt].lo, all_primary_tiles[p0 + pt].hi, search_radius) < r2)
+                {
+                  need_tile[p0 + pt] = 1;
+                }
+            }
+        }
+    }
+
+  std::vector<int> send_count(NTask, 0), recv_count(NTask, 0), send_disp(NTask, 0), recv_disp(NTask, 0);
+  for(int task = 0; task < NTask; task++)
+    {
+      if(task == ThisTask) continue;
+      for(size_t lt = 0; lt < local_primary_tiles.size(); lt++)
+        if(send_tile[lt * NTask + task])
+          send_count[task] += local_primary_tiles[lt].count;
+      for(int rt = 0; rt < primary_counts[task]; rt++)
+        if(need_tile[primary_offsets[task] + rt])
+          recv_count[task] += all_primary_tiles[primary_offsets[task] + rt].count;
+    }
+  int total_send = 0, total_recv = 0;
+  for(int task = 0; task < NTask; task++)
+    {
+      if(task > 0)
+        {
+          send_disp[task] = send_disp[task - 1] + send_count[task - 1];
+          recv_disp[task] = recv_disp[task - 1] + recv_count[task - 1];
+        }
+      total_send += send_count[task];
+      total_recv += recv_count[task];
+    }
+
+  std::vector<particle_data> send_particles(total_send > 0 ? total_send : 1);
+  std::vector<int> send_home_index(total_send > 0 ? total_send : 1);
+  std::vector<MyIDType> send_label_id(total_send > 0 ? total_send : 1);
+  std::vector<MyIDType> send_label_task(total_send > 0 ? total_send : 1);
+  std::vector<int> cursor = send_disp;
+  for(int task = 0; task < NTask; task++)
+    {
+      if(task == ThisTask || send_count[task] == 0) continue;
+      for(size_t lt = 0; lt < local_primary_tiles.size(); lt++)
+        {
+          if(!send_tile[lt * NTask + task]) continue;
+          const fof_tile_meta_t &tile = local_primary_tiles[lt];
+          for(int s = 0; s < tile.count; s++)
+            {
+              int idx = primary_indices[tile.first + s];
+              int off = cursor[task]++;
+              send_particles[off] = P[idx];
+              send_home_index[off] = idx;
+              if(include_labels)
+                {
+                  send_label_id[off] = MinID[idx];
+                  send_label_task[off] = MinIDTask[idx];
+                }
+              else
+                {
+                  send_label_id[off] = P[idx].ID;
+                  send_label_task[off] = ThisTask;
+                }
+            }
+        }
+    }
+
+  std::vector<int> send_bytes(NTask), recv_bytes(NTask), send_bdisp(NTask), recv_bdisp(NTask);
+  for(int task = 0; task < NTask; task++)
+    {
+      send_bytes[task] = send_count[task] * (int)sizeof(particle_data);
+      recv_bytes[task] = recv_count[task] * (int)sizeof(particle_data);
+      send_bdisp[task] = send_disp[task] * (int)sizeof(particle_data);
+      recv_bdisp[task] = recv_disp[task] * (int)sizeof(particle_data);
+    }
+  size_t old_size = pool.particles.size();
+  pool.particles.resize(old_size + total_recv);
+  MPI_Alltoallv(send_particles.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
+                total_recv > 0 ? &pool.particles[old_size] : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+
+  pool.ghost_home_index.resize(total_recv > 0 ? total_recv : 0);
+  pool.ghost_home_task.resize(total_recv > 0 ? total_recv : 0);
+  for(int task = 0; task < NTask; task++)
+    {
+      send_bytes[task] = send_count[task] * (int)sizeof(int);
+      recv_bytes[task] = recv_count[task] * (int)sizeof(int);
+      send_bdisp[task] = send_disp[task] * (int)sizeof(int);
+      recv_bdisp[task] = recv_disp[task] * (int)sizeof(int);
+    }
+  MPI_Alltoallv(send_home_index.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
+                total_recv > 0 ? pool.ghost_home_index.data() : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+  for(int task = 0; task < NTask; task++)
+    for(int g = 0; g < recv_count[task]; g++)
+      pool.ghost_home_task[recv_disp[task] + g] = task;
+
+  pool.ghost_label_id.resize(total_recv > 0 ? total_recv : 0);
+  pool.ghost_label_task.resize(total_recv > 0 ? total_recv : 0);
+  for(int task = 0; task < NTask; task++)
+    {
+      send_bytes[task] = send_count[task] * (int)sizeof(MyIDType);
+      recv_bytes[task] = recv_count[task] * (int)sizeof(MyIDType);
+      send_bdisp[task] = send_disp[task] * (int)sizeof(MyIDType);
+      recv_bdisp[task] = recv_disp[task] * (int)sizeof(MyIDType);
+    }
+  MPI_Alltoallv(send_label_id.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
+                total_recv > 0 ? pool.ghost_label_id.data() : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+  MPI_Alltoallv(send_label_task.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
+                total_recv > 0 ? pool.ghost_label_task.data() : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+}
+
+static void fof_build_cross_type_nl(std::vector<particle_data> &particles, int *sources, int nsources,
+                                    double *radii, int j_type_mask, neighbor_list_t *nl)
+{
+#ifdef OPENMP_GPU_OFFLOAD
+  gpu_build_cross_type_neighbor_list(particles.data(), particles.size(), sources, nsources, radii,
+                                     j_type_mask, NGB_SEARCH_ONEWAY, nl);
+#else
+  for(int a = 0; a < nsources; a++) particles[sources[a]].KernelRadius = radii[a];
+  build_neighbor_list_sfc(particles.data(), CellP, particles.size(), sources, nsources,
+                          NGB_SEARCH_ONEWAY, j_type_mask, nl);
+#endif
+}
+
+static double fof_distance2_particles(const particle_data &a, const particle_data &b)
+{
+  Vec3<double> dr = {a.Pos[0] - b.Pos[0], a.Pos[1] - b.Pos[1], a.Pos[2] - b.Pos[2]};
+  nearest_xyz(dr, 1);
+  return dr.norm_sq();
+}
+
+static void fof_exchange_label_updates(const std::vector<fof_label_update_t> &send_updates,
+                                       const std::vector<int> &send_count,
+                                       std::vector<fof_label_update_t> &recv_updates)
+{
+  std::vector<int> recv_count(NTask, 0), send_disp(NTask, 0), recv_disp(NTask, 0);
+  MPI_Alltoall((void *)send_count.data(), 1, MPI_INT, recv_count.data(), 1, MPI_INT, MPI_COMM_WORLD);
+  int total_send = 0, total_recv = 0;
+  for(int task = 0; task < NTask; task++)
+    {
+      if(task > 0)
+        {
+          send_disp[task] = send_disp[task - 1] + send_count[task - 1];
+          recv_disp[task] = recv_disp[task - 1] + recv_count[task - 1];
+        }
+      total_send += send_count[task];
+      total_recv += recv_count[task];
+    }
+  recv_updates.resize(total_recv);
+
+  std::vector<int> send_bytes(NTask), recv_bytes(NTask), send_bdisp(NTask), recv_bdisp(NTask);
+  for(int task = 0; task < NTask; task++)
+    {
+      send_bytes[task] = send_count[task] * (int)sizeof(fof_label_update_t);
+      recv_bytes[task] = recv_count[task] * (int)sizeof(fof_label_update_t);
+      send_bdisp[task] = send_disp[task] * (int)sizeof(fof_label_update_t);
+      recv_bdisp[task] = recv_disp[task] * (int)sizeof(fof_label_update_t);
+    }
+  MPI_Alltoallv((void *)(total_send > 0 ? send_updates.data() : NULL), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
+                (void *)(total_recv > 0 ? recv_updates.data() : NULL), recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+}
+
+static void fof_find_groups_modern(void)
+{
+  std::vector<int> primary_indices;
+  primary_indices.reserve(NumPart);
+  for(int i = 0; i < NumPart; i++)
+    if(P[i].Mass > 0 && ((1 << P[i].Type) & MyFOF_PRIMARY_LINK_TYPES))
+      primary_indices.push_back(i);
+
+  if(primary_indices.empty()) return;
+
+  std::vector<int> local_to_primary(NumPart, -1);
+  std::vector<int> parent(primary_indices.size()), rank(primary_indices.size(), 0);
+  std::vector<fof_label_t> root_label(primary_indices.size());
+  for(size_t a = 0; a < primary_indices.size(); a++)
+    {
+      int i = primary_indices[a];
+      local_to_primary[i] = a;
+      parent[a] = a;
+      root_label[a].id = P[i].ID;
+      root_label[a].task = ThisTask;
+    }
+
+  fof_import_pool_t import_pool;
+  fof_import_primary_pool(MyFOF_PRIMARY_LINK_TYPES, LinkL, 0, import_pool);
+
+  std::vector<double> radii(primary_indices.size(), LinkL);
+  neighbor_list_t nl = {NULL, NULL, 0, 0};
+  fof_build_cross_type_nl(import_pool.particles, primary_indices.data(), primary_indices.size(),
+                          radii.data(), MyFOF_PRIMARY_LINK_TYPES, &nl);
+
+  std::vector<fof_remote_edge_t> remote_edges;
+  for(size_t a = 0; a < primary_indices.size(); a++)
+    {
+      int i = primary_indices[a];
+      for(int n = nl.offsets[a]; n < nl.offsets[a + 1]; n++)
+        {
+          int j = nl.neighbors[n];
+          if(j == i) continue;
+          if(fof_distance2_particles(import_pool.particles[i], import_pool.particles[j]) >= LinkL * LinkL) continue;
+          if(j < NumPart)
+            {
+              int b = (j >= 0 && j < NumPart) ? local_to_primary[j] : -1;
+              if(b >= 0) fof_dsu_union(parent, rank, root_label, a, b);
+            }
+          else
+            {
+              int g = j - NumPart;
+              fof_remote_edge_t edge;
+              edge.local_index = i;
+              edge.remote_task = import_pool.ghost_home_task[g];
+              edge.remote_index = import_pool.ghost_home_index[g];
+              remote_edges.push_back(edge);
+            }
+        }
+    }
+  free_neighbor_list(&nl);
+
+  long long n_remote_edges_local = remote_edges.size(), n_remote_edges_global = 0;
+  MPI_Allreduce(&n_remote_edges_local, &n_remote_edges_global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+  PRINT_STATUS("FOF modern: local primary components linked; remote boundary edges=%lld", n_remote_edges_global);
+
+  int changed_global = 0;
+  int iter = 0;
+  do
+    {
+      std::vector<int> send_count(NTask, 0);
+      for(size_t e = 0; e < remote_edges.size(); e++) send_count[remote_edges[e].remote_task]++;
+      std::vector<int> cursor(NTask, 0), send_disp(NTask, 0);
+      int total_send = 0;
+      for(int task = 0; task < NTask; task++)
+        {
+          if(task > 0) send_disp[task] = send_disp[task - 1] + send_count[task - 1];
+          total_send += send_count[task];
+        }
+      cursor = send_disp;
+      std::vector<fof_label_update_t> send_updates(total_send);
+      for(size_t e = 0; e < remote_edges.size(); e++)
+        {
+          const fof_remote_edge_t &edge = remote_edges[e];
+          int a = local_to_primary[edge.local_index];
+          int root = fof_dsu_find(parent, a);
+          int off = cursor[edge.remote_task]++;
+          send_updates[off].index = edge.remote_index;
+          send_updates[off].id = root_label[root].id;
+          send_updates[off].task = root_label[root].task;
+        }
+
+      std::vector<fof_label_update_t> recv_updates;
+      fof_exchange_label_updates(send_updates, send_count, recv_updates);
+
+      int changed_local = 0;
+      for(size_t u = 0; u < recv_updates.size(); u++)
+        {
+          int idx = recv_updates[u].index;
+          if(idx < 0 || idx >= NumPart) continue;
+          int a = local_to_primary[idx];
+          if(a < 0) continue;
+          int root = fof_dsu_find(parent, a);
+          fof_label_t incoming = {recv_updates[u].id, recv_updates[u].task};
+          if(fof_label_less(incoming, root_label[root]))
+            {
+              root_label[root] = incoming;
+              changed_local = 1;
+            }
+        }
+      MPI_Allreduce(&changed_local, &changed_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+      iter++;
+      if(iter > MAXITER)
+        {
+          printf("FOF modern distributed label propagation failed to converge after %d iterations\n", iter);
+          fflush(stdout);
+          endrun(990503);
+        }
+    }
+  while(changed_global);
+
+  PRINT_STATUS("FOF modern: distributed labels converged in %d iterations", iter);
+
+  for(size_t a = 0; a < primary_indices.size(); a++)
+    {
+      int i = primary_indices[a];
+      int root = fof_dsu_find(parent, a);
+      MinID[i] = root_label[root].id;
+      MinIDTask[i] = root_label[root].task;
+      Head[i] = i;
+    }
+}
+
+static void fof_find_nearest_dmparticle_modern(void)
+{
+  std::vector<int> secondary_indices;
+  secondary_indices.reserve(NumPart);
+  for(int i = 0; i < NumPart; i++)
+    if(P[i].Mass > 0 && ((1 << P[i].Type) & MyFOF_SECONDARY_LINK_TYPES))
+      secondary_indices.push_back(i);
+
+  if(secondary_indices.empty()) return;
+
+  fof_import_pool_t import_pool;
+  fof_import_primary_pool(MyFOF_SECONDARY_LINK_TYPES, 4.0 * LinkL, 1, import_pool);
+
+  std::vector<double> nearest_dist2(secondary_indices.size(), MAX_REAL_NUMBER);
+  std::vector<unsigned char> done(secondary_indices.size(), 0);
+  std::vector<double> radius(secondary_indices.size(), 0.1 * LinkL);
+  std::vector<int> secondary_pos_by_index(NumPart, -1);
+  for(size_t a = 0; a < secondary_indices.size(); a++) secondary_pos_by_index[secondary_indices[a]] = a;
+
+  int nleft_global = 0;
+  int iter = 0;
+  do
+    {
+      std::vector<int> active_sources;
+      std::vector<double> active_radii;
+      active_sources.reserve(secondary_indices.size());
+      active_radii.reserve(secondary_indices.size());
+      for(size_t a = 0; a < secondary_indices.size(); a++)
+        if(!done[a])
+          {
+            active_sources.push_back(secondary_indices[a]);
+            active_radii.push_back(radius[a]);
+          }
+
+      if(active_sources.empty()) break;
+
+      neighbor_list_t nl = {NULL, NULL, 0, 0};
+      fof_build_cross_type_nl(import_pool.particles, active_sources.data(), active_sources.size(),
+                              active_radii.data(), MyFOF_PRIMARY_LINK_TYPES, &nl);
+
+      for(size_t aa = 0; aa < active_sources.size(); aa++)
+        {
+          int i = active_sources[aa];
+          int sec_pos = secondary_pos_by_index[i];
+          if(sec_pos < 0) continue;
+          double best_r2 = nearest_dist2[sec_pos];
+          int best_j = -1;
+          for(int n = nl.offsets[aa]; n < nl.offsets[aa + 1]; n++)
+            {
+              int j = nl.neighbors[n];
+              double r2 = fof_distance2_particles(import_pool.particles[i], import_pool.particles[j]);
+              if(r2 < best_r2 && r2 < active_radii[aa] * active_radii[aa])
+                {
+                  best_r2 = r2;
+                  best_j = j;
+                }
+            }
+          if(best_j >= 0)
+            {
+              nearest_dist2[sec_pos] = best_r2;
+              done[sec_pos] = 1;
+              if(best_j < NumPart)
+                {
+                  MinID[i] = MinID[best_j];
+                  MinIDTask[i] = MinIDTask[best_j];
+                }
+              else
+                {
+                  int g = best_j - NumPart;
+                  MinID[i] = import_pool.ghost_label_id[g];
+                  MinIDTask[i] = import_pool.ghost_label_task[g];
+                }
+              Head[i] = i;
+            }
+        }
+      free_neighbor_list(&nl);
+
+      int nleft_local = 0;
+      for(size_t a = 0; a < secondary_indices.size(); a++)
+        {
+          if(done[a]) continue;
+          if(radius[a] < 4.0 * LinkL)
+            {
+              radius[a] *= 2.0;
+              if(radius[a] > 4.0 * LinkL) radius[a] = 4.0 * LinkL;
+              nleft_local++;
+            }
+          else
+            {
+              done[a] = 1;
+            }
+        }
+      MPI_Allreduce(&nleft_local, &nleft_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+      iter++;
+      if(iter > MAXITER)
+        {
+          printf("FOF modern nearest-primary attachment failed to converge after %d iterations\n", iter);
+          fflush(stdout);
+          endrun(990504);
+        }
+    }
+  while(nleft_global > 0);
+}
+
+#endif /* OPENMP_GPU_OFFLOAD */
+
 
 void fof_fof(int num)
 {
-#ifndef FOF_PORTED_TO_MODERN_NL
-  /* FOF walks the legacy CPU tree (Nextnode[]/Nodes[]) which no longer holds
-   * under the modern Kokkos build. ~500-1000 LOC port to gpu_ngb_list_build is
-   * needed (linking-length search + adaptive density refinement). Until that
-   * lands, fail loud rather than silently calling broken legacy code.
-   * Sunset agenda: handoff_legacy_tree_audit_findings.md */
-  endrun(990501);
-#endif
-  int i, ndm, start, lenloc, largestgroup, n;
+  int i, ndm, start, lenloc, largestgroup, n = 0;
   double mass, masstot, rhodm, t0, t1;
+#ifndef OPENMP_GPU_OFFLOAD
   struct unbind_data *d;
+#endif
   long long ndmtot;
 
 #ifdef IO_SUBFIND_READFOF_FROMIC
@@ -112,9 +702,11 @@ void fof_fof(int num)
 
   CPU_Step[CPU_MISC] += measure_time();
 
+#ifndef OPENMP_GPU_OFFLOAD
   domain_Decomposition(1, 0, 0);
 
   force_treefree();
+#endif
 
   for(i = 0, ndm = 0, mass = 0; i < NumPart; i++)
     if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
@@ -148,8 +740,13 @@ void fof_fof(int num)
   CPU_Step[CPU_FOF] += measure_time();
 
   if(ThisTask == 0)
+#ifdef OPENMP_GPU_OFFLOAD
+    printf("Modern FOF neighbor-list construction.\n");
+#else
     printf("Tree construction.\n");
+#endif
 
+#ifndef OPENMP_GPU_OFFLOAD
   /* build index list of particles of selected primary species */
   d = (struct unbind_data *) mymalloc("d", NumPart * sizeof(struct unbind_data));
   for(i = 0, n = 0; i < NumPart; i++)
@@ -159,6 +756,9 @@ void fof_fof(int num)
   force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
     
   force_treebuild(n, d);
+#else
+  (void)n;
+#endif
 
   for(i = 0; i < NumPart; i++)
     {
@@ -172,7 +772,11 @@ void fof_fof(int num)
 
   t0 = my_second();
 
+#ifdef OPENMP_GPU_OFFLOAD
+  fof_find_groups_modern();
+#else
   fof_find_groups();
+#endif
 
   t1 = my_second();
   if(ThisTask == 0)
@@ -181,7 +785,11 @@ void fof_fof(int num)
 
   t0 = my_second();
 
+#ifdef OPENMP_GPU_OFFLOAD
+  fof_find_nearest_dmparticle_modern();
+#else
   fof_find_nearest_dmparticle();
+#endif
 
   t1 = my_second();
   if(ThisTask == 0)
@@ -214,9 +822,10 @@ void fof_fof(int num)
       FOF_PList[i].Pindex = i;
     }
 
+#ifndef OPENMP_GPU_OFFLOAD
   force_treefree();
-
   myfree(d);
+#endif
   
   myfree(Tail);
   myfree(Next);
@@ -331,6 +940,7 @@ void fof_fof(int num)
 
   CPU_Step[CPU_FOF] += measure_time();
 
+#ifndef OPENMP_GPU_OFFLOAD
 #ifdef SUBFIND
   domain_Decomposition(1, 0, 0);
 #else
@@ -342,6 +952,7 @@ void fof_fof(int num)
   force_treebuild(NumPart, NULL);
 
   TreeReconstructFlag = 0;
+#endif
 }
 
 

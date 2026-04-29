@@ -308,7 +308,7 @@ GPU_ALL_SYNC_FUNC(ngb)
 void gpu_spatial_index_build(struct particle_data *, int, int, gpu_spatial_index_t *) {}
 void gpu_spatial_index_free(gpu_spatial_index_t *) {}
 void gpu_ngb_list_build(struct particle_data *, int, int *, int, int, int,
-                        gpu_neighbor_list_t *, gpu_spatial_index_t *, double, const double *) {}
+                        gpu_neighbor_list_t *, gpu_spatial_index_t *, double, const double *, const double *) {}
 void gpu_ngb_list_free(gpu_neighbor_list_t *, gpu_spatial_index_t *) {}
 void gpu_build_symmetric_neighbor_list(struct particle_data *, int, int *, int, neighbor_list_t *, double) {}
 void gpu_build_cross_type_neighbor_list(struct particle_data *, int, int *, int, const double *, int, int, neighbor_list_t *) {}
