@@ -5,6 +5,7 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <vector>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
 #include "../../mesh/kernel.h"
@@ -18,10 +19,26 @@
 #ifdef SUBFIND
 
 #include "../fof.h"
+#include "../group_search.h"
 #include "subfind.h"
 
 static MyOutputFloat *R200, *M200;
 struct Subfind_DensityOtherPropsEval_data_out *Subfind_DensityOtherPropsEval_DataResult, *Subfind_DensityOtherPropsEval_DataOut, *Subfind_DensityOtherPropsEval_GlobalPasser;
+
+#ifndef OPENMP_GPU_OFFLOAD
+static inline int subfind_open_imported_so_node(const int node)
+{
+  if(node < 0) {return -1;}
+  if(node < All.MaxPart || node >= All.MaxPart + MaxNodes + MaxForeignNodes)
+    {
+      printf("SUBFIND SO received invalid imported tree node=%d MaxPart=%d MaxNodes=%d MaxForeignNodes=%d task=%d\n",
+             node, All.MaxPart, MaxNodes, MaxForeignNodes, ThisTask);
+      fflush(stdout);
+      endrun(13008);
+    }
+  return Nodes[node].u.d.nextnode;
+}
+#endif
 
 
 /*!
@@ -31,18 +48,28 @@ struct Subfind_DensityOtherPropsEval_data_out *Subfind_DensityOtherPropsEval_Dat
 */
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
 /*! first define a short structure needed to pass in the group info here */
+#ifndef OPENMP_GPU_OFFLOAD
 static struct Subfind_DensityOtherPropsEval_data_in {Vec3<MyDouble> Pos; MyOutputFloat R200; int NodeList[NODELISTLENGTH]; /* all needed for any version */} *Subfind_DensityOtherPropsEval_DataIn, *Subfind_DensityOtherPropsEval_DataGet;
 /*! now the main routine */
 int Subfind_DensityOtherProps_evaluate(int target, int mode, int *nexport, int *nsend_local)
 {
     int ngb,n,j,k,startnode,listindex=0; double *subhalo_pos, Hsearch; struct Subfind_DensityOtherPropsEval_data_out out; memset(&out, 0, sizeof(struct Subfind_DensityOtherPropsEval_data_out));
     if(mode == 0) {subhalo_pos=Group[target].Pos.data_ptr(); Hsearch=R200[target];} else {subhalo_pos=Subfind_DensityOtherPropsEval_DataGet[target].Pos.data_ptr(); Hsearch=Subfind_DensityOtherPropsEval_DataGet[target].R200;}
-    if(mode == 0) {startnode = All.MaxPart;} else {startnode = Subfind_DensityOtherPropsEval_DataGet[target].NodeList[0]; startnode = Nodes[startnode].u.d.nextnode;}
+    if(mode == 0) {startnode = All.MaxPart;} else {startnode = subfind_open_imported_so_node(Subfind_DensityOtherPropsEval_DataGet[target].NodeList[0]);}
     while(startnode >= 0) {while(startnode >= 0) {
       ngb = ngb_treefind_variable_targeted(subhalo_pos, Hsearch, target, &startnode, mode, nexport, nsend_local, 63);
       if(ngb < 0) {return -2;}
       for(n = 0; n < ngb; n++)
         { j = Ngblist[n];
+#ifdef GIZMO_DEBUG_GROUP_SEARCH_BOUNDS
+            if(j < 0 || j >= NumPart)
+              {
+                printf("SUBFIND SO additional properties received invalid neighbor j=%d n=%d ngb=%d NumPart=%d target=%d mode=%d Hsearch=%g task=%d\n",
+                       j, n, ngb, NumPart, target, mode, Hsearch, ThisTask);
+                fflush(stdout);
+                endrun(13011);
+              }
+#endif
             Vec3<double> dr; for(k=0;k<3;k++) {dr[k]=P[j].Pos[k]-subhalo_pos[k];} nearest_xyz(dr,-1); double r2=dr.norm_sq(); if(r2>Hsearch*Hsearch) continue; /* position offset */
             out.M200+=P[j].Mass;
             
@@ -59,7 +86,7 @@ int Subfind_DensityOtherProps_evaluate(int target, int mode, int *nexport, int *
 #endif
             
         }
-    } if(mode==1) {listindex++; if(listindex < NODELISTLENGTH) {startnode = Subfind_DensityOtherPropsEval_DataGet[target].NodeList[listindex]; if(startnode >= 0) startnode = Nodes[startnode].u.d.nextnode;}}}
+    } if(mode==1) {listindex++; if(listindex < NODELISTLENGTH) {startnode = subfind_open_imported_so_node(Subfind_DensityOtherPropsEval_DataGet[target].NodeList[listindex]);}}}
     if(mode == 0) {out2particle_Subfind_DensityOtherPropsEval(&out, target, 0);} else {Subfind_DensityOtherPropsEval_DataResult[target] = out;} /* collects the result at the right place */
   return 0;
 }
@@ -77,6 +104,7 @@ static inline void out2particle_Subfind_DensityOtherPropsEval(struct Subfind_Den
     ASSIGN_ADD(Subfind_DensityOtherPropsEval_GlobalPasser[i].star_mass,out->star_mass,mode);
 #endif
 }
+#endif
 
 /*! do any final opertations on the data after it comes back from  Subfind_DensityOtherProps_evaluate  */
 void Subfind_DensityOtherProps_finaloperations(struct Subfind_DensityOtherPropsEval_data_out *in)
@@ -91,6 +119,288 @@ void Subfind_DensityOtherProps_finaloperations(struct Subfind_DensityOtherPropsE
 #endif
 }
 
+#ifdef OPENMP_GPU_OFFLOAD
+static void subfind_density_other_props_loop_modern(void);
+
+static void subfind_so_accumulate_particle(const int gr, const particle_data &pj, const gas_cell_data *cell,
+                                           struct Subfind_DensityOtherPropsEval_data_out *out)
+{
+  int k;
+  Vec3<double> dr;
+  for(k = 0; k < 3; k++) dr[k] = pj.Pos[k] - Group[gr].Pos[k];
+  nearest_xyz(dr, -1);
+  out->M200 += pj.Mass;
+
+#ifdef SUBFIND_ADDIO_VELDISP
+  for(k = 0; k < 3; k++)
+    {
+      double dv = pj.Vel[k] / All.cf_atime + All.cf_hubble_a * All.cf_atime * dr[k];
+      out->V200[k] += pj.Mass * dv;
+      out->Disp200 += pj.Mass * dv * dv;
+    }
+#endif
+#ifdef SUBFIND_ADDIO_BARYONS
+  if(pj.Type == 0)
+    {
+      if(cell == NULL)
+        {
+          printf("SUBFIND modern SO missing gas cell payload for group=%d task=%d\n", gr, ThisTask);
+          fflush(stdout);
+          endrun(13012);
+        }
+      double temp_keV = 6.14e-16 * (cell->InternalEnergy / UNIT_SPECEGY_IN_CGS);
+      out->gas_mass += pj.Mass;
+      out->temp += pj.Mass * temp_keV;
+      out->xlum += 1.52e-20 * (pj.Mass * UNIT_MASS_IN_CGS) * (cell->Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * sqrt(temp_keV);
+    }
+  else if(pj.Type == 4)
+    {
+      out->star_mass += pj.Mass;
+    }
+#endif
+}
+
+static void subfind_so_compute_modern(const std::vector<int> &groups, const MyOutputFloat *radii,
+                                      struct Subfind_DensityOtherPropsEval_data_out *results)
+{
+  int nsources = groups.size();
+  std::vector<double> centers(3 * nsources), query_radii(nsources);
+  for(int a = 0; a < nsources; a++)
+    {
+      int gr = groups[a];
+      query_radii[a] = radii[gr];
+      for(int k = 0; k < 3; k++) centers[3 * a + k] = Group[gr].Pos[k];
+      memset(&results[gr], 0, sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+    }
+
+  group_search_import_pool_t pool;
+#ifdef SUBFIND_ADDIO_BARYONS
+  const bool import_cells = true;
+#else
+  const bool import_cells = false;
+#endif
+  group_search_import_particles_around_points(63, centers, query_radii, pool, import_cells);
+  if(nsources <= 0) return;
+
+  int query_start = pool.particles.size();
+  pool.particles.resize(query_start + nsources);
+  if(import_cells) pool.cells.resize(query_start + nsources);
+
+  std::vector<int> sources(nsources);
+  for(int a = 0; a < nsources; a++)
+    {
+      particle_data q;
+      memset(&q, 0, sizeof(particle_data));
+      int gr = groups[a];
+      q.Type = 6;
+      q.Mass = 1;
+      q.KernelRadius = query_radii[a];
+      for(int k = 0; k < 3; k++) q.Pos[k] = Group[gr].Pos[k];
+      pool.particles[query_start + a] = q;
+      sources[a] = query_start + a;
+    }
+
+  neighbor_list_t nl;
+  group_search_build_cross_type_nl(pool.particles, sources.data(), nsources, query_radii.data(), 63, &nl);
+
+  for(int a = 0; a < nsources; a++)
+    {
+      int gr = groups[a];
+      for(int n = nl.offsets[a]; n < nl.offsets[a + 1]; n++)
+        {
+          int j = nl.neighbors[n];
+          const gas_cell_data *cell = (import_cells && j < (int)pool.cells.size()) ? &pool.cells[j] : NULL;
+          subfind_so_accumulate_particle(gr, pool.particles[j], cell, &results[gr]);
+        }
+    }
+
+  free_neighbor_list(&nl);
+}
+
+static void subfind_density_other_props_loop_modern(void)
+{
+  long long ntot;
+  int i, j, npleft, rep, iter;
+  MyFloat *Left, *Right;
+  char *Todo;
+  double t0, t1, t2, t3, rguess, overdensity, Deltas[SUBFIND_ADDIO_NUMOVERDEN], z;
+
+  Left = (MyFloat *) mymalloc("Left", sizeof(MyFloat) * Ngroups);
+  Right = (MyFloat *) mymalloc("Right", sizeof(MyFloat) * Ngroups);
+  R200 = (MyOutputFloat *) mymalloc("R200", sizeof(MyOutputFloat) * Ngroups);
+  M200 = (MyOutputFloat *) mymalloc("M200", sizeof(MyOutputFloat) * Ngroups);
+  Subfind_DensityOtherPropsEval_GlobalPasser =
+    (struct Subfind_DensityOtherPropsEval_data_out *) mymalloc("Subfind_DensityOtherPropsEval_GlobalPasser",
+                                                               Ngroups * sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+  Todo = (char *)mymalloc("Todo", sizeof(char) * Ngroups);
+
+  if(All.ComovingIntegrationOn) {z = 1 / All.Time - 1;} else {z = 0;}
+  double rhoback = 3 * All.OmegaMatter * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), zplusone=1.+z;
+  double omegaz = All.OmegaMatter * pow(zplusone,3) / (All.OmegaRadiation * pow(zplusone,4) + All.OmegaMatter * pow(zplusone,3) + (1 - All.OmegaMatter - All.OmegaLambda - All.OmegaRadiation) * pow(zplusone,2) + All.OmegaLambda);
+  double x = omegaz - 1, DeltaTopHat = (18 * M_PI * M_PI + 82 * x - 39 * x * x) / omegaz;
+
+  double Delta_ToEvalList[10];
+  Delta_ToEvalList[0] = 200;
+  Delta_ToEvalList[1] = DeltaTopHat;
+  Delta_ToEvalList[2] = 200/omegaz;
+  Delta_ToEvalList[3] = 500/omegaz;
+  Delta_ToEvalList[4] = 1000/omegaz;
+  Delta_ToEvalList[5] = 2500/omegaz;
+  Delta_ToEvalList[6] = 500;
+  Delta_ToEvalList[7] = 1000;
+  Delta_ToEvalList[8] = 2500;
+  Delta_ToEvalList[9] = 5000;
+  for(j = 0; j < SUBFIND_ADDIO_NUMOVERDEN; j++) Deltas[j] = Delta_ToEvalList[j];
+
+  for(rep = 0; rep < SUBFIND_ADDIO_NUMOVERDEN; rep++)
+    {
+      t2 = my_second();
+      for(i = 0; i < Ngroups; i++)
+        {
+          R200[i] = M200[i] = 0;
+          memset(&Subfind_DensityOtherPropsEval_GlobalPasser[i], 0, sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+          if(Group[i].Nsubs > 0)
+            {
+              rguess = pow(All.G * Group[i].Mass / (100 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits), 1.0 / 3);
+              Right[i] = 3 * rguess;
+              Left[i] = 0;
+              Todo[i] = 1;
+            }
+          else
+            {
+              Left[i] = Right[i] = 0;
+              Todo[i] = 0;
+            }
+        }
+      iter = 0;
+
+      do
+        {
+          t0 = my_second();
+          std::vector<int> active;
+          active.reserve(Ngroups);
+          for(i = 0; i < Ngroups; i++)
+            if(Todo[i])
+              {
+                R200[i] = 0.5 * (Left[i] + Right[i]);
+                active.push_back(i);
+              }
+
+          subfind_so_compute_modern(active, R200, Subfind_DensityOtherPropsEval_GlobalPasser);
+          for(size_t a = 0; a < active.size(); a++)
+            {
+              int gr = active[a];
+              M200[gr] = Subfind_DensityOtherPropsEval_GlobalPasser[gr].M200;
+            }
+
+          for(i = 0, npleft = 0; i < Ngroups; i++)
+            {
+              if(Todo[i])
+                {
+                  overdensity = M200[i] / (4.0 * M_PI / 3.0 * R200[i] * R200[i] * R200[i]) / rhoback;
+                  if((Right[i] - Left[i]) > 1.0e-4 * Left[i])
+                    {
+                      npleft++;
+                      if(overdensity > Deltas[rep]) {Left[i] = R200[i];} else {Right[i] = R200[i];}
+                      if(iter >= MAXITER - 10)
+                        {
+                          printf("gr=%d task=%d  R200=%g Left=%g Right=%g Menclosed=%g Right-Left=%g\n   pos=(%g|%g|%g)\n",
+                                 i, ThisTask, R200[i], Left[i], Right[i], M200[i], Right[i] - Left[i],
+                                 Group[i].Pos[0], Group[i].Pos[1], Group[i].Pos[2]);
+                          fflush(stdout);
+                        }
+                    }
+                  else
+                    {
+                      Todo[i] = 0;
+                    }
+                }
+            }
+
+          sumup_large_ints(1, &npleft, &ntot);
+          t1 = my_second();
+          if(ntot > 0)
+            {
+              iter++;
+              if(iter > 0 && ThisTask == 0)
+                {
+                  printf("SO iteration %d: need to repeat for %d%09d groups. (took %g sec)\n", iter,
+                         (int) (ntot / 1000000000), (int) (ntot % 1000000000), timediff(t0, t1));
+                  fflush(stdout);
+                }
+              if(iter > MAXITER)
+                {
+                  printf("failed to converge in modern SUBFIND SO radius iteration\n");
+                  fflush(stdout);
+                  endrun(1155);
+                }
+            }
+        }
+      while(ntot > 0);
+
+      MPI_Barrier(MPI_COMM_WORLD);
+      t3 = my_second();
+      if(ThisTask == 0)
+        {
+          printf("SO Radius calculation took %g sec\n", timediff(t2, t3));
+          fflush(stdout);
+        }
+
+      t0 = my_second();
+      memset(Subfind_DensityOtherPropsEval_GlobalPasser, 0, Ngroups * sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+      std::vector<int> active_props;
+      active_props.reserve(Ngroups);
+      for(i = 0; i < Ngroups; i++)
+        if(Group[i].Nsubs > 0 && R200[i] > 0)
+          active_props.push_back(i);
+      subfind_so_compute_modern(active_props, R200, Subfind_DensityOtherPropsEval_GlobalPasser);
+
+      MPI_Barrier(MPI_COMM_WORLD);
+      t1 = my_second();
+      if(ThisTask == 0)
+        {
+          printf("secondary subfind loop for additional information took %g sec\n", timediff(t0, t1));
+          fflush(stdout);
+        }
+
+      t0 = my_second();
+      for(i = 0; i < Ngroups; i++)
+        {
+          if(Group[i].Nsubs > 0)
+            {
+              M200[i] = Subfind_DensityOtherPropsEval_GlobalPasser[i].M200;
+              overdensity = M200[i] / (4.0 * M_PI / 3.0 * R200[i] * R200[i] * R200[i]) / rhoback;
+
+              if((overdensity - Deltas[rep]) > 0.1 * Deltas[rep] || M200[i] < 5 * Group[i].Mass / Group[i].Len)
+                {
+                  R200[i] = M200[i] = 0;
+                  memset(&Subfind_DensityOtherPropsEval_GlobalPasser[i], 0, sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+                }
+            }
+          else
+            {
+              R200[i] = M200[i] = 0;
+              memset(&Subfind_DensityOtherPropsEval_GlobalPasser[i], 0, sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+            }
+
+          Subfind_DensityOtherPropsEval_GlobalPasser[i].R200 = R200[i];
+          Subfind_DensityOtherProps_finaloperations(&Subfind_DensityOtherPropsEval_GlobalPasser[i]);
+          memcpy(&Group[i].SubHaloProps_vsDelta[rep], &Subfind_DensityOtherPropsEval_GlobalPasser[i],
+                 sizeof(struct Subfind_DensityOtherPropsEval_data_out));
+        }
+    }
+  t1 = my_second();
+  if(ThisTask == 0) {printf("Saving data took %g sec\n", timediff(t0, t1)); fflush(stdout);}
+
+  myfree(Todo);
+  myfree(Subfind_DensityOtherPropsEval_GlobalPasser);
+  myfree(M200);
+  myfree(R200);
+  myfree(Right);
+  myfree(Left);
+}
+#endif
+
     
     
     
@@ -101,6 +411,10 @@ void Subfind_DensityOtherProps_finaloperations(struct Subfind_DensityOtherPropsE
 
 void Subfind_DensityOtherProps_Loop(void)
 {
+#ifdef OPENMP_GPU_OFFLOAD
+    subfind_density_other_props_loop_modern();
+    return;
+#else
     long long ntot; int i, j, ndone, ndone_flag, npleft, dummy, rep, iter;
     MyFloat *Left, *Right; char *Todo; int ngrp, recvTask, place, nexport, nimport;
     double t0, t1, t2, t3, rguess, overdensity, Deltas[SUBFIND_ADDIO_NUMOVERDEN], z;
@@ -116,6 +430,15 @@ void Subfind_DensityOtherProps_Loop(void)
     size_t MyBufferSize = (size_t)All.BufferSize;
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + sizeof(struct Subfind_DensityOtherPropsEval_data_in) + sizeof(struct Subfind_DensityOtherPropsEval_data_out) +
                      sizemax(sizeof(struct Subfind_DensityOtherPropsEval_data_in), sizeof(struct Subfind_DensityOtherPropsEval_data_out))));
+    if(All.BunchSize < 1)
+      {
+        printf("SUBFIND SO buffer is too small: BufferSize=%llu BunchSize=%ld input_size=%llu output_size=%llu task=%d\n",
+               (unsigned long long)All.BufferSize, All.BunchSize,
+               (unsigned long long)sizeof(struct Subfind_DensityOtherPropsEval_data_in),
+               (unsigned long long)sizeof(struct Subfind_DensityOtherPropsEval_data_out), ThisTask);
+        fflush(stdout);
+        endrun(13005);
+      }
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
 
@@ -419,7 +742,7 @@ void Subfind_DensityOtherProps_Loop(void)
 	  for(j = 0; j < nexport; j++)
 	    {
 	      place = DataIndexTable[j].Index;
-            out2particle_Subfind_DensityOtherPropsEval(Subfind_DensityOtherPropsEval_DataOut, place, 1);
+	      out2particle_Subfind_DensityOtherPropsEval(&Subfind_DensityOtherPropsEval_DataOut[j], place, 1);
 	    }
 
 	  myfree(Subfind_DensityOtherPropsEval_DataOut);
@@ -478,12 +801,17 @@ void Subfind_DensityOtherProps_Loop(void)
 
   
 }
+#endif
+#ifdef OPENMP_GPU_OFFLOAD
+}
+#endif
 
 
 /*! This function represents the core of the density computation. The
  *  target particle may either be local, or reside in the communication
  *  buffer.
  */
+#ifndef OPENMP_GPU_OFFLOAD
 int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_local)
 {
   int startnode, listindex = 0;
@@ -508,8 +836,7 @@ int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_loc
     }
   else
     {
-      startnode = Subfind_DensityOtherPropsEval_DataGet[target].NodeList[0];
-      startnode = Nodes[startnode].u.d.nextnode;	/* open it */
+      startnode = subfind_open_imported_so_node(Subfind_DensityOtherPropsEval_DataGet[target].NodeList[0]);
     }
 
   mass = 0;
@@ -528,9 +855,7 @@ int Subfind_RvirMvir_evaluate(int target, int mode, int *nexport, int *nsend_loc
 	  listindex++;
 	  if(listindex < NODELISTLENGTH)
 	    {
-	      startnode = Subfind_DensityOtherPropsEval_DataGet[target].NodeList[listindex];
-	      if(startnode >= 0)
-		startnode = Nodes[startnode].u.d.nextnode;	/* open it */
+	      startnode = subfind_open_imported_so_node(Subfind_DensityOtherPropsEval_DataGet[target].NodeList[listindex]);
 	    }
 	}
     }
@@ -583,44 +908,67 @@ double subfind_ovderdens_treefind(Vec3<double>& searchcenter, MyFloat rkern, int
 	{
 	  if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)	/* pseudo particle */
 	    {
+	      int topindex = no - (All.MaxPart + MaxNodes + MaxForeignNodes);
+	      if(topindex < 0 || topindex >= NTopnodes)
+	        {
+	          printf("SUBFIND SO encountered invalid pseudo topnode=%d NTopnodes=%d no=%d MaxPart=%d MaxNodes=%d MaxForeignNodes=%d task=%d\n",
+	                 topindex, NTopnodes, no, All.MaxPart, MaxNodes, MaxForeignNodes, ThisTask);
+	          fflush(stdout);
+	          endrun(13006);
+	        }
+	      task = DomainTask[topindex];
+	      if(task < 0 || task >= NTask)
+	        {
+	          printf("SUBFIND SO encountered invalid pseudo task=%d topnode=%d NTask=%d task=%d\n",
+	                 task, topindex, NTask, ThisTask);
+	          fflush(stdout);
+	          endrun(13007);
+	        }
 	      if(mode == 1)
-		endrun(12312);
+	        endrun(12312);
 
 	      if(mode == 0)
-		{
-		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
-		    {
-		      Exportflag[task] = target;
-		      Exportnodecount[task] = NODELISTLENGTH;
-		    }
+	        {
+	          if(Exportflag[task] != target)
+	            {
+	              Exportflag[task] = target;
+	              Exportnodecount[task] = NODELISTLENGTH;
+	            }
 
-		  if(Exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      if(*nexport >= All.BunchSize)
-			{
-			  *nexport = nexport_save;
-			  if(nexport_save == 0) {endrun(13005);}	/* in this case, the buffer is too small to process even a single particle */
-			  for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
-			  for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
-			  return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-			}
-		      Exportnodecount[task] = 0;
-		      Exportindex[task] = *nexport;
-		      DataIndexTable[*nexport].Task = task;
-		      DataIndexTable[*nexport].Index = target;
-		      DataIndexTable[*nexport].IndexGet = *nexport;
-		      *nexport = *nexport + 1;
-		      nsend_local[task]++;
-		    }
+	          if(Exportnodecount[task] == NODELISTLENGTH)
+	            {
+	              if(*nexport >= All.BunchSize)
+	                {
+	                  int nexport_full = *nexport;
+	                  *nexport = nexport_save;
+	                  if(nexport_save == 0)
+	                    {
+	                      printf("SUBFIND SO export buffer exhausted before first export: nexport_full=%d BunchSize=%ld BufferSize=%llu target=%d mode=%d task=%d rkern=%g\n",
+	                             nexport_full, All.BunchSize, (unsigned long long)All.BufferSize, target, mode, ThisTask, rkern);
+	                      fflush(stdout);
+	                      endrun(13005);
+	                    }	/* in this case, the buffer is too small to process even a single particle */
+	                  for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
+	                  for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
+	                  return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
+	                }
+	              Exportnodecount[task] = 0;
+	              Exportindex[task] = *nexport;
+	              DataIndexTable[*nexport].Task = task;
+	              DataIndexTable[*nexport].Index = target;
+	              DataIndexTable[*nexport].IndexGet = *nexport;
+	              *nexport = *nexport + 1;
+	              nsend_local[task]++;
+	            }
 
-		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
+	          DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
+	            DomainNodeIndex[topindex];
 
-		  if(Exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-		}
+	          if(Exportnodecount[task] < NODELISTLENGTH)
+	            DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
+	        }
 
-	      no = Nextnode[no - MaxNodes];
+	      no = Nextnode[no - MaxNodes - MaxForeignNodes];
 	      continue;
 	    }
 
@@ -670,5 +1018,6 @@ double subfind_ovderdens_treefind(Vec3<double>& searchcenter, MyFloat rkern, int
   *startnode = -1;
   return mass;
 }
+#endif
 
 #endif

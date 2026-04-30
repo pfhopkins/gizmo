@@ -482,6 +482,7 @@ RHD_OBJS =  radiation/rt_utilities.o \
 ## radiation/rt_chem.o is in GPU_OBJS (compiled by nvcc_wrapper for Kokkos offload)
 
 FOF_OBJS =	structure/fof.o \
+			structure/group_search.o \
 			structure/subfind/subfind.o \
 			structure/subfind/subfind_vars.o \
 			structure/subfind/subfind_collective.o \
@@ -491,6 +492,7 @@ FOF_OBJS =	structure/fof.o \
 			structure/subfind/subfind_distribute.o \
 			structure/subfind/subfind_findlinkngb.o \
 			structure/subfind/subfind_nearesttwo.o \
+			structure/subfind/subfind_modern_search.o \
 			structure/subfind/subfind_loctree.o \
 			structure/subfind/subfind_potential.o \
 			structure/subfind/subfind_density.o \
@@ -713,5 +715,4 @@ compile_time_info.cc: $(CONFIG)
 
 clean:
 	rm -f $(OBJS) $(GPU_OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
-
 

@@ -39,6 +39,10 @@ static struct linkngbdata_out
 
 void subfind_find_linkngb(void)
 {
+#ifdef OPENMP_GPU_OFFLOAD
+  subfind_find_linkngb_modern();
+  return;
+#endif
   long long ntot;
   int i, j, ndone, ndone_flag, npleft, dummy, iter = 0;
   MyFloat *Left, *Right;
@@ -455,7 +459,7 @@ int subfind_ngb_treefind_linkngb(MyDouble searchcenter[3], double rkern, int tar
 		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
 		}
 
-	      no = Nextnode[no - MaxNodes];
+	      no = Nextnode[no - MaxNodes - MaxForeignNodes];
 	      continue;
 	    }
 
@@ -613,7 +617,7 @@ int subfind_ngb_treefind_linkpairs(MyDouble searchcenter[3], double rkern, int t
 		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
 		}
 
-	      no = Nextnode[no - MaxNodes];
+	      no = Nextnode[no - MaxNodes - MaxForeignNodes];
 	      continue;
 	    }
 

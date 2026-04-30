@@ -44,6 +44,10 @@ static struct nearestdata_out
 
 void subfind_find_nearesttwo(void)
 {
+#ifdef OPENMP_GPU_OFFLOAD
+  subfind_find_nearesttwo_modern();
+  return;
+#endif
   int i, j, k, l, ndone, ndone_flag, dummy;
   int ngrp, recvTask, place, nexport, nimport;
 
@@ -513,7 +517,7 @@ int subfind_ngb_treefind_nearesttwo(MyDouble searchcenter[3], double rkern, int 
 		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
 		}
 
-	      no = Nextnode[no - MaxNodes];
+	      no = Nextnode[no - MaxNodes - MaxForeignNodes];
 	      continue;
 	    }
 

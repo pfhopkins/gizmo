@@ -54,14 +54,10 @@ static int Nids;
 
 void subfind(int num)
 {
-#ifndef SUBFIND_PORTED_TO_MODERN_NL
-  /* SUBFIND main-tree usages (subfind_density.cc, subfind_so.cc) walk the legacy
-   * CPU tree which no longer holds under the modern Kokkos build. ~500-1000 LOC
-   * port needed (adaptive density iteration + R200 spherical-overdensity).
-   * Note subfind_loctree.cc builds its own internal octree on unbind_data[] —
-   * that one is self-contained and stays as-is.
-   * Sunset agenda: handoff_legacy_tree_audit_findings.md */
-  endrun(990502);
+#if defined(OPENMP_GPU_OFFLOAD) && defined(FOF_DENSITY_SPLIT_TYPES)
+  if(ThisTask == 0)
+    printf("FOF_DENSITY_SPLIT_TYPES is not yet supported by the modern SUBFIND neighbor-list path.\n");
+  endrun(990505);
 #endif
   double t0, t1, tstart, tend;
   int i, gr, nlocid, offset, limit, ncount, ntotingrouplocal, nminingrouplocal, nmaxingrouplocal;
