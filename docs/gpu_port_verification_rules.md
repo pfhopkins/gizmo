@@ -39,7 +39,7 @@
 
 12. **GPU dispatcher must use the active-list, NOT NumPart.** Active-list pattern is required for all GPU neighbor dispatchers. Never early-return before MPI collectives.
 
-13. **Append `GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY` to all Kokkos builds.** Both Vista GPU (SYSTYPE=Vista) and MacBookCellar_Kokkos. Omitting it causes a silent revert to the legacy tree-walk.
+13. **Kokkos builds automatically activate all GPU infrastructure.** GPU neighbor-list, GPU kernels, and GPU gravity tree are always on with SYSTYPE=Vista or MacBookCellar_Kokkos. No extra Config.sh flags are needed to enable them.
 
 14. **`TreeRebuild_ActiveFraction=2.0` is required for GPU gravity walk to fire.** Default value (0.005) causes `TakeLevel >= 0` (cost-measurement mode) for typical test problem sizes, which makes `gpu_gravtree_walk_primary()` return 0 immediately. All gravity-walk validation params MUST set this to 2.0. See Section 6.
 
@@ -55,9 +55,8 @@
 # Set Makefile.systype:
 echo 'SYSTYPE="MacBookCellar_Kokkos"' > Makefile.systype
 
-# Confirm Config.sh has:
-#   GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-#   <activating flags for the kernel under test>
+# Confirm Config.sh has the activating flags for the kernel under test
+# (GPU neighbor-list and GPU kernels are always active with MacBookCellar_Kokkos)
 
 make clean
 make -j8 2>&1 | tee build_gpu.log
@@ -69,13 +68,11 @@ grep -E "error: 200[19]" build_gpu.log
 grep "" GIZMO_config.h | head -60
 ```
 
-### 2.2 Build CPU reference (legacy tree-walk, no Kokkos)
+### 2.2 Build CPU reference (no Kokkos)
 
 ```bash
-# Use MacBookCellar_Kokkos SYSTYPE but OMIT:
-#   OPENMP_GPU_OFFLOAD
-#   GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
-# (Do NOT use MacBookCellar — it is broken for this purpose)
+# Use SYSTYPE="MacBookCellar" (non-Kokkos variant) for a CPU-only reference build.
+# (MacBookCellar_Kokkos always enables GPU infrastructure — not suitable for reference.)
 
 make clean
 make -j8 2>&1 | tee build_cpu.log

@@ -14,7 +14,7 @@ Config notes:
   on ==0) does NOT fire here — B4/C3/D1 are the active GPU paths.
 
 Validation protocol:
-1. Build with FIRE_BHS + GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+1. Build with FIRE_BHS (Kokkos neighbor-list always active)
 2. Confirm PRINT_STATUS shows nonzero "GPU sink_swallow: N active, M pairs" on at
    least one active-sink timestep
 3. Verify Sink_Mass grows via HQ accretion (gas → subgrid reservoir → sink)

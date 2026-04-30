@@ -3,7 +3,6 @@
 # to exercise the C1 do_cbe_drift_kick GPU EP port.
 ########################################
 
-GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 
 BOX_PERIODIC
 BOX_SPATIAL_DIMENSION=3

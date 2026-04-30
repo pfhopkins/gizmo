@@ -177,7 +177,6 @@ static inline double let_point_to_bbox_dist_sq(const double *bbox_min,
 /* ----------------------------------------------------------------------
  * Function prototypes (defined in let_pack.cc, 9.1c-e)
  * ---------------------------------------------------------------------- */
-#ifdef OPENMP_GPU_OFFLOAD
 
 #ifdef __cplusplus
 extern "C" {
@@ -265,6 +264,5 @@ int  let_run_exchange(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_LET_DATA_H */

@@ -45,7 +45,6 @@
 #include "let_data.h"
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 /* Sentinel encoding for out-of-subtree sibling pointers:
  *
@@ -1183,4 +1182,3 @@ extern "C" int let_run_exchange(void)
     return 0;
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */

@@ -115,6 +115,8 @@ def download_test_files(test_name: str):
     exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
 
     for f in icfile, exactfile, exactfile2:
+        if path.isfile(f):
+            continue
         try:
             urlretrieve(website_path + f, f)
         except HTTPError as err:

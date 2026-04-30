@@ -21,7 +21,6 @@
 #include "gpu_topology_finalize.h"
 #include "forcetree.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 extern "C" int gpu_topology_finalize_father(int n)
 {
@@ -173,7 +172,7 @@ extern "C" int gpu_topology_writeback_d_to_aos(int n)
 
     int          *sibling_soa = soa->sibling;
     int          *father_soa  = soa->father;
-    struct NODE  *Nodes_uvm   = Nodes_base;   /* UVM under OPENMP_GPU_OFFLOAD (6.8d) */
+    struct NODE  *Nodes_uvm   = Nodes_base;   /* UVM on the Kokkos path (6.8d) */
 
     /* Phase 6.8f: GPU kernel writeback (was host OMP loop).  With Nodes_base
      * UVM-resident, the same parallel writes happen device-side without an
@@ -255,4 +254,3 @@ GPU_ALL_SYNC_FUNC(topo_finalize_father)
 GPU_ALL_SYNC_FUNC(topo_finalize_sibling)
 GPU_ALL_SYNC_FUNC(node_reset_ephemeral)
 
-#endif /* OPENMP_GPU_OFFLOAD */

@@ -1,7 +1,6 @@
 /* ags_density_gpu.cc — GPU-accelerated AGS kernel-radius / density loop.
  *
- * GPU translation unit: compiled by nvcc_wrapper when OPENMP_GPU_OFFLOAD is
- * enabled. Called once per bitmask group from ags_density() in ags_rkern.cc
+ * GPU translation unit: (Kokkos/nvcc_wrapper). Called once per bitmask group from ags_density() in ags_rkern.cc
  * — see project_tier_b_infra_scope.md for the partition-by-bitmask design.
  *
  * Ports the per-pair body at ags_rkern.cc:174-229 verbatim except for:
@@ -39,7 +38,7 @@
 #include "ags_density_gpu.h"
 
 
-#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 
 /* Named struct (file scope) for TimeBinActive device-capture. CUDA nvcc
    rejects unnamed-type captures in __device__ lambdas ("type local to a
@@ -223,4 +222,4 @@ void ags_density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, in
                               int *, int, const double *, int, void *) {}
 void gizmo_gpu_sync_all_agsdensity(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE && OPENMP_GPU_OFFLOAD */
+#endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

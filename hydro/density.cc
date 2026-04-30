@@ -10,12 +10,10 @@
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
-#ifdef OPENMP_GPU_OFFLOAD
 extern void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int, int *, int);
 extern void density_gpu_session_begin(struct particle_data *, struct gas_cell_data *, int);
 extern void density_gpu_session_end(void);
-#endif
-#if defined(HYDRO_VOLUME_CORRECTIONS) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(HYDRO_VOLUME_CORRECTIONS)
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -183,9 +181,7 @@ void density(void)
         }} /* done with intial zero-out loop */
 
     double timeall=0, timecomp=0;
-#ifdef OPENMP_GPU_OFFLOAD
     density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
-#endif
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
@@ -574,9 +570,7 @@ void density(void)
 
     /* iteration is done - de-malloc everything now */
     double t_postproc_start = my_second();
-#ifdef OPENMP_GPU_OFFLOAD
     density_gpu_session_end(); /* free persistent SharedSpace arrays */
-#endif
     double t_session_end = timediff(t_postproc_start, my_second());
     myfree(Right); myfree(Left);
 

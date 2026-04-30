@@ -583,9 +583,7 @@ void find_next_sync_point_and_drift(void)
     else {All.Time = All.TimeBegin + All.Ti_Current * All.Timebase_interval;}
 
   set_cosmo_factors_for_current_time();
-#ifdef OPENMP_GPU_OFFLOAD
   gizmo_gpu_sync_all();
-#endif
 #ifdef BOX_SHEARING
     calc_shearing_box_pos_offset();
 #endif
@@ -633,9 +631,7 @@ void find_next_sync_point_and_drift(void)
   for(n = 0, prev = -1; n < TIMEBINS; n++)
     {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current);}}}
 
-#ifdef OPENMP_GPU_OFFLOAD
   refresh_timestep_dilation_factors_for_gpu();
-#endif
 
 }
 

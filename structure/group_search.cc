@@ -8,9 +8,7 @@
 #include "../core/proto.h"
 #include "../mesh/sfc_tiles.h"
 #include "group_search.h"
-#ifdef OPENMP_GPU_OFFLOAD
 #include "../mesh/gpu_neighbor_list.h"
-#endif
 
 struct group_search_tile_meta_t
 {
@@ -480,14 +478,8 @@ void group_search_build_cross_type_nl(std::vector<particle_data> &particles, int
       for(int a = 0; a <= nsources; a++) nl->offsets[a] = 0;
       return;
     }
-#ifdef OPENMP_GPU_OFFLOAD
   gpu_build_cross_type_neighbor_list(particles.data(), particles.size(), sources, nsources, radii,
                                      j_type_mask, NGB_SEARCH_ONEWAY, nl);
-#else
-  for(int a = 0; a < nsources; a++) particles[sources[a]].KernelRadius = radii[a];
-  build_neighbor_list_sfc(particles.data(), CellP, particles.size(), sources, nsources,
-                          NGB_SEARCH_ONEWAY, j_type_mask, nl);
-#endif
   std::vector<int> offsets(nsources + 1, 0);
   std::vector<int> neighbors;
   neighbors.reserve(nl->total_pairs);

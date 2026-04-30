@@ -27,7 +27,6 @@
 
 #include <stdint.h>
 
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/typedefs.h"
@@ -215,6 +214,5 @@ KOKKOS_INLINE_FUNCTION int gpu_topleaf_for_key(const struct topnode_data *tn,
     return tn[no].Leaf;
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_PEANO_WALK_FUNCTIONS_H */

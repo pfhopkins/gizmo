@@ -61,7 +61,6 @@
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 extern "C" int gpu_nextnode_thread(void)
 {
@@ -164,4 +163,3 @@ extern "C" int gpu_nextnode_thread(void)
 
 GPU_ALL_SYNC_FUNC(nextnode_thread)
 
-#endif /* OPENMP_GPU_OFFLOAD */

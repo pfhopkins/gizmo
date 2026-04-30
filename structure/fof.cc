@@ -85,7 +85,6 @@ static char *NonlocalFlag;
 static float *fof_nearest_distance;
 static float *fof_nearest_rkern;
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 struct fof_label_t
 {
@@ -399,16 +398,12 @@ static void fof_find_nearest_dmparticle_modern(void)
   while(nleft_global > 0);
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 
 void fof_fof(int num)
 {
   int i, ndm, start, lenloc, largestgroup, n = 0;
   double mass, masstot, rhodm, t0, t1;
-#ifndef OPENMP_GPU_OFFLOAD
-  struct unbind_data *d;
-#endif
   long long ndmtot;
 
 #ifdef IO_SUBFIND_READFOF_FROMIC
@@ -426,11 +421,6 @@ void fof_fof(int num)
 
   CPU_Step[CPU_MISC] += measure_time();
 
-#ifndef OPENMP_GPU_OFFLOAD
-  domain_Decomposition(1, 0, 0);
-
-  force_treefree();
-#endif
 
   for(i = 0, ndm = 0, mass = 0; i < NumPart; i++)
     if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
@@ -464,25 +454,9 @@ void fof_fof(int num)
   CPU_Step[CPU_FOF] += measure_time();
 
   if(ThisTask == 0)
-#ifdef OPENMP_GPU_OFFLOAD
     printf("Modern FOF neighbor-list construction.\n");
-#else
-    printf("Tree construction.\n");
-#endif
 
-#ifndef OPENMP_GPU_OFFLOAD
-  /* build index list of particles of selected primary species */
-  d = (struct unbind_data *) mymalloc("d", NumPart * sizeof(struct unbind_data));
-  for(i = 0, n = 0; i < NumPart; i++)
-    if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
-      d[n++].index = i;
-
-  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
-    
-  force_treebuild(n, d);
-#else
   (void)n;
-#endif
 
   for(i = 0; i < NumPart; i++)
     {
@@ -496,11 +470,7 @@ void fof_fof(int num)
 
   t0 = my_second();
 
-#ifdef OPENMP_GPU_OFFLOAD
   fof_find_groups_modern();
-#else
-  fof_find_groups();
-#endif
 
   t1 = my_second();
   if(ThisTask == 0)
@@ -509,11 +479,7 @@ void fof_fof(int num)
 
   t0 = my_second();
 
-#ifdef OPENMP_GPU_OFFLOAD
   fof_find_nearest_dmparticle_modern();
-#else
-  fof_find_nearest_dmparticle();
-#endif
 
   t1 = my_second();
   if(ThisTask == 0)
@@ -546,10 +512,6 @@ void fof_fof(int num)
       FOF_PList[i].Pindex = i;
     }
 
-#ifndef OPENMP_GPU_OFFLOAD
-  force_treefree();
-  myfree(d);
-#endif
   
   myfree(Tail);
   myfree(Next);
@@ -664,19 +626,6 @@ void fof_fof(int num)
 
   CPU_Step[CPU_FOF] += measure_time();
 
-#ifndef OPENMP_GPU_OFFLOAD
-#ifdef SUBFIND
-  domain_Decomposition(1, 0, 0);
-#else
-  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
-#endif
-
-  if(ThisTask == 0)
-    printf("Tree construction.\n");
-  force_treebuild(NumPart, NULL);
-
-  TreeReconstructFlag = 0;
-#endif
 }
 
 

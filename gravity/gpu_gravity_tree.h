@@ -33,7 +33,6 @@
 struct NODE;
 struct extNODE;
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #ifdef __cplusplus
 extern "C" {
@@ -216,6 +215,5 @@ int gpu_nextnode_thread(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_GRAVITY_TREE_H */

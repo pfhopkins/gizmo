@@ -21,7 +21,6 @@
 #include "gpu_pseudo_update.h"
 #include "forcetree.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 /* ===================================================================== */
 /* Phase 6.7a — gpu_force_flag_localnodes                                */
@@ -749,4 +748,3 @@ extern "C" int gpu_set_soa_nextnode(int abs_idx, int new_nextnode)
 /* Per-TU All_dev sync stub (no-op on Kokkos path). */
 GPU_ALL_SYNC_FUNC(pseudo_update)
 
-#endif /* OPENMP_GPU_OFFLOAD */

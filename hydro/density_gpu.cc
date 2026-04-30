@@ -1,7 +1,6 @@
 /* density_gpu.cc — GPU-accelerated density evaluation via Kokkos.
  *
- * This file is a GPU translation unit (TU): compiled by nvcc/hipcc when
- * OPENMP_GPU_OFFLOAD is enabled. It provides:
+ * GPU translation unit (Kokkos/nvcc_wrapper). It provides:
  *   1. GPU neighbor list construction (BVH traversal via Kokkos::parallel_for)
  *   2. GPU density kernel (CSR neighbor iteration via Kokkos::parallel_for)
  *
@@ -52,7 +51,6 @@
 #undef INPUT_STRUCT_NAME
 #undef OUTPUT_STRUCT_NAME
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
@@ -854,15 +852,3 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 }
 
 
-#else /* !OPENMP_GPU_OFFLOAD */
-
-/* Stub: GPU density/gradient/hydro not available */
-void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
-                          int, int *, int) {}
-void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
-                           int, int *, int, int *, int *, int, void *, int) {}
-void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
-                        int, int *, int, int *, int *, int, void *) {}
-void gizmo_gpu_sync_all_density(struct global_data_all_processes *p) { (void)p; }
-
-#endif /* OPENMP_GPU_OFFLOAD */

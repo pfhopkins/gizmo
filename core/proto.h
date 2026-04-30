@@ -934,10 +934,8 @@ double eccentric_anomaly(double mean_anomaly, double ecc);
 
 /* Kokkos/GPU lifecycle and sync functions (defined in cooling/cooling.cc).
    Declared unconditionally — the call sites in main.cc/begrun.cc/run.cc are
-   guarded by  #ifdef OPENMP_GPU_OFFLOAD, so these are only called when GPU
+   retired (Step 5 C4); these sync functions are always compiled
    offload is active.  Declarations are harmless without definitions. */
-#ifdef OPENMP_GPU_OFFLOAD
 void gizmo_kokkos_initialize(int argc, char *argv[]);
 void gizmo_kokkos_finalize(void);
 void gizmo_gpu_sync_all(void);
-#endif

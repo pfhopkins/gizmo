@@ -71,7 +71,7 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #include "cooling_tables.h"
 
 #if !defined(CHIMES)
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
+#if defined(GIZMO_GPU_COMPILER)
 __managed__ struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL, 0,0,0,0,0,0,0};
 #else
 struct cooling_tables_t CoolTables = {-1.0, 9.0, 0, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL, 0,0,0,0,0,0,0};
@@ -190,7 +190,7 @@ void cooling_parent_routine(void)
      * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
      * than N_active × struct_size, further reducing UVM pressure.
      */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+#if !defined(CHIMES)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
@@ -1169,15 +1169,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 
 void InitCoolMemory(void)
 {
-    /* With Kokkos+CUDA (OPENMP_GPU_OFFLOAD), allocate cooling table arrays in CUDA unified
+    /* With Kokkos+CUDA (Kokkos+GPU), allocate cooling table arrays in CUDA unified
        memory via Kokkos so they are accessible from device kernels. The pointer variables
        themselves are __managed__ (see top of file), so assigning to them here is fine.
        Without GPU offload, use the normal mymalloc pool. */
-#if defined(OPENMP_GPU_OFFLOAD)
 #define COOLMEM(name, type, n) name = (type *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(#name, (n) * sizeof(type))
-#else
-#define COOLMEM(name, type, n) name = (type *) mymalloc(#name, (n) * sizeof(type))
-#endif
     COOLMEM(CoolTables.BetaH0,    double, NCOOLTAB + 1);
     COOLMEM(CoolTables.BetaHep,   double, NCOOLTAB + 1);
     COOLMEM(CoolTables.AlphaHp,   double, NCOOLTAB + 1);
@@ -1590,12 +1586,10 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     LoadMultiSpeciesTables();
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
     /* Cooling tables are allocated via Kokkos SharedSpace (__managed__ / UVM),
        so they are automatically accessible from device. No explicit
        #pragma omp target enter data needed (and the CoolTables #define aliases
        are incompatible with the OMP map syntax). */
-#endif
 #endif // CHIMES
 }
 
@@ -2488,7 +2482,6 @@ void chimes_gizmo_exit(void)
 
 /* Kokkos lifecycle and sync functions — OUTSIDE #ifdef COOLING because they
    must exist for any GPU build (e.g. NUCLEAR_NETWORK without COOLING). */
-#ifdef OPENMP_GPU_OFFLOAD
 void gizmo_kokkos_initialize(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
 #if defined(__CUDACC__)
@@ -2517,10 +2510,7 @@ extern void gizmo_gpu_sync_all_eos(struct global_data_all_processes *);
 #ifdef NUCLEAR_NETWORK
 extern void gizmo_gpu_sync_all_nuclear(struct global_data_all_processes *);
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
 extern void gizmo_gpu_sync_all_density(struct global_data_all_processes *);
-extern void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *);
-#endif
 #ifdef RT_CHEM_PHOTOION
 extern void gizmo_gpu_sync_all_rt_chem(struct global_data_all_processes *);
 #endif
@@ -2573,10 +2563,7 @@ void gizmo_gpu_sync_all(void) {
 #ifdef NUCLEAR_NETWORK
     gizmo_gpu_sync_all_nuclear(host_all);
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
     gizmo_gpu_sync_all_density(host_all);
-    gizmo_gpu_sync_all_ngb(host_all);
-#endif
 #ifdef RT_CHEM_PHOTOION
     gizmo_gpu_sync_all_rt_chem(host_all);
 #endif
@@ -2616,4 +2603,3 @@ void gizmo_gpu_sync_all(void) {
 
 /* This TU's own sync function */
 GPU_ALL_SYNC_FUNC(cooling)
-#endif /* OPENMP_GPU_OFFLOAD */

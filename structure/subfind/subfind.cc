@@ -54,7 +54,7 @@ static int Nids;
 
 void subfind(int num)
 {
-#if defined(OPENMP_GPU_OFFLOAD) && defined(FOF_DENSITY_SPLIT_TYPES)
+#if defined(FOF_DENSITY_SPLIT_TYPES)
   if(ThisTask == 0)
     printf("FOF_DENSITY_SPLIT_TYPES is not yet supported by the modern SUBFIND neighbor-list path.\n");
   endrun(990505);

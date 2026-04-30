@@ -29,7 +29,6 @@
 #include "gpu_gravity_tree.h"
 #include "gpu_topology_build.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 namespace {
 
@@ -472,4 +471,3 @@ extern "C" void gpu_topology_build_release(void)
 
 GPU_ALL_SYNC_FUNC(topobuild)
 
-#endif /* OPENMP_GPU_OFFLOAD */

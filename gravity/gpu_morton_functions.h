@@ -44,7 +44,6 @@
 
 #include <stdint.h>
 
-#ifdef OPENMP_GPU_OFFLOAD
 #include <Kokkos_Core.hpp>
 #include "../declarations/gpu_rng.h"
 
@@ -302,6 +301,5 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_split_8way_random_inplace(
     return 0;
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_MORTON_FUNCTIONS_H */

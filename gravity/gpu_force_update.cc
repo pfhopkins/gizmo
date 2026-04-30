@@ -1,6 +1,6 @@
 /* gpu_force_update.cc — Step 13 Phase 7.c
  *
- * GPU replacement for force_update_tree() when OPENMP_GPU_OFFLOAD is defined.
+ * GPU replacement for force_update_tree().
  * Propagates per-particle momentum kicks (P[i].dp) through the tree via three
  * GPU-accelerated stages + host-side MPI:
  *
@@ -46,7 +46,6 @@
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 /* Atomic max for MyFloat via 64-bit CAS (MyFloat = double in GIZMO typedefs). */
 static_assert(sizeof(MyFloat) == sizeof(uint64_t),
@@ -220,4 +219,3 @@ finish_mpi:
 
 GPU_ALL_SYNC_FUNC(force_update)
 
-#endif /* OPENMP_GPU_OFFLOAD */

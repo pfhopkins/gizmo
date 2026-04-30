@@ -18,9 +18,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../core/proto.h"
-#ifdef OPENMP_GPU_OFFLOAD
 #include "../system/gpu_particles_arena.h"
-#endif
 
 /* This file contains the routines for driven turbulence/stirring; use for things
  like idealized turbulence tests, large-eddy simulations, and the like */
@@ -384,7 +382,6 @@ void add_turb_accel()
     for (int i : ActiveParticleList) {if(P[i].Type == 0) {turb_indices[N_active++] = i;}}
     if(N_active == 0) {free(turb_indices); PRINT_STATUS("Finished turbulence driving (acceleration) computation"); return;}
 
-#if defined(OPENMP_GPU_OFFLOAD)
     if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
         /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
         double *gpu_mode = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
@@ -432,7 +429,6 @@ void add_turb_accel()
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_mode);
 
     } else
-#endif
     { /* CPU path */
         struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
         struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
@@ -538,11 +534,7 @@ void log_turb_temp(void)
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-#ifdef OPENMP_GPU_OFFLOAD
 GPU_ALL_SYNC_FUNC(turb)
-#else
-void gizmo_gpu_sync_all_turb(struct global_data_all_processes *p) { (void)p; }
-#endif
 
 
 #endif

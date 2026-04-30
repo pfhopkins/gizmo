@@ -21,10 +21,8 @@
 
 void subfind_find_linkngb(void)
 {
-#ifdef OPENMP_GPU_OFFLOAD
   subfind_find_linkngb_modern();
   return;
-#endif
 }
 
 int subfind_ngb_compare_dist(const void *a, const void *b)

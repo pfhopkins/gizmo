@@ -47,15 +47,9 @@
 
 /* Portable atomic operations: Kokkos atomics on GPU, direct write on CPU.
    On CPU the caller ensures thread safety via OpenMP atomics at a higher level. */
-#ifdef OPENMP_GPU_OFFLOAD
 #define HYDRO_ATOMIC_ADD(ptr, val) Kokkos::atomic_add(ptr, val)
 #define HYDRO_ATOMIC_STORE(ptr, val) Kokkos::atomic_store(ptr, val)
 #define HYDRO_ATOMIC_MAX(ptr, val) Kokkos::atomic_max(ptr, val)
-#else
-#define HYDRO_ATOMIC_ADD(ptr, val) (*(ptr) += (val))
-#define HYDRO_ATOMIC_STORE(ptr, val) (*(ptr) = (val))
-#define HYDRO_ATOMIC_MAX(ptr, val) do { if((val) > *(ptr)) { *(ptr) = (val); } } while(0)
-#endif
 
 
 /* Per-neighbor-pair hydro flux accumulation for particle i: kernel evaluation,

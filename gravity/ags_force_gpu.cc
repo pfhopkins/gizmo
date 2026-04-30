@@ -47,7 +47,7 @@
 #include "ags_force_gpu.h"
 #include "ags_functions.h"
 
-#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 
 /* Must include AFTER gpu_all_mirror.h redirects All -> All_dev and AFTER the
    KOKKOS_INLINE_FUNCTION macro definition so the helpers expand with GPU
@@ -331,4 +331,4 @@ void ags_force_evaluate_gpu(struct particle_data *, int, int *, int,
                             const double *, int, struct ags_force_gpu_out *) {}
 void gizmo_gpu_sync_all_agsforce(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE && OPENMP_GPU_OFFLOAD */
+#endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

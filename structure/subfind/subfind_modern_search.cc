@@ -11,7 +11,6 @@
 #include "subfind.h"
 
 #ifdef SUBFIND
-#ifdef OPENMP_GPU_OFFLOAD
 
 struct subfind_modern_ngb_t
 {
@@ -348,5 +347,4 @@ void subfind_find_nearesttwo_modern(void)
   if(!active.empty()) free_neighbor_list(&nl);
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */
 #endif /* SUBFIND */

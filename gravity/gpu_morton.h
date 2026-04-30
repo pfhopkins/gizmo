@@ -33,7 +33,6 @@
 
 #include <stdint.h>
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #include "gpu_morton_functions.h"   /* for Morton128 type used by accessor */
 
@@ -84,6 +83,5 @@ void gpu_morton_release(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_MORTON_H */

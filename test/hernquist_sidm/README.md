@@ -58,6 +58,6 @@ parts in 1e-12 as suspect.
 
 ## Files
 - `make_ic.py` — IC generator (Hernquist DF + Von Neumann velocity sampler)
-- `Config.sh` — GPU path (GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY + adaptive softening + SIDM)
+- `Config.sh` — GPU path (adaptive softening + SIDM; Kokkos always active)
 - `Config_cpu_reference.sh` — CPU tree-walk reference (same flags minus the neighbor-list one)
 - `hernquist_sidm.params` — params, including DM_InteractionCrossSection etc.

@@ -36,7 +36,6 @@
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 /* USE_TIMESTEP_DILATION_FOR_ZOOMS: node-indexed dilation is supported via a
  * per-call host-pre-compute cache. The dispatcher below allocates a SharedSpace
@@ -291,10 +290,3 @@ extern "C" void gpu_force_drift_release(void)
 
 GPU_ALL_SYNC_FUNC(force_drift)
 
-#else /* !OPENMP_GPU_OFFLOAD */
-
-/* Non-GPU builds: stubs so the header prototype resolves. */
-extern "C" int  gpu_force_drift_nodes(integertime t) { (void)t; return 0; }
-extern "C" void gpu_force_drift_release(void) {}
-
-#endif /* OPENMP_GPU_OFFLOAD */

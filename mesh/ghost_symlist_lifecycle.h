@@ -14,11 +14,9 @@
 #include "neighbor_list.h"
 #include "sfc_tiles.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
     int *active_indices, int num_active, neighbor_list_t *out,
     double search_radius_factor);
-#endif
 
 /* Shared search/ghost-inflation factor (only grows when TURB_DIFF_DYNAMIC
    widens the dynamic-diffusion kernel). */
@@ -83,11 +81,7 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
 
     /* build the symmetric CSR list (max(h_i,h_j) search radius) */
     double t_sym = my_second();
-#if defined(OPENMP_GPU_OFFLOAD)
     gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, search_fac);
-#else
-    build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
-#endif
     if(ThisTask == 0) {PRINT_STATUS("Symmetric neighbor list: %d active, %d pairs (%.4f s)",
                                     gizmo_sym_num_active, gizmo_sym_neighbor_list.total_pairs, timediff(t_sym, my_second()));}
 }
@@ -102,11 +96,7 @@ static inline void gizmo_gradients_refresh_symlist(double safety, double search_
         free_neighbor_list(&gizmo_sym_neighbor_list);
         ghost_exchange_cleanup();
         ghost_exchange(safety);
-#if defined(OPENMP_GPU_OFFLOAD)
         gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, search_fac);
-#else
-        build_neighbor_list_sfc(P, CellP, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, NGB_SEARCH_SYMMETRIC, 1, &gizmo_sym_neighbor_list);
-#endif
         if(ThisTask == 0) {PRINT_STATUS("Ghost refresh + CSR rebuild after gradients: %d pairs (%.4f s)",
                                         gizmo_sym_neighbor_list.total_pairs, timediff(t_refresh, my_second()));}
     }

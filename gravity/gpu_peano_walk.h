@@ -24,7 +24,6 @@
 #ifndef GIZMO_GPU_PEANO_WALK_H
 #define GIZMO_GPU_PEANO_WALK_H
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 struct topnode_data;  /* forward decl; defined in declarations/allvars.h */
 
@@ -48,6 +47,5 @@ const int                 *gpu_peano_walk_domain_node_index(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_PEANO_WALK_H */

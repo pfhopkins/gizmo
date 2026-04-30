@@ -72,7 +72,7 @@ void   force_update_size_of_parent_node(int no);
 
 void   dump_particles(void);
 
-/* mesh/ngb.cc retired in Step 5 Phase D5: ngb_treebuild/ngb_treefind_* all dead under OPENMP_GPU_OFFLOAD.
+/* mesh/ngb.cc retired in Step 5 Phase D5: ngb_treebuild/ngb_treefind_* all dead on the Kokkos path.
    ngb_treebuild() callers replaced with force_treebuild(NumPart, NULL) directly. */
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)

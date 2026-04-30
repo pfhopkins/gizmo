@@ -1,12 +1,9 @@
 ########################################
 # hernquist_sidm test — DM_SIDM activating test for the B2 AGSForce GPU port.
-# Kokkos/GPU neighbor-list variant (default). For the CPU tree-walk reference
-# used to validate the GPU output, comment the two GIZMO_USE_NEIGHBOR_LIST_*
-# and OPENMP_GPU_OFFLOAD-related flags by switching SYSTYPE to MacBookCellar
-# (non-Kokkos) or by using Config_cpu_reference.sh.
+# Kokkos/GPU variant (default). For a CPU reference build, use SYSTYPE=MacBookCellar
+# (non-Kokkos) or Config_cpu_reference.sh.
 ########################################
 
-GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
 
 # Gravity + box setup (pure DM, no gas, no PM)
 BOX_PERIODIC

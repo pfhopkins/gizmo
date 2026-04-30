@@ -47,20 +47,16 @@ static long long Ntotal;
 
 void subfind_density(int j_in)
 {
-#ifdef OPENMP_GPU_OFFLOAD
   subfind_density_modern(j_in);
   return;
-#endif
 }
 
 void subfind_setup_smoothinglengths(int j)
 {
-#ifdef OPENMP_GPU_OFFLOAD
 #ifdef FOF_DENSITY_SPLIT_TYPES
   if(ThisTask == 0)
     printf("FOF_DENSITY_SPLIT_TYPES is not yet supported by the modern SUBFIND neighbor-list path.\n");
   endrun(990505);
-#endif
 #endif
   int i, no, p;
 

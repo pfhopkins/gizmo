@@ -19,7 +19,6 @@
 #include "../declarations/allvars.h"
 #include "gpu_particles_arena.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 static struct particle_data *arena_P     = NULL;
 static struct gas_cell_data *arena_CellP = NULL;
@@ -72,7 +71,6 @@ static void arena_print_struct_offsets_(void)
            (int)offsetof(struct particle_data, KernelRadius),
            (int)offsetof(struct particle_data, DensityAroundParticle));
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
     /* gas_cell_data fields relevant to RT */
 #if defined(RT_USE_GRAVTREE) || defined(RADTRANSFER)
     printf("  CellP: Mass=%d  Density=%d\n",
@@ -82,7 +80,6 @@ static void arena_print_struct_offsets_(void)
     printf("  CellP: Radiation_Temperature=%d  Dust_Temperature=%d\n",
            (int)offsetof(struct gas_cell_data, Radiation_Temperature),
            (int)offsetof(struct gas_cell_data, Dust_Temperature));
-#endif
 #endif
 #endif
     fflush(stdout);
@@ -217,4 +214,3 @@ extern "C" struct gas_cell_data *gpu_particles_arena_CellP(void) {return arena_v
 extern "C" int gpu_particles_arena_capacity(void)                {return arena_capacity_;}
 extern "C" int gpu_particles_arena_valid(void)                   {return arena_valid_;}
 
-#endif /* OPENMP_GPU_OFFLOAD */

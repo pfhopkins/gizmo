@@ -30,7 +30,6 @@
 #include "gpu_peano_walk.h"
 #include "gpu_peano_walk_functions.h"  /* syntax-check device-side header */
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 namespace {
 
@@ -116,4 +115,3 @@ extern "C" const int *gpu_peano_walk_domain_node_index(void)
 
 GPU_ALL_SYNC_FUNC(peanowalk)
 
-#endif /* OPENMP_GPU_OFFLOAD */

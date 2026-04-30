@@ -13,7 +13,7 @@
 #define GPU_MIN_PARTICLES_FOR_OFFLOAD 4096
 #endif
 /* DEBUG BISECTION: override to force CPU fallback for cooling/nuclear/turb.
-   Uncomment to disable GPU kernels while keeping OPENMP_GPU_OFFLOAD active
+   Uncomment to disable GPU kernels while keeping GPU kernels active
    (All_dev sync, __managed__ CoolTables, #pragma omp declare target, etc.) */
 //#undef GPU_MIN_PARTICLES_FOR_OFFLOAD
 //#define GPU_MIN_PARTICLES_FOR_OFFLOAD 999999999

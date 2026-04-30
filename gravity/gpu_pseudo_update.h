@@ -19,7 +19,6 @@
 #ifndef GIZMO_GPU_PSEUDO_UPDATE_H
 #define GIZMO_GPU_PSEUDO_UPDATE_H
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,6 +68,5 @@ int gpu_topnode_moment_resum(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_PSEUDO_UPDATE_H */

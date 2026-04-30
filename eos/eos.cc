@@ -46,10 +46,8 @@ double return_user_desired_target_pressure(int i)
      */
 }
 
-/* ---- BEGIN device-compilable EOS functions (for OPENMP_GPU_OFFLOAD cooling loop) ---- */
-#ifdef OPENMP_GPU_OFFLOAD
+/* ---- BEGIN device-compilable EOS functions (for GPU cooling loop) ---- */
 #pragma omp begin declare target
-#endif
 
 /*!
     Updates the thermodynamic quantities determined by the current internal
@@ -85,9 +83,7 @@ double return_user_desired_target_pressure(int i)
 #define KOKKOS_INLINE_FUNCTION
 #include "eos_functions.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
-#endif
 
 /* set_eos_pressure — compute pressure and soundspeed from EOS.
    Calls ThermalProperties (in cooling.cc via cooling_functions.h) by external
@@ -512,6 +508,4 @@ void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particl
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-#ifdef OPENMP_GPU_OFFLOAD
 GPU_ALL_SYNC_FUNC(eos)
-#endif

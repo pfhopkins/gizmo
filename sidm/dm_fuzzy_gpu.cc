@@ -1,7 +1,6 @@
 /* dm_fuzzy_gpu.cc — GPU-accelerated DMGrad (density-gradient estimator for DM_FUZZY).
  *
- * GPU translation unit: compiled by nvcc_wrapper when OPENMP_GPU_OFFLOAD is
- * enabled. Called once per iteration from DMGrad_gradient_calc() in
+ * GPU translation unit: (Kokkos/nvcc_wrapper). Called once per iteration from DMGrad_gradient_calc() in
  * dm_fuzzy.cc. Builds a cross-type CSR (i = DM active, j = DM via
  * bitmask group), runs the iteration-specific accumulation kernel.
  *
@@ -33,7 +32,7 @@
 #include "dm_fuzzy_gpu.h"
 
 
-#if defined(DM_FUZZY) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(DM_FUZZY)
 
 /* Device-side min/max helpers that update in place (MINMAX_CHECK equivalent). */
 KOKKOS_INLINE_FUNCTION void dmgrad_minmax(double v, double &mn, double &mx)
@@ -201,4 +200,4 @@ void dmgrad_evaluate_gpu(struct particle_data *, int, int *, int, const double *
                          const struct dmgrad_gpu_in *, int, int, void *) {}
 void gizmo_gpu_sync_all_dmgrad(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* DM_FUZZY && OPENMP_GPU_OFFLOAD */
+#endif /* DM_FUZZY */

@@ -48,7 +48,8 @@ fi
 # Base flags prepended to every config: enable the GPU/Kokkos code path.
 # GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY retired in Step 5 C5 (always-on).
 # GIZMO_GPU_GRAVTREE and OPENMP_TREE_UPDATE retired in Step 5 C1/C2.
-BASE_FLAGS="OPENMP_GPU_OFFLOAD"
+# OPENMP_GPU_OFFLOAD retired in Step 5 C4 (always-on, removed from source).
+BASE_FLAGS=""
 
 RESULTS_FILE="compile_suite_results.txt"
 ERRORS_DIR="compile_suite_errors"

@@ -157,7 +157,7 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #define GIZMO_GPU_DEVICE
 #endif
 /* KOKKOS_FUNCTION / KOKKOS_INLINE_FUNCTION: defined by Kokkos headers when
-   OPENMP_GPU_OFFLOAD is active.  On non-GPU builds, define to nothing/inline
+   Kokkos is active.  On non-GPU builds, define to nothing/inline
    so code annotated with these compiles without Kokkos. */
 #ifndef KOKKOS_FUNCTION
 #define KOKKOS_FUNCTION
@@ -168,9 +168,7 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 /* Kokkos memory space abstraction: Kokkos::SharedSpace is backend-agnostic
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
    convenience alias so allocation code doesn't hardcode a backend. */
-#ifdef OPENMP_GPU_OFFLOAD
 #define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
-#endif
 
 /* DMAX/DMIN/IMAX/IMIN as macros: the static inline function versions in proto.h
    lack __device__ annotations and nvcc silently stubs them to return 0 on device.
@@ -184,7 +182,7 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 #define IMAX(a,b) ((a) > (b) ? (a) : (b))
 #define IMIN(a,b) ((a) < (b) ? (a) : (b))
 
-#if defined(OPENMP_GPU_OFFLOAD) && (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
+#if (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__))
 /* GPU-device endrun/PRINT_WARNING.  Device code cannot call MPI_Abort, but it
    must not continue after a fatal physics/error path.  Print the source
    location, then trap the kernel so the host post-kernel error check sees the

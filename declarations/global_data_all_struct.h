@@ -61,7 +61,7 @@ struct global_data_all_processes
   double PartAllocFactor;	/*!< in order to maintain work-load balance, the particle load will usually NOT be balanced.  Each processor allocates memory for PartAllocFactor times the average number of particles to allow for that */
   double TreeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */
   double TopNodeAllocFactor;	/*!< Each processor allocates a number of nodes which is TreeAllocFactor times the maximum(!) number of particles.  Note: A typical local tree for N particles needs usually about ~0.65*N nodes. */
-  double LETAllocFactor;        /*!< Step 13 Phase 9: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode for the Locally Essential Tree.  Foreign-node capacity = ceil(LETAllocFactor * MaxNodes).  Default 1.0; raise for clustered runs that exhaust the foreign buffer (endrun message will name this param).  Only used on OPENMP_GPU_OFFLOAD builds. */
+  double LETAllocFactor;        /*!< Step 13 Phase 9: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode for the Locally Essential Tree.  Foreign-node capacity = ceil(LETAllocFactor * MaxNodes).  Default 1.0; raise for clustered runs that exhaust the foreign buffer (endrun message will name this param).  Only used on GPU builds. */
 
 #ifdef DM_SCALARFIELD_SCREENING
   double ScalarBeta;

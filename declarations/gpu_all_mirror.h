@@ -21,7 +21,7 @@
    and provides the struct type needed for the __managed__ declaration. */
 #include "global_data_all_struct.h"
 
-#if defined(OPENMP_GPU_OFFLOAD) && defined(GIZMO_GPU_COMPILER)
+#if defined(GIZMO_GPU_COMPILER)
 
 /* Per-TU managed copy of the global All struct.  __managed__ makes it
    accessible from both host and device code within this translation unit.
@@ -61,7 +61,7 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
     gizmo_gpu_sync_all_##name(gizmo_gpu_host_all_ptr()); \
 } while(0)
 
-#elif defined(OPENMP_GPU_OFFLOAD)
+#else
 
 /* Kokkos OpenMP backend — All is the regular extern from allvars.h.
    Still need the sync function stub so cooling.cc can call it. */
@@ -69,12 +69,6 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
     void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
 
 /* Freshness guard — no-op on host Kokkos backend (All is already live). */
-#define GIZMO_GPU_ENSURE_ALL_FRESH(name) ((void)0)
-
-#else
-
-/* No GPU offload at all — no-op. */
-#define GPU_ALL_SYNC_FUNC(name)
 #define GIZMO_GPU_ENSURE_ALL_FRESH(name) ((void)0)
 
 #endif

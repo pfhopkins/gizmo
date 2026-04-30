@@ -20,9 +20,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#ifdef OPENMP_GPU_OFFLOAD
 /* Kokkos lifecycle wrappers declared in proto.h, defined in cooling/cooling.cc */
-#endif
 
 
 
@@ -44,7 +42,6 @@ int main(int argc, char **argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &ThisTask);
   MPI_Comm_size(MPI_COMM_WORLD, &NTask);
-#ifdef OPENMP_GPU_OFFLOAD
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
   /* Check if CUDA/Kokkos init changed CPU floating-point mode (FTZ/DAZ).
      On ARM (aarch64), check FPCR bits 24 (FZ) and 19 (FZ16).
@@ -75,7 +72,6 @@ int main(int argc, char **argv)
       }
 #endif
   }
-#endif
 
 #ifdef IMPOSE_PINNING
   pin_to_core_set();
@@ -162,9 +158,7 @@ int main(int argc, char **argv)
 
   run();			/* main simulation loop */
 
-#ifdef OPENMP_GPU_OFFLOAD
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
-#endif
   MPI_Finalize();		/* clean up & finalize MPI */
 
   return 0;

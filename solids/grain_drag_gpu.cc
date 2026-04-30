@@ -1,6 +1,6 @@
 /* grain_drag_gpu.cc — GPU-accelerated grain drag force evaluation.
  *
- * GPU translation unit: compiled by nvcc_wrapper when OPENMP_GPU_OFFLOAD is enabled.
+ * GPU translation unit: GPU translation unit (Kokkos/nvcc_wrapper).
  * Provides grain_drag_evaluate_gpu() which runs the per-particle grain drag/Lorentz
  * force computation via Kokkos::parallel_for.
  *
@@ -43,7 +43,7 @@ extern struct cooling_tables_t CoolTables;
 #include "../declarations/gpu_dispatch_templates.h"
 
 
-#if defined(GRAIN_FLUID) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(GRAIN_FLUID)
 
 /* Per-particle grain drag kernel. Operates on compact arrays pp[idx].
  * Modifies pp[idx].GravAccel, pp[idx].Grain_AccelTimeMin, and
@@ -285,4 +285,4 @@ void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                              int *, int) {}
 void gizmo_gpu_sync_all_grain(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GRAIN_FLUID && OPENMP_GPU_OFFLOAD */
+#endif /* GRAIN_FLUID */

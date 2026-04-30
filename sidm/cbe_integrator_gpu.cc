@@ -26,7 +26,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../declarations/macros.h"
 
-#if defined(CBE_INTEGRATOR) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(CBE_INTEGRATOR)
 
 #include "cbe_integrator_functions.h"
 
@@ -76,4 +76,4 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *p, int num_total,
 }
 void gizmo_gpu_sync_all_cbeintegrator(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* CBE_INTEGRATOR && OPENMP_GPU_OFFLOAD */
+#endif /* CBE_INTEGRATOR */

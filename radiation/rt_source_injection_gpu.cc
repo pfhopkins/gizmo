@@ -3,7 +3,7 @@
  * Source particles (Type != 0 with luminosity) scatter radiation into
  * surrounding gas (Type == 0) neighbors via a Kokkos parallel_for kernel.
  * This replaces the CPU tree-walk inside rt_source_injection() when both
- * OPENMP_GPU_OFFLOAD is defined.
+ * GPU translation unit (Kokkos/nvcc_wrapper).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -30,7 +30,7 @@
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 
-#if defined(RT_SOURCE_INJECTION) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(RT_SOURCE_INJECTION)
 
 #include "rt_source_injection_functions.h"
 
@@ -203,4 +203,4 @@ void rt_source_injection_evaluate_gpu(struct particle_data *p,
 }
 void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* RT_SOURCE_INJECTION && OPENMP_GPU_OFFLOAD */
+#endif /* RT_SOURCE_INJECTION */

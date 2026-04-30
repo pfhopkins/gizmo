@@ -7,7 +7,7 @@ RT_CHEM_PHOTOION=1, RT_INFRARED).  Pre-existing Type-4 stellar particles
 emit into these bands from step 1, guaranteeing nonzero injection.
 
 Validation protocol:
-1. Build with GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY + OPENMP_GPU_OFFLOAD
+1. Build with default Kokkos Config.sh (flags are now always active)
 2. Confirm PRINT_STATUS shows nonzero "GPU rt_source_injection: N sources, M pairs"
 3. Check that radiation energy density is nonzero in snapshot PartType0/PhotonEnergy_*
 4. Compare GPU vs CPU tree-walk reference on at least one RT band field.

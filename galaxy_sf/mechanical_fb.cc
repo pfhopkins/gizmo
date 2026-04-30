@@ -241,7 +241,6 @@ void mechanical_fb_calc_toplevel(void)
     N_Gas_Couplings_ThisTask = 0; /* initialize this to zero [default to assume no coupled feedback] */
     int i; for(i=0;i<N_gas;i++) {if(P[i].Type==0) {memset(&LocalGasMechFBInfoTemp[i], 0, sizeof(struct MechFBGasDelta));}} /* zero it out before loops */
 
-#ifdef OPENMP_GPU_OFFLOAD
     /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
        neighbor list across modes. See galaxy_sf/mechanical_fb_gpu.cc. */
     {
@@ -274,7 +273,6 @@ void mechanical_fb_calc_toplevel(void)
         N_Gas_Couplings_ThisTask = n_coup_gpu;
         myfree(nl_radii); myfree(nl_active);
     }
-#endif
 
 
 

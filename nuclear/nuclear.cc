@@ -197,7 +197,7 @@ void nuclear_parent_routine(void)
     if (N_active == 0) return;
 
     /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
-#if defined(OPENMP_GPU_OFFLOAD) && !defined(CHIMES)
+#if !defined(CHIMES)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
     static const int GPU_BURN_BATCH_SIZE = 32768;
 
@@ -279,10 +279,6 @@ void nuclear_parent_routine(void)
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-#ifdef OPENMP_GPU_OFFLOAD
 GPU_ALL_SYNC_FUNC(nuclear)
-#else
-void gizmo_gpu_sync_all_nuclear(struct global_data_all_processes *p) { (void)p; }
-#endif
 
 #endif /* NUCLEAR_NETWORK */

@@ -72,7 +72,6 @@
 #include "../radiation/rt_functions.h"
 #endif
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 /* ------------------------------------------------------------------ */
 /* Atomic-max helper for floating-point types using a CAS loop.       */
@@ -981,4 +980,3 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
 
 GPU_ALL_SYNC_FUNC(moment_refresh)
 
-#endif /* OPENMP_GPU_OFFLOAD */

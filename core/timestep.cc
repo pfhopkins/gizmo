@@ -1471,7 +1471,7 @@ double return_timestep_dilation_factor(int i, int mode, struct particle_data *pp
 
 void refresh_timestep_dilation_factors_for_gpu(void)
 {
-#if defined(OPENMP_GPU_OFFLOAD) && defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+#if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
     if(P == NULL || NumPart <= 0) {return;}
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)

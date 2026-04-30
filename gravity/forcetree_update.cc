@@ -9,10 +9,8 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 /* Phase 7.c: GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
-#endif
 
 /* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
 static inline void atomic_max_double(double* addr, double val) {
@@ -41,97 +39,12 @@ static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for ato
 
 void force_update_tree(void)
 {
-#ifdef OPENMP_GPU_OFFLOAD
     /* Phase 7.d: GPU path is the only path — CPU fallback retired. */
     gpu_force_update_tree();
     return;
-#else
-    PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree");
-    int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
-    /* note: the current list of active particles still refers to that synchronized at the previous time. */
-
-    /* Phase 1: drift all ancestor nodes to Ti_Current (serial — force_drift_node has complex read-modify-write) */
-    for (int i : ActiveParticleList)
-    {
-        int no = Father[i];
-        while(no >= 0)
-        {
-            if(Nodes[no].Ti_current == All.Ti_Current) {break;} /* already drifted; ancestors above will be too since they were drifted first */
-            force_drift_node(no, All.Ti_Current);
-            no = Nodes[no].u.d.father;
-        }
-    }
-    /* Phase 2: accumulate kicks in parallel (all nodes already drifted, so only atomic accumulation needed) */
-#pragma omp parallel for schedule(dynamic)
-    for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
-    {
-        int i = ActiveParticleList[idx];
-        force_kick_node(i, P[i].dp);
-        P[i].dp = {};
-    }
-    force_finish_kick_nodes();
-    myfree(DomainList);
-    PRINT_STATUS(" ..Tree has been updated dynamically");
-#endif /* OPENMP_GPU_OFFLOAD */
 }
 
 
-#ifndef OPENMP_GPU_OFFLOAD
-void force_kick_node(int i, Vec3<MyDouble>& dp)
-{
-  int j, no; MyFloat v, vmax;
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    Vec3<MyDouble> rt_source_lum_dp;
-    {double lum[N_RT_FREQ_BINS]; int active_check = rt_get_source_luminosity(i,-1,lum, P, CellP); rt_source_lum_dp = active_check ? dp : Vec3<MyDouble>{};}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-    Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
-#endif
-
-  for(j = 0, vmax = 0; j < 3; j++)
-    if((v = fabs(P[i].Vel[j])) > vmax)
-      vmax = v;
-
-  no = Father[i];
-
-  while(no >= 0)
-    {
-      for(int k = 0; k < 3; k++) {
-          #pragma omp atomic
-          Extnodes[no].dp[k] += dp[k];
-      }
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-      for(int k = 0; k < 3; k++) {
-          #pragma omp atomic
-          Extnodes[no].rt_source_lum_dp[k] += rt_source_lum_dp[k];
-      }
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-      for(int k = 0; k < 3; k++) {
-          #pragma omp atomic
-          Extnodes[no].dp_dm[k] += dp_dm[k];
-      }
-#endif
-      atomic_max_double(&Extnodes[no].vmax, vmax);
-      Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
-      Extnodes[no].Ti_lastkicked = All.Ti_Current;
-      if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
-      {
-          #pragma omp critical(DomainListAppend)
-          {
-              if(Extnodes[no].Flag != GlobFlag)
-              {
-                  Extnodes[no].Flag = GlobFlag;
-                  DomainList[DomainNumChanged++] = no;
-              }
-          }
-          break;
-      }
-
-      no = Nodes[no].u.d.father;
-    }
-}
-#endif /* !OPENMP_GPU_OFFLOAD */
 
 
 

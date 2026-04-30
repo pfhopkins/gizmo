@@ -104,7 +104,6 @@ struct SinkSwallowOut
 };
 
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 /* Per-pair kernel — mirrors sink_swallow_and_kick.cc:204-510. Atomic j-writes on
  * the target gas cell / sink / star / DM; host-side scatter of per-source
@@ -440,6 +439,5 @@ static void sink_swallow_pair_kernel(
     }
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* SINK_PARTICLES */

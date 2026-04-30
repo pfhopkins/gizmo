@@ -1,7 +1,6 @@
 /* dm_dispersion_gpu.cc — GPU-accelerated DM velocity dispersion around gas.
  *
- * GPU translation unit: compiled by nvcc_wrapper when OPENMP_GPU_OFFLOAD is
- * enabled. Provides disp_density_evaluate_gpu(), called once per h-iteration
+ * GPU translation unit: (Kokkos/nvcc_wrapper). Provides disp_density_evaluate_gpu(), called once per h-iteration
  * from disp_density() in dm_dispersion_rkern.cc. Builds a cross-type CSR list
  * (gas i → DM j, search radius = per-i CellP[i].KernelRadiusDM), runs the
  * accumulation kernel via Kokkos::parallel_for. Read-only on j, so no atomics
@@ -35,7 +34,7 @@
 
 
 #if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2) \
-    && defined(OPENMP_GPU_OFFLOAD)
+   
 
 /* DM type filter: the CPU tree-walk code calls ngb_treefind_variable_threads_targeted
    with type_bitmask=2 (i.e. 2^1 = high-res DM). We mirror that exactly. */
@@ -130,4 +129,4 @@ GPU_ALL_SYNC_FUNC(dispdensity)
 void disp_density_evaluate_gpu(struct particle_data *, int, int *, int, const double *, void *) {}
 void gizmo_gpu_sync_all_dispdensity(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 && OPENMP_GPU_OFFLOAD */
+#endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 */

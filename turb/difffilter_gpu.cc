@@ -1,6 +1,6 @@
 /* difffilter_gpu.cc — GPU-accelerated DiffFilter velocity smoothing for TURB_DIFF_DYNAMIC.
  *
- * This is a GPU translation unit: compiled by nvcc_wrapper when OPENMP_GPU_OFFLOAD is enabled.
+ * This is a GPU translation unit: GPU translation unit (Kokkos/nvcc_wrapper).
  * Provides difffilter_evaluate_gpu() which builds a wider CSR neighbor list (search radius =
  * TurbDynamicDiffFac * h_i) and runs the DiffFilter per-pair kernel via Kokkos::parallel_for.
  *
@@ -33,7 +33,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 
 
-#if defined(TURB_DIFF_DYNAMIC) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(TURB_DIFF_DYNAMIC)
 
 /* Output struct: matches the fields accumulated by DiffFilter_evaluate */
 struct DiffFilter_out {
@@ -407,4 +407,4 @@ void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                               void *, void *, void *, int) {}
 void gizmo_gpu_sync_all_difffilter(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* TURB_DIFF_DYNAMIC && OPENMP_GPU_OFFLOAD */
+#endif /* TURB_DIFF_DYNAMIC */

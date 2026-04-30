@@ -61,7 +61,7 @@ void do_first_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
-#if defined(CBE_INTEGRATOR) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(CBE_INTEGRATOR)
     {
         int n = (int)ActiveParticleList.size();
         int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
@@ -79,9 +79,7 @@ void do_first_halfstep_kick(void)
         myfree(cbe_dt); myfree(cbe_active);
     }
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host Vel/Entropy kicked; arena stale */
-#endif
 }
 
 void do_second_halfstep_kick(void)
@@ -119,7 +117,7 @@ void do_second_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
-#if defined(CBE_INTEGRATOR) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(CBE_INTEGRATOR)
     {
         int n = (int)ActiveParticleList.size();
         int    *cbe_active = (int *)   mymalloc("cbe_kick_idx", (n>0?n:1)*sizeof(int));
@@ -141,9 +139,7 @@ void do_second_halfstep_kick(void)
 #ifdef TURB_DRIVING
     do_turb_driving_step_second_half();
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host Vel/Entropy kicked; arena stale */
-#endif
 }
 
 #ifdef HERMITE_INTEGRATION
@@ -472,9 +468,6 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
         P[i].dp += dp;
 #ifdef DM_FUZZY
         do_dm_fuzzy_drift_kick(i, dt_entr, 0); /* kicks for fuzzy-dm integration */
-#endif
-#if defined(CBE_INTEGRATOR) && !defined(OPENMP_GPU_OFFLOAD)
-        do_cbe_drift_kick(i, dt_entr); /* kicks for cbe integration of phase-space distribution function */
 #endif
         
     } // if(TimeBinActive[P[i].TimeBin]) //

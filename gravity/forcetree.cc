@@ -11,13 +11,11 @@
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
 #include "gpu_gravity_tree.h"
 #include "gpu_peano_walk.h"
 #include "gpu_topology_build.h"
 #include "gpu_topology_finalize.h"
 #include "gpu_pseudo_update.h"
-#endif
 
 /*! \file forcetree.c
  *  \brief gravitational tree and code for Ewald correction
@@ -209,7 +207,6 @@ int force_treebuild(int npart, struct unbind_data *mp)
         }
     }
     while(flag == -1);
-#ifdef OPENMP_GPU_OFFLOAD
     /* GPU finalize stage replaces force_update_node_recursive's
      * sibling/father/Father[] outputs.  Order matters:
      *   1. finalize_father: writes soa->father for all internal nodes
@@ -254,11 +251,6 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * this point — no mark_all_dirty needed. */
     if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(913341);}
     if(gpu_topnode_moment_resum() != 0)     {endrun(913342);}
-#else
-    force_flag_localnodes();
-    force_exchange_pseudodata();
-    force_treeupdate_pseudos(All.MaxPart);
-#endif
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;
 }
@@ -305,7 +297,6 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     if(force_create_empty_nodes(All.MaxPart, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
     /* if a high-resolution region in a global tree is used, we need to generate an additional set empty nodes to make sure that we have a complete top-level tree for the high-resolution inset */
 
-#ifdef OPENMP_GPU_OFFLOAD
     /* Step 13 Phase 6.5d: GPU tree-build replaces the per-particle CPU
      * insertion loop for inside-topleaf topology.  Order on GPU compile:
      *   1. force_insert_pseudo_particles (modifies foreign-topleaf u.suns).
@@ -363,157 +354,9 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
          * setup_smoothinglengths which walks Nodes[Father[i]].u.d.father. */
         if(gpu_topology_writeback_to_aos(0, numnodes) != 0) {return -1;}
     }
-#else
-    nfreep = &Nodes[nfree];
-    parent = -1;            /* note: will not be used below before it is changed */
-    morton_list = (peanokey *) mymalloc("morton_list", NumPart * sizeof(peanokey));
-
-    /* now we insert all particles */
-    for(k = 0; k < npart; k++)
-    {
-        if(mp) {i = mp[k].index;} else {i = k;}
-        rep = 0;
-        /* new code */
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        key = peano_and_morton_key(xb, yb, zb, BITS_PER_DIMENSION, &morton);
-        morton_list[i] = morton;
-        shift = 3 * (BITS_PER_DIMENSION - 1);
-        no = 0;
-        while(TopNodes[no].Daughter >= 0)
-        {
-            no = TopNodes[no].Daughter + (key - TopNodes[no].StartKey) / (TopNodes[no].Size / 8);
-            shift -= 3;
-            rep++;
-        }
-        no = TopNodes[no].Leaf;
-        th = DomainNodeIndex[no];
-        
-        while(1)
-        {
-            if(th >= All.MaxPart)    /* we are dealing with an internal node */
-            {
-                if(shift >= 0) {subnode = ((morton >> shift) & 7);}
-                else
-                {
-                    subnode = 0;
-                    if(P[i].Pos[0] > Nodes[th].center[0]) {subnode += 1;}
-                    if(P[i].Pos[1] > Nodes[th].center[1]) {subnode += 2;}
-                    if(P[i].Pos[2] > Nodes[th].center[2]) {subnode += 4;}
-                }
-                
-                {
-                    double split_scale = DMAX(ForceSoftening_KernelRadius(i), P[i].KernelRadius);
-                    if(Nodes[th].len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * split_scale)
-                    {
-                        /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
-                         * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                        subnode = (int) (8.0 * get_random_number(P[i].ID));
-                        if(subnode >= 8) {subnode = 7;}
-                    }
-                }
-                
-                nn = Nodes[th].u.suns[subnode];
-                shift -= 3;
-                
-                if(nn >= 0)    /* ok, something is in the daughter slot already, need to continue */
-                {
-                    parent = th;
-                    th = nn;
-                    rep++;
-                }
-                else
-                {
-                    /* here we have found an empty slot where we can attach the new particle as a leaf. */
-                    Nodes[th].u.suns[subnode] = i;
-                    break;    /* done for this particle */
-                }
-            }
-            else
-            {
-                /* We try to insert into a leaf with a single particle.  Need to generate a new internal node at this point. */
-                Nodes[parent].u.suns[subnode] = nfree;
-                nfreep->len = 0.5 * Nodes[parent].len;
-                lenhalf = 0.25 * Nodes[parent].len;
-                
-                if(subnode & 1) {nfreep->center[0] = Nodes[parent].center[0] + lenhalf;}
-                else {nfreep->center[0] = Nodes[parent].center[0] - lenhalf;}
-                
-                if(subnode & 2) {nfreep->center[1] = Nodes[parent].center[1] + lenhalf;}
-                else {nfreep->center[1] = Nodes[parent].center[1] - lenhalf;}
-                
-                if(subnode & 4) {nfreep->center[2] = Nodes[parent].center[2] + lenhalf;}
-                else {nfreep->center[2] = Nodes[parent].center[2] - lenhalf;}
-                
-                nfreep->u.suns[0] = -1;
-                nfreep->u.suns[1] = -1;
-                nfreep->u.suns[2] = -1;
-                nfreep->u.suns[3] = -1;
-                nfreep->u.suns[4] = -1;
-                nfreep->u.suns[5] = -1;
-                nfreep->u.suns[6] = -1;
-                nfreep->u.suns[7] = -1;
-                
-                if(shift >= 0)
-                {
-                    th_key = morton_list[th];
-                    subnode = ((th_key >> shift) & 7);
-                }
-                else
-                {
-                    subnode = 0;
-                    if(P[th].Pos[0] > nfreep->center[0]) {subnode += 1;}
-                    if(P[th].Pos[1] > nfreep->center[1]) {subnode += 2;}
-                    if(P[th].Pos[2] > nfreep->center[2]) {subnode += 4;}
-                }
-                
-                {
-                    double split_scale = DMAX(ForceSoftening_KernelRadius(th), P[th].KernelRadius);
-                    if(nfreep->len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING * split_scale)
-                    {
-                        /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
-                         * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                        subnode = (int) (8.0 * get_random_number(P[th].ID));
-                        if(subnode >= 8) {subnode = 7;}
-                    }
-                }
-                
-                nfreep->u.suns[subnode] = th;
-                th = nfree;    /* resume trying to insert the new particle at the newly created internal node */
-                numnodes++;
-                nfree++;
-                nfreep++;
-                
-                if((numnodes) >= MaxNodes)
-                {
-                    printf("task %d: maximum number %d of tree-nodes reached for particle %d.\n", ThisTask, MaxNodes, i);
-                    
-                    if(All.TreeAllocFactor > 5.0)
-                    {
-                        printf("task %d: looks like a serious problem for particle %d, stopping with particle dump.\n", ThisTask, i);
-                        dump_particles();
-                        endrun(1);
-                    }
-                    else
-                    {
-                        myfree(morton_list);
-                        return -1;
-                    }
-                }
-            }
-        }
-    }
-    
-    myfree(morton_list);
-
-    /* insert the pseudo particles that represent the mass distribution of other domains */
-    force_insert_pseudo_particles();
-#endif  /* end of CPU per-particle path -- GPU path already did pseudo-insert above */
 
     /* now compute the multipole moments recursively */
     last = -1;
-#ifdef OPENMP_GPU_OFFLOAD
     /* Phase 6.6: force_update_node_recursive retired on GPU build.  The GPU
      * finalize stage in force_treebuild (gpu_topology_finalize_father,
      * gpu_topology_finalize_sibling, gpu_moment_refresh, gpu_nextnode_thread)
@@ -526,16 +369,6 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
      * SoA writes give complete suns_backup coverage, and nothing clobbers
      * AoS u.suns until gpu_topology_writeback_d_to_aos at the very end of
      * force_treebuild (by which point all SoA readers are done). */
-#else
-    force_update_node_recursive(All.MaxPart, -1, -1);
-
-    if(last >= All.MaxPart)
-    {
-        if(last >= All.MaxPart + MaxNodes + MaxForeignNodes) {Nextnode[last - MaxNodes - MaxForeignNodes] = -1;}    /* a pseudo-particle (Phase 9: foreign-node range below pseudos) */
-        else {Nodes[last].u.d.nextnode = -1;}
-    }
-    else {Nextnode[last] = -1;}
-#endif
 
     return numnodes;
 }
@@ -1674,7 +1507,6 @@ void force_add_element_to_tree(int iparent, int ichild)
     for(int k = 0; k < 3; k++) {if(fabs(P[ichild].Vel[k]) > new_vmax) {new_vmax = fabs(P[ichild].Vel[k]);}}
     Extnodes[father].vmax = (MyFloat) new_vmax;
 
-#ifdef OPENMP_GPU_OFFLOAD
     /* Phase 10.2 (α): keep SoA walk-mirror coherent with the AoS Extnodes
      * change above.  hmax and vmax are read by the walk's opening criteria
      * (and vmax drives bbox expansion in subsequent drifts via Nodes[].len).
@@ -1689,7 +1521,6 @@ void force_add_element_to_tree(int iparent, int ichild)
             if(soa->vmax) {soa->vmax[k_soa] = (MyGravFloat) new_vmax;}
         }
     }
-#endif
 
     /* Phase 9.6 diagnostic: each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at
@@ -3705,7 +3536,6 @@ void force_treeallocate(int maxnodes, int maxpart)
     DomainNodeIndex = (int *) mymalloc("DomainNodeIndex", bytes = NTopleaves * sizeof(int));
     allbytes_topleaves += bytes;
     MaxNodes = maxnodes;
-#ifdef OPENMP_GPU_OFFLOAD
     /* Phase 9 LET: foreign-node headroom in Nodes_base/Extnodes_base/Nextnode.
      * Index map (single source of truth):
      *   [0,                                     MaxPart)                                  -> particles
@@ -3773,32 +3603,6 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(8267342);
     }
     gpu_gravity_tree_alias_nextnode(Nextnode, (int) nextnode_slots);
-#else
-    if(!(Nodes_base = (struct NODE *) mymalloc("Nodes_base", bytes = (MaxNodes + 1) * sizeof(struct NODE))))
-    {
-        printf("failed to allocate memory for %d tree-nodes (%g MB).\n", MaxNodes, bytes / (1024.0 * 1024.0));
-        endrun(3);
-    }
-    allbytes += bytes;
-    if(!
-       (Extnodes_base =
-        (struct extNODE *) mymalloc("Extnodes_base", bytes = (MaxNodes + 1) * sizeof(struct extNODE))))
-    {
-        printf("failed to allocate memory for %d tree-extnodes (%g MB).\n", MaxNodes, bytes / (1024.0 * 1024.0));
-        endrun(3);
-    }
-    allbytes += bytes;
-    Nodes = Nodes_base - All.MaxPart;
-    Extnodes = Extnodes_base - All.MaxPart;
-    if(!(Nextnode = (int *) mymalloc("Nextnode", bytes = (maxpart + NTopnodes) * sizeof(int))))
-    {
-        printf("Failed to allocate %d spaces for 'Nextnode' array (%g MB)\n",
-               maxpart + NTopnodes, bytes / (1024.0 * 1024.0));
-        endrun(8267342);
-    }
-    allbytes += bytes;
-#endif
-#ifdef OPENMP_GPU_OFFLOAD
     /* Phase 6.6: Father[] is UVM (SharedSpace) so the GPU father kernel can
      * write into it directly and host readers (setup_smoothinglengths etc.)
      * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
@@ -3812,14 +3616,6 @@ void force_treeallocate(int maxnodes, int maxpart)
         endrun(438965237);
     }
     /* Don't add to allbytes — kokkos_malloc accounting is separate. */
-#else
-    if(!(Father = (int *) mymalloc("Father", bytes = (maxpart) * sizeof(int))))
-    {
-        printf("Failed to allocate %d spaces for 'Father' array (%g MB)\n", maxpart, bytes / (1024.0 * 1024.0));
-        endrun(438965237);
-    }
-    allbytes += bytes;
-#endif
     if(first_flag == 0)
     {
         first_flag = 1;
@@ -3889,7 +3685,6 @@ void force_treefree(void)
 {
     if(tree_allocated_flag)
     {
-#ifdef OPENMP_GPU_OFFLOAD
         /* Phase 6.8d/e: SharedSpace (UVM) frees for GPU-addressable tree
          * storage.  Order is reverse-of-alloc (LIFO discipline preserved for
          * the residual mymalloc'd DomainNodeIndex). */
@@ -3898,12 +3693,6 @@ void force_treefree(void)
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
-#else
-        myfree(Father);
-        myfree(Nextnode);
-        myfree(Extnodes_base);
-        myfree(Nodes_base);
-#endif
         myfree(DomainNodeIndex);
         tree_allocated_flag = 0;
     }
@@ -4193,7 +3982,6 @@ void force_refresh_node_moments(void)
     int i, k, no;
     PRINT_STATUS("Refreshing tree node moments (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
 
-#ifdef OPENMP_GPU_OFFLOAD
     /* Phase 6.2: GPU moment-refresh kernel computes local-tree node
      * moments + writes back to AoS. After this returns, Nodes[] /
      * Extnodes[] are in the same state CPU steps 1-4 below would
@@ -4223,7 +4011,6 @@ void force_refresh_node_moments(void)
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
         return;
     }
-#endif
 
     /* Step 1: zero all node moment fields (preserving structural fields: nextnode, sibling, father) */
     for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)

@@ -7,7 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
-#if defined(OUTPUT_TWOPOINT_ENABLED) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(OUTPUT_TWOPOINT_ENABLED)
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
@@ -81,7 +81,6 @@ void twopoint(void)
 
     gizmo_rng_t saved_rng = random_generator;
     gizmo_rng_init(&random_generator, (uint64_t)P[0].ID + (uint64_t)ThisTask);
-#ifdef OPENMP_GPU_OFFLOAD
     /* Modern path: prebuilt CSR NL, per-source rs, all-types search pool.
      *
      * INTERIM IMPLEMENTATION: drops the legacy tree-mass-aggregation
@@ -186,53 +185,6 @@ void twopoint(void)
         }
         if(ghost_imported) ghost_exchange_cleanup();
     }
-#else
-    i = 0;            /* begin with this index */
-    do
-    {
-        for(j = 0; j < NTask; j++) {Send_count[j] = 0; Exportflag[j] = -1;}
-        for(nexport = 0; i < NumPart; i++) /* do local particles and prepare export list */
-        if(gizmo_rng_uniform(&random_generator) < scaled_frac)
-        {
-          p = gizmo_rng_uniform(&random_generator); rs = pow(pow(R0, ALPHA) + p * (pow(R1, ALPHA) - pow(R0, ALPHA)), 1 / ALPHA);
-          bin = (int) ((log(rs) - logR0) * binfac); rs = exp((bin + 1) / binfac + logR0); RsList[i] = rs;
-          if(twopoint_count_local(i, 0, &nexport, Send_count) < 0) {break;}
-          for(j = 0; j <= bin; j++) {CountSpheres[j]++;}
-        }
-        mysort_dataindex(DataIndexTable, nexport, sizeof(struct data_index), data_index_compare);
-        MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD);
-        for(j = 0, nimport = 0, Recv_offset[0] = 0, Send_offset[0] = 0; j < NTask; j++)
-        {
-          nimport += Recv_count[j];
-          if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1]; Recv_offset[j] = Recv_offset[j - 1] + Recv_count[j - 1];}
-        }
-        TwoPointDataGet = (struct twopointdata_in *) mymalloc("TwoPointDataGet", nimport * sizeof(struct twopointdata_in));
-        TwoPointDataIn = (struct twopointdata_in *) mymalloc("TwoPointDataIn", nexport * sizeof(struct twopointdata_in));
-        for(j = 0; j < nexport; j++)
-        {
-          place = DataIndexTable[j].Index;
-          TwoPointDataIn[j].Pos = P[place].Pos;
-          TwoPointDataIn[j].Rs = RsList[place];
-          memcpy(TwoPointDataIn[j].NodeList, DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
-        }
-        /* exchange particle data */
-        for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
-        {
-          recvTask = ThisTask ^ ngrp;
-          if(recvTask < NTask)
-            if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
-            { /* get the particles */
-              MPI_Sendrecv(&TwoPointDataIn[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct twopointdata_in), MPI_BYTE, recvTask, TAG_HYDRO_A,
-                     &TwoPointDataGet[Recv_offset[recvTask]], Recv_count[recvTask] * sizeof(struct twopointdata_in), MPI_BYTE, recvTask, TAG_HYDRO_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            }
-        }
-        myfree(TwoPointDataIn);
-        for(j = 0; j < nimport; j++) {twopoint_count_local(j, 1, &dummy, &dummy);}
-        if(i >= NumPart) {ndone_flag = 1;} else {ndone_flag = 0;}
-        MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        myfree(TwoPointDataGet);
-    } while(ndone < NTask);
-#endif /* OPENMP_GPU_OFFLOAD */
     random_generator = saved_rng;
 
     myfree(RsList);

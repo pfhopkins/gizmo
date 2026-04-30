@@ -20,10 +20,8 @@
 
 void subfind_find_nearesttwo(void)
 {
-#ifdef OPENMP_GPU_OFFLOAD
   subfind_find_nearesttwo_modern();
   return;
-#endif
 }
 
 #endif

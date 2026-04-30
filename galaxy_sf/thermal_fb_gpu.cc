@@ -3,7 +3,7 @@
  * Active Type-4 (stellar) particles with SNe_ThisTimeStep > 0 scatter
  * thermal energy / ejecta mass into surrounding gas (Type 0) neighbors
  * via a Kokkos parallel_for kernel.  This replaces the CPU tree-walk
- * inside thermal_fb_calc() when OPENMP_GPU_OFFLOAD is defined.
+ * inside thermal_fb_calc().
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -29,7 +29,7 @@
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 
-#if defined(GALSF_FB_THERMAL) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(GALSF_FB_THERMAL)
 
 #include "thermal_fb_functions.h"
 
@@ -201,4 +201,4 @@ void thermal_fb_evaluate_gpu(struct particle_data *p,
 }
 void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GALSF_FB_THERMAL && OPENMP_GPU_OFFLOAD */
+#endif /* GALSF_FB_THERMAL */

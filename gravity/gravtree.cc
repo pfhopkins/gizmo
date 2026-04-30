@@ -9,9 +9,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "gpu_gravtree.h"
-#ifdef OPENMP_GPU_OFFLOAD
 #include "../system/gpu_particles_arena.h"
-#endif
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
@@ -184,7 +182,7 @@ void gravity_tree(void)
          * On pseudo-particle hit, leaves the particle untouched for the
          * CPU loop + MPI export machinery to handle unchanged. Ewald_iter
          * splits primary (==0) vs Ewald-correction (==1) walks; both are
-         * no-ops when OPENMP_GPU_OFFLOAD is not defined. */
+         * active on all Kokkos builds. */
         if(Ewald_iter == 0) {gpu_gravtree_walk_primary();}
         else                {gpu_ewald_walk_primary();}
 
@@ -206,16 +204,15 @@ void gravity_tree(void)
             }
             tend = my_second(); timetree1 += timediff(tstart, tend);
 
-#ifdef OPENMP_GPU_OFFLOAD
             /* ============================================================
              * Phase 9.4 RETIREMENT: CPU gravity export round-trip
              * ------------------------------------------------------------
-             * Under OPENMP_GPU_OFFLOAD the GPU pre-pass + Locally Essential
+             * On the GPU path the GPU pre-pass + Locally Essential
              * Tree (Phase 9.0-9.3) supply all foreign-rank gravity locally,
              * so the legacy MPI export round-trip is dead.  The block below
              * (BufferFullFlag compaction, MPI_Alltoall/Sendrecv exchange,
              * gravity_secondary_loop, scatter-back to P[]) is gated out in
-             * #ifndef OPENMP_GPU_OFFLOAD.  Final deletion is scheduled in
+             * retired in Step 5 C4. Final deletion is scheduled in
              * the Step 7 dead-code cleanup; the export infrastructure
              * (BunchSize, DataIndexTable, DataNodeList, gravdata_in/out)
              * is kept alive for surviving consumers (mg_gradient_correction,
@@ -230,306 +227,12 @@ void gravity_tree(void)
                 fflush(stdout);
                 endrun(914040);
             }
-#endif
 
-#ifndef OPENMP_GPU_OFFLOAD
-            if(BufferFullFlag) /* we've filled the buffer or reached the end of the list, prepare for communications */
-            {
-                int last_nextparticle = NextParticle;
-                int processed_particles = 0;
-                int first_unprocessedparticle = -1;
-                NextParticle = save_NextParticle; /* figure out where we are */
-                while(NextParticle < (int)ActiveParticleList.size())
-                {
-                    if(NextParticle == last_nextparticle) {break;}
-                    int pindex = ActiveParticleList[NextParticle];
-#ifndef _OPENMP
-                    if(ProcessedFlag[pindex] != 1) {break;}
-#else
-                    if(ProcessedFlag[pindex] == 0 && first_unprocessedparticle < 0) {first_unprocessedparticle = NextParticle;}
-                    if(ProcessedFlag[pindex] == 1)
-#endif
-                    {
-                        processed_particles++;
-                        ProcessedFlag[pindex] = 2;
-                    }
-                    NextParticle++;
-                }
-#ifdef _OPENMP
-                if(first_unprocessedparticle >= 0) {NextParticle = first_unprocessedparticle;} /* reset the neighbor list properly for the next group since we can get 'jumps' with openmp active */
-                if(processed_particles == 0 && NextParticle == save_NextParticle && NextParticle < (int)ActiveParticleList.size()) {
-                    BufferCollisionFlag++; if(BufferCollisionFlag < 2) {continue;}} /* we overflowed without processing a single particle, but this could be because of a collision, try once with the serialized approach, but if it fails then, we're truly stuck */
-                else if(processed_particles && BufferCollisionFlag) {BufferCollisionFlag = 0;} /* we had a problem in a previous iteration but things worked, reset to normal operations */
-#endif
-                if(processed_particles <= 0 && NextParticle == save_NextParticle) {endrun(114408);} /* in this case, the buffer is too small to process even a single particle */
-
-                int new_export = 0; /* actually calculate exports [so we can tell other tasks] */
-                for(j = 0, k = 0; j < Nexport; j++)
-                {
-                    if(ProcessedFlag[DataIndexTable[j].Index] != 2)
-                    {
-                        if(k < j + 1) {k = j + 1;}
-                        for(; k < Nexport; k++)
-                            if(ProcessedFlag[DataIndexTable[k].Index] == 2)
-                            {
-                                int old_index = DataIndexTable[j].Index;
-                                DataIndexTable[j] = DataIndexTable[k]; DataNodeList[j] = DataNodeList[k]; DataIndexTable[j].IndexGet = j; new_export++;
-                                DataIndexTable[k].Index = old_index; k++;
-                                break;
-                            }
-                    }
-                    else {new_export++;}
-                }
-                Nexport = new_export; /* counting exports... */
-            }
-            n_exported += Nexport;
-            for(j = 0; j < NTask; j++) {Send_count[j] = 0;}
-            for(j = 0; j < Nexport; j++) {Send_count[DataIndexTable[j].Task]++;}
-            mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
-            tstart = my_second();
-            MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD); /* broadcast import/export counts */
-            tend = my_second(); timewait1 += timediff(tstart, tend);
-
-            for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */
-            GravDataIn = (struct gravdata_in *) mymalloc("GravDataIn", Nexport * sizeof(struct gravdata_in));
-            GravDataOut = (struct gravdata_out *) mymalloc("GravDataOut", Nexport * sizeof(struct gravdata_out));
-            for(j = 0; j < Nexport; j++) /* prepare particle data for export [fill in the structures to be passed] */
-            {
-                place = DataIndexTable[j].Index;
-
-                /* assign values (input-function to pass in memory) */
-                GravDataIn[j].Pos = P[place].Pos;
-                GravDataIn[j].Type = P[place].Type;
-                GravDataIn[j].Soft = ForceSoftening_KernelRadius(place);
-                GravDataIn[j].OldAcc = P[place].OldAcc;
-                GravDataIn[j].Mass = P[place].Mass;
-#if defined(SINK_DYNFRICTION_FROMTREE)
-                if(P[place].Type==5) {GravDataIn[j].Sink_Mass = P[place].Sink_Mass;}
-#endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                GravDataIn[j].Vel = P[place].Vel;
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if(P[place].Type == 5)
-                {
-                    GravDataIn[j].Min_Sink_OrbitalTime = P[place].Min_Sink_OrbitalTime; //orbital time for binary
-                    GravDataIn[j].comp_Mass = P[place].comp_Mass; //mass of binary companion
-                    GravDataIn[j].is_in_a_binary = P[place].is_in_a_binary; // 1 if we're in a binary, 0 if not
-                    GravDataIn[j].comp_dx = P[place].comp_dx; GravDataIn[j].comp_dv = P[place].comp_dv;
-                }
-                else {P[place].is_in_a_binary=0; /* setting values to zero just to be sure */}
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FORGAS
-                if((P[place].Type == 0) && (P[place].KernelRadius > All.ForceSoftening[P[place].Type])) {GravDataIn[j].AGS_zeta = P[place].AGS_zeta;} else {GravDataIn[j].AGS_zeta = 0;}
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FORALL
-                GravDataIn[j].Soft = P[place].AGS_KernelRadius;
-                GravDataIn[j].AGS_zeta = P[place].AGS_zeta;
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-                GravDataIn[j].tidal_tensorps_prevstep=P[place].tidal_tensorps_prevstep;
-#endif
-                memcpy(GravDataIn[j].NodeList,DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
-            }
-
-            /* ok now we have to figure out if there is enough memory to handle all the tasks sending us their data, and if not, break it into sub-chunks */
-            int N_chunks_for_import, ngrp_initial, ngrp;
-            for(ngrp_initial = 1; ngrp_initial < (1 << PTask); ngrp_initial += N_chunks_for_import) /* sub-chunking loop opener */
-            {
-                int flagall;
-                N_chunks_for_import = (1 << PTask) - ngrp_initial;
-                do {
-                    int flag = 0; Nimport = 0;
-                    for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++)
-                    {
-                        recvTask = ThisTask ^ ngrp;
-                        if(recvTask < NTask) {if(Recv_count[recvTask] > 0) {Nimport += Recv_count[recvTask];}}
-                    }
-                    size_t space_needed = Nimport * sizeof(struct gravdata_in) + Nimport * sizeof(struct gravdata_out) + 16384; /* extra bitflag is a padding, to avoid overflows */
-                    if(space_needed > FreeBytes) {flag = 1;}
-                    MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-                    if(flagall) {N_chunks_for_import /= 2;} else {break;}
-                } while(N_chunks_for_import > 0);
-                if(N_chunks_for_import == 0) {printf("Memory is insufficient for even one import-chunk: N_chunks_for_import=%d  ngrp_initial=%d  Nimport=%ld  FreeBytes=%lld , but we need to allocate=%lld \n",N_chunks_for_import, ngrp_initial, Nimport, (long long)FreeBytes,(long long)(Nimport * sizeof(struct gravdata_in) + Nimport * sizeof(struct gravdata_out) + 16384)); endrun(9966);}
-                if(flagall) {if(ThisTask==0) PRINT_WARNING("Splitting import operation into sub-chunks as we are hitting memory limits (check this isn't imposing large communication cost)");}
-
-                /* now allocated the import and results buffers */
-                GravDataGet = (struct gravdata_in *) mymalloc("GravDataGet", Nimport * sizeof(struct gravdata_in));
-                GravDataResult = (struct gravdata_out *) mymalloc("GravDataResult", Nimport * sizeof(struct gravdata_out));
-
-                tstart = my_second(); Nimport = 0; /* reset because this will be cycled below to calculate the recieve offsets (Recv_offset) */
-                for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* exchange particle data */
-                {
-                    recvTask = ThisTask ^ ngrp;
-                    if(recvTask < NTask)
-                    {
-                        if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) /* get the particles */
-                        {
-                            MPI_Sendrecv(&GravDataIn[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_GRAV_A,
-                                         &GravDataGet[Nimport], Recv_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_GRAV_A,
-                                         MPI_COMM_WORLD, &status);
-                            Nimport += Recv_count[recvTask];
-                        }
-                    }
-                }
-                tend = my_second(); timecommsumm1 += timediff(tstart, tend);
-                report_memory_usage(&HighMark_gravtree, "GRAVTREE");
-
-                /* now do the particles that were sent to us */
-                tstart = my_second(); NextJ = 0;
-#ifdef _OPENMP
-#pragma omp parallel
-#endif
-                {
-#ifdef _OPENMP
-                    int mainthreadid = omp_get_thread_num();
-#else
-                    int mainthreadid = 0;
-#endif
-                    gravity_secondary_loop(&mainthreadid);
-                }
-                tend = my_second(); timetree2 += timediff(tstart, tend); tstart = my_second();
-                MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
-                tend = my_second(); timewait2 += timediff(tstart, tend);
-
-                tstart = my_second(); Nimport = 0;
-                for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
-                {
-                    recvTask = ThisTask ^ ngrp;
-                    if(recvTask < NTask)
-                    {
-                        if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
-                        {
-                            MPI_Sendrecv(&GravDataResult[Nimport], Recv_count[recvTask] * sizeof(struct gravdata_out), MPI_BYTE, recvTask, TAG_GRAV_B,
-                                         &GravDataOut[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_out), MPI_BYTE, recvTask, TAG_GRAV_B,
-                                         MPI_COMM_WORLD, &status);
-                            Nimport += Recv_count[recvTask];
-                        }
-                    }
-                }
-                tend = my_second(); timecommsumm2 += timediff(tstart, tend);
-                myfree(GravDataResult); myfree(GravDataGet); /* free the structures used to send data back to tasks, its sent */
-
-            } /* close the sub-chunking loop: for(ngrp_initial = 1; ngrp_initial < (1 << PTask); ngrp_initial += N_chunks_for_import) */
-
-            /* we have all our results back from the elements we exported: add the result to the local elements */
-            tstart = my_second();
-            for(j = 0; j < Nexport; j++)
-            {
-                place = DataIndexTable[j].Index;
-                P[place].GravAccel += GravDataOut[j].Acc;
-                if(Ewald_iter > 0) continue; /* everything below is ONLY evaluated if we are in the first sub-loop, not the periodic correction, or else we will get un-allocated memory or un-physical values */
-
-#ifdef EVALPOTENTIAL
-                P[place].Potential += GravDataOut[j].Potential;
-#endif
-#ifdef COUNT_MASS_IN_GRAVTREE
-                P[place].TreeMass += GravDataOut[j].TreeMass;
-#endif
-#ifdef SINK_CALC_DISTANCES /* GravDataOut[j].Min_Distance_to_Sink contains the min dist to particle "P[place]" on another task.  We now check if it is smaller than the current value */
-                if(GravDataOut[j].Min_Distance_to_Sink < P[place].Min_Distance_to_Sink)
-                {
-                    P[place].Min_Distance_to_Sink = GravDataOut[j].Min_Distance_to_Sink;
-                    P[place].Min_xyz_to_Sink = GravDataOut[j].Min_xyz_to_Sink;
-#ifdef SPECIAL_POINT_MOTION
-                    if(P[place].Type != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-                    {
-                        P[place].vel_of_nearest_special = GravDataOut[j].vel_of_nearest_special;
-                        P[place].acc_of_nearest_special = GravDataOut[j].acc_of_nearest_special;
-                    }
-#endif
-                }
-#ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                if(P[place].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
-                {
-                    P[place].vel_of_nearest_special += GravDataOut[j].vel_of_nearest_special; /* this is the weighted sum of the velocity around that cell */
-                    P[place].acc_of_nearest_special += GravDataOut[j].acc_of_nearest_special; /* this is the weighted sum of the velocity around that cell */
-                    P[place].weight_sum_for_special_point_smoothing += GravDataOut[j].weight_sum_for_special_point_smoothing; /* weighted sum needed */
-                }
-#endif
-#ifdef SINGLE_STAR_TIMESTEPPING
-                if(GravDataOut[j].Min_Sink_Approach_Time < P[place].Min_Sink_Approach_Time) {P[place].Min_Sink_Approach_Time = GravDataOut[j].Min_Sink_Approach_Time;}
-                if(GravDataOut[j].Min_Sink_Freefall_time < P[place].Min_Sink_Freefall_time) {P[place].Min_Sink_Freefall_time = GravDataOut[j].Min_Sink_Freefall_time;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if((P[place].Type == 5) && (GravDataOut[j].Min_Sink_OrbitalTime < P[place].Min_Sink_OrbitalTime))
-                {
-                    P[place].Min_Sink_OrbitalTime = GravDataOut[j].Min_Sink_OrbitalTime;
-                    P[place].comp_Mass = GravDataOut[j].comp_Mass;
-                    P[place].is_in_a_binary = GravDataOut[j].is_in_a_binary;
-                    P[place].comp_dx=GravDataOut[j].comp_dx; P[place].comp_dv=GravDataOut[j].comp_dv;
-                }
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                if(GravDataOut[j].Min_Sink_FeedbackTime < P[place].Min_Sink_FeedbackTime) {P[place].Min_Sink_FeedbackTime = GravDataOut[j].Min_Sink_FeedbackTime;}
-#endif                
-#endif
-#endif // SINK_CALC_DISTANCES
-
-#ifdef RT_USE_TREECOL_FOR_NH
-                int kbin=0; for(kbin=0; kbin < RT_USE_TREECOL_FOR_NH; kbin++) {P[place].ColumnDensityBins[kbin] += GravDataOut[j].ColumnDensityBins[kbin];}
-#ifdef GIZMO_TREECOL_DIAG
-                if(ThisTask==0 && P[place].Type==0 && place<10 && All.NumCurrentTiStep<4) {
-                    double fsum=0; for(int kb=0;kb<RT_USE_TREECOL_FOR_NH;kb++) fsum+=GravDataOut[j].ColumnDensityBins[kb];
-                    printf("TREECOL_FOREIGN rank=0 step=%d place=%d j=%d foreign_binsum=%g bins=[%g,%g,%g,%g,%g,%g]\n",
-                           All.NumCurrentTiStep,(int)place,(int)j,fsum,
-                           GravDataOut[j].ColumnDensityBins[0],GravDataOut[j].ColumnDensityBins[1],
-                           GravDataOut[j].ColumnDensityBins[2],GravDataOut[j].ColumnDensityBins[3],
-                           GravDataOut[j].ColumnDensityBins[4],GravDataOut[j].ColumnDensityBins[5]); fflush(stdout);
-                }
-#endif
-#endif
-#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-                P[place].MencInRcrit += GravDataOut[j].MencInRcrit;
-#endif
-#ifdef RT_OTVET
-                if(P[place].Type==0) {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[place].ET[k_freq] += GravDataOut[j].ET[k_freq];}}
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                if(P[place].Type==0) {CellP[place].Rad_Flux_UV += GravDataOut[j].Rad_Flux_UV;}
-                if(P[place].Type==0) {CellP[place].Rad_Flux_EUV += GravDataOut[j].Rad_Flux_EUV;}
-#ifdef CHIMES
-                if(P[place].Type == 0)
-                {
-                    int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++)
-                    {
-                        CellP[place].Chimes_G0[kc] += GravDataOut[j].Chimes_G0[kc];
-                        CellP[place].Chimes_fluxPhotIon[kc] += GravDataOut[j].Chimes_fluxPhotIon[kc];
-                    }
-                }
-#endif
-#endif
-#ifdef SINK_COMPTON_HEATING
-                if(P[place].Type==0) CellP[place].Rad_Flux_AGN += GravDataOut[j].Rad_Flux_AGN;
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                if(P[place].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[place].Rad_E_gamma[kf] += GravDataOut[j].Rad_E_gamma[kf];}}
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                if(P[place].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[place].Rad_Flux[kf] += GravDataOut[j].Rad_Flux[kf];}}
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-                if(P[place].Type==0) {CellP[place].SubGrid_CosmicRayEnergyDensity += GravDataOut[j].SubGrid_CosmicRayEnergyDensity;}
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                P[place].tidal_tensorps += GravDataOut[j].tidal_tensorps;
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-                {int i1tt; for(i1tt=0; i1tt<3; i1tt++) P[place].GravJerk[i1tt] += GravDataOut[j].GravJerk[i1tt];}
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-                P[place].tidal_zeta += GravDataOut[j].tidal_zeta;
-#endif
-#endif
-            }
-            tend = my_second(); timetree1 += timediff(tstart, tend);
-            myfree(GravDataOut); myfree(GravDataIn);
-#endif /* !OPENMP_GPU_OFFLOAD -- close Phase 9.4 retirement gate */
-#ifdef OPENMP_GPU_OFFLOAD
             /* Phase 9.4: export-back loop is retired under GPU offload, so the arena
              * is not invalidated by host-side P[] writes.  Keep this call as a no-op
              * safety net (it is harmless if arena state is already coherent) so any
              * surviving consumer that mutates P[] before the next acquire is covered. */
             gpu_particles_arena_invalidate();
-#endif
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
@@ -541,22 +244,9 @@ void gravity_tree(void)
 
     /* assign node cost to particles */
     if(TakeLevel >= 0) {
-#ifndef OPENMP_GPU_OFFLOAD
-        sum_top_level_node_costfactors();
-        for(i = 0; i < NumPart; i++)
-        {
-            int no = Father[i];
-            while(no >= 0)
-            {
-                if(Nodes[no].u.d.mass > 0) {P[i].GravCost[TakeLevel] += Nodes[no].GravCost * P[i].Mass / Nodes[no].u.d.mass;}
-                no = Nodes[no].u.d.father;
-            }
-        }
-#else
         /* Modern GPU/LET gravity executes work on the target-owning rank, so
          * gpu_gravtree_walk_primary() records target-side interaction counts
          * directly in P[target].GravCost[TakeLevel]. */
-#endif
     }
 
 
@@ -715,12 +405,10 @@ void gravity_tree(void)
 #endif
 
     } /* end of loop over active particles*/
-#ifdef OPENMP_GPU_OFFLOAD
     /* Post-processing wrote GravAccel (×G) and OldAcc to host P[]; arena
      * seeded before this loop no longer matches host — invalidate so the
      * next gpu_particles_arena_acquire re-seeds from the updated host. */
     gpu_particles_arena_invalidate();
-#endif
 
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 

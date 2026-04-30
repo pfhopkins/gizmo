@@ -31,11 +31,9 @@
 
 #ifdef MHD_MODIFIED_GRADIENT
 
-#if defined(OPENMP_GPU_OFFLOAD)
 extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
     int *active_indices, int num_active, neighbor_list_t *out,
     double search_radius_factor);
-#endif
 
 #if !defined(MHD_MODIFIED_GRADIENT_CG_ONLY) && !defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
 #include "HYPRE.h"
@@ -120,7 +118,7 @@ static inline void mg_add_remote_entry(int i, int remote_task, int remote_index,
 /* Modern symmetric-CSR path (mg_build_matrix_modern) is now the only build path.        */
 /* These functions are no longer reachable: mg_gradient_correction_calc calls             */
 /* mg_build_matrix_modern unconditionally; MG_USE_MODERN_BUILD is auto-defined via       */
-/* precompiler_logic.h unconditionally (Step 5 C5 retired GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY). */
+/* precompiler_logic.h unconditionally retired in Step 5 C5. */
 /* ==================================================================================== */
 #if 0 /* RETIRED B6.5 — legacy tree-walk matrix build */
 static void particle2in_MG(struct MGdata_in *in, int i)
@@ -1623,13 +1621,8 @@ static void mg_build_allgas_neighbor_list(int **mg_active_indices_out, int *mg_n
         if(P[i].Type == 0 && P[i].Mass > 0) mg_active_indices[aa++] = i;
     }
 
-#if defined(OPENMP_GPU_OFFLOAD)
     gpu_build_symmetric_neighbor_list(P, NumPart, mg_active_indices, mg_num_active,
                                       mg_neighbor_list, 1.0);
-#else
-    build_neighbor_list_sfc(P, CellP, NumPart, mg_active_indices, mg_num_active,
-                            NGB_SEARCH_SYMMETRIC, 1, mg_neighbor_list);
-#endif
 
     *mg_active_indices_out = mg_active_indices;
     *mg_num_active_out = mg_num_active;

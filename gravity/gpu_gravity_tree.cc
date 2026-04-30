@@ -18,7 +18,6 @@
 #include "../declarations/allvars.h"
 #include "gpu_gravity_tree.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 static struct gpu_gravity_tree_soa_t soa_ = {0};
 static int soa_capacity_ = 0;
@@ -295,4 +294,3 @@ extern "C" void gpu_nextnode_backup_suns(int n)
     Kokkos::fence();
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */

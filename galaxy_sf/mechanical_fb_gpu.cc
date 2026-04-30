@@ -32,7 +32,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "mechanical_fb_gpu.h"
 
-#if defined(GALSF_FB_MECHANICAL) && defined(OPENMP_GPU_OFFLOAD)
+#if defined(GALSF_FB_MECHANICAL)
 
 #include "mechanical_fb_functions.h"
 
@@ -315,4 +315,4 @@ void mechanical_fb_evaluate_gpu(struct particle_data *p,
 }
 void gizmo_gpu_sync_all_mechfb(struct global_data_all_processes *p) { (void)p; }
 
-#endif /* GALSF_FB_MECHANICAL && OPENMP_GPU_OFFLOAD */
+#endif /* GALSF_FB_MECHANICAL */

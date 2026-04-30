@@ -6,11 +6,9 @@
 #endif
 
 /* the following struture holds data that is stored for each fluid cell in addition to the collisionless variables.
-   When OPENMP_GPU_OFFLOAD is enabled, the struct and its inline member functions must be device-compilable
+   On Kokkos builds, the struct and its inline member functions must be device-compilable
    since they are called from within the GPU-offloaded cooling loop. */
-#ifdef OPENMP_GPU_OFFLOAD
 #pragma omp begin declare target
-#endif
 extern struct gas_cell_data
 {
     /* the PRIMITIVE and CONSERVED hydro variables used in STATE reconstruction */
@@ -635,8 +633,6 @@ extern struct gas_cell_data
 }
 *CellP,                /*!< holds gas cell data on local processor */
 *DomainGasBuf;            /*!< buffer for gas cell data in domain decomposition */
-#ifdef OPENMP_GPU_OFFLOAD
 #pragma omp end declare target
-#endif
 
 

@@ -166,11 +166,9 @@ void rt_get_sigma(void)
        #define All All_dev, we must temporarily restore the host All for this function.
        Otherwise the values go to All_dev, then gizmo_gpu_sync_all() overwrites All_dev
        with host zeros, and non-GPU code reads zero opacities. */
-#ifdef OPENMP_GPU_OFFLOAD
 #pragma push_macro("All")
 #undef All
     extern struct global_data_all_processes All;
-#endif
     /* first initialize all bands, so non-ionizing bands don't cause problems */
     int k;
     for(k=0;k<N_RT_FREQ_BINS;k++)
@@ -280,9 +278,7 @@ void rt_get_sigma(void)
 
     if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",All.rt_ion_sigma_HI[i]/fac, All.rt_ion_G_HI[i]/fac_two,All.rt_ion_sigma_HeI[i]/fac, All.rt_ion_G_HeI[i]/fac_two,All.rt_ion_sigma_HeII[i]/fac, All.rt_ion_G_HeII[i]/fac_two);}}
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
 #pragma pop_macro("All")
-#endif
 }
 
 
@@ -298,7 +294,6 @@ void rt_update_chemistry(void)
     int *chem_indices = (int *) malloc(N_active * sizeof(int));
     {int j = 0; for(int i : ActiveParticleList) {if(P[i].Type == 0) chem_indices[j++] = i;}}
 
-#if defined(OPENMP_GPU_OFFLOAD)
     if(N_active > 0)
     {
         /* Gather into compact SharedSpace arrays */
@@ -333,7 +328,6 @@ void rt_update_chemistry(void)
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
     } else
-#endif
     { /* CPU path: OpenMP-parallel dispatch */
         struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
         struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
@@ -434,11 +428,7 @@ void rt_write_chemistry_stats(void)
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-#ifdef OPENMP_GPU_OFFLOAD
 GPU_ALL_SYNC_FUNC(rt_chem)
-#else
-void gizmo_gpu_sync_all_rt_chem(struct global_data_all_processes *p) { (void)p; }
-#endif
 
 
 #endif /* RT_CHEM_PHOTOION */

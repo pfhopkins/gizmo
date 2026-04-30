@@ -20,7 +20,6 @@
 #ifndef GIZMO_GPU_DISPATCH_TEMPLATES_H
 #define GIZMO_GPU_DISPATCH_TEMPLATES_H
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #include <utility>
 #include "gpu_error_check.h"
@@ -33,6 +32,5 @@ inline void gizmo_gpu_kernel_launch(const char *tag, int N, F&& f, int batch_sta
     gizmo_gpu_check_last_error(tag, N, batch_start);
 }
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_DISPATCH_TEMPLATES_H */

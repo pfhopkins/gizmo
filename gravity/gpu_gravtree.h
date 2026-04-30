@@ -12,7 +12,7 @@
  *   - If it completes successfully, it writes P[i].GravAccel and sets
  *     ProcessedFlag[i]=1 so the CPU loop skips it.
  *
- * Gated at compile time by OPENMP_GPU_OFFLOAD. PMGRID, ADAPTIVE_GRAVSOFT_*,
+ * GPU gravity tree (always active on Kokkos builds). PMGRID, ADAPTIVE_GRAVSOFT_*,
  * EVALPOTENTIAL, RT/SINK/SINGLE_STAR/CR/TIDAL/JERK payloads, periodic Ewald,
  * HERMITE/ATFU, and FIRE_BHS MencInRcrit are all supported via the Phase 9-10
  * LET work.
@@ -35,7 +35,7 @@ extern "C" {
  * existing CPU primary loop handles them as usual.
  *
  * Returns the number of particles that completed successfully on GPU. When
- * the build lacks OPENMP_GPU_OFFLOAD, this is an unconditional no-op
+ * the build lacks Kokkos, this is an unconditional no-op
  * (returns 0) so callers in gravity_tree() stay simple. */
 int gpu_gravtree_walk_primary(void);
 
@@ -48,7 +48,7 @@ int gpu_gravtree_walk_primary(void);
  *
  * Only the local tree walk runs on GPU. Pseudo-particle hits leave
  * ProcessedFlag unset, so the CPU Ewald secondary loop finishes those via
- * MPI export.  No-op when the build lacks OPENMP_GPU_OFFLOAD. Returns
+ * MPI export.  No-op when the build lacks Kokkos. Returns
  * number of successfully walked targets. */
 int gpu_ewald_walk_primary(void);
 

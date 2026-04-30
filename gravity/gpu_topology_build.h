@@ -19,7 +19,6 @@
 #ifndef GIZMO_GPU_TOPOLOGY_BUILD_H
 #define GIZMO_GPU_TOPOLOGY_BUILD_H
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,6 +98,5 @@ void gpu_topology_build_release(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_TOPOLOGY_BUILD_H */

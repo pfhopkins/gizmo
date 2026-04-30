@@ -6,7 +6,7 @@ Pre-existing Type-4 stellar particles are older than 5 Myr and fire SNe via the 
 model from the very first timestep, guaranteeing the GPU kernel sees active sources.
 
 Validation protocol:
-1. Build with GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY + OPENMP_GPU_OFFLOAD
+1. Build with default Kokkos Config.sh (flags are now always active)
 2. Confirm PRINT_STATUS shows nonzero "GPU thermal_fb: N sources, M pairs"
 3. Compare GPU output against CPU tree-walk reference — quantities written by
    addthermalFB_evaluate (gas InternalEnergy, Metals, Masses) must match to round-off.

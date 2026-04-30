@@ -23,7 +23,6 @@
 struct particle_data;
 struct gas_cell_data;
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,6 +62,5 @@ int gpu_particles_arena_valid(void);
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_PARTICLES_ARENA_H */

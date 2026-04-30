@@ -9,7 +9,7 @@
  * SharedSpace P mirror; inside CPU code the caller passes the global P.
  *
  * AGS_ATOMIC_{ADD,STORE} selects backend atomics at compile time. On the GPU
- * path (OPENMP_GPU_OFFLOAD) we use Kokkos::atomic_{add,store}. On the CPU
+ * path (Kokkos+GPU) we use Kokkos::atomic_{add,store}. On the CPU
  * tree-walk path there is no macro that captures `#pragma omp atomic` (pragmas
  * can't live inside macros), so we provide a plain assignment and the CPU
  * caller is expected to wrap the statement with `#pragma omp atomic` directly.
@@ -63,16 +63,8 @@ double get_particle_volume_ags_P(int j, const struct particle_data *P_arr)
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */
 
 
-#ifdef OPENMP_GPU_OFFLOAD
 /* Kokkos atomics inside a device lambda. */
 #define AGS_ATOMIC_ADD(ptr, val)   Kokkos::atomic_add((ptr), (val))
 #define AGS_ATOMIC_STORE(ptr, val) Kokkos::atomic_store((ptr), (val))
-#else
-/* CPU path: macros expand to plain ops. The caller is expected to wrap the
-   containing statement in `#pragma omp atomic` where thread-safety is needed,
-   because a #pragma cannot appear inside a macro expansion. */
-#define AGS_ATOMIC_ADD(ptr, val)   (*(ptr) += (val))
-#define AGS_ATOMIC_STORE(ptr, val) (*(ptr) = (val))
-#endif
 
 #endif /* AGS_FUNCTIONS_H */

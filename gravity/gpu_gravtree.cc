@@ -31,7 +31,6 @@
 
 #include "../mesh/kernel.h"
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 /* Globals that live at file-scope in gravtree.cc without a header declaration. */
 extern int Ewald_iter;
@@ -2300,9 +2299,3 @@ extern "C" int gpu_ewald_walk_primary(void) {return 0;}
 #endif
 
 
-#else /* !OPENMP_GPU_OFFLOAD */
-
-extern "C" int gpu_gravtree_walk_primary(void) {return 0;}
-extern "C" int gpu_ewald_walk_primary(void)   {return 0;}
-
-#endif

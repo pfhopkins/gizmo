@@ -29,7 +29,6 @@
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
 
-#if defined(OPENMP_GPU_OFFLOAD)
 
 namespace {
 
@@ -171,4 +170,3 @@ extern "C" void gpu_morton_release(void)
 
 GPU_ALL_SYNC_FUNC(morton)
 
-#endif /* OPENMP_GPU_OFFLOAD */

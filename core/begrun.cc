@@ -95,9 +95,7 @@ void begrun(void)
   set_cosmo_factors_for_current_time();
   All.Time = All.TimeBegin;
 
-#ifdef OPENMP_GPU_OFFLOAD
   gizmo_gpu_sync_all();  /* sync All to GPU managed copies before any EOS/cooling calls */
-#endif
 
 #ifdef COOLING
   InitCool();
@@ -522,12 +520,10 @@ void begrun(void)
 
   All.TimeLastRestartFile = CPUThisRun;
 
-#ifdef OPENMP_GPU_OFFLOAD
   gizmo_gpu_sync_all();  /* re-sync All to GPU after ALL initialization (init, InitCool, rt_set_simple_inits, etc.).
                             The early sync at line 100 runs before init() sets All.SolarAbundances and other fields.
                             Without this re-sync, GPU TUs see stale All_dev with SolarAbundances[0]==0,
                             causing division-by-zero in gas_dust_heating_coeff on the first kick. */
-#endif
 }
 
 
@@ -2819,12 +2815,10 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n"); endrun(1);}
     }
-#ifdef OPENMP_GPU_OFFLOAD
     if(All.LETAllocFactor <= 0)
     {
-        if(ThisTask==0) {printf("LETAllocFactor must be >0 in OPENMP_GPU_OFFLOAD builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n"); endrun(1);}
+        if(ThisTask==0) {printf("LETAllocFactor must be >0 in GPU builds: the legacy gravity export fallback is retired, so LET cannot be disabled. Use the default 1.0 or increase this value if LET unpack overflows.\n"); endrun(1);}
     }
-#endif
     if((All.MaxRMSDisplacementFac<=0)||(All.MaxRMSDisplacementFac>0.25))
     {
         if(ThisTask==0) {printf("MaxRMSDisplacementFac must be >0 and <0.25 to ensure stability \n"); endrun(1);}

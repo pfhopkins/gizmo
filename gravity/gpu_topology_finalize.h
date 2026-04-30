@@ -29,7 +29,6 @@
 #ifndef GIZMO_GPU_TOPOLOGY_FINALIZE_H
 #define GIZMO_GPU_TOPOLOGY_FINALIZE_H
 
-#ifdef OPENMP_GPU_OFFLOAD
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +80,5 @@ void  gpu_tree_free_bytes(void *p);        /* matching free */
 }
 #endif
 
-#endif /* OPENMP_GPU_OFFLOAD */
 
 #endif /* GIZMO_GPU_TOPOLOGY_FINALIZE_H */

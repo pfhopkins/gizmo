@@ -192,7 +192,7 @@ FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
-OPT     += -DHDF5_DISABLE_VERSION_CHECK -DOPENMP_GPU_OFFLOAD
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ## submit to 'gh' or 'gh-dev' queue on Vista (NVIDIA Grace Hopper H200, sm_90)
 endif
 
@@ -350,7 +350,7 @@ HDF5_VERSION := $(shell ls /opt/homebrew/Cellar/hdf5/ 2>/dev/null | sort -V | ta
 HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API
 HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz
 MPICHLIB = #
-OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION -DOPENMP_GPU_OFFLOAD -DGIZMO_GPU_ARENA_DEBUG
+OPT     += -DDISABLE_ALIGNED_ALLOC -DCHIMES_USE_DOUBLE_PRECISION -DGIZMO_GPU_ARENA_DEBUG
 endif
 
 #----------------------------

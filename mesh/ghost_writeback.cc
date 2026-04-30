@@ -42,9 +42,7 @@ void ghost_writeback_zero_hydro(void)
 #endif
         P[j].wakeup = 0;
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -164,9 +162,7 @@ void ghost_writeback_hydro(void)
     }
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P deltas applied; arena stale */
-#endif
 }
 
 
@@ -184,9 +180,7 @@ void ghost_writeback_zero_wakeup(void)
     int num_local = ghost_get_num_local();
     if(num_ghosts <= 0) return;
     for(int g = 0; g < num_ghosts; g++) { P[num_local + g].wakeup = 0; }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -266,9 +260,7 @@ void ghost_writeback_wakeup(void)
     }
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -320,9 +312,7 @@ void ghost_writeback_zero_agsforce(void)
 #endif
         P[j].wakeup = 0;
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -458,9 +448,7 @@ void ghost_writeback_agsforce(void)
 #if defined(DM_SIDM)
     if(agsforce_ghost_NInt0) { free(agsforce_ghost_NInt0); agsforce_ghost_NInt0 = NULL; }
 #endif
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -486,9 +474,7 @@ void ghost_writeback_zero_swallowtime(void)
     for(int g = 0; g < num_ghosts; g++) {
         swallowtime_ghost0[g] = P[num_local + g].SwallowTime;
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -562,9 +548,7 @@ void ghost_writeback_swallowtime(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(swallowtime_ghost0); swallowtime_ghost0 = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* SINGLE_STAR_SINK_DYNAMICS */
@@ -643,9 +627,7 @@ void ghost_writeback_zero_thermalfb(void)
         s.DelayCool = CellP[j].DelayTimeCoolingSNe;
 #endif
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -764,9 +746,7 @@ void ghost_writeback_thermalfb(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(thermalfb_snap); thermalfb_snap = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* GALSF_FB_THERMAL */
@@ -813,9 +793,7 @@ void ghost_writeback_zero_sinkfeed(void)
         sinkfeed_snap[g].Injected_Sink_Energy = CellP[j].Injected_Sink_Energy;
 #endif
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -918,9 +896,7 @@ void ghost_writeback_sinkfeed(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(sinkfeed_snap); sinkfeed_snap = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* SINK_PARTICLES */
@@ -1086,9 +1062,7 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
     }
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* GALSF_FB_MECHANICAL */
@@ -1135,9 +1109,7 @@ void ghost_writeback_zero_grainbackrx(void)
         s.dp[0] = P[j].dp[0]; s.dp[1] = P[j].dp[1]; s.dp[2] = P[j].dp[2];
         s.Grain_AccelTimeMin = P[j].Grain_AccelTimeMin;
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -1246,9 +1218,7 @@ void ghost_writeback_grainbackrx(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(grainbackrx_snap); grainbackrx_snap = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* GRAIN_FLUID && GRAIN_BACKREACTION */
@@ -1350,9 +1320,7 @@ void ghost_writeback_zero_sinkswallow(void)
         s.DelayTime = CellP[j].DelayTime;
 #endif
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -1501,9 +1469,7 @@ void ghost_writeback_sinkswallow(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(sinkswallow_snap); sinkswallow_snap = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* SINK_PARTICLES */
@@ -1545,9 +1511,7 @@ void ghost_writeback_zero_radfbrp(void)
         s.VelPred[0] = CellP[j].VelPred[0]; s.VelPred[1] = CellP[j].VelPred[1]; s.VelPred[2] = CellP[j].VelPred[2];
         s.dp[0] = P[j].dp[0]; s.dp[1] = P[j].dp[1]; s.dp[2] = P[j].dp[2];
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 
@@ -1650,9 +1614,7 @@ void ghost_writeback_radfbrp(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(radfbrp_snap); radfbrp_snap = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
-#endif
 }
 
 #endif /* GALSF_FB_FIRE_RT_LOCALRP */
@@ -1758,9 +1720,7 @@ void ghost_writeback_zero_rtsrcinjection(void)
         }
 #endif
     }
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate();
-#endif
 }
 
 void ghost_writeback_rtsrcinjection(void)
@@ -1964,9 +1924,7 @@ void ghost_writeback_rtsrcinjection(void)
 
     free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     free(rtsrcinjection_snap); rtsrcinjection_snap = NULL;
-#ifdef OPENMP_GPU_OFFLOAD
     gpu_particles_arena_invalidate();
-#endif
 }
 
 #endif /* RT_SOURCE_INJECTION */
