@@ -213,7 +213,6 @@ int conduction_evaluate(int target, int mode, double *in, double *out, double *s
 			int *nexport, int *nsend_local);
 
 
-int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend_local);
 void fof_compute_group_properties(int gr, int start, int len);
 
 #ifdef TURB_DIFF_DYNAMIC
@@ -251,8 +250,6 @@ void myfree_movable_fullinfo(void *p, const char *func, const char *file, int li
 void mymalloc_init(void);
 void dump_memory_table(void);
 void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, const char *label, const char *func, const char *file, int line);
-
-int fof_find_dmparticles_evaluate(int target, int mode, int *nexport, int *nsend_local);
 
 /* Get_Particle_Size is now a member function of particle_data — use P[i].Get_Particle_Size() or pp[i].Get_Particle_Size() */
 double INLINE_FUNC Get_Particle_Expected_Area(double h);
@@ -369,12 +366,9 @@ int sink_evaluate_swallow(int target, int mode, int *nexport, int *nsend_local);
 
 
 void fof_fof(int num);
-void fof_find_groups(void);
 void fof_compile_catalogue(void);
 void fof_save_groups(int num);
 void fof_save_local_catalogue(int num);
-void fof_find_nearest_dmparticle(void);
-int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int *nsend_local);
 
 void fof_make_sink_particles(void);
 
