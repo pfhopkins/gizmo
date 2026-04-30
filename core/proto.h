@@ -886,9 +886,6 @@ inline void local_slopelimiter(Vec3<double>& grad, double valmax, double valmin,
 #ifdef TURB_DIFF_DYNAMIC
 void dynamic_diff_vel_calc(void);
 void dynamic_diff_calc(void);
-int DynamicDiff_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int dynamic_iteration);
-void *DynamicDiff_evaluate_primary(void *p, int dynamic_iteration);
-void *DynamicDiff_evaluate_secondary(void *p, int dynamic_iteration);
 #endif
 
 #ifdef PARTICLE_EXCISION
