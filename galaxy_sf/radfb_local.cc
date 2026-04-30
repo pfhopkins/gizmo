@@ -90,6 +90,28 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             if(stellum_i <= 0) continue;
             if(P[ip].KernelRadius <= 0 || P[ip].DensityAroundParticle <= 0) continue;
             double h_local = P[ip].KernelRadius;
+            /* Pre-compute mionizable using same formula as per-source loop, and apply
+             * the same probabilistic filter (prandom < 5*mionizable/Mass).
+             * Sources that fail this check do ZERO work in the per-source loop, so
+             * including them in the NL build is pure waste — it inflates NL size by
+             * 10-100x (especially old disk stars with tiny stellum but large h that get
+             * a floor-radius NL search). Filtering here preserves exact physics since
+             * get_random_number(ID+7) is deterministic and returns the same value in
+             * the loop. */
+            {
+                double rho_i = P[ip].DensityAroundParticle;
+                double RHII_i = 4.78e-9*pow(stellum_i,0.333)*pow(rho_i*All.cf_a3inv*UNIT_DENSITY_IN_CGS,-0.66667) / (All.cf_atime*UNIT_LENGTH_IN_CGS);
+                double RHIIMAX_i = 2.*240.0*pow(stellum_i,0.5)/(All.cf_atime*UNIT_LENGTH_IN_CGS);
+                if(RHIIMAX_i < 2.0*h_local) RHIIMAX_i = 2.0*h_local;
+                if(RHIIMAX_i > 10.0*h_local) RHIIMAX_i = 10.0*h_local;
+                if(RHII_i > RHIIMAX_i) RHII_i = RHIIMAX_i;
+                if(RHII_i < 0.3*h_local) RHII_i = 0.3*h_local;
+                double mion_i = VOLUME_NORM_COEFF_FOR_NDIMS*rho_i*RHII_i*RHII_i*RHII_i;
+                double M_emit = (3.05e10*PROTONMASS_CGS)*stellum_i*(dt_i*UNIT_TIME_IN_CGS)/UNIT_MASS_IN_CGS;
+                mion_i = DMIN(mion_i, M_emit);
+                double prandom_i = get_random_number(P[ip].ID + 7);
+                if(prandom_i >= 5.0*mion_i/P[ip].Mass) continue; /* deterministic skip */
+            }
             double RHIIMAX_l = 2. * 240.0*pow(stellum_i, 0.5) / (All.cf_atime * UNIT_LENGTH_IN_CGS);
             if(RHIIMAX_l < 2.0*h_local) RHIIMAX_l = 2.0*h_local;
             if(RHIIMAX_l > 10.0*h_local) RHIIMAX_l = 10.0*h_local;
@@ -100,23 +122,51 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
         }
 
         int num_src = (int)hii_src_idx.size();
+
+        /* DEADLOCK FIX: ghost_exchange (inside gizmo_density_prep_ghosts) is an MPI
+         * collective — ALL ranks must call it together. The old code gated it on
+         * num_src > 0, so a rank with no HII sources would skip it and race ahead to
+         * MPI_Reduce, deadlocking against the rank that entered ghost_exchange.
+         * Fix: MPI_Allreduce num_src → global_num_src so all ranks agree, then ALL
+         * ranks call ghost_exchange (or all skip it). */
+        int global_num_src = 0;
+        MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
         int imported_ghosts = 0;
-        gpu_neighbor_list_t gnl = {};
         int local_count = 0;
-        if(num_src > 0) {
+        int num_all = 0;
+        if(global_num_src > 0) {
+            /* All ranks in agreement: either all call ghost_exchange or all skip it. */
             if(ghost_get_num_ghosts() <= 0) {
                 gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
                 imported_ghosts = 1;
             }
             local_count = ghost_get_num_local();
-            int num_all = local_count + ghost_get_num_ghosts();
+            num_all = local_count + ghost_get_num_ghosts();
             if(num_all <= 0) num_all = NumPart;
+        }
+
+        gpu_neighbor_list_t gnl = {};
+        if(num_src > 0) {
             gpu_particles_arena_acquire(num_all, P, CellP);
             struct particle_data *P_gpu = gpu_particles_arena_P();
             gpu_ngb_list_build(P_gpu, num_all,
                                hii_src_idx.data(), num_src,
                                NGB_SEARCH_ONEWAY, 1 /* gas only */,
                                &gnl, NULL, 1.0, hii_src_radii.data());
+        }
+
+        /* Pre-reserve neighbor buffer on heap once to max slice size.
+         * alloca() inside a loop accumulates until function return (NOT per-iteration),
+         * causing stack overflow with many sources (was 8 MB limit exceeded). */
+        std::vector<int> ngb_buf;
+        if(num_src > 0 && gnl.total_pairs > 0) {
+            int max_nl = 0;
+            for(int aa = 0; aa < num_src; aa++) {
+                int nl_n = gnl.offsets[aa+1] - gnl.offsets[aa];
+                if(nl_n > max_nl) max_nl = nl_n;
+            }
+            ngb_buf.reserve(max_nl > 0 ? max_nl : 1);
         }
 
         /* Sequential per-source loop — preserves greedy ionization ordering across
@@ -151,7 +201,10 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
                 mionized = 0.0; jnearest = -1; rnearest = MAX_REAL_NUMBER; NITER_HIIFB = 0;
                 int nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
                 int nl_n = nl_end - nl_start;
-                int *ngb_list_touse = (int *)alloca((nl_n > 0 ? nl_n : 1) * sizeof(int));
+                /* Use heap buffer instead of alloca — see ALLOCA FIX comment above. */
+                if(nl_n > (int)ngb_buf.capacity()) ngb_buf.reserve(nl_n);
+                ngb_buf.resize(nl_n > 0 ? nl_n : 1);
+                int *ngb_list_touse = ngb_buf.data();
                 int more_iters = 1;
                 do {
                     double RHII_2 = RHII*RHII;
