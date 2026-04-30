@@ -29,52 +29,6 @@
 #ifdef GALSF_SUBGRID_WINDS
 #if (GALSF_SUBGRID_WIND_SCALING==2)
 
-#define CORE_FUNCTION_NAME disp_density_evaluate /* name of the 'core' function doing the actual inter-neighbor operations. this MUST be defined somewhere as "int CORE_FUNCTION_NAME(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)" */
-#define INPUTFUNCTION_NAME disp_particle2in_density    /* name of the function which loads the element data needed (for e.g. broadcast to other processors, neighbor search) */
-#define OUTPUTFUNCTION_NAME disp_out2particle_density  /* name of the function which takes the data returned from other processors and combines it back to the original elements */
-#define CONDITIONFUNCTION_FOR_EVALUATION if(disp_density_isactive(i)) /* function for which elements will be 'active' and allowed to undergo operations. can be a function call, e.g. 'density_is_active(i)', or a direct function call like 'if(P[i].Mass>0)' */
-#include "../system/code_block_xchange_initialize.h" /* pre-define all the ALL_CAPS variables we will use below, so their naming conventions are consistent and they compile together, as well as defining some of the function calls needed */
-
-/* this structure defines the variables that need to be sent -from- the 'searching' element */
-static struct INPUT_STRUCT_NAME
-{
-    Vec3<MyDouble> Pos;
-    MyFloat KernelRadiusDM;
-    int NodeList[NODELISTLENGTH];
-}
-*DATAIN_NAME, *DATAGET_NAME;
-
-/* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
-void disp_particle2in_density(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
-{
-    in->Pos = P[i].Pos;
-    in->KernelRadiusDM = CellP[i].KernelRadiusDM;
-}
-
-
-/* this structure defines the variables that need to be sent -back to- the 'searching' element */
-static struct OUTPUT_STRUCT_NAME
-{
-    MyDouble Ngb;
-    MyDouble DM_Vel_Disp;
-    MyDouble DM_Vx;
-    MyDouble DM_Vy;
-    MyDouble DM_Vz;
-}
-*DATARESULT_NAME, *DATAOUT_NAME;
-
-/* this subroutine assigns the values to the variables that need to be sent -back to- the 'searching' element */
-void disp_out2particle_density(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
-{
-    ASSIGN_ADD(CellP[i].DM_Vx, out->DM_Vx, mode);
-    ASSIGN_ADD(CellP[i].DM_Vy, out->DM_Vy, mode);
-    ASSIGN_ADD(CellP[i].DM_Vz, out->DM_Vz, mode);
-    ASSIGN_ADD(CellP[i].DM_VelDisp, out->DM_Vel_Disp, mode);
-    ASSIGN_ADD(CellP[i].NumNgbDM, out->Ngb, mode);
-}
-
-
-/* routine to determine if we need to use disp_density to calculate KernelRadius */
 int disp_density_isactive(int i);
 int disp_density_isactive(int i)
 {
@@ -87,32 +41,6 @@ int disp_density_isactive(int i)
 
 /*! This function represents the core of the density computation. The target particle may either be local, or reside in the communication buffer. */
 /*!   -- this subroutine contains no writes to shared memory -- */
-int disp_density_evaluate(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)
-{
-    int startnode, numngb_inbox, listindex = 0, j, n; struct INPUT_STRUCT_NAME local; struct OUTPUT_STRUCT_NAME out; memset(&out, 0, sizeof(struct OUTPUT_STRUCT_NAME)); /* define variables and zero memory and import data for local target*/
-    if(mode == 0) {INPUTFUNCTION_NAME(&local, target, loop_iteration);} else {local = DATAGET_NAME[target];} /* imports the data to the correct place and names */
-    /* Now start the actual neighbor computation for this particle */
-    if(mode == 0) {startnode = All.MaxPart; /* root node */} else {startnode = DATAGET_NAME[target].NodeList[0]; startnode = Nodes[startnode].u.d.nextnode;    /* open it */}
-    while(startnode >= 0) {
-        while(startnode >= 0) {
-            numngb_inbox = ngb_treefind_variable_threads_targeted(local.Pos, local.KernelRadiusDM, target, &startnode, mode, exportflag, exportnodecount, exportindex, ngblist, 2); // search for high-res DM particles only: 2^1 = 2
-            if(numngb_inbox < 0) {return -2;}
-            for(n = 0; n < numngb_inbox; n++)
-            {
-                j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
-                if(P[j].Mass <= 0) continue;
-                out.DM_Vx += P[j].Vel[0]; out.DM_Vy += P[j].Vel[1]; out.DM_Vz += P[j].Vel[2];
-                out.DM_Vel_Disp += (P[j].Vel[0] * P[j].Vel[0] + P[j].Vel[1] * P[j].Vel[1] + P[j].Vel[2] * P[j].Vel[2]);
-                out.Ngb++;
-            } // numngb_inbox loop
-        } // while(startnode)
-        if(mode == 1) {listindex++; if(listindex < NODELISTLENGTH) {startnode = DATAGET_NAME[target].NodeList[listindex]; if(startnode >= 0) {startnode = Nodes[startnode].u.d.nextnode; /* open it */}}} /* continue to open leaves if needed */
-    }
-    if(mode == 0) {OUTPUTFUNCTION_NAME(&out, target, 0, loop_iteration);} else {DATARESULT_NAME[target] = out;} /* collects the result at the right place */
-    return 0;
-}
-
-
 void disp_density(void)
 {
     /* initialize variables used below, in particlar the structures we need to call throughout the iteration */
@@ -292,7 +220,6 @@ void disp_density(void)
     CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp; CPU_Step[CPU_AGSDENSWAIT] += timewait;
     CPU_Step[CPU_AGSDENSCOMM] += timecomm; CPU_Step[CPU_AGSDENSMISC] += timeall - (timecomp + timewait + timecomm);
 }
-#include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
 
 #endif
