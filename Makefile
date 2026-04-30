@@ -476,7 +476,6 @@ SINK_OBJS = sinks/sink.o \
             sinks/sink_swallow_and_kick.o
 
 RHD_OBJS =  radiation/rt_utilities.o \
-			radiation/rt_CGmethod.o \
 			radiation/rt_source_injection.o \
 			radiation/rt_dust_opacity.o
 ## radiation/rt_chem.o is in GPU_OBJS (compiled by nvcc_wrapper for Kokkos offload)
