@@ -912,9 +912,6 @@ void hydro_gradient_calc(void)
                             to determine which limit we are actually in: ratio f=|flux|/(c_eff*Energy_density_rad): f<<1 = diffusion limit, f~1 = free-streaming limit: this is our slope-limiter above */
                         double chi=DMAX(1./3.,DMIN(1.,(3.+4.*lambda*lambda)/(5.+2.*sqrt(4.-3.*lambda*lambda)))), chifac_iso=3.*(1-chi)/2., chifac_ot=(3.*chi-1.)/2.;
                         CellP[i].Gradients.Rad_E_gamma_ET[k_freq] = chifac_ot*CellP[i].Gradients.Rad_E_gamma_ET[k_freq] + (chifac_iso/3.)*GasGradDataPasser[i].Gradients_Rad_E_gamma[k_freq];
-#ifdef RT_DIFFUSION_CG
-                        CellP[i].ET[k_freq] *= chifac_ot; CellP[i].ET[k_freq][0][0] += chifac_iso/3.; CellP[i].ET[k_freq][1][1] += chifac_iso/3.; CellP[i].ET[k_freq][2][2] += chifac_iso/3.; // (this only makes sense if ET is freq-dependent) [note this will cause instability in the explicit methods; only use for CG where ET is explicitly called and this is done only on global timesteps]
-#endif
 #endif // ifdef otvet
                     }
                     CellP[i].Rad_Flux_Limiter[k_freq] = lambda;

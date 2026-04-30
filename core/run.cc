@@ -397,9 +397,6 @@ void calculate_non_standard_physics(void)
     if(rt_step_diag_count <= 50) rt_step_checksum("after_rt_source");
 #endif
 #endif
-#if defined(RT_DIFFUSION_CG) /* use the CG method to solve the RT diffusion equation implicitly for all particles; do only on full timesteps, requires synchronous timestepping right now */
-    if(Flag_FullStep) {All.Radiation_Ti_endstep = All.Ti_Current; rt_diffusion_cg_solve(); All.Radiation_Ti_begstep = All.Radiation_Ti_endstep;}
-#endif
 #if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
 #ifdef TRANSPORT_SUBCYCLE
     if(transport_sub == 0) /* chemistry update only on first sub-step (cooling handles it on subsequent sub-steps if TRANSPORT_SUBCYCLE_COOLING) */

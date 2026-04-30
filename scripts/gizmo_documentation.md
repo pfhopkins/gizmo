@@ -2089,17 +2089,14 @@ All of these methods follow Hopkins and Grudic, arXiv:1803.07573 and attempt to 
 #--------------------- solvers (numerical) --------------------------------------------------------
 #RT_SPEEDOFLIGHT_REDUCTION=1            # set to a number <1 to use the 'reduced speed of light' approximation for photon propagation (C_eff=C_true*RT_SPEEDOFLIGHT_REDUCTION)
 #RT_COMOVING                            # solve RHD equations formulated in the comoving frame, as compared to the default mixed-frame formulation; see Mihalas+Mihalas 84
-#RT_DIFFUSION_IMPLICIT                  # solve the diffusion part of the RT equations (if needed) implicitly with Conjugate Gradient iteration (Petkova+Springel): less accurate and only works with some methods, but allows larger timesteps [otherwise more accurate explicit used]
 ############################################################################################################################
 ```
 
-This governs decisions of *how* the transport algorithm above is solved, for example whether the full speed of light is used or a reduce speed-of-light approximation, or whether an implicit or explicit solver is used. 
+This governs decisions of *how* the transport algorithm above is solved, for example whether the full speed of light is used or a reduced speed-of-light approximation.
 
 **RT\_SPEEDOFLIGHT\_REDUCTION**: Set to a value below unity to enable the 'reduced speed of light' approximation, reduced by this factor
 
 **RT\_COMOVING**: By default, the code uses the more common mixed-frame approximation to RHD, where the RHD equations are solved in the lab/simulation frame, then boosted after solution/update into the appropriate translating-with-the-cells frame if one is using a Lagrangian solver (e.g. SPH, MFM, etc). By turning this module on, the code will instead solve the RHD equations directly formulated in the comoving frame, as compared to the default mixed-frame formulation. See Mihalas and Mihalas 1984 for detailed discussion of the differences. Formally these are equivalent to leading order in u/c, where u is the characteristic fluid velocity. The lab-frame system includes some slightly higher terms relevant at higher fluid velocities, but is also less accurate and less robust to very small reduced-speed of light if that is used with a comoving/Lagrangian formulation (note that none of the formulations included by default in GIZMO RHD right now is valid for fully-relativistic MHD plus RHD).
-
-**RT\_DIFFUSION\_IMPLICIT**: Solve the diffusion part of the RT equations fully-implicitly using a Conjugate Gradient iteration. This allows much larger timesteps if a pure-diffusion (FLD or OTVET) method us used, but in non-linear problems with a deep timestep hierarchy this can be problematic because it requires a global solve. For M1 or LEBRON methods, there is no speedup so this will not be used. If this is used, please also cite Petkova & Springel, MNRAS, 2009, 396, 1383 for the CG-iteration method.
 
 
 <a name="config-rhd-freqs"></a>

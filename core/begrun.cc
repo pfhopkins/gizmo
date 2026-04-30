@@ -498,9 +498,6 @@ void begrun(void)
 #if defined(RT_EVOLVE_INTENSITIES)
     rt_init_intensity_directions();
 #endif
-#if defined(RT_DIFFUSION_CG)
-    All.Radiation_Ti_begstep = 0;
-#endif
 #ifdef RT_CHEM_PHOTOION
     rt_get_sigma();
 #endif

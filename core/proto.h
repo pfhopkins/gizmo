@@ -830,10 +830,6 @@ double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
 double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell);
 
-#ifdef RT_DIFFUSION_CG
-void rt_diffusion_cg_solve(void);
-#endif
-
 #ifdef RT_CHEM_PHOTOION
 /* rt_return_photon_number_density is now cell[i].rt_photon_number_density(k) */
 double rt_photoion_chem_return_temperature(int i, double internal_energy);

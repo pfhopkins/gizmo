@@ -785,9 +785,14 @@
 #endif
 #endif
 
-/* check whether we want to use the implicit solver [only usable for very special cases, not recommended] */
-#if defined(RT_DIFFUSION_IMPLICIT) && (defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION)) // only modules the implicit solver works with
-#define RT_DIFFUSION_CG // use our implicit solver [will crash with any other modules, hence checking this before the others below]
+/* RT_DIFFUSION_IMPLICIT / RT_DIFFUSION_CG retired 2026-04: the Petkova+Springel CG-FLD solver
+   was not used by any group for >10 years and is a poor match for GIZMO's adaptive-timestep,
+   high-dynamic-range regime (globally-synchronous CG, diagonal-only preconditioner, OTVET
+   closure pathologies). Use M1+subcycling (RT_M1) instead. If stiff implicit diffusion is
+   ever needed, the MG-CG infrastructure in gravity/mg_gradient_correction.cc +
+   mesh/compute_finitevol_faces.cc can be retargeted; for neutrinos use multigroup-M1. */
+#ifdef RT_DIFFUSION_IMPLICIT
+#error "RT_DIFFUSION_IMPLICIT has been retired. Use RT_M1 with subcycling (TRANSPORT_SUBCYCLE) instead."
 #endif
 
 /* options for FLD or OTVET or M1 or Ray/Rad_Intensity modules */
@@ -796,9 +801,7 @@
 #define RADTRANSFER // RADTRANSFER is ON, obviously
 #endif
 #define RT_SOURCE_INJECTION // need source injection enabled to define emissivity
-#if !defined(RT_DIFFUSION_CG)
-#define RT_SOLVER_EXPLICIT // default to explicit solutions (much more accurate/flexible)
-#endif
+#define RT_SOLVER_EXPLICIT // explicit solutions (much more accurate/flexible)
 #endif /* end of options for our general RHD methods */
 
 /* OTVET-specific options [uses the gravity tree to calculate the Eddington tensor] */
