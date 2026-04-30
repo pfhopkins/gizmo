@@ -1646,3 +1646,316 @@ void ghost_writeback_radfbrp(void)
 }
 
 #endif /* GALSF_FB_FIRE_RT_LOCALRP */
+
+
+/* --- RT source injection variant ------------------------------------------ */
+
+#ifdef RT_SOURCE_INJECTION
+
+struct ghost_delta_rtsrcinjection_t {
+    int home_index;
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+    MyFloat dRad_Je[N_RT_FREQ_BINS];
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+    MyFloat dRad_E_gamma[N_RT_FREQ_BINS];
+#ifdef RT_EVOLVE_ENERGY
+    MyFloat dRad_E_gamma_Pred[N_RT_FREQ_BINS];
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+    MyFloat dRad_Intensity[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS];
+    MyFloat dRad_Intensity_Pred[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS];
+#endif
+#ifdef RT_EVOLVE_FLUX
+    MyFloat dRad_Flux[N_RT_FREQ_BINS][3];
+    MyFloat dRad_Flux_Pred[N_RT_FREQ_BINS][3];
+#endif
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+    MyDouble dVel[3];
+    MyDouble dVelPred[3];
+    MyDouble ddp[3];
+#endif
+};
+
+struct ghost_snap_rtsrcinjection_t {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+    MyFloat Rad_Je[N_RT_FREQ_BINS];
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+    MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
+#ifdef RT_EVOLVE_ENERGY
+    MyFloat Rad_E_gamma_Pred[N_RT_FREQ_BINS];
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+    MyFloat Rad_Intensity[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS];
+    MyFloat Rad_Intensity_Pred[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS];
+#endif
+#ifdef RT_EVOLVE_FLUX
+    MyFloat Rad_Flux[N_RT_FREQ_BINS][3];
+    MyFloat Rad_Flux_Pred[N_RT_FREQ_BINS][3];
+#endif
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+    MyDouble Vel[3];
+    MyDouble VelPred[3];
+    MyDouble dp[3];
+#endif
+};
+
+static struct ghost_snap_rtsrcinjection_t *rtsrcinjection_snap = NULL;
+
+void ghost_writeback_zero_rtsrcinjection(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+    if(NTask <= 1) return;
+
+    rtsrcinjection_snap = (struct ghost_snap_rtsrcinjection_t *)
+        malloc((num_ghosts > 0 ? num_ghosts : 1) * sizeof(struct ghost_snap_rtsrcinjection_t));
+
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        auto& s = rtsrcinjection_snap[g];
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+            s.Rad_Je[k] = CellP[j].Rad_Je[k];
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+            s.Rad_E_gamma[k] = CellP[j].Rad_E_gamma[k];
+#ifdef RT_EVOLVE_ENERGY
+            s.Rad_E_gamma_Pred[k] = CellP[j].Rad_E_gamma_Pred[k];
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+            for(int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
+                s.Rad_Intensity[k][kv] = CellP[j].Rad_Intensity[k][kv];
+                s.Rad_Intensity_Pred[k][kv] = CellP[j].Rad_Intensity_Pred[k][kv];
+            }
+#endif
+#ifdef RT_EVOLVE_FLUX
+            for(int kv = 0; kv < 3; kv++) {
+                s.Rad_Flux[k][kv] = CellP[j].Rad_Flux[k][kv];
+                s.Rad_Flux_Pred[k][kv] = CellP[j].Rad_Flux_Pred[k][kv];
+            }
+#endif
+#endif
+        }
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+        for(int kv = 0; kv < 3; kv++) {
+            s.Vel[kv] = P[j].Vel[kv];
+            s.VelPred[kv] = CellP[j].VelPred[kv];
+            s.dp[kv] = P[j].dp[kv];
+        }
+#endif
+    }
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate();
+#endif
+}
+
+void ghost_writeback_rtsrcinjection(void)
+{
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+
+    if(!rtsrcinjection_snap || NTask <= 1) {
+        if(rtsrcinjection_snap) { free(rtsrcinjection_snap); rtsrcinjection_snap = NULL; }
+        return;
+    }
+
+    int *home_rank  = ghost_get_home_rank();
+    int *home_index = ghost_get_home_index();
+
+    int *delta_send_count = (int *) calloc(NTask, sizeof(int));
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        auto& s = rtsrcinjection_snap[g];
+        int modified = 0;
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+            if(CellP[j].Rad_Je[k] != s.Rad_Je[k]) modified = 1;
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+            if(CellP[j].Rad_E_gamma[k] != s.Rad_E_gamma[k]) modified = 1;
+#ifdef RT_EVOLVE_ENERGY
+            if(CellP[j].Rad_E_gamma_Pred[k] != s.Rad_E_gamma_Pred[k]) modified = 1;
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+            for(int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
+                if(CellP[j].Rad_Intensity[k][kv] != s.Rad_Intensity[k][kv]) modified = 1;
+                if(CellP[j].Rad_Intensity_Pred[k][kv] != s.Rad_Intensity_Pred[k][kv]) modified = 1;
+            }
+#endif
+#ifdef RT_EVOLVE_FLUX
+            for(int kv = 0; kv < 3; kv++) {
+                if(CellP[j].Rad_Flux[k][kv] != s.Rad_Flux[k][kv]) modified = 1;
+                if(CellP[j].Rad_Flux_Pred[k][kv] != s.Rad_Flux_Pred[k][kv]) modified = 1;
+            }
+#endif
+#endif
+        }
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+        for(int kv = 0; kv < 3; kv++) {
+            if(P[j].Vel[kv] != s.Vel[kv]) modified = 1;
+            if(CellP[j].VelPred[kv] != s.VelPred[kv]) modified = 1;
+            if(P[j].dp[kv] != s.dp[kv]) modified = 1;
+        }
+#endif
+        if(modified) delta_send_count[home_rank[g]]++;
+    }
+
+    int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
+    delta_send_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1];
+    int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
+
+    struct ghost_delta_rtsrcinjection_t *send_buf = (struct ghost_delta_rtsrcinjection_t *)
+        malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_rtsrcinjection_t));
+    int *pack_offset = (int *) malloc(NTask * sizeof(int));
+    memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
+
+    for(int g = 0; g < num_ghosts; g++) {
+        int j = num_local + g;
+        auto& s = rtsrcinjection_snap[g];
+        int modified = 0;
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+            if(CellP[j].Rad_Je[k] != s.Rad_Je[k]) modified = 1;
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+            if(CellP[j].Rad_E_gamma[k] != s.Rad_E_gamma[k]) modified = 1;
+#ifdef RT_EVOLVE_ENERGY
+            if(CellP[j].Rad_E_gamma_Pred[k] != s.Rad_E_gamma_Pred[k]) modified = 1;
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+            for(int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
+                if(CellP[j].Rad_Intensity[k][kv] != s.Rad_Intensity[k][kv]) modified = 1;
+                if(CellP[j].Rad_Intensity_Pred[k][kv] != s.Rad_Intensity_Pred[k][kv]) modified = 1;
+            }
+#endif
+#ifdef RT_EVOLVE_FLUX
+            for(int kv = 0; kv < 3; kv++) {
+                if(CellP[j].Rad_Flux[k][kv] != s.Rad_Flux[k][kv]) modified = 1;
+                if(CellP[j].Rad_Flux_Pred[k][kv] != s.Rad_Flux_Pred[k][kv]) modified = 1;
+            }
+#endif
+#endif
+        }
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+        for(int kv = 0; kv < 3; kv++) {
+            if(P[j].Vel[kv] != s.Vel[kv]) modified = 1;
+            if(CellP[j].VelPred[kv] != s.VelPred[kv]) modified = 1;
+            if(P[j].dp[kv] != s.dp[kv]) modified = 1;
+        }
+#endif
+        if(!modified) continue;
+        int task = home_rank[g];
+        int off  = pack_offset[task]++;
+        send_buf[off].home_index = home_index[g];
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+            send_buf[off].dRad_Je[k] = CellP[j].Rad_Je[k] - s.Rad_Je[k];
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+            send_buf[off].dRad_E_gamma[k] = CellP[j].Rad_E_gamma[k] - s.Rad_E_gamma[k];
+#ifdef RT_EVOLVE_ENERGY
+            send_buf[off].dRad_E_gamma_Pred[k] = CellP[j].Rad_E_gamma_Pred[k] - s.Rad_E_gamma_Pred[k];
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+            for(int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
+                send_buf[off].dRad_Intensity[k][kv] = CellP[j].Rad_Intensity[k][kv] - s.Rad_Intensity[k][kv];
+                send_buf[off].dRad_Intensity_Pred[k][kv] = CellP[j].Rad_Intensity_Pred[k][kv] - s.Rad_Intensity_Pred[k][kv];
+            }
+#endif
+#ifdef RT_EVOLVE_FLUX
+            for(int kv = 0; kv < 3; kv++) {
+                send_buf[off].dRad_Flux[k][kv] = CellP[j].Rad_Flux[k][kv] - s.Rad_Flux[k][kv];
+                send_buf[off].dRad_Flux_Pred[k][kv] = CellP[j].Rad_Flux_Pred[k][kv] - s.Rad_Flux_Pred[k][kv];
+            }
+#endif
+#endif
+        }
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+        for(int kv = 0; kv < 3; kv++) {
+            send_buf[off].dVel[kv] = P[j].Vel[kv] - s.Vel[kv];
+            send_buf[off].dVelPred[kv] = CellP[j].VelPred[kv] - s.VelPred[kv];
+            send_buf[off].ddp[kv] = P[j].dp[kv] - s.dp[kv];
+        }
+#endif
+    }
+    free(pack_offset);
+
+    int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
+    MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
+    delta_recv_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1];
+    int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
+
+    struct ghost_delta_rtsrcinjection_t *recv_buf = (struct ghost_delta_rtsrcinjection_t *)
+        malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_rtsrcinjection_t));
+
+    int delta_size = sizeof(struct ghost_delta_rtsrcinjection_t);
+    int *send_bytes = (int *) malloc(NTask * sizeof(int));
+    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
+    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
+    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        send_bytes[t] = delta_send_count[t] * delta_size;
+        recv_bytes[t] = delta_recv_count[t] * delta_size;
+        send_bdisp[t] = delta_send_disp[t] * delta_size;
+        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
+    }
+    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
+                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    free(send_buf); free(delta_send_count); free(delta_send_disp);
+
+    for(int d = 0; d < total_recv; d++) {
+        int idx = recv_buf[d].home_index;
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+            CellP[idx].Rad_Je[k] += recv_buf[d].dRad_Je[k];
+#endif
+#if defined(RT_INJECT_PHOTONS_DISCRETELY)
+            CellP[idx].Rad_E_gamma[k] += recv_buf[d].dRad_E_gamma[k];
+#ifdef RT_EVOLVE_ENERGY
+            CellP[idx].Rad_E_gamma_Pred[k] += recv_buf[d].dRad_E_gamma_Pred[k];
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+            for(int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
+                CellP[idx].Rad_Intensity[k][kv] += recv_buf[d].dRad_Intensity[k][kv];
+                CellP[idx].Rad_Intensity_Pred[k][kv] += recv_buf[d].dRad_Intensity_Pred[k][kv];
+            }
+#endif
+#ifdef RT_EVOLVE_FLUX
+            for(int kv = 0; kv < 3; kv++) {
+                CellP[idx].Rad_Flux[k][kv] += recv_buf[d].dRad_Flux[k][kv];
+                CellP[idx].Rad_Flux_Pred[k][kv] += recv_buf[d].dRad_Flux_Pred[k][kv];
+            }
+#endif
+#endif
+        }
+#if defined(RT_INJECT_PHOTONS_DISCRETELY_ADD_MOMENTUM_FOR_LOCAL_EXTINCTION) && !defined(RT_DISABLE_RAD_PRESSURE)
+        for(int kv = 0; kv < 3; kv++) {
+            P[idx].Vel[kv] += recv_buf[d].dVel[kv];
+            CellP[idx].VelPred[kv] += recv_buf[d].dVelPred[kv];
+            P[idx].dp[kv] += recv_buf[d].ddp[kv];
+        }
+#endif
+    }
+
+    if(ThisTask == 0 && (total_send > 0 || total_recv > 0)) {
+        printf("  Ghost writeback (rtsrcinjection): sent %d deltas, received %d deltas\n",
+               total_send, total_recv);
+        fflush(stdout);
+    }
+
+    free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+    free(rtsrcinjection_snap); rtsrcinjection_snap = NULL;
+#ifdef OPENMP_GPU_OFFLOAD
+    gpu_particles_arena_invalidate();
+#endif
+}
+
+#endif /* RT_SOURCE_INJECTION */

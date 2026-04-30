@@ -112,6 +112,14 @@ void ghost_writeback_zero_radfbrp(void);
 void ghost_writeback_radfbrp(void);
 #endif
 
+/* RT source injection variant: snapshot-based reverse communication for
+ * rt_source_injection GPU kernel j-gas writes (radiation energy/source fields,
+ * optional momentum kicks, and optional flux/intensity fields). */
+#ifdef RT_SOURCE_INJECTION
+void ghost_writeback_zero_rtsrcinjection(void);
+void ghost_writeback_rtsrcinjection(void);
+#endif
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);

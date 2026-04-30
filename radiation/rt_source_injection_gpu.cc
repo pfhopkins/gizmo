@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -26,6 +27,8 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../declarations/macros.h"
 #include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_symlist_lifecycle.h"
 
 #if defined(RT_SOURCE_INJECTION) && defined(OPENMP_GPU_OFFLOAD)
 
@@ -97,10 +100,25 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
         rt_src_local_fill(i_active_host[a], P_host, CellP_host, &src_local[a]);
     }
 
+    int num_src_global = 0;
+    MPI_Allreduce(&num_src, &num_src_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(num_src_global <= 0) return;
+
+    int imported_ghosts = 0;
+    if(ghost_get_num_ghosts() <= 0) {
+        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+        imported_ghosts = 1;
+    }
+
+    int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
+    if(num_all <= 0) num_all = num_total;
+
     /* Step 13 Phase 1 arena. */
-    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
+    gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
+
+    ghost_writeback_zero_rtsrcinjection();
 
     /* Copy per-source local input to SharedSpace (1-element backstop when num_src==0) */
     int alloc_n = (num_src > 0) ? num_src : 1;
@@ -111,7 +129,7 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     /* Build cross-type neighbor list: sources → gas (j_type_bitmask=1).
        Uses gpu_ngb_list_build directly (same pattern as ags_force_gpu.cc). */
     gpu_neighbor_list_t gnl;
-    gpu_ngb_list_build(P_gpu, num_total,
+    gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
                        &gnl, NULL, 1.0, src_radii_host);
@@ -156,14 +174,17 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     gizmo_gpu_check_last_error("rt_src_injection", num_src);
 
     /* Scatter: copy modified P and CellP back to host */
-    memcpy(P_host,    P_gpu,     num_total * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_total * sizeof(struct gas_cell_data));
+    memcpy(P_host,    P_gpu,     num_all * sizeof(struct particle_data));
+    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+
+    ghost_writeback_rtsrcinjection();
 
     /* CPU-side RT ops after return (Rad_E_gamma updates etc.) mutate host;
        invalidate so the next GPU acquire does a fresh copy. */
     gpu_particles_arena_invalidate();
     gpu_ngb_list_free(&gnl, NULL);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
+    if(imported_ghosts) { ghost_exchange_cleanup(); }
 }
 
 GPU_ALL_SYNC_FUNC(rtsrcinjection)
