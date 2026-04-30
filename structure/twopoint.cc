@@ -134,11 +134,13 @@ void twopoint(void)
         }
 
         int num_src = (int)active_idx.size();
+        int num_src_global = 0;
+        MPI_Allreduce(&num_src, &num_src_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         gpu_neighbor_list_t gnl = {};
         int local_count = ghost_get_num_local();
         if(local_count <= 0) local_count = NumPart;
         int ghost_imported = 0;
-        if(num_src > 0) {
+        if(num_src_global > 0) {
             if(ghost_get_num_ghosts() <= 0) {
                 gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
                 ghost_imported = 1;
@@ -178,7 +180,7 @@ void twopoint(void)
             }
         }
 
-        if(num_src > 0) {
+        if(num_src_global > 0) {
             gpu_ngb_list_free(&gnl, NULL);
             gpu_particles_arena_invalidate();
         }
