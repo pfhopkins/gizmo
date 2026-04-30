@@ -118,6 +118,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                                  const double *src_radii_host,
                                  int *n_couplings_out)
 {
+    ghost_write_detector_begin("mechanical_fb");
     GIZMO_GPU_ENSURE_ALL_FRESH(mechfb);
 
     /* Caller-supplies-active-list rule: i_active_host[] holds LOCAL indices
@@ -274,6 +275,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
        d_gas is in SharedSpace (host-accessible), passed as the source; caller's
        gas_delta_host is the home destination. */
     ghost_writeback_mechfb(d_gas, gas_delta_host, n_gas);
+    ghost_write_detector_end();
 
     /* Count gas cells that received coupling, matching N_Gas_Couplings_ThisTask. */
     int n_coup = 0;

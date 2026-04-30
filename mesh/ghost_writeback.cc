@@ -50,6 +50,7 @@ void ghost_writeback_zero_hydro(void)
 
 void ghost_writeback_hydro(void)
 {
+    ghost_write_detector_register_writeback();
     if(NTask <= 1) return; /* single rank: no ghosts, no communication needed */
 
     int num_ghosts = ghost_get_num_ghosts();
@@ -191,6 +192,7 @@ void ghost_writeback_zero_wakeup(void)
 
 void ghost_writeback_wakeup(void)
 {
+    ghost_write_detector_register_writeback();
     if(NTask <= 1) return;
 
     int num_ghosts = ghost_get_num_ghosts();
@@ -326,6 +328,7 @@ void ghost_writeback_zero_agsforce(void)
 
 void ghost_writeback_agsforce(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local = ghost_get_num_local();
 
@@ -491,6 +494,7 @@ void ghost_writeback_zero_swallowtime(void)
 
 void ghost_writeback_swallowtime(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -647,6 +651,7 @@ void ghost_writeback_zero_thermalfb(void)
 
 void ghost_writeback_thermalfb(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -816,6 +821,7 @@ void ghost_writeback_zero_sinkfeed(void)
 
 void ghost_writeback_sinkfeed(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -955,6 +961,7 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
                              struct MechFBGasDelta *home_buf,
                              int n_gas)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
     if(NTask <= 1 || num_ghosts <= 0) return;
@@ -1136,6 +1143,7 @@ void ghost_writeback_zero_grainbackrx(void)
 
 void ghost_writeback_grainbackrx(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -1350,6 +1358,7 @@ void ghost_writeback_zero_sinkswallow(void)
 
 void ghost_writeback_sinkswallow(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -1544,6 +1553,7 @@ void ghost_writeback_zero_radfbrp(void)
 
 void ghost_writeback_radfbrp(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -1755,6 +1765,7 @@ void ghost_writeback_zero_rtsrcinjection(void)
 
 void ghost_writeback_rtsrcinjection(void)
 {
+    ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
@@ -1959,3 +1970,81 @@ void ghost_writeback_rtsrcinjection(void)
 }
 
 #endif /* RT_SOURCE_INJECTION */
+
+
+/* --- Ghost-write detector (debug builds only) ----------------------------- */
+
+#ifdef GIZMO_GPU_ARENA_DEBUG
+
+static struct particle_data *gwd_P_snap = NULL;
+static struct gas_cell_data *gwd_CellP_snap = NULL;
+static int gwd_n_snap = 0;
+static int gwd_local_at_snap = 0;
+static int gwd_wb_count_at_snap = 0;
+static int gwd_wb_count = 0;
+static const char *gwd_kernel = "(none)";
+static int gwd_active = 0;
+
+void ghost_write_detector_register_writeback(void) { gwd_wb_count++; }
+
+void ghost_write_detector_begin(const char *kernel_name)
+{
+    if(NTask <= 1) return;
+    int n = ghost_get_num_ghosts();
+    if(n <= 0) return;
+    int local = ghost_get_num_local();
+    if(gwd_active) {
+        /* Nested begin without an end — programmer error. */
+        fprintf(stderr, "[ghost_write_detector] nested begin('%s') while '%s' still active\n",
+                kernel_name ? kernel_name : "(null)", gwd_kernel);
+        endrun(91234);
+    }
+    gwd_P_snap = (struct particle_data *) malloc(n * sizeof(struct particle_data));
+    gwd_CellP_snap = (struct gas_cell_data *) malloc(n * sizeof(struct gas_cell_data));
+    memcpy(gwd_P_snap,    P     + local, n * sizeof(struct particle_data));
+    memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
+    gwd_n_snap = n;
+    gwd_local_at_snap = local;
+    gwd_wb_count_at_snap = gwd_wb_count;
+    gwd_kernel = kernel_name ? kernel_name : "(unnamed)";
+    gwd_active = 1;
+}
+
+void ghost_write_detector_end(void)
+{
+    if(!gwd_active) return;
+    int wb_ran = (gwd_wb_count > gwd_wb_count_at_snap);
+    if(!wb_ran) {
+        /* Use the local count captured at begin(); if it changed, ghost layout
+         * was rebuilt mid-window — treat as a write-detection failure. */
+        int local_now = ghost_get_num_local();
+        int n_now = ghost_get_num_ghosts();
+        int n_diff = 0, first_diff = -1;
+        if(local_now == gwd_local_at_snap && n_now == gwd_n_snap) {
+            for(int g = 0; g < gwd_n_snap; g++) {
+                if(memcmp(&P[gwd_local_at_snap + g],     &gwd_P_snap[g],     sizeof(struct particle_data)) != 0 ||
+                   memcmp(&CellP[gwd_local_at_snap + g], &gwd_CellP_snap[g], sizeof(struct gas_cell_data)) != 0) {
+                    n_diff++; if(first_diff < 0) first_diff = g;
+                }
+            }
+        } else {
+            n_diff = -1; /* layout changed — can't compare */
+        }
+        if(n_diff != 0) {
+            fprintf(stderr, "[ghost_write_detector] kernel '%s' modified ghost particles "
+                    "but no ghost_writeback_* was called.\n"
+                    "  ghost_count_at_begin=%d, local_at_begin=%d, ghost_count_now=%d, local_now=%d, "
+                    "first_differing_ghost_index=%d, n_diff=%d\n"
+                    "  → either add a ghost_writeback call, or confirm this kernel is read-only on j.\n",
+                    gwd_kernel, gwd_n_snap, gwd_local_at_snap, n_now, local_now,
+                    first_diff, n_diff);
+            endrun(91234);
+        }
+    }
+    free(gwd_P_snap);     gwd_P_snap = NULL;
+    free(gwd_CellP_snap); gwd_CellP_snap = NULL;
+    gwd_n_snap = 0;
+    gwd_active = 0;
+}
+
+#endif /* GIZMO_GPU_ARENA_DEBUG */

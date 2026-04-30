@@ -97,6 +97,7 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Snapshot ghost fields before kernel for delta writeback */
+    ghost_write_detector_begin("thermal_fb");
     ghost_writeback_zero_thermalfb();
 
     /* Copy per-source input to SharedSpace (1-element backstop when num_src==0) */
@@ -158,6 +159,7 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
 
     /* Ghost writeback: propagate j-particle deltas to home ranks */
     ghost_writeback_thermalfb();
+    ghost_write_detector_end();
 
     /* Copy output back and apply to source particles */
     std::vector<struct ThermalFBOut> h_out(num_src);

@@ -183,6 +183,7 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
     /* Snapshot ghost Vel/VelPred/dp for writeback */
+    ghost_write_detector_begin("radfb_local_rp");
     ghost_writeback_zero_radfbrp();
 
     int alloc_n = (num_src > 0) ? num_src : 1;
@@ -263,6 +264,7 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
 
     /* Ghost writeback: propagate Vel/VelPred/dp deltas to home ranks */
     ghost_writeback_radfbrp();
+    ghost_write_detector_end();
 
     /* Apply jet momentum consumed back to source particles */
     std::vector<struct RadFBRPOut> h_out(num_src);

@@ -118,6 +118,7 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
+    ghost_write_detector_begin("rt_source_injection");
     ghost_writeback_zero_rtsrcinjection();
 
     /* Copy per-source local input to SharedSpace (1-element backstop when num_src==0) */
@@ -178,6 +179,7 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
 
     ghost_writeback_rtsrcinjection();
+    ghost_write_detector_end();
 
     /* CPU-side RT ops after return (Rad_E_gamma updates etc.) mutate host;
        invalidate so the next GPU acquire does a fresh copy. */

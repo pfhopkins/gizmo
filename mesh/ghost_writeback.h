@@ -120,6 +120,31 @@ void ghost_writeback_zero_rtsrcinjection(void);
 void ghost_writeback_rtsrcinjection(void);
 #endif
 
+/* --- Ghost-write detector ---------------------------------------------------
+ * Debug-build instrumentation that catches "GPU kernel touched ghost particles
+ * but no ghost_writeback_* was called". Active only under GIZMO_GPU_ARENA_DEBUG;
+ * compiles to no-ops otherwise. Pattern:
+ *
+ *   ghost_write_detector_begin("kernel_name");
+ *   ... kernel + memcpy back to host ...
+ *   ghost_writeback_foo();   // increments writeback counter
+ *   ghost_write_detector_end();
+ *
+ * If end() sees ghost-byte differences AND no writeback ran since begin(), it
+ * aborts with a diagnostic naming the kernel. Each writeback function calls
+ * ghost_write_detector_register_writeback() at entry to mark itself accounted.
+ * Catches the "forgot to call ghost_writeback_X entirely" failure mode that
+ * silently dropped multi-rank RT source injection and HII heating physics. */
+#ifdef GIZMO_GPU_ARENA_DEBUG
+void ghost_write_detector_begin(const char *kernel_name);
+void ghost_write_detector_end(void);
+void ghost_write_detector_register_writeback(void);
+#else
+static inline void ghost_write_detector_begin(const char *k) { (void)k; }
+static inline void ghost_write_detector_end(void) {}
+static inline void ghost_write_detector_register_writeback(void) {}
+#endif
+
 /* Accessors from ghost_exchange.cc */
 int ghost_get_num_ghosts(void);
 int ghost_get_num_local(void);

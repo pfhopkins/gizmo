@@ -7,6 +7,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
+#include "../mesh/ghost_writeback.h"
 #include "dm_dispersion_gpu.h"
 
 /*! \file dm_dispersion_rkern
@@ -82,7 +83,9 @@ void disp_density(void)
         /* Launch GPU kernel */
         struct dispdens_gpu_out *nl_outs = (struct dispdens_gpu_out *) mymalloc("disp_nl_outs",
             (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct dispdens_gpu_out));
+        ghost_write_detector_begin("disp_density");
         disp_density_evaluate_gpu(P, NumPart, nl_active, nl_num_active, nl_radii, nl_outs);
+        ghost_write_detector_end();
         /* Scatter results */
         for(int aa = 0; aa < nl_num_active; aa++) {
             int ii = nl_active[aa];

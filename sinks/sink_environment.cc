@@ -68,6 +68,7 @@ void sink_environment_loop(void)
         if(sink_isactive(i)) { nl_active[aa] = i; nl_radii[aa] = P[i].KernelRadius; aa++; }
     }
 
+    ghost_write_detector_begin("sink_environment");
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     ghost_writeback_zero_swallowtime();
 #endif
@@ -76,6 +77,7 @@ void sink_environment_loop(void)
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     ghost_writeback_swallowtime();
 #endif
+    ghost_write_detector_end();
 
     /* Scatter per-active-sink outputs into SinkTempInfo */
     for(int a = 0; a < num_active; a++) {
@@ -174,10 +176,12 @@ void sink_environment_second_loop(void)
         aa++;
     }}
 
+    ghost_write_detector_begin("sink_environment_second");
     sink_environment_second_evaluate_gpu(P, CellP, NumPart,
                                           nl_active, num_active, nl_radii,
                                           nl_Jgas, nl_Jstar,
                                           SINK_NEIGHBOR_BITFLAG, nl_outs);
+    ghost_write_detector_end();
 
     for(int a = 0; a < num_active; a++) {
         int i = nl_active[a];

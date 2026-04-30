@@ -151,9 +151,11 @@ void ags_density(void)
             /* zero P[j].wakeup on ghosts so post-kernel non-zero values are pure deltas
                to reverse-communicate to home ranks (the kernel writes wakeup atomically
                when a ghost satisfies the wakeup condition). */
+            ghost_write_detector_begin("ags_density");
             ghost_writeback_zero_wakeup();
             ags_density_evaluate_gpu(P, CellP, NumPart, nl_active, nl_num_active, nl_radii, bm, nl_outs);
             ghost_writeback_wakeup();
+            ghost_write_detector_end();
             for(int a=0;a<nl_num_active;a++) {
                 int ii = nl_active[a];
                 P[ii].NumNgb          += nl_outs[a].Ngb;
@@ -652,9 +654,11 @@ void AGSForce_calc(void)
 
         /* Snapshot ghost Vel/dp/NInteractions + zero wakeup so post-kernel
            values become pure deltas to reverse-communicate. */
+        ghost_write_detector_begin("ags_force");
         ghost_writeback_zero_agsforce();
         ags_force_evaluate_gpu(P, NumPart, nl_active, nl_num_active, nl_radii, bm, nl_outs);
         ghost_writeback_agsforce();
+        ghost_write_detector_end();
 
         /* Scatter i-side accumulators into P[ii] (match CPU OUTPUT semantics). */
         for(int a = 0; a < nl_num_active; a++) {

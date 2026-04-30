@@ -183,6 +183,7 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
     PRINT_STATUS("  GPU sink_swallow: %d active, %d pairs", num_active, gnl.total_pairs);
 
     /* Snapshot ghost-side fields for the sinkswallow writeback. */
+    ghost_write_detector_begin("sink_swallow_and_kick");
     ghost_writeback_zero_sinkswallow();
 
     {
@@ -245,6 +246,7 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
 
     /* Reduce ghost-side j-side deltas to home. */
     ghost_writeback_sinkswallow();
+    ghost_write_detector_end();
 
     /* Host scatter of per-source outputs into SinkTempInfo + P[i] (mass loss,
      * CountProgs, Accreted_Age).  Also accumulate per-rank swallow counters. */

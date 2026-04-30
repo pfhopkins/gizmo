@@ -168,6 +168,7 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
 #endif
 
     /* Snapshot ghost fields before kernel */
+    ghost_write_detector_begin("sink_feed");
     ghost_writeback_zero_sinkfeed();
 
     /* Copy per-source input to SharedSpace (1-element backstop when num_src==0) */
@@ -264,6 +265,7 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
 
     /* Ghost writeback: propagate j-particle deltas to home ranks */
     ghost_writeback_sinkfeed();
+    ghost_write_detector_end();
 
     /* Apply per-source outputs */
     std::vector<struct SinkFeedOut> h_out(num_src);
