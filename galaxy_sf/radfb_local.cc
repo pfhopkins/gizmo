@@ -46,6 +46,23 @@ void radiation_pressure_winds_consolidated(void)
  * because the inner greedy search calls ngb_treefind_variable_targeted, which writes
  * to the global Ngblist buffer.  Making Ngblist thread_local in allvars.cc would
  * unblock this; deferred until that change is made. */
+
+/* SINGLEDOMAIN SEMANTIC — DO NOT add a ghost_writeback for this routine, and do
+ * NOT instrument it with ghost_write_detector_begin/end (the detector would
+ * abort because no writeback is registered).
+ *
+ * By design (matching the legacy CPU path), HII heating only ionizes gas
+ * particles owned by THIS rank — never ghosts. Sources can sit anywhere, but
+ * radiation only crosses a domain boundary if the gas on the other side is
+ * imported as a local cell, never via ghost write-back. The pre-walk filter at
+ * `if(j_cand >= local_count) continue;` enforces this. The ghost import that
+ * gizmo_density_prep_ghosts performs is only there to give the GPU NL builder
+ * a consistent num_all-sized arena (and to pad the search radius for sources
+ * near the boundary so they find their nearest LOCAL gas correctly); the
+ * imported ghosts are then skipped before any ionization is applied.
+ *
+ * Phil has confirmed this is intentional. If you find yourself thinking
+ * "shouldn't we add ghost_writeback_hii?" — the answer is NO. */
 void HII_heating_singledomain(void)    /* this version of the HII routine only communicates with particles on the same processor */
 {
 #ifdef RT_CHEM_PHOTOION
