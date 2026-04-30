@@ -290,67 +290,11 @@ extern "C" void gpu_force_drift_release(void)
 }
 
 GPU_ALL_SYNC_FUNC(force_drift)
-GPU_ALL_SYNC_FUNC(gpu_assign_gravcost)
-
-
-/* =========================================================================== *
- * Phase 7.b: GPU gravity-cost assignment.                                      *
- *                                                                              *
- * Replaces the host loop at gravtree.cc:487-495 that walks the Father chain    *
- * for every local particle and accumulates Nodes[].GravCost into               *
- * P[i].GravCost[takelevel].  The same loop is also responsible for zeroing     *
- * P[i].GravCost[takelevel] before the accumulation (host did this at line 145; *
- * on GPU builds the GPU kernel does it inline).                                 *
- *                                                                              *
- * All inputs are UVM: Father[] since Phase 6.6, Nodes[] since Phase 6.8d,     *
- * P[] via gpu_particles_arena (SharedSpace since Phase 1).  No atomics needed  *
- * since each thread owns a private P[i].GravCost[takelevel] slot.              *
- * =========================================================================== */
-extern "C" void gpu_assign_gravcost(int takelevel)
-{
-    if(NumPart <= 0) return;
-    GIZMO_GPU_ENSURE_ALL_FRESH(gpu_assign_gravcost);
-
-    /* Re-seed arena from host P[] if hydro/kicks/predict invalidated it between
-     * gravity calls.  gpu_particles_arena_P() returns NULL when arena_valid_==0,
-     * which caused a NULL-deref crash on the third gravity_tree() call (after hydro
-     * ran and fired gpu_particles_arena_invalidate()).  Acquiring here is cheap when
-     * already valid (fast path in arena code), and correct when stale. */
-    gpu_particles_arena_set_site("gpu_assign_gravcost");
-    gpu_particles_arena_acquire(NumPart, P, CellP);
-
-    struct particle_data *Pp = gpu_particles_arena_P();
-    int                  *Fa = Father;   /* UVM since Phase 6.6 */
-    struct NODE          *No = Nodes;    /* UVM shifted ptr since Phase 6.8d */
-
-    int _mp = All.MaxPart, _mn = MaxNodes;
-    Kokkos::parallel_for("gpu_assign_gravcost", NumPart,
-        KOKKOS_LAMBDA(const int i) {
-            float gc = 0.0f;
-            int no = Fa[i];
-            while(no >= 0) {
-                if(no < _mp || no >= _mp + _mn) {break;}  /* guard against corrupt father */
-                double nm = (double)No[no].u.d.mass;
-                if(nm > 0) {
-                    gc += (float)(No[no].GravCost * (double)Pp[i].Mass / nm);
-                }
-                no = No[no].u.d.father;
-            }
-            Pp[i].GravCost[takelevel] = gc;
-        });
-    Kokkos::fence();
-
-    /* Copy GravCost results from the arena (Pp) back to host P[].  The arena is a
-     * separate SharedSpace allocation from P, so the GPU's writes to Pp[i].GravCost
-     * do not automatically update P[i].GravCost; the host loop below does that. */
-    for(int i = 0; i < NumPart; i++) {P[i].GravCost[takelevel] = Pp[i].GravCost[takelevel];}
-}
 
 #else /* !OPENMP_GPU_OFFLOAD */
 
 /* Non-GPU builds: stubs so the header prototype resolves. */
 extern "C" int  gpu_force_drift_nodes(integertime t) { (void)t; return 0; }
 extern "C" void gpu_force_drift_release(void) {}
-extern "C" void gpu_assign_gravcost(int tl) { (void)tl; }
 
 #endif /* OPENMP_GPU_OFFLOAD */
