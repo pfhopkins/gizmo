@@ -72,36 +72,8 @@ void   force_update_size_of_parent_node(int no);
 
 void   dump_particles(void);
 
-MyFloat  INLINE_FUNC ngb_periodic(MyFloat x);
-MyFloat  INLINE_FUNC ngb_periodic_longbox(MyFloat x);
-MyFloat  ngb_select_closest(int k, int n, MyFloat *arr, int *ind);
-void   ngb_treeallocate(int npart);
-void   ngb_treebuild(void);
-
-
-void   ngb_treefree(void);
-void   ngb_treesearch(int);
-void   ngb_treesearch_pairs(int);
-void   ngb_update_nodes(void);
-void   ngb_treesearch_notsee(int no);
-
-int ngb_treefind_fof_primary(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode, int mode,
-			    int *nexport, int *nsend_local, int MyFOF_PRIMARY_LINK_TYPES);
-int ngb_clear_buf(MyDouble searchcenter[3], MyFloat hguess, int numngb);
-void ngb_treefind_flagexport(MyDouble searchcenter[3], MyFloat hguess);
-
-
-int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
-		       int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
-inline int ngb_treefind_pairs_threads(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist) { return ngb_treefind_pairs_threads(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist); }
-int ngb_treefind_variable_targeted(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode, int mode,
- 			  int *nexport, int *nsend_local, int TARGET_BITMASK);
-inline int ngb_treefind_variable_targeted(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *nexport, int *nsend_local, int TARGET_BITMASK) { return ngb_treefind_variable_targeted(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, nexport, nsend_local, TARGET_BITMASK); }
-int ngb_treefind_pairs_targeted(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode, int mode,
-                                   int *nexport, int *nsend_local, int TARGET_BITMASK);
-int ngb_treefind_variable_threads(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode, int mode,
-			  int *exportflag, int *exportnodecount, int *exportindex, int *ngblist);
-inline int ngb_treefind_variable_threads(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist) { return ngb_treefind_variable_threads(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist); }
+/* mesh/ngb.cc retired in Step 5 Phase D5: ngb_treebuild/ngb_treefind_* all dead under OPENMP_GPU_OFFLOAD.
+   ngb_treebuild() callers replaced with force_treebuild(NumPart, NULL) directly. */
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
 #define GIZMO_EWALD_EN 64  /* must match EN in forcetree.cc (size of Ewald correction look-up table octant) */

@@ -131,15 +131,7 @@ void calc_shearing_box_pos_offset(void);
 #endif
 
 
-int ngb_treefind_variable_threads_targeted(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
-                                           int mode, int *exportflag, int *exportnodecount, int *exportindex,
-                                           int *ngblist, int TARGET_BITMASK);
-inline int ngb_treefind_variable_threads_targeted(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int TARGET_BITMASK) { return ngb_treefind_variable_threads_targeted(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist, TARGET_BITMASK); }
-
-int ngb_treefind_pairs_threads_targeted(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
-                                           int mode, int *exportflag, int *exportnodecount, int *exportindex,
-                                           int *ngblist, int TARGET_BITMASK);
-inline int ngb_treefind_pairs_threads_targeted(const Vec3<MyDouble>& searchcenter, MyFloat rkern, int target, int *startnode, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int TARGET_BITMASK) { return ngb_treefind_pairs_threads_targeted(const_cast<MyDouble*>(searchcenter.data), rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist, TARGET_BITMASK); }
+/* ngb_treefind_*_targeted decls retired with mesh/ngb.cc in Step 5 Phase D5. */
 
 
 
