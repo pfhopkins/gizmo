@@ -1,8 +1,6 @@
 #!/bin/bash
 # run_compile_suite.sh — Test GIZMO compilation under many Config.sh flag combinations.
 #
-# Every config gets OPENMP_GPU_OFFLOAD prepended so we test the GPU/Kokkos code path.
-#
 # Usage:
 #   Local (Kokkos OpenMP):  ./test/compile_suite/run_compile_suite.sh
 #   Vista (CUDA GPU):       ./test/compile_suite/run_compile_suite.sh --gpu

@@ -1,5 +1,4 @@
 % PMGRID+BOX_PERIODIC GPU gravity walk validation — CPU reference.
-% Identical to gravtree_pmgrid_gpu.params minus GIZMO_GPU_GRAVTREE.
 %
 InitCondFile                       ../gmc_cooling/gmc_cooling_ics
 OutputDir                          output_cpu
@@ -27,4 +26,4 @@ ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
 ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
-TreeRebuild_ActiveFraction         2.0
+TreeRebuild_ActiveFraction         0.005

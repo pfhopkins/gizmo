@@ -248,4 +248,4 @@ AGS_MaxNumNgbDeviation  0.10  % tolerance in Nngb (make larger than gas)
 DivBcleaningParabolicSigma   1.0 % (3D~0.7-1.0,2D~0.2-0.3)
 DivBcleaningHyperbolicSigma  1.0 % (~1)
 
-TreeRebuild_ActiveFraction         2.0
+TreeRebuild_ActiveFraction         0.005

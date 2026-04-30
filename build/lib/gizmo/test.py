@@ -35,7 +35,10 @@ def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
 
 def clean_test_outputs(test_name: str, extra_config_flags=()):
     """Remove this variant's output directory, plot PNGs, and log files from a previous test run.
-    Other variants' output directories (including the baseline plain "output") are left untouched."""
+    Other variants' output directories (including the baseline plain "output") are left untouched.
+    No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     test_dir = f"test/{test_name}"
     output_dir = variant_output_dir(test_name, extra_config_flags)
     if path.isdir(output_dir):
@@ -60,10 +63,30 @@ def default_mpi_ranks(max_ranks=None):
     return max(n, 1)
 
 
+_KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
+
+
+def _current_systype():
+    """Read active SYSTYPE from Makefile.systype (first uncommented SYSTYPE=... line)."""
+    try:
+        with open("Makefile.systype") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("SYSTYPE=") and not line.startswith("#"):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return ""
+
+
 def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
     """Sets environment variables and runs a script for building gizmo for a given test.
     If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building.
-    extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",))."""
+    extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",)).
+    GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY is retired (Step 5 C5) and no longer appended.
+    No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     system("rm -f GIZMO test/*/GIZMO")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
@@ -105,21 +128,41 @@ def download_test_files(test_name: str):
 
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0):
-    """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run."""
+    """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
+    No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     if num_openmp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
+    # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
+    # in MHD_MODIFIED_GRADIENT) don't introduce nondeterministic/non-reproducible
+    # results that get amplified by the divergence-cleaning feedback loop.
+    environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    environ.setdefault("MKL_NUM_THREADS", "1")
+    # Silence Kokkos "OMP_PROC_BIND not set" warnings.  `false` is the documented
+    # unit-testing value; for production runs on a managed cluster the launcher
+    # (e.g. ibrun on TACC) pins ranks to cpusets, so binding is already handled.
+    environ.setdefault("OMP_PROC_BIND", "false")
+    environ.setdefault("OMP_PLACES", "threads")
     paramsfile = f"{test_name}.params"
     bind_opts = "--bind-to none" if num_openmp_threads > 0 else ""
     system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus {bind_opts} ./GIZMO {paramsfile} 0 1>test_{test_name}.out 2>test_{test_name}.err")
 
 
 def get_cooling_tables(test_directory="."):
-    """Downloads spcool_tables.tar.gz and copies TREECOOL to test directory"""
+    """Downloads spcool_tables.tar.gz and copies TREECOOL to test directory.
+    Idempotent: skips steps whose targets already exist (supports symlinks as well as
+    real files/dirs), so tests that share cooling data with sibling tests via symlinks
+    don't trigger unnecessary downloads."""
 
-    url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
-    urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
-    system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
-    system(f"cp cooling/TREECOOL {test_directory}")
+    spcool_dir = f"{test_directory}/spcool_tables"
+    if not (path.isdir(spcool_dir) or path.islink(spcool_dir)):
+        url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
+        urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
+        system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
+    treecool_dst = f"{test_directory}/TREECOOL"
+    if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
+        system(f"cp cooling/TREECOOL {test_directory}")
 
 
 _BASELINE_STASH = "__output_baseline_stash__"
@@ -162,7 +205,13 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
-    output/ (if any) is temporarily stashed aside so it isn't overwritten by the variant run."""
+    output/ (if any) is temporarily stashed aside so it isn't overwritten by the variant run.
+
+    Set env var GIZMO_TEST_SKIP_BUILD_RUN=1 to reuse snapshots already present in
+    test/<name>/output/ — useful for validating a remote (e.g. Vista GPU) run against
+    the pytest assertions + plots without rebuilding/rerunning locally."""
+    if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        return
     clean_test_outputs(test_name, extra_config_flags)
     build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
     stash_baseline_output(test_name, extra_config_flags)

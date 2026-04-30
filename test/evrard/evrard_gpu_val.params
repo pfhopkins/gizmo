@@ -1,6 +1,4 @@
 % AGS GPU walk validation: evrard with ADAPTIVE_GRAVSOFT_FORGAS
-% Build twice (+/- GIZMO_GPU_GRAVTREE), compare snapshots.
-% TreeRebuild_ActiveFraction=2.0 is REQUIRED so TakeLevel=-1 and GPU walk fires.
 InitCondFile                       evrard_ics
 OutputDir                          output_gpu_val
 PartAllocFactor                    10
@@ -26,4 +24,4 @@ ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
 ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
-TreeRebuild_ActiveFraction         2.0
+TreeRebuild_ActiveFraction         0.005

@@ -37,7 +37,7 @@ TimeBetStatistics                  0.5
 MaxMemSize                         8000
 ResubmitOn                         0
 ResubmitCommand                    none
-TreeRebuild_ActiveFraction         2.0
+TreeRebuild_ActiveFraction         0.005
 CoolingTablePath                   ./TREECOOL
 SpeciesAbundPath                   ./spcool_tables/spcool_
 

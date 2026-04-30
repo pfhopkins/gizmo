@@ -41,7 +41,7 @@
 
 13. **Kokkos builds automatically activate all GPU infrastructure.** GPU neighbor-list, GPU kernels, and GPU gravity tree are always on with SYSTYPE=Vista or MacBookCellar_Kokkos. No extra Config.sh flags are needed to enable them.
 
-14. **`TreeRebuild_ActiveFraction=2.0` is required for GPU gravity walk to fire.** Default value (0.005) causes `TakeLevel >= 0` (cost-measurement mode) for typical test problem sizes, which makes `gpu_gravtree_walk_primary()` return 0 immediately. All gravity-walk validation params MUST set this to 2.0. See Section 6.
+14. **`TreeRebuild_ActiveFraction` uses the standard default (0.005).** The TakeLevel gate that previously required forcing this to 2.0 has been fixed; normal rebuild-fraction values work correctly. Validation params use 0.005.
 
 15. **Ask before advancing task lists.** After completing each discrete task, report and ask for approval before moving to the next item.
 
@@ -271,7 +271,7 @@ When no reference snapshot exists:
 | Wrong IC/params for module | Flag compiled in but physics never activates (no sinks formed, no SNe, no RT sources) | Inspect params: SinkFormationDensity, SNe rate, particle types present |
 | Vista job exits cleanly but output is wrong | Silent memory/arena bug; SLURM says COMPLETED | Must rsync + run pytest assertions |
 | gmc_cooling_rt used alone | Known radiation-solver bug masks regressions | Always pair with soundwave or gmc_cooling |
-| TakeLevel ≥ 0 gate for gravity walk | GPU walk returns 0 immediately; walk never executes | Set `TreeRebuild_ActiveFraction=2.0` in params |
+| TakeLevel ≥ 0 gate for gravity walk | *Fixed* — GPU walk now fires correctly with default rebuild fraction | If re-observed, check `gpu_gravtree_walk_primary()` TakeLevel logic |
 | Stale gpu_gravity_tree SoA | Wrong forces after tree rebuild | Ensure `gpu_gravity_tree_invalidate()` called after each GPU walk |
 | Stale arena after GPU write | Wrong P[i] reads on next host access | Ensure `gpu_particles_arena_invalidate()` called after GPU writes GravAccel |
 | All.G double-applied | Forces off by G factor | GPU kernel must write RAW forces; post-walk loop applies G |

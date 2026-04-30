@@ -48,7 +48,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
     return binned_statistic(nH, T, "median", nH_bins)[0]
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_mpi_ranks", (2,))  # reference generated at 2 ranks; stochastic cooling is rank-count sensitive
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
     # specify the test name

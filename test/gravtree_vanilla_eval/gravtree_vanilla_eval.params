@@ -3,7 +3,6 @@
 %
 %        HYDRO_MESHLESS_FINITE_MASS
 %        EOS_GAMMA=(5.0/3.0)
-%        GIZMO_GPU_GRAVTREE  (compare against same Config minus this flag)
 %
 InitCondFile                       ../evrard/evrard_ics
 OutputDir                          output
@@ -30,4 +29,4 @@ ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
 ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
-TreeRebuild_ActiveFraction         2.0
+TreeRebuild_ActiveFraction         0.005
