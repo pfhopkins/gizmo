@@ -90,6 +90,11 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             if(stellum_i <= 0) continue;
             if(P[ip].KernelRadius <= 0 || P[ip].DensityAroundParticle <= 0) continue;
             double h_local = P[ip].KernelRadius;
+            /* Census diagnostics for ALL ionizing candidates (not just those that fire
+             * this step) — preserves original semantics of total_N_ionizing_part as a
+             * source-population census, not a stochastic sample count. */
+            total_N_ionizing_part += 1;
+            total_Ndot_ionizing += stellum_i * (3.05e10/HYDROGEN_MASSFRAC);
             /* Pre-compute mionizable using same formula as per-source loop, and apply
              * the same probabilistic filter (prandom < 5*mionizable/Mass).
              * Sources that fail this check do ZERO work in the per-source loop, so
@@ -193,12 +198,9 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             if(RHII > RHIIMAX) RHII = RHIIMAX;
             if(RHII < 0.3*h_i) RHII = 0.3*h_i;
             RHII_initial = RHII;
-            total_N_ionizing_part += 1;
-            total_Ndot_ionizing += stellum * (3.05e10/HYDROGEN_MASSFRAC);
-
             prandom = get_random_number(P[i].ID + 7);
             if(prandom < 5.0*mionizable/P[i].Mass) {
-                mionized = 0.0; jnearest = -1; rnearest = MAX_REAL_NUMBER; NITER_HIIFB = 0;
+                mionized = 0.0; mion_actual = 0.0; jnearest = -1; rnearest = MAX_REAL_NUMBER; NITER_HIIFB = 0;
                 int nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
                 int nl_n = nl_end - nl_start;
                 /* Use heap buffer instead of alloca — see ALLOCA FIX comment above. */
