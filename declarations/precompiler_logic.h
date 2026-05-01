@@ -663,6 +663,9 @@
 #ifndef MAGNETIC
 #error "MHD_BATTERY_MECHANISMS requires MAGNETIC"
 #endif
+#if (MHD_BATTERY_MECHANISMS & 4) && !defined(GRAIN_FLUID)
+#error "MHD_BATTERY_MECHANISMS bit 2 (=4, dust-TVA battery) requires GRAIN_FLUID for grain properties (charge, size, stopping time). The TVA approximation does NOT require explicit J_d evolution but still uses grain state from GRAIN_FLUID."
+#endif
 #if (MHD_BATTERY_MECHANISMS & 8) && !defined(GRAIN_FLUID)
 #error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires GRAIN_FLUID"
 #endif

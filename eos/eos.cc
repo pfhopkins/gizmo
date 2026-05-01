@@ -76,6 +76,9 @@ double return_user_desired_target_pressure(int i)
 #ifdef COSMIC_RAY_FLUID
 #include "cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
+#include "../solids/dust_battery_functions.h"
+#endif
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h. */
@@ -142,6 +145,12 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
 #endif
 
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+    /* Reset Tier-2 EMF accumulator each step. Each enabled bit's per-cell
+       builder (radiative below, dust further below) ADDS its contribution. */
+    cell[i].E_battery_T2_cell = {};
+#endif
+
 #if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 2)
     /* Tier-2 radiative-ionization battery EMF (Durrive & Langer 2015 / Harrison 1973):
          alpha[k] = (sigma_HI[k] n_HI + sigma_HeI[k] n_HeI + sigma_HeII[k] n_HeII)
@@ -192,8 +201,15 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
                 }
             }
         }
-        cell[i].E_battery_T2_cell = E_RI;
+        cell[i].E_battery_T2_cell += E_RI;
     }
+#endif
+
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
+    /* Tier-2 dust battery EMF (Soliman, Hopkins & Squire 2025). Currently a
+       scaffolded stub returning {0,0,0}; SHS25 Eqs. 9, 10-12, 16-18 still to
+       be implemented in solids/dust_battery_functions.h. */
+    cell[i].E_battery_T2_cell += dust_battery_assemble_E_cell(i, cell, pp);
 #endif
 
 #ifdef EOS_SUBSTELLAR_ISM

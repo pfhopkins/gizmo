@@ -577,6 +577,9 @@ void init(void)
 #if (MHD_BATTERY_MECHANISMS & 8)
         CellP[i].J_dust_cell = {};
 #endif
+#if (MHD_BATTERY_MECHANISMS & 8)
+        CellP[i].J_dust_cell = {};
+#endif
 #endif
 #ifdef VISCOSITY
         CellP[i].Eta_ShearViscosity = 0;
