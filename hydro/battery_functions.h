@@ -76,13 +76,13 @@
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION
-Vec3<double> battery_E_Biermann(int i, struct gas_cell_data *cell)
+Vec3<double> battery_E_Biermann(int i, struct gas_cell_data *cell, double h_cell_code)
 {
     Vec3<double> E_zero = {0,0,0};
 #if (MHD_BATTERY_MECHANISMS & 1)
     const double n_e = cell[i].n_e();
     const double T_e = cell[i].T_e();
-    if(!(n_e > 0)) {return E_zero;}
+    if(!(n_e > 0) || !(T_e > 0)) {return E_zero;}
 
     const Vec3<double> g_ne = cell[i].Gradients.ElectronNumberDensity; /* cgs/length_code */
     const Vec3<double> g_Te = cell[i].Gradients.ElectronTemperature;   /* K/length_code */
@@ -92,18 +92,51 @@ Vec3<double> battery_E_Biermann(int i, struct gas_cell_data *cell)
 
     /* E_phys in [statvolt/cm], using grad_phys = grad_code / UNIT_LENGTH_IN_CGS */
     Vec3<double> E_phys;
+    const double inv_L = 1.0 / UNIT_LENGTH_IN_CGS;
     {
-        const double inv_L = 1.0 / UNIT_LENGTH_IN_CGS;
         const double prefac_1 = -kB_over_e * inv_L;                    /* multiplies grad T_e */
         const double prefac_2 = -kB_over_e * (T_e / n_e) * inv_L;      /* multiplies grad n_e */
         for(int k=0;k<3;k++) {E_phys[k] = prefac_1 * g_Te[k] + prefac_2 * g_ne[k];}
     }
+
+    /* Per-cell physical cap on |E_Bier|: limiter Piece 1.
+       Slope-limited ∇T_e and ∇n_e can take pathological values near extrema
+       (sub-resolution oscillations, finite-difference noise on T_e/n_e
+       differences that are themselves slope-limited). The cross-product
+       structure ∇n_e × ∇T_e in dB/dt then propagates that into uncontrolled
+       B-growth from B=0. The natural physical scale of |E_Bier| is set by
+       the worst-resolved field-gradient length:
+         |E_Bier|_natural ~ (k_B·T_e/e) × min(|∇T_e|/T_e, |∇n_e|/n_e ; 1/h_cell)
+       i.e. capped at the inverse cell size when slope-limited gradients
+       suggest sub-resolution scales. We allow up to 10x this natural scale
+       to leave headroom for asymmetric cross-product structure, then clip
+       per-component. This cap is generic to any battery EMF source -- the
+       same pattern applies in future battery_E_*() functions, each with
+       their own natural-scale formula. */
+    {
+        const double mag_g_Te = sqrt(g_Te.norm_sq());
+        const double mag_g_ne = sqrt(g_ne.norm_sq());
+        const double L_T_inv_code = mag_g_Te / DMAX(fabs(T_e), MIN_REAL_NUMBER);
+        const double L_n_inv_code = mag_g_ne / DMAX(fabs(n_e), MIN_REAL_NUMBER);
+        const double L_field_inv_code = DMAX(L_T_inv_code, L_n_inv_code);
+        const double L_field_inv_cgs  = L_field_inv_code * inv_L;
+        const double h_cell_cgs       = h_cell_code * UNIT_LENGTH_IN_CGS;
+        const double inv_L_eff_cgs    = DMIN(L_field_inv_cgs,
+                                             1.0 / DMAX(h_cell_cgs, MIN_REAL_NUMBER));
+        const double E_natural_cgs    = kB_over_e * T_e * inv_L_eff_cgs; /* statvolt/cm */
+        const double E_cap            = 10.0 * E_natural_cgs;
+        for(int k=0;k<3;k++) {
+            if(E_phys[k] >  E_cap) E_phys[k] =  E_cap;
+            if(E_phys[k] < -E_cap) E_phys[k] = -E_cap;
+        }
+    }
+
     /* code-unit conversion: dB[code]/dt[code] = -∇_code × E_code with
        E_code = (C_LIGHT_CODE / UNIT_B_IN_GAUSS) * E_phys */
     const double to_code = C_LIGHT_CODE / UNIT_B_IN_GAUSS;
     return to_code * E_phys;
 #else
-    (void)i; (void)cell;
+    (void)i; (void)cell; (void)h_cell_code;
     return E_zero;
 #endif
 }
@@ -115,13 +148,15 @@ Vec3<double> battery_E_Biermann(int i, struct gas_cell_data *cell)
  * grad(other ionization fields) for RI / dust contributions).
  * ========================================================================== */
 KOKKOS_INLINE_FUNCTION
-void battery_assemble_per_cell_emf(int i, struct gas_cell_data *cell)
+void battery_assemble_per_cell_emf(int i, struct gas_cell_data *cell, double h_cell_code)
 {
     Vec3<double> E_total = {0,0,0};
 #if (MHD_BATTERY_MECHANISMS & 1)
-    E_total += battery_E_Biermann(i, cell);
+    E_total += battery_E_Biermann(i, cell, h_cell_code);
 #endif
-    /* (MHD_BATTERY_MECHANISMS & 2): RI contribution -- TODO */
+    /* (MHD_BATTERY_MECHANISMS & 2): RI contribution -- TODO. Pass h_cell_code through
+       so each per-source builder can apply its own per-cell physical cap (limiter
+       Piece 1, generic across sources). */
     /* (MHD_BATTERY_MECHANISMS & 4): dust TVA, in solids/dust_battery_functions.h -- TODO */
     /* (MHD_BATTERY_MECHANISMS & 8): dust explicit-J_d, idem -- TODO */
     cell[i].E_battery_cell = E_total;
@@ -153,8 +188,20 @@ Vec3<double> battery_assemble_pair_bflux(
     const Vec3<MyDouble> &E_j,
     const Vec3<double> &Face_Area_Vec)
 {
+    /* Per-component MINMOD on the face EMF: limiter Piece 2.
+       Standard MINMOD(a,b) returns 0 when sign(a) != sign(b), and the
+       smaller-magnitude one when signs agree. This is the structural analog
+       of the non-ideal MHD MINMOD-on-bflux step, applied to the source EMF
+       BEFORE the cross product (rather than to the diffusive bflux after).
+       Effect: when cell-i and cell-j disagree about E[k] (slope-limiter
+       noise from one-sided clipping, or curl-of-gradient noise in the
+       cross-product structure of E_Bier), that component is suppressed.
+       When the two cells agree on the physical signal, MINMOD returns the
+       smaller-magnitude one, so the answer is at most 2x conservative
+       relative to the simple 0.5*(E_i+E_j) average -- the physical signal
+       passes through. Generic for any per-cell battery E aggregator. */
     Vec3<double> E_face;
-    for(int k=0; k<3; k++) { E_face[k] = 0.5 * (E_i[k] + E_j[k]); }
+    for(int k=0; k<3; k++) { E_face[k] = MINMOD((double)E_i[k], (double)E_j[k]); }
     return cross(Face_Area_Vec, E_face);
 }
 

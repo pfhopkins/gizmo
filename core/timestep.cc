@@ -589,6 +589,32 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
+#ifdef MHD_BATTERY_MECHANISMS
+            /* Battery CFL: limiter Piece 3.
+               The battery EMF source has no internal mechanism for limiting
+               dB/dt -- with B starting from a tiny floor, any nonzero E
+               drives an unbounded relative dB/B per step. We require
+                 |dB/dt|_battery * dt   <=   CourantFac * max(|B|, B_floor).
+               Estimate |dB/dt|_battery ~ |E_battery_cell| / L_particle
+               (curl-of-E magnitude scale, valid up to face-summation
+               geometry factors of O(1)). Both |B| and |E| are in code units
+               here; no explicit cf-factors needed since the timestep is in
+               code time and the consistency of code-unit B and E is set in
+               battery_E_*() / Bfield(). The B_floor 1e-40 (code units) is a
+               numerical regularizer that matches the IC seed convention --
+               way below any physical scale but resolvable by float64. */
+            {
+                double E_battery_mag = sqrt(CellP[p].E_battery_cell.norm_sq());
+                if(E_battery_mag > MIN_REAL_NUMBER)
+                {
+                    double B_mag_code = sqrt(CellP[p].Bfield().norm_sq());
+                    const double B_floor = 1.e-40;  /* code-unit B floor; matches IC seed convention */
+                    double dt_battery = All.CourantFac * DMAX(B_mag_code, B_floor) * L_particle / E_battery_mag;
+                    if(dt_battery < dt) dt = dt_battery;
+                }
+            }
+#endif
+
 #ifdef MHD_NON_IDEAL
             {
                 double b_grad = 0, b_mag = 0;

@@ -1047,9 +1047,10 @@ void hydro_gradient_calc(void)
 #ifdef MHD_BATTERY_MECHANISMS
             /* per-cell battery EMF: gradients of n_e/T_e (and, eventually, RI/dust quantities)
                are now slope-limited and final, so we can assemble E_battery_cell. The pair
-               loop will read this directly to add cross(Face_Area_Vec, 0.5*(E_i+E_j)) to
-               Fluxes.B (commit 7/N). */
-            battery_assemble_per_cell_emf(i, CellP);
+               loop reads this and adds the MINMOD-limited cross(Face_Area_Vec, E_face) to
+               Fluxes.B (commit 7/N + 8a/N). h_cell is the local resolved scale used by each
+               per-source EMF builder for its physical cap on |E| (limiter Piece 1, 8b/N). */
+            battery_assemble_per_cell_emf(i, CellP, P[i].Get_Particle_Size());
 #endif
 
 
