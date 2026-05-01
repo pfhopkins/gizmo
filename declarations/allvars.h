@@ -69,55 +69,53 @@
 #include "../cooling/chimes/chimes_proto.h"
 #endif
 
+/* Pull in the struct definition + extern declaration of `All` early so the
+   boxSize / boxHalf / Shearing_Box_*_Offset macros below (which expand to
+   All.*) parse correctly inside templates and inline functions defined in
+   this header.  The full repeat of the include + extern at the bottom of
+   the file is gated on `#ifndef All` and is harmless on second pass. */
+#include "global_data_all_struct.h"
+#ifndef All
+extern struct global_data_all_processes All;
+#endif
+
 /*********************************************************/
 /*  Global variables                                     */
 /*********************************************************/
 
-#if defined(BOX_PERIODIC) && !defined(GIZMO_GPU_COMPILER)
-extern MyDouble boxSize, boxHalf;
-#else
-/* Non-periodic: always macros. GPU TUs with BOX_PERIODIC: also macros,
-   reading from All (= All_dev, __managed__) so device code can access them.
-   The extern variables still exist in allvars.cc for host TUs. */
+/* Box-size shorthands.  Always macros reading from All (= All_dev managed
+   mirror inside GPU TUs) so the same code compiles for host + device with
+   no extern globals to keep in sync.  Step 5 Phase E0 (2026-04-30) — was
+   previously CPU-only externs synced from begrun.cc. */
+#ifdef BOX_PERIODIC
 #define boxSize (All.BoxSize)
 #define boxHalf (0.5*All.BoxSize)
 #endif
-#if defined(BOX_LONG_X) && !defined(GIZMO_GPU_COMPILER)
-extern MyDouble boxSize_X, boxHalf_X;
-#elif defined(BOX_LONG_X) && defined(GIZMO_GPU_COMPILER)
+#ifdef BOX_LONG_X
 #define boxSize_X (All.BoxSize * ((MyDouble)(BOX_LONG_X)))
 #define boxHalf_X (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_X)))
-#elif !defined(BOX_LONG_X)
+#else
 #define boxSize_X boxSize
 #define boxHalf_X boxHalf
 #endif
-#if defined(BOX_LONG_Y) && !defined(GIZMO_GPU_COMPILER)
-extern MyDouble boxSize_Y, boxHalf_Y;
-#elif defined(BOX_LONG_Y) && defined(GIZMO_GPU_COMPILER)
+#ifdef BOX_LONG_Y
 #define boxSize_Y (All.BoxSize * ((MyDouble)(BOX_LONG_Y)))
 #define boxHalf_Y (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_Y)))
-#elif !defined(BOX_LONG_Y)
+#else
 #define boxSize_Y boxSize
 #define boxHalf_Y boxHalf
 #endif
-#if defined(BOX_LONG_Z) && !defined(GIZMO_GPU_COMPILER)
-extern MyDouble boxSize_Z, boxHalf_Z;
-#elif defined(BOX_LONG_Z) && defined(GIZMO_GPU_COMPILER)
+#ifdef BOX_LONG_Z
 #define boxSize_Z (All.BoxSize * ((MyDouble)(BOX_LONG_Z)))
 #define boxHalf_Z (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_Z)))
-#elif !defined(BOX_LONG_Z)
+#else
 #define boxSize_Z boxSize
 #define boxHalf_Z boxHalf
 #endif
 
 #ifdef BOX_SHEARING
-#ifdef GIZMO_GPU_COMPILER
 #define Shearing_Box_Vel_Offset (All.Shearing_Box_Vel_Offset)
 #define Shearing_Box_Pos_Offset (All.Shearing_Box_Pos_Offset)
-#else
-extern MyDouble Shearing_Box_Vel_Offset;
-extern MyDouble Shearing_Box_Pos_Offset;
-#endif
 #endif
 
 #if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)

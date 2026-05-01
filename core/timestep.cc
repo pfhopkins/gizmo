@@ -1400,10 +1400,10 @@ void process_wake_ups(void)
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void) /* function that calculates the shear-offset between the shear-periodic boundaries in a shearing box */
 {
-    Shearing_Box_Pos_Offset = Shearing_Box_Vel_Offset * All.Time;
-    while(Shearing_Box_Pos_Offset > boxSize_Y) {Shearing_Box_Pos_Offset -= boxSize_Y;}
-    All.Shearing_Box_Vel_Offset = Shearing_Box_Vel_Offset; /* sync to All for GPU access */
-    All.Shearing_Box_Pos_Offset = Shearing_Box_Pos_Offset;
+    /* Shearing_Box_*_Offset are macros into All.* (Step 5 Phase E0).
+       Single write — no separate host extern + All-sync needed. */
+    All.Shearing_Box_Pos_Offset = All.Shearing_Box_Vel_Offset * All.Time;
+    while(All.Shearing_Box_Pos_Offset > boxSize_Y) {All.Shearing_Box_Pos_Offset -= boxSize_Y;}
 }
 #endif
 

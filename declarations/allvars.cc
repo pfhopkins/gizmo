@@ -74,23 +74,8 @@ std::vector<int> PrevInTimeBin;
 size_t HighMark_run, HighMark_domain, HighMark_gravtree,
   HighMark_pmperiodic, HighMark_pmnonperiodic, HighMark_gasdensity, HighMark_hydro, HighMark_GasGrad;
 
-#ifdef BOX_PERIODIC
-MyDouble boxSize, boxHalf;      /* size of the box! these variables are technically redundant but used -constantly- so very helpful */
-#endif
-#ifdef BOX_LONG_X
-MyDouble boxSize_X, boxHalf_X;
-#endif
-#ifdef BOX_LONG_Y
-MyDouble boxSize_Y, boxHalf_Y;
-#endif
-#ifdef BOX_LONG_Z
-MyDouble boxSize_Z, boxHalf_Z;
-#endif
-
-#ifdef BOX_SHEARING
-MyDouble Shearing_Box_Vel_Offset;
-MyDouble Shearing_Box_Pos_Offset;
-#endif
+/* boxSize / boxHalf / boxSize_[XYZ] / boxHalf_[XYZ] / Shearing_Box_*_Offset
+   are macros into All.* — see declarations/allvars.h.  Step 5 Phase E0. */
 
 #if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
 short int special_boundary_condition_xyz_def_reflect[3];

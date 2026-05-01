@@ -105,30 +105,15 @@ void begrun(void)
   ewald_init();
 #endif
 
-#ifdef BOX_PERIODIC
-    boxSize = All.BoxSize;
-    boxHalf = 0.5 * All.BoxSize;
-#endif
-#ifdef BOX_LONG_X
-    boxSize_X = All.BoxSize * BOX_LONG_X;
-    boxHalf_X = 0.5 * boxSize_X;
-#endif
-#ifdef BOX_LONG_Y
-    boxSize_Y = All.BoxSize * BOX_LONG_Y;
-    boxHalf_Y = 0.5 * boxSize_Y;
-#endif
-#ifdef BOX_LONG_Z
-    boxSize_Z = All.BoxSize * BOX_LONG_Z;
-    boxHalf_Z = 0.5 * boxSize_Z;
-#endif
+    /* boxSize / boxHalf / boxSize_[XYZ] / boxHalf_[XYZ] are macros into
+       All.BoxSize — no per-startup sync needed (Step 5 Phase E0). */
 
 #ifdef BOX_SHEARING
     double L_box_towrap = All.BoxSize;
 #ifdef BOX_LONG_X
     L_box_towrap *= BOX_LONG_X;
 #endif
-    Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
-    All.Shearing_Box_Vel_Offset = Shearing_Box_Vel_Offset; /* sync to All for GPU access */
+    All.Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
     calc_shearing_box_pos_offset();
 #endif
 

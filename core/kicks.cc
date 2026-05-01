@@ -7,7 +7,7 @@
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
 #ifdef CBE_INTEGRATOR
-#include "../sidm/cbe_integrator_gpu.h"
+#include "../sidm/sidm_gpu_decls.h"
 #endif
 
 /*!
