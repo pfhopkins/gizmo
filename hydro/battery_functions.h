@@ -31,6 +31,7 @@
 #ifndef BATTERY_FUNCTIONS_H
 #define BATTERY_FUNCTIONS_H
 
+#include "hydro_structs.h"
 #include "hydro_pair_types.h"
 
 #ifdef MHD_BATTERY_MECHANISMS
@@ -124,6 +125,28 @@ void battery_assemble_per_cell_emf(int i, struct gas_cell_data *cell)
     /* (MHD_BATTERY_MECHANISMS & 4): dust TVA, in solids/dust_battery_functions.h -- TODO */
     /* (MHD_BATTERY_MECHANISMS & 8): dust explicit-J_d, idem -- TODO */
     cell[i].E_battery_cell = E_total;
+}
+
+/* ============================================================================
+ * Per-pair induction back-reaction. Uses the symmetric face-averaged comoving
+ * electric field 0.5*(E'_i + E'_j) and the pair's vector face area to add the
+ *   dB/dt|_battery = -c (grad x E')
+ * source via the existing Fluxes.B accumulator, mirroring the pattern used by
+ * nonideal_mhd_compute_pair. The factor of c and the unit-conversion are
+ * already folded into E_battery_cell by battery_E_Biermann().
+ * ========================================================================== */
+KOKKOS_INLINE_FUNCTION
+void battery_compute_pair(
+    const struct hydro_data_in &local,
+    const struct gas_cell_data &CPj,
+    const Vec3<double> &Face_Area_Vec,
+    struct Conserved_var_Riemann &Fluxes)
+{
+    if(!(local.Mass > 0)) { return; }
+    Vec3<double> E_face;
+    for(int k=0; k<3; k++) { E_face[k] = 0.5 * (local.E_battery_cell[k] + CPj.E_battery_cell[k]); }
+    Vec3<double> dB = cross(Face_Area_Vec, E_face);
+    Fluxes.B += dB;
 }
 
 #endif /* MHD_BATTERY_MECHANISMS */

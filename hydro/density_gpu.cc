@@ -672,6 +672,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #ifdef MAGNETIC
             local.BPred = kc[ii].Bfield(); /* Bfield() = BPred * Density/Mass: convert from mass-weighted storage to physical B */
             local.Gradients.B = kc[ii].Gradients.B;
+#ifdef MHD_BATTERY_MECHANISMS
+            local.E_battery_cell = kc[ii].E_battery_cell;
+#endif
 #ifdef DIVBCLEANING_DEDNER
             local.PhiPred = kc[ii].PhiPred / kp[ii].Mass;
             local.Gradients.Phi = kc[ii].Gradients.Phi;
