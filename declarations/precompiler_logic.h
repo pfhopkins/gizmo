@@ -666,14 +666,14 @@
 #if (MHD_BATTERY_MECHANISMS & 8) && !defined(GRAIN_FLUID)
 #error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires GRAIN_FLUID"
 #endif
+#if (MHD_BATTERY_MECHANISMS & 2) && !defined(RT_EVOLVE_FLUX)
+#error "MHD_BATTERY_MECHANISMS bit 1 (=2, radiative-ionization battery) requires an RT solver that evolves the radiation flux vector (RT_EVOLVE_FLUX)"
+#endif
+#if (MHD_BATTERY_MECHANISMS & 2) && !defined(RT_CHEM_PHOTOION)
+#error "MHD_BATTERY_MECHANISMS bit 1 (=2, radiative-ionization battery) requires RT_CHEM_PHOTOION (provides cell.HI and per-band photoionization cross-sections All.rt_ion_sigma_*)"
+#endif
 #if (MHD_BATTERY_MECHANISMS & ~15)
 #error "MHD_BATTERY_MECHANISMS may only set bits 0-3 (values 1,2,4,8); higher bits are reserved"
-#endif
-/* Biermann discrete-curl form vs EMF-form: default to direct-curl, which avoids
-   discrete-gradient curl noise. Set MHD_BATTERY_BIERMANN_EMF_FORM=1 in Config.sh
-   to override and use the EMF-form (per-cell vector E_Bier through pair-loop curl). */
-#if (MHD_BATTERY_MECHANISMS & 1) && !defined(MHD_BATTERY_BIERMANN_EMF_FORM)
-#define MHD_BATTERY_BIERMANN_DIRECT_CURL
 #endif
 /* Bit 3 implies bit 2 should NOT also be active (would double-count) — bit 3 wins. */
 #if (MHD_BATTERY_MECHANISMS & 8) && (MHD_BATTERY_MECHANISMS & 4)
@@ -1301,4 +1301,3 @@
 #define SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM (1)
 #endif
 #endif
-

@@ -474,6 +474,9 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
             local.GQuant.ElectronNumberDensity = kc[ii].n_e();
             local.GQuant.ElectronTemperature   = kc[ii].T_e();
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            local.GQuant.E_battery_T2 = kc[ii].E_battery_T2_cell;
+#endif
 #ifdef DOGRAD_SOUNDSPEED
             local.GQuant.SoundSpeed = kc[ii].effective_soundspeed();
 #endif
@@ -673,7 +676,10 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.BPred = kc[ii].Bfield(); /* Bfield() = BPred * Density/Mass: convert from mass-weighted storage to physical B */
             local.Gradients.B = kc[ii].Gradients.B;
 #ifdef MHD_BATTERY_MECHANISMS
-            local.E_battery_cell = kc[ii].E_battery_cell;
+#if (MHD_BATTERY_MECHANISMS & 1)
+            local.Gradients.ElectronNumberDensity = kc[ii].Gradients.ElectronNumberDensity;
+            local.Gradients.ElectronTemperature = kc[ii].Gradients.ElectronTemperature;
+#endif
 #endif
 #ifdef DIVBCLEANING_DEDNER
             local.PhiPred = kc[ii].PhiPred / kp[ii].Mass;
@@ -857,5 +863,4 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
 }
-
 

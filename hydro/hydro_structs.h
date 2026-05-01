@@ -102,6 +102,10 @@ struct hydro_data_in
 #ifdef DOGRAD_INTERNAL_ENERGY
         Vec3<MyDouble> InternalEnergy;
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+        Vec3<MyDouble> ElectronNumberDensity;
+        Vec3<MyDouble> ElectronTemperature;
+#endif
 #ifdef DOGRAD_SOUNDSPEED
         Vec3<MyDouble> SoundSpeed;
 #endif
@@ -160,10 +164,6 @@ struct hydro_data_in
     MyFloat Eta_MHD_OhmicResistivity_Coeff;
     MyFloat Eta_MHD_HallEffect_Coeff;
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;
-#endif
-
-#ifdef MHD_BATTERY_MECHANISMS
-    Vec3<MyDouble> E_battery_cell;  /* per-cell comoving battery EMF, copied from CellP at pair-loop dispatch */
 #endif
 
 #ifdef VISCOSITY

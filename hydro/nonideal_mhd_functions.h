@@ -27,7 +27,6 @@
 #define NONIDEAL_MHD_FUNCTIONS_H
 
 #include "hydro_pair_types.h"
-#include "battery_functions.h"
 
 /* Shared linear-algebra helper for assembling the comoving electric field E'
  * (or, in code units, the b_flux) from a current J and its decomposition
@@ -38,7 +37,8 @@
  * Used by:
  *   - nonideal_mhd_compute_pair (this file): coef = eta = (c^2/4pi)*alpha
  *     with J = curl B (the standard MHD current).
- *   - dust battery (solids/dust_battery_functions.h, next session): coef = eta_dust
+ *   - dust battery (solids/dust_battery_functions.h): builds E_dust per-cell;
+ *     gradient pass takes ∇E_dust; curl applied in hydro_toplevel.cc.
  *     = (c^2/4pi)*alpha_dust with J = J_d (dust current).
  *
  * The structural identity between non-ideal MHD and the dust battery is the
@@ -168,25 +168,12 @@ void nonideal_mhd_compute_pair(
     Fluxes.B += bflux_from_nonideal_effects;
 #endif /* MHD_NON_IDEAL */
 
-#ifdef MHD_BATTERY_MECHANISMS
-    /* Battery EMF source: per-cell E values aggregated upstream into
-       cell.E_battery_cell. The pair contribution adds to Fluxes.B AND to
-       bflux_from_nonideal_effects so the energy hook in the caller
-       (out.DtInternalEnergy += dot(BPred, bflux_from_nonideal_effects))
-       picks up dot(B, dB/dt|_battery) automatically -- this enforces total
-       energy conservation between thermal and magnetic by Poynting. The
-       sign of B*dB depends on whether the battery generates or destroys
-       magnetic energy, so the same hook handles both directions correctly.
-
-       8a/N: no-limiter form. 8b/N adds the per-cell physical cap, the
-       per-component MINMOD on E_face, and the battery-CFL timestep cap. */
-    if((local.Mass > 0) && (Pj.Mass > 0) && (dt_hydrostep > 0)) {
-        Vec3<double> bflux_battery = battery_assemble_pair_bflux(
-            local.E_battery_cell, CPj.E_battery_cell, Face_Area_Vec);
-        Fluxes.B += bflux_battery;
-        bflux_from_nonideal_effects += bflux_battery;
-    }
-#endif /* MHD_BATTERY_MECHANISMS */
+    /* Battery sources (Biermann, radiative-ionization, dust) are NOT applied
+       here. They are evaluated as cell-centered source terms in
+       hydro_toplevel.cc::out2particle_hydra after the pair loop closes;
+       face-flux/curl-of-EMF evaluation cannot be made discretely div-B
+       preserving on an unstructured/meshless mesh (cf. AREPO's cell-centered
+       choice; see Garaldi+2021 §2.2). */
 }
 
 #endif /* NONIDEAL_MHD_FUNCTIONS_H */

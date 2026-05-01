@@ -142,6 +142,60 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
 #endif
 
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 2)
+    /* Tier-2 radiative-ionization battery EMF (Durrive & Langer 2015 / Harrison 1973):
+         alpha[k] = (sigma_HI[k] n_HI + sigma_HeI[k] n_HeI + sigma_HeII[k] n_HeII)
+                    / (n_e * e * c)
+         E_RI = sum_k alpha[k] * F_rad[k]                             [statvolt/cm = G]
+       Sum over photoionizing bands; gradient pass + curl in hydro_toplevel turn this
+       into dB/dt|_RI. Requires RT_EVOLVE_FLUX (for cell.Rad_Flux) and RT_CHEM_PHOTOION
+       (for cell.HI / sigma_HI / etc.); precompiler_logic.h enforces this.
+
+       F_rad units: cell.Rad_Flux[k] is stored as F_phys * V_phys in code units. We use
+       vol_inv = Density*cf_a3inv/Mass = 1/V_phys_code, then UNIT_FLUX_IN_CGS to get
+       physical cgs flux. (cf. gravtree.cc:351, where vol_inv is computed identically.) */
+    {
+        Vec3<MyDouble> E_RI = {};
+        double n_e_cgs = 0;
+#if (MHD_BATTERY_MECHANISMS & 1)
+        n_e_cgs = cell[i].n_e_cell;
+#else
+#ifdef COOLING
+        n_e_cgs = ne_battery_save * cell[i].nHcgs();
+#else
+        n_e_cgs = cell[i].nHcgs();
+#endif
+#endif
+        if((n_e_cgs > 0) && (pp[i].Mass > 0) && (cell[i].Density > 0)) {
+            const double nH = cell[i].nHcgs();
+            const double n_HI = cell[i].HI * nH;
+#ifdef RT_CHEM_PHOTOION_HE
+            const double He_per_H = (1.0 - HYDROGEN_MASSFRAC) / (4.0 * HYDROGEN_MASSFRAC);
+            const double n_HeI  = cell[i].HeI  * nH * He_per_H;
+            const double n_HeII = cell[i].HeII * nH * He_per_H;
+#endif
+            const double inv_neec = 1.0 / (n_e_cgs * ELECTRONCHARGE_CGS * C_LIGHT_CGS);
+            const double vol_inv_code = cell[i].Density * All.cf_a3inv / pp[i].Mass;
+            const double rad_flux_to_cgs = vol_inv_code * UNIT_FLUX_IN_CGS;
+
+            for(int k=0; k<N_RT_FREQ_BINS; k++) {
+                double sig_x_n = All.rt_ion_sigma_HI[k] * n_HI;
+#ifdef RT_CHEM_PHOTOION_HE
+                sig_x_n += All.rt_ion_sigma_HeI[k]  * n_HeI;
+                sig_x_n += All.rt_ion_sigma_HeII[k] * n_HeII;
+#endif
+                if(sig_x_n > 0) {
+                    const double alpha_k = sig_x_n * inv_neec;
+                    for(int kd=0; kd<3; kd++) {
+                        E_RI[kd] += alpha_k * cell[i].Rad_Flux[k][kd] * rad_flux_to_cgs;
+                    }
+                }
+            }
+        }
+        cell[i].E_battery_T2_cell = E_RI;
+    }
+#endif
+
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
 #endif

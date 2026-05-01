@@ -74,6 +74,9 @@ struct Quantities_for_Gradients
     MyDouble ElectronNumberDensity;  /* n_e for Biermann battery: provides grad(n_e) used in dB/dt|_Bier ~ grad(T_e) x grad(n_e). */
     MyDouble ElectronTemperature;    /* T_e for Biermann battery (currently == T_gas). */
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+    Vec3<MyDouble> E_battery_T2;     /* Tier-2 battery EMF (sum of radiative + dust). Gradient pass produces grad(E_battery_T2); curl is taken in hydro_toplevel. */
+#endif
 #ifdef COSMIC_RAY_FLUID
     MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif
@@ -421,6 +424,12 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
     double d_Te = CellP[j].T_e() - local->GQuant.ElectronTemperature;
     MINMAX_CHECK(d_Te, out->Minima.ElectronTemperature, out->Maxima.ElectronTemperature);
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+    Vec3<MyDouble> dE_T2 = CellP[j].E_battery_T2_cell - local->GQuant.E_battery_T2;
+    for(int kk=0; kk<3; kk++) {
+        MINMAX_CHECK(dE_T2[kk], out->Minima.E_battery_T2[kk], out->Maxima.E_battery_T2[kk]);
+    }
+#endif
 
 #ifdef COSMIC_RAY_FLUID
     double dpCR[N_CR_PARTICLE_BINS];
@@ -542,6 +551,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
             {double dphi_loc = CellP[j].PhiPred / P[j].Mass - local->GQuant.Phi;
              out->Gradients[k].Phi += wk_xyz_i * dphi_loc;}
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            out->Gradients[k].E_battery_T2 += wk_xyz_i * dE_T2;
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)

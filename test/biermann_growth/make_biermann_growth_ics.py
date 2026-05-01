@@ -41,7 +41,7 @@ u_cgs = T_target_K * BOLTZMANN_CGS / ((GAMMA - 1.0) * PROTONMASS_CGS)
 u0_code = u_cgs / UnitEnergyPerMass_cgs
 
 # ---- IC layout -------------------------------------------------------------
-def make_IC(N_1D=64, Lbox=1.0, amp_rho=1e-2, amp_u=1e-2, seed=0,
+def make_IC(N_1D=64, Lbox=1.0, amp_rho=1e-4, amp_u=1e-4, seed=0,
             fname="biermann_growth_ics.hdf5"):
     """Lay down a 2D regular lattice and write the GIZMO HDF5 IC file."""
 

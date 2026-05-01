@@ -168,6 +168,9 @@ extern struct gas_cell_data
         Vec3<MyDouble> ElectronNumberDensity; /*!< grad(n_e) for Biermann battery */
         Vec3<MyDouble> ElectronTemperature;   /*!< grad(T_e) for Biermann battery */
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+        Mat3<MyDouble> E_battery_T2;          /*!< gradient tensor of cell-centered Tier-2 battery EMF (radiative-ionization + dust). curl(E_battery_T2) gives -dB/dt|_battery_T2 / c via Mat3::curl(). Filled in gradient pass after E_battery_T2_cell is populated by the per-cell Tier-2 source builders (radiative_E_RI in eos.cc, dust battery in solids/). */
+#endif
     } Gradients;
     SymmetricTensor2<MyDouble> NV_T; /*!< holds the tensor used for gradient estimation */
     Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
@@ -311,10 +314,12 @@ extern struct gas_cell_data
 #endif
 
 #ifdef MHD_BATTERY_MECHANISMS
-    Vec3<MyDouble> E_battery_cell;              /*!< per-cell comoving electric field E' from battery mechanisms (Biermann + RadIon + dust). Repopulated each step before hydro pair loop; communicated to ghosts via the standard gas_cell_data ghost layout. Used in hydro pair loop as Fluxes.B += cross(Face_Area_Vec, 0.5*(E_battery_i + E_battery_j)). */
 #if (MHD_BATTERY_MECHANISMS & 1)
     MyDouble n_e_cell;                          /*!< electron number density [physical cgs] from cooling. Cached on SoA so the gradient pass can produce grad(n_e) for Biermann battery. Populated at end of cooling step. */
     MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Written by the cooling pass after each cooling step (same place gas T is already stored, not recomputed from u). Equals gas T today (single-T plasma); becomes the independently evolved electron temperature when the two-temperature plasma module lands -- the field name and the consumers do not change. */
+#endif
+#if (MHD_BATTERY_MECHANISMS & (2|4|8))
+    Vec3<MyDouble> E_battery_T2_cell;           /*!< Tier-2 battery EMF E' [statvolt/cm in physical cgs, multiplied by the same code-unit conversion the gradient pass expects]. Sum of radiative-ionization + dust contributions. Populated by per-cell builders in eos/cooling and solids/. The gradient pass then takes grad(E_battery_T2_cell), and hydro_toplevel.cc applies dB/dt|_T2 = -c * curl(grad). */
 #endif
 #if (MHD_BATTERY_MECHANISMS & 8)
     Vec3<MyDouble> J_dust_cell;                 /*!< per-cell dust current J_d = -sum_grain (q_d n_d (v_d - v_g)) [physical cgs], summed from grain particles in gas-cell kernel. Repopulated each step before per-cell battery EMF assembly. Soliman, Hopkins & Squire 2025 Eq. 8. */

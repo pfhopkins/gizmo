@@ -14,9 +14,11 @@
  *                                     (textbook conversion between mobility
  *                                     coefficient and diffusivity).
  *
- * The dust-battery contribution to b_flux is structurally identical to the
- * existing non-ideal MHD term; the linear-algebra is shared via
- * nonideal_mhd_assemble_bflux() in hydro/battery_functions.h.
+ * The dust-battery EMF E'_bat,d is built per-cell here, then exported to the
+ * gradient pass for slope-limited gradient computation; the curl is taken in
+ * hydro_toplevel.cc::out2particle_hydra and added as a cell-centered source
+ * to DtB. The shared linear-algebra helper nonideal_mhd_assemble_bflux()
+ * lives in hydro/nonideal_mhd_functions.h.
  *
  * All entries guarded by MHD_BATTERY_MECHANISMS & (4|8). Header-only,
  * KOKKOS_INLINE_FUNCTION, no rdc.

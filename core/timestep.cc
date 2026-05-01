@@ -590,19 +590,13 @@ integertime get_timestep(int p,		/*!< particle index */
 
 
 /* No battery-specific CFL: the battery EMF is a SOURCE, not a self-feedback
-   growth mode. Pure source dB/dt = const integrates as a linear ramp -- it
-   has no intrinsic stability constraint. The earlier concerns about "super-
-   step B growth" were about *numerical* runaway from curl-of-gradient noise,
-   which the per-cell |E| cap (battery_E_Biermann, limiter Piece 1) and the
-   per-component MINMOD on E_face (battery_assemble_pair_bflux, limiter Piece
-   2) bound. Once B grows to dynamically-relevant values, the existing
-   MaxSignalVel-driven CFL just below picks up the Alfven speed and limits dt
-   naturally. An attempted Piece-3 CFL based on max(|B|, B_floor)*L/|E| with
-   B_floor = 1e-40 (the IC seed scale) was tried in 8b/N and removed in
-   8d/N: at startup |B| ~ B_floor and any nonzero |E| forced dt to ~1e-21,
-   stalling the integrator on MinSizeTimestep. The fundamental error was
-   conflating the IC seed scale with a physically-meaningful "minimum B we
-   want to resolve" -- the test's whole point is to grow B from the seed. */
+   growth mode. Pure source dB/dt = const integrates as a linear ramp -- no
+   intrinsic stability constraint. Once B grows to dynamically-relevant
+   values, the existing MaxSignalVel-driven CFL just below picks up the
+   Alfven speed and limits dt naturally. An energy-fraction limiter on the
+   battery contribution to dB/dt is applied per-cell in
+   hydro_toplevel.cc::out2particle_hydra, which is the right place
+   (limits |dE_mag|/dt, not |B|/dt). */
 
 #ifdef MHD_NON_IDEAL
             {

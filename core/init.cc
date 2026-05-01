@@ -567,10 +567,12 @@ void init(void)
         CellP[i].Eta_MHD_AmbiPolarDiffusion_Coeff = 0;
 #endif
 #ifdef MHD_BATTERY_MECHANISMS
-        CellP[i].E_battery_cell = {};
 #if (MHD_BATTERY_MECHANISMS & 1)
         CellP[i].n_e_cell = 0;
         CellP[i].T_e_cell = 0;
+#endif
+#if (MHD_BATTERY_MECHANISMS & (2|4|8))
+        CellP[i].E_battery_T2_cell = {};
 #endif
 #if (MHD_BATTERY_MECHANISMS & 8)
         CellP[i].J_dust_cell = {};
