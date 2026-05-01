@@ -91,6 +91,10 @@ struct Quantities_for_Gradients
 #ifdef DOGRAD_INTERNAL_ENERGY
     MyDouble InternalEnergy;
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+    MyDouble ElectronNumberDensity;  /* n_e for Biermann battery: provides grad(n_e) used in dB/dt|_Bier ~ grad(T_e) x grad(n_e). */
+    MyDouble ElectronTemperature;    /* T_e for Biermann battery (currently == T_gas). */
+#endif
 #ifdef COSMIC_RAY_FLUID
     MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif

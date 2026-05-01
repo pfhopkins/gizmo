@@ -162,6 +162,10 @@ struct hydro_data_in
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;
 #endif
 
+#ifdef MHD_BATTERY_MECHANISMS
+    Vec3<MyDouble> E_battery_cell;  /* per-cell comoving battery EMF, copied from CellP at pair-loop dispatch */
+#endif
+
 #ifdef VISCOSITY
     MyFloat Eta_ShearViscosity;
     MyFloat Zeta_BulkViscosity;

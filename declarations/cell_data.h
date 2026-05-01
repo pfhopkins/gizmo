@@ -305,6 +305,17 @@ extern struct gas_cell_data
     MyFloat Eta_MHD_HallEffect_Coeff;           /*!< Hall effect coefficient [physical units of L^2/t] */
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;   /*!< Hall effect coefficient [physical units of L^2/t] */
 #endif
+
+#ifdef MHD_BATTERY_MECHANISMS
+    Vec3<MyDouble> E_battery_cell;              /*!< per-cell comoving electric field E' from battery mechanisms (Biermann + RadIon + dust). Repopulated each step before hydro pair loop; communicated to ghosts via the standard gas_cell_data ghost layout. Used in hydro pair loop as Fluxes.B += cross(Face_Area_Vec, 0.5*(E_battery_i + E_battery_j)). */
+#if (MHD_BATTERY_MECHANISMS & 1)
+    MyDouble n_e_cell;                          /*!< electron number density [physical cgs] from cooling. Cached on SoA so the gradient pass can produce grad(n_e) for Biermann battery. Populated at end of cooling step. */
+    MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Equals gas T today (single-T plasma); will become independent when two-temp plasma module lands. Wrapped via get_Te(rho,u,ye) so Biermann auto-upgrades. */
+#endif
+#if (MHD_BATTERY_MECHANISMS & 8)
+    Vec3<MyDouble> J_dust_cell;                 /*!< per-cell dust current J_d = -sum_grain (q_d n_d (v_d - v_g)) [physical cgs], summed from grain particles in gas-cell kernel. Repopulated each step before per-cell battery EMF assembly. Soliman, Hopkins & Squire 2025 Eq. 8. */
+#endif
+#endif
     
     
 #if defined(VISCOSITY)
