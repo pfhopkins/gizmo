@@ -995,8 +995,8 @@ void hydro_gradient_calc(void)
             local_slopelimiter(CellP[i].Gradients.InternalEnergy,GasGradDataPasser[i].Maxima.InternalEnergy,GasGradDataPasser[i].Minima.InternalEnergy,a_limiter,h_lim,stol_tmp, 1,d_max,CellP[i].InternalEnergyPred);
 #endif
 #if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-            local_slopelimiter(CellP[i].Gradients.ElectronNumberDensity,GasGradDataPasser[i].Maxima.ElectronNumberDensity,GasGradDataPasser[i].Minima.ElectronNumberDensity,a_limiter,h_lim,stol, 1,d_max,CellP[i].n_e_cell);
-            local_slopelimiter(CellP[i].Gradients.ElectronTemperature,GasGradDataPasser[i].Maxima.ElectronTemperature,GasGradDataPasser[i].Minima.ElectronTemperature,a_limiter,h_lim,stol, 1,d_max,CellP[i].T_e_cell);
+            local_slopelimiter(CellP[i].Gradients.ElectronNumberDensity,GasGradDataPasser[i].Maxima.ElectronNumberDensity,GasGradDataPasser[i].Minima.ElectronNumberDensity,a_limiter,h_lim,stol, 1,d_max,CellP[i].n_e());
+            local_slopelimiter(CellP[i].Gradients.ElectronTemperature,GasGradDataPasser[i].Maxima.ElectronTemperature,GasGradDataPasser[i].Minima.ElectronTemperature,a_limiter,h_lim,stol, 1,d_max,CellP[i].T_e());
 #endif
 #ifdef DOGRAD_SOUNDSPEED
             local_slopelimiter(CellP[i].Gradients.SoundSpeed,GasGradDataPasser[i].Maxima.SoundSpeed,GasGradDataPasser[i].Minima.SoundSpeed,a_limiter,h_lim,stol, 1,d_max,CellP[i].effective_soundspeed());

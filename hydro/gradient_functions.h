@@ -416,9 +416,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
 
 #if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-    double d_ne = CellP[j].n_e_cell - local->GQuant.ElectronNumberDensity;
+    double d_ne = CellP[j].n_e() - local->GQuant.ElectronNumberDensity;
     MINMAX_CHECK(d_ne, out->Minima.ElectronNumberDensity, out->Maxima.ElectronNumberDensity);
-    double d_Te = CellP[j].T_e_cell - local->GQuant.ElectronTemperature;
+    double d_Te = CellP[j].T_e() - local->GQuant.ElectronTemperature;
     MINMAX_CHECK(d_Te, out->Minima.ElectronTemperature, out->Maxima.ElectronTemperature);
 #endif
 

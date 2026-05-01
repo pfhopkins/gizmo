@@ -471,8 +471,8 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
             local.GQuant.InternalEnergy = kc[ii].InternalEnergyPred;
 #endif
 #if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-            local.GQuant.ElectronNumberDensity = kc[ii].n_e_cell;
-            local.GQuant.ElectronTemperature   = kc[ii].T_e_cell;
+            local.GQuant.ElectronNumberDensity = kc[ii].n_e();
+            local.GQuant.ElectronTemperature   = kc[ii].T_e();
 #endif
 #ifdef DOGRAD_SOUNDSPEED
             local.GQuant.SoundSpeed = kc[ii].effective_soundspeed();

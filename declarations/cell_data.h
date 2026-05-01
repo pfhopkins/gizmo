@@ -314,7 +314,7 @@ extern struct gas_cell_data
     Vec3<MyDouble> E_battery_cell;              /*!< per-cell comoving electric field E' from battery mechanisms (Biermann + RadIon + dust). Repopulated each step before hydro pair loop; communicated to ghosts via the standard gas_cell_data ghost layout. Used in hydro pair loop as Fluxes.B += cross(Face_Area_Vec, 0.5*(E_battery_i + E_battery_j)). */
 #if (MHD_BATTERY_MECHANISMS & 1)
     MyDouble n_e_cell;                          /*!< electron number density [physical cgs] from cooling. Cached on SoA so the gradient pass can produce grad(n_e) for Biermann battery. Populated at end of cooling step. */
-    MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Equals gas T today (single-T plasma); will become independent when two-temp plasma module lands. Wrapped via get_Te(rho,u,ye) so Biermann auto-upgrades. */
+    MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Written by the cooling pass after each cooling step (same place gas T is already stored, not recomputed from u). Equals gas T today (single-T plasma); becomes the independently evolved electron temperature when the two-temperature plasma module lands -- the field name and the consumers do not change. */
 #endif
 #if (MHD_BATTERY_MECHANISMS & 8)
     Vec3<MyDouble> J_dust_cell;                 /*!< per-cell dust current J_d = -sum_grain (q_d n_d (v_d - v_g)) [physical cgs], summed from grain particles in gas-cell kernel. Repopulated each step before per-cell battery EMF assembly. Soliman, Hopkins & Squire 2025 Eq. 8. */
@@ -520,6 +520,10 @@ extern struct gas_cell_data
 
     inline double pressure() const {return Pressure;} /*!< gas pressure */
     inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+    GIZMO_GPU_FUNCTION inline double T_e() const {return T_e_cell;} /*!< electron temperature [K]; equals gas T today, becomes independently evolved when 2-T plasma module lands. Always read through this accessor so consumers don't need updates then. */
+    GIZMO_GPU_FUNCTION inline double n_e() const {return n_e_cell;} /*!< electron number density [physical cgs]; populated by the cooling pass. */
+#endif
 
     GIZMO_GPU_FUNCTION double gamma_eos_value() const { /*!< effective adiabatic index */
 #if defined(COOL_MOLECFRAC_NONEQM)
