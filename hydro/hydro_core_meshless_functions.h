@@ -105,9 +105,6 @@ void hydro_core_meshless_compute_pair(
             kernel.dp[0], kernel.dp[1], kernel.dp[2],
             local.NV_T[0][0], local.NV_T[0][1], local.NV_T[0][2],
             CellP[j].NV_T[0][0], CellP[j].NV_T[0][1], CellP[j].NV_T[0][2]);
-#ifndef GIZMO_GPU_COMPILER
-        fflush(stdout);
-#endif
     }
     Vec3<double> n_unit = Face_Area_Vec / Face_Area_Norm;
 

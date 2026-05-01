@@ -294,7 +294,7 @@ void rt_update_chemistry(void)
     int *chem_indices = (int *) malloc(N_active * sizeof(int));
     {int j = 0; for(int i : ActiveParticleList) {if(P[i].Type == 0) chem_indices[j++] = i;}}
 
-    if(N_active > 0)
+    if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD)
     {
         /* Gather into compact SharedSpace arrays */
         int batch_n = N_active;
@@ -327,8 +327,8 @@ void rt_update_chemistry(void)
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
 
-    } else
-    { /* CPU path: OpenMP-parallel dispatch */
+    } else if(N_active > 0)
+    { /* CPU path: OpenMP-parallel dispatch (fallback for small N on GPU builds) */
         struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
         struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
         for(int j = 0; j < N_active; j++)

@@ -48,9 +48,11 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #include "./simple_chemistry.h"
 /* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls
  * ThermalProperties (which calls convert_u_to_temp → hydrogen_molecule chain),
- * doubling the device stack depth and causing CUDA OOM on the H200.  Instead,
- * set_eos_pressure calls are guarded with #ifndef GIZMO_GPU_COMPILER inside
- * do_the_cooling_for_particle, and the scatter pass calls it on the host. */
+ * doubling the device stack depth and causing CUDA OOM on the H200.  It is
+ * therefore not called inside do_the_cooling_for_particle (host or device);
+ * the scatter pass in cooling_parent_routine() calls it on the host once per
+ * cell after writeback.  Likewise finish_cooling_host_deferred_dust_updates
+ * (GALSF_ISMDUSTCHEM_MODEL) is invoked from the scatter pass, not the kernel. */
 
 /*!
  * This file contains the routines for optically-thin cooling (generally aimed towards simulations of the ISM,
@@ -323,6 +325,14 @@ void cooling_parent_routine(void)
         int i = cool_indices[j];
         CellP[i] = compact_Cell[j];
         P[i] = compact_P[j];
+        set_eos_pressure(i, P, CellP);
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+        double dtime = get_particle_timestep_in_physical(i, P);
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+        dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */
+#endif
+        if((dtime>0)&&(CellP[i].Mass>0)&&(P[i].Type==0)) {finish_cooling_host_deferred_dust_updates(i, dtime, P, CellP);}
+#endif
     }
     free(compact_Cell);
     free(compact_P);
@@ -361,9 +371,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= 0.59/1.28; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-#ifndef GIZMO_GPU_COMPILER
-            set_eos_pressure(i, pp, cell); /* deferred to scatter pass on GPU (derived quantities only) */
-#endif
             }
 #endif
 #endif
@@ -504,19 +511,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-#ifndef GIZMO_GPU_COMPILER
-        set_eos_pressure(i, pp, cell); /* skipped on-device: called in scatter pass on host instead (stack depth) */
-#endif
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
         /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
 #endif
 
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
-#ifndef GIZMO_GPU_COMPILER
-        finish_cooling_host_deferred_dust_updates(i, dtime, pp, cell); /* deferred to scatter pass on GPU (large module, post-cooling) */
-#endif
-#else
+#if !defined(GALSF_ISMDUSTCHEM_MODEL)
 #ifdef COOL_MOLECFRAC_NONEQM
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
 #endif
@@ -531,8 +531,8 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
         if(cell[i].DelayTimeHII < 0) {cell[i].DelayTimeHII = 0;} // older versions simply dont allow negative values here
 #endif
-#endif
-#endif
+#endif // GALSF_FB_FIRE_RT_HIIHEATING
+#endif // !defined(GALSF_ISMDUSTCHEM_MODEL)
 
     } // closes if((dt>0)&&(cell[i].Mass>0)&&(pp[i].Type==0)) check
 }
