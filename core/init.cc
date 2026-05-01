@@ -568,13 +568,16 @@ void init(void)
 #endif
 #ifdef MHD_BATTERY_MECHANISMS
         CellP[i].E_battery_cell = {};
-#if (MHD_BATTERY_MECHANISMS & 1)
-        CellP[i].n_e_cell = 0;
-        CellP[i].T_e_cell = 0;
-#endif
 #if (MHD_BATTERY_MECHANISMS & 8)
         CellP[i].J_dust_cell = {};
 #endif
+#endif
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+        CellP[i].n_e_cell = 0;
+        CellP[i].T_e_cell = 0;
+#endif
+#ifdef TWO_TEMPERATURE_PLASMA
+        CellP[i].u_e_cell = 0; /* eos.cc populates from LTE (T_e = T_gas) on first call */
 #endif
 #ifdef VISCOSITY
         CellP[i].Eta_ShearViscosity = 0;
