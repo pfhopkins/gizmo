@@ -15,8 +15,7 @@
 #endif
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
-#include "ags_density_gpu.h"
-#include "ags_force_gpu.h"
+#include "ags_gpu_decls.h"
 #include "ags_functions.h"
 #include "../mesh/ghost_writeback.h"
 

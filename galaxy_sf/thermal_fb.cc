@@ -51,7 +51,7 @@ void thermal_fb_calc(void)
 {
     PRINT_STATUS(" ..depositing thermal feedback to gas");
     {
-#include "../galaxy_sf/thermal_fb_gpu.h"
+#include "../galaxy_sf/galsf_gpu_decls.h"
         /* Build LOCAL active-source list from ActiveParticleList; iterating
            NumPart here would include ghost imports and double-deposit. */
         int num_active = 0;

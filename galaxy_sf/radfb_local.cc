@@ -12,7 +12,7 @@
  */
 
 #if defined(GALSF_FB_FIRE_RT_LOCALRP)
-#include "radfb_local_gpu.h"
+#include "galsf_gpu_decls.h"
 #endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)

@@ -30,7 +30,7 @@
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
-#include "mechanical_fb_gpu.h"
+#include "galsf_gpu_decls.h"
 
 #if defined(GALSF_FB_MECHANICAL)
 
@@ -313,6 +313,6 @@ void mechanical_fb_evaluate_gpu(struct particle_data *p,
     (void)i_active_host; (void)num_active; (void)src_radii_host;
     if(n_couplings_out) *n_couplings_out = 0;
 }
-void gizmo_gpu_sync_all_mechfb(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(mechfb)
 
 #endif /* GALSF_FB_MECHANICAL */

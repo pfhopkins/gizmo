@@ -36,7 +36,7 @@ void sink_swallow_and_kick_loop(void)
     /* D1 GPU path — atomic j-writes + ghost writeback; per-source output scatter
      * and MPI_Reduce of swallow counters handled inside the launcher. */
     {
-#include "../sinks/sink_swallow_and_kick_gpu.h"
+#include "../sinks/sinks_gpu_decls.h"
         bool imported_ghosts = (ghost_get_num_ghosts() == 0);
         if(imported_ghosts) { gizmo_density_prep_ghosts(gizmo_ghost_safety_factor()); }
 

@@ -29,7 +29,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 
-#include "dm_fuzzy_gpu.h"
+#include "sidm_gpu_decls.h"
 
 
 #if defined(DM_FUZZY)
@@ -198,6 +198,6 @@ GPU_ALL_SYNC_FUNC(dmgrad)
 
 void dmgrad_evaluate_gpu(struct particle_data *, int, int *, int, const double *,
                          const struct dmgrad_gpu_in *, int, int, void *) {}
-void gizmo_gpu_sync_all_dmgrad(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(dmgrad)
 
 #endif /* DM_FUZZY */

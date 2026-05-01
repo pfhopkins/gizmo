@@ -244,7 +244,7 @@ void mechanical_fb_calc_toplevel(void)
     /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
        neighbor list across modes. See galaxy_sf/mechanical_fb_gpu.cc. */
     {
-#include "../galaxy_sf/mechanical_fb_gpu.h"
+#include "../galaxy_sf/galsf_gpu_decls.h"
         /* Build SUPERSET active list: any star active in ANY mode is included.
            The per-mode mask inside the kernel skips stars not active in that mode. */
         int num_active = 0;

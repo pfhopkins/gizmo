@@ -44,7 +44,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 
 #include "../core/timestep_functions.h"
-#include "ags_force_gpu.h"
+#include "ags_gpu_decls.h"
 #include "ags_functions.h"
 
 #if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
@@ -329,6 +329,6 @@ GPU_ALL_SYNC_FUNC(agsforce)
 
 void ags_force_evaluate_gpu(struct particle_data *, int, int *, int,
                             const double *, int, struct ags_force_gpu_out *) {}
-void gizmo_gpu_sync_all_agsforce(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(agsforce)
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

@@ -35,7 +35,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 
-#include "ags_density_gpu.h"
+#include "ags_gpu_decls.h"
 
 
 #if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
@@ -220,6 +220,6 @@ GPU_ALL_SYNC_FUNC(agsdensity)
 
 void ags_density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int,
                               int *, int, const double *, int, void *) {}
-void gizmo_gpu_sync_all_agsdensity(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(agsdensity)
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

@@ -349,6 +349,6 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *p
                                                           int *ig, int ng, const double *rg,
                                                           int *ir, int nr, const double *rr)
 { (void)p; (void)cp; (void)num_total; (void)ig; (void)ng; (void)rg; (void)ir; (void)nr; (void)rr; }
-void gizmo_gpu_sync_all_grainphysics(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(grainphysics)
 
 #endif /* GRAIN_FLUID */

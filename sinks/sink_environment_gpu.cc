@@ -35,7 +35,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 
-#include "sink_environment_gpu.h"
+#include "sinks_gpu_decls.h"
 
 #if defined(SINK_PARTICLES)
 
@@ -367,6 +367,6 @@ void sink_environment_second_evaluate_gpu(struct particle_data *, struct gas_cel
                                            const MyFloat (*)[3], const MyFloat (*)[3],
                                            int, struct sink_env_second_gpu_out *) {}
 #endif
-void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(sinkenv)
 
 #endif /* SINK_PARTICLES */

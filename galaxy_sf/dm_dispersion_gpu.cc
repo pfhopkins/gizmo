@@ -30,7 +30,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 
-#include "dm_dispersion_gpu.h"
+#include "galsf_gpu_decls.h"
 
 
 #if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2) \
@@ -127,6 +127,6 @@ GPU_ALL_SYNC_FUNC(dispdensity)
 #else /* stubs when disabled */
 
 void disp_density_evaluate_gpu(struct particle_data *, int, int *, int, const double *, void *) {}
-void gizmo_gpu_sync_all_dispdensity(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(dispdensity)
 
 #endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 */

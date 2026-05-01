@@ -11,7 +11,7 @@
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
-#include "sink_environment_gpu.h"
+#include "sinks_gpu_decls.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.

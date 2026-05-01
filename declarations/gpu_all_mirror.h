@@ -49,6 +49,13 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
         All_dev = *host_all; \
     }
 
+/* Same name, no body — for the `#else` (feature-disabled) branch of a GPU TU
+   so cooling.cc's `extern void gizmo_gpu_sync_all_<name>(...);` call still
+   resolves.  Step 5 Phase E2 (2026-04-30) — replaces ~14 hand-written
+   `void gizmo_gpu_sync_all_<X>(...) { (void)p; }` boilerplate sites. */
+#define GPU_ALL_SYNC_FUNC_STUB(name) \
+    void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
+
 /* Freshness guard for the top of a GPU dispatch function.  Ensures this TU's
    All_dev mirror matches host All right now (idempotent; trivial cost — a single
    struct copy).  Use this instead of assuming gizmo_gpu_sync_all() at the top of
@@ -67,6 +74,10 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
    Still need the sync function stub so cooling.cc can call it. */
 #define GPU_ALL_SYNC_FUNC(name) \
     void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
+
+/* Stub form — same as GPU_ALL_SYNC_FUNC on the host backend (no real sync
+   needed since All is already host-live). */
+#define GPU_ALL_SYNC_FUNC_STUB(name) GPU_ALL_SYNC_FUNC(name)
 
 /* Freshness guard — no-op on host Kokkos backend (All is already live). */
 #define GIZMO_GPU_ENSURE_ALL_FRESH(name) ((void)0)

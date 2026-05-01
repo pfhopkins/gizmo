@@ -22,7 +22,7 @@
 void sink_feed_loop(void)
 {
     {
-#include "../sinks/sink_feed_gpu.h"
+#include "../sinks/sinks_gpu_decls.h"
         /* Build LOCAL active-source list from ActiveParticleList; iterating
            NumPart here would include ghost imports and double-deposit. */
         int num_active = 0;

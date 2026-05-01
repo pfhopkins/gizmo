@@ -8,7 +8,7 @@
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "../mesh/ghost_writeback.h"
-#include "dm_dispersion_gpu.h"
+#include "galsf_gpu_decls.h"
 
 /*! \file dm_dispersion_rkern
  *  \brief smoothing length and velocity dispersion calculation for dark matter particles around gas particles

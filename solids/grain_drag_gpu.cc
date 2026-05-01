@@ -283,6 +283,6 @@ GPU_ALL_SYNC_FUNC(grain)
 
 void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                              int *, int) {}
-void gizmo_gpu_sync_all_grain(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(grain)
 
 #endif /* GRAIN_FLUID */

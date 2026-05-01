@@ -9,7 +9,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
-#include "dm_fuzzy_gpu.h"
+#include "sidm_gpu_decls.h"
 
 /*! \file dm_fuzzy.c
  *  \brief routines needed for fuzzy-DM implementation

@@ -74,6 +74,6 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *p, int num_total,
 {
     (void)p; (void)num_total; (void)active; (void)num_active; (void)dt_arr;
 }
-void gizmo_gpu_sync_all_cbeintegrator(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(cbeintegrator)
 
 #endif /* CBE_INTEGRATOR */

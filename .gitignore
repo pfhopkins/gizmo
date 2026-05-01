@@ -23,6 +23,7 @@ compile_time_info.cc
 # compile_suite artifacts
 /compile_suite_errors/
 /compile_suite_output.log
+/compile_suite_output_*.log
 /compile_suite_results.txt
 
 # Test artifacts

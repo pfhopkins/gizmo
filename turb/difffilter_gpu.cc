@@ -405,6 +405,6 @@ void difffilter_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                               int, int *, int, int *, int *, int,
                               void *, void *, void *, int) {}
-void gizmo_gpu_sync_all_difffilter(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(difffilter)
 
 #endif /* TURB_DIFF_DYNAMIC */

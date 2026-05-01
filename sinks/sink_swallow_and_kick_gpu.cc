@@ -34,7 +34,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 
-#include "sink_swallow_and_kick_gpu.h"
+#include "sinks_gpu_decls.h"
 
 #if defined(SINK_PARTICLES)
 
@@ -288,6 +288,6 @@ GPU_ALL_SYNC_FUNC(sinkswallow)
 
 void sink_swallow_and_kick_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                                          int, int *, int, const double *, int) {}
-void gizmo_gpu_sync_all_sinkswallow(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(sinkswallow)
 
 #endif /* SINK_PARTICLES */

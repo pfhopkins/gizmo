@@ -201,6 +201,6 @@ void rt_source_injection_evaluate_gpu(struct particle_data *p,
 {
     (void)p; (void)cp; (void)num_total; (void)i_active_host; (void)num_active; (void)src_radii_host;
 }
-void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(rtsrcinjection)
 
 #endif /* RT_SOURCE_INJECTION */

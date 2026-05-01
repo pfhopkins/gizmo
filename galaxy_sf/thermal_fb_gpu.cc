@@ -199,6 +199,6 @@ void thermal_fb_evaluate_gpu(struct particle_data *p,
 {
     (void)p; (void)cp; (void)num_total; (void)i_active_host; (void)num_active; (void)src_radii_host;
 }
-void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *p) { (void)p; }
+GPU_ALL_SYNC_FUNC_STUB(thermalfb)
 
 #endif /* GALSF_FB_THERMAL */
