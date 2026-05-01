@@ -19,7 +19,7 @@
 6. [Compiling and Using the Code (a very brief tutorial)](#tutorial)
     + [Compilation Requirements](#tutorial-requirements)
     + [Starting & Running the Code](#tutorial-running)  
-    + [CPU-GPU Acceleration (Kokkos)](#cpugpu)
+    + [Performance-Portable Heterogeneous Execution (CPU-GPU, Kokkos)](#cpugpu)
     + [Restarting a Run](#tutorial-restart) 
 7. [Modules in Config.sh (Setting compile-time options, i.e. Physics)](#config)
     + [Overview](#config-overview)
@@ -159,7 +159,7 @@ A few core principles distinguish **GIZMO** from other simulation codes and are 
 
 **Accuracy and conservation.** The default MFM/MFV methods are designed to combine the best properties of particle-based and grid-based methods: exact mass, energy, and momentum conservation (to machine precision), Galilean invariance, zero advection errors, automatic and continuous spatial adaptivity, and high-order shock capturing via Riemann solvers. These properties are not compromises -- they are achieved simultaneously, in a mathematically well-defined framework. See [Hopkins 2015](https://arxiv.org/abs/1409.7395) for the mathematical foundations.
 
-**Scalability.** The code is designed for problems ranging from a few hundred particles on a laptop to billions of resolution elements on national supercomputing facilities. The hybrid MPI+OpenMP parallelization (with emerging GPU/Kokkos acceleration for key physics loops) and hierarchical adaptive timestepping enable efficient use of modern heterogeneous computing architectures. For details on GPU acceleration, see the [CPU-GPU Acceleration](#cpugpu) section below.
+**Scalability.** The code is designed for problems ranging from a few hundred particles on a laptop to billions of resolution elements on national supercomputing facilities. MPI + Kokkos performance-portable execution (CUDA, HIP, or OpenMP backends) plus hierarchical adaptive timestepping enable efficient use of modern heterogeneous computing architectures. The compute-intensive physics — hydro chain, gravity tree, cooling/chemistry, nuclear networks, RT, feedback, sinks — runs entirely on the device (GPU or OpenMP threads); the host MPI process is primarily a memory manager and inter-rank dispatcher. For details, see the [Performance-Portable Heterogeneous Execution](#cpugpu) section below.
 
 
 ***
@@ -548,11 +548,11 @@ Long story short, we want to take advantage of the large community using, develo
 
 That said, GIZMO is a totally different code from GADGET "under the hood" in many ways. 
 
-Most obviously, the physics options (e.g. magnetic fields, conduction, turbulent diffusion, models for galaxy and star formation, feedback, coupled dust-gas physics, nuclear reaction networks, cooling, exotic dark matter, black holes, etc.) are either completely not present, or are qualitatively totally different from the physics included in GADGET (or in its more direct descendant, AREPO). Where there are some overlaps, they are intentionally included so that we can compare the new code results with the large body of historical simulations. Additionally, GIZMO now includes GPU acceleration for key physics loops (density, gradients, hydro force, cooling, nuclear burning) via the Kokkos portability library, and the code has been migrated from C to C++ (C++17) to support modern language features, templates, and device-callable inline functions.
+Most obviously, the physics options (e.g. magnetic fields, conduction, turbulent diffusion, models for galaxy and star formation, feedback, coupled dust-gas physics, nuclear reaction networks, cooling, exotic dark matter, black holes, etc.) are either completely not present, or are qualitatively totally different from the physics included in GADGET (or in its more direct descendant, AREPO). Where there are some overlaps, they are intentionally included so that we can compare the new code results with the large body of historical simulations. Additionally, GIZMO is now a performance-portable heterogeneous code in which essentially the entire physics integration — hydro chain (density, gradients, hydro force), self-gravity tree (build, LET exchange, walk), cooling/chemistry, nuclear burning, RT, feedback, sinks, AGS, SIDM, and per-particle drift/kick — executes on-device through the Kokkos portability layer (CUDA, HIP, or OpenMP backends), with the host MPI process acting as memory manager and inter-rank dispatcher. The code has been migrated from C to C++ (C++17) to support modern language features, templates, and device-callable inline functions.
 
 But the differences go deeper as well. The actual method for solving the hydrodynamics has almost nothing in common with GADGET. Obviously, if you choose to use a non-SPH hydro solver (e.g. the meshless finite-volume, or lagrangian finite-mass method), you aren't even using an SPH code anymore! But even in SPH mode, the differences are very fundamental, and include: the functional form of the SPH equations (pressure-energy vs density-entropy), constraints used to determine the SPH smoothing lengths (constant-mass vs constant-particle number in kernel), artificial viscosity (higher-order matrix moments following Cullen and Dehnen's 'inviscid SPH' versus 'constant AV'), artificial conductivity (not present in GADGET), pairwise symmetric hydro operations (not present in GADGET), high-order integral-based gradient estimation (not present in GADGET), and timestepping (limiter based on Saitoh et al. with a second-order leapfrog, versus unlimited timestepping in single-step marching). Don't expect to run GIZMO in SPH mode and get exactly the same answer as you would with GADGET!
 
-Even for the N-body code, there have been substantial improvements and revisions to the original GADGET structure. The data structures are somewhat different (for memory reasons), the domain decomposition has been heavily optimized and made more flexible, especially for runs with hybrid openmp+mpi use, the tree walk code has been consolidated, the gravity solver restructured to allow more modular behavior (e.g. additions of external potentials, exotic dark matter or dark energy physics, etc), and the gravitational softenings are now fully adaptive for all particle types (as opposed to fixed). So don't expect to run GIZMO in even pure N-Body mode and expect to get exactly the same answer as you would with GADGET!
+Even for the N-body code, there have been substantial improvements and revisions to the original GADGET structure. The data structures are somewhat different (for memory reasons), the domain decomposition has been heavily optimized and made more flexible, especially for heterogeneous CPU+GPU runs, the tree walk code has been consolidated, and the gravity solver has been restructured to allow more modular behavior (e.g. additions of external potentials, exotic dark matter or dark energy physics, etc). The entire gravity tree pipeline — domain decomposition, tree build (Karras-style GPU BVH), Local Essential Tree exchange across MPI ranks, and the Barnes-Hut walk itself — now runs on the Kokkos device, with the host MPI process responsible only for inter-rank communication. The gravitational softenings are also now fully adaptive for all particle types (as opposed to fixed). So don't expect to run GIZMO in even pure N-Body mode and expect to get exactly the same answer as you would with GADGET!
 
 <a name="gadget-mimic"></a>
 ## How do you make GIZMO "act like" another code? 
@@ -674,44 +674,71 @@ This is a script submitting job-name `TEST`, requesting it go in the `NORMAL` qu
 
 
 <a name="cpugpu"></a>
-## CPU-GPU Acceleration (Kokkos)
+## Performance-Portable Heterogeneous Execution (CPU-GPU, Kokkos)
 
-**GIZMO** includes GPU acceleration for computationally intensive physics loops, using the [Kokkos](https://github.com/kokkos/kokkos) performance portability library. This allows the same source code to target NVIDIA GPUs (via CUDA), AMD GPUs (via HIP), or multi-core CPUs (via OpenMP), selected at compile time through the Makefile machine configuration.
+**GIZMO** is a flexible, performance-portable heterogeneous code: the same source tree targets NVIDIA GPUs (via CUDA), AMD GPUs (via HIP), and multi-core CPU-only nodes (via OpenMP), selected at compile time through the [Kokkos](https://github.com/kokkos/kokkos) portability library and the Makefile machine configuration. The design philosophy is that *almost all numerically-intensive work runs on the device*. On a GPU node the device is the GPU; on a CPU-only Kokkos build the device is the OpenMP thread pool — but in either case the same kernels execute, with the host MPI process acting primarily as a memory manager, dispatcher, and inter-rank communicator. Builds without Kokkos are no longer supported.
 
-### What is accelerated
+### What runs on the device
 
-GPU offload is currently implemented for:
+Practically every per-particle, per-pair, per-node, and per-substep loop is now device-resident. This includes not just the kernel evaluations themselves, but the full surrounding pipeline — neighbor-list construction, kernel calculations, post-processing reductions, tree construction, tree walks, drift/kick/timestep updates, and (where applicable) domain-decomposition work all execute on the device. The host is responsible for MPI traffic, file I/O, the high-level time-loop, and the small amount of bookkeeping where collective decisions or rank-to-rank sends/receives are unavoidable. The current device-resident inventory:
 
-+ **Cooling and chemistry** (the per-particle implicit cooling solver): this is an embarrassingly-parallel loop where each particle's thermochemistry is solved independently. On GPU, particles are batched and solved in parallel via `Kokkos::parallel_for`.
++ **Cooling, chemistry, and nuclear reaction networks** (per-particle implicit solvers): each particle's thermochemistry or nuclear burning is integrated independently in a `Kokkos::parallel_for` over the active set. Includes built-in atomic/molecular cooling, GRACKLE/CHIMES front-ends, and the `aprox13` alpha-chain network (with SkyNet/Torch externally linked for larger isotope sets).
 
-+ **Density, gradient, and hydro force kernels**: these neighbor-interaction loops use a GPU-resident SFC-tile neighbor finder with BVH acceleration, replacing the traditional tree-walk for neighbor finding. The per-pair physics kernels (kernel evaluation, Riemann solver, flux accumulation) run as Kokkos parallel kernels over a CSR (compressed sparse row) neighbor list. Ghost exchange provides boundary particles from other MPI ranks before the GPU kernels run, and a reverse-communication ("ghost writeback") step propagates any j-particle modifications (e.g. mass flux for MFV, wakeup flags) back to their home ranks.
++ **Hydro chain** (density, gradient, hydro force): the entire neighbor-interaction pipeline is device-resident. Ghost particles are imported via tile-based MPI_Alltoallv into a device-resident ghost arena; a GPU-built symmetric neighbor list (SFC tiles + BVH, two-pass CSR construction) replaces the legacy CPU tree-walk neighbor finder; density h-convergence iterates entirely on device with persistent arrays; the MLS gradient reconstruction and the Riemann/flux-accumulation force kernel both run as device parallel kernels with Kokkos atomic j-writes (for MFV mass conservation and wakeup flags); a reverse-communication "ghost writeback" step propagates j-particle modifications back to home ranks. The legacy CPU tree-walk path for hydro neighbors has been retired.
 
-+ **Nuclear reaction networks** (if enabled): the per-particle nuclear burning integration, similar in structure to the cooling solver.
++ **Self-gravity tree pipeline** (Step 13): every stage of the gravity solve runs on device — Peano-Hilbert key generation and Morton sort, Karras-style GPU BVH tree build, GPU moment refresh (incremental rebuilds), Local Essential Tree (LET) packing on device with MPI_Iallgatherv exchange, the speculative tree walk itself (Barnes-Hut multipole opening), per-particle gravitational acceleration accumulation, optional potential / tidal-tensor / jerk evaluation, adaptive softening lookups, PMGRID short-range table evaluation, and per-substep drift / cost / kick updates. The persistent particle arena (`P[]`, `CellP[]`, `Nodes[]`, `Nextnode[]`, `Father[]`) lives in Kokkos `SharedSpace` (CUDA Unified Memory on NVIDIA, page-migrated on HIP, plain host memory on OpenMP), giving zero-copy device access without explicit deep-copies. The legacy CPU export-loop and per-rank tree-walk paths have all been retired.
 
-All GPU-accelerated loops produce results that are bitwise-identical (on the same hardware) or within floating-point summation-order tolerance (across CPU/GPU) compared to the traditional tree-walk code paths. The tree-walk paths remain in the code as a fallback and for validation.
++ **Subgrid feedback and source physics**: mechanical feedback (SNe), thermal feedback, RT source injection, sink formation / accretion / swallow, FIRE radiative feedback (HII regions, momentum winds, photoelectric heating), AGS adaptive-softening density and force, SIDM scattering and CBE integration, dm_dispersion, MHD div-B correction (CG/SSOR/HYPRE solvers — note that HYPRE itself runs on CPU when not built with `--with-cuda`), elastic solids (kernel-gradient correction, Brookshaw Laplacian).
 
-### How to enable GPU acceleration
++ **RT transport** (M1 / OTVET / FLD subcycles): the per-particle radiation-transport substep advances on device with the cooling/chemistry coupling.
 
-GPU acceleration is always active when Kokkos is linked (controlled by SYSTYPE in the Makefile, not by `Config.sh` flags). The neighbor-list infrastructure (ghost exchange, SFC tiles, symmetric CSR lists), GPU kernel dispatch, and GPU gravity tree are all unconditionally enabled in Kokkos builds. If Kokkos is compiled with a GPU backend (CUDA or HIP), the kernels run on GPU; if compiled with the OpenMP backend, they run as multi-threaded CPU loops using the same code path.
++ **Per-particle drift, predictor, and timestep updates**: short-loop work that used to be host-side OpenMP is now part of the same device parallel-region pattern.
 
-The Makefile must link to Kokkos and (for GPU) the appropriate device compiler. See the "Vista" or "MacBookCellar_Kokkos" blocks in the Makefile for working examples. On systems where Kokkos is installed via `module load kokkos`, the include and library paths are typically set by environment variables.
+The host MPI process retains responsibility for: rank-to-rank communication (ghost exchange Alltoallv, LET Iallgatherv, domain rebalancing collectives), I/O (snapshots, restart files, on-the-fly group catalogs), the global time-step decision tree, and a handful of small reductions (energy, momentum, mass conservation diagnostics) where the cost of a device kernel would exceed the cost of a host loop. In a typical step on a GPU node, the host wall-time is dominated by MPI and I/O — almost the entire physics integration happens on the GPU.
+
+Numerically, all device-resident kernels produce results that are bitwise-identical to the corresponding host-only run on the same hardware, and within floating-point summation-order tolerance across CPU/GPU. The GPU gravity tree walk and GPU hydro chain have been validated to bitwise identity against the (now-retired) legacy CPU tree-walk reference at 1- and 2-rank scale on both NVIDIA GH200 (Vista) and Apple-Silicon Kokkos-OpenMP builds (MacBookCellar_Kokkos).
+
+### How to enable
+
+Performance-portable execution is always active when Kokkos is linked, which is controlled by `SYSTYPE` in the Makefile (not by any `Config.sh` flag). The neighbor-list infrastructure, ghost exchange, GPU kernel dispatch, persistent particle arena, GPU gravity tree, and GPU domain decomposition are all unconditionally enabled in any Kokkos build. The choice between GPU and CPU-OpenMP execution is determined entirely by the Kokkos backend selected at Kokkos build time:
+
++ **GPU build** (NVIDIA via CUDA, AMD via HIP): kernels execute on the GPU, with Kokkos UVM / managed memory for the persistent arena.
++ **CPU-only build** (Kokkos OpenMP backend): the *exact same* kernels run as multi-threaded CPU loops over the host-resident arena. This is the recommended way to develop and validate without GPU hardware, and is also a reasonable production target for CPU-only clusters.
+
+The Makefile must link to Kokkos and (for GPU) the appropriate device compiler. See the `Vista` (Vista GH200, CUDA), `MacBookCellar_Kokkos` (Apple Silicon, OpenMP), or `Frontier` (AMD MI250X, HIP) blocks in the Makefile for working examples. On HPC systems where Kokkos is installed as a module (`module load kokkos`), the include and library paths are typically set by environment variables. There are no `Config.sh` flags that toggle GPU vs CPU dispatch — both code paths are always compiled in, and the Kokkos backend selects which one runs.
 
 ### Architecture
 
-The GPU acceleration follows an "AthenaK-style" pattern: all device-callable physics functions live in `.h` header files (with `KOKKOS_INLINE_FUNCTION` annotation), while `.cc` files contain only host-side orchestration (memory management, MPI communication, kernel launch). A `__managed__` copy of the global `All` struct provides device code with access to simulation parameters. Each GPU translation unit (e.g. `density_gpu.cc`, `cooling.cc`) is compiled by the device compiler (nvcc or hipcc) and linked with the rest of the code.
+The implementation follows an "AthenaK-style" pattern: device-callable physics functions live in `.h` header files (annotated `KOKKOS_INLINE_FUNCTION`), while `.cc` files contain only host-side orchestration — memory management, MPI communication, and `Kokkos::parallel_for` launches. A `__managed__` copy of the global `All` parameter struct (`All_dev`) provides device kernels with read-only access to simulation parameters. Each device translation unit (e.g. `density_gpu.cc`, `cooling.cc`, `gravity/gpu_gravtree.cc`) is compiled by the device compiler (`nvcc`/`hipcc`/host C++) and linked with the rest of the code.
 
-For neighbor-interaction kernels, the workflow per timestep is:
+A typical timestep, with all heavy work on the device, looks roughly like:
 
-1. **Ghost exchange**: import boundary particles from neighboring MPI ranks (tile-based overlap detection, MPI_Alltoallv)
-2. **Density** (GPU): iterative h-convergence with persistent GPU arrays across iterations
-3. **Symmetric neighbor list build**: SFC tiles + BVH, two-pass CSR construction via Kokkos parallel_for
-4. **Gradient** (GPU): MLS gradient reconstruction over symmetric neighbor list
-5. **Hydro force** (GPU): Riemann solver + flux accumulation, with Kokkos atomic j-writes for MFV mass conservation and wakeup flags
-6. **Ghost writeback**: reverse-communicate j-particle modifications to home ranks
+1. **Domain decomposition** (device): Peano-Hilbert key build, GPU topology build/finalize, work-cost balancing.
+2. **Drift** (device): per-particle position/velocity predictor over the active set.
+3. **Tree build** (device): Morton sort + Karras-style BVH construction; topnode moment resummation; incremental moment refresh on subsequent substeps via dirty-node tracking.
+4. **LET exchange** (host MPI + device pack/unpack): each rank packs its locally-essential tree on device, exchanges via `MPI_Iallgatherv`, and integrates foreign tree segments into the device-resident SoA.
+5. **Gravity walk** (device): speculative Barnes-Hut walk for the active set; force, optional potential, tidal tensor, jerk; adaptive softening; PMGRID short-range table.
+6. **Ghost exchange** (host MPI): import boundary gas particles from neighboring ranks via tile-based `MPI_Alltoallv` into the device-resident ghost arena.
+7. **Hydro chain** (device): density h-convergence → symmetric neighbor list build → gradient reconstruction → Riemann/flux hydro force.
+8. **Ghost writeback** (host MPI): reverse-communicate j-particle modifications to home ranks.
+9. **Source/subgrid physics** (device): cooling, chemistry, RT subcycle, mechanical/thermal/radiative feedback, sinks, AGS, SIDM, etc.
+10. **Kick + timestep update** (device).
+
+The persistent device arena means that between these stages, particle data does not move — `P[]` and `CellP[]` are read and written in place by successive device kernels with no host-device deep-copies.
 
 ### Performance characteristics
 
-GPU acceleration provides the largest speedup for the hydro force kernel (10-20x on modern GPUs such as NVIDIA GH200), with smaller but significant gains for gradients (~2x). The density phase includes overhead from neighbor list construction that partially offsets kernel speedups at small particle counts (<100k). At larger particle counts (>500k), the kernel speedups dominate and overall speedup increases. The code automatically handles all MPI communication on the CPU side; only the compute-intensive per-particle and per-pair kernels are offloaded to GPU.
+Headline results on NVIDIA GH200 (Vista, single GPU, Kokkos-CUDA) versus the same Vista node running the CPU-only reference build (`SYSTYPE=Vista_CPU`, GCC, no Kokkos):
+
+| Test | Particles | CPU (s/step) | GPU (s/step) | Speedup |
+|------|-----------|--------------|--------------|---------|
+| `poisson_box` (hydro + gravity) | 125k | 1.92 | 0.27 | **7.2×** |
+| `poisson_box` (hydro + gravity) | 1M | 17.0 | 2.14 | **7.9×** |
+| `gmc_cooling` (MHD + cooling + SF) | 512k | 25.8 | 4.8 | **5.4×** |
+
+Per-phase speedups for `gmc_cooling` 512k: hydro force kernel ~32×, gradient ~6.7×, cooling ~3.5×, density ~3.2×. The hydro pipeline as a whole runs ~7× faster end-to-end. Cooling has the smallest relative speedup because the underlying solver is already well-vectorized on CPU and the implicit chemistry network is short.
+
+At small particle counts (≲100k per rank), Kokkos kernel-launch overhead and CSR-build overhead can dominate and the GPU build is no faster — sometimes slightly slower — than CPU-OpenMP. Speedup grows with N and dominates the total wall-time at production scales. Ghost-exchange and LET MPI traffic remain on the host and are unaffected by the device backend; at very large rank counts these can become the bottleneck, motivating the "host-as-MPI-only" mental model.
 
 
 <a name="tutorial-interrupt"></a>
@@ -2204,9 +2231,9 @@ Flags governing the radiation pressure terms (photon momentum transfer to gas), 
 ####################################################################################################
 ```
 
-These flags govern the implementation of multi-threading in the code. Must be enabled and set appropriately to run multi-threaded code.
-     
-**OPENMP**: This enables the code to run in hybrid OpenMP-MPI (multi-threaded) mode. If you enable this, you need to edit the makefile compile command appropriately to be sure you are actually compiling with the required flags for OPENMP (on many machines the code will still compile and appear to be working normally, but you wont actually be multi-threading!). For example, on TACC machines like Frontera, "-qopenmp" is added to the intel compiler OPT line. Set the value of OPENMP equal to the number of threads per MPI process. This can be anything from 1 (which is not useful, so make it at least 2 if you enable it at all) to the number of MPI cores on the node (some systems allow more threads than cores, but you should read up on your machine before you attempt anything like that). In the submission script for the job, you will also usually need to specify a flag for the number of threads you are using -- again, consult the guide for your local machine for running in hybrid OpenMP+MPI mode. The OpenMP threads use shared memory, so they must be on the same node; but only certain parts of the code can be multi-threaded. In general, this option is here to both allow larger parallelization and better code scaling for large simulations, and to help deal with memory errors (since OpenMP is shared memory, two threads on two cores will have effectively double the memory of two MPI processes on two cores). However, the gains (or losses) are highly dependent on both the specific problem, resolution, processor number, and machine configuration. You should experiment with this setting to get an idea of which values may be useful.
+These flags govern multi-threading and domain subdivision in the code. Note that the bulk of the per-step compute (hydro, gravity, cooling, feedback, and so on) now runs through the Kokkos device backend — see the [Performance-Portable Heterogeneous Execution](#cpugpu) section. Kokkos provides its own internal threading (its OpenMP backend on CPU-only nodes; CUDA/HIP on GPU). The `OPENMP` flag below controls only the residual host-side `#pragma omp` parallelization in code paths that have not been Kokkos-ized (mainly some I/O, MPI-staging, and a handful of bookkeeping loops). On a GPU build, `OPENMP` is largely irrelevant; on a CPU-only Kokkos build it is generally simpler to leave host OpenMP off and let Kokkos manage all the threads.
+
+**OPENMP**: This enables the code to run in hybrid OpenMP-MPI (multi-threaded) mode for the host-side code paths. If you enable this, you need to edit the makefile compile command appropriately to be sure you are actually compiling with the required flags for OPENMP (on many machines the code will still compile and appear to be working normally, but you wont actually be multi-threading!). For example, on TACC machines like Frontera, "-qopenmp" is added to the intel compiler OPT line. Set the value of OPENMP equal to the number of threads per MPI process. This can be anything from 1 (which is not useful, so make it at least 2 if you enable it at all) to the number of MPI cores on the node (some systems allow more threads than cores, but you should read up on your machine before you attempt anything like that). In the submission script for the job, you will also usually need to specify a flag for the number of threads you are using -- again, consult the guide for your local machine for running in hybrid OpenMP+MPI mode. The OpenMP threads use shared memory, so they must be on the same node; but only certain parts of the code can be multi-threaded. In general, this option is here to both allow larger parallelization and better code scaling for large simulations, and to help deal with memory errors (since OpenMP is shared memory, two threads on two cores will have effectively double the memory of two MPI processes on two cores). However, the gains (or losses) are highly dependent on both the specific problem, resolution, processor number, and machine configuration. You should experiment with this setting to get an idea of which values may be useful.
 
 **MULTIPLEDOMAINS**: This subdivides the tree into smaller sub-domains which can be independently moved to different processors. This makes domain de-composition dramatically less dependent on spatial co-location, at the cost of increased communication and less ability to take advantage of multi-threading. Experiment with values here to see what works best -- in general, for problems with greater degrees of inhomogeneity, a higher value of this parameter can help.
 

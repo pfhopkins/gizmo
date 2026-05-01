@@ -281,25 +281,14 @@ When no reference snapshot exists:
 
 ---
 
-## 6. PMGRID / TreeRebuild_ActiveFraction Gotcha
+## 6. Verifying the GPU gravity walk fires
 
-**Rule:** ALL validation parameter files for the GPU gravity tree walk MUST contain:
-```
-TreeRebuild_ActiveFraction   2.0
-```
+The historical `TreeRebuild_ActiveFraction=2.0` workaround is obsolete — the `TakeLevel` gate that previously skipped the GPU walk under cost-measurement mode has been fixed, and the standard default (`0.005`) works correctly. Validation params should use the standard default unless a specific test calls for otherwise.
 
-**Why:** `gpu_gravtree_walk_primary()` contains this gate at the top of the dispatch logic:
-- When `TakeLevel >= 0` (cost-measurement mode), the function returns 0 immediately — GPU walk never executes.
-- `TakeLevel` is set >= 0 when the code is measuring tree-force costs to decide rebuild frequency.
-- For typical test problem sizes (few thousand to ~100k particles), the default `TreeRebuild_ActiveFraction=0.005` almost always triggers `TakeLevel >= 0` within the first few steps.
-- Setting `TreeRebuild_ActiveFraction=2.0` forces `TakeLevel = -1` (full-walk mode) every step.
-
-**Affected validation tests:** `gravtree_vanilla`, `gravtree_vanilla_eval`, `evrard` (evrard_gpu_val.params), `gmc_cooling_pmgrid`.
-
-**How to verify the walk actually fired:**
+To confirm the walk actually fired (mandatory for any GPU gravity port — see Rule 4):
 ```bash
 grep "GPU gravity" gizmo.out   # or whatever prefix the dispatcher printf uses
-# Must show nonzero particle counts, not "TakeLevel>=0, skipping"
+# Must show nonzero particle counts.
 ```
 
 ---

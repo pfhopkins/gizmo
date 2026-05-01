@@ -1,145 +1,123 @@
-# GPU Port Handoff — 2026-04-23
-Branch: `gpu_kokkos_domaintree`
-Target: Kokkos OpenMP (Mac dev) / Kokkos CUDA (Vista GH200)
+# GPU Port — Current State (as of 2026-04-30)
+Branch: `gpu_kokkos_unified`
+Targets validated: Kokkos OpenMP (Apple Silicon, `MacBookCellar_Kokkos`); Kokkos CUDA (NVIDIA GH200, `Vista`).
+Frontier (AMD MI250X, HIP) is the next planned target.
+
+This document supersedes the earlier mid-Phase-4 handoff. The full thirteen-step modernization roadmap is complete; what follows is a snapshot of the resulting state and the small number of explicitly deferred items.
 
 ---
 
-## 1. Completed and Committed
+## 1. Status by roadmap step
 
-| Step | Module | Status |
-|------|--------|--------|
-| 1-12 | density, neighbor list, hydro gradients/forces, ghost exchange, MHD div-B, simple_chemistry cooling, rt_chem, RT transport subcycle, mechanical/thermal/radiation feedback, sink formation/swallowing, AGS density/force, SIDM, elastic solids, dm_dispersion | GPU-ported, Vista-validated |
-| 13 Phase 1 | Persistent P[]/CellP[] arena (SharedSpace UVM), zero-copy GPU access | Committed |
-| 13 Phase 3 | GPU gravity tree SoA (`gpu_gravity_tree.cc/h`), mirrors Nodes_base + Nextnode | Committed |
-| 13 Phase 4 Tier 1a | GPU speculative gravity tree walk, core walk only (`7641063b`) | Committed; bitwise identical 1-rank + 2-rank |
-| 13 Phase 4 Tier 1b.1+1b.2 | EVALPOTENTIAL inline potential + PMGRID shortrange_table (`5c07b4ac`) | Committed; bitwise identical 2-rank |
-
----
-
-## 2. In Progress (working tree, not committed)
-
-**Step 13 Phase 4 Tier 1b.3 — ADAPTIVE_GRAVSOFT_FORGAS**
-- Code complete in `gravity/gpu_gravtree.cc`
-- Compile-tested against all configs including FORGAS
-- Runtime tests in progress: evrard, vanilla_eval, gmc_cooling+PMGRID
-- NOT yet committed
-
----
-
-## 3. Key Files Changed in Phase 4
-
-| File | Role |
-|------|------|
-| `gravity/gpu_gravtree.cc` | Walk kernel + dispatcher (main file) |
-| `gravity/gpu_gravtree.h` | Public interface (always-callable stub) |
-| `gravity/gpu_gravity_tree.cc` + `.h` | SoA mirror of tree (Phase 3) |
-| `gravity/gravtree.cc` | Calls `gpu_gravtree_walk_primary()` before primary loop (~line 173) |
-| `gravity/forcetree.cc` | Changed `static float shortrange_table[]` to non-static for extern access |
-| `test/gravtree_vanilla/Config.sh` + `.params` | Validation test (no AGS) |
-| `test/gravtree_vanilla_eval/Config.sh` + `.params` | EVALPOTENTIAL variant |
-| `test/evrard/evrard_gpu_val.params` | AGS validation; requires `TreeRebuild_ActiveFraction=2.0` |
-| `test/gmc_cooling_pmgrid/Config.sh` + `.params` | PMGRID validation |
+| Step | Scope | Status |
+|------|-------|--------|
+| 1 | Per-kernel physics audit | DONE |
+| 2 | Multi-rank validation | DONE |
+| 3 | Compile-flag matrix (106/106 Mac, 144/144 Vista) | DONE |
+| 4 | First-pass benchmarks | DONE — see §5 |
+| 5 | Legacy CPU tree-walk retirement | DONE |
+| 6 | Ghost-exchange infrastructure | DONE |
+| 7 | Dead-code cleanup (header consolidation, `*_gpu.h` → `*_gpu_decls.h`, `mesh/ngb.cc` removal, `rt_CGmethod.cc`/`potential.cc` retirement) | DONE |
+| 8 | Halo-transfer OOM handling | substantively DONE; dynamic realloc deferred behind mymalloc refactor |
+| 9 | Remaining physics loops on device | DONE (one open known issue, §6) |
+| 10 | Global-solver evaluation (HeFFTe / Hypre GPU) | DONE; HeFFTe explicitly deferred until a Vista module is available |
+| 11 | Ancient/dead-code pruning | DONE |
+| 12 | Documentation first pass | DONE |
+| 13 | Domain decomposition + gravity tree on device | DONE (Phases 1–10 closed) |
+| 14 | Documentation second pass (this document; user-guide GPU section) | IN PROGRESS |
+| 15 | Scaling-test suite (Vista weak/strong, Frontier port) | not started |
+| 16 | New-physics roadmap (two-temp plasma, batteries, MCRT, planet formation, multi-fluid, GR-MHD) | not started |
 
 ---
 
-## 4. Supported Configs (compile + runtime pass)
+## 2. Device-resident inventory
 
-| Config | Status |
-|--------|--------|
-| Vanilla (HYDRO_MESHLESS_FINITE_MASS + EOS_GAMMA + OUTPUT_IN_DOUBLEPRECISION + DEVELOPER_MODE + GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY + GIZMO_GPU_GRAVTREE) | bitwise identical 1-rank + 2-rank |
-| Vanilla + EVALPOTENTIAL | runtime in progress |
-| Vanilla + ADAPTIVE_GRAVSOFT_FORGAS + GIZMO_GPU_GRAVTREE | runtime in progress |
-| BOX_PERIODIC + GRAVITY_NOT_PERIODIC + PMGRID + GIZMO_GPU_GRAVTREE | runtime in progress |
+Everything in the list below executes on the Kokkos device (GPU when CUDA/HIP backend is active; OpenMP threads when the OpenMP backend is active). Host responsibilities are limited to MPI traffic, file I/O, the time-loop, and a handful of conservation-diagnostic reductions.
 
----
+**Hydro chain.** Ghost import (host MPI dispatch into device-resident ghost arena) → density h-convergence → symmetric neighbor-list build (SFC tiles + BVH, two-pass CSR) → gradient (MLS) → hydro force (Riemann + flux, atomic j-writes) → ghost writeback. Source files: `hydro/density.cc`, `hydro/hydro_evaluate_gpu.cc`, `hydro/gpu_neighbor_list.cc`, `hydro/gpu_gradient.cc`, `hydro/gpu_hydro_force.cc`, `system/ghost_exchange.cc`.
 
-## 5. Unsupported / #error Gates in `gravity/gpu_gravtree.cc`
+**Self-gravity tree pipeline (Step 13).**
+- `gravity/gpu_topology_build.{cc,h}` + `gpu_topology_finalize.{cc,h}`: domain Peano-Hilbert key build and topology assembly on device.
+- `gravity/gpu_morton.{cc,h}` + `gpu_morton_functions.h`: Morton sorting infrastructure for the BVH build.
+- `gravity/gpu_peano_walk.{cc,h}` + `gpu_peano_walk_functions.h`: GPU SFC walk for tree construction.
+- `gravity/gpu_gravity_tree.{cc,h}`: persistent SoA mirror of `Nodes_base`, `Nextnode`, `Father` (and the dirty-tracking ledger).
+- `gravity/gpu_moment_refresh.cc`: incremental moment recomputation.
+- `gravity/gpu_pseudo_update.{cc,h}` + `gpu_nextnode_thread.cc`: pseudo-particle updates and Nextnode threading.
+- `gravity/let_pack.cc` + `let_data.h`: LET packing on device, exchanged via `MPI_Iallgatherv`.
+- `gravity/gpu_gravtree.{cc,h}`: speculative Barnes-Hut walk, force / potential / tidal-tensor / jerk / adaptive-softening / PMGRID short-range table.
+- `gravity/gpu_force_drift.cc`, `gpu_force_update.cc`: per-substep drift/cost/kick on device.
+- `system/gpu_particles_arena.cc`: persistent UVM/SharedSpace arena for `P[]`, `CellP[]`, tree arrays.
 
-### Tier 1c (next planned)
-- `ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING` — not ported; blocks FORALL
-- `ADAPTIVE_GRAVSOFT_FORALL` — auto-enables SYMMETRIZE via `precompiler_logic.h:152-156`; blocked
+**Source/subgrid physics.** Cooling, chemistry, RT subcycles, mechanical/thermal/radiative feedback, sink formation/accretion/swallow, FIRE radiative feedback, AGS density/force, SIDM, dm_dispersion, MHD div-B (CG/SSOR; HYPRE solve still host-side unless built `--with-cuda`), elastic solids, nuclear burning (`aprox13` device-callable; SkyNet/Torch external).
 
-### Tier 2 (FIRE/STARFORGE payloads)
-- `RT_USE_GRAVTREE`, `RT_USE_TREECOL_FOR_NH`
-- `SINK_CALC_DISTANCES`, `SINK_PHOTONMOMENTUM`, `SINK_DYNFRICTION_FROMTREE`, `SINK_COMPTON_HEATING`
-- `SINGLE_STAR_STARFORGE_DEFAULTS`, `SINGLE_STAR_SINK_DYNAMICS`, `SINGLE_STAR_TIMESTEPPING`, `SINGLE_STAR_FIND_BINARIES`, `SINGLE_STAR_FB_TIMESTEPLIMIT`
-- `COSMIC_RAY_SUBGRID_LEBRON`, `GALSF_FB_FIRE_RT_LONGRANGE`, `CHIMES_STELLAR_FLUXES`
-
-### Tier 3 (deferred)
-- `ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION` — needs tidal tensor
-- `COMPUTE_TIDAL_TENSOR_IN_GRAVTREE`, `COMPUTE_JERK_IN_GRAVTREE`
-- `DM_SCALARFIELD_SCREENING`, `GRAVITY_SPHERICAL_SYMMETRY`
-- `COUNT_MASS_IN_GRAVTREE`, `GRAVTREE_CALCULATE_GAS_MASS_IN_NODE`
-- `GALSF_MERGER_STARCLUSTER_PARTICLES`, `ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT`, `SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM` (type-specific softening overrides)
-
-### Phase 5 / Tier 3
-- `HERMITE_INTEGRATION`, `ADAPTIVE_TREEFORCE_UPDATE`, `NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE`
-
-### Later / not planned near-term
-- `BOX_PERIODIC` without `GRAVITY_NOT_PERIODIC` (periodic Ewald walk)
-- `SELFGRAVITY_OFF`
+**Per-particle drift, predictor, timestep.** Folded into the same device parallel-region pattern.
 
 ---
 
-## 6. Known Gotchas
+## 3. Configuration model
 
-### 6.1 TakeLevel gate (CRITICAL for validation)
-- `gpu_gravtree_walk_primary()` returns 0 immediately when `TakeLevel >= 0` (cost-measurement mode)
-- Default `TreeRebuild_ActiveFraction=0.005` causes `TakeLevel >= 0` for typical test sizes → GPU walk never fires
-- ALL validation params MUST have `TreeRebuild_ActiveFraction=2.0`
-- Check: add a `printf` in the dispatcher to confirm GPU path is taken
+There are no `Config.sh` flags that toggle GPU vs CPU dispatch — both code paths are always compiled in, and the Kokkos backend selects which runs. The retired flags (now hard-wired on with any Kokkos build) are: `OPENMP_GPU_OFFLOAD`, `GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY`, `GIZMO_GPU_GRAVTREE`. Builds without Kokkos are no longer supported.
 
-### 6.2 All.G double-apply
-- GPU walk writes RAW forces (no G factor)
-- Post-walk loop in `gravity_tree()` applies `P[i].GravAccel *= All.G` unconditionally
-- Same for `P[i].Potential` when EVALPOTENTIAL
-- Do not add G inside the GPU kernel
+The persistent particle arena (`P[]`, `CellP[]`, `Nodes[]`, `Nextnode[]`, `Father[]`) lives in Kokkos `SharedSpace` (CUDA Unified Memory on NVIDIA, page-migrated on HIP, plain host memory on OpenMP). Device kernels access this arena zero-copy; there are no host↔device deep-copies on the per-step hot path.
 
-### 6.3 force_drift_node stale SoA
-- CPU updates `Nodes[no].u.d.s` in-place during walk
-- `gpu_gravity_tree_invalidate()` must be called after each GPU walk to force reseed on next call
-- Already implemented; do not remove
+`__managed__` `All_dev` mirrors the runtime `All` parameter struct for read-only device access.
 
-### 6.4 Arena invalidate
-- `gpu_particles_arena_invalidate()` must be called after GPU writes `P[i].GravAccel`
-- Already implemented; do not remove
-
-### 6.5 FORALL blocked
-- `ADAPTIVE_GRAVSOFT_FORALL` auto-enables `SYMMETRIZE_BY_AVERAGING` via `precompiler_logic.h:152-156`
-- FORALL cannot be enabled until Tier 1c is ported
-
-### 6.6 Dead code — force_treeevaluate_potential
-- `force_treeevaluate_potential` is DEAD CODE when EVALPOTENTIAL is set
-- `compute_potential()` is gated `#if !defined(EVALPOTENTIAL)` in `core/run.cc`
-- Do not try to GPU-port or call it when EVALPOTENTIAL is active
-
-### 6.7 Stale build artifacts
-- Always `make clean` before switching Config.sh
-- Stale .o files from a different config silently produce wrong binaries
-- Verify which config built which binary: `grep GIZMO_config.h` after build
+Optional infrastructure flag added during Step 13: `GIZMO_MIXED_PRECISION_GRAVITY` (default OFF). When set, exposes the `MyGravFloat = float` typedef and switches force-carrying gravity fields to single precision while leaving positions in double. Follows pkdgrav3 / Bonsai conventions. Diagnostic flag also added: `GIZMO_DEBUG_RT_COOLING` (high-volume stdout, intended for targeted RT/cooling debug; slated for retirement once §6 is closed).
 
 ---
 
-## 7. Next Atomic Commits
+## 4. Validation status
 
-| Commit | Description | Blocker |
-|--------|-------------|---------|
-| Tier 1b.3 | ADAPTIVE_GRAVSOFT_FORGAS — commit after runtime validation | runtime tests pending |
-| Tier 1c | ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING + FORALL | depends on 1b.3 |
-| Tier 2 | RT_USE_GRAVTREE, SINK_*, SINGLE_STAR_* payloads | depends on 1c |
-| Tier 3 | COMPUTE_TIDAL_TENSOR, COSMIC_RAY_SUBGRID_LEBRON, DM_SCALARFIELD_SCREENING, GRAVITY_SPHERICAL_SYMMETRY, HERMITE_INTEGRATION | depends on Tier 2 |
-| Phase 5 | ADAPTIVE_TREEFORCE_UPDATE GPU extrapolation | depends on Tier 3 |
-| Later | BOX_PERIODIC Ewald walk, TreePM GPU, HeFFTe FFT | long-term |
+All currently-supported configurations are bitwise-identical between the GPU and (now-retired) legacy CPU tree-walk reference, on the same hardware, at 1- and 2-rank scale. Headline validations:
+
+- `soundwave`, `dustywave`, `square`, `field_loop`, `mhd_wave`, `gmc_cooling`, `evrard`, `hernquist_sidm`, `isodisk_mechfb_sinks`, `isodisk_mechfb_cr`, `gravtree_vanilla`, `gravtree_vanilla_eval`, `gmc_cooling_pmgrid`: pass on Mac (Kokkos OpenMP) and Vista (Kokkos CUDA).
+- Compile-flag matrix: 106/106 Mac, 144/144 Vista.
+
+See `docs/gpu_port_verification_rules.md` for the canonical verification protocol and `MEMORY.md` index for per-test details.
 
 ---
 
-## 8. Hard Rules for This Work
+## 5. Performance (NVIDIA GH200, single GPU vs. single Vista CPU node)
 
-- NEVER loosen comparison tolerances — failing physics tests mean a real bug
-- NEVER assume TakeLevel=-1 without verifying `TreeRebuild_ActiveFraction=2.0` in params
-- NEVER skip multi-rank test — 1-rank masks domain boundary bugs
-- NEVER commit without both a standard-reference Config AND an activating Config passing
-- NEVER create dual code paths or fall back to CPU tree-walk; fix GPU infrastructure
-- Always verify Config.sh + `grep GIZMO_config.h` after build before running tests
-- Always call `gpu_gravity_tree_invalidate()` + `gpu_particles_arena_invalidate()` after GPU walk
-- Add a `printf` to confirm the GPU dispatch path fires before declaring a config validated
+| Test | N | CPU (s/step) | GPU (s/step) | Speedup |
+|------|---|--------------|--------------|---------|
+| `poisson_box` (hydro + gravity) | 125k | 1.92 | 0.27 | 7.2× |
+| `poisson_box` (hydro + gravity) | 1M | 17.0 | 2.14 | 7.9× |
+| `gmc_cooling` (MHD + cooling + SF) | 512k | 25.8 | 4.8 | 5.4× |
+
+Per-phase breakdown for `gmc_cooling` 512k: hydro force ~32×, gradient ~6.7×, cooling ~3.5×, density ~3.2×.
+
+At ≲100k particles per rank the GPU build is overhead-bound. MHD and STARFORGE sweeps, plus a clean log-log scaling study, are the Step 15 deliverable.
+
+---
+
+## 6. Known open items
+
+1. **`gmc_cooling_rt` ~25% divergence** (T, xe, urad_FUV) when used with the GPU RT-chemistry path. Bug is isolated; debug branch `gpu_kokkos_ngbtest_gmccoolingrtdebug` retains diagnostics. Not blocking any other work; `gmc_cooling_rt` is excluded from the validation gate in favor of `soundwave` + `gmc_cooling`.
+
+2. **Dynamic realloc for the persistent arena** (Step 8 tail). Blocked behind a planned `mymalloc` refactor; the static `MaxPart`/`MaxNodes` allocations cover all current production runs.
+
+3. **HeFFTe GPU PM** (Step 10 tail). Closed pending appearance of a HeFFTe Vista module; CPU FFTW3 + CPU Hypre paths are intact and PMGRID is not on the hot path for current science targets.
+
+4. **Gravity tree optimization backlog** (seven items, benchmark-gated): see `MEMORY.md` → `project_gravity_tree_optimization_backlog.md`. Each item has a concrete trigger threshold to be evaluated against Step 15 scaling data; do not open speculatively.
+
+---
+
+## 7. Hard rules carried forward
+
+These are invariants for any further work on the GPU/Kokkos path. Full statements live in `docs/gpu_port_verification_rules.md`; the short form:
+
+- Test = comparison against reference, not exit code.
+- Always multi-rank (`mpirun -np 2` minimum).
+- Never loosen tolerances to make a test pass.
+- Confirm the kernel actually fires (printf check) before declaring a port validated.
+- Never use `gmc_cooling_rt` as the sole validator.
+- Every port validates against both a standard-reference Config and an activating Config.
+- No `_device.h` duplicate files; one canonical copy per device function.
+- Never silently reduce scope or drop `#ifdef` branches in a port.
+- No test artifacts in commits.
+- Watch for nvcc errors `2001x` / `2009x` in build logs.
+- Verify `Config.sh` against `GIZMO_config.h` after every build.
+- GPU dispatchers use the active list, never `NumPart`; never early-return before MPI collectives.
+- No `Config.sh` flags toggle GPU vs CPU dispatch — that is a Kokkos-backend concern.
+- Ask before advancing task lists.
