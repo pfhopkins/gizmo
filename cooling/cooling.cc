@@ -514,31 +514,42 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
-#ifndef COOLING_OPERATOR_SPLIT
-        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
-        /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
-#endif
 
 #ifdef TWO_TEMPERATURE_PLASMA
-        /* C2/C3a: Spitzer e-i analytic equilibration. Total InternalEnergy
-           unchanged here; only the electron/ion partition is adjusted.
-           Radiative-cooling routing to T_e arrives in C3b.
+        /* C2/C3a/C3b: 2-T plasma post-cooling update. Two operations, in order:
+           (1) Apply the radiative delta to u_e. Of the cooling-step Δu_total =
+               unew - uold, the hydro work component went to ions (D3 default
+               f_e=0); the radiative component went to electrons. The cooling
+               iteration already evaluated rates at T_e (see C3b lambda above)
+               so this is consistent.
+           (2) Spitzer analytic e-i equilibration (C2): redistributes (u_e, u_i)
+               at fixed total via exp(-alpha*dt) decay of (T_e - T_i).
            n_i (ion number density used in both energy partition and Spitzer
-           rate denominator α = (1 + n_e/n_i) ν_eq) = n_H + n_He = n_H * (1 +
-           yhelium), independent of ionization state since each helium nucleus
-           contributes one heavy particle to the kinetic energy budget. For
-           Σ_s n_s Z_s²/A_s in the Spitzer rate this is exact for fully ionized
-           H, ~5% off for primordial H+He at high T (Z²/A = 4/4 for He²⁺ vs
-           1/1 for H, A weighting matters for partial ionization; deferred). */
+           rate denominator alpha = (1 + n_e/n_i) nu_eq) = n_H + n_He = n_H * (1
+           + yhelium), independent of ionization state since each helium nucleus
+           contributes one heavy particle to the kinetic energy budget (C3a). */
         {
-            const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
-            const double n_e_phys = cell[i].n_e_cell;
-            const double nH_phys  = cell[i].nHcgs();
-            const double n_i_phys = nH_phys * (1.0 + yhelium(i, pp));
-            const double dt_phys  = dtime * UNIT_TIME_IN_CGS;
-            const double T_e_before = cell[i].T_e_cell;
-            const double u_e_new  = two_temp_relax_step(cell[i].InternalEnergy, cell[i].u_e_cell,
-                                                        n_e_phys, n_i_phys, rho_phys, dt_phys);
+            const double rho_phys     = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+            const double n_e_phys     = cell[i].n_e_cell;
+            const double nH_phys      = cell[i].nHcgs();
+            const double n_i_phys     = nH_phys * (1.0 + yhelium(i, pp));
+            const double dt_phys      = dtime * UNIT_TIME_IN_CGS;
+            const double u_old_code   = uold; /* start-of-step total u in code units */
+            const double u_e_old_code = cell[i].u_e_cell;
+            /* hydro_du in code units: matches the value the rootfind absorbed. */
+            const double nHcgs_local  = nH_phys;
+            const double ratefact     = (nHcgs_local * nHcgs_local) / rho_phys;
+            const double hydro_du_cgs = ratefact * cell[i].DtInternalEnergy * dt_phys / nHcgs_local;
+            const double hydro_du_code = hydro_du_cgs / UNIT_SPECEGY_IN_CGS;
+            const double du_total_code = cell[i].InternalEnergy - u_old_code;
+            const double du_rad_code   = du_total_code - hydro_du_code;
+            /* (1) absorb radiative delta into u_e */
+            double u_e_intermediate = u_e_old_code + du_rad_code;
+            if(!(u_e_intermediate > 0)) {u_e_intermediate = 1e-30 * (u_e_old_code > 0 ? u_e_old_code : 1.0);}
+            const double T_e_before = two_temp_T_e_from_u_e(u_e_intermediate, rho_phys, n_e_phys);
+            /* (2) Spitzer analytic relaxation at fixed u_total */
+            const double u_e_new = two_temp_relax_step(cell[i].InternalEnergy, u_e_intermediate,
+                                                       n_e_phys, n_i_phys, rho_phys, dt_phys);
             cell[i].u_e_cell = u_e_new;
             cell[i].T_e_cell = two_temp_T_e_from_u_e(u_e_new, rho_phys, n_e_phys);
 #ifdef GIZMO_DEBUG_TWO_TEMP
@@ -547,12 +558,18 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                                      / ((n_e_phys + n_i_phys) * BOLTZMANN_CGS);
                 const double nu_eq = two_temp_nu_eq(T_e_before, n_e_phys);
                 const double alpha_dt = (1. + n_e_phys/n_i_phys) * nu_eq * dt_phys;
-                printf("[2T_DIAG] t=%.6e ID=%llu n_e=%.3e T_total=%.3e T_e_before=%.3e T_e_after=%.3e alpha*dt=%.3e\n",
-                       All.Time, (unsigned long long)pp[i].ID, n_e_phys, T_total, T_e_before, cell[i].T_e_cell, alpha_dt);
+                printf("[2T_DIAG] t=%.6e ID=%llu n_e=%.3e T_total=%.3e T_e_postrad=%.3e T_e_after=%.3e alpha*dt=%.3e du_rad/du_tot=%.3e\n",
+                       All.Time, (unsigned long long)pp[i].ID, n_e_phys, T_total, T_e_before, cell[i].T_e_cell, alpha_dt,
+                       (du_total_code != 0) ? du_rad_code/du_total_code : 0.);
                 fflush(stdout);
             }
 #endif
         }
+#endif
+
+#ifndef COOLING_OPERATOR_SPLIT
+        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
+        /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
 #endif
 
 #if !defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -639,8 +656,32 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
     ratefact = nHcgs * nHcgs / rho;
     u = u_upper = u_lower =  u_old; /* initialize values */
+#ifdef TWO_TEMPERATURE_PLASMA
+    /* 2-T plasma (Phase 16 C3b): the radiative cooling rate is physically a
+       function of T_e, not T_total. Inside the rootfind we track T_e
+       implicitly: of the trial du, the hydro-source portion goes to ions and
+       the remaining radiative portion goes to electrons (D3 default f_e=0).
+       u_e_trial = u_e_old + (du - hydro_du), and T_e_trial = (2/3) rho
+       u_e_trial / (n_e k_B). Pass T_e_trial in place of T_total to CoolingRate
+       so all rate components (line cooling, free-free, recombination, photo-
+       heating, Compton) automatically use the electron temperature. The hydro-
+       source addition inside CoolingRate (Q += DtInternalEnergy/nHcgs) is
+       T-independent and is preserved unchanged. The bisection still converges
+       since dT_e/du > 0 (same monotonicity as the single-T case). */
+    const double u_e_old_cgs_2T = cell[target].u_e_cell * UNIT_SPECEGY_IN_CGS;
+    const double n_e_phys_2T    = cell[target].n_e_cell;
+    const double hydro_du_2T    = ratefact * cell[target].DtInternalEnergy * dt / nHcgs;
+#endif
     auto cooling_rootfind_function = [&](double du) { /* control the *relative* error on the *change* in u */
+#ifdef TWO_TEMPERATURE_PLASMA
+        double u_e_trial = u_e_old_cgs_2T + (du - hydro_du_2T);
+        if(!(u_e_trial > 0)) {u_e_trial = (u_e_old_cgs_2T > 0) ? 1e-30 * u_e_old_cgs_2T : 1e-30;}
+        double T_e_trial = (2./3.) * rho * u_e_trial / (n_e_phys_2T * BOLTZMANN_CGS);
+        if(!(T_e_trial > 0)) {T_e_trial = 1.0;}
+        return du - ratefact * CoolingRate(log10(T_e_trial), rho, ne_guess, ne_eval, target, pp, cell) * dt;
+#else
         return du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt;
+#endif
     };
     double du_net = cooling_rootfind_function(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
 #ifdef GIZMO_DEBUG_RT_COOLING
