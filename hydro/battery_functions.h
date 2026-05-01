@@ -34,6 +34,16 @@
 #include "hydro_structs.h"
 #include "hydro_pair_types.h"
 
+/* B-field seed convention for any test that exercises the battery
+ * mechanism from B=0: set BiniX (or another component) to ~1e-40 Gauss
+ * via MHD_B_SET_IN_PARAMS in the run's parameter file (8c/N). This
+ * gives Dedner divB-cleaning a finite reference scale to lean on, and
+ * keeps the battery-CFL dt_battery = CourantFac*max(|B|,B_floor)*L/|E|
+ * (timestep.cc) finite in the first step. The seed is so far below any
+ * physical B that it never affects energetics, and choosing a direction
+ * orthogonal to the expected battery-generated B avoids contaminating
+ * the validation signal. */
+
 #ifdef MHD_BATTERY_MECHANISMS
 
 /* TODO: per-cell radiative-ionization electric field E'_RI from sigma_nu * x_n * F_rad.
