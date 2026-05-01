@@ -320,6 +320,14 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
         MIN_ADD(GasGradDataPasser[i].Minima.InternalEnergy,out->Minima.InternalEnergy,mode);
         for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.InternalEnergy[k],out->Gradients[k].InternalEnergy,mode);}
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+        MAX_ADD(GasGradDataPasser[i].Maxima.ElectronNumberDensity,out->Maxima.ElectronNumberDensity,mode);
+        MIN_ADD(GasGradDataPasser[i].Minima.ElectronNumberDensity,out->Minima.ElectronNumberDensity,mode);
+        for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.ElectronNumberDensity[k],out->Gradients[k].ElectronNumberDensity,mode);}
+        MAX_ADD(GasGradDataPasser[i].Maxima.ElectronTemperature,out->Maxima.ElectronTemperature,mode);
+        MIN_ADD(GasGradDataPasser[i].Minima.ElectronTemperature,out->Minima.ElectronTemperature,mode);
+        for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.ElectronTemperature[k],out->Gradients[k].ElectronTemperature,mode);}
+#endif
 #ifdef COSMIC_RAY_FLUID
         for(j=0;j<N_CR_PARTICLE_BINS;j++)
         {
@@ -534,6 +542,10 @@ void hydro_gradient_calc(void)
             CellP[i].Gradients.Velocity = {};
 #ifdef DOGRAD_INTERNAL_ENERGY
             CellP[i].Gradients.InternalEnergy = {};
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            CellP[i].Gradients.ElectronNumberDensity = {};
+            CellP[i].Gradients.ElectronTemperature = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
             for(k2=0;k2<N_CR_PARTICLE_BINS;k2++) {CellP[i].Gradients.CosmicRayPressure[k2] = {};}
@@ -786,6 +798,10 @@ void hydro_gradient_calc(void)
 #ifdef DOGRAD_INTERNAL_ENERGY
             construct_gradient(CellP[i].Gradients.InternalEnergy,i);
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            construct_gradient(CellP[i].Gradients.ElectronNumberDensity,i);
+            construct_gradient(CellP[i].Gradients.ElectronTemperature,i);
+#endif
 #ifdef COSMIC_RAY_FLUID
             for(k=0;k<N_CR_PARTICLE_BINS;k++) {construct_gradient(CellP[i].Gradients.CosmicRayPressure[k],i);}
             int is_particle_local_extremum[N_CR_PARTICLE_BINS]={0}; is_particle_local_extremum[0]=0; // test for local extremum to revert to lower-order reconstruction if necessary
@@ -977,6 +993,10 @@ void hydro_gradient_calc(void)
             stol_tmp = DMAX(stol,stol_diffusion);
 #endif
             local_slopelimiter(CellP[i].Gradients.InternalEnergy,GasGradDataPasser[i].Maxima.InternalEnergy,GasGradDataPasser[i].Minima.InternalEnergy,a_limiter,h_lim,stol_tmp, 1,d_max,CellP[i].InternalEnergyPred);
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            local_slopelimiter(CellP[i].Gradients.ElectronNumberDensity,GasGradDataPasser[i].Maxima.ElectronNumberDensity,GasGradDataPasser[i].Minima.ElectronNumberDensity,a_limiter,h_lim,stol, 1,d_max,CellP[i].n_e_cell);
+            local_slopelimiter(CellP[i].Gradients.ElectronTemperature,GasGradDataPasser[i].Maxima.ElectronTemperature,GasGradDataPasser[i].Minima.ElectronTemperature,a_limiter,h_lim,stol, 1,d_max,CellP[i].T_e_cell);
 #endif
 #ifdef DOGRAD_SOUNDSPEED
             local_slopelimiter(CellP[i].Gradients.SoundSpeed,GasGradDataPasser[i].Maxima.SoundSpeed,GasGradDataPasser[i].Minima.SoundSpeed,a_limiter,h_lim,stol, 1,d_max,CellP[i].effective_soundspeed());

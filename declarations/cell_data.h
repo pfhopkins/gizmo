@@ -164,6 +164,10 @@ extern struct gas_cell_data
         MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
         MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+        Vec3<MyDouble> ElectronNumberDensity; /*!< grad(n_e) for Biermann battery */
+        Vec3<MyDouble> ElectronTemperature;   /*!< grad(T_e) for Biermann battery */
+#endif
     } Gradients;
     SymmetricTensor2<MyDouble> NV_T; /*!< holds the tensor used for gradient estimation */
     Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */

@@ -70,6 +70,10 @@ struct Quantities_for_Gradients
 #ifdef DOGRAD_INTERNAL_ENERGY
     MyDouble InternalEnergy;
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+    MyDouble ElectronNumberDensity;  /* n_e for Biermann battery: provides grad(n_e) used in dB/dt|_Bier ~ grad(T_e) x grad(n_e). */
+    MyDouble ElectronTemperature;    /* T_e for Biermann battery (currently == T_gas). */
+#endif
 #ifdef COSMIC_RAY_FLUID
     MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif
@@ -411,6 +415,13 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
     MINMAX_CHECK(du, out->Minima.InternalEnergy, out->Maxima.InternalEnergy);
 #endif
 
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+    double d_ne = CellP[j].n_e_cell - local->GQuant.ElectronNumberDensity;
+    MINMAX_CHECK(d_ne, out->Minima.ElectronNumberDensity, out->Maxima.ElectronNumberDensity);
+    double d_Te = CellP[j].T_e_cell - local->GQuant.ElectronTemperature;
+    MINMAX_CHECK(d_Te, out->Minima.ElectronTemperature, out->Maxima.ElectronTemperature);
+#endif
+
 #ifdef COSMIC_RAY_FLUID
     double dpCR[N_CR_PARTICLE_BINS];
     for(int k=0;k<N_CR_PARTICLE_BINS;k++) {
@@ -515,6 +526,10 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
             out->Gradients[k].InternalEnergy += wk_xyz_i * du;
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            out->Gradients[k].ElectronNumberDensity += wk_xyz_i * d_ne;
+            out->Gradients[k].ElectronTemperature   += wk_xyz_i * d_Te;
 #endif
 #ifdef COSMIC_RAY_FLUID
             for(int k2=0;k2<N_CR_PARTICLE_BINS;k2++) {out->Gradients[k].CosmicRayPressure[k2] += wk_xyz_i * dpCR[k2];}
