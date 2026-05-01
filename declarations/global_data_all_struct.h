@@ -201,6 +201,7 @@ struct global_data_all_processes
 #endif
 #ifdef TWO_TEMPERATURE_PLASMA
   double TwoTemp_InitialTeOverTgas; /*!< initial T_e / T_gas ratio used at the LTE seed in eos.cc on the first call (when u_e_cell == 0). Default 1.0 (LTE start). Set to !=1 in the param file to start in a 2-T initial state, e.g. for the 2T_relaxation regression test (electrons cold, ions hot, watch the analytic Spitzer relaxation toward T_eq). */
+  double TwoTemp_ShockElectronFraction; /*!< fraction f_e of the hydro-dissipation (DtInternalEnergy) deposited into electrons; remainder goes to ions. Default 0.0 = collisionless-shock limit (Vink+15, Ghavamian+13: ions take all of the dissipation, electrons heat only via Coulomb equilibration). f_e = 1.0 = strong-coupling limit (single-fluid behavior). Mach-dependent f_e (Ghavamian-style) deferred to a later refinement; one scalar suffices for v1. */
 #endif
 
   /* gravitational and hydrodynamical softening lengths (given in terms of an `equivalent' Plummer softening length) five groups of particles are supported 0=gas,1=halo,2=disk,3=bulge,4=stars */

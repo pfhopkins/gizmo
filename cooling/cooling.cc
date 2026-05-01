@@ -543,8 +543,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             const double hydro_du_code = hydro_du_cgs / UNIT_SPECEGY_IN_CGS;
             const double du_total_code = cell[i].InternalEnergy - u_old_code;
             const double du_rad_code   = du_total_code - hydro_du_code;
-            /* (1) absorb radiative delta into u_e */
-            double u_e_intermediate = u_e_old_code + du_rad_code;
+            /* (1) absorb radiative delta into u_e (always to electrons), plus
+               C4a fraction f_e of hydro dissipation routed to electrons. f_e=0
+               (default) -> only radiative; f_e=1 -> electrons absorb full du. */
+            const double f_e_shock     = All.TwoTemp_ShockElectronFraction;
+            double u_e_intermediate    = u_e_old_code + du_rad_code + f_e_shock * hydro_du_code;
             if(!(u_e_intermediate > 0)) {u_e_intermediate = 1e-30 * (u_e_old_code > 0 ? u_e_old_code : 1.0);}
             const double T_e_before = two_temp_T_e_from_u_e(u_e_intermediate, rho_phys, n_e_phys);
             /* (2) Spitzer analytic relaxation at fixed u_total */
@@ -671,10 +674,16 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     const double u_e_old_cgs_2T = cell[target].u_e_cell * UNIT_SPECEGY_IN_CGS;
     const double n_e_phys_2T    = cell[target].n_e_cell;
     const double hydro_du_2T    = ratefact * cell[target].DtInternalEnergy * dt / nHcgs;
+    /* C4a: fraction of hydro dissipation deposited into electrons. f_e=0 (default,
+       collisionless-shock limit, ions absorb all dissipation) recovers pure
+       (du - hydro_du) for u_e_trial; f_e=1 makes electrons absorb the same du as
+       u_total (single-fluid limit). */
+    const double f_e_2T         = All.TwoTemp_ShockElectronFraction;
+    const double hydro_du_to_e_2T = f_e_2T * hydro_du_2T;
 #endif
     auto cooling_rootfind_function = [&](double du) { /* control the *relative* error on the *change* in u */
 #ifdef TWO_TEMPERATURE_PLASMA
-        double u_e_trial = u_e_old_cgs_2T + (du - hydro_du_2T);
+        double u_e_trial = u_e_old_cgs_2T + (du - hydro_du_2T) + hydro_du_to_e_2T;
         if(!(u_e_trial > 0)) {u_e_trial = (u_e_old_cgs_2T > 0) ? 1e-30 * u_e_old_cgs_2T : 1e-30;}
         double T_e_trial = (2./3.) * rho * u_e_trial / (n_e_phys_2T * BOLTZMANN_CGS);
         if(!(T_e_trial > 0)) {T_e_trial = 1.0;}
