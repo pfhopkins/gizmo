@@ -1,0 +1,37 @@
+{
+  "name": "tier2_mac",
+  "purpose": "Tier-2 Mac smoke test: gmc_cooling with builds A+C. Validates phase5 config, cooling IC download, and C vs A comparison on the physics-heavy problem.",
+  "tier": 2,
+
+  "bench_root": "/Users/phopkins/Documents/work/code/gizmo/gizmo_vscode/benchmarks_step15",
+
+  "platform": "mac",
+  "submit_mode": "local",
+
+  "problems": [
+    {
+      "name": "gmc_cooling",
+      "params_template": "test/gmc_cooling/gmc_cooling.params",
+      "params_overrides": {
+        "TimeMax":           "1.0",
+        "MaxSizeTimestep":   "0.025",
+        "TimeBetSnapshot":   "100.0",
+        "TimeLimitCPU":      "900",
+        "TimeBetStatistics": "0.05"
+      },
+      "sizes": [
+        {"label": "N20k", "N_per_side": null}
+      ]
+    }
+  ],
+
+  "builds": ["A", "C"],
+
+  "rank_thread_grid": [
+    {"nranks": 1, "nthreads": 4}
+  ],
+
+  "min_steps":         10,
+  "warmup_steps":      2,
+  "abort_on_misc_pct": 30.0
+}

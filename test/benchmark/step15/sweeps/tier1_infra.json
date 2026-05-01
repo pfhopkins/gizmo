@@ -1,0 +1,41 @@
+{
+  "name": "tier1_infra",
+  "purpose": "Smoke test: harness end-to-end on Mac with poisson_box. ~minutes, no SLURM.",
+  "tier": 1,
+
+  "bench_root": "/Users/phopkins/Documents/work/code/gizmo/gizmo_vscode/benchmarks_step15",
+
+  "platform": "mac",
+  "submit_mode": "local",
+
+  "problems": [
+    {
+      "name": "poisson_box",
+      "ic_generator": "test/poisson_box/make_poisson_box_ics.py",
+      "params_template": "test/poisson_box/poisson_box.params",
+      "params_overrides": {
+        "TimeMax":              "0.005",
+        "MaxSizeTimestep":      "0.0005",
+        "TimeBetSnapshot":      "10.0",
+        "TimeLimitCPU":         "1800",
+        "SofteningGas":         "1.0",
+        "SofteningGasMaxPhys":  "1.0"
+      },
+      "sizes": [
+        {"label": "32cube", "N_per_side": 32},
+        {"label": "64cube", "N_per_side": 64}
+      ]
+    }
+  ],
+
+  "builds": ["A", "C"],
+
+  "rank_thread_grid": [
+    {"nranks": 1, "nthreads": 4},
+    {"nranks": 2, "nthreads": 2}
+  ],
+
+  "min_steps":         10,
+  "warmup_steps":      2,
+  "abort_on_misc_pct": 20.0
+}

@@ -1,0 +1,63 @@
+{
+  "name": "tier2_vista",
+  "purpose": "Tier-2 Vista bring-up: poisson_box + gmc_cooling with builds A (GPU), B (CPU-Kokkos), C (legacy). Establishes A>B>C baseline on GH200; runs via SLURM gh-dev queue.",
+  "tier": 2,
+
+  "bench_root": "/scratch/01799/phopkins/benchmarks_step15",
+
+  "platform": "vista",
+  "submit_mode": "slurm",
+
+  "slurm": {
+    "partition": "gh-dev",
+    "account":   "TG-NAIRR260139",
+    "walltime":  "00:30:00"
+  },
+
+  "problems": [
+    {
+      "name": "poisson_box",
+      "params_template": "test/poisson_box/poisson_box.params",
+      "params_overrides": {
+        "TimeMax":             "0.005",
+        "MaxSizeTimestep":     "0.0005",
+        "TimeBetSnapshot":     "10.0",
+        "TimeLimitCPU":        "1800",
+        "SofteningGas":        "1.0",
+        "SofteningGasMaxPhys": "1.0"
+      },
+      "sizes": [
+        {"label": "32cube",  "N_per_side": 32},
+        {"label": "64cube",  "N_per_side": 64},
+        {"label": "128cube", "N_per_side": 128}
+      ]
+    },
+    {
+      "name": "gmc_cooling",
+      "params_template": "test/gmc_cooling/gmc_cooling.params",
+      "params_overrides": {
+        "TimeMax":           "1.0",
+        "MaxSizeTimestep":   "0.025",
+        "TimeBetSnapshot":   "100.0",
+        "TimeLimitCPU":      "1800",
+        "TimeBetStatistics": "0.05"
+      },
+      "sizes": [
+        {"label": "N20k", "N_per_side": null}
+      ]
+    }
+  ],
+
+  "builds": ["A", "B", "C"],
+
+  "rank_thread_grid": [
+    {"nranks": 1, "nthreads": 1},
+    {"nranks": 1, "nthreads": 4},
+    {"nranks": 2, "nthreads": 2},
+    {"nranks": 4, "nthreads": 1}
+  ],
+
+  "min_steps":         10,
+  "warmup_steps":      2,
+  "abort_on_misc_pct": 30.0
+}
