@@ -657,6 +657,30 @@
 #endif
 #endif
 
+/* MHD_BATTERY_MECHANISMS: in-situ EMF generation. Bitfield, see Template_Config.sh.
+   bit 0 (=1) Biermann, bit 1 (=2) radiative-ionization, bit 2 (=4) dust TVA, bit 3 (=8) dust-explicit. */
+#ifdef MHD_BATTERY_MECHANISMS
+#ifndef MAGNETIC
+#error "MHD_BATTERY_MECHANISMS requires MAGNETIC"
+#endif
+#if (MHD_BATTERY_MECHANISMS & 8) && !defined(GRAIN_FLUID)
+#error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires GRAIN_FLUID"
+#endif
+#if (MHD_BATTERY_MECHANISMS & ~15)
+#error "MHD_BATTERY_MECHANISMS may only set bits 0-3 (values 1,2,4,8); higher bits are reserved"
+#endif
+/* Biermann discrete-curl form vs EMF-form: default to direct-curl, which avoids
+   discrete-gradient curl noise. Set MHD_BATTERY_BIERMANN_EMF_FORM=1 in Config.sh
+   to override and use the EMF-form (per-cell vector E_Bier through pair-loop curl). */
+#if (MHD_BATTERY_MECHANISMS & 1) && !defined(MHD_BATTERY_BIERMANN_EMF_FORM)
+#define MHD_BATTERY_BIERMANN_DIRECT_CURL
+#endif
+/* Bit 3 implies bit 2 should NOT also be active (would double-count) — bit 3 wins. */
+#if (MHD_BATTERY_MECHANISMS & 8) && (MHD_BATTERY_MECHANISMS & 4)
+#error "MHD_BATTERY_MECHANISMS bits 2 (dust-TVA) and 3 (dust-explicit) are mutually exclusive; pick one"
+#endif
+#endif /* MHD_BATTERY_MECHANISMS */
+
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC
