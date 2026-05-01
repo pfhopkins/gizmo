@@ -20,9 +20,35 @@ exactly what we test.
 
 from gizmo.test import build_and_run_test, get_cooling_tables, default_omp_threads
 from glob import glob
+from pathlib import Path
+import os
 import h5py
 import numpy as np
 import pytest
+
+
+def _ensure_ics_present():
+    """Reuse gmc_cooling's IC and Ewald table via symlink. The IC files are not
+    tracked in git (test/*/*_ics.hdf5 + ewald_spc_table_*.dat are .gitignored
+    per repo convention) and there is no separate two_temperature_ics.hdf5 on
+    the test-IC server, so we link to gmc_cooling's copy. Per Phil's local-
+    test-setup memory: tapir is down, symlink ICs from /gizmo/test/<name>/
+    into the working tree -- never download or switch tests on network failure."""
+    here = Path(__file__).resolve().parent
+    gmc = here.parent / "gmc_cooling"
+    pairs = [
+        (here / "two_temperature_ics.hdf5", gmc / "gmc_cooling_ics.hdf5"),
+        (here / "ewald_spc_table_64_dbl.dat", gmc / "ewald_spc_table_64_dbl.dat"),
+    ]
+    for link, target in pairs:
+        if link.exists() or link.is_symlink():
+            continue
+        if not target.exists():
+            raise FileNotFoundError(
+                f"two_temperature test needs {target} (symlinked as {link.name}) -- "
+                "run the gmc_cooling test once first to fetch its IC file."
+            )
+        os.symlink(target, link)
 
 
 def _read_snapshot_temps(path):
@@ -46,6 +72,7 @@ def test_two_temperature(num_mpi_ranks, num_omp_threads):
     test_name = "two_temperature"
     test_dir = "test/two_temperature"
 
+    _ensure_ics_present()
     get_cooling_tables(test_dir)
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
