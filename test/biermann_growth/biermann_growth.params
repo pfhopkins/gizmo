@@ -1,0 +1,51 @@
+% Biermann battery growth-rate test (sign-anchor for MHD_BATTERY_MECHANISMS)
+%
+% 2D periodic box, B=0 initially, rho ∝ 1+a*sin(2π x/L) (=> grad n_e || x-hat),
+% u   ∝ 1+b*sin(2π y/L) (=> grad T_e || y-hat). The analytic Biermann source
+%   dB_z/dt = -(c k_B / (e n_e)) (grad n_e) × (grad T_e)
+% should produce a B_z field whose early-time slope matches the analytic rate.
+% No cooling: T_e_cell = T_gas, n_e_cell = nHcgs() (fully ionized fallback).
+%
+% Compile-time options:
+%   HYDRO_MESHLESS_FINITE_MASS
+%   BOX_PERIODIC
+%   BOX_SPATIAL_DIMENSION=2
+%   EOS_GAMMA=(5.0/3.0)
+%   MAGNETIC
+%   MHD_BATTERY_MECHANISMS=1
+%   SELFGRAVITY_OFF
+%   GIZMO_USE_NEIGHBOR_LIST_FOR_DENSITY
+%
+InitCondFile                       biermann_growth_ics
+OutputDir                          output
+TimeMax                            0.5
+BoxSize                            1
+TimeBetSnapshot                    0.05
+MaxSizeTimestep                    0.05
+DesNumNgb                          20
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxNumNgbDeviation                 0.1
+ErrTolTheta                        0.7
+DivBcleaningParabolicSigma         0.2
+DivBcleaningHyperbolicSigma        1.0
+ResubmitOn                         0
+ResubmitCommand                    none
+
+% Custom unit system tuned to put the analytic Biermann source at O(1) per
+% code-time while keeping all code-side numbers O(1):
+%   UnitLength = 1 cm   (so k_phys = 2 pi/cm = 6.28 /cm)
+%   UnitMass   = m_p    (so rho_code = nH/cm^-3 to leading order)
+%   UnitVel    = c_s_phys at T=1e6 K, ~1.18e7 cm/s (so sound speed ~ 1 in code)
+% At T=1e6 K with a=b=0.01: dBz/dt_phys ~ -3.4e7 G/s, UnitTime ~ 8.5e-8 s
+% => dBz/dt_code ~ -2.9 G per code time. Half a sound crossing accumulates
+% ~1.5 G — comfortably above double-precision noise.
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.67262178e-24
+UnitVelocity_in_cm_per_s           1.18e7
+UnitMagneticField_in_gauss         1.0
+GravityConstantInternal            0
