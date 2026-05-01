@@ -1,7 +1,7 @@
 /* dm_dispersion_gpu.cc — GPU-accelerated DM velocity dispersion around gas.
  *
  * GPU translation unit: (Kokkos/nvcc_wrapper). Provides disp_density_evaluate_gpu(), called once per h-iteration
- * from disp_density() in dm_dispersion_rkern.cc. Builds a cross-type CSR list
+ * from disp_density() in dm_dispersion.cc. Builds a cross-type CSR list
  * (gas i → DM j, search radius = per-i CellP[i].KernelRadiusDM), runs the
  * accumulation kernel via Kokkos::parallel_for. Read-only on j, so no atomics
  * or ghost writeback are needed.

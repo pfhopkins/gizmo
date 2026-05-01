@@ -10,7 +10,7 @@
 #include "../mesh/ghost_writeback.h"
 #include "galsf_gpu_decls.h"
 
-/*! \file dm_dispersion_rkern
+/*! \file dm_dispersion
  *  \brief smoothing length and velocity dispersion calculation for dark matter particles around gas particles
  *
  *  This file contains a loop modeled on the gas density computation which

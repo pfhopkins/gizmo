@@ -467,7 +467,7 @@ STARFORM_OBJS = galaxy_sf/sfr_eff.o \
                 galaxy_sf/mechanical_fb.o \
                 galaxy_sf/thermal_fb.o \
                 galaxy_sf/radfb_local.o \
-                galaxy_sf/dm_dispersion_rkern.o
+                galaxy_sf/dm_dispersion.o
 
 SINK_OBJS = sinks/sink.o \
             sinks/sink_util.o \
