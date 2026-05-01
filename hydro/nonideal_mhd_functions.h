@@ -16,6 +16,35 @@
 
 #include "hydro_pair_types.h"
 
+/* Shared linear-algebra helper for assembling the comoving electric field E'
+ * (or, in code units, the b_flux) from a current J and its decomposition
+ * along/perpendicular to B^:
+ *   b_flux = -coef_O J  -  coef_H (J x B^)  -  coef_A ((J x B^) x B^)
+ * where coef_{O,H,A} are Ohmic, Hall, and ambipolar coefficients respectively.
+ *
+ * Used by:
+ *   - nonideal_mhd_compute_pair (this file): coef = eta = (c^2/4pi)*alpha
+ *     with J = curl B (the standard MHD current).
+ *   - dust battery (solids/dust_battery_functions.h, next session): coef = eta_dust
+ *     = (c^2/4pi)*alpha_dust with J = J_d (dust current).
+ *
+ * The structural identity between non-ideal MHD and the dust battery is the
+ * key insight from Soliman, Hopkins & Squire 2025 (Eq. 9): both produce the
+ * same E' form, just with different (coef, J) pairs. */
+KOKKOS_INLINE_FUNCTION
+Vec3<double> nonideal_mhd_assemble_bflux(
+    double coef_O, double coef_H, double coef_A,
+    const Vec3<double>& J, const Vec3<double>& bhat)
+{
+    Vec3<double> b_flux = {};
+    Vec3<double> JcrossB = cross(J, bhat);
+    Vec3<double> JcrossBcrossB = cross(JcrossB, bhat);
+    if(fabs(coef_O) > 0) { b_flux += -coef_O * J; }
+    if(fabs(coef_A) > 0) { b_flux +=  coef_A * JcrossBcrossB; }
+    if(fabs(coef_H) > 0) { b_flux += -coef_H * JcrossB; }
+    return b_flux;
+}
+
 KOKKOS_INLINE_FUNCTION
 void nonideal_mhd_compute_pair(
     const struct hydro_data_in &local,
@@ -68,13 +97,7 @@ void nonideal_mhd_compute_pair(
     }
     double Jmag = J_current.norm_sq();
 
-    Vec3<double> b_flux = {};
-    Vec3<double> JcrossB = cross(J_current, bhat);
-    Vec3<double> JcrossBcrossB = cross(JcrossB, bhat);
-    if(fabs(eta_ohmic) > 0) { b_flux += -eta_ohmic * J_current; }
-    if(fabs(eta_ad)    > 0) { b_flux +=  eta_ad    * JcrossBcrossB; }
-    if(fabs(eta_hall)  > 0) { b_flux += -eta_hall  * JcrossB; }
-
+    Vec3<double> b_flux = nonideal_mhd_assemble_bflux(eta_ohmic, eta_hall, eta_ad, J_current, bhat);
     bflux_from_nonideal_effects = cross(Face_Area_Vec, b_flux);
 
     double eta_0 = v_hll * kernel.r * All.cf_atime;
@@ -82,13 +105,8 @@ void nonideal_mhd_compute_pair(
     if(fabs(eta_ohmic) > 0) { q = eta_0/fabs(eta_ohmic); eta_ohmic_0 = eta_0*(0.2 + q)/(0.2 + q + q*q); }
     if(fabs(eta_ad)    > 0) { q = eta_0/fabs(eta_ad);    eta_ad_0    = eta_0*(0.2 + q)/(0.2 + q + q*q); }
     if(fabs(eta_hall)  > 0) { q = eta_0/fabs(eta_hall);  eta_hall_0  = eta_0*(0.2 + q)/(0.2 + q + q*q); if(eta_hall < 0) { eta_hall_0 *= -1; } }
-    Vec3<double> b_flux_direct = {}, db_direct;
-    Vec3<double> JcrossB_direct      = cross(J_direct, bhat);
-    Vec3<double> JcrossBcrossB_direct = cross(JcrossB_direct, bhat);
-    if(fabs(eta_ohmic_0) > 0) { b_flux_direct += -eta_ohmic_0 * J_direct; }
-    if(fabs(eta_ad_0)    > 0) { b_flux_direct +=  eta_ad_0    * JcrossBcrossB_direct; }
-    if(fabs(eta_hall_0)  > 0) { b_flux_direct += -eta_hall_0  * JcrossB_direct; }
-    db_direct = cross(Face_Area_Vec, b_flux_direct);
+    Vec3<double> b_flux_direct = nonideal_mhd_assemble_bflux(eta_ohmic_0, eta_hall_0, eta_ad_0, J_direct, bhat);
+    Vec3<double> db_direct = cross(Face_Area_Vec, b_flux_direct);
 
     double db_dot_direct_diff = 0;
     double F_ddiff_prefac = -Face_Area_Norm * rinv * DMAX(eta_ohmic, fabs(eta_hall) + eta_ad);
