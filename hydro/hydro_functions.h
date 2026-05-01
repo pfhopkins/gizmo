@@ -31,8 +31,7 @@
 #include "hydro_core_sph_functions.h"
 #include "conduction_functions.h"
 #include "viscosity_functions.h"
-#include "nonideal_mhd_functions.h"
-#include "battery_functions.h"
+#include "nonideal_mhd_functions.h"  /* also pulls in battery_functions.h */
 #include "../solids/elastic_stress_tensor_force_functions.h"
 #include "../turb/turbulent_diffusion_functions.h"
 #include "../turb/chimes_turbulent_ion_diffusion_functions.h"
@@ -302,12 +301,15 @@ void hydro_accumulate_neighbor(
                                              Face_Area_Vec, Face_Area_Norm,
                                              tensile_correction_factor, dt_hydrostep, Fluxes);
     Vec3<double> bflux_from_nonideal_effects = {};
+    /* nonideal_mhd_compute_pair handles BOTH classical non-ideal MHD
+       (Ohmic / Hall / ambipolar) and the battery EMF source. The battery
+       contribution is added to bflux_from_nonideal_effects after the
+       diffusive-flux limiters, so the energy hook below accounts for it
+       automatically (and the diffusive limiters do not corrupt the
+       source-EMF physics). See nonideal_mhd_functions.h for details. */
     nonideal_mhd_compute_pair(local, P[j], CellP[j], BPred_j, kernel, rinv,
                               Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                               dt_hydrostep, Fluxes, bflux_from_nonideal_effects);
-#ifdef MHD_BATTERY_MECHANISMS
-    battery_compute_pair(local, CellP[j], Face_Area_Vec, Fluxes);
-#endif
     /* Per-pair physics sub-modules. Functions guard their bodies with the
        relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
     double face_density_for_diffusion = 0;

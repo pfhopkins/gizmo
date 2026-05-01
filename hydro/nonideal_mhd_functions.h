@@ -15,6 +15,7 @@
 #define NONIDEAL_MHD_FUNCTIONS_H
 
 #include "hydro_pair_types.h"
+#include "battery_functions.h"
 
 /* Shared linear-algebra helper for assembling the comoving electric field E'
  * (or, in code units, the b_flux) from a current J and its decomposition
@@ -140,6 +141,26 @@ void nonideal_mhd_compute_pair(
 
     Fluxes.B += bflux_from_nonideal_effects;
 #endif /* MHD_NON_IDEAL */
+
+#ifdef MHD_BATTERY_MECHANISMS
+    /* Battery EMF source: per-cell E values aggregated upstream into
+       cell.E_battery_cell. The pair contribution adds to Fluxes.B AND to
+       bflux_from_nonideal_effects so the energy hook in the caller
+       (out.DtInternalEnergy += dot(BPred, bflux_from_nonideal_effects))
+       picks up dot(B, dB/dt|_battery) automatically -- this enforces total
+       energy conservation between thermal and magnetic by Poynting. The
+       sign of B*dB depends on whether the battery generates or destroys
+       magnetic energy, so the same hook handles both directions correctly.
+
+       8a/N: no-limiter form. 8b/N adds the per-cell physical cap, the
+       per-component MINMOD on E_face, and the battery-CFL timestep cap. */
+    if((local.Mass > 0) && (Pj.Mass > 0) && (dt_hydrostep > 0)) {
+        Vec3<double> bflux_battery = battery_assemble_pair_bflux(
+            local.E_battery_cell, CPj.E_battery_cell, Face_Area_Vec);
+        Fluxes.B += bflux_battery;
+        bflux_from_nonideal_effects += bflux_battery;
+    }
+#endif /* MHD_BATTERY_MECHANISMS */
 }
 
 #endif /* NONIDEAL_MHD_FUNCTIONS_H */
