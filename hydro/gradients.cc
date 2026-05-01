@@ -16,6 +16,7 @@ extern void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *
                                   int, int *, int, int *, int *, int, void *, int);
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "compute_finitevol_faces_functions.h"
+#include "battery_functions.h"
 
 
 
@@ -1041,6 +1042,14 @@ void hydro_gradient_calc(void)
 #if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
             local_slopelimiter(CellP[i].Gradients.Phi,GasGradDataPasser[i].Maxima.Phi,GasGradDataPasser[i].Minima.Phi,a_limiter,h_lim,stol, 0,0,0);
 #endif
+#endif
+
+#ifdef MHD_BATTERY_MECHANISMS
+            /* per-cell battery EMF: gradients of n_e/T_e (and, eventually, RI/dust quantities)
+               are now slope-limited and final, so we can assemble E_battery_cell. The pair
+               loop will read this directly to add cross(Face_Area_Vec, 0.5*(E_i+E_j)) to
+               Fluxes.B (commit 7/N). */
+            battery_assemble_per_cell_emf(i, CellP);
 #endif
 
 
