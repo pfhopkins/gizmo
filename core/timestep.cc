@@ -589,31 +589,20 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
-#ifdef MHD_BATTERY_MECHANISMS
-            /* Battery CFL: limiter Piece 3.
-               The battery EMF source has no internal mechanism for limiting
-               dB/dt -- with B starting from a tiny floor, any nonzero E
-               drives an unbounded relative dB/B per step. We require
-                 |dB/dt|_battery * dt   <=   CourantFac * max(|B|, B_floor).
-               Estimate |dB/dt|_battery ~ |E_battery_cell| / L_particle
-               (curl-of-E magnitude scale, valid up to face-summation
-               geometry factors of O(1)). Both |B| and |E| are in code units
-               here; no explicit cf-factors needed since the timestep is in
-               code time and the consistency of code-unit B and E is set in
-               battery_E_*() / Bfield(). The B_floor 1e-40 (code units) is a
-               numerical regularizer that matches the IC seed convention --
-               way below any physical scale but resolvable by float64. */
-            {
-                double E_battery_mag = sqrt(CellP[p].E_battery_cell.norm_sq());
-                if(E_battery_mag > MIN_REAL_NUMBER)
-                {
-                    double B_mag_code = sqrt(CellP[p].Bfield().norm_sq());
-                    const double B_floor = 1.e-40;  /* code-unit B floor; matches IC seed convention */
-                    double dt_battery = All.CourantFac * DMAX(B_mag_code, B_floor) * L_particle / E_battery_mag;
-                    if(dt_battery < dt) dt = dt_battery;
-                }
-            }
-#endif
+/* No battery-specific CFL: the battery EMF is a SOURCE, not a self-feedback
+   growth mode. Pure source dB/dt = const integrates as a linear ramp -- it
+   has no intrinsic stability constraint. The earlier concerns about "super-
+   step B growth" were about *numerical* runaway from curl-of-gradient noise,
+   which the per-cell |E| cap (battery_E_Biermann, limiter Piece 1) and the
+   per-component MINMOD on E_face (battery_assemble_pair_bflux, limiter Piece
+   2) bound. Once B grows to dynamically-relevant values, the existing
+   MaxSignalVel-driven CFL just below picks up the Alfven speed and limits dt
+   naturally. An attempted Piece-3 CFL based on max(|B|, B_floor)*L/|E| with
+   B_floor = 1e-40 (the IC seed scale) was tried in 8b/N and removed in
+   8d/N: at startup |B| ~ B_floor and any nonzero |E| forced dt to ~1e-21,
+   stalling the integrator on MinSizeTimestep. The fundamental error was
+   conflating the IC seed scale with a physically-meaningful "minimum B we
+   want to resolve" -- the test's whole point is to grow B from the seed. */
 
 #ifdef MHD_NON_IDEAL
             {
