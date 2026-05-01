@@ -3,8 +3,20 @@
  *
  * Body guarded by MHD_NON_IDEAL. Pure i-accumulation into Fluxes.B.
  *
- * Note (from original): not updated for cosmological units. Intended for
- * non-cosmological simulations.
+ * Cosmological units (commit 9/N): predict.cc:268 requires anything added to
+ * Fluxes.B/DtB to be in physical d(B*V)/dt (the integrator does the
+ * conversion via *dt/cf_atime to get the code-unit BPred update). The native
+ * scaling of this routine is cf_atime^3 too large vs physical:
+ *   B_code = a^2 * B_phys                   (cf. bhat = (B_i+B_j)/2 * cf_a2inv)
+ *   Bfield() differences  d_scalar  ~ a^2 * dB_phys
+ *   gradient(Bfield) in code-coord  ~ a^3 * gradB_phys      (extra factor of
+ *     a from x_code = x_phys/a)
+ *   J_current, J_direct, b_flux, db_direct, db_direct_diff:  all  ~ a^3 * physical
+ *   hll_correction_fn(d_scalar_hll, ...) output:  ~ a^2 * physical (because
+ *     d_scalar_hll comes from Bfield differences, NOT gradients).
+ * Internal consistency requires a uniform a-power throughout the limiter; we
+ * lift hll_corr from a^2 to a^3 with one cf_atime, then strip the uniform
+ * a^3 from the final OUT-param with one cf_a3inv. cf_atime=1 bit-identical.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -119,8 +131,15 @@ void nonideal_mhd_compute_pair(
     for(int k=0; k<3; k++) {
         double d_scalar_tmp = d_scalar[k] - grad_dot_x_ij[k];
         double d_scalar_hll = MINMOD(d_scalar[k], d_scalar_tmp);
+        /* hll_correction_fn output is built from d_scalar_hll which carries
+           cf_atime^2 (Bfield difference), but everything else in this loop
+           (b_flux, db_direct, db_direct_diff) carries cf_atime^3. Lift to
+           cf_atime^3 here so the +/MINMOD/sign-check operations below compare
+           like-with-like. The final cf_a3inv at the end of the function then
+           strips the uniform cf_atime^3 from all of them simultaneously. */
         double hll_corr = bfluxmag * hll_correction_fn(d_scalar_hll, 0., 1., eta_max,
-                                                       v_hll, Face_Area_Norm, kernel.r, All.cf_atime);
+                                                       v_hll, Face_Area_Norm, kernel.r, All.cf_atime)
+                          * All.cf_atime;
         double db_corr = bflux_from_nonideal_effects[k] + hll_corr;
         bflux_from_nonideal_effects[k] = MINMOD(1.1 * bflux_from_nonideal_effects[k], db_corr);
         if(hll_corr != 0) {
@@ -139,6 +158,13 @@ void nonideal_mhd_compute_pair(
         bflux_from_nonideal_effects -= (db_dot_direct_diff / db_direct_diff_mag2) * db_direct_diff;
     }
 
+    /* Cosmological units (commit 9/N): all flux contributions inside this
+       block are uniformly cf_atime^3 too large vs physical d(B*V)/dt. Strip
+       the factor here so Fluxes.B and the OUT param bflux_from_nonideal_effects
+       (consumed by the energy hook in hydro_functions.h) are both in physical
+       units, matching the integrator convention asserted at predict.cc:268.
+       cf_atime=1: bit-identical (cf_a3inv=1). */
+    bflux_from_nonideal_effects *= All.cf_a3inv;
     Fluxes.B += bflux_from_nonideal_effects;
 #endif /* MHD_NON_IDEAL */
 
