@@ -520,15 +520,21 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
 
 #ifdef TWO_TEMPERATURE_PLASMA
-        /* C2: Spitzer e-i analytic equilibration. Total InternalEnergy unchanged
-           here; only the electron/ion partition is adjusted. Radiative-cooling
-           routing to T_e arrives in C3. Pure-ionized-H proxy: n_i ~= n_e (a
-           ~7% rate overestimate for primordial H+He; refined in C3 using
-           mu_meanwt from ThermalProperties). */
+        /* C2/C3a: Spitzer e-i analytic equilibration. Total InternalEnergy
+           unchanged here; only the electron/ion partition is adjusted.
+           Radiative-cooling routing to T_e arrives in C3b.
+           n_i (ion number density used in both energy partition and Spitzer
+           rate denominator α = (1 + n_e/n_i) ν_eq) = n_H + n_He = n_H * (1 +
+           yhelium), independent of ionization state since each helium nucleus
+           contributes one heavy particle to the kinetic energy budget. For
+           Σ_s n_s Z_s²/A_s in the Spitzer rate this is exact for fully ionized
+           H, ~5% off for primordial H+He at high T (Z²/A = 4/4 for He²⁺ vs
+           1/1 for H, A weighting matters for partial ionization; deferred). */
         {
             const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
             const double n_e_phys = cell[i].n_e_cell;
-            const double n_i_phys = n_e_phys; /* pure-H proxy; refined in C3 */
+            const double nH_phys  = cell[i].nHcgs();
+            const double n_i_phys = nH_phys * (1.0 + yhelium(i, pp));
             const double dt_phys  = dtime * UNIT_TIME_IN_CGS;
             const double T_e_before = cell[i].T_e_cell;
             const double u_e_new  = two_temp_relax_step(cell[i].InternalEnergy, cell[i].u_e_cell,
