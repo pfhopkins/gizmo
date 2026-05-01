@@ -9,9 +9,10 @@
   "submit_mode": "slurm",
 
   "slurm": {
-    "partition": "gh-dev",
-    "account":   "TG-NAIRR260139",
-    "walltime":  "00:30:00"
+    "partition":  "gh",
+    "account":    "TG-NAIRR260139",
+    "walltime":   "01:00:00",
+    "batch_size": 8
   },
 
   "problems": [

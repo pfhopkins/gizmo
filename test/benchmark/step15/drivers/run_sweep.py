@@ -332,13 +332,22 @@ def main() -> int:
             print(f"  exit={rc}")
             post_run(rd)
     elif submit == "slurm":
-        partition = spec.get("slurm", {}).get("partition", "gh-dev")
-        account   = spec.get("slurm", {}).get("account", "TG-NAIRR260139")
-        walltime  = spec.get("slurm", {}).get("walltime", "00:30:00")
+        partition  = spec.get("slurm", {}).get("partition", "gh-dev")
+        account    = spec.get("slurm", {}).get("account", "TG-NAIRR260139")
+        walltime   = spec.get("slurm", {}).get("walltime", "00:30:00")
+        batch_size = spec.get("slurm", {}).get("batch_size", 0)  # 0 = unlimited
+        submitted = 0
         for rd in run_dirs:
             sb = emit_slurm(rd, partition, account, walltime)
             print(f"  sbatch {sb}")
-            subprocess.call(["sbatch", str(sb)], cwd=rd)
+            rc = subprocess.call(["sbatch", str(sb)], cwd=rd)
+            if rc == 0:
+                submitted += 1
+                if batch_size and submitted >= batch_size:
+                    print(f"[slurm] batch_size={batch_size} reached; stopping submission.")
+                    print(f"[slurm] Re-run with --no-launch to skip already-submitted runs,")
+                    print(f"[slurm] or wait for queue slots and re-run without --only.")
+                    break
     else:
         print(f"ERROR: unknown submit_mode {submit}", file=sys.stderr); return 2
 

@@ -203,15 +203,16 @@ ifeq ($(SYSTYPE),"Vista_CPU")
 ## Same source code path as Vista (Kokkos kernels), just dispatched to OpenMP
 ## CPU threads instead of CUDA. GIZMO_GPU_COMPILER is NOT defined (no nvcc),
 ## so __managed__ All_dev blocks are skipped and All remains the normal extern.
-## Load modules: gcc openmpi hdf5/2.0.0 fftw3 gsl kokkos/4.5.01-omp
+## Load modules: nvidia openmpi hdf5/2.0.0 fftw3 gsl kokkos/4.5.01-omp
 ## (i.e. kokkos/4.5.01-omp NOT kokkos/4.5.01-cuda; the rest matches the CUDA build).
+## mpicxx on Vista wraps nvc++ (NVIDIA HPC SDK), not gcc — no -foffload needed.
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 FC       =  mpif90
 OPTIMIZE = -O2 -Wall
-## OpenMP needed for Kokkos OMP backend; -foffload=disable suppresses gcc 15's
-## auto-enabled nvptx GPU offload (we want pure CPU OpenMP threads here).
-OPTIMIZE += -fopenmp -foffload=disable
+OPTIMIZE += -fopenmp
+GSL_INCL = -I$(TACC_GSL_INC)
+GSL_LIBS = -L$(TACC_GSL_LIB)
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
 CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
