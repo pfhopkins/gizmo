@@ -322,6 +322,9 @@ extern struct gas_cell_data
 #endif
 #ifdef TWO_TEMPERATURE_PLASMA
     MyDouble u_e_cell;                          /*!< specific electron internal energy per gas mass [code units; same units as InternalEnergy]: u_e = (3/2) n_e k_B T_e / rho. Primary state of the 2-T plasma module; evolved by the cooling integrator (Spitzer e-i exchange + electron-side radiative + Compton + PdV/dissipation partition). T_e_cell is the derived cache populated at end of each cooling step. */
+#if (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    MyDouble DtInternalEnergy_FromConduction;   /*!< 2-T plasma bit 2: conduction-only contribution to DtInternalEnergy, accumulated from the hydro pair loop. Routed entirely to u_e in the cooling step (Spitzer-Härm thermal conduction is electron heat). The non-conduction hydro work continues to follow the f_e shock partition. Reset to zero each step alongside DtInternalEnergy. */
+#endif
 #endif
     
     

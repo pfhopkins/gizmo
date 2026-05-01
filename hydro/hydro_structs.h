@@ -216,6 +216,9 @@ struct hydro_data_out
 {
     Vec3<MyDouble> Acc;
     MyDouble DtInternalEnergy;
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    MyDouble DtInternalEnergy_FromConduction; /*!< 2-T plasma bit 2: per-pair conduction contribution to DtInternalEnergy, accumulated separately so the cooling step can route it to u_e instead of u_total. Captured as the pre/post difference of Fluxes.p around conduction_compute_pair. */
+#endif
     MyFloat MaxSignalVel;
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;

@@ -544,10 +544,19 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             const double du_total_code = cell[i].InternalEnergy - u_old_code;
             const double du_rad_code   = du_total_code - hydro_du_code;
             /* (1) absorb radiative delta into u_e (always to electrons), plus
-               C4a fraction f_e of hydro dissipation routed to electrons. f_e=0
-               (default) -> only radiative; f_e=1 -> electrons absorb full du. */
+               C4a fraction f_e of NON-conduction hydro dissipation, plus C4b
+               full conduction contribution (Spitzer-Härm electron heat under
+               TWO_TEMPERATURE_PLASMA bit 2). f_e=0 default -> only radiative
+               + conduction (if bit 2 active); f_e=1 -> electrons absorb full du. */
             const double f_e_shock     = All.TwoTemp_ShockElectronFraction;
+#if (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+            const double cond_du_cgs   = ratefact * cell[i].DtInternalEnergy_FromConduction * dt_phys / nHcgs_local;
+            const double cond_du_code  = cond_du_cgs / UNIT_SPECEGY_IN_CGS;
+            const double noncond_du_code = hydro_du_code - cond_du_code;
+            double u_e_intermediate    = u_e_old_code + du_rad_code + f_e_shock * noncond_du_code + cond_du_code;
+#else
             double u_e_intermediate    = u_e_old_code + du_rad_code + f_e_shock * hydro_du_code;
+#endif
             if(!(u_e_intermediate > 0)) {u_e_intermediate = 1e-30 * (u_e_old_code > 0 ? u_e_old_code : 1.0);}
             const double T_e_before = two_temp_T_e_from_u_e(u_e_intermediate, rho_phys, n_e_phys);
             /* (2) Spitzer analytic relaxation at fixed u_total */
@@ -679,7 +688,18 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
        (du - hydro_du) for u_e_trial; f_e=1 makes electrons absorb the same du as
        u_total (single-fluid limit). */
     const double f_e_2T         = All.TwoTemp_ShockElectronFraction;
+    /* C4b: under bit 2 of TWO_TEMPERATURE_PLASMA, conduction is electron heat
+       (Spitzer-Härm) and routes 100% to u_e regardless of f_e. The non-
+       conduction hydro work continues to follow f_e. Conduction's contribution
+       is captured separately in the hydro pair loop and stored in
+       cell.DtInternalEnergy_FromConduction. */
+#if (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    const double cond_du_2T       = ratefact * cell[target].DtInternalEnergy_FromConduction * dt / nHcgs;
+    const double noncond_du_2T    = hydro_du_2T - cond_du_2T;
+    const double hydro_du_to_e_2T = f_e_2T * noncond_du_2T + cond_du_2T;
+#else
     const double hydro_du_to_e_2T = f_e_2T * hydro_du_2T;
+#endif
 #endif
     auto cooling_rootfind_function = [&](double du) { /* control the *relative* error on the *change* in u */
 #ifdef TWO_TEMPERATURE_PLASMA
