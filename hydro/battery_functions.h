@@ -79,10 +79,18 @@
  * per code-length, so grad_phys = grad_code / UNIT_LENGTH_IN_CGS, and that
  * factor appears once (not twice) since E_phys ∝ grad.
  *
- * Cosmological factors (cf_atime, cf_a3inv): NOT yet applied. The whole
- * nonideal+battery cosmological-units pass is its own deliverable, paired
- * with the long-standing comment in nonideal_mhd_functions.h. Until that
- * lands, callers should restrict tests to cf_atime=1 (non-cosmological).
+ * Cosmological units (commit 10/N): the gradient pass stores
+ *   Gradients.field = (UNIT_LENGTH * cf_atime) * gradient_phys[per cm]
+ * because x_phys = x_code * UNIT_LENGTH * cf_atime, so dividing by inv_L
+ * recovers a value that is still cf_atime times the physical cgs gradient.
+ * Therefore E_phys as computed below is cf_atime * E_actual_cgs. Stripping
+ * the factor with one (1/cf_atime) multiplication at the return turns
+ * E_battery_cell into the physical EMF in code units that the pair-loop
+ * expects, so cross(Face_Area_Vec, E_face) gives physical d(B*V)/dt
+ * matching predict.cc:268's convention. The per-cell cap below is
+ * scale-invariant under this rescaling (both E_phys and E_natural carry the
+ * same cf_atime factor, so the comparison is correct either way), so no
+ * cap-side fix is needed. cf_atime = 1: bit-identical (factor collapses to 1).
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION
@@ -141,10 +149,16 @@ Vec3<double> battery_E_Biermann(int i, struct gas_cell_data *cell, double h_cell
         }
     }
 
-    /* code-unit conversion: dB[code]/dt[code] = -∇_code × E_code with
-       E_code = (C_LIGHT_CODE / UNIT_B_IN_GAUSS) * E_phys */
+    /* code-unit conversion + cosmological-factor strip in one step:
+         to_code         = C_LIGHT_CODE / UNIT_B_IN_GAUSS  (cgs E -> code-unit B)
+         1/All.cf_atime  = strip the cf_atime factor injected by code-coord
+                           gradients (see comment block above the function;
+                           cf_atime=1 collapses this to a no-op).
+       Result is the physical EMF in code units such that
+         cross(Face_Area_Vec, E_face) is in physical d(B*V)/dt (the
+         convention predict.cc:268 demands of any Fluxes.B contribution). */
     const double to_code = C_LIGHT_CODE / UNIT_B_IN_GAUSS;
-    return to_code * E_phys;
+    return (to_code / All.cf_atime) * E_phys;
 #else
     (void)i; (void)cell; (void)h_cell_code;
     return E_zero;
