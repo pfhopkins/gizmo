@@ -122,6 +122,9 @@ KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess,
 #endif
 #define COOLING_FUNCTIONS_OWNER
 #include "cooling_functions.h"
+#ifdef TWO_TEMPERATURE_PLASMA
+#include "two_temperature_functions.h"
+#endif
 KOKKOS_FUNCTION double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
@@ -514,6 +517,36 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
         /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
+#endif
+
+#ifdef TWO_TEMPERATURE_PLASMA
+        /* C2: Spitzer e-i analytic equilibration. Total InternalEnergy unchanged
+           here; only the electron/ion partition is adjusted. Radiative-cooling
+           routing to T_e arrives in C3. Pure-ionized-H proxy: n_i ~= n_e (a
+           ~7% rate overestimate for primordial H+He; refined in C3 using
+           mu_meanwt from ThermalProperties). */
+        {
+            const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+            const double n_e_phys = cell[i].n_e_cell;
+            const double n_i_phys = n_e_phys; /* pure-H proxy; refined in C3 */
+            const double dt_phys  = dtime * UNIT_TIME_IN_CGS;
+            const double T_e_before = cell[i].T_e_cell;
+            const double u_e_new  = two_temp_relax_step(cell[i].InternalEnergy, cell[i].u_e_cell,
+                                                        n_e_phys, n_i_phys, rho_phys, dt_phys);
+            cell[i].u_e_cell = u_e_new;
+            cell[i].T_e_cell = two_temp_T_e_from_u_e(u_e_new, rho_phys, n_e_phys);
+#ifdef GIZMO_DEBUG_TWO_TEMP
+            if(pp[i].ID == 1 || pp[i].ID == 1000) {
+                const double T_total = (2./3.) * rho_phys * cell[i].InternalEnergy * UNIT_SPECEGY_IN_CGS
+                                     / ((n_e_phys + n_i_phys) * BOLTZMANN_CGS);
+                const double nu_eq = two_temp_nu_eq(T_e_before, n_e_phys);
+                const double alpha_dt = (1. + n_e_phys/n_i_phys) * nu_eq * dt_phys;
+                printf("[2T_DIAG] t=%.6e ID=%llu n_e=%.3e T_total=%.3e T_e_before=%.3e T_e_after=%.3e alpha*dt=%.3e\n",
+                       All.Time, (unsigned long long)pp[i].ID, n_e_phys, T_total, T_e_before, cell[i].T_e_cell, alpha_dt);
+                fflush(stdout);
+            }
+#endif
+        }
 #endif
 
 #if !defined(GALSF_ISMDUSTCHEM_MODEL)

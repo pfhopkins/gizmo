@@ -199,6 +199,9 @@ struct global_data_all_processes
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
 #endif
+#ifdef TWO_TEMPERATURE_PLASMA
+  double TwoTemp_InitialTeOverTgas; /*!< initial T_e / T_gas ratio used at the LTE seed in eos.cc on the first call (when u_e_cell == 0). Default 1.0 (LTE start). Set to !=1 in the param file to start in a 2-T initial state, e.g. for the 2T_relaxation regression test (electrons cold, ions hot, watch the analytic Spitzer relaxation toward T_eq). */
+#endif
 
   /* gravitational and hydrodynamical softening lengths (given in terms of an `equivalent' Plummer softening length) five groups of particles are supported 0=gas,1=halo,2=disk,3=bulge,4=stars */
     double MinGasKernelRadiusFractional; /*!< minimim allowed gas kernel length relative to force softening (what you actually set) */

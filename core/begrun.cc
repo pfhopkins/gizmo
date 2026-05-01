@@ -276,6 +276,9 @@ void begrun(void)
         All.ActiveFractionForMGSweep = all.ActiveFractionForMGSweep;
         All.Flag_SkipMGSolve = 0; /* first timestep always runs the MG global solve */
 #endif
+#ifdef TWO_TEMPERATURE_PLASMA
+        All.TwoTemp_InitialTeOverTgas = all.TwoTemp_InitialTeOverTgas;
+#endif
 
         All.OutputListOn = all.OutputListOn;
         All.CourantFac = all.CourantFac;
@@ -1088,6 +1091,13 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "ActiveFractionForMGSweep");
       strcpy(alternate_tag[nt], "MGSweep_ActiveFraction");
       addr[nt] = &All.ActiveFractionForMGSweep;
+      id[nt++] = REAL;
+#endif
+
+#ifdef TWO_TEMPERATURE_PLASMA
+      strcpy(tag[nt], "TwoTemp_InitialTeOverTgas");
+      strcpy(alternate_tag[nt], "TwoTemp_InitTeRatio");
+      addr[nt] = &All.TwoTemp_InitialTeOverTgas;
       id[nt++] = REAL;
 #endif
 
@@ -2426,6 +2436,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom; increase if LET unpack overflows) (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
+#endif
+#ifdef TWO_TEMPERATURE_PLASMA
+                if(strcmp("TwoTemp_InitialTeOverTgas",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to LTE seed (T_e = T_gas) at startup (=%g) \n",tag[i],alternate_tag[i],All.TwoTemp_InitialTeOverTgas); continue;}
 #endif
                 if(strcmp("MaxKernelRadius",tag[i])==0) {*((double *)addr[i])=MAX_REAL_NUMBER; printf("Tag %s (%s) not set in parameter file: defaulting to assume no maximum (=%g) \n",tag[i],alternate_tag[i],All.MaxKernelRadius); continue;}
                 if(strcmp("GravityConstantInternal",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to calculating in terms of other specified units if needed (=%g) \n",tag[i],alternate_tag[i],All.G); continue;}

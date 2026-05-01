@@ -138,17 +138,21 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #else
     cell[i].n_e_cell = cell[i].nHcgs(); /* no chemistry tracked: assume fully ionized */
 #endif
-    /* electron-temperature cache. C1 (no 2-T integrator yet): T_e_cell tracks
-       T_gas every step (slave behavior, identical to battery-only path). When
-       the C2 integrator lands, this write will be gated to a one-time LTE seed
-       (when u_e_cell == 0) and the cooling integrator will own T_e_cell + u_e_cell. */
-    cell[i].T_e_cell = temp;
+    /* electron-temperature cache. Battery-only (no TWO_TEMPERATURE_PLASMA):
+       T_e == T_gas every step. Under TWO_TEMPERATURE_PLASMA: this is the
+       one-time LTE seed (initial T_e = TwoTemp_InitialTeOverTgas * T_gas);
+       after the first cooling step the integrator owns u_e_cell + T_e_cell
+       and we leave them alone here. */
 #ifdef TWO_TEMPERATURE_PLASMA
-    {
+    if(!(cell[i].u_e_cell > 0)) {
+        const double T_e_init = temp * All.TwoTemp_InitialTeOverTgas;
         const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
-        const double u_e_phys = 1.5 * cell[i].n_e_cell * BOLTZMANN_CGS * temp / rho_phys; /* erg/g */
+        const double u_e_phys = 1.5 * cell[i].n_e_cell * BOLTZMANN_CGS * T_e_init / rho_phys; /* erg/g */
+        cell[i].T_e_cell = T_e_init;
         cell[i].u_e_cell = u_e_phys / UNIT_SPECEGY_IN_CGS;
     }
+#else
+    cell[i].T_e_cell = temp;
 #endif
 #endif
 
