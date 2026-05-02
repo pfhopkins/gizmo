@@ -86,11 +86,11 @@ extern struct global_data_all_processes All;
 /* Box-size shorthands.  Always macros reading from All (= All_dev managed
    mirror inside GPU TUs) so the same code compiles for host + device with
    no extern globals to keep in sync.  Step 5 Phase E0 (2026-04-30) — was
-   previously CPU-only externs synced from begrun.cc. */
-#ifdef BOX_PERIODIC
+   previously CPU-only externs synced from begrun.cc.
+   All.BoxSize is always a valid field (set from the param file even for
+   non-periodic runs), so boxSize/boxHalf are unconditionally defined. */
 #define boxSize (All.BoxSize)
 #define boxHalf (0.5*All.BoxSize)
-#endif
 #ifdef BOX_LONG_X
 #define boxSize_X (All.BoxSize * ((MyDouble)(BOX_LONG_X)))
 #define boxHalf_X (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_X)))

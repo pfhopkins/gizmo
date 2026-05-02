@@ -16,6 +16,7 @@
 #include "../mesh/kernel.h"
 
 #include "../declarations/gpu_numeric_macros.h"
+#include "composition_registry.h"
 
 /*! Routines for gas equation-of-state terms (collects things like calculation of gas pressure)
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -252,24 +253,38 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     cell[i].Temperature = eos_out.temp;
 #endif
 
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    /* Per-particle solid-EOS dispatch keyed on CompositionType. With a
+       single solid-EOS flag enabled, the switch reduces to one case and
+       is bit-identical to pre-17c. With multiple solid-EOS flags enabled
+       (post-17d), eos_branch_of() partitions the CompositionType ID
+       space; see eos/composition_registry.h. */
+    switch(eos_branch_of(cell[i].CompositionType)) {
 #ifdef EOS_TILLOTSON
-    press = cell[i].calculate_tillotson_eos(); soundspeed = cell[i].SoundSpeed;
+        case EOS_BRANCH_TILLOTSON:
+            press = cell[i].calculate_tillotson_eos();
+            soundspeed = cell[i].SoundSpeed;
+            break;
 #endif
-
 #ifdef EOS_ANEOS
-    {
-        int aneos_mat = cell[i].CompositionType;
-        double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
-        double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
-        double aneos_T_guess = cell[i].Temperature;
-        double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
-        int aneos_phase;
-        aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                      &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
-        press      = aneos_P / UNIT_PRESSURE_IN_CGS;
-        soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
-        cell[i].Temperature = aneos_T_guess;
-        cell[i].PhaseID = aneos_phase;
+        case EOS_BRANCH_ANEOS: {
+            int aneos_mat = aneos_subindex(cell[i].CompositionType);
+            double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
+            double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
+            double aneos_T_guess = cell[i].Temperature;
+            double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
+            int aneos_phase;
+            aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
+                          &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+            press      = aneos_P / UNIT_PRESSURE_IN_CGS;
+            soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
+            cell[i].Temperature = aneos_T_guess;
+            cell[i].PhaseID = aneos_phase;
+            break;
+        }
+#endif
+        default:
+            break;
     }
 #endif
 
