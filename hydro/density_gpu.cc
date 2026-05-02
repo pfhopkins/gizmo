@@ -336,6 +336,9 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 #if defined(GRAIN_LORENTZFORCE)
                 kp[ii].Gas_B = out.Gas_B;
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+                for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { kp[ii].Gas_VolatileSpecies[kv] = out.Gas_VolatileSpecies[kv]; }
+#endif
             }
 #endif
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES

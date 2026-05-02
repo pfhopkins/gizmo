@@ -1080,6 +1080,13 @@ struct ghost_delta_grainbackrx_t {
     MyDouble dVelPred[3];
     MyFloat  ddp[3];
     MyFloat  Grain_AccelTimeMin;   /* absolute value (min-apply at home) */
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    /* Phase 17b COND/SUBL: additive deltas for the gas-side fields the
+     * grain_backrx pair kernel mutates under (GRAIN_EVOLUTION & 96). */
+    MyFloat  dVolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES];
+    MyDouble dInternalEnergy;
+    MyDouble dInternalEnergyPred;
+#endif
 };
 
 struct ghost_snap_grainbackrx_t {
@@ -1087,6 +1094,11 @@ struct ghost_snap_grainbackrx_t {
     MyDouble VelPred[3];
     MyFloat  dp[3];
     MyFloat  Grain_AccelTimeMin;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    MyFloat  VolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES];
+    MyDouble InternalEnergy;
+    MyDouble InternalEnergyPred;
+#endif
 };
 
 static struct ghost_snap_grainbackrx_t *grainbackrx_snap = NULL;
@@ -1108,6 +1120,11 @@ void ghost_writeback_zero_grainbackrx(void)
         s.VelPred[0] = CellP[j].VelPred[0]; s.VelPred[1] = CellP[j].VelPred[1]; s.VelPred[2] = CellP[j].VelPred[2];
         s.dp[0] = P[j].dp[0]; s.dp[1] = P[j].dp[1]; s.dp[2] = P[j].dp[2];
         s.Grain_AccelTimeMin = P[j].Grain_AccelTimeMin;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+        for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { s.VolatileSpecies[kv] = CellP[j].VolatileSpecies[kv]; }
+        s.InternalEnergy     = CellP[j].InternalEnergy;
+        s.InternalEnergyPred = CellP[j].InternalEnergyPred;
+#endif
     }
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
 }
@@ -1133,6 +1150,12 @@ void ghost_writeback_grainbackrx(void)
         auto& s = grainbackrx_snap[g];
         int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]
                      || P[j].Grain_AccelTimeMin != s.Grain_AccelTimeMin);
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+        if(!modified) {
+            if(CellP[j].InternalEnergy != s.InternalEnergy) { modified = 1; }
+            else { for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { if(CellP[j].VolatileSpecies[kv] != s.VolatileSpecies[kv]) { modified = 1; break; } } }
+        }
+#endif
         if(modified) delta_send_count[home_rank[g]]++;
     }
 
@@ -1151,6 +1174,12 @@ void ghost_writeback_grainbackrx(void)
         auto& s = grainbackrx_snap[g];
         int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]
                      || P[j].Grain_AccelTimeMin != s.Grain_AccelTimeMin);
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+        if(!modified) {
+            if(CellP[j].InternalEnergy != s.InternalEnergy) { modified = 1; }
+            else { for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { if(CellP[j].VolatileSpecies[kv] != s.VolatileSpecies[kv]) { modified = 1; break; } } }
+        }
+#endif
         if(!modified) continue;
         int task = home_rank[g];
         int off  = pack_offset[task]++;
@@ -1165,6 +1194,11 @@ void ghost_writeback_grainbackrx(void)
         send_buf[off].ddp[1] = P[j].dp[1] - s.dp[1];
         send_buf[off].ddp[2] = P[j].dp[2] - s.dp[2];
         send_buf[off].Grain_AccelTimeMin = P[j].Grain_AccelTimeMin; /* absolute (min-apply) */
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+        for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { send_buf[off].dVolatileSpecies[kv] = CellP[j].VolatileSpecies[kv] - s.VolatileSpecies[kv]; }
+        send_buf[off].dInternalEnergy     = CellP[j].InternalEnergy     - s.InternalEnergy;
+        send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
+#endif
     }
     free(pack_offset);
 
@@ -1208,6 +1242,11 @@ void ghost_writeback_grainbackrx(void)
         if(recv_buf[d].Grain_AccelTimeMin < P[idx].Grain_AccelTimeMin) {
             P[idx].Grain_AccelTimeMin = recv_buf[d].Grain_AccelTimeMin;
         }
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+        for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { CellP[idx].VolatileSpecies[kv] += recv_buf[d].dVolatileSpecies[kv]; }
+        CellP[idx].InternalEnergy     += recv_buf[d].dInternalEnergy;
+        CellP[idx].InternalEnergyPred += recv_buf[d].dInternalEnergyPred;
+#endif
     }
 
     if(ThisTask == 0 && (total_send > 0 || total_recv > 0)) {

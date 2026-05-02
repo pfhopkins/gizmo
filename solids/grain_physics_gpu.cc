@@ -48,6 +48,10 @@ static void grain_backrx_local_fill(int i,
     loc->Grain_DeltaMomentum = P_host[i].Grain_DeltaMomentum;
     loc->Gas_Density = P_host[i].Gas_Density;
     loc->Grain_AccelTimeMin = P_host[i].Grain_AccelTimeMin;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { loc->Grain_DeltaVolatileMass[kv] = P_host[i].Grain_DeltaVolatileMass[kv]; }
+    loc->Grain_DeltaInternalEnergyHeating = P_host[i].Grain_DeltaInternalEnergyHeating;
+#endif
 }
 #endif
 

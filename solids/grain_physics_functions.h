@@ -65,6 +65,13 @@ struct GrainBackrxLocalIn
     Vec3<MyFloat> Grain_DeltaMomentum;
     MyFloat Gas_Density;
     MyFloat Grain_AccelTimeMin;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    /* Phase 17b grain->gas back-reaction accumulators for COND/SUBL.
+     * Distributed to gas neighbors with the same -wk_i/gas_rho weight as
+     * Grain_DeltaMomentum (see grain_backrx_pair_kernel). */
+    MyFloat Grain_DeltaVolatileMass[GRAIN_NUM_VOLATILE_SPECIES];
+    MyFloat Grain_DeltaInternalEnergyHeating;
+#endif
 };
 
 /* No per-source output (matches the CPU OUTPUT_STRUCT_NAME which is empty). */
@@ -115,6 +122,39 @@ static void grain_backrx_pair_kernel(
         2.0 * All.ErrTolIntAccuracy * pgsize * All.cf_atime * All.cf_atime / sqrt(dv2 + MIN_REAL_NUMBER),
         4.0 * (double)local.Grain_AccelTimeMin);
     Kokkos::atomic_min(&P[j].Grain_AccelTimeMin, (MyFloat)taccel_cand);
+
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    /* Phase 17b: scatter COND/SUBL back-reaction. Same kernel weight `wt`
+     * as the momentum scatter so mass and energy are deposited consistently
+     * with the existing grain_backrx convention.
+     *
+     * Distribution of a per-grain quantity Q across gas neighbors:
+     *   ΔQ_in_cell_j = Q × wk_ij × Mass_j / Gas_Density
+     * Gas_Density is the kernel-weighted Σ wk Mass that defined the local
+     * density on the grain, so this partitions Q exactly across neighbors.
+     *
+     * For volatile mass (mass fraction = mass / Mass_j):
+     *   Δ(VolatileSpecies[k]) = ΔM_volatile_in_cell_j / Mass_j
+     *                         = ΔM_grain × wk_ij / Gas_Density
+     *                         = -wt × Grain_DeltaVolatileMass[k]
+     *   Sign: Grain_DeltaVolatileMass[k] > 0 (COND) => gas mass-fraction
+     *   DROPS, since wt < 0.
+     *
+     * For specific internal energy:
+     *   Δu_j = ΔE_in_cell_j / Mass_j = -wt × Grain_DeltaInternalEnergyHeating.
+     *   Sign: Grain_DeltaInternalEnergyHeating > 0 (COND latent release) =>
+     *   gas u INCREASES.
+     *
+     * Both atomic-add to CellP[j] like the momentum scatter does. */
+    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) {
+        Kokkos::atomic_add(&CellP[j].VolatileSpecies[kv], (MyFloat)(wt * (double)local.Grain_DeltaVolatileMass[kv]));
+    }
+    if(local.Grain_DeltaInternalEnergyHeating != 0) {
+        double du = -wt * (double)local.Grain_DeltaInternalEnergyHeating;
+        Kokkos::atomic_add(&CellP[j].InternalEnergy,     (MyDouble)du);
+        Kokkos::atomic_add(&CellP[j].InternalEnergyPred, (MyDouble)du);
+    }
+#endif
 }
 
 #endif /* GRAIN_FLUID && GRAIN_BACKREACTION */

@@ -175,19 +175,43 @@ inline void grain_evolution_apply_sputter(int i, struct particle_data *P, double
 }
 #endif /* GRAIN_EVOLUTION & (8|16) */
 
+#if (GRAIN_EVOLUTION & (32|64))
+/* Bits 5+6 COND+SUBL: condensation/sublimation of volatile species (H2O,
+ * CO, CO2 ices) on grain mantles, with full mass + latent-heat back-
+ * reaction to the gas. Same operator handles both directions per species
+ * via the sign of the per-species net rate.
+ *
+ * Sign convention on the accumulators (zeroed at top of grain_drag_kernel,
+ * scattered to gas neighbors by the extended grain_backrx_pair_kernel):
+ *   Grain_DeltaVolatileMass[k] > 0 -> COND (mass leaves gas, joins grain)
+ *   Grain_DeltaVolatileMass[k] < 0 -> SUBL (mass leaves grain, joins gas)
+ *   Grain_DeltaInternalEnergyHeating > 0 -> COND latent release heats gas
+ *   Grain_DeltaInternalEnergyHeating < 0 -> SUBL latent absorption cools gas
+ *
+ * C5a is the no-op scaffold -- the operator computes nothing but the
+ * structural plumbing (cache field, accumulators, ghost writeback) is in
+ * place. C5b adds the COND physics; C6 adds the SUBL branch. */
+KOKKOS_INLINE_FUNCTION
+inline void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
+{
+    (void)i; (void)P; (void)dt;
+}
+#endif
+
 /* Per-superparticle local step. Dispatches to the active local-operator bits
- * (3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL). */
+ * (3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL). All operators run inside
+ * grain_drag_kernel (solids/grain_drag_gpu.cc) and any back-reaction they
+ * generate piggybacks on the existing GRAIN_BACKREACTION ghost-writeback
+ * infrastructure (mesh/ghost_writeback.cc::ghost_writeback_grainbackrx,
+ * extended for the new fields). No parallel pass. */
 KOKKOS_INLINE_FUNCTION
 inline void grain_evolution_local_step(int i, struct particle_data *P, double dt)
 {
 #if (GRAIN_EVOLUTION & (8|16))
     grain_evolution_apply_sputter(i, P, dt);
 #endif
-#if (GRAIN_EVOLUTION & 32)
-    /* C5: bit 5 COND (condensation/mantle growth from VolatileSpecies). */
-#endif
-#if (GRAIN_EVOLUTION & 64)
-    /* C6: bit 6 SUBL (sublimation/desorption, inverse of bit 5). */
+#if (GRAIN_EVOLUTION & (32|64))
+    grain_evolution_apply_cond_subl(i, P, dt);
 #endif
 #if !(GRAIN_EVOLUTION & (8|16|32|64))
     (void)i; (void)P; (void)dt;

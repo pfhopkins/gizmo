@@ -76,6 +76,10 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 #if defined(GRAIN_BACKREACTION)
     pp[idx].Grain_DeltaMomentum = {};
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { pp[idx].Grain_DeltaVolatileMass[kv] = 0; }
+    pp[idx].Grain_DeltaInternalEnergyHeating = 0;
+#endif
 
     double dt = get_particle_timestep_in_physical(idx, pp);
     double vgas_mag = sqrt((pp[idx].Gas_Velocity - pp[idx].Vel).norm_sq()) / All.cf_atime;
@@ -296,6 +300,14 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
          * (sputter shrinkage; later: condensation/sublimation mass exchange). */
         P_host[ii].Mass       = compact_P[j].Mass;
         P_host[ii].Grain_Size = compact_P[j].Grain_Size;
+#if (GRAIN_EVOLUTION & (32|64))
+        /* COND/SUBL operator may also update grain Composition[] and write
+         * back-reaction accumulators (scattered to gas neighbors by the
+         * grain_backrx pair kernel below). */
+        for(int s = 0; s < GRAIN_NUM_SPECIES; s++) { P_host[ii].Composition[s] = compact_P[j].Composition[s]; }
+        for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { P_host[ii].Grain_DeltaVolatileMass[kv] = compact_P[j].Grain_DeltaVolatileMass[kv]; }
+        P_host[ii].Grain_DeltaInternalEnergyHeating = compact_P[j].Grain_DeltaInternalEnergyHeating;
+#endif
 #endif
     }
 

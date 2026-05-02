@@ -1218,6 +1218,9 @@
 #if (GRAIN_EVOLUTION & 7) && !defined(GRAIN_COLLISIONS)
 #error "GRAIN_EVOLUTION pairwise bits (1|2|4 = COAG/FRAG/SHAT) require GRAIN_COLLISIONS for the neighbor-loop scaffolding."
 #endif
+#if (GRAIN_EVOLUTION & (32|64)) && !defined(GRAIN_BACKREACTION)
+#error "GRAIN_EVOLUTION condensation/sublimation bits (32|64 = COND/SUBL) require GRAIN_BACKREACTION -- they piggyback on the same kernel-weighted grain->gas writeback infrastructure (no parallel ghost-writeback path is built)."
+#endif
 /* Composition split: 3 refractory (silicate, carbon, Fe — match ISMDustChem) + 3 ice (H2O, CO, CO2). */
 #define GRAIN_NUM_REFRACTORY_SPECIES 3
 #define GRAIN_NUM_ICE_SPECIES        3

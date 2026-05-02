@@ -88,6 +88,9 @@ struct density_evaluate_data_out_
 #if defined(GRAIN_LORENTZFORCE)
     Vec3<MyDouble> Gas_B;
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    MyDouble Gas_VolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES];
+#endif
 #endif
 #ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
     Vec3<MyDouble> GradH_numer;
@@ -113,6 +116,11 @@ void density_evaluate_extra_physics_gas(struct density_evaluate_data_in_ *local,
             out->GasVel += kernel->mj_wk * (local->Vel - kernel->dv);
 #if defined(GRAIN_LORENTZFORCE)
             out->Gas_B += kernel->wk * CellP[j].BPred;
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+            for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) {
+                out->Gas_VolatileSpecies[kv] += kernel->mj_wk * CellP[j].VolatileSpecies[kv];
+            }
 #endif
         }
 #endif
