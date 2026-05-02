@@ -192,37 +192,60 @@ struct sh25_plasma_state build_plasma_state_for_battery(int i, struct gas_cell_d
 
 /* --------------------------------------------------------------------------
  * delta a_dg : differential acceleration on dust vs gas from radiation
- * pressure, summed over RT bands. Uses rt_kappa_adaptive_IR_band with the
- * dust/gas-only flag to separate dust opacity from gas opacity.
+ * pressure, summed over RT bands.
  *   delta_a_d,g = sum_k [(kappa_dust[k] - kappa_gas[k]) * F_rad[k] / c]
- * Returns vector (cgs cm/s^2). Approximate for ionizing bands (where
- * kappa is dominated by gas / HI photoionization, dust contribution small)
- * and for non-ionizing bands (where dust dominates). The rt_kappa helper
- * already encodes this band-by-band split.
+ * Per-band gas/dust split:
+ *   - IR band (RT_FREQ_BIN_INFRARED): use rt_kappa_adaptive_IR_band's
+ *     existing dust/gas-only separation (the ONLY band for which the IR
+ *     helper applies).
+ *   - Photoionizing bands (RT_FREQ_BIN_H0, He0, He1, He2): assume
+ *     kappa_total ~ kappa_gas (HI/HeI/HeII photoionization dominates), so
+ *     kappa_dust - kappa_gas ~ -kappa_total.
+ *   - All other bands: assume kappa_total ~ kappa_dust, so
+ *     kappa_dust - kappa_gas ~ +kappa_total.
+ * cell.Rad_Kappa[k] holds the total per-band kappa in code units, so we use
+ * that as kappa_total for the non-IR cases without redundantly calling rt_kappa.
+ * Returns vector (cgs cm/s^2).
  * -------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
 Vec3<double> dust_battery_delta_a_dg(int i, struct gas_cell_data *cell, struct particle_data *pp)
 {
     Vec3<double> da = {0,0,0};
 #if defined(RT_EVOLVE_FLUX) && defined(RADTRANSFER)
+    if(pp[i].Mass <= 0 || cell[i].Density <= 0) return da;
     /* F_rad in physical cgs: cell.Rad_Flux is stored as F * V_phys in code
        units; vol_inv = Density * cf_a3inv / Mass = 1/V_phys_code. */
-    if(pp[i].Mass <= 0 || cell[i].Density <= 0) return da;
     const double vol_inv_code = cell[i].Density * All.cf_a3inv / pp[i].Mass;
     const double rad_flux_to_cgs = vol_inv_code * UNIT_FLUX_IN_CGS;
-    const double Tdust = cell[i].Dust_Temperature;
-    const double Trad  = cell[i].Radiation_Temperature;
+    const double kappa_code_to_cgs = (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS) / UNIT_MASS_IN_CGS;
+
     for(int k = 0; k < N_RT_FREQ_BINS; k++) {
-        /* Total kappa and gas-only kappa for this band; difference = dust-only. */
-        const double kappa_total_code = rt_kappa_adaptive_IR_band(i, Tdust, Trad,  0,  0, pp, cell);
-        const double kappa_gas_code   = rt_kappa_adaptive_IR_band(i, Tdust, Trad, -1, -1, pp, cell);
-        const double kappa_dust_code  = DMAX(0.0, kappa_total_code - kappa_gas_code);
-        /* convert kappa (code = cm^2 / [code mass]) to cgs cm^2/g */
-        const double kappa_dust_cgs = kappa_dust_code * (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS) / UNIT_MASS_IN_CGS;
-        const double kappa_gas_cgs  = kappa_gas_code  * (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS) / UNIT_MASS_IN_CGS;
-        const double kappa_diff = kappa_dust_cgs - kappa_gas_cgs;
+        double kappa_diff_cgs = 0; /* kappa_dust - kappa_gas, cm^2/g */
+#ifdef RT_INFRARED
+        if(k == RT_FREQ_BIN_INFRARED) {
+            /* IR: use the dust/gas separation in rt_kappa_adaptive_IR_band */
+            const double Tdust = cell[i].Dust_Temperature;
+            const double Trad  = cell[i].Radiation_Temperature;
+            const double kappa_total_code = rt_kappa_adaptive_IR_band(i, Tdust, Trad,  0,  0, pp, cell);
+            const double kappa_gas_code   = rt_kappa_adaptive_IR_band(i, Tdust, Trad, -1, -1, pp, cell);
+            const double kappa_dust_code  = DMAX(0.0, kappa_total_code - kappa_gas_code);
+            kappa_diff_cgs = (kappa_dust_code - kappa_gas_code) * kappa_code_to_cgs;
+        } else
+#endif
+        {
+            /* Non-IR: ionizing bands ~ all gas; everything else ~ all dust */
+            const double kappa_total_cgs = cell[i].Rad_Kappa[k] * kappa_code_to_cgs;
+            int is_ionizing = 0;
+#ifdef RT_CHEM_PHOTOION
+            if(k == RT_FREQ_BIN_H0) is_ionizing = 1;
+#ifdef RT_CHEM_PHOTOION_HE
+            if(k == RT_FREQ_BIN_He0 || k == RT_FREQ_BIN_He1 || k == RT_FREQ_BIN_He2) is_ionizing = 1;
+#endif
+#endif
+            kappa_diff_cgs = is_ionizing ? -kappa_total_cgs : +kappa_total_cgs;
+        }
         for(int kd = 0; kd < 3; kd++) {
-            da[kd] += kappa_diff * cell[i].Rad_Flux[k][kd] * rad_flux_to_cgs / C_LIGHT_CGS;
+            da[kd] += kappa_diff_cgs * cell[i].Rad_Flux[k][kd] * rad_flux_to_cgs / C_LIGHT_CGS;
         }
     }
 #else
