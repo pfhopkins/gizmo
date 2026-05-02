@@ -153,9 +153,37 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
     }
 #endif
 
-    /* C9 (bit 2) SHAT branch goes here. For C8 only the FRAG branch
-     * above is implemented; v >= v_shat collisions in this commit
-     * silently no-op (no SHAT physics yet). */
+#if (GRAIN_EVOLUTION & 4)
+    /* Bit 2 SHAT: high-velocity collision (|dv| >= v_shat). Both grains
+     * shatter into many small fragments. In the monodisperse super-
+     * particle representation, the fragments stay in the same SP at
+     * smaller size (mass-conservative; N_phys grows implicitly through
+     * the M / a^3 ratio).
+     *
+     * Shattering efficiency model: ramp linearly from 0.5 at |dv| = v_shat
+     * up to a hard cap at 0.9 (cannot shrink the grain to zero in a
+     * single event):
+     *   shat_eff = min(0.9, 0.5 * |dv| / v_shat)
+     *   shat_factor = (1 - shat_eff)^(1/3)
+     * The FRAG -> SHAT transition is intentionally discontinuous at
+     * v_shat (FRAG saturates at frag_eff = 0.1; SHAT starts at
+     * shat_eff = 0.5) -- this matches the bin-based ISMDustChem model
+     * where v_shat is a real threshold, not a smooth crossover. */
+    if(dv_mag >= ep.v_shat) {
+        double shat_eff = 0.5 * dv_mag / ep.v_shat;
+        if(shat_eff > 0.9) { shat_eff = 0.9; }
+        double shat_factor = pow(1.0 - shat_eff, 1.0/3.0);
+        out.Grain_DeltaErosionFrac *= shat_factor;
+        MyFloat old_a, new_a, returned_a;
+        do {
+            old_a = Kokkos::atomic_load(&P[j].Grain_Size);
+            if(old_a <= 0) { break; }
+            new_a = (MyFloat)((double)old_a * shat_factor);
+            returned_a = Kokkos::atomic_compare_exchange(&P[j].Grain_Size, old_a, new_a);
+        } while(returned_a != old_a);
+        return;
+    }
+#endif
     (void)dv_mag; (void)ep;
 }
 #endif
