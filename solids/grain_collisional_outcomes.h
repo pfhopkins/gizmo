@@ -124,6 +124,52 @@ inline double grain_outcomes_v_coag_dominik(double a_i, double a_j,
  * gives da/dt in cm/Gyr (this is the conversion the caller applies; the
  * polynomial returns the raw fit value). Coefficients verbatim from the
  * prior inline definitions in update_dust_sputtering. */
+/* Per-ice-species microphysics for Phase 17b condensation/sublimation
+ * (bits 5/6 of GRAIN_EVOLUTION). Indexed by ice slot:
+ *   ICE_INDEX_H2O = 0, ICE_INDEX_CO = 1, ICE_INDEX_CO2 = 2.
+ * Refractory vapor (volatile species index 3 in VolatileSpecies[]) is not
+ * handled here -- there is no source for it yet in Phase 17b (sputter->
+ * vapor coupling is reserved for a later commit). Numerical values from
+ * standard cosmochemistry references (Sandford+1988; Fraser+2001;
+ * Burke+2010); these match conventions used in protoplanetary-disk
+ * chemistry codes. */
+enum GrainEvolutionIceIndex {
+    GRAIN_EVOLUTION_ICE_H2O = 0,
+    GRAIN_EVOLUTION_ICE_CO  = 1,
+    GRAIN_EVOLUTION_ICE_CO2 = 2,
+    GRAIN_EVOLUTION_NUM_ICE = 3
+};
+
+KOKKOS_INLINE_FUNCTION
+inline double grain_outcomes_ice_snowline_T(int ice_index)
+{
+    /* Equilibrium sublimation/condensation temperature [K] at ~MMSN
+     * midplane number densities. */
+    if(ice_index == GRAIN_EVOLUTION_ICE_H2O) { return 150.0; }
+    if(ice_index == GRAIN_EVOLUTION_ICE_CO)  { return  25.0; }
+    if(ice_index == GRAIN_EVOLUTION_ICE_CO2) { return  70.0; }
+    return 100.0; /* default */
+}
+KOKKOS_INLINE_FUNCTION
+inline double grain_outcomes_ice_latent_heat_cgs(int ice_index)
+{
+    /* Latent heat of sublimation [erg / g of ice]. */
+    if(ice_index == GRAIN_EVOLUTION_ICE_H2O) { return 2.83e10; }
+    if(ice_index == GRAIN_EVOLUTION_ICE_CO)  { return 2.09e9;  }
+    if(ice_index == GRAIN_EVOLUTION_ICE_CO2) { return 5.74e9;  }
+    return 1.0e10; /* default */
+}
+KOKKOS_INLINE_FUNCTION
+inline double grain_outcomes_ice_molecular_weight(int ice_index)
+{
+    /* Mean molecular weight of the volatile species (in amu). Used to set
+     * thermal velocity in the collision-rate prefactor. */
+    if(ice_index == GRAIN_EVOLUTION_ICE_H2O) { return 18.0; }
+    if(ice_index == GRAIN_EVOLUTION_ICE_CO)  { return 28.0; }
+    if(ice_index == GRAIN_EVOLUTION_ICE_CO2) { return 44.0; }
+    return 18.0; /* default */
+}
+
 /* Bit-identical contract: these polynomials are character-for-character the
  * same as the prior inline carbSput/silSput/ironSput definitions in
  * update_dust_sputtering. Do not refactor pow(logt,k) -> repeated multiply
