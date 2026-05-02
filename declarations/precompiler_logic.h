@@ -74,6 +74,13 @@
 #endif
 #endif
 
+#if defined(PLANET_HEATING)
+/* Phase 17f: radiogenic + accretional heating; solid material required */
+#ifndef EOS_TILLOTSON
+#define EOS_TILLOTSON
+#endif
+#endif
+
 #if defined(EOS_ELASTIC)
 #if !defined(DISABLE_SURFACE_VOLCORR) && !defined(HYDRO_KERNEL_SURFACE_VOLCORR)
 #define HYDRO_KERNEL_SURFACE_VOLCORR

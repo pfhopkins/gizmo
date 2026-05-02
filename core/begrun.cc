@@ -565,6 +565,15 @@ void set_units(void)
 #ifdef DISK_BETA_COOL
     All.BetaCool_u_irr = All.BetaCool_Tirr / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
 #endif
+#ifdef PLANET_HEATING
+    {
+        double cgs_to_code_rate = UNIT_TIME_IN_CGS / UNIT_SPECEGY_IN_CGS;
+        All.PlanetHeating_RadQ0  = All.PlanetHeating_RadQ0_cgs  * cgs_to_code_rate;
+        All.PlanetHeating_RadTau = (All.PlanetHeating_RadTau_cgs > 0.0)
+                                   ? All.PlanetHeating_RadTau_cgs / UNIT_TIME_IN_CGS : 0.0;
+        All.PlanetHeating_AccQ0  = All.PlanetHeating_AccQ0_cgs  * cgs_to_code_rate;
+    }
+#endif
 
 
 #if defined(GALSF)
@@ -1651,6 +1660,19 @@ void read_parameter_file(char *fname)
 
       strcpy(tag[nt], "BetaCool_Tirr");
       addr[nt] = &All.BetaCool_Tirr;
+      id[nt++] = REAL;
+#endif
+#ifdef PLANET_HEATING
+      strcpy(tag[nt], "PlanetHeating_RadQ0_cgs");
+      addr[nt] = &All.PlanetHeating_RadQ0_cgs;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "PlanetHeating_RadTau_cgs");
+      addr[nt] = &All.PlanetHeating_RadTau_cgs;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "PlanetHeating_AccQ0_cgs");
+      addr[nt] = &All.PlanetHeating_AccQ0_cgs;
       id[nt++] = REAL;
 #endif
 

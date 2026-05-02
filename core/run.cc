@@ -10,6 +10,7 @@
 #include "../core/proto.h"
 #include "../mesh/neighbor_list.h"
 #include "../cooling/disk_betacool.h"
+#include "../cooling/planet_heating.h"
 
 
 /*! \file run.c
@@ -475,6 +476,10 @@ void calculate_non_standard_physics(void)
 #endif
 #ifdef DISK_BETA_COOL
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
+#ifdef PLANET_HEATING
+    planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)

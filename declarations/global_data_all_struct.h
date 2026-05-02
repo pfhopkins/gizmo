@@ -84,6 +84,14 @@ struct global_data_all_processes
   double BetaCool_Tirr;         /*!< irradiation-floor temperature [K]; 0 disables floor */
   double BetaCool_u_irr;        /*!< derived: u corresponding to BetaCool_Tirr */
 #endif
+#ifdef PLANET_HEATING
+  double PlanetHeating_RadQ0_cgs; /*!< input: initial radiogenic specific heating rate [erg/g/s] */
+  double PlanetHeating_RadTau_cgs;/*!< input: radiogenic e-folding decay time [s] */
+  double PlanetHeating_AccQ0_cgs; /*!< input: background accretional heating rate [erg/g/s]; 0=off */
+  double PlanetHeating_RadQ0;     /*!< derived: RadQ0_cgs in code units [code u / code t] */
+  double PlanetHeating_RadTau;    /*!< derived: RadTau_cgs in code units [code t] */
+  double PlanetHeating_AccQ0;     /*!< derived: AccQ0_cgs in code units [code u / code t] */
+#endif
 #ifdef GRAIN_EVOLUTION
   double GrainEvolution_StickingCoeff;          /*!< global sticking-coefficient multiplier for pairwise outcomes (bits 0|1|2) and condensation (bit 5). 1.0 = use species defaults from grain_collisional_outcomes.h. */
   double GrainEvolution_VelThreshFrag;          /*!< |dv| threshold for fragmentation onset [code velocity]; 0 = use species defaults. */
