@@ -2995,7 +2995,7 @@ def build_all(base_dir, output_file):
             ds.attrs['units'] = units
             ds.attrs['shape'] = '(N_Z, N_M, N_age)'
 
-        ds = f.create_dataset('surface_abundances', data=surface, **comp)
+        ds = f.create_dataset('surface_abundances', data=surface.astype(np.float32), **comp)
         ds.attrs['units'] = 'mass fractions, (N_Z, N_M, N_age, N_elements)'
         ds.attrs['elements'] = TRACKED_ELEMENTS
 
@@ -3038,20 +3038,117 @@ def build_all(base_dir, output_file):
         f.create_dataset('M_He_core', data=M_He_core_arr)
         f['M_He_core'].attrs['units'] = 'Msun, He core mass at end of life'
 
-        # Yield tables (end-of-life)
-        ds = f.create_dataset('net_yields', data=yields, **comp)
-        ds.attrs['units'] = 'Msun (net yield per element)'
-        ds.attrs['shape'] = '(N_Z, N_M, N_elements)'
+        # ── Absolute per-event element ejecta (preferred runtime path) ──
+        # Build X_init[Z, k]: Asplund09 proto-solar pattern x (Z/Z_solar) for metals,
+        # proto-solar X_He, X_H = remainder. Σ_k X_init = 1 per Z.
+        SOLAR_FRAC = {
+            'H': 0.7381, 'He': 0.2485, 'C': 2.36e-3, 'N': 6.91e-4, 'O': 5.72e-3,
+            'F': 3.26e-7, 'Ne': 1.25e-3, 'Na': 2.98e-5, 'Mg': 5.91e-4, 'Al': 5.57e-5,
+            'Si': 6.65e-4, 'P': 5.16e-6, 'S': 3.10e-4, 'Cl': 3.15e-6, 'Ar': 7.37e-5,
+            'K': 2.93e-6, 'Ca': 6.44e-5, 'Sc': 3.48e-8, 'Ti': 3.59e-6, 'V': 2.30e-7,
+            'Cr': 1.37e-5, 'Mn': 9.17e-6, 'Fe': 1.17e-3, 'Co': 3.30e-6, 'Ni': 6.99e-5,
+            'Cu': 7.20e-7, 'Zn': 1.67e-6,
+        }
+        Z_SOLAR_REF = 0.0134
+        REM_WD = 0; REM_ECSN = 1; REM_CCSN = 2; REM_PPISN = 4; REM_PISN = 5
+        SN_TYPES = {REM_ECSN, REM_CCSN, REM_PPISN, REM_PISN}
 
-        ds = f.create_dataset('wind_yields', data=wind_yields, **comp)
-        ds.attrs['units'] = 'Msun (net wind-only yield per element)'
-        ds.attrs['shape'] = '(N_Z, N_M, N_elements)'
-        ds.attrs['description'] = ('Wind-only net yields (pre-SN mass loss). '
-                                   'SN-only yields = net_yields - wind_yields. '
-                                   'AGB (M<8): wind_yields = 0 (no wind injection in code, full yields at death). '
-                                   'Limongi (8-14): wind_yields = 0 (SN ejecta only). '
-                                   'PARSEC v2 (M>=14): from winds_ejecta.dat. '
-                                   'FSN/DBH: wind_yields = net_yields (no explosion).')
+        X_init = np.zeros((N_Z, N_ELEM))
+        iH  = TRACKED_ELEMENTS.index('H')
+        iHe = TRACKED_ELEMENTS.index('He')
+        for iz in range(N_Z):
+            Zv = Z_grid[iz]
+            for k, e in enumerate(TRACKED_ELEMENTS):
+                if e in ('H', 'He'):
+                    continue
+                X_init[iz, k] = SOLAR_FRAC[e] * (Zv / Z_SOLAR_REF)
+            X_init[iz, iHe] = SOLAR_FRAC['He']
+            X_init[iz, iH]  = 1.0 - X_init[iz, iHe] - X_init[iz, [k for k in range(N_ELEM) if k not in (iH, iHe)]].sum()
+        assert np.allclose(X_init.sum(axis=1), 1.0, atol=1e-12), 'X_init rows must sum to 1'
+
+        def _absolute_ejecta(X_row, net_minus_wind, Mej, iH_idx):
+            if Mej <= 0:
+                return np.zeros_like(X_row)
+            ej = np.maximum(X_row * Mej + net_minus_wind, 0.0)
+            ej[iH_idx] = max(0.0, ej[iH_idx] + (Mej - ej.sum()))
+            s = ej.sum()
+            if s > 0:
+                ej *= Mej / s
+            return ej
+
+        elem_ej_SN  = np.zeros((N_Z, N_M, N_ELEM))
+        elem_ej_AGB = np.zeros((N_Z, N_M, N_ELEM))
+        for iz in range(N_Z):
+            for im in range(N_M):
+                rt = int(rem_type[iz, im])
+                rm = float(rem_mass[iz, im])
+                Mi = float(M_grid[im])
+                snw = yields[iz, im] - wind_yields[iz, im]
+                if rt in SN_TYPES:
+                    Mej = Mi if rt == REM_PISN else (Mi - rm)
+                    if Mej > 0:
+                        elem_ej_SN[iz, im] = _absolute_ejecta(X_init[iz], snw, Mej, iH)
+                elif rt == REM_WD:
+                    Mej = Mi - rm
+                    if Mej > 0:
+                        elem_ej_AGB[iz, im] = _absolute_ejecta(X_init[iz], yields[iz, im], Mej, iH)
+
+        # SN, AGB, X_init go into the main table.
+        ds = f.create_dataset('elem_ej_SN_mass', data=elem_ej_SN, **comp)
+        ds.attrs['units'] = 'Msun'
+        ds.attrs['description'] = ('Per-SN-event ejecta mass per element. '
+                                    'Sigma_k = M_init - rem_mass (PISN: M_init). '
+                                    'Zero for WD/FSN/DBH remnants.')
+
+        ds = f.create_dataset('elem_ej_AGB_mass', data=elem_ej_AGB, **comp)
+        ds.attrs['units'] = 'Msun'
+        ds.attrs['description'] = ('Per-AGB-event ejecta mass per element. '
+                                    'Sigma_k = M_init - rem_mass for WD remnants; zero otherwise.')
+
+        ds = f.create_dataset('X_init', data=X_init, **comp)
+        ds.attrs['units'] = 'mass_fraction'
+        ds.attrs['description'] = ('Assumed birth composition per Z (Asplund09 proto-solar '
+                                    'pattern x Z/Z_solar for metals, proto-solar X_He, X_H = remainder).')
+
+    # ── Cumulative wind ejecta: split into a separate file to keep the main
+    # table small. Σ_k elem_ej_wind_cumulative = M_init - M_current(age) within
+    # lifetime; plateaus past death (M_current=0 sentinel).
+    elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
+    for iz in range(N_Z):
+        for im in range(N_M):
+            M_t = M_current[iz, im, :]
+            alive = (M_t[:-1] > 0) & (M_t[1:] > 0)
+            drop = np.maximum(0.0, M_t[:-1] - M_t[1:])
+            dM = np.zeros(N_AGE)
+            dM[1:] = np.where(alive, drop, 0.0)
+            if dM.sum() <= 0:
+                continue
+            cum = np.cumsum(surface[iz, im].astype(np.float64) * dM[:, None], axis=0)
+            alive_idx = np.where(M_t > 0)[0]
+            if alive_idx.size > 0:
+                last = alive_idx[-1]
+                cum[last+1:] = cum[last]
+            elem_ej_wind[iz, im, :, :] = cum.astype(np.float32)
+    wind_file = os.path.join(os.path.dirname(output_file), 'stellar_wind_cumulative.hdf5')
+    print(f"Writing {wind_file}...", flush=True)
+    with h5py.File(wind_file, 'w') as fw:
+        fw.create_dataset('Z',          data=Z_grid)
+        fw.create_dataset('M_init',     data=M_grid)
+        fw.create_dataset('log_age_yr', data=log_age_grid)
+        fw.create_dataset('elements',   data=np.array(TRACKED_ELEMENTS, dtype='S4'))
+        dsw = fw.create_dataset('elem_ej_wind_cumulative', data=elem_ej_wind, **comp)
+        dsw.attrs['units'] = 'Msun'
+        dsw.attrs['description'] = ('Cumulative wind ejecta per element from ZAMS to age, '
+                                     'integrated as Σ X_surf[s,k] * max(0, M_curr[s-1] - M_curr[s]). '
+                                     'Sigma_k = M_init - M_current(age) within lifetime.')
+        fw.attrs['description'] = ('Per-element cumulative wind ejecta companion to '
+                                    'stellar_tables_unified.hdf5. Split out for file size.')
+    sz_w = os.path.getsize(wind_file) / 1e6
+    print(f"Done. Wind file: {sz_w:.1f} MB")
+
+    with h5py.File(output_file, 'a') as f:
+        # Re-open for the rest of the writes that follow this block.
+        pass
 
         f.create_dataset('remnant_type', data=rem_type)
         f['remnant_type'].attrs['encoding'] = ('0=WD, 1=ECSN(NS), 2=CCSN(NS), 3=FSN(BH), '
@@ -3160,8 +3257,10 @@ def verify(output_file):
             print(f"{M[im]:6.1f} {s:>6s} {life:10.3f} {lQ:9.2f} "
                   f"{lF:8.2f} {lN:8.2f} {lO:8.2f} {lB:8.2f} {vw:7.1f}")
 
-        # Yield spot checks
-        yields = f['net_yields'][:]
+        # Yield spot checks (use absolute SN ejecta; AGB rows are zero here by design)
+        ej_SN  = f['elem_ej_SN_mass'][:]
+        ej_AGB = f['elem_ej_AGB_mass'][:]
+        yields = ej_SN + ej_AGB
         rtype = f['remnant_type'][:]
         rmass = f['remnant_mass'][:]
         elems = [e.decode() for e in f['elements'][:]]
