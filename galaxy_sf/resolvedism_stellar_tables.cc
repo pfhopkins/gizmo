@@ -260,6 +260,11 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "surface_abundances",     StellarTbl.surface_abundances,     n3d * STBL_NELEM);
 #endif
 
+        /* Legacy net_yields/wind_yields arrays no longer in HDF5; zero them so
+         * any leftover diagnostic code sees a clean state. */
+        memset(StellarTbl.net_yields,  0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
+        memset(StellarTbl.wind_yields, 0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
+
         /* Absolute element ejecta tables (X_init baked in by table builder) */
         read_hdf5_dataset_double(file, "elem_ej_SN_mass",  StellarTbl.elem_ej_SN_mass,  (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
         read_hdf5_dataset_double(file, "elem_ej_AGB_mass", StellarTbl.elem_ej_AGB_mass, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
@@ -482,27 +487,6 @@ void resolvedism_load_stellar_tables(void)
             }
             if(nfail > 0) { printf("  WARNING: %d surface abundance=0 cases for living mid-grid stars\n", nfail); n_warn++; }
             else printf("  [PASS] Surface abundances > 0 for all living mid-grid stars at 90/95/99%% lifetime\n");
-        }
-
-        /* --- Test 4: Wind yields + SN yields = net yields for on-grid masses --- */
-        {
-            int nfail = 0; double worst_err4 = 0;
-            for(int iz = 0; iz < STBL_NZ; iz++) {
-                for(int im = 0; im < STBL_NM; im++) {
-                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
-                    for(int kk = 0; kk < STBL_NELEM; kk++) {
-                        double ny = stellar_net_yield(logM_t, logZ_t, kk);
-                        double wy = stellar_wind_yield(logM_t, logZ_t, kk);
-                        double sy = stellar_sn_yield(logM_t, logZ_t, kk);
-                        double err = fabs((wy + sy) - ny);
-                        if(fabs(ny) > 1e-10) err /= fabs(ny);
-                        if(err > worst_err4) worst_err4 = err;
-                        if(err > 0.01) nfail++;
-                    }
-                }
-            }
-            if(nfail > 0) { printf("  WARNING: %d wind+SN != net yield inconsistencies (worst=%.2e)\n", nfail, worst_err4); n_warn++; }
-            else printf("  [PASS] wind_yield + sn_yield = net_yield for all on-grid (Z,M) (roundoff=%.2e)\n", worst_err4);
         }
 
         /* --- Test 5: Lifetime monotonically decreases with mass at each Z (M >= 0.5 only) --- */
