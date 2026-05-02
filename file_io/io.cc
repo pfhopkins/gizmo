@@ -1515,6 +1515,35 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+#ifdef EOS_DAMAGE_POROSITY
+        case IO_DAMAGE_POROSITY_DAMAGE:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].Damage;
+                    n++;
+                }
+            break;
+
+        case IO_DAMAGE_POROSITY_DISTENTION:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].Distention;
+                    n++;
+                }
+            break;
+
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].ActiveCracks;
+                    n++;
+                }
+            break;
+#endif
+
             case IO_EOSPHASE:
 #ifdef EOS_ANEOS
             for(n = 0; n < pc; pindex++)
@@ -1918,6 +1947,12 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_STAGE_PROTOSTAR:
             bytes_per_blockelement = sizeof(int);
             break;
+
+        case IO_DAMAGE_POROSITY_DAMAGE:
+        case IO_DAMAGE_POROSITY_DISTENTION:
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            bytes_per_blockelement = sizeof(MyOutputFloat);
+            break;
             
         case IO_AGE_PROTOSTAR:
         case IO_MASS:
@@ -2232,6 +2267,12 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_STAGE_PROTOSTAR:
             typekey = 0;		/* native int */
             break;
+
+        case IO_DAMAGE_POROSITY_DAMAGE:
+        case IO_DAMAGE_POROSITY_DISTENTION:
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            typekey = 1;		/* native MyOutputFloat */
+            break;
             
         default:
             typekey = 1;		/* native MyOutputFloat */
@@ -2360,6 +2401,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
+        case IO_DAMAGE_POROSITY_DAMAGE:
+        case IO_DAMAGE_POROSITY_DISTENTION:
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
             values = 1;
             break;
 
@@ -2654,6 +2698,9 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DUSTCHEMGRAINBINMASS:
         case IO_DUSTCHEM_COAG_MASSRATE:
         case IO_DUSTCHEM_SHAT_MASSRATE:
+        case IO_DAMAGE_POROSITY_DAMAGE:
+        case IO_DAMAGE_POROSITY_DISTENTION:
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
             break;
@@ -2951,6 +2998,14 @@ int blockpresent(enum iofields blocknr)
 
         case IO_MOLECULARFRACTION:
 #if defined(OUTPUT_MOLECULAR_FRACTION)
+            return 1;
+#endif
+            break;
+
+        case IO_DAMAGE_POROSITY_DAMAGE:
+        case IO_DAMAGE_POROSITY_DISTENTION:
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+#ifdef EOS_DAMAGE_POROSITY
             return 1;
 #endif
             break;
@@ -3512,6 +3567,15 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SHOCKMACHNUM:
             strncpy(label, "SMAC", 4);
             break;
+        case IO_DAMAGE_POROSITY_DAMAGE:
+            strncpy(label, "DAMG", 4);
+            break;
+        case IO_DAMAGE_POROSITY_DISTENTION:
+            strncpy(label, "DIST", 4);
+            break;
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            strncpy(label, "ACTV", 4);
+            break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strncpy(label, "DBNU", 4);
             break;
@@ -3958,6 +4022,15 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_SHOCKMACHNUM:
             strcpy(buf, "ShockMachNumber");
+            break;
+        case IO_DAMAGE_POROSITY_DAMAGE:
+            strcpy(buf, "Damage");
+            break;
+        case IO_DAMAGE_POROSITY_DISTENTION:
+            strcpy(buf, "Distention");
+            break;
+        case IO_DAMAGE_POROSITY_ACTVCRACKS:
+            strcpy(buf, "ActiveCracks");
             break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strcpy(buf, "DustBinNumbers");
