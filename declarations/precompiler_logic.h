@@ -64,6 +64,16 @@
 #define SINK_CALC_DISTANCES
 #endif
 
+#if defined(EOS_DAMAGE_POROSITY)
+/* Phase 17e: damage + porosity bitfield (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
+#ifndef EOS_TILLOTSON
+#define EOS_TILLOTSON
+#endif
+#ifndef EOS_ELASTIC
+#define EOS_ELASTIC
+#endif
+#endif
+
 #if defined(EOS_ELASTIC)
 #if !defined(DISABLE_SURFACE_VOLCORR) && !defined(HYDRO_KERNEL_SURFACE_VOLCORR)
 #define HYDRO_KERNEL_SURFACE_VOLCORR

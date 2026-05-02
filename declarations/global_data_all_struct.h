@@ -613,7 +613,7 @@ struct global_data_all_processes
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-  double Tillotson_EOS_params[7][12]; /*! < holds parameters for Tillotson EOS for solids */
+  double Tillotson_EOS_params[7][16]; /*! < holds parameters for Tillotson EOS for solids; slots 12-15 (k_Weibull, m_Weibull, mu_DP, alpha_0) are used only under EOS_DAMAGE_POROSITY */
 #endif
 
 #ifdef EOS_TABULATED

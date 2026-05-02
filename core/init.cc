@@ -905,6 +905,15 @@ void init(void)
             CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
         }
 #endif
+#if defined(EOS_DAMAGE_POROSITY)
+        if(RestartFlag != 1)
+        {
+            CellP[i].Damage = 0;
+            CellP[i].ActiveCracks = 0;
+            CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15]; /* alpha_0 per material; 1 = solid */
+            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
+        }
+#endif
         CellP[i].DtInternalEnergy = 0;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
         CellP[i].CoolingIsOperatorSplitThisTimestep = 1; /* default to more conservative split */

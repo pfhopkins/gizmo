@@ -447,6 +447,11 @@ extern struct gas_cell_data
     Mat3<MyDouble> Elastic_Stress_Tensor_Pred;
     Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
 #endif
+#ifdef EOS_DAMAGE_POROSITY
+    MyFloat Damage;        /* Grady-Kipp scalar damage D in [0,1] */
+    MyFloat Distention;    /* Jutzi P-alpha distention alpha in [1, alpha_0] */
+    MyFloat ActiveCracks;  /* Grady-Kipp Weibull active-flaw bookkeeping */
+#endif
 #endif
     
 #if defined(OUTPUT_COOLRATE_DETAIL) && defined(COOLING)
