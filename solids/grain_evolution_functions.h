@@ -73,10 +73,23 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
 #endif
 }
 
-#if (GRAIN_EVOLUTION & 8)
-/* Bit 3 THERM_SPUT: thermal sputtering of refractory grain material by hot
- * (>1e4 K) gas. Per-superparticle stochastic translation of the same Nozawa+
- * (2006) erosion-rate fits used by the bin-based fluid module
+#if (GRAIN_EVOLUTION & (8|16))
+/* Bits 3+4 SPUTTER (thermal + non-thermal): sputtering of refractory grain
+ * material via ion impact. Same physical process for both bits, differing
+ * only in the energy source of the impinging ions:
+ *   bit 3 THERM_SPUT  -> ions drawn from a hot gas thermal distribution
+ *                        (T_thermal from Gas_InternalEnergy)
+ *   bit 4 NTHERM_SPUT -> ions seen by a grain drifting through gas
+ *                        (T_drift = (1/2) m_p v_drift^2 / k_B)
+ * When both bits are active the rates do not add independently -- they are
+ * combined into one effective sputter temperature
+ *     T_eff = T_thermal + T_drift
+ * which is the standard Tielens (1994) / Caselli+(1997) / Hu+(2019)
+ * treatment: the impinging-ion energy distribution is a thermal one offset
+ * by the bulk drift KE.
+ *
+ * Per-superparticle stochastic translation of the same Nozawa+(2006)
+ * erosion-rate polynomial fits used by the bin-based fluid module
  * (update_dust_sputtering in solids/ism_dust_chemistry.cc); the polynomial
  * coefficients are shared via grain_collisional_outcomes.h.
  *
@@ -87,8 +100,9 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
  * 17b plan -- bit 5 COND will reclaim it once the gas-phase
  * VolatileSpecies array is wired in C5). Sputter is energy-neutral against
  * the gas thermal pool by construction (the impinging-ion KE comes from gas
- * thermal energy, the rearrangement is implicit), so no DtInternalEnergy
- * back-reaction; latent-heat coupling is reserved for bits 5/6.
+ * thermal/kinetic energy, the rearrangement is implicit), so no
+ * DtInternalEnergy back-reaction; latent-heat coupling is reserved for
+ * bits 5/6.
  *
  * Composition: weighted average of refractory-species erosion rates;
  * Composition[] mass fractions are NOT updated here (would require species-
@@ -96,27 +110,43 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
  * super-particle assumption -- not worth it for the small differential
  * sputter rates among silicate/carbon/iron). */
 KOKKOS_INLINE_FUNCTION
-inline void grain_evolution_thermal_sputter(int i, struct particle_data *P, double dt)
+inline void grain_evolution_apply_sputter(int i, struct particle_data *P, double dt)
 {
     if(P[i].Mass <= 0 || P[i].Grain_Size <= 0 || P[i].Gas_Density <= 0) { return; }
-    if(P[i].Gas_InternalEnergy <= 0) { return; }
-    /* Estimate gas T from the kernel-weighted Gas_InternalEnergy already
-     * carried on the grain super-particle (see hydro/density.cc:720). Using
-     * a single mean-molecular-weight value mu = 0.6 (singly-ionized H+He);
+
+    /* Build effective sputter temperature from the active source bits. */
+    double T_eff = 0.0;
+#if (GRAIN_EVOLUTION & 8)
+    /* Thermal contribution. Gas T estimated from the kernel-weighted
+     * Gas_InternalEnergy already carried on the grain super-particle (see
+     * hydro/density.cc:720) using mu = 0.6 (singly-ionized H+He);
      * sputtering activates only at T > 1e4 K where this is accurate to
      * ~10%. A future refinement could read mu from the host gas cell's
-     * chemistry, but the polynomial Y(T) varies far more slowly with T than
-     * the 10% T-uncertainty would matter. */
-    const double mu_ionized = 0.6;
-    double T = P[i].Gas_InternalEnergy * mu_ionized * (GAMMA_DEFAULT - 1.0) * U_TO_TEMP_UNITS;
-    if(T <= 1.0e4) { return; } /* matches the temp>1e4 gate in update_dust_sputtering */
+     * chemistry, but the polynomial Y(T) varies far more slowly with T
+     * than the 10% T-uncertainty would matter. */
+    if(P[i].Gas_InternalEnergy > 0) {
+        const double mu_ionized = 0.6;
+        T_eff += P[i].Gas_InternalEnergy * mu_ionized * (GAMMA_DEFAULT - 1.0) * U_TO_TEMP_UNITS;
+    }
+#endif
+#if (GRAIN_EVOLUTION & 16)
+    /* Drift contribution: relative velocity between grain and local gas
+     * (Vel and Gas_Velocity, both in code peculiar units) converts to an
+     * effective impinging-ion temperature (Tielens 1994 §4.5;
+     * Hu+2019 Eq. 22). Same code-unit -> CGS convention used by the grain
+     * drag kernel (solids/grain_drag_gpu.cc:72). */
+    Vec3<double> dv_code = P[i].Vel - P[i].Gas_Velocity;
+    double v_drift_cgs2 = dv_code.norm_sq() / (All.cf_atime*All.cf_atime) * UNIT_VEL_IN_CGS * UNIT_VEL_IN_CGS;
+    T_eff += 0.5 * PROTONMASS_CGS * v_drift_cgs2 / BOLTZMANN_CGS;
+#endif
+    if(T_eff <= 1.0e4) { return; } /* matches the temp>1e4 gate in update_dust_sputtering */
 
     /* Composition-weighted erosion rate, refractory species only (ices
      * sublimate via bit 6 long before sputtering matters). */
     double refractory_frac = 0.0;
     for(int s = 0; s < GRAIN_NUM_REFRACTORY_SPECIES; s++) { refractory_frac += P[i].Composition[s]; }
     if(refractory_frac <= 0) { return; }
-    double logt = log10(T);
+    double logt = log10(T_eff);
     double Y_sput_eff = 0.0;
     for(int s = 0; s < GRAIN_NUM_REFRACTORY_SPECIES; s++) {
         Y_sput_eff += P[i].Composition[s] * grain_outcomes_sputter_erosion_dadt_per_nH(logt, grain_evolution_composition_index_to_outcome_kind(s));
@@ -143,18 +173,15 @@ inline void grain_evolution_thermal_sputter(int i, struct particle_data *P, doub
     P[i].Grain_Size = a_new;
     P[i].Mass *= size_ratio * size_ratio * size_ratio; /* M ~ a^3 (number conserved) */
 }
-#endif /* GRAIN_EVOLUTION & 8 */
+#endif /* GRAIN_EVOLUTION & (8|16) */
 
 /* Per-superparticle local step. Dispatches to the active local-operator bits
  * (3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL). */
 KOKKOS_INLINE_FUNCTION
 inline void grain_evolution_local_step(int i, struct particle_data *P, double dt)
 {
-#if (GRAIN_EVOLUTION & 8)
-    grain_evolution_thermal_sputter(i, P, dt);
-#endif
-#if (GRAIN_EVOLUTION & 16)
-    /* C4: bit 4 NTHERM_SPUT (drift-driven). */
+#if (GRAIN_EVOLUTION & (8|16))
+    grain_evolution_apply_sputter(i, P, dt);
 #endif
 #if (GRAIN_EVOLUTION & 32)
     /* C5: bit 5 COND (condensation/mantle growth from VolatileSpecies). */
