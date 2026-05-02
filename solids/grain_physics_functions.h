@@ -16,6 +16,10 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+#include "grain_charge_functions.h"
+#endif
+
 
 /* -------------------------------------------------------------------------
  *  GPU-callable grain extinction efficiency (used by B7b kernels).
@@ -135,6 +139,10 @@ struct GasGrainRTLocalIn
     MyFloat KernelRadius, Mass;
     MyFloat Grain_Size;                 /* grain only; unused for gas source */
     MyFloat Grain_Abs_Coeff[N_RT_FREQ_BINS]; /* grain only; unused for gas source */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    MyFloat Ne_gas;                     /* gas electron fraction (cell.Ne); gas source only */
+    MyFloat Density_gas;                /* comoving gas density (code units); gas source only */
+#endif
 };
 
 /* Per-source outputs — the kernel writes only the fields relevant to its
@@ -196,11 +204,22 @@ static void gasgrain_rt_gas_search_pair_kernel(
             const double gamma_eff = GAMMA_DEFAULT;
             const double cs_code = sqrt(gamma_eff*(gamma_eff-1.0) * (double)P[j].Gas_InternalEnergy);
             const double cs_cgs = cs_code * UNIT_VEL_IN_CGS;
-            const double tau_ds = R_grain_cgs * (2.3*PROTONMASS_CGS) * cs_cgs*cs_cgs
-                                  / (gamma_eff * ELECTRONCHARGE_CGS * ELECTRONCHARGE_CGS);
-            double Z_grain = -DMAX(1.0/(1.0 + sqrt(1.0e-3/(tau_ds + MIN_REAL_NUMBER))),
-                                   2.5 * tau_ds);
-            if(!(Z_grain == Z_grain) || Z_grain >= 0) Z_grain = 0;       /* NaN/positive guard */
+            const double T_K_est = cs_cgs * cs_cgs * (2.3 * PROTONMASS_CGS)
+                                   / (gamma_eff * BOLTZMANN_CGS);
+            /* Use gas cell's electron density (local.Ne_gas, local.Density_gas) when
+               available (bit 8 + gas source); otherwise n_e=0 returns Z≈0. */
+            const double rho_gas_cgs = (double)local.Density_gas * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+            const double n_eff_for_Z = rho_gas_cgs / PROTONMASS_CGS;
+            const double mean_mol_weight = 2.38;  /* matches eos.cc default */
+            const double n_e_for_Z = (double)local.Ne_gas * HYDROGEN_MASSFRAC
+                                     * mean_mol_weight * n_eff_for_Z;
+            const double a_grain_micron_j = R_grain_cgs * 1.0e4;  /* cm → microns */
+            const double f_dustgas_est = 0.01;                     /* default, matches eos.cc */
+            const double m_grain_in_mp  = m_grain_single_cgs / PROTONMASS_CGS;
+            const double ngr_ngas_est   = (mean_mol_weight / m_grain_in_mp) * f_dustgas_est;
+            double Z_grain = grain_charge_equilibrium_simple(a_grain_micron_j, n_eff_for_Z,
+                                                              T_K_est, n_e_for_Z, ngr_ngas_est,
+                                                              0.0 /* zeta_cr not available */, 24.3);
             const double q_per_grain_esu = Z_grain * ELECTRONCHARGE_CGS;
             const double M_j_cgs = (double)P[j].Mass * UNIT_MASS_IN_CGS;
             /* wk_i has units 1/code-volume; convert to physical cgs cm^-3:

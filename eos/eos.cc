@@ -79,6 +79,9 @@ double return_user_desired_target_pressure(int i)
 #if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
 #include "../solids/dust_battery_functions.h"
 #endif
+#ifdef MHD_NON_IDEAL
+#include "../solids/grain_charge_functions.h"
+#endif
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h. */
@@ -365,21 +368,24 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
     double k0 = 1.95e-4 * ag01*ag01 * sqrt(temperature); // prefactor for rate coefficient for electron-grain collisions
     double ngr_ngas = (m_neutral/m_grain) * f_dustgas; // number of grains per neutral
     double psi_prefac = 167.1 / (ag01 * temperature); // e*e/(a_grain*k_boltzmann*T): Z_grain = psi/psi_prefac where psi is constant determines charge
-    double alpha = zeta_cr * psi_prefac / (ngr_ngas*ngr_ngas * k0 * (n_eff/m_neutral)); // coefficient for equation that determines Z_grain
-    // psi solves the equation: psi = alpha * (exp[psi] - y/(1+psi)) where y=sqrt(m_ion/m_electron); note the solution for small alpha is independent of m_ion, only large alpha
-    //   (where the non-ideal effects are weak, generally) produces a difference: at very high-T, appropriate m_ion should be hydrogen+helium, but in this limit our cooling
-    //    routines will already correctly determine the ionization states. so we can safely adopt Mg as our ion of consideration
-    double y=sqrt(m_ion*PROTONMASS_CGS/ELECTRONMASS_CGS), psi_0 = 0.5188025-0.804386*log(y), psi=psi_0; // solution for large alpha [>~10]
-    if(alpha<0.002) {psi=alpha*(1.-y)/(1.+alpha*(1.+y));} else if(alpha<10.) {psi=psi_0/(1.+0.027/alpha);} // accurate approximation for intermediate values we can use here
+    double y = sqrt(m_ion*PROTONMASS_CGS/ELECTRONMASS_CGS);
+#ifdef COOLING
+    double mu_eff=2.38, x_elec=DMAX(1.e-18, cell[i].Ne*HYDROGEN_MASSFRAC*mu_eff);
+    double n_elec_input = x_elec * n_eff / mu_eff; // electron density from ionization state
+#else
+    double n_elec_input = 0.0;
+#endif
+    double Z_grain = grain_charge_equilibrium_simple(a_grain_micron, n_eff, temperature, n_elec_input, ngr_ngas, zeta_cr, m_ion);
+    double psi = Z_grain * psi_prefac; // recover psi from Z for collision-rate derivations below
     double k_e = k0 * exp(psi); // e-grain collision rate coefficient
     double k_i = k0 * sqrt(ELECTRONMASS_CGS / (m_ion*PROTONMASS_CGS)) * (1 - psi); // i-grain collision rate coefficient
-    double n_elec = zeta_cr / (ngr_ngas * k_e); // electron number density
-    double n_ion = zeta_cr / (ngr_ngas * k_i); // ion number density
-    double Z_grain = psi / psi_prefac; // mean grain charge (note this is signed, will be negative)
+    double n_elec, n_ion;
 #ifdef COOLING
-    double mu_eff=2.38, x_elec=DMAX(1.e-18, cell[i].Ne*HYDROGEN_MASSFRAC*mu_eff), R=x_elec*psi_prefac/ngr_ngas; psi_0=-3.787124454911839; n_elec=x_elec*n_eff/mu_eff; // R is essentially the ratio of negative charge in e- to dust: determines which regime we're in to set quantities below
-    if(R > 100.) {psi=psi_0;} else if(R < 0.002) {psi=R*(1.-y)/(1.+2.*y*R);} else {psi=psi_0/(1.+pow(R/0.18967,-0.5646));} // simple set of functions to solve for psi, given R above, using the same equations used to determine low-temp ion fractions
-    n_ion = n_elec * y * exp(psi)/(1.-psi); Z_grain = psi / psi_prefac; // we can immediately now calculate these from the above
+    n_elec = n_elec_input;
+    n_ion = n_elec * y * exp(psi) / (1. - psi);
+#else
+    n_elec = zeta_cr / (ngr_ngas * k_e + MIN_REAL_NUMBER);
+    n_ion  = zeta_cr / (ngr_ngas * k_i + MIN_REAL_NUMBER);
 #endif
     // now define more variables we will need below //
     double gizmo2gauss = UNIT_B_IN_GAUSS; // convert to B-field to gauss (units)

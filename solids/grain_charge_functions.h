@@ -30,7 +30,7 @@
 #ifndef GRAIN_CHARGE_FUNCTIONS_H
 #define GRAIN_CHARGE_FUNCTIONS_H
 
-#if defined(GRAIN_LORENTZFORCE) || (defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8)))
+#if defined(GRAIN_LORENTZFORCE) || defined(MHD_NON_IDEAL) || (defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8)))
 
 /* --------------------------------------------------------------------------
  * Equilibrium grain charge Z (signed, in units of e). Lifted from the inline
