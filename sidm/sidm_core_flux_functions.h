@@ -30,6 +30,9 @@
 #ifdef GRAIN_COLLISIONS
 #include "../solids/grain_helper_functions.h"
 #endif
+#ifdef GRAIN_EVOLUTION
+#include "../solids/grain_evolution_functions.h"
+#endif
 
 struct SidmScatterResult {
     int scattered;          /* 1 if a scatter occurred this pair */
@@ -92,6 +95,14 @@ SidmScatterResult sidm_core_flux_compute_pair(
         r.dv_sidm[k] = dv_sidm;
     }
     out.si_count++;
+
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+    /* Phase 17b pairwise outcomes (COAG/FRAG/SHAT). The SIDM scatter
+     * machinery already handles "does a collision fire" via the prob
+     * gate; this resolver decides what HAPPENS to grain mass + size when
+     * a collision fires, by comparing |dv| to per-species thresholds. */
+    grain_evolution_resolve_pairwise(local, j, P, dv_local, out);
+#endif
 #else
     (void)local; (void)j; (void)P; (void)kernel; (void)out;
 #endif /* DM_SIDM */

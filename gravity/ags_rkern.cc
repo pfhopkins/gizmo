@@ -670,6 +670,37 @@ void AGSForce_calc(void)
             if(nl_outs[a].dtime_sidm < P[ii].dtime_sidm) P[ii].dtime_sidm = nl_outs[a].dtime_sidm;
             P[ii].NInteractions += nl_outs[a].si_count;
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+            /* Phase 17b pairwise-outcome scatter. COAG: absorbed mass +
+             * per-species composition mass go to ii. Mass conservation:
+             * Σ_i Grain_DeltaCoagMass equals Σ_j (M_j set to 0), since
+             * each pair is processed exactly once by SIDM dedup.
+             * FRAG/SHAT (C8/C9): erosion-fraction multiplier applied as
+             * Grain_Size *= factor (1.0 means no event). */
+            if(P[ii].Mass > 0) {
+                if(nl_outs[a].Grain_DeltaCoagMass > 0) {
+                    double M_old = (double)P[ii].Mass;
+                    double M_new = M_old + nl_outs[a].Grain_DeltaCoagMass;
+                    /* Composition mixing: per-species mass on absorber +
+                     * per-species mass absorbed from j-neighbors. */
+                    for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
+                        double M_species_s = M_old * (double)P[ii].Composition[s] + nl_outs[a].Grain_DeltaCoag_CompositionMass[s];
+                        if(M_species_s < 0) { M_species_s = 0; }
+                        P[ii].Composition[s] = (MyFloat)(M_species_s / M_new);
+                    }
+                    /* Size update: monodisperse mass-conserving rule with
+                     * N_phys preserved on the absorber (each absorber
+                     * grain takes ~one j-grain worth of mass on average).
+                     * a_new = a_old * (M_new / M_old)^(1/3). */
+                    P[ii].Grain_Size = (MyFloat)((double)P[ii].Grain_Size * pow(M_new / M_old, 1.0 / 3.0));
+                    P[ii].Mass       = (MyDouble)M_new;
+                }
+                if(nl_outs[a].Grain_DeltaErosionFrac != 1.0 && nl_outs[a].Grain_DeltaErosionFrac > 0.0) {
+                    /* C8/C9 size shrinkage applied multiplicatively. */
+                    P[ii].Grain_Size = (MyFloat)((double)P[ii].Grain_Size * nl_outs[a].Grain_DeltaErosionFrac);
+                }
+            }
+#endif
 #ifdef DM_FUZZY
             for(int k = 0; k < 3; k++) P[ii].GravAccel[k] += nl_outs[a].acc[k];
             P[ii].AGS_Dt_Numerical_QuantumPotential += nl_outs[a].AGS_Dt_Numerical_QuantumPotential;

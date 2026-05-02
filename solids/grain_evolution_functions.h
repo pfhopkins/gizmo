@@ -40,6 +40,7 @@
 #ifdef GRAIN_EVOLUTION
 
 #include <math.h>
+#include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
 #include "grain_collisional_outcomes.h"
@@ -59,19 +60,69 @@ inline int grain_evolution_composition_index_to_outcome_kind(int s)
     return GRAIN_OUTCOME_SPECIES_CO2_ICE;
 }
 
-/* Pairwise outcome resolver. C1 stub: returns without touching state.
- * Activated under (GRAIN_EVOLUTION & 7) in C7-C9. */
-template <typename LocalT>
-KOKKOS_INLINE_FUNCTION
-void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particle_data *P, double dv_mag)
-{
 #if (GRAIN_EVOLUTION & 7)
-    (void)local; (void)j; (void)P; (void)dv_mag;
-    /* C7: bit 0 COAG; C8: bit 1 FRAG; C9: bit 2 SHAT. */
-#else
-    (void)local; (void)j; (void)P; (void)dv_mag;
+/* Pairwise outcome resolver: decides COAG / FRAG / SHAT based on |dv| vs
+ * per-species thresholds, given that a collision has fired (the SIDM
+ * scatter prob-gate already handled "did a collision happen"). Mutates
+ * the local-side accumulators on out (gathered to P[ii] in the host
+ * post-pass in gravity/ags_rkern.cc) and atomically mutates P[j].
+ *
+ * Per-pair routing: SIDM dedup ensures only the lower-ID side processes
+ * each pair (sidm_core_flux_functions.h:62), so "local" is the actor.
+ * COAG outcome convention: local always absorbs j (mass-conservative;
+ * statistical bias toward lower-ID-as-absorber is harmless for stochastic
+ * coagulation). FRAG/SHAT (C8/C9): both local and j shrink; symmetric.
+ *
+ * Thresholds: v_coag from grain_outcomes_v_coag_dominik(); v_shat from
+ * grain_outcomes_elastic_props(). C7 uses silicate elastic props as the
+ * default species lookup (composition-weighted thresholds are a future
+ * refinement). */
+template <typename LocalT, typename OutT>
+KOKKOS_INLINE_FUNCTION
+void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particle_data *P, const Vec3<double> &dv, OutT &out)
+{
+    if(local.Mass <= 0 || local.Grain_Size <= 0) { return; }
+    if(P[j].Mass <= 0 || P[j].Grain_Size <= 0) { return; }
+    double dv_mag = sqrt(dv.norm_sq()) * UNIT_VEL_IN_CGS / All.cf_atime; /* cgs cm/s */
+
+    /* Elastic / breakup thresholds. Use silicate defaults for both pair
+     * sides in C7; refining to composition-weighted thresholds is a clean
+     * extension that doesn't change the resolver's structural shape. */
+    struct GrainOutcomeElasticProps ep = grain_outcomes_elastic_props(GRAIN_OUTCOME_SPECIES_SILICATE);
+    double a_i_cm = local.Grain_Size;
+    double a_j_cm = (double)P[j].Grain_Size;
+    double v_coag = grain_outcomes_v_coag_dominik(a_i_cm, a_j_cm, ep.gamma, ep.E_young, ep.nu_poisson, All.Grain_Internal_Density);
+    if(v_coag > ep.v_shat) { v_coag = ep.v_shat; } /* clamp -- match ISMDustChem update_dust_shattering_and_coagulation:1619 */
+
+#if (GRAIN_EVOLUTION & 1)
+    /* Bit 0 COAG: low-velocity collision -> stick. Local absorbs j fully.
+     * Mass conservation between the pair: M_local += M_j, M_j -> 0.
+     * Composition mixing: per-species mass accumulator on out so the
+     * host-side post-pass can do the mass-fraction renormalization with
+     * full multi-source visibility (multiple j-neighbors of the same i
+     * may all be absorbed in one step). */
+    if(dv_mag < v_coag * All.GrainEvolution_StickingCoeff) {
+        double M_j = (double)P[j].Mass;
+        if(M_j <= 0) { return; }
+        out.Grain_DeltaCoagMass += M_j;
+        for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
+            out.Grain_DeltaCoag_CompositionMass[s] += M_j * (double)P[j].Composition[s];
+        }
+        /* Atomically zero out j -- it is now fully absorbed. The grain
+         * super-particle persists in the array but is inert
+         * (Mass = 0 short-circuits all GRAIN_FLUID code paths). */
+        Kokkos::atomic_store(&P[j].Mass,       (MyDouble)0.0);
+        Kokkos::atomic_store(&P[j].Grain_Size, (MyFloat)0.0);
+        return;
+    }
 #endif
+
+    /* C8 (bit 1) FRAG and C9 (bit 2) SHAT branches go here. For C7 only
+     * the COAG branch above is implemented; non-COAG collisions in this
+     * commit silently no-op (no FRAG/SHAT physics yet). */
+    (void)dv_mag; (void)ep;
 }
+#endif
 
 #if (GRAIN_EVOLUTION & (8|16))
 /* Bits 3+4 SPUTTER (thermal + non-thermal): sputtering of refractory grain

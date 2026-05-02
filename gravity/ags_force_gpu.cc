@@ -95,6 +95,13 @@ struct ags_force_local_t {
     double Grain_CrossSection_PerUnitMass;
 #endif
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+    /* Phase 17b pairwise resolver inputs. Composition[] needed for
+     * composition-mixing on the absorber side; Grain_Size needed for the
+     * Dominik-Tielens v_coag threshold and for size-update bookkeeping. */
+    double Grain_Size;
+    double Composition[GRAIN_NUM_SPECIES];
+#endif
 };
 
 
@@ -220,6 +227,10 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
             local.Grain_CrossSection_PerUnitMass = return_grain_cross_section_per_unit_mass_P(ii, kp);
 #endif
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+            local.Grain_Size = (double)kp[ii].Grain_Size;
+            for(int gs = 0; gs < GRAIN_NUM_SPECIES; gs++) { local.Composition[gs] = (double)kp[ii].Composition[gs]; }
+#endif
 
             /* Per-i kernel invariants. */
             ags_force_kernel_t kernel;
@@ -232,6 +243,9 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
             memset(&out, 0, sizeof(ags_force_dev_out_t));
 #if defined(DM_SIDM)
             out.dtime_sidm = local.dtime_sidm;
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+            out.Grain_DeltaErosionFrac = 1.0; /* multiplicative -- 1.0 = no FRAG/SHAT loss */
 #endif
 
             int start = offsets[aa], end = offsets[aa + 1];
