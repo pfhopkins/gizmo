@@ -117,9 +117,45 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
     }
 #endif
 
-    /* C8 (bit 1) FRAG and C9 (bit 2) SHAT branches go here. For C7 only
-     * the COAG branch above is implemented; non-COAG collisions in this
-     * commit silently no-op (no FRAG/SHAT physics yet). */
+#if (GRAIN_EVOLUTION & 2)
+    /* Bit 1 FRAG: intermediate-velocity collision (v_coag <= |dv| < v_shat).
+     * Both grains experience mild chipping -- size drops slightly while
+     * super-particle mass is preserved (chipped material reinterpreted as
+     * smaller grains in the same SP -> N_phys grows implicitly through
+     * the M / a^3 ratio).
+     *
+     * Fragmentation efficiency model: smooth ramp from 0 at v = v_coag to
+     * fragmentation_max = 0.1 at v = v_shat (10% mass-equivalent size
+     * shrink per collision event near the SHAT threshold). Closed-form
+     * monotonic in (dv/v_shat)^2 so the FRAG branch hands off smoothly to
+     * SHAT in C9 without a discontinuity.
+     *
+     * Size update: a_new = a_old * (1 - frag_eff)^(1/3) -- the cube-root
+     * reflects the conserved super-particle mass with implicit N growth. */
+    if(dv_mag >= v_coag * All.GrainEvolution_StickingCoeff && dv_mag < ep.v_shat) {
+        double frag_eff = 0.1 * (dv_mag * dv_mag) / (ep.v_shat * ep.v_shat);
+        if(frag_eff > 0.5) { frag_eff = 0.5; }
+        double frag_factor = pow(1.0 - frag_eff, 1.0/3.0);
+        /* Local i-side accumulator (multiplicative; applied in host
+         * post-pass alongside the COAG mass update). */
+        out.Grain_DeltaErosionFrac *= frag_factor;
+        /* J-side: atomic CAS loop multiplicatively shrinks Grain_Size.
+         * Multiple i-neighbors of the same j may FRAG it in the same
+         * step; the loop preserves the cumulative product. */
+        MyFloat old_a, new_a, returned_a;
+        do {
+            old_a = Kokkos::atomic_load(&P[j].Grain_Size);
+            if(old_a <= 0) { break; }
+            new_a = (MyFloat)((double)old_a * frag_factor);
+            returned_a = Kokkos::atomic_compare_exchange(&P[j].Grain_Size, old_a, new_a);
+        } while(returned_a != old_a);
+        return;
+    }
+#endif
+
+    /* C9 (bit 2) SHAT branch goes here. For C8 only the FRAG branch
+     * above is implemented; v >= v_shat collisions in this commit
+     * silently no-op (no SHAT physics yet). */
     (void)dv_mag; (void)ep;
 }
 #endif
