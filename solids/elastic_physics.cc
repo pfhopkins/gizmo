@@ -7,6 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "damage_porosity_functions.h"
 
 /*
  
