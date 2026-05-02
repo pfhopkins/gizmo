@@ -562,6 +562,10 @@ void set_units(void)
 #endif
     All.MinEgySpec = All.MinGasTemp / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
 
+#ifdef DISK_BETA_COOL
+    All.BetaCool_u_irr = All.BetaCool_Tirr / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
+#endif
+
 
 #if defined(GALSF)
   /* for historical reasons, we need to convert to "All.MaxSfrTimescale", defined as the SF timescale in code units at the critical physical
@@ -1639,6 +1643,16 @@ void read_parameter_file(char *fname)
       strcpy(alternate_tag[nt], "Minimum_Gas_Temperature");
       addr[nt] = &All.MinGasTemp;
       id[nt++] = REAL;
+
+#ifdef DISK_BETA_COOL
+      strcpy(tag[nt], "BetaCool_Beta");
+      addr[nt] = &All.BetaCool_Beta;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "BetaCool_Tirr");
+      addr[nt] = &All.BetaCool_Tirr;
+      id[nt++] = REAL;
+#endif
 
 #ifdef DM_SCALARFIELD_SCREENING
       strcpy(tag[nt], "ScalarBeta");

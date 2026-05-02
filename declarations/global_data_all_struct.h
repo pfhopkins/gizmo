@@ -79,6 +79,11 @@ struct global_data_all_processes
   double InitGasTemp;		/*!< may be used to set the temperature in the IC's */
   double InitGasU;		/*!< the same, but converted to thermal energy per unit mass */
   double MinGasTemp;		/*!< may be used to set a floor for the gas temperature */
+#ifdef DISK_BETA_COOL
+  double BetaCool_Beta;         /*!< beta in t_cool = beta / Omega */
+  double BetaCool_Tirr;         /*!< irradiation-floor temperature [K]; 0 disables floor */
+  double BetaCool_u_irr;        /*!< derived: u corresponding to BetaCool_Tirr */
+#endif
 #ifdef CHIMES
   int ChimesThermEvolOn;        /*!< Flag to determine whether to evolve the temperature in CHIMES. */
 #ifdef CHIMES_STELLAR_FLUXES

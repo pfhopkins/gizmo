@@ -9,6 +9,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/neighbor_list.h"
+#include "../cooling/disk_betacool.h"
 
 
 /*! \file run.c
@@ -471,6 +472,10 @@ void calculate_non_standard_physics(void)
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+#endif
+#ifdef DISK_BETA_COOL
+    disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");

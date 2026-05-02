@@ -1187,6 +1187,15 @@
 #endif // BOX_SHEARING
 
 
+#ifdef DISK_BETA_COOL
+/* minimal beta-cooling for protoplanetary-disk problems; mutually exclusive with COOLING.
+ * see cooling/disk_betacool.h for the actual operator and design notes. */
+#if defined(COOLING)
+#error "DISK_BETA_COOL is mutually exclusive with COOLING (both write CellP.InternalEnergy)."
+#endif
+#endif
+
+
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */
 #ifdef METALS
