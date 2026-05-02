@@ -187,7 +187,7 @@ void Initialize_ISMDustChem_Particle_Variables(int i, struct particle_data *pp, 
 #endif
     }
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-    Initialize_ISMDustChemEvo_Particle_Variables(i);
+    Initialize_ISMDustChemEvo_Particle_Variables(i, pp, cell);
 #endif
 }
 
@@ -537,7 +537,7 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
     yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]=species_yields[k];}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-    ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,cell[i].Mass*cell[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields
+    ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,P[i].Mass*P[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields (i is a star-particle index; MassReturn_ThisTimeStep lives on particle_data, not gas_cell_data) //
 #endif
 }
 
@@ -844,7 +844,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             ISMDustChem_get_species_properties(spec_indx, &dust_atomic_weight, &bulk_dens);
             // First get the mass/number of grain in each bin in the shocked and unshocked gas. 
             for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
-                double total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l, cell);
+                double total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l, CellP);
                 shocked_init_bin_N[l] = mass_frac_shocked * CellP[j].ISMDustChem_Dust_NumberInBin[k][l];
                 shocked_init_bin_slope[l] = mass_frac_shocked * CellP[j].ISMDustChem_Dust_SlopeInBin[k][l];
                 shocked_init_bin_M[l] = mass_frac_shocked * total_bin_mass;
@@ -861,7 +861,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             // Update number and slope in each bin
             for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) { 
                 species_yields[k] += unshocked_init_bin_M[l]+shocked_final_bin_M[l];
-                update_ISMDustChemEvo_bin_number_and_slope(j, k, l, unshocked_init_bin_N[l]+shocked_final_bin_N[l], unshocked_init_bin_M[l]+shocked_final_bin_M[l], cell);
+                update_ISMDustChemEvo_bin_number_and_slope(j, k, l, unshocked_init_bin_N[l]+shocked_final_bin_N[l], unshocked_init_bin_M[l]+shocked_final_bin_M[l], CellP);
             }
             species_yields[k] /= (m0 * UNIT_MASS_IN_CGS); // Convert to mass fraction
         }
@@ -943,8 +943,8 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
                 // If either the number of grains or mass of grains injected into the bin are zero then nothing to do here. Also deals with rounding errors that can cause negative values
                 if (inject_N_in_bin>0 && inject_M_in_bin>0) {
                     new_N_in_bin = CellP[j].ISMDustChem_Dust_NumberInBin[k][l] + inject_N_in_bin;
-                    new_M_in_bin = get_ISMDustChemEvo_bin_mass(j,k,l, cell) + inject_M_in_bin;
-                    update_ISMDustChemEvo_bin_number_and_slope(j,k,l,new_N_in_bin,new_M_in_bin, cell);
+                    new_M_in_bin = get_ISMDustChemEvo_bin_mass(j,k,l, CellP) + inject_M_in_bin;
+                    update_ISMDustChemEvo_bin_number_and_slope(j,k,l,new_N_in_bin,new_M_in_bin, CellP);
                 }
             }
         }

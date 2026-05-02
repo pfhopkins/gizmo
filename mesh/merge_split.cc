@@ -962,7 +962,7 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
         for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
             total_bin_num = CellP[j].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].ISMDustChem_Dust_NumberInBin[k][l]; /* dust grain bin number conserving */
-            total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l, CellP) + get_ISMDustChemEvo_bin_mass(i,k,l); /* dust grain bin mass conserving */
+            total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l, CellP) + get_ISMDustChemEvo_bin_mass(i,k,l, CellP); /* dust grain bin mass conserving */
             update_ISMDustChemEvo_bin_number_and_slope(j,k,l,total_bin_num,total_bin_mass, CellP);
         }
     }

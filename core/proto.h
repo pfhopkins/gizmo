@@ -503,11 +503,11 @@ void ISMDustChem_get_species_properties(int spec_indx, double *dust_atomic_weigh
 void ISMDustChemEvo_renormalize_dust_fields(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void check_dust_fields(int i, int update_process);
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-void Initialize_ISMDustChemEvo_Particle_Variables(int i);
+void Initialize_ISMDustChemEvo_Particle_Variables(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double get_ISMDustChemEvo_bin_mass(int i, int j, int k, struct gas_cell_data *cell);
 void update_ISMDustChemEvo_bin_number_and_slope(int i, int j, int k, double number_in_bin, double mass_in_bin, struct gas_cell_data *cell);
 void check_for_slope_limiting(int k, double bulk_dens, double *number_in_bin, double *slope_in_bin, double mass_in_bin);
-void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SNeIaFlag, double Msne);
+void ISMDustChemEvo_get_SNe_dust_grain_size_yields(double *yields, int i, int SNeIaFlag, double Msne, struct particle_data *pp, struct gas_cell_data *cell);
 void ISMDustChemEvo_get_wind_dust_grain_size_yields(double *yields, double Msne);
 void ISMDustChemEvo_update_bins_given_grain_size_change(int i, int j, double *bin_da, double mass_limit, struct gas_cell_data *cell);
 void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp, double rho, struct particle_data *pp, struct gas_cell_data *cell);
