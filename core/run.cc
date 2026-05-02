@@ -477,10 +477,6 @@ void calculate_non_standard_physics(void)
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
-#ifdef GRAIN_EVOLUTION
-    grain_evolution_local_parent_routine(); // Phase-17b per-superparticle local grain evolution (sputtering, condensation, sublimation; pairwise bits piggyback on GRAIN_COLLISIONS) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time();
-#endif
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_cooling");
 #endif

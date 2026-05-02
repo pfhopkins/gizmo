@@ -45,9 +45,18 @@ extern struct cooling_tables_t CoolTables;
 
 #if defined(GRAIN_FLUID)
 
+#ifdef GRAIN_EVOLUTION
+#include "grain_evolution_functions.h"
+#endif
+
 /* Per-particle grain drag kernel. Operates on compact arrays pp[idx].
  * Modifies pp[idx].GravAccel, pp[idx].Grain_AccelTimeMin, and
- * (if GRAIN_BACKREACTION) pp[idx].Grain_DeltaMomentum in-place. */
+ * (if GRAIN_BACKREACTION) pp[idx].Grain_DeltaMomentum in-place.
+ * Under GRAIN_EVOLUTION, also runs the per-superparticle local-step
+ * operators (sputter; later: COND/SUBL) at the end of the kernel so they
+ * share the same Gas_* and dt computation, and the same back-reaction
+ * writeback machinery (extended ghost_writeback_grainbackrx) as the drag
+ * itself. */
 KOKKOS_FUNCTION
 static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp)
 {
@@ -225,6 +234,19 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
         }
     }
 #endif
+
+#ifdef GRAIN_EVOLUTION
+    /* Per-superparticle local operators (Phase 17b). Co-located with the
+     * drag kernel because (a) every Gas_* field they need is already in
+     * registers here, (b) any back-reaction they generate piggybacks on
+     * the existing GRAIN_BACKREACTION writeback infrastructure rather than
+     * requiring a parallel pass. Gated on grain_subtype <= 2 so PIC
+     * particles (subtype >= 3) -- whose Composition[] would be meaningless
+     * -- are skipped. */
+    if((grain_subtype <= 2) && (dt > 0)) {
+        grain_evolution_local_step(idx, pp, dt);
+    }
+#endif
 }
 
 
@@ -268,6 +290,12 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
 #endif
 #if defined(GRAIN_BACKREACTION)
         P_host[ii].Grain_DeltaMomentum = compact_P[j].Grain_DeltaMomentum;
+#endif
+#ifdef GRAIN_EVOLUTION
+        /* GRAIN_EVOLUTION local-step operators may mutate Mass and Grain_Size
+         * (sputter shrinkage; later: condensation/sublimation mass exchange). */
+        P_host[ii].Mass       = compact_P[j].Mass;
+        P_host[ii].Grain_Size = compact_P[j].Grain_Size;
 #endif
     }
 
