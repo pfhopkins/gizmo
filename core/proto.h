@@ -660,6 +660,9 @@ void cooling_parent_routine(void);
 void nuclear_parent_routine(void);
 void InitNuclearNetwork(void);
 #endif
+#ifdef GRAIN_EVOLUTION
+void grain_evolution_local_parent_routine(void);
+#endif
 void density(void);
 void do_box_wrapping(void);
 void energy_statistics(void);

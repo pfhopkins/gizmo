@@ -321,6 +321,9 @@ extern struct gas_cell_data
     Vec3<MyDouble> J_dust_cell;                 /*!< per-cell dust current J_d = -sum_grain (q_d n_d (v_d - v_g)) [physical cgs], summed from grain particles in gas-cell kernel. Repopulated each step before per-cell battery EMF assembly. Soliman, Hopkins & Squire 2025 Eq. 8. */
 #endif
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    MyFloat VolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES]; /*!< gas-phase volatile mass fractions {H2O, CO, CO2, refractory-vapor}; coupled to grain-mantle bits 5 (COND, drains gas->grain) and 6 (SUBL, drains grain->gas) of GRAIN_EVOLUTION. Latent-heat exchange routed into InternalEnergy. */
+#endif
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     MyDouble n_e_cell;                          /*!< electron number density [physical cgs] from cooling. Cached on SoA so the gradient pass can produce grad(n_e) for Biermann battery and the 2-T integrator can convert between u_e and T_e. Populated at end of cooling step. */
     MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Under MHD_BATTERY_MECHANISMS-only this is a per-step cache equal to T_gas, written in eos.cc. Under TWO_TEMPERATURE_PLASMA this is the derived view of u_e_cell, written by the 2-T cooling integrator. Either way readers (Biermann battery, gradient pass, snapshot) consume it identically through T_e(). */

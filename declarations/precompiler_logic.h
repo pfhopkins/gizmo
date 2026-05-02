@@ -1196,6 +1196,39 @@
 #endif
 
 
+#ifdef GRAIN_EVOLUTION
+/* Phase-17b grain evolution: per-superparticle stochastic translation of the ISMDustChem
+ * fluid grain-size-evolution physics. Bitfield mirrors MHD_BATTERY_MECHANISMS:
+ *   bit 0 (=1)  COAG       — pairwise coagulation        (extends GRAIN_COLLISIONS)
+ *   bit 1 (=2)  FRAG       — pairwise fragmentation      (extends GRAIN_COLLISIONS)
+ *   bit 2 (=4)  SHAT       — pairwise shattering         (extends GRAIN_COLLISIONS)
+ *   bit 3 (=8)  THERM_SPUT — thermal sputtering          (local operator)
+ *   bit 4 (=16) NTHERM_SPUT— non-thermal sputtering      (local, drift-driven)
+ *   bit 5 (=32) COND       — condensation/mantle growth  (local; reads VolatileSpecies)
+ *   bit 6 (=64) SUBL       — sublimation/desorption      (local; inverse of bit 5)
+ * See solids/grain_evolution.cc and solids/grain_evolution_functions.h for the operators.
+ * Storage is monodisperse per super-particle: (Mass, Grain_Size, Composition[]) is the
+ * complete state — N_phys is derived on demand at call sites that need cross-section. */
+#ifndef GRAIN_FLUID
+#error "GRAIN_EVOLUTION requires GRAIN_FLUID (operates on Type-3 grain super-particles)."
+#endif
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#error "GRAIN_EVOLUTION is mutually exclusive with GALSF_ISMDUSTCHEM_GRAINSIZEEVO (different mass-conservation models: per-superparticle vs bin-based fluid)."
+#endif
+#if (GRAIN_EVOLUTION & 7) && !defined(GRAIN_COLLISIONS)
+#error "GRAIN_EVOLUTION pairwise bits (1|2|4 = COAG/FRAG/SHAT) require GRAIN_COLLISIONS for the neighbor-loop scaffolding."
+#endif
+/* Composition split: 3 refractory (silicate, carbon, Fe — match ISMDustChem) + 3 ice (H2O, CO, CO2). */
+#define GRAIN_NUM_REFRACTORY_SPECIES 3
+#define GRAIN_NUM_ICE_SPECIES        3
+#define GRAIN_NUM_SPECIES (GRAIN_NUM_REFRACTORY_SPECIES + GRAIN_NUM_ICE_SPECIES)
+/* Volatile gas-phase species: {H2O, CO, CO2, refractory-vapor}. Allocated only when bits 5|6 active. */
+#if (GRAIN_EVOLUTION & (32|64))
+#define GRAIN_NUM_VOLATILE_SPECIES 4
+#endif
+#endif // GRAIN_EVOLUTION
+
+
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */
 #ifdef METALS

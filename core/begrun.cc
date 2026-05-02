@@ -1654,6 +1654,20 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef GRAIN_EVOLUTION
+      strcpy(tag[nt], "GrainEvolution_StickingCoeff");
+      addr[nt] = &All.GrainEvolution_StickingCoeff;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainEvolution_VelThreshFrag");
+      addr[nt] = &All.GrainEvolution_VelThreshFrag;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainEvolution_VelThreshShat");
+      addr[nt] = &All.GrainEvolution_VelThreshShat;
+      id[nt++] = REAL;
+#endif
+
 #ifdef DM_SCALARFIELD_SCREENING
       strcpy(tag[nt], "ScalarBeta");
       addr[nt] = &All.ScalarBeta;

@@ -145,6 +145,13 @@ extern ALIGN(32) struct particle_data
 #if defined(GRAIN_LORENTZFORCE)
     Vec3<MyFloat> Gas_B;
 #endif
+#if defined(GRAIN_EVOLUTION)
+    /* Mass fractions of each species in this super-particle. Conserved-on-mass under
+     * coag/frag/shat (bits 0-2); inflated/depleted by condensation/sublimation (bits 5/6
+     * affect only the ice species). Sum is 1 by construction; refractory subset
+     * is composition[0..GRAIN_NUM_REFRACTORY_SPECIES-1], ice subset is the remainder. */
+    MyFloat Composition[GRAIN_NUM_SPECIES];
+#endif
 #endif
 #if defined(PIC_MHD)
     short int MHD_PIC_SubType;

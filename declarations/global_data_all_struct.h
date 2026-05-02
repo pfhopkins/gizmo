@@ -84,6 +84,11 @@ struct global_data_all_processes
   double BetaCool_Tirr;         /*!< irradiation-floor temperature [K]; 0 disables floor */
   double BetaCool_u_irr;        /*!< derived: u corresponding to BetaCool_Tirr */
 #endif
+#ifdef GRAIN_EVOLUTION
+  double GrainEvolution_StickingCoeff;   /*!< global sticking-coefficient multiplier for pairwise outcomes (bits 0|1|2) and condensation (bit 5). 1.0 = use species defaults from grain_collisional_outcomes.h. */
+  double GrainEvolution_VelThreshFrag;   /*!< |dv| threshold for fragmentation onset [code velocity]; 0 = use species defaults. */
+  double GrainEvolution_VelThreshShat;   /*!< |dv| threshold for shattering onset [code velocity]; 0 = use species defaults. */
+#endif
 #ifdef CHIMES
   int ChimesThermEvolOn;        /*!< Flag to determine whether to evolve the temperature in CHIMES. */
 #ifdef CHIMES_STELLAR_FLUXES
