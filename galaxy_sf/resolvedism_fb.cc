@@ -199,28 +199,28 @@ void resolvedism_determine_SNe(void)
         sn_remtype[n_logged] = rem_type;
         sn_age[n_logged] = star_age_yr;
         sn_lifetime[n_logged] = lifetime_yr;
-        /* Pre-compute ejecta mass and metal yield for logging */
+        /* Pre-compute ejecta mass and metal yield for logging — read from absolute
+         * elem_ej tables (matches what fb_thermal.cc actually injects). */
         {
-            double mej_log = P[i].Mass * UNIT_MASS_IN_SOLAR - rem_mass;
-            if(rem_type == REM_PISN) mej_log = P[i].Mass * UNIT_MASS_IN_SOLAR;
-            if(mej_log < 0) mej_log = 0;
+            double mej_log = 0;
             double zej_log = 0, yC_log = 0, yO_log = 0, ySi_log = 0, yFe_log = 0;
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
-                double sy = stellar_sn_yield(logM, logZ, kk);
-                double xb = 0;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                xb = P[i].ElementAbundance[kk];
+#ifndef GALSF_RESOLVEDISM_WINDS
+            double t_end_yr_log = stellar_lifetime(logM, logZ);
+            double log_age_end_log = log10(DMAX(t_end_yr_log, 100.0));
 #endif
-                double me = sy + xb * mej_log;
-                if(me < 0) me = 0;
-                zej_log += me;
+            for(int kk = 0; kk < STBL_NELEM; kk++) {
+                double me = stellar_elem_ej_SN(logM, logZ, kk);
+#ifndef GALSF_RESOLVEDISM_WINDS
+                me += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_log, kk);
+#endif
+                mej_log += me;
+                if(kk >= ELEM_C) zej_log += me;
                 if(kk == ELEM_C)  yC_log  = me;
                 if(kk == ELEM_O)  yO_log  = me;
                 if(kk == ELEM_Si) ySi_log = me;
                 if(kk == ELEM_Fe) yFe_log = me;
             }
-            if(zej_log > mej_log) zej_log = mej_log;
 #endif
             sn_mej[n_logged] = mej_log;
             sn_zej[n_logged] = zej_log;
@@ -612,33 +612,37 @@ void resolvedism_inject_sn_energy(void)
             double rem_mass = stellar_remnant_mass(logM, logZ);
             if(rem_type == REM_PISN) rem_mass = 0; /* complete disruption */
 
-            double Mej_solar = M_star_old - rem_mass;
-            if(Mej_solar < 0) Mej_solar = 0;
+            /* Mej + Z_ej from absolute elem_ej tables (matches fb_thermal/fb_momentum injection).
+             * SN: elem_ej_SN_mass [+ elem_ej_wind_cumulative(end of life) when WINDS off].
+             * AGB: elem_ej_AGB_mass. */
+            double Mej_solar = 0, Z_ej = 0;
+#ifndef GALSF_RESOLVEDISM_WINDS
+            double t_end_yr_acc = stellar_lifetime(logM, logZ);
+            double log_age_end_acc = log10(DMAX(t_end_yr_acc, 100.0));
+#endif
+            for(int kk = 0; kk < STBL_NELEM; kk++) {
+                double m_k;
+                if(channel == 0) { /* SN */
+                    m_k = stellar_elem_ej_SN(logM, logZ, kk);
+#ifndef GALSF_RESOLVEDISM_WINDS
+                    m_k += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_acc, kk);
+#endif
+                } else { /* AGB */
+                    m_k = stellar_elem_ej_AGB(logM, logZ, kk);
+                }
+                Mej_solar += m_k;
+                if(kk >= ELEM_C) Z_ej += m_k;
+            }
 
             n_events[channel] += 1;
             M_injected[channel] += Mej_solar;
             M_removed[channel] += Mej_solar;
+            Z_injected[channel] += Z_ej;
             if(channel == 0) { /* SN: has energy */
                 double Esne_erg = 1.0e51;
                 if(rem_type == REM_PISN) Esne_erg = 1.0e52;
                 E_injected[channel] += Esne_erg;
             }
-
-            /* Metals: SN-only yields (net - wind, since wind metals already injected during life)
-             * plus birth composition of the SN ejecta */
-            double Z_ej = 0;
-            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
-                double sn_y = stellar_sn_yield(logM, logZ, kk);
-                double X_birth = 0;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                X_birth = P[i].ElementAbundance[kk];
-#endif
-                double M_elem = sn_y + X_birth * Mej_solar;
-                if(M_elem < 0) M_elem = 0;
-                Z_ej += M_elem;
-            }
-            if(Z_ej > Mej_solar) Z_ej = Mej_solar; /* metals cannot exceed total ejecta */
-            Z_injected[channel] += Z_ej;
 
             /* Set particle mass to remnant mass */
             P[i].Mass = rem_mass / UNIT_MASS_IN_SOLAR;

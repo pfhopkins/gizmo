@@ -238,22 +238,27 @@ void resolvedism_load_stellar_tables(void)
 #endif
 #endif
 
-        /* Cumulative wind ejecta — always loaded.  Surface abundances only with WINDS on. */
-        read_hdf5_dataset_as_float(file, "elem_ej_wind_cumulative", StellarTbl.elem_ej_wind_cumulative, n3d * STBL_NELEM);
+        /* Cumulative wind ejecta — lives in a sibling file (split for size).
+         * Derive the path from the unified-table path by replacing the suffix. */
+        {
+            char wind_path[512];
+            strncpy(wind_path, All.StellarTablesFile, sizeof(wind_path) - 1);
+            wind_path[sizeof(wind_path) - 1] = 0;
+            char *suffix = strstr(wind_path, "stellar_tables_unified.hdf5");
+            if(suffix == NULL) {
+                printf("ERROR: cannot derive stellar_wind_cumulative.hdf5 path from '%s'\n", All.StellarTablesFile);
+                endrun(1);
+            }
+            strcpy(suffix, "stellar_wind_cumulative.hdf5");
+            hid_t wf = H5Fopen(wind_path, H5F_ACC_RDONLY, H5P_DEFAULT);
+            if(wf < 0) { printf("ERROR: cannot open '%s'\n", wind_path); endrun(1); }
+            read_hdf5_dataset_as_float(wf, "elem_ej_wind_cumulative", StellarTbl.elem_ej_wind_cumulative, n3d * STBL_NELEM);
+            H5Fclose(wf);
+            printf("RESOLVEDISM TABLES: loaded elem_ej_wind_cumulative from %s\n", wind_path);
+        }
 #ifdef GALSF_RESOLVEDISM_WINDS
         read_hdf5_dataset_as_float(file, "surface_abundances",     StellarTbl.surface_abundances,     n3d * STBL_NELEM);
 #endif
-
-        /* Net yields [NZ x NM x NELEM] */
-        read_hdf5_dataset_double(file, "net_yields", StellarTbl.net_yields, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
-
-        /* Wind yields [NZ x NM x NELEM] — wind-only portion of net yields */
-        if(H5Lexists(file, "wind_yields", H5P_DEFAULT) > 0) {
-            read_hdf5_dataset_double(file, "wind_yields", StellarTbl.wind_yields, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
-        } else {
-            memset(StellarTbl.wind_yields, 0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
-            if(ThisTask == 0) printf("RESOLVEDISM TABLES: WARNING — wind_yields not found in table, SN yields = net yields\n");
-        }
 
         /* Absolute element ejecta tables (X_init baked in by table builder) */
         read_hdf5_dataset_double(file, "elem_ej_SN_mass",  StellarTbl.elem_ej_SN_mass,  (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
@@ -331,8 +336,6 @@ void resolvedism_load_stellar_tables(void)
 #endif
     }
 
-    MPI_Bcast(StellarTbl.net_yields,        STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(StellarTbl.wind_yields,       STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.elem_ej_SN_mass,   STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.elem_ej_AGB_mass,  STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.X_init,            STBL_NZ * STBL_NELEM,           MPI_DOUBLE, 0, MPI_COMM_WORLD);
