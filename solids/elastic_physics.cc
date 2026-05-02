@@ -81,10 +81,15 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
                 if(k==j) {I1 += S_new[j][k];} // first invariant of the tensor
                 J2 += 0.5 * S_new[j][k]*S_new[j][k]; // second invariant of the tensor
             }}
-        // now apply the von Mises yield criterion //
+        // now apply the yield criterion (von Mises by default; Drucker-Prager
+        // extension Y_eff = Y0 + mu_DP * P_hydro under EOS_DAMAGE_POROSITY bit 1)
+        double Y_eff = Y0;
+#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_DRUCKER_PRAGER
+        Y_eff = apply_drucker_prager(Y0, CellP[i].Pressure, CellP[i].CompositionType);
+#endif
         if(J2 > 0)
         {
-            double f_Y = Y0*Y0/(NDim*J2);
+            double f_Y = Y_eff*Y_eff/(NDim*J2);
             if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
         }
         // write out to variable //

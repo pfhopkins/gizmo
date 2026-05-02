@@ -63,17 +63,26 @@ double distention_jutzi_palpha_update(double alpha_prev, double P_solid,
 /* ---------------------------------------------------------------------------
  * bit 1: Drucker-Prager pressure-dependent yield extension
  *
- * Given the von Mises yield Y0 and the cell trace I_1 = tr(sigma) (or hydrostatic
- * pressure), return the modified yield strength Y_DP = Y0 + mu_DP * I_1
- * clamped at zero. Wired into elastic_body_update_driftkick yield block in C4.
+ * Returns the modified yield strength Y_DP = max(0, Y_0 + mu_DP * P_hydro),
+ * where mu_DP is the per-material friction coefficient (slot 14). Reduces
+ * to von Mises (Y_0) for mu_DP = 0. P_hydro is the cell hydrostatic
+ * pressure (positive in compression). Tensile failure (Y_DP -> 0) handled
+ * naturally by the clamp.
  * ---------------------------------------------------------------------------*/
 KOKKOS_INLINE_FUNCTION
-double apply_drucker_prager(double Y0, double I_1_or_P, int composition_type)
+double apply_drucker_prager(double Y0, double P_hydro, int composition_type)
 {
-    (void)I_1_or_P; (void)composition_type;
-    /* C4 will populate: Y_DP = max(0, Y0 + mu_DP * I_1) */
-    return Y0;
+    double mu_DP = All.Tillotson_EOS_params[composition_type][14];
+    double Y_eff = Y0 + mu_DP * P_hydro;
+    return (Y_eff > 0.0) ? Y_eff : 0.0;
 }
+
+/* Convenience: is bit 1 (Drucker-Prager) requested? */
+#if ((EOS_DAMAGE_POROSITY) & 2)
+#define DAMAGE_POROSITY_BIT_DRUCKER_PRAGER 1
+#else
+#define DAMAGE_POROSITY_BIT_DRUCKER_PRAGER 0
+#endif
 
 /* ---------------------------------------------------------------------------
  * bit 0: Grady-Kipp scalar damage from Weibull flaw distribution
