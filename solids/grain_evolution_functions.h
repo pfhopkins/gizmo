@@ -208,18 +208,13 @@ inline void grain_evolution_apply_sputter(int i, struct particle_data *P, double
 KOKKOS_INLINE_FUNCTION
 inline void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
 {
-#if !(GRAIN_EVOLUTION & 32)
-    /* C6 only: SUBL is implemented in C6; bit 5 is not active here. */
-    (void)i; (void)P; (void)dt;
-    return;
-#else
     if(P[i].Mass <= 0 || P[i].Grain_Size <= 0 || P[i].Gas_Density <= 0) { return; }
     if(P[i].Gas_InternalEnergy <= 0) { return; }
     if(P[i].KernelRadius <= 0) { return; }
 
     /* Gas T from kernel-weighted Gas_InternalEnergy. Use mu = 2.3 (cold
      * molecular H2 + He), accurate at the < 200 K regime where ice
-     * condensation is even possible. */
+     * condensation/sublimation actually drives mantle dynamics. */
     const double mu_molecular = 2.3;
     double T_gas = P[i].Gas_InternalEnergy * mu_molecular * (GAMMA_DEFAULT - 1.0) * U_TO_TEMP_UNITS;
     if(T_gas <= 0) { return; }
@@ -228,64 +223,114 @@ inline void grain_evolution_apply_cond_subl(int i, struct particle_data *P, doub
     double a_cm        = (double)P[i].Grain_Size; /* already in cm */
     double rho_bulk    = All.Grain_Internal_Density; /* g/cm^3 */
     double sticking    = (All.GrainEvolution_StickingCoeff > 0) ? All.GrainEvolution_StickingCoeff : 1.0;
-    /* Local kernel volume estimate (physical cgs) for the per-step clamp. */
     double h_phys_cm     = (double)P[i].KernelRadius * All.cf_atime * UNIT_LENGTH_IN_CGS;
     double V_kernel_cgs  = (4.0 * M_PI / 3.0) * h_phys_cm * h_phys_cm * h_phys_cm;
     double M_super_cgs   = (double)P[i].Mass * UNIT_MASS_IN_CGS;
     double dt_cgs        = dt * UNIT_TIME_IN_CGS;
     double M_old_code    = (double)P[i].Mass;
 
-    /* Per-ice-species condensation. Handles VolatileSpecies[0..2] = H2O,
-     * CO, CO2 -> grain Composition[3..5]. VolatileSpecies[3] (refractory
-     * vapor) has no source in Phase 17b yet -- skip. */
-    double dM_cond_total_code = 0.0;
+    /* Per-ice-species net flux. Handles VolatileSpecies[0..2] =
+     * H2O/CO/CO2 <-> grain Composition[3..5] mantles. VolatileSpecies[3]
+     * (refractory vapor) is intentionally NOT handled here -- there is no
+     * source for it yet in Phase 17b (sputter -> vapor coupling reserved
+     * for later). dM > 0 = COND (gas->grain), dM < 0 = SUBL (grain->gas).
+     * Direction is set by sign of (T_snow - T_gas):
+     *   T_gas < T_snow_k -> COND (gas-driven, magnitude limited by
+     *                       available volatile in kernel volume)
+     *   T_gas > T_snow_k -> SUBL (mantle-driven via Clausius-Clapeyron
+     *                       equilibrium-vapor-density excess; magnitude
+     *                       limited by available mantle on the grain) */
+    double dM_per_species_code[GRAIN_NUM_VOLATILE_SPECIES] = {0};
     double dE_release_total_cgs = 0.0;
-    double dM_cond_per_species_code[GRAIN_NUM_VOLATILE_SPECIES] = {0};
     for(int k = 0; k < GRAIN_EVOLUTION_NUM_ICE; k++)
     {
-        if(P[i].Gas_VolatileSpecies[k] <= 0) { continue; }
-        if(T_gas >= grain_outcomes_ice_snowline_T(k)) { continue; } /* too hot to condense */
-        double m_v_amu     = grain_outcomes_ice_molecular_weight(k);
-        double m_v_g       = m_v_amu * PROTONMASS_CGS;
-        double v_th_cgs    = sqrt(8.0 * BOLTZMANN_CGS * T_gas / (M_PI * m_v_g));
-        double rho_v_cgs   = rho_gas_cgs * (double)P[i].Gas_VolatileSpecies[k];
-        /* Hertz-Knudsen condensation rate per super-particle (g/s). */
-        double dMdt_cgs    = M_super_cgs * 3.0 * sticking * v_th_cgs * rho_v_cgs / (4.0 * a_cm * rho_bulk);
-        double dM_cgs      = dMdt_cgs * dt_cgs;
-        /* Stability clamp: cap at half the volatile mass in the local
-         * kernel volume, per-species. */
-        double dM_cap_cgs  = 0.5 * V_kernel_cgs * rho_v_cgs;
-        if(dM_cgs > dM_cap_cgs) { dM_cgs = dM_cap_cgs; }
-        if(dM_cgs <= 0) { continue; }
-        double dM_code     = dM_cgs / UNIT_MASS_IN_CGS;
-        dM_cond_per_species_code[k] = dM_code;
-        dM_cond_total_code         += dM_code;
-        dE_release_total_cgs       += dM_cgs * grain_outcomes_ice_latent_heat_cgs(k);
+        double T_snow_k = grain_outcomes_ice_snowline_T(k);
+        double m_v_amu  = grain_outcomes_ice_molecular_weight(k);
+        double m_v_g    = m_v_amu * PROTONMASS_CGS;
+        double L_cgs    = grain_outcomes_ice_latent_heat_cgs(k);
+        double v_th_cgs = sqrt(8.0 * BOLTZMANN_CGS * T_gas / (M_PI * m_v_g));
+        double dM_cgs   = 0.0;
+
+        if(T_gas < T_snow_k) {
+#if (GRAIN_EVOLUTION & 32)
+            /* COND branch (bit 5). Hertz-Knudsen condensation rate per
+             * super-particle, capped at half the locally-available
+             * volatile mass per step. */
+            if(P[i].Gas_VolatileSpecies[k] <= 0) { continue; }
+            double rho_v_cgs = rho_gas_cgs * (double)P[i].Gas_VolatileSpecies[k];
+            double dMdt_cgs  = M_super_cgs * 3.0 * sticking * v_th_cgs * rho_v_cgs / (4.0 * a_cm * rho_bulk);
+            dM_cgs           = dMdt_cgs * dt_cgs;
+            double dM_cap    = 0.5 * V_kernel_cgs * rho_v_cgs;
+            if(dM_cgs > dM_cap) { dM_cgs = dM_cap; }
+#endif
+        } else {
+#if (GRAIN_EVOLUTION & 64)
+            /* SUBL branch (bit 6). Clausius-Clapeyron equilibrium-vapor-
+             * density excess: at T = T_snow the system is in equilibrium
+             * with the local volatile field; at T > T_snow the saturation
+             * vapor density rises exponentially and the net flux reverses.
+             * Reference n_v_sat(T_snow) is taken to equal the current
+             * local n_v -- a one-parameter approximation that gives the
+             * correct sign and dominant temperature dependence (the exp
+             * factor) without requiring per-species P_ref tables. */
+            int comp_idx = GRAIN_NUM_REFRACTORY_SPECIES + k;
+            if(P[i].Composition[comp_idx] <= 0) { continue; }
+            double exp_arg   = L_cgs * m_v_g / BOLTZMANN_CGS * (1.0/T_snow_k - 1.0/T_gas);
+            /* Cap exp_arg to avoid overflow; sublimation timescale is
+             * exponentially short above T_snow already at exp_arg ~ 30. */
+            if(exp_arg > 50.0) { exp_arg = 50.0; }
+            double rho_v_local_cgs = rho_gas_cgs * (double)P[i].Gas_VolatileSpecies[k];
+            double rho_v_sat_cgs   = rho_v_local_cgs * exp(exp_arg);
+            /* If local n_v is itself zero, use a tiny floor so SUBL still
+             * proceeds (otherwise mantles never sublimate in vacuum). */
+            if(rho_v_sat_cgs <= 0) { rho_v_sat_cgs = 1e-30 * rho_gas_cgs; }
+            double dMdt_cgs  = -M_super_cgs * 3.0 * sticking * v_th_cgs * rho_v_sat_cgs / (4.0 * a_cm * rho_bulk);
+            dM_cgs           = dMdt_cgs * dt_cgs;
+            /* Cap at half the available mantle mass for this species. */
+            double M_mantle_k_cgs = M_super_cgs * (double)P[i].Composition[comp_idx];
+            double dM_floor_cgs   = -0.5 * M_mantle_k_cgs;
+            if(dM_cgs < dM_floor_cgs) { dM_cgs = dM_floor_cgs; }
+#endif
+        }
+
+        if(dM_cgs == 0) { continue; }
+        dM_per_species_code[k] = dM_cgs / UNIT_MASS_IN_CGS;
+        /* Latent-heat sign: COND (dM > 0) releases L into gas (warms);
+         * SUBL (dM < 0) absorbs L from gas (cools). dE has same sign as dM. */
+        dE_release_total_cgs += dM_cgs * L_cgs;
     }
-    if(dM_cond_total_code <= 0) { return; }
+
+    /* Sum mass change over all species. */
+    double dM_total_code = 0.0;
+    for(int k = 0; k < GRAIN_EVOLUTION_NUM_ICE; k++) { dM_total_code += dM_per_species_code[k]; }
+    if(dM_total_code == 0) { return; }
 
     /* Update grain Mass + Composition. Number-of-grains stays implicit
-     * (Composition[] flux changes the mantle composition, refractory
-     * fractions decrease only by mass-fraction renormalization). */
-    double M_new_code = M_old_code + dM_cond_total_code;
+     * (mantle change affects M and Composition; the grain core is
+     * untouched here -- bit 3 sputter handles refractory loss). */
+    double M_new_code = M_old_code + dM_total_code;
+    if(M_new_code <= 0) { return; } /* defensive: avoid divide-by-zero */
     for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
         double M_species_s = M_old_code * (double)P[i].Composition[s];
         if(s >= GRAIN_NUM_REFRACTORY_SPECIES) {
             int ice_idx = s - GRAIN_NUM_REFRACTORY_SPECIES;
-            if(ice_idx < GRAIN_EVOLUTION_NUM_ICE) { M_species_s += dM_cond_per_species_code[ice_idx]; }
+            if(ice_idx < GRAIN_EVOLUTION_NUM_ICE) { M_species_s += dM_per_species_code[ice_idx]; }
         }
+        if(M_species_s < 0) { M_species_s = 0; } /* defensive: a clamped
+            SUBL can momentarily push a species slightly negative */
         P[i].Composition[s] = (MyFloat)(M_species_s / M_new_code);
     }
     P[i].Mass = M_new_code;
 
-    /* Write back-reaction accumulators. Sign convention: positive entries
-     * for COND (gas loses mass, gains heat). The grain_backrx_pair_kernel
-     * uses these with the same kernel weights as the momentum scatter. */
+    /* Write back-reaction accumulators. Sign convention:
+     *   Grain_DeltaVolatileMass[k] > 0 -> COND (gas mass-fraction drops)
+     *   Grain_DeltaVolatileMass[k] < 0 -> SUBL (gas mass-fraction rises)
+     *   Grain_DeltaInternalEnergyHeating > 0 -> COND latent release heats gas
+     *   Grain_DeltaInternalEnergyHeating < 0 -> SUBL latent absorption cools gas */
     for(int k = 0; k < GRAIN_EVOLUTION_NUM_ICE; k++) {
-        P[i].Grain_DeltaVolatileMass[k] += (MyFloat)dM_cond_per_species_code[k];
+        P[i].Grain_DeltaVolatileMass[k] += (MyFloat)dM_per_species_code[k];
     }
     P[i].Grain_DeltaInternalEnergyHeating += (MyFloat)(dE_release_total_cgs / UNIT_ENERGY_IN_CGS);
-#endif /* GRAIN_EVOLUTION & 32 */
 }
 #endif
 
