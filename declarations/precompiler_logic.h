@@ -669,6 +669,9 @@
 #if (MHD_BATTERY_MECHANISMS & 8) && !defined(GRAIN_FLUID)
 #error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires GRAIN_FLUID"
 #endif
+#if (MHD_BATTERY_MECHANISMS & 8) && !defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
+#error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires RT_OPACITY_FROM_EXPLICIT_GRAINS — the J_dust accumulation piggybacks on the existing grain->gas pass to avoid duplicating the neighbor walk."
+#endif
 #if (MHD_BATTERY_MECHANISMS & 2) && !defined(RT_EVOLVE_FLUX)
 #error "MHD_BATTERY_MECHANISMS bit 1 (=2, radiative-ionization battery) requires an RT solver that evolves the radiation flux vector (RT_EVOLVE_FLUX)"
 #endif

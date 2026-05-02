@@ -247,12 +247,25 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
         gizmo_gpu_check_last_error("gasgrain_rt_gas_src", num_src);
 
         /* Scatter per-gas output back to CellP[i] */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+        /* Reset J_dust_cell once per pass (active sources only) so the
+           accumulation below replaces any stale value from a previous step. */
+        for(int a = 0; a < num_src; a++) {
+            int i = i_active_gas_host[a];
+            CellP_host[i].J_dust_cell = {};
+        }
+#endif
         for(int a = 0; a < num_src; a++) {
             int i = i_active_gas_host[a];
             CellP_host[i].InterpolatedGeometricDustCrossSection += d_out[a].InterpolatedGeometricDustCrossSection;
             for(int k_freq = 0; k_freq < N_RT_FREQ_BINS; k_freq++) {
                 CellP_host[i].Interpolated_Opacity[k_freq] += d_out[a].Interpolated_Opacity[k_freq];
             }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+            for(int kd = 0; kd < 3; kd++) {
+                CellP_host[i].J_dust_cell[kd] += d_out[a].J_dust_contribution[kd];
+            }
+#endif
         }
 
         gpu_ngb_list_free(&gnl, NULL);

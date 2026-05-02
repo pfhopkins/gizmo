@@ -144,6 +144,9 @@ struct GasGrainRTOut
     Vec3<MyDouble> Interpolated_Radiation_Acceleration;   /* grain direction */
     MyDouble InterpolatedGeometricDustCrossSection;       /* gas direction */
     MyDouble Interpolated_Opacity[N_RT_FREQ_BINS];        /* gas direction */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    Vec3<MyDouble> J_dust_contribution;                   /* gas direction; cgs esu/cm^2/s */
+#endif
 };
 
 /* Gas source (Type==0) searches grain neighbors: computes dust opacity
@@ -177,6 +180,44 @@ static void gasgrain_rt_gas_search_pair_kernel(
         double Q_abs = grain_extinction_Q_inline(j, k_freq, P);
         out.Interpolated_Opacity[k_freq] += (MyDouble)(Q_abs * geom);
     }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    /* Dust battery J_dust accumulation (SHS25 Eq. 8). Per-grain-particle
+       contribution to the gas-cell-centered current density:
+         dJ_d = (Z_j q_e / m_grain_single) * M_j * wk_i * (v_grain - v_gas)
+       Z_grain estimated inline from the grain Draine-Sutin tau parameter
+       (same expression as solids/grain_drag_gpu.cc::grain_drag_kernel:91 for
+       GRAIN_LORENTZFORCE — this is the existing per-grain-charge approximation).
+       Result accumulated in cgs (esu/cm^2/s); units are conservative because
+       all factors are converted to physical cgs explicitly here. */
+    {
+        const double R_grain_cgs = (double)P[j].Grain_Size;
+        const double m_grain_single_cgs = (4.0/3.0) * M_PI * R_grain_cgs*R_grain_cgs*R_grain_cgs * All.Grain_Internal_Density;
+        if((m_grain_single_cgs > 0) && (P[j].Gas_InternalEnergy > 0)) {
+            const double gamma_eff = GAMMA_DEFAULT;
+            const double cs_code = sqrt(gamma_eff*(gamma_eff-1.0) * (double)P[j].Gas_InternalEnergy);
+            const double cs_cgs = cs_code * UNIT_VEL_IN_CGS;
+            const double tau_ds = R_grain_cgs * (2.3*PROTONMASS_CGS) * cs_cgs*cs_cgs
+                                  / (gamma_eff * ELECTRONCHARGE_CGS * ELECTRONCHARGE_CGS);
+            double Z_grain = -DMAX(1.0/(1.0 + sqrt(1.0e-3/(tau_ds + MIN_REAL_NUMBER))),
+                                   2.5 * tau_ds);
+            if(!(Z_grain == Z_grain) || Z_grain >= 0) Z_grain = 0;       /* NaN/positive guard */
+            const double q_per_grain_esu = Z_grain * ELECTRONCHARGE_CGS;
+            const double M_j_cgs = (double)P[j].Mass * UNIT_MASS_IN_CGS;
+            /* wk_i has units 1/code-volume; convert to physical cgs cm^-3:
+                 wk_phys = wk_i / (UNIT_LENGTH * cf_atime)^3
+               Then M_j_cgs * wk_phys gives a contribution to local gas density
+               from grain particle j (g/cm^3 per (mass/density-norm) weight). */
+            const double L_phys_cgs = UNIT_LENGTH_IN_CGS * All.cf_atime;
+            const double wk_phys = wk_i / (L_phys_cgs * L_phys_cgs * L_phys_cgs);
+            const double charge_density_cgs = (q_per_grain_esu / m_grain_single_cgs) * M_j_cgs * wk_phys;
+            for(int kd = 0; kd < 3; kd++) {
+                const double dv_phys_cgs = ((double)P[j].Vel[kd] - (double)local.Vel[kd])
+                                           * UNIT_VEL_IN_CGS / All.cf_atime;
+                out.J_dust_contribution[kd] += (MyDouble)(charge_density_cgs * dv_phys_cgs);
+            }
+        }
+    }
+#endif
 }
 
 /* Grain source (Type in GRAIN_PTYPES) searches gas neighbors: computes
