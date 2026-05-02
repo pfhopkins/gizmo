@@ -132,9 +132,10 @@ extern ALIGN(32) struct particle_data
     MyFloat DeuteriumAbundance;       /*!< total D mass fraction (free + D+ + HD), for diffusion of D pool in network 17 */
 #endif
 #ifdef GALSF_RESOLVEDISM_WINDS
-    MyFloat WindMassAccum;       /*!< accumulated wind mass since last injection [Msun] */
+    MyFloat WindMassAccum;       /*!< accumulated wind mass since last injection [Msun] (used for momentum) */
     MyFloat WindMomentumAccum;   /*!< accumulated wind momentum magnitude [Msun * km/s] */
     MyFloat M_current_old;       /*!< M_current at start of previous timestep [Msun] */
+    MyFloat last_wind_log_age;   /*!< log10(age in yr) at last wind injection, for telescoping cumulative-table lookup */
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     MyFloat M_drawn_Ia;          /*!< original drawn mass for Type Ia DTD [Msun], >0 = WD eligible */

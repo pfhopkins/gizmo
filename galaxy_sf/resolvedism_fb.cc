@@ -558,6 +558,16 @@ void resolvedism_inject_sn_energy(void)
                 dM_wind / P[i].MstarSampleIMF[0], P[i].TimeBin, All.Time);
             P[i].WindMassAccum = 0;
             P[i].WindMomentumAccum = 0;
+            /* Advance the cumulative-table pointer so the next wind FB call
+             * injects only what the table integrated since this moment. */
+            {
+                double age_yr_now = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                double Mstar_log = P[i].MstarSampleIMF[0];
+                double logM_log  = log10(DMAX(Mstar_log, 0.08));
+                double logZ_log  = log10(DMAX(P[i].BirthMetallicity, 1e-10));
+                double table_age_now = get_star_table_age(age_yr_now, logM_log, logZ_log);
+                P[i].last_wind_log_age = log10(DMAX(table_age_now, 100.0));
+            }
             P[i].SNe_ThisTimeStep = -1;
             continue;
         }

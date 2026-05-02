@@ -119,24 +119,34 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     if(P[i].SNe_ThisTimeStep != 2 && P[i].SNe_ThisTimeStep != 3) return;
 
     /* ---- Wind injection (SNe_ThisTimeStep == 3) ---- */
+    /* Per-element ejecta from telescoping cumulative table:
+     *   delta_k = elem_ej_wind_cumulative(now, k) - elem_ej_wind_cumulative(prev, k)
+     * sums exactly to the table's total wind ejecta over the star's life.
+     * Momentum still uses WindMomentumAccum (v_wind × dM integrated externally). */
 #ifdef GALSF_RESOLVEDISM_WINDS
     if(P[i].SNe_ThisTimeStep == 3) {
         double dp_cgs = P[i].WindMomentumAccum * SOLAR_MASS_CGS * 1.0e5;
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
-        in->Mej = P[i].WindMassAccum / UNIT_MASS_IN_SOLAR;
 
         double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
         double table_age = get_star_table_age(star_age_yr, logM, logZ);
-        double log_age = log10(DMAX(table_age, 100.0));
+        double log_age_now  = log10(DMAX(table_age, 100.0));
+        double log_age_prev = P[i].last_wind_log_age;
+
+        double Mej_solar_winds = 0;
         double metal_mass_solar = 0;
         for(int k = 0; k < STBL_NELEM; k++) {
-            double X_surf = stellar_surface_abundance(logM, logZ, log_age, k);
-            double M_elem = X_surf * P[i].WindMassAccum;
+            double cum_now  = stellar_elem_ej_wind_cumulative(logM, logZ, log_age_now,  k);
+            double cum_prev = stellar_elem_ej_wind_cumulative(logM, logZ, log_age_prev, k);
+            double delta = cum_now - cum_prev;
+            if(delta < 0) delta = 0; /* float32 / interpolation noise floor */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            in->ElemYields[k] = M_elem / UNIT_MASS_IN_SOLAR;
+            in->ElemYields[k] = delta / UNIT_MASS_IN_SOLAR;
 #endif
-            if(k >= ELEM_C) metal_mass_solar += M_elem;
+            Mej_solar_winds += delta;
+            if(k >= ELEM_C) metal_mass_solar += delta;
         }
+        in->Mej = Mej_solar_winds / UNIT_MASS_IN_SOLAR;
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
         return;
     }
@@ -157,33 +167,18 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         in->WindMomentum = Mej_solar * 30.0 * SOLAR_MASS_CGS * 1.0e5 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
     }
 
-    /* AGB yields */
+    /* AGB yields: absolute element ejecta from table (all ≥0, Σ_k = Mej by construction) */
     double metal_mass_solar = 0;
+    double Mej_table_solar = 0;
     for(k = 0; k < STBL_NELEM; k++) {
-        double net_y = stellar_sn_yield(logM, logZ, k);
-        double X_birth = 0;
+        double m_k = stellar_elem_ej_AGB(logM, logZ, k);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        X_birth = P[i].ElementAbundance[k];
-#else
-        if(k == ELEM_H) X_birth = 0.74;
-        else if(k == ELEM_He) X_birth = 0.24;
-        else {
-            double Z_birth = DMAX(P[i].BirthMetallicity, 1e-10);
-            double solar_frac[STBL_NELEM] = {
-                0.7381, 0.2485, 2.36e-3, 6.91e-4, 5.72e-3, 3.26e-7, 1.25e-3,
-                2.98e-5, 5.91e-4, 5.57e-5, 6.65e-4, 5.16e-6, 3.10e-4, 3.15e-6,
-                7.37e-5, 2.93e-6, 6.44e-5, 3.48e-8, 3.59e-6, 2.30e-7, 1.37e-5,
-                9.17e-6, 1.17e-3, 3.30e-6, 6.99e-5, 7.20e-7, 1.67e-6};
-            X_birth = solar_frac[k] * (Z_birth / 0.014);
-        }
+        in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
-        double M_elem_ej = net_y + X_birth * Mej_solar;
-        if(M_elem_ej < 0) M_elem_ej = 0;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        in->ElemYields[k] = M_elem_ej / UNIT_MASS_IN_SOLAR;
-#endif
-        if(k >= ELEM_C) metal_mass_solar += M_elem_ej;
+        Mej_table_solar += m_k;
+        if(k >= ELEM_C) metal_mass_solar += m_k;
     }
+    in->Mej = Mej_table_solar / UNIT_MASS_IN_SOLAR;
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 
 #ifdef GALSF_RESOLVEDISM_DUST

@@ -85,6 +85,7 @@ void finalize_sampled_star(int i, double M_drawn)
     P[i].WindMassAccum = 0;
     P[i].WindMomentumAccum = 0;
     P[i].M_current_old = M_drawn; /* initial mass = ZAMS mass */
+    P[i].last_wind_log_age = 0.0; /* log10(1 yr) — cumulative table is ~0 at this age */
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     P[i].M_drawn_Ia = 0; /* set when star dies as WD */

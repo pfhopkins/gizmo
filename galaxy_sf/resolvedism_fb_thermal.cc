@@ -103,71 +103,32 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         default:        in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
     }
 
-    double M_particle_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
-    double Mej_solar = M_particle_solar - rem_mass;
-    if(Mej_solar < 0) Mej_solar = 0;
-    in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
-
+    /* SN ejecta: read absolute element ejecta from table directly.
+     * Table guarantees: all values ≥0, Σ_k elem_ej_SN_mass = post-wind envelope ejecta.
+     *
+     * When WINDS is OFF at compile time, the wind ejecta from the star's lifetime
+     * was never injected anywhere — it would silently vanish from the mass ledger.
+     * To preserve mass conservation, fold the cumulative wind ejecta (at end of life)
+     * into the SN injection so the entire returned mass is delivered in one event. */
+    (void)rem_mass; /* still used by Esne switch above */
+#ifndef GALSF_RESOLVEDISM_WINDS
+    double t_end_yr = stellar_lifetime(logM, logZ);
+    double log_age_end = log10(DMAX(t_end_yr, 100.0));
+#endif
+    double Mej_solar = 0;
     double metal_mass_solar = 0;
-    double ElemYields_solar[STBL_NELEM];
-    double X_birth_arr[STBL_NELEM];
-    double sum_yields = 0;
-
-    /* First pass: compute per-element yields and birth fractions */
     for(k = 0; k < STBL_NELEM; k++) {
-        /* FSN/DBH: no explosion — ejecta is birth composition only (net_y = 0).
-           Without winds: use net_yield (wind+SN combined) since wind yields
-           were never injected during the star's life.
-           With winds: use sn_yield (net-wind) since wind yields already injected. */
-        double net_y;
-        if(rem_type == REM_FSN || rem_type == REM_DBH) {
-            net_y = 0;
-        } else {
-#ifdef GALSF_RESOLVEDISM_WINDS
-            net_y = stellar_sn_yield(logM, logZ, k);
-#else
-            net_y = stellar_net_yield(logM, logZ, k);
+        double m_k = stellar_elem_ej_SN(logM, logZ, k);
+#ifndef GALSF_RESOLVEDISM_WINDS
+        m_k += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, k);
 #endif
-        }
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        X_birth_arr[k] = P[i].ElementAbundance[k];
-#else
-        if(k == ELEM_H) X_birth_arr[k] = 0.74;
-        else if(k == ELEM_He) X_birth_arr[k] = 0.24;
-        else {
-            double Z_birth = DMAX(P[i].BirthMetallicity, 1e-10);
-            double solar_frac[STBL_NELEM] = {
-                0.7381, 0.2485, 2.36e-3, 6.91e-4, 5.72e-3, 3.26e-7, 1.25e-3,
-                2.98e-5, 5.91e-4, 5.57e-5, 6.65e-4, 5.16e-6, 3.10e-4, 3.15e-6,
-                7.37e-5, 2.93e-6, 6.44e-5, 3.48e-8, 3.59e-6, 2.30e-7, 1.37e-5,
-                9.17e-6, 1.17e-3, 3.30e-6, 6.99e-5, 7.20e-7, 1.67e-6};
-            X_birth_arr[k] = solar_frac[k] * (Z_birth / 0.014);
-        }
+        in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
-        double M_elem_ej = net_y + X_birth_arr[k] * Mej_solar;
-        if(M_elem_ej < 0) M_elem_ej = 0;
-        ElemYields_solar[k] = M_elem_ej;
-        sum_yields += M_elem_ej;
+        Mej_solar += m_k;
+        if(k >= ELEM_C) metal_mass_solar += m_k;
     }
-
-    /* Enforce mass conservation: if clipping negative yields caused
-       sum(ElemYields) != Mej, redistribute the deficit into H.
-       This happens for PPISN entries near the PISN boundary where
-       sn_yield[H] is large negative (more H consumed than available in Mej). */
-    if(Mej_solar > 0 && sum_yields > 0) {
-        double deficit = Mej_solar - sum_yields;
-        if(fabs(deficit) > 1e-6) {
-            ElemYields_solar[ELEM_H] += deficit;
-            if(ElemYields_solar[ELEM_H] < 0) ElemYields_solar[ELEM_H] = 0;
-        }
-    }
-
-    for(k = 0; k < STBL_NELEM; k++) {
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        in->ElemYields[k] = ElemYields_solar[k] / UNIT_MASS_IN_SOLAR;
-#endif
-        if(k >= ELEM_C) metal_mass_solar += ElemYields_solar[k];
-    }
+    in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 
 #ifdef GALSF_RESOLVEDISM_DUST

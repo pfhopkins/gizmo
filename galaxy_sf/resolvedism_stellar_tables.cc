@@ -164,10 +164,13 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.log_L_ion_He1 = StellarTbl.log_L_ion_He2 = NULL;
 #endif
 
-    /* Surface abundances: only if winds enabled (~500 MB as float) */
-    StellarTbl.surface_abundances = NULL;
-#ifdef GALSF_RESOLVEDISM_WINDS
+    /* Cumulative wind ejecta is always loaded (used by SN injection when WINDS is off
+     * to add the wind mass that would otherwise have been injected during the star's life).
+     * Surface abundances only if WINDS enabled (used for wind-on diagnostics). */
     size_t n4d = n3d * STBL_NELEM;
+    StellarTbl.surface_abundances = NULL;
+    StellarTbl.elem_ej_wind_cumulative = (float *)mymalloc("stbl_wcum",  n4d * sizeof(float));
+#ifdef GALSF_RESOLVEDISM_WINDS
     StellarTbl.surface_abundances = (float *)mymalloc("stbl_surfab", n4d * sizeof(float));
 #endif
 
@@ -235,9 +238,10 @@ void resolvedism_load_stellar_tables(void)
 #endif
 #endif
 
-        /* Surface abundances */
+        /* Cumulative wind ejecta — always loaded.  Surface abundances only with WINDS on. */
+        read_hdf5_dataset_as_float(file, "elem_ej_wind_cumulative", StellarTbl.elem_ej_wind_cumulative, n3d * STBL_NELEM);
 #ifdef GALSF_RESOLVEDISM_WINDS
-        read_hdf5_dataset_as_float(file, "surface_abundances", StellarTbl.surface_abundances, n3d * STBL_NELEM);
+        read_hdf5_dataset_as_float(file, "surface_abundances",     StellarTbl.surface_abundances,     n3d * STBL_NELEM);
 #endif
 
         /* Net yields [NZ x NM x NELEM] */
@@ -250,6 +254,11 @@ void resolvedism_load_stellar_tables(void)
             memset(StellarTbl.wind_yields, 0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
             if(ThisTask == 0) printf("RESOLVEDISM TABLES: WARNING — wind_yields not found in table, SN yields = net yields\n");
         }
+
+        /* Absolute element ejecta tables (X_init baked in by table builder) */
+        read_hdf5_dataset_double(file, "elem_ej_SN_mass",  StellarTbl.elem_ej_SN_mass,  (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
+        read_hdf5_dataset_double(file, "elem_ej_AGB_mass", StellarTbl.elem_ej_AGB_mass, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
+        read_hdf5_dataset_double(file, "X_init",           StellarTbl.X_init,           (size_t)STBL_NZ * STBL_NELEM);
 
         /* Type Ia yields [NELEM] */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
@@ -307,18 +316,27 @@ void resolvedism_load_stellar_tables(void)
 #endif
 #endif
 
+    /* 4D wind tables are large — broadcast in chunks to avoid MPI limits */
+    {
+        size_t chunk = 100000000; /* 100M floats per chunk (~400 MB) */
+        for(size_t offset = 0; offset < n4d; offset += chunk) {
+            size_t this_chunk = (offset + chunk > n4d) ? (n4d - offset) : chunk;
+            MPI_Bcast(StellarTbl.elem_ej_wind_cumulative + offset, (int)this_chunk, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        }
 #ifdef GALSF_RESOLVEDISM_WINDS
-    /* Surface abundances are large — broadcast in chunks to avoid MPI limits */
-    size_t chunk = 100000000; /* 100M floats per chunk (~400 MB) */
-    for(size_t offset = 0; offset < n4d; offset += chunk) {
-        size_t this_chunk = (offset + chunk > n4d) ? (n4d - offset) : chunk;
-        MPI_Bcast(StellarTbl.surface_abundances + offset, (int)this_chunk, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    }
+        for(size_t offset = 0; offset < n4d; offset += chunk) {
+            size_t this_chunk = (offset + chunk > n4d) ? (n4d - offset) : chunk;
+            MPI_Bcast(StellarTbl.surface_abundances + offset, (int)this_chunk, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        }
 #endif
+    }
 
-    MPI_Bcast(StellarTbl.net_yields,     STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(StellarTbl.wind_yields,    STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(StellarTbl.type_ia_yields, STBL_NELEM,                      MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.net_yields,        STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.wind_yields,       STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.elem_ej_SN_mass,   STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.elem_ej_AGB_mass,  STBL_NZ * STBL_NM * STBL_NELEM, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.X_init,            STBL_NZ * STBL_NELEM,           MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(StellarTbl.type_ia_yields,    STBL_NELEM,                     MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     /* Compute grid spacing for O(1) index lookup */
     StellarTbl.log_Z_min = StellarTbl.log_Z[0];
@@ -858,6 +876,7 @@ void resolvedism_free_stellar_tables(void)
 #ifdef GALSF_RESOLVEDISM_WINDS
     if(StellarTbl.surface_abundances) { myfree(StellarTbl.surface_abundances); StellarTbl.surface_abundances = NULL; }
 #endif
+    if(StellarTbl.elem_ej_wind_cumulative) { myfree(StellarTbl.elem_ej_wind_cumulative); StellarTbl.elem_ej_wind_cumulative = NULL; }
 #ifdef RADTRANSFER
     if(StellarTbl.log_L_ion_He2)   { myfree(StellarTbl.log_L_ion_He2);   StellarTbl.log_L_ion_He2 = NULL; }
     if(StellarTbl.log_L_ion_He1)   { myfree(StellarTbl.log_L_ion_He1);   StellarTbl.log_L_ion_He1 = NULL; }
@@ -1159,6 +1178,78 @@ double stellar_type_ia_yield(int elem)
 {
     if(elem < 0 || elem >= STBL_NELEM) return 0;
     return StellarTbl.type_ia_yields[elem];
+}
+
+/* Absolute element ejecta tables [Msun] — X_init baked in by table builder.
+ * These are the runtime quantities for SN/AGB metal injection. */
+double stellar_elem_ej_SN(double logM, double logZ, int elem)
+{
+    if(elem < 0 || elem >= STBL_NELEM) return 0;
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    int b00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
+    int b01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
+    int b10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
+    int b11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
+    double v00 = StellarTbl.elem_ej_SN_mass[b00];
+    double v01 = StellarTbl.elem_ej_SN_mass[b01];
+    double v10 = StellarTbl.elem_ej_SN_mass[b10];
+    double v11 = StellarTbl.elem_ej_SN_mass[b11];
+    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+}
+
+double stellar_elem_ej_AGB(double logM, double logZ, int elem)
+{
+    if(elem < 0 || elem >= STBL_NELEM) return 0;
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    int b00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
+    int b01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
+    int b10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
+    int b11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
+    double v00 = StellarTbl.elem_ej_AGB_mass[b00];
+    double v01 = StellarTbl.elem_ej_AGB_mass[b01];
+    double v10 = StellarTbl.elem_ej_AGB_mass[b10];
+    double v11 = StellarTbl.elem_ej_AGB_mass[b11];
+    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+}
+
+/* Initial composition assumed by the yield table at this Z [linear in logZ] */
+double stellar_X_init(double logZ, int elem)
+{
+    if(elem < 0 || elem >= STBL_NELEM) return 0;
+    int iz; double fz;
+    stbl_idx_Z(logZ, &iz, &fz);
+    double v0 = StellarTbl.X_init[iz   * STBL_NELEM + elem];
+    double v1 = StellarTbl.X_init[(iz+1) * STBL_NELEM + elem];
+    return (1-fz)*v0 + fz*v1;
+}
+
+/* Cumulative wind ejecta of element `elem` [Msun] from birth up to log_age.
+ * Per-corner age clamp at lifetime: cum stays at end-of-life value past death. */
+double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem)
+{
+    if(!StellarTbl.elem_ej_wind_cumulative || elem < 0 || elem >= STBL_NELEM) return 0;
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    double corners[4];
+    int iz_c[4] = {iz, iz, iz+1, iz+1};
+    int im_c[4] = {im, im+1, im, im+1};
+    for(int c = 0; c < 4; c++) {
+        double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
+        double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
+        int ia_c; double fa_c;
+        stbl_idx_age(log_age_c, &ia_c, &fa_c);
+        double v0 = StellarTbl.elem_ej_wind_cumulative[IDX4(iz_c[c], im_c[c], ia_c,   elem)];
+        double v1 = StellarTbl.elem_ej_wind_cumulative[IDX4(iz_c[c], im_c[c], ia_c+1, elem)];
+        corners[c] = v0*(1-fa_c) + v1*fa_c;
+    }
+    double c0 = corners[0]*(1-fm) + corners[1]*fm;
+    double c1 = corners[2]*(1-fm) + corners[3]*fm;
+    return c0*(1-fz) + c1*fz;
 }
 
 

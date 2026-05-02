@@ -104,10 +104,21 @@ struct StellarTables {
 
     /* 4D surface abundances [NZ * NM * NAGE * NELEM] — only if winds enabled */
     float *surface_abundances;
+    /* 4D cumulative wind ejecta [NZ * NM * NAGE * NELEM] [Msun] — only if winds enabled */
+    float *elem_ej_wind_cumulative;
 
-    /* 3D yield datasets — flat [NZ * NM * NELEM] */
+    /* 3D yield datasets — flat [NZ * NM * NELEM]
+     * net_yields/wind_yields kept for diagnostics only.
+     * Use elem_ej_SN_mass / elem_ej_AGB_mass at runtime — these are
+     * absolute element ejecta masses [Msun] with X_init baked in. */
     double net_yields[STBL_NZ * STBL_NM * STBL_NELEM];
     double wind_yields[STBL_NZ * STBL_NM * STBL_NELEM];
+    double elem_ej_SN_mass[STBL_NZ * STBL_NM * STBL_NELEM];
+    double elem_ej_AGB_mass[STBL_NZ * STBL_NM * STBL_NELEM];
+
+    /* Initial composition the table was generated with [NZ * NELEM]
+     * — used to undo X_init when applying the star's actual P[i].ElementAbundance. */
+    double X_init[STBL_NZ * STBL_NELEM];
 
     /* Type Ia yields [NELEM] */
     double type_ia_yields[STBL_NELEM];
@@ -160,13 +171,17 @@ double stellar_log_L_NUV_lo(double logM, double logZ, double log_age);
 double stellar_log_L_FUV_M1(double logM, double logZ, double log_age);
 double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age);
 
-/* ---- Surface abundances (3D + element index) ---- */
+/* ---- Surface abundances + cumulative wind ejecta (3D + element index) ---- */
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem);
+double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem); /* cumulative wind ejecta from birth [Msun] */
 
 /* ---- Yields (2D + element index) ---- */
-double stellar_net_yield(double logM, double logZ, int elem);
-double stellar_wind_yield(double logM, double logZ, int elem);
-double stellar_sn_yield(double logM, double logZ, int elem); /* net_yield - wind_yield */
+double stellar_net_yield(double logM, double logZ, int elem);   /* diagnostics — do not use at runtime */
+double stellar_wind_yield(double logM, double logZ, int elem);  /* diagnostics — do not use at runtime */
+double stellar_sn_yield(double logM, double logZ, int elem);    /* diagnostics — do not use at runtime */
+double stellar_elem_ej_SN(double logM, double logZ, int elem);  /* absolute SN ejecta [Msun], X_init baked in */
+double stellar_elem_ej_AGB(double logM, double logZ, int elem); /* absolute AGB ejecta [Msun], X_init baked in */
+double stellar_X_init(double logZ, int elem);                   /* table's assumed birth mass fraction */
 double stellar_type_ia_yield(int elem);
 
 #endif /* GALSF_RESOLVEDISM_STELLAR_TABLES */
