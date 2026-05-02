@@ -98,6 +98,11 @@ struct global_data_all_processes
   double GrainEvolution_VelThreshShat;          /*!< |dv| threshold for shattering onset [code velocity]; 0 = use species defaults. */
   double GrainEvolution_ThermalSputteringScaling; /*!< global multiplier on the Nozawa+(2006) thermal-sputter erosion rate (bit 3). Mirrors All.ISMDustChem_ThermalSputteringScaling. 1.0 = nominal. */
 #endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+  double GrainPromotion_MassThresh;         /*!< derived: MassThresh_cgs in code units */
+  double GrainPromotion_MassThresh_cgs;     /*!< user input: grain mass promotion threshold [g] */
+  double GrainPromotion_DustGasRatioThresh; /*!< grain/gas density ratio threshold; 0 = disabled */
+#endif
 #ifdef CHIMES
   int ChimesThermEvolOn;        /*!< Flag to determine whether to evolve the temperature in CHIMES. */
 #ifdef CHIMES_STELLAR_FLUXES

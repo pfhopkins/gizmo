@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../eos/composition_registry.h"
 
 
 /*! \file init.c
@@ -630,6 +631,9 @@ void init(void)
             CellP[i].DtInternalEnergy = 0;
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+            CellP[i].CompositionType = MATERIAL_TILLOTSON_UNUSED; /* 0 = ideal gas; solid-body ICs set this to a named material */
+#endif
 #ifdef COOLING
 #ifndef CHIMES
             CellP[i].Ne = 1.0;

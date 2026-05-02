@@ -11,6 +11,7 @@
 #include "../mesh/neighbor_list.h"
 #include "../cooling/disk_betacool.h"
 #include "../cooling/planet_heating.h"
+#include "../solids/grain_promotion.h"
 
 
 /*! \file run.c
@@ -487,6 +488,9 @@ void calculate_non_standard_physics(void)
 #endif
 
 
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+    grain_promotion_parent_routine();
+#endif
 #ifdef GALSF /* star/sink particle formation */
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling

@@ -228,6 +228,9 @@ extern int Gas_split;           /*!< current number of newly-spawned gas particl
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
 #endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+extern int Grains_promoted;	/*!< current number of grain particles promoted to solid body in gas block */
+#endif
 
 extern double TimeOfLastTreeConstruction;	/*!< holds what it says */
 extern std::vector<int> Ngblist;		/*!< Buffer to hold indices of neighbours retrieved by the neighbour search routines */

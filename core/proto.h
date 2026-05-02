@@ -428,6 +428,9 @@ void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+void grain_promotion_parent_routine(void);
+#endif
 #if defined(TURB_DRIVING)
 void do_turb_driving_step_first_half(void);
 void do_turb_driving_step_second_half(void);

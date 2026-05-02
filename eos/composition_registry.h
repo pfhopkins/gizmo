@@ -55,10 +55,10 @@ static inline enum EosBranch eos_branch_of(int composition_type)
     if(composition_type < N_TILLOTSON_MATERIALS) {return EOS_BRANCH_TILLOTSON;}
     return EOS_BRANCH_ANEOS;
 #elif defined(EOS_TILLOTSON)
-    (void)composition_type;
+    if(composition_type == MATERIAL_TILLOTSON_UNUSED) {return EOS_BRANCH_NONE;}
     return EOS_BRANCH_TILLOTSON;
 #elif defined(EOS_ANEOS)
-    (void)composition_type;
+    if(composition_type == MATERIAL_TILLOTSON_UNUSED) {return EOS_BRANCH_NONE;}
     return EOS_BRANCH_ANEOS;
 #else
     (void)composition_type;

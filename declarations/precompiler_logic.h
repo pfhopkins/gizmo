@@ -1248,6 +1248,15 @@
 #endif
 #endif // GRAIN_EVOLUTION
 
+#if defined(GRAIN_FLUID_PROMOTION)
+#ifndef GRAIN_FLUID
+#error "GRAIN_FLUID_PROMOTION requires GRAIN_FLUID"
+#endif
+#ifndef EOS_TILLOTSON
+#define EOS_TILLOTSON
+#endif
+#endif // GRAIN_FLUID_PROMOTION
+
 
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */

@@ -565,6 +565,9 @@ void set_units(void)
 #ifdef DISK_BETA_COOL
     All.BetaCool_u_irr = All.BetaCool_Tirr / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
 #endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+    All.GrainPromotion_MassThresh = All.GrainPromotion_MassThresh_cgs / UNIT_MASS_IN_CGS;
+#endif
 #ifdef PLANET_HEATING
     {
         double cgs_to_code_rate = UNIT_TIME_IN_CGS / UNIT_SPECEGY_IN_CGS;
@@ -1676,6 +1679,15 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+      strcpy(tag[nt], "GrainPromotion_MassThresh_cgs");
+      addr[nt] = &All.GrainPromotion_MassThresh_cgs;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainPromotion_DustGasRatioThresh");
+      addr[nt] = &All.GrainPromotion_DustGasRatioThresh;
+      id[nt++] = REAL;
+#endif
 #ifdef GRAIN_EVOLUTION
       strcpy(tag[nt], "GrainEvolution_StickingCoeff");
       addr[nt] = &All.GrainEvolution_StickingCoeff;

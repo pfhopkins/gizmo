@@ -143,6 +143,9 @@ int Gas_split;           /*!< current number of newly-spawned gas particles outs
 #ifdef GALSF
 int Stars_converted;		/*!< current number of star particles in gas particle block */
 #endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+int Grains_promoted;		/*!< current number of grain particles promoted to solid body in gas block */
+#endif
 
 double TimeOfLastTreeConstruction;	/*!< holds what it says */
 
