@@ -1,0 +1,5 @@
+Makefile.systype
+*.o
+*.a
+GIZMO
+.git

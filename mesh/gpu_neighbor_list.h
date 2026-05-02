@@ -18,10 +18,12 @@
 
 #include "sfc_tiles.h"
 
-/* GPU-resident neighbor list: CSR arrays in SharedSpace */
+/* GPU-resident neighbor list: CSR arrays.
+   offsets: SharedSpace (host writes offsets[num_active]=total after scan).
+   neighbors: DeviceSpace (GPU HBM on CUDA; never host-accessed directly). */
 struct gpu_neighbor_list_t {
     int *offsets;       /* [num_active+1] in SharedSpace */
-    int *neighbors;     /* [total_pairs] in SharedSpace */
+    int *neighbors;     /* [total_pairs] in DeviceSpace (GPU HBM — no UVM fault) */
     int num_active;
     int total_pairs;
 
@@ -66,9 +68,11 @@ struct gpu_spatial_index_t {
 
 
 /* Build spatial index (tiles + BVH) on CPU, copy to SharedSpace.
-   P_shared must be in SharedSpace (managed memory). */
+   P_shared must be in SharedSpace (managed memory).
+   caller_label: short tag printed in DIAG_SIDX so we can attribute rebuilds. */
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
-                             int type_bitmask, gpu_spatial_index_t *idx);
+                             int type_bitmask, gpu_spatial_index_t *idx,
+                             const char *caller_label = "?");
 
 /* Free spatial index SharedSpace memory. */
 void gpu_spatial_index_free(gpu_spatial_index_t *idx);
@@ -110,7 +114,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         gpu_spatial_index_t *cached_idx,
                         double search_radius_factor = 1.0,
                         const double *search_radii_host = NULL,
-                        const double *source_positions_host = NULL);
+                        const double *source_positions_host = NULL,
+                        const char *caller_label = "?");
 
 /* Free CSR arrays + active indices. Does NOT free tiles/BVH/pool if they
    belong to the cached spatial index (use gpu_spatial_index_free for those). */

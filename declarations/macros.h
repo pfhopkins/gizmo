@@ -169,6 +169,16 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
    convenience alias so allocation code doesn't hardcode a backend. */
 #define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
+/* Device-only memory space: GPU HBM on CUDA builds, falls back to SharedSpace
+   elsewhere.  Use for temporary GPU-internal buffers that the host never reads
+   (e.g. neighbor-list scratch, CSR neighbors array).  Avoids UVM page-fault
+   overhead on GH200 where each freshly-allocated CudaUVM page costs ~0.65 ms
+   to fault in — adding ~1.4s per kernel call for typical scratch sizes. */
+#ifdef KOKKOS_ENABLE_CUDA
+#define GIZMO_KOKKOS_DEVICE_SPACE Kokkos::CudaSpace
+#else
+#define GIZMO_KOKKOS_DEVICE_SPACE GIZMO_KOKKOS_SHARED_SPACE
+#endif
 
 /* DMAX/DMIN/IMAX/IMIN as macros: the static inline function versions in proto.h
    lack __device__ annotations and nvcc silently stubs them to return 0 on device.

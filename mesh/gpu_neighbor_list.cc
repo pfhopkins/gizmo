@@ -38,7 +38,8 @@ void gpu_step_sidx_invalidate(void)
 
 
 void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
-                             int type_bitmask, gpu_spatial_index_t *idx)
+                             int type_bitmask, gpu_spatial_index_t *idx,
+                             const char *caller_label)
 {
     /* Capture periodicity parameters */
     idx->periodic_flags[0] = TILE_PERIODIC_X;
@@ -97,8 +98,8 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->valid = 1;
 
     if(ThisTask == 0) { /* DIAG: spatial index build breakdown — remove after profiling */
-        printf("[DIAG_SIDX ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
-               ntiles, num_pool,
+        printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
+               caller_label ? caller_label : "?", type_bitmask, ntiles, num_pool,
                timediff(t_si0, t_si1), timediff(t_si1, t_si2), timediff(t_si2, t_si3),
                timediff(t_si3, t_si4), timediff(t_si0, t_si4));
         fflush(stdout);
@@ -122,9 +123,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         gpu_spatial_index_t *cached_idx,
                         double search_radius_factor,
                         const double *search_radii_host,
-                        const double *source_positions_host)
+                        const double *source_positions_host,
+                        const char *caller_label)
 {
     gnl->num_active = num_active;
+    double t_entry = my_second(); /* DIAG: entry */
 
     /* Use cached spatial index if available, otherwise build fresh.
      * If caller provided a cached_idx but it's not yet built, populate it (this
@@ -138,12 +141,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     if(cached_idx && cached_idx->valid) {
         idx = cached_idx;
     } else if(cached_idx) {
-        gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx);
+        gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label);
         idx = cached_idx;
     } else {
-        gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx);
+        gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label);
         idx = &local_idx;
     }
+    double t_after_sidx = my_second(); /* DIAG: after SIDX (re)use decision */
 
     /* Copy spatial index pointers to gnl for use by free */
     gnl->d_tiles = idx->d_tiles;
@@ -156,18 +160,21 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
     memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
 
-    /* Refresh the h component of the compact array from current P_shared[i].KernelRadius.
-       Positions are stable while the spatial index is cached, but h changes between
-       calls (density h-iteration mutates KernelRadius). Without this refresh, source
-       h_i (when search_radii_host==NULL) and j-side h_j (SYMMETRIC mode) read stale
-       values, breaking convergence. Cost: ~1ms for 2M particles. */
+    /* Refresh the h component of the compact array from current P_shared[i].KernelRadius. */
+    double t_refresh_launch_in = 0, t_refresh_launch_out = 0, t_refresh_fence_out = 0; /* DIAG */
+    int did_refresh = 0;
     if(cached_idx && cached_idx->valid) {
+        did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
+        t_refresh_launch_in = my_second();
         Kokkos::parallel_for("compact_h_refresh", num_total, KOKKOS_LAMBDA(int i) {
             compact[i*4+3] = (float)P_shared[i].KernelRadius;
         });
+        t_refresh_launch_out = my_second();
         Kokkos::fence();
+        t_refresh_fence_out = my_second();
     }
+    double t_after_refresh = my_second(); /* DIAG */
 
     /* Active indices: always re-uploaded (changes per call) */
     gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
@@ -203,11 +210,26 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
-    int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
-    int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(na_safe * sizeof(int));
+    int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
+    int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * sizeof(int));
     double t_alloc1 = my_second(); /* DIAG: end of scratch alloc */
 
-    double t_nl0 = my_second(); /* DIAG: start of GPU passes */
+    /* DIAG: drain any prior async GPU work so subsequent fence times only this kernel */
+    Kokkos::fence();
+    double t_drain_done = my_second();
+    double t_nl0 = t_drain_done; /* DIAG: start of GPU passes */
+    double t_fused_launch_in = 0, t_fused_launch_out = 0; /* DIAG */
+    double t_noop_launch_in = 0, t_noop_launch_out = 0, t_noop_fence_out = 0; /* DIAG: empty-kernel probe */
+
+    /* Empty-kernel probe: distinguishes Kokkos/CUDA fence floor (platform overhead)
+     * from actual GPU work.  If noop_fnc ≈ fused_fnc the 1.4s is the fence floor;
+     * if noop_fnc ≈ µs the 1.4s is real kernel work (e.g. UVM page migration). */
+    t_noop_launch_in = my_second();
+    Kokkos::parallel_for("noop_probe", 1, KOKKOS_LAMBDA(int) {});
+    t_noop_launch_out = my_second();
+    Kokkos::fence();
+    t_noop_fence_out = my_second();
+
     /* Fused single pass: BVH walk + write neighbors into per-particle scratchpad */
     {
         sfc_tile_t *tiles = gnl->d_tiles;
@@ -227,6 +249,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const float *compact_xyzh = gnl->d_compact_xyzh;
+        t_fused_launch_in = my_second();
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
             double bs[3] = {bs0, bs1, bs2};
@@ -244,6 +267,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                                                pf, bs, bh);
             counts[aa] = cnt;
         });
+        t_fused_launch_out = my_second();
         Kokkos::fence();
     }
     double t_nl1 = my_second(); /* DIAG: after fused BVH pass */
@@ -279,12 +303,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     double t_nl2 = my_second(); /* DIAG: after GPU prefix scan */
 
     /* Allocate CSR neighbors array */
-    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((total > 0) ? total : 1) * sizeof(int));
+    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(((total > 0) ? total : 1) * sizeof(int));
 
-    /* Compact: copy from per-particle scratchpad into dense CSR neighbors[].
-       Overflow particles (count > stride) re-walk the BVH with unbounded store
-       directly into neighbors[offsets[aa]]; this keeps the fast path fast while
-       remaining correct for arbitrarily clumpy problems. */
+    /* Compact: copy from per-particle scratchpad into dense CSR neighbors[]. */
+    double t_compact_launch_in = 0, t_compact_launch_out = 0; /* DIAG */
     {
         sfc_tile_t *tiles = gnl->d_tiles;
         tile_bvh_node_t *bvh = gnl->d_bvh;
@@ -304,6 +326,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const float *compact_xyzh = gnl->d_compact_xyzh;
+        t_compact_launch_in = my_second();
         Kokkos::parallel_for("ngb_compact", num_active, KOKKOS_LAMBDA(int aa) {
             int n = counts[aa];
             int dst = offsets[aa];
@@ -327,26 +350,50 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                                          pf, bs, bh);
             }
         });
+        t_compact_launch_out = my_second();
         Kokkos::fence();
     }
     double t_nl3 = my_second(); /* DIAG: after compact pass */
 
     /* Free temporaries */
     double t_free0 = my_second(); /* DIAG */
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_scratch);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_counts);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
     if(d_radii) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     if(d_source_pos) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);
     double t_free1 = my_second(); /* DIAG: end of scratch free */
 
-    int sidx_cached = (cached_idx && cached_idx->valid) ? 1 : 0;
-    if(ThisTask == 0) { /* DIAG: NGP build phase breakdown — remove after profiling */
-        printf("[DIAG_NGL N=%d pairs=%d ovflw=%d sidx_cached=%d] alloc=%.3f gpu_fused=%.3f gpu_scan=%.3f gpu_compact=%.3f free=%.3f total=%.3f\n",
-               num_active, total, overflow_count, sidx_cached,
-               timediff(t_alloc0, t_alloc1),
-               timediff(t_nl0, t_nl1), timediff(t_nl1, t_nl2), timediff(t_nl2, t_nl3),
+    int sidx_cached_now = (cached_idx && cached_idx->valid) ? 1 : 0;
+    if(ThisTask == 0) { /* DIAG: NGP build fine-grained breakdown */
+        /* Sub-times for compact_h_refresh (when run): launch return vs trailing fence */
+        double refresh_launch = did_refresh ? timediff(t_refresh_launch_in, t_refresh_launch_out) : 0;
+        double refresh_fence  = did_refresh ? timediff(t_refresh_launch_out, t_refresh_fence_out) : 0;
+        /* Drain fence cost (prior async GPU work) */
+        double drain_fence    = timediff(t_alloc1, t_drain_done);
+        /* Fused launch return vs trailing fence */
+        double fused_launch   = (num_active > 0) ? timediff(t_fused_launch_in, t_fused_launch_out) : 0;
+        double fused_fence    = (num_active > 0) ? timediff(t_fused_launch_out, t_nl1) : 0;
+        /* Compact launch return vs trailing fence */
+        double compact_launch = (num_active > 0) ? timediff(t_compact_launch_in, t_compact_launch_out) : 0;
+        double compact_fence  = (num_active > 0) ? timediff(t_compact_launch_out, t_nl3) : 0;
+        double noop_launch = timediff(t_noop_launch_in, t_noop_launch_out);
+        double noop_fence  = timediff(t_noop_launch_out, t_noop_fence_out);
+        printf("[DIAG_NGL caller=%s tbm=0x%x N=%d Ntot=%d pairs=%d ovflw=%d sidx_cached=%d] "
+               "sidx_dec=%.3f refresh_lnch=%.3f refresh_fnc=%.3f drain=%.3f "
+               "noop_lnch=%.4f noop_fnc=%.4f "
+               "fused_lnch=%.3f fused_fnc=%.3f scan=%.3f "
+               "compact_lnch=%.3f compact_fnc=%.3f free=%.3f total=%.3f\n",
+               caller_label ? caller_label : "?", type_bitmask, num_active, num_total,
+               total, overflow_count, sidx_cached_now,
+               timediff(t_entry, t_after_sidx),
+               refresh_launch, refresh_fence,
+               drain_fence,
+               noop_launch, noop_fence,
+               fused_launch, fused_fence,
+               timediff(t_nl1, t_nl2),
+               compact_launch, compact_fence,
                timediff(t_free0, t_free1),
-               timediff(t_alloc0, t_free1));
+               timediff(t_entry, t_free1));
         fflush(stdout);
     }
 }
@@ -354,7 +401,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
 void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx)
 {
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->neighbors);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->offsets);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_active);
     /* Only free tiles/BVH/pool if they were NOT from the cached index */
@@ -383,7 +430,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
     gpu_neighbor_list_t gpu_nl;
     gpu_ngb_list_build(P_shared, num_total, active_indices, num_active,
                        NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, gpu_step_sidx_ptr(),
-                       search_radius_factor);
+                       search_radius_factor, NULL, NULL, "symlist");
 
     /* Copy CSR into mymalloc neighbor_list_t */
     out->num_active = num_active;
@@ -418,7 +465,7 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
     gpu_neighbor_list_t gpu_nl;
     gpu_ngb_list_build(P_shared, num_total, i_active_indices, num_active,
                        search_mode, j_type_bitmask, &gpu_nl, NULL,
-                       1.0 /* search_radius_factor */, i_search_radii_host);
+                       1.0 /* search_radius_factor */, i_search_radii_host, NULL, "xtype");
 
     /* Copy CSR into mymalloc neighbor_list_t */
     out->num_active = num_active;
