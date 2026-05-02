@@ -85,9 +85,10 @@ struct global_data_all_processes
   double BetaCool_u_irr;        /*!< derived: u corresponding to BetaCool_Tirr */
 #endif
 #ifdef GRAIN_EVOLUTION
-  double GrainEvolution_StickingCoeff;   /*!< global sticking-coefficient multiplier for pairwise outcomes (bits 0|1|2) and condensation (bit 5). 1.0 = use species defaults from grain_collisional_outcomes.h. */
-  double GrainEvolution_VelThreshFrag;   /*!< |dv| threshold for fragmentation onset [code velocity]; 0 = use species defaults. */
-  double GrainEvolution_VelThreshShat;   /*!< |dv| threshold for shattering onset [code velocity]; 0 = use species defaults. */
+  double GrainEvolution_StickingCoeff;          /*!< global sticking-coefficient multiplier for pairwise outcomes (bits 0|1|2) and condensation (bit 5). 1.0 = use species defaults from grain_collisional_outcomes.h. */
+  double GrainEvolution_VelThreshFrag;          /*!< |dv| threshold for fragmentation onset [code velocity]; 0 = use species defaults. */
+  double GrainEvolution_VelThreshShat;          /*!< |dv| threshold for shattering onset [code velocity]; 0 = use species defaults. */
+  double GrainEvolution_ThermalSputteringScaling; /*!< global multiplier on the Nozawa+(2006) thermal-sputter erosion rate (bit 3). Mirrors All.ISMDustChem_ThermalSputteringScaling. 1.0 = nominal. */
 #endif
 #ifdef CHIMES
   int ChimesThermEvolOn;        /*!< Flag to determine whether to evolve the temperature in CHIMES. */

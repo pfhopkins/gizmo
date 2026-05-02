@@ -1666,6 +1666,10 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "GrainEvolution_VelThreshShat");
       addr[nt] = &All.GrainEvolution_VelThreshShat;
       id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainEvolution_ThermalSputteringScaling");
+      addr[nt] = &All.GrainEvolution_ThermalSputteringScaling;
+      id[nt++] = REAL;
 #endif
 
 #ifdef DM_SCALARFIELD_SCREENING

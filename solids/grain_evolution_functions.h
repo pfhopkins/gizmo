@@ -39,7 +39,25 @@
 
 #ifdef GRAIN_EVOLUTION
 
+#include <math.h>
+
 #include "../declarations/allvars.h"
+#include "grain_collisional_outcomes.h"
+
+/* Composition[] index -> stable GrainOutcomeSpecies enum (used by all
+ * per-species lookups in grain_collisional_outcomes.h). The fixed layout is:
+ *   Composition[0..2]                           = silicate, carbon, iron (refractory)
+ *   Composition[3..GRAIN_NUM_SPECIES-1]         = H2O, CO, CO2 ices */
+KOKKOS_INLINE_FUNCTION
+inline int grain_evolution_composition_index_to_outcome_kind(int s)
+{
+    if(s == 0) { return GRAIN_OUTCOME_SPECIES_SILICATE; }
+    if(s == 1) { return GRAIN_OUTCOME_SPECIES_CARBON;   }
+    if(s == 2) { return GRAIN_OUTCOME_SPECIES_IRON;     }
+    if(s == 3) { return GRAIN_OUTCOME_SPECIES_H2O_ICE;  }
+    if(s == 4) { return GRAIN_OUTCOME_SPECIES_CO_ICE;   }
+    return GRAIN_OUTCOME_SPECIES_CO2_ICE;
+}
 
 /* Pairwise outcome resolver. C1 stub: returns without touching state.
  * Activated under (GRAIN_EVOLUTION & 7) in C7-C9. */
@@ -55,14 +73,96 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
 #endif
 }
 
-/* Per-superparticle local step. C1 stub. Activated bit-by-bit in C3-C6. */
+#if (GRAIN_EVOLUTION & 8)
+/* Bit 3 THERM_SPUT: thermal sputtering of refractory grain material by hot
+ * (>1e4 K) gas. Per-superparticle stochastic translation of the same Nozawa+
+ * (2006) erosion-rate fits used by the bin-based fluid module
+ * (update_dust_sputtering in solids/ism_dust_chemistry.cc); the polynomial
+ * coefficients are shared via grain_collisional_outcomes.h.
+ *
+ * Physics: sputter shrinks each individual grain (ion-impact ejection of
+ * surface atoms), so number-of-grains in the super-particle is conserved and
+ * the super-particle Mass scales as Grain_Size^3. Refractory vapor is
+ * dropped from the total mass budget at this commit (per the locked Phase
+ * 17b plan -- bit 5 COND will reclaim it once the gas-phase
+ * VolatileSpecies array is wired in C5). Sputter is energy-neutral against
+ * the gas thermal pool by construction (the impinging-ion KE comes from gas
+ * thermal energy, the rearrangement is implicit), so no DtInternalEnergy
+ * back-reaction; latent-heat coupling is reserved for bits 5/6.
+ *
+ * Composition: weighted average of refractory-species erosion rates;
+ * Composition[] mass fractions are NOT updated here (would require species-
+ * specific da/dt tracked separately, which breaks the monodisperse
+ * super-particle assumption -- not worth it for the small differential
+ * sputter rates among silicate/carbon/iron). */
 KOKKOS_INLINE_FUNCTION
-void grain_evolution_local_step(int i, struct particle_data *P, double dt)
+inline void grain_evolution_thermal_sputter(int i, struct particle_data *P, double dt)
 {
-#if (GRAIN_EVOLUTION & (8|16|32|64))
-    (void)i; (void)P; (void)dt;
-    /* C3: bit 3 THERM_SPUT; C4: bit 4 NTHERM_SPUT; C5: bit 5 COND; C6: bit 6 SUBL. */
-#else
+    if(P[i].Mass <= 0 || P[i].Grain_Size <= 0 || P[i].Gas_Density <= 0) { return; }
+    if(P[i].Gas_InternalEnergy <= 0) { return; }
+    /* Estimate gas T from the kernel-weighted Gas_InternalEnergy already
+     * carried on the grain super-particle (see hydro/density.cc:720). Using
+     * a single mean-molecular-weight value mu = 0.6 (singly-ionized H+He);
+     * sputtering activates only at T > 1e4 K where this is accurate to
+     * ~10%. A future refinement could read mu from the host gas cell's
+     * chemistry, but the polynomial Y(T) varies far more slowly with T than
+     * the 10% T-uncertainty would matter. */
+    const double mu_ionized = 0.6;
+    double T = P[i].Gas_InternalEnergy * mu_ionized * (GAMMA_DEFAULT - 1.0) * U_TO_TEMP_UNITS;
+    if(T <= 1.0e4) { return; } /* matches the temp>1e4 gate in update_dust_sputtering */
+
+    /* Composition-weighted erosion rate, refractory species only (ices
+     * sublimate via bit 6 long before sputtering matters). */
+    double refractory_frac = 0.0;
+    for(int s = 0; s < GRAIN_NUM_REFRACTORY_SPECIES; s++) { refractory_frac += P[i].Composition[s]; }
+    if(refractory_frac <= 0) { return; }
+    double logt = log10(T);
+    double Y_sput_eff = 0.0;
+    for(int s = 0; s < GRAIN_NUM_REFRACTORY_SPECIES; s++) {
+        Y_sput_eff += P[i].Composition[s] * grain_outcomes_sputter_erosion_dadt_per_nH(logt, grain_evolution_composition_index_to_outcome_kind(s));
+    }
+    Y_sput_eff /= refractory_frac;
+
+    /* da/dt = -Y * 1e-4 * nH * 1e9  [cm/Gyr]; matches update_dust_sputtering
+     * scaling (the 1e-4 is um->cm, the 1e9 is yr->Gyr; Y is in um/yr cm^3). */
+    double rho_gas_cgs = P[i].Gas_Density * UNIT_DENSITY_IN_CGS * All.cf_a3inv;
+    double nH_cgs      = HYDROGEN_MASSFRAC * rho_gas_cgs / PROTONMASS_CGS;
+    double dadt_cm_per_Gyr = -Y_sput_eff * 1.0e-4 * nH_cgs * 1.0e9 * All.GrainEvolution_ThermalSputteringScaling;
+    double da_cm = dadt_cm_per_Gyr * dt * UNIT_TIME_IN_GYR;
+
+    double a_old = P[i].Grain_Size;
+    double a_new = a_old + da_cm;
+    /* Floor at the runtime Grain_Size_Min (cgs); under heavy sputtering the
+     * per-step shrinkage can outrun the floor, in which case clamp here.
+     * A future commit could mark the super-particle for deletion when it
+     * hits the floor, similar to gas-cell merge/split. */
+    if(a_new < All.Grain_Size_Min) { a_new = All.Grain_Size_Min; }
+    if(a_new >= a_old) { return; } /* numerical noise or already at floor */
+
+    double size_ratio = a_new / a_old;
+    P[i].Grain_Size = a_new;
+    P[i].Mass *= size_ratio * size_ratio * size_ratio; /* M ~ a^3 (number conserved) */
+}
+#endif /* GRAIN_EVOLUTION & 8 */
+
+/* Per-superparticle local step. Dispatches to the active local-operator bits
+ * (3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL). */
+KOKKOS_INLINE_FUNCTION
+inline void grain_evolution_local_step(int i, struct particle_data *P, double dt)
+{
+#if (GRAIN_EVOLUTION & 8)
+    grain_evolution_thermal_sputter(i, P, dt);
+#endif
+#if (GRAIN_EVOLUTION & 16)
+    /* C4: bit 4 NTHERM_SPUT (drift-driven). */
+#endif
+#if (GRAIN_EVOLUTION & 32)
+    /* C5: bit 5 COND (condensation/mantle growth from VolatileSpecies). */
+#endif
+#if (GRAIN_EVOLUTION & 64)
+    /* C6: bit 6 SUBL (sublimation/desorption, inverse of bit 5). */
+#endif
+#if !(GRAIN_EVOLUTION & (8|16|32|64))
     (void)i; (void)P; (void)dt;
 #endif
 }
