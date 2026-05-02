@@ -85,22 +85,61 @@ double apply_drucker_prager(double Y0, double P_hydro, int composition_type)
 #endif
 
 /* ---------------------------------------------------------------------------
- * bit 0: Grady-Kipp scalar damage from Weibull flaw distribution
+ * bit 0: Grady-Kipp scalar damage (Benz & Asphaug 1995 Eq. 3-6)
  *
- * dot(D) growth rate from active-crack count and local strain rate. Returns 0
- * for D >= 1 (fully damaged). Wired in C5; per-pair stress carries (1-D) factor.
+ * Each particle tracks an effective crack radius ActiveCracks [code length].
+ * At each kick step:
+ *   1. Crack grows: A_new = A + c_g * dt  (c_g ≈ 0.4 * c_s)
+ *   2. Active-flaw density from Weibull: n_act = k_W * eps_eq^m_W
+ *      where eps_eq = sqrt(J2) / mu  (shear-strain proxy from deviatoric stress)
+ *   3. D = min(1, n_act * (4π/3) * A_new^3)   (sphere volume * flaw density)
+ *   4. Irreversibility: D never decreases, A never decreases.
+ *
+ * Arguments: D_prev, A_prev (ActiveCracks), J2 (deviatoric 2nd invariant
+ * [pressure^2]), mu_shear (shear modulus [pressure]), c_s (sound speed
+ * [code vel]), dt (timestep), composition_type.  Outputs via pointers.
+ * k_Weibull unit conversion applied here: k_code = k_cgs * UNIT_LENGTH_IN_CGS^3.
  * ---------------------------------------------------------------------------*/
 KOKKOS_INLINE_FUNCTION
-double damage_rate_grady_kipp(double D, double active_cracks,
-                              double strain_rate_invariant,
-                              int composition_type)
+void damage_update_grady_kipp(double D_prev, double A_prev, double J2,
+                              double mu_shear, double c_s, double dt,
+                              int composition_type,
+                              double *D_out, double *A_out)
 {
-    (void)D; (void)active_cracks; (void)strain_rate_invariant;
-    (void)composition_type;
-    /* C5 will populate: dot(D)^(1/3) = (n_act * c_g / 3) using Grady-Kipp
-     * crack-growth speed c_g and number of active flaws n_act from k/m Weibull. */
-    return 0.0;
+    if(D_prev >= 1.0) { *D_out = 1.0; *A_out = A_prev; return; }
+
+    double k_cgs     = All.Tillotson_EOS_params[composition_type][12];
+    double m_weibull = All.Tillotson_EOS_params[composition_type][13];
+
+    /* convert k [1/cm^3] → [1/code_length^3] */
+    double Lcgs = UNIT_LENGTH_IN_CGS;
+    double k_code = k_cgs * (Lcgs * Lcgs * Lcgs);
+
+    /* crack growth speed and new radius */
+    double c_g = 0.4 * c_s;
+    double A_new = A_prev + c_g * dt;
+    if(A_new < 0.0) { A_new = 0.0; }
+
+    /* Weibull active-flaw density at current equivalent shear strain */
+    double eps_eq = (mu_shear > 0.0) ? sqrt(J2) / mu_shear : 0.0;
+    double n_act  = (eps_eq > 0.0 && m_weibull > 0.0 && k_code > 0.0)
+                    ? k_code * pow(eps_eq, m_weibull) : 0.0;
+
+    /* D from sphere-of-cracks model */
+    double D_new = n_act * (4.0 * M_PI / 3.0) * A_new * A_new * A_new;
+    if(D_new > 1.0) { D_new = 1.0; }
+    if(D_new < D_prev) { D_new = D_prev; }  /* irreversible */
+
+    *D_out = D_new;
+    *A_out = A_new;
 }
+
+/* Convenience: is bit 0 (Grady-Kipp damage) requested? */
+#if ((EOS_DAMAGE_POROSITY) & 1)
+#define DAMAGE_POROSITY_BIT_GRADY_KIPP 1
+#else
+#define DAMAGE_POROSITY_BIT_GRADY_KIPP 0
+#endif
 
 #endif /* EOS_DAMAGE_POROSITY */
 

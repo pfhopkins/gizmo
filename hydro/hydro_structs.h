@@ -206,6 +206,9 @@ struct hydro_data_in
 #ifdef EOS_ELASTIC
     MyFloat Elastic_Stress_Tensor[3][3];
 #endif
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    MyFloat Damage; /* Grady-Kipp scalar D in [0,1] for i-particle */
+#endif
 
     int TimeBin;
 };

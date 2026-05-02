@@ -92,6 +92,19 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
             double f_Y = Y_eff*Y_eff/(NDim*J2);
             if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
         }
+#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
+        /* Phase 17e bit 0: Grady-Kipp damage update at kick (mode==0) only */
+        if(mode == 0)
+        {
+            double D_new, A_new;
+            damage_update_grady_kipp(CellP[i].Damage, CellP[i].ActiveCracks,
+                                     J2, mu, CellP[i].SoundSpeed, dt_entr,
+                                     CellP[i].CompositionType,
+                                     &D_new, &A_new);
+            CellP[i].Damage       = (MyFloat)D_new;
+            CellP[i].ActiveCracks = (MyFloat)A_new;
+        }
+#endif
         // write out to variable //
         for(j=0;j<NDim;j++) {
             for(k=0;k<NDim;k++) {
