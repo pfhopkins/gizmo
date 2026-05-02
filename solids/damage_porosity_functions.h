@@ -20,6 +20,7 @@
 #include <math.h>
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
+#include "jutzi_crush_curve.h"
 
 #ifdef EOS_DAMAGE_POROSITY
 
@@ -34,19 +35,30 @@ int damage_porosity_bit_active(int bit_index)
 /* ---------------------------------------------------------------------------
  * bit 2: P-alpha porosity (Jutzi 2008 quadratic crush curve)
  *
- * dot(alpha) rate from current cell pressure P and distention alpha. Returns
- * 0 outside [P_e, P_s] crush range. Material-specific P_e/P_s pulled from the
- * registry in C3.
+ * Returns the irreversible-monotone distention alpha given current matrix
+ * pressure P_solid (i.e. the Tillotson/ANEOS pressure evaluated at matrix
+ * density rho_s = alpha*rho), the previous distention alpha_prev, and the
+ * cell's CompositionType. Compaction is one-way: alpha never grows.
  * ---------------------------------------------------------------------------*/
 KOKKOS_INLINE_FUNCTION
-double distention_rate_jutzi_palpha(double alpha, double P, double dPdt,
-                                    int composition_type)
+double distention_jutzi_palpha_update(double alpha_prev, double P_solid,
+                                      int composition_type)
 {
-    (void)alpha; (void)P; (void)dPdt; (void)composition_type;
-    /* C3 will populate: quadratic crush curve d(alpha)/dt = -2*(alpha-1)*
-     *  (P-P_e)/(P_s-P_e)^2 * dP/dt for dP/dt > 0 and alpha > 1 */
-    return 0.0;
+    double alpha_0 = All.Tillotson_EOS_params[composition_type][15];
+    double P_e     = All.Tillotson_EOS_params[composition_type][16];
+    double P_s     = All.Tillotson_EOS_params[composition_type][17];
+    double alpha_eq = jutzi_distention_eq8(P_solid, alpha_0, P_e, P_s);
+    double alpha_new = (alpha_eq < alpha_prev) ? alpha_eq : alpha_prev;
+    if(alpha_new < 1.0) { alpha_new = 1.0; }
+    return alpha_new;
 }
+
+/* Convenience: is bit 2 (P-alpha porosity) requested for this build? */
+#if ((EOS_DAMAGE_POROSITY) & 4)
+#define DAMAGE_POROSITY_BIT_PALPHA 1
+#else
+#define DAMAGE_POROSITY_BIT_PALPHA 0
+#endif
 
 /* ---------------------------------------------------------------------------
  * bit 1: Drucker-Prager pressure-dependent yield extension

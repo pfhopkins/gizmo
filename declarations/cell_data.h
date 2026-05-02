@@ -4,6 +4,9 @@
 #ifdef EOS_SUBSTELLAR_ISM
 #include "../eos/hydrogen_molecule_functions.h"
 #endif
+#if defined(EOS_DAMAGE_POROSITY)
+#include "../solids/jutzi_crush_curve.h"
+#endif
 
 /* the following struture holds data that is stored for each fluid cell in addition to the collisionless variables.
    On Kokkos builds, the struct and its inline member functions must be device-compilable
@@ -649,6 +652,12 @@ extern struct gas_cell_data
         u_s=All.Tillotson_EOS_params[type][6], u_s_prime=All.Tillotson_EOS_params[type][7],
         alpha=All.Tillotson_EOS_params[type][8], beta=All.Tillotson_EOS_params[type][9];
         double rho=Density, u=InternalEnergyPred;
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
+        /* Phase 17e bit 2: P-alpha porosity. Tillotson is evaluated at the matrix
+         * density rho_s = alpha*rho_bulk; bulk pressure is P_matrix/alpha. */
+        double alpha_d = (Distention >= 1.0) ? Distention : 1.0;
+        rho *= alpha_d;
+#endif
         double eta=rho/rho0, mu=eta-1, u_u0eta2=1+u/(u0*eta*eta), p0=u*rho, z=1/eta-1, press=0, cs=0, press_min=1.e-10*u0*rho0;
         double Pc = (a + b/u_u0eta2)*p0 + A0*mu + B0*mu*mu;
         double c2c_rho = (1+a+b/u_u0eta2)*Pc + A0+B0*(eta*eta-1) + b*(u_u0eta2-1)*(2*p0-Pc)/(u_u0eta2*u_u0eta2);
@@ -664,6 +673,21 @@ extern struct gas_cell_data
         SoundSpeed += All.Tillotson_EOS_params[CompositionType][10] / rho;
 #endif
         SoundSpeed = sqrt(SoundSpeed);
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
+        /* Phase 17e bit 2: irreversibly update distention from current matrix
+         * pressure, then convert matrix pressure to bulk porous pressure.
+         * Sound speed retained as matrix-frame value (CFL-conservative). */
+        {
+            double alpha_0_p = All.Tillotson_EOS_params[CompositionType][15];
+            double P_e_p     = All.Tillotson_EOS_params[CompositionType][16];
+            double P_s_p     = All.Tillotson_EOS_params[CompositionType][17];
+            double alpha_eq = jutzi_distention_eq8(press, alpha_0_p, P_e_p, P_s_p);
+            double alpha_new = (alpha_eq < Distention) ? alpha_eq : Distention;
+            if(alpha_new < 1.0) { alpha_new = 1.0; }
+            Distention = alpha_new;
+            if(alpha_new > 1.0) { press /= alpha_new; }
+        }
+#endif
         return press;
     }
 #endif
