@@ -223,6 +223,9 @@ static inline void out2particle_hydra(struct hydro_data_out *out, int i, int mod
     /* these are zero-d out at beginning of hydro loop so should always be added */
     CellP[i].HydroAccel += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    CellP[i].DtInternalEnergy_FromConduction += out->DtInternalEnergy_FromConduction;
+#endif
     //CellP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -631,6 +634,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+            CellP[i].DtInternalEnergy_FromConduction = 0;
+#endif
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};

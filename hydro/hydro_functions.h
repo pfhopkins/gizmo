@@ -313,8 +313,17 @@ void hydro_accumulate_neighbor(
 #if defined(SAVE_FACE_DENSITY) && !defined(HYDRO_SPH)
     face_density_for_diffusion = Riemann_out.Face_Density;
 #endif
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    /* 2-T plasma bit 2: capture the conduction-only contribution to Fluxes.p
+       so the cooling step can route it to u_e (electron heat) instead of u_total.
+       Pre/post difference avoids modifying conduction_compute_pair's signature. */
+    const MyDouble Fluxes_p_pre_conduction_2T = Fluxes.p;
+#endif
     conduction_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                             v_hll, bhat, bhat_mag, dt_hydrostep, Fluxes);
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    out.DtInternalEnergy_FromConduction += (Fluxes.p - Fluxes_p_pre_conduction_2T);
+#endif
     viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
                            Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                            dt_hydrostep, Fluxes);

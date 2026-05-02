@@ -1433,6 +1433,17 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                 }
             break;
 
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].T_e_cell;
+                    n++;
+                }
+            break;
+#endif
+
         case IO_PRESSURE:
 #if defined(EOS_GENERAL)
             for(n = 0; n < pc; pindex++)
@@ -1958,6 +1969,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ZAMS_MASS:
         case IO_LUM_SINGLESTAR:
         case IO_EOSTEMP:
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+#endif
         case IO_EOSABAR:
         case IO_EOSYE:
         case IO_EOSCS:
@@ -2307,6 +2321,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_LUM_SINGLESTAR:
         case IO_SINKPROGS:
         case IO_EOSTEMP:
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+#endif
         case IO_EOSABAR:
         case IO_EOSCS:
         case IO_EOSCOMP:
@@ -2589,6 +2606,9 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_GRADMAG:
         case IO_COOLRATE:
         case IO_EOSTEMP:
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+#endif
         case IO_EOSABAR:
         case IO_EOSYE:
 #ifdef NUCLEAR_NETWORK
@@ -3232,6 +3252,12 @@ int blockpresent(enum iofields blocknr)
             return 1;
             break;
 
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+            return 1;
+            break;
+#endif
+
         case IO_PRESSURE:
         case IO_EOSCS:
 #ifdef EOS_GENERAL
@@ -3666,6 +3692,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_EOSTEMP:
             strncpy(label, "TEMP", 4);
             break;
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+            strncpy(label, "TELE", 4);
+            break;
+#endif
         case IO_EOSABAR:
             strncpy(label, "ABAR", 4);
             break;
@@ -4108,6 +4139,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_EOSTEMP:
             strcpy(buf, "Temperature");
             break;
+#ifdef TWO_TEMPERATURE_PLASMA
+        case IO_TWOTEMP_TE:
+            strcpy(buf, "ElectronTemperature");
+            break;
+#endif
         case IO_EOSABAR:
             strcpy(buf, "Abar");
             break;

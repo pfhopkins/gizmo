@@ -105,7 +105,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
 
 #ifdef COOLING
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+#ifdef GIZMO_TRACK_ELECTRON_STATE
     double ne_battery_save = 1.0; /* electron fraction (per H), used to populate n_e_cell below; default = fully ionized for pre-init */
 #endif
     if(All.Time <= All.TimeBegin) {
@@ -114,7 +114,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
         double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
         cell[i].Gamma = cell[i].gamma_eos_value();
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+#ifdef GIZMO_TRACK_ELECTRON_STATE
         ne_battery_save = ne;
 #endif
 
@@ -136,15 +136,29 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
     cell[i].Temperature = temp;
 
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-    /* electron temperature and number density caches for the Biermann battery: gradient pass consumes these.
-       Single-T plasma today: T_e == T_gas. n_e [cgs] = ne_per_H * nHcgs, with ne_per_H from ThermalProperties
-       (or =1 fallback before cooling has run). Two-T plasma module will write T_e_cell directly in cooling. */
-    cell[i].T_e_cell = temp;
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+    /* electron number density cache; consumed by the Biermann battery (grad n_e)
+       and by the 2-T plasma integrator (u_e <-> T_e mapping). */
 #ifdef COOLING
     cell[i].n_e_cell = ne_battery_save * cell[i].nHcgs();
 #else
     cell[i].n_e_cell = cell[i].nHcgs(); /* no chemistry tracked: assume fully ionized */
+#endif
+    /* electron-temperature cache. Battery-only (no TWO_TEMPERATURE_PLASMA):
+       T_e == T_gas every step. Under TWO_TEMPERATURE_PLASMA: this is the
+       one-time LTE seed (initial T_e = TwoTemp_InitialTeOverTgas * T_gas);
+       after the first cooling step the integrator owns u_e_cell + T_e_cell
+       and we leave them alone here. */
+#ifdef TWO_TEMPERATURE_PLASMA
+    if(!(cell[i].u_e_cell > 0)) {
+        const double T_e_init = temp * All.TwoTemp_InitialTeOverTgas;
+        const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+        const double u_e_phys = 1.5 * cell[i].n_e_cell * BOLTZMANN_CGS * T_e_init / rho_phys; /* erg/g */
+        cell[i].T_e_cell = T_e_init;
+        cell[i].u_e_cell = u_e_phys / UNIT_SPECEGY_IN_CGS;
+    }
+#else
+    cell[i].T_e_cell = temp;
 #endif
 #endif
 

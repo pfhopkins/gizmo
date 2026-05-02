@@ -314,15 +314,21 @@ extern struct gas_cell_data
 #endif
 
 #ifdef MHD_BATTERY_MECHANISMS
-#if (MHD_BATTERY_MECHANISMS & 1)
-    MyDouble n_e_cell;                          /*!< electron number density [physical cgs] from cooling. Cached on SoA so the gradient pass can produce grad(n_e) for Biermann battery. Populated at end of cooling step. */
-    MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Written by the cooling pass after each cooling step (same place gas T is already stored, not recomputed from u). Equals gas T today (single-T plasma); becomes the independently evolved electron temperature when the two-temperature plasma module lands -- the field name and the consumers do not change. */
-#endif
 #if (MHD_BATTERY_MECHANISMS & (2|4|8))
     Vec3<MyDouble> E_battery_T2_cell;           /*!< Tier-2 battery EMF E' [statvolt/cm in physical cgs, multiplied by the same code-unit conversion the gradient pass expects]. Sum of radiative-ionization + dust contributions. Populated by per-cell builders in eos/cooling and solids/. The gradient pass then takes grad(E_battery_T2_cell), and hydro_toplevel.cc applies dB/dt|_T2 = -c * curl(grad). */
 #endif
 #if (MHD_BATTERY_MECHANISMS & 8)
     Vec3<MyDouble> J_dust_cell;                 /*!< per-cell dust current J_d = -sum_grain (q_d n_d (v_d - v_g)) [physical cgs], summed from grain particles in gas-cell kernel. Repopulated each step before per-cell battery EMF assembly. Soliman, Hopkins & Squire 2025 Eq. 8. */
+#endif
+#endif
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+    MyDouble n_e_cell;                          /*!< electron number density [physical cgs] from cooling. Cached on SoA so the gradient pass can produce grad(n_e) for Biermann battery and the 2-T integrator can convert between u_e and T_e. Populated at end of cooling step. */
+    MyDouble T_e_cell;                          /*!< electron temperature [Kelvin]. Under MHD_BATTERY_MECHANISMS-only this is a per-step cache equal to T_gas, written in eos.cc. Under TWO_TEMPERATURE_PLASMA this is the derived view of u_e_cell, written by the 2-T cooling integrator. Either way readers (Biermann battery, gradient pass, snapshot) consume it identically through T_e(). */
+#endif
+#ifdef TWO_TEMPERATURE_PLASMA
+    MyDouble u_e_cell;                          /*!< specific electron internal energy per gas mass [code units; same units as InternalEnergy]: u_e = (3/2) n_e k_B T_e / rho. Primary state of the 2-T plasma module; evolved by the cooling integrator (Spitzer e-i exchange + electron-side radiative + Compton + PdV/dissipation partition). T_e_cell is the derived cache populated at end of each cooling step. */
+#if (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    MyDouble DtInternalEnergy_FromConduction;   /*!< 2-T plasma bit 2: conduction-only contribution to DtInternalEnergy, accumulated from the hydro pair loop. Routed entirely to u_e in the cooling step (Spitzer-Härm thermal conduction is electron heat). The non-conduction hydro work continues to follow the f_e shock partition. Reset to zero each step alongside DtInternalEnergy. */
 #endif
 #endif
     
@@ -525,8 +531,8 @@ extern struct gas_cell_data
 
     inline double pressure() const {return Pressure;} /*!< gas pressure */
     inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-    GIZMO_GPU_FUNCTION inline double T_e() const {return T_e_cell;} /*!< electron temperature [K]; equals gas T today, becomes independently evolved when 2-T plasma module lands. Always read through this accessor so consumers don't need updates then. */
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+    GIZMO_GPU_FUNCTION inline double T_e() const {return T_e_cell;} /*!< electron temperature [K]. Under battery-only it equals gas T (cached in eos.cc). Under TWO_TEMPERATURE_PLASMA it is the independently evolved value (derived from u_e_cell, cached after each cooling step). Consumers read through this accessor unchanged. */
     GIZMO_GPU_FUNCTION inline double n_e() const {return n_e_cell;} /*!< electron number density [physical cgs]; populated by the cooling pass. */
 #endif
 

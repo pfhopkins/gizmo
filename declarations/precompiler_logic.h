@@ -687,6 +687,42 @@
 #endif
 #endif /* MHD_BATTERY_MECHANISMS */
 
+/* TWO_TEMPERATURE_PLASMA: independently evolved electron temperature T_e.
+   Bitfield, see Template_Config.sh. bit 0 (=1) Spitzer e-i + radiative routing,
+   bit 1 (=2) e-neutral [reserved], bit 2 (=4) conduction-to-electrons. */
+#ifdef TWO_TEMPERATURE_PLASMA
+#ifndef COOLING
+#error "TWO_TEMPERATURE_PLASMA requires COOLING"
+#endif
+#ifdef CHIMES
+#error "TWO_TEMPERATURE_PLASMA conflicts with CHIMES (CHIMES already evolves T_e internally)"
+#endif
+#ifdef EOS_HELMHOLTZ
+#error "TWO_TEMPERATURE_PLASMA conflicts with EOS_HELMHOLTZ in v1 (Helmholtz EOS owns T directly)"
+#endif
+#ifdef COOLING_OPERATOR_SPLIT
+#error "TWO_TEMPERATURE_PLASMA does not support COOLING_OPERATOR_SPLIT in v1; use the unsplit cooling path"
+#endif
+#if (TWO_TEMPERATURE_PLASMA & ~7)
+#error "TWO_TEMPERATURE_PLASMA may only set bits 0-2 (values 1,2,4); higher bits are reserved"
+#endif
+#if (TWO_TEMPERATURE_PLASMA & 2)
+#error "TWO_TEMPERATURE_PLASMA bit 1 (e-neutral coupling) is reserved and not yet implemented"
+#endif
+#if (TWO_TEMPERATURE_PLASMA & 4) && !defined(CONDUCTION)
+#error "TWO_TEMPERATURE_PLASMA bit 2 (conduction-to-electrons) requires CONDUCTION"
+#endif
+#endif /* TWO_TEMPERATURE_PLASMA */
+
+/* Unified guard for the per-cell electron-state cache (T_e_cell, n_e_cell).
+   Active under either the Biermann battery (bit 0 of MHD_BATTERY_MECHANISMS) or
+   under TWO_TEMPERATURE_PLASMA. Both modules consume T_e()/n_e() via the same
+   accessors; battery treats T_e_cell as a per-step cache (== T_gas), 2-T treats
+   it as the derived view of u_e_cell. */
+#if (defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)) || defined(TWO_TEMPERATURE_PLASMA)
+#define GIZMO_TRACK_ELECTRON_STATE
+#endif
+
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC
