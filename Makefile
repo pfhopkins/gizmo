@@ -63,6 +63,7 @@ PERL     =  /usr/bin/perl
 
 RESULT     := $(shell CONFIG=$(CONFIG) PERL=$(PERL) make -f config-makefile)
 CONFIGVARS := $(shell cat GIZMO_config.h)
+CONFIGVARS += OPENMP
 
 HG_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
 HG_REPO := $(shell git config --get remote.origin.url)

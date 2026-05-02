@@ -73,7 +73,8 @@ GPU_ALL_SYNC_FUNC(density)
    shared with the symmetric neighbor list build in accel.cc. */
 #include "../mesh/gpu_neighbor_list.h"
 
-static gpu_spatial_index_t density_cached_spatial_index = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, 0};
+/* Density's spatial index is now the module-shared g_step_sidx (mesh/gpu_neighbor_list.cc),
+ * persisted across density rounds + symlist within a step, invalidated after drift in run.cc. */
 
 
 /* ================================================================
@@ -115,12 +116,12 @@ void density_gpu_session_end(void)
 {
     /* Free cached CSR neighbor list */
     if(density_cached_gnl_valid) {
-        gpu_ngb_list_free(&density_cached_gnl, &density_cached_spatial_index);
+        gpu_ngb_list_free(&density_cached_gnl, gpu_step_sidx_ptr());
         density_cached_gnl_valid = 0;
     }
     if(density_csr_max_h) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_max_h); density_csr_max_h = NULL;}
     if(density_csr_offset_lookup) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(density_csr_offset_lookup); density_csr_offset_lookup = NULL;}
-    gpu_spatial_index_free(&density_cached_spatial_index); /* free cached tiles+BVH */
+    /* g_step_sidx is owned by gpu_neighbor_list module — invalidated by run.cc after drift, NOT here. */
     /* Note: do NOT release the arena here — it is decomp-scoped and may be consumed
      * by gradient/hydro/etc. after density returns. But DO invalidate: the host
      * postloop in density.cc (NV_T inversion, NumNgb normalization, etc.) mutates
@@ -139,6 +140,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(density);
     double t_dens_gpu_start = my_second(), t_dens_gpu_phase;
+    double t_diag_setup_end = 0, t_diag_ngb_end = 0, t_diag_scatter_end = 0; /* DIAG */
     struct particle_data *P_gpu;
     struct gas_cell_data *CellP_gpu;
     int session_active = (gpu_particles_arena_valid() && density_session_num_total == num_total
@@ -158,10 +160,16 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         memcpy(P_gpu, P_host, num_total * sizeof(struct particle_data));
         memcpy(CellP_gpu, CellP_host, num_total * sizeof(struct gas_cell_data));
     }
+    t_diag_setup_end = my_second(); /* DIAG: end of arena/P_gpu setup */
 
-    /* Build spatial index once per session */
-    if(session_active && !density_cached_spatial_index.valid) {
-        gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, &density_cached_spatial_index);
+    /* Build the gas-only persistent SIDX (g_step_sidx) BEFORE density inflates
+     * KernelRadius. The BVH's per-node hmax is set at build time and not refreshed
+     * later — building it from inflated h would inflate node->hmax, causing the
+     * SYMMETRIC consumer (symlist for gradients) to over-search by ~2.2× volume.
+     * Building from un-inflated h gives correct hmax; compact_xyzh.h is refreshed
+     * per call (so density still gets inflated h_i for its own oversize search). */
+    if(session_active && !gpu_step_sidx_ptr()->valid) {
+        gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, gpu_step_sidx_ptr());
     }
 
     /* Check if we can reuse the cached CSR list */
@@ -194,7 +202,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     } else {
         /* Build fresh CSR (first iteration, or buffer exceeded) */
         if(density_cached_gnl_valid) {
-            gpu_ngb_list_free(&density_cached_gnl, &density_cached_spatial_index);
+            gpu_ngb_list_free(&density_cached_gnl, gpu_step_sidx_ptr());
             density_cached_gnl_valid = 0;
         }
 
@@ -208,7 +216,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 
         gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
                            NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl,
-                           session_active ? &density_cached_spatial_index : NULL);
+                           gpu_step_sidx_ptr());
 
         /* Restore actual KernelRadius (kernel uses this for the density computation) */
         if(session_active) {
@@ -241,7 +249,8 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         }
     }
 
-    t_dens_gpu_phase = my_second();
+    t_diag_ngb_end = my_second(); /* DIAG: end of NGP/CSR build */
+    t_dens_gpu_phase = t_diag_ngb_end;
 
     /* GPU density accumulation kernel */
     {
@@ -364,7 +373,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl.d_active);
     } else if(!session_active || !density_cached_gnl_valid) {
         /* No session or cache not valid: free everything */
-        gpu_ngb_list_free(&gnl, session_active ? &density_cached_spatial_index : NULL);
+        gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
     }
     /* If session_active and we just built + cached the CSR, don't free it (cache owns it) */
 
@@ -372,11 +381,13 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     t_dens_gpu_phase = my_second();
 
     /* Scatter results back to host arrays for active particles */
+    {double t_diag_scatter_start = my_second();
     for(int aa = 0; aa < num_active; aa++) {
         int ii = active_indices_host[aa];
         P_host[ii] = P_gpu[ii];
         CellP_host[ii] = CellP_gpu[ii];
     }
+    t_diag_scatter_end = my_second() - t_diag_scatter_start;} /* DIAG: reuse as elapsed */
 
     /* Only free if no persistent session (session_end handles cleanup) */
     if(!session_active) {
@@ -384,7 +395,14 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
     }
 
-    if(0) { /* density_gpu internal timing — disabled, use cpu.txt for production profiling */
+    if(ThisTask == 0) { /* DIAG: density phase breakdown — remove after profiling */
+        double t_arena  = timediff(t_dens_gpu_start, t_diag_setup_end);
+        double t_ngb    = timediff(t_diag_setup_end, t_diag_ngb_end);
+        double t_kernel = t_dens_kernel;
+        double t_scatter = t_diag_scatter_end; /* stored as elapsed */
+        double t_total  = timediff(t_dens_gpu_start, my_second());
+        printf("[DIAG_DENS step=%d N=%d] total=%.3f arena=%.3f ngb_build=%.3f gpu_kernel=%.3f scatter=%.3f\n",
+               (int)All.NumCurrentTiStep, num_active, t_total, t_arena, t_ngb, t_kernel, t_scatter);
         fflush(stdout);
     }
 }
@@ -408,6 +426,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
                            void *out_host_void, int gradient_iteration)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(density);
+    double t_grad_start = my_second(); /* DIAG */
     struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
 
     /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
@@ -417,6 +436,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
+    double t_grad_arena = my_second(); /* DIAG: end of arena acquire */
 
     /* Copy CSR neighbor list to SharedSpace */
     int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
@@ -425,6 +445,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     memcpy(d_offsets, csr_offsets_host, (num_active + 1) * sizeof(int));
     memcpy(d_neighbors, csr_neighbors_host, csr_total_pairs * sizeof(int));
     memcpy(d_active, active_indices_host, num_active * sizeof(int));
+    double t_grad_csr_copy = my_second(); /* DIAG: end of CSR copy to SharedSpace */
 
     /* Allocate output array in SharedSpace */
     struct GasGraddata_out_ *d_out = (struct GasGraddata_out_ *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct GasGraddata_out_));
@@ -544,9 +565,11 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
             kout[aa] = out;
         }); /* end gizmo_gpu_kernel_launch */
     }
+    double t_grad_kernel = my_second(); /* DIAG: kernel already fence'd by gizmo_gpu_kernel_launch */
 
     /* Copy output back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct GasGraddata_out_));
+    double t_grad_copyout = my_second(); /* DIAG: end of output copy */
 
     /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
      * Invalidate: gradients.cc post-scatters d_out values into host CellP.Gradients
@@ -556,6 +579,18 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
+
+    if(ThisTask == 0) { /* DIAG: gradient phase breakdown — remove after profiling */
+        long long pairs_mb = (long long)csr_total_pairs * 2 * sizeof(int) / (1024*1024);
+        printf("[DIAG_GRAD step=%d N=%d pairs=%d(~%lldMB)] arena=%.3f csr_copy=%.3f gpu_kernel=%.3f out_copy=%.3f total=%.3f\n",
+               (int)All.NumCurrentTiStep, num_active, csr_total_pairs, pairs_mb,
+               timediff(t_grad_start,  t_grad_arena),
+               timediff(t_grad_arena,  t_grad_csr_copy),
+               timediff(t_grad_csr_copy, t_grad_kernel),
+               timediff(t_grad_kernel, t_grad_copyout),
+               timediff(t_grad_start,  t_grad_copyout));
+        fflush(stdout);
+    }
 }
 
 

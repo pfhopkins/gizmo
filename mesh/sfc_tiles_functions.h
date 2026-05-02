@@ -61,10 +61,14 @@ int bbox_overlaps_sphere_gpu(const double box_lo[3], const double box_hi[3],
  * after consuming the CSR list. (Existing callers don't filter; this matches
  * the legacy ngb_treefind_* semantic that returns self when source is a
  * particle and the same particle is in the search pool.) */
+/* compact_xyzh[j*4+0..3] = x,y,z,h for particle j (float, ~32MB for 2M parts).
+ * Using compact float array instead of P[j].Pos/KernelRadius reduces BVH
+ * traversal memory traffic by ~12× (32 vs 400 bytes/particle), allowing the
+ * array to fit in GPU L2 cache and eliminate random-access cache misses. */
 KOKKOS_INLINE_FUNCTION
-int check_tile_particles_gpu(struct particle_data *P, const double pos_i[3], double h_i, double h2_i,
+int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], double h_i, double h2_i,
                              sfc_tile_t *tile, int *pool, int search_mode,
-                             int *store_neighbors, int count,
+                             int *store_neighbors, int count, int max_store,
                              const double box_sizes[3], const double box_halves[3],
                              const int periodic_flags[3])
 {
@@ -75,9 +79,9 @@ int check_tile_particles_gpu(struct particle_data *P, const double pos_i[3], dou
     for(int s = 0; s < tile->count; s++)
     {
         int j = pool[tile->first + s];
-        double dx_raw = pos_i[0] - P[j].Pos[0];
-        double dy_raw = pos_i[1] - P[j].Pos[1];
-        double dz_raw = pos_i[2] - P[j].Pos[2];
+        double dx_raw = pos_i[0] - (double)compact_xyzh[j*4+0];
+        double dy_raw = pos_i[1] - (double)compact_xyzh[j*4+1];
+        double dz_raw = pos_i[2] - (double)compact_xyzh[j*4+2];
         double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
         double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
         double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
@@ -86,14 +90,18 @@ int check_tile_particles_gpu(struct particle_data *P, const double pos_i[3], dou
         if(search_mode == NGB_SEARCH_ONEWAY) {
             pair_search_r2 = h2_i;
         } else {
-            double h_max = (h_i > P[j].KernelRadius) ? h_i : P[j].KernelRadius;
+            double h_j = (double)compact_xyzh[j*4+3];
+            double h_max = (h_i > h_j) ? h_i : h_j;
             pair_search_r2 = h_max * h_max;
         }
 
         if(adx > h_i && (search_mode == NGB_SEARCH_ONEWAY || adx * adx > pair_search_r2)) continue;
         double r2 = adx * adx + ady * ady + adz * adz;
         if(r2 < pair_search_r2) {
-            if(store_neighbors) store_neighbors[count] = j;
+            /* Bounded write: count past max_store still increments (so caller can
+             * detect overflow), but the write is suppressed. Used by the fused
+             * single-pass build with a per-particle scratchpad of stride max_store. */
+            if(store_neighbors && count < max_store) store_neighbors[count] = j;
             count++;
         }
     }
@@ -108,11 +116,11 @@ int check_tile_particles_gpu(struct particle_data *P, const double pos_i[3], dou
  * particle-based sources (gpu_ngb_list_build's default mode) and
  * arbitrary-position sources (e.g. TURB_DRIVING_SPECTRUMGRID grid cells). */
 KOKKOS_INLINE_FUNCTION
-int search_neighbors_sfc_gpu(struct particle_data *P, const double pos_i[3], double h_i,
+int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], double h_i,
                              sfc_tile_t *tiles, int ntiles,
                              int *pool, int search_mode,
                              tile_bvh_node_t *bvh, int bvh_root,
-                             int *store_neighbors,
+                             int *store_neighbors, int max_store,
                              const int periodic_flags[3],
                              const double box_sizes[3],
                              const double box_halves[3])
@@ -143,8 +151,8 @@ int search_neighbors_sfc_gpu(struct particle_data *P, const double pos_i[3], dou
         {
             /* Leaf node: process the tile's particles */
             int tile_idx = -(node->left + 1);
-            count = check_tile_particles_gpu(P, pos_i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
-                                             store_neighbors, count,
+            count = check_tile_particles_gpu(compact_xyzh, pos_i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
+                                             store_neighbors, count, max_store,
                                              box_sizes, box_halves, periodic_flags);
         }
         else

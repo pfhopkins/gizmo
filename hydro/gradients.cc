@@ -475,7 +475,14 @@ void hydro_gradient_calc(void)
     /* Neighbor-list path: allocate active-index array, refresh ghosts, build symmetric CSR.
        The CSR is reused by hydro_force. Helper is a no-op on the tree-walk build. */
     double gsl_safety = gizmo_ghost_safety_factor();
+    double t_diag_symlist_start = my_second(); /* DIAG */
     gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
+    if(ThisTask == 0) { /* DIAG: symmetric NGP build cost — remove after profiling */
+        printf("[DIAG_SYMNL step=%d N=%d pairs=%d] symlist_build=%.3f\n",
+               (int)All.NumCurrentTiStep, gizmo_sym_num_active, (gizmo_sym_neighbor_list.total_pairs),
+               timediff(t_diag_symlist_start, my_second()));
+        fflush(stdout);
+    }
     int i, j, k, k1, ndone, ndone_flag, recvTask, place, save_NextParticle;
     double timeall = 0, timecomp1 = 0, timecomp2 = 0, timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0;
     double timecomp, timecomm, timewait, tstart, tend, t1;

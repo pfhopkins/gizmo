@@ -37,6 +37,10 @@ struct gpu_neighbor_list_t {
     int periodic_flags[3];
     double box_sizes[3];
     double box_halves[3];
+
+    /* Compact position+h array for BVH traversal cache efficiency (points into
+       spatial index memory; do NOT free from gnl — owned by gpu_spatial_index_t). */
+    float *d_compact_xyzh;
 };
 
 
@@ -52,6 +56,11 @@ struct gpu_spatial_index_t {
     int periodic_flags[3];
     double box_sizes[3];
     double box_halves[3];
+    /* Compact position+h array: d_compact_xyzh[i*4+0..3] = x,y,z,h for particle i.
+       Fits ~32MB for 2M particles vs ~800MB for full P[], dramatically improving
+       GPU BVH traversal cache efficiency. Built in gpu_spatial_index_build. */
+    float *d_compact_xyzh;
+    int num_total;  /* particle count when built; mismatch → invalidate */
     int valid;  /* 1 if built and usable */
 };
 
@@ -63,6 +72,14 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
 /* Free spatial index SharedSpace memory. */
 void gpu_spatial_index_free(gpu_spatial_index_t *idx);
+
+/* Module-level persistent SIDX for gas-only (type_bitmask=1) neighbor builds.
+ * Shared across density rounds + symlist within a single step so the BVH +
+ * compact_xyzh build only happens once per step instead of 4× per step.
+ * Must be invalidated after drift (positions change) — caller (run.cc) calls
+ * gpu_step_sidx_invalidate() after find_next_sync_point_and_drift(). */
+gpu_spatial_index_t *gpu_step_sidx_ptr(void);
+void gpu_step_sidx_invalidate(void);
 
 /* Build GPU-accelerated CSR neighbor list.
    If cached_idx is non-NULL and valid, reuses its tiles+BVH.

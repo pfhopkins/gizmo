@@ -9,6 +9,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/neighbor_list.h"
+#include "../mesh/gpu_neighbor_list.h"
 
 
 /*! \file run.c
@@ -131,6 +132,9 @@ void run(void)
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
+        gpu_step_sidx_invalidate(); /* positions changed; the gas SIDX (BVH+compact_xyzh)
+                                     * shared across density rounds + symlist within a step
+                                     * must be rebuilt on the next gas ngb_list_build call. */
 
         output_log_messages();	/* write some info to log-files */
 
