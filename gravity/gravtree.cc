@@ -229,10 +229,22 @@ void gravity_tree(void)
             }
 
             /* Phase 9.4: export-back loop is retired under GPU offload, so the arena
-             * is not invalidated by host-side P[] writes.  Keep this call as a no-op
-             * safety net (it is harmless if arena state is already coherent) so any
-             * surviving consumer that mutates P[] before the next acquire is covered. */
-            gpu_particles_arena_invalidate();
+             * is not invalidated by host-side P[] writes here.
+             * Phase 8a Round 3b (2026-05-03): the prior "no-op safety net"
+             * gpu_particles_arena_invalidate() that was here is REMOVED. The
+             * comment authored above said it was already a no-op when arena state
+             * is coherent. With the arena-coherence work in Round 1-2-3, the
+             * arena IS coherent at this point (gpu_gravtree_walk_primary
+             * invalidates internally at line 1979 if its host scatter happens;
+             * mirror-update conversions in subsequent Round 3 commits will
+             * replace that with mark_clean too). The redundant double-invalidate
+             * here was costing nothing in old code but blocks fast-path
+             * acquires after Round 2D's refresh. Removing it.
+             *
+             * If we ever surface a pre-acquire host mutation that makes arena
+             * stale at this point, the GIZMO_GPU_ARENA_DEBUG=1 byte-compare
+             * guard will abort with site name. Ship the trip wire instead of
+             * cargo-cult invalidate. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
@@ -405,10 +417,36 @@ void gravity_tree(void)
 #endif
 
     } /* end of loop over active particles*/
-    /* Post-processing wrote GravAccel (×G) and OldAcc to host P[]; arena
-     * seeded before this loop no longer matches host — invalidate so the
-     * next gpu_particles_arena_acquire re-seeds from the updated host. */
-    gpu_particles_arena_invalidate();
+
+    /* Phase 8a Round 3d: mirror the post-processed host P[i] / CellP[i] for
+     * active particles into the arena, then mark_clean instead of invalidating.
+     * The post-loop above wrote GravAccel(×G), OldAcc, Potential, tidal_*,
+     * Rad_*, SigmaEff, etc. for active i — many fields under various #ifdef
+     * branches. Per-touched-i full struct copy avoids the maintenance burden
+     * of enumerating each conditional field. Cost is O(N_active) which is
+     * trivial compared to the 1.1s slow-path memcpy that the next acquire
+     * would otherwise pay. */
+    {
+        struct particle_data *P_arena_post     = gpu_particles_arena_P();
+        struct gas_cell_data *CellP_arena_post = gpu_particles_arena_CellP();
+        if(P_arena_post) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+            for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {
+                int i = ActiveParticleList[ii];
+                P_arena_post[i] = P[i];
+                if(CellP_arena_post && P[i].Type == 0) {
+                    CellP_arena_post[i] = CellP[i];
+                }
+            }
+            gpu_particles_arena_mark_clean_after_scatter("gravity_tree_post_loop");
+        } else {
+            /* Arena unavailable (e.g. capacity issue or already invalidated by
+             * something we missed) — defensive invalidate keeps correctness. */
+            gpu_particles_arena_invalidate();
+        }
+    }
 
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 
