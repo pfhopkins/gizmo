@@ -137,6 +137,27 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: with no source particles, no kernel writes occur, so
+     * we can skip arena_acquire (~1.4s slow-path memcpy when invalidated),
+     * d_gas allocation+memset (~2.5 GB SharedSpace for num_all=12.4M), per-source
+     * allocations, the gpu_ngb_list_build call, the per-mode kernel dispatch,
+     * and the unconditional 17 GB host scatter at the end of the function.  The
+     * ghost_writeback_mechfb collective is a no-op when NTask<=1 or num_ghosts<=0
+     * (it returns at its own guard); on multi-rank with imported ghosts we
+     * participate via a calloc'd zero buffer to keep MPI_Alltoallv consistent. */
+    if(num_src == 0) {
+        if(NTask > 1 && ghost_get_num_ghosts() > 0) {
+            struct MechFBGasDelta *zero_gas = (struct MechFBGasDelta *)
+                calloc(num_all > 0 ? num_all : 1, sizeof(struct MechFBGasDelta));
+            ghost_writeback_mechfb(zero_gas, gas_delta_host, n_gas);
+            free(zero_gas);
+        }
+        ghost_write_detector_end();
+        if(n_couplings_out) *n_couplings_out = 0;
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();

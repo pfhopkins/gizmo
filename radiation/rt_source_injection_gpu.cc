@@ -113,6 +113,22 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: this rank has no sources (num_src==0) but the global
+     * MPI_Allreduce cleared the early-return at line 105, meaning some other
+     * rank does have sources.  We must still participate in the writeback
+     * collectives, but we can skip arena_acquire / d_local alloc / kernel /
+     * the unconditional 17 GB host scatter at the end.  ghost_writeback_*
+     * self-guard on NTask<=1 / num_ghosts<=0; the MPI_Alltoallv inside requires
+     * every rank to call. */
+    if(num_src == 0) {
+        ghost_write_detector_begin("rt_source_injection");
+        ghost_writeback_zero_rtsrcinjection();
+        ghost_writeback_rtsrcinjection();
+        ghost_write_detector_end();
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();

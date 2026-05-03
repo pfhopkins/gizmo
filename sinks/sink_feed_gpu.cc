@@ -138,6 +138,20 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: no source sinks → no kernel writes.  Skip the 12.4M-
+     * iter softening_kernel_radius_host[] CPU loop, the same-size sink_binary
+     * loop, arena_acquire (1.4s slow path), big SharedSpace allocs, kernel,
+     * scatter.  Preserve ghost_writeback collectives for multi-rank
+     * consistency (each self-guards on NTask<=1 || num_ghosts<=0). */
+    if(num_src == 0) {
+        ghost_write_detector_begin("sink_feed");
+        ghost_writeback_zero_sinkfeed();
+        ghost_writeback_sinkfeed();
+        ghost_write_detector_end();
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     std::vector<double> softening_kernel_radius_host(num_all);
     for(int n = 0; n < num_all; n++) {
         softening_kernel_radius_host[n] = ForceSoftening_KernelRadius(n);
@@ -195,7 +209,7 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, SINK_NEIGHBOR_BITFLAG,
-                       &gnl, NULL, 1.0, src_radii_host);
+                       &gnl, NULL, 1.0, src_radii_host, NULL, "sink_feed");
 
     PRINT_STATUS("  GPU sink_feed: %d sources, j_bitmask=%d, %d pairs",
                  num_src, SINK_NEIGHBOR_BITFLAG, gnl.total_pairs);

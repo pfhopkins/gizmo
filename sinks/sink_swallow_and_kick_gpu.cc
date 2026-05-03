@@ -150,6 +150,18 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: no active sinks → skip arena_acquire, big SharedSpace
+     * allocs, kernel, scatter.  Preserve ghost_writeback collectives for
+     * multi-rank consistency (each self-guards on NTask<=1 || num_ghosts<=0). */
+    if(num_active == 0) {
+        ghost_write_detector_begin("sink_swallow_and_kick");
+        ghost_writeback_zero_sinkswallow();
+        ghost_writeback_sinkswallow();
+        ghost_write_detector_end();
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
@@ -178,7 +190,7 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, j_type_bitmask,
-                       &gnl, NULL, 1.0, i_radii_host);
+                       &gnl, NULL, 1.0, i_radii_host, NULL, "sink_swk");
 
     PRINT_STATUS("  GPU sink_swallow: %d active, %d pairs", num_active, gnl.total_pairs);
 

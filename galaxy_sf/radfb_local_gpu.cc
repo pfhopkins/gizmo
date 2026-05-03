@@ -177,6 +177,20 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: with no source particles, kernel does no host writes,
+     * skip arena_acquire / d_local / d_out / gpu_ngb_list_build / kernel /
+     * scatter / apply loops.  ghost_writeback_*_radfbrp self-guard on
+     * NTask<=1 || num_ghosts<=0 (no-op single-rank); MPI participation kept
+     * for multi-rank correctness. */
+    if(num_src == 0) {
+        ghost_write_detector_begin("radfb_local_rp");
+        ghost_writeback_zero_radfbrp();
+        ghost_writeback_radfbrp();
+        ghost_write_detector_end();
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();

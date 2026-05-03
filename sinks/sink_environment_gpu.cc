@@ -51,6 +51,12 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(sinkenv);
 
+    /* Wrapper fast-path: no active sources → nothing to do.  Skip arena_acquire
+     * (1.4s slow-path memcpy when invalidated), the 17 GB host scatter at the
+     * end, allocations, kernel.  No MPI collectives in this function so we can
+     * fully early-out. */
+    if(num_active == 0) { return; }
+
     /* Step 13 Phase 1 arena: pass CellP_host=NULL when no gas; arena handles. */
     gpu_particles_arena_acquire(num_total, P_host, (All.TotN_gas > 0) ? CellP_host : NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
@@ -59,7 +65,7 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
-                       1.0, i_radii_host);
+                       1.0, i_radii_host, NULL, "sink_env1");
 
     struct sink_env_gpu_out *d_out = (struct sink_env_gpu_out *)
         Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
@@ -273,6 +279,9 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(sinkenv);
 
+    /* Wrapper fast-path: no active sources → fully skip arena+kernel+scatter. */
+    if(num_active == 0) { (void)CellP_host; return; }
+
     /* Step 13 Phase 1 arena. CellP unused by this kernel; pass NULL. */
     gpu_particles_arena_acquire(num_total, P_host, NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
@@ -281,7 +290,7 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
-                       1.0, i_radii_host);
+                       1.0, i_radii_host, NULL, "sink_env2");
 
     int alloc_n = (num_active > 0) ? num_active : 1;
     struct sink_env_second_gpu_out *d_out = (struct sink_env_second_gpu_out *)

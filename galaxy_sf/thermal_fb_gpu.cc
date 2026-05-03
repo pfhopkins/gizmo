@@ -91,6 +91,23 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: with no source particles, the kernel does no host
+     * writes, so we skip arena_acquire (slow-path 1.4s when invalidated),
+     * d_local/d_out allocations, the gpu_ngb_list_build call, the kernel
+     * dispatch, and the unconditional 17 GB host scatter at the end of the
+     * function.  Still call the ghost_writeback_*_thermalfb functions: each
+     * self-guards on NTask<=1 || num_ghosts<=0 (entry no-op on single-rank);
+     * on multi-rank with imported ghosts they participate in MPI_Alltoallv
+     * collectives that other ranks may rely on. */
+    if(num_src == 0) {
+        ghost_write_detector_begin("thermal_fb");
+        ghost_writeback_zero_thermalfb();
+        ghost_writeback_thermalfb();
+        ghost_write_detector_end();
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
