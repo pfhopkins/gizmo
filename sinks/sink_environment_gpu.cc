@@ -262,7 +262,10 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
-    gpu_ngb_list_free(&gnl, NULL);
+    /* Pass the shared all-types cache pointer so the free leaves the SIDX
+     * storage intact for sink_feed/sink_swk reuse. With NULL the free
+     * destroys d_tiles/d_bvh/d_pool/d_compact_xyzh out from under the cache. */
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_alltypes_ptr());
     gpu_particles_arena_invalidate();
 }
 
@@ -362,7 +365,8 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_Jstar);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_Jgas);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
-    gpu_ngb_list_free(&gnl, NULL);
+    /* Preserve shared all-types SIDX for downstream sink phases. */
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_alltypes_ptr());
     gpu_particles_arena_invalidate();
 }
 

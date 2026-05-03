@@ -285,7 +285,11 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
         fflush(stdout);
     }
 
-    gpu_ngb_list_free(&gnl, NULL);
+    /* Last sink phase per step but cache will be invalidated by next drift,
+     * not here. Pass the cached pointer so we don't tear down storage that
+     * may be needed if anything else queries the alltypes cache before
+     * gpu_step_sidx_invalidate() runs. */
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_alltypes_ptr());
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     /* Full P+CellP scatter syncs arena→host; ghost_writeback_sinkswallow above

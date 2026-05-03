@@ -303,7 +303,8 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
 #endif
     }
 
-    gpu_ngb_list_free(&gnl, NULL);
+    /* Preserve shared all-types SIDX for sink_swk reuse. */
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_alltypes_ptr());
     /* Full P+CellP scatter syncs arena→host; arena stays consistent.
      * ghost_writeback_sinkfeed() above already invalidates so the next
      * acquire re-syncs from any host changes it applied. */
