@@ -618,6 +618,22 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
 
 /* ================================================================
    GPU hydro force kernel (B3b)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side (active sources, indexed by aa->ii):
+       kout[aa]                            — per-active output (flux deltas, MaxSignalVel, etc.)
+     j-side (neighbors, indexed by j = neighbors[idx]):
+       P_gpu[j].wakeup                     — HYDRO_ATOMIC_MAX
+     #ifdef HYDRO_MESHLESS_FINITE_VOLUME
+       CellP_gpu[j].dMass                  — HYDRO_ATOMIC_ADD
+     #endif
+     scalar:
+       *NeedToWakeup                       — HYDRO_ATOMIC_STORE on wakeup trigger
+
+   Sparse-scatter target: walk neighbors[0..csr_total_pairs] and scatter
+   only the (deduplicated by idempotent assignment) j fields above. NEVER
+   memcpy the full P/CellP arrays — those are populated host->arena once
+   per arena cycle and not mutated by the hydro kernel.
    ================================================================ */
 
 void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,

@@ -134,6 +134,23 @@ static int radfb_rp_local_fill(int i,
 }
 
 
+/* ================================================================
+   GPU local radiation-pressure-winds evaluator
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: out_arr[aa].jet_momentum_used (atomic_add inside pair_kick)
+     j-side (gas neighbors, indexed by j = neighbors[nn]; only Type==0):
+       P_gpu[j].Vel[k]      — Kokkos::atomic_add  (k = 0..2)
+       CellP_gpu[j].VelPred[k] — Kokkos::atomic_add  (k = 0..2)
+       P_gpu[j].dp[k]       — Kokkos::atomic_add  (k = 0..2)
+
+   Sparse-scatter target: walk neighbors[] and scatter the 3 fields above
+   to host for touched j. The full memcpy(P_host, P_gpu, num_all*...) and
+   memcpy(CellP_host, CellP_gpu, num_all*...) at lines ~282-283 cover ONLY
+   these three j-side updates plus the per-source NewStar_Momentum loop
+   that runs explicitly on host (active sources only). Replace with sparse
+   scatter.
+   ================================================================ */
 void radiation_pressure_winds_gpu(struct particle_data *P_host,
                                    struct gas_cell_data *CellP_host,
                                    int num_total,

@@ -30,6 +30,21 @@
 
 #include "cbe_integrator_functions.h"
 
+/* ================================================================
+   GPU CBE drift-kick evaluator (LATENT for fire_m11i — CBE_INTEGRATOR-only)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side ONLY (no j-side at all):
+       P_gpu[i] for i = active[a]              — full struct mutated by
+                                                 do_cbe_drift_kick_kernel
+   No neighbor pass — kernel takes one i per active and updates its own
+   record.
+
+   Sparse-scatter target: walk active[0..num_active] and per-i struct copy
+   P_gpu[i] -> P_host[i]. The full memcpy(P_host, P_gpu, num_total*...)
+   at line ~58 is sized for ALL particles when only num_active are mutated.
+   This is a sparse-over-active scatter, NOT over neighbors[].
+   ================================================================ */
 void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
                                   const int *active_host, int num_active,
                                   const double *dt_host)

@@ -109,6 +109,25 @@ static void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
 }
 
 
+/* ================================================================
+   GPU mechanical-feedback evaluator
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: out_arr[aa] (per-source MechFBOut: M_coupled, Area_weighted_sum)
+     j-side (gas neighbors, indexed by j = neighbors[nn]; only Type==0):
+       d_gas[j].N_injected, m_injected, TE_injected, KE_injected,
+       d_gas[j].Z_injected[k], p_injected[k], Mass_Where_Dust_Shocked
+                                           — Kokkos::atomic_add (all)
+     P_gpu / CellP_gpu: NOT WRITTEN by the kernel.
+
+   Sparse-scatter target: gas_delta_host[j] over touched j (walk neighbors[],
+   filter Type==0). The full memcpy(P_host, P_gpu, num_all*...) and
+   memcpy(CellP_host, CellP_gpu, num_all*...) currently at lines ~292-293
+   are CARGO-CULT (kernel doesn't touch P/CellP). Source-side mass loss is
+   already applied explicitly via mech_fb_apply_source_mass_out for active
+   sources only. Delete the full memcpys; replace gas_delta full-N copy
+   with sparse scatter.
+   ================================================================ */
 void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                                  struct gas_cell_data *CellP_host,
                                  int num_total,

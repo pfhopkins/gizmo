@@ -106,6 +106,21 @@ static void sink_feed_local_fill(int i,
 }
 
 
+/* ================================================================
+   GPU sink-feed evaluator (mark-for-accretion pass)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: out_arr[aa] (per-source SinkFeedOut: angle-weighted-kernel-sum,
+                          potential-min position, etc.)
+     j-side (neighbors, indexed by j = neighbors[nn]):
+       P_gpu[j].SwallowID                     — Kokkos::atomic_exchange
+       CellP_gpu[j].Injected_Sink_Energy      — Kokkos::atomic_add
+
+   Sparse-scatter target: walk neighbors[] CSR; for each touched j scatter
+   the two fields above. The full memcpy(P_host,P_gpu,...) +
+   memcpy(CellP_host,CellP_gpu,...) at lines ~282-283 are oversized for
+   what the kernel actually writes. Replace with sparse two-field scatter.
+   ================================================================ */
 void sink_feed_evaluate_gpu(struct particle_data *P_host,
                               struct gas_cell_data *CellP_host,
                               int num_total,

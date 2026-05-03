@@ -51,6 +51,22 @@ static void grain_backrx_local_fill(int i,
 }
 #endif
 
+/* ================================================================
+   GPU grain-physics evaluators (LATENT for fire_m11i — GRAIN_FLUID-only)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     j-side: TBD — pair kernel (grain_backrx_pair / gasgrain_rt_pair) needs
+                   audit during the actual sweep. Quick scan showed atomic
+                   updates to P[j]/CellP[j] but the exact field set was
+                   not enumerated.
+   Sparse-scatter target: walk neighbors[] CSR; per-touched-j struct copy
+   over P + CellP (safest first cut). Refine to per-field if profile
+   demands.
+
+   NOTE: this evaluator has TWO call sites (grain_backrx, gasgrain_rt with
+   gas-source and grain-source variants). Each has its own full memcpy
+   pair (lines ~134-135, ~343-344) — ALL three need the same treatment.
+   ================================================================ */
 void grain_backrx_evaluate_gpu(struct particle_data *P_host,
                                 struct gas_cell_data *CellP_host,
                                 int num_total,

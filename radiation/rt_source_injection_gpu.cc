@@ -77,6 +77,23 @@ static void rt_src_local_fill(int i,
 }
 
 
+/* ================================================================
+   GPU RT source-injection evaluator (LATENT for fire_m11i)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: nothing (kernel computes per-source effects directly into j)
+     j-side (gas neighbors, indexed by j = neighbors[nn]; only Type==0):
+       CellP_gpu[j].Rad_Je[k]                 — atomic_add (per RT freq bin)
+       CellP_gpu[j].Rad_E_gamma[k]            — atomic_add (DISCRETELY)
+       CellP_gpu[j].Rad_E_gamma_Pred[k]       — atomic_add (EVOLVE_ENERGY)
+       P_gpu[j].Vel[k] / dp[k]                — atomic_add (LOCAL_EXTINCTION)
+       CellP_gpu[j].VelPred[k]                — atomic_add (LOCAL_EXTINCTION)
+       (additional fields under various RT_* feature flags)
+
+   Sparse-scatter target: walk neighbors[] CSR; per-touched-j struct copy
+   over both P and CellP. Field set varies with #ifdefs — struct copy is
+   safer.
+   ================================================================ */
 void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
                                        struct gas_cell_data *CellP_host,
                                        int num_total,

@@ -59,6 +59,25 @@ static void thermal_fb_local_fill(int i,
 }
 
 
+/* ================================================================
+   GPU thermal-feedback evaluator (LATENT for fire_m11i)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: out_arr[aa].M_coupled
+     j-side (gas neighbors, indexed by j = neighbors[nn]; only Type==0):
+       P_gpu[j].Mass                          — Kokkos::atomic_add
+       P_gpu[j].dp[k]                         — atomic_add (k = 0..2)
+       P_gpu[j].Metallicity[k]                — atomic_add (METALS, k = 0..NUM_METAL_SPECIES-1)
+       CellP_gpu[j].MassTrue                  — atomic_add (MFV)
+       CellP_gpu[j].Density                   — atomic_add (delta_rho path)
+       CellP_gpu[j].InternalEnergy            — atomic_add
+       CellP_gpu[j].InternalEnergyPred        — atomic_add
+       CellP_gpu[j].DelayTimeCoolingSNe       — atomic_max
+
+   Sparse-scatter target: walk neighbors[] CSR; per-touched-j struct copy
+   over both P and CellP (field set is large enough that struct copy is
+   safer than enumerating). Replace full memcpys at lines ~177-178.
+   ================================================================ */
 void thermal_fb_evaluate_gpu(struct particle_data *P_host,
                                struct gas_cell_data *CellP_host,
                                int num_total,

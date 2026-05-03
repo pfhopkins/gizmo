@@ -41,6 +41,27 @@
 
 #include "sink_functions.h"
 
+/* ================================================================
+   GPU sink-environment evaluator (Stage E1 — kernel-sum pass)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: kout[aa] (per-source SinkEnvOut: Mgas_in_Kernel, Jgas_in_Kernel,
+                       SurroundingGasVel, mass_to_swallow_edd, ...)
+     j-side (neighbors, indexed by j = neighbors[nn]):
+       #if defined(SINGLE_STAR_SINK_DYNAMICS)
+       P_gpu[j].SwallowTime                   — Kokkos::atomic_fetch_min
+       #endif
+     Outside SINGLE_STAR_SINK_DYNAMICS: NO J-SIDE WRITES at all.
+
+   Sparse-scatter target:
+     - WITH SINGLE_STAR_SINK_DYNAMICS: walk neighbors[] CSR, scatter
+       P_gpu[j].SwallowTime to host for touched j.
+     - WITHOUT: delete the full memcpy(P_host, P_gpu, num_total*...)
+       at line ~261 entirely (Case 1).
+   For fire_m11i (SINGLE_STAR not defined): pure delete.
+   The Stage-E2 (sink_environment_second) kernel is pure i-side, no
+   j-writes; its scatter is also Case-1 delete-able.
+   ================================================================ */
 void sink_environment_evaluate_gpu(struct particle_data *P_host,
                                    struct gas_cell_data *CellP_host,
                                    int num_total,

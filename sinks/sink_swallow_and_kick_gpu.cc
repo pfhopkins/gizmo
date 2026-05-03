@@ -132,6 +132,32 @@ static void sink_swallow_apply_out(const struct SinkSwallowOut *out, int i)
 }
 
 
+/* ================================================================
+   GPU sink-swallow-and-kick evaluator
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: out_arr[aa] (per-source SinkSwallowOut: timebin deltas, swallow counts)
+     j-side (neighbors, indexed by j = neighbors[nn]):
+       P_gpu[j].Mass               — atomic_add OR atomic_store(0) (gas swallow)
+       P_gpu[j].Vel[k]             — atomic_add (k = 0..2)
+       P_gpu[j].dp[k]              — atomic_add (k = 0..2)
+       P_gpu[j].Sink_Mass          — atomic_store(0)         (sink-on-sink)
+       P_gpu[j].Sink_Mass_Reservoir — atomic_store(0)        (sink-on-sink)
+       P_gpu[j].Sink_Mdot          — atomic_store(0)         (sink-on-sink)
+       CellP_gpu[j].MassTrue       — atomic_add OR atomic_store(0) (MFV)
+       CellP_gpu[j].VelPred[k]     — atomic_add (k = 0..2)
+       CellP_gpu[j].InternalEnergy / InternalEnergyPred — atomic_add
+       CellP_gpu[j].DelayTime      — atomic_store
+       CellP_gpu[j].B[k] / BPred[k] — atomic_add  (MAGNETIC, k = 0..2)
+       CellP_gpu[j].CosmicRayEnergy[kc] / EnergyPred / Flux[kc][kk] / FluxPred — atomic_add
+                                                                       (COSMIC_RAY_FLUID)
+
+   Sparse-scatter target: walk neighbors[] CSR; for each touched j do a
+   per-touched-j struct-level copy of P_gpu[j] -> P_host[j] and
+   CellP_gpu[j] -> CellP_host[j]. The field set is large enough that
+   per-field listing risks omission; struct copy over the touched j-list
+   is correct + safe + still O(N_touched), not O(num_all).
+   ================================================================ */
 void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
                                          struct gas_cell_data *CellP_host,
                                          int num_total,

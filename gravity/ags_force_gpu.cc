@@ -112,6 +112,27 @@ struct ags_force_kernel_t {
 typedef struct ags_force_gpu_out ags_force_dev_out_t;
 
 
+/* ================================================================
+   GPU AGS-force evaluator (LATENT for fire_m11i — SIDM-only j-writes)
+   ----------------------------------------------------------------
+   Kernel writes (host-visible, by index):
+     i-side: kout[aa] (per-active output: AGS-corrections, gravitational
+                       softening sums)
+     j-side (neighbors, indexed by j = neighbors[nn]):
+       #if defined(DM_SIDM)
+       P_gpu[j].wakeup                        — atomic_store(-1)  (SIDM scatter)
+       P_gpu[j].Vel[kv]                       — atomic_add (k = 0..2)
+       P_gpu[j].dp[kv]                        — atomic_add (k = 0..2)
+       P_gpu[j].NInteractions                 — atomic_add(1)
+       #endif
+     Without DM_SIDM: NO j-side writes.
+
+   Sparse-scatter target:
+     - WITH DM_SIDM: walk neighbors[] CSR, scatter the four fields above
+       (or per-touched-j struct copy of P).
+     - WITHOUT (fire_m11i): delete the full memcpy(P_host, P_gpu, num_total*...)
+       at line ~316 (Case 1).
+   ================================================================ */
 void ags_force_evaluate_gpu(struct particle_data *P_host,
                             int num_total,
                             int *i_active_host, int num_active,
