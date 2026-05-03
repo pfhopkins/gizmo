@@ -536,8 +536,16 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
     out->total_pairs = gpu_nl.total_pairs;
     out->offsets = (int *) mymalloc("ngb_offsets", (num_active + 1) * sizeof(int));
     out->neighbors = (int *) mymalloc("ngb_neighbors", (gpu_nl.total_pairs > 0 ? gpu_nl.total_pairs : 1) * sizeof(int));
+    /* gpu_nl.offsets is SharedSpace (UVM) → host memcpy is fine.
+     * gpu_nl.neighbors is DEVICE_SPACE (CudaSpace) → must use deep_copy, not host memcpy. */
     memcpy(out->offsets, gpu_nl.offsets, (num_active + 1) * sizeof(int));
-    memcpy(out->neighbors, gpu_nl.neighbors, gpu_nl.total_pairs * sizeof(int));
+    if(gpu_nl.total_pairs > 0) {
+        Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            h_neighbors(out->neighbors, gpu_nl.total_pairs);
+        Kokkos::View<const int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            d_neighbors(gpu_nl.neighbors, gpu_nl.total_pairs);
+        Kokkos::deep_copy(h_neighbors, d_neighbors);
+    }
 
     /* Free GPU temporaries (keep tiles/BVH alive — owned by g_step_sidx).
      * Arena is intentionally not released — subsequent gradient/hydro callers
@@ -573,8 +581,15 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
     out->total_pairs = gpu_nl.total_pairs;
     out->offsets = (int *) mymalloc("ngb_offsets", (num_active + 1) * sizeof(int));
     out->neighbors = (int *) mymalloc("ngb_neighbors", (gpu_nl.total_pairs > 0 ? gpu_nl.total_pairs : 1) * sizeof(int));
+    /* See gpu_build_symmetric_neighbor_list for why neighbors needs deep_copy. */
     memcpy(out->offsets, gpu_nl.offsets, (num_active + 1) * sizeof(int));
-    memcpy(out->neighbors, gpu_nl.neighbors, gpu_nl.total_pairs * sizeof(int));
+    if(gpu_nl.total_pairs > 0) {
+        Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            h_neighbors(out->neighbors, gpu_nl.total_pairs);
+        Kokkos::View<const int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            d_neighbors(gpu_nl.neighbors, gpu_nl.total_pairs);
+        Kokkos::deep_copy(h_neighbors, d_neighbors);
+    }
 
     /* Free GPU temporaries.  Arena is intentionally retained for subsequent callers. */
     gpu_ngb_list_free(&gpu_nl, NULL);
