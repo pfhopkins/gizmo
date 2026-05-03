@@ -2548,6 +2548,7 @@ extern void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *);
 #ifdef SINK_PARTICLES
 extern void gizmo_gpu_sync_all_sinkfeed(struct global_data_all_processes *);
 #endif
+extern void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *);
 
 void gizmo_gpu_sync_all(void) {
     /* Get pointer to host All (undo the #define All All_dev redirect) */
@@ -2599,6 +2600,13 @@ void gizmo_gpu_sync_all(void) {
 #ifdef GALSF_FB_THERMAL
     gizmo_gpu_sync_all_thermalfb(host_all);
 #endif
+    /* gpu_neighbor_list TU's All_dev — feeds box_sizes/box_halves used by
+     * gpu_spatial_index_build's periodic-wrap math. Without this sync the
+     * mirror stays zero, periodic wrap turns gap negative in
+     * bbox_overlaps_sphere_gpu, every BVH bbox falsely "overlaps" every
+     * query, and the BVH walk degenerates to an exhaustive O(N) scan
+     * regardless of num_active. */
+    gizmo_gpu_sync_all_ngb(host_all);
 }
 
 /* This TU's own sync function */
