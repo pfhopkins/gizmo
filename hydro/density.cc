@@ -181,7 +181,18 @@ void density(void)
         }} /* done with intial zero-out loop */
 
     double timeall=0, timecomp=0;
-    density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
+    /* If no gas is active on this rank for this sync-point, skip the
+     * density_gpu session begin/end pair entirely.  session_begin's
+     * gpu_particles_arena_acquire on an invalidated arena is a 17 GB host→
+     * SharedSpace memcpy (~1.4s on fire_m11i 12.4M particles), which is wasted
+     * work when no kernel will run.  prep_ghosts above and the postloop
+     * iteration over ActiveParticleList stay (multi-rank correctness, host-
+     * side bookkeeping). */
+    int any_active_gas_local = 0;
+    for(int ii : ActiveParticleList) {
+        if(P[ii].Type == 0 && P[ii].Mass > 0) { any_active_gas_local = 1; break; }
+    }
+    if(any_active_gas_local) density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
@@ -570,7 +581,7 @@ void density(void)
 
     /* iteration is done - de-malloc everything now */
     double t_postproc_start = my_second();
-    density_gpu_session_end(); /* free persistent SharedSpace arrays */
+    if(any_active_gas_local) density_gpu_session_end(); /* free persistent SharedSpace arrays */
     double t_session_end = timediff(t_postproc_start, my_second());
     myfree(Right); myfree(Left);
 
@@ -839,7 +850,7 @@ void cellcorrections_calc(void)
             gpu_ngb_list_build(P_gpu, num_all,
                                active_idx.data(), num_src,
                                NGB_SEARCH_SYMMETRIC, 1 /* gas only */,
-                               &gnl, NULL, 1.0, radii.data());
+                               &gnl, NULL, 1.0, radii.data(), NULL, "dens-vol1");
         }
 
         for (int aa = 0; aa < num_src; aa++) {

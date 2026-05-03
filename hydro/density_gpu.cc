@@ -139,6 +139,10 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
                           int num_total, int *active_indices_host, int num_active)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(density);
+    /* Wrapper fast-path: with no active particles, the kernel does no work.
+     * Skip the arena/scatter/diag overhead entirely so a no-active-gas h-iter
+     * costs ms not seconds. */
+    if(num_active == 0) { return; }
     double t_dens_gpu_start = my_second(), t_dens_gpu_phase;
     double t_diag_setup_end = 0, t_diag_ngb_end = 0, t_diag_scatter_end = 0; /* DIAG */
     struct particle_data *P_gpu;
