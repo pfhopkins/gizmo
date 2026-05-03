@@ -247,13 +247,33 @@ void drift_particle(int i, integertime time1)
 
 
 
+/* Short-circuit cache: skip the all-particles loop entirely when we've
+ * already drifted everyone to this time. Each call to move_particles ends
+ * with all P[i].Ti_drift >= time1; subsequent calls with the same time1
+ * would do per-particle no-ops (drift_particle bails internally) but still
+ * pay 12.4M cache-misses on the loop. Cache eliminates the loop overhead.
+ *
+ * Reset to -1 by find_next_sync_point_and_drift's bookkeeping (which
+ * advances All.Ti_Current beyond the last full drift) — if anything else
+ * needs to invalidate the cache, call gizmo_full_drift_invalidate() below.
+ *
+ * Safety: per-particle drift_particle is idempotent for time1 ≤ Ti_drift;
+ * partial-drifts via per-particle drift_particle calls between full drifts
+ * only ADVANCE individual Ti_drift values, never go backward. So cache
+ * "last full drift to time1" remains conservatively true. */
+static integertime g_last_full_drift_Ti = -1;
+
+extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
+
 void move_particles(integertime time1)
 {
+    if(time1 <= g_last_full_drift_Ti) return; /* already drifted to time1; loop would be all no-ops */
     int i;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
+    g_last_full_drift_Ti = time1;
     gpu_particles_arena_invalidate(); /* host Pos/VelPred drifted; arena stale */
 }
 

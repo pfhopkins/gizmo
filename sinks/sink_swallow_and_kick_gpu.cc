@@ -141,6 +141,12 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(sinkswallow);
 
+    /* Count-first guard: skip ghost_prep entirely when no rank has any active
+     * sink. ghost_prep does a 12.4M-particle drift loop, ~1s on fire_m11i. */
+    int global_num_active = num_active;
+    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_active == 0) { return; }
+
     int imported_ghosts = 0;
     if(ghost_get_num_ghosts() <= 0) {
         gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());

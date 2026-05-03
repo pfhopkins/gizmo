@@ -236,10 +236,6 @@ void verify_and_assign_local_mechfb_integrals(void)
 void mechanical_fb_calc_toplevel(void)
 {
     PRINT_STATUS("Start mechanical feedback computation...");
-    /* allocate temporary stucture which will hold the total change, to compare when done to check for non-linear effects if too many cells act at once */
-    LocalGasMechFBInfoTemp = (struct MechFBGasDelta *) mymalloc("LocalGasMechFBInfoTemp",N_gas * sizeof(struct MechFBGasDelta)); /* allocate */
-    N_Gas_Couplings_ThisTask = 0; /* initialize this to zero [default to assume no coupled feedback] */
-    int i; for(i=0;i<N_gas;i++) {if(P[i].Type==0) {memset(&LocalGasMechFBInfoTemp[i], 0, sizeof(struct MechFBGasDelta));}} /* zero it out before loops */
 
     /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
        neighbor list across modes. See galaxy_sf/mechanical_fb_gpu.cc. */
@@ -255,6 +251,28 @@ void mechanical_fb_calc_toplevel(void)
             }
             if(any) num_active++;
         }
+        /* Multi-rank correctness: ghost_prep is collective in mech_fb_gpu so all
+         * ranks must agree on whether to call it. MPI_Allreduce num_active first;
+         * if no rank has any source, every rank skips the entire mech_fb path
+         * (no allocation, no kernel, no ghost_prep). Saves ~1s/step on tiny-N
+         * timebins where no SNe/winds fire. Architectural rule (Phil): NEVER
+         * loop over N_gas in a tiny-N step when no work will be done; use
+         * ActiveParticleList instead. The N_gas memset of LocalGasMechFBInfoTemp
+         * (was here pre-fix) was paying ~0.5s/step even on no-work timebins. */
+        int global_num_active = num_active;
+        MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(global_num_active == 0) {
+            return;
+        }
+
+        /* allocate temporary stucture which will hold the total change, to compare when done to check for non-linear effects if too many cells act at once */
+        LocalGasMechFBInfoTemp = (struct MechFBGasDelta *) mymalloc("LocalGasMechFBInfoTemp",N_gas * sizeof(struct MechFBGasDelta));
+        N_Gas_Couplings_ThisTask = 0; /* initialize this to zero [default to assume no coupled feedback] */
+        /* Zero only gas particles. memset of N_gas is unavoidable here because
+         * this struct is indexed by particle index across all gas (kernel writes
+         * to neighbor j-indices, not just i-active sources). But it only fires
+         * when global_num_active > 0, so no waste on tiny-N no-work steps. */
+        for(int j = 0; j < N_gas; j++) {if(P[j].Type==0) {memset(&LocalGasMechFBInfoTemp[j], 0, sizeof(struct MechFBGasDelta));}}
         int *nl_active = (int *) mymalloc("mechfb_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         double *nl_radii = (double *) mymalloc("mechfb_nl_radii",

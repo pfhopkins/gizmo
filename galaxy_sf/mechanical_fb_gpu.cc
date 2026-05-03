@@ -124,9 +124,13 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     /* Caller-supplies-active-list rule: i_active_host[] holds LOCAL indices
        built from ActiveParticleList + per-mode active-check (superset across
        modes). Never iterate num_total here — ghost imports would double-deposit.
-       Do NOT early-return when num_active==0: gizmo_density_prep_ghosts and
-       ghost_writeback_mechfb are MPI collectives; every rank must participate. */
+       Multi-rank correctness: gizmo_density_prep_ghosts is an MPI collective so
+       every rank must agree on whether to call it. MPI_Allreduce num_src first;
+       if no rank has any source, every rank skips ghost_prep + the rest. */
     int num_src = num_active;
+    int global_num_src = num_src;
+    MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_src == 0) { ghost_write_detector_end(); return; } /* nothing anywhere; ghost_writeback would write nothing */
 
     int imported_ghosts = 0;
     if(ghost_get_num_ghosts() <= 0) {

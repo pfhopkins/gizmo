@@ -46,6 +46,22 @@ void sink_environment_loop(void)
     /* GPU neighbor-list path: build active-sink index + radius arrays, dispatch
        GPU kernel, scatter outputs into SinkTempInfo. */
     CPU_Step[CPU_SINKS] += measure_time();
+
+    /* Count active sinks FIRST (cheap host loop over ActiveParticleList).
+     * If no rank has any active sinks, skip ghost_prep + arena_acquire +
+     * everything else. ghost_prep does an all-particles drift loop (12.4M
+     * cache-miss reads on fire_m11i) so this guard saves ~1s/step on
+     * sink-inactive timebins. Multi-rank correctness requires the
+     * MPI_Allreduce so all ranks agree to skip or proceed together. */
+    int num_active = 0;
+    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
+    int global_num_active = num_active;
+    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_active == 0) {
+        CPU_Step[CPU_SINKS] += measure_time();
+        return;
+    }
+
     /* Import ghost particles only if not already present (e.g. TRANSPORT_SUBCYCLE
        keeps hydro ghosts alive past hydro_force; double-importing would corrupt P). */
     bool sinkenv_imported_ghosts = (ghost_get_num_ghosts() == 0);
@@ -53,10 +69,6 @@ void sink_environment_loop(void)
         double ags_ghost_safety = gizmo_ghost_safety_factor();
         gizmo_density_prep_ghosts(ags_ghost_safety);
     }
-
-    /* Count active sinks */
-    int num_active = 0;
-    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
 
     int *nl_active = (int *) mymalloc("sinkenv_nl_active", (num_active > 0 ? num_active : 1) * sizeof(int));
     double *nl_radii = (double *) mymalloc("sinkenv_nl_radii", (num_active > 0 ? num_active : 1) * sizeof(double));
@@ -149,13 +161,21 @@ void sink_environment_second_loop(void)
     /* Stage E2: GPU path — pure aggregator, no j-writes, same active set + radii +
      * j_type_bitmask as the first environment pass. */
     CPU_Step[CPU_SINKS] += measure_time();
+
+    /* Count-first guard (see sink_environment_loop for rationale). */
+    int num_active = 0;
+    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
+    int global_num_active = num_active;
+    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_active == 0) {
+        CPU_Step[CPU_SINKS] += measure_time();
+        return;
+    }
+
     bool sinkenv2_imported_ghosts = (ghost_get_num_ghosts() == 0);
     if(sinkenv2_imported_ghosts) {
         gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
     }
-
-    int num_active = 0;
-    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
     int alloc_n = (num_active > 0 ? num_active : 1);
     int    *nl_active   = (int *)    mymalloc("sinkenv2_nl_active", alloc_n * sizeof(int));
     double *nl_radii    = (double *) mymalloc("sinkenv2_nl_radii",  alloc_n * sizeof(double));

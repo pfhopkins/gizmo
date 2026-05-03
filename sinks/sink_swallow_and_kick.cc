@@ -37,11 +37,20 @@ void sink_swallow_and_kick_loop(void)
      * and MPI_Reduce of swallow counters handled inside the launcher. */
     {
 #include "../sinks/sinks_gpu_decls.h"
+        /* Count-first guard: skip ghost_prep entirely when no rank has any
+         * active sink. ghost_prep does the all-particles drift loop. */
+        int num_active = 0;
+        for(int i : ActiveParticleList) { if(sink_isactive(i) && P[i].SwallowID == 0) num_active++; }
+        int global_num_active = num_active;
+        MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(global_num_active == 0) {
+            CPU_Step[CPU_SINKS] += measure_time();
+            return;
+        }
+
         bool imported_ghosts = (ghost_get_num_ghosts() == 0);
         if(imported_ghosts) { gizmo_density_prep_ghosts(gizmo_ghost_safety_factor()); }
 
-        int num_active = 0;
-        for(int i : ActiveParticleList) { if(sink_isactive(i) && P[i].SwallowID == 0) num_active++; }
         int alloc_n = (num_active > 0) ? num_active : 1;
         int *nl_active = (int *) mymalloc("sinkswallow_nl_active", alloc_n * sizeof(int));
         double *nl_radii = (double *) mymalloc("sinkswallow_nl_radii", alloc_n * sizeof(double));

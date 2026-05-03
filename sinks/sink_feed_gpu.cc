@@ -115,11 +115,13 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     GIZMO_GPU_ENSURE_ALL_FRESH(sinkfeed);
 
     /* Caller supplies LOCAL active sources (ActiveParticleList + sink_isactive).
-       Iterating num_total here would include ghost-imported sources and
-       double-deposit on multi-rank runs. Do NOT early-return on num_active==0:
-       gizmo_density_prep_ghosts and ghost_writeback_sinkfeed are MPI collectives
-       — every rank must participate even with no local sources. */
+       Multi-rank correctness: gizmo_density_prep_ghosts is an MPI collective so
+       every rank must agree on whether to call it. MPI_Allreduce num_src first;
+       if no rank has any source, every rank skips ghost_prep + the rest. */
     int num_src = num_active;
+    int global_num_src = num_src;
+    MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_src == 0) { return; } /* nothing to do anywhere; ghost_writeback's writes would be no-ops */
 
     /* Prep ghosts */
     int imported_ghosts = 0;

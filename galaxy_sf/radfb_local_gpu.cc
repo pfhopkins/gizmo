@@ -166,6 +166,12 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
 
     int num_src = (int)active_src.size();
 
+    /* Multi-rank correctness: ghost_prep is collective so all ranks must agree.
+     * MPI_Allreduce num_src; if no rank has work, every rank skips ghost_prep. */
+    int global_num_src = num_src;
+    MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_src == 0) { return; }
+
     /* Ghost prep — must happen before neighbor list build.
      * Guard against TRANSPORT_SUBCYCLE double-import. */
     int imported_ghosts = 0;

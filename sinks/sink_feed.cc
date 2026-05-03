@@ -27,6 +27,14 @@ void sink_feed_loop(void)
            NumPart here would include ghost imports and double-deposit. */
         int num_active = 0;
         for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
+        /* Count-first guard: skip mymalloc + populate + evaluate_gpu (which
+         * itself does ghost_prep) when no rank has any active sink. */
+        int global_num_active = num_active;
+        MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(global_num_active == 0) {
+            CPU_Step[CPU_SINKS] += measure_time();
+            return;
+        }
         int *nl_active = (int *) mymalloc("sinkfeed_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         double *nl_radii = (double *) mymalloc("sinkfeed_nl_radii",

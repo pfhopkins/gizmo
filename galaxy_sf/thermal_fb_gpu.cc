@@ -70,9 +70,12 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     /* Caller supplies LOCAL active-source indices (built from ActiveParticleList +
        addthermalFB_evaluate_active_check). Iterating num_total here would include
        ghost-imported sources and double-deposit on multi-rank runs.
-       Note: do NOT early-return when num_active==0; ghost prep and ghost_writeback
-       are MPI collectives — every rank must participate even with no local sources. */
+       Multi-rank correctness: gizmo_density_prep_ghosts is an MPI collective so
+       every rank must agree. MPI_Allreduce num_src; all-zero ranks skip together. */
     int num_src = num_active;
+    int global_num_src = num_src;
+    MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(global_num_src == 0) { return; }
 
     /* Prep ghosts (check guard from TRANSPORT_SUBCYCLE pitfall) */
     int imported_ghosts = 0;
