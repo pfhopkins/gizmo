@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
+#include "../system/gpu_particles_arena.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
 /* gradient_evaluate_gpu writes results as GasGraddata_out_ structs (defined in
@@ -573,7 +574,15 @@ void hydro_gradient_calc(void)
 #endif
         }
 
-
+    /* CORRECTNESS FIX (caught by GIZMO_GPU_ARENA_DEBUG=1, 2026-05-03):
+     * The zero-out loop above mutates host P[i].AGS_zeta and CellP[i].Gradients.*
+     * for active gas particles. The GPU arena (populated by the symlist memcpy
+     * earlier) is NOT updated, so a subsequent fast-path acquire by
+     * gradient_evaluate_gpu would read stale values. Invalidate arena here so
+     * the next acquire forces a slow-path memcpy and re-seeds from host.
+     * Phase 8a Round 2 will replace this with a mirror-update + mark_clean
+     * (write zeros to BOTH host and arena) to recover the slow-path memcpy. */
+    gpu_particles_arena_invalidate();
 
     /* prepare to do the requisite number of sweeps over the particle distribution */
     int gradient_iteration;
