@@ -1376,12 +1376,19 @@ void pm_periodic_transposeA(fftw_real * field, fftw_real * scratch)
 
       if(task < NTask)
 	{
-	  MPI_Sendrecv(scratch + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY,
-		       field + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  /* Self-send: memcpy avoids int-count overflow for PMGRID >= 1024 single-rank. */
+	  if(task == ThisTask) {
+	    memcpy(field + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   scratch + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   (size_t)PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
+	  } else {
+	    MPI_Sendrecv(scratch + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY,
+		         field + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  }
 	}
     }
 }
@@ -1398,12 +1405,19 @@ void pm_periodic_transposeB(fftw_real * field, fftw_real * scratch)
 
       if(task < NTask)
 	{
-	  MPI_Sendrecv(field + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY,
-		       scratch + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  /* Self-send: memcpy avoids int-count overflow for PMGRID >= 1024 single-rank. */
+	  if(task == ThisTask) {
+	    memcpy(scratch + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   field   + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   (size_t)PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
+	  } else {
+	    MPI_Sendrecv(field + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY,
+		         scratch + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  }
 	}
     }
 
@@ -1441,12 +1455,19 @@ void pm_periodic_transposeAz(fftw_real * field, fftw_real * scratch)
 
       if(task < NTask)
 	{
-	  MPI_Sendrecv(scratch + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY,
-		       field + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  /* Self-send: memcpy avoids int-count overflow for PMGRID >= 1024 single-rank. */
+	  if(task == ThisTask) {
+	    memcpy(field + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   scratch + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   (size_t)PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
+	  } else {
+	    MPI_Sendrecv(scratch + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY,
+		         field + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  }
 	}
     }
 }
@@ -1463,12 +1484,19 @@ void pm_periodic_transposeBz(fftw_real * field, fftw_real * scratch)
 
       if(task < NTask)
 	{
-	  MPI_Sendrecv(field + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY,
-		       scratch + PMGRID * first_slab_of_task[task] * nslab_x,
-		       PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		       MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  /* Self-send: memcpy avoids int-count overflow for PMGRID >= 1024 single-rank. */
+	  if(task == ThisTask) {
+	    memcpy(scratch + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   field   + (size_t)PMGRID * first_slab_of_task[task] * nslab_x,
+		   (size_t)PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
+	  } else {
+	    MPI_Sendrecv(field + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY,
+		         scratch + PMGRID * first_slab_of_task[task] * nslab_x,
+		         PMGRID * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
+		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	  }
 	}
     }
   for(task = 0; task < NTask; task++)
