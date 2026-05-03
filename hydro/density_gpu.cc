@@ -167,9 +167,16 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
      * later — building it from inflated h would inflate node->hmax, causing the
      * SYMMETRIC consumer (symlist for gradients) to over-search by ~2.2× volume.
      * Building from un-inflated h gives correct hmax; compact_xyzh.h is refreshed
-     * per call (so density still gets inflated h_i for its own oversize search). */
-    if(session_active && !gpu_step_sidx_ptr()->valid) {
-        gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, gpu_step_sidx_ptr());
+     * per call (so density still gets inflated h_i for its own oversize search).
+     *
+     * num_active==0 short-circuit: when no gas particles are active, density does
+     * not inflate any h (the inflate loop below is gated on aa<num_active), so the
+     * "build-before-inflate" correctness constraint is moot.  Skip the prebuild;
+     * any downstream caller (mech_fb, sinks, etc.) that needs the SIDX will lazy-
+     * build inside gpu_ngb_list_build with un-inflated h, which is correct.  Saves
+     * ~1.3s on small-bin steps where no gas is active (e.g. DM/sink-only timebins). */
+    if(session_active && num_active > 0 && !gpu_step_sidx_ptr()->valid) {
+        gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, gpu_step_sidx_ptr(), "density-prebuild");
     }
 
     /* Check if we can reuse the cached CSR list */
@@ -216,7 +223,8 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 
         gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
                            NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl,
-                           gpu_step_sidx_ptr());
+                           gpu_step_sidx_ptr(),
+                           1.0, NULL, NULL, "density");
 
         /* Restore actual KernelRadius (kernel uses this for the density computation) */
         if(session_active) {
