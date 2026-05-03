@@ -181,18 +181,24 @@ void density(void)
         }} /* done with intial zero-out loop */
 
     double timeall=0, timecomp=0;
-    /* If no gas is active on this rank for this sync-point, skip the
-     * density_gpu session begin/end pair entirely.  session_begin's
+    /* If no particle on this rank passes density_isactive() this sync-point,
+     * skip the density_gpu session begin/end pair entirely.  session_begin's
      * gpu_particles_arena_acquire on an invalidated arena is a 17 GB host→
-     * SharedSpace memcpy (~1.4s on fire_m11i 12.4M particles), which is wasted
-     * work when no kernel will run.  prep_ghosts above and the postloop
-     * iteration over ActiveParticleList stay (multi-rank correctness, host-
-     * side bookkeeping). */
-    int any_active_gas_local = 0;
+     * SharedSpace memcpy (~1.4s on fire_m11i 12.4M particles), wasted work
+     * when no kernel will run.  prep_ghosts above and the postloop iteration
+     * over ActiveParticleList stay (multi-rank correctness, host-side
+     * bookkeeping).
+     *
+     * Use density_isactive(i) (the same test the do-while loop body uses,
+     * line ~196) rather than Type==0: non-gas types (sinks, stars w/ AGS,
+     * etc.) also flow through this density() pass to set their own kernel
+     * radii.  Skipping when density_isactive==false for everyone preserves
+     * exactly the work that would have happened. */
+    int any_density_active_local = 0;
     for(int ii : ActiveParticleList) {
-        if(P[ii].Type == 0 && P[ii].Mass > 0) { any_active_gas_local = 1; break; }
+        if(density_isactive(ii)) { any_density_active_local = 1; break; }
     }
-    if(any_active_gas_local) density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
+    if(any_density_active_local) density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
@@ -581,7 +587,7 @@ void density(void)
 
     /* iteration is done - de-malloc everything now */
     double t_postproc_start = my_second();
-    if(any_active_gas_local) density_gpu_session_end(); /* free persistent SharedSpace arrays */
+    if(any_density_active_local) density_gpu_session_end(); /* free persistent SharedSpace arrays */
     double t_session_end = timediff(t_postproc_start, my_second());
     myfree(Right); myfree(Left);
 
