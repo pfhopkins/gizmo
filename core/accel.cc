@@ -6,6 +6,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"
 
 /*! \file accel.c
  *  \brief driver routines to carry out force computation
@@ -62,30 +63,32 @@ void compute_hydro_densities_and_forces(void)
         double t_bench_density_start = my_second();
         density();		/* computes density, and pressure */
         double t_bench_density_only = timediff(t_bench_density_start, my_second());
+        gizmo_step_phase_record("density", t_bench_density_only);
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-        ags_density();
+        STEP_PHASE_TIME("ags_density", ags_density());
 #endif
         double t_hmax_start = my_second();
         force_update_hmax();	/* update kernel lengths in tree */
         double t_bench_hmax = timediff(t_hmax_start, my_second());
+        gizmo_step_phase_record("force_update_hmax", t_bench_hmax);
         /*! This function updates the hmax-values in tree nodes that hold gas. These values are needed to find all neighbors in the hydro-force computation.  Since the KernelRadius-values are potentially changed in the gas-denity computation, force_update_hmax() should be carried out before the hydrodynamical forces are computed, i.e. after density(). */
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
-        cellcorrections_calc(); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
+        STEP_PHASE_TIME("cellcorrections_calc", cellcorrections_calc()); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
 #endif
 #ifdef TURB_DIFF_DYNAMIC
-        dynamic_diff_vel_calc(); /* This must be called between density and gradient calculations */
+        STEP_PHASE_TIME("dynamic_diff_vel_calc", dynamic_diff_vel_calc()); /* This must be called between density and gradient calculations */
 #endif
 #if defined(RADTRANSFER) && defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION)
-        rt_source_injection(); /* doing source injection here (just before interpolation and hydro gradients) is slightly more accurate for this setup, but not possible in total generality owing to dependence of some injection modules on quantities calculated below */
+        STEP_PHASE_TIME("rt_source_injection", rt_source_injection()); /* doing source injection here (just before interpolation and hydro gradients) is slightly more accurate for this setup, but not possible in total generality owing to dependence of some injection modules on quantities calculated below */
 #endif
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
-        interpolate_fluxes_opacities_gasgrains(); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
+        STEP_PHASE_TIME("interp_fluxes_opacities", interpolate_fluxes_opacities_gasgrains()); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
 #endif
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
-        compute_stellar_feedback();
+        STEP_PHASE_TIME("compute_stellar_feedback", compute_stellar_feedback());
 #endif
 
         double t_bench_grad_start = my_second();
@@ -109,19 +112,21 @@ void compute_hydro_densities_and_forces(void)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */
 #endif
         double t_bench_grad = timediff(t_bench_grad_start, my_second());
+        gizmo_step_phase_record("hydro_gradient_calc", t_bench_grad);
         PRINT_STATUS(" ..gradient computation done.");
 
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
-        special_rt_feedback_injection(); /* do before proper hydro loop */
+        STEP_PHASE_TIME("special_rt_feedback_injection", special_rt_feedback_injection()); /* do before proper hydro loop */
 #endif
 
 #ifdef TURB_DIFF_DYNAMIC
-        dynamic_diff_calc(); /* This MUST be called immediately following gradient calculations */
+        STEP_PHASE_TIME("dynamic_diff_calc", dynamic_diff_calc()); /* This MUST be called immediately following gradient calculations */
 #endif
         double t_bench_hydro_start = my_second();
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
-        compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
+        gizmo_step_phase_record("hydro_force", t_bench_hydro);
+        STEP_PHASE_TIME("compute_addl_forces", compute_additional_forces_for_all_particles()); /* other accelerations that need to be computed are done here */
         /* Feed GPU-path kernel timings into CPU_Step accumulators for cpu.txt output.
            drift+ghost+redo feeds are done inside density()/gradients()/hydro_force() via
            the ghost_symlist_lifecycle helpers. */
@@ -169,22 +174,22 @@ void compute_stellar_feedback(void)
 #endif
 
 #ifdef GALSF_FB_MECHANICAL /* check the mechanical sources of feedback */
-    mechanical_fb_calc_toplevel();  /* call the parent loop for the different mechanical fb sub-loops */
+    STEP_PHASE_TIME("mechanical_fb_calc", mechanical_fb_calc_toplevel());  /* call the parent loop for the different mechanical fb sub-loops */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_THERMAL
-    thermal_fb_calc(); /* thermal feedback */
+    STEP_PHASE_TIME("thermal_fb_calc", thermal_fb_calc()); /* thermal feedback */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
-    
+
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
-    HII_heating_singledomain(); /* local photo-ionization heating */
+    STEP_PHASE_TIME("HII_heating_singledomain", HII_heating_singledomain()); /* local photo-ionization heating */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
-    
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
-    radiation_pressure_winds_consolidated(); /* local radiation pressure */
+    STEP_PHASE_TIME("radiation_pressure_winds", radiation_pressure_winds_consolidated()); /* local radiation pressure */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_LOCALWIND] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
     

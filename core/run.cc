@@ -8,6 +8,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
 
@@ -123,12 +124,12 @@ void run(void)
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
 #endif
-        do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+        STEP_PHASE_TIME("kick1", do_first_halfstep_kick());	/* half-step kick at beginning of timestep for synchronous particles */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick1");
 #endif
 
-        find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
+        STEP_PHASE_TIME("drift_findsync", find_next_sync_point_and_drift());	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
@@ -150,20 +151,20 @@ void run(void)
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
         {
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
-            if(!NeedFullDomainDecomp) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
+            if(!NeedFullDomainDecomp) {STEP_PHASE_TIME("domain_decomp_light", domain_Decomposition_light(0));}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
-            {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
+            {STEP_PHASE_TIME("domain_decomp", domain_Decomposition(0, 0, 1));}  /* full decomposition needed */
             reconstructed_tree = 1;
         }
-        else if(TreeReconstructFlag) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag) {STEP_PHASE_TIME("domain_decomp_treerebuild", domain_Decomposition(0, 0, 1)); reconstructed_tree = 1;}
         else
         {
-            force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
-            make_list_of_active_particles();	/* now we can set the new chain list of active particles */
+            STEP_PHASE_TIME("force_update_tree", force_update_tree());	/* update tree dynamically with kicks of last step so that it can be reused */
+            STEP_PHASE_TIME("make_active_list", make_list_of_active_particles());	/* now we can set the new chain list of active particles */
         }
 
-        compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
+        STEP_PHASE_TIME("compute_grav_accelerations", compute_grav_accelerations());	/* compute gravitational accelerations for synchronous particles */
 
 #ifdef GALSF_SUBGRID_WINDS
 #if (GALSF_SUBGRID_WIND_SCALING==2)
@@ -188,7 +189,7 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
-        compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+        STEP_PHASE_TIME("compute_hydro", compute_hydro_densities_and_forces());	/* densities, gradients, & hydro-accels for synchronous particles */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_hydro");
 #endif
@@ -196,17 +197,17 @@ void run(void)
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
         {
-            merge_and_split_particles();
-            rearrange_particle_sequence();
+            STEP_PHASE_TIME("merge_split", merge_and_split_particles());
+            STEP_PHASE_TIME("rearrange_particles", rearrange_particle_sequence());
         }
 #endif
-        
-        do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+
+        STEP_PHASE_TIME("kick2", do_second_halfstep_kick());	/* this does the half-step kick at the end of the timestep */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
         if(rt_step_diag_count <= 50) rt_step_checksum("after_kick2");
 #endif
 
-        calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+        STEP_PHASE_TIME("calc_nonstandard_phys", calculate_non_standard_physics());	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
@@ -279,6 +280,11 @@ void run(void)
         }
 
         report_memory_usage(&HighMark_run, "RUN");
+
+        /* DIAG: per-step phase wallclock breakdown (env-gated GIZMO_STEP_PHASES=1).
+         * NumCurrentTiStep was bumped inside find_next_sync_point_and_drift, so the
+         * just-completed step is at index (NumCurrentTiStep - 1). */
+        gizmo_step_phase_dump((int)(All.NumCurrentTiStep - 1));
     }
 
 }
@@ -322,7 +328,7 @@ void calculate_non_standard_physics(void)
     if(All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr)
 #endif
     {
-        sink_accretion();
+        STEP_PHASE_TIME("sink_accretion", sink_accretion());
 #ifdef SINK_WIND_SPAWN
         double Max_Unspawned_MassUnits_fromSink_global;
         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
