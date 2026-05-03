@@ -70,9 +70,16 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
     Kokkos::fence();
     gizmo_gpu_check_last_error("cbe_drift_kick", num_active);
 
-    memcpy(P_host, P_gpu, num_total * sizeof(struct particle_data));
+    /* Row 6c of arena-scope sweep: sparse scatter over the ACTIVE list
+     * (not neighbors[] — this kernel has no neighbor pass; do_cbe_drift_kick_kernel
+     * takes one i per active and updates only P_gpu[i]). Per-active struct
+     * copy is O(num_active) instead of O(num_total). active_host[] is already
+     * a host array, no device->host copy needed. */
+    for(int a = 0; a < num_active; a++) {
+        int i = active_host[a];
+        P_host[i] = P_gpu[i];
+    }
 
-    /* Full P scatter syncs arena→host (P-side); CellP unmodified by this kernel. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_dt);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
 

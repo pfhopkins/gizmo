@@ -207,9 +207,24 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     Kokkos::fence();
     gizmo_gpu_check_last_error("rt_src_injection", num_src);
 
-    /* Scatter: copy modified P and CellP back to host */
-    memcpy(P_host,    P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 6a of arena-scope sweep: sparse scatter over CSR neighbors[] —
+     * replaces former full memcpy(P_host, P_gpu, num_all*...) +
+     * memcpy(CellP_host, CellP_gpu, num_all*...). Per the kernel-writes
+     * audit (commit a06e30ca), rt_source_injection_pair_kernel writes a
+     * varying set of CellP[j] (Rad_Je, Rad_E_gamma, Rad_E_gamma_Pred,
+     * VelPred[k], donation bins under various RT_* flags) and P[j]
+     * (Vel[k], dp[k] under LOCAL_EXTINCTION). All atomic_add. Per-touched-j
+     * struct copy is safer than enumerating across all the #ifdef branches.
+     * gnl.neighbors lives in DEVICE_SPACE — deep-copy once. */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j]     = P_gpu[j];
+            CellP_host[j] = CellP_gpu[j];
+        }
+    }
 
     ghost_writeback_rtsrcinjection();
     ghost_write_detector_end();

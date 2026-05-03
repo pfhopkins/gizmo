@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -331,10 +332,26 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
         });
     }
 
-    /* Copy outputs back to host. P_gpu holds the atomic j-side deltas;
-       copy those back over P_host so scatter afterwards sees them. */
+    /* Row 6b of arena-scope sweep: kernel-writes audit (a06e30ca) shows
+     * j-side writes ONLY under DM_SIDM (wakeup, Vel[kv], dp[kv], NInteractions
+     * — all atomic). Outside DM_SIDM (e.g. fire_m11i): kernel writes only
+     * per-active kout[aa]; the former full memcpy(P_host, P_gpu, num_total*...)
+     * was cargo-cult and is DELETED. Inside DM_SIDM: sparse scatter of touched
+     * j fields over gnl.neighbors[] (deep-copied to host since DEVICE_SPACE). */
     memcpy(out_host, d_out, num_active * sizeof(struct ags_force_gpu_out));
-    memcpy(P_host, P_gpu, num_total * sizeof(struct particle_data));
+#if defined(DM_SIDM)
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j].wakeup        = P_gpu[j].wakeup;
+            P_host[j].Vel           = P_gpu[j].Vel;
+            P_host[j].dp            = P_gpu[j].dp;
+            P_host[j].NInteractions = P_gpu[j].NInteractions;
+        }
+    }
+#endif
     if(*d_need_wakeup) NeedToWakeupParticles_local = 1;
 
     /* Full P scatter syncs arena→host (P-side); CellP unmodified by this kernel. */

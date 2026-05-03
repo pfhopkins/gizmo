@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -192,9 +193,28 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     Kokkos::fence();
     gizmo_gpu_check_last_error("thermal_fb", num_src);
 
-    /* Scatter modified arrays back to host */
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 5 of arena-scope sweep: sparse scatter over CSR neighbors[] —
+     * replaces former full memcpy(P_host, P_gpu, num_all*...) +
+     * memcpy(CellP_host, CellP_gpu, num_all*...). Per the kernel-writes
+     * audit (commit a06e30ca), thermal_fb_pair_kernel writes ONLY to gas
+     * neighbors (kernel's Type==0 guard) the following fields, all atomic:
+     *   P_gpu[j].Mass, P_gpu[j].dp[k], P_gpu[j].Metallicity[k]  (METALS)
+     *   CellP_gpu[j].MassTrue (MFV), CellP_gpu[j].Density,
+     *   CellP_gpu[j].InternalEnergy, CellP_gpu[j].InternalEnergyPred,
+     *   CellP_gpu[j].DelayTimeCoolingSNe (atomic_max)
+     *
+     * Field set is large with multiple #ifdef branches — per-touched-j
+     * full struct copy is correct, safe, and still O(N_touched) instead
+     * of O(num_all). gnl.neighbors lives in DEVICE_SPACE — deep-copy once. */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j]     = P_gpu[j];
+            CellP_host[j] = CellP_gpu[j];
+        }
+    }
 
     /* Ghost writeback: propagate j-particle deltas to home ranks */
     ghost_writeback_thermalfb();

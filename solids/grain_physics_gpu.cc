@@ -55,17 +55,21 @@ static void grain_backrx_local_fill(int i,
    GPU grain-physics evaluators (LATENT for fire_m11i — GRAIN_FLUID-only)
    ----------------------------------------------------------------
    Kernel writes (host-visible, by index):
-     j-side: TBD — pair kernel (grain_backrx_pair / gasgrain_rt_pair) needs
-                   audit during the actual sweep. Quick scan showed atomic
-                   updates to P[j]/CellP[j] but the exact field set was
-                   not enumerated.
-   Sparse-scatter target: walk neighbors[] CSR; per-touched-j struct copy
-   over P + CellP (safest first cut). Refine to per-field if profile
-   demands.
+     grain_backrx_pair_kernel (Case 2 — sparse, 4 fields):
+       P_gpu[j].Vel[k]                — Kokkos::atomic_add
+       P_gpu[j].dp[k]                 — Kokkos::atomic_add
+       P_gpu[j].Grain_AccelTimeMin    — Kokkos::atomic_min
+       CellP_gpu[j].VelPred[k]        — Kokkos::atomic_add
 
-   NOTE: this evaluator has TWO call sites (grain_backrx, gasgrain_rt with
-   gas-source and grain-source variants). Each has its own full memcpy
-   pair (lines ~134-135, ~343-344) — ALL three need the same treatment.
+     gasgrain_rt_gas_search_pair_kernel  — PURE READ-ONLY (writes only
+                                            per-source out_arr[aa]).
+     gasgrain_rt_grain_search_pair_kernel — PURE READ-ONLY (same).
+
+   Sparse-scatter targets:
+     - grain_backrx evaluator: walk neighbors[] CSR, scatter the 4 fields
+       above (Case 2).
+     - interpolate_fluxes_opacities_gasgrains evaluator: kernels are
+       read-only, full P/CellP scatter is cargo-cult — DELETE (Case 1).
    ================================================================ */
 void grain_backrx_evaluate_gpu(struct particle_data *P_host,
                                 struct gas_cell_data *CellP_host,
@@ -147,8 +151,24 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     Kokkos::fence();
     gizmo_gpu_check_last_error("grain_backrx", num_src);
 
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 6d.i of arena-scope sweep: sparse scatter for grain_backrx. Per
+     * audit (a06e30ca), grain_backrx_pair_kernel writes only:
+     *   P_gpu[j].Vel[k]                 — atomic_add
+     *   CellP_gpu[j].VelPred[k]         — atomic_add
+     *   P_gpu[j].dp[k]                  — atomic_add
+     *   P_gpu[j].Grain_AccelTimeMin     — atomic_min
+     * Sparse scatter over gnl.neighbors[] (deep-copied to host). */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j].Vel               = P_gpu[j].Vel;
+            P_host[j].dp                = P_gpu[j].dp;
+            P_host[j].Grain_AccelTimeMin = P_gpu[j].Grain_AccelTimeMin;
+            CellP_host[j].VelPred       = CellP_gpu[j].VelPred;
+        }
+    }
 
     ghost_writeback_grainbackrx();
 
@@ -356,10 +376,13 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
     }
 
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 6d.ii of arena-scope sweep: kernel-writes audit (a06e30ca) shows
+     * gasgrain_rt_gas_search_pair_kernel and gasgrain_rt_grain_search_pair_kernel
+     * are PURE READ-ONLY on P/CellP — they only write to per-source out_arr[aa].
+     * The former full memcpy(P_host, P_gpu, num_all*...) +
+     * memcpy(CellP_host, CellP_gpu, num_all*...) here was cargo-cult — DELETED. */
 
-    /* Full scatter syncs arena→host; defensive invalidate for any caller post-mods. */
+    /* Defensive invalidate for any caller post-mods. */
     gpu_particles_arena_invalidate();
 
     if(imported_ghosts) ghost_exchange_cleanup();
