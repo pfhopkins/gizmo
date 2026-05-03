@@ -19,6 +19,9 @@ int g_enabled_cached = -1;
 /* Per-step accumulators, in registration order. */
 std::vector<std::pair<std::string, double>> g_buckets;
 
+/* Wallclock at start of current step (set by gizmo_step_phase_step_start). */
+double g_step_start_t = 0.0;
+
 int find_bucket(const char *name)
 {
     for(size_t i = 0; i < g_buckets.size(); i++) {
@@ -50,17 +53,25 @@ extern "C" void gizmo_step_phase_record(const char *name, double dt)
     }
 }
 
+extern "C" void gizmo_step_phase_step_start(void)
+{
+    if(!gizmo_step_phase_enabled()) return;
+    g_step_start_t = my_second();
+}
+
 extern "C" void gizmo_step_phase_dump(int step)
 {
     if(!gizmo_step_phase_enabled()) return;
     if(ThisTask != 0) {g_buckets.clear(); return;}
-    double total = 0;
-    for(size_t i = 0; i < g_buckets.size(); i++) total += g_buckets[i].second;
-    printf("[STEP_PHASES step=%d total=%.3fs", step, total);
+    double wall = (g_step_start_t > 0) ? (my_second() - g_step_start_t) : 0.0;
+    double bucketsum = 0;
+    for(size_t i = 0; i < g_buckets.size(); i++) bucketsum += g_buckets[i].second;
+    printf("[STEP_PHASES step=%d wall=%.3fs bucketsum=%.3fs", step, wall, bucketsum);
     for(size_t i = 0; i < g_buckets.size(); i++) {
         printf(" %s=%.3f", g_buckets[i].first.c_str(), g_buckets[i].second);
     }
     printf("]\n");
     fflush(stdout);
     g_buckets.clear();
+    g_step_start_t = 0.0;
 }

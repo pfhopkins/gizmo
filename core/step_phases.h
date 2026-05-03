@@ -35,8 +35,17 @@ int gizmo_step_phase_enabled(void);
  * (per-step sequential calls on rank 0). */
 void gizmo_step_phase_record(const char *name, double dt);
 
+/* Mark the wallclock start of the iteration (step) — call at the very
+ * top of the per-step loop body. The end is captured automatically by
+ * gizmo_step_phase_dump() which uses (now - start) as the actual
+ * step wallclock. Without this the dump's "wall=" reports 0.
+ * Buckets sum may exceed wall because nested wrappers are double-counted
+ * (e.g. compute_hydro contains compute_stellar_feedback contains mech_fb). */
+void gizmo_step_phase_step_start(void);
+
 /* Print accumulated buckets in registration order (rank 0, env-gated)
- * with total/sum line, then clear all buckets for next step. */
+ * with `wall=` (actual step wallclock) and `bucketsum=` (sum of all
+ * buckets, may double-count nested), then clear all buckets for next step. */
 void gizmo_step_phase_dump(int step);
 
 #ifdef __cplusplus

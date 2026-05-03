@@ -83,9 +83,10 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
-        compute_statistics();	/* regular statistics outputs (like total energy) */
+        gizmo_step_phase_step_start(); /* DIAG: capture wallclock start of this iteration */
+        STEP_PHASE_TIME("compute_statistics", compute_statistics());	/* regular statistics outputs (like total energy) */
 
-        write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
+        STEP_PHASE_TIME("write_cpu_log", write_cpu_log());		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
         if((All.Ti_Current >= TIMEBASE) || (All.Time > All.TimeMax)) /* check whether we reached the final time */
         {
@@ -95,7 +96,7 @@ void run(void)
             break;
         }
 
-        find_timesteps();		/* find-timesteps */
+        STEP_PHASE_TIME("find_timesteps", find_timesteps());		/* find-timesteps */
 
         /* RT_STEP_DIAG: print RT field checksums after each major phase to locate divergence. */
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
@@ -137,9 +138,9 @@ void run(void)
                                      * shared across density rounds + symlist within a step
                                      * must be rebuilt on the next gas ngb_list_build call. */
 
-        output_log_messages();	/* write some info to log-files */
+        STEP_PHASE_TIME("output_log_messages", output_log_messages());	/* write some info to log-files */
 
-        set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
+        STEP_PHASE_TIME("set_nonstandard_phys_t", set_non_standard_physics_for_current_time());	/* update auxiliary physics for current time */
 
         int reconstructed_tree = 0;
         int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
@@ -183,10 +184,10 @@ void run(void)
 
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
-        determine_where_SNe_occur(); // for mechanical FB models
+        STEP_PHASE_TIME("determine_SNe_occur", determine_where_SNe_occur()); // for mechanical FB models
 #endif
 #ifdef GALSF_FB_THERMAL
-        determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
+        STEP_PHASE_TIME("determine_thermalFB_occur", determine_where_addthermalFB_events_occur()); // (same, but for simple thermal feedback models)
 #endif
 
         STEP_PHASE_TIME("compute_hydro", compute_hydro_densities_and_forces());	/* densities, gradients, & hydro-accels for synchronous particles */
