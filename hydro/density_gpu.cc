@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
@@ -220,28 +221,30 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
             density_cached_gnl_valid = 0;
         }
 
-        /* Temporarily inflate KernelRadius for oversized search */
-        if(session_active && num_active > 0) {
+        /* Pass inflated search radii via the NGL API instead of mutating
+         * P_gpu.KernelRadius and round-tripping a mark_h_dirty + restore +
+         * mark_h_dirty again. NGB_SEARCH_ONEWAY only reads h_i (the source
+         * radius), so an explicit per-active radii buffer is exactly equivalent
+         * to the inflate; the kernel's per-pair predicate uses search_radii[aa]
+         * for h_i and never touches compact_xyzh[j*4+3] for h_j. This removes
+         * 2 of the ~6-8 compact_h_refresh fires per step (~1.25s each at
+         * full N when h-dirty), the largest remaining tiny-N floor on gas
+         * paths post-866aad55 BVH fix. */
+        std::vector<double> inflated_radii;
+        const double *radii_arg = NULL;
+        if(num_active > 0) {
+            inflated_radii.resize(num_active);
             for(int aa = 0; aa < num_active; aa++) {
                 int ii = active_indices_host[aa];
-                P_gpu[ii].KernelRadius *= DENSITY_H_BUFFER_FACTOR;
+                inflated_radii[aa] = P_host[ii].KernelRadius * DENSITY_H_BUFFER_FACTOR;
             }
-            gpu_compact_xyzh_mark_h_dirty(); /* inflate-write, refresh inside ngb_list_build */
+            radii_arg = inflated_radii.data();
         }
 
         gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
                            NGB_SEARCH_ONEWAY, 1 /* gas only */, &gnl,
                            gpu_step_sidx_ptr(),
-                           1.0, NULL, NULL, "density");
-
-        /* Restore actual KernelRadius (kernel uses this for the density computation) */
-        if(session_active && num_active > 0) {
-            for(int aa = 0; aa < num_active; aa++) {
-                int ii = active_indices_host[aa];
-                P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
-            }
-            gpu_compact_xyzh_mark_h_dirty(); /* restored to un-inflated h; next ngb_build needs refresh */
-        }
+                           1.0, radii_arg, NULL, "density");
 
         /* Cache the CSR and build lookup table */
         if(session_active) {

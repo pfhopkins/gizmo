@@ -70,6 +70,23 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->periodic_flags[2] = TILE_PERIODIC_Z;
     idx->box_sizes[0] = boxSize_X; idx->box_sizes[1] = boxSize_Y; idx->box_sizes[2] = boxSize_Z;
     idx->box_halves[0] = boxHalf_X; idx->box_halves[1] = boxHalf_Y; idx->box_halves[2] = boxHalf_Z;
+    /* Hard guard: bbox_overlaps_sphere_gpu's periodic-wrap math goes pathological
+     * (every node "overlaps" every query, BVH degenerates to exhaustive scan)
+     * if box_sizes[k] is 0 while periodic_flags[k] is on. This was the latent
+     * bug pre-866aad55 caused by missing gizmo_gpu_sync_all_ngb registration.
+     * Fail loud at build time so any future regression in the All_dev sync
+     * path can never silently corrupt performance again. */
+    for(int k = 0; k < 3; k++) {
+        if(idx->periodic_flags[k] && !(idx->box_sizes[k] > 0.0)) {
+            printf("gpu_spatial_index_build: periodic_flags[%d]=1 but box_sizes[%d]=%g (caller='%s'). "
+                   "Likely cause: gpu_neighbor_list TU's All_dev not synced from host All. "
+                   "Check that gizmo_gpu_sync_all_ngb is registered in gizmo_gpu_sync_all() "
+                   "(cooling/cooling.cc).\n",
+                   k, k, idx->box_sizes[k], caller_label ? caller_label : "?");
+            fflush(stdout);
+            endrun(913004);
+        }
+    }
 
     double t_si0 = my_second(); /* DIAG */
     /* Build SFC tiles + BVH on CPU */
