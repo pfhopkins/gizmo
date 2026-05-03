@@ -295,9 +295,32 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
     Kokkos::fence();
     gizmo_gpu_check_last_error("radfb_rp", num_src);
 
-    /* Scatter modified arrays back to host */
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 3 of arena-scope sweep: sparse scatter over CSR neighbors[] —
+     * replaces former full memcpy(P_host, P_gpu, num_all*...) and
+     * memcpy(CellP_host, CellP_gpu, num_all*...). Per the kernel-writes
+     * audit (commit a06e30ca), radfb_rp_pair_kick writes only
+     *   P[j].Vel[k]      (atomic_add)
+     *   CellP[j].VelPred[k] (atomic_add)
+     *   P[j].dp[k]       (atomic_add)
+     * and only for gas neighbors (kernel's Type==0 guard returns early
+     * for non-gas j's, leaving them unchanged in arena vs host). Walk
+     * the CSR; idempotent assignment makes duplicates correct. The
+     * per-source NewStar_Momentum loop below mutates P_host[i] directly
+     * for active sources only — those i's are not in this scatter set
+     * (they're sources, not neighbors), so no conflict.
+     *
+     * gnl.neighbors lives in DEVICE_SPACE (CudaSpace) — not host-readable
+     * on GH200. Deep-copy once, then iterate the host buffer. */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j].Vel = P_gpu[j].Vel;
+            P_host[j].dp  = P_gpu[j].dp;
+            CellP_host[j].VelPred = CellP_gpu[j].VelPred;
+        }
+    }
 
     /* Ghost writeback: propagate Vel/VelPred/dp deltas to home ranks */
     ghost_writeback_radfbrp();
