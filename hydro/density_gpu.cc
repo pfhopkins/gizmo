@@ -30,6 +30,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"
 #include "../core/timestep_functions.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
@@ -146,6 +147,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     if(num_active == 0) { return; }
     double t_dens_gpu_start = my_second(), t_dens_gpu_phase;
     double t_diag_setup_end = 0, t_diag_ngb_end = 0, t_diag_scatter_end = 0; /* DIAG */
+    double t_sidx_prebuild = 0; /* DIAG sub: gas SIDX prebuild only */
     struct particle_data *P_gpu;
     struct gas_cell_data *CellP_gpu;
     int session_active = (gpu_particles_arena_valid() && density_session_num_total == num_total
@@ -186,7 +188,9 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
      * build inside gpu_ngb_list_build with un-inflated h, which is correct.  Saves
      * ~1.3s on small-bin steps where no gas is active (e.g. DM/sink-only timebins). */
     if(session_active && num_active > 0 && !gpu_step_sidx_ptr()->valid) {
+        double t_sidx_start = my_second();
         gpu_spatial_index_build(P_gpu, num_total, 1 /* gas only */, gpu_step_sidx_ptr(), "density-prebuild");
+        t_sidx_prebuild = timediff(t_sidx_start, my_second());
     }
 
     /* Check if we can reuse the cached CSR list */
@@ -417,15 +421,25 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_gpu);
     }
 
-    if(ThisTask == 0) { /* DIAG: density phase breakdown — remove after profiling */
-        double t_arena  = timediff(t_dens_gpu_start, t_diag_setup_end);
-        double t_ngb    = timediff(t_diag_setup_end, t_diag_ngb_end);
-        double t_kernel = t_dens_kernel;
+    {
+        double t_arena   = timediff(t_dens_gpu_start, t_diag_setup_end);
+        double t_ngb     = timediff(t_diag_setup_end, t_diag_ngb_end);
+        double t_kernel  = t_dens_kernel;
         double t_scatter = t_diag_scatter_end; /* stored as elapsed */
-        double t_total  = timediff(t_dens_gpu_start, my_second());
-        printf("[DIAG_DENS step=%d N=%d] total=%.3f arena=%.3f ngb_build=%.3f gpu_kernel=%.3f scatter=%.3f\n",
-               (int)All.NumCurrentTiStep, num_active, t_total, t_arena, t_ngb, t_kernel, t_scatter);
-        fflush(stdout);
+        /* Phase 7 sub-buckets — env-gated via GIZMO_STEP_PHASES; no-op when off.
+         * Note t_ngb includes the SIDX prebuild when present; record SIDX
+         * separately so density_ngb_build reflects only the ngb_list_build cost. */
+        gizmo_step_phase_record("density_arena", t_arena);
+        gizmo_step_phase_record("density_sidx_prebuild", t_sidx_prebuild);
+        gizmo_step_phase_record("density_ngb_build", t_ngb - t_sidx_prebuild);
+        gizmo_step_phase_record("density_kernel", t_kernel);
+        gizmo_step_phase_record("density_scatter", t_scatter);
+        if(ThisTask == 0) { /* keep DIAG_DENS for per-call detail */
+            double t_total = timediff(t_dens_gpu_start, my_second());
+            printf("[DIAG_DENS step=%d N=%d] total=%.3f arena=%.3f ngb_build=%.3f sidx_prebuild=%.3f gpu_kernel=%.3f scatter=%.3f\n",
+                   (int)All.NumCurrentTiStep, num_active, t_total, t_arena, t_ngb, t_sidx_prebuild, t_kernel, t_scatter);
+            fflush(stdout);
+        }
     }
 }
 
@@ -602,16 +616,24 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
 
-    if(ThisTask == 0) { /* DIAG: gradient phase breakdown — remove after profiling */
-        long long pairs_mb = (long long)csr_total_pairs * 2 * sizeof(int) / (1024*1024);
-        printf("[DIAG_GRAD step=%d N=%d pairs=%d(~%lldMB)] arena=%.3f csr_copy=%.3f gpu_kernel=%.3f out_copy=%.3f total=%.3f\n",
-               (int)All.NumCurrentTiStep, num_active, csr_total_pairs, pairs_mb,
-               timediff(t_grad_start,  t_grad_arena),
-               timediff(t_grad_arena,  t_grad_csr_copy),
-               timediff(t_grad_csr_copy, t_grad_kernel),
-               timediff(t_grad_kernel, t_grad_copyout),
-               timediff(t_grad_start,  t_grad_copyout));
-        fflush(stdout);
+    {
+        double t_arena    = timediff(t_grad_start,    t_grad_arena);
+        double t_csr_copy = timediff(t_grad_arena,    t_grad_csr_copy);
+        double t_kernel   = timediff(t_grad_csr_copy, t_grad_kernel);
+        double t_out_copy = timediff(t_grad_kernel,   t_grad_copyout);
+        /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_STEP_PHASES off */
+        gizmo_step_phase_record("gradient_arena",    t_arena);
+        gizmo_step_phase_record("gradient_csr_copy", t_csr_copy);
+        gizmo_step_phase_record("gradient_kernel",   t_kernel);
+        gizmo_step_phase_record("gradient_out_copy", t_out_copy);
+        if(ThisTask == 0) {
+            long long pairs_mb = (long long)csr_total_pairs * 2 * sizeof(int) / (1024*1024);
+            printf("[DIAG_GRAD step=%d N=%d pairs=%d(~%lldMB)] arena=%.3f csr_copy=%.3f gpu_kernel=%.3f out_copy=%.3f total=%.3f\n",
+                   (int)All.NumCurrentTiStep, num_active, csr_total_pairs, pairs_mb,
+                   t_arena, t_csr_copy, t_kernel, t_out_copy,
+                   timediff(t_grad_start, t_grad_copyout));
+            fflush(stdout);
+        }
     }
 }
 
@@ -643,6 +665,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(density);
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
+    double t_hyd_start = my_second(); /* Phase 7 sub-bucket timing */
 
     /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
      * SharedSpace alloc+memcpy. Fast path skips memcpy when arena is valid. */
@@ -650,6 +673,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
+    double t_hyd_arena = my_second();
 
     /* Copy CSR neighbor list to SharedSpace */
     int *d_offsets = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((num_active + 1) * sizeof(int));
@@ -658,6 +682,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     memcpy(d_offsets, csr_offsets_host, (num_active + 1) * sizeof(int));
     memcpy(d_neighbors, csr_neighbors_host, csr_total_pairs * sizeof(int));
     memcpy(d_active, active_indices_host, num_active * sizeof(int));
+    double t_hyd_csr_copy = my_second();
 
     /* Copy TimeBinActive to SharedSpace */
     int *d_TimeBinActive = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(TIMEBINS * sizeof(int));
@@ -914,12 +939,14 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
         gizmo_gpu_check_last_error("hydro kernel", num_active);
     }
+    double t_hyd_kernel = my_second();
 
     /* Copy output back to host */
     memcpy(out_host, d_out, num_active * sizeof(struct hydro_data_out));
 
     /* Copy wakeup flag back */
     if(*d_NeedToWakeup) NeedToWakeupParticles_local = 1;
+    double t_hyd_out_copy = my_second();
 
     /* SPARSE scatter (replaces former full-num_total loop). The kernel writes
      * only P_gpu[j].wakeup (atomic_max) and, MFV-only, CellP_gpu[j].dMass
@@ -934,6 +961,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         CellP_host[j].dMass = CellP_gpu[j].dMass;
 #endif
     }
+    double t_hyd_scatter = my_second();
 
     /* Verification harness (β): for any untouched j, P_gpu[j] must match the
      * pre-kernel snapshot. Any violation means the kernel-writes header is
@@ -984,6 +1012,17 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
+
+    /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_STEP_PHASES off */
+    {
+        double t_postloop_end = my_second();
+        gizmo_step_phase_record("hydro_arena",       timediff(t_hyd_start,    t_hyd_arena));
+        gizmo_step_phase_record("hydro_csr_copy",    timediff(t_hyd_arena,    t_hyd_csr_copy));
+        gizmo_step_phase_record("hydro_kernel",      timediff(t_hyd_csr_copy, t_hyd_kernel));
+        gizmo_step_phase_record("hydro_out_copy",    timediff(t_hyd_kernel,   t_hyd_out_copy));
+        gizmo_step_phase_record("hydro_scatter",     timediff(t_hyd_out_copy, t_hyd_scatter));
+        gizmo_step_phase_record("hydro_postloop",    timediff(t_hyd_scatter,  t_postloop_end));
+    }
 }
 
 

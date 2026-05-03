@@ -35,18 +35,29 @@ void compute_grav_accelerations(void)
   CPU_Step[CPU_MISC] += measure_time();
   PRINT_STATUS("Start gravity force computation...");
 
+  /* Phase 7 sub-bucket timing — env-gated via GIZMO_STEP_PHASES; no-op when off.
+   * NOTE: force_update_tree is a SEPARATE top-level bucket recorded by run.cc;
+   * do NOT include it here (would double-count). */
 #ifdef PMGRID
-  if(All.PM_Ti_endstep == All.Ti_Current)
-    {
-      long_range_force();
-      CPU_Step[CPU_MESH] += measure_time();
-    }
+  {
+    double t_pm_start = my_second();
+    if(All.PM_Ti_endstep == All.Ti_Current)
+      {
+        long_range_force();
+        CPU_Step[CPU_MESH] += measure_time();
+      }
+    gizmo_step_phase_record("grav_pm", timediff(t_pm_start, my_second()));
+  }
 #endif
 
-  gravity_tree();		/* computes gravity accel. */
+  {
+    double t_tw_start = my_second();
+    gravity_tree();		/* computes gravity accel. */
 
-  /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy */
-  if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {gravity_tree();}
+    /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy */
+    if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {gravity_tree();}
+    gizmo_step_phase_record("grav_tree_walk", timediff(t_tw_start, my_second()));
+  }
 
   PRINT_STATUS(" ..gravity force computation done");
 }

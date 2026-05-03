@@ -10,6 +10,7 @@
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
+#include "../core/step_phases.h"
 extern void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int, int *, int);
 extern void density_gpu_session_begin(struct particle_data *, struct gas_cell_data *, int);
 extern void density_gpu_session_end(void);
@@ -198,7 +199,11 @@ void density(void)
     for(int ii : ActiveParticleList) {
         if(density_isactive(ii)) { any_density_active_local = 1; break; }
     }
-    if(any_density_active_local) density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
+    if(any_density_active_local) {
+        double t_sb_start = my_second();
+        density_gpu_session_begin(P, CellP, NumPart); /* one-time full copy to SharedSpace */
+        gizmo_step_phase_record("density_session_begin", timediff(t_sb_start, my_second()));
+    }
     /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
     do
     {
@@ -589,6 +594,7 @@ void density(void)
     double t_postproc_start = my_second();
     if(any_density_active_local) density_gpu_session_end(); /* free persistent SharedSpace arrays */
     double t_session_end = timediff(t_postproc_start, my_second());
+    gizmo_step_phase_record("density_session_end", t_session_end);
     myfree(Right); myfree(Left);
 
     /* mark as active again */
