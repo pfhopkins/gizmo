@@ -88,6 +88,22 @@ def ensure_poisson_ic(N_per_side: int, work_dir: Path) -> Path:
     return target
 
 
+def ensure_fire_m11i_ic(work_dir: Path) -> Path:
+    """Copy fire_m11i IC (snapshot_045.hdf5) from ic_cache; return path in work_dir."""
+    ic_name = "snapshot_045.hdf5"
+    cache_dir = STEP15 / "ic_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    ic_cached = cache_dir / ic_name
+    if not ic_cached.exists():
+        raise FileNotFoundError(
+            f"IC not found: {ic_cached}\n"
+            f"Rsync it to Vista: rsync /path/to/snapshot_045.hdf5 {ic_cached}")
+    target = work_dir / ic_name
+    if not target.exists():
+        shutil.copy2(ic_cached, target)
+    return target
+
+
 def ensure_gmc_cooling_ic(work_dir: Path) -> Path:
     """Download gmc_cooling IC file if not cached; return the IC file path in work_dir."""
     ic_name = "gmc_cooling_ics.hdf5"
@@ -161,17 +177,25 @@ def build_run(spec: dict, problem: dict, size: dict, build: str, rt: dict, *,
         if s.exists(): shutil.copy2(s, run_dir / s.name)
 
     # IC + params (problem-specific)
-    if problem["name"] == "poisson_box":
+    if problem["name"] in ("poisson_box", "poisson_starforge"):
         ic_path = ensure_poisson_ic(size["N_per_side"], run_dir)
         ic_basename = ic_path.stem  # GIZMO wants filename without .hdf5
     elif problem["name"] == "gmc_cooling":
         ic_path = ensure_gmc_cooling_ic(run_dir)
         ic_basename = ic_path.stem
+    elif problem["name"] == "fire_m11i":
+        ic_path = ensure_fire_m11i_ic(run_dir)
+        ic_basename = ic_path.stem  # "snapshot_045"
     else:
         raise NotImplementedError(f"IC handling for problem '{problem['name']}' not yet wired")
 
     src_params = GIZMO_ROOT / problem["params_template"]
     overrides = dict(problem.get("params_overrides", {}))
+    mem_per_node = spec.get("mem_per_node_mb")
+    if mem_per_node:
+        nodes = rt.get("nodes", 1)
+        tasks_per_node = max(1, rt["nranks"] // nodes)
+        overrides["MaxMemSize"] = str(mem_per_node // tasks_per_node)
     patch_params(src_params, run_dir / "params.txt", overrides, ic_basename)
 
     # Runtime data files (TREECOOL, spcool_tables, ewald table) — search a few
@@ -194,7 +218,7 @@ def build_run(spec: dict, problem: dict, size: dict, build: str, rt: dict, *,
                 break
 
     # Metadata
-    is_kokkos = build in ("A", "B")
+    is_kokkos = build in ("A", "B")  # D is legacy CPU, same as C
     metadata = {
         "name":         name,
         "system":       sysl,
@@ -205,6 +229,7 @@ def build_run(spec: dict, problem: dict, size: dict, build: str, rt: dict, *,
         "size_params":  size,
         "nranks":       rt["nranks"],
         "nthreads":     rt["nthreads"],
+        "nodes":        rt.get("nodes", 1),
         "is_kokkos":    is_kokkos,
         "binary":       str(bin_path),
         "params_template": str(src_params),
@@ -244,21 +269,27 @@ def launch_local(run_dir: Path) -> int:
     return subprocess.call(cmd, cwd=run_dir)
 
 
-def emit_slurm(run_dir: Path, partition: str, account: str, walltime: str) -> Path:
+def emit_slurm(run_dir: Path, partition: str, account: str, walltime: str,
+               extra_env: list[str] | None = None) -> Path:
     md = json.loads((run_dir / "metadata.json").read_text())
+    nodes = md.get("nodes", 1)
+    tasks_per_node = max(1, md["nranks"] // nodes)
     script = run_dir / "run.sbatch"
+    env_block = ""
+    if extra_env:
+        env_block = "\n".join(f"export {e}" for e in extra_env) + "\n"
     script.write_text(f"""#!/bin/bash
 #SBATCH -J s15_{md['build']}_{md['problem']}_{md['size_label']}
 #SBATCH -p {partition}
-#SBATCH -N 1
-#SBATCH --ntasks-per-node {md['nranks']}
+#SBATCH -N {nodes}
+#SBATCH --ntasks-per-node {tasks_per_node}
 #SBATCH --cpus-per-task {md['nthreads']}
 #SBATCH -t {walltime}
 #SBATCH -A {account}
 #SBATCH -o slurm.out
 #SBATCH -e slurm.err
-source $HOME/.bashrc
-{LAUNCH} ./GIZMO ./params.txt {md['nranks']} {md['nthreads']} {1 if md['is_kokkos'] else 0}
+source $HOME/.{"bashrc_gcc" if md["build"] in ("B", "D") else "bashrc"}
+{env_block}{LAUNCH} ./GIZMO ./params.txt {md['nranks']} {md['nthreads']} {1 if md['is_kokkos'] else 0}
 """)
     script.chmod(0o755)
     return script
@@ -336,9 +367,10 @@ def main() -> int:
         account    = spec.get("slurm", {}).get("account", "TG-NAIRR260139")
         walltime   = spec.get("slurm", {}).get("walltime", "00:30:00")
         batch_size = spec.get("slurm", {}).get("batch_size", 0)  # 0 = unlimited
+        extra_env = spec.get("extra_env", [])
         submitted = 0
         for rd in run_dirs:
-            sb = emit_slurm(rd, partition, account, walltime)
+            sb = emit_slurm(rd, partition, account, walltime, extra_env=extra_env)
             print(f"  sbatch {sb}")
             rc = subprocess.call(["sbatch", str(sb)], cwd=rd)
             if rc == 0:

@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -306,14 +307,32 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
         }
     } /* per-mode loop */
 
-    /* Scatter P/CellP back to host (the kernel itself doesn't modify these,
-       but keep this for parity with B6 in case the kernel gains direct writes). */
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 2 of arena-scope sweep: the former full memcpy(P_host, P_gpu, num_all*...)
+     * and memcpy(CellP_host, CellP_gpu, num_all*...) here were CARGO-CULT — per
+     * the kernel-writes audit (commit a06e30ca) the mech_fb pair kernel writes
+     * only d_gas[j], never P/CellP. Source-side mass loss is already applied
+     * explicitly to BOTH P_host and P_gpu via mech_fb_apply_source_mass_out
+     * (lines ~301-304) for active sources only, so the host already has the
+     * correct state. The full memcpys also masked a latent correctness bug:
+     * they could overwrite newer host-side mutations with stale arena state.
+     * DELETED. */
 
-    /* Copy device delta buffer: home cells -> caller's gas_delta_host; ghost
-       cells stay in d_gas for the writeback step to ship home. */
-    for(int j = 0; j < n_gas; j++) gas_delta_host[j] = d_gas[j];
+    /* Sparse gas_delta scatter: kernel writes d_gas[j] (atomic_add) only for
+     * j's appearing in gnl.neighbors. Walk the CSR; copy the home-cell subset
+     * (j < n_gas) into caller's gas_delta_host. Ghost-cell deltas (j >= n_gas)
+     * stay in d_gas for ghost_writeback_mechfb to ship to the home rank.
+     * Idempotent assignment makes duplicate j's correct.
+     *
+     * gnl.neighbors lives in DEVICE_SPACE (CudaSpace) — not host-readable on
+     * GH200. Deep-copy to host once, then iterate the host buffer. */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            if(j < n_gas) gas_delta_host[j] = d_gas[j];
+        }
+    }
 
     /* Ghost writeback: reduce ghost-side deltas into home-rank home_buf entries.
        d_gas is in SharedSpace (host-accessible), passed as the source; caller's
@@ -321,13 +340,21 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     ghost_writeback_mechfb(d_gas, gas_delta_host, n_gas);
     ghost_write_detector_end();
 
-    /* Count gas cells that received coupling, matching N_Gas_Couplings_ThisTask. */
+    /* Count gas cells that received coupling, matching N_Gas_Couplings_ThisTask.
+     * TODO(arena-scope): this remains an O(n_gas) scan because ghost_writeback_mechfb
+     * may merge remote contributions into home cells that weren't in our local
+     * touched-list. A future change would have writeback report its touched
+     * indices so this count can be sparse. The cost is small relative to the
+     * deleted full-N P/CellP memcpy (~5GB), but it is the next refinement. */
     int n_coup = 0;
     for(int j = 0; j < n_gas; j++) if(gas_delta_host[j].N_injected > 0) n_coup++;
     if(n_couplings_out) *n_couplings_out = n_coup;
 
-    /* Full P+CellP scatter syncs arena→host; ghost_writeback_mechfb above
-     * already invalidates for any host changes from ghost-side reduction. */
+    /* No full P/CellP scatter remains; arena state is consistent with host
+     * because (a) kernel doesn't write P/CellP and (b) per-source mass-loss
+     * was applied to BOTH host and arena above. ghost_writeback_mechfb may
+     * have merged into gas_delta_host (caller's buffer), which doesn't touch
+     * the arena. */
     gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_gas);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
