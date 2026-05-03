@@ -80,6 +80,7 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
     if(num_active == 0) { return; }
 
     /* Step 13 Phase 1 arena: pass CellP_host=NULL when no gas; arena handles. */
+    gpu_particles_arena_set_site("sink_environment_evaluate_gpu");
     gpu_particles_arena_acquire(num_total, P_host, (All.TotN_gas > 0) ? CellP_host : NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = (All.TotN_gas > 0) ? gpu_particles_arena_CellP() : NULL;
@@ -328,6 +329,7 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
     if(num_active == 0) { (void)CellP_host; return; }
 
     /* Step 13 Phase 1 arena. CellP unused by this kernel; pass NULL. */
+    gpu_particles_arena_set_site("sink_environment_second_evaluate_gpu");
     gpu_particles_arena_acquire(num_total, P_host, NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     (void)CellP_host;

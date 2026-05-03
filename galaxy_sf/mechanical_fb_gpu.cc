@@ -183,6 +183,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     }
 
     /* Step 13 Phase 1 arena. */
+    gpu_particles_arena_set_site("mechanical_fb_evaluate_gpu");
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();

@@ -38,6 +38,12 @@ static const char *g_arena_site = "(unknown)";  /* set by caller before acquire 
  * the arena" — for diagnostic output when the debug byte-compare guard fails. */
 static const char *g_arena_last_clean_site = "(none)";
 
+/* Phase 8a Round 1.5: also track who did the most-recent slow-path memcpy
+ * (that made arena valid) and who most recently invalidated. The acquire
+ * trio (memcpy, invalidate, current) names the suspects when the guard fires. */
+static const char *g_arena_last_memcpy_site    = "(none)";
+static const char *g_arena_last_invalidate_site = "(none)";
+
 extern "C" void gpu_particles_arena_set_site(const char *site) { g_arena_site = site; }
 
 /* Phase 8a Round 1: runtime-gated arena debug. The helpers below are always
@@ -167,10 +173,15 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
                 if(p_diff || c_diff) {
                     arena_print_struct_offsets_();
                     printf("gpu_particles_arena_acquire: arena_valid_==1 but host data differs from arena.\n"
-                           "  site='%s' serial=%d (last_memcpy_serial=%d) last_clean_site='%s'\n"
-                           "  Some host mutation site missed invalidate, or a Phase-8 mirror-update is incomplete.\n"
+                           "  current_site='%s' serial=%d (last_memcpy_serial=%d)\n"
+                           "  last_memcpy_site='%s'   (= site that did the most-recent slow-path memcpy)\n"
+                           "  last_invalidate_site='%s' (= site that most recently set arena_valid_=0)\n"
+                           "  last_mark_clean_site='%s' (= site that most recently asserted arena coherent)\n"
+                           "  ==> kernel between {memcpy or mark_clean} and now wrote arena[i].field while host[i].field stayed unchanged.\n"
                            "  Capacity = %d. P_diff=%d CellP_diff=%d. Aborting.\n",
                            g_arena_site, my_serial, g_valid_memcpy_serial,
+                           g_arena_last_memcpy_site,
+                           g_arena_last_invalidate_site,
                            g_arena_last_clean_site,
                            min_capacity, p_diff, c_diff);
                     if(p_diff) {
@@ -205,6 +216,7 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
         if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
         gizmo_step_phase_record("arena_acquire_memcpy_time", timediff(t_acq_start, my_second()));
         g_valid_memcpy_serial = my_serial;
+        g_arena_last_memcpy_site = g_arena_site; /* Phase 8a R1.5: who fired the slow-path? */
         arena_valid_ = 1;
         /* DO NOT mark compact_xyzh dirty here.  Within a step, the only
          * within-step mutators of P[].KernelRadius are density's inflate /
@@ -237,6 +249,7 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
     if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
     arena_capacity_ = min_capacity;
     g_valid_memcpy_serial = my_serial;
+    g_arena_last_memcpy_site = g_arena_site; /* fresh-alloc memcpy also counts */
     arena_valid_    = 1;
     /* Fresh arena alloc: any prior SIDX's compact_xyzh is stale wrt current host h. */
     gpu_compact_xyzh_mark_h_dirty();
@@ -246,6 +259,11 @@ extern "C" void gpu_particles_arena_invalidate(void)
 {
     /* Phase 7 Round A4: count invalidate calls per step. env-gated; no-op when off. */
     gizmo_step_phase_record("arena_invalidate_calls", 1.0);
+    /* Phase 8a R1.5: track who most recently invalidated, using whatever site
+     * was last set via gpu_particles_arena_set_site (callers that don't set
+     * a site keep showing the previous setter, which is also informative —
+     * implies the invalidate happened deep in code that doesn't own the site). */
+    g_arena_last_invalidate_site = g_arena_site;
     arena_valid_ = 0;
 }
 

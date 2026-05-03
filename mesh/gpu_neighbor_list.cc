@@ -810,6 +810,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
      * already populated it earlier in the step), avoiding ~2.3s of redundant
      * P-copy on small-N symlist invocations.  Pass the global CellP so the
      * arena's "valid" state remains consistent across mixed P/CellP consumers. */
+    gpu_particles_arena_set_site("gpu_build_symmetric_neighbor_list");
     gpu_particles_arena_acquire(num_total, P_host, CellP);
     struct particle_data *P_shared = gpu_particles_arena_P();
     double t_sym_arena = my_second();
@@ -864,6 +865,7 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
 {
     /* Use the per-step particle arena to avoid a redundant full-NumPart memcpy
      * (see gpu_build_symmetric_neighbor_list for rationale). */
+    gpu_particles_arena_set_site("gpu_build_cross_type_neighbor_list");
     gpu_particles_arena_acquire(num_total, P_host, CellP);
     struct particle_data *P_shared = gpu_particles_arena_P();
 
