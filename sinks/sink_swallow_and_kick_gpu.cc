@@ -286,9 +286,31 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
 
     gizmo_gpu_check_last_error("sink_swallow", num_active);
 
-    /* Scatter P/CellP back to host. */
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 4 of arena-scope sweep: sparse scatter over CSR neighbors[] —
+     * replaces former full memcpy(P_host, P_gpu, num_all*...) +
+     * memcpy(CellP_host, CellP_gpu, num_all*...). Per the kernel-writes
+     * audit (commit a06e30ca), sink_swallow_pair_kernel writes a LARGE set
+     * of P_gpu[j] / CellP_gpu[j] fields atomically (Mass, Sink_Mass,
+     * Sink_Mdot, Sink_Mass_Reservoir, Vel[k], dp[k] on P; MassTrue,
+     * VelPred[k], InternalEnergy, InternalEnergyPred, B[k]/BPred[k] under
+     * MAGNETIC, CR fields under COSMIC_RAY_FLUID, DelayTime on CellP).
+     *
+     * The field set is large enough that listing fields per-by-field risks
+     * omission (and would need to track every #ifdef branch). Per-touched-j
+     * full struct copy is correct, safe, and still O(N_touched) instead of
+     * O(num_all). For Nf=1 sink-active steps with ~few-hundred neighbors,
+     * this is a ~10⁴× reduction in scatter bytes.
+     *
+     * gnl.neighbors lives in DEVICE_SPACE — deep-copy once to host. */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j]     = P_gpu[j];
+            CellP_host[j] = CellP_gpu[j];
+        }
+    }
 
     /* Reduce ghost-side j-side deltas to home. */
     ghost_writeback_sinkswallow();

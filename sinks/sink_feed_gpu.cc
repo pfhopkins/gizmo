@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -293,9 +294,27 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     Kokkos::fence();
     gizmo_gpu_check_last_error("sink_feed", num_src);
 
-    /* Scatter modified arrays back to host */
-    memcpy(P_host,     P_gpu,     num_all * sizeof(struct particle_data));
-    memcpy(CellP_host, CellP_gpu, num_all * sizeof(struct gas_cell_data));
+    /* Row 4b of arena-scope sweep: sparse scatter over CSR neighbors[] —
+     * replaces former full memcpy(P_host, P_gpu, num_all*...) and
+     * memcpy(CellP_host, CellP_gpu, num_all*...). Per the kernel-writes
+     * audit (commit a06e30ca), sink_feed_pair_kernel writes ONLY:
+     *   P_gpu[j].SwallowID                (Kokkos::atomic_exchange)
+     *   CellP_gpu[j].Injected_Sink_Energy (Kokkos::atomic_add, SINK_THERMALFEEDBACK only)
+     * Walk the CSR; idempotent assignment makes duplicates correct.
+     *
+     * gnl.neighbors lives in DEVICE_SPACE (CudaSpace) on GH200 — deep-copy
+     * once to a host buffer, then iterate. */
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j].SwallowID = P_gpu[j].SwallowID;
+#ifdef SINK_THERMALFEEDBACK
+            CellP_host[j].Injected_Sink_Energy = CellP_gpu[j].Injected_Sink_Energy;
+#endif
+        }
+    }
 
     /* Ghost writeback: propagate j-particle deltas to home ranks */
     ghost_writeback_sinkfeed();

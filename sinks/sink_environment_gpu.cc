@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
@@ -274,12 +275,28 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
         });
     }
 
-    /* Copy outputs + any j-side SwallowTime atomics back to host.
-     * Full P scatter syncs arena→host for P; CellP unscattered, so host
-     * sink_environment.cc post-scatter of out_host into CellP fields makes
-     * arena stale — invalidate before next kernel acquires. */
+    /* Row 4c of arena-scope sweep: per kernel-writes audit (a06e30ca), the
+     * sink_env kernel writes ZERO j-side fields outside SINGLE_STAR_SINK_DYNAMICS
+     * (and only P[j].SwallowTime when that's defined). Everything else is
+     * per-active-source kout[aa] or pure read.
+     *
+     * Outside SINGLE_STAR_SINK_DYNAMICS (e.g. fire_m11i): no j-side scatter
+     * needed at all. The former full memcpy(P_host, P_gpu, num_total*...) was
+     * pure cargo-cult and is DELETED.
+     *
+     * Inside SINGLE_STAR_SINK_DYNAMICS: scatter SwallowTime sparsely over the
+     * CSR-touched j set (gnl.neighbors[], deep-copied to host). */
     memcpy(out_host, d_out, num_active * sizeof(struct sink_env_gpu_out));
-    memcpy(P_host, P_gpu, num_total * sizeof(struct particle_data));
+#if defined(SINGLE_STAR_SINK_DYNAMICS)
+    if(gnl.total_pairs > 0) {
+        std::vector<int> gnl_neighbors_host(gnl.total_pairs);
+        gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+        for(int idx = 0; idx < gnl.total_pairs; idx++) {
+            int j = gnl_neighbors_host[idx];
+            P_host[j].SwallowTime = P_gpu[j].SwallowTime;
+        }
+    }
+#endif
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
