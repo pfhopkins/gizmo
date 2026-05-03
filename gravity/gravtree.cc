@@ -154,7 +154,22 @@ void gravity_tree(void)
         for(i = 0; i < GRAVCOSTLEVELS; i++) {if(All.LevelToTimeBin[i] == All.HighestActiveTimeBin) {All.LevelToTimeBin[i] = 0;}}
         TakeLevel = -1;
     }
-    if(TakeLevel >= 0) {for(i = 0; i < NumPart; i++) {P[i].GravCost[TakeLevel] = 0;}} /* re-zero the cost [will be re-summed] */
+    if(TakeLevel >= 0) {
+        /* Phase 8a Round 3d.bug-fix: this NumPart-wide zero-out mutates HOST P[]
+         * for all particles, including non-active ones. Without an arena mirror,
+         * arena retains the previous step's GravCost values on non-active particles,
+         * producing a coherence violation that GIZMO_GPU_ARENA_DEBUG=1 catches at
+         * the next fast-path acquire (caught at particle 0 with stale 475.0 vs
+         * host 0.0 on first Round 3 verification). Mirror the zero into the arena
+         * in the same loop so arena stays coherent. The NumPart loop already
+         * exists (legitimate full-N reset of the load-balance counter); doubling
+         * per-iteration cost by writing to arena too is negligible. */
+        struct particle_data *P_arena_zero = gpu_particles_arena_P();
+        for(i = 0; i < NumPart; i++) {
+            P[i].GravCost[TakeLevel] = 0;
+            if(P_arena_zero) P_arena_zero[i].GravCost[TakeLevel] = 0;
+        }
+    } /* re-zero the cost [will be re-summed] */
 
     /* cache which particles need a new tree force BEFORE the tree walk runs: the tree walk can modify
        quantities like Min_Sink_FeedbackTime that needs_new_treeforce() depends on, so re-calling it
