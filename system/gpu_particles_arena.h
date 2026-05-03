@@ -23,6 +23,7 @@
 struct particle_data;
 struct gas_cell_data;
 
+#include <stddef.h>  /* size_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,6 +90,16 @@ void gpu_particles_arena_set_site(const char *site);
 
 /* Free all SharedSpace storage. Called at shutdown. */
 void gpu_particles_arena_release(void);
+
+/* UVM-canonical particles: backing-storage allocator for P[] and CellP[].
+ * Allocates `nbytes` of Kokkos::SharedSpace memory (CudaUVMSpace on GH200,
+ * HIPManagedSpace on AMD).  Zeros the buffer so callers see the same
+ * implicit-zero behavior they got from mymalloc.  Returns NULL on failure.
+ * Called once at startup from system/allocate.cc; the returned pointer
+ * persists until process exit.  This wrapper exists so allocate.cc — which
+ * is compiled as a host (non-CUDA) TU — does not have to include
+ * <Kokkos_Core.hpp> directly. */
+void *gpu_particles_uvm_alloc(size_t nbytes);
 
 /* Accessors. Return NULL / 0 when arena is not currently held. */
 struct particle_data *gpu_particles_arena_P(void);

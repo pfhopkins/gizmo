@@ -3,8 +3,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "gpu_particles_arena.h"
+
+/* UVM-canonical particles: allocate P[] and CellP[] directly in
+ * Kokkos::SharedSpace (CudaUVMSpace on GH200) via gpu_particles_uvm_alloc()
+ * rather than through mymalloc.  The GPU particles arena then aliases these
+ * pointers — no host->device memcpy on arena_acquire, no coherence dance,
+ * no invalidate.  See HANDOFF_fire_m11i_arena_sweep.md.
+ *
+ * The kokkos_malloc call lives in gpu_particles_arena.cc (a GPU TU) so that
+ * this host TU does not have to include <Kokkos_Core.hpp> directly, which
+ * would trip the KOKKOS_ENABLE_CUDA-without-__CUDACC__ guard.
+ *
+ * P/CellP are never myfree'd in the codebase (verified by grep), so
+ * bypassing mymalloc for them is safe — the mymalloc LIFO stack stays
+ * intact for everything else.  Storage persists to process exit. */
 
 
 /* This routine allocates memory for particle storage, both the collisionless and the fluid particles.
@@ -48,28 +64,32 @@ void allocate_memory(void)
 
   if(All.MaxPart > 0)
     {
-      if(!(P = (struct particle_data *) mymalloc("ParticleData_P", bytes = All.MaxPart * sizeof(struct particle_data))))
+      bytes = All.MaxPart * sizeof(struct particle_data);
+      P = (struct particle_data *) gpu_particles_uvm_alloc(bytes);
+      if(!P)
 	{
 	  printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0));
 	  endrun(1);
 	}
       bytes_tot += bytes;
 
-      if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage.\n", bytes_tot / (1024.0 * 1024.0));}
+      if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));}
     }
 
   if(All.MaxPartGas > 0)
     {
       bytes_tot = 0;
 
-      if(!(CellP = (struct gas_cell_data *) mymalloc("GasCellData_P", bytes = All.MaxPartGas * sizeof(struct gas_cell_data))))
-    {
+      bytes = All.MaxPartGas * sizeof(struct gas_cell_data);
+      CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes);
+      if(!CellP)
+	{
 	  printf("failed to allocate memory for gas cell data storage structure (%g MB).\n", bytes / (1024.0 * 1024.0));
 	  endrun(1);
 	}
       bytes_tot += bytes;
 
-      if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data.\n", bytes_tot / (1024.0 * 1024.0));}
+      if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));}
 
 #ifdef CHIMES 
       if (!(ChimesGasVars = (struct gasVariables *) mymalloc("gasVars", bytes = All.MaxPartGas * sizeof(struct gasVariables)))) 
