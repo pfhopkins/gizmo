@@ -133,7 +133,7 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                       &gnl, NULL, 1.0, src_radii_host);
+                       &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_host, NULL, "rt_inj");
 
     PRINT_STATUS("  GPU rt_source_injection: %d sources, %d pairs", num_src, gnl.total_pairs);
 
@@ -184,7 +184,7 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     /* CPU-side RT ops after return (Rad_E_gamma updates etc.) mutate host;
        invalidate so the next GPU acquire does a fresh copy. */
     gpu_particles_arena_invalidate();
-    gpu_ngb_list_free(&gnl, NULL);
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
     if(imported_ghosts) { ghost_exchange_cleanup(); }
 }

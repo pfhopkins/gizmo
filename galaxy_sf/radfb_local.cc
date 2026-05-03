@@ -175,7 +175,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             gpu_ngb_list_build(P_gpu, num_all,
                                hii_src_idx.data(), num_src,
                                NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                               &gnl, NULL, 1.0, hii_src_radii.data());
+                               &gnl, gpu_step_sidx_ptr(), 1.0, hii_src_radii.data(), NULL, "hii_fb");
         }
 
         /* Pre-reserve neighbor buffer on heap once to max slice size.
@@ -333,7 +333,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
         }
 
         if(num_src > 0) {
-            gpu_ngb_list_free(&gnl, NULL);
+            gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
             gpu_particles_arena_invalidate();
         }
         if(imported_ghosts) ghost_exchange_cleanup();

@@ -116,7 +116,7 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                       &gnl, NULL, 1.0, src_radii_host);
+                       &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_host, NULL, "therm_fb");
 
     PRINT_STATUS("  GPU thermal_fb: %d sources, %d pairs", num_src, gnl.total_pairs);
 
@@ -179,7 +179,7 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
 
     /* Full P+CellP scatter syncs arena→host; per-source mass-loss loop above
      * mutates P_host directly, so invalidate to cover that. */
-    gpu_ngb_list_free(&gnl, NULL);
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
     gpu_particles_arena_invalidate();

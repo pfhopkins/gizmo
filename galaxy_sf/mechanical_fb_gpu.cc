@@ -162,7 +162,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                       &gnl, NULL, 1.0, src_radii_host);
+                       &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_host, NULL, "mech_fb");
 
     PRINT_STATUS("  GPU mech_fb: %d sources, %d pairs", num_src, gnl.total_pairs);
 
@@ -284,7 +284,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
 
     /* Full P+CellP scatter syncs arena→host; ghost_writeback_mechfb above
      * already invalidates for any host changes from ghost-side reduction. */
-    gpu_ngb_list_free(&gnl, NULL);
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_gas);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);

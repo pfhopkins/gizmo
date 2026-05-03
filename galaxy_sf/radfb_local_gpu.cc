@@ -203,7 +203,7 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
     gpu_ngb_list_build(P_gpu, num_all,
                        active_src.data(), num_src,
                        NGB_SEARCH_ONEWAY, 1 /* gas only */,
-                       &gnl, NULL, 1.0, src_radii.data());
+                       &gnl, gpu_step_sidx_ptr(), 1.0, src_radii.data(), NULL, "radfb_g");
 
     PRINT_STATUS("  GPU radiation_pressure: %d sources, %d pairs", num_src, gnl.total_pairs);
 
@@ -296,7 +296,7 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
 
     /* Full P+CellP scatter syncs arena→host; per-source NewStar_Momentum loop
      * above mutates P_host directly, so invalidate to cover that. */
-    gpu_ngb_list_free(&gnl, NULL);
+    gpu_ngb_list_free(&gnl, gpu_step_sidx_ptr());
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
     gpu_particles_arena_invalidate();
