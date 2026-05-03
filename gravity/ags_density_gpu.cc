@@ -56,6 +56,10 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
     GIZMO_GPU_ENSURE_ALL_FRESH(agsdensity);
     struct ags_density_gpu_out *out_host = (struct ags_density_gpu_out *)out_host_void;
 
+    /* Wrapper fast-path: caller-side ags_density_isactive() filter has already
+     * produced num_active.  When 0, skip arena/allocs/kernel/scatter. */
+    if(num_active == 0) { (void)out_host; return; }
+
     /* Step 13 Phase 1 arena. CellP only needed when there's gas; pass NULL otherwise.
      * The kernel gates kc[] access on kp[j].Type == 0 so a NULL kc is safe. */
     gpu_particles_arena_set_site("ags_density_gpu");
@@ -68,7 +72,7 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
-                       1.0 /* search_radius_factor */, i_radii_host);
+                       1.0 /* search_radius_factor */, i_radii_host, NULL, "ags_dens");
 
     /* Output + radii arrays in SharedSpace */
     struct ags_density_gpu_out *d_out = (struct ags_density_gpu_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(

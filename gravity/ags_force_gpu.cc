@@ -121,6 +121,10 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 {
     GIZMO_GPU_ENSURE_ALL_FRESH(agsforce);
 
+    /* Wrapper fast-path: caller-side ags_density_isactive() filter has already
+     * produced num_active.  When 0, skip arena/allocs/kernel/scatter. */
+    if(num_active == 0) { (void)out_host; return; }
+
     /* Step 13 Phase 1 arena. P-only kernel; pass NULL CellP. j-writes go via
      * Kokkos atomics to the arena P, then full P scatter back at the end. */
     gpu_particles_arena_set_site("ags_force_gpu");
@@ -136,7 +140,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
-                       sr_fac, i_radii_host);
+                       sr_fac, i_radii_host, NULL, "ags_force");
 
     double *d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
         ((num_active > 0) ? num_active : 1) * sizeof(double));

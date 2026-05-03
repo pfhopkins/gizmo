@@ -71,6 +71,15 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
+    /* Wrapper fast-path: no source grains → skip arena/allocs/kernel/scatter.
+     * Preserve ghost_writeback collectives (each self-guards). */
+    if(num_src == 0) {
+        ghost_writeback_zero_grainbackrx();
+        ghost_writeback_grainbackrx();
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
@@ -187,6 +196,14 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
 
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
+
+    /* Wrapper fast-path: both directions empty → skip arena+allocs+kernels.
+     * No multi-rank writeback collective in this function (per-source updates
+     * scatter directly via the per-direction loops below). */
+    if(num_active_gas == 0 && num_active_grain == 0) {
+        if(imported_ghosts) ghost_exchange_cleanup();
+        return;
+    }
 
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_all, P_host, CellP_host);

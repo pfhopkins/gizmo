@@ -48,6 +48,9 @@ void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
     GIZMO_GPU_ENSURE_ALL_FRESH(dispdensity);
     struct dispdens_gpu_out *out_host = (struct dispdens_gpu_out *)out_host_void;
 
+    /* Wrapper fast-path: no active sources → skip arena/allocs/kernel/scatter. */
+    if(num_active == 0) { (void)out_host; return; }
+
     /* Step 13 Phase 1 arena. P-only kernel (CellP not used). */
     gpu_particles_arena_acquire(num_total, P_host, NULL);
     struct particle_data *P_gpu = gpu_particles_arena_P();
@@ -57,7 +60,7 @@ void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, DM_J_TYPE_BITMASK, &gnl, NULL,
-                       1.0 /* search_radius_factor */, i_radii_host);
+                       1.0 /* search_radius_factor */, i_radii_host, NULL, "dm_disp");
 
     /* Per-active output in SharedSpace */
     struct dispdens_gpu_out *d_out = (struct dispdens_gpu_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(

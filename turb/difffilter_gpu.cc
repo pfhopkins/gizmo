@@ -51,6 +51,9 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     GIZMO_GPU_ENSURE_ALL_FRESH(difffilter);
     struct DiffFilter_out *out_host = (struct DiffFilter_out *)out_host_void;
 
+    /* Wrapper fast-path: no active gas → skip arena/allocs/kernel/scatter. */
+    if(num_active == 0) { (void)out_host; return; }
+
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
     struct particle_data *P_gpu = gpu_particles_arena_P();
@@ -60,7 +63,7 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
                        NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gnl, NULL,
-                       All.TurbDynamicDiffFac);
+                       All.TurbDynamicDiffFac, NULL, NULL, "diff");
 
     /* Allocate output array in SharedSpace */
     struct DiffFilter_out *d_out = (struct DiffFilter_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
@@ -233,6 +236,14 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
     struct DynDiff_gpu_in *in_host = (struct DynDiff_gpu_in *)in_host_void;
     struct DynDiff_gpu_out0 *out0_host = (struct DynDiff_gpu_out0 *)out0_host_void;
     struct DynDiff_gpu_out_iter *out_iter_host = (struct DynDiff_gpu_out_iter *)out_iter_host_void;
+
+    /* Wrapper fast-path: no active sources → skip arena/CSR copy/kernel/scatter. */
+    if(num_active == 0) {
+        (void)in_host; (void)out0_host; (void)out_iter_host;
+        (void)csr_offsets; (void)csr_neighbors; (void)csr_total_pairs;
+        (void)dynamic_iteration;
+        return;
+    }
 
     /* Step 13 Phase 1 arena. */
     gpu_particles_arena_acquire(num_total, P_host, CellP_host);
