@@ -640,6 +640,18 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_CHIMES_FLUX_ION:
             break;
 
+        case IO_KETJU_FINAL_VEL:
+#ifdef KETJU_REGULARIZATION
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].KetjuFinalVel[k] = *fp++;}}
+#endif
+            break;
+
+        case IO_KETJU_SPIN:
+#if defined(KETJU_REGULARIZATION) && defined(SINGLE_STAR_SINK_DYNAMICS)
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].KetjuSpin[k] = *fp++;}}
+#endif
+            break;
+
         case IO_LASTENTRY:
             endrun(220);
             break;
