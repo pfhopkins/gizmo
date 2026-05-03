@@ -177,10 +177,20 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
         if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
         g_valid_memcpy_serial = my_serial;
         arena_valid_ = 1;
-        /* Host P may have new KernelRadius values (sink_swallow accretion,
-         * merge_split refinement, density iter writeback, etc.); the SIDX's
-         * compact_xyzh.h is now potentially stale. */
-        gpu_compact_xyzh_mark_h_dirty();
+        /* DO NOT mark compact_xyzh dirty here.  Within a step, the only
+         * within-step mutators of P[].KernelRadius are density's inflate /
+         * restore / iter-sync (which call gpu_compact_xyzh_mark_h_dirty()
+         * explicitly).  Other within-step host mutations (mech_fb / hii_fb /
+         * radfb_g per-source mass-loss apply, etc.) touch Mass/Vel/dp/Z but
+         * NOT KernelRadius, so arena re-seed brings new field values that
+         * don't affect compact_xyzh.h.  Cross-step mutators (predict.cc drift,
+         * sink_swallow accretion, merge_split refinement) all happen AFTER
+         * the last in-step ngb_build and BEFORE the next step's drift, which
+         * invalidates the SIDX entirely (sidx_cached=0 → full rebuild seeds
+         * compact_xyzh from current h, marking dirty=0 fresh).  Ghost-exchange
+         * h-import is the only multi-rank case that updates ghost-slot h
+         * mid-step; if/when that becomes hot, mark_h_dirty inside the ghost
+         * import path rather than blanket-marking on every arena re-seed. */
         return;
     }
 
