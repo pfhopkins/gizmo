@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
@@ -402,6 +403,76 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                        rep, tB - tA, tD - tC);
                 fflush(stdout);
             }
+            /* One additional launch with BVH visit counters wired up. Tells us
+             * whether the 1.48s/call is BVH traversal pathology, candidate-test
+             * floods, or something else (e.g. underutilization-induced latency
+             * with reasonable visit counts). */
+            int *d_nodes  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
+            int *d_tilesV = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
+            int *d_tested = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
+            int *d_accept = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>((size_t)num_active * sizeof(int));
+            {
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_n(d_nodes,  num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_t(d_tilesV, num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_x(d_tested, num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_a(d_accept, num_active);
+                Kokkos::deep_copy(v_n, 0); Kokkos::deep_copy(v_t, 0); Kokkos::deep_copy(v_x, 0); Kokkos::deep_copy(v_a, 0);
+            }
+            double tA = my_second();
+            Kokkos::parallel_for("ngb_fused_count", num_active, KOKKOS_LAMBDA(int aa) {
+                int pf[3] = {pf0, pf1, pf2};
+                double bs[3] = {bs0, bs1, bs2};
+                double bh[3] = {bh0, bh1, bh2};
+                int i = active[aa];
+                double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
+                double pos_i[3];
+                if(src_pos) { pos_i[0] = src_pos[aa*3+0]; pos_i[1] = src_pos[aa*3+1]; pos_i[2] = src_pos[aa*3+2]; }
+                else        { pos_i[0] = (double)compact_xyzh[i*4+0]; pos_i[1] = (double)compact_xyzh[i*4+1]; pos_i[2] = (double)compact_xyzh[i*4+2]; }
+                int n_nodes = 0, n_tiles = 0, n_test = 0, n_acc = 0;
+                (void) search_neighbors_sfc_gpu(compact_xyzh, pos_i, h_i,
+                                                tiles, ntiles, pool, smode,
+                                                bvh, bvh_root,
+                                                &scratch[(size_t)aa * NGL_SCRATCH_STRIDE],
+                                                NGL_SCRATCH_STRIDE,
+                                                pf, bs, bh,
+                                                &n_nodes, &n_tiles, &n_test, &n_acc);
+                d_nodes[aa]  = n_nodes;
+                d_tilesV[aa] = n_tiles;
+                d_tested[aa] = n_test;
+                d_accept[aa] = n_acc;
+            });
+            Kokkos::fence();
+            double tB = my_second();
+            /* Pull counters back to host */
+            std::vector<int> h_nodes(num_active), h_tiles(num_active), h_test(num_active), h_acc(num_active);
+            {
+                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_n(h_nodes.data(), num_active);
+                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_t(h_tiles.data(), num_active);
+                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_x(h_test.data(),  num_active);
+                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hv_a(h_acc.data(),   num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_n(d_nodes,  num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_t(d_tilesV, num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_x(d_tested, num_active);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_a(d_accept, num_active);
+                Kokkos::deep_copy(hv_n, dv_n); Kokkos::deep_copy(hv_t, dv_t);
+                Kokkos::deep_copy(hv_x, dv_x); Kokkos::deep_copy(hv_a, dv_a);
+            }
+            auto stats = [&](const std::vector<int> &v, const char *name) {
+                long sum = 0; int mn = v[0], mx = v[0];
+                for(int i = 0; i < num_active; i++) { sum += v[i]; if(v[i]<mn) mn=v[i]; if(v[i]>mx) mx=v[i]; }
+                printf("[NGB_MICROBENCH]   %-22s sum=%ld  min=%d  max=%d  mean=%.1f\n",
+                       name, sum, mn, mx, (double)sum/num_active);
+            };
+            printf("[NGB_MICROBENCH] counter-pass fused=%.4fs (ntiles=%d, pool_total ~ scaled to active set)\n",
+                   tB - tA, ntiles);
+            stats(h_nodes, "bvh_nodes_visited");
+            stats(h_tiles, "bvh_tiles_visited");
+            stats(h_test,  "candidates_tested");
+            stats(h_acc,   "candidates_accepted");
+            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_accept);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_tested);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_tilesV);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_nodes);
             printf("[NGB_MICROBENCH] done\n"); fflush(stdout);
         }
     }

@@ -70,7 +70,11 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
                              sfc_tile_t *tile, int *pool, int search_mode,
                              int *store_neighbors, int count, int max_store,
                              const double box_sizes[3], const double box_halves[3],
-                             const int periodic_flags[3])
+                             const int periodic_flags[3],
+                             /* Optional per-active counters; pass nullptr for fast-path. Compiler
+                              * eliminates the null-checks via constant prop when null literal is passed. */
+                             int *cnt_candidates_tested = nullptr,
+                             int *cnt_candidates_accepted = nullptr)
 {
     (void)box_sizes;
     (void)box_halves;
@@ -78,6 +82,7 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
     MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
     for(int s = 0; s < tile->count; s++)
     {
+        if(cnt_candidates_tested) (*cnt_candidates_tested)++;
         int j = pool[tile->first + s];
         double dx_raw = pos_i[0] - (double)compact_xyzh[j*4+0];
         double dy_raw = pos_i[1] - (double)compact_xyzh[j*4+1];
@@ -103,6 +108,7 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
              * single-pass build with a per-particle scratchpad of stride max_store. */
             if(store_neighbors && count < max_store) store_neighbors[count] = j;
             count++;
+            if(cnt_candidates_accepted) (*cnt_candidates_accepted)++;
         }
     }
     return count;
@@ -123,8 +129,15 @@ int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], d
                              int *store_neighbors, int max_store,
                              const int periodic_flags[3],
                              const double box_sizes[3],
-                             const double box_halves[3])
+                             const double box_halves[3],
+                             /* Optional per-active counters for diagnostics. Pass nullptr (default) for
+                              * fast path. Compiler eliminates null-checks via constant prop. */
+                             int *cnt_nodes_visited = nullptr,
+                             int *cnt_tiles_visited = nullptr,
+                             int *cnt_candidates_tested = nullptr,
+                             int *cnt_candidates_accepted = nullptr)
 {
+    (void)ntiles;
     double h2_i = h_i * h_i;
     int count = 0;
 
@@ -137,6 +150,7 @@ int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], d
     {
         int node_idx = stack[--sp];
         tile_bvh_node_t *node = &bvh[node_idx];
+        if(cnt_nodes_visited) (*cnt_nodes_visited)++;
 
         /* Compute search radius for this node: for SYMMETRIC, use node's subtree hmax */
         double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node->hmax) ? h_i : node->hmax);
@@ -151,9 +165,11 @@ int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], d
         {
             /* Leaf node: process the tile's particles */
             int tile_idx = -(node->left + 1);
+            if(cnt_tiles_visited) (*cnt_tiles_visited)++;
             count = check_tile_particles_gpu(compact_xyzh, pos_i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
                                              store_neighbors, count, max_store,
-                                             box_sizes, box_halves, periodic_flags);
+                                             box_sizes, box_halves, periodic_flags,
+                                             cnt_candidates_tested, cnt_candidates_accepted);
         }
         else
         {
