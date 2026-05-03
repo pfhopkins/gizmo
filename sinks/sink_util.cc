@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/gpu_particles_arena.h"
 
 /*! \file sink_util.c
  *  \brief util routines for memory (de)allocation and array setting for sink particles
@@ -183,6 +184,15 @@ void sink_properties_loop(void) /* Note, normalize_temp_info_struct is now done 
         set_sink_new_mass(i, n, dt);
         /* results dumped to 'sink_details' files at the end of sink_final_operations so that BH mass is corrected for mass loss to radiation/bal outflows */
     }// for(i=0; i<N_active_loc_Sink; i++)
+    /* CORRECTNESS FIX (caught by GIZMO_GPU_ARENA_DEBUG=1, particle 6763133,
+     * 2026-05-03): the loop above mutates host P[n].Sink_Mdot, Sink_Mass,
+     * and other sink-centric fields for active sinks via the set_sink_*
+     * helpers. With Round 3a (sink_environment mark_clean) upstream, the
+     * next sink_feed_evaluate_gpu acquire would fast-path on a stale
+     * arena. Invalidate so sink_feed slow-paths and re-seeds.  Phase 8a
+     * Round 3-sinks mirror-update will replace this with explicit per-sink
+     * arena_P[n] writes inside the set_sink_* helpers + mark_clean later. */
+    if(N_active_loc_Sink > 0) gpu_particles_arena_invalidate();
 }
 
 
