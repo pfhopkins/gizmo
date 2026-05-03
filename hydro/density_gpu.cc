@@ -150,9 +150,12 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         P_gpu = gpu_particles_arena_P();
         CellP_gpu = gpu_particles_arena_CellP();
         /* Sync KernelRadius from host for active particles (h changed during iteration) */
-        for(int aa = 0; aa < num_active; aa++) {
-            int ii = active_indices_host[aa];
-            P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
+        if(num_active > 0) {
+            for(int aa = 0; aa < num_active; aa++) {
+                int ii = active_indices_host[aa];
+                P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
+            }
+            gpu_compact_xyzh_mark_h_dirty(); /* P_gpu.KernelRadius mutated; refresh on next ngb_build */
         }
     } else {
         P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
@@ -214,11 +217,12 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         }
 
         /* Temporarily inflate KernelRadius for oversized search */
-        if(session_active) {
+        if(session_active && num_active > 0) {
             for(int aa = 0; aa < num_active; aa++) {
                 int ii = active_indices_host[aa];
                 P_gpu[ii].KernelRadius *= DENSITY_H_BUFFER_FACTOR;
             }
+            gpu_compact_xyzh_mark_h_dirty(); /* inflate-write, refresh inside ngb_list_build */
         }
 
         gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
@@ -227,11 +231,12 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
                            1.0, NULL, NULL, "density");
 
         /* Restore actual KernelRadius (kernel uses this for the density computation) */
-        if(session_active) {
+        if(session_active && num_active > 0) {
             for(int aa = 0; aa < num_active; aa++) {
                 int ii = active_indices_host[aa];
                 P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
             }
+            gpu_compact_xyzh_mark_h_dirty(); /* restored to un-inflated h; next ngb_build needs refresh */
         }
 
         /* Cache the CSR and build lookup table */

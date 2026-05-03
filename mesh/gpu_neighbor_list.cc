@@ -32,9 +32,29 @@ static gpu_spatial_index_t g_step_sidx = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0}
 
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
 
+/* Tracks whether g_step_sidx's compact_xyzh.h field is in sync with
+ * P[].KernelRadius.  Set to 1 (dirty) when KernelRadius is mutated;
+ * cleared to 0 when compact_h_refresh runs (or when the SIDX is freshly
+ * built — the build phase fills compact_xyzh from current h).
+ *
+ * The compact_h_refresh kernel iterates over num_total particles writing
+ * h values to compact_xyzh; for fire_m11i (12.4M particles) this is
+ * ~1.1-1.2s of UVM page-state churn per call.  Within a single step, only
+ * density mutates KernelRadius (inflate / restore / iter sync); subsequent
+ * gas-only callers (mech_fb, hii_fb, symlist) just read it, so they can
+ * legitimately skip the refresh.
+ *
+ * Default 1 (force first refresh) so missed mark-dirty sites are
+ * fail-correct (slightly slower) rather than fail-incorrect (stale h
+ * → missed neighbors). */
+static int g_compact_xyzh_h_dirty = 1;
+
+void gpu_compact_xyzh_mark_h_dirty(void) { g_compact_xyzh_h_dirty = 1; }
+
 void gpu_step_sidx_invalidate(void)
 {
     if(g_step_sidx.valid) gpu_spatial_index_free(&g_step_sidx);
+    g_compact_xyzh_h_dirty = 1; /* compact_xyzh is gone; next build/refresh syncs */
 }
 
 
@@ -97,6 +117,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     myfree(h_pool);
     idx->num_total = num_total;
     idx->valid = 1;
+    g_compact_xyzh_h_dirty = 0; /* fresh build seeded compact_xyzh from current h */
 
     if(ThisTask == 0) { /* DIAG: spatial index build breakdown — remove after profiling */
         printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
@@ -203,10 +224,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
     memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
 
-    /* Refresh the h component of the compact array from current P_shared[i].KernelRadius. */
+    /* Refresh the h component of the compact array from current P_shared[i].KernelRadius.
+     * Skipped when g_compact_xyzh_h_dirty==0 — i.e. compact_xyzh.h is already in
+     * sync with P_shared[i].KernelRadius from the previous refresh or build.
+     * Saves ~1.1-1.2s per call on fire_m11i (12.4M-particle parallel_for over UVM). */
     double t_refresh_launch_in = 0, t_refresh_launch_out = 0, t_refresh_fence_out = 0; /* DIAG */
     int did_refresh = 0;
-    if(cached_idx && cached_idx->valid) {
+    if(cached_idx && cached_idx->valid && g_compact_xyzh_h_dirty) {
         did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
         t_refresh_launch_in = my_second();
@@ -216,6 +240,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         t_refresh_launch_out = my_second();
         Kokkos::fence();
         t_refresh_fence_out = my_second();
+        g_compact_xyzh_h_dirty = 0; /* compact_xyzh now in sync with P_shared.KernelRadius */
     }
     double t_after_refresh = my_second(); /* DIAG */
 

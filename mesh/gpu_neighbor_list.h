@@ -85,6 +85,15 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx);
 gpu_spatial_index_t *gpu_step_sidx_ptr(void);
 void gpu_step_sidx_invalidate(void);
 
+/* Mark the compact_xyzh h-field as out of sync with P[].KernelRadius.
+ * Call from any code that mutates KernelRadius (host or arena P) BEFORE the
+ * next gpu_ngb_list_build that wants the change reflected.  The next build
+ * with sidx_cached=1 will then re-run compact_h_refresh; otherwise refresh is
+ * skipped (saving ~1.1-1.2s on fire_m11i 12.4M-particle pool).
+ * Safe to over-call (false positive = slightly slower); fail-correct default
+ * is dirty=1, so missing a real mutation is the only fail-incorrect path. */
+void gpu_compact_xyzh_mark_h_dirty(void);
+
 /* Build GPU-accelerated CSR neighbor list.
    If cached_idx is non-NULL and valid, reuses its tiles+BVH.
    Otherwise builds a fresh spatial index internally.

@@ -18,6 +18,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "gpu_particles_arena.h"
+#include "../mesh/gpu_neighbor_list.h"
 
 
 static struct particle_data *arena_P     = NULL;
@@ -176,6 +177,10 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
         if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
         g_valid_memcpy_serial = my_serial;
         arena_valid_ = 1;
+        /* Host P may have new KernelRadius values (sink_swallow accretion,
+         * merge_split refinement, density iter writeback, etc.); the SIDX's
+         * compact_xyzh.h is now potentially stale. */
+        gpu_compact_xyzh_mark_h_dirty();
         return;
     }
 
@@ -194,6 +199,8 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
     arena_capacity_ = min_capacity;
     g_valid_memcpy_serial = my_serial;
     arena_valid_    = 1;
+    /* Fresh arena alloc: any prior SIDX's compact_xyzh is stale wrt current host h. */
+    gpu_compact_xyzh_mark_h_dirty();
 }
 
 extern "C" void gpu_particles_arena_invalidate(void)
