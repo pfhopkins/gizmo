@@ -31,8 +31,26 @@
  * Lifetime: built lazily on first gas (type_bitmask=1) ngb_list_build, reused
  * for all subsequent gas builds, freed by gpu_step_sidx_invalidate() after drift. */
 static gpu_spatial_index_t g_step_sidx = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0};
+static gpu_spatial_index_t g_step_sidx_alltypes = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0};
 
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
+gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_alltypes; }
+
+/* GIZMO_NGB_QUIET=1 suppresses DIAG_NGL/DIAG_SIDX/DIAG_DENS/DIAG_SYMNL/DIAG_GRAD
+ * prints. Used to estimate the wallclock contribution of the diagnostic prints
+ * themselves (typically a few hundred per step on rank 0; printf+fflush to a
+ * scratch-mounted slurm log can plausibly add ms-scale overhead each).
+ * Cached on first read: getenv is reasonably cheap but called per-DIAG site
+ * adds up across ~hundreds of fires per step. */
+static int g_ngb_diag_quiet_cached = -1;
+extern "C" int gizmo_ngb_diag_quiet(void)
+{
+    if(g_ngb_diag_quiet_cached < 0) {
+        const char *q = getenv("GIZMO_NGB_QUIET");
+        g_ngb_diag_quiet_cached = (q && q[0] && q[0] != '0') ? 1 : 0;
+    }
+    return g_ngb_diag_quiet_cached;
+}
 
 /* Dirty-index tracking for compact_xyzh.h field. Two modes:
  *  - g_dirty_all = true: full-pool refresh required (fresh arena alloc,
@@ -102,6 +120,7 @@ void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); 
 void gpu_step_sidx_invalidate(void)
 {
     if(g_step_sidx.valid) gpu_spatial_index_free(&g_step_sidx);
+    if(g_step_sidx_alltypes.valid) gpu_spatial_index_free(&g_step_sidx_alltypes);
     /* compact_xyzh is gone; next build/refresh repopulates it from current h.
      * Force full mode so the next call doesn't skip refresh on a stale
      * "not dirty" state. */
@@ -209,7 +228,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->valid = 1;
     g_dirty_clear_(); /* fresh build seeded compact_xyzh from current h */
 
-    if(ThisTask == 0) { /* DIAG: spatial index build breakdown — remove after profiling */
+    if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: spatial index build breakdown — env-gated by GIZMO_NGB_QUIET */
         printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
                caller_label ? caller_label : "?", type_bitmask, ntiles, num_pool,
                timediff(t_si0, t_si1), timediff(t_si1, t_si2), timediff(t_si2, t_si3),
@@ -273,7 +292,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         gnl->offsets[0] = 0;
         gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(sizeof(int));
         gnl->total_pairs = 0;
-        if(ThisTask == 0) {
+        if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) {
             printf("[DIAG_NGL caller=%s tbm=0x%x N=0 Ntot=%d pairs=0 ovflw=0 sidx_cached=%d earlyout=1] "
                    "total=%.3f\n",
                    caller_label ? caller_label : "?", type_bitmask, num_total,
@@ -703,7 +722,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     double t_free1 = my_second(); /* DIAG: end of scratch free */
 
     int sidx_cached_now = (cached_idx && cached_idx->valid) ? 1 : 0;
-    if(ThisTask == 0) { /* DIAG: NGP build fine-grained breakdown */
+    if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: NGP build fine-grained breakdown */
         /* Sub-times for compact_h_refresh (when run): launch return vs trailing fence */
         double refresh_launch = did_refresh ? timediff(t_refresh_launch_in, t_refresh_launch_out) : 0;
         double refresh_fence  = did_refresh ? timediff(t_refresh_launch_out, t_refresh_fence_out) : 0;

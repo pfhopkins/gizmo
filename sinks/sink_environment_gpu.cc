@@ -63,8 +63,12 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
     struct gas_cell_data *CellP_gpu = (All.TotN_gas > 0) ? gpu_particles_arena_CellP() : NULL;
 
     gpu_neighbor_list_t gnl;
+    /* Use the all-types step-persistent SIDX cache (built once per step;
+     * sink_env1/feed/swk all share). j_type_bitmask MUST be 0x3f for cache
+     * consistency. */
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
-                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
+                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl,
+                       gpu_step_sidx_alltypes_ptr(),
                        1.0, i_radii_host, NULL, "sink_env1");
 
     struct sink_env_gpu_out *d_out = (struct sink_env_gpu_out *)
@@ -288,8 +292,10 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
     (void)CellP_host;
 
     gpu_neighbor_list_t gnl;
+    /* Same all-types cache as sink_env1 (see gpu_neighbor_list.h). */
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
-                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
+                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl,
+                       gpu_step_sidx_alltypes_ptr(),
                        1.0, i_radii_host, NULL, "sink_env2");
 
     int alloc_n = (num_active > 0) ? num_active : 1;

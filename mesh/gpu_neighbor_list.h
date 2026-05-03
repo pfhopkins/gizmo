@@ -83,6 +83,18 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx);
  * Must be invalidated after drift (positions change) — caller (run.cc) calls
  * gpu_step_sidx_invalidate() after find_next_sync_point_and_drift(). */
 gpu_spatial_index_t *gpu_step_sidx_ptr(void);
+
+/* Module-level persistent SIDX for all-types (type_bitmask=0x3f) builds.
+ * Specifically for the SINK_PARTICLE codepath (sink_env1, sink_feed,
+ * sink_swk all use the same all-types pool with the same num_total).
+ * First sink call within a step builds it; subsequent sink calls hit the
+ * cached BVH+compact_xyzh, saving ~1.5s × 2 per step on sink-active steps.
+ * IMPORTANT: callers MUST pass tbm=0x3f when using this cache. Mixing
+ * type bitmasks against a shared cache will produce wrong answers (the
+ * cached compact_xyzh / pool only includes the originally-built types).
+ * Invalidated alongside the gas-only SIDX by gpu_step_sidx_invalidate(). */
+gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void);
+
 void gpu_step_sidx_invalidate(void);
 
 /* Dirty-index API for compact_xyzh h-field tracking.

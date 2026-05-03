@@ -187,10 +187,12 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
 #endif
 
     gpu_neighbor_list_t gnl;
+    /* Same all-types cache as sink_env1/feed; see gpu_neighbor_list.h. */
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_active,
                        NGB_SEARCH_ONEWAY, j_type_bitmask,
-                       &gnl, NULL, 1.0, i_radii_host, NULL, "sink_swk");
+                       &gnl, gpu_step_sidx_alltypes_ptr(),
+                       1.0, i_radii_host, NULL, "sink_swk");
 
     PRINT_STATUS("  GPU sink_swallow: %d active, %d pairs", num_active, gnl.total_pairs);
 

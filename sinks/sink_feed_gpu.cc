@@ -204,12 +204,15 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     /* RNG step counter: use NumCurrentTiStep as counter base */
     uint64_t rng_step = (uint64_t)All.NumCurrentTiStep;
 
-    /* Build neighbor list: Type-5 sources → SINK_NEIGHBOR_BITFLAG types */
+    /* Build neighbor list: Type-5 sources → SINK_NEIGHBOR_BITFLAG types.
+     * Use the all-types step-persistent SIDX cache (sink_env1/feed/swk all
+     * share; saves ~1.5s per step on every sink-active step). */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
                        NGB_SEARCH_ONEWAY, SINK_NEIGHBOR_BITFLAG,
-                       &gnl, NULL, 1.0, src_radii_host, NULL, "sink_feed");
+                       &gnl, gpu_step_sidx_alltypes_ptr(),
+                       1.0, src_radii_host, NULL, "sink_feed");
 
     PRINT_STATUS("  GPU sink_feed: %d sources, j_bitmask=%d, %d pairs",
                  num_src, SINK_NEIGHBOR_BITFLAG, gnl.total_pairs);
