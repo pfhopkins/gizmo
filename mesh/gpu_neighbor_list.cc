@@ -446,10 +446,14 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
     if(gnl->neighbors) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->neighbors);
     if(gnl->offsets)   Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->offsets);
     if(gnl->d_active)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_active);
-    /* Only free tiles/BVH/pool if they were NOT from the cached index.
-     * Pointers may also be NULL (early-out path with no cache); guard each. */
+    /* Only free tiles/BVH/pool/compact_xyzh if they were NOT from the cached index.
+     * Pointers may also be NULL (early-out path with no cache); guard each.
+     * d_compact_xyzh in particular was previously leaked here for every
+     * non-cached call (~199 MB for an all-types pool, ~73 MB for gas-only),
+     * accumulating with each mech_fb/radfb_g/sink call that passes cached_idx=NULL. */
     if(!cached_idx || !cached_idx->valid ||
        gnl->d_tiles != cached_idx->d_tiles) {
+        if(gnl->d_compact_xyzh) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_compact_xyzh);
         if(gnl->d_pool)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_pool);
         if(gnl->d_bvh)   Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_bvh);
         if(gnl->d_tiles) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_tiles);
