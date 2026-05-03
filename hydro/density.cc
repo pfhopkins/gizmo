@@ -11,6 +11,7 @@
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "../core/step_phases.h"
+#include "../system/gpu_particles_arena.h"
 extern void density_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int, int *, int);
 extern void density_gpu_session_begin(struct particle_data *, struct gas_cell_data *, int);
 extern void density_gpu_session_end(void);
@@ -18,7 +19,6 @@ extern void density_gpu_session_end(void);
 #include <vector>
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
-#include "../system/gpu_particles_arena.h"
 #endif
 
 /* provide externally-visible (non-inline) symbols for functions defined in density_functions.h */
@@ -158,6 +158,16 @@ void density(void)
 #endif
 #endif
     
+    /* CORRECTNESS FIX (caught by GIZMO_GPU_ARENA_DEBUG=1, particle 5871464,
+     * 2026-05-03): the per-active loop below mutates host P[i].SwallowID
+     * (under SINK_PARTICLES), P[i].SwallowTime (SINGLE_STAR), Sink_Ngb_Flag,
+     * and conditionally caps P[i].KernelRadius to 0.99*maxsoft when out of
+     * range. With Round 3 mark_clean upstream, density_gpu_session_begin
+     * below would fast-path acquire and read stale arena. Invalidate here
+     * so session_begin slow-paths and re-seeds with these freshly written
+     * host values. Phase 8a Round 3-density-fix (analogous to the gradients
+     * zero-out fix in 068c7a72) — replace with mirror+mark_clean later. */
+    gpu_particles_arena_invalidate();
     /* initialize anything we need to about the active particles before their loop */
     for (int i : ActiveParticleList) {
         if(density_isactive(i)) {
