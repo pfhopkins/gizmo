@@ -34,29 +34,78 @@ static gpu_spatial_index_t g_step_sidx = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0}
 
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
 
-/* Tracks whether g_step_sidx's compact_xyzh.h field is in sync with
- * P[].KernelRadius.  Set to 1 (dirty) when KernelRadius is mutated;
- * cleared to 0 when compact_h_refresh runs (or when the SIDX is freshly
- * built — the build phase fills compact_xyzh from current h).
+/* Dirty-index tracking for compact_xyzh.h field. Two modes:
+ *  - g_dirty_all = true: full-pool refresh required (fresh arena alloc,
+ *    >threshold accumulated dirty indices, or unknown-scope mutator via the
+ *    backwards-compat _mark_h_dirty() entry point).
+ *  - g_dirty_all = false: refresh only the indices in g_dirty_list.
  *
- * The compact_h_refresh kernel iterates over num_total particles writing
- * h values to compact_xyzh; for fire_m11i (12.4M particles) this is
- * ~1.1-1.2s of UVM page-state churn per call.  Within a single step, only
- * density mutates KernelRadius (inflate / restore / iter sync); subsequent
- * gas-only callers (mech_fb, hii_fb, symlist) just read it, so they can
- * legitimately skip the refresh.
- *
- * Default 1 (force first refresh) so missed mark-dirty sites are
- * fail-correct (slightly slower) rather than fail-incorrect (stale h
- * → missed neighbors). */
-static int g_compact_xyzh_h_dirty = 1;
+ * The list auto-promotes to "all" when its size crosses
+ * G_DIRTY_PROMOTE_THRESHOLD (a refresh of N indices via list costs ~the same
+ * as a full-pool scan once N is a substantial fraction of num_total, plus
+ * we'd be paying device-buffer staging cost for the list itself). */
+static bool g_dirty_all = true;
+static std::vector<int> g_dirty_list;
+static const int G_DIRTY_PROMOTE_THRESHOLD = 1 << 20; /* 1M indices */
 
-void gpu_compact_xyzh_mark_h_dirty(void) { g_compact_xyzh_h_dirty = 1; }
+static inline void g_dirty_clear_(void)
+{
+    g_dirty_all = false;
+    g_dirty_list.clear();
+}
+
+void gpu_compact_xyzh_mark_h_dirty_all(void)
+{
+    g_dirty_all = true;
+    g_dirty_list.clear(); /* superseded; reclaim memory at next op if huge */
+}
+
+void gpu_compact_xyzh_mark_h_dirty_idx(int i)
+{
+    if(g_dirty_all) {return;} /* already covered */
+    if(i < 0) {return;}
+    g_dirty_list.push_back(i);
+    if((int)g_dirty_list.size() > G_DIRTY_PROMOTE_THRESHOLD) {
+        gpu_compact_xyzh_mark_h_dirty_all();
+    }
+}
+
+void gpu_compact_xyzh_mark_h_dirty_range(int start, int end)
+{
+    if(g_dirty_all) {return;}
+    if(end <= start) {return;}
+    int n = end - start;
+    if((int)(g_dirty_list.size() + n) > G_DIRTY_PROMOTE_THRESHOLD) {
+        gpu_compact_xyzh_mark_h_dirty_all();
+        return;
+    }
+    g_dirty_list.reserve(g_dirty_list.size() + n);
+    for(int i = start; i < end; i++) {g_dirty_list.push_back(i);}
+}
+
+void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n)
+{
+    if(g_dirty_all) {return;}
+    if(!indices || n <= 0) {return;}
+    if((int)(g_dirty_list.size() + n) > G_DIRTY_PROMOTE_THRESHOLD) {
+        gpu_compact_xyzh_mark_h_dirty_all();
+        return;
+    }
+    g_dirty_list.reserve(g_dirty_list.size() + n);
+    for(int k = 0; k < n; k++) {g_dirty_list.push_back(indices[k]);}
+}
+
+/* Backwards-compat: any caller that doesn't know which indices it dirtied
+ * conservatively forces a full-pool refresh. */
+void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); }
 
 void gpu_step_sidx_invalidate(void)
 {
     if(g_step_sidx.valid) gpu_spatial_index_free(&g_step_sidx);
-    g_compact_xyzh_h_dirty = 1; /* compact_xyzh is gone; next build/refresh syncs */
+    /* compact_xyzh is gone; next build/refresh repopulates it from current h.
+     * Force full mode so the next call doesn't skip refresh on a stale
+     * "not dirty" state. */
+    gpu_compact_xyzh_mark_h_dirty_all();
 }
 
 
@@ -158,7 +207,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     myfree(h_pool);
     idx->num_total = num_total;
     idx->valid = 1;
-    g_compact_xyzh_h_dirty = 0; /* fresh build seeded compact_xyzh from current h */
+    g_dirty_clear_(); /* fresh build seeded compact_xyzh from current h */
 
     if(ThisTask == 0) { /* DIAG: spatial index build breakdown — remove after profiling */
         printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
@@ -265,23 +314,45 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
     memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
 
-    /* Refresh the h component of the compact array from current P_shared[i].KernelRadius.
-     * Skipped when g_compact_xyzh_h_dirty==0 — i.e. compact_xyzh.h is already in
-     * sync with P_shared[i].KernelRadius from the previous refresh or build.
-     * Saves ~1.1-1.2s per call on fire_m11i (12.4M-particle parallel_for over UVM). */
+    /* Refresh the h component of the compact array. Two modes:
+     *  - g_dirty_all: full-pool parallel_for(num_total, ...) — same as legacy
+     *    behavior. Pays ~1.1-1.2s per call on fire_m11i 12.4M pool (UVM fault
+     *    latency on P_shared.KernelRadius reads).
+     *  - dirty list: parallel_for(n_dirty, ...) reading indices via a staged
+     *    device buffer. ~ms per call when n_dirty is the active set. This is
+     *    the gas-side win that step (3) of the codex_dialogue plan delivers.
+     * Skipped entirely when neither mode has anything to refresh. */
     double t_refresh_launch_in = 0, t_refresh_launch_out = 0, t_refresh_fence_out = 0; /* DIAG */
     int did_refresh = 0;
-    if(cached_idx && cached_idx->valid && g_compact_xyzh_h_dirty) {
+    if(cached_idx && cached_idx->valid && (g_dirty_all || !g_dirty_list.empty())) {
         did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
         t_refresh_launch_in = my_second();
-        Kokkos::parallel_for("compact_h_refresh", num_total, KOKKOS_LAMBDA(int i) {
-            compact[i*4+3] = (float)P_shared[i].KernelRadius;
-        });
+        if(g_dirty_all) {
+            Kokkos::parallel_for("compact_h_refresh_all", num_total, KOKKOS_LAMBDA(int i) {
+                compact[i*4+3] = (float)P_shared[i].KernelRadius;
+            });
+        } else {
+            int n_dirty = (int)g_dirty_list.size();
+            int *d_dirty = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(n_dirty * sizeof(int));
+            {
+                Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                    hv(g_dirty_list.data(), n_dirty);
+                Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                    dv(d_dirty, n_dirty);
+                Kokkos::deep_copy(dv, hv);
+            }
+            Kokkos::parallel_for("compact_h_refresh_idx", n_dirty, KOKKOS_LAMBDA(int k) {
+                int i = d_dirty[k];
+                compact[i*4+3] = (float)P_shared[i].KernelRadius;
+            });
+            Kokkos::fence();
+            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_dirty);
+        }
         t_refresh_launch_out = my_second();
         Kokkos::fence();
         t_refresh_fence_out = my_second();
-        g_compact_xyzh_h_dirty = 0; /* compact_xyzh now in sync with P_shared.KernelRadius */
+        g_dirty_clear_(); /* compact_xyzh now in sync with arena KernelRadius */
     }
     double t_after_refresh = my_second(); /* DIAG */
 

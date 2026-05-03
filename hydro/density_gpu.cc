@@ -154,13 +154,15 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
     if(session_active) {
         P_gpu = gpu_particles_arena_P();
         CellP_gpu = gpu_particles_arena_CellP();
-        /* Sync KernelRadius from host for active particles (h changed during iteration) */
+        /* Sync KernelRadius from host for active particles (h changed during iteration).
+         * Mark only the active indices dirty so the next cached ngb_build refreshes
+         * compact_xyzh[ii*4+3] for these and skips the other ~12.4M-num_active. */
         if(num_active > 0) {
             for(int aa = 0; aa < num_active; aa++) {
                 int ii = active_indices_host[aa];
                 P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
             }
-            gpu_compact_xyzh_mark_h_dirty(); /* P_gpu.KernelRadius mutated; refresh on next ngb_build */
+            gpu_compact_xyzh_mark_h_dirty_indices(active_indices_host, num_active);
         }
     } else {
         P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));

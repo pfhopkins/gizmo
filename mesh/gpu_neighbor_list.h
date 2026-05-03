@@ -85,13 +85,38 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx);
 gpu_spatial_index_t *gpu_step_sidx_ptr(void);
 void gpu_step_sidx_invalidate(void);
 
-/* Mark the compact_xyzh h-field as out of sync with P[].KernelRadius.
- * Call from any code that mutates KernelRadius (host or arena P) BEFORE the
- * next gpu_ngb_list_build that wants the change reflected.  The next build
- * with sidx_cached=1 will then re-run compact_h_refresh; otherwise refresh is
- * skipped (saving ~1.1-1.2s on fire_m11i 12.4M-particle pool).
- * Safe to over-call (false positive = slightly slower); fail-correct default
- * is dirty=1, so missing a real mutation is the only fail-incorrect path. */
+/* Dirty-index API for compact_xyzh h-field tracking.
+ *
+ * compact_xyzh[j*4+3] must equal arena[j].KernelRadius for every j that any
+ * cached neighbor search will read as a candidate (BVH-walk reads compact for
+ * pruning + the leaf check_tile_particles reads compact[j*4+3] for h_j in
+ * SYMMETRIC mode).  Whenever code mutates arena[j].KernelRadius (or imports
+ * a ghost slot that overwrites it), it must register j as dirty so the next
+ * cached gpu_ngb_list_build's compact_h_refresh covers it.
+ *
+ * Three primitives:
+ *   _idx(i)               — single index dirty
+ *   _range(start, end)    — half-open range dirty (e.g. ghost import)
+ *   _indices(arr, n)      — vector of indices dirty (e.g. density h-iter sync)
+ *   _all()                — full-pool dirty (fresh arena alloc, fallback)
+ *
+ * Internal state auto-promotes to "all dirty" when the dirty list grows past
+ * a memory-budget threshold (refreshing a few million indices via list is no
+ * faster than the full-pool refresh and uses more bookkeeping).
+ *
+ * Multi-rank guarantee: ghost imports MUST register the imported range so
+ * symmetric searches that read h_j for ghost candidates see fresh values.
+ *
+ * Cleared by: full SIDX rebuild (gpu_spatial_index_build), refresh fire
+ * inside gpu_ngb_list_build, or explicit call to _all(). */
+void gpu_compact_xyzh_mark_h_dirty_idx(int i);
+void gpu_compact_xyzh_mark_h_dirty_range(int start, int end);
+void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n);
+void gpu_compact_xyzh_mark_h_dirty_all(void);
+
+/* Backwards-compat alias for callers that haven't been updated yet (treats
+ * any unknown mutation as "all dirty"). New code should use the index-aware
+ * variants above. */
 void gpu_compact_xyzh_mark_h_dirty(void);
 
 /* Build GPU-accelerated CSR neighbor list.

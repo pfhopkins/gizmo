@@ -30,6 +30,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 
 /*
  * ============================================================================
@@ -463,6 +464,19 @@ void ghost_exchange(double safety_factor)
     NumGhostParticles = total_recv;
     NumPart += total_recv;
 
+    /* Multi-rank correctness: ghost slots [NumPart_before_ghost, NumPart) just
+     * received fresh particle_data from remote ranks via MPI_Alltoallv. Their
+     * KernelRadius values overwrote whatever was in those local P[] slots
+     * (uninitialized or stale from prior step's ghost import). Any subsequent
+     * cached gpu_ngb_list_build reading compact_xyzh[j*4+3] for h_j on those
+     * slots would see stale values without this dirty-mark, silently missing
+     * symmetric neighbor pairs where r<h_ghost.  Single-rank runs hit this
+     * branch only when NumGhostParticles>0 (rare for true 1-rank), so this
+     * fix is functionally a multi-rank correctness guarantee. */
+    if(NumGhostParticles > 0) {
+        gpu_compact_xyzh_mark_h_dirty_range(NumPart_before_ghost, NumPart);
+    }
+
     /* ================================================================
        Step 7: Build ghost provenance map for writeback.
        Exchange home indices so each ghost knows its home rank + index.
@@ -616,6 +630,15 @@ int ghost_exchange_needs_redo(void)
 void ghost_exchange_cleanup(void)
 {
     if(NumPart_before_ghost < 0) return;
+    /* Ghost slots are about to leave scope (NumPart shrinks back to local).
+     * Any dirty-list entries for indices in [num_local, num_local+num_ghost)
+     * would index out of bounds in compact_h_refresh on the next cached call
+     * if a smaller-num_total build happens before SIDX invalidation. Force
+     * full-pool refresh mode as a fail-safe — the next build's full
+     * gpu_spatial_index_build will rebuild compact_xyzh from scratch and
+     * clear the state anyway, so the cost here is at most one extra full
+     * refresh on a build path that's already paying for SIDX construction. */
+    if(NumGhostParticles > 0) { gpu_compact_xyzh_mark_h_dirty_all(); }
     PreviousGhostCount = NumGhostParticles; /* save for domain decomposition headroom */
     NumPart = NumPart_before_ghost;
     N_gas = N_gas_before_ghost;
