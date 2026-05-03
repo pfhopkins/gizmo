@@ -169,14 +169,23 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
    convenience alias so allocation code doesn't hardcode a backend. */
 #define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
-/* Device-only memory space: previously defined as Kokkos::CudaSpace on CUDA
-   builds to avoid UVM page-fault overhead (~0.65 ms/page on GH200).  Reverted
-   to SharedSpace because (a) the empirically measured 1.4s small-N kernel floor
-   was unchanged after the move, falsifying the page-fault hypothesis, and
-   (b) the CudaSpace allocations introduced an MPI_ERR_COUNT crash in
-   pmforce_periodic on fire_m11i (sync-point 0) that did not exist with
-   SharedSpace.  Macro retained so call sites don't change. */
+/* Device-only memory space: GPU HBM on CUDA builds, falls back to SharedSpace
+   elsewhere.  Use for arrays that are kernel-read-only and can be fed via
+   explicit deep_copy from a SharedSpace/HostSpace stage — the previous
+   "half-port" (only scratch/counts in CudaSpace, kernel still reading
+   compact_xyzh/tiles/bvh/pool through UVM) showed no benefit because the
+   hot read path was unchanged.  A complete port (build phase fills SharedSpace
+   stage, deep_copy to CudaSpace mirror, kernel reads CudaSpace) eliminates
+   HMM/TLB-miss overhead on small-N kernels where one thread does ~1000s of
+   scattered UVM reads through the BVH and compact_xyzh.  The PM_ERR_COUNT
+   crash that followed the prior partial port was independent (PMGRID=512
+   single-rank int overflow in MPI_Sendrecv slab transposes — fixed in
+   gravity/pm_*.cc memcpy-self-send patch). */
+#ifdef KOKKOS_ENABLE_CUDA
+#define GIZMO_KOKKOS_DEVICE_SPACE Kokkos::CudaSpace
+#else
 #define GIZMO_KOKKOS_DEVICE_SPACE GIZMO_KOKKOS_SHARED_SPACE
+#endif
 
 /* DMAX/DMIN/IMAX/IMIN as macros: the static inline function versions in proto.h
    lack __device__ annotations and nvcc silently stubs them to return 0 on device.

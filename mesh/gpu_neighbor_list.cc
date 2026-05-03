@@ -84,22 +84,44 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->bvh_root = bvh_nnodes - 1;
     double t_si2 = my_second(); /* DIAG: after build_tile_bvh */
 
-    /* Copy to SharedSpace */
+    /* Allocate kernel-read-path arrays in DEVICE_SPACE (CudaSpace HBM on GPU
+     * builds, falls back to SharedSpace elsewhere).  This eliminates HMM/TLB-
+     * miss overhead on the small-N kernel hot path where one thread does
+     * ~1000s of scattered reads through bvh/tiles/pool/compact_xyzh — that
+     * scattered-UVM-access pattern is the suspected source of the residual
+     * 1.4s "fused_fnc" floor on 1-active-particle calls.  CPU host arrays
+     * h_tiles/h_bvh/h_pool are transferred via Kokkos::deep_copy through
+     * unmanaged-View wrappers (cudaMemcpy under the hood on CUDA builds);
+     * compact_xyzh is built directly on-device by a parallel_for that reads
+     * from UVM-backed P_shared and writes to DEVICE_SPACE compact_xyzh. */
     int bvh_size = (2 * ntiles - 1);
     if(bvh_size < 1) bvh_size = 1;
-    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(ntiles * sizeof(sfc_tile_t));
-    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(bvh_size * sizeof(tile_bvh_node_t));
-    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_pool > 0) ? num_pool : 1) * sizeof(int));
+    int pool_size = (num_pool > 0) ? num_pool : 1;
+    idx->d_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(ntiles * sizeof(sfc_tile_t));
+    idx->d_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(bvh_size * sizeof(tile_bvh_node_t));
+    idx->d_pool = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(pool_size * sizeof(int));
 
-    memcpy(idx->d_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
-    memcpy(idx->d_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
-    memcpy(idx->d_pool, h_pool, num_pool * sizeof(int));
-    double t_si3 = my_second(); /* DIAG: after memcpy to SharedSpace */
+    /* Stage host buffers into device memory.  On non-CUDA builds DEVICE_SPACE
+     * == SharedSpace and Kokkos::deep_copy reduces to a memcpy. */
+    {
+        using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
+        Kokkos::View<sfc_tile_t*,        Kokkos::HostSpace, UV>            h_tiles_v(h_tiles, ntiles);
+        Kokkos::View<sfc_tile_t*,        GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_tiles_v(idx->d_tiles, ntiles);
+        Kokkos::View<tile_bvh_node_t*,   Kokkos::HostSpace, UV>            h_bvh_v(h_bvh, bvh_nnodes);
+        Kokkos::View<tile_bvh_node_t*,   GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_bvh_v(idx->d_bvh, bvh_nnodes);
+        Kokkos::View<int*,               Kokkos::HostSpace, UV>            h_pool_v(h_pool, num_pool);
+        Kokkos::View<int*,               GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_pool_v(idx->d_pool, num_pool);
+        Kokkos::deep_copy(d_tiles_v, h_tiles_v);
+        Kokkos::deep_copy(d_bvh_v,   h_bvh_v);
+        Kokkos::deep_copy(d_pool_v,  h_pool_v);
+    }
+    double t_si3 = my_second(); /* DIAG: after staging tiles/BVH/pool to DEVICE_SPACE */
 
     /* Build compact float4 position+h array for cache-efficient GPU BVH traversal.
        32MB for 2M particles vs 800MB for full P_shared — fits in H100 L2 (50MB),
-       eliminating the random-access cache misses that dominate the GPU count/fill passes. */
-    idx->d_compact_xyzh = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * 4 * sizeof(float));
+       eliminating the random-access cache misses that dominate the GPU count/fill passes.
+       In DEVICE_SPACE so the BVH-walk kernels read from HBM directly. */
+    idx->d_compact_xyzh = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(num_total * 4 * sizeof(float));
     {
         float *compact = idx->d_compact_xyzh;
         Kokkos::parallel_for("compact_xyzh_build", num_total, KOKKOS_LAMBDA(int i) {
@@ -130,10 +152,10 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
 void gpu_spatial_index_free(gpu_spatial_index_t *idx)
 {
-    if(idx->d_compact_xyzh) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_compact_xyzh); idx->d_compact_xyzh = NULL;}
-    if(idx->d_pool) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_pool); idx->d_pool = NULL;}
-    if(idx->d_bvh) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_bvh); idx->d_bvh = NULL;}
-    if(idx->d_tiles) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx->d_tiles); idx->d_tiles = NULL;}
+    if(idx->d_compact_xyzh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_compact_xyzh); idx->d_compact_xyzh = NULL;}
+    if(idx->d_pool) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_pool); idx->d_pool = NULL;}
+    if(idx->d_bvh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_bvh); idx->d_bvh = NULL;}
+    if(idx->d_tiles) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_tiles); idx->d_tiles = NULL;}
     idx->valid = 0;
 }
 
@@ -479,10 +501,10 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
      * accumulating with each mech_fb/radfb_g/sink call that passes cached_idx=NULL. */
     if(!cached_idx || !cached_idx->valid ||
        gnl->d_tiles != cached_idx->d_tiles) {
-        if(gnl->d_compact_xyzh) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_compact_xyzh);
-        if(gnl->d_pool)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_pool);
-        if(gnl->d_bvh)   Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_bvh);
-        if(gnl->d_tiles) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_tiles);
+        if(gnl->d_compact_xyzh) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->d_compact_xyzh);
+        if(gnl->d_pool)  Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->d_pool);
+        if(gnl->d_bvh)   Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->d_bvh);
+        if(gnl->d_tiles) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->d_tiles);
     }
 }
 
