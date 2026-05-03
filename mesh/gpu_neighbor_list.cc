@@ -15,6 +15,7 @@
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../system/gpu_particles_arena.h"
 #include "../core/proto.h"
 
 #include "sfc_tiles.h"
@@ -469,9 +470,13 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                                        neighbor_list_t *out,
                                        double search_radius_factor)
 {
-    /* Copy P to SharedSpace for GPU kernel access */
-    struct particle_data *P_shared = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_shared, P_host, num_total * sizeof(struct particle_data));
+    /* Use the per-step particle arena instead of a dedicated full-NumPart memcpy.
+     * The arena's fast path is a no-op when valid (e.g. when gradient/hydro
+     * already populated it earlier in the step), avoiding ~2.3s of redundant
+     * P-copy on small-N symlist invocations.  Pass the global CellP so the
+     * arena's "valid" state remains consistent across mixed P/CellP consumers. */
+    gpu_particles_arena_acquire(num_total, P_host, CellP);
+    struct particle_data *P_shared = gpu_particles_arena_P();
 
     /* Build GPU CSR — share gas-only SIDX with density via the step-persistent cache */
     gpu_neighbor_list_t gpu_nl;
@@ -487,9 +492,10 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
     memcpy(out->offsets, gpu_nl.offsets, (num_active + 1) * sizeof(int));
     memcpy(out->neighbors, gpu_nl.neighbors, gpu_nl.total_pairs * sizeof(int));
 
-    /* Free GPU temporaries (keep tiles/BVH alive — owned by g_step_sidx) */
+    /* Free GPU temporaries (keep tiles/BVH alive — owned by g_step_sidx).
+     * Arena is intentionally not released — subsequent gradient/hydro callers
+     * benefit from the fast-path skip. */
     gpu_ngb_list_free(&gpu_nl, gpu_step_sidx_ptr());
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_shared);
 }
 
 
@@ -504,9 +510,10 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
                                         int j_type_bitmask, int search_mode,
                                         neighbor_list_t *out)
 {
-    /* Copy P to SharedSpace for GPU kernel access */
-    struct particle_data *P_shared = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));
-    memcpy(P_shared, P_host, num_total * sizeof(struct particle_data));
+    /* Use the per-step particle arena to avoid a redundant full-NumPart memcpy
+     * (see gpu_build_symmetric_neighbor_list for rationale). */
+    gpu_particles_arena_acquire(num_total, P_host, CellP);
+    struct particle_data *P_shared = gpu_particles_arena_P();
 
     /* Build GPU CSR with explicit per-i radii and j-side type filter */
     gpu_neighbor_list_t gpu_nl;
@@ -522,9 +529,8 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
     memcpy(out->offsets, gpu_nl.offsets, (num_active + 1) * sizeof(int));
     memcpy(out->neighbors, gpu_nl.neighbors, gpu_nl.total_pairs * sizeof(int));
 
-    /* Free GPU temporaries */
+    /* Free GPU temporaries.  Arena is intentionally retained for subsequent callers. */
     gpu_ngb_list_free(&gpu_nl, NULL);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(P_shared);
 }
 
 
