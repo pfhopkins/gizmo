@@ -62,6 +62,27 @@ void gpu_particles_arena_invalidate(void);
  * mirror-update site, then disable for production runs. */
 void gpu_particles_arena_mark_clean_after_scatter(const char *site);
 
+/* Phase 8a Round 2 (option D): post-full-host-drift coherence point.
+ *
+ * Used by move_particles() (and any future full-N host mutator) to refresh
+ * arena from current host state and mark clean, replacing the prior
+ * invalidate-then-let-the-next-acquire-slow-path pattern. Costs one full
+ * memcpy here, but unlocks fast-path acquires in all subsequent wrappers
+ * for the rest of the step (when combined with Round 3 wrappers that
+ * also mark_clean instead of invalidating defensively).
+ *
+ * Behavior:
+ *   - If arena exists with capacity >= min_capacity: memcpy host->arena,
+ *     set arena_valid_=1, record memcpy site for diagnostics.
+ *   - Otherwise: fall back to invalidate (next acquire will allocate).
+ *
+ * site: caller tag for diagnostic output (e.g. "move_particles_post_drift").
+ */
+void gpu_particles_arena_refresh_from_host(int min_capacity,
+                                           struct particle_data *P_host,
+                                           struct gas_cell_data *CellP_host,
+                                           const char *site);
+
 /* DIAGNOSTIC: tag the upcoming acquire with a short descriptive string so
  * that GIZMO_GPU_ARENA_DEBUG mismatch messages identify the call site. */
 void gpu_particles_arena_set_site(const char *site);

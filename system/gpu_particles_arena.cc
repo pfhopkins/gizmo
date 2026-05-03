@@ -289,6 +289,40 @@ extern "C" void gpu_particles_arena_mark_clean_after_scatter(const char *site)
     gizmo_step_phase_record("arena_mark_clean_calls", 1.0);
 }
 
+extern "C" void gpu_particles_arena_refresh_from_host(int min_capacity,
+                                                     struct particle_data *P_host,
+                                                     struct gas_cell_data *CellP_host,
+                                                     const char *site)
+{
+    /* Phase 8a Round 2 (option D): one post-drift coherence point. Replaces
+     * the invalidate-then-defer-memcpy pattern used by move_particles. */
+    gizmo_step_phase_record("arena_refresh_calls", 1.0);
+    if(min_capacity <= 0) {min_capacity = 1;}
+
+    /* Fall back to invalidate when arena isn't allocated or is too small —
+     * the next gpu_particles_arena_acquire will allocate fresh and memcpy. */
+    if(!arena_P || !arena_CellP || arena_capacity_ < min_capacity) {
+        g_arena_last_invalidate_site = (site ? site : "refresh_capacity_too_small");
+        arena_valid_ = 0;
+        gizmo_step_phase_record("arena_refresh_fallback_invalidate", 1.0);
+        return;
+    }
+
+    /* Refresh: memcpy host -> arena. Same cost as a slow-path acquire memcpy
+     * but spent HERE (after the legitimate full drift) instead of being
+     * deferred to whichever wrapper acquires next. */
+    g_acquire_serial++;
+    int my_serial = g_acquire_serial;
+    double t0 = my_second();
+    memcpy(arena_P, P_host, (size_t)min_capacity * sizeof(struct particle_data));
+    if(CellP_host) {memcpy(arena_CellP, CellP_host, (size_t)min_capacity * sizeof(struct gas_cell_data));}
+    gizmo_step_phase_record("arena_refresh_memcpy_time", timediff(t0, my_second()));
+
+    g_valid_memcpy_serial    = my_serial;
+    g_arena_last_memcpy_site = (site ? site : "(unnamed_refresh)");
+    arena_valid_             = 1;
+}
+
 extern "C" void gpu_particles_arena_release(void)
 {
     if(arena_CellP) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(arena_CellP); arena_CellP = NULL;}

@@ -282,8 +282,18 @@ void move_particles(integertime time1)
 #endif
     for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
     g_last_full_drift_Ti = time1;
-    gpu_particles_arena_invalidate(); /* host Pos/VelPred drifted; arena stale */
     gizmo_step_phase_record("mp_drift_time", timediff(t_mp_start, my_second()));
+
+    /* Phase 8a Round 2 option D: one post-drift arena coherence point.
+     * Drift mutated host P[].Pos/VelPred/etc for all NumPart particles,
+     * making the arena (separate Kokkos managed allocation) stale. Instead
+     * of invalidating and forcing the next ~5 wrapper acquires to each
+     * slow-path memcpy 17GB, refresh arena ONCE here from host. By itself
+     * this is perf-neutral (one memcpy here vs one in next acquire); win
+     * materializes when Round 3 wrappers also stop invalidating defensively
+     * (each one mark_clean instead of invalidate, downstream acquires fast-path).
+     * Falls back to invalidate when arena isn't allocated yet. */
+    gpu_particles_arena_refresh_from_host(NumPart, P, CellP, "move_particles_post_drift");
 }
 
 
