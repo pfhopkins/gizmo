@@ -24,6 +24,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
@@ -1593,12 +1594,16 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * Nodes/Extnodes AND the SoA mirror in one pass — no host loop, no
      * AoS->SoA reseed afterwards.  Cost is O(active drifted nodes) with
      * GPU parallelism over Numnodestree (early-out when Ti_current matches). */
+    /* Phase 7+ sub-bucket timing — env-gated; no-op when GIZMO_STEP_PHASES off. */
+    double t_grv_start = my_second();
     move_particles(All.Ti_Current); /* drifts all P[], invalidates arena */
+    double t_grv_mp = my_second();
     /* SoA must exist before the drift kernel — it writes mirror fields. */
     gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
     if(gpu_force_drift_nodes(All.Ti_Current) != 0) {
         endrun(929702);
     }
+    double t_grv_drift_nodes = my_second();
 
     int *idx_host = (int *) mymalloc("gpu_grav_idx", num_active_total * sizeof(int));
     int num_active = 0;
@@ -1615,12 +1620,14 @@ extern "C" int gpu_gravtree_walk_primary(void)
         idx_host[num_active++] = i;
     }
     if(num_active <= 0) {myfree(idx_host); return 0;}
+    double t_grv_active_list = my_second();
 
     /* Acquire Phase 1 arena (P_dev + CellP_dev in SharedSpace) */
     gpu_particles_arena_set_site("gpu_gravtree_walk_primary");
     gpu_particles_arena_acquire(NumPart, P, CellP);
     struct particle_data    *P_dev    = gpu_particles_arena_P();
     struct gas_cell_data    *CellP_dev = gpu_particles_arena_CellP();
+    double t_grv_arena = my_second();
 
     int min_nodes = MaxNodes + 1;
     gpu_gravity_tree_acquire(min_nodes, Nodes_base, Extnodes_base);
@@ -1744,6 +1751,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     cr_data_snap.t_max_cr  = t_max_cr;
 #endif /* COSMIC_RAY_SUBGRID_LEBRON */
 
+    double t_grv_precompute = my_second();
     /* Scratch arrays for per-target results */
     int *d_idx    = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
     int *d_failed = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(int));
@@ -1791,6 +1799,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     const struct gpu_cr_walk_data_t cr_data_dev = cr_data_snap;
 #endif
 
+    double t_grv_pre_kernel = my_second();
     Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
@@ -1826,6 +1835,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         }
     });
     Kokkos::fence();
+    double t_grv_post_kernel = my_second();
 
     /* Scatter successes back to host; copy RT CellP fields from device mirror */
     int nsucceeded = 0;
@@ -2002,6 +2012,23 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
 
     myfree(idx_host);
+
+    /* Phase 7+ sub-buckets — env-gated; no-op when GIZMO_STEP_PHASES off.
+     * Codex flagged grav_tree_walk=2.07s as suspiciously similar to other
+     * full-NumPart taxes; this breakdown isolates which is to blame. */
+    {
+        double t_grv_done = my_second();
+        gizmo_step_phase_record("grav_move_particles",  timediff(t_grv_start,        t_grv_mp));
+        gizmo_step_phase_record("grav_drift_nodes",     timediff(t_grv_mp,           t_grv_drift_nodes));
+        gizmo_step_phase_record("grav_active_list",     timediff(t_grv_drift_nodes,  t_grv_active_list));
+        gizmo_step_phase_record("grav_arena_acquire",   timediff(t_grv_active_list,  t_grv_arena));
+        gizmo_step_phase_record("grav_full_precompute", timediff(t_grv_arena,        t_grv_precompute));
+        gizmo_step_phase_record("grav_scratch_alloc",   timediff(t_grv_precompute,   t_grv_pre_kernel));
+        gizmo_step_phase_record("grav_kernel",          timediff(t_grv_pre_kernel,   t_grv_post_kernel));
+        gizmo_step_phase_record("grav_postwalk",        timediff(t_grv_post_kernel,  t_grv_done));
+        /* Interaction counter from inside the function */
+        gizmo_step_phase_record("grav_num_active_dbl",  (double)num_active);
+    }
 
     return nsucceeded;
 }

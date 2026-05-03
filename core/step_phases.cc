@@ -66,7 +66,10 @@ extern "C" void gizmo_step_phase_dump(int step)
     double wall = (g_step_start_t > 0) ? (my_second() - g_step_start_t) : 0.0;
     double bucketsum = 0;
     for(size_t i = 0; i < g_buckets.size(); i++) bucketsum += g_buckets[i].second;
-    printf("[STEP_PHASES step=%d wall=%.3fs bucketsum=%.3fs", step, wall, bucketsum);
+    /* Emit step+1 to match the balance.txt sync-point label. (Old behavior
+     * printed the local counter which was off-by-one against balance.txt;
+     * see feedback_gpu_wrapper_disciplines.md.) */
+    printf("[STEP_PHASES step=%d wall=%.3fs bucketsum=%.3fs", step + 1, wall, bucketsum);
     for(size_t i = 0; i < g_buckets.size(); i++) {
         printf(" %s=%.3f", g_buckets[i].first.c_str(), g_buckets[i].second);
     }

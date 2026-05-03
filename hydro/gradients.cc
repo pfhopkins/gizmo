@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"
 #include "../mesh/kernel.h"
 #include "../mesh/neighbor_list.h"
 /* gradient_evaluate_gpu writes results as GasGraddata_out_ structs (defined in
@@ -472,11 +473,15 @@ void construct_gradient(Vec3<MyDouble>& grad, int i)
 void hydro_gradient_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time(); double t0 = my_second();
+    /* Phase 7+ outer-wrapper sub-bucket timing — env-gated; no-op when off. */
+    double t_grad_outer_start = my_second();
     /* Neighbor-list path: allocate active-index array, refresh ghosts, build symmetric CSR.
        The CSR is reused by hydro_force. Helper is a no-op on the tree-walk build. */
     double gsl_safety = gizmo_ghost_safety_factor();
     double t_diag_symlist_start = my_second(); /* DIAG */
     gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
+    double t_grad_after_symlist = my_second();
+    gizmo_step_phase_record("gradient_prep_symlist", timediff(t_diag_symlist_start, t_grad_after_symlist));
     if(ThisTask == 0) { /* DIAG: symmetric NGP build cost — remove after profiling */
         printf("[DIAG_SYMNL step=%d N=%d pairs=%d] symlist_build=%.3f\n",
                (int)All.NumCurrentTiStep, gizmo_sym_num_active, (gizmo_sym_neighbor_list.total_pairs),
@@ -1146,9 +1151,19 @@ void hydro_gradient_calc(void)
     timewait = timewait1 + timewait2;
     timecomm = timecommsumm1 + timecommsumm2;
 
+    double t_grad_before_refresh = my_second();
     /* Neighbor-list path: refresh ghosts so hydro_force sees converged gradients on both
        sides of each pair, and rebuild the symmetric CSR. No-op on tree-walk build. */
     gizmo_gradients_refresh_symlist(gsl_safety, gsl_safety);
+    double t_grad_outer_end = my_second();
+    /* Phase 7+ outer-wrapper sub-buckets — env-gated. The bucket
+     * "hydro_gradient_calc" is the timed top-level (recorded in core/accel.cc).
+     * These split out the major phases of THIS function, complementing the
+     * inner gradient_evaluate_gpu sub-buckets (gradient_arena, gradient_kernel,
+     * etc.) that are recorded inside the GPU evaluator. */
+    gizmo_step_phase_record("gradient_zero_iter_loops", timediff(t_grad_after_symlist, t_grad_before_refresh));
+    gizmo_step_phase_record("gradient_refresh_symlist", timediff(t_grad_before_refresh, t_grad_outer_end));
+    gizmo_step_phase_record("gradient_outer_total",     timediff(t_grad_outer_start,    t_grad_outer_end));
 }
 
 
