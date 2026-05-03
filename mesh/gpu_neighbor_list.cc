@@ -359,6 +359,51 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         });
         t_fused_launch_out = my_second();
         Kokkos::fence();
+
+        /* MICROBENCHMARK PROBE — fires once per process when GIZMO_NGB_MICROBENCH=1
+         * env var is set and we hit a small-N cached call. Re-launches the SAME
+         * ngb_fused kernel 20 times back-to-back with per-iteration fence timing,
+         * plus 20 empty-kernel "noop" launches for comparison. Settles whether
+         * the ~1.45s fused floor is per-call (every iteration ~1.45s) or
+         * first-touch/JIT (only iteration 0 slow). */
+        static bool g_microbench_done = false;
+        if(!g_microbench_done && getenv("GIZMO_NGB_MICROBENCH")
+           && cached_idx && cached_idx->valid && num_active <= 16) {
+            g_microbench_done = true;
+            printf("[NGB_MICROBENCH] caller=%s N=%d sidx_cached=1 — running 20 repeated fused + 20 noop launches\n",
+                   caller_label, num_active);
+            fflush(stdout);
+            for(int rep = 0; rep < 20; rep++) {
+                double tA = my_second();
+                Kokkos::parallel_for("ngb_fused_probe", num_active, KOKKOS_LAMBDA(int aa) {
+                    int pf[3] = {pf0, pf1, pf2};
+                    double bs[3] = {bs0, bs1, bs2};
+                    double bh[3] = {bh0, bh1, bh2};
+                    int i = active[aa];
+                    double h_i = (radii ? radii[aa] : (double)compact_xyzh[i*4+3]) * sr_fac;
+                    double pos_i[3];
+                    if(src_pos) { pos_i[0] = src_pos[aa*3+0]; pos_i[1] = src_pos[aa*3+1]; pos_i[2] = src_pos[aa*3+2]; }
+                    else        { pos_i[0] = (double)compact_xyzh[i*4+0]; pos_i[1] = (double)compact_xyzh[i*4+1]; pos_i[2] = (double)compact_xyzh[i*4+2]; }
+                    int cnt = search_neighbors_sfc_gpu(compact_xyzh, pos_i, h_i,
+                                                       tiles, ntiles, pool, smode,
+                                                       bvh, bvh_root,
+                                                       &scratch[(size_t)aa * NGL_SCRATCH_STRIDE],
+                                                       NGL_SCRATCH_STRIDE,
+                                                       pf, bs, bh);
+                    counts[aa] = cnt;
+                });
+                Kokkos::fence();
+                double tB = my_second();
+                double tC = my_second();
+                Kokkos::parallel_for("noop_probe2", 1, KOKKOS_LAMBDA(int) {});
+                Kokkos::fence();
+                double tD = my_second();
+                printf("[NGB_MICROBENCH] rep=%2d fused=%.4fs noop=%.6fs\n",
+                       rep, tB - tA, tD - tC);
+                fflush(stdout);
+            }
+            printf("[NGB_MICROBENCH] done\n"); fflush(stdout);
+        }
     }
     double t_nl1 = my_second(); /* DIAG: after fused BVH pass */
 
