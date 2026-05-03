@@ -757,6 +757,7 @@ double powerspec_turb_obtain_fields(void)
 
             /* Stage 5: build NL on this rank with global pending positions as override */
             gpu_neighbor_list_t gnl = {};
+            std::vector<int> gnl_neighbors_host;
             std::vector<int> sentinel_active(total_pending > 0 ? total_pending : 1, 0);
             if(total_pending > 0) {
                 gpu_particles_arena_acquire(num_all, P, CellP);
@@ -767,7 +768,13 @@ double powerspec_turb_obtain_fields(void)
                                    &gnl, NULL, 1.0,
                                    g_rad.data(),
                                    g_pos.data() /* arbitrary-source override */);
+                /* gnl.neighbors is DEVICE_SPACE; host loop below indexes it. */
+                if(gnl.total_pairs > 0) {
+                    gnl_neighbors_host.resize(gnl.total_pairs);
+                    gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+                }
             }
+            const int *gnl_neighbors = gnl_neighbors_host.empty() ? NULL : gnl_neighbors_host.data();
 
             /* Stage 6: per global pending cell, compute THIS rank's home-gas best */
             std::vector<double> local_dist(total_pending, 1.0e30);
@@ -779,7 +786,7 @@ double powerspec_turb_obtain_fields(void)
                 double best_r2 = MAX_REAL_NUMBER;
                 MyDouble xtmp = 0;
                 for(int kk = n_off; kk < n_off_end; kk++) {
-                    int p_idx = gnl.neighbors[kk];
+                    int p_idx = gnl_neighbors[kk];
                     if(p_idx >= num_local) continue; /* skip ghosts: each rank only contributes its HOME gas as candidate, so MIN_LOC tiebreaks cleanly */
                     if(p_idx >= N_gas) continue;
                     if(P[p_idx].Type != 0 || P[p_idx].Mass <= 0) continue;

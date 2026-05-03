@@ -317,6 +317,7 @@ void merge_and_split_particles(void)
 
         int num_src = (int)ms_src_idx.size();
         gpu_neighbor_list_t gnl = {};
+        std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
         if (local_count <= 0) local_count = NumPart;
         if (num_src > 0) {
@@ -327,8 +328,14 @@ void merge_and_split_particles(void)
             gpu_ngb_list_build(P_gpu, num_all,
                                ms_src_idx.data(), num_src,
                                NGB_SEARCH_ONEWAY, merge_split_types_mask,
-                               &gnl, NULL, 1.0, ms_src_radii.data());
+                               &gnl, NULL, 1.0, ms_src_radii.data(), NULL, "msplit");
+            /* gnl.neighbors is DEVICE_SPACE; host loop below indexes it. */
+            if (gnl.total_pairs > 0) {
+                gnl_neighbors_host.resize(gnl.total_pairs);
+                gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+            }
         }
+        const int *gnl_neighbors = gnl_neighbors_host.empty() ? NULL : gnl_neighbors_host.data();
 
         for (int aa = 0; aa < num_src; aa++) {
             i = ms_src_idx[aa];
@@ -338,7 +345,7 @@ void merge_and_split_particles(void)
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 for (int nn = nl_start; nn < nl_end; nn++) {
-                    j = gnl.neighbors[nn];
+                    j = gnl_neighbors[nn];
                     if (j >= local_count) continue; /* skip ghosts (local-only merge) */
                     if (P[j].Type != P[i].Type) continue;
                     double m_eff = P[j].Mass; int do_allow_merger = 0;
@@ -384,7 +391,7 @@ void merge_and_split_particles(void)
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 for (int nn = nl_start; nn < nl_end; nn++) {
-                    j = gnl.neighbors[nn];
+                    j = gnl_neighbors[nn];
                     if (j >= local_count) continue;
                     if (P[j].Type != P[i].Type) continue;
                     if ((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0) && (Ptmp[j].flag == 0)) {

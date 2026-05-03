@@ -130,6 +130,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
    belong to the cached spatial index (use gpu_spatial_index_free for those). */
 void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx);
 
+/* Copy gnl->neighbors (DEVICE_SPACE / CudaSpace) into a caller-allocated host
+   buffer. Use when host code needs to index gnl.neighbors[] directly (e.g.
+   per-source CPU loops in radfb_local, merge_split). host_dest must hold at
+   least gnl->total_pairs ints; no-op when total_pairs <= 0. */
+void gpu_ngb_copy_neighbors_to_host(const gpu_neighbor_list_t *gnl, int *host_dest);
+
 /* Cross-type high-level wrapper: i-list is caller-supplied active indices of
    any type(s); j-side is filtered by j_type_bitmask. Caller supplies explicit
    per-active search radii (for loops whose kernel isn't P[i].KernelRadius —

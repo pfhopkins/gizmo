@@ -508,6 +508,21 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx
     }
 }
 
+/* Copy gnl->neighbors (DEVICE_SPACE) into a host buffer. Caller owns host_dest.
+   For host-side per-source loops (radfb_local, merge_split, density.cc:868
+   HYDRO_VOLUME_CORRECTIONS path, turb_powerspectra, twopoint) that index
+   neighbors[] from CPU code. */
+void gpu_ngb_copy_neighbors_to_host(const gpu_neighbor_list_t *gnl, int *host_dest)
+{
+    if(!host_dest || !gnl || gnl->total_pairs <= 0 || !gnl->neighbors) {return;}
+    Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+        h(host_dest, gnl->total_pairs);
+    Kokkos::View<const int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+        d(gnl->neighbors, gnl->total_pairs);
+    Kokkos::deep_copy(h, d);
+}
+
+
 /* High-level wrapper: build a symmetric neighbor list on GPU and return it
    in the mymalloc-based neighbor_list_t format expected by gradient/hydro.
    Called from accel.cc (which is NOT compiled by nvcc).

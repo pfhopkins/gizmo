@@ -834,6 +834,7 @@ void cellcorrections_calc(void)
 
         int num_src = (int)active_idx.size();
         gpu_neighbor_list_t gnl = {};
+        std::vector<int> gnl_neighbors_host;
         int imported_ghosts = 0;
         if (num_src > 0) {
             /* Defensive ghost prep: legacy used code_block_xchange MPI export to
@@ -857,7 +858,13 @@ void cellcorrections_calc(void)
                                active_idx.data(), num_src,
                                NGB_SEARCH_SYMMETRIC, 1 /* gas only */,
                                &gnl, NULL, 1.0, radii.data(), NULL, "dens-vol1");
+            /* gnl.neighbors is DEVICE_SPACE; host loop below indexes it. */
+            if (gnl.total_pairs > 0) {
+                gnl_neighbors_host.resize(gnl.total_pairs);
+                gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+            }
         }
+        const int *gnl_neighbors = gnl_neighbors_host.empty() ? NULL : gnl_neighbors_host.data();
 
         for (int aa = 0; aa < num_src; aa++) {
             int i = active_idx[aa];
@@ -865,7 +872,7 @@ void cellcorrections_calc(void)
             int n_off = gnl.offsets[aa], n_off_end = gnl.offsets[aa+1];
             double accum_V1 = 0;
             for (int nn = n_off; nn < n_off_end; nn++) {
-                int j = gnl.neighbors[nn];
+                int j = gnl_neighbors[nn];
                 Vec3<double> dp = pos_i - P[j].Pos;
                 nearest_xyz(dp);
                 double r2 = dp.norm_sq();

@@ -136,6 +136,7 @@ void twopoint(void)
         int num_src_global = 0;
         MPI_Allreduce(&num_src, &num_src_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         gpu_neighbor_list_t gnl = {};
+        std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
         if(local_count <= 0) local_count = NumPart;
         int ghost_imported = 0;
@@ -153,7 +154,13 @@ void twopoint(void)
                                active_idx.data(), num_src,
                                NGB_SEARCH_ONEWAY, 0xFF /* all types */,
                                &gnl, NULL, 1.0, active_radii.data());
+            /* gnl.neighbors is DEVICE_SPACE; host loop below indexes it. */
+            if(gnl.total_pairs > 0) {
+                gnl_neighbors_host.resize(gnl.total_pairs);
+                gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+            }
         }
+        const int *gnl_neighbors = gnl_neighbors_host.empty() ? NULL : gnl_neighbors_host.data();
 
         for(int aa = 0; aa < num_src; aa++) {
             int isrc = active_idx[aa];
@@ -162,7 +169,7 @@ void twopoint(void)
             Vec3<double> pos_i = P[isrc].Pos;
             int n_off = gnl.offsets[aa], n_off_end = gnl.offsets[aa+1];
             for(int nn = n_off; nn < n_off_end; nn++) {
-                int jp = gnl.neighbors[nn];
+                int jp = gnl_neighbors[nn];
                 if(jp == isrc) continue; /* skip self */
                 double dx_raw = P[jp].Pos[0] - pos_i[0];
                 double dy_raw = P[jp].Pos[1] - pos_i[1];
