@@ -1949,6 +1949,22 @@ extern "C" int gpu_gravtree_walk_primary(void)
             ProcessedFlag[i] = 1;
             costtotal_added += d_ninter[a];
             if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = d_ninter[a];}
+
+            /* Phase 8a Round 3c: mirror the just-written host P[i] into the arena.
+             * The host scatter above writes many fields under varying #ifdef
+             * branches (GravAccel, Potential, Min_Distance_to_Sink, tidal_*,
+             * GravJerk, etc.). Per-touched-i full struct copy is safer than
+             * field-by-field enumeration (no #ifdef tracking, no risk of
+             * missing a branch). At this point host P[i] holds the post-scatter
+             * value; copy to arena_P[i] so the next acquire fast-paths.
+             * Same struct-copy approach used in row 4 sink_swallow scatter. */
+            P_dev[i] = P[i];
+            /* CellP fields written above (RT_USE_GRAVTREE / COSMIC_RAY_SUBGRID_LEBRON
+             * branches, all gated on Type==0) — mirror full CellP[i] for active gas. */
+            if(P[i].Type == 0 && CellP_dev) {
+                CellP_dev[i] = CellP[i];
+            }
+
             nsucceeded++;
         }
     }
@@ -1976,7 +1992,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
         fflush(stdout);
     }
 
-    gpu_particles_arena_invalidate();
+    /* Phase 8a Round 3c: replace invalidate with mark_clean. Per-active-i
+     * P_dev[i]=P[i] mirror in the scatter loop above keeps arena coherent
+     * for the touched indices; untouched i's were unchanged from acquire-time
+     * (kernel output went to d_* buffers, not arena). Verified safe with
+     * GIZMO_GPU_ARENA_DEBUG=1. */
+    gpu_particles_arena_mark_clean_after_scatter("gpu_gravtree_walk_primary");
     /* No SoA invalidate: the next force_treebuild fully repopulates the SoA
      * via the build pipeline; the next pre-walk drift mutates only the
      * stale-Ti_current nodes via gpu_force_drift_nodes (UVM AoS + SoA in one
