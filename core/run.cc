@@ -62,6 +62,9 @@ void run(void)
         }
 
         find_timesteps();		/* find-timesteps */
+#ifdef KETJU_REGULARIZATION
+        ketju_limit_timesteps();    /* force chain particles to shared timebin */
+#endif
         int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
@@ -69,6 +72,12 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+
+#ifdef KETJU_REGULARIZATION
+        ketju_find_regions();       /* detect chain regions around massive stars/BHs */
+        ketju_run_integration();    /* subtract tree force, run MSTAR, apply velocity trick */
+        ketju_write_output();       /* write KETJU diagnostics to HDF5 */
+#endif
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
@@ -94,8 +103,16 @@ void run(void)
 #endif
             {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
             reconstructed_tree = 1;
+#ifdef KETJU_REGULARIZATION
+            ketju_mark_regions_stale();  /* particle indices changed — invalidate cached KETJU communicators */
+#endif
         }
-        else if(TreeReconstructFlag) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag) {
+            domain_Decomposition(0, 0, 1); reconstructed_tree = 1;
+#ifdef KETJU_REGULARIZATION
+            ketju_mark_regions_stale();
+#endif
+        }
         else
         {
             force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */
@@ -147,6 +164,9 @@ void run(void)
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
         do_hermite_correction();
+#endif
+#ifdef KETJU_REGULARIZATION
+        ketju_finish_step();        /* clean up KETJU region data (flags persist for next step's guards) */
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
@@ -558,6 +578,10 @@ void find_next_sync_point_and_drift(void)
    * may still need to old list in the dynamic tree update */
   for(n = 0, prev = -1; n < TIMEBINS; n++)
     {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current);}}}
+
+#ifdef KETJU_REGULARIZATION
+  ketju_set_final_velocities(); /* swap in true physical velocities after drift (velocity trick) */
+#endif
 
 }
 
