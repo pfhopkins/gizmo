@@ -672,6 +672,30 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 
     PRINT_STATUS("  GPU hydro: %d active, %d pairs", num_active, csr_total_pairs);
 
+    /* Verification harness (β): GIZMO_VERIFY_KERNEL_WRITES=1 snapshots the
+     * arena fields the kernel is permitted to write (P[j].wakeup, CellP[j].dMass
+     * MFV-only) so the post-kernel sparse scatter can prove the kernel touched
+     * ONLY j's that appear in csr_neighbors_host[]. O(N) cost, off by default.
+     * Used once after each new wrapper sparse-scatter conversion to confirm
+     * the kernel-writes header comment is complete. */
+    static int gizmo_verify_init = 0, gizmo_verify_on = 0;
+    if(!gizmo_verify_init) {
+        gizmo_verify_init = 1;
+        gizmo_verify_on = (getenv("GIZMO_VERIFY_KERNEL_WRITES") != nullptr) ? 1 : 0;
+    }
+    short int *verify_snap_wakeup = nullptr;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    MyDouble *verify_snap_dMass = nullptr;
+#endif
+    if(gizmo_verify_on && num_total > 0) {
+        verify_snap_wakeup = (short int *) malloc((size_t)num_total * sizeof(short int));
+        for(int j = 0; j < num_total; j++) verify_snap_wakeup[j] = P_gpu[j].wakeup;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        verify_snap_dMass = (MyDouble *) malloc((size_t)num_total * sizeof(MyDouble));
+        for(int j = 0; j < num_total; j++) verify_snap_dMass[j] = CellP_gpu[j].dMass;
+#endif
+    }
+
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     /* Pre-compute ISMDustChem passive scalar diffusion values on host.
      * return_ismdustchem_species_of_interest_for_diffusion_and_yields() reads
@@ -897,14 +921,52 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     /* Copy wakeup flag back */
     if(*d_NeedToWakeup) NeedToWakeupParticles_local = 1;
 
-    /* Scatter j-particle modifications (dMass, wakeup) back to host P/CellP.
-       Ghost writeback handles the MPI communication — here we just copy the
-       SharedSpace arrays back so local+ghost modifications are visible on host. */
-    for(int j = 0; j < num_total; j++) {
+    /* SPARSE scatter (replaces former full-num_total loop). The kernel writes
+     * only P_gpu[j].wakeup (atomic_max) and, MFV-only, CellP_gpu[j].dMass
+     * (atomic_add) — and only for j's that appear in the CSR neighbors[].
+     * Walk the host-side CSR directly; idempotent assignment makes duplicate
+     * j's across active-i ranges correct without a dedupe pass.
+     * Ghost writeback below handles MPI communication of these deltas. */
+    for(int idx = 0; idx < csr_total_pairs; idx++) {
+        int j = csr_neighbors_host[idx];
         P_host[j].wakeup = P_gpu[j].wakeup;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP_host[j].dMass = CellP_gpu[j].dMass;
 #endif
+    }
+
+    /* Verification harness (β): for any untouched j, P_gpu[j] must match the
+     * pre-kernel snapshot. Any violation means the kernel-writes header is
+     * incomplete (a write the audit missed). Off by default. */
+    if(verify_snap_wakeup) {
+        char *touched = (char *) calloc((size_t)num_total, sizeof(char));
+        for(int idx = 0; idx < csr_total_pairs; idx++) touched[csr_neighbors_host[idx]] = 1;
+        long wakeup_violations = 0;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        long dMass_violations = 0;
+#endif
+        for(int j = 0; j < num_total; j++) {
+            if(touched[j]) continue;
+            if(P_gpu[j].wakeup != verify_snap_wakeup[j]) wakeup_violations++;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            if(CellP_gpu[j].dMass != verify_snap_dMass[j]) dMass_violations++;
+#endif
+        }
+        if(wakeup_violations) {
+            printf("[VERIFY_KERNEL_WRITES] hydro: %ld untouched j's had P_gpu.wakeup mutated (rank=%d, num_total=%d, csr_pairs=%d)\n",
+                   wakeup_violations, ThisTask, num_total, csr_total_pairs);
+            fflush(stdout);
+        }
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        if(dMass_violations) {
+            printf("[VERIFY_KERNEL_WRITES] hydro: %ld untouched j's had CellP_gpu.dMass mutated (rank=%d)\n",
+                   dMass_violations, ThisTask);
+            fflush(stdout);
+        }
+        free(verify_snap_dMass);
+#endif
+        free(touched);
+        free(verify_snap_wakeup);
     }
 
     /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
