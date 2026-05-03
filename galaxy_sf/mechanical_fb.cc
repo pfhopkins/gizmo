@@ -267,6 +267,9 @@ void mechanical_fb_calc_toplevel(void)
             if(any) { nl_active[aa] = ii; nl_radii[aa] = (double)P[ii].KernelRadius; aa++; }
         }}
         int n_coup_gpu = 0;
+        /* Always call evaluate_gpu — its wrapper fast-path handles num_active==0
+         * including the multi-rank ghost_writeback_mechfb collective, which other
+         * ranks may rely on even when this rank has no local sources. */
         mechanical_fb_evaluate_gpu(P, CellP, NumPart,
                                     LocalGasMechFBInfoTemp, N_gas,
                                     nl_active, num_active, nl_radii, &n_coup_gpu);
