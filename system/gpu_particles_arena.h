@@ -45,6 +45,23 @@ void gpu_particles_arena_acquire(int min_capacity,
  * change, ghost-exchange host-side writeback. */
 void gpu_particles_arena_invalidate(void);
 
+/* Phase 8a Round 1 — contract API for mirror-update call sites.
+ *
+ * A wrapper whose host postloop mutates P/CellP fields after the GPU kernel
+ * returns has two options to keep the arena coherent:
+ *   (a) gpu_particles_arena_invalidate()  — defensive; forces next acquire
+ *       to slow-path memcpy the full N entries.
+ *   (b) Mirror the same writes into the arena (write to BOTH P_host[i].field
+ *       and arena_P[i].field), then call this function.  Asserts that arena
+ *       now holds host-equivalent data for all touched fields/indices; the
+ *       next acquire fast-paths.
+ *
+ * Optional GIZMO_GPU_ARENA_DEBUG=1 env var enables a byte-compare guard on
+ * the next acquire that aborts if the (b) contract was violated, naming the
+ * most recent site that asserted clean. Use during development of every new
+ * mirror-update site, then disable for production runs. */
+void gpu_particles_arena_mark_clean_after_scatter(const char *site);
+
 /* DIAGNOSTIC: tag the upcoming acquire with a short descriptive string so
  * that GIZMO_GPU_ARENA_DEBUG mismatch messages identify the call site. */
 void gpu_particles_arena_set_site(const char *site);

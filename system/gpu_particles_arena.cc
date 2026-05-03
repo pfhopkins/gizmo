@@ -34,9 +34,28 @@ static int  g_acquire_serial  = 0;
 static int  g_valid_memcpy_serial = 0;  /* serial# of last acquire that did memcpy */
 static const char *g_arena_site = "(unknown)";  /* set by caller before acquire */
 
+/* Phase 8a Round 1: track last call site that asserted "I just mirror-updated
+ * the arena" — for diagnostic output when the debug byte-compare guard fails. */
+static const char *g_arena_last_clean_site = "(none)";
+
 extern "C" void gpu_particles_arena_set_site(const char *site) { g_arena_site = site; }
 
-#ifdef GIZMO_GPU_ARENA_DEBUG
+/* Phase 8a Round 1: runtime-gated arena debug. The helpers below are always
+ * compiled in; the actual byte-compare guard inside gpu_particles_arena_acquire
+ * is enabled by GIZMO_GPU_ARENA_DEBUG=1 env var (cached on first lookup).
+ * This lets us toggle the heavy O(N) check without rebuilding. */
+static int g_arena_debug_init = 0;
+static int g_arena_debug_on   = 0;
+static inline int arena_debug_enabled_(void)
+{
+    if(!g_arena_debug_init) {
+        g_arena_debug_init = 1;
+        const char *q = getenv("GIZMO_GPU_ARENA_DEBUG");
+        g_arena_debug_on = (q && q[0] && q[0] != '0') ? 1 : 0;
+    }
+    return g_arena_debug_on;
+}
+
 /* One-time print of key field byte-offsets within particle_data and gas_cell_data,
  * so the arena_report_first_diff_ output can be mapped to field names. */
 static int g_offsets_printed = 0;
@@ -123,7 +142,6 @@ static void arena_report_first_diff_(const unsigned char *arena_buf,
         }
     }
 }
-#endif /* GIZMO_GPU_ARENA_DEBUG */
 
 extern "C" void gpu_particles_arena_acquire(int min_capacity,
                                             struct particle_data *P_host,
@@ -138,37 +156,39 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
 
     if(arena_P && arena_CellP && arena_capacity_ >= min_capacity) {
         if(arena_valid_) {
-#ifdef GIZMO_GPU_ARENA_DEBUG
-            /* Debug guard: arena claims to be in sync with host; verify by byte-compare.
-             * If a host mutation site forgot to call gpu_particles_arena_invalidate(),
-             * this aborts at the offending kernel call rather than yielding silent
-             * stale-data corruption downstream. */
-            int p_diff = (memcmp(arena_P, P_host, min_capacity * sizeof(struct particle_data)) != 0);
-            int c_diff = (CellP_host && memcmp(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data)) != 0);
-            if(p_diff || c_diff) {
-                arena_print_struct_offsets_();
-                printf("gpu_particles_arena_acquire: arena_valid_==1 but host data differs from arena.\n"
-                       "  site='%s' serial=%d (last_memcpy_serial=%d)\n"
-                       "  Some host mutation site missed calling gpu_particles_arena_invalidate().\n"
-                       "  Capacity = %d. P_diff=%d CellP_diff=%d. Aborting.\n",
-                       g_arena_site, my_serial, g_valid_memcpy_serial,
-                       min_capacity, p_diff, c_diff);
-                if(p_diff) {
-                    arena_report_first_diff_((const unsigned char *)arena_P,
-                                            (const unsigned char *)P_host,
-                                            (size_t)min_capacity * sizeof(struct particle_data),
-                                            sizeof(struct particle_data), "P", my_serial);
+            if(arena_debug_enabled_()) {
+                /* Phase 8a Round 1: runtime debug guard. arena claims to be in sync
+                 * with host; verify by byte-compare. If a host mutation site forgot
+                 * to call gpu_particles_arena_invalidate(), or a Phase-8 mirror-update
+                 * is incomplete, this aborts at the offending acquire rather than
+                 * yielding silent stale-data corruption downstream. */
+                int p_diff = (memcmp(arena_P, P_host, min_capacity * sizeof(struct particle_data)) != 0);
+                int c_diff = (CellP_host && memcmp(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data)) != 0);
+                if(p_diff || c_diff) {
+                    arena_print_struct_offsets_();
+                    printf("gpu_particles_arena_acquire: arena_valid_==1 but host data differs from arena.\n"
+                           "  site='%s' serial=%d (last_memcpy_serial=%d) last_clean_site='%s'\n"
+                           "  Some host mutation site missed invalidate, or a Phase-8 mirror-update is incomplete.\n"
+                           "  Capacity = %d. P_diff=%d CellP_diff=%d. Aborting.\n",
+                           g_arena_site, my_serial, g_valid_memcpy_serial,
+                           g_arena_last_clean_site,
+                           min_capacity, p_diff, c_diff);
+                    if(p_diff) {
+                        arena_report_first_diff_((const unsigned char *)arena_P,
+                                                (const unsigned char *)P_host,
+                                                (size_t)min_capacity * sizeof(struct particle_data),
+                                                sizeof(struct particle_data), "P", my_serial);
+                    }
+                    if(c_diff) {
+                        arena_report_first_diff_((const unsigned char *)arena_CellP,
+                                                (const unsigned char *)CellP_host,
+                                                (size_t)min_capacity * sizeof(struct gas_cell_data),
+                                                sizeof(struct gas_cell_data), "CellP", my_serial);
+                    }
+                    fflush(stdout);
+                    endrun(913002);
                 }
-                if(c_diff) {
-                    arena_report_first_diff_((const unsigned char *)arena_CellP,
-                                            (const unsigned char *)CellP_host,
-                                            (size_t)min_capacity * sizeof(struct gas_cell_data),
-                                            sizeof(struct gas_cell_data), "CellP", my_serial);
-                }
-                fflush(stdout);
-                endrun(913002);
             }
-#endif
             /* Fast path: arena holds the latest host state already (no invalidate
              * fired since the previous acquire). Skip memcpy entirely — the win
              * compounds across kernels in a single timestep. */
@@ -227,6 +247,28 @@ extern "C" void gpu_particles_arena_invalidate(void)
     /* Phase 7 Round A4: count invalidate calls per step. env-gated; no-op when off. */
     gizmo_step_phase_record("arena_invalidate_calls", 1.0);
     arena_valid_ = 0;
+}
+
+/* Phase 8a Round 1: contract API for mirror-update sites.
+ *
+ * A wrapper that mutates host P/CellP fields after its GPU kernel returns
+ * MUST either (a) call gpu_particles_arena_invalidate(), or (b) write the
+ * same fields to the arena and call this function instead.  Calling this
+ * function is a CONTRACT that the arena now holds host-equivalent data
+ * for the modified indices/fields; the next acquire can fast-path.
+ *
+ * The optional debug guard (GIZMO_GPU_ARENA_DEBUG=1) byte-compares on the
+ * next acquire and aborts if the contract was violated, naming the most
+ * recent site that asserted clean.  Counter recorded in STEP_PHASES so we
+ * can correlate "arena_mark_clean_calls" with "arena_acquire_fastpath" —
+ * a properly-mirrored step should have these match closely.
+ */
+extern "C" void gpu_particles_arena_mark_clean_after_scatter(const char *site)
+{
+    g_arena_last_clean_site = (site ? site : "(unnamed)");
+    arena_valid_ = 1;
+    g_valid_memcpy_serial = g_acquire_serial; /* logical sync point */
+    gizmo_step_phase_record("arena_mark_clean_calls", 1.0);
 }
 
 extern "C" void gpu_particles_arena_release(void)
