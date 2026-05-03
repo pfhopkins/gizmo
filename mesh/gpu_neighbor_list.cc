@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cmath>
 #include <vector>
+#include <algorithm>
 #include <Kokkos_Core.hpp>
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
@@ -371,9 +372,53 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         if(!g_microbench_done && getenv("GIZMO_NGB_MICROBENCH")
            && cached_idx && cached_idx->valid && num_active <= 16) {
             g_microbench_done = true;
-            printf("[NGB_MICROBENCH] caller=%s N=%d sidx_cached=1 — running 20 repeated fused + 20 noop launches\n",
-                   caller_label, num_active);
+            printf("[NGB_MICROBENCH] caller=%s N=%d sidx_cached=1 search_mode=%d — running 20 repeated fused + 20 noop launches\n",
+                   caller_label, num_active, search_mode);
+            printf("[NGB_MICROBENCH] box_sizes=(%g,%g,%g) ntiles=%d periodic=(%d,%d,%d)\n",
+                   bs0, bs1, bs2, ntiles, pf0, pf1, pf2);
             fflush(stdout);
+
+            /* Tile-bbox stats: pull tile bboxes back to host and report extent
+             * distribution per axis. If extents are ~box/cube_root(ntiles) the
+             * SFC tiling is healthy; if extents ~ box_size the SFC sort failed
+             * and every bbox overlap test will pass regardless of query. */
+            {
+                std::vector<sfc_tile_t> h_tiles(ntiles);
+                Kokkos::View<sfc_tile_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                    hv(h_tiles.data(), ntiles);
+                Kokkos::View<sfc_tile_t*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                    dv(tiles, ntiles);
+                Kokkos::deep_copy(hv, dv);
+                double bs_axes[3] = {bs0, bs1, bs2};
+                for(int k = 0; k < 3; k++) {
+                    std::vector<double> ext(ntiles);
+                    for(int t = 0; t < ntiles; t++) ext[t] = h_tiles[t].hi[k] - h_tiles[t].lo[k];
+                    std::sort(ext.begin(), ext.end());
+                    double mn = ext.front(), md = ext[ntiles/2], mx = ext.back();
+                    double sum = 0; for(double v : ext) sum += v;
+                    double mean = sum / ntiles;
+                    printf("[NGB_MICROBENCH] tile_bbox axis=%d  min=%.6g  median=%.6g  mean=%.6g  max=%.6g  box=%.6g  max/box=%.4f\n",
+                           k, mn, md, mean, mx, bs_axes[k], (bs_axes[k]>0 ? mx/bs_axes[k] : 0.0));
+                }
+                /* Per-active query stats: h_i, h_i/box, position. */
+                {
+                    std::vector<int> h_active(num_active);
+                    Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> ha(h_active.data(), num_active);
+                    Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> da(active, num_active);
+                    Kokkos::deep_copy(ha, da);
+                    std::vector<float> h_compact(4 * (size_t)num_total);
+                    Kokkos::View<float*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hc(h_compact.data(), 4 * num_total);
+                    Kokkos::View<const float*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dc(compact_xyzh, 4 * num_total);
+                    Kokkos::deep_copy(hc, dc);
+                    for(int aa = 0; aa < num_active; aa++) {
+                        int i = h_active[aa];
+                        float x = h_compact[i*4+0], y = h_compact[i*4+1], z = h_compact[i*4+2], h = h_compact[i*4+3];
+                        printf("[NGB_MICROBENCH]   active aa=%2d i=%d  pos=(%.4g,%.4g,%.4g)  h=%.4g  h/box=(%.4f,%.4f,%.4f)\n",
+                               aa, i, x, y, z, h, h/bs0, h/bs1, h/bs2);
+                    }
+                }
+                fflush(stdout);
+            }
             for(int rep = 0; rep < 20; rep++) {
                 double tA = my_second();
                 Kokkos::parallel_for("ngb_fused_probe", num_active, KOKKOS_LAMBDA(int aa) {
