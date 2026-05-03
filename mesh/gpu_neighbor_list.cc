@@ -129,6 +129,48 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
 
+    /* Early-out: with no active particles there is nothing to search.
+     * Skip the SIDX build/refresh AND all kernel launches.  Allocate 1-element
+     * stubs so the caller's gpu_ngb_list_free path is well-defined (it always
+     * frees neighbors/offsets/d_active).  Use cached SIDX pointers if available
+     * so the free path's "is this from cache?" comparison still works. */
+    if(num_active == 0) {
+        gpu_spatial_index_t *idx_for_stubs = NULL;
+        if(cached_idx && cached_idx->valid && cached_idx->num_total == num_total) {
+            idx_for_stubs = cached_idx;
+        }
+        if(idx_for_stubs) {
+            gnl->d_tiles  = idx_for_stubs->d_tiles;
+            gnl->d_bvh    = idx_for_stubs->d_bvh;
+            gnl->d_pool   = idx_for_stubs->d_pool;
+            gnl->d_compact_xyzh = idx_for_stubs->d_compact_xyzh;
+            gnl->ntiles   = idx_for_stubs->ntiles;
+            gnl->bvh_root = idx_for_stubs->bvh_root;
+            memcpy(gnl->periodic_flags, idx_for_stubs->periodic_flags, 3 * sizeof(int));
+            memcpy(gnl->box_sizes,      idx_for_stubs->box_sizes,      3 * sizeof(double));
+            memcpy(gnl->box_halves,     idx_for_stubs->box_halves,     3 * sizeof(double));
+        } else {
+            gnl->d_tiles = NULL; gnl->d_bvh = NULL; gnl->d_pool = NULL; gnl->d_compact_xyzh = NULL;
+            gnl->ntiles = 0; gnl->bvh_root = 0;
+            memset(gnl->periodic_flags, 0, 3*sizeof(int));
+            memset(gnl->box_sizes,      0, 3*sizeof(double));
+            memset(gnl->box_halves,     0, 3*sizeof(double));
+        }
+        gnl->d_active  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+        gnl->offsets   = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(sizeof(int));
+        gnl->offsets[0] = 0;
+        gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(sizeof(int));
+        gnl->total_pairs = 0;
+        if(ThisTask == 0) {
+            printf("[DIAG_NGL caller=%s tbm=0x%x N=0 Ntot=%d pairs=0 ovflw=0 sidx_cached=%d earlyout=1] "
+                   "total=%.3f\n",
+                   caller_label ? caller_label : "?", type_bitmask, num_total,
+                   idx_for_stubs ? 1 : 0, timediff(t_entry, my_second()));
+            fflush(stdout);
+        }
+        return;
+    }
+
     /* Use cached spatial index if available, otherwise build fresh.
      * If caller provided a cached_idx but it's not yet built, populate it (this
      * enables persistent caching across calls — caller controls invalidation). */
@@ -401,15 +443,16 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
 void gpu_ngb_list_free(gpu_neighbor_list_t *gnl, gpu_spatial_index_t *cached_idx)
 {
-    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->neighbors);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->offsets);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_active);
-    /* Only free tiles/BVH/pool if they were NOT from the cached index */
+    if(gnl->neighbors) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->neighbors);
+    if(gnl->offsets)   Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->offsets);
+    if(gnl->d_active)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_active);
+    /* Only free tiles/BVH/pool if they were NOT from the cached index.
+     * Pointers may also be NULL (early-out path with no cache); guard each. */
     if(!cached_idx || !cached_idx->valid ||
        gnl->d_tiles != cached_idx->d_tiles) {
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_pool);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_bvh);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_tiles);
+        if(gnl->d_pool)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_pool);
+        if(gnl->d_bvh)   Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_bvh);
+        if(gnl->d_tiles) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_tiles);
     }
 }
 
