@@ -17,6 +17,7 @@
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 #include "../core/proto.h"
 
@@ -800,6 +801,10 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                                        neighbor_list_t *out,
                                        double search_radius_factor)
 {
+    /* Phase 7 Round A1: sub-bucket the 1.6s gradient_prep_symlist cost.
+     * env-gated via GIZMO_STEP_PHASES; no-op when off. */
+    double t_sym_start = my_second();
+
     /* Use the per-step particle arena instead of a dedicated full-NumPart memcpy.
      * The arena's fast path is a no-op when valid (e.g. when gradient/hydro
      * already populated it earlier in the step), avoiding ~2.3s of redundant
@@ -807,12 +812,14 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
      * arena's "valid" state remains consistent across mixed P/CellP consumers. */
     gpu_particles_arena_acquire(num_total, P_host, CellP);
     struct particle_data *P_shared = gpu_particles_arena_P();
+    double t_sym_arena = my_second();
 
     /* Build GPU CSR — share gas-only SIDX with density via the step-persistent cache */
     gpu_neighbor_list_t gpu_nl;
     gpu_ngb_list_build(P_shared, num_total, active_indices, num_active,
                        NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, gpu_step_sidx_ptr(),
                        search_radius_factor, NULL, NULL, "symlist");
+    double t_sym_ngb = my_second();
 
     /* Copy CSR into mymalloc neighbor_list_t */
     out->num_active = num_active;
@@ -829,11 +836,18 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
             d_neighbors(gpu_nl.neighbors, gpu_nl.total_pairs);
         Kokkos::deep_copy(h_neighbors, d_neighbors);
     }
+    double t_sym_csr = my_second();
 
     /* Free GPU temporaries (keep tiles/BVH alive — owned by g_step_sidx).
      * Arena is intentionally not released — subsequent gradient/hydro callers
      * benefit from the fast-path skip. */
     gpu_ngb_list_free(&gpu_nl, gpu_step_sidx_ptr());
+    double t_sym_free = my_second();
+
+    gizmo_step_phase_record("symlist_arena_acquire", timediff(t_sym_start, t_sym_arena));
+    gizmo_step_phase_record("symlist_ngb_build",     timediff(t_sym_arena, t_sym_ngb));
+    gizmo_step_phase_record("symlist_csr_copy",      timediff(t_sym_ngb,   t_sym_csr));
+    gizmo_step_phase_record("symlist_free",          timediff(t_sym_csr,   t_sym_free));
 }
 
 

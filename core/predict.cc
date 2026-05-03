@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
 
 /*! Routines for the drift/predict step */
@@ -267,7 +268,14 @@ extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
 
 void move_particles(integertime time1)
 {
-    if(time1 <= g_last_full_drift_Ti) return; /* already drifted to time1; loop would be all no-ops */
+    /* Phase 7 Round A3: drift-cache state diagnostics. env-gated; no-op when off. */
+    gizmo_step_phase_record("mp_calls", 1.0);
+    if(time1 <= g_last_full_drift_Ti) {
+        gizmo_step_phase_record("mp_hits", 1.0); /* cache hit — early-return */
+        return; /* already drifted to time1; loop would be all no-ops */
+    }
+    gizmo_step_phase_record("mp_misses", 1.0); /* cache miss — full N drift fires */
+    double t_mp_start = my_second();
     int i;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
@@ -275,6 +283,7 @@ void move_particles(integertime time1)
     for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
     g_last_full_drift_Ti = time1;
     gpu_particles_arena_invalidate(); /* host Pos/VelPred drifted; arena stale */
+    gizmo_step_phase_record("mp_drift_time", timediff(t_mp_start, my_second()));
 }
 
 

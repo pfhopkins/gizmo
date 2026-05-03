@@ -17,6 +17,8 @@
  * the include order in hydro/density_gpu.cc and other GPU TUs. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../core/proto.h"
+#include "../core/step_phases.h"
 #include "gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h"
 
@@ -131,6 +133,9 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
     g_acquire_serial++;
     int my_serial = g_acquire_serial;
 
+    /* Phase 7 Round A4: arena state diagnostics. env-gated; no-op when off. */
+    gizmo_step_phase_record("arena_acquire_calls", 1.0);
+
     if(arena_P && arena_CellP && arena_capacity_ >= min_capacity) {
         if(arena_valid_) {
 #ifdef GIZMO_GPU_ARENA_DEBUG
@@ -167,14 +172,18 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
             /* Fast path: arena holds the latest host state already (no invalidate
              * fired since the previous acquire). Skip memcpy entirely — the win
              * compounds across kernels in a single timestep. */
+            gizmo_step_phase_record("arena_acquire_fastpath", 1.0);
             return;
         }
         /* Slow path: arena is stale (some host mutation site invalidated us).
          * Re-seed from host. UVM keeps pages device-resident if they weren't
          * dirtied on the device side since last access. CellP_host may be NULL
          * for N-body callers (no gas); arena_CellP storage exists but is unused. */
+        gizmo_step_phase_record("arena_acquire_slowpath", 1.0);
+        double t_acq_start = my_second();
         memcpy(arena_P,     P_host,     min_capacity * sizeof(struct particle_data));
         if(CellP_host) {memcpy(arena_CellP, CellP_host, min_capacity * sizeof(struct gas_cell_data));}
+        gizmo_step_phase_record("arena_acquire_memcpy_time", timediff(t_acq_start, my_second()));
         g_valid_memcpy_serial = my_serial;
         arena_valid_ = 1;
         /* DO NOT mark compact_xyzh dirty here.  Within a step, the only
@@ -215,6 +224,8 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
 
 extern "C" void gpu_particles_arena_invalidate(void)
 {
+    /* Phase 7 Round A4: count invalidate calls per step. env-gated; no-op when off. */
+    gizmo_step_phase_record("arena_invalidate_calls", 1.0);
     arena_valid_ = 0;
 }
 
