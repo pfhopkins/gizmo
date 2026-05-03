@@ -305,7 +305,21 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
      * storage intact for sink_feed/sink_swk reuse. With NULL the free
      * destroys d_tiles/d_bvh/d_pool/d_compact_xyzh out from under the cache. */
     gpu_ngb_list_free(&gnl, gpu_step_sidx_alltypes_ptr());
-    gpu_particles_arena_invalidate();
+
+    /* Phase 8a Round 3a: arena coherence. With SINGLE_STAR_SINK_DYNAMICS off,
+     * the kernel writes ZERO j-side fields (audit a06e30ca, row 4c
+     * 5a01b004) — arena P/CellP are byte-identical to host throughout
+     * this evaluator. The caller (sinks/sink_environment.cc:95-141) only
+     * mutates SinkTempInfo (separate struct, not P/CellP). Safe to
+     * mark_clean instead of invalidate.
+     * With SINGLE_STAR_SINK_DYNAMICS on, the SwallowTime sparse scatter
+     * above DOES mirror the j-side writes back to host, so arena is also
+     * coherent. (If a debug-guard run flags this branch, sweep it then.) */
+#if defined(SINGLE_STAR_SINK_DYNAMICS)
+    gpu_particles_arena_mark_clean_after_scatter("sink_environment_evaluate_gpu(single_star)");
+#else
+    gpu_particles_arena_mark_clean_after_scatter("sink_environment_evaluate_gpu");
+#endif
 }
 
 /* ========================================================================
@@ -407,7 +421,11 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     /* Preserve shared all-types SIDX for downstream sink phases. */
     gpu_ngb_list_free(&gnl, gpu_step_sidx_alltypes_ptr());
-    gpu_particles_arena_invalidate();
+
+    /* Phase 8a Round 3a: kernel is read-only on P/CellP (audit comment at
+     * function header confirms). Caller scatters out_host into SinkTempInfo
+     * only (not P/CellP). Arena byte-identical to host — mark_clean. */
+    gpu_particles_arena_mark_clean_after_scatter("sink_environment_second_evaluate_gpu");
 }
 
 #endif /* SINK_GRAVACCRETION == 0 */
