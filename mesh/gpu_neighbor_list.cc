@@ -118,13 +118,248 @@ void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n)
  * conservatively forces a full-pool refresh. */
 void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); }
 
+/* Drift-time SIDX refresh (Attack B v2: incremental rebuild).
+ *
+ * The unconditional full rebuild post-drift in the prior code cost
+ * ~1.3s/step on fire_m11i tiny-N (the dominant tiny-N bucket post-
+ * UVM-canonical). Of that, ~1s is build_sfc_tiles' SFC sort over
+ * 12.4M particles — work that's only needed when particle layout
+ * actually changes (i.e., domain_decomp).
+ *
+ * Between domain decomps, particles drift but their pool/tile
+ * assignments are still meaningful: each tile still references the
+ * same particles. Their positions just changed slightly. So the
+ * refresh path is:
+ *
+ *   1. For each tile, recompute lo/hi/hmax from the current particle
+ *      positions in its pool slice (host OMP — random P[].Pos reads
+ *      go to host memory directly under UVM-canonical, no device
+ *      page-fault storm).
+ *   2. Re-fit the BVH from the updated tile bboxes via build_tile_bvh
+ *      (CPU, O(ntiles) ≈ ms for ~70k tiles; structurally identical
+ *      to the original BVH because ntiles and tile order are unchanged).
+ *   3. Stage updated tiles + BVH to device (deep_copy, ms-scale).
+ *   4. Refresh compact_xyzh[i*4+0..2] device-side (existing parallel_for,
+ *      ms-scale). h is unchanged by drift; mark_h_dirty machinery
+ *      handles h-changes from density iter etc. independently.
+ *
+ * Correctness invariant: each tile's bbox covers all current positions
+ * of the particles in its pool. Tile assignments are frozen, so as
+ * particles "wander" spatially they accumulate into multiple tiles'
+ * bbox regions — BVH queries may visit a couple extra tiles per query
+ * (inefficiency, never a missed neighbor; each tile still iterates its
+ * pool, particles' actual positions are checked).
+ *
+ * Reset boundary: gpu_step_sidx_invalidate_full() at every domain_decomp
+ * frees the SIDX, forcing a fresh rebuild including SFC sort. Domain
+ * decomp is already a heavy step, so the marginal cost is small. This
+ * naturally bounds bbox dispersion within a decomp interval and resets
+ * tile assignments to current spatial layout.
+ *
+ * Diagnostics: sidx_drift_max_extent_ratio tracks max(new_extent /
+ * orig_extent_at_last_full_rebuild). Watch this to confirm the design
+ * assumption that bbox-spread is bounded between decomps. If it grows
+ * pathologically over many drifts, v3 (SFC reassignment) would be
+ * justified.
+ */
+
+/* Recomputes tile bboxes from current particle positions AND fills the
+ * host-side position-staging buffer (idx->h_pos_buf) for every pool
+ * member. Returns max (new_extent / orig_extent) across all tiles. */
+static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
+                                             struct particle_data *P_shared)
+{
+    sfc_tile_t *h_tiles = idx->h_tiles;
+    int *h_pool = idx->h_pool;
+    int ntiles = idx->ntiles;
+    const double *orig_extent = idx->h_tile_orig_max_extent;
+    float *pos_buf = idx->h_pos_buf;
+    double max_ratio = 0.0;
+
+    #pragma omp parallel for reduction(max:max_ratio) schedule(static)
+    for(int t = 0; t < ntiles; t++) {
+        sfc_tile_t *tile = &h_tiles[t];
+        if(tile->count <= 0) continue;
+        int j0 = h_pool[tile->first];
+        double x0 = P_shared[j0].Pos[0], y0 = P_shared[j0].Pos[1], z0 = P_shared[j0].Pos[2];
+        double lo0 = x0, hi0 = x0;
+        double lo1 = y0, hi1 = y0;
+        double lo2 = z0, hi2 = z0;
+        double hmax = P_shared[j0].KernelRadius;
+        if(pos_buf) { pos_buf[j0*3+0] = (float)x0; pos_buf[j0*3+1] = (float)y0; pos_buf[j0*3+2] = (float)z0; }
+        for(int s = 1; s < tile->count; s++) {
+            int j = h_pool[tile->first + s];
+            double x = P_shared[j].Pos[0];
+            double y = P_shared[j].Pos[1];
+            double z = P_shared[j].Pos[2];
+            if(x < lo0) lo0 = x; else if(x > hi0) hi0 = x;
+            if(y < lo1) lo1 = y; else if(y > hi1) hi1 = y;
+            if(z < lo2) lo2 = z; else if(z > hi2) hi2 = z;
+            double h = P_shared[j].KernelRadius;
+            if(h > hmax) hmax = h;
+            if(pos_buf) { pos_buf[j*3+0] = (float)x; pos_buf[j*3+1] = (float)y; pos_buf[j*3+2] = (float)z; }
+        }
+        tile->lo[0] = lo0; tile->hi[0] = hi0;
+        tile->lo[1] = lo1; tile->hi[1] = hi1;
+        tile->lo[2] = lo2; tile->hi[2] = hi2;
+        tile->hmax = hmax;
+
+        if(orig_extent && orig_extent[t] > 0) {
+            double ext = hi0 - lo0;
+            double e1 = hi1 - lo1; if(e1 > ext) ext = e1;
+            double e2 = hi2 - lo2; if(e2 > ext) ext = e2;
+            double r = ext / orig_extent[t];
+            if(r > max_ratio) max_ratio = r;
+        }
+    }
+    return max_ratio;
+}
+
+/* Refresh compact_xyzh positions on device via host-staged buffer.
+ *
+ * Avoids the UVM-fault-storm cost of a parallel_for that reads P_shared.Pos
+ * directly on device (which costs ~1.25s/step on fire_m11i 12.4M after host
+ * drift just wrote those pages — every page faults migration to GPU on first
+ * access). Instead: positions were already filled into idx->h_pos_buf by the
+ * host bbox-recompute loop; bulk deep_copy to d_pos_buf (~200MB at NVLink
+ * ~600GB/s = sub-ms), then a small device kernel scatters into the
+ * interleaved d_compact_xyzh array. h field intentionally untouched —
+ * drift doesn't change h; mark_h_dirty machinery handles h refresh
+ * separately. */
+static void sidx_refresh_compact_positions_device(gpu_spatial_index_t *idx)
+{
+    int num_total = idx->num_total;
+    if(!idx->h_pos_buf || !idx->d_pos_buf) return;
+    /* Bulk host->device copy of the staged position buffer. Single linear
+     * cudaMemcpy under the hood; pages are migrated as one transfer rather
+     * than fault-by-fault on first device read. */
+    using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
+    Kokkos::View<float*, Kokkos::HostSpace, UV>            h_v(idx->h_pos_buf, 3 * num_total);
+    Kokkos::View<float*, GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_v(idx->d_pos_buf, 3 * num_total);
+    Kokkos::deep_copy(d_v, h_v);
+
+    float *compact = idx->d_compact_xyzh;
+    float *pos_buf = idx->d_pos_buf;
+    Kokkos::parallel_for("compact_xyzh_pos_scatter", num_total, KOKKOS_LAMBDA(int i) {
+        compact[i*4+0] = pos_buf[i*3+0];
+        compact[i*4+1] = pos_buf[i*3+1];
+        compact[i*4+2] = pos_buf[i*3+2];
+    });
+    Kokkos::fence();
+}
+
+/* Re-fit BVH from updated tile bboxes (structural rebuild — left/right links
+ * are recomputed identically since tile order is unchanged, but bboxes/hmax
+ * propagate from the refreshed tiles). Calls build_tile_bvh (which mymalloc's
+ * a fresh BVH), copies into the persistent HostSpace h_bvh buffer, then frees
+ * the mymalloc'd transient. The HostSpace buffer was allocated to size
+ * 2*ntiles-1 at build time; ntiles is unchanged across drifts, so the buffer
+ * always has room. */
+static void sidx_rebuild_bvh_inplace(gpu_spatial_index_t *idx)
+{
+    tile_bvh_node_t *h_bvh_tmp = NULL;
+    int new_nnodes = build_tile_bvh(idx->h_tiles, idx->ntiles, &h_bvh_tmp);
+    if(new_nnodes > 0 && h_bvh_tmp && idx->h_bvh) {
+        memcpy(idx->h_bvh, h_bvh_tmp, new_nnodes * sizeof(tile_bvh_node_t));
+    }
+    if(h_bvh_tmp) myfree(h_bvh_tmp);
+    idx->h_bvh_nnodes = new_nnodes;
+    idx->bvh_root = new_nnodes - 1;
+}
+
+/* Stage updated host h_tiles + h_bvh to device d_tiles + d_bvh.
+ * h_pool / d_pool unchanged across drifts (tile assignments frozen). */
+static void sidx_stage_to_device(gpu_spatial_index_t *idx)
+{
+    using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
+    Kokkos::View<sfc_tile_t*,      Kokkos::HostSpace, UV>            h_tiles_v(idx->h_tiles, idx->ntiles);
+    Kokkos::View<sfc_tile_t*,      GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_tiles_v(idx->d_tiles, idx->ntiles);
+    Kokkos::View<tile_bvh_node_t*, Kokkos::HostSpace, UV>            h_bvh_v(idx->h_bvh, idx->h_bvh_nnodes);
+    Kokkos::View<tile_bvh_node_t*, GIZMO_KOKKOS_DEVICE_SPACE, UV>    d_bvh_v(idx->d_bvh, idx->h_bvh_nnodes);
+    Kokkos::deep_copy(d_tiles_v, h_tiles_v);
+    Kokkos::deep_copy(d_bvh_v,   h_bvh_v);
+}
+
+/* Forward decl */
+void gpu_step_sidx_invalidate_full(void);
+
+/* Drift-time refresh: skip the SFC sort, recompute bboxes/BVH, refresh compact_xyzh. */
+static void sidx_refresh_after_drift(gpu_spatial_index_t *idx,
+                                      struct particle_data *P_shared,
+                                      double *max_extent_ratio_out,
+                                      double *t_bbox_out, double *t_bvh_out,
+                                      double *t_stage_out, double *t_compact_out)
+{
+    double t0 = my_second();
+    double max_ratio = sidx_refresh_tile_bboxes_host(idx, P_shared);
+    double t1 = my_second();
+    sidx_rebuild_bvh_inplace(idx);
+    double t2 = my_second();
+    sidx_stage_to_device(idx);
+    double t3 = my_second();
+    sidx_refresh_compact_positions_device(idx);
+    double t4 = my_second();
+    *max_extent_ratio_out = max_ratio;
+    *t_bbox_out    = timediff(t0, t1);
+    *t_bvh_out     = timediff(t1, t2);
+    *t_stage_out   = timediff(t2, t3);
+    *t_compact_out = timediff(t3, t4);
+}
+
 void gpu_step_sidx_invalidate(void)
 {
-    if(g_step_sidx.valid) gpu_spatial_index_free(&g_step_sidx);
+    double t_total_start = my_second();
+    int refreshed = 0;
+    double max_extent_ratio = 0.0;
+    double t_bbox = 0, t_bvh = 0, t_stage = 0, t_compact = 0;
+
+    struct particle_data *P_shared = gpu_particles_arena_P();
+    if(!P_shared) {
+        /* No arena -> no canonical particle storage; fall back to full free. */
+        gpu_step_sidx_invalidate_full();
+        return;
+    }
+
+    /* v2 scope: refresh the gas SIDX (the hot-path 1.3s/step bucket from
+     * density_sidx_prebuild); alltypes goes through full-free since it
+     * only builds on sink-active steps and isn't on the dominant tiny-N
+     * path. Future v2.1 can extend the refresh path to alltypes once
+     * gas is validated. */
     if(g_step_sidx_alltypes.valid) gpu_spatial_index_free(&g_step_sidx_alltypes);
-    /* compact_xyzh is gone; next build/refresh repopulates it from current h.
-     * Force full mode so the next call doesn't skip refresh on a stale
-     * "not dirty" state. */
+
+    gpu_spatial_index_t *idx = &g_step_sidx;
+    if(idx->valid) {
+        if(!idx->h_tiles || !idx->h_pool || !idx->d_compact_xyzh || idx->ntiles <= 0) {
+            /* Defensive: incomplete state -> free, fall back to full rebuild. */
+            gpu_spatial_index_free(idx);
+            gpu_compact_xyzh_mark_h_dirty_all();
+        } else {
+            double r = 0, tb = 0, tv = 0, ts = 0, tc = 0;
+            sidx_refresh_after_drift(idx, P_shared, &r, &tb, &tv, &ts, &tc);
+            max_extent_ratio = r;
+            t_bbox = tb; t_bvh = tv; t_stage = ts; t_compact = tc;
+            refreshed = 1;
+            /* h-dirty state intentionally left intact: drift doesn't change h, and
+             * any pending dirties from density iter etc. will be consumed by the
+             * next gpu_ngb_list_build refresh as usual. */
+        }
+    }
+
+    double t_total = timediff(t_total_start, my_second());
+    gizmo_step_phase_record("sidx_drift_refresh_calls",     (double)refreshed);
+    gizmo_step_phase_record("sidx_drift_refresh_total",     t_total);
+    gizmo_step_phase_record("sidx_drift_bbox_recompute",    t_bbox);
+    gizmo_step_phase_record("sidx_drift_bvh_refit",         t_bvh);
+    gizmo_step_phase_record("sidx_drift_stage_to_device",   t_stage);
+    gizmo_step_phase_record("sidx_drift_compact_refresh",   t_compact);
+    gizmo_step_phase_record("sidx_drift_max_extent_ratio",  max_extent_ratio);
+}
+
+void gpu_step_sidx_invalidate_full(void)
+{
+    if(g_step_sidx_alltypes.valid) gpu_spatial_index_free(&g_step_sidx_alltypes);
+    if(g_step_sidx.valid) gpu_spatial_index_free(&g_step_sidx);
+    /* Force full-mode dirty so next build's compact_xyzh seeds correctly. */
     gpu_compact_xyzh_mark_h_dirty_all();
 }
 
@@ -222,9 +457,56 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     }
     double t_si4 = my_second(); /* DIAG: after compact array build */
 
+    /* Keep host-side persistent copies of tiles/pool/BVH alive across drifts
+     * so the incremental refresh path (gpu_step_sidx_invalidate ->
+     * sidx_refresh_after_drift) can recompute tile bboxes from current
+     * particle positions on host without re-running the SFC sort.
+     *
+     * MUST use Kokkos::HostSpace allocator (heap-based) NOT mymalloc — the
+     * latter is LIFO-stack-disciplined and persistent SIDX buffers would
+     * sit on top of any subsequent transient allocation (e.g. density's
+     * per-step mymalloc'd Left/Right arrays), preventing those transients
+     * from being freed in LIFO order. The transient mymalloc'd h_tiles /
+     * h_pool / h_bvh from build_sfc_tiles + build_tile_bvh are copied
+     * out then myfree'd in proper LIFO order below. */
+    idx->h_tiles = (sfc_tile_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(ntiles * sizeof(sfc_tile_t));
+    memcpy(idx->h_tiles, h_tiles, ntiles * sizeof(sfc_tile_t));
+    idx->h_pool = (int *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(pool_size * sizeof(int));
+    memcpy(idx->h_pool, h_pool, num_pool * sizeof(int));
+    idx->h_bvh = (tile_bvh_node_t *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(bvh_size * sizeof(tile_bvh_node_t));
+    memcpy(idx->h_bvh, h_bvh, bvh_nnodes * sizeof(tile_bvh_node_t));
+    idx->h_bvh_nnodes = bvh_nnodes;
+    idx->num_pool = num_pool;
+
+    /* Drift-refresh staging buffers: h_pos_buf is filled per-pool-member by the
+     * host bbox-recompute loop; bulk deep_copy to d_pos_buf; device scatter
+     * into d_compact_xyzh. Sized 3*num_total floats so each pool index can
+     * write directly to h_pos_buf[j*3+0..2] without remapping. Non-pool
+     * entries stay uninitialized in h_pos_buf and their stale d_compact_xyzh
+     * positions are never read by BVH queries (BVH only visits tiles, tiles
+     * only contain pool members). */
+    int pos_buf_count = (num_total > 0 ? num_total : 1);
+    idx->h_pos_buf = (float *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(3 * pos_buf_count * sizeof(float));
+    idx->d_pos_buf = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(3 * pos_buf_count * sizeof(float));
+
+    /* Snapshot per-tile original max-axis extent for the drift refresh's
+     * extent-ratio diagnostic (sidx_drift_max_extent_ratio). */
+    idx->h_tile_orig_max_extent = (double *) Kokkos::kokkos_malloc<Kokkos::HostSpace>(
+                                              (ntiles > 0 ? ntiles : 1) * sizeof(double));
+    for(int t = 0; t < ntiles; t++) {
+        double ext = idx->h_tiles[t].hi[0] - idx->h_tiles[t].lo[0];
+        double e1 = idx->h_tiles[t].hi[1] - idx->h_tiles[t].lo[1]; if(e1 > ext) ext = e1;
+        double e2 = idx->h_tiles[t].hi[2] - idx->h_tiles[t].lo[2]; if(e2 > ext) ext = e2;
+        idx->h_tile_orig_max_extent[t] = ext;
+    }
+
+    /* Free the transient mymalloc'd build buffers in proper LIFO order
+     * (build_tile_bvh allocated h_bvh last; build_sfc_tiles allocated
+     * h_pool then h_tiles). */
     myfree(h_bvh);
     myfree(h_tiles);
     myfree(h_pool);
+
     idx->num_total = num_total;
     idx->valid = 1;
     g_dirty_clear_(); /* fresh build seeded compact_xyzh from current h */
@@ -244,6 +526,23 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
     if(idx->d_pool) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_pool); idx->d_pool = NULL;}
     if(idx->d_bvh) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_bvh); idx->d_bvh = NULL;}
     if(idx->d_tiles) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_tiles); idx->d_tiles = NULL;}
+    /* Free host-side persistent buffers kept alive across drifts.
+     * mymalloc uses LIFO stack discipline; free in reverse-allocation order:
+     * orig_extent (allocated last in build) -> h_pool -> h_tiles -> h_bvh
+     * (h_bvh allocated first by build_tile_bvh, but build_tile_bvh may have
+     * been re-called via sidx_rebuild_bvh_inplace which freed-then-allocated,
+     * so h_bvh is on top of the stack at this point in normal flow). */
+    /* Persistent host-side buffers live in Kokkos::HostSpace (heap-allocated,
+     * not mymalloc) so they don't pin the LIFO stack across other transient
+     * mymalloc'd state. Free order doesn't matter. */
+    if(idx->h_bvh)   { Kokkos::kokkos_free<Kokkos::HostSpace>(idx->h_bvh);   idx->h_bvh = NULL; }
+    if(idx->h_tile_orig_max_extent) { Kokkos::kokkos_free<Kokkos::HostSpace>(idx->h_tile_orig_max_extent); idx->h_tile_orig_max_extent = NULL; }
+    if(idx->h_tiles) { Kokkos::kokkos_free<Kokkos::HostSpace>(idx->h_tiles); idx->h_tiles = NULL; }
+    if(idx->h_pool)  { Kokkos::kokkos_free<Kokkos::HostSpace>(idx->h_pool);  idx->h_pool = NULL; }
+    if(idx->h_pos_buf) { Kokkos::kokkos_free<Kokkos::HostSpace>(idx->h_pos_buf); idx->h_pos_buf = NULL; }
+    if(idx->d_pos_buf) { Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_pos_buf); idx->d_pos_buf = NULL; }
+    idx->h_bvh_nnodes = 0;
+    idx->num_pool = 0;
     idx->valid = 0;
 }
 

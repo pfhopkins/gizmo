@@ -64,6 +64,32 @@ struct gpu_spatial_index_t {
     float *d_compact_xyzh;
     int num_total;  /* particle count when built; mismatch → invalidate */
     int valid;  /* 1 if built and usable */
+    /* Host-side persistent copies kept alive across drifts to support
+     * gpu_step_sidx_invalidate's incremental refresh path: tile bboxes
+     * are recomputed in place from current particle positions, the BVH
+     * is re-fitted from the updated tile bboxes (build_tile_bvh re-call,
+     * O(ntiles)), then re-staged to device. Skips the expensive SFC
+     * sort (build_sfc_tiles ~1s on 12.4M particles) which is the
+     * dominant cost in a fresh build. Only freed at full invalidate
+     * (post-domain_decomp boundary). */
+    sfc_tile_t *h_tiles;        /* [ntiles] */
+    int *h_pool;                /* [num_pool] */
+    tile_bvh_node_t *h_bvh;     /* [2*ntiles-1] */
+    int h_bvh_nnodes;
+    int num_pool;
+    /* Per-tile original extent (max axis range at last full rebuild). Used to
+     * monitor cumulative bbox dispersion across drifts; if it grows pathologically
+     * the next gpu_step_sidx_invalidate_full() resets it. */
+    double *h_tile_orig_max_extent; /* [ntiles] */
+    /* Host + device position-staging buffers used by the drift refresh path to
+     * bypass the UVM-fault storm of a device-side parallel_for over P_shared.Pos.
+     * The bbox-recompute pass on host fills h_pos_buf for every pool member;
+     * h_pos_buf -> d_pos_buf is one bulk deep_copy (~200MB at NVLink ~600GB/s
+     * = sub-ms); then a tiny device-side scatter kernel writes into the
+     * interleaved d_compact_xyzh[i*4+0..2]. Non-pool entries are unused by the
+     * BVH walk so their stale h_pos_buf values are harmless. */
+    float *h_pos_buf;           /* [3*num_total] in Kokkos::HostSpace */
+    float *d_pos_buf;           /* [3*num_total] in DEVICE_SPACE */
 };
 
 
@@ -95,7 +121,22 @@ gpu_spatial_index_t *gpu_step_sidx_ptr(void);
  * Invalidated alongside the gas-only SIDX by gpu_step_sidx_invalidate(). */
 gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void);
 
+/* Drift-time refresh: incremental bbox + BVH update without an SFC re-sort.
+ * Called from run.cc after find_next_sync_point_and_drift(). Recomputes
+ * each tile's bbox from current particle positions, re-fits the BVH,
+ * refreshes compact_xyzh[i*4+0..2]. Tile assignments stay frozen (so
+ * particles can wander into other tiles' bbox regions — inefficiency,
+ * not correctness loss; each tile's pool still references its original
+ * particles whose actual current positions are inside the recomputed
+ * bbox). Reset to a fresh full rebuild at domain_decomp via
+ * gpu_step_sidx_invalidate_full(). */
 void gpu_step_sidx_invalidate(void);
+
+/* Full invalidate: free SIDXes so the next gpu_ngb_list_build does a
+ * complete rebuild including the SFC sort. Called from run.cc after
+ * any domain_decomp variant, since decomp shuffles particle indices
+ * and pool/tile assignments become stale. */
+void gpu_step_sidx_invalidate_full(void);
 
 /* Dirty-index API for compact_xyzh h-field tracking.
  *

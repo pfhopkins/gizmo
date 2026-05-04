@@ -134,9 +134,11 @@ void run(void)
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
-        gpu_step_sidx_invalidate(); /* positions changed; the gas SIDX (BVH+compact_xyzh)
-                                     * shared across density rounds + symlist within a step
-                                     * must be rebuilt on the next gas ngb_list_build call. */
+        gpu_step_sidx_invalidate(); /* drift-time refresh: incremental tile-bbox + BVH
+                                     * update, no SFC re-sort (gas SIDX persists across
+                                     * drifts; alltypes SIDX is full-freed since it's
+                                     * less hot). domain_decomp boundary below triggers
+                                     * the full rebuild via gpu_step_sidx_invalidate_full(). */
 
         STEP_PHASE_TIME("output_log_messages", output_log_messages());	/* write some info to log-files */
 
@@ -163,6 +165,14 @@ void run(void)
         {
             STEP_PHASE_TIME("force_update_tree", force_update_tree());	/* update tree dynamically with kicks of last step so that it can be reused */
             STEP_PHASE_TIME("make_active_list", make_list_of_active_particles());	/* now we can set the new chain list of active particles */
+        }
+
+        if(reconstructed_tree) {
+            /* Domain decomposition (any variant) shuffles particle layout/indices —
+             * the SIDX's pool/tile assignments reference stale slots, so the cheap
+             * drift-time refresh path can't fix it. Force a full rebuild on next use,
+             * which also reseeds per-tile original-extent tracking. */
+            gpu_step_sidx_invalidate_full();
         }
 
         STEP_PHASE_TIME("compute_grav_accelerations", compute_grav_accelerations());	/* compute gravitational accelerations for synchronous particles */
