@@ -18,11 +18,16 @@
 #define DAMAGE_POROSITY_FUNCTIONS_H
 
 #include <math.h>
-#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "jutzi_crush_curve.h"
 
 #ifdef EOS_DAMAGE_POROSITY
+/* Kokkos is only needed for the body's KOKKOS_INLINE_FUNCTION declarations.
+ * Pulling it in unconditionally would drag every TU that includes this header
+ * (e.g. solids/elastic_physics.cc, which the host compiler builds) through the
+ * CUDA-aware compile path, breaking builds that don't define EOS_DAMAGE_POROSITY
+ * (fire_m11i, etc.). */
+#include <Kokkos_Core.hpp>
 
 /* convenience accessor for whether a sub-bit is on (compile-time when the
  * runtime flag is a literal in tests; runtime otherwise) */

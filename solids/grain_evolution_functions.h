@@ -50,7 +50,7 @@
  *   Composition[0..2]                           = silicate, carbon, iron (refractory)
  *   Composition[3..GRAIN_NUM_SPECIES-1]         = H2O, CO, CO2 ices */
 KOKKOS_INLINE_FUNCTION
-inline int grain_evolution_composition_index_to_outcome_kind(int s)
+int grain_evolution_composition_index_to_outcome_kind(int s)
 {
     if(s == 0) { return GRAIN_OUTCOME_SPECIES_SILICATE; }
     if(s == 1) { return GRAIN_OUTCOME_SPECIES_CARBON;   }
@@ -225,7 +225,7 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
  * super-particle assumption -- not worth it for the small differential
  * sputter rates among silicate/carbon/iron). */
 KOKKOS_INLINE_FUNCTION
-inline void grain_evolution_apply_sputter(int i, struct particle_data *P, double dt)
+void grain_evolution_apply_sputter(int i, struct particle_data *P, double dt)
 {
     if(P[i].Mass <= 0 || P[i].Grain_Size <= 0 || P[i].Gas_Density <= 0) { return; }
 
@@ -321,7 +321,7 @@ inline void grain_evolution_apply_sputter(int i, struct particle_data *P, double
  * C5b is COND only -- bit 5 fires below T_snow[k] for each ice species.
  * C6 will add the SUBL branch (T > T_snow[k]) symmetrically. */
 KOKKOS_INLINE_FUNCTION
-inline void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
+void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
 {
     if(P[i].Mass <= 0 || P[i].Grain_Size <= 0 || P[i].Gas_Density <= 0) { return; }
     if(P[i].Gas_InternalEnergy <= 0) { return; }
@@ -456,7 +456,7 @@ inline void grain_evolution_apply_cond_subl(int i, struct particle_data *P, doub
  * infrastructure (mesh/ghost_writeback.cc::ghost_writeback_grainbackrx,
  * extended for the new fields). No parallel pass. */
 KOKKOS_INLINE_FUNCTION
-inline void grain_evolution_local_step(int i, struct particle_data *P, double dt)
+void grain_evolution_local_step(int i, struct particle_data *P, double dt)
 {
 #if (GRAIN_EVOLUTION & (8|16))
     grain_evolution_apply_sputter(i, P, dt);

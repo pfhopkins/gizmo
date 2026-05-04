@@ -80,7 +80,7 @@ struct GrainOutcomeElasticProps {
 };
 
 KOKKOS_INLINE_FUNCTION
-inline struct GrainOutcomeElasticProps grain_outcomes_elastic_props(int kind)
+struct GrainOutcomeElasticProps grain_outcomes_elastic_props(int kind)
 {
     struct GrainOutcomeElasticProps p;
     /* Defaults match the silicate branch (matches the prior fall-through in
@@ -112,7 +112,7 @@ inline struct GrainOutcomeElasticProps grain_outcomes_elastic_props(int kind)
  * (lines 1618 and 1657 prior to C2). Do not refactor x*x*x to pow(x,3) or
  * vice versa here without re-validating the FIRE regression. */
 KOKKOS_INLINE_FUNCTION
-inline double grain_outcomes_v_coag_dominik(double a_i, double a_j,
+double grain_outcomes_v_coag_dominik(double a_i, double a_j,
                                             double gamma, double E_young,
                                             double nu_poisson, double bulk_dens)
 {
@@ -141,7 +141,7 @@ enum GrainEvolutionIceIndex {
 };
 
 KOKKOS_INLINE_FUNCTION
-inline double grain_outcomes_ice_snowline_T(int ice_index)
+double grain_outcomes_ice_snowline_T(int ice_index)
 {
     /* Equilibrium sublimation/condensation temperature [K] at ~MMSN
      * midplane number densities. */
@@ -151,7 +151,7 @@ inline double grain_outcomes_ice_snowline_T(int ice_index)
     return 100.0; /* default */
 }
 KOKKOS_INLINE_FUNCTION
-inline double grain_outcomes_ice_latent_heat_cgs(int ice_index)
+double grain_outcomes_ice_latent_heat_cgs(int ice_index)
 {
     /* Latent heat of sublimation [erg / g of ice]. */
     if(ice_index == GRAIN_EVOLUTION_ICE_H2O) { return 2.83e10; }
@@ -160,7 +160,7 @@ inline double grain_outcomes_ice_latent_heat_cgs(int ice_index)
     return 1.0e10; /* default */
 }
 KOKKOS_INLINE_FUNCTION
-inline double grain_outcomes_ice_molecular_weight(int ice_index)
+double grain_outcomes_ice_molecular_weight(int ice_index)
 {
     /* Mean molecular weight of the volatile species (in amu). Used to set
      * thermal velocity in the collision-rate prefactor. */
@@ -183,7 +183,7 @@ inline double grain_outcomes_ice_molecular_weight(int ice_index)
  * original "double logt = log10(temp);" line that preceded the polynomial in
  * update_dust_sputtering. */
 KOKKOS_INLINE_FUNCTION
-inline double grain_outcomes_sputter_erosion_dadt_per_nH(double logt, int kind)
+double grain_outcomes_sputter_erosion_dadt_per_nH(double logt, int kind)
 {
     if(kind == GRAIN_OUTCOME_SPECIES_CARBON) {
         return pow(10,-226.85 + 133.44*logt - 32.572*pow(logt,2) + 4.0057*pow(logt,3) - 0.24747*pow(logt,4) + 0.0061212*pow(logt,5));
