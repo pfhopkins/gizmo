@@ -64,6 +64,23 @@
 #define SINK_CALC_DISTANCES
 #endif
 
+#if defined(EOS_DAMAGE_POROSITY)
+/* Phase 17e: damage + porosity bitfield (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
+#ifndef EOS_TILLOTSON
+#define EOS_TILLOTSON
+#endif
+#ifndef EOS_ELASTIC
+#define EOS_ELASTIC
+#endif
+#endif
+
+#if defined(PLANET_HEATING)
+/* Phase 17f: radiogenic + accretional heating; solid material required */
+#ifndef EOS_TILLOTSON
+#define EOS_TILLOTSON
+#endif
+#endif
+
 #if defined(EOS_ELASTIC)
 #if !defined(DISABLE_SURFACE_VOLCORR) && !defined(HYDRO_KERNEL_SURFACE_VOLCORR)
 #define HYDRO_KERNEL_SURFACE_VOLCORR
@@ -657,6 +674,72 @@
 #endif
 #endif
 
+/* MHD_BATTERY_MECHANISMS: in-situ EMF generation. Bitfield, see Template_Config.sh.
+   bit 0 (=1) Biermann, bit 1 (=2) radiative-ionization, bit 2 (=4) dust TVA, bit 3 (=8) dust-explicit. */
+#ifdef MHD_BATTERY_MECHANISMS
+#ifndef MAGNETIC
+#error "MHD_BATTERY_MECHANISMS requires MAGNETIC"
+#endif
+#if (MHD_BATTERY_MECHANISMS & 4) && !defined(GRAIN_FLUID)
+#error "MHD_BATTERY_MECHANISMS bit 2 (=4, dust-TVA battery) requires GRAIN_FLUID for grain properties (charge, size, stopping time). The TVA approximation does NOT require explicit J_d evolution but still uses grain state from GRAIN_FLUID."
+#endif
+#if (MHD_BATTERY_MECHANISMS & 8) && !defined(GRAIN_FLUID)
+#error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires GRAIN_FLUID"
+#endif
+#if (MHD_BATTERY_MECHANISMS & 8) && !defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
+#error "MHD_BATTERY_MECHANISMS bit 3 (=8, explicit-dust battery) requires RT_OPACITY_FROM_EXPLICIT_GRAINS — the J_dust accumulation piggybacks on the existing grain->gas pass to avoid duplicating the neighbor walk."
+#endif
+#if (MHD_BATTERY_MECHANISMS & 2) && !defined(RT_EVOLVE_FLUX)
+#error "MHD_BATTERY_MECHANISMS bit 1 (=2, radiative-ionization battery) requires an RT solver that evolves the radiation flux vector (RT_EVOLVE_FLUX)"
+#endif
+#if (MHD_BATTERY_MECHANISMS & 2) && !defined(RT_CHEM_PHOTOION)
+#error "MHD_BATTERY_MECHANISMS bit 1 (=2, radiative-ionization battery) requires RT_CHEM_PHOTOION (provides cell.HI and per-band photoionization cross-sections All.rt_ion_sigma_*)"
+#endif
+#if (MHD_BATTERY_MECHANISMS & ~15)
+#error "MHD_BATTERY_MECHANISMS may only set bits 0-3 (values 1,2,4,8); higher bits are reserved"
+#endif
+/* Bit 3 implies bit 2 should NOT also be active (would double-count) — bit 3 wins. */
+#if (MHD_BATTERY_MECHANISMS & 8) && (MHD_BATTERY_MECHANISMS & 4)
+#error "MHD_BATTERY_MECHANISMS bits 2 (dust-TVA) and 3 (dust-explicit) are mutually exclusive; pick one"
+#endif
+#endif /* MHD_BATTERY_MECHANISMS */
+
+/* TWO_TEMPERATURE_PLASMA: independently evolved electron temperature T_e.
+   Bitfield, see Template_Config.sh. bit 0 (=1) Spitzer e-i + radiative routing,
+   bit 1 (=2) e-neutral [reserved], bit 2 (=4) conduction-to-electrons. */
+#ifdef TWO_TEMPERATURE_PLASMA
+#ifndef COOLING
+#error "TWO_TEMPERATURE_PLASMA requires COOLING"
+#endif
+#ifdef CHIMES
+#error "TWO_TEMPERATURE_PLASMA conflicts with CHIMES (CHIMES already evolves T_e internally)"
+#endif
+#ifdef EOS_HELMHOLTZ
+#error "TWO_TEMPERATURE_PLASMA conflicts with EOS_HELMHOLTZ in v1 (Helmholtz EOS owns T directly)"
+#endif
+#ifdef COOLING_OPERATOR_SPLIT
+#error "TWO_TEMPERATURE_PLASMA does not support COOLING_OPERATOR_SPLIT in v1; use the unsplit cooling path"
+#endif
+#if (TWO_TEMPERATURE_PLASMA & ~7)
+#error "TWO_TEMPERATURE_PLASMA may only set bits 0-2 (values 1,2,4); higher bits are reserved"
+#endif
+#if (TWO_TEMPERATURE_PLASMA & 2)
+#error "TWO_TEMPERATURE_PLASMA bit 1 (e-neutral coupling) is reserved and not yet implemented"
+#endif
+#if (TWO_TEMPERATURE_PLASMA & 4) && !defined(CONDUCTION)
+#error "TWO_TEMPERATURE_PLASMA bit 2 (conduction-to-electrons) requires CONDUCTION"
+#endif
+#endif /* TWO_TEMPERATURE_PLASMA */
+
+/* Unified guard for the per-cell electron-state cache (T_e_cell, n_e_cell).
+   Active under either the Biermann battery (bit 0 of MHD_BATTERY_MECHANISMS) or
+   under TWO_TEMPERATURE_PLASMA. Both modules consume T_e()/n_e() via the same
+   accessors; battery treats T_e_cell as a per-step cache (== T_gas), 2-T treats
+   it as the derived view of u_e_cell. */
+#if (defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)) || defined(TWO_TEMPERATURE_PLASMA)
+#define GIZMO_TRACK_ELECTRON_STATE
+#endif
+
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC
@@ -1121,6 +1204,60 @@
 #endif // BOX_SHEARING
 
 
+#ifdef DISK_BETA_COOL
+/* minimal beta-cooling for protoplanetary-disk problems; mutually exclusive with COOLING.
+ * see cooling/disk_betacool.h for the actual operator and design notes. */
+#if defined(COOLING)
+#error "DISK_BETA_COOL is mutually exclusive with COOLING (both write CellP.InternalEnergy)."
+#endif
+#endif
+
+
+#ifdef GRAIN_EVOLUTION
+/* Phase-17b grain evolution: per-superparticle stochastic translation of the ISMDustChem
+ * fluid grain-size-evolution physics. Bitfield mirrors MHD_BATTERY_MECHANISMS:
+ *   bit 0 (=1)  COAG       — pairwise coagulation        (extends GRAIN_COLLISIONS)
+ *   bit 1 (=2)  FRAG       — pairwise fragmentation      (extends GRAIN_COLLISIONS)
+ *   bit 2 (=4)  SHAT       — pairwise shattering         (extends GRAIN_COLLISIONS)
+ *   bit 3 (=8)  THERM_SPUT — thermal sputtering          (local operator)
+ *   bit 4 (=16) NTHERM_SPUT— non-thermal sputtering      (local, drift-driven)
+ *   bit 5 (=32) COND       — condensation/mantle growth  (local; reads VolatileSpecies)
+ *   bit 6 (=64) SUBL       — sublimation/desorption      (local; inverse of bit 5)
+ * See solids/grain_evolution.cc and solids/grain_evolution_functions.h for the operators.
+ * Storage is monodisperse per super-particle: (Mass, Grain_Size, Composition[]) is the
+ * complete state — N_phys is derived on demand at call sites that need cross-section. */
+#ifndef GRAIN_FLUID
+#error "GRAIN_EVOLUTION requires GRAIN_FLUID (operates on Type-3 grain super-particles)."
+#endif
+#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#error "GRAIN_EVOLUTION is mutually exclusive with GALSF_ISMDUSTCHEM_GRAINSIZEEVO (different mass-conservation models: per-superparticle vs bin-based fluid)."
+#endif
+#if (GRAIN_EVOLUTION & 7) && !defined(GRAIN_COLLISIONS)
+#error "GRAIN_EVOLUTION pairwise bits (1|2|4 = COAG/FRAG/SHAT) require GRAIN_COLLISIONS for the neighbor-loop scaffolding."
+#endif
+#if (GRAIN_EVOLUTION & (32|64)) && !defined(GRAIN_BACKREACTION)
+#error "GRAIN_EVOLUTION condensation/sublimation bits (32|64 = COND/SUBL) require GRAIN_BACKREACTION -- they piggyback on the same kernel-weighted grain->gas writeback infrastructure (no parallel ghost-writeback path is built)."
+#endif
+/* Composition split: 3 refractory (silicate, carbon, Fe — match ISMDustChem) + 3 ice (H2O, CO, CO2). */
+#define GRAIN_NUM_REFRACTORY_SPECIES 3
+#define GRAIN_NUM_ICE_SPECIES        3
+#define GRAIN_NUM_SPECIES (GRAIN_NUM_REFRACTORY_SPECIES + GRAIN_NUM_ICE_SPECIES)
+/* Volatile gas-phase species: {H2O, CO, CO2, refractory-vapor}. Allocated only when bits 5|6 active. */
+#if (GRAIN_EVOLUTION & (32|64))
+#define GRAIN_NUM_VOLATILE_SPECIES 4
+#endif
+#endif // GRAIN_EVOLUTION
+
+#if defined(GRAIN_FLUID_PROMOTION)
+#ifndef GRAIN_FLUID
+#error "GRAIN_FLUID_PROMOTION requires GRAIN_FLUID"
+#endif
+#ifndef EOS_TILLOTSON
+#define EOS_TILLOTSON
+#endif
+#endif // GRAIN_FLUID_PROMOTION
+
+
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */
 #ifdef METALS
@@ -1277,4 +1414,3 @@
 #define SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM (1)
 #endif
 #endif
-

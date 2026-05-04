@@ -145,6 +145,28 @@ extern ALIGN(32) struct particle_data
 #if defined(GRAIN_LORENTZFORCE)
     Vec3<MyFloat> Gas_B;
 #endif
+#if defined(GRAIN_EVOLUTION)
+    /* Mass fractions of each species in this super-particle. Conserved-on-mass under
+     * coag/frag/shat (bits 0-2); inflated/depleted by condensation/sublimation (bits 5/6
+     * affect only the ice species). Sum is 1 by construction; refractory subset
+     * is composition[0..GRAIN_NUM_REFRACTORY_SPECIES-1], ice subset is the remainder. */
+    MyFloat Composition[GRAIN_NUM_SPECIES];
+#if (GRAIN_EVOLUTION & (32|64))
+    /* Kernel-weighted local gas-phase volatile mass fractions, populated by the
+     * density loop (mirrors Gas_InternalEnergy). Read by the condensation/
+     * sublimation operator inside grain_drag_kernel to compute exchange rates. */
+    MyFloat Gas_VolatileSpecies[GRAIN_NUM_VOLATILE_SPECIES];
+    /* Per-step accumulators for grain->gas back-reaction from COND/SUBL.
+     * Scattered to gas neighbors by the existing grain_backrx_pair_kernel via
+     * the same kernel weights used for momentum back-reaction. Sign convention:
+     *   Grain_DeltaVolatileMass[k] > 0  => mass flows from gas to grain (COND)
+     *   Grain_DeltaVolatileMass[k] < 0  => mass flows from grain to gas (SUBL)
+     *   Grain_DeltaInternalEnergyHeating > 0 => gas heated (latent release on COND)
+     *   Grain_DeltaInternalEnergyHeating < 0 => gas cooled (latent absorption on SUBL) */
+    MyFloat Grain_DeltaVolatileMass[GRAIN_NUM_VOLATILE_SPECIES];
+    MyFloat Grain_DeltaInternalEnergyHeating;
+#endif
+#endif
 #endif
 #if defined(PIC_MHD)
     short int MHD_PIC_SubType;

@@ -63,6 +63,21 @@ struct ags_force_gpu_out {
     double AGS_vsig; /* MAX reduction (not sum) */
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
+    /* Phase 17b pairwise outcomes (bits 0|1|2 = COAG|FRAG|SHAT). Accumulators
+     * for the local (absorber/eroded) side of each pair; scattered to P[ii]
+     * by the host-side post-pass in ags_rkern.cc.
+     *   Grain_DeltaCoagMass:                additive mass gained from COAG
+     *   Grain_DeltaCoag_CompositionMass[s]: per-species mass gained (for
+     *                                       composition mixing on absorber)
+     *   Grain_DeltaErosionFrac:             multiplicative size shrink factor
+     *                                       from FRAG/SHAT events (1 - sum of
+     *                                       per-event fractional losses;
+     *                                       applied as a^new = a^old * factor) */
+    double Grain_DeltaCoagMass;
+    double Grain_DeltaCoag_CompositionMass[GRAIN_NUM_SPECIES];
+    double Grain_DeltaErosionFrac;
+#endif
 };
 
 /* Dispatch entry: one group, one GPU kernel.

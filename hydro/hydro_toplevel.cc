@@ -115,9 +115,117 @@ static inline void out2particle_hydra(struct hydro_data_out *out, int i, int mod
 static inline void out2particle_hydra(struct hydro_data_out *out, int i, int mode, int loop_iteration)
 {
     int k;
+#if defined(MAGNETIC) && defined(MHD_BATTERY_MECHANISMS)
+    {
+        /* All cell-centered battery sources funnel into a single per-cell
+           accumulator dBdt_battery_total, then a single shared limiter applies
+           to the SUM (not per-source). Energy conservation is automatic via the
+           per-cell line further below: DtInternalEnergy -= dot(B_phys, DtB).
+           Each source is a CONSERVATIVE source, NOT a dissipative one, so we
+           do NOT use the dot(B, bflux) heating hook (which is for Ohmic). */
+        Vec3<double> dBdt_battery_total = {};
+
+        /* Common unit conversion: dB/dt[G/s_phys] -> code-B per code-time, with
+           cosmological a^2 lift (cf_a2inv = 1 non-cosmological). */
+        const double dBdt_phys_to_code =
+            UNIT_TIME_IN_CGS / All.UnitMagneticField_in_gauss / DMAX(All.cf_a2inv, MIN_REAL_NUMBER);
+
+#if (MHD_BATTERY_MECHANISMS & 1)
+        /* Tier-1 Biermann (Garaldi+2021 / AREPO style; see Soliman, Hopkins &
+           Squire 2025). Computes dB/dt directly from slope-limited cell-centered
+           gradients of n_e and T_e:
+             dB/dt = (c k_B / (e n_e)) * (grad T_e) x (grad n_e)        [G/s]
+           Curl reduces analytically to a clean two-gradient cross product
+           because E_Bier is a pure gradient (curls of gradients vanish). */
+        {
+            const double n_e_cgs = CellP[i].n_e();
+            const double T_e_cgs = CellP[i].T_e();
+            if((n_e_cgs > 0) && (T_e_cgs > 0)) {
+                const Vec3<double> g_Te_code = CellP[i].Gradients.ElectronTemperature;   /* K per code-length * cf_atime */
+                const Vec3<double> g_ne_code = CellP[i].Gradients.ElectronNumberDensity; /* cm^-3 per code-length * cf_atime */
+
+                /* physical gradients in cgs: code-coord conversion + cosmological
+                   cf_atime strip (gradient pass stores cf_atime * physical) */
+                const double inv_L_cgs = 1.0 / (UNIT_LENGTH_IN_CGS * All.cf_atime);
+                const Vec3<double> g_Te_phys = g_Te_code * inv_L_cgs;   /* K/cm */
+                const Vec3<double> g_ne_phys = g_ne_code * inv_L_cgs;   /* cm^-4 */
+
+                const double prefac = C_LIGHT_CGS * BOLTZMANN_CGS
+                    / (ELECTRONCHARGE_CGS * DMAX(n_e_cgs, MIN_REAL_NUMBER));
+                const Vec3<double> dBdt_Bier_phys_cgs = prefac * cross(g_Te_phys, g_ne_phys);
+
+                dBdt_battery_total += dBdt_Bier_phys_cgs * dBdt_phys_to_code;
+            }
+        }
+#endif
+
+#if (MHD_BATTERY_MECHANISMS & (2|4|8))
+        /* Tier-2: radiative-ionization (bit 2) and dust battery (bits 4, 8).
+           These EMFs do NOT reduce analytically to a clean cross product of
+           primitive gradients (because their structure isn't pure-gradient
+           like Biermann's). Instead, each per-cell builder writes its EMF
+           into CellP[i].E_battery_T2_cell, the gradient pass takes its
+           slope-limited gradient (a Mat3 tensor), and here we take the curl:
+             dB/dt|_T2 = -c * curl(E_battery_T2)                       [phys]
+           with the same physical->code unit conversion as Biermann.
+
+           E_battery_T2_cell is in physical-cgs statvolt/cm (= Gauss).
+           Gradients.E_battery_T2 stores the slope-limited gradient with
+           the gradient pass's storage convention: per-code-length, with
+           one factor of cf_atime injected (since x_phys = x_code * UnitLength
+           * cf_atime). Strip both factors with inv_L_cgs to get a physical
+           cgs gradient, then curl, then -c gives dB/dt in G/s_phys. */
+        {
+            const double inv_L_cgs = 1.0 / (UNIT_LENGTH_IN_CGS * All.cf_atime);
+            Mat3<double> gradE_phys_cgs;
+            for(int kr=0; kr<3; kr++) {
+                for(int kc=0; kc<3; kc++) {
+                    gradE_phys_cgs[kr][kc] = ((double)CellP[i].Gradients.E_battery_T2[kr][kc]) * inv_L_cgs;
+                }
+            }
+            const Vec3<double> curl_E_phys_cgs = gradE_phys_cgs.curl();
+            const Vec3<double> dBdt_T2_phys_cgs = -C_LIGHT_CGS * curl_E_phys_cgs;   /* G/s_phys */
+            dBdt_battery_total += dBdt_T2_phys_cgs * dBdt_phys_to_code;
+        }
+#endif
+
+        /* Single shared limiter on |dE_mag| per step over the SUM of all
+           battery sources. GIZMO uses Heaviside-Lorentz internally for magnetic
+           energy / pressure (no 4pi/8pi factors); see line below where
+           DtInternalEnergy -= dot(B_phys, DtB). Compare:
+             dE_mag_cell ~ |B_phys . dB| * V_code
+           against eps * E_internal AND eps * (P_thermal + P_mag) * V_code.
+           Slope-limited gradients already bound small-scale noise; this
+           limiter protects against extrapolation past linearization regime
+           (e.g. when growing B approaches equipartition). */
+        const double dt_code   = get_particle_timestep_in_physical(i);
+        const double V_code    = P[i].Mass / DMAX(CellP[i].Density, MIN_REAL_NUMBER);
+        const Vec3<double> B_phys_codeunits = CellP[i].Bfield() * All.cf_a2inv;
+        const Vec3<double> dB_step          = dBdt_battery_total * dt_code;
+        const double dEmag_cell = fabs(dot(B_phys_codeunits, dB_step)) * V_code;
+
+        const double E_internal_cell = P[i].Mass * CellP[i].InternalEnergyPred;
+        const double P_thermal_phys  = CellP[i].Pressure * All.cf_a3inv;
+        const double P_mag_phys      = 0.5 * B_phys_codeunits.norm_sq();
+        const double E_pressure_cell = (P_thermal_phys + P_mag_phys) * V_code;
+
+        const double eps = 0.1;
+        const double allowed = eps * DMIN(DMAX(E_internal_cell, MIN_REAL_NUMBER),
+                                          DMAX(E_pressure_cell, MIN_REAL_NUMBER));
+        if((dEmag_cell > allowed) && (dEmag_cell > 0)) {
+            const double scale = allowed / dEmag_cell;
+            dBdt_battery_total *= scale;
+        }
+
+        out->DtB += dBdt_battery_total;
+    }
+#endif
     /* these are zero-d out at beginning of hydro loop so should always be added */
     CellP[i].HydroAccel += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    CellP[i].DtInternalEnergy_FromConduction += out->DtInternalEnergy_FromConduction;
+#endif
     //CellP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -526,6 +634,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+            CellP[i].DtInternalEnergy_FromConduction = 0;
+#endif
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};

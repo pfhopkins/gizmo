@@ -53,6 +53,14 @@ void elastic_stress_tensor_force_compute_pair(
     for(int ij_switch=0; ij_switch<2; ij_switch++) {
         double nvt[NUMDIMS*NUMDIMS] = {0}, norm_m = 0, wtfac = 0;
         if(ij_switch == 0) { wtfac = wt_i; } else { wtfac = wt_j; }
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+        /* Phase 17e bit 0: damaged material carries (1-D) of its deviatoric stress */
+        {
+            double D_side = (ij_switch == 0) ? (double)local.Damage : (double)CPj.Damage;
+            if(D_side < 0.0) { D_side = 0.0; } else if(D_side > 1.0) { D_side = 1.0; }
+            wtfac *= (1.0 - D_side);
+        }
+#endif
         for(int k_v=0; k_v<NUMDIMS; k_v++) { for(int j_v=0; j_v<NUMDIMS; j_v++) {
             if(ij_switch == 0) { nvt[NUMDIMS*k_v + j_v] = local.Elastic_Stress_Tensor[k_v][j_v]; }
             else               { nvt[NUMDIMS*k_v + j_v] = CPj.Elastic_Stress_Tensor_Pred[k_v][j_v]; }

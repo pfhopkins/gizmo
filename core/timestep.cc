@@ -589,6 +589,15 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
+/* No battery-specific CFL: the battery EMF is a SOURCE, not a self-feedback
+   growth mode. Pure source dB/dt = const integrates as a linear ramp -- no
+   intrinsic stability constraint. Once B grows to dynamically-relevant
+   values, the existing MaxSignalVel-driven CFL just below picks up the
+   Alfven speed and limits dt naturally. An energy-fraction limiter on the
+   battery contribution to dB/dt is applied per-cell in
+   hydro_toplevel.cc::out2particle_hydra, which is the right place
+   (limits |dE_mag|/dt, not |B|/dt). */
+
 #ifdef MHD_NON_IDEAL
             {
                 double b_grad = 0, b_mag = 0;

@@ -16,6 +16,7 @@
 #include "../mesh/kernel.h"
 
 #include "../declarations/gpu_numeric_macros.h"
+#include "composition_registry.h"
 
 /*! Routines for gas equation-of-state terms (collects things like calculation of gas pressure)
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -76,6 +77,12 @@ double return_user_desired_target_pressure(int i)
 #ifdef COSMIC_RAY_FLUID
 #include "cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
+#include "../solids/dust_battery_functions.h"
+#endif
+#ifdef MHD_NON_IDEAL
+#include "../solids/grain_charge_functions.h"
+#endif
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h. */
@@ -99,12 +106,18 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
 
 #ifdef COOLING
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+    double ne_battery_save = 1.0; /* electron fraction (per H), used to populate n_e_cell below; default = fully ionized for pre-init */
+#endif
     if(All.Time <= All.TimeBegin) {
         temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS; /* use whatever was initialized already, because this hasn't been fully iterated in the cooling routine yet */
     } else {
         double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
         cell[i].Gamma = cell[i].gamma_eos_value();
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+        ne_battery_save = ne;
+#endif
 
         #ifdef GIZMO_DEBUG_RT_COOLING
         /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
@@ -123,6 +136,99 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
 #endif
     cell[i].Temperature = temp;
+
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+    /* electron number density cache; consumed by the Biermann battery (grad n_e)
+       and by the 2-T plasma integrator (u_e <-> T_e mapping). */
+#ifdef COOLING
+    cell[i].n_e_cell = ne_battery_save * cell[i].nHcgs();
+#else
+    cell[i].n_e_cell = cell[i].nHcgs(); /* no chemistry tracked: assume fully ionized */
+#endif
+    /* electron-temperature cache. Battery-only (no TWO_TEMPERATURE_PLASMA):
+       T_e == T_gas every step. Under TWO_TEMPERATURE_PLASMA: this is the
+       one-time LTE seed (initial T_e = TwoTemp_InitialTeOverTgas * T_gas);
+       after the first cooling step the integrator owns u_e_cell + T_e_cell
+       and we leave them alone here. */
+#ifdef TWO_TEMPERATURE_PLASMA
+    if(!(cell[i].u_e_cell > 0)) {
+        const double T_e_init = temp * All.TwoTemp_InitialTeOverTgas;
+        const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+        const double u_e_phys = 1.5 * cell[i].n_e_cell * BOLTZMANN_CGS * T_e_init / rho_phys; /* erg/g */
+        cell[i].T_e_cell = T_e_init;
+        cell[i].u_e_cell = u_e_phys / UNIT_SPECEGY_IN_CGS;
+    }
+#else
+    cell[i].T_e_cell = temp;
+#endif
+#endif
+
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+    /* Reset Tier-2 EMF accumulator each step. Each enabled bit's per-cell
+       builder (radiative below, dust further below) ADDS its contribution. */
+    cell[i].E_battery_T2_cell = {};
+#endif
+
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 2)
+    /* Tier-2 radiative-ionization battery EMF (Durrive & Langer 2015 / Harrison 1973):
+         alpha[k] = (sigma_HI[k] n_HI + sigma_HeI[k] n_HeI + sigma_HeII[k] n_HeII)
+                    / (n_e * e * c)
+         E_RI = sum_k alpha[k] * F_rad[k]                             [statvolt/cm = G]
+       Sum over photoionizing bands; gradient pass + curl in hydro_toplevel turn this
+       into dB/dt|_RI. Requires RT_EVOLVE_FLUX (for cell.Rad_Flux) and RT_CHEM_PHOTOION
+       (for cell.HI / sigma_HI / etc.); precompiler_logic.h enforces this.
+
+       F_rad units: cell.Rad_Flux[k] is stored as F_phys * V_phys in code units. We use
+       vol_inv = Density*cf_a3inv/Mass = 1/V_phys_code, then UNIT_FLUX_IN_CGS to get
+       physical cgs flux. (cf. gravtree.cc:351, where vol_inv is computed identically.) */
+    {
+        Vec3<MyDouble> E_RI = {};
+        double n_e_cgs = 0;
+#if (MHD_BATTERY_MECHANISMS & 1)
+        n_e_cgs = cell[i].n_e_cell;
+#else
+#ifdef COOLING
+        n_e_cgs = ne_battery_save * cell[i].nHcgs();
+#else
+        n_e_cgs = cell[i].nHcgs();
+#endif
+#endif
+        if((n_e_cgs > 0) && (pp[i].Mass > 0) && (cell[i].Density > 0)) {
+            const double nH = cell[i].nHcgs();
+            const double n_HI = cell[i].HI * nH;
+#ifdef RT_CHEM_PHOTOION_HE
+            const double He_per_H = (1.0 - HYDROGEN_MASSFRAC) / (4.0 * HYDROGEN_MASSFRAC);
+            const double n_HeI  = cell[i].HeI  * nH * He_per_H;
+            const double n_HeII = cell[i].HeII * nH * He_per_H;
+#endif
+            const double inv_neec = 1.0 / (n_e_cgs * ELECTRONCHARGE_CGS * C_LIGHT_CGS);
+            const double vol_inv_code = cell[i].Density * All.cf_a3inv / pp[i].Mass;
+            const double rad_flux_to_cgs = vol_inv_code * UNIT_FLUX_IN_CGS;
+
+            for(int k=0; k<N_RT_FREQ_BINS; k++) {
+                double sig_x_n = All.rt_ion_sigma_HI[k] * n_HI;
+#ifdef RT_CHEM_PHOTOION_HE
+                sig_x_n += All.rt_ion_sigma_HeI[k]  * n_HeI;
+                sig_x_n += All.rt_ion_sigma_HeII[k] * n_HeII;
+#endif
+                if(sig_x_n > 0) {
+                    const double alpha_k = sig_x_n * inv_neec;
+                    for(int kd=0; kd<3; kd++) {
+                        E_RI[kd] += alpha_k * cell[i].Rad_Flux[k][kd] * rad_flux_to_cgs;
+                    }
+                }
+            }
+        }
+        cell[i].E_battery_T2_cell += E_RI;
+    }
+#endif
+
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
+    /* Tier-2 dust battery EMF (Soliman, Hopkins & Squire 2025). Currently a
+       scaffolded stub returning {0,0,0}; SHS25 Eqs. 9, 10-12, 16-18 still to
+       be implemented in solids/dust_battery_functions.h. */
+    cell[i].E_battery_T2_cell += dust_battery_assemble_E_cell(i, cell, pp);
+#endif
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
@@ -147,24 +253,38 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     cell[i].Temperature = eos_out.temp;
 #endif
 
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    /* Per-particle solid-EOS dispatch keyed on CompositionType. With a
+       single solid-EOS flag enabled, the switch reduces to one case and
+       is bit-identical to pre-17c. With multiple solid-EOS flags enabled
+       (post-17d), eos_branch_of() partitions the CompositionType ID
+       space; see eos/composition_registry.h. */
+    switch(eos_branch_of(cell[i].CompositionType)) {
 #ifdef EOS_TILLOTSON
-    press = cell[i].calculate_tillotson_eos(); soundspeed = cell[i].SoundSpeed;
+        case EOS_BRANCH_TILLOTSON:
+            press = cell[i].calculate_tillotson_eos();
+            soundspeed = cell[i].SoundSpeed;
+            break;
 #endif
-
 #ifdef EOS_ANEOS
-    {
-        int aneos_mat = cell[i].CompositionType;
-        double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
-        double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
-        double aneos_T_guess = cell[i].Temperature;
-        double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
-        int aneos_phase;
-        aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                      &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
-        press      = aneos_P / UNIT_PRESSURE_IN_CGS;
-        soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
-        cell[i].Temperature = aneos_T_guess;
-        cell[i].PhaseID = aneos_phase;
+        case EOS_BRANCH_ANEOS: {
+            int aneos_mat = aneos_subindex(cell[i].CompositionType);
+            double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
+            double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
+            double aneos_T_guess = cell[i].Temperature;
+            double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
+            int aneos_phase;
+            aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
+                          &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+            press      = aneos_P / UNIT_PRESSURE_IN_CGS;
+            soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
+            cell[i].Temperature = aneos_T_guess;
+            cell[i].PhaseID = aneos_phase;
+            break;
+        }
+#endif
+        default:
+            break;
     }
 #endif
 
@@ -277,21 +397,24 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
     double k0 = 1.95e-4 * ag01*ag01 * sqrt(temperature); // prefactor for rate coefficient for electron-grain collisions
     double ngr_ngas = (m_neutral/m_grain) * f_dustgas; // number of grains per neutral
     double psi_prefac = 167.1 / (ag01 * temperature); // e*e/(a_grain*k_boltzmann*T): Z_grain = psi/psi_prefac where psi is constant determines charge
-    double alpha = zeta_cr * psi_prefac / (ngr_ngas*ngr_ngas * k0 * (n_eff/m_neutral)); // coefficient for equation that determines Z_grain
-    // psi solves the equation: psi = alpha * (exp[psi] - y/(1+psi)) where y=sqrt(m_ion/m_electron); note the solution for small alpha is independent of m_ion, only large alpha
-    //   (where the non-ideal effects are weak, generally) produces a difference: at very high-T, appropriate m_ion should be hydrogen+helium, but in this limit our cooling
-    //    routines will already correctly determine the ionization states. so we can safely adopt Mg as our ion of consideration
-    double y=sqrt(m_ion*PROTONMASS_CGS/ELECTRONMASS_CGS), psi_0 = 0.5188025-0.804386*log(y), psi=psi_0; // solution for large alpha [>~10]
-    if(alpha<0.002) {psi=alpha*(1.-y)/(1.+alpha*(1.+y));} else if(alpha<10.) {psi=psi_0/(1.+0.027/alpha);} // accurate approximation for intermediate values we can use here
+    double y = sqrt(m_ion*PROTONMASS_CGS/ELECTRONMASS_CGS);
+#ifdef COOLING
+    double mu_eff=2.38, x_elec=DMAX(1.e-18, cell[i].Ne*HYDROGEN_MASSFRAC*mu_eff);
+    double n_elec_input = x_elec * n_eff / mu_eff; // electron density from ionization state
+#else
+    double n_elec_input = 0.0;
+#endif
+    double Z_grain = grain_charge_equilibrium_simple(a_grain_micron, n_eff, temperature, n_elec_input, ngr_ngas, zeta_cr, m_ion);
+    double psi = Z_grain * psi_prefac; // recover psi from Z for collision-rate derivations below
     double k_e = k0 * exp(psi); // e-grain collision rate coefficient
     double k_i = k0 * sqrt(ELECTRONMASS_CGS / (m_ion*PROTONMASS_CGS)) * (1 - psi); // i-grain collision rate coefficient
-    double n_elec = zeta_cr / (ngr_ngas * k_e); // electron number density
-    double n_ion = zeta_cr / (ngr_ngas * k_i); // ion number density
-    double Z_grain = psi / psi_prefac; // mean grain charge (note this is signed, will be negative)
+    double n_elec, n_ion;
 #ifdef COOLING
-    double mu_eff=2.38, x_elec=DMAX(1.e-18, cell[i].Ne*HYDROGEN_MASSFRAC*mu_eff), R=x_elec*psi_prefac/ngr_ngas; psi_0=-3.787124454911839; n_elec=x_elec*n_eff/mu_eff; // R is essentially the ratio of negative charge in e- to dust: determines which regime we're in to set quantities below
-    if(R > 100.) {psi=psi_0;} else if(R < 0.002) {psi=R*(1.-y)/(1.+2.*y*R);} else {psi=psi_0/(1.+pow(R/0.18967,-0.5646));} // simple set of functions to solve for psi, given R above, using the same equations used to determine low-temp ion fractions
-    n_ion = n_elec * y * exp(psi)/(1.-psi); Z_grain = psi / psi_prefac; // we can immediately now calculate these from the above
+    n_elec = n_elec_input;
+    n_ion = n_elec * y * exp(psi) / (1. - psi);
+#else
+    n_elec = zeta_cr / (ngr_ngas * k_e + MIN_REAL_NUMBER);
+    n_ion  = zeta_cr / (ngr_ngas * k_i + MIN_REAL_NUMBER);
 #endif
     // now define more variables we will need below //
     double gizmo2gauss = UNIT_B_IN_GAUSS; // convert to B-field to gauss (units)

@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../eos/composition_registry.h"
 
 
 /*! \file init.c
@@ -566,6 +567,24 @@ void init(void)
         CellP[i].Eta_MHD_HallEffect_Coeff = 0;
         CellP[i].Eta_MHD_AmbiPolarDiffusion_Coeff = 0;
 #endif
+#ifdef MHD_BATTERY_MECHANISMS
+#if (MHD_BATTERY_MECHANISMS & (2|4|8))
+        CellP[i].E_battery_T2_cell = {};
+#endif
+#if (MHD_BATTERY_MECHANISMS & 8)
+        CellP[i].J_dust_cell = {};
+#endif
+#endif
+#ifdef GIZMO_TRACK_ELECTRON_STATE
+        CellP[i].n_e_cell = 0;
+        CellP[i].T_e_cell = 0;
+#endif
+#ifdef TWO_TEMPERATURE_PLASMA
+        CellP[i].u_e_cell = 0; /* eos.cc populates from LTE (T_e = T_gas) on first call */
+#if (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+        CellP[i].DtInternalEnergy_FromConduction = 0;
+#endif
+#endif
 #ifdef VISCOSITY
         CellP[i].Eta_ShearViscosity = 0;
         CellP[i].Zeta_BulkViscosity = 0;
@@ -612,6 +631,9 @@ void init(void)
             CellP[i].DtInternalEnergy = 0;
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+            CellP[i].CompositionType = MATERIAL_TILLOTSON_UNUSED; /* 0 = ideal gas; solid-body ICs set this to a named material */
+#endif
 #ifdef COOLING
 #ifndef CHIMES
             CellP[i].Ne = 1.0;
@@ -885,6 +907,15 @@ void init(void)
             CellP[i].Dt_Elastic_Stress_Tensor = CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor = {};
         } else {
             CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
+        }
+#endif
+#if defined(EOS_DAMAGE_POROSITY)
+        if(RestartFlag != 1)
+        {
+            CellP[i].Damage = 0;
+            CellP[i].ActiveCracks = 0;
+            CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15]; /* alpha_0 per material; 1 = solid */
+            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
         }
 #endif
         CellP[i].DtInternalEnergy = 0;

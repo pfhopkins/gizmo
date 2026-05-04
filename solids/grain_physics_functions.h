@@ -16,6 +16,10 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+#include "grain_charge_functions.h"
+#endif
+
 
 /* -------------------------------------------------------------------------
  *  GPU-callable grain extinction efficiency (used by B7b kernels).
@@ -61,6 +65,13 @@ struct GrainBackrxLocalIn
     Vec3<MyFloat> Grain_DeltaMomentum;
     MyFloat Gas_Density;
     MyFloat Grain_AccelTimeMin;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    /* Phase 17b grain->gas back-reaction accumulators for COND/SUBL.
+     * Distributed to gas neighbors with the same -wk_i/gas_rho weight as
+     * Grain_DeltaMomentum (see grain_backrx_pair_kernel). */
+    MyFloat Grain_DeltaVolatileMass[GRAIN_NUM_VOLATILE_SPECIES];
+    MyFloat Grain_DeltaInternalEnergyHeating;
+#endif
 };
 
 /* No per-source output (matches the CPU OUTPUT_STRUCT_NAME which is empty). */
@@ -111,6 +122,39 @@ static void grain_backrx_pair_kernel(
         2.0 * All.ErrTolIntAccuracy * pgsize * All.cf_atime * All.cf_atime / sqrt(dv2 + MIN_REAL_NUMBER),
         4.0 * (double)local.Grain_AccelTimeMin);
     Kokkos::atomic_min(&P[j].Grain_AccelTimeMin, (MyFloat)taccel_cand);
+
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    /* Phase 17b: scatter COND/SUBL back-reaction. Same kernel weight `wt`
+     * as the momentum scatter so mass and energy are deposited consistently
+     * with the existing grain_backrx convention.
+     *
+     * Distribution of a per-grain quantity Q across gas neighbors:
+     *   ΔQ_in_cell_j = Q × wk_ij × Mass_j / Gas_Density
+     * Gas_Density is the kernel-weighted Σ wk Mass that defined the local
+     * density on the grain, so this partitions Q exactly across neighbors.
+     *
+     * For volatile mass (mass fraction = mass / Mass_j):
+     *   Δ(VolatileSpecies[k]) = ΔM_volatile_in_cell_j / Mass_j
+     *                         = ΔM_grain × wk_ij / Gas_Density
+     *                         = -wt × Grain_DeltaVolatileMass[k]
+     *   Sign: Grain_DeltaVolatileMass[k] > 0 (COND) => gas mass-fraction
+     *   DROPS, since wt < 0.
+     *
+     * For specific internal energy:
+     *   Δu_j = ΔE_in_cell_j / Mass_j = -wt × Grain_DeltaInternalEnergyHeating.
+     *   Sign: Grain_DeltaInternalEnergyHeating > 0 (COND latent release) =>
+     *   gas u INCREASES.
+     *
+     * Both atomic-add to CellP[j] like the momentum scatter does. */
+    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) {
+        Kokkos::atomic_add(&CellP[j].VolatileSpecies[kv], (MyFloat)(wt * (double)local.Grain_DeltaVolatileMass[kv]));
+    }
+    if(local.Grain_DeltaInternalEnergyHeating != 0) {
+        double du = -wt * (double)local.Grain_DeltaInternalEnergyHeating;
+        Kokkos::atomic_add(&CellP[j].InternalEnergy,     (MyDouble)du);
+        Kokkos::atomic_add(&CellP[j].InternalEnergyPred, (MyDouble)du);
+    }
+#endif
 }
 
 #endif /* GRAIN_FLUID && GRAIN_BACKREACTION */
@@ -135,6 +179,10 @@ struct GasGrainRTLocalIn
     MyFloat KernelRadius, Mass;
     MyFloat Grain_Size;                 /* grain only; unused for gas source */
     MyFloat Grain_Abs_Coeff[N_RT_FREQ_BINS]; /* grain only; unused for gas source */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    MyFloat Ne_gas;                     /* gas electron fraction (cell.Ne); gas source only */
+    MyFloat Density_gas;                /* comoving gas density (code units); gas source only */
+#endif
 };
 
 /* Per-source outputs — the kernel writes only the fields relevant to its
@@ -144,6 +192,9 @@ struct GasGrainRTOut
     Vec3<MyDouble> Interpolated_Radiation_Acceleration;   /* grain direction */
     MyDouble InterpolatedGeometricDustCrossSection;       /* gas direction */
     MyDouble Interpolated_Opacity[N_RT_FREQ_BINS];        /* gas direction */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    Vec3<MyDouble> J_dust_contribution;                   /* gas direction; cgs esu/cm^2/s */
+#endif
 };
 
 /* Gas source (Type==0) searches grain neighbors: computes dust opacity
@@ -177,6 +228,55 @@ static void gasgrain_rt_gas_search_pair_kernel(
         double Q_abs = grain_extinction_Q_inline(j, k_freq, P);
         out.Interpolated_Opacity[k_freq] += (MyDouble)(Q_abs * geom);
     }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    /* Dust battery J_dust accumulation (SHS25 Eq. 8). Per-grain-particle
+       contribution to the gas-cell-centered current density:
+         dJ_d = (Z_j q_e / m_grain_single) * M_j * wk_i * (v_grain - v_gas)
+       Z_grain estimated inline from the grain Draine-Sutin tau parameter
+       (same expression as solids/grain_drag_gpu.cc::grain_drag_kernel:91 for
+       GRAIN_LORENTZFORCE — this is the existing per-grain-charge approximation).
+       Result accumulated in cgs (esu/cm^2/s); units are conservative because
+       all factors are converted to physical cgs explicitly here. */
+    {
+        const double R_grain_cgs = (double)P[j].Grain_Size;
+        const double m_grain_single_cgs = (4.0/3.0) * M_PI * R_grain_cgs*R_grain_cgs*R_grain_cgs * All.Grain_Internal_Density;
+        if((m_grain_single_cgs > 0) && (P[j].Gas_InternalEnergy > 0)) {
+            const double gamma_eff = GAMMA_DEFAULT;
+            const double cs_code = sqrt(gamma_eff*(gamma_eff-1.0) * (double)P[j].Gas_InternalEnergy);
+            const double cs_cgs = cs_code * UNIT_VEL_IN_CGS;
+            const double T_K_est = cs_cgs * cs_cgs * (2.3 * PROTONMASS_CGS)
+                                   / (gamma_eff * BOLTZMANN_CGS);
+            /* Use gas cell's electron density (local.Ne_gas, local.Density_gas) when
+               available (bit 8 + gas source); otherwise n_e=0 returns Z≈0. */
+            const double rho_gas_cgs = (double)local.Density_gas * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
+            const double n_eff_for_Z = rho_gas_cgs / PROTONMASS_CGS;
+            const double mean_mol_weight = 2.38;  /* matches eos.cc default */
+            const double n_e_for_Z = (double)local.Ne_gas * HYDROGEN_MASSFRAC
+                                     * mean_mol_weight * n_eff_for_Z;
+            const double a_grain_micron_j = R_grain_cgs * 1.0e4;  /* cm → microns */
+            const double f_dustgas_est = 0.01;                     /* default, matches eos.cc */
+            const double m_grain_in_mp  = m_grain_single_cgs / PROTONMASS_CGS;
+            const double ngr_ngas_est   = (mean_mol_weight / m_grain_in_mp) * f_dustgas_est;
+            double Z_grain = grain_charge_equilibrium_simple(a_grain_micron_j, n_eff_for_Z,
+                                                              T_K_est, n_e_for_Z, ngr_ngas_est,
+                                                              0.0 /* zeta_cr not available */, 24.3);
+            const double q_per_grain_esu = Z_grain * ELECTRONCHARGE_CGS;
+            const double M_j_cgs = (double)P[j].Mass * UNIT_MASS_IN_CGS;
+            /* wk_i has units 1/code-volume; convert to physical cgs cm^-3:
+                 wk_phys = wk_i / (UNIT_LENGTH * cf_atime)^3
+               Then M_j_cgs * wk_phys gives a contribution to local gas density
+               from grain particle j (g/cm^3 per (mass/density-norm) weight). */
+            const double L_phys_cgs = UNIT_LENGTH_IN_CGS * All.cf_atime;
+            const double wk_phys = wk_i / (L_phys_cgs * L_phys_cgs * L_phys_cgs);
+            const double charge_density_cgs = (q_per_grain_esu / m_grain_single_cgs) * M_j_cgs * wk_phys;
+            for(int kd = 0; kd < 3; kd++) {
+                const double dv_phys_cgs = ((double)P[j].Vel[kd] - (double)local.Vel[kd])
+                                           * UNIT_VEL_IN_CGS / All.cf_atime;
+                out.J_dust_contribution[kd] += (MyDouble)(charge_density_cgs * dv_phys_cgs);
+            }
+        }
+    }
+#endif
 }
 
 /* Grain source (Type in GRAIN_PTYPES) searches gas neighbors: computes

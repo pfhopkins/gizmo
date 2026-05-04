@@ -276,6 +276,10 @@ void begrun(void)
         All.ActiveFractionForMGSweep = all.ActiveFractionForMGSweep;
         All.Flag_SkipMGSolve = 0; /* first timestep always runs the MG global solve */
 #endif
+#ifdef TWO_TEMPERATURE_PLASMA
+        All.TwoTemp_InitialTeOverTgas = all.TwoTemp_InitialTeOverTgas;
+        All.TwoTemp_ShockElectronFraction = all.TwoTemp_ShockElectronFraction;
+#endif
 
         All.OutputListOn = all.OutputListOn;
         All.CourantFac = all.CourantFac;
@@ -557,6 +561,22 @@ void set_units(void)
     meanweight = 1. / ( HYDROGEN_MASSFRAC*0.5 + (1-HYDROGEN_MASSFRAC)/4. + 1./(16.+12.)); /* assumes fully-molecular if low-temp cooling enabled */
 #endif
     All.MinEgySpec = All.MinGasTemp / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
+
+#ifdef DISK_BETA_COOL
+    All.BetaCool_u_irr = All.BetaCool_Tirr / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
+#endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+    All.GrainPromotion_MassThresh = All.GrainPromotion_MassThresh_cgs / UNIT_MASS_IN_CGS;
+#endif
+#ifdef PLANET_HEATING
+    {
+        double cgs_to_code_rate = UNIT_TIME_IN_CGS / UNIT_SPECEGY_IN_CGS;
+        All.PlanetHeating_RadQ0  = All.PlanetHeating_RadQ0_cgs  * cgs_to_code_rate;
+        All.PlanetHeating_RadTau = (All.PlanetHeating_RadTau_cgs > 0.0)
+                                   ? All.PlanetHeating_RadTau_cgs / UNIT_TIME_IN_CGS : 0.0;
+        All.PlanetHeating_AccQ0  = All.PlanetHeating_AccQ0_cgs  * cgs_to_code_rate;
+    }
+#endif
 
 
 #if defined(GALSF)
@@ -1100,6 +1120,18 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef TWO_TEMPERATURE_PLASMA
+      strcpy(tag[nt], "TwoTemp_InitialTeOverTgas");
+      strcpy(alternate_tag[nt], "TwoTemp_InitTeRatio");
+      addr[nt] = &All.TwoTemp_InitialTeOverTgas;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TwoTemp_ShockElectronFraction");
+      strcpy(alternate_tag[nt], "TwoTemp_fE_Shock");
+      addr[nt] = &All.TwoTemp_ShockElectronFraction;
+      id[nt++] = REAL;
+#endif
+
 #ifdef DEVELOPER_MODE
         strcpy(tag[nt], "ErrTolIntAccuracy");
         addr[nt] = &All.ErrTolIntAccuracy;
@@ -1632,6 +1664,56 @@ void read_parameter_file(char *fname)
       strcpy(alternate_tag[nt], "Minimum_Gas_Temperature");
       addr[nt] = &All.MinGasTemp;
       id[nt++] = REAL;
+
+#ifdef DISK_BETA_COOL
+      strcpy(tag[nt], "BetaCool_Beta");
+      addr[nt] = &All.BetaCool_Beta;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "BetaCool_Tirr");
+      addr[nt] = &All.BetaCool_Tirr;
+      id[nt++] = REAL;
+#endif
+#ifdef PLANET_HEATING
+      strcpy(tag[nt], "PlanetHeating_RadQ0_cgs");
+      addr[nt] = &All.PlanetHeating_RadQ0_cgs;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "PlanetHeating_RadTau_cgs");
+      addr[nt] = &All.PlanetHeating_RadTau_cgs;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "PlanetHeating_AccQ0_cgs");
+      addr[nt] = &All.PlanetHeating_AccQ0_cgs;
+      id[nt++] = REAL;
+#endif
+
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+      strcpy(tag[nt], "GrainPromotion_MassThresh_cgs");
+      addr[nt] = &All.GrainPromotion_MassThresh_cgs;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainPromotion_DustGasRatioThresh");
+      addr[nt] = &All.GrainPromotion_DustGasRatioThresh;
+      id[nt++] = REAL;
+#endif
+#ifdef GRAIN_EVOLUTION
+      strcpy(tag[nt], "GrainEvolution_StickingCoeff");
+      addr[nt] = &All.GrainEvolution_StickingCoeff;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainEvolution_VelThreshFrag");
+      addr[nt] = &All.GrainEvolution_VelThreshFrag;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainEvolution_VelThreshShat");
+      addr[nt] = &All.GrainEvolution_VelThreshShat;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GrainEvolution_ThermalSputteringScaling");
+      addr[nt] = &All.GrainEvolution_ThermalSputteringScaling;
+      id[nt++] = REAL;
+#endif
 
 #ifdef DM_SCALARFIELD_SCREENING
       strcpy(tag[nt], "ScalarBeta");
@@ -2435,6 +2517,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("LETAllocFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to 1.0 (LET active with 1x MaxNodes foreign headroom; increase if LET unpack overflows) (=%g) \n",tag[i],alternate_tag[i],All.LETAllocFactor); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
+#endif
+#ifdef TWO_TEMPERATURE_PLASMA
+                if(strcmp("TwoTemp_InitialTeOverTgas",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to LTE seed (T_e = T_gas) at startup (=%g) \n",tag[i],alternate_tag[i],All.TwoTemp_InitialTeOverTgas); continue;}
+                if(strcmp("TwoTemp_ShockElectronFraction",tag[i])==0) {*((double *)addr[i])=0.0; printf("Tag %s (%s) not set in parameter file: defaulting to collisionless-shock limit f_e=0 (all hydro dissipation to ions; electrons heat only via Spitzer Coulomb exchange) (=%g) \n",tag[i],alternate_tag[i],All.TwoTemp_ShockElectronFraction); continue;}
 #endif
                 if(strcmp("MaxKernelRadius",tag[i])==0) {*((double *)addr[i])=MAX_REAL_NUMBER; printf("Tag %s (%s) not set in parameter file: defaulting to assume no maximum (=%g) \n",tag[i],alternate_tag[i],All.MaxKernelRadius); continue;}
                 if(strcmp("GravityConstantInternal",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to calculating in terms of other specified units if needed (=%g) \n",tag[i],alternate_tag[i],All.G); continue;}

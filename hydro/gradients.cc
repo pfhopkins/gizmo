@@ -93,6 +93,13 @@ struct Quantities_for_Gradients
 #ifdef DOGRAD_INTERNAL_ENERGY
     MyDouble InternalEnergy;
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+    MyDouble ElectronNumberDensity;  /* n_e for Biermann battery: provides grad(n_e) used in dB/dt|_Bier ~ grad(T_e) x grad(n_e). */
+    MyDouble ElectronTemperature;    /* T_e for Biermann battery (currently == T_gas). */
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+    Vec3<MyDouble> E_battery_T2;     /* Tier-2 battery EMF (sum of radiative + dust). Gradient pass produces grad(E_battery_T2); curl is taken in hydro_toplevel. */
+#endif
 #ifdef COSMIC_RAY_FLUID
     MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif
@@ -317,6 +324,21 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
         MAX_ADD(GasGradDataPasser[i].Maxima.InternalEnergy,out->Maxima.InternalEnergy,mode);
         MIN_ADD(GasGradDataPasser[i].Minima.InternalEnergy,out->Minima.InternalEnergy,mode);
         for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.InternalEnergy[k],out->Gradients[k].InternalEnergy,mode);}
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+        MAX_ADD(GasGradDataPasser[i].Maxima.ElectronNumberDensity,out->Maxima.ElectronNumberDensity,mode);
+        MIN_ADD(GasGradDataPasser[i].Minima.ElectronNumberDensity,out->Minima.ElectronNumberDensity,mode);
+        for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.ElectronNumberDensity[k],out->Gradients[k].ElectronNumberDensity,mode);}
+        MAX_ADD(GasGradDataPasser[i].Maxima.ElectronTemperature,out->Maxima.ElectronTemperature,mode);
+        MIN_ADD(GasGradDataPasser[i].Minima.ElectronTemperature,out->Minima.ElectronTemperature,mode);
+        for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.ElectronTemperature[k],out->Gradients[k].ElectronTemperature,mode);}
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+        for(j=0;j<3;j++) {
+            MAX_ADD(GasGradDataPasser[i].Maxima.E_battery_T2[j],out->Maxima.E_battery_T2[j],mode);
+            MIN_ADD(GasGradDataPasser[i].Minima.E_battery_T2[j],out->Minima.E_battery_T2[j],mode);
+            for(k=0;k<3;k++) {ASSIGN_ADD_PRESET(CellP[i].Gradients.E_battery_T2[j][k],out->Gradients[k].E_battery_T2[j],mode);}
+        }
 #endif
 #ifdef COSMIC_RAY_FLUID
         for(j=0;j<N_CR_PARTICLE_BINS;j++)
@@ -543,6 +565,13 @@ void hydro_gradient_calc(void)
             CellP[i].Gradients.Velocity = {};
 #ifdef DOGRAD_INTERNAL_ENERGY
             CellP[i].Gradients.InternalEnergy = {};
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            CellP[i].Gradients.ElectronNumberDensity = {};
+            CellP[i].Gradients.ElectronTemperature = {};
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            CellP[i].Gradients.E_battery_T2 = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
             for(k2=0;k2<N_CR_PARTICLE_BINS;k2++) {CellP[i].Gradients.CosmicRayPressure[k2] = {};}
@@ -803,6 +832,13 @@ void hydro_gradient_calc(void)
 #ifdef DOGRAD_INTERNAL_ENERGY
             construct_gradient(CellP[i].Gradients.InternalEnergy,i);
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            construct_gradient(CellP[i].Gradients.ElectronNumberDensity,i);
+            construct_gradient(CellP[i].Gradients.ElectronTemperature,i);
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            for(k=0;k<3;k++) {construct_gradient(CellP[i].Gradients.E_battery_T2[k],i);}
+#endif
 #ifdef COSMIC_RAY_FLUID
             for(k=0;k<N_CR_PARTICLE_BINS;k++) {construct_gradient(CellP[i].Gradients.CosmicRayPressure[k],i);}
             int is_particle_local_extremum[N_CR_PARTICLE_BINS]={0}; is_particle_local_extremum[0]=0; // test for local extremum to revert to lower-order reconstruction if necessary
@@ -995,6 +1031,13 @@ void hydro_gradient_calc(void)
 #endif
             local_slopelimiter(CellP[i].Gradients.InternalEnergy,GasGradDataPasser[i].Maxima.InternalEnergy,GasGradDataPasser[i].Minima.InternalEnergy,a_limiter,h_lim,stol_tmp, 1,d_max,CellP[i].InternalEnergyPred);
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            local_slopelimiter(CellP[i].Gradients.ElectronNumberDensity,GasGradDataPasser[i].Maxima.ElectronNumberDensity,GasGradDataPasser[i].Minima.ElectronNumberDensity,a_limiter,h_lim,stol, 1,d_max,CellP[i].n_e());
+            local_slopelimiter(CellP[i].Gradients.ElectronTemperature,GasGradDataPasser[i].Maxima.ElectronTemperature,GasGradDataPasser[i].Minima.ElectronTemperature,a_limiter,h_lim,stol, 1,d_max,CellP[i].T_e());
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            for(k1=0;k1<3;k1++) {local_slopelimiter(CellP[i].Gradients.E_battery_T2[k1],GasGradDataPasser[i].Maxima.E_battery_T2[k1],GasGradDataPasser[i].Minima.E_battery_T2[k1],a_limiter,h_lim,stol, 0,0,0);}
+#endif
 #ifdef DOGRAD_SOUNDSPEED
             local_slopelimiter(CellP[i].Gradients.SoundSpeed,GasGradDataPasser[i].Maxima.SoundSpeed,GasGradDataPasser[i].Minima.SoundSpeed,a_limiter,h_lim,stol, 1,d_max,CellP[i].effective_soundspeed());
 #endif
@@ -1039,6 +1082,7 @@ void hydro_gradient_calc(void)
             local_slopelimiter(CellP[i].Gradients.Phi,GasGradDataPasser[i].Maxima.Phi,GasGradDataPasser[i].Minima.Phi,a_limiter,h_lim,stol, 0,0,0);
 #endif
 #endif
+
 
 
 #ifdef TURB_DIFFUSION
@@ -1174,5 +1218,4 @@ void hydro_gradient_calc(void)
     gizmo_step_phase_record("gradient_refresh_symlist", timediff(t_grad_before_refresh, t_grad_outer_end));
     gizmo_step_phase_record("gradient_outer_total",     timediff(t_grad_outer_start,    t_grad_outer_end));
 }
-
 

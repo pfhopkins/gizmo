@@ -102,6 +102,10 @@ struct hydro_data_in
 #ifdef DOGRAD_INTERNAL_ENERGY
         Vec3<MyDouble> InternalEnergy;
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+        Vec3<MyDouble> ElectronNumberDensity;
+        Vec3<MyDouble> ElectronTemperature;
+#endif
 #ifdef DOGRAD_SOUNDSPEED
         Vec3<MyDouble> SoundSpeed;
 #endif
@@ -202,6 +206,9 @@ struct hydro_data_in
 #ifdef EOS_ELASTIC
     MyFloat Elastic_Stress_Tensor[3][3];
 #endif
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    MyFloat Damage; /* Grady-Kipp scalar D in [0,1] for i-particle */
+#endif
 
     int TimeBin;
 };
@@ -212,6 +219,9 @@ struct hydro_data_out
 {
     Vec3<MyDouble> Acc;
     MyDouble DtInternalEnergy;
+#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
+    MyDouble DtInternalEnergy_FromConduction; /*!< 2-T plasma bit 2: per-pair conduction contribution to DtInternalEnergy, accumulated separately so the cooling step can route it to u_e instead of u_total. Captured as the pre/post difference of Fluxes.p around conduction_compute_pair. */
+#endif
     MyFloat MaxSignalVel;
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;

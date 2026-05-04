@@ -48,6 +48,10 @@ static void grain_backrx_local_fill(int i,
     loc->Grain_DeltaMomentum = P_host[i].Grain_DeltaMomentum;
     loc->Gas_Density = P_host[i].Gas_Density;
     loc->Grain_AccelTimeMin = P_host[i].Grain_AccelTimeMin;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { loc->Grain_DeltaVolatileMass[kv] = P_host[i].Grain_DeltaVolatileMass[kv]; }
+    loc->Grain_DeltaInternalEnergyHeating = P_host[i].Grain_DeltaInternalEnergyHeating;
+#endif
 }
 #endif
 
@@ -190,6 +194,7 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
 static void gasgrain_rt_local_fill(int i,
                                     struct particle_data *P_host,
+                                    struct gas_cell_data *CellP_host,
                                     struct GasGrainRTLocalIn *loc)
 {
     loc->Type = P_host[i].Type;
@@ -210,6 +215,11 @@ static void gasgrain_rt_local_fill(int i,
                 (4.0 * C_LIGHT_CODE_REDUCED * rho_grain_code * R_grain_code * rho_gas_code));
         }
     }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    /* For gas sources: pack electron fraction + density for J_dust Z_grain estimate. */
+    loc->Ne_gas      = (P_host[i].Type == 0) ? CellP_host[i].Ne : 0.0f;
+    loc->Density_gas = (P_host[i].Type == 0) ? CellP_host[i].Density : 0.0f;
+#endif
 }
 #endif
 
@@ -256,7 +266,7 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
             Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(struct GasGrainRTOut));
         memset(d_out, 0, alloc_n * sizeof(struct GasGrainRTOut));
         for(int a = 0; a < num_src; a++) {
-            gasgrain_rt_local_fill(i_active_gas_host[a], P_host, &d_local[a]);
+            gasgrain_rt_local_fill(i_active_gas_host[a], P_host, CellP_host, &d_local[a]);
         }
 
         gpu_neighbor_list_t gnl;
@@ -300,12 +310,25 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
         gizmo_gpu_check_last_error("gasgrain_rt_gas_src", num_src);
 
         /* Scatter per-gas output back to CellP[i] */
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+        /* Reset J_dust_cell once per pass (active sources only) so the
+           accumulation below replaces any stale value from a previous step. */
+        for(int a = 0; a < num_src; a++) {
+            int i = i_active_gas_host[a];
+            CellP_host[i].J_dust_cell = {};
+        }
+#endif
         for(int a = 0; a < num_src; a++) {
             int i = i_active_gas_host[a];
             CellP_host[i].InterpolatedGeometricDustCrossSection += d_out[a].InterpolatedGeometricDustCrossSection;
             for(int k_freq = 0; k_freq < N_RT_FREQ_BINS; k_freq++) {
                 CellP_host[i].Interpolated_Opacity[k_freq] += d_out[a].Interpolated_Opacity[k_freq];
             }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+            for(int kd = 0; kd < 3; kd++) {
+                CellP_host[i].J_dust_cell[kd] += d_out[a].J_dust_contribution[kd];
+            }
+#endif
         }
 
         gpu_ngb_list_free(&gnl, NULL);
@@ -323,7 +346,7 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
             Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(alloc_n * sizeof(struct GasGrainRTOut));
         memset(d_out, 0, alloc_n * sizeof(struct GasGrainRTOut));
         for(int a = 0; a < num_src; a++) {
-            gasgrain_rt_local_fill(i_active_grain_host[a], P_host, &d_local[a]);
+            gasgrain_rt_local_fill(i_active_grain_host[a], P_host, CellP_host, &d_local[a]);
         }
 
         gpu_neighbor_list_t gnl;

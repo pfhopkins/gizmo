@@ -79,6 +79,30 @@ struct global_data_all_processes
   double InitGasTemp;		/*!< may be used to set the temperature in the IC's */
   double InitGasU;		/*!< the same, but converted to thermal energy per unit mass */
   double MinGasTemp;		/*!< may be used to set a floor for the gas temperature */
+#ifdef DISK_BETA_COOL
+  double BetaCool_Beta;         /*!< beta in t_cool = beta / Omega */
+  double BetaCool_Tirr;         /*!< irradiation-floor temperature [K]; 0 disables floor */
+  double BetaCool_u_irr;        /*!< derived: u corresponding to BetaCool_Tirr */
+#endif
+#ifdef PLANET_HEATING
+  double PlanetHeating_RadQ0_cgs; /*!< input: initial radiogenic specific heating rate [erg/g/s] */
+  double PlanetHeating_RadTau_cgs;/*!< input: radiogenic e-folding decay time [s] */
+  double PlanetHeating_AccQ0_cgs; /*!< input: background accretional heating rate [erg/g/s]; 0=off */
+  double PlanetHeating_RadQ0;     /*!< derived: RadQ0_cgs in code units [code u / code t] */
+  double PlanetHeating_RadTau;    /*!< derived: RadTau_cgs in code units [code t] */
+  double PlanetHeating_AccQ0;     /*!< derived: AccQ0_cgs in code units [code u / code t] */
+#endif
+#ifdef GRAIN_EVOLUTION
+  double GrainEvolution_StickingCoeff;          /*!< global sticking-coefficient multiplier for pairwise outcomes (bits 0|1|2) and condensation (bit 5). 1.0 = use species defaults from grain_collisional_outcomes.h. */
+  double GrainEvolution_VelThreshFrag;          /*!< |dv| threshold for fragmentation onset [code velocity]; 0 = use species defaults. */
+  double GrainEvolution_VelThreshShat;          /*!< |dv| threshold for shattering onset [code velocity]; 0 = use species defaults. */
+  double GrainEvolution_ThermalSputteringScaling; /*!< global multiplier on the Nozawa+(2006) thermal-sputter erosion rate (bit 3). Mirrors All.ISMDustChem_ThermalSputteringScaling. 1.0 = nominal. */
+#endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+  double GrainPromotion_MassThresh;         /*!< derived: MassThresh_cgs in code units */
+  double GrainPromotion_MassThresh_cgs;     /*!< user input: grain mass promotion threshold [g] */
+  double GrainPromotion_DustGasRatioThresh; /*!< grain/gas density ratio threshold; 0 = disabled */
+#endif
 #ifdef CHIMES
   int ChimesThermEvolOn;        /*!< Flag to determine whether to evolve the temperature in CHIMES. */
 #ifdef CHIMES_STELLAR_FLUXES
@@ -198,6 +222,10 @@ struct global_data_all_processes
 #ifdef MHD_MODIFIED_GRADIENT
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
+#endif
+#ifdef TWO_TEMPERATURE_PLASMA
+  double TwoTemp_InitialTeOverTgas; /*!< initial T_e / T_gas ratio used at the LTE seed in eos.cc on the first call (when u_e_cell == 0). Default 1.0 (LTE start). Set to !=1 in the param file to start in a 2-T initial state, e.g. for the 2T_relaxation regression test (electrons cold, ions hot, watch the analytic Spitzer relaxation toward T_eq). */
+  double TwoTemp_ShockElectronFraction; /*!< fraction f_e of the hydro-dissipation (DtInternalEnergy) deposited into electrons; remainder goes to ions. Default 0.0 = collisionless-shock limit (Vink+15, Ghavamian+13: ions take all of the dissipation, electrons heat only via Coulomb equilibration). f_e = 1.0 = strong-coupling limit (single-fluid behavior). Mach-dependent f_e (Ghavamian-style) deferred to a later refinement; one scalar suffices for v1. */
 #endif
 
   /* gravitational and hydrodynamical softening lengths (given in terms of an `equivalent' Plummer softening length) five groups of particles are supported 0=gas,1=halo,2=disk,3=bulge,4=stars */
@@ -598,7 +626,7 @@ struct global_data_all_processes
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-  double Tillotson_EOS_params[7][12]; /*! < holds parameters for Tillotson EOS for solids */
+  double Tillotson_EOS_params[7][18]; /*! < holds parameters for Tillotson EOS for solids; slots 12-15 (k_Weibull, m_Weibull, mu_DP, alpha_0) and slots 16-17 (P_e, P_s) are used only under EOS_DAMAGE_POROSITY */
 #endif
 
 #ifdef EOS_TABULATED

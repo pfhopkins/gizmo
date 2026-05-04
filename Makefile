@@ -462,6 +462,7 @@ EOSCOOL_OBJS =  \
 				eos/cosmic_ray_fluid/cosmic_ray_utilities.o \
 				solids/elastic_physics.o \
 				solids/grain_physics.o \
+				solids/grain_promotion.o \
 				solids/ism_dust_chemistry.o
 
 STARFORM_OBJS = galaxy_sf/sfr_eff.o \

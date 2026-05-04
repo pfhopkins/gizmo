@@ -1,0 +1,78 @@
+% Phase 17d smoke test: 1D adiabatic compression of H/He fluid using the
+% Chabrier-Debras 2021 (CD21) tabulated H/He EOS, loaded through the
+% existing ANEOS dispatch (EOS_ANEOS). The native CD21 (logT, logP) ASCII
+% table is converted offline to SESAME format by
+% python_src/eos_tools/cms_to_sesame.py; the converted file is hosted at
+%   http://www.tapir.caltech.edu/~phopkins/sims/cd21_y0275.sesame
+% (placeholder path; update once uploaded).
+%
+% This is intentionally a compile-and-smoke target only. Physics validation
+% (Jupiter/Saturn polytrope vs published interior models) is deferred.
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=1
+%        BOX_PERIODIC
+%        SELFGRAVITY_OFF
+%        EOS_ANEOS
+
+InitCondFile                       compression_ics
+OutputDir                          output
+TimeMax                            1.0
+BoxSize                            10
+TimeBetSnapshot                    0.1
+MaxSizeTimestep                    0.001
+DesNumNgb                          4
+MaxNumNgbDeviation                 1e-6
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.0025
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.125
+TimeBetStatistics                  0.5
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+
+% Code units (chosen so code units = CGS for direct comparison with the
+% CD21 table; the SESAME loader feeds rho/u in CGS regardless).
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+UnitVelocity_in_cm_per_s           1.0
+UnitMagneticField_in_gauss         1.0
+GravityConstantInternal            0
+
+% ANEOS table parameters
+AneosNumMaterials                  1
+AneosTable0                        cd21_y0275.sesame
+
+InitGasTemp                        100
+MinGasTemp                         10
+MinGasHsmlFractional               0
+SofteningGas                       0.05
+SofteningHalo                      0.05
+SofteningDisk                      0.05
+SofteningBulge                     0.05
+SofteningStars                     0.05
+SofteningBndry                     0.05
+SofteningGasMaxPhys                0.05
+SofteningHaloMaxPhys               0.05
+SofteningDiskMaxPhys               0.05
+SofteningBulgeMaxPhys              0.05
+SofteningStarsMaxPhys              0.05
+SofteningBndryMaxPhys              0.05
+PartAllocFactor                    5.0
+BufferSize                         100
+TimeBegin                          0
+ComovingIntegrationOn              0
+TimeOfFirstSnapshot                0
+SnapFormat                         3
+NumFilesPerSnapshot                1
+NumFilesWrittenInParallel          1
+CpuTimeBetRestartFile              7200
+TimeLimitCPU                       100000
+ICFormat                           3
+TypeOfTimestepCriterion            0
+TypeOfOpeningCriterion             1
+OutputListOn                       0
+OutputListFilename                 output_times.txt
+PeriodicBoundariesOn               1

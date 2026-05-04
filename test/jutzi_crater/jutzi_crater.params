@@ -1,0 +1,52 @@
+% Jutzi cratering smoke test (Phase 17e, CGS units)
+% Basalt impactor into basalt target, 3 km/s impact.
+% CompositionType=2 (basalt) for all particles; per-material Tillotson params
+% are loaded from the built-in table via tillotson_eos_init() into slots [2][*].
+% Slot [0][*] (below) is the fallback / required universal set; we populate it
+% with basalt values since GIZMO requires these tags.  All values in code units
+% (UnitLength=UnitMass=UnitVelocity=1 => code units = CGS here).
+
+% Tillotson EOS params for slot [0] (universal fallback, basalt values in CGS=code)
+Tillotson_EOS_params_a          0.5
+Tillotson_EOS_params_b          1.5
+Tillotson_EOS_params_u_0        4.87e12
+Tillotson_EOS_params_rho_0      2.7
+Tillotson_EOS_params_A          2.67e11
+Tillotson_EOS_params_B          2.67e11
+Tillotson_EOS_params_u_s        4.72e10
+Tillotson_EOS_params_u_s_prime  1.82e11
+Tillotson_EOS_params_alpha      5.0
+Tillotson_EOS_params_beta       5.0
+Tillotson_EOS_params_mu         2.27e11
+Tillotson_EOS_params_Y0         3.5e10
+
+InitCondFile                       jutzi_crater_ics
+OutputDir                          output
+SnapshotFileBase                   snapshot
+
+TimeMax                            1.0e-5
+TimeBetSnapshot                    5.0e-6
+TimeBegin                          0.0
+OutputListOn                       0
+
+MaxSizeTimestep                    5.0e-7
+MinSizeTimestep                    1.0e-12
+CourantFac                         0.2
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+
+TimeBetStatistics                  5.0e-6
+MaxMemSize                         1000
+
+ResubmitOn                         0
+ResubmitCommand                    none
+
+UnitVelocity_in_cm_per_s           1.0
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0

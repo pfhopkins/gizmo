@@ -371,6 +371,9 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
 #if defined(GRAIN_LORENTZFORCE)
                 kp[ii].Gas_B = out.Gas_B;
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+                for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { kp[ii].Gas_VolatileSpecies[kv] = out.Gas_VolatileSpecies[kv]; }
+#endif
             }
 #endif
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
@@ -526,6 +529,13 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
             local.GQuant.InternalEnergy = kc[ii].InternalEnergyPred;
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+            local.GQuant.ElectronNumberDensity = kc[ii].n_e();
+            local.GQuant.ElectronTemperature   = kc[ii].T_e();
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+            local.GQuant.E_battery_T2 = kc[ii].E_battery_T2_cell;
 #endif
 #ifdef DOGRAD_SOUNDSPEED
             local.GQuant.SoundSpeed = kc[ii].effective_soundspeed();
@@ -790,6 +800,12 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #ifdef MAGNETIC
             local.BPred = kc[ii].Bfield(); /* Bfield() = BPred * Density/Mass: convert from mass-weighted storage to physical B */
             local.Gradients.B = kc[ii].Gradients.B;
+#ifdef MHD_BATTERY_MECHANISMS
+#if (MHD_BATTERY_MECHANISMS & 1)
+            local.Gradients.ElectronNumberDensity = kc[ii].Gradients.ElectronNumberDensity;
+            local.Gradients.ElectronTemperature = kc[ii].Gradients.ElectronTemperature;
+#endif
+#endif
 #ifdef DIVBCLEANING_DEDNER
             local.PhiPred = kc[ii].PhiPred / kp[ii].Mass;
             local.Gradients.Phi = kc[ii].Gradients.Phi;
@@ -897,6 +913,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #endif
 #ifdef EOS_ELASTIC
             for(int k=0;k<3;k++) {for(int k2=0;k2<3;k2++) {local.Elastic_Stress_Tensor[k][k2] = kc[ii].Elastic_Stress_Tensor_Pred[k][k2];}}
+#endif
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+            local.Damage = kc[ii].Damage;
 #endif
 #ifdef GALSF_SUBGRID_WINDS
             local.DelayTime = kc[ii].DelayTime;
@@ -1024,5 +1043,4 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         gizmo_step_phase_record("hydro_postloop",    timediff(t_hyd_scatter,  t_postloop_end));
     }
 }
-
 

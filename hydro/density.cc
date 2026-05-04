@@ -752,11 +752,17 @@ void density(void)
                 {
                     P[i].Gas_InternalEnergy /= P[i].Gas_Density;
                     P[i].Gas_Velocity /= P[i].Gas_Density;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+                    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { P[i].Gas_VolatileSpecies[kv] /= P[i].Gas_Density; }
+#endif
                 } else {
                     P[i].Gas_InternalEnergy = 0;
                     P[i].Gas_Velocity = {};
 #if defined(GRAIN_LORENTZFORCE)
                     P[i].Gas_B = {};
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+                    for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { P[i].Gas_VolatileSpecies[kv] = 0; }
 #endif
                 }
             }

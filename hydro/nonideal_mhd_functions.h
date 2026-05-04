@@ -3,8 +3,20 @@
  *
  * Body guarded by MHD_NON_IDEAL. Pure i-accumulation into Fluxes.B.
  *
- * Note (from original): not updated for cosmological units. Intended for
- * non-cosmological simulations.
+ * Cosmological units (commit 9/N): predict.cc:268 requires anything added to
+ * Fluxes.B/DtB to be in physical d(B*V)/dt (the integrator does the
+ * conversion via *dt/cf_atime to get the code-unit BPred update). The native
+ * scaling of this routine is cf_atime^3 too large vs physical:
+ *   B_code = a^2 * B_phys                   (cf. bhat = (B_i+B_j)/2 * cf_a2inv)
+ *   Bfield() differences  d_scalar  ~ a^2 * dB_phys
+ *   gradient(Bfield) in code-coord  ~ a^3 * gradB_phys      (extra factor of
+ *     a from x_code = x_phys/a)
+ *   J_current, J_direct, b_flux, db_direct, db_direct_diff:  all  ~ a^3 * physical
+ *   hll_correction_fn(d_scalar_hll, ...) output:  ~ a^2 * physical (because
+ *     d_scalar_hll comes from Bfield differences, NOT gradients).
+ * Internal consistency requires a uniform a-power throughout the limiter; we
+ * lift hll_corr from a^2 to a^3 with one cf_atime, then strip the uniform
+ * a^3 from the final OUT-param with one cf_a3inv. cf_atime=1 bit-identical.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -15,6 +27,36 @@
 #define NONIDEAL_MHD_FUNCTIONS_H
 
 #include "hydro_pair_types.h"
+
+/* Shared linear-algebra helper for assembling the comoving electric field E'
+ * (or, in code units, the b_flux) from a current J and its decomposition
+ * along/perpendicular to B^:
+ *   b_flux = -coef_O J  -  coef_H (J x B^)  -  coef_A ((J x B^) x B^)
+ * where coef_{O,H,A} are Ohmic, Hall, and ambipolar coefficients respectively.
+ *
+ * Used by:
+ *   - nonideal_mhd_compute_pair (this file): coef = eta = (c^2/4pi)*alpha
+ *     with J = curl B (the standard MHD current).
+ *   - dust battery (solids/dust_battery_functions.h): builds E_dust per-cell;
+ *     gradient pass takes ∇E_dust; curl applied in hydro_toplevel.cc.
+ *     = (c^2/4pi)*alpha_dust with J = J_d (dust current).
+ *
+ * The structural identity between non-ideal MHD and the dust battery is the
+ * key insight from Soliman, Hopkins & Squire 2025 (Eq. 9): both produce the
+ * same E' form, just with different (coef, J) pairs. */
+KOKKOS_INLINE_FUNCTION
+Vec3<double> nonideal_mhd_assemble_bflux(
+    double coef_O, double coef_H, double coef_A,
+    const Vec3<double>& J, const Vec3<double>& bhat)
+{
+    Vec3<double> b_flux = {};
+    Vec3<double> JcrossB = cross(J, bhat);
+    Vec3<double> JcrossBcrossB = cross(JcrossB, bhat);
+    if(fabs(coef_O) > 0) { b_flux += -coef_O * J; }
+    if(fabs(coef_A) > 0) { b_flux +=  coef_A * JcrossBcrossB; }
+    if(fabs(coef_H) > 0) { b_flux += -coef_H * JcrossB; }
+    return b_flux;
+}
 
 KOKKOS_INLINE_FUNCTION
 void nonideal_mhd_compute_pair(
@@ -68,13 +110,7 @@ void nonideal_mhd_compute_pair(
     }
     double Jmag = J_current.norm_sq();
 
-    Vec3<double> b_flux = {};
-    Vec3<double> JcrossB = cross(J_current, bhat);
-    Vec3<double> JcrossBcrossB = cross(JcrossB, bhat);
-    if(fabs(eta_ohmic) > 0) { b_flux += -eta_ohmic * J_current; }
-    if(fabs(eta_ad)    > 0) { b_flux +=  eta_ad    * JcrossBcrossB; }
-    if(fabs(eta_hall)  > 0) { b_flux += -eta_hall  * JcrossB; }
-
+    Vec3<double> b_flux = nonideal_mhd_assemble_bflux(eta_ohmic, eta_hall, eta_ad, J_current, bhat);
     bflux_from_nonideal_effects = cross(Face_Area_Vec, b_flux);
 
     double eta_0 = v_hll * kernel.r * All.cf_atime;
@@ -82,13 +118,8 @@ void nonideal_mhd_compute_pair(
     if(fabs(eta_ohmic) > 0) { q = eta_0/fabs(eta_ohmic); eta_ohmic_0 = eta_0*(0.2 + q)/(0.2 + q + q*q); }
     if(fabs(eta_ad)    > 0) { q = eta_0/fabs(eta_ad);    eta_ad_0    = eta_0*(0.2 + q)/(0.2 + q + q*q); }
     if(fabs(eta_hall)  > 0) { q = eta_0/fabs(eta_hall);  eta_hall_0  = eta_0*(0.2 + q)/(0.2 + q + q*q); if(eta_hall < 0) { eta_hall_0 *= -1; } }
-    Vec3<double> b_flux_direct = {}, db_direct;
-    Vec3<double> JcrossB_direct      = cross(J_direct, bhat);
-    Vec3<double> JcrossBcrossB_direct = cross(JcrossB_direct, bhat);
-    if(fabs(eta_ohmic_0) > 0) { b_flux_direct += -eta_ohmic_0 * J_direct; }
-    if(fabs(eta_ad_0)    > 0) { b_flux_direct +=  eta_ad_0    * JcrossBcrossB_direct; }
-    if(fabs(eta_hall_0)  > 0) { b_flux_direct += -eta_hall_0  * JcrossB_direct; }
-    db_direct = cross(Face_Area_Vec, b_flux_direct);
+    Vec3<double> b_flux_direct = nonideal_mhd_assemble_bflux(eta_ohmic_0, eta_hall_0, eta_ad_0, J_direct, bhat);
+    Vec3<double> db_direct = cross(Face_Area_Vec, b_flux_direct);
 
     double db_dot_direct_diff = 0;
     double F_ddiff_prefac = -Face_Area_Norm * rinv * DMAX(eta_ohmic, fabs(eta_hall) + eta_ad);
@@ -100,8 +131,15 @@ void nonideal_mhd_compute_pair(
     for(int k=0; k<3; k++) {
         double d_scalar_tmp = d_scalar[k] - grad_dot_x_ij[k];
         double d_scalar_hll = MINMOD(d_scalar[k], d_scalar_tmp);
+        /* hll_correction_fn output is built from d_scalar_hll which carries
+           cf_atime^2 (Bfield difference), but everything else in this loop
+           (b_flux, db_direct, db_direct_diff) carries cf_atime^3. Lift to
+           cf_atime^3 here so the +/MINMOD/sign-check operations below compare
+           like-with-like. The final cf_a3inv at the end of the function then
+           strips the uniform cf_atime^3 from all of them simultaneously. */
         double hll_corr = bfluxmag * hll_correction_fn(d_scalar_hll, 0., 1., eta_max,
-                                                       v_hll, Face_Area_Norm, kernel.r, All.cf_atime);
+                                                       v_hll, Face_Area_Norm, kernel.r, All.cf_atime)
+                          * All.cf_atime;
         double db_corr = bflux_from_nonideal_effects[k] + hll_corr;
         bflux_from_nonideal_effects[k] = MINMOD(1.1 * bflux_from_nonideal_effects[k], db_corr);
         if(hll_corr != 0) {
@@ -120,8 +158,22 @@ void nonideal_mhd_compute_pair(
         bflux_from_nonideal_effects -= (db_dot_direct_diff / db_direct_diff_mag2) * db_direct_diff;
     }
 
+    /* Cosmological units (commit 9/N): all flux contributions inside this
+       block are uniformly cf_atime^3 too large vs physical d(B*V)/dt. Strip
+       the factor here so Fluxes.B and the OUT param bflux_from_nonideal_effects
+       (consumed by the energy hook in hydro_functions.h) are both in physical
+       units, matching the integrator convention asserted at predict.cc:268.
+       cf_atime=1: bit-identical (cf_a3inv=1). */
+    bflux_from_nonideal_effects *= All.cf_a3inv;
     Fluxes.B += bflux_from_nonideal_effects;
 #endif /* MHD_NON_IDEAL */
+
+    /* Battery sources (Biermann, radiative-ionization, dust) are NOT applied
+       here. They are evaluated as cell-centered source terms in
+       hydro_toplevel.cc::out2particle_hydra after the pair loop closes;
+       face-flux/curl-of-EMF evaluation cannot be made discretely div-B
+       preserving on an unstructured/meshless mesh (cf. AREPO's cell-centered
+       choice; see Garaldi+2021 §2.2). */
 }
 
 #endif /* NONIDEAL_MHD_FUNCTIONS_H */

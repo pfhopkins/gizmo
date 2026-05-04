@@ -8,6 +8,24 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "grain_collisional_outcomes.h"
+
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+/* Dispatch from the runtime ISMDustChem species index to the stable
+ * GrainOutcomeSpecies enum used by grain_collisional_outcomes.h. Returns the
+ * silicate/default enum for SiC and ORes (SiC has its key element handled
+ * elsewhere; the elastic-props branch in update_dust_shattering_and_coagulation
+ * never reached SiC under the prior fall-through, which silently used the
+ * silicate-default elastic constants — this dispatch preserves that). */
+static inline int ismdustchem_spec_indx_to_outcome_kind(int spec_indx)
+{
+    if(spec_indx == All.ISMDustChem_Sil_Index)        { return GRAIN_OUTCOME_SPECIES_SILICATE; }
+    if(spec_indx == All.ISMDustChem_Carb_Index)       { return GRAIN_OUTCOME_SPECIES_CARBON;   }
+    if(spec_indx == All.ISMDustChem_FreeIron_Index ||
+       spec_indx == All.ISMDustChem_InclIron_Index)   { return GRAIN_OUTCOME_SPECIES_IRON;     }
+    return GRAIN_OUTCOME_SPECIES_DEFAULT;
+}
+#endif
 
 /* This module collects the live ism dust chemistry modules developed by Caleb Choban in Choban et al., 2022/25.
     Written by C. Choban, reorganized and collected by PFH.
@@ -187,7 +205,7 @@ void Initialize_ISMDustChem_Particle_Variables(int i, struct particle_data *pp, 
 #endif
     }
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-    Initialize_ISMDustChemEvo_Particle_Variables(i);
+    Initialize_ISMDustChemEvo_Particle_Variables(i, pp, cell);
 #endif
 }
 
@@ -537,7 +555,7 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
     yields[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+source_key] = dust_yields[0]; // total yield goes to the source term of this type
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {yields[k+NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES]=species_yields[k];}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-    ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,cell[i].Mass*cell[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields
+    ISMDustChemEvo_get_wind_dust_grain_size_yields(yields,P[i].Mass*P[i].MassReturn_ThisTimeStep); // get dust grain size/mass yields (i is a star-particle index; MassReturn_ThisTimeStep lives on particle_data, not gas_cell_data) //
 #endif
 }
 
@@ -844,7 +862,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             ISMDustChem_get_species_properties(spec_indx, &dust_atomic_weight, &bulk_dens);
             // First get the mass/number of grain in each bin in the shocked and unshocked gas. 
             for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
-                double total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l, cell);
+                double total_bin_mass = get_ISMDustChemEvo_bin_mass(j,k,l, CellP);
                 shocked_init_bin_N[l] = mass_frac_shocked * CellP[j].ISMDustChem_Dust_NumberInBin[k][l];
                 shocked_init_bin_slope[l] = mass_frac_shocked * CellP[j].ISMDustChem_Dust_SlopeInBin[k][l];
                 shocked_init_bin_M[l] = mass_frac_shocked * total_bin_mass;
@@ -861,7 +879,7 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
             // Update number and slope in each bin
             for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) { 
                 species_yields[k] += unshocked_init_bin_M[l]+shocked_final_bin_M[l];
-                update_ISMDustChemEvo_bin_number_and_slope(j, k, l, unshocked_init_bin_N[l]+shocked_final_bin_N[l], unshocked_init_bin_M[l]+shocked_final_bin_M[l], cell);
+                update_ISMDustChemEvo_bin_number_and_slope(j, k, l, unshocked_init_bin_N[l]+shocked_final_bin_N[l], unshocked_init_bin_M[l]+shocked_final_bin_M[l], CellP);
             }
             species_yields[k] /= (m0 * UNIT_MASS_IN_CGS); // Convert to mass fraction
         }
@@ -943,8 +961,8 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
                 // If either the number of grains or mass of grains injected into the bin are zero then nothing to do here. Also deals with rounding errors that can cause negative values
                 if (inject_N_in_bin>0 && inject_M_in_bin>0) {
                     new_N_in_bin = CellP[j].ISMDustChem_Dust_NumberInBin[k][l] + inject_N_in_bin;
-                    new_M_in_bin = get_ISMDustChemEvo_bin_mass(j,k,l, cell) + inject_M_in_bin;
-                    update_ISMDustChemEvo_bin_number_and_slope(j,k,l,new_N_in_bin,new_M_in_bin, cell);
+                    new_M_in_bin = get_ISMDustChemEvo_bin_mass(j,k,l, CellP) + inject_M_in_bin;
+                    update_ISMDustChemEvo_bin_number_and_slope(j,k,l,new_N_in_bin,new_M_in_bin, CellP);
                 }
             }
         }
@@ -1461,7 +1479,7 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho, st
 #if (GALSF_ISMDUSTCHEM_MODEL & 2) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
         int k_cycle, n_subcycle;
         double species_yields[NUM_ISMDUSTCHEM_SPECIES] = {0.0};
-        double carbSput, silSput, ironSput, Y_sput, dadt, dust_formula_mass, clumping_factor;
+        double Y_sput, dadt, dust_formula_mass, clumping_factor;
         double logt = log10(temp);
         double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;    /* hydrogen number dens in cgs units */
         double bin_da[NUM_ISMDUSTCHEM_SIZE_BINS];
@@ -1470,16 +1488,14 @@ void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho, st
 
         // Sputtering erosion rates (change in grain size per nH) for silicates, carbonaceous, and metallic iron dust from polynomial fits to Nozawa+(2006). Y=(da/dt)/nH (um/yr cm^3)
         // This is the change in grain radius over time which is independant of grain size.
-        carbSput = pow(10,-226.85 + 133.44*logt - 32.572*pow(logt,2) + 4.0057*pow(logt,3) - 0.24747*pow(logt,4) + 0.0061212*pow(logt,5));
-        silSput = pow(10,-226.95 + 127.94*logt - 29.920*pow(logt,2) + 3.5354*pow(logt,3) - 0.21055*pow(logt,4) + 0.0050362*pow(logt,5));
-        ironSput = pow(10,-156.88 +  82.110*logt - 18.238*pow(logt,2) + 2.0692*pow(logt,3) - 0.11933*pow(logt,4) + 0.0027788*pow(logt,5));
+        // Polynomial fits live in solids/grain_collisional_outcomes.h.
 
         for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {
             spec_indx = All.ISMDustChem_TrackedSpeciesIDTable[k];
             Y_sput = 0;
-            if (spec_indx==All.ISMDustChem_Sil_Index) {Y_sput = silSput;}
-            else if (spec_indx==All.ISMDustChem_Carb_Index) {Y_sput = carbSput;}
-            else if (spec_indx==All.ISMDustChem_FreeIron_Index) {Y_sput = ironSput;}
+            if (spec_indx==All.ISMDustChem_Sil_Index)            { Y_sput = grain_outcomes_sputter_erosion_dadt_per_nH(logt, GRAIN_OUTCOME_SPECIES_SILICATE); }
+            else if (spec_indx==All.ISMDustChem_Carb_Index)      { Y_sput = grain_outcomes_sputter_erosion_dadt_per_nH(logt, GRAIN_OUTCOME_SPECIES_CARBON);   }
+            else if (spec_indx==All.ISMDustChem_FreeIron_Index)  { Y_sput = grain_outcomes_sputter_erosion_dadt_per_nH(logt, GRAIN_OUTCOME_SPECIES_IRON);     }
 
             if (Y_sput > 0) {
                 dadt = DMIN(0, -Y_sput * 1E-4 * nHcgs * 1E9 * clumping_factor *  All.ISMDustChem_ThermalSputteringScaling); // cm/Gyr
@@ -1567,10 +1583,10 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         ISMDustChem_get_species_properties(spec_indx, &dust_atomic_weight, &bulk_dens);
         dMdt_moved=0; dNdt_moved=0; total_N=0;
         
-        if (spec_indx==All.ISMDustChem_Sil_Index) {vshat = 2.7E5; P1 = 3E11; gamma = 25; E_young = 5.4E11; nu_poisson = 0.17;}
-        else if (spec_indx==All.ISMDustChem_Carb_Index) {vshat = 1.2E5; P1 = 4E10; gamma = 75; E_young = 1E11; nu_poisson = 0.32;}
-        else if (spec_indx==All.ISMDustChem_FreeIron_Index || spec_indx==All.ISMDustChem_InclIron_Index) {vshat = 2.2E5; P1 = 5.5E10; gamma = 3000; E_young = 2.1E12; nu_poisson = 0.27;}
-        else {vshat=2E5; P1 = 3E11; gamma = 25; E_young = 5.4E11; nu_poisson = 0.17;} // default to silicates
+        {
+            struct GrainOutcomeElasticProps __ep = grain_outcomes_elastic_props(ismdustchem_spec_indx_to_outcome_kind(spec_indx));
+            vshat = __ep.v_shat; P1 = __ep.P1; gamma = __ep.gamma; E_young = __ep.E_young; nu_poisson = __ep.nu_poisson;
+        }
 
         // Calculate turbulence driven grain velocities for each bin following prescription in Hirashita & Chen (2023)
         // Note we use the rms nH
@@ -1615,7 +1631,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                     vikrel = vrel[bin_i][bin_k];
                     // Mass lost from bin i due to shattering collisions with grains in bin k
                     if (vikrel > vshat) {mlost_shat += All.ISMDustChem_ShatteringScaling * vikrel * shattering_coagulation_polynomial(i, k, bin_i, bin_k, cell);}
-                    vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((aicenter*aicenter*aicenter + akcenter*akcenter*akcenter)/pow(aicenter+akcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(aicenter*akcenter/(aicenter + akcenter),5./6.)*sqrt(bulk_dens)); // cm/s
+                    vcoag = All.ISMDustChem_VCoagScaling * grain_outcomes_v_coag_dominik(aicenter, akcenter, gamma, E_young, nu_poisson, bulk_dens); // cm/s
                     if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                     // Mass lost from bin i due to coagulating collisions with grains in bin k
                     if (vikrel <= vcoag) {mlost_coag += All.ISMDustChem_CoagulationScaling * (vikrel) * shattering_coagulation_polynomial(i, k, bin_i, bin_k, cell);}
@@ -1654,7 +1670,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
                             }
                             mgained_shat += All.ISMDustChem_ShatteringScaling * vkjrel * mkj_shat * shattering_coagulation_polynomial(i, k, bin_k, bin_j, cell);
                         }
-                        vcoag = All.ISMDustChem_VCoagScaling * 10 * 2.14 * sqrt((akcenter*akcenter*akcenter + ajcenter*ajcenter*ajcenter)/pow(akcenter+ajcenter,3))*pow(gamma,5./6.)/(pow((E_young/(2*(1-nu_poisson)*(1-nu_poisson))),1./3.)*pow(akcenter*ajcenter/(akcenter + ajcenter),5./6.)*sqrt(bulk_dens)); // cm/s
+                        vcoag = All.ISMDustChem_VCoagScaling * grain_outcomes_v_coag_dominik(akcenter, ajcenter, gamma, E_young, nu_poisson, bulk_dens); // cm/s
                         if (vcoag > vshat) vcoag = vshat; // Rare cases where coagualation threshold is higher than shattering threshold
                         // Mass gained in bin i due to coagulating collisions between grains in bin k and bin j producing aggregate grains
                         if (vkjrel <= vcoag) {

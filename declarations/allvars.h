@@ -86,11 +86,11 @@ extern struct global_data_all_processes All;
 /* Box-size shorthands.  Always macros reading from All (= All_dev managed
    mirror inside GPU TUs) so the same code compiles for host + device with
    no extern globals to keep in sync.  Step 5 Phase E0 (2026-04-30) — was
-   previously CPU-only externs synced from begrun.cc. */
-#ifdef BOX_PERIODIC
+   previously CPU-only externs synced from begrun.cc.
+   All.BoxSize is always a valid field (set from the param file even for
+   non-periodic runs), so boxSize/boxHalf are unconditionally defined. */
 #define boxSize (All.BoxSize)
 #define boxHalf (0.5*All.BoxSize)
-#endif
 #ifdef BOX_LONG_X
 #define boxSize_X (All.BoxSize * ((MyDouble)(BOX_LONG_X)))
 #define boxHalf_X (0.5 * All.BoxSize * ((MyDouble)(BOX_LONG_X)))
@@ -227,6 +227,9 @@ extern gizmo_rng_t random_generator;	/*!< the random number generator used */
 extern int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
+#endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+extern int Grains_promoted;	/*!< current number of grain particles promoted to solid body in gas block */
 #endif
 
 extern double TimeOfLastTreeConstruction;	/*!< holds what it says */
@@ -731,6 +734,9 @@ enum iofields
   IO_COOLRATE,
   IO_TIDALTENSORPS,
   IO_EOSTEMP,
+#ifdef TWO_TEMPERATURE_PLASMA
+  IO_TWOTEMP_TE,
+#endif
   IO_EOSABAR,
   IO_EOSYE,
 #ifdef NUCLEAR_NETWORK
@@ -790,6 +796,9 @@ enum iofields
   IO_DELAY_TIME_HII,
   IO_MOLECULARFRACTION,
   IO_SHOCKMACHNUM,
+  IO_DAMAGE_POROSITY_DAMAGE,      /* Phase 17e: Grady-Kipp scalar D in [0,1] */
+  IO_DAMAGE_POROSITY_DISTENTION,  /* Phase 17e: Jutzi P-alpha alpha in [1,alpha_0] */
+  IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Phase 17e: Grady-Kipp active-crack radius */
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 

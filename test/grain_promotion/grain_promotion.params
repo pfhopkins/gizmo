@@ -1,0 +1,60 @@
+% Grain→Solid promotion smoke test (Phase 17g, CGS units).
+% 2D periodic box: ~64 uniform gas particles + 1 Type-3 grain above mass threshold.
+% After one timestep, the grain should be promoted to a Type-0 olivine body.
+
+% Tillotson EOS params for slot [0] (universal fallback, olivine values in CGS)
+Tillotson_EOS_params_a          0.5
+Tillotson_EOS_params_b          1.4
+Tillotson_EOS_params_u_0        5.50e12
+Tillotson_EOS_params_rho_0      3.5
+Tillotson_EOS_params_A          1.31e12
+Tillotson_EOS_params_B          4.90e11
+Tillotson_EOS_params_u_s        4.50e10
+Tillotson_EOS_params_u_s_prime  1.50e11
+Tillotson_EOS_params_alpha      5.0
+Tillotson_EOS_params_beta       5.0
+Tillotson_EOS_params_mu         8.13e11
+Tillotson_EOS_params_Y0         9.0e10
+
+% Grain fluid parameters
+Grain_Internal_Density          3.5
+Grain_Size_Min                  0.01
+Grain_Size_Max                  0.01
+Grain_Size_Spectrum_Powerlaw    0.5
+
+% Grain promotion thresholds
+GrainPromotion_MassThresh_cgs   0.01
+GrainPromotion_DustGasRatioThresh  0.0
+
+InitCondFile                    grain_promotion_ics
+OutputDir                       output
+SnapshotFileBase                snapshot
+
+TimeMax                         1.0e-5
+TimeBetSnapshot                 5.0e-6
+TimeBegin                       0.0
+OutputListOn                    0
+BoxSize                         10.0
+
+MaxSizeTimestep                 1.0e-6
+MinSizeTimestep                 1.0e-12
+CourantFac                      0.2
+ErrTolIntAccuracy               0.01
+MaxRMSDisplacementFac           0.25
+
+DesNumNgb                       16
+MaxNumNgbDeviation              1
+PartAllocFactor                 50
+
+ErrTolForceAcc                  0.001
+ErrTolTheta                     0.7
+
+TimeBetStatistics               5.0e-6
+MaxMemSize                      500
+
+ResubmitOn                      0
+ResubmitCommand                 none
+
+UnitVelocity_in_cm_per_s        1.0
+UnitLength_in_cm                1.0
+UnitMass_in_g                   1.0
