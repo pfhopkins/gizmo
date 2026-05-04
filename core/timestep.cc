@@ -272,7 +272,7 @@ void find_timesteps(void)
 
     process_wake_ups();
 
-    CPU_Step[CPU_TIMELINE] += measure_time();
+    CPU_Step[CPU_FIND_TIMESTEPS] += measure_time();
 }
 
 

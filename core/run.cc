@@ -1065,7 +1065,7 @@ void write_cpu_log(void)
           "fof/subfind   %10.2f  %5.1f%%\n"
 #endif
           "drift/splitmg %10.2f  %5.1f%%\n"
-	      "kicks         %10.2f  %5.1f%%\n"
+	      "find_timestep %10.2f  %5.1f%%\n"
 	      "io/snapshots  %10.2f  %5.1f%%\n"
 #ifdef COOLING
 	      "cooling+chem  %10.2f  %5.1f%%\n"
@@ -1146,7 +1146,6 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_FOF], (All.CPU_Sum[CPU_FOF]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
     All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TIMELINE], (All.CPU_Sum[CPU_TIMELINE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef COOLING

@@ -32,14 +32,17 @@ int find_bucket(const char *name)
 
 } /* anonymous namespace */
 
-extern "C" int gizmo_step_phase_enabled(void)
+extern "C" int gizmo_verbose_diag(void)
 {
     if(g_enabled_cached < 0) {
-        const char *q = getenv("GIZMO_STEP_PHASES");
+        const char *q = getenv("GIZMO_VERBOSE_DIAG");
         g_enabled_cached = (q && q[0] && q[0] != '0') ? 1 : 0;
     }
     return g_enabled_cached;
 }
+
+/* Backwards-compat shim — same gate now. */
+extern "C" int gizmo_step_phase_enabled(void) { return gizmo_verbose_diag(); }
 
 extern "C" void gizmo_step_phase_record(const char *name, double dt)
 {

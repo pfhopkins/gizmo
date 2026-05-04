@@ -67,21 +67,12 @@ static double sidx_h_slack(void)
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
 gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_alltypes; }
 
-/* GIZMO_NGB_QUIET=1 suppresses DIAG_NGL/DIAG_SIDX/DIAG_DENS/DIAG_SYMNL/DIAG_GRAD
- * prints. Used to estimate the wallclock contribution of the diagnostic prints
- * themselves (typically a few hundred per step on rank 0; printf+fflush to a
- * scratch-mounted slurm log can plausibly add ms-scale overhead each).
- * Cached on first read: getenv is reasonably cheap but called per-DIAG site
- * adds up across ~hundreds of fires per step. */
-static int g_ngb_diag_quiet_cached = -1;
-extern "C" int gizmo_ngb_diag_quiet(void)
-{
-    if(g_ngb_diag_quiet_cached < 0) {
-        const char *q = getenv("GIZMO_NGB_QUIET");
-        g_ngb_diag_quiet_cached = (q && q[0] && q[0] != '0') ? 1 : 0;
-    }
-    return g_ngb_diag_quiet_cached;
-}
+/* gizmo_ngb_diag_quiet() is now a backwards-compat shim that delegates to
+ * the unified gizmo_verbose_diag() gate (env GIZMO_VERBOSE_DIAG=1, default
+ * off). Polarity preserved — "quiet" means "not verbose". All DIAG_NGL /
+ * DIAG_SIDX / DIAG_DENS / DIAG_GRAD / DIAG_SYMNL / GPU_WALK_* prints share
+ * the same env var so production runs are silent by default. */
+extern "C" int gizmo_ngb_diag_quiet(void) { return !gizmo_verbose_diag(); }
 
 /* Dirty-index tracking for compact_xyzh.h field. Two modes:
  *  - g_dirty_all = true: full-pool refresh required (fresh arena alloc,

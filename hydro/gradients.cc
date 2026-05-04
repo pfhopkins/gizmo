@@ -483,7 +483,7 @@ void hydro_gradient_calc(void)
     gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
     double t_grad_after_symlist = my_second();
     gizmo_step_phase_record("gradient_prep_symlist", timediff(t_diag_symlist_start, t_grad_after_symlist));
-    if(ThisTask == 0) { /* DIAG: symmetric NGP build cost — remove after profiling */
+    if(ThisTask == 0 && gizmo_verbose_diag()) {
         printf("[DIAG_SYMNL step=%d N=%d pairs=%d] symlist_build=%.3f\n",
                (int)All.NumCurrentTiStep, gizmo_sym_num_active, (gizmo_sym_neighbor_list.total_pairs),
                timediff(t_diag_symlist_start, my_second()));

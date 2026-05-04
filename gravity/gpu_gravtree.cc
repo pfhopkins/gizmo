@@ -1960,7 +1960,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     Costtotal += costtotal_added;
 
     /* Phase 9.3 diagnostic: print GPU walk summary + first 10 particles for LET vs no-LET comparison */
-    if(ThisTask == 0) {
+    if(ThisTask == 0 && gizmo_verbose_diag()) {
         long long tot_foreign = 0;
         for(int a = 0; a < num_active; a++) { if(!d_failed[a]) tot_foreign += d_foreign[a]; }
         printf("GPU_WALK_SUMMARY[t=0 LET=%d]: nsucceeded=%d/%d total_ninter=%.0f total_foreign=%lld avg_ninter=%.1f maxForeignNodes=%d Numforeignnodes=%d\n",

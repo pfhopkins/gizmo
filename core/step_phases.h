@@ -27,7 +27,14 @@
 extern "C" {
 #endif
 
-/* Returns 1 if GIZMO_STEP_PHASES env var is set (cached). 0 otherwise. */
+/* Single common gate for ALL diagnostic stdout output (DIAG_NGL/DIAG_SIDX/
+ * DIAG_DENS/DIAG_GRAD/DIAG_SYMNL prints, GPU_WALK_SUMMARY/PART prints,
+ * STEP_PHASES dumps, etc.). Reads env GIZMO_VERBOSE_DIAG (cached). Default
+ * OFF — production runs print nothing. Set GIZMO_VERBOSE_DIAG=1 to enable
+ * all diagnostic stdout. */
+int gizmo_verbose_diag(void);
+
+/* Backwards-compat shim: returns gizmo_verbose_diag() (=1 means print). */
 int gizmo_step_phase_enabled(void);
 
 /* Record dt seconds against named bucket. Multiple records to same name

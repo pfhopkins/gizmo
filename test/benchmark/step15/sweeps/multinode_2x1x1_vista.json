@@ -1,0 +1,47 @@
+{
+  "name": "multinode_2x1x1_vista",
+  "purpose": "§6 multi-node / multi-rank / multi-GPU validation: 2 nodes × 1 rank/node × 1 GPU/rank, fire_m11i, lazy drift mode. Verifies (1) MPI build + run on Vista's gh queue, (2) legacy CPU_DENSCOMM/HYDCOMM/TREESEND/RECV/WAIT* populate correctly (single-rank tests left these zero), (3) cpu.txt/balance.txt render correctly under MPI reduction, (4) physics matches single-rank baseline at energy.txt row 0 (within FP-reduction-order noise). Production-mode env (no diagnostic stdout).",
+  "tier": 3,
+
+  "bench_root": "/scratch/01799/phopkins/benchmarks_step15",
+
+  "platform": "vista",
+  "submit_mode": "slurm",
+
+  "slurm": {
+    "partition":  "gh",
+    "account":    "TG-NAIRR260139",
+    "walltime":   "00:25:00",
+    "batch_size": 1
+  },
+
+  "problems": [
+    {
+      "name": "fire_m11i",
+      "params_template": "test/fire_m11i/fire_m11i.params",
+      "params_overrides": {
+        "MaxSimulationWallTime_in_Seconds": "1300"
+      },
+      "sizes": [
+        {"label": "mpi_2x1x1"}
+      ]
+    }
+  ],
+
+  "builds": ["A"],
+
+  "rank_thread_grid": [
+    {"nranks": 2, "nthreads": 72, "nodes": 2}
+  ],
+
+  "extra_env": [
+    "GIZMO_LAZY_DRIFT_ENABLE=1",
+    "GIZMO_LAZY_DRIFT_H_SLACK=0.5"
+  ],
+
+  "mem_per_node_mb":   85000,
+
+  "min_steps":         5,
+  "warmup_steps":      1,
+  "abort_on_misc_pct": 30.0
+}

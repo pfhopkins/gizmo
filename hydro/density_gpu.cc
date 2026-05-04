@@ -434,7 +434,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         gizmo_step_phase_record("density_ngb_build", t_ngb - t_sidx_prebuild);
         gizmo_step_phase_record("density_kernel", t_kernel);
         gizmo_step_phase_record("density_scatter", t_scatter);
-        if(ThisTask == 0) { /* keep DIAG_DENS for per-call detail */
+        if(ThisTask == 0 && gizmo_verbose_diag()) {
             double t_total = timediff(t_dens_gpu_start, my_second());
             printf("[DIAG_DENS step=%d N=%d] total=%.3f arena=%.3f ngb_build=%.3f sidx_prebuild=%.3f gpu_kernel=%.3f scatter=%.3f\n",
                    (int)All.NumCurrentTiStep, num_active, t_total, t_arena, t_ngb, t_sidx_prebuild, t_kernel, t_scatter);
@@ -626,7 +626,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
         gizmo_step_phase_record("gradient_csr_copy", t_csr_copy);
         gizmo_step_phase_record("gradient_kernel",   t_kernel);
         gizmo_step_phase_record("gradient_out_copy", t_out_copy);
-        if(ThisTask == 0) {
+        if(ThisTask == 0 && gizmo_verbose_diag()) {
             long long pairs_mb = (long long)csr_total_pairs * 2 * sizeof(int) / (1024*1024);
             printf("[DIAG_GRAD step=%d N=%d pairs=%d(~%lldMB)] arena=%.3f csr_copy=%.3f gpu_kernel=%.3f out_copy=%.3f total=%.3f\n",
                    (int)All.NumCurrentTiStep, num_active, csr_total_pairs, pairs_mb,

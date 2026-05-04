@@ -219,7 +219,11 @@
 #define CPU_HYDCOMM        17
 #define CPU_HYDMISC        18
 #define CPU_DRIFT          19
-#define CPU_TIMELINE       20
+/* Slot 20: was CPU_TIMELINE (mislabeled "kicks" in cpu.txt). It's actually
+ * populated only by find_timesteps() in core/timestep.cc, so renamed to
+ * reflect its real meaning. No "kicks" bucket exists in legacy CPU_Step;
+ * kick wall time falls into CPU_MISC by default. */
+#define CPU_FIND_TIMESTEPS 20
 #define CPU_POTENTIAL      21
 #define CPU_MESH           22
 #define CPU_PEANO          23
@@ -255,12 +259,12 @@
 #define CPU_LAZY_DRIFT        49  /* Attack-C lazy-drift hook (drift neighbors before kernel) */
 #define CPU_GRAV_PRECOMP      50  /* gravity per-step precompute (active list, scratch alloc, kernel setup) */
 #define CPU_FORCE_UPDATE_TREE 51  /* force_update_tree (kick propagation through existing tree) */
-#define CPU_FIND_TIMESTEPS    52  /* per-step timestep determination */
-#define CPU_SINK_ENV          53  /* sink_environment GPU kernel + scatter */
-#define CPU_SINK_FEEDSWK      54  /* sink_feed + sink_swallow_and_kick combined */
-#define CPU_GPU_KERNEL        55  /* combined density/gradient/hydro GPU kernel parallel_for+fence time */
-#define CPU_DUMMY09           56  /* reserved for future repurpose */
-#define CPU_DUMMY10           57  /* reserved for future repurpose */
+#define CPU_SINK_ENV          52  /* sink_environment GPU kernel + scatter */
+#define CPU_SINK_FEEDSWK      53  /* sink_feed + sink_swallow_and_kick combined */
+#define CPU_GPU_KERNEL        54  /* combined density/gradient/hydro GPU kernel parallel_for+fence time */
+#define CPU_DUMMY08           55  /* reserved */
+#define CPU_DUMMY09           56  /* reserved */
+#define CPU_DUMMY10           57  /* reserved */
 
 #define CPU_PARTS          58  /* this gives the number of parts above (must be last) */
 
