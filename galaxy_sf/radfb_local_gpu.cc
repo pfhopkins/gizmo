@@ -190,11 +190,19 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
     if(global_num_src == 0) { return; }
 
     /* Ghost prep — must happen before neighbor list build.
-     * Guard against TRANSPORT_SUBCYCLE double-import. */
+     * Collective decision: active-aware exchange leaves ghost counts asymmetric on
+     * tiny-N steps (density redo may give some ranks 0 ghosts).  Allreduce so all
+     * ranks agree: if any rank needs an import, all re-import. */
     int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
+    {
+        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+        int need_import = 0;
+        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(need_import) {
+            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            imported_ghosts = 1;
+        }
     }
 
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();

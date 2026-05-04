@@ -97,11 +97,19 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
     MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(global_num_src == 0) { return; }
 
-    /* Prep ghosts (check guard from TRANSPORT_SUBCYCLE pitfall) */
+    /* Collective import decision: active-aware exchange can leave ghost counts asymmetric
+     * across ranks (density redo on tiny-N gives some ranks 0 ghosts).  Deciding per-rank
+     * whether to call the collective ghost_exchange causes a desync → MPI_ERR_TRUNCATE. */
     int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
+    {
+        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+        int need_import = 0;
+        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(need_import) {
+            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            imported_ghosts = 1;
+        }
     }
 
     /* Fill per-source input structs (size guarded so std::vector(0) is well-defined) */

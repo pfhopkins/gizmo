@@ -158,10 +158,21 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
         int local_count = 0;
         int num_all = 0;
         if(global_num_src > 0) {
-            /* All ranks in agreement: either all call ghost_exchange or all skip it. */
-            if(ghost_get_num_ghosts() <= 0) {
-                gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-                imported_ghosts = 1;
+            /* With the active-aware ghost exchange, one rank may have received 0 ghosts
+             * from density (e.g. after a redo that converged to smaller h) while another
+             * rank has ghosts.  The ghost_exchange call below is an MPI collective: all
+             * ranks must call it or all must skip.  Deciding based on the local ghost count
+             * alone is asymmetric and causes a collective desync → MPI_ERR_TRUNCATE.
+             * Fix: gather the decision globally so all ranks agree. */
+            {
+                int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+                int need_import = 0;
+                MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                if(need_import) {
+                    if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup(); /* clear asymmetric stale ghosts */
+                    gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+                    imported_ghosts = 1;
+                }
             }
             local_count = ghost_get_num_local();
             num_all = local_count + ghost_get_num_ghosts();

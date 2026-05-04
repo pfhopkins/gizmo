@@ -298,6 +298,16 @@ void ghost_exchange(double safety_factor)
     double t_ghost_meta = timediff(t_ghost_phase, my_second());
     double t_phase_overlap_start = my_second();
 
+    /* Diagnostic: number this ghost_exchange call to track progress in multi-call steps */
+    static int ghost_call_seq = 0;
+    ghost_call_seq++;
+    int this_call = ghost_call_seq;
+    if(gizmo_verbose_diag()) {
+        printf("[GX rank=%d call=%d] after_allgatherv: local_ntiles=%d total_tiles=%d NumPart=%d\n",
+               ThisTask, this_call, local_ntiles, total_tiles, NumPart);
+        fflush(stdout);
+    }
+
     /* ================================================================
        Step 3: Per-task tile overlap check.
        For each remote task, check which of its tiles overlap with any
@@ -409,8 +419,17 @@ void ghost_exchange(double safety_factor)
      * slices if NTask grows past ~100). The pass-1 cost is unchanged: outer
      * loop active-gated, ~handful of tiles on tiny-N. */
     int *all_need_from = (int *) malloc((size_t)NTask * total_tiles * sizeof(int));
+    if(gizmo_verbose_diag()) {
+        printf("[GX rank=%d call=%d] BEFORE Allgather(need_from): total_tiles=%d NTask=%d\n",
+               ThisTask, this_call, total_tiles, NTask);
+        fflush(stdout);
+    }
     MPI_Allgather(need_from, total_tiles, MPI_INT,
                   all_need_from, total_tiles, MPI_INT, MPI_COMM_WORLD);
+    if(gizmo_verbose_diag()) {
+        printf("[GX rank=%d call=%d] AFTER  Allgather(need_from) OK\n", ThisTask, this_call);
+        fflush(stdout);
+    }
     for(task = 0; task < NTask; task++)
     {
         if(task == ThisTask) continue;
@@ -526,9 +545,20 @@ void ghost_exchange(double safety_factor)
      * already in element units. gizmo_mpi_alltoallv_typed builds a contiguous
      * MPI_Datatype per call so element-count int*'s drive the wire — dodging
      * the 2.1 GB per-peer int-overflow that bites fire_m11i at >~6M parts/rank. */
+    if(gizmo_verbose_diag()) {
+        int ts=0, tr=0;
+        for(int tt=0; tt<NTask; tt++) { ts += send_count[tt]; tr += recv_count[tt]; }
+        printf("[GX rank=%d call=%d] BEFORE Alltoallv(P): total_send=%d total_recv=%d send[0]=%d recv[0]=%d\n",
+               ThisTask, this_call, ts, tr, send_count[0], recv_count[0]);
+        fflush(stdout);
+    }
     gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
                               &P[NumPart], recv_count, recv_disp,
                               sizeof(struct particle_data), MPI_COMM_WORLD);
+    if(gizmo_verbose_diag()) {
+        printf("[GX rank=%d call=%d] AFTER  Alltoallv(P) OK\n", ThisTask, this_call);
+        fflush(stdout);
+    }
 
     /* CellP exchange: only meaningful when the simulation has any gas
        particles globally. With TotN_gas==0 (N-body / DM-only runs), CellP
@@ -536,9 +566,17 @@ void ghost_exchange(double safety_factor)
        an out-of-bounds pointer. Skip the CellP alltoallv in that case —
        no gas ghosts can exist if no gas exists anywhere. */
     if(All.TotN_gas > 0) {
+        if(gizmo_verbose_diag()) {
+            printf("[GX rank=%d call=%d] BEFORE Alltoallv(CellP)\n", ThisTask, this_call);
+            fflush(stdout);
+        }
         gizmo_mpi_alltoallv_typed(send_CellP, send_count, send_disp,
                                   &CellP[NumPart], recv_count, recv_disp,
                                   sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+        if(gizmo_verbose_diag()) {
+            printf("[GX rank=%d call=%d] AFTER  Alltoallv(CellP) OK\n", ThisTask, this_call);
+            fflush(stdout);
+        }
     }
 
     /* Update counts */
@@ -565,9 +603,17 @@ void ghost_exchange(double safety_factor)
     {
         /* Exchange home indices: send_home_idx[total_send] → recv_home_idx[total_recv] */
         int *recv_home_idx = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
+        if(gizmo_verbose_diag()) {
+            printf("[GX rank=%d call=%d] BEFORE Alltoallv(home_idx)\n", ThisTask, this_call);
+            fflush(stdout);
+        }
         gizmo_mpi_alltoallv_typed(send_home_idx, send_count, send_disp,
                                   recv_home_idx, recv_count, recv_disp,
                                   sizeof(int), MPI_COMM_WORLD);
+        if(gizmo_verbose_diag()) {
+            printf("[GX rank=%d call=%d] AFTER  Alltoallv(home_idx) OK\n", ThisTask, this_call);
+            fflush(stdout);
+        }
 
         /* Build per-ghost provenance: home_rank and home_index */
         ghost_home_rank_map = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
@@ -599,7 +645,11 @@ void ghost_exchange(double safety_factor)
     int n_active_global = 0;
     if(gizmo_verbose_diag()) {
         int n_active = (int)ActiveParticleList.size();
+        printf("[GX rank=%d call=%d] BEFORE MPI_Reduce(n_active=%d)\n", ThisTask, this_call, n_active);
+        fflush(stdout);
         MPI_Reduce(&n_active, &n_active_global, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        printf("[GX rank=%d call=%d] AFTER  MPI_Reduce OK active_global=%d\n", ThisTask, this_call, n_active_global);
+        fflush(stdout);
     }
     if(ThisTask == 0) {
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",

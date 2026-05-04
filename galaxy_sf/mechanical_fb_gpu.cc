@@ -153,9 +153,18 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     if(global_num_src == 0) { ghost_write_detector_end(); return; } /* nothing anywhere; ghost_writeback would write nothing */
 
     int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
+    {   /* Collective import decision: active-aware exchange can leave rank A with 0
+         * ghosts while rank B has some (e.g. after density redo on tiny-N).  Deciding
+         * per-rank whether to call ghost_exchange causes a collective desync.  Use an
+         * Allreduce so all ranks agree: if any rank needs ghosts, all re-import. */
+        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+        int need_import = 0;
+        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(need_import) {
+            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            imported_ghosts = 1;
+        }
     }
 
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
