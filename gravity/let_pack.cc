@@ -42,6 +42,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
+#include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "let_data.h"
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
@@ -809,29 +810,31 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
         total_hdr_send += send_hdr_counts[r]; total_hdr_recv += recv_hdr_counts[r];
     }
 
-    /* Allocate offsets/bytes for both exchanges, then flat_send / flat_recv
-     * for both data streams.  All temporaries are freed in strict reverse
-     * order at the end of this function. */
+    /* Allocate offsets for both exchanges (in units of struct elements, NOT
+     * bytes), then flat_send / flat_recv for both data streams. All
+     * temporaries are freed in strict reverse order at the end of this
+     * function.
+     *
+     * Element-count units (instead of MPI_BYTE) are required for scaling:
+     * MPI_Alltoallv's count/displ arguments are int*, so byte-based counts
+     * overflow once any per-peer payload exceeds 2.1 GB. fire_m11i at 12.4M
+     * particles on 2 ranks already trips this (~2.4 GB per peer at
+     * sizeof(LETNodeWire)~400 B). Using a contiguous MPI_Datatype for the
+     * struct moves the int limit from 2.1 GB to 2.1 G *elements*, i.e.
+     * sizeof(struct)*2.1G bytes — effectively unbounded for any realistic
+     * problem. */
     int *send_offsets     = (int *) mymalloc("LET_send_offsets",     NTask * sizeof(int));
     int *recv_offsets     = (int *) mymalloc("LET_recv_offsets",     NTask * sizeof(int));
-    int *send_bytes       = (int *) mymalloc("LET_send_bytes",       NTask * sizeof(int));
-    int *recv_bytes       = (int *) mymalloc("LET_recv_bytes",       NTask * sizeof(int));
     int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
     int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
-    int *send_hdr_bytes   = (int *) mymalloc("LET_send_hdr_bytes",   NTask * sizeof(int));
-    int *recv_hdr_bytes   = (int *) mymalloc("LET_recv_hdr_bytes",   NTask * sizeof(int));
 
     int s_off = 0, r_off = 0, hs_off = 0, hr_off = 0;
     for(int r = 0; r < NTask; r++)
     {
-        send_offsets[r]     = s_off  * sizeof(struct LETNodeWire);
-        recv_offsets[r]     = r_off  * sizeof(struct LETNodeWire);
-        send_bytes[r]       = send_counts_int[r] * sizeof(struct LETNodeWire);
-        recv_bytes[r]       = recv_counts_int[r] * sizeof(struct LETNodeWire);
-        send_hdr_offsets[r] = hs_off * sizeof(struct LETSubtreeHeader);
-        recv_hdr_offsets[r] = hr_off * sizeof(struct LETSubtreeHeader);
-        send_hdr_bytes[r]   = send_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
-        recv_hdr_bytes[r]   = recv_hdr_counts[r] * sizeof(struct LETSubtreeHeader);
+        send_offsets[r]     = s_off;
+        recv_offsets[r]     = r_off;
+        send_hdr_offsets[r] = hs_off;
+        recv_hdr_offsets[r] = hr_off;
         s_off  += send_counts_int[r];
         r_off  += recv_counts_int[r];
         hs_off += send_hdr_counts[r];
@@ -865,13 +868,14 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
         hs_pos += send_hdr_counts[r];
     }
 
-    /* MPI exchanges (parallel for nodes + headers) */
-    MPI_Alltoallv(flat_send,     send_bytes,     send_offsets,     MPI_BYTE,
-                  flat_recv,     recv_bytes,     recv_offsets,     MPI_BYTE,
-                  MPI_COMM_WORLD);
-    MPI_Alltoallv(flat_hdr_send, send_hdr_bytes, send_hdr_offsets, MPI_BYTE,
-                  flat_hdr_recv, recv_hdr_bytes, recv_hdr_offsets, MPI_BYTE,
-                  MPI_COMM_WORLD);
+    /* MPI exchanges (parallel for nodes + headers). Counts and displacements
+     * are in element units, not bytes — see system/mpi_alltoallv_typed.h. */
+    gizmo_mpi_alltoallv_typed(flat_send,     send_counts_int, send_offsets,
+                              flat_recv,     recv_counts_int, recv_offsets,
+                              sizeof(struct LETNodeWire), MPI_COMM_WORLD);
+    gizmo_mpi_alltoallv_typed(flat_hdr_send, send_hdr_counts, send_hdr_offsets,
+                              flat_hdr_recv, recv_hdr_counts, recv_hdr_offsets,
+                              sizeof(struct LETSubtreeHeader), MPI_COMM_WORLD);
 
     /* Install foreign tree contents while flat_recv / flat_hdr_recv are
      * still alive on the mymalloc stack. */
@@ -883,12 +887,8 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
     myfree(flat_hdr_send);
     myfree(flat_recv);
     myfree(flat_send);
-    myfree(recv_hdr_bytes);
-    myfree(send_hdr_bytes);
     myfree(recv_hdr_offsets);
     myfree(send_hdr_offsets);
-    myfree(recv_bytes);
-    myfree(send_bytes);
     myfree(recv_offsets);
     myfree(send_offsets);
     myfree(recv_hdr_counts);

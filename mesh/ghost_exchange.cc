@@ -30,6 +30,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/mpi_alltoallv_typed.h"
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 
 /*
@@ -430,19 +431,13 @@ void ghost_exchange(double safety_factor)
     /* ================================================================
        Step 6: Exchange via MPI_Alltoallv.
        ================================================================ */
-    int *recv_bytes = (int *) mymalloc("ghost_rb", NTask * sizeof(int));
-    int *send_bytes = (int *) mymalloc("ghost_sb", NTask * sizeof(int));
-    int *recv_bdisp = (int *) mymalloc("ghost_rbd", NTask * sizeof(int));
-    int *send_bdisp = (int *) mymalloc("ghost_sbd", NTask * sizeof(int));
-    for(task = 0; task < NTask; task++) {
-        recv_bytes[task] = recv_count[task] * sizeof(struct particle_data);
-        send_bytes[task] = send_count[task] * sizeof(struct particle_data);
-        recv_bdisp[task] = recv_disp[task] * sizeof(struct particle_data);
-        send_bdisp[task] = send_disp[task] * sizeof(struct particle_data);
-    }
-
-    MPI_Alltoallv(send_P, send_bytes, send_bdisp, MPI_BYTE,
-                  &P[NumPart], recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+    /* Per-particle exchange: send_count/recv_count/send_disp/recv_disp are
+     * already in element units. gizmo_mpi_alltoallv_typed builds a contiguous
+     * MPI_Datatype per call so element-count int*'s drive the wire — dodging
+     * the 2.1 GB per-peer int-overflow that bites fire_m11i at >~6M parts/rank. */
+    gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
+                              &P[NumPart], recv_count, recv_disp,
+                              sizeof(struct particle_data), MPI_COMM_WORLD);
 
     /* CellP exchange: only meaningful when the simulation has any gas
        particles globally. With TotN_gas==0 (N-body / DM-only runs), CellP
@@ -450,14 +445,9 @@ void ghost_exchange(double safety_factor)
        an out-of-bounds pointer. Skip the CellP alltoallv in that case —
        no gas ghosts can exist if no gas exists anywhere. */
     if(All.TotN_gas > 0) {
-        for(task = 0; task < NTask; task++) {
-            recv_bytes[task] = recv_count[task] * sizeof(struct gas_cell_data);
-            send_bytes[task] = send_count[task] * sizeof(struct gas_cell_data);
-            recv_bdisp[task] = recv_disp[task] * sizeof(struct gas_cell_data);
-            send_bdisp[task] = send_disp[task] * sizeof(struct gas_cell_data);
-        }
-        MPI_Alltoallv(send_CellP, send_bytes, send_bdisp, MPI_BYTE,
-                      &CellP[NumPart], recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+        gizmo_mpi_alltoallv_typed(send_CellP, send_count, send_disp,
+                                  &CellP[NumPart], recv_count, recv_disp,
+                                  sizeof(struct gas_cell_data), MPI_COMM_WORLD);
     }
 
     /* Update counts */
@@ -484,14 +474,9 @@ void ghost_exchange(double safety_factor)
     {
         /* Exchange home indices: send_home_idx[total_send] → recv_home_idx[total_recv] */
         int *recv_home_idx = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
-        for(task = 0; task < NTask; task++) {
-            send_bytes[task] = send_count[task] * sizeof(int);
-            recv_bytes[task] = recv_count[task] * sizeof(int);
-            send_bdisp[task] = send_disp[task] * sizeof(int);
-            recv_bdisp[task] = recv_disp[task] * sizeof(int);
-        }
-        MPI_Alltoallv(send_home_idx, send_bytes, send_bdisp, MPI_BYTE,
-                      recv_home_idx, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
+        gizmo_mpi_alltoallv_typed(send_home_idx, send_count, send_disp,
+                                  recv_home_idx, recv_count, recv_disp,
+                                  sizeof(int), MPI_COMM_WORLD);
 
         /* Build per-ghost provenance: home_rank and home_index */
         ghost_home_rank_map = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
@@ -530,7 +515,6 @@ void ghost_exchange(double safety_factor)
     }
 
     /* Cleanup: mymalloc in reverse order, then free malloc'd send metadata */
-    myfree(send_bdisp); myfree(recv_bdisp); myfree(send_bytes); myfree(recv_bytes);
     myfree(task_offset);
     myfree(send_CellP); myfree(send_P);
     myfree(send_disp); myfree(recv_disp);

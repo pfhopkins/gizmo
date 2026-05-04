@@ -12,6 +12,7 @@
 #include "../core/proto.h"
 #include "ghost_writeback.h"
 #include "../system/gpu_particles_arena.h"
+#include "../system/mpi_alltoallv_typed.h"
 #ifdef GALSF_FB_MECHANICAL
 #include "../galaxy_sf/mechanical_fb_types.h"  /* for struct MechFBGasDelta */
 #endif
@@ -122,22 +123,9 @@ void ghost_writeback_hydro(void)
     struct ghost_delta_hydro_t *recv_buf = (struct ghost_delta_hydro_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_hydro_t));
 
-    int delta_size = sizeof(struct ghost_delta_hydro_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_hydro_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     /* Apply received deltas to home particles */
@@ -227,20 +215,9 @@ void ghost_writeback_wakeup(void)
     struct ghost_delta_wakeup_t *recv_buf = (struct ghost_delta_wakeup_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_wakeup_t));
 
-    int delta_size = sizeof(struct ghost_delta_wakeup_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_wakeup_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     int wakeups_applied = 0;
@@ -400,20 +377,9 @@ void ghost_writeback_agsforce(void)
     struct ghost_delta_agsforce_t *recv_buf = (struct ghost_delta_agsforce_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_agsforce_t));
 
-    int delta_size = sizeof(struct ghost_delta_agsforce_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_agsforce_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     int wakeups_applied = 0;
@@ -525,20 +491,9 @@ void ghost_writeback_swallowtime(void)
     struct ghost_delta_swallowtime_t *recv_buf = (struct ghost_delta_swallowtime_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_swallowtime_t));
 
-    int delta_size = sizeof(struct ghost_delta_swallowtime_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_swallowtime_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {
@@ -699,20 +654,9 @@ void ghost_writeback_thermalfb(void)
     struct ghost_delta_thermalfb_t *recv_buf = (struct ghost_delta_thermalfb_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_thermalfb_t));
 
-    int delta_size = sizeof(struct ghost_delta_thermalfb_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_thermalfb_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {
@@ -859,20 +803,9 @@ void ghost_writeback_sinkfeed(void)
     struct ghost_delta_sinkfeed_t *recv_buf = (struct ghost_delta_sinkfeed_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_sinkfeed_t));
 
-    int delta_size = sizeof(struct ghost_delta_sinkfeed_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_sinkfeed_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {
@@ -1007,20 +940,9 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
     struct ghost_delta_mechfb_t *recv_buf = (struct ghost_delta_mechfb_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_mechfb_t));
 
-    int delta_size = sizeof(struct ghost_delta_mechfb_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_mechfb_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     /* Accumulate received deltas into home_buf */
@@ -1212,20 +1134,9 @@ void ghost_writeback_grainbackrx(void)
     struct ghost_delta_grainbackrx_t *recv_buf = (struct ghost_delta_grainbackrx_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_grainbackrx_t));
 
-    int delta_size = sizeof(struct ghost_delta_grainbackrx_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_grainbackrx_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {
@@ -1451,20 +1362,9 @@ void ghost_writeback_sinkswallow(void)
     struct ghost_delta_sinkswallow_t *recv_buf = (struct ghost_delta_sinkswallow_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_sinkswallow_t));
 
-    int delta_size = sizeof(struct ghost_delta_sinkswallow_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_sinkswallow_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {
@@ -1616,20 +1516,9 @@ void ghost_writeback_radfbrp(void)
     struct ghost_delta_radfbrp_t *recv_buf = (struct ghost_delta_radfbrp_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_radfbrp_t));
 
-    int delta_size = sizeof(struct ghost_delta_radfbrp_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_radfbrp_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {
@@ -1905,20 +1794,9 @@ void ghost_writeback_rtsrcinjection(void)
     struct ghost_delta_rtsrcinjection_t *recv_buf = (struct ghost_delta_rtsrcinjection_t *)
         malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_rtsrcinjection_t));
 
-    int delta_size = sizeof(struct ghost_delta_rtsrcinjection_t);
-    int *send_bytes = (int *) malloc(NTask * sizeof(int));
-    int *recv_bytes = (int *) malloc(NTask * sizeof(int));
-    int *send_bdisp = (int *) malloc(NTask * sizeof(int));
-    int *recv_bdisp = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        send_bytes[t] = delta_send_count[t] * delta_size;
-        recv_bytes[t] = delta_recv_count[t] * delta_size;
-        send_bdisp[t] = delta_send_disp[t] * delta_size;
-        recv_bdisp[t] = delta_recv_disp[t] * delta_size;
-    }
-    MPI_Alltoallv(send_buf, send_bytes, send_bdisp, MPI_BYTE,
-                  recv_buf, recv_bytes, recv_bdisp, MPI_BYTE, MPI_COMM_WORLD);
-    free(send_bytes); free(recv_bytes); free(send_bdisp); free(recv_bdisp);
+    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                              recv_buf, delta_recv_count, delta_recv_disp,
+                              sizeof(struct ghost_delta_rtsrcinjection_t), MPI_COMM_WORLD);
     free(send_buf); free(delta_send_count); free(delta_send_disp);
 
     for(int d = 0; d < total_recv; d++) {

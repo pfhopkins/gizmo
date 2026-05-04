@@ -1235,12 +1235,16 @@ void domain_exchange(void)
 
 	  if(count[target] > 0 || count_recv[target] > 0)
 	    {
-	      MPI_Sendrecv(partBuf + offset[target], count[target] * sizeof(struct particle_data),
+	      /* Use the chunking wrapper — fire_m11i with ~6M non-gas parts/rank
+	       * × sizeof(struct particle_data)~400 B exceeds int_max for the
+	       * MPI_Sendrecv byte count. The gas branch above already uses this
+	       * wrapper for the same reason. */
+	      MPI_Sizelimited_Sendrecv(partBuf + offset[target], count[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA,
 			   P + offset_recv[target], count_recv[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-	      MPI_Sendrecv(keyBuf + offset[target], count[target] * sizeof(peanokey),
+	      MPI_Sizelimited_Sendrecv(keyBuf + offset[target], count[target] * sizeof(peanokey),
 			   MPI_BYTE, target, TAG_KEY,
 			   Key + offset_recv[target], count_recv[target] * sizeof(peanokey),
 			   MPI_BYTE, target, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
