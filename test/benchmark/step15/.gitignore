@@ -1,7 +1,0 @@
-# Downloaded ICs and runtime data — regenerated on first use
-ic_cache/
-runtime_data/spcool_tables/
-
-# Built binaries
-build/GIZMO_*
-build/*.buildlog

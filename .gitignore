@@ -63,10 +63,10 @@ build/
 # Claude Code per-session state (auto-memory, transcripts, etc.)
 .claude/
 
-# Step-15 benchmarking one-off artifacts (kept locally in
-# ~/Documents/work/code/gizmo/benchmarks/step15_optimization/, not in repo)
-test/benchmark/step15/figures/
-test/benchmark/step15/results/
-test/benchmark/step15/runtime_data/
+# Step-15 benchmarking — entire tree is testing-ancillary, kept locally
+# (~/Documents/work/code/gizmo/benchmarks/step15_optimization/) but not in repo.
+# Drivers, sweep configs, analysis scripts, sanity probes — none of it is part
+# of the production code; meaningful only inside this immediate testing setup.
+test/benchmark/step15/
 test/fire_m11i/
 test/poisson_starforge/
