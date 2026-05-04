@@ -48,21 +48,9 @@ static gpu_spatial_index_t g_step_sidx_alltypes = {NULL,NULL,NULL,0,0,{0},{0},{0
  * the BVH over-includes tiles, absorbing accumulated h-growth from
  * undrifted particles. Per-pair r² acceptance inside kernels reads the
  * REAL P[j].KernelRadius (UVM) — over-inclusion is wasted work, never a
- * silent miss. Default slack 0 (eager mode preserves identity); recommended
- * value under lazy mode covers the per-decomp-interval h-growth (env
- * GIZMO_LAZY_DRIFT_H_SLACK, e.g. 0.5 = 50% inflation). */
-static double g_h_slack_cached = -1.0;
-static double sidx_h_slack(void)
-{
-    if(g_h_slack_cached < 0) {
-        const char *e = getenv("GIZMO_LAZY_DRIFT_H_SLACK");
-        double v = (e && e[0]) ? atof(e) : 0.0;
-        if(v < 0) v = 0.0;
-        if(v > 4.0) v = 4.0;
-        g_h_slack_cached = v;
-    }
-    return g_h_slack_cached;
-}
+ * silent miss. 0.5 (50% inflation) covers the per-decomp-interval h-growth
+ * with margin. */
+static constexpr double SIDX_H_SLACK = 0.5;
 
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
 gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_alltypes; }
@@ -488,7 +476,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->d_compact_xyzh = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(num_total * 4 * sizeof(float));
     {
         float *compact = idx->d_compact_xyzh;
-        float h_inflate = (float)(1.0 + sidx_h_slack()); /* lazy-drift slack: see sidx_h_slack() comment */
+        float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* lazy-drift slack: see SIDX_H_SLACK comment */
         Kokkos::parallel_for("compact_xyzh_build", num_total, KOKKOS_LAMBDA(int i) {
             compact[i*4+0] = (float)P_shared[i].Pos[0];
             compact[i*4+1] = (float)P_shared[i].Pos[1];
@@ -553,7 +541,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->valid = 1;
     g_dirty_clear_(); /* fresh build seeded compact_xyzh from current h */
 
-    if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: spatial index build breakdown — env-gated by GIZMO_NGB_QUIET */
+    if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: spatial index build breakdown — env-gated by GIZMO_VERBOSE_DIAG */
         printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
                caller_label ? caller_label : "?", type_bitmask, ntiles, num_pool,
                timediff(t_si0, t_si1), timediff(t_si1, t_si2), timediff(t_si2, t_si3),
@@ -688,7 +676,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     if(cached_idx && cached_idx->valid && (g_dirty_all || !g_dirty_list.empty())) {
         did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
-        float h_inflate = (float)(1.0 + sidx_h_slack()); /* see sidx_h_slack() — lazy-drift over-search slack */
+        float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* see SIDX_H_SLACK — lazy-drift over-search slack */
         t_refresh_launch_in = my_second();
         if(g_dirty_all) {
             Kokkos::parallel_for("compact_h_refresh_all", num_total, KOKKOS_LAMBDA(int i) {
@@ -1098,13 +1086,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         fflush(stdout);
     }
 
-    /* Lazy-drift hook (Attack C): when GIZMO_LAZY_DRIFT_ENABLE=1 is set,
-     * drift each neighbor in the freshly-built CSR list to time1 on host.
-     * Active particle i is already drifted (move_particles iterated
-     * ActiveParticleList). Each pool member j touched by this kernel needs
-     * its predicted state (CellP[j].VelPred / Density / InternalEnergyPred /
-     * KernelRadius) at time1 before the kernel reads it; drift_particle(j,
-     * time1) handles all of that with a single call.
+    /* Lazy-drift hook (Attack C): drift each neighbor in the freshly-built
+     * CSR list to time1 on host. Active particle i is already drifted
+     * (move_particles iterated ActiveParticleList). Each pool member j touched
+     * by this kernel needs its predicted state (CellP[j].VelPred / Density /
+     * InternalEnergyPred / KernelRadius) at time1 before the kernel reads it;
+     * drift_particle(j, time1) handles all of that with a single call.
      *
      * drift_particle's "if(time1 == time0) return" early-exit dedups: a j
      * already drifted (e.g. it was in another active i's neighbor list
@@ -1113,13 +1100,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * Marks h_dirty for the touched j's so that the NEXT gpu_ngb_list_build
      * call's compact_h_refresh updates compact_xyzh[j*4+3] from the freshly-
      * drifted KernelRadius. The CURRENT call's compact_xyzh h field is
-     * stale by up to one drift step; the GIZMO_LAZY_DRIFT_H_SLACK
-     * inflation in compact_xyzh write paths absorbs that staleness in the
-     * BVH tile-overlap test. Per-pair r² acceptance reads the actual
-     * P[j].KernelRadius (now freshly drifted), so correctness is preserved.
-     *
-     * In eager mode (default) this is a no-op early-out. */
-    if(gizmo_lazy_drift_enabled() && gnl->total_pairs > 0 && gnl->neighbors) {
+     * stale by up to one drift step; the SIDX_H_SLACK inflation in
+     * compact_xyzh write paths absorbs that staleness in the BVH tile-overlap
+     * test. Per-pair r² acceptance reads the actual P[j].KernelRadius (now
+     * freshly drifted), so correctness is preserved. */
+    if(gnl->total_pairs > 0 && gnl->neighbors) {
         double t_lazy0 = my_second();
         std::vector<int> ngb_host(gnl->total_pairs);
         gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
@@ -1179,7 +1164,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                                        double search_radius_factor)
 {
     /* Phase 7 Round A1: sub-bucket the 1.6s gradient_prep_symlist cost.
-     * env-gated via GIZMO_STEP_PHASES; no-op when off. */
+     * env-gated via GIZMO_VERBOSE_DIAG; no-op when off. */
     double t_sym_start = my_second();
 
     /* Use the per-step particle arena instead of a dedicated full-NumPart memcpy.

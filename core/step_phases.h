@@ -5,7 +5,7 @@
  * which only track coarse buckets and miss things like arena memcpy, scatter
  * loops, and host-side aggregation inside misc_hydro.
  *
- * Enabled by environment variable GIZMO_STEP_PHASES=1 (cached on first call).
+ * Enabled by environment variable GIZMO_VERBOSE_DIAG=1 (cached on first call).
  * When disabled, all calls are no-ops with negligible overhead (one branch).
  *
  * Usage:

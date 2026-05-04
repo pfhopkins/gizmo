@@ -429,7 +429,7 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
         double t_ngb     = timediff(t_diag_setup_end, t_diag_ngb_end);
         double t_kernel  = t_dens_kernel;
         double t_scatter = t_diag_scatter_end; /* stored as elapsed */
-        /* Phase 7 sub-buckets — env-gated via GIZMO_STEP_PHASES; no-op when off.
+        /* Phase 7 sub-buckets — env-gated via GIZMO_VERBOSE_DIAG; no-op when off.
          * Note t_ngb includes the SIDX prebuild when present; record SIDX
          * separately so density_ngb_build reflects only the ngb_list_build cost. */
         gizmo_step_phase_record("density_arena", t_arena);
@@ -631,7 +631,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
         double t_csr_copy = timediff(t_grad_arena,    t_grad_csr_copy);
         double t_kernel   = timediff(t_grad_csr_copy, t_grad_kernel);
         double t_out_copy = timediff(t_grad_kernel,   t_grad_copyout);
-        /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_STEP_PHASES off */
+        /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
         gizmo_step_phase_record("gradient_arena",    t_arena);
         gizmo_step_phase_record("gradient_csr_copy", t_csr_copy);
         gizmo_step_phase_record("gradient_kernel",   t_kernel);
@@ -1032,7 +1032,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
     gpu_particles_arena_invalidate();
 
-    /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_STEP_PHASES off */
+    /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
     {
         double t_postloop_end = my_second();
         gizmo_step_phase_record("hydro_arena",       timediff(t_hyd_start,    t_hyd_arena));

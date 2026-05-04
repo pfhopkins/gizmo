@@ -248,7 +248,7 @@ void drift_particle(int i, integertime time1)
 
 
 
-/* Drift-cache state and lazy-drift mode toggle.
+/* Drift-cache state.
  *
  * g_last_full_drift_Ti tracks the time1 of the most recent full-N drift.
  * When move_particles or gizmo_full_drift_to is called with time1 <= this
@@ -256,41 +256,22 @@ void drift_particle(int i, integertime time1)
  * bail per-particle). Reset to -1 via gizmo_full_drift_invalidate() if
  * external state advances time without a corresponding drift call.
  *
- * Lazy-drift mode (Attack C): when enabled, move_particles() iterates only
+ * Lazy-drift mode (Attack C): move_particles() iterates only
  * ActiveParticleList instead of all NumPart particles, leaving non-active
  * particles' Ti_current at their previous value. drift_particle() fires
  * lazily for neighbors on-demand via gizmo_lazy_drift_for_neighbor_list()
  * inside gpu_ngb_list_build. Domain_decomp boundaries call
  * gizmo_full_drift_to() explicitly so the decomp + subsequent fresh SIDX
- * build see all-particles-at-time1 P[].Pos.
- *
- * Toggle: GIZMO_LAZY_DRIFT_ENABLE=1 turns on lazy mode (default OFF, which
- * preserves the original eager full-drift semantics). The companion env
- * GIZMO_LAZY_DRIFT_H_SLACK (default 0) inflates compact_xyzh's h field by
- * (1 + slack) to absorb h-growth in undrifted neighbors during BVH tile
- * overlap tests; per-pair r² acceptance still uses the real P[j].KernelRadius
- * so over-inclusion is wasted work, never a missed-neighbor correctness
- * violation. */
+ * build see all-particles-at-time1 P[].Pos. */
 static integertime g_last_full_drift_Ti = -1;
 
 extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
 
-static int g_lazy_drift_enable_cached = -1;
-extern "C" int gizmo_lazy_drift_enabled(void)
-{
-    if(g_lazy_drift_enable_cached < 0) {
-        const char *e = getenv("GIZMO_LAZY_DRIFT_ENABLE");
-        g_lazy_drift_enable_cached = (e && e[0] && e[0] != '0') ? 1 : 0;
-    }
-    return g_lazy_drift_enable_cached;
-}
-
-/* Eager full-N drift to time1. Idempotent re-entry via g_last_full_drift_Ti
- * cache. Used by:
- *  - move_particles() when lazy mode is OFF (preserves original semantics)
+/* Full-N drift to time1. Idempotent re-entry via g_last_full_drift_Ti cache.
+ * Used by:
  *  - run.cc explicitly before each domain_Decomposition_* call so the decomp
  *    + subsequent fresh SIDX build see correct P[].Pos for every particle
- *    even when lazy mode left non-active particles undrifted
+ *    (lazy move_particles leaves non-active particles undrifted)
  *  - any code path that needs the full-particle set at a uniform time
  *    (output, restart, box-wrapping) */
 void gizmo_full_drift_to(integertime time1)
@@ -318,18 +299,9 @@ void move_particles(integertime time1)
         gizmo_step_phase_record("mp_hits", 1.0); /* cache hit — already drifted */
         return;
     }
-    if(!gizmo_lazy_drift_enabled()) {
-        /* Eager mode (default): preserve original move_particles semantics —
-         * full-N drift, set g_last_full_drift_Ti = time1. */
-        gizmo_step_phase_record("mp_misses", 1.0);
-        double t_mp_start = my_second();
-        gizmo_full_drift_to(time1);
-        gizmo_step_phase_record("mp_drift_time", timediff(t_mp_start, my_second()));
-        return;
-    }
-    /* Lazy mode: drift only the active-particle set. Non-active particles
-     * stay at their previous Ti_current; drift_particle fires lazily via
-     * the gpu_ngb_list_build hook when a kernel actually reads them.
+    /* Drift only the active-particle set. Non-active particles stay at their
+     * previous Ti_current; drift_particle fires lazily via the
+     * gpu_ngb_list_build hook when a kernel actually reads them.
      *
      * IMPORTANT: do NOT advance g_last_full_drift_Ti here — full drift
      * has not happened, so a subsequent gizmo_full_drift_to(time1) call

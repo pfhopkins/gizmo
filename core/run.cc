@@ -313,7 +313,7 @@ void run(void)
 
         report_memory_usage(&HighMark_run, "RUN");
 
-        /* DIAG: per-step phase wallclock breakdown (env-gated GIZMO_STEP_PHASES=1).
+        /* DIAG: per-step phase wallclock breakdown (env-gated GIZMO_VERBOSE_DIAG=1).
          * NumCurrentTiStep was bumped inside find_next_sync_point_and_drift, so the
          * just-completed step is at index (NumCurrentTiStep - 1). */
         gizmo_step_phase_dump((int)(All.NumCurrentTiStep - 1));

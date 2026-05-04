@@ -419,7 +419,6 @@ void gizmo_full_drift_to(integertime time1);
 #ifdef __cplusplus
 extern "C" {
 #endif
-int gizmo_lazy_drift_enabled(void);
 void gizmo_full_drift_invalidate(void);
 #ifdef __cplusplus
 }

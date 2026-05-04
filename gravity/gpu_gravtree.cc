@@ -1594,7 +1594,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * Nodes/Extnodes AND the SoA mirror in one pass — no host loop, no
      * AoS->SoA reseed afterwards.  Cost is O(active drifted nodes) with
      * GPU parallelism over Numnodestree (early-out when Ti_current matches). */
-    /* Phase 7+ sub-bucket timing — env-gated; no-op when GIZMO_STEP_PHASES off. */
+    /* Phase 7+ sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off. */
     double t_grv_start = my_second();
     move_particles(All.Ti_Current); /* drifts all P[], invalidates arena */
     double t_grv_mp = my_second();
@@ -2023,7 +2023,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
 
     myfree(idx_host);
 
-    /* Phase 7+ sub-buckets — env-gated; no-op when GIZMO_STEP_PHASES off.
+    /* Phase 7+ sub-buckets — env-gated; no-op when GIZMO_VERBOSE_DIAG off.
      * Codex flagged grav_tree_walk=2.07s as suspiciously similar to other
      * full-NumPart taxes; this breakdown isolates which is to blame. */
     {

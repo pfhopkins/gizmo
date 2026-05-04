@@ -35,7 +35,7 @@ void compute_grav_accelerations(void)
   CPU_Step[CPU_MISC] += measure_time();
   PRINT_STATUS("Start gravity force computation...");
 
-  /* Phase 7 sub-bucket timing — env-gated via GIZMO_STEP_PHASES; no-op when off.
+  /* Phase 7 sub-bucket timing — env-gated via GIZMO_VERBOSE_DIAG; no-op when off.
    * NOTE: force_update_tree is a SEPARATE top-level bucket recorded by run.cc;
    * do NOT include it here (would double-count). */
 #ifdef PMGRID
