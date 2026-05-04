@@ -27,6 +27,11 @@
 
 
 /* RT_STEP_DIAG: checksum function for bisecting RT divergence */
+/* Forward declarations for cpu.txt force-print flag (defined below near
+ * write_cpu_log; called from the step loop in run() above). */
+extern "C" void gizmo_cpu_log_request_force_print(void);
+extern "C" int  gizmo_cpu_log_consume_force_print(void);
+
 #if defined(RT_INFRARED) && defined(COOLING) && defined(GIZMO_DEBUG_RT_COOLING)
 static int rt_step_diag_count = 0;
 static void rt_step_checksum(const char *label) {
@@ -182,6 +187,10 @@ void run(void)
              * drift-time refresh path can't fix it. Force a full rebuild on next use,
              * which also reseeds per-tile original-extent tracking. */
             gpu_step_sidx_invalidate_full();
+            /* Trigger a cpu.txt summary at the start of the NEXT iteration (when
+             * write_cpu_log fires) — domain-decomp steps are inherently expensive,
+             * a per-decomp summary is the most informative cheap-cadence sample. */
+            gizmo_cpu_log_request_force_print();
         }
 
         STEP_PHASE_TIME("compute_grav_accelerations", compute_grav_accelerations());	/* compute gravitational accelerations for synchronous particles */
@@ -941,6 +950,16 @@ void output_log_messages(void)
 
 
 
+/* Force-print flag for cpu.txt: set by the run.cc step loop when domain
+ * decomposition (any variant) just ran in the previous step iteration.
+ * write_cpu_log consumes it (read-and-clear) so the cpu.txt summary fires
+ * on those steps in addition to global timesteps. Single-int state, so the
+ * out-of-band signaling avoids threading another argument through the call.
+ * No effect when OUTPUT_ADDITIONAL_RUNINFO is set (cpu.txt always fires). */
+static int g_cpu_log_force_print = 0;
+extern "C" void gizmo_cpu_log_request_force_print(void) { g_cpu_log_force_print = 1; }
+extern "C" int  gizmo_cpu_log_consume_force_print(void) { int v = g_cpu_log_force_print; g_cpu_log_force_print = 0; return v; }
+
 void write_cpu_log(void)
 {
   double max_CPU_Step[CPU_PARTS], avg_CPU_Step[CPU_PARTS], t0, t1, tsum; int i; t0=0; t1=0; tsum=0;
@@ -992,7 +1011,13 @@ void write_cpu_log(void)
     }
 
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
-    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) // only do the actual -print- operation on global timesteps
+    /* Default trigger: fire on global timesteps. Step-15 optimization addition:
+     * also fire on steps where domain decomposition just ran (set via
+     * gizmo_cpu_log_request_force_print() in the run.cc step loop) — those
+     * are inherently expensive steps and a per-decomp summary gives much
+     * better visibility for the long-running production case where
+     * OUTPUT_ADDITIONAL_RUNINFO is off. */
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin || gizmo_cpu_log_consume_force_print())
 #endif
   if(ThisTask == 0)
     {
@@ -1029,11 +1054,9 @@ void write_cpu_log(void)
 #endif
 	      "hydro/fluids  %10.2f  %5.1f%%\n"
 	      "   density    %10.2f  %5.1f%%\n"
-	      "   ghost_xchg %10.2f  %5.1f%%\n"
 	      "   gradients  %10.2f  %5.1f%%\n"
 	      "   hydro_frc  %10.2f  %5.1f%%\n"
-	      "   symlist    %10.2f  %5.1f%%\n"
-	      "   (unused)   %10.2f  %5.1f%%\n"
+	      "   comm+wait  %10.2f  %5.1f%%\n"
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   misc_hydro %10.2f  %5.1f%%\n"
 	      "domain        %10.2f  %5.1f%%\n"
@@ -1052,12 +1075,14 @@ void write_cpu_log(void)
 #endif
 #ifdef SINK_PARTICLES
 	      "sinks         %10.2f  %5.1f%%\n"
+	      "   sink_env   %10.2f  %5.1f%%\n"
+	      "   sink_swk   %10.2f  %5.1f%%\n"
 #endif
 #ifdef GRAIN_FLUID
           "grains        %10.2f  %5.1f%%\n"
 #endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
-          "mech_fb_loop  %10.2f  %5.1f%%\n"
+          "mechanical    %10.2f  %5.1f%%\n"
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
           "hII_fb_loop   %10.2f  %5.1f%%\n"
@@ -1109,11 +1134,10 @@ void write_cpu_log(void)
               + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDMISC]
               + All.CPU_Sum[CPU_HYDWAIT] + All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSCOMPUTE], (All.CPU_Sum[CPU_DENSCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DENSCOMM], (All.CPU_Sum[CPU_DENSCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSWAIT], (All.CPU_Sum[CPU_DENSWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_HYDCOMM], (All.CPU_Sum[CPU_HYDCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_HYDWAIT], (All.CPU_Sum[CPU_HYDWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDWAIT],
+              (All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEHMAXUPDATE], (All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_HYDMISC] + All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_HYDMISC] + All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DOMAIN], (All.CPU_Sum[CPU_DOMAIN]) / All.CPU_Sum[CPU_ALL] * 100,
@@ -1123,6 +1147,7 @@ void write_cpu_log(void)
 #endif
     All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TIMELINE], (All.CPU_Sum[CPU_TIMELINE]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,
 #ifdef COOLING
     All.CPU_Sum[CPU_COOLINGSFR], (All.CPU_Sum[CPU_COOLINGSFR]) / All.CPU_Sum[CPU_ALL] * 100,
@@ -1131,7 +1156,10 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_COOLSFRIMBAL], (All.CPU_Sum[CPU_COOLSFRIMBAL]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
 #ifdef SINK_PARTICLES
-    All.CPU_Sum[CPU_SINKS], (All.CPU_Sum[CPU_SINKS]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_SINKS] + All.CPU_Sum[CPU_SINK_ENV] + All.CPU_Sum[CPU_SINK_FEEDSWK],
+              (All.CPU_Sum[CPU_SINKS] + All.CPU_Sum[CPU_SINK_ENV] + All.CPU_Sum[CPU_SINK_FEEDSWK]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_SINK_ENV], (All.CPU_Sum[CPU_SINK_ENV]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_SINK_FEEDSWK], (All.CPU_Sum[CPU_SINK_FEEDSWK]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
 #ifdef GRAIN_FLUID
     All.CPU_Sum[CPU_DRAGFORCE], (All.CPU_Sum[CPU_DRAGFORCE]) / All.CPU_Sum[CPU_ALL] * 100,

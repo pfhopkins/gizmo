@@ -44,7 +44,7 @@ void sink_swallow_and_kick_loop(void)
         int global_num_active = num_active;
         MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(global_num_active == 0) {
-            CPU_Step[CPU_SINKS] += measure_time();
+            CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
             return;
         }
 
@@ -62,7 +62,7 @@ void sink_swallow_and_kick_loop(void)
         sink_swallow_and_kick_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii, SINK_NEIGHBOR_BITFLAG);
         myfree(nl_radii); myfree(nl_active);
         if(imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
-        CPU_Step[CPU_SINKS] += measure_time();
+        CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
     }
 }
 

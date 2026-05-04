@@ -45,7 +45,7 @@ void sink_environment_loop(void)
 {
     /* GPU neighbor-list path: build active-sink index + radius arrays, dispatch
        GPU kernel, scatter outputs into SinkTempInfo. */
-    CPU_Step[CPU_SINKS] += measure_time();
+    CPU_Step[CPU_SINK_ENV] += measure_time();
 
     /* Count active sinks FIRST (cheap host loop over ActiveParticleList).
      * If no rank has any active sinks, skip ghost_prep + arena_acquire +
@@ -58,7 +58,7 @@ void sink_environment_loop(void)
     int global_num_active = num_active;
     MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(global_num_active == 0) {
-        CPU_Step[CPU_SINKS] += measure_time();
+        CPU_Step[CPU_SINK_ENV] += measure_time();
         return;
     }
 
@@ -139,7 +139,7 @@ void sink_environment_loop(void)
     if(sinkenv_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
     /* final operations on results */
     {int i; for(i=0; i<N_active_loc_Sink; i++) {sink_normalize_temp_info_struct_after_environment_loop(i);}}
-    CPU_Step[CPU_SINKS] += measure_time(); /* collect timings and reset clock for next timing */
+    CPU_Step[CPU_SINK_ENV] += measure_time(); /* collect timings and reset clock for next timing */
 }
 
 
@@ -160,7 +160,7 @@ void sink_environment_second_loop(void)
 {
     /* Stage E2: GPU path — pure aggregator, no j-writes, same active set + radii +
      * j_type_bitmask as the first environment pass. */
-    CPU_Step[CPU_SINKS] += measure_time();
+    CPU_Step[CPU_SINK_ENV] += measure_time();
 
     /* Count-first guard (see sink_environment_loop for rationale). */
     int num_active = 0;
@@ -168,7 +168,7 @@ void sink_environment_second_loop(void)
     int global_num_active = num_active;
     MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(global_num_active == 0) {
-        CPU_Step[CPU_SINKS] += measure_time();
+        CPU_Step[CPU_SINK_ENV] += measure_time();
         return;
     }
 
@@ -212,7 +212,7 @@ void sink_environment_second_loop(void)
 
     myfree(nl_outs); myfree(nl_Jstar); myfree(nl_Jgas); myfree(nl_radii); myfree(nl_active);
     if(sinkenv2_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
-    CPU_Step[CPU_SINKS] += measure_time();
+    CPU_Step[CPU_SINK_ENV] += measure_time();
 }
 
 #endif   //SINK_GRAVACCRETION == 0

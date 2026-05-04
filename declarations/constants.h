@@ -246,17 +246,21 @@
 #define CPU_IMPROVDIFFWAIT    44
 #define CPU_IMPROVDIFFCOMM    45
 #define CPU_RTNONFLUXOPS  46
-#define CPU_DUMMY00       47
-#define CPU_DUMMY01       48
-#define CPU_DUMMY02       49
-#define CPU_DUMMY03       50
-#define CPU_DUMMY04       51
-#define CPU_DUMMY05       52
-#define CPU_DUMMY06       53
-#define CPU_DUMMY07       54
-#define CPU_DUMMY08       55
-#define CPU_DUMMY09       56
-#define CPU_DUMMY10       57
+/* Categories repurposed from the original CPU_DUMMY00..10 slots to track
+ * GPU-era costs surfaced during the step-15 optimization pass. Single double
+ * increment per call site — same overhead as any existing CPU_Step bucket,
+ * unconditional (unlike STEP_PHASES which is env-gated). */
+#define CPU_GPU_NGB_BUILD     47  /* GPU CSR neighbor-list build (gpu_ngb_list_build) */
+#define CPU_SIDX_REFRESH      48  /* Attack-B SIDX drift-time incremental refresh */
+#define CPU_LAZY_DRIFT        49  /* Attack-C lazy-drift hook (drift neighbors before kernel) */
+#define CPU_GRAV_PRECOMP      50  /* gravity per-step precompute (active list, scratch alloc, kernel setup) */
+#define CPU_FORCE_UPDATE_TREE 51  /* force_update_tree (kick propagation through existing tree) */
+#define CPU_FIND_TIMESTEPS    52  /* per-step timestep determination */
+#define CPU_SINK_ENV          53  /* sink_environment GPU kernel + scatter */
+#define CPU_SINK_FEEDSWK      54  /* sink_feed + sink_swallow_and_kick combined */
+#define CPU_GPU_KERNEL        55  /* combined density/gradient/hydro GPU kernel parallel_for+fence time */
+#define CPU_DUMMY09           56  /* reserved for future repurpose */
+#define CPU_DUMMY10           57  /* reserved for future repurpose */
 
 #define CPU_PARTS          58  /* this gives the number of parts above (must be last) */
 

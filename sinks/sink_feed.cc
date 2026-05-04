@@ -32,7 +32,7 @@ void sink_feed_loop(void)
         int global_num_active = num_active;
         MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(global_num_active == 0) {
-            CPU_Step[CPU_SINKS] += measure_time();
+            CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
             return;
         }
         int *nl_active = (int *) mymalloc("sinkfeed_nl_active",
@@ -46,7 +46,7 @@ void sink_feed_loop(void)
         }}
         sink_feed_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
         myfree(nl_radii); myfree(nl_active);
-        CPU_Step[CPU_SINKS] += measure_time();
+        CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
     }
 }
 

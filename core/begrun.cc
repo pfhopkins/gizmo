@@ -757,6 +757,16 @@ void open_outputfiles(void)
     fprintf(FdBalance, "MultiDiff-comm = '%c' / '%c'\n", CPU_Symbol[CPU_IMPROVDIFFCOMM], CPU_SymbolImbalance[CPU_IMPROVDIFFCOMM]);
     fprintf(FdBalance, "MultiDiff-misc = '%c' / '%c'\n", CPU_Symbol[CPU_IMPROVDIFFMISC], CPU_SymbolImbalance[CPU_IMPROVDIFFMISC]);
     fprintf(FdBalance, "Miscellaneous  = '%c' / '%c'\n", CPU_Symbol[CPU_MISC], CPU_SymbolImbalance[CPU_MISC]);
+    /* Step-15-era buckets surfaced during the GPU optimization pass. */
+    fprintf(FdBalance, "GPU ngb-build  = '%c' / '%c'\n", CPU_Symbol[CPU_GPU_NGB_BUILD],     CPU_SymbolImbalance[CPU_GPU_NGB_BUILD]);
+    fprintf(FdBalance, "SIDX refresh   = '%c' / '%c'\n", CPU_Symbol[CPU_SIDX_REFRESH],      CPU_SymbolImbalance[CPU_SIDX_REFRESH]);
+    fprintf(FdBalance, "Lazy drift hk  = '%c' / '%c'\n", CPU_Symbol[CPU_LAZY_DRIFT],        CPU_SymbolImbalance[CPU_LAZY_DRIFT]);
+    fprintf(FdBalance, "GPU kernel     = '%c' / '%c'\n", CPU_Symbol[CPU_GPU_KERNEL],        CPU_SymbolImbalance[CPU_GPU_KERNEL]);
+    fprintf(FdBalance, "Grav precomp   = '%c' / '%c'\n", CPU_Symbol[CPU_GRAV_PRECOMP],      CPU_SymbolImbalance[CPU_GRAV_PRECOMP]);
+    fprintf(FdBalance, "Force-upd-tree = '%c' / '%c'\n", CPU_Symbol[CPU_FORCE_UPDATE_TREE], CPU_SymbolImbalance[CPU_FORCE_UPDATE_TREE]);
+    fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS],    CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
+    fprintf(FdBalance, "Sink env       = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_ENV],          CPU_SymbolImbalance[CPU_SINK_ENV]);
+    fprintf(FdBalance, "Sink feed/swk  = '%c' / '%c'\n", CPU_Symbol[CPU_SINK_FEEDSWK],      CPU_SymbolImbalance[CPU_SINK_FEEDSWK]);
     fprintf(FdBalance, "\n");
 #endif
 
