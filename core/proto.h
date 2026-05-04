@@ -746,6 +746,7 @@ double gravkick_integ(double a, void *param);
 double growthfactor_integ(double a, void *param);
 void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
+double get_drift_factor_omp_safe(integertime time0, integertime time1, int i, int mode);
 double measure_time(void);
 double report_time(void);
 

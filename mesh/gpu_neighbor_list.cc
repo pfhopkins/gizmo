@@ -163,9 +163,24 @@ void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); 
  * justified.
  */
 
-/* Recomputes tile bboxes from current particle positions AND fills the
- * host-side position-staging buffer (idx->h_pos_buf) for every pool
- * member. Returns max (new_extent / orig_extent) across all tiles. */
+/* Recomputes tile bboxes from each pool member's "virtual at-time1 position"
+ * AND fills the host-side position-staging buffer (idx->h_pos_buf) with the
+ * same values. Returns max (new_extent / orig_extent) across all tiles.
+ *
+ * "Virtual at-time1 position" = P[j].Pos + P[j].Vel * get_drift_factor(
+ *     P[j].Ti_current, All.Ti_Current, j, 0). This matches what
+ * drift_particle's Pos update would produce IF / WHEN the particle is
+ * lazily drifted by a downstream consumer. Under the current full-drift
+ * regime (move_particles iterates every NumPart particle), Ti_current ==
+ * All.Ti_Current for all j, dt = 0, virt_pos == P[j].Pos — i.e. this code
+ * is a no-op in absolute value, just exercising the threadsafe drift-factor
+ * code path so it's already wired when Attack C C1 flips move_particles to
+ * active-only iteration.
+ *
+ * Correctness invariant: the bbox covers each particle's actual location
+ * at time1, regardless of whether the particle has been drifted yet. BVH
+ * queries against the bbox find every potentially-relevant pool member;
+ * the consumer then drifts the particle on first read. */
 static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
                                              struct particle_data *P_shared)
 {
@@ -175,13 +190,17 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
     const double *orig_extent = idx->h_tile_orig_max_extent;
     float *pos_buf = idx->h_pos_buf;
     double max_ratio = 0.0;
+    integertime time1 = All.Ti_Current;
 
     #pragma omp parallel for reduction(max:max_ratio) schedule(static)
     for(int t = 0; t < ntiles; t++) {
         sfc_tile_t *tile = &h_tiles[t];
         if(tile->count <= 0) continue;
         int j0 = h_pool[tile->first];
-        double x0 = P_shared[j0].Pos[0], y0 = P_shared[j0].Pos[1], z0 = P_shared[j0].Pos[2];
+        double dt0 = get_drift_factor_omp_safe(P_shared[j0].Ti_current, time1, j0, 0);
+        double x0 = P_shared[j0].Pos[0] + P_shared[j0].Vel[0] * dt0;
+        double y0 = P_shared[j0].Pos[1] + P_shared[j0].Vel[1] * dt0;
+        double z0 = P_shared[j0].Pos[2] + P_shared[j0].Vel[2] * dt0;
         double lo0 = x0, hi0 = x0;
         double lo1 = y0, hi1 = y0;
         double lo2 = z0, hi2 = z0;
@@ -189,9 +208,10 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         if(pos_buf) { pos_buf[j0*3+0] = (float)x0; pos_buf[j0*3+1] = (float)y0; pos_buf[j0*3+2] = (float)z0; }
         for(int s = 1; s < tile->count; s++) {
             int j = h_pool[tile->first + s];
-            double x = P_shared[j].Pos[0];
-            double y = P_shared[j].Pos[1];
-            double z = P_shared[j].Pos[2];
+            double dt = get_drift_factor_omp_safe(P_shared[j].Ti_current, time1, j, 0);
+            double x = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
+            double y = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
+            double z = P_shared[j].Pos[2] + P_shared[j].Vel[2] * dt;
             if(x < lo0) lo0 = x; else if(x > hi0) hi0 = x;
             if(y < lo1) lo1 = y; else if(y > hi1) hi1 = y;
             if(z < lo2) lo2 = z; else if(z > hi2) hi2 = z;
