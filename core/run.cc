@@ -91,6 +91,7 @@ void run(void)
         if((All.Ti_Current >= TIMEBASE) || (All.Time > All.TimeMax)) /* check whether we reached the final time */
         {
             if(ThisTask == 0) {printf("\nFinal time=%g reached. Simulation ends.\n", All.TimeMax);}
+            gizmo_full_drift_to(All.Ti_Current); /* lazy-drift sync: restart + final snapshot need all-particle predicted state */
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
@@ -153,6 +154,14 @@ void run(void)
         MPI_Allreduce(MPI_IN_PLACE, &NeedFullDomainDecomp, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
         {
+            /* Under lazy-drift mode, move_particles only drifted ActiveParticleList;
+             * non-active particles are still at their previous Ti_current. Domain
+             * decomposition redistributes particles based on P[].Pos, and the
+             * subsequent fresh SIDX build (post-invalidate_full) populates
+             * compact_xyzh from P[].Pos — both require all-particles-at-time1.
+             * Force a full eager drift before either decomp variant fires.
+             * In eager mode this is a no-op (g_last_full_drift_Ti cache hit). */
+            gizmo_full_drift_to(All.Ti_Current);
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
             if(!NeedFullDomainDecomp) {STEP_PHASE_TIME("domain_decomp_light", domain_Decomposition_light(0));}  /* lightweight repartition: reuse top tree, just rebalance */
             else
@@ -160,7 +169,7 @@ void run(void)
             {STEP_PHASE_TIME("domain_decomp", domain_Decomposition(0, 0, 1));}  /* full decomposition needed */
             reconstructed_tree = 1;
         }
-        else if(TreeReconstructFlag) {STEP_PHASE_TIME("domain_decomp_treerebuild", domain_Decomposition(0, 0, 1)); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); STEP_PHASE_TIME("domain_decomp_treerebuild", domain_Decomposition(0, 0, 1)); reconstructed_tree = 1;}
         else
         {
             STEP_PHASE_TIME("force_update_tree", force_update_tree());	/* update tree dynamically with kicks of last step so that it can be reused */
@@ -515,6 +524,15 @@ void compute_statistics(void)
 {
     if((All.Time - All.TimeLastStatistics) >= All.TimeBetStatistics)
     {
+        /* Lazy-drift global-read sync: energy_statistics sums predicted state
+         * (VelPred, InternalEnergyPred, Density) over ALL gas particles. Under
+         * lazy drift, particles not recently touched as neighbors still carry
+         * their previous-Ti_current predicted state — the global reduction
+         * would mix particles at different times. Drift everyone to the
+         * current sync time so the reduction is consistent. Under eager mode
+         * the call is a fast no-op (g_last_full_drift_Ti cache hit). Gated
+         * on TimeBetStatistics so this doesn't fire every step. */
+        gizmo_full_drift_to(All.Ti_Current);
         energy_statistics();	/* compute and output energy statistics */
         All.TimeLastStatistics += All.TimeBetStatistics;
     }
@@ -592,6 +610,7 @@ void find_next_sync_point_and_drift(void)
          * stays drifted continuously under ADAPTIVE_TREEFORCE_UPDATE.  The
          * legacy compute_potential() (gravity/potential.cc) and
          * OUTPUT_RECOMPUTE_POTENTIAL flag are retired. */
+        gizmo_full_drift_to(All.Ti_Current); /* lazy-drift sync: snapshot writes all-particle predicted state */
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
         All.Ti_nextoutput = find_next_outputtime(All.Ti_nextoutput + 1);
     }

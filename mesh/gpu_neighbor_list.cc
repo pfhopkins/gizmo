@@ -34,6 +34,36 @@
 static gpu_spatial_index_t g_step_sidx = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0};
 static gpu_spatial_index_t g_step_sidx_alltypes = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0};
 
+/* Lazy-drift h-slack: under lazy drift, neighbor j's KernelRadius in P[] may
+ * be at j's old Ti_current, not at time1. drift_particle's gas-extras block
+ * grows h via exp(divv_fac/NDIMS) per drift (capped at exp(divv_fac_max=±0.3
+ * /NDIMS) ≈ ±10% per drift), accumulating over multiple deferred drifts.
+ * compact_xyzh[j*4+3] inherits the same staleness when populated from P[].
+ *
+ * The BVH walk reads compact_xyzh[j*4+3] for tile-overlap decisions in
+ * symmetric mode. Stale-small h_j → BVH overlap test underestimates →
+ * legitimate neighbors missed.
+ *
+ * Mitigation: at compact_xyzh population time, multiply h by (1 + slack) so
+ * the BVH over-includes tiles, absorbing accumulated h-growth from
+ * undrifted particles. Per-pair r² acceptance inside kernels reads the
+ * REAL P[j].KernelRadius (UVM) — over-inclusion is wasted work, never a
+ * silent miss. Default slack 0 (eager mode preserves identity); recommended
+ * value under lazy mode covers the per-decomp-interval h-growth (env
+ * GIZMO_LAZY_DRIFT_H_SLACK, e.g. 0.5 = 50% inflation). */
+static double g_h_slack_cached = -1.0;
+static double sidx_h_slack(void)
+{
+    if(g_h_slack_cached < 0) {
+        const char *e = getenv("GIZMO_LAZY_DRIFT_H_SLACK");
+        double v = (e && e[0]) ? atof(e) : 0.0;
+        if(v < 0) v = 0.0;
+        if(v > 4.0) v = 4.0;
+        g_h_slack_cached = v;
+    }
+    return g_h_slack_cached;
+}
+
 gpu_spatial_index_t *gpu_step_sidx_ptr(void) { return &g_step_sidx; }
 gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_alltypes; }
 
@@ -467,11 +497,12 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->d_compact_xyzh = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(num_total * 4 * sizeof(float));
     {
         float *compact = idx->d_compact_xyzh;
+        float h_inflate = (float)(1.0 + sidx_h_slack()); /* lazy-drift slack: see sidx_h_slack() comment */
         Kokkos::parallel_for("compact_xyzh_build", num_total, KOKKOS_LAMBDA(int i) {
             compact[i*4+0] = (float)P_shared[i].Pos[0];
             compact[i*4+1] = (float)P_shared[i].Pos[1];
             compact[i*4+2] = (float)P_shared[i].Pos[2];
-            compact[i*4+3] = (float)P_shared[i].KernelRadius;
+            compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
         });
         Kokkos::fence();
     }
@@ -666,10 +697,11 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     if(cached_idx && cached_idx->valid && (g_dirty_all || !g_dirty_list.empty())) {
         did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
+        float h_inflate = (float)(1.0 + sidx_h_slack()); /* see sidx_h_slack() — lazy-drift over-search slack */
         t_refresh_launch_in = my_second();
         if(g_dirty_all) {
             Kokkos::parallel_for("compact_h_refresh_all", num_total, KOKKOS_LAMBDA(int i) {
-                compact[i*4+3] = (float)P_shared[i].KernelRadius;
+                compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
             });
         } else {
             int n_dirty = (int)g_dirty_list.size();
@@ -683,7 +715,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }
             Kokkos::parallel_for("compact_h_refresh_idx", n_dirty, KOKKOS_LAMBDA(int k) {
                 int i = d_dirty[k];
-                compact[i*4+3] = (float)P_shared[i].KernelRadius;
+                compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
             });
             Kokkos::fence();
             Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_dirty);
@@ -1073,6 +1105,41 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                timediff(t_free0, t_free1),
                timediff(t_entry, t_free1));
         fflush(stdout);
+    }
+
+    /* Lazy-drift hook (Attack C): when GIZMO_LAZY_DRIFT_ENABLE=1 is set,
+     * drift each neighbor in the freshly-built CSR list to time1 on host.
+     * Active particle i is already drifted (move_particles iterated
+     * ActiveParticleList). Each pool member j touched by this kernel needs
+     * its predicted state (CellP[j].VelPred / Density / InternalEnergyPred /
+     * KernelRadius) at time1 before the kernel reads it; drift_particle(j,
+     * time1) handles all of that with a single call.
+     *
+     * drift_particle's "if(time1 == time0) return" early-exit dedups: a j
+     * already drifted (e.g. it was in another active i's neighbor list
+     * earlier this step, or it IS an active particle) is a fast no-op.
+     *
+     * Marks h_dirty for the touched j's so that the NEXT gpu_ngb_list_build
+     * call's compact_h_refresh updates compact_xyzh[j*4+3] from the freshly-
+     * drifted KernelRadius. The CURRENT call's compact_xyzh h field is
+     * stale by up to one drift step; the GIZMO_LAZY_DRIFT_H_SLACK
+     * inflation in compact_xyzh write paths absorbs that staleness in the
+     * BVH tile-overlap test. Per-pair r² acceptance reads the actual
+     * P[j].KernelRadius (now freshly drifted), so correctness is preserved.
+     *
+     * In eager mode (default) this is a no-op early-out. */
+    if(gizmo_lazy_drift_enabled() && gnl->total_pairs > 0 && gnl->neighbors) {
+        double t_lazy0 = my_second();
+        std::vector<int> ngb_host(gnl->total_pairs);
+        gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
+        integertime time1 = All.Ti_Current;
+        for(int idx_n = 0; idx_n < gnl->total_pairs; idx_n++) {
+            int j = ngb_host[idx_n];
+            if(j >= 0 && j < num_total) drift_particle(j, time1);
+        }
+        gpu_compact_xyzh_mark_h_dirty_indices(ngb_host.data(), gnl->total_pairs);
+        gizmo_step_phase_record("lazy_drift_pairs", (double)gnl->total_pairs);
+        gizmo_step_phase_record("lazy_drift_time",  timediff(t_lazy0, my_second()));
     }
 }
 

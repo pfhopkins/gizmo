@@ -248,52 +248,106 @@ void drift_particle(int i, integertime time1)
 
 
 
-/* Short-circuit cache: skip the all-particles loop entirely when we've
- * already drifted everyone to this time. Each call to move_particles ends
- * with all P[i].Ti_drift >= time1; subsequent calls with the same time1
- * would do per-particle no-ops (drift_particle bails internally) but still
- * pay 12.4M cache-misses on the loop. Cache eliminates the loop overhead.
+/* Drift-cache state and lazy-drift mode toggle.
  *
- * Reset to -1 by find_next_sync_point_and_drift's bookkeeping (which
- * advances All.Ti_Current beyond the last full drift) — if anything else
- * needs to invalidate the cache, call gizmo_full_drift_invalidate() below.
+ * g_last_full_drift_Ti tracks the time1 of the most recent full-N drift.
+ * When move_particles or gizmo_full_drift_to is called with time1 <= this
+ * value, the loop is short-circuited (already drifted; drift_particle would
+ * bail per-particle). Reset to -1 via gizmo_full_drift_invalidate() if
+ * external state advances time without a corresponding drift call.
  *
- * Safety: per-particle drift_particle is idempotent for time1 ≤ Ti_drift;
- * partial-drifts via per-particle drift_particle calls between full drifts
- * only ADVANCE individual Ti_drift values, never go backward. So cache
- * "last full drift to time1" remains conservatively true. */
+ * Lazy-drift mode (Attack C): when enabled, move_particles() iterates only
+ * ActiveParticleList instead of all NumPart particles, leaving non-active
+ * particles' Ti_current at their previous value. drift_particle() fires
+ * lazily for neighbors on-demand via gizmo_lazy_drift_for_neighbor_list()
+ * inside gpu_ngb_list_build. Domain_decomp boundaries call
+ * gizmo_full_drift_to() explicitly so the decomp + subsequent fresh SIDX
+ * build see all-particles-at-time1 P[].Pos.
+ *
+ * Toggle: GIZMO_LAZY_DRIFT_ENABLE=1 turns on lazy mode (default OFF, which
+ * preserves the original eager full-drift semantics). The companion env
+ * GIZMO_LAZY_DRIFT_H_SLACK (default 0) inflates compact_xyzh's h field by
+ * (1 + slack) to absorb h-growth in undrifted neighbors during BVH tile
+ * overlap tests; per-pair r² acceptance still uses the real P[j].KernelRadius
+ * so over-inclusion is wasted work, never a missed-neighbor correctness
+ * violation. */
 static integertime g_last_full_drift_Ti = -1;
 
 extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
 
-void move_particles(integertime time1)
+static int g_lazy_drift_enable_cached = -1;
+extern "C" int gizmo_lazy_drift_enabled(void)
 {
-    /* Phase 7 Round A3: drift-cache state diagnostics. env-gated; no-op when off. */
-    gizmo_step_phase_record("mp_calls", 1.0);
-    if(time1 <= g_last_full_drift_Ti) {
-        gizmo_step_phase_record("mp_hits", 1.0); /* cache hit — early-return */
-        return; /* already drifted to time1; loop would be all no-ops */
+    if(g_lazy_drift_enable_cached < 0) {
+        const char *e = getenv("GIZMO_LAZY_DRIFT_ENABLE");
+        g_lazy_drift_enable_cached = (e && e[0] && e[0] != '0') ? 1 : 0;
     }
-    gizmo_step_phase_record("mp_misses", 1.0); /* cache miss — full N drift fires */
-    double t_mp_start = my_second();
+    return g_lazy_drift_enable_cached;
+}
+
+/* Eager full-N drift to time1. Idempotent re-entry via g_last_full_drift_Ti
+ * cache. Used by:
+ *  - move_particles() when lazy mode is OFF (preserves original semantics)
+ *  - run.cc explicitly before each domain_Decomposition_* call so the decomp
+ *    + subsequent fresh SIDX build see correct P[].Pos for every particle
+ *    even when lazy mode left non-active particles undrifted
+ *  - any code path that needs the full-particle set at a uniform time
+ *    (output, restart, box-wrapping) */
+void gizmo_full_drift_to(integertime time1)
+{
+    if(time1 <= g_last_full_drift_Ti) return; /* already drifted */
+    double t_start = my_second();
     int i;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
     g_last_full_drift_Ti = time1;
-    gizmo_step_phase_record("mp_drift_time", timediff(t_mp_start, my_second()));
-
+    gizmo_step_phase_record("mp_full_drift_time", timediff(t_start, my_second()));
     /* Phase 8a Round 2 option D: one post-drift arena coherence point.
-     * Drift mutated host P[].Pos/VelPred/etc for all NumPart particles,
-     * making the arena (separate Kokkos managed allocation) stale. Instead
-     * of invalidating and forcing the next ~5 wrapper acquires to each
-     * slow-path memcpy 17GB, refresh arena ONCE here from host. By itself
-     * this is perf-neutral (one memcpy here vs one in next acquire); win
-     * materializes when Round 3 wrappers also stop invalidating defensively
-     * (each one mark_clean instead of invalidate, downstream acquires fast-path).
-     * Falls back to invalidate when arena isn't allocated yet. */
+     * Under UVM-canonical (current branch) the arena IS the host P/CellP
+     * (alias), so refresh is a diagnostic-counter no-op; kept for forward
+     * compat with non-aliased arena builds. */
     gpu_particles_arena_refresh_from_host(NumPart, P, CellP, "move_particles_post_drift");
+}
+
+void move_particles(integertime time1)
+{
+    gizmo_step_phase_record("mp_calls", 1.0);
+    if(time1 <= g_last_full_drift_Ti) {
+        gizmo_step_phase_record("mp_hits", 1.0); /* cache hit — already drifted */
+        return;
+    }
+    if(!gizmo_lazy_drift_enabled()) {
+        /* Eager mode (default): preserve original move_particles semantics —
+         * full-N drift, set g_last_full_drift_Ti = time1. */
+        gizmo_step_phase_record("mp_misses", 1.0);
+        double t_mp_start = my_second();
+        gizmo_full_drift_to(time1);
+        gizmo_step_phase_record("mp_drift_time", timediff(t_mp_start, my_second()));
+        return;
+    }
+    /* Lazy mode: drift only the active-particle set. Non-active particles
+     * stay at their previous Ti_current; drift_particle fires lazily via
+     * the gpu_ngb_list_build hook when a kernel actually reads them.
+     *
+     * IMPORTANT: do NOT advance g_last_full_drift_Ti here — full drift
+     * has not happened, so a subsequent gizmo_full_drift_to(time1) call
+     * (e.g. before domain_decomp) must still execute the full loop. */
+    gizmo_step_phase_record("mp_misses", 1.0);
+    double t_mp_start = my_second();
+    int n_active = 0;
+    /* OMP over a global iterator like ActiveParticleList isn't trivially
+     * parallelizable (range-based-for over a custom container). For tiny-N
+     * the loop is short enough that single-threaded host iteration is
+     * dominated by drift_particle's per-particle work, which is itself
+     * already work-bounded — paralleling here gains little. */
+    for(int i : ActiveParticleList) {
+        drift_particle(i, time1);
+        n_active++;
+    }
+    gizmo_step_phase_record("mp_drift_time",   timediff(t_mp_start, my_second()));
+    gizmo_step_phase_record("mp_active_drift", (double)n_active);
 }
 
 

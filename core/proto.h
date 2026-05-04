@@ -415,6 +415,15 @@ peanokey morton_key(peano1D x, peano1D y, peano1D z, int bits);
 void pm_init_periodic_allocate(void);
 void pm_init_periodic_free(void);
 void move_particles(integertime time1);
+void gizmo_full_drift_to(integertime time1);
+#ifdef __cplusplus
+extern "C" {
+#endif
+int gizmo_lazy_drift_enabled(void);
+void gizmo_full_drift_invalidate(void);
+#ifdef __cplusplus
+}
+#endif
 void ghost_exchange(double safety_factor);
 void ghost_exchange_cleanup(void);
 int ghost_exchange_needs_redo(void);
