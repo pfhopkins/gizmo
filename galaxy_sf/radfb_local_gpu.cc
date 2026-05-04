@@ -218,6 +218,14 @@ void radiation_pressure_winds_gpu(struct particle_data *P_host,
         ghost_writeback_zero_radfbrp();
         ghost_writeback_radfbrp();
         ghost_write_detector_end();
+        /* Match the full-path MPI_Reduce sequence (lines below) so a rank that
+         * skips the kernel still participates collectively. Without these,
+         * ranks with num_src==0 are 2 collectives behind ranks with work →
+         * MPI_ERR_TRUNCATE in a later MPI op (e.g. ghost_exchange's diagnostic
+         * MPI_Reduce, observed in fire_m11i 2-rank tiny-N runs). */
+        double zero_n = 0.0, zero_mom = 0.0, dummy_n = 0.0, dummy_mom = 0.0;
+        MPI_Reduce(&zero_n,   &dummy_n,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&zero_mom, &dummy_mom, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
         if(imported_ghosts) ghost_exchange_cleanup();
         return;
     }
