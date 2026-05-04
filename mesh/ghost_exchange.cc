@@ -31,6 +31,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../system/mpi_alltoallv_typed.h"
+#include "../core/step_phases.h"   /* gizmo_verbose_diag() */
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
 
 /*
@@ -145,10 +146,26 @@ void ghost_exchange(double safety_factor)
     local_ntiles = (num_pool + tile_target - 1) / tile_target;
     if(local_ntiles < 1) local_ntiles = 1;
 
-    /* Compact tile metadata for exchange: bbox (6 doubles) + hmax (1 double) + count (1 int) = 60 bytes */
+    /* Compact tile metadata for exchange. Two parallel bbox/hmax sets:
+     *   (lo, hi, hmax, count)         — over ALL particles in tile
+     *   (active_lo, active_hi, active_hmax, active_count) — over ACTIVE only
+     *
+     * The all-particle set governs what this rank can SUPPLY as ghosts (j may
+     * be inactive on its home rank but still a neighbor of an active i on a
+     * peer rank — WAKEUP-style semantics demand this).
+     *
+     * The active-only set governs what this rank actually NEEDS: only tiles
+     * containing at least one active particle drive remote-tile imports.
+     *
+     * Old code (pre-tile, tree-based ngb_treefind_variable_threads) iterated
+     * FirstActiveParticle and built per-rank exports off active i's search
+     * radius — the new tile path silently dropped that gating and was
+     * shipping ~all of the global pool on tiny-N steps. */
     struct tile_meta_t {
         double lo[3], hi[3], hmax;
         int count;
+        double active_lo[3], active_hi[3], active_hmax;
+        int active_count;
     };
 
     tile_meta_t *local_meta = (tile_meta_t *) malloc(local_ntiles * sizeof(tile_meta_t));
@@ -172,6 +189,16 @@ void ghost_exchange(double safety_factor)
         return h;
     };
 
+    /* Per-particle active flag — ActiveParticleList lookup at O(1). The active
+     * stats below restrict the tile's "what do I need from peers?" criterion
+     * to particles that will actually walk neighbors this step. Allocate as
+     * char rather than bool to keep the address-stable contract. */
+    char *is_active = (char *) calloc(NumPart > 0 ? NumPart : 1, sizeof(char));
+    for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
+        int i_act = ActiveParticleList[kk];
+        if(i_act >= 0 && i_act < NumPart) is_active[i_act] = 1;
+    }
+
     for(int t = 0; t < local_ntiles; t++)
     {
         int start = t * tile_target;
@@ -180,10 +207,22 @@ void ghost_exchange(double safety_factor)
         tile_first[t] = start;
         local_meta[t].count = count;
         local_meta[t].hmax = 0;
+        local_meta[t].active_count = 0;
+        local_meta[t].active_hmax = 0;
+        for(k = 0; k < 3; k++) {
+            local_meta[t].active_lo[k] = 0;  /* will be overwritten on first active */
+            local_meta[t].active_hi[k] = 0;
+        }
 
         int j0 = pool[start];
         for(k = 0; k < 3; k++) local_meta[t].lo[k] = local_meta[t].hi[k] = P[j0].Pos[k];
         {double h0 = effective_ghost_radius(j0); if(h0 > local_meta[t].hmax) local_meta[t].hmax = h0;}
+        if(is_active[j0]) {
+            local_meta[t].active_count = 1;
+            for(k = 0; k < 3; k++) local_meta[t].active_lo[k] = local_meta[t].active_hi[k] = P[j0].Pos[k];
+            double h0 = effective_ghost_radius(j0);
+            local_meta[t].active_hmax = h0;
+        }
 
         for(int s = 1; s < count; s++) {
             int j = pool[start + s];
@@ -193,8 +232,22 @@ void ghost_exchange(double safety_factor)
             }
             double hj = effective_ghost_radius(j);
             if(hj > local_meta[t].hmax) local_meta[t].hmax = hj;
+            if(is_active[j]) {
+                if(local_meta[t].active_count == 0) {
+                    for(k = 0; k < 3; k++) local_meta[t].active_lo[k] = local_meta[t].active_hi[k] = P[j].Pos[k];
+                    local_meta[t].active_hmax = hj;
+                } else {
+                    for(k = 0; k < 3; k++) {
+                        if(P[j].Pos[k] < local_meta[t].active_lo[k]) local_meta[t].active_lo[k] = P[j].Pos[k];
+                        if(P[j].Pos[k] > local_meta[t].active_hi[k]) local_meta[t].active_hi[k] = P[j].Pos[k];
+                    }
+                    if(hj > local_meta[t].active_hmax) local_meta[t].active_hmax = hj;
+                }
+                local_meta[t].active_count++;
+            }
         }
     }
+    free(is_active);
 
     /* Save per-tile hmax for h-growth detection */
     if(saved_leaf_hmax) {free(saved_leaf_hmax); saved_leaf_hmax = NULL;}
@@ -243,6 +296,7 @@ void ghost_exchange(double safety_factor)
     }
 
     double t_ghost_meta = timediff(t_ghost_phase, my_second());
+    double t_phase_overlap_start = my_second();
 
     /* ================================================================
        Step 3: Per-task tile overlap check.
@@ -253,83 +307,119 @@ void ghost_exchange(double safety_factor)
        ================================================================ */
 
     /* Per-tile need flags: need_from[total_tiles] = do WE need this remote tile?
-       send_to[local_ntiles * NTask] = does task t need our tile lt? */
+       send_to[local_ntiles * NTask] = does task t need our tile lt?
+     *
+     * Asymmetric criterion:
+     *   need_from[rt]            = our active tiles' bbox vs rt's all-bbox
+     *   send_to[lt][task]        = task's active tiles' bbox vs our lt's all-bbox
+     * Active-aware on each rank's REQUEST side, all-particle on the SUPPLY
+     * side (a remote inactive j may still be a neighbor of an active i — see
+     * WAKEUP). Tile pairs where the request side has zero actives early-exit
+     * — that's where the tiny-N wins come from. */
     int *need_from = (int *) calloc(total_tiles, sizeof(int));
     int *send_to = (int *) calloc(local_ntiles * NTask, sizeof(int));
     int my_tile_start = tile_disp[ThisTask];
 
-    for(task = 0; task < NTask; task++)
-    {
-        if(task == ThisTask) continue;
-        int t_start = tile_disp[task];
-        int t_count = all_ntiles[task];
-
-        for(int rt_idx = 0; rt_idx < t_count; rt_idx++)
-        {
-            int rt = t_start + rt_idx;
-            tile_meta_t *rm = &all_meta[rt];
-
-            for(int lt_idx = 0; lt_idx < local_ntiles; lt_idx++)
-            {
-                int lt = my_tile_start + lt_idx;
-                tile_meta_t *lm = &all_meta[lt];
-                double search_r = DMAX(lm->hmax, rm->hmax) * safety_factor;
-                if(search_r <= 0) continue;
-                double search_r2 = search_r * search_r;
-
-                /* Min distance between two AABBs with periodic wrapping */
-                double dist2 = 0;
-                int overlaps = 1;
-                for(k = 0; k < 3; k++)
-                {
+    /* Per-axis min-AABB-AABB squared distance under periodic wrap. Returns
+     * negative gap on this axis if the AABBs overlap. Inlined for hot loop. */
+    auto axis_gap = [&](double c_a, double hw_a, double c_b, double hw_b, int kk) -> double {
 #if defined(BOX_PERIODIC)
-                    int is_periodic = 1;
-                    double bsize = (k==0) ? boxSize_X : ((k==1) ? boxSize_Y : boxSize_Z);
+        int is_periodic = 1;
+        double bsize = (kk==0) ? boxSize_X : ((kk==1) ? boxSize_Y : boxSize_Z);
 #if defined(BOX_REFLECT_X)
-                    if(k==0) is_periodic = 0;
+        if(kk==0) is_periodic = 0;
 #endif
 #if defined(BOX_REFLECT_Y)
-                    if(k==1) is_periodic = 0;
+        if(kk==1) is_periodic = 0;
 #endif
 #if defined(BOX_REFLECT_Z)
-                    if(k==2) is_periodic = 0;
+        if(kk==2) is_periodic = 0;
 #endif
 #if defined(BOX_OUTFLOW_X)
-                    if(k==0) is_periodic = 0;
+        if(kk==0) is_periodic = 0;
 #endif
 #if defined(BOX_OUTFLOW_Y)
-                    if(k==1) is_periodic = 0;
+        if(kk==1) is_periodic = 0;
 #endif
 #if defined(BOX_OUTFLOW_Z)
-                    if(k==2) is_periodic = 0;
+        if(kk==2) is_periodic = 0;
 #endif
 #else
-                    int is_periodic = 0;
-                    double bsize = 0;
+        int is_periodic = 0;
+        double bsize = 0;
 #endif
-                    double c_local = 0.5 * (lm->lo[k] + lm->hi[k]);
-                    double c_remote = 0.5 * (rm->lo[k] + rm->hi[k]);
-                    double hw_local = 0.5 * (lm->hi[k] - lm->lo[k]);
-                    double hw_remote = 0.5 * (rm->hi[k] - rm->lo[k]);
+        double dx = fabs(c_a - c_b);
+        if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
+        return dx - hw_a - hw_b;
+    };
 
-                    double dx = fabs(c_local - c_remote);
-                    if(is_periodic && dx > 0.5 * bsize) dx = bsize - dx;
-
-                    double gap = dx - hw_local - hw_remote;
-                    if(gap <= 0) continue; /* AABBs overlap on this axis */
-
+    /* Pass 1: need_from[rt] — driven by OUR active tiles. Outer loop over
+     * local tiles with active_count > 0 only (tiny-N: just a handful). */
+    for(int lt_idx = 0; lt_idx < local_ntiles; lt_idx++)
+    {
+        int lt = my_tile_start + lt_idx;
+        tile_meta_t *lm = &all_meta[lt];
+        if(lm->active_count == 0) continue;
+        double c_lo[3], c_hw[3];
+        for(k = 0; k < 3; k++) {
+            c_lo[k] = 0.5 * (lm->active_lo[k] + lm->active_hi[k]);
+            c_hw[k] = 0.5 * (lm->active_hi[k] - lm->active_lo[k]);
+        }
+        for(task = 0; task < NTask; task++)
+        {
+            if(task == ThisTask) continue;
+            int t_start = tile_disp[task];
+            int t_count = all_ntiles[task];
+            for(int rt_idx = 0; rt_idx < t_count; rt_idx++)
+            {
+                int rt = t_start + rt_idx;
+                if(need_from[rt]) continue;            /* already flagged by another lt */
+                tile_meta_t *rm = &all_meta[rt];
+                double search_r = DMAX(lm->active_hmax, rm->hmax) * safety_factor;
+                if(search_r <= 0) continue;
+                double search_r2 = search_r * search_r;
+                double dist2 = 0;
+                int overlaps = 1;
+                for(k = 0; k < 3; k++) {
+                    double c_r = 0.5 * (rm->lo[k] + rm->hi[k]);
+                    double hw_r = 0.5 * (rm->hi[k] - rm->lo[k]);
+                    double gap = axis_gap(c_lo[k], c_hw[k], c_r, hw_r, k);
+                    if(gap <= 0) continue;
                     if(gap > search_r) { overlaps = 0; break; }
                     dist2 += gap * gap;
                 }
-
-                if(overlaps && dist2 < search_r2) {
-                    need_from[rt] = 1;          /* we need this remote tile */
-                    send_to[lt_idx * NTask + task] = 1; /* task t needs our tile lt */
-                    /* don't break — need to check all local tiles for send_to */
-                }
+                if(overlaps && dist2 < search_r2) need_from[rt] = 1;
             }
         }
     }
+
+    /* Pass 2: derive send_to[lt][task] from peers' need_from directly.
+     *
+     * Earlier versions recomputed an "active-on-the-other-side" overlap test
+     * here. That's algebraically the same predicate as peer's pass 1 — but
+     * the two ranks running floating-point min-distance arithmetic on the
+     * same all_meta blob can disagree on a tile pair that lies right at the
+     * search-radius threshold. When they do, A says send_count[B]=N and B
+     * says recv_count[A]=N±1, and the downstream Alltoallv truncates with
+     * MPI_ERR_TRUNCATE. Killing the recompute entirely makes the two sides
+     * bit-identical by construction.
+     *
+     * Cost of the Allgather: total_tiles*NTask ints (~1.5 MB at 2 ranks ×
+     * 200k tiles, scales as O(NTask^2) — switch to Alltoall of per-rank
+     * slices if NTask grows past ~100). The pass-1 cost is unchanged: outer
+     * loop active-gated, ~handful of tiles on tiny-N. */
+    int *all_need_from = (int *) malloc((size_t)NTask * total_tiles * sizeof(int));
+    MPI_Allgather(need_from, total_tiles, MPI_INT,
+                  all_need_from, total_tiles, MPI_INT, MPI_COMM_WORLD);
+    for(task = 0; task < NTask; task++)
+    {
+        if(task == ThisTask) continue;
+        const int *peer_need = all_need_from + (size_t)task * total_tiles;
+        for(int lt_idx = 0; lt_idx < local_ntiles; lt_idx++) {
+            send_to[lt_idx * NTask + task] = peer_need[my_tile_start + lt_idx];
+        }
+    }
+    free(all_need_from);
 
     /* ================================================================
        Step 4: Compute per-task send/recv counts from overlap results.
@@ -371,7 +461,8 @@ void ghost_exchange(double safety_factor)
         for(task = 0; task < NTask; task++) { if(send_to[lt * NTask + task]) { tiles_sent++; break; } }
     }
 
-    double t_ghost_overlap = timediff(t_ghost_meta, my_second()); /* includes steps 3+4 (overlap + schedule) */
+    double t_ghost_overlap = timediff(t_phase_overlap_start, my_second()); /* steps 3+4 (overlap + schedule) */
+    double t_phase_mpi_start = my_second();
 
     /* Check space: ghost particles are appended to P[]/CellP[] arrays, which are
        allocated to All.MaxPart = PartAllocFactor * (TotNumPart / NTask).
@@ -498,13 +589,28 @@ void ghost_exchange(double safety_factor)
         memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
     }
 
-    double t_ghost_mpi = timediff(t_ghost_overlap, my_second()); /* includes steps 5+6 (pack + MPI + unpack) */
+    double t_ghost_mpi = timediff(t_phase_mpi_start, my_second()); /* steps 5+6 (pack + MPI + unpack) */
     double t_ghost_end = my_second();
     double t_ghost_total = timediff(t_ghost_start, t_ghost_end);
+
+    /* Active-count diagnostic (gated on GIZMO_VERBOSE_DIAG; collective so all
+     * ranks must call). Lets us correlate ghost-exchange wall with how many
+     * particles are actually active on this step. */
+    int n_active_global = 0;
+    if(gizmo_verbose_diag()) {
+        int n_active = (int)ActiveParticleList.size();
+        MPI_Reduce(&n_active, &n_active_global, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    }
     if(ThisTask == 0) {
         PRINT_STATUS("Ghost exchange: %d local + %d ghost = %d total (recv %d tiles, sent %d/%d) [%.4f s]",
                      NumPart_before_ghost, NumGhostParticles, NumPart,
                      tiles_needed, tiles_sent, local_ntiles, t_ghost_total);
+        if(gizmo_verbose_diag()) {
+            printf("  ghost_exchange phases: tiles_build=%.4f meta_allgather=%.4f overlap+sched=%.4f pack+mpi=%.4f total=%.4f  active_global=%d\n",
+                   t_ghost_tiles, t_ghost_meta, t_ghost_overlap, t_ghost_mpi, t_ghost_total,
+                   n_active_global);
+            fflush(stdout);
+        }
     }
     /* Warn if ghost particles used >80% of available headroom */
     if(NumPart > 0.8 * All.MaxPart) {

@@ -43,6 +43,7 @@
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
+#include "../core/step_phases.h"              /* gizmo_verbose_diag() */
 #include "let_data.h"
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 
@@ -791,6 +792,7 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
                                    struct LETSubtreeHeader **send_hdr_per_rank,
                                    const int *send_hdr_count_per_rank)
 {
+    double t_let_start = my_second();
     /* Phase 1: exchange node-counts AND header-counts */
     int *send_counts_int = (int *) mymalloc("LET_send_counts",     NTask * sizeof(int));
     int *recv_counts_int = (int *) mymalloc("LET_recv_counts",     NTask * sizeof(int));
@@ -870,12 +872,14 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
 
     /* MPI exchanges (parallel for nodes + headers). Counts and displacements
      * are in element units, not bytes — see system/mpi_alltoallv_typed.h. */
+    double t_let_mpi = my_second();
     gizmo_mpi_alltoallv_typed(flat_send,     send_counts_int, send_offsets,
                               flat_recv,     recv_counts_int, recv_offsets,
                               sizeof(struct LETNodeWire), MPI_COMM_WORLD);
     gizmo_mpi_alltoallv_typed(flat_hdr_send, send_hdr_counts, send_hdr_offsets,
                               flat_hdr_recv, recv_hdr_counts, recv_hdr_offsets,
                               sizeof(struct LETSubtreeHeader), MPI_COMM_WORLD);
+    double t_let_alltoallv = timediff(t_let_mpi, my_second());
 
     /* Install foreign tree contents while flat_recv / flat_hdr_recv are
      * still alive on the mymalloc stack. */
@@ -895,6 +899,12 @@ extern "C" int let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
     myfree(send_hdr_counts);
     myfree(recv_counts_int);
     myfree(send_counts_int);
+    double t_let_total = timediff(t_let_start, my_second());
+    if(ThisTask == 0 && gizmo_verbose_diag()) {
+        printf("  let_exchange_nodes: total=%.4f alltoallv=%.4f total_send=%d total_recv=%d hdr_send=%d hdr_recv=%d\n",
+               t_let_total, t_let_alltoallv, total_send, total_recv, total_hdr_send, total_hdr_recv);
+        fflush(stdout);
+    }
     return 0;
 }
 
