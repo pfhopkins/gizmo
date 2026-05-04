@@ -59,3 +59,14 @@ __pycache__/
 
 # Build directory
 build/
+
+# Claude Code per-session state (auto-memory, transcripts, etc.)
+.claude/
+
+# Step-15 benchmarking one-off artifacts (kept locally in
+# ~/Documents/work/code/gizmo/benchmarks/step15_optimization/, not in repo)
+test/benchmark/step15/figures/
+test/benchmark/step15/results/
+test/benchmark/step15/runtime_data/
+test/fire_m11i/
+test/poisson_starforge/
