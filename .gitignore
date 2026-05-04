@@ -68,5 +68,18 @@ build/
 # Drivers, sweep configs, analysis scripts, sanity probes — none of it is part
 # of the production code; meaningful only inside this immediate testing setup.
 test/benchmark/step15/
+
+# Local handoff / agent memory / planning notes. Same rationale as .claude/:
+# meaningful only to the immediate working session, not part of the code.
+docs/
+
+# Stray dev-scratch test notes (out-of-date WIP memos shipped from upstream
+# branches; not user-facing docs).
+test/biermann_growth/NOTES.md
+
+# Python bytecode caches (regenerated on every pytest invocation, not source).
+__pycache__/
+*.pyc
+*.pyo
 test/fire_m11i/
 test/poisson_starforge/
