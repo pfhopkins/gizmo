@@ -23,3 +23,8 @@ test/unit/test_chemcool_diff_packunpack
 test/unit/test_diffusion_dense_cell_drift
 test/unit/test_yield_invariants
 .claude/
+
+# Large binary data tables — distribute via FTP/curl, not git
+# (re-introducing these to git permanently bloats .git history)
+galaxy_sf/stellar_tables/*.hdf5
+galaxy_sf/stellar_tables/spectra/atlas9/*.pck
