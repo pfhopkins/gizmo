@@ -155,20 +155,10 @@ void gravity_tree(void)
         TakeLevel = -1;
     }
     if(TakeLevel >= 0) {
-        /* Phase 8a Round 3d.bug-fix: this NumPart-wide zero-out mutates HOST P[]
-         * for all particles, including non-active ones. Without an arena mirror,
-         * arena retains the previous step's GravCost values on non-active particles,
-         * producing a coherence violation that GIZMO_GPU_ARENA_DEBUG=1 catches at
-         * the next fast-path acquire (caught at particle 0 with stale 475.0 vs
-         * host 0.0 on first Round 3 verification). Mirror the zero into the arena
-         * in the same loop so arena stays coherent. The NumPart loop already
-         * exists (legitimate full-N reset of the load-balance counter); doubling
-         * per-iteration cost by writing to arena too is negligible. */
-        struct particle_data *P_arena_zero = gpu_particles_arena_P();
-        for(i = 0; i < NumPart; i++) {
-            P[i].GravCost[TakeLevel] = 0;
-            if(P_arena_zero) P_arena_zero[i].GravCost[TakeLevel] = 0;
-        }
+        /* Under UVM-canonical particles (commit 0d9e74b4), arena_P aliases host
+         * P[] — the Round-3d mirror write to P_arena_zero[i] is a self-assignment,
+         * so the single host write is sufficient for both views. */
+        for(i = 0; i < NumPart; i++) { P[i].GravCost[TakeLevel] = 0; }
     } /* re-zero the cost [will be re-summed] */
 
     /* cache which particles need a new tree force BEFORE the tree walk runs: the tree walk can modify
@@ -433,35 +423,8 @@ void gravity_tree(void)
 
     } /* end of loop over active particles*/
 
-    /* Phase 8a Round 3d: mirror the post-processed host P[i] / CellP[i] for
-     * active particles into the arena, then mark_clean instead of invalidating.
-     * The post-loop above wrote GravAccel(×G), OldAcc, Potential, tidal_*,
-     * Rad_*, SigmaEff, etc. for active i — many fields under various #ifdef
-     * branches. Per-touched-i full struct copy avoids the maintenance burden
-     * of enumerating each conditional field. Cost is O(N_active) which is
-     * trivial compared to the 1.1s slow-path memcpy that the next acquire
-     * would otherwise pay. */
-    {
-        struct particle_data *P_arena_post     = gpu_particles_arena_P();
-        struct gas_cell_data *CellP_arena_post = gpu_particles_arena_CellP();
-        if(P_arena_post) {
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-            for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {
-                int i = ActiveParticleList[ii];
-                P_arena_post[i] = P[i];
-                if(CellP_arena_post && P[i].Type == 0) {
-                    CellP_arena_post[i] = CellP[i];
-                }
-            }
-            gpu_particles_arena_mark_clean_after_scatter("gravity_tree_post_loop");
-        } else {
-            /* Arena unavailable (e.g. capacity issue or already invalidated by
-             * something we missed) — defensive invalidate keeps correctness. */
-            gpu_particles_arena_invalidate();
-        }
-    }
+    /* Round-3d arena mirror-update is a no-op under UVM-canonical (arena_P
+     * aliases host P[]); the post-loop above already wrote canonical state. */
 
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 

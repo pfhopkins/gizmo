@@ -1950,20 +1950,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
             costtotal_added += d_ninter[a];
             if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = d_ninter[a];}
 
-            /* Phase 8a Round 3c: mirror the just-written host P[i] into the arena.
-             * The host scatter above writes many fields under varying #ifdef
-             * branches (GravAccel, Potential, Min_Distance_to_Sink, tidal_*,
-             * GravJerk, etc.). Per-touched-i full struct copy is safer than
-             * field-by-field enumeration (no #ifdef tracking, no risk of
-             * missing a branch). At this point host P[i] holds the post-scatter
-             * value; copy to arena_P[i] so the next acquire fast-paths.
-             * Same struct-copy approach used in row 4 sink_swallow scatter. */
-            P_dev[i] = P[i];
-            /* CellP fields written above (RT_USE_GRAVTREE / COSMIC_RAY_SUBGRID_LEBRON
-             * branches, all gated on Type==0) — mirror full CellP[i] for active gas. */
-            if(P[i].Type == 0 && CellP_dev) {
-                CellP_dev[i] = CellP[i];
-            }
+            /* Round-3c arena mirror-update collapsed: under UVM-canonical
+             * (commit 0d9e74b4) P_dev = arena_P aliases host P[], so the
+             * struct copy P_dev[i] = P[i] is self-assignment. */
 
             nsucceeded++;
         }

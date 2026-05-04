@@ -23,67 +23,37 @@
 #include "../mesh/gpu_neighbor_list.h"
 
 
+/* Under UVM-canonical particles (commit 0d9e74b4), P[] and CellP[] live in
+ * Kokkos::SharedSpace and the arena is a pure pointer alias. Acquire copies
+ * pointers; invalidate / mark_clean / refresh / set_site are pure no-ops kept
+ * as stable API for callers. The Phase-8a debug-guard infrastructure
+ * (per-acquire serial counters, per-call-site tracking strings) was removed
+ * since the byte-compare guard it served is unreachable under the alias
+ * scheme. */
 static struct particle_data *arena_P     = NULL;
 static struct gas_cell_data *arena_CellP = NULL;
 static int arena_capacity_ = 0;
 static int arena_valid_    = 0;
 
-/* DIAGNOSTIC: per-acquire sequence counter and call-site tag.
- * Call gpu_particles_arena_set_site("tag") just before acquire to label it. */
-static int  g_acquire_serial  = 0;
-static int  g_valid_memcpy_serial = 0;  /* serial# of last acquire that did memcpy */
-static const char *g_arena_site = "(unknown)";  /* set by caller before acquire */
-
-/* Phase 8a Round 1: track last call site that asserted "I just mirror-updated
- * the arena" — for diagnostic output when the debug byte-compare guard fails. */
-static const char *g_arena_last_clean_site = "(none)";
-
-/* Phase 8a Round 1.5: also track who did the most-recent slow-path memcpy
- * (that made arena valid) and who most recently invalidated. The acquire
- * trio (memcpy, invalidate, current) names the suspects when the guard fires. */
-static const char *g_arena_last_memcpy_site    = "(none)";
-static const char *g_arena_last_invalidate_site = "(none)";
-
-extern "C" void gpu_particles_arena_set_site(const char *site) { g_arena_site = site; }
+extern "C" void gpu_particles_arena_set_site(const char *site) { (void)site; }
 
 extern "C" void gpu_particles_arena_acquire(int min_capacity,
                                             struct particle_data *P_host,
                                             struct gas_cell_data *CellP_host)
 {
     if(min_capacity <= 0) {min_capacity = 1;}
-    g_acquire_serial++;
-    int my_serial = g_acquire_serial;
-
-    /* Phase 7 Round A4: arena state diagnostics. env-gated; no-op when off. */
     gizmo_step_phase_record("arena_acquire_calls", 1.0);
-
-    /* UVM-canonical particles: P[] and CellP[] live in Kokkos::SharedSpace
-     * (see system/allocate.cc).  The arena is a pure alias — no separate
-     * allocation, no memcpy, no coherence dance.  Both fast-path acquire
-     * and any prior slow-path collapse to the same trivial pointer copy. */
     arena_P         = P_host;
     arena_CellP     = CellP_host;
     arena_capacity_ = min_capacity;
     arena_valid_    = 1;
-    g_valid_memcpy_serial    = my_serial;
-    g_arena_last_memcpy_site = g_arena_site;
-    gizmo_step_phase_record("arena_acquire_fastpath", 1.0);
 }
 
-/* Under UVM-canonical particles, invalidate is a counter-only no-op.  The
- * arena IS host; there is nothing to mark stale.  Existing call sites are
- * kept as cost-free counters for diagnostic correlation with STEP_PHASES. */
-extern "C" void gpu_particles_arena_invalidate(void)
-{
-    gizmo_step_phase_record("arena_invalidate_calls", 1.0);
-    g_arena_last_invalidate_site = g_arena_site;
-}
+extern "C" void gpu_particles_arena_invalidate(void) {}
 
 extern "C" void gpu_particles_arena_mark_clean_after_scatter(const char *site)
 {
-    /* No-op under UVM-canonical: arena is always coherent because it IS host. */
-    g_arena_last_clean_site = (site ? site : "(unnamed)");
-    gizmo_step_phase_record("arena_mark_clean_calls", 1.0);
+    (void)site;
 }
 
 extern "C" void gpu_particles_arena_refresh_from_host(int min_capacity,
@@ -91,10 +61,7 @@ extern "C" void gpu_particles_arena_refresh_from_host(int min_capacity,
                                                      struct gas_cell_data *CellP_host,
                                                      const char *site)
 {
-    /* No-op under UVM-canonical: P_host/CellP_host already are the arena. */
-    gizmo_step_phase_record("arena_refresh_calls", 1.0);
-    g_arena_last_memcpy_site = (site ? site : "(unnamed_refresh)");
-    (void)min_capacity; (void)P_host; (void)CellP_host;
+    (void)min_capacity; (void)P_host; (void)CellP_host; (void)site;
 }
 
 extern "C" void gpu_particles_arena_release(void)
@@ -119,4 +86,3 @@ extern "C" struct particle_data *gpu_particles_arena_P(void)     {return arena_v
 extern "C" struct gas_cell_data *gpu_particles_arena_CellP(void) {return arena_valid_ ? arena_CellP : NULL;}
 extern "C" int gpu_particles_arena_capacity(void)                {return arena_capacity_;}
 extern "C" int gpu_particles_arena_valid(void)                   {return arena_valid_;}
-
