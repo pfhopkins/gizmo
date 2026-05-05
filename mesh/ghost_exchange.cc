@@ -683,6 +683,74 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
         fflush(stdout);
     }
 
+    /* IMPORT-WASTE DIAGNOSTIC (Phase 0): for each imported ghost, check whether
+     * any local active particle has it as an actual neighbor under either the
+     * one-way (r_ij < h_i) or symmetric (r_ij < max(h_i, h_j)) predicate. The
+     * ratio (used / imported) quantifies how broken the current tile-overlap
+     * candidate generator is. Gas-only and respects the gas_only filter for
+     * apples-to-apples comparison with what the criterion thinks it's doing.
+     * O(num_active * total_recv); for tiny-N (active~1-100) this is ms. For
+     * larger steps (active>10k) it's still seconds — gated by num_active cap
+     * to avoid blowing up the diagnostic budget. */
+    if(gizmo_verbose_diag() && total_recv > 0 && NumPart_before_ghost > 0) {
+        const int ACTIVE_CAP = 1024;  /* sample if more — accuracy fine for waste ratio */
+        int n_active_sample = 0;
+        int active_indices[ACTIVE_CAP];
+        for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < ACTIVE_CAP; kk++) {
+            int i_act = ActiveParticleList[kk];
+            if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
+            if(active_gas_only && P[i_act].Type != 0) continue;
+            active_indices[n_active_sample++] = i_act;
+        }
+        int total_active_full = 0;
+        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
+            int i_act = ActiveParticleList[kk];
+            if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
+            if(active_gas_only && P[i_act].Type != 0) continue;
+            total_active_full++;
+        }
+        long long pairs_tested = 0;
+        long long ghosts_oneway_used = 0, ghosts_symm_used = 0;
+        /* Per-ghost flags so a ghost used by ANY active counts once. */
+        char *used_oneway = (char *) calloc(total_recv, sizeof(char));
+        char *used_symm   = (char *) calloc(total_recv, sizeof(char));
+        for(int aa = 0; aa < n_active_sample; aa++) {
+            int i = active_indices[aa];
+            double h_i = effective_ghost_radius(i);
+            double pos_i_x = P[i].Pos[0], pos_i_y = P[i].Pos[1], pos_i_z = P[i].Pos[2];
+            double h2_i = h_i * h_i;
+            for(int g = 0; g < total_recv; g++) {
+                int gi = NumPart_before_ghost + g;
+                double dx_raw = pos_i_x - P[gi].Pos[0];
+                double dy_raw = pos_i_y - P[gi].Pos[1];
+                double dz_raw = pos_i_z - P[gi].Pos[2];
+                MyDouble xtmp = 0; (void)xtmp;
+                double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+                double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+                double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
+                double r2 = adx*adx + ady*ady + adz*adz;
+                pairs_tested++;
+                if(!used_oneway[g] && r2 < h2_i) used_oneway[g] = 1;
+                if(!used_symm[g]) {
+                    double h_j = effective_ghost_radius(gi);
+                    double h2_max = (h2_i > h_j*h_j) ? h2_i : h_j*h_j;
+                    if(r2 < h2_max) used_symm[g] = 1;
+                }
+            }
+        }
+        for(int g = 0; g < total_recv; g++) {
+            ghosts_oneway_used += used_oneway[g];
+            ghosts_symm_used   += used_symm[g];
+        }
+        free(used_oneway); free(used_symm);
+        double waste_oneway = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_oneway_used / (double)total_recv) : 0.0;
+        double waste_symm   = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_symm_used   / (double)total_recv) : 0.0;
+        printf("[GX_WASTE rank=%d call=%d imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
+               ThisTask, this_call, total_recv, total_active_full, n_active_sample,
+               ghosts_oneway_used, ghosts_symm_used, waste_oneway, waste_symm, pairs_tested);
+        fflush(stdout);
+    }
+
     /* Multi-rank correctness: ghost slots [NumPart_before_ghost, NumPart) just
      * received fresh particle_data from remote ranks via MPI_Alltoallv. Their
      * KernelRadius values overwrote whatever was in those local P[] slots
