@@ -33,6 +33,8 @@
 #include "../system/mpi_alltoallv_typed.h"
 #include "../core/step_phases.h"   /* gizmo_verbose_diag() */
 #include "gpu_neighbor_list.h" /* gpu_compact_xyzh_mark_h_dirty_range */
+#include "sfc_tiles.h"           /* build_sfc_tiles, build_tile_bvh, sfc_tile_t, tile_bvh_node_t */
+#include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
 
 /*
  * ============================================================================
@@ -976,13 +978,98 @@ static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_ca
     fflush(stdout);
 }
 
-/* Absolute periodic-shortened delta on one axis. */
-static inline double gx_abs_dx(double dx, double bsize, double bhalf, int periodic)
+/* Host-only BVH bbox-vs-sphere overlap test. Mirrors bbox_overlaps_sphere_gpu
+ * (mesh/sfc_tiles_functions.h). For each axis, take the periodic-shortened
+ * gap between sphere center and bbox; if any gap exceeds search_r, prune.
+ * Otherwise sum-of-squares vs search_r2 for the final accept. */
+static inline int gx_bbox_overlaps_sphere(const double bbox_lo[3], const double bbox_hi[3],
+                                          const double pos[3], double search_r, double search_r2,
+                                          const int periodic_flags[3], const double box_sizes[3])
 {
-    double a = fabs(dx);
-    if(periodic && a > bhalf) a = bsize - a;
-    return a;
+    double dist2 = 0;
+    for(int k = 0; k < 3; k++) {
+        double c = 0.5 * (bbox_lo[k] + bbox_hi[k]);
+        double hw = 0.5 * (bbox_hi[k] - bbox_lo[k]);
+        double d = pos[k] - c;
+        if(periodic_flags[k]) {
+            double bsize = box_sizes[k];
+            double bhalf = 0.5 * bsize;
+            if(d > bhalf) d -= bsize;
+            else if(d < -bhalf) d += bsize;
+        }
+        double a = (d > 0) ? d : -d;
+        double gap = a - hw;
+        if(gap <= 0) continue;            /* this axis overlaps */
+        if(gap > search_r) return 0;      /* prune fast */
+        dist2 += gap * gap;
+    }
+    return (dist2 < search_r2) ? 1 : 0;
 }
+
+/* Host-only BVH walk for the request-driven path. Mirrors
+ * search_neighbors_sfc_gpu's iterative stack-based walk. For each query,
+ * traverses the local BVH, accepts at leaves with per-particle r_ij vs the
+ * caller-specified predicate (ONEWAY or SYMMETRIC), marks matched pool
+ * indices in match_bitmask. */
+static void gx_walk_local_bvh(const float *compact_xyzh,
+                              const sfc_tile_t *tiles, int ntiles,
+                              const int *pool, int num_pool,
+                              const tile_bvh_node_t *bvh, int bvh_root,
+                              const double pos_q[3], double h_q, int search_mode,
+                              const int periodic_flags[3], const double box_sizes[3],
+                              char *match_bitmask /* size num_pool */)
+{
+    (void)ntiles;
+    double h_q2 = h_q * h_q;
+    int stack[TILE_BVH_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = bvh_root;
+    while(sp > 0) {
+        int node_idx = stack[--sp];
+        const tile_bvh_node_t *node = &bvh[node_idx];
+        /* OPENER criterion: for SYMMETRIC, search_r = max(h_q, node->hmax) so a
+         * subtree with any large-h particle stays open. ONEWAY: just h_q —
+         * remote h_j cannot make a far subtree relevant. */
+        double search_r = (search_mode == NGB_SEARCH_ONEWAY)
+                            ? h_q
+                            : ((h_q > node->hmax) ? h_q : node->hmax);
+        if(search_r <= 0) continue;
+        double search_r2 = search_r * search_r;
+        if(!gx_bbox_overlaps_sphere(node->lo, node->hi, pos_q, search_r, search_r2,
+                                    periodic_flags, box_sizes)) continue;
+        if(node->left < 0) {
+            /* Leaf: per-particle accept against EXACT predicate. */
+            int tile_idx = -(node->left + 1);
+            const sfc_tile_t *tile = &tiles[tile_idx];
+            for(int s = 0; s < tile->count; s++) {
+                int pool_pos = tile->first + s;
+                if(pool_pos < 0 || pool_pos >= num_pool) continue;
+                if(match_bitmask[pool_pos]) continue;
+                double dx = pos_q[0] - (double)compact_xyzh[pool_pos*4+0];
+                double dy = pos_q[1] - (double)compact_xyzh[pool_pos*4+1];
+                double dz = pos_q[2] - (double)compact_xyzh[pool_pos*4+2];
+                if(periodic_flags[0]) { double b=box_sizes[0], h=0.5*b; if(dx>h) dx-=b; else if(dx<-h) dx+=b; }
+                if(periodic_flags[1]) { double b=box_sizes[1], h=0.5*b; if(dy>h) dy-=b; else if(dy<-h) dy+=b; }
+                if(periodic_flags[2]) { double b=box_sizes[2], h=0.5*b; if(dz>h) dz-=b; else if(dz<-h) dz+=b; }
+                double r2 = dx*dx + dy*dy + dz*dz;
+                double thresh2;
+                if(search_mode == NGB_SEARCH_ONEWAY) {
+                    thresh2 = h_q2;
+                } else {
+                    double h_j = (double)compact_xyzh[pool_pos*4+3];
+                    double h_max = (h_q > h_j) ? h_q : h_j;
+                    thresh2 = h_max * h_max;
+                }
+                if(r2 < thresh2) match_bitmask[pool_pos] = 1;
+            }
+        } else {
+            if(sp + 2 > TILE_BVH_STACK_SIZE) break;  /* defensive — shouldn't happen */
+            stack[sp++] = node->left;
+            stack[sp++] = node->right;
+        }
+    }
+}
+
 
 static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
@@ -996,24 +1083,6 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
     NumPart_before_ghost = NumPart;
     N_gas_before_ghost = N_gas;
     NumGhostParticles = 0;
-
-    /* Periodic-axis flags for box wrap (cached for the per-pair distance fn). */
-    int per_x = 0, per_y = 0, per_z = 0;
-    double bsx = 0, bsy = 0, bsz = 0, bhx = 0, bhy = 0, bhz = 0;
-#if defined(BOX_PERIODIC)
-    bsx = boxSize_X; bsy = boxSize_Y; bsz = boxSize_Z;
-    bhx = boxHalf_X; bhy = boxHalf_Y; bhz = boxHalf_Z;
-    per_x = per_y = per_z = 1;
-#  if defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X)
-    per_x = 0;
-#  endif
-#  if defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
-    per_y = 0;
-#  endif
-#  if defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_Z)
-    per_z = 0;
-#  endif
-#endif
 
     static int gx_call_seq_rd = 0;
     gx_call_seq_rd++;
@@ -1071,23 +1140,45 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
                    MPI_COMM_WORLD);
     free(q_byte_counts); free(q_byte_disps);
 
-    /* === Step 3: per-rank, walk local pool against each remote rank's queries === */
-    /* Pool index list (supply-mask filtered). */
+    /* === Step 3: per-rank, walk local BVH against each remote rank's queries ===
+     *
+     * Build a host-side SFC tile + BVH index over the supply-mask-filtered pool.
+     * For each remote query, walk the BVH (O(log N + matches) per query, vs the
+     * O(N) brute-force scan that had been a tiny-N proof-of-concept). Per-particle
+     * acceptance at leaves uses the EXACT predicate (ONEWAY: r²<h_q²; SYMMETRIC:
+     * r²<max(h_q,h_j)²) — same predicate the kernel applies later. */
+    double t_step3_start = my_second();
+
+    /* build_sfc_tiles takes a type_bitmask in {1<<Type} format — same as our
+     * supply_mask (GHOST_TYPE_GAS=(1<<0), GHOST_TYPE_SINK=(1<<5), etc.). */
+    sfc_tile_t *h_tiles = NULL;
+    int *h_pool = NULL;
     int num_pool = 0;
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Mass <= 0) continue;
-        if(!ghost_type_passes((int)P[i].Type, supply_mask)) continue;
-        num_pool++;
+    int ntiles = build_sfc_tiles(P, NumPart, (int)supply_mask, TILE_TARGET_SIZE,
+                                 &h_tiles, &h_pool, &num_pool);
+    tile_bvh_node_t *h_bvh = NULL;
+    int bvh_nnodes = build_tile_bvh(h_tiles, ntiles, &h_bvh);
+    int bvh_root = bvh_nnodes - 1;
+
+    /* Host compact_xyzh: float[4] per pool particle = (x, y, z, h*safety_factor).
+     * Embedding safety_factor in the stored h means leaf-level r² < h² compares
+     * against the inflated radius without a per-particle multiply in the inner
+     * loop. */
+    float *h_compact_xyzh = (float *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * 4 * sizeof(float));
+    for(int p = 0; p < num_pool; p++) {
+        int j = h_pool[p];
+        h_compact_xyzh[p*4+0] = (float)P[j].Pos[0];
+        h_compact_xyzh[p*4+1] = (float)P[j].Pos[1];
+        h_compact_xyzh[p*4+2] = (float)P[j].Pos[2];
+        h_compact_xyzh[p*4+3] = (float)((double)P[j].KernelRadius * safety_factor);
     }
-    int *pool = (int *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(int));
-    {
-        int p = 0;
-        for(int i = 0; i < NumPart; i++) {
-            if(P[i].Mass <= 0) continue;
-            if(!ghost_type_passes((int)P[i].Type, supply_mask)) continue;
-            pool[p++] = i;
-        }
-    }
+
+    /* Periodic flags / box sizes for the BVH walker. */
+    int periodic_flags[3] = { TILE_PERIODIC_X, TILE_PERIODIC_Y, TILE_PERIODIC_Z };
+    double box_sizes[3]   = { boxSize_X, boxSize_Y, boxSize_Z };
+
+    double t_step3_build = timediff(t_step3_start, my_second());
+    double t_step3_walk_start = my_second();
 
     /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
     char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
@@ -1098,30 +1189,22 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
         char *match_for_t = matched + (size_t)t * (size_t)num_pool;
         for(int qi = 0; qi < q_count; qi++) {
             const struct gx_query_t *q = &all_queries[q_start + qi];
-            double q_pos_x = q->pos[0], q_pos_y = q->pos[1], q_pos_z = q->pos[2];
-            double q_h = q->h;
-            double q_h2 = q_h * q_h;
-            for(int p = 0; p < num_pool; p++) {
-                if(match_for_t[p]) continue;
-                int j = pool[p];
-                double dx = q_pos_x - P[j].Pos[0];
-                double dy = q_pos_y - P[j].Pos[1];
-                double dz = q_pos_z - P[j].Pos[2];
-                double adx = gx_abs_dx(dx, bsx, bhx, per_x);
-                double ady = gx_abs_dx(dy, bsy, bhy, per_y);
-                double adz = gx_abs_dx(dz, bsz, bhz, per_z);
-                double r2 = adx*adx + ady*ady + adz*adz;
-                double thresh2;
-                if(search_mode == NGB_SEARCH_ONEWAY) {
-                    thresh2 = q_h2;
-                } else {
-                    double h_j = (double)P[j].KernelRadius * safety_factor;
-                    double h_max = (q_h > h_j) ? q_h : h_j;
-                    thresh2 = h_max * h_max;
-                }
-                if(r2 < thresh2) match_for_t[p] = 1;
-            }
+            /* q->h already includes safety_factor (set at query-build time).
+             * compact_xyzh[*4+3] also includes safety_factor. So leaf r² check
+             * uses inflated radii on both sides of max(h_q, h_j). */
+            gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
+                              h_bvh, bvh_root,
+                              q->pos, q->h, search_mode,
+                              periodic_flags, box_sizes,
+                              match_for_t);
         }
+    }
+
+    double t_step3_walk = timediff(t_step3_walk_start, my_second());
+    if(ThisTask == 0 && gizmo_verbose_diag()) {
+        printf("[GX_RD rank=0 step3 build_tiles+bvh+compact=%.4f s walk_all_queries=%.4f s ntiles=%d num_pool=%d total_queries=%d]\n",
+               t_step3_build, t_step3_walk, ntiles, num_pool, total_queries);
+        fflush(stdout);
     }
 
     /* === Step 4: per-peer counts + index list === */
@@ -1167,7 +1250,7 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
             char *match_for_t = matched + (size_t)t * (size_t)num_pool;
             for(int p = 0; p < num_pool; p++) {
                 if(!match_for_t[p]) continue;
-                int j = pool[p];
+                int j = h_pool[p];
                 int off = task_offset[t]++;
                 send_P[off] = P[j];
                 send_home_idx[off] = j;
@@ -1177,7 +1260,6 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
         }
         myfree(task_offset);
     }
-    free(matched);
 
     /* === Step 6: Alltoallv particles + cells + home_idx === */
     gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
@@ -1247,11 +1329,17 @@ static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_
     }
     gx_print_waste(spec, this_call, total_recv);
 
-    /* Cleanup local. */
+    /* Cleanup local. mymalloc requires LIFO free order: BVH was allocated
+     * AFTER tiles which was AFTER pool, so free in reverse. */
     myfree(send_CellP); myfree(send_P);
     myfree(recv_disp); myfree(send_disp); myfree(recv_count); myfree(send_count);
     free(send_home_idx);
-    free(pool); free(all_queries); free(q_disps); free(all_q_counts); free(local_queries);
+    free(matched);
+    free(h_compact_xyzh);
+    if(h_bvh)   myfree(h_bvh);
+    if(h_tiles) myfree(h_tiles);
+    if(h_pool)  myfree(h_pool);
+    free(all_queries); free(q_disps); free(all_q_counts); free(local_queries);
 }
 
 /* Public wrappers — each fills a spec, calls the single _impl. New callers
