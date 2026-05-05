@@ -110,18 +110,13 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
     } else {
         gizmo_sym_num_active_global = gizmo_sym_num_active;
     }
-    if(gizmo_sym_num_active_global == 0) {
-        /* Leave the symlist in zero-init state so callers fast-path on
-           total_pairs==0; gradient/hydro kernels skip cleanly when num_active==0. */
-        gizmo_sym_neighbor_list.offsets = NULL;
-        gizmo_sym_neighbor_list.neighbors = NULL;
-        gizmo_sym_neighbor_list.total_pairs = 0;
-        return;
-    }
 
-    /* refresh ghosts so they carry converged Density/KernelRadius from their
-       home rank (the density pass modified local values only). */
-    if(NTask > 1) {
+    /* When global active-gas count is 0, skip the collective ghost refresh
+       (otherwise pure overhead — ~1-2s/step on 2-rank tiny-N). The symlist
+       build still runs with num_active=0; it allocates the size-1 backstop
+       offsets/neighbors that downstream gradient_evaluate_gpu requires (a
+       NULL backing buffer there causes a segfault even though pairs=0). */
+    if(gizmo_sym_num_active_global > 0 && NTask > 1) {
         double t_refresh = my_second();
         ghost_exchange_cleanup();
         ghost_exchange_hydro(safety);
@@ -138,8 +133,9 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
 /* Epilogue for hydro_gradient_calc(): refresh ghosts again so hydro_force
    sees updated CellP.Gradients on both sides of each pair, and rebuild the
    CSR (ghost indices may shift after re-exchange). Skipped when global
-   active-gas was 0 in prep (matching skip — no ghosts were imported, no
-   symlist was built, nothing to refresh or rebuild). */
+   active-gas was 0 in prep — no work in either direction so no need to
+   rebuild ghosts or the symlist. The size-1 backstop symlist from prep
+   stays valid for the (no-op) hydro_force kernel. */
 static inline void gizmo_gradients_refresh_symlist(double safety, double search_fac)
 {
     if(gizmo_sym_num_active_global == 0) return;
