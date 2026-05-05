@@ -71,15 +71,26 @@ static inline void gizmo_hydro_density_prep_ghosts(double safety)
    iteration, re-exchange with the converged hmax so subsequent neighbour
    ops have a complete ghost set.  Internally guarded (NTask==1 returns 0).
    ALL-TYPES — must match the prep. AGS / DM-dispersion / fuzzy-DM density
-   iterations call this and need cross-type ghosts. A hydro-typed redo
-   companion can be added when a hydro-typed prep replaces the all-types
-   prep at the matching call sites. */
+   iterations call this and need cross-type ghosts. */
 static inline void gizmo_density_redo_ghosts_if_needed(double safety)
 {
     if(ghost_exchange_needs_redo()) {
         double t0 = my_second();
         ghost_exchange_cleanup();
         ghost_exchange(safety);
+        CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
+    }
+}
+
+/* Hydro-typed companion to gizmo_density_redo_ghosts_if_needed: gas-only
+   pool, one-way criterion. Use from hydro density() iteration so the redo
+   matches the gas-only one-way prep (gizmo_hydro_density_prep_ghosts). */
+static inline void gizmo_hydro_density_redo_ghosts_if_needed(double safety)
+{
+    if(ghost_exchange_needs_redo()) {
+        double t0 = my_second();
+        ghost_exchange_cleanup();
+        ghost_exchange_hydro_oneway(safety);
         CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
     }
 }

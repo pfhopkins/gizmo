@@ -137,9 +137,13 @@ void density(void)
     /* initialize variables used below, in particlar the structures we need to call throughout the iteration */
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second(); MyFloat *Left, *Right; double fac, fac_lim, desnumngb, desnumngbdev; long long ntot;
     /* Neighbor-list path: drift all particles to current time and import ghost particles before
-       any neighbour ops. Helpers are no-ops on the tree-walk build and on NTask==1. */
+       any neighbour ops. Helpers are no-ops on the tree-walk build and on NTask==1.
+       Hydro density is ONE-WAY (r_ij < h_i) and gas-only — using the all-types symmetric
+       gizmo_density_prep_ghosts here over-imports by orders of magnitude per Phase-0 [GX_WASTE]
+       diagnostic. The hydro-typed prep eliminates the non-gas pollution + the unnecessary
+       symmetric h_j contribution to search radius. */
     double gsl_safety = gizmo_ghost_safety_factor();
-    gizmo_density_prep_ghosts(gsl_safety);
+    gizmo_hydro_density_prep_ghosts(gsl_safety);
     double t_density_kernel_total = 0, t_density_hiter_total = 0; int density_iter_count = 0;
     int i, npleft, iter=0, redo_particle, particle_set_to_minrkern_flag = 0, particle_set_to_maxrkern_flag = 0;
     Left = (MyFloat *) mymalloc("Left", NumPart * sizeof(MyFloat));
@@ -797,8 +801,9 @@ void density(void)
         PRINT_STATUS("  density computation done (%.4f s, %d iterations)", timeall, density_iter_count);
     }
     /* Neighbor-list path: if h grew past the ghost pool during iteration, re-exchange with
-       converged hmax so any downstream neighbor op has a complete ghost set. */
-    gizmo_density_redo_ghosts_if_needed(gsl_safety);
+       converged hmax so any downstream neighbor op has a complete ghost set. Hydro-typed
+       redo to match the hydro-typed prep above (gas-only, one-way). */
+    gizmo_hydro_density_redo_ghosts_if_needed(gsl_safety);
 }
 
 
