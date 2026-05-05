@@ -114,7 +114,21 @@ static inline int ghost_toptree_leaf(peanokey key)
  *   >1.0 = inflate search radius to account for h-growth during density iteration
  *          (e.g. 2.0 on first timestep when densities are just guesses).
  */
-void ghost_exchange(double safety_factor)
+/* Two independent type filters:
+ *   pool_gas_only=1:   tile pool restricted to Type==0 (gas). Removes DM/star/
+ *                      sink kernel-radius pollution of tile hmax for callers
+ *                      that only need gas neighbors on the supply side.
+ *   active_gas_only=1: only gas particles in ActiveParticleList drive imports
+ *                      (pass-1 need_from). Useful when a non-gas active
+ *                      particle is in the global list but doesn't need hydro
+ *                      neighbors (it's served by a different exchange).
+ * Combinations:
+ *   (0,0) = original all-types behavior; thin ghost_exchange() wrapper.
+ *   (1,1) = hydro: pool=gas, active=gas; thin ghost_exchange_hydro() wrapper.
+ *   (1,0) = stellar feedback / radiation-injection: gas pool but star/sink
+ *           actives drive imports. Wrapper to be added when those callers
+ *           migrate. */
+static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int active_gas_only)
 {
     if(NTask <= 1) return;
     double t_ghost_start = my_second(), t_ghost_phase;
@@ -135,13 +149,26 @@ void ghost_exchange(double safety_factor)
        ================================================================ */
     int local_ntiles = 0, num_pool = 0;
 
-    /* Count pool particles (all types, positive mass) */
-    for(i = 0; i < NumPart; i++) { if(P[i].Mass > 0) num_pool++; }
+    /* Count pool particles. pool_gas_only=1 restricts to Type==0 (hydro/stellar-
+     * fb supply); =0 is the original all-types behavior. The type gate here is
+     * the dominant fix for tile-hmax pollution: a hydro pool over gas alone has
+     * tile hmax = max(gas h) ~ kpc, vs the all-types pool where DM init values
+     * (P[i].KernelRadius=272 for Type=2) push tile hmax to 100s of kpc and
+     * inflate search radii by orders of magnitude. */
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) continue;
+        if(pool_gas_only && P[i].Type != 0) continue;
+        num_pool++;
+    }
 
     /* Build pool index array */
     int *pool = (int *) malloc((num_pool > 0 ? num_pool : 1) * sizeof(int));
     int p = 0;
-    for(i = 0; i < NumPart; i++) { if(P[i].Mass > 0) pool[p++] = i; }
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) continue;
+        if(pool_gas_only && P[i].Type != 0) continue;
+        pool[p++] = i;
+    }
 
     local_ntiles = (num_pool + tile_target - 1) / tile_target;
     if(local_ntiles < 1) local_ntiles = 1;
@@ -176,7 +203,13 @@ void ghost_exchange(double safety_factor)
        included; additional fields are pulled in under their compile flags so
        ghost bboxes cover the widest search any active kernel needs (e.g. DM
        dispersion's KernelRadiusDM, adaptive-gravsoft's AGS_KernelRadius). */
-    auto effective_ghost_radius = [](int j) -> double {
+    auto effective_ghost_radius = [pool_gas_only](int j) -> double {
+        if(pool_gas_only) {
+            /* Hydro/stellar-fb path: only Type==0's KernelRadius is meaningful
+             * as a hydro search radius. Skip the AGS_KernelRadius / KernelRadiusDM
+             * branches which conflate non-hydro radii into hydro tile bboxes. */
+            return (P[j].Type == 0) ? (double)P[j].KernelRadius : 0.0;
+        }
         double h = P[j].KernelRadius;
 #if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
         if(P[j].Type == 0 && j < N_gas) {
@@ -196,7 +229,13 @@ void ghost_exchange(double safety_factor)
     char *is_active = (char *) calloc(NumPart > 0 ? NumPart : 1, sizeof(char));
     for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
         int i_act = ActiveParticleList[kk];
-        if(i_act >= 0 && i_act < NumPart) is_active[i_act] = 1;
+        if(i_act < 0 || i_act >= NumPart) continue;
+        /* active_gas_only path: only gas actives drive imports. A non-gas
+         * active (e.g. an active sink in the global list when we're doing
+         * hydro density) doesn't need hydro neighbors and shouldn't trigger
+         * a gas ghost import here. */
+        if(active_gas_only && P[i_act].Type != 0) continue;
+        is_active[i_act] = 1;
     }
 
     for(int t = 0; t < local_ntiles; t++)
@@ -248,6 +287,51 @@ void ghost_exchange(double safety_factor)
         }
     }
     free(is_active);
+
+    /* Diagnostic: identify top-N tile-hmax outliers and what's setting them.
+     * Gated on GIZMO_VERBOSE_DIAG=1 + first 3 calls to keep output manageable.
+     * For each top tile we walk its particles to find the one(s) with the
+     * largest effective_ghost_radius and dump Type/Mass/h/Pos/ID/TimeBin.
+     * Goal: settle whether 582-scale tile hmax comes from DM init values,
+     * sink kernel inflation, stale gas, or a real outlier. */
+    {
+        static int gx_topn_calls = 0;
+        if(gizmo_verbose_diag() && gx_topn_calls < 3 && local_ntiles > 0) {
+            const int TOPN = 8;
+            int top_idx[TOPN]; double top_h[TOPN];
+            for(int q = 0; q < TOPN; q++) { top_idx[q] = -1; top_h[q] = -1.0; }
+            for(int t = 0; t < local_ntiles; t++) {
+                double h = local_meta[t].hmax;
+                int slot = -1;
+                for(int q = 0; q < TOPN; q++) { if(h > top_h[q]) { slot = q; break; } }
+                if(slot >= 0) {
+                    for(int q = TOPN - 1; q > slot; q--) { top_h[q] = top_h[q-1]; top_idx[q] = top_idx[q-1]; }
+                    top_h[slot] = h; top_idx[slot] = t;
+                }
+            }
+            for(int q = 0; q < TOPN && top_idx[q] >= 0; q++) {
+                int t = top_idx[q];
+                int start = tile_first[t];
+                int n = local_meta[t].count;
+                int worst_j = -1; double worst_h = -1.0;
+                for(int s = 0; s < n; s++) {
+                    int j = pool[start + s];
+                    double hj = effective_ghost_radius(j);
+                    if(hj > worst_h) { worst_h = hj; worst_j = j; }
+                }
+                if(worst_j >= 0) {
+                    printf("[GX_TOPHMAX rank=%d call=%d t=%d tile_hmax=%.6g particle: idx=%d ID=%llu Type=%d Mass=%.4g KernelRadius=%.6g Pos=(%.4g,%.4g,%.4g) TimeBin=%d active_count=%d tile_count=%d]\n",
+                           ThisTask, gx_topn_calls, t, top_h[q],
+                           worst_j, (unsigned long long)P[worst_j].ID, (int)P[worst_j].Type,
+                           (double)P[worst_j].Mass, (double)P[worst_j].KernelRadius,
+                           (double)P[worst_j].Pos[0], (double)P[worst_j].Pos[1], (double)P[worst_j].Pos[2],
+                           (int)P[worst_j].TimeBin, local_meta[t].active_count, local_meta[t].count);
+                }
+            }
+            fflush(stdout);
+            gx_topn_calls++;
+        }
+    }
 
     /* Save per-tile hmax for h-growth detection */
     if(saved_leaf_hmax) {free(saved_leaf_hmax); saved_leaf_hmax = NULL;}
@@ -583,6 +667,22 @@ void ghost_exchange(double safety_factor)
     NumGhostParticles = total_recv;
     NumPart += total_recv;
 
+    /* Diagnostic: ghost composition by Type. If a hydro-context exchange is
+     * pulling DM/sink/star ghosts back, the type-mask refactor needs to
+     * gate them out. Gated on GIZMO_VERBOSE_DIAG=1. */
+    if(gizmo_verbose_diag() && total_recv > 0) {
+        int by_type[6] = {0,0,0,0,0,0};
+        for(int g = 0; g < total_recv; g++) {
+            int gi = NumPart_before_ghost + g;
+            int tt = (int)P[gi].Type;
+            if(tt >= 0 && tt < 6) by_type[tt]++;
+        }
+        printf("[GX_GHOSTTYPE rank=%d call=%d total_recv=%d  T0(gas)=%d T1=%d T2=%d T3=%d T4(star)=%d T5(sink)=%d]\n",
+               ThisTask, this_call, total_recv,
+               by_type[0], by_type[1], by_type[2], by_type[3], by_type[4], by_type[5]);
+        fflush(stdout);
+    }
+
     /* Multi-rank correctness: ghost slots [NumPart_before_ghost, NumPart) just
      * received fresh particle_data from remote ranks via MPI_Alltoallv. Their
      * KernelRadius values overwrote whatever was in those local P[] slots
@@ -680,6 +780,10 @@ void ghost_exchange(double safety_factor)
     free(all_meta); free(tile_disp); free(all_ntiles);
     free(tile_first); free(local_meta); free(pool);
 }
+
+/* Public wrappers. */
+void ghost_exchange(double safety_factor) { ghost_exchange_impl(safety_factor, 0, 0); }              /* all types */
+void ghost_exchange_hydro(double safety_factor) { ghost_exchange_impl(safety_factor, 1, 1); }        /* gas pool, gas active */
 
 
 /*!
