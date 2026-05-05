@@ -424,6 +424,7 @@ void gizmo_full_drift_invalidate(void);
 }
 #endif
 void ghost_exchange(double safety_factor);
+void ghost_exchange_hydro(double safety_factor);
 void ghost_exchange_cleanup(void);
 int ghost_exchange_needs_redo(void);
 int ghost_get_previous_count(void);

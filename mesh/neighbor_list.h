@@ -60,6 +60,7 @@ void free_neighbor_list(neighbor_list_t *list);
 extern neighbor_list_t gizmo_sym_neighbor_list;
 extern int *gizmo_sym_active_indices;
 extern int gizmo_sym_num_active;
+extern int gizmo_sym_num_active_global;
 void gizmo_sym_neighbor_list_free(void);
 
 #endif /* NEIGHBOR_LIST_H */
