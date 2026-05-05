@@ -51,16 +51,17 @@ static inline void gizmo_density_prep_ghosts(double safety)
     CPU_Step[CPU_DENSCOMM] += t_ghost;
 }
 
-/* Pure-hydro variant of gizmo_density_prep_ghosts: gas-only pool, gas-only
-   active gate, gas-only effective h. Use from density iteration and any
-   other context that only needs gas neighbors of gas particles. */
-static inline void gizmo_hydro_prep_ghosts(double safety)
+/* Hydro-density variant of gizmo_density_prep_ghosts: gas-only pool, gas-only
+   active gate, ONE-WAY criterion (r_ij < h_i — correct for density; symmetric
+   max(h_i, h_j) is wrong here and over-imports by orders of magnitude per
+   Phase-0 waste-ratio diagnostic). Use from hydro density iteration only. */
+static inline void gizmo_hydro_density_prep_ghosts(double safety)
 {
     double t0 = my_second();
     move_particles(All.Ti_Current);
     double t_drift = timediff(t0, my_second());
     double t1 = my_second();
-    ghost_exchange_hydro(safety);
+    ghost_exchange_hydro_oneway(safety);
     double t_ghost = timediff(t1, my_second());
     CPU_Step[CPU_DENSMISC] += t_drift;
     CPU_Step[CPU_DENSCOMM] += t_ghost;

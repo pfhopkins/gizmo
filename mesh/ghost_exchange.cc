@@ -114,22 +114,44 @@ static inline int ghost_toptree_leaf(peanokey key)
  *   >1.0 = inflate search radius to account for h-growth during density iteration
  *          (e.g. 2.0 on first timestep when densities are just guesses).
  */
-/* Two independent type filters:
- *   pool_gas_only=1:   tile pool restricted to Type==0 (gas). Removes DM/star/
- *                      sink kernel-radius pollution of tile hmax for callers
- *                      that only need gas neighbors on the supply side.
- *   active_gas_only=1: only gas particles in ActiveParticleList drive imports
- *                      (pass-1 need_from). Useful when a non-gas active
- *                      particle is in the global list but doesn't need hydro
- *                      neighbors (it's served by a different exchange).
- * Combinations:
- *   (0,0) = original all-types behavior; thin ghost_exchange() wrapper.
- *   (1,1) = hydro: pool=gas, active=gas; thin ghost_exchange_hydro() wrapper.
- *   (1,0) = stellar feedback / radiation-injection: gas pool but star/sink
- *           actives drive imports. Wrapper to be added when those callers
- *           migrate. */
-static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int active_gas_only)
+/* Single source of truth: every caller fills a ghost_exchange_spec_t and
+ * calls ghost_exchange_impl(spec). Behavior parameterized by:
+ *   request_type_mask : bitmask of P[].Type values whose actives drive
+ *                       imports. (1<<0)=gas, (1<<5)=sink, etc.
+ *                       (1<<6)-1 = all types.
+ *   supply_type_mask  : bitmask of P[].Type values that may fill the
+ *                       candidate pool (and contribute to tile hmax).
+ *   search_mode       : NGB_SEARCH_ONEWAY (r_ij < h_i; correct for density)
+ *                       or NGB_SEARCH_SYMMETRIC (r_ij < max(h_i, h_j);
+ *                       gradients, hydro_force, sinks).
+ *   safety_factor     : multiplier on search radius.
+ * One core, branched only where flags actually matter (pool filter, active
+ * filter, search_r formula). Adding a new caller = one wrapper line; new
+ * logic dimension = one spec field + one branch in core. Matches the legacy
+ * ngb_treefind_* design in the old GIZMO. */
+struct ghost_exchange_spec_t {
+    unsigned int request_type_mask;
+    unsigned int supply_type_mask;
+    int          search_mode;
+    double       safety_factor;
+    const char  *caller_name;
+};
+#define GHOST_TYPE_GAS   (1u << 0)
+#define GHOST_TYPE_DM    (1u << 1)
+#define GHOST_TYPE_DISK  (1u << 2)
+#define GHOST_TYPE_BULGE (1u << 3)
+#define GHOST_TYPE_STAR  (1u << 4)
+#define GHOST_TYPE_SINK  (1u << 5)
+#define GHOST_TYPE_ALL   ((1u << 6) - 1u)
+
+static inline int ghost_type_passes(int ptype, unsigned int mask) { return (mask & (1u << (unsigned)ptype)) != 0u; }
+
+static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
 {
+    const double safety_factor = spec->safety_factor;
+    const unsigned int request_mask = spec->request_type_mask;
+    const unsigned int supply_mask  = spec->supply_type_mask;
+    const int  search_mode = spec->search_mode;
     if(NTask <= 1) return;
     double t_ghost_start = my_second(), t_ghost_phase;
 
@@ -149,15 +171,12 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
        ================================================================ */
     int local_ntiles = 0, num_pool = 0;
 
-    /* Count pool particles. pool_gas_only=1 restricts to Type==0 (hydro/stellar-
-     * fb supply); =0 is the original all-types behavior. The type gate here is
-     * the dominant fix for tile-hmax pollution: a hydro pool over gas alone has
-     * tile hmax = max(gas h) ~ kpc, vs the all-types pool where DM init values
-     * (P[i].KernelRadius=272 for Type=2) push tile hmax to 100s of kpc and
-     * inflate search radii by orders of magnitude. */
+    /* Count pool particles. supply_mask gates which Types may join the pool;
+     * removes tile-hmax pollution from non-supply types (e.g. DM init-time
+     * KernelRadius poisoning hydro tile bboxes). */
     for(i = 0; i < NumPart; i++) {
         if(P[i].Mass <= 0) continue;
-        if(pool_gas_only && P[i].Type != 0) continue;
+        if(!ghost_type_passes((int)P[i].Type, supply_mask)) continue;
         num_pool++;
     }
 
@@ -166,7 +185,7 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
     int p = 0;
     for(i = 0; i < NumPart; i++) {
         if(P[i].Mass <= 0) continue;
-        if(pool_gas_only && P[i].Type != 0) continue;
+        if(!ghost_type_passes((int)P[i].Type, supply_mask)) continue;
         pool[p++] = i;
     }
 
@@ -203,12 +222,14 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
        included; additional fields are pulled in under their compile flags so
        ghost bboxes cover the widest search any active kernel needs (e.g. DM
        dispersion's KernelRadiusDM, adaptive-gravsoft's AGS_KernelRadius). */
-    auto effective_ghost_radius = [pool_gas_only](int j) -> double {
-        if(pool_gas_only) {
-            /* Hydro/stellar-fb path: only Type==0's KernelRadius is meaningful
-             * as a hydro search radius. Skip the AGS_KernelRadius / KernelRadiusDM
-             * branches which conflate non-hydro radii into hydro tile bboxes. */
-            return (P[j].Type == 0) ? (double)P[j].KernelRadius : 0.0;
+    auto effective_ghost_radius = [supply_mask](int j) -> double {
+        /* For typed callers (any non-all-types mask), use the simple
+         * KernelRadius — matches the legacy ngb search and avoids conflating
+         * AGS / DM / wind kernels into the hydro/sink/feedback radius. The
+         * all-types path retains the original conditional fan-in. */
+        if(supply_mask != GHOST_TYPE_ALL) {
+            if(!ghost_type_passes((int)P[j].Type, supply_mask)) return 0.0;
+            return (double)P[j].KernelRadius;
         }
         double h = P[j].KernelRadius;
 #if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
@@ -230,11 +251,8 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
     for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
         int i_act = ActiveParticleList[kk];
         if(i_act < 0 || i_act >= NumPart) continue;
-        /* active_gas_only path: only gas actives drive imports. A non-gas
-         * active (e.g. an active sink in the global list when we're doing
-         * hydro density) doesn't need hydro neighbors and shouldn't trigger
-         * a gas ghost import here. */
-        if(active_gas_only && P[i_act].Type != 0) continue;
+        /* request_mask gates which types' actives drive imports. */
+        if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
         is_active[i_act] = 1;
     }
 
@@ -469,7 +487,16 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
                 int rt = t_start + rt_idx;
                 if(need_from[rt]) continue;            /* already flagged by another lt */
                 tile_meta_t *rm = &all_meta[rt];
-                double search_r = DMAX(lm->active_hmax, rm->hmax) * safety_factor;
+                /* Search radius depends on caller mode:
+                 *   ONEWAY (density): r_ij < h_i — only the LOCAL active's h
+                 *     matters. Importing a remote tile because of its own
+                 *     particles' large h_j is incorrect for density.
+                 *   SYMMETRIC (gradients/sinks/etc.): r_ij < max(h_i, h_j) —
+                 *     remote h_j matters because j's kernel may reach back
+                 *     to i. */
+                double search_r = (search_mode == NGB_SEARCH_ONEWAY)
+                                    ? lm->active_hmax * safety_factor
+                                    : DMAX(lm->active_hmax, rm->hmax) * safety_factor;
                 if(search_r <= 0) continue;
                 double search_r2 = search_r * search_r;
                 double dist2 = 0;
@@ -677,8 +704,9 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
             int tt = (int)P[gi].Type;
             if(tt >= 0 && tt < 6) by_type[tt]++;
         }
-        printf("[GX_GHOSTTYPE rank=%d call=%d total_recv=%d  T0(gas)=%d T1=%d T2=%d T3=%d T4(star)=%d T5(sink)=%d]\n",
-               ThisTask, this_call, total_recv,
+        printf("[GX_GHOSTTYPE rank=%d call=%d caller=%s total_recv=%d  T0(gas)=%d T1=%d T2=%d T3=%d T4(star)=%d T5(sink)=%d]\n",
+               ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
+               total_recv,
                by_type[0], by_type[1], by_type[2], by_type[3], by_type[4], by_type[5]);
         fflush(stdout);
     }
@@ -699,14 +727,14 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
         for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < ACTIVE_CAP; kk++) {
             int i_act = ActiveParticleList[kk];
             if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
-            if(active_gas_only && P[i_act].Type != 0) continue;
+            if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
             active_indices[n_active_sample++] = i_act;
         }
         int total_active_full = 0;
         for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
             int i_act = ActiveParticleList[kk];
             if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
-            if(active_gas_only && P[i_act].Type != 0) continue;
+            if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
             total_active_full++;
         }
         long long pairs_tested = 0;
@@ -745,8 +773,11 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
         free(used_oneway); free(used_symm);
         double waste_oneway = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_oneway_used / (double)total_recv) : 0.0;
         double waste_symm   = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_symm_used   / (double)total_recv) : 0.0;
-        printf("[GX_WASTE rank=%d call=%d imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
-               ThisTask, this_call, total_recv, total_active_full, n_active_sample,
+        printf("[GX_WASTE rank=%d call=%d caller=%s mode=%s imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
+               ThisTask, this_call,
+               (spec->caller_name ? spec->caller_name : "?"),
+               (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
+               total_recv, total_active_full, n_active_sample,
                ghosts_oneway_used, ghosts_symm_used, waste_oneway, waste_symm, pairs_tested);
         fflush(stdout);
     }
@@ -849,9 +880,23 @@ static void ghost_exchange_impl(double safety_factor, int pool_gas_only, int act
     free(tile_first); free(local_meta); free(pool);
 }
 
-/* Public wrappers. */
-void ghost_exchange(double safety_factor) { ghost_exchange_impl(safety_factor, 0, 0); }              /* all types */
-void ghost_exchange_hydro(double safety_factor) { ghost_exchange_impl(safety_factor, 1, 1); }        /* gas pool, gas active */
+/* Public wrappers — each fills a spec, calls the single _impl. New callers
+ * add a wrapper line; do not duplicate logic. */
+void ghost_exchange(double safety_factor)
+{
+    struct ghost_exchange_spec_t sp = {GHOST_TYPE_ALL, GHOST_TYPE_ALL, NGB_SEARCH_SYMMETRIC, safety_factor, "all_types"};
+    ghost_exchange_impl(&sp);
+}
+void ghost_exchange_hydro(double safety_factor)
+{
+    struct ghost_exchange_spec_t sp = {GHOST_TYPE_GAS, GHOST_TYPE_GAS, NGB_SEARCH_SYMMETRIC, safety_factor, "hydro_symmetric"};
+    ghost_exchange_impl(&sp);
+}
+void ghost_exchange_hydro_oneway(double safety_factor)
+{
+    struct ghost_exchange_spec_t sp = {GHOST_TYPE_GAS, GHOST_TYPE_GAS, NGB_SEARCH_ONEWAY, safety_factor, "hydro_oneway"};
+    ghost_exchange_impl(&sp);
+}
 
 
 /*!
