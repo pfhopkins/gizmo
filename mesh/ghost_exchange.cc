@@ -146,7 +146,36 @@ struct ghost_exchange_spec_t {
 
 static inline int ghost_type_passes(int ptype, unsigned int mask) { return (mask & (1u << (unsigned)ptype)) != 0u; }
 
+/* Forward decls. */
+static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
+static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
+static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv);
+static double gx_eff_h(int j, unsigned int supply_mask);
+
+/* Env gate: GIZMO_GHOST_REQUEST_DRIVEN=1 selects the per-active query-driven
+ * exchange (Phase 2 design). Default 0 retains the legacy tile-overlap path
+ * during validation. Once Phase 2 validates against R1 baseline waste
+ * numbers, this becomes the only path and the gate goes away. */
+static int ghost_request_driven_enabled(void)
+{
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_GHOST_REQUEST_DRIVEN");
+        cached = (e && e[0] && e[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
 static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
+{
+    if(ghost_request_driven_enabled()) {
+        ghost_exchange_request_driven_impl(spec);
+    } else {
+        ghost_exchange_tile_overlap_impl(spec);
+    }
+}
+
+static void ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec)
 {
     const double safety_factor = spec->safety_factor;
     const unsigned int request_mask = spec->request_type_mask;
@@ -711,85 +740,8 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
         fflush(stdout);
     }
 
-    /* IMPORT-WASTE DIAGNOSTIC (Phase 0): for each imported ghost, check whether
-     * any local active particle has it as an actual neighbor under either the
-     * one-way (r_ij < h_i) or symmetric (r_ij < max(h_i, h_j)) predicate. The
-     * ratio (used / imported) quantifies how broken the current tile-overlap
-     * candidate generator is. Gas-only and respects the gas_only filter for
-     * apples-to-apples comparison with what the criterion thinks it's doing.
-     * O(num_active * total_recv); for tiny-N (active~1-100) this is ms. For
-     * larger steps (active>10k) it's still seconds — gated by num_active cap
-     * to avoid blowing up the diagnostic budget. */
-    if(gizmo_verbose_diag() && total_recv > 0 && NumPart_before_ghost > 0) {
-        /* Throttle: cap total pairs_tested at ~10M to keep diagnostic <1s/call
-         * even on global steps. n_sample = min(active, 10M / imported). For
-         * tiny-N this is unbounded; for global steps it caps the sample.
-         * Statistical waste-ratio is robust to small n_sample because it's
-         * a per-ghost OR over actives — undersampling can only INCREASE
-         * reported waste, never decrease it. */
-        const long long PAIRS_BUDGET = 10000000LL;
-        int sample_cap = (int)(PAIRS_BUDGET / (long long)(total_recv > 0 ? total_recv : 1));
-        if(sample_cap < 4) sample_cap = 4;
-        if(sample_cap > 1024) sample_cap = 1024;
-        int n_active_sample = 0;
-        int *active_indices = (int *) malloc((size_t)sample_cap * sizeof(int));
-        for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < sample_cap; kk++) {
-            int i_act = ActiveParticleList[kk];
-            if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
-            if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
-            active_indices[n_active_sample++] = i_act;
-        }
-        int total_active_full = 0;
-        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
-            int i_act = ActiveParticleList[kk];
-            if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
-            if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
-            total_active_full++;
-        }
-        long long pairs_tested = 0;
-        long long ghosts_oneway_used = 0, ghosts_symm_used = 0;
-        /* Per-ghost flags so a ghost used by ANY active counts once. */
-        char *used_oneway = (char *) calloc(total_recv, sizeof(char));
-        char *used_symm   = (char *) calloc(total_recv, sizeof(char));
-        for(int aa = 0; aa < n_active_sample; aa++) {
-            int i = active_indices[aa];
-            double h_i = effective_ghost_radius(i);
-            double pos_i_x = P[i].Pos[0], pos_i_y = P[i].Pos[1], pos_i_z = P[i].Pos[2];
-            double h2_i = h_i * h_i;
-            for(int g = 0; g < total_recv; g++) {
-                int gi = NumPart_before_ghost + g;
-                double dx_raw = pos_i_x - P[gi].Pos[0];
-                double dy_raw = pos_i_y - P[gi].Pos[1];
-                double dz_raw = pos_i_z - P[gi].Pos[2];
-                MyDouble xtmp = 0; (void)xtmp;
-                double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
-                double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
-                double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
-                double r2 = adx*adx + ady*ady + adz*adz;
-                pairs_tested++;
-                if(!used_oneway[g] && r2 < h2_i) used_oneway[g] = 1;
-                if(!used_symm[g]) {
-                    double h_j = effective_ghost_radius(gi);
-                    double h2_max = (h2_i > h_j*h_j) ? h2_i : h_j*h_j;
-                    if(r2 < h2_max) used_symm[g] = 1;
-                }
-            }
-        }
-        for(int g = 0; g < total_recv; g++) {
-            ghosts_oneway_used += used_oneway[g];
-            ghosts_symm_used   += used_symm[g];
-        }
-        free(used_oneway); free(used_symm); free(active_indices);
-        double waste_oneway = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_oneway_used / (double)total_recv) : 0.0;
-        double waste_symm   = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_symm_used   / (double)total_recv) : 0.0;
-        printf("[GX_WASTE rank=%d call=%d caller=%s mode=%s imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
-               ThisTask, this_call,
-               (spec->caller_name ? spec->caller_name : "?"),
-               (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
-               total_recv, total_active_full, n_active_sample,
-               ghosts_oneway_used, ghosts_symm_used, waste_oneway, waste_symm, pairs_tested);
-        fflush(stdout);
-    }
+    /* Phase-0 import-waste diagnostic — see gx_print_waste(). */
+    gx_print_waste(spec, this_call, total_recv);
 
     /* Multi-rank correctness: ghost slots [NumPart_before_ghost, NumPart) just
      * received fresh particle_data from remote ranks via MPI_Alltoallv. Their
@@ -887,6 +839,419 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
     free(send_to); free(need_from);
     free(all_meta); free(tile_disp); free(all_ntiles);
     free(tile_first); free(local_meta); free(pool);
+}
+
+
+/* ============================================================================
+ * Request-driven ghost exchange (Phase 2).
+ *
+ * Replaces the tile-overlap candidate generator + whole-tile MPI payload of
+ * ghost_exchange_tile_overlap_impl with:
+ *   1. Each rank builds a list of compact query records {pos[3], h, _pad}
+ *      for each LOCAL active particle matching spec->request_type_mask.
+ *   2. Per-rank query counts via Allgather; queries themselves via Allgatherv.
+ *   3. For each remote rank's queries, walk the LOCAL pool and apply the
+ *      EXACT predicate per particle (r_ij < h_i for ONEWAY,
+ *      r_ij < max(h_i, h_j) for SYMMETRIC). Mark matched local pool indices
+ *      in a bitmask per peer rank to dedupe (same j matched by N queries
+ *      ships once).
+ *   4. Per-peer match list is the basis for Alltoallv pack.
+ *   5. Alltoallv particle_data + gas_cell_data + home_idx (existing typed
+ *      Alltoallv used for the legacy path).
+ *   6. Install as ghosts (NumPart += total_recv, mark dirty for compact_xyzh,
+ *      build ghost_home_*_map, save ghost_wb_* arrays).
+ *
+ * Killshot diagnostic on Vista (job 694703) showed the legacy path imports
+ * with 99.97-100% waste — millions of particles imported per call, of which
+ * <1000 are actual neighbors under the criterion that imported them. This
+ * path's match step performs the EXACT predicate before pack, so per-call
+ * waste is zero by construction (modulo a small over-supply factor from
+ * ghosts that pass for one query but turn out unused after kernel).
+ *
+ * For now the local-pool walk is a flat O(N_local_tiles * N_remote_queries)
+ * scan with bbox-vs-sphere prune at the tile level; per-particle accept at
+ * the leaf. A BVH speedup is straightforward later (the all-particle BVH
+ * already used by the GPU neighbor list can be reused) but not a Phase-2
+ * blocker — even the flat scan is dominated by per-particle work for the
+ * tiny-N case that motivates this restructure.
+ * ============================================================================ */
+struct gx_query_t {
+    double pos[3];
+    double h;
+    int    type;       /* for caller diagnostics; predicate uses h_i directly */
+    int    _pad;
+};
+
+/* effective_ghost_radius re-implemented as a free function for cross-path reuse
+ * (tile_overlap_impl has its own captured-lambda copy; this is for the
+ * request-driven path + waste diagnostic). */
+static double gx_eff_h(int j, unsigned int supply_mask)
+{
+    if(supply_mask != GHOST_TYPE_ALL) {
+        if(!ghost_type_passes((int)P[j].Type, supply_mask)) return 0.0;
+        return (double)P[j].KernelRadius;
+    }
+    double h = (double)P[j].KernelRadius;
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+    if(P[j].Type == 0 && j < N_gas) {
+        if((double)CellP[j].KernelRadiusDM > h) h = CellP[j].KernelRadiusDM;
+    }
+#endif
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+    if((double)P[j].AGS_KernelRadius > h) h = P[j].AGS_KernelRadius;
+#endif
+    return h;
+}
+
+/* Print [GX_WASTE] for any ghost_exchange path. Walks (sampled) local actives
+ * × imported ghosts, applies ONEWAY and SYMMETRIC predicates, prints the
+ * per-ghost OR-aggregate waste ratio. PAIRS_BUDGET caps cost on global steps. */
+static void gx_print_waste(const struct ghost_exchange_spec_t *spec, int this_call, int total_recv)
+{
+    if(!gizmo_verbose_diag()) return;
+    if(total_recv <= 0 || NumPart_before_ghost <= 0) return;
+    const unsigned int request_mask = spec->request_type_mask;
+    const unsigned int supply_mask  = spec->supply_type_mask;
+    const int  search_mode = spec->search_mode;
+    const long long PAIRS_BUDGET = 10000000LL;
+    int sample_cap = (int)(PAIRS_BUDGET / (long long)total_recv);
+    if(sample_cap < 4) sample_cap = 4;
+    if(sample_cap > 1024) sample_cap = 1024;
+    int n_active_sample = 0;
+    int *active_indices = (int *) malloc((size_t)sample_cap * sizeof(int));
+    for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < sample_cap; kk++) {
+        int i_act = ActiveParticleList[kk];
+        if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
+        if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
+        active_indices[n_active_sample++] = i_act;
+    }
+    int total_active_full = 0;
+    for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
+        int i_act = ActiveParticleList[kk];
+        if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
+        if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
+        total_active_full++;
+    }
+    long long pairs_tested = 0;
+    long long g_oneway_used = 0, g_symm_used = 0;
+    char *used_oneway = (char *) calloc(total_recv, sizeof(char));
+    char *used_symm   = (char *) calloc(total_recv, sizeof(char));
+    for(int aa = 0; aa < n_active_sample; aa++) {
+        int i = active_indices[aa];
+        double h_i = gx_eff_h(i, supply_mask);
+        double h2_i = h_i * h_i;
+        double px = P[i].Pos[0], py = P[i].Pos[1], pz = P[i].Pos[2];
+        for(int g = 0; g < total_recv; g++) {
+            int gi = NumPart_before_ghost + g;
+            double dx_raw = px - P[gi].Pos[0];
+            double dy_raw = py - P[gi].Pos[1];
+            double dz_raw = pz - P[gi].Pos[2];
+            MyDouble xtmp = 0; (void)xtmp;
+            double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+            double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+            double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
+            double r2 = adx*adx + ady*ady + adz*adz;
+            pairs_tested++;
+            if(!used_oneway[g] && r2 < h2_i) used_oneway[g] = 1;
+            if(!used_symm[g]) {
+                double h_j = gx_eff_h(gi, supply_mask);
+                double h2_max = (h2_i > h_j*h_j) ? h2_i : h_j*h_j;
+                if(r2 < h2_max) used_symm[g] = 1;
+            }
+        }
+    }
+    for(int g = 0; g < total_recv; g++) {
+        g_oneway_used += used_oneway[g];
+        g_symm_used   += used_symm[g];
+    }
+    free(used_oneway); free(used_symm); free(active_indices);
+    double waste_o = 100.0 * (1.0 - (double)g_oneway_used / (double)total_recv);
+    double waste_s = 100.0 * (1.0 - (double)g_symm_used   / (double)total_recv);
+    printf("[GX_WASTE rank=%d call=%d caller=%s mode=%s imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
+           ThisTask, this_call,
+           (spec->caller_name ? spec->caller_name : "?"),
+           (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
+           total_recv, total_active_full, n_active_sample,
+           g_oneway_used, g_symm_used, waste_o, waste_s, pairs_tested);
+    fflush(stdout);
+}
+
+/* Absolute periodic-shortened delta on one axis. */
+static inline double gx_abs_dx(double dx, double bsize, double bhalf, int periodic)
+{
+    double a = fabs(dx);
+    if(periodic && a > bhalf) a = bsize - a;
+    return a;
+}
+
+static void ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
+{
+    if(NTask <= 1) return;
+    const double safety_factor = spec->safety_factor;
+    const unsigned int request_mask = spec->request_type_mask;
+    const unsigned int supply_mask  = spec->supply_type_mask;
+    const int  search_mode = spec->search_mode;
+    double t_ghost_start = my_second();
+
+    NumPart_before_ghost = NumPart;
+    N_gas_before_ghost = N_gas;
+    NumGhostParticles = 0;
+
+    /* Periodic-axis flags for box wrap (cached for the per-pair distance fn). */
+    int per_x = 0, per_y = 0, per_z = 0;
+    double bsx = 0, bsy = 0, bsz = 0, bhx = 0, bhy = 0, bhz = 0;
+#if defined(BOX_PERIODIC)
+    bsx = boxSize_X; bsy = boxSize_Y; bsz = boxSize_Z;
+    bhx = boxHalf_X; bhy = boxHalf_Y; bhz = boxHalf_Z;
+    per_x = per_y = per_z = 1;
+#  if defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X)
+    per_x = 0;
+#  endif
+#  if defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
+    per_y = 0;
+#  endif
+#  if defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_Z)
+    per_z = 0;
+#  endif
+#endif
+
+    static int gx_call_seq_rd = 0;
+    gx_call_seq_rd++;
+    int this_call = gx_call_seq_rd;
+
+    /* === Step 1: build local query list === */
+    int n_local_queries = 0;
+    for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
+        int i = ActiveParticleList[kk];
+        if(i < 0 || i >= NumPart) continue;
+        if(P[i].Mass <= 0) continue;
+        if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
+        n_local_queries++;
+    }
+    struct gx_query_t *local_queries = (struct gx_query_t *)
+        malloc((size_t)(n_local_queries > 0 ? n_local_queries : 1) * sizeof(struct gx_query_t));
+    {
+        int q = 0;
+        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
+            int i = ActiveParticleList[kk];
+            if(i < 0 || i >= NumPart) continue;
+            if(P[i].Mass <= 0) continue;
+            if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
+            local_queries[q].pos[0] = P[i].Pos[0];
+            local_queries[q].pos[1] = P[i].Pos[1];
+            local_queries[q].pos[2] = P[i].Pos[2];
+            double h = (double)P[i].KernelRadius;
+            local_queries[q].h    = h * safety_factor;
+            local_queries[q].type = (int)P[i].Type;
+            local_queries[q]._pad = 0;
+            q++;
+        }
+    }
+
+    /* === Step 2: Allgather query counts, Allgatherv query records === */
+    int *all_q_counts = (int *) malloc(NTask * sizeof(int));
+    MPI_Allgather(&n_local_queries, 1, MPI_INT, all_q_counts, 1, MPI_INT, MPI_COMM_WORLD);
+    int *q_disps = (int *) malloc(NTask * sizeof(int));
+    int total_queries = 0;
+    for(int t = 0; t < NTask; t++) {
+        q_disps[t] = total_queries;
+        total_queries += all_q_counts[t];
+    }
+    struct gx_query_t *all_queries = (struct gx_query_t *)
+        malloc((size_t)(total_queries > 0 ? total_queries : 1) * sizeof(struct gx_query_t));
+
+    int *q_byte_counts = (int *) malloc(NTask * sizeof(int));
+    int *q_byte_disps  = (int *) malloc(NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) {
+        q_byte_counts[t] = all_q_counts[t] * (int)sizeof(struct gx_query_t);
+        q_byte_disps[t]  = q_disps[t]      * (int)sizeof(struct gx_query_t);
+    }
+    MPI_Allgatherv(local_queries, n_local_queries * (int)sizeof(struct gx_query_t), MPI_BYTE,
+                   all_queries,   q_byte_counts, q_byte_disps, MPI_BYTE,
+                   MPI_COMM_WORLD);
+    free(q_byte_counts); free(q_byte_disps);
+
+    /* === Step 3: per-rank, walk local pool against each remote rank's queries === */
+    /* Pool index list (supply-mask filtered). */
+    int num_pool = 0;
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) continue;
+        if(!ghost_type_passes((int)P[i].Type, supply_mask)) continue;
+        num_pool++;
+    }
+    int *pool = (int *) malloc((size_t)(num_pool > 0 ? num_pool : 1) * sizeof(int));
+    {
+        int p = 0;
+        for(int i = 0; i < NumPart; i++) {
+            if(P[i].Mass <= 0) continue;
+            if(!ghost_type_passes((int)P[i].Type, supply_mask)) continue;
+            pool[p++] = i;
+        }
+    }
+
+    /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
+    char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
+    for(int t = 0; t < NTask; t++) {
+        if(t == ThisTask) continue;
+        int q_start = q_disps[t];
+        int q_count = all_q_counts[t];
+        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
+        for(int qi = 0; qi < q_count; qi++) {
+            const struct gx_query_t *q = &all_queries[q_start + qi];
+            double q_pos_x = q->pos[0], q_pos_y = q->pos[1], q_pos_z = q->pos[2];
+            double q_h = q->h;
+            double q_h2 = q_h * q_h;
+            for(int p = 0; p < num_pool; p++) {
+                if(match_for_t[p]) continue;
+                int j = pool[p];
+                double dx = q_pos_x - P[j].Pos[0];
+                double dy = q_pos_y - P[j].Pos[1];
+                double dz = q_pos_z - P[j].Pos[2];
+                double adx = gx_abs_dx(dx, bsx, bhx, per_x);
+                double ady = gx_abs_dx(dy, bsy, bhy, per_y);
+                double adz = gx_abs_dx(dz, bsz, bhz, per_z);
+                double r2 = adx*adx + ady*ady + adz*adz;
+                double thresh2;
+                if(search_mode == NGB_SEARCH_ONEWAY) {
+                    thresh2 = q_h2;
+                } else {
+                    double h_j = (double)P[j].KernelRadius * safety_factor;
+                    double h_max = (q_h > h_j) ? q_h : h_j;
+                    thresh2 = h_max * h_max;
+                }
+                if(r2 < thresh2) match_for_t[p] = 1;
+            }
+        }
+    }
+
+    /* === Step 4: per-peer counts + index list === */
+    int *send_count = (int *) mymalloc("gx_rd_sc", NTask * sizeof(int));
+    int *recv_count = (int *) mymalloc("gx_rd_rc", NTask * sizeof(int));
+    int *send_disp  = (int *) mymalloc("gx_rd_sd", NTask * sizeof(int));
+    int *recv_disp  = (int *) mymalloc("gx_rd_rd", NTask * sizeof(int));
+    for(int t = 0; t < NTask; t++) { send_count[t] = 0; recv_count[t] = 0; }
+    for(int t = 0; t < NTask; t++) {
+        if(t == ThisTask) continue;
+        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
+        int s = 0;
+        for(int p = 0; p < num_pool; p++) if(match_for_t[p]) s++;
+        send_count[t] = s;
+    }
+    MPI_Alltoall(send_count, 1, MPI_INT, recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    int total_send = 0, total_recv = 0;
+    for(int t = 0; t < NTask; t++) { total_send += send_count[t]; total_recv += recv_count[t]; }
+    send_disp[0] = 0; recv_disp[0] = 0;
+    for(int t = 1; t < NTask; t++) {
+        send_disp[t] = send_disp[t-1] + send_count[t-1];
+        recv_disp[t] = recv_disp[t-1] + recv_count[t-1];
+    }
+
+    /* Check space (mirrors legacy guard). */
+    if(NumPart + total_recv > All.MaxPart) {
+        printf("ERROR: request-driven ghost exchange needs %d ghosts on task %d, only %d free.\n",
+               total_recv, ThisTask, All.MaxPart - NumPart);
+        endrun(7702);
+    }
+
+    /* === Step 5: pack particle data + cell data + home_idx === */
+    struct particle_data *send_P = (struct particle_data *) mymalloc("gx_rd_sP",
+        (total_send > 0 ? total_send : 1) * sizeof(struct particle_data));
+    struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_rd_sC",
+        (total_send > 0 ? total_send : 1) * sizeof(struct gas_cell_data));
+    int *send_home_idx = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
+    {
+        int *task_offset = (int *) mymalloc("gx_rd_toff", NTask * sizeof(int));
+        memcpy(task_offset, send_disp, NTask * sizeof(int));
+        for(int t = 0; t < NTask; t++) {
+            if(t == ThisTask) continue;
+            char *match_for_t = matched + (size_t)t * (size_t)num_pool;
+            for(int p = 0; p < num_pool; p++) {
+                if(!match_for_t[p]) continue;
+                int j = pool[p];
+                int off = task_offset[t]++;
+                send_P[off] = P[j];
+                send_home_idx[off] = j;
+                if(P[j].Type == 0 && j < N_gas) send_CellP[off] = CellP[j];
+                else memset(&send_CellP[off], 0, sizeof(struct gas_cell_data));
+            }
+        }
+        myfree(task_offset);
+    }
+    free(matched);
+
+    /* === Step 6: Alltoallv particles + cells + home_idx === */
+    gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
+                              &P[NumPart], recv_count, recv_disp,
+                              sizeof(struct particle_data), MPI_COMM_WORLD);
+    if(All.TotN_gas > 0) {
+        gizmo_mpi_alltoallv_typed(send_CellP, send_count, send_disp,
+                                  &CellP[NumPart], recv_count, recv_disp,
+                                  sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+    }
+
+    /* Update counts now so home_idx receive can land at &P[NumPart_before_ghost+...] */
+    NumGhostParticles = total_recv;
+    NumPart += total_recv;
+
+    /* Mark dirty for compact_xyzh refresh (same as legacy). */
+    if(NumGhostParticles > 0) {
+        gpu_compact_xyzh_mark_h_dirty_range(NumPart_before_ghost, NumPart);
+    }
+
+    /* Home-index exchange + provenance maps. */
+    int *recv_home_idx = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
+    gizmo_mpi_alltoallv_typed(send_home_idx, send_count, send_disp,
+                              recv_home_idx, recv_count, recv_disp,
+                              sizeof(int), MPI_COMM_WORLD);
+    ghost_home_rank_map = (int *) malloc((total_recv > 0 ? total_recv : 1) * sizeof(int));
+    ghost_home_index_map = recv_home_idx;
+    for(int t = 0; t < NTask; t++) {
+        for(int g = 0; g < recv_count[t]; g++) {
+            ghost_home_rank_map[recv_disp[t] + g] = t;
+        }
+    }
+    /* Preserve comm maps for reverse Alltoallv (ghost writeback). */
+    ghost_wb_recv_count = (int *) malloc(NTask * sizeof(int));
+    ghost_wb_recv_disp  = (int *) malloc(NTask * sizeof(int));
+    ghost_wb_send_count = (int *) malloc(NTask * sizeof(int));
+    ghost_wb_send_disp  = (int *) malloc(NTask * sizeof(int));
+    memcpy(ghost_wb_recv_count, recv_count, NTask * sizeof(int));
+    memcpy(ghost_wb_recv_disp,  recv_disp,  NTask * sizeof(int));
+    memcpy(ghost_wb_send_count, send_count, NTask * sizeof(int));
+    memcpy(ghost_wb_send_disp,  send_disp,  NTask * sizeof(int));
+
+    double t_ghost_total = timediff(t_ghost_start, my_second());
+
+    if(ThisTask == 0) {
+        PRINT_STATUS("Ghost exchange (request-driven, %s, %s): %d local + %d ghost  queries=%d total_queries=%d num_pool=%d  [%.4f s]",
+                     (spec->caller_name ? spec->caller_name : "?"),
+                     (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
+                     NumPart_before_ghost, NumGhostParticles,
+                     n_local_queries, total_queries, num_pool, t_ghost_total);
+    }
+
+    /* Diagnostic: ghost composition + import-waste ratio (should be ~0% for
+     * the request-driven path by construction since per-particle accept ran
+     * before pack — provides direct A/B vs the legacy tile-overlap waste). */
+    if(gizmo_verbose_diag() && total_recv > 0) {
+        int by_type[6] = {0,0,0,0,0,0};
+        for(int g = 0; g < total_recv; g++) {
+            int gi = NumPart_before_ghost + g;
+            int tt = (int)P[gi].Type;
+            if(tt >= 0 && tt < 6) by_type[tt]++;
+        }
+        printf("[GX_GHOSTTYPE rank=%d call=%d caller=%s total_recv=%d  T0(gas)=%d T1=%d T2=%d T3=%d T4(star)=%d T5(sink)=%d]\n",
+               ThisTask, this_call, (spec->caller_name ? spec->caller_name : "?"),
+               total_recv, by_type[0], by_type[1], by_type[2], by_type[3], by_type[4], by_type[5]);
+        fflush(stdout);
+    }
+    gx_print_waste(spec, this_call, total_recv);
+
+    /* Cleanup local. */
+    myfree(send_CellP); myfree(send_P);
+    myfree(recv_disp); myfree(send_disp); myfree(recv_count); myfree(send_count);
+    free(send_home_idx);
+    free(pool); free(all_queries); free(q_disps); free(all_q_counts); free(local_queries);
 }
 
 /* Public wrappers — each fills a spec, calls the single _impl. New callers
