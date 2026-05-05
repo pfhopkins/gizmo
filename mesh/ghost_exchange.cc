@@ -721,10 +721,19 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
      * larger steps (active>10k) it's still seconds — gated by num_active cap
      * to avoid blowing up the diagnostic budget. */
     if(gizmo_verbose_diag() && total_recv > 0 && NumPart_before_ghost > 0) {
-        const int ACTIVE_CAP = 1024;  /* sample if more — accuracy fine for waste ratio */
+        /* Throttle: cap total pairs_tested at ~10M to keep diagnostic <1s/call
+         * even on global steps. n_sample = min(active, 10M / imported). For
+         * tiny-N this is unbounded; for global steps it caps the sample.
+         * Statistical waste-ratio is robust to small n_sample because it's
+         * a per-ghost OR over actives — undersampling can only INCREASE
+         * reported waste, never decrease it. */
+        const long long PAIRS_BUDGET = 10000000LL;
+        int sample_cap = (int)(PAIRS_BUDGET / (long long)(total_recv > 0 ? total_recv : 1));
+        if(sample_cap < 4) sample_cap = 4;
+        if(sample_cap > 1024) sample_cap = 1024;
         int n_active_sample = 0;
-        int active_indices[ACTIVE_CAP];
-        for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < ACTIVE_CAP; kk++) {
+        int *active_indices = (int *) malloc((size_t)sample_cap * sizeof(int));
+        for(size_t kk = 0; kk < ActiveParticleList.size() && n_active_sample < sample_cap; kk++) {
             int i_act = ActiveParticleList[kk];
             if(i_act < 0 || i_act >= NumPart_before_ghost) continue;
             if(!ghost_type_passes((int)P[i_act].Type, request_mask)) continue;
@@ -770,7 +779,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
             ghosts_oneway_used += used_oneway[g];
             ghosts_symm_used   += used_symm[g];
         }
-        free(used_oneway); free(used_symm);
+        free(used_oneway); free(used_symm); free(active_indices);
         double waste_oneway = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_oneway_used / (double)total_recv) : 0.0;
         double waste_symm   = (total_recv > 0) ? 100.0 * (1.0 - (double)ghosts_symm_used   / (double)total_recv) : 0.0;
         printf("[GX_WASTE rank=%d call=%d caller=%s mode=%s imported=%d n_active=%d (sampled=%d) used_oneway=%lld used_symm=%lld waste_oneway=%.2f%% waste_symm=%.2f%% pairs_tested=%lld]\n",
