@@ -666,9 +666,15 @@ double powerspec_turb_obtain_fields(void)
         int max_iter = MAXITER;
         int iter_count = 0;
         int ghost_imported = 0;
-        if(ghost_get_num_ghosts() <= 0) {
-            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-            ghost_imported = 1;
+        {
+            int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+            int need_import = 0;
+            MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(need_import) {
+                if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+                gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+                ghost_imported = 1;
+            }
         }
         int num_local = ghost_get_num_local();
         if(num_local <= 0) num_local = NumPart;
@@ -1110,7 +1116,6 @@ void powerspec_turb_calc_dispersion(void)
 
 
 #endif
-
 
 
 

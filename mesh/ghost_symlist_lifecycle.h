@@ -13,6 +13,8 @@
 
 #include "neighbor_list.h"
 #include "sfc_tiles.h"
+#include "ghost_exchange_spec.h"
+#include "ghost_writeback.h"
 
 extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_total,
     int *active_indices, int num_active, neighbor_list_t *out,
@@ -49,6 +51,73 @@ static inline void gizmo_density_prep_ghosts(double safety)
     double t_ghost = timediff(t1, my_second());
     CPU_Step[CPU_DENSMISC] += t_drift;
     CPU_Step[CPU_DENSCOMM] += t_ghost;
+}
+
+/* Explicit-query ghost prep for caller-owned active lists.
+ *
+ * This preserves a single ghost_exchange implementation while letting physics
+ * loops provide their exact source list and search semantics. Most loops are
+ * symmetric; only use NGB_SEARCH_ONEWAY when the actual kernel predicate is
+ * strictly r_ij < h_i (density-like calls). */
+static inline void gizmo_explicit_query_prep_ghosts(const char *caller_name,
+                                                    int search_mode,
+                                                    unsigned int supply_type_mask,
+                                                    const int *active_indices,
+                                                    int num_active,
+                                                    const double *active_radii,
+                                                    double safety)
+{
+    double t0 = my_second();
+    move_particles(All.Ti_Current);
+    double t_drift = timediff(t0, my_second());
+
+    int alloc_n = (num_active > 0 ? num_active : 1);
+    double (*qpos)[3] = (double (*)[3]) malloc((size_t)alloc_n * sizeof(double[3]));
+    double *qh = (double *) malloc((size_t)alloc_n * sizeof(double));
+    for(int a = 0; a < num_active; a++) {
+        int i = active_indices[a];
+        qpos[a][0] = P[i].Pos[0];
+        qpos[a][1] = P[i].Pos[1];
+        qpos[a][2] = P[i].Pos[2];
+        qh[a] = active_radii[a];
+    }
+
+    struct ghost_exchange_spec_t sp = {
+        0u,
+        supply_type_mask,
+        search_mode,
+        safety,
+        caller_name,
+        num_active,
+        (const double (*)[3]) qpos,
+        (const double *) qh
+    };
+
+    double t1 = my_second();
+    ghost_exchange_run(&sp);
+    double t_ghost = timediff(t1, my_second());
+    free(qh);
+    free(qpos);
+    CPU_Step[CPU_DENSMISC] += t_drift;
+    CPU_Step[CPU_DENSCOMM] += t_ghost;
+}
+
+/* Collective-safe explicit-query prep for phases that must always build a
+ * caller-specific ghost pool. A local ghost-count guard is illegal here:
+ * exporter-only ranks can have zero received ghosts while importer ranks have
+ * nonzero ghosts, causing only some ranks to enter the collective exchange. */
+static inline int gizmo_explicit_query_prep_ghosts_fresh(const char *caller_name,
+                                                        int search_mode,
+                                                        unsigned int supply_type_mask,
+                                                        const int *active_indices,
+                                                        int num_active,
+                                                        const double *active_radii,
+                                                        double safety)
+{
+    ghost_exchange_cleanup();
+    gizmo_explicit_query_prep_ghosts(caller_name, search_mode, supply_type_mask,
+                                     active_indices, num_active, active_radii, safety);
+    return 1;
 }
 
 /* Hydro-density variant of gizmo_density_prep_ghosts: gas-only pool, gas-only

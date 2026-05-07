@@ -8,7 +8,7 @@
  *   The current ghost_exchange() builds tiles over every massive particle and
  *   uses every active particle as a request driver. For a hydro density call
  *   with 1 active gas particle, this means:
- *     - tile hmax can be inflated by a co-tile DM/star/sink particle's
+ *     - tile hmax can be inflated by a co-tile particle of another Type's
  *       KernelRadius (often 100-600× the gas h)
  *     - search_r = max(active_hmax, remote_tile_hmax) becomes huge
  *     - import 50k+ ghosts of all types when ~80 gas neighbors are wanted
@@ -30,7 +30,7 @@
  * Internal changes from the current monolithic ghost_exchange():
  *   1. Pool building (line ~139): instead of `if(P[i].Mass > 0)`, gate by
  *      `((1u << P[i].Type) & spec->supply_type_bitmask) && P[i].Mass > 0`.
- *      This removes DM/star/sink contamination of tile hmax for hydro
+ *      This removes non-supply-Type contamination of tile hmax for hydro
  *      callers in one place.
  *   2. effective_ghost_radius lambda (line ~179): replaced by the caller's
  *      radius_fn. Hydro callers pass a gas-only function that returns
@@ -39,21 +39,22 @@
  *      sinks, ignored for non-sink supply (or supply-only-gas).
  *   3. is_active flag (line ~196): `is_active[i_act] = 1` only if
  *      `(1u << P[i_act].Type) & spec->request_type_bitmask`. Hydro callers
- *      pass mask = 1 (gas only); sink/feedback callers pass star/sink mask.
+ *      pass mask = 1 (Type 0/cells only); other callers pass the Type mask
+ *      appropriate to their physics.
  *
  * Caller routing table:
  *
- *   gizmo_density_prep_ghosts          { req=GAS  sup=GAS   r=KernelRadius }
- *   gizmo_density_redo_ghosts_if_needed{ req=GAS  sup=GAS   r=KernelRadius }
- *   gizmo_gradients_prep_symlist       { req=GAS  sup=GAS   r=KernelRadius }
- *   gizmo_gradients_refresh_symlist    { req=GAS  sup=GAS   r=KernelRadius }
- *   sink_environment_loop              { req=SINK sup=GAS|SINK r=KernelRadius_sink }
- *   sink_feed_loop                     { req=SINK sup=GAS|SINK r=KernelRadius_sink }
- *   sink_swallow_and_kick_loop         { req=SINK sup=GAS|SINK r=KernelRadius_sink }
- *   mech_fb (mechanical_fb_evaluate_gpu){ req=STAR|SINK sup=GAS r=stellar_h }
- *   thermal_fb_evaluate_gpu            { req=STAR|SINK sup=GAS r=stellar_h }
- *   HII_heating_singledomain           { req=STAR sup=GAS r=R_HII or KernelRadius }
- *   radiation_pressure_winds (gpu)     { req=STAR sup=GAS r=stellar_h }
+ *   gizmo_density_prep_ghosts          { req=Type0  sup=Type0  r=KernelRadius }
+ *   gizmo_density_redo_ghosts_if_needed{ req=Type0  sup=Type0  r=KernelRadius }
+ *   gizmo_gradients_prep_symlist       { req=Type0  sup=Type0  r=KernelRadius }
+ *   gizmo_gradients_refresh_symlist    { req=Type0  sup=Type0  r=KernelRadius }
+ *   sink_environment_loop              { req=Type5  sup=caller mask r=KernelRadius_sink }
+ *   sink_feed_loop                     { req=Type5  sup=caller mask r=KernelRadius_sink }
+ *   sink_swallow_and_kick_loop         { req=Type5  sup=caller mask r=KernelRadius_sink }
+ *   mech_fb (mechanical_fb_evaluate_gpu){ req=caller actives sup=Type0 r=source_h }
+ *   thermal_fb_evaluate_gpu            { req=caller actives sup=Type0 r=source_h }
+ *   HII_heating_singledomain           { req=caller actives sup=Type0 r=R_HII or KernelRadius }
+ *   radiation_pressure_winds (gpu)     { req=caller actives sup=Type0 r=source_h }
  *
  * Backwards-compat:
  *   The bare `ghost_exchange(double safety)` becomes a wrapper that calls
@@ -62,12 +63,12 @@
  *   tree breaks; new typed callers opt in one by one.
  *
  * Type bitmasks (matching P[].Type):
- *   #define GHOST_TYPE_GAS    (1u << 0)
- *   #define GHOST_TYPE_DM     (1u << 1)
- *   #define GHOST_TYPE_DISK   (1u << 2)
- *   #define GHOST_TYPE_BULGE  (1u << 3)
- *   #define GHOST_TYPE_STAR   (1u << 4)
- *   #define GHOST_TYPE_SINK   (1u << 5)
+ *   #define GHOST_TYPE_0      (1u << 0)
+ *   #define GHOST_TYPE_1      (1u << 1)
+ *   #define GHOST_TYPE_2      (1u << 2)
+ *   #define GHOST_TYPE_3      (1u << 3)
+ *   #define GHOST_TYPE_4      (1u << 4)
+ *   #define GHOST_TYPE_5      (1u << 5)
  *   #define GHOST_TYPE_ALL    0x3F
  *
  * Migration order (after diagnostic confirms):
@@ -96,7 +97,7 @@
  *   - Should pool build be cached across same-type calls within a step?
  *     (e.g. density+gradient+hydro_force all use same gas pool — worth
  *     not rebuilding tile_meta 3x per step?)
- *   - For sink callers, should "supply_type_bitmask = GAS|SINK" actually
+ *   - For sink callers, should "supply_type_bitmask = caller mask" actually
  *     build TWO separate tile lists, one per type, with type-specific h?
  *     Current single-list approach risks contaminating sink pool with
  *     gas h, but gas h ~ sink h numerically (both kpc-scale), so probably

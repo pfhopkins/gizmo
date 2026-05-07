@@ -141,7 +141,11 @@ void twopoint(void)
         if(local_count <= 0) local_count = NumPart;
         int ghost_imported = 0;
         if(num_src_global > 0) {
-            if(ghost_get_num_ghosts() <= 0) {
+            int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+            int need_import = 0;
+            MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(need_import) {
+                if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
                 gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
                 ghost_imported = 1;
             }

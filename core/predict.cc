@@ -3,10 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
+#include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 
 /*! Routines for the drift/predict step */
 
@@ -276,7 +278,7 @@ extern "C" void gizmo_full_drift_invalidate(void) { g_last_full_drift_Ti = -1; }
  *    (output, restart, box-wrapping) */
 void gizmo_full_drift_to(integertime time1)
 {
-    if(time1 <= g_last_full_drift_Ti) return; /* already drifted */
+    if(time1 <= g_last_full_drift_Ti) return; /* already drifted — no h change */
     double t_start = my_second();
     int i;
 #ifdef _OPENMP
@@ -284,6 +286,12 @@ void gizmo_full_drift_to(integertime time1)
 #endif
     for(i=0; i<NumPart; i++) {drift_particle(i, time1);}
     g_last_full_drift_Ti = time1;
+    /* drift_particle just multiplied KernelRadius by exp(divv_fac/N) for every
+     * particle (predict.cc:160,229). Mark the whole pool h-dirty so the next
+     * NGL build / next ghost_exchange refreshes compact_xyzh.h from current P[].
+     * Conservative: covers all types at once. (A future refinement could narrow
+     * to only Type 0 + AGS-active types if profiling shows this is too eager.) */
+    gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     gizmo_step_phase_record("mp_full_drift_time", timediff(t_start, my_second()));
     /* Phase 8a Round 2 option D: one post-drift arena coherence point.
      * Under UVM-canonical (current branch) the arena IS the host P/CellP
@@ -309,15 +317,25 @@ void move_particles(integertime time1)
     gizmo_step_phase_record("mp_misses", 1.0);
     double t_mp_start = my_second();
     int n_active = 0;
-    /* OMP over a global iterator like ActiveParticleList isn't trivially
-     * parallelizable (range-based-for over a custom container). For tiny-N
-     * the loop is short enough that single-threaded host iteration is
-     * dominated by drift_particle's per-particle work, which is itself
-     * already work-bounded — paralleling here gains little. */
+    /* Materialize the active list into a vector once so we can both drive the
+     * drift loop AND batch-mark h-dirty after. Vector construction is O(N_active)
+     * and trivially parallelizable; the drift loop dominates anyway.
+     *
+     * OMP over the global iterator ActiveParticleList isn't trivially
+     * parallelizable (range-based-for over a custom container). Single-thread
+     * host iteration is fine — drift_particle's per-particle work bounds the
+     * loop, paralleling here gains little. */
+    std::vector<int> active_idx;
+    active_idx.reserve(ActiveParticleList.size());
     for(int i : ActiveParticleList) {
         drift_particle(i, time1);
+        active_idx.push_back(i);
         n_active++;
     }
+    /* drift_particle just multiplied KernelRadius for each active particle
+     * (predict.cc:160,229). Mark h-dirty for both GPU SIDX tracker and host
+     * glt cache via the SSOT helper. */
+    if(n_active > 0) gizmo_mark_kernel_radius_dirty_indices(active_idx.data(), n_active);
     gizmo_step_phase_record("mp_drift_time",   timediff(t_mp_start, my_second()));
     gizmo_step_phase_record("mp_active_drift", (double)n_active);
 }

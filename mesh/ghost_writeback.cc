@@ -299,7 +299,12 @@ void ghost_writeback_agsforce(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local = ghost_get_num_local();
 
-    if(NTask <= 1 || num_ghosts <= 0) {
+    /* MULTI-RANK COLLECTIVE CORRECTNESS: only NTask<=1 short-circuits the MPI
+     * calls below. num_ghosts==0 OR snapshot-arrays==NULL: participate in the
+     * collective with empty buffers; skip the per-ghost diff/pack loops. With
+     * narrow-supply migrated callers, ghost imports are asymmetric (one rank
+     * has them, another doesn't), so the local count cannot gate a collective. */
+    if(NTask <= 1) {
         if(agsforce_ghost_Vel0) { free(agsforce_ghost_Vel0); agsforce_ghost_Vel0 = NULL; }
         if(agsforce_ghost_dp0)  { free(agsforce_ghost_dp0);  agsforce_ghost_dp0 = NULL; }
 #if defined(DM_SIDM)
@@ -307,25 +312,28 @@ void ghost_writeback_agsforce(void)
 #endif
         return;
     }
+    int have_snap = (agsforce_ghost_Vel0 != NULL && agsforce_ghost_dp0 != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        int modified = 0;
-        if(P[j].Vel[0] != agsforce_ghost_Vel0[g][0] ||
-           P[j].Vel[1] != agsforce_ghost_Vel0[g][1] ||
-           P[j].Vel[2] != agsforce_ghost_Vel0[g][2]) modified = 1;
-        if(P[j].dp[0] != agsforce_ghost_dp0[g][0] ||
-           P[j].dp[1] != agsforce_ghost_dp0[g][1] ||
-           P[j].dp[2] != agsforce_ghost_dp0[g][2]) modified = 1;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            int modified = 0;
+            if(P[j].Vel[0] != agsforce_ghost_Vel0[g][0] ||
+               P[j].Vel[1] != agsforce_ghost_Vel0[g][1] ||
+               P[j].Vel[2] != agsforce_ghost_Vel0[g][2]) modified = 1;
+            if(P[j].dp[0] != agsforce_ghost_dp0[g][0] ||
+               P[j].dp[1] != agsforce_ghost_dp0[g][1] ||
+               P[j].dp[2] != agsforce_ghost_dp0[g][2]) modified = 1;
 #if defined(DM_SIDM)
-        if(P[j].NInteractions != agsforce_ghost_NInt0[g]) modified = 1;
+            if(P[j].NInteractions != agsforce_ghost_NInt0[g]) modified = 1;
 #endif
-        if(P[j].wakeup != 0) modified = 1;
-        if(modified) delta_send_count[home_rank[g]]++;
+            if(P[j].wakeup != 0) modified = 1;
+            if(modified) delta_send_count[home_rank[g]]++;
+        }
     }
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
     delta_send_disp[0] = 0;
@@ -337,33 +345,35 @@ void ghost_writeback_agsforce(void)
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
 
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        int modified = 0;
-        double dVx = P[j].Vel[0] - agsforce_ghost_Vel0[g][0];
-        double dVy = P[j].Vel[1] - agsforce_ghost_Vel0[g][1];
-        double dVz = P[j].Vel[2] - agsforce_ghost_Vel0[g][2];
-        double dpx = P[j].dp[0]  - agsforce_ghost_dp0[g][0];
-        double dpy = P[j].dp[1]  - agsforce_ghost_dp0[g][1];
-        double dpz = P[j].dp[2]  - agsforce_ghost_dp0[g][2];
-        if(dVx != 0 || dVy != 0 || dVz != 0) modified = 1;
-        if(dpx != 0 || dpy != 0 || dpz != 0) modified = 1;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            int modified = 0;
+            double dVx = P[j].Vel[0] - agsforce_ghost_Vel0[g][0];
+            double dVy = P[j].Vel[1] - agsforce_ghost_Vel0[g][1];
+            double dVz = P[j].Vel[2] - agsforce_ghost_Vel0[g][2];
+            double dpx = P[j].dp[0]  - agsforce_ghost_dp0[g][0];
+            double dpy = P[j].dp[1]  - agsforce_ghost_dp0[g][1];
+            double dpz = P[j].dp[2]  - agsforce_ghost_dp0[g][2];
+            if(dVx != 0 || dVy != 0 || dVz != 0) modified = 1;
+            if(dpx != 0 || dpy != 0 || dpz != 0) modified = 1;
 #if defined(DM_SIDM)
-        long unsigned int dNI = P[j].NInteractions - agsforce_ghost_NInt0[g];
-        if(dNI != 0) modified = 1;
+            long unsigned int dNI = P[j].NInteractions - agsforce_ghost_NInt0[g];
+            if(dNI != 0) modified = 1;
 #endif
-        if(P[j].wakeup != 0) modified = 1;
-        if(!modified) continue;
+            if(P[j].wakeup != 0) modified = 1;
+            if(!modified) continue;
 
-        int task = home_rank[g];
-        int off = pack_offset[task]++;
-        send_buf[off].home_index = home_index[g];
-        send_buf[off].dVel[0] = dVx; send_buf[off].dVel[1] = dVy; send_buf[off].dVel[2] = dVz;
-        send_buf[off].ddp[0]  = dpx; send_buf[off].ddp[1]  = dpy; send_buf[off].ddp[2]  = dpz;
+            int task = home_rank[g];
+            int off = pack_offset[task]++;
+            send_buf[off].home_index = home_index[g];
+            send_buf[off].dVel[0] = dVx; send_buf[off].dVel[1] = dVy; send_buf[off].dVel[2] = dVz;
+            send_buf[off].ddp[0]  = dpx; send_buf[off].ddp[1]  = dpy; send_buf[off].ddp[2]  = dpz;
 #if defined(DM_SIDM)
-        send_buf[off].dNInteractions = dNI;
+            send_buf[off].dNInteractions = dNI;
 #endif
-        send_buf[off].wakeup = P[j].wakeup;
+            send_buf[off].wakeup = P[j].wakeup;
+        }
     }
     free(pack_offset);
 
@@ -450,17 +460,21 @@ void ghost_writeback_swallowtime(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
-    if(!swallowtime_ghost0 || NTask <= 1 || num_ghosts <= 0) {
+    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
+    if(NTask <= 1) {
         if(swallowtime_ghost0) { free(swallowtime_ghost0); swallowtime_ghost0 = NULL; }
         return;
     }
+    int have_snap = (swallowtime_ghost0 != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        if(P[num_local + g].SwallowTime < swallowtime_ghost0[g]) { delta_send_count[home_rank[g]]++; }
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            if(P[num_local + g].SwallowTime < swallowtime_ghost0[g]) { delta_send_count[home_rank[g]]++; }
+        }
     }
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
     delta_send_disp[0] = 0;
@@ -471,13 +485,15 @@ void ghost_writeback_swallowtime(void)
         malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_swallowtime_t));
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        if(P[j].SwallowTime >= swallowtime_ghost0[g]) continue;
-        int task = home_rank[g];
-        int off = pack_offset[task]++;
-        send_buf[off].home_index = home_index[g];
-        send_buf[off].SwallowTime = P[j].SwallowTime;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            if(P[j].SwallowTime >= swallowtime_ghost0[g]) continue;
+            int task = home_rank[g];
+            int off = pack_offset[task]++;
+            send_buf[off].home_index = home_index[g];
+            send_buf[off].SwallowTime = P[j].SwallowTime;
+        }
     }
     free(pack_offset);
 
@@ -592,18 +608,22 @@ void ghost_writeback_thermalfb(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
-    if(!thermalfb_snap || NTask <= 1 || num_ghosts <= 0) {
+    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
+    if(NTask <= 1) {
         if(thermalfb_snap) { free(thermalfb_snap); thermalfb_snap = NULL; }
         return;
     }
+    int have_snap = (thermalfb_snap != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        if(P[j].Mass != thermalfb_snap[g].Mass) { delta_send_count[home_rank[g]]++; }
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            if(P[j].Mass != thermalfb_snap[g].Mass) { delta_send_count[home_rank[g]]++; }
+        }
     }
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
     delta_send_disp[0] = 0;
@@ -615,32 +635,34 @@ void ghost_writeback_thermalfb(void)
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
 
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        if(P[j].Mass == thermalfb_snap[g].Mass) continue;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            if(P[j].Mass == thermalfb_snap[g].Mass) continue;
 
-        int task = home_rank[g];
-        int off  = pack_offset[task]++;
-        auto& s  = thermalfb_snap[g];
-        send_buf[off].home_index        = home_index[g];
-        send_buf[off].dMass             = P[j].Mass             - s.Mass;
-        send_buf[off].dDensity          = CellP[j].Density       - s.Density;
-        send_buf[off].ddp[0]            = P[j].dp[0]             - s.dp[0];
-        send_buf[off].ddp[1]            = P[j].dp[1]             - s.dp[1];
-        send_buf[off].ddp[2]            = P[j].dp[2]             - s.dp[2];
-        send_buf[off].dInternalEnergy    = CellP[j].InternalEnergy     - s.InternalEnergy;
-        send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
+            int task = home_rank[g];
+            int off  = pack_offset[task]++;
+            auto& s  = thermalfb_snap[g];
+            send_buf[off].home_index        = home_index[g];
+            send_buf[off].dMass             = P[j].Mass             - s.Mass;
+            send_buf[off].dDensity          = CellP[j].Density       - s.Density;
+            send_buf[off].ddp[0]            = P[j].dp[0]             - s.dp[0];
+            send_buf[off].ddp[1]            = P[j].dp[1]             - s.dp[1];
+            send_buf[off].ddp[2]            = P[j].dp[2]             - s.dp[2];
+            send_buf[off].dInternalEnergy    = CellP[j].InternalEnergy     - s.InternalEnergy;
+            send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        send_buf[off].dMassTrue         = CellP[j].MassTrue      - s.MassTrue;
+            send_buf[off].dMassTrue         = CellP[j].MassTrue      - s.MassTrue;
 #endif
 #ifdef METALS
-        for(int k = 0; k < NUM_METAL_SPECIES; k++) {
-            send_buf[off].dMetallicity[k] = P[j].Metallicity[k] - s.Metallicity[k];
-        }
+            for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+                send_buf[off].dMetallicity[k] = P[j].Metallicity[k] - s.Metallicity[k];
+            }
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
-        send_buf[off].dDelayCool        = CellP[j].DelayTimeCoolingSNe - s.DelayCool;
+            send_buf[off].dDelayCool        = CellP[j].DelayTimeCoolingSNe - s.DelayCool;
 #endif
+        }
     }
     free(pack_offset);
 
@@ -747,22 +769,26 @@ void ghost_writeback_sinkfeed(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
-    if(!sinkfeed_snap || NTask <= 1 || num_ghosts <= 0) {
+    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
+    if(NTask <= 1) {
         if(sinkfeed_snap) { free(sinkfeed_snap); sinkfeed_snap = NULL; }
         return;
     }
+    int have_snap = (sinkfeed_snap != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        int changed = (P[j].SwallowID != sinkfeed_snap[g].SwallowID);
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            int changed = (P[j].SwallowID != sinkfeed_snap[g].SwallowID);
 #ifdef SINK_THERMALFEEDBACK
-        changed |= (CellP[j].Injected_Sink_Energy != sinkfeed_snap[g].Injected_Sink_Energy);
+            changed |= (CellP[j].Injected_Sink_Energy != sinkfeed_snap[g].Injected_Sink_Energy);
 #endif
-        if(changed) { delta_send_count[home_rank[g]]++; }
+            if(changed) { delta_send_count[home_rank[g]]++; }
+        }
     }
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
     delta_send_disp[0] = 0;
@@ -774,22 +800,24 @@ void ghost_writeback_sinkfeed(void)
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
 
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        int changed = (P[j].SwallowID != sinkfeed_snap[g].SwallowID);
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            int changed = (P[j].SwallowID != sinkfeed_snap[g].SwallowID);
 #ifdef SINK_THERMALFEEDBACK
-        changed |= (CellP[j].Injected_Sink_Energy != sinkfeed_snap[g].Injected_Sink_Energy);
+            changed |= (CellP[j].Injected_Sink_Energy != sinkfeed_snap[g].Injected_Sink_Energy);
 #endif
-        if(!changed) continue;
+            if(!changed) continue;
 
-        int task = home_rank[g];
-        int off  = pack_offset[task]++;
-        send_buf[off].home_index = home_index[g];
-        send_buf[off].SwallowID  = P[j].SwallowID;
+            int task = home_rank[g];
+            int off  = pack_offset[task]++;
+            send_buf[off].home_index = home_index[g];
+            send_buf[off].SwallowID  = P[j].SwallowID;
 #ifdef SINK_THERMALFEEDBACK
-        send_buf[off].dInjected_Sink_Energy =
-            CellP[j].Injected_Sink_Energy - sinkfeed_snap[g].Injected_Sink_Energy;
+            send_buf[off].dInjected_Sink_Energy =
+                CellP[j].Injected_Sink_Energy - sinkfeed_snap[g].Injected_Sink_Energy;
 #endif
+        }
     }
     free(pack_offset);
 
@@ -873,12 +901,24 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
     ghost_write_detector_register_writeback();
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
-    if(NTask <= 1 || num_ghosts <= 0) return;
+    /* MULTI-RANK CORRECTNESS: do NOT early-return on num_ghosts<=0 alone.
+     * The MPI_Alltoall + Alltoallv below are collective; every rank that
+     * passes the caller's global-active-zero gate (e.g. mech_fb_gpu.cc:152)
+     * must enter them in lock-step, even when its local ghost set is
+     * empty. With a narrow supply mask (e.g. mech_fb_v1 supply=GAS),
+     * ghost imports are strictly asymmetric (rank with sources gets
+     * imports; rank with only sinks-of-imports gets none) — early-return
+     * on num_ghosts==0 deadlocked rank-with-imports waiting for the other
+     * rank's collectives. Now: NTask<=1 still returns; num_ghosts==0
+     * runs the function with empty buffers, sending zeros into the
+     * collective and returning when the no-op count loop ends. */
+    if(NTask <= 1) return;
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
-    /* First pass: count non-trivial ghost entries per home-rank. */
+    /* First pass: count non-trivial ghost entries per home-rank.
+     * num_ghosts==0 → loop body never executes → all delta_send_count[t]==0. */
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
     for(int g = 0; g < num_ghosts; g++) {
         int j = num_local + g;
@@ -1058,27 +1098,31 @@ void ghost_writeback_grainbackrx(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
-    if(!grainbackrx_snap || NTask <= 1 || num_ghosts <= 0) {
+    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
+    if(NTask <= 1) {
         if(grainbackrx_snap) { free(grainbackrx_snap); grainbackrx_snap = NULL; }
         return;
     }
+    int have_snap = (grainbackrx_snap != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        auto& s = grainbackrx_snap[g];
-        int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]
-                     || P[j].Grain_AccelTimeMin != s.Grain_AccelTimeMin);
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            auto& s = grainbackrx_snap[g];
+            int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]
+                         || P[j].Grain_AccelTimeMin != s.Grain_AccelTimeMin);
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-        if(!modified) {
-            if(CellP[j].InternalEnergy != s.InternalEnergy) { modified = 1; }
-            else { for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { if(CellP[j].VolatileSpecies[kv] != s.VolatileSpecies[kv]) { modified = 1; break; } } }
-        }
+            if(!modified) {
+                if(CellP[j].InternalEnergy != s.InternalEnergy) { modified = 1; }
+                else { for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { if(CellP[j].VolatileSpecies[kv] != s.VolatileSpecies[kv]) { modified = 1; break; } } }
+            }
 #endif
-        if(modified) delta_send_count[home_rank[g]]++;
+            if(modified) delta_send_count[home_rank[g]]++;
+        }
     }
 
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
@@ -1091,36 +1135,38 @@ void ghost_writeback_grainbackrx(void)
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
 
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        auto& s = grainbackrx_snap[g];
-        int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]
-                     || P[j].Grain_AccelTimeMin != s.Grain_AccelTimeMin);
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            auto& s = grainbackrx_snap[g];
+            int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]
+                         || P[j].Grain_AccelTimeMin != s.Grain_AccelTimeMin);
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-        if(!modified) {
-            if(CellP[j].InternalEnergy != s.InternalEnergy) { modified = 1; }
-            else { for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { if(CellP[j].VolatileSpecies[kv] != s.VolatileSpecies[kv]) { modified = 1; break; } } }
+            if(!modified) {
+                if(CellP[j].InternalEnergy != s.InternalEnergy) { modified = 1; }
+                else { for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { if(CellP[j].VolatileSpecies[kv] != s.VolatileSpecies[kv]) { modified = 1; break; } } }
+            }
+#endif
+            if(!modified) continue;
+            int task = home_rank[g];
+            int off  = pack_offset[task]++;
+            send_buf[off].home_index = home_index[g];
+            send_buf[off].dVel[0] = P[j].Vel[0] - s.Vel[0];
+            send_buf[off].dVel[1] = P[j].Vel[1] - s.Vel[1];
+            send_buf[off].dVel[2] = P[j].Vel[2] - s.Vel[2];
+            send_buf[off].dVelPred[0] = CellP[j].VelPred[0] - s.VelPred[0];
+            send_buf[off].dVelPred[1] = CellP[j].VelPred[1] - s.VelPred[1];
+            send_buf[off].dVelPred[2] = CellP[j].VelPred[2] - s.VelPred[2];
+            send_buf[off].ddp[0] = P[j].dp[0] - s.dp[0];
+            send_buf[off].ddp[1] = P[j].dp[1] - s.dp[1];
+            send_buf[off].ddp[2] = P[j].dp[2] - s.dp[2];
+            send_buf[off].Grain_AccelTimeMin = P[j].Grain_AccelTimeMin; /* absolute (min-apply) */
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+            for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { send_buf[off].dVolatileSpecies[kv] = CellP[j].VolatileSpecies[kv] - s.VolatileSpecies[kv]; }
+            send_buf[off].dInternalEnergy     = CellP[j].InternalEnergy     - s.InternalEnergy;
+            send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
+#endif
         }
-#endif
-        if(!modified) continue;
-        int task = home_rank[g];
-        int off  = pack_offset[task]++;
-        send_buf[off].home_index = home_index[g];
-        send_buf[off].dVel[0] = P[j].Vel[0] - s.Vel[0];
-        send_buf[off].dVel[1] = P[j].Vel[1] - s.Vel[1];
-        send_buf[off].dVel[2] = P[j].Vel[2] - s.Vel[2];
-        send_buf[off].dVelPred[0] = CellP[j].VelPred[0] - s.VelPred[0];
-        send_buf[off].dVelPred[1] = CellP[j].VelPred[1] - s.VelPred[1];
-        send_buf[off].dVelPred[2] = CellP[j].VelPred[2] - s.VelPred[2];
-        send_buf[off].ddp[0] = P[j].dp[0] - s.dp[0];
-        send_buf[off].ddp[1] = P[j].dp[1] - s.dp[1];
-        send_buf[off].ddp[2] = P[j].dp[2] - s.dp[2];
-        send_buf[off].Grain_AccelTimeMin = P[j].Grain_AccelTimeMin; /* absolute (min-apply) */
-#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
-        for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { send_buf[off].dVolatileSpecies[kv] = CellP[j].VolatileSpecies[kv] - s.VolatileSpecies[kv]; }
-        send_buf[off].dInternalEnergy     = CellP[j].InternalEnergy     - s.InternalEnergy;
-        send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
-#endif
     }
     free(pack_offset);
 
@@ -1280,27 +1326,31 @@ void ghost_writeback_sinkswallow(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
-    if(!sinkswallow_snap || NTask <= 1 || num_ghosts <= 0) {
+    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
+    if(NTask <= 1) {
         if(sinkswallow_snap) { free(sinkswallow_snap); sinkswallow_snap = NULL; }
         return;
     }
+    int have_snap = (sinkswallow_snap != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        auto& s = sinkswallow_snap[g];
-        /* Use Mass comparison as the primary "did anything change" gate — all
-         * sink-swallow actions that touch this cell also touch Mass (accretion
-         * delta or explicit zero-out). Also sentinel on Sink_Mass for sink
-         * mergers where only Sink_Mass changes (if Mass matched). */
-        int modified = (P[j].Mass != s.Mass)
-                    || (P[j].Sink_Mass != s.Sink_Mass)
-                    || (P[j].Sink_Mdot != s.Sink_Mdot)
-                    || (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
-        if(modified) delta_send_count[home_rank[g]]++;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            auto& s = sinkswallow_snap[g];
+            /* Use Mass comparison as the primary "did anything change" gate — all
+             * sink-swallow actions that touch this cell also touch Mass (accretion
+             * delta or explicit zero-out). Also sentinel on Sink_Mass for sink
+             * mergers where only Sink_Mass changes (if Mass matched). */
+            int modified = (P[j].Mass != s.Mass)
+                        || (P[j].Sink_Mass != s.Sink_Mass)
+                        || (P[j].Sink_Mdot != s.Sink_Mdot)
+                        || (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
+            if(modified) delta_send_count[home_rank[g]]++;
+        }
     }
 
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
@@ -1313,42 +1363,44 @@ void ghost_writeback_sinkswallow(void)
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
 
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        auto& s = sinkswallow_snap[g];
-        int modified = (P[j].Mass != s.Mass)
-                    || (P[j].Sink_Mass != s.Sink_Mass)
-                    || (P[j].Sink_Mdot != s.Sink_Mdot)
-                    || (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
-        if(!modified) continue;
-        int task = home_rank[g];
-        int off  = pack_offset[task]++;
-        send_buf[off].home_index = home_index[g];
-        send_buf[off].dMass      = P[j].Mass - s.Mass;
-        for(int k = 0; k < 3; k++) {
-            send_buf[off].dVel[k] = P[j].Vel[k] - s.Vel[k];
-            send_buf[off].ddp[k]  = P[j].dp[k]  - s.dp[k];
-        }
-        send_buf[off].dSink_Mass = P[j].Sink_Mass - s.Sink_Mass;
-        send_buf[off].dSink_Mdot = P[j].Sink_Mdot - s.Sink_Mdot;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            auto& s = sinkswallow_snap[g];
+            int modified = (P[j].Mass != s.Mass)
+                        || (P[j].Sink_Mass != s.Sink_Mass)
+                        || (P[j].Sink_Mdot != s.Sink_Mdot)
+                        || (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
+            if(!modified) continue;
+            int task = home_rank[g];
+            int off  = pack_offset[task]++;
+            send_buf[off].home_index = home_index[g];
+            send_buf[off].dMass      = P[j].Mass - s.Mass;
+            for(int k = 0; k < 3; k++) {
+                send_buf[off].dVel[k] = P[j].Vel[k] - s.Vel[k];
+                send_buf[off].ddp[k]  = P[j].dp[k]  - s.dp[k];
+            }
+            send_buf[off].dSink_Mass = P[j].Sink_Mass - s.Sink_Mass;
+            send_buf[off].dSink_Mdot = P[j].Sink_Mdot - s.Sink_Mdot;
 #ifdef SINK_ALPHADISK_ACCRETION
-        send_buf[off].dSink_Mass_Reservoir = P[j].Sink_Mass_Reservoir - s.Sink_Mass_Reservoir;
+            send_buf[off].dSink_Mass_Reservoir = P[j].Sink_Mass_Reservoir - s.Sink_Mass_Reservoir;
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        send_buf[off].dMassTrue = CellP[j].MassTrue - s.MassTrue;
+            send_buf[off].dMassTrue = CellP[j].MassTrue - s.MassTrue;
 #endif
-        for(int k = 0; k < 3; k++) send_buf[off].dVelPred[k] = CellP[j].VelPred[k] - s.VelPred[k];
-        send_buf[off].dInternalEnergy     = CellP[j].InternalEnergy     - s.InternalEnergy;
-        send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
+            for(int k = 0; k < 3; k++) send_buf[off].dVelPred[k] = CellP[j].VelPred[k] - s.VelPred[k];
+            send_buf[off].dInternalEnergy     = CellP[j].InternalEnergy     - s.InternalEnergy;
+            send_buf[off].dInternalEnergyPred = CellP[j].InternalEnergyPred - s.InternalEnergyPred;
 #ifdef MAGNETIC
-        for(int k = 0; k < 3; k++) {
-            send_buf[off].dB[k]     = CellP[j].B[k]     - s.B[k];
-            send_buf[off].dBPred[k] = CellP[j].BPred[k] - s.BPred[k];
-        }
+            for(int k = 0; k < 3; k++) {
+                send_buf[off].dB[k]     = CellP[j].B[k]     - s.B[k];
+                send_buf[off].dBPred[k] = CellP[j].BPred[k] - s.BPred[k];
+            }
 #endif
 #ifdef GALSF_SUBGRID_WINDS
-        send_buf[off].dDelayTime = CellP[j].DelayTime - s.DelayTime;
+            send_buf[off].dDelayTime = CellP[j].DelayTime - s.DelayTime;
 #endif
+        }
     }
     free(pack_offset);
 
@@ -1460,20 +1512,24 @@ void ghost_writeback_radfbrp(void)
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
 
-    if(!radfbrp_snap || NTask <= 1 || num_ghosts <= 0) {
+    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
+    if(NTask <= 1) {
         if(radfbrp_snap) { free(radfbrp_snap); radfbrp_snap = NULL; }
         return;
     }
+    int have_snap = (radfbrp_snap != NULL && num_ghosts > 0);
 
     int *home_rank  = ghost_get_home_rank();
     int *home_index = ghost_get_home_index();
 
     int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        auto& s = radfbrp_snap[g];
-        int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
-        if(modified) delta_send_count[home_rank[g]]++;
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            auto& s = radfbrp_snap[g];
+            int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
+            if(modified) delta_send_count[home_rank[g]]++;
+        }
     }
 
     int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
@@ -1486,23 +1542,25 @@ void ghost_writeback_radfbrp(void)
     int *pack_offset = (int *) malloc(NTask * sizeof(int));
     memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
 
-    for(int g = 0; g < num_ghosts; g++) {
-        int j = num_local + g;
-        auto& s = radfbrp_snap[g];
-        int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
-        if(!modified) continue;
-        int task = home_rank[g];
-        int off  = pack_offset[task]++;
-        send_buf[off].home_index = home_index[g];
-        send_buf[off].dVel[0] = P[j].Vel[0] - s.Vel[0];
-        send_buf[off].dVel[1] = P[j].Vel[1] - s.Vel[1];
-        send_buf[off].dVel[2] = P[j].Vel[2] - s.Vel[2];
-        send_buf[off].dVelPred[0] = CellP[j].VelPred[0] - s.VelPred[0];
-        send_buf[off].dVelPred[1] = CellP[j].VelPred[1] - s.VelPred[1];
-        send_buf[off].dVelPred[2] = CellP[j].VelPred[2] - s.VelPred[2];
-        send_buf[off].ddp[0] = P[j].dp[0] - s.dp[0];
-        send_buf[off].ddp[1] = P[j].dp[1] - s.dp[1];
-        send_buf[off].ddp[2] = P[j].dp[2] - s.dp[2];
+    if(have_snap) {
+        for(int g = 0; g < num_ghosts; g++) {
+            int j = num_local + g;
+            auto& s = radfbrp_snap[g];
+            int modified = (P[j].Vel[0] != s.Vel[0] || P[j].Vel[1] != s.Vel[1] || P[j].Vel[2] != s.Vel[2]);
+            if(!modified) continue;
+            int task = home_rank[g];
+            int off  = pack_offset[task]++;
+            send_buf[off].home_index = home_index[g];
+            send_buf[off].dVel[0] = P[j].Vel[0] - s.Vel[0];
+            send_buf[off].dVel[1] = P[j].Vel[1] - s.Vel[1];
+            send_buf[off].dVel[2] = P[j].Vel[2] - s.Vel[2];
+            send_buf[off].dVelPred[0] = CellP[j].VelPred[0] - s.VelPred[0];
+            send_buf[off].dVelPred[1] = CellP[j].VelPred[1] - s.VelPred[1];
+            send_buf[off].dVelPred[2] = CellP[j].VelPred[2] - s.VelPred[2];
+            send_buf[off].ddp[0] = P[j].dp[0] - s.dp[0];
+            send_buf[off].ddp[1] = P[j].dp[1] - s.dp[1];
+            send_buf[off].ddp[2] = P[j].dp[2] - s.dp[2];
+        }
     }
     free(pack_offset);
 
@@ -1862,6 +1920,25 @@ static int gwd_active = 0;
 
 void ghost_write_detector_register_writeback(void) { gwd_wb_count++; }
 
+/* Re-snapshot ghost P/CellP at the current state. Called by gpu_ngb_list_build
+ * after its lazy-drift loop updates Ti_current + Pos on touched ghost slots —
+ * those updates are NOT a "kernel write" the detector should flag (they're
+ * caller-side predicted-state setup), so we move the comparison baseline to
+ * the post-drift state. The remaining detector window (kernel + scatter) then
+ * catches any genuine kernel-side writes that need a writeback. */
+void ghost_write_detector_resnapshot_after_lazy_drift(void)
+{
+    if(!gwd_active) return;
+    if(gwd_n_snap <= 0) return;
+    int local = ghost_get_num_local();
+    int n = ghost_get_num_ghosts();
+    /* If layout changed mid-window we already can't compare — leave the
+     * snapshot alone; the original alarm logic handles it. */
+    if(local != gwd_local_at_snap || n != gwd_n_snap) return;
+    memcpy(gwd_P_snap,    P     + local, n * sizeof(struct particle_data));
+    memcpy(gwd_CellP_snap, CellP + local, n * sizeof(struct gas_cell_data));
+}
+
 void ghost_write_detector_begin(const char *kernel_name)
 {
     if(NTask <= 1) return;
@@ -1913,6 +1990,38 @@ void ghost_write_detector_end(void)
                     "  → either add a ghost_writeback call, or confirm this kernel is read-only on j.\n",
                     gwd_kernel, gwd_n_snap, gwd_local_at_snap, n_now, local_now,
                     first_diff, n_diff);
+            /* Byte-level diff for the first differing slot — narrows down
+             * which struct field the kernel mutated. */
+            if(first_diff >= 0) {
+                const unsigned char *cur_P = (const unsigned char *) &P[gwd_local_at_snap + first_diff];
+                const unsigned char *snap_P = (const unsigned char *) &gwd_P_snap[first_diff];
+                size_t sz = sizeof(struct particle_data);
+                size_t first_byte = (size_t)-1, last_byte = 0, diff_bytes = 0;
+                for(size_t b = 0; b < sz; b++) {
+                    if(cur_P[b] != snap_P[b]) {
+                        if(first_byte == (size_t)-1) first_byte = b;
+                        last_byte = b; diff_bytes++;
+                    }
+                }
+                fprintf(stderr, "  P[]: diff at bytes [%zu..%zu], %zu bytes total within sizeof(particle_data)=%zu\n",
+                        first_byte, last_byte, diff_bytes, sz);
+                if(first_byte != (size_t)-1) {
+                    fprintf(stderr, "  P[].first_byte = 0x%02x → 0x%02x (snap → now)\n",
+                            snap_P[first_byte], cur_P[first_byte]);
+                }
+                const unsigned char *cur_C = (const unsigned char *) &CellP[gwd_local_at_snap + first_diff];
+                const unsigned char *snap_C = (const unsigned char *) &gwd_CellP_snap[first_diff];
+                size_t sc = sizeof(struct gas_cell_data);
+                size_t first_byteC = (size_t)-1, last_byteC = 0, diff_bytesC = 0;
+                for(size_t b = 0; b < sc; b++) {
+                    if(cur_C[b] != snap_C[b]) {
+                        if(first_byteC == (size_t)-1) first_byteC = b;
+                        last_byteC = b; diff_bytesC++;
+                    }
+                }
+                fprintf(stderr, "  CellP[]: diff at bytes [%zu..%zu], %zu bytes total within sizeof(gas_cell_data)=%zu\n",
+                        first_byteC, last_byteC, diff_bytesC, sc);
+            }
             endrun(91234);
         }
     }

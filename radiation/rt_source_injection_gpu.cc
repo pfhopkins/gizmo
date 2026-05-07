@@ -122,9 +122,15 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     if(num_src_global <= 0) return;
 
     int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
+    {
+        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+        int need_import = 0;
+        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(need_import) {
+            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            imported_ghosts = 1;
+        }
     }
 
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
@@ -162,11 +168,14 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     if(num_src > 0) memcpy(d_local, src_local.data(), num_src * sizeof(struct RtSrcLocalIn));
 
     /* Build cross-type neighbor list: sources → gas (j_type_bitmask=1).
-       Uses gpu_ngb_list_build directly (same pattern as ags_force_gpu.cc). */
+       Per Phil + audit: kernel at line 197 has a SYM branch when All.TimeStep>0
+       (rejects only when r >= h_i AND r >= h_j); call mode must be SYMMETRIC
+       so the BVH provides those h_j-sided neighbors. Kernel's ONEWAY branch
+       (line 199) safely rejects the extras. */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
-                       NGB_SEARCH_ONEWAY, 1 /* gas only */,
+                       NGB_SEARCH_SYMMETRIC, 1 /* gas only */,
                        &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_host, NULL, "rt_inj");
 
     PRINT_STATUS("  GPU rt_source_injection: %d sources, %d pairs", num_src, gnl.total_pairs);

@@ -9,6 +9,7 @@
 #include <mpi.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -24,7 +25,9 @@
 #include "sfc_tiles.h"
 #include "sfc_tiles_functions.h"
 #include "gpu_neighbor_list.h"
+#include "gpu_dirty_tracker.h"
 #include "neighbor_list.h"
+#include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift */
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
@@ -62,70 +65,120 @@ gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_allt
  * the same env var so production runs are silent by default. */
 extern "C" int gizmo_ngb_diag_quiet(void) { return !gizmo_verbose_diag(); }
 
-/* Dirty-index tracking for compact_xyzh.h field. Two modes:
- *  - g_dirty_all = true: full-pool refresh required (fresh arena alloc,
- *    >threshold accumulated dirty indices, or unknown-scope mutator via the
- *    backwards-compat _mark_h_dirty() entry point).
- *  - g_dirty_all = false: refresh only the indices in g_dirty_list.
+/* Dirty-index tracking for compact_xyzh.h field.
  *
- * The list auto-promotes to "all" when its size crosses
- * G_DIRTY_PROMOTE_THRESHOLD (a refresh of N indices via list costs ~the same
- * as a full-pool scan once N is a substantial fraction of num_total, plus
- * we'd be paying device-buffer staging cost for the list itself). */
-static bool g_dirty_all = true;
-static std::vector<int> g_dirty_list;
-static const int G_DIRTY_PROMOTE_THRESHOLD = 1 << 20; /* 1M indices */
-
-static inline void g_dirty_clear_(void)
-{
-    g_dirty_all = false;
-    g_dirty_list.clear();
-}
+ * Pre-tracker: a single global g_dirty_list/g_dirty_all pair was shared by
+ * both g_step_sidx (gas-only) and g_step_sidx_alltypes. Once both caches
+ * persist across ghost-import-only changes (commit C), one cache consuming
+ * and clearing the global state would silently leave the other stale -- a
+ * physics-correctness hole. Now: per-cache state via gpu_dirty_tracker.
+ *
+ * Caches register their dense particle-index range [base, base+count) on
+ * build, unregister on free. Marks route to ALL caches whose range covers
+ * the j (each cache has its own bitset). Refresh consumes only its own
+ * cache's bitset.
+ *
+ * mark_h_dirty_all preserves global semantics: it sets all_dirty on every
+ * registered cache (matching the old "unknown-scope mutation"). Per-cache
+ * promote-to-all still fires when one cache's popcount exceeds threshold
+ * inside the tracker. */
 
 void gpu_compact_xyzh_mark_h_dirty_all(void)
 {
-    g_dirty_all = true;
-    g_dirty_list.clear(); /* superseded; reclaim memory at next op if huge */
+    gpu_dirty_tracker_mark_all_global();
 }
 
 void gpu_compact_xyzh_mark_h_dirty_idx(int i)
 {
-    if(g_dirty_all) {return;} /* already covered */
-    if(i < 0) {return;}
-    g_dirty_list.push_back(i);
-    if((int)g_dirty_list.size() > G_DIRTY_PROMOTE_THRESHOLD) {
-        gpu_compact_xyzh_mark_h_dirty_all();
-    }
+    if(i < 0) return;
+    int idx_arr[1] = { i };
+    gpu_dirty_tracker_mark_indices(idx_arr, 1);
 }
 
 void gpu_compact_xyzh_mark_h_dirty_range(int start, int end)
 {
-    if(g_dirty_all) {return;}
-    if(end <= start) {return;}
-    int n = end - start;
-    if((int)(g_dirty_list.size() + n) > G_DIRTY_PROMOTE_THRESHOLD) {
-        gpu_compact_xyzh_mark_h_dirty_all();
-        return;
-    }
-    g_dirty_list.reserve(g_dirty_list.size() + n);
-    for(int i = start; i < end; i++) {g_dirty_list.push_back(i);}
+    gpu_dirty_tracker_mark_range(start, end);
 }
 
 void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n)
 {
-    if(g_dirty_all) {return;}
-    if(!indices || n <= 0) {return;}
-    if((int)(g_dirty_list.size() + n) > G_DIRTY_PROMOTE_THRESHOLD) {
-        gpu_compact_xyzh_mark_h_dirty_all();
-        return;
-    }
-    g_dirty_list.reserve(g_dirty_list.size() + n);
-    for(int k = 0; k < n; k++) {g_dirty_list.push_back(indices[k]);}
+    gpu_dirty_tracker_mark_indices(indices, n);
 }
 
 /* Backwards-compat: any caller that doesn't know which indices it dirtied
- * conservatively forces a full-pool refresh. */
+ * conservatively forces a full-pool refresh on every cache. */
 void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); }
+
+/* SSOT mark helpers — see header for design.  Route to BOTH the GPU SIDX
+ * dirty tracker AND the host glt cache dirty tracker. Adding a new cache
+ * later (e.g. host/ghost split in commit C) requires only register/unregister
+ * inside the new cache's lifetime — these helpers automatically include it. */
+void gizmo_mark_kernel_radius_dirty_indices(const int *indices, int n)
+{
+    if(!indices || n <= 0) return;
+    gpu_dirty_tracker_mark_indices(indices, n);
+    ghost_exchange_local_tree_mark_h_dirty_indices(indices, n);
+}
+void gizmo_mark_kernel_radius_dirty_range(int start, int end)
+{
+    if(end <= start) return;
+    gpu_dirty_tracker_mark_range(start, end);
+    ghost_exchange_local_tree_mark_h_dirty_range(start, end);
+}
+
+/* SIDX lifecycle epoch counters. Bumped by notify hooks; consumed by the
+ * segmented SIDX (later commit). Defined here so the diagnostic prints can
+ * pick them up immediately. */
+static uint64_t g_sidx_ghost_epoch = 0;
+static uint64_t g_sidx_pool_epoch  = 0;
+static int      g_sidx_last_ghost_start = 0;
+static int      g_sidx_last_ghost_count = 0;
+
+void gpu_sidx_notify_ghost_imported(int start, int count)
+{
+    /* Contract requires unconditional call on every rank, including count==0. */
+    g_sidx_last_ghost_start = start;
+    g_sidx_last_ghost_count = count;
+    g_sidx_ghost_epoch++;
+    /* Future commit C: count==0 also frees any cached ghost segment.
+     * Today no segment exists, so this is purely a counter bump. */
+}
+
+void gpu_sidx_notify_ghost_cleanup(void)
+{
+    /* Called BEFORE NumPart shrinks, so any cached ghost segment containing
+     * indices >= NumPart_local can be freed in the segment owner's response.
+     * Today: just bump epoch. */
+    g_sidx_last_ghost_start = 0;
+    g_sidx_last_ghost_count = 0;
+    g_sidx_ghost_epoch++;
+}
+
+void gpu_sidx_notify_pool_changed(void)
+{
+    /* Type/Mass/membership change in the home pool — invalidate any pool-
+     * dependent cache on next access. */
+    g_sidx_pool_epoch++;
+}
+
+/* Diagnostic accessors (used by GX_RD_CACHE / DIAG_NGL prints when verbose
+ * diag is on). Keep internal-linkage public-ish via these getters rather
+ * than exposing the statics. */
+extern "C" uint64_t gpu_sidx_ghost_epoch(void) { return g_sidx_ghost_epoch; }
+extern "C" uint64_t gpu_sidx_pool_epoch(void)  { return g_sidx_pool_epoch; }
+extern "C" int      gpu_sidx_last_ghost_start(void) { return g_sidx_last_ghost_start; }
+extern "C" int      gpu_sidx_last_ghost_count(void) { return g_sidx_last_ghost_count; }
+
+/* Deprecated: was a workaround for the global g_dirty_list pre-tracker era,
+ * filtering ghost-slot indices when ghost slots leave scope at cleanup. The
+ * per-cache tracker handles this cleanly: each cache's bitset is sized to
+ * its own range; ghost-slot indices outside a cache's range are silently
+ * skipped at mark time. Kept as a no-op so existing callsites compile;
+ * remove in commit E. */
+void gpu_compact_xyzh_dirty_drop_above(int threshold)
+{
+    (void)threshold; /* see deprecation comment */
+}
 
 /* Drift-time SIDX refresh (Attack B v2: incremental rebuild).
  *
@@ -149,8 +202,13 @@ void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); 
  *      to the original BVH because ntiles and tile order are unchanged).
  *   3. Stage updated tiles + BVH to device (deep_copy, ms-scale).
  *   4. Refresh compact_xyzh[i*4+0..2] device-side (existing parallel_for,
- *      ms-scale). h is unchanged by drift; mark_h_dirty machinery
- *      handles h-changes from density iter etc. independently.
+ *      ms-scale). NOTE: drift_particle DOES change KernelRadius (predict.cc
+ *      lines ~160 and ~229: P[i].KernelRadius *= exp(divv_fac/NUMDIMS)).
+ *      The drift-time refresh here updates positions only; the h component
+ *      is refreshed separately via mark_h_dirty machinery, which the lazy-
+ *      drift path inside gpu_ngb_list_build populates with the j's it
+ *      drifted (so compact_xyzh[j*4+3] gets re-read from P_shared on the
+ *      next build).
  *
  * Correctness invariant: each tile's bbox covers all current positions
  * of the particles in its pool. Tile assignments are frozen, so as
@@ -252,9 +310,14 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
  * access). Instead: positions were already filled into idx->h_pos_buf by the
  * host bbox-recompute loop; bulk deep_copy to d_pos_buf (~200MB at NVLink
  * ~600GB/s = sub-ms), then a small device kernel scatters into the
- * interleaved d_compact_xyzh array. h field intentionally untouched —
- * drift doesn't change h; mark_h_dirty machinery handles h refresh
- * separately. */
+ * interleaved d_compact_xyzh array. h field intentionally untouched here —
+ * NOTE: drift_particle DOES change KernelRadius (predict.cc:160,229), but
+ * THIS function is the position-only fast path used at drift-time; the h
+ * component is refreshed via the mark_h_dirty machinery on the next
+ * gpu_ngb_list_build, which consumes the dirty list populated by every
+ * h-writer (lazy drift, density iter, etc.). Splitting pos and h refresh
+ * lets us amortize the position update across the whole step while only
+ * the touched h slots get refreshed per-build. */
 static void sidx_refresh_compact_positions_device(gpu_spatial_index_t *idx)
 {
     int num_total = idx->num_total;
@@ -368,9 +431,14 @@ void gpu_step_sidx_invalidate(void)
             max_extent_ratio = r;
             t_bbox = tb; t_bvh = tv; t_stage = ts; t_compact = tc;
             refreshed = 1;
-            /* h-dirty state intentionally left intact: drift doesn't change h, and
-             * any pending dirties from density iter etc. will be consumed by the
-             * next gpu_ngb_list_build refresh as usual. */
+            /* h-dirty state intentionally left intact. drift_particle DOES
+             * change KernelRadius (predict.cc:160,229) — those h updates are
+             * marked into the per-cache dirty tracker (gpu_dirty_tracker) by
+             * the lazy-drift loop in the previous step's gpu_ngb_list_build,
+             * by move_particles/gizmo_full_drift_to (commit B), and by other
+             * h-writers like density iter. The next gpu_ngb_list_build
+             * consume()s this cache's bits and refreshes compact_xyzh[*4+3]
+             * from current P_shared.KernelRadius before walking. */
         }
     }
 
@@ -539,7 +607,17 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
 
     idx->num_total = num_total;
     idx->valid = 1;
-    g_dirty_clear_(); /* fresh build seeded compact_xyzh from current h */
+    /* Register this cache with the dirty tracker over [0, num_total). compact_xyzh
+     * was just seeded from current P[] — bitset starts clean (all_dirty=0). */
+    if(idx->dirty_handle >= 0) gpu_dirty_tracker_unregister(idx->dirty_handle);
+    idx->dirty_handle = gpu_dirty_tracker_register(0, num_total);
+    /* Tracker registers fresh caches with all_dirty=1 by default (the cache
+     * is "newborn"); but the build above already wrote compact_xyzh from
+     * current P[].KernelRadius, so we want a clean slate. Force consume-and-
+     * clear by treating this build as having already serviced an all-dirty
+     * refresh: the tracker's all_dirty=1 will trigger a full refresh on the
+     * very first NGL call after build, which is harmless (compact is fresh,
+     * the kernel just rewrites identical values). Acceptable for v1. */
 
     if(ThisTask == 0 && !gizmo_ngb_diag_quiet()) { /* DIAG: spatial index build breakdown — env-gated by GIZMO_VERBOSE_DIAG */
         printf("[DIAG_SIDX caller=%s tbm=0x%x ntiles=%d pool=%d] sfc_tiles=%.3f bvh_build=%.3f memcpy=%.3f compact=%.3f total=%.3f\n",
@@ -574,6 +652,10 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
     idx->h_bvh_nnodes = 0;
     idx->num_pool = 0;
     idx->valid = 0;
+    if(idx->dirty_handle >= 0) {
+        gpu_dirty_tracker_unregister(idx->dirty_handle);
+        idx->dirty_handle = -1;
+    }
 }
 
 
@@ -589,6 +671,19 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 {
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
+    /* HANG_DBG: dense per-phase tracing for the sink_swk hang. Gated on
+     * GIZMO_HANG_DBG=1 + caller label match (sink_swk by default). Every
+     * phase prints rank+caller+phase to stderr so we can see exactly which
+     * phase doesn't return on the stuck rank. */
+    static const char *g_hang_dbg_env = getenv("GIZMO_HANG_DBG");
+    static const char *g_hang_dbg_caller_env = getenv("GIZMO_HANG_DBG_CALLER");
+    int hang_dbg = (g_hang_dbg_env && g_hang_dbg_env[0] == '1');
+    if(hang_dbg) {
+        const char *want = g_hang_dbg_caller_env ? g_hang_dbg_caller_env : "sink_swk";
+        if(strcmp(caller_label ? caller_label : "?", want) != 0) hang_dbg = 0;
+    }
+    #define HDBG(label) do { if(hang_dbg) { fprintf(stderr, "[HDBG rank=%d caller=%s phase=%s num_active=%d num_total=%d cached=%d]\n", ThisTask, caller_label ? caller_label : "?", label, num_active, num_total, (cached_idx && cached_idx->valid) ? 1 : 0); fflush(stderr); } } while(0)
+    HDBG("entry");
 
     /* Early-out: with no active particles there is nothing to search.
      * Skip the SIDX build/refresh AND all kernel launches.  Allocate 1-element
@@ -639,15 +734,22 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     gpu_spatial_index_t *idx;
     /* Invalidate cached SIDX if num_total changed (ghost exchange redo, particle creation, etc.).
      * The compact_xyzh and pool arrays were sized for the old count; accessing beyond them is UB. */
-    if(cached_idx && cached_idx->valid && cached_idx->num_total != num_total)
+    if(cached_idx && cached_idx->valid && cached_idx->num_total != num_total) {
+        HDBG("sidx_invalidate_size_mismatch");
         gpu_spatial_index_free(cached_idx);
+    }
     if(cached_idx && cached_idx->valid) {
+        HDBG("sidx_use_cached");
         idx = cached_idx;
     } else if(cached_idx) {
+        HDBG("sidx_build_into_cache");
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, cached_idx, caller_label);
+        HDBG("sidx_built_into_cache");
         idx = cached_idx;
     } else {
+        HDBG("sidx_build_local");
         gpu_spatial_index_build(P_shared, num_total, type_bitmask, &local_idx, caller_label);
+        HDBG("sidx_built_local");
         idx = &local_idx;
     }
     double t_after_sidx = my_second(); /* DIAG: after SIDX (re)use decision */
@@ -663,31 +765,54 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     memcpy(gnl->box_sizes, idx->box_sizes, 3 * sizeof(double));
     memcpy(gnl->box_halves, idx->box_halves, 3 * sizeof(double));
 
-    /* Refresh the h component of the compact array. Two modes:
-     *  - g_dirty_all: full-pool parallel_for(num_total, ...) — same as legacy
-     *    behavior. Pays ~1.1-1.2s per call on fire_m11i 12.4M pool (UVM fault
-     *    latency on P_shared.KernelRadius reads).
-     *  - dirty list: parallel_for(n_dirty, ...) reading indices via a staged
-     *    device buffer. ~ms per call when n_dirty is the active set. This is
-     *    the gas-side win that step (3) of the codex_dialogue plan delivers.
-     * Skipped entirely when neither mode has anything to refresh. */
+    /* Refresh the h component of the compact array. Two modes (driven by the
+     * per-cache gpu_dirty_tracker):
+     *  - all-dirty: full-pool parallel_for(num_total, ...) — pays ~1.1-1.2s
+     *    per call on fire_m11i 12.4M pool (UVM fault latency on P_shared
+     *    KernelRadius reads).
+     *  - bitset drain: parallel_for(n_dirty, ...) reading indices staged from
+     *    this cache's bitset to a device buffer. ~ms per call when n_dirty is
+     *    the active set. Per-cache state means consuming-and-clearing this
+     *    cache's bits leaves the other registered caches' bitsets untouched.
+     * Skipped entirely when this cache has neither all_dirty nor any set bits. */
     double t_refresh_launch_in = 0, t_refresh_launch_out = 0, t_refresh_fence_out = 0; /* DIAG */
     int did_refresh = 0;
-    if(cached_idx && cached_idx->valid && (g_dirty_all || !g_dirty_list.empty())) {
+    /* Per-cache dirty tracker query: this cache's bitset is independent of
+     * other caches' state. consume() iterates set bits, populates d_dirty,
+     * then clears bitset+all_dirty for THIS cache only. */
+    int do_refresh = 0, refresh_all = 0;
+    int handle = cached_idx ? cached_idx->dirty_handle : -1;
+    if(cached_idx && cached_idx->valid && handle >= 0) {
+        if(gpu_dirty_tracker_is_all_dirty(handle)) { do_refresh = 1; refresh_all = 1; }
+        else if(gpu_dirty_tracker_popcount(handle) > 0) { do_refresh = 1; refresh_all = 0; }
+    }
+    if(do_refresh) {
+        HDBG(refresh_all ? "compact_h_refresh_all_start" : "compact_h_refresh_idx_start");
         did_refresh = 1;
         float *compact = idx->d_compact_xyzh;
         float h_inflate = (float)(1.0 + SIDX_H_SLACK); /* see SIDX_H_SLACK — lazy-drift over-search slack */
         t_refresh_launch_in = my_second();
-        if(g_dirty_all) {
+        if(refresh_all) {
             Kokkos::parallel_for("compact_h_refresh_all", num_total, KOKKOS_LAMBDA(int i) {
                 compact[i*4+3] = (float)P_shared[i].KernelRadius * h_inflate;
             });
+            /* Drain the bitset (no kernel use; just clear it). */
+            struct {} dummy;
+            gpu_dirty_tracker_consume(handle,
+                [](int j, void *ud){ (void)j; (void)ud; },
+                &dummy);
         } else {
-            int n_dirty = (int)g_dirty_list.size();
+            /* Drain bitset → host vector → device buffer → kernel. */
+            std::vector<int> dirty_host;
+            dirty_host.reserve(gpu_dirty_tracker_popcount(handle));
+            gpu_dirty_tracker_consume(handle,
+                [](int j, void *ud){ ((std::vector<int> *)ud)->push_back(j); },
+                &dirty_host);
+            int n_dirty = (int)dirty_host.size();
             int *d_dirty = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(n_dirty * sizeof(int));
             {
                 Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-                    hv(g_dirty_list.data(), n_dirty);
+                    hv(dirty_host.data(), n_dirty);
                 Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
                     dv(d_dirty, n_dirty);
                 Kokkos::deep_copy(dv, hv);
@@ -702,9 +827,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         t_refresh_launch_out = my_second();
         Kokkos::fence();
         t_refresh_fence_out = my_second();
-        g_dirty_clear_(); /* compact_xyzh now in sync with arena KernelRadius */
+        HDBG("compact_h_refresh_done");
     }
     double t_after_refresh = my_second(); /* DIAG */
+    HDBG("after_refresh");
 
     /* Active indices: always re-uploaded (changes per call) */
     gnl->d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
@@ -740,12 +866,16 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* size_t cast required: int * int overflows for num_active > ~4.19M (e.g. fire_m11i
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
+    HDBG("scratch_alloc_start");
     int *d_scratch = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int));
     int *d_counts  = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(na_safe * sizeof(int));
     double t_alloc1 = my_second(); /* DIAG: end of scratch alloc */
+    HDBG("scratch_alloc_done");
 
     /* DIAG: drain any prior async GPU work so subsequent fence times only this kernel */
+    HDBG("drain_fence_start");
     Kokkos::fence();
+    HDBG("drain_fence_done");
     double t_drain_done = my_second();
     double t_nl0 = t_drain_done; /* DIAG: start of GPU passes */
     double t_fused_launch_in = 0, t_fused_launch_out = 0; /* DIAG */
@@ -754,10 +884,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* Empty-kernel probe: distinguishes Kokkos/CUDA fence floor (platform overhead)
      * from actual GPU work.  If noop_fnc ≈ fused_fnc the 1.4s is the fence floor;
      * if noop_fnc ≈ µs the 1.4s is real kernel work (e.g. UVM page migration). */
+    HDBG("noop_probe_launch");
     t_noop_launch_in = my_second();
     Kokkos::parallel_for("noop_probe", 1, KOKKOS_LAMBDA(int) {});
     t_noop_launch_out = my_second();
+    HDBG("noop_probe_fence_start");
     Kokkos::fence();
+    HDBG("noop_probe_fence_done");
     t_noop_fence_out = my_second();
 
     /* Fused single pass: BVH walk + write neighbors into per-particle scratchpad */
@@ -779,6 +912,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const float *compact_xyzh = gnl->d_compact_xyzh;
+        HDBG("fused_launch_start");
         t_fused_launch_in = my_second();
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
             int pf[3] = {pf0, pf1, pf2};
@@ -798,7 +932,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             counts[aa] = cnt;
         });
         t_fused_launch_out = my_second();
+        HDBG("fused_fence_start");
         Kokkos::fence();
+        HDBG("fused_fence_done");
 
         /* MICROBENCHMARK PROBE — fires once per process when GIZMO_NGB_MICROBENCH=1
          * env var is set and we hit a small-N cached call. Re-launches the SAME
@@ -963,6 +1099,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
     /* Count overflow particles (count > stride: they need a re-walk in compact phase) */
     int overflow_count = 0;
+    HDBG("overflow_check_start");
     {
         int *counts = d_counts;
         Kokkos::parallel_reduce("ngb_overflow_check", num_active,
@@ -971,11 +1108,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }, overflow_count);
         Kokkos::fence();
     }
+    HDBG("overflow_check_done");
 
     /* GPU exclusive prefix scan: counts → offsets, returning total.
        Counts are correct even for overflow particles (search_neighbors_sfc_gpu
        returns the true count regardless of bounded write). */
     int total = 0;
+    HDBG("offsets_scan_start");
     {
         int *counts = d_counts;
         int *offsets = gnl->offsets;
@@ -987,6 +1126,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             }, total);
         Kokkos::fence();
     }
+    HDBG("offsets_scan_done");
     gnl->offsets[num_active] = total;
     gnl->total_pairs = total;
     double t_nl2 = my_second(); /* DIAG: after GPU prefix scan */
@@ -1015,6 +1155,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const float *compact_xyzh = gnl->d_compact_xyzh;
+        HDBG("compact_kernel_start");
         t_compact_launch_in = my_second();
         Kokkos::parallel_for("ngb_compact", num_active, KOKKOS_LAMBDA(int aa) {
             int n = counts[aa];
@@ -1041,11 +1182,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         });
         t_compact_launch_out = my_second();
         Kokkos::fence();
+        HDBG("compact_kernel_done");
     }
     double t_nl3 = my_second(); /* DIAG: after compact pass */
 
     /* Free temporaries */
     double t_free0 = my_second(); /* DIAG */
+    HDBG("free_start");
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
     if(d_radii) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);
@@ -1104,6 +1247,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * compact_xyzh write paths absorbs that staleness in the BVH tile-overlap
      * test. Per-pair r² acceptance reads the actual P[j].KernelRadius (now
      * freshly drifted), so correctness is preserved. */
+    HDBG("lazy_drift_start");
     if(gnl->total_pairs > 0 && gnl->neighbors) {
         double t_lazy0 = my_second();
         std::vector<int> ngb_host(gnl->total_pairs);
@@ -1113,10 +1257,77 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             int j = ngb_host[idx_n];
             if(j >= 0 && j < num_total) drift_particle(j, time1);
         }
-        gpu_compact_xyzh_mark_h_dirty_indices(ngb_host.data(), gnl->total_pairs);
+        /* Lazy drift just called drift_particle on each j in ngb_host.
+         * drift_particle mutates Ti_current, Pos, AND KernelRadius
+         * (predict.cc:160,229 — *= exp(divv_fac/N)). Mark h-dirty for both
+         * GPU SIDX tracker and host glt cache via the SSOT helper.
+         * Promote-to-all kicks in per cache if any cache's bitset popcount
+         * exceeds threshold. */
+        gizmo_mark_kernel_radius_dirty_indices(ngb_host.data(), gnl->total_pairs);
+        /* Move detector baseline past the lazy drift's Ti_current/Pos updates
+         * — those are predicted-state setup, not kernel writes that need
+         * writeback. Subsequent kernel-side writes to ghost particles will
+         * still be flagged by ghost_write_detector_end(). No-op when
+         * GIZMO_GPU_ARENA_DEBUG is undefined or detector is inactive. */
+        ghost_write_detector_resnapshot_after_lazy_drift();
         gizmo_step_phase_record("lazy_drift_pairs", (double)gnl->total_pairs);
         gizmo_step_phase_record("lazy_drift_time",  timediff(t_lazy0, my_second()));
     }
+    /* Strict A/B dump: env-gated. Writes per-call binary file with sorted
+     * neighbor rows so a diff tool can verify pair-set equivalence across
+     * code revisions. Captures GPU-built neighbor set BEFORE lazy drift
+     * mutates anything (lazy drift is read-only on gnl above this point).
+     * File path: $GIZMO_NGL_DUMP_DIR/ngl_rank<R>_call<N>.bin */
+    {
+        const char *dump_dir = getenv("GIZMO_NGL_DUMP_DIR");
+        if(dump_dir && dump_dir[0] && gnl->offsets && (gnl->total_pairs == 0 || gnl->neighbors)) {
+            static int call_seq = 0;
+            int my_seq = call_seq++;
+            char path[512];
+            snprintf(path, sizeof(path), "%s/ngl_rank%d_call%05d.bin",
+                     dump_dir, ThisTask, my_seq);
+            FILE *f = fopen(path, "wb");
+            if(f) {
+                /* Header: magic + rank + call_seq + caller_label + num_active +
+                 * num_total + total_pairs */
+                const char magic[8] = {'N','G','L','D','M','P','v','1'};
+                fwrite(magic, 8, 1, f);
+                int32_t r32 = (int32_t)ThisTask;
+                int32_t s32 = (int32_t)my_seq;
+                fwrite(&r32, sizeof(int32_t), 1, f);
+                fwrite(&s32, sizeof(int32_t), 1, f);
+                char clabel[32] = {0};
+                strncpy(clabel, caller_label ? caller_label : "?", 31);
+                fwrite(clabel, 32, 1, f);
+                int32_t na32 = (int32_t)num_active;
+                int32_t nt32 = (int32_t)num_total;
+                int64_t tp64 = (int64_t)gnl->total_pairs;
+                fwrite(&na32, sizeof(int32_t), 1, f);
+                fwrite(&nt32, sizeof(int32_t), 1, f);
+                fwrite(&tp64, sizeof(int64_t), 1, f);
+                /* Active indices (caller-provided particle indices). */
+                fwrite(active_indices_host, sizeof(int), num_active, f);
+                /* Offsets [num_active+1]. */
+                fwrite(gnl->offsets, sizeof(int), num_active + 1, f);
+                /* Neighbors: copy device→host once, sort each row, write. */
+                if(gnl->total_pairs > 0) {
+                    std::vector<int> ngb_host(gnl->total_pairs);
+                    gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
+                    /* Sort each row to make the dump order-invariant for diff. */
+                    for(int a = 0; a < num_active; a++) {
+                        int beg = gnl->offsets[a];
+                        int end = gnl->offsets[a + 1];
+                        if(end > beg) std::sort(ngb_host.begin() + beg, ngb_host.begin() + end);
+                    }
+                    fwrite(ngb_host.data(), sizeof(int), gnl->total_pairs, f);
+                }
+                fclose(f);
+            }
+        }
+    }
+
+    HDBG("return");
+    #undef HDBG
 }
 
 

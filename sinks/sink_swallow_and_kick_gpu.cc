@@ -173,24 +173,38 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
     MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(global_num_active == 0) { return; }
 
-    int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
-    }
-
-    int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
+    int num_local_for_arena = ghost_get_num_local();
+    int num_ghosts_for_arena = ghost_get_num_ghosts();
+    int num_all = num_local_for_arena + num_ghosts_for_arena;
     if(num_all <= 0) num_all = num_total;
 
     /* Wrapper fast-path: no active sinks → skip arena_acquire, big SharedSpace
      * allocs, kernel, scatter.  Preserve ghost_writeback collectives for
-     * multi-rank consistency (each self-guards on NTask<=1 || num_ghosts<=0). */
+     * multi-rank consistency (each self-guards on NTask<=1 || num_ghosts<=0).
+     *
+     * Multi-rank correctness: the 4 MPI_Reduces at the end of this function
+     * (swallow counters, lines below) are collective — every rank that
+     * passed the global_num_active>0 gate at line ~173 MUST call them. So
+     * this early-return path also calls them with zero counters, matching
+     * what the full path would compute on a num_active==0 rank. Without
+     * this, ranks desync and MPI_ERR_TRUNCATE fires when buffer sizes
+     * misalign at the next collective. */
     if(num_active == 0) {
         ghost_write_detector_begin("sink_swallow_and_kick");
         ghost_writeback_zero_sinkswallow();
         ghost_writeback_sinkswallow();
         ghost_write_detector_end();
-        if(imported_ghosts) ghost_exchange_cleanup();
+        int N_gas_sw = 0, N_sink_sw = 0, N_star_sw = 0, N_dm_sw = 0;
+        int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
+        MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_Reduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0 && (Ntot_gas || Ntot_sink || Ntot_star || Ntot_dm)) {
+            printf("Accretion done: swallowed %d gas, %d star, %d dm, and %d sink particles\n",
+                   Ntot_gas, Ntot_star, Ntot_dm, Ntot_sink);
+            fflush(stdout);
+        }
         return;
     }
 
@@ -220,10 +234,11 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
 #endif
 
     gpu_neighbor_list_t gnl;
-    /* Same all-types cache as sink_env1/feed; see gpu_neighbor_list.h. */
+    /* Same all-types cache as sink_env1/feed; see gpu_neighbor_list.h.
+     * Sink interaction semantics are two-sided in radius. */
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_active,
-                       NGB_SEARCH_ONEWAY, j_type_bitmask,
+                       NGB_SEARCH_SYMMETRIC, j_type_bitmask,
                        &gnl, gpu_step_sidx_alltypes_ptr(),
                        1.0, i_radii_host, NULL, "sink_swk");
 
@@ -276,7 +291,6 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
                 Vec3<double> dpos = kp[j].Pos - loc.Pos;
                 nearest_xyz(dpos, -1);
                 double r2 = dpos.norm_sq();
-                if(r2 >= h_i * h_i) continue;
                 sink_swallow_pair_kernel(loc, j, kp, kc, out_arr[aa],
                                          dpos, r2, h_i,
                                          mom_budget, J_dir,
@@ -351,8 +365,6 @@ void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
      * already invalidates for any host changes it applied. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_local);
-
-    if(imported_ghosts) ghost_exchange_cleanup();
 }
 
 GPU_ALL_SYNC_FUNC(sinkswallow)

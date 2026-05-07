@@ -31,6 +31,7 @@
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
+#include "../mesh/ghost_exchange_spec.h"  /* mech_fb_v1 inline spec literal */
 #include "galsf_gpu_decls.h"
 
 #if defined(GALSF_FB_MECHANICAL)
@@ -162,7 +163,43 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
         MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(need_import) {
             if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
-            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            /* mech_fb_v1 caller-built spec literal (Bucket 1.2 PoC). The literal
+             * here IS the SSOT for this loop's physics; ghost_exchange.cc has no
+             * mech_fb-specific knowledge.
+             *
+             *   sources : caller-filtered i_active_host[] (per-mode active-check
+             *             superset; type filter happens in addFB_evaluate_active_check
+             *             upstream — no request_type_mask filter inside ghost_exchange)
+             *   supply  : Type 0 cells only (kernel deposits energy/mass/momentum
+             *             into the continuum/cell population)
+             *   mode    : SYMMETRIC (paired r_ij<max(h_i,h_j) — matches the legacy
+             *             ngb_treefind_pairs_threads in old GIZMO)
+             *   h_q     : src_radii_host[] (caller-supplied per-source radii) */
+            double t_drift = my_second();
+            move_particles(All.Ti_Current);  /* lazy drift — was inside gizmo_density_prep_ghosts */
+            CPU_Step[CPU_DENSMISC] += timediff(t_drift, my_second());
+            int nq = num_active;
+            double (*qpos)[3] = (double(*)[3]) malloc((size_t)(nq > 0 ? nq : 1) * sizeof(double[3]));
+            double  *qh       = (double *)     malloc((size_t)(nq > 0 ? nq : 1) * sizeof(double));
+            for(int a = 0; a < nq; a++) {
+                int i = i_active_host[a];
+                qpos[a][0] = P[i].Pos[0]; qpos[a][1] = P[i].Pos[1]; qpos[a][2] = P[i].Pos[2];
+                qh[a]      = src_radii_host[a];
+            }
+            struct ghost_exchange_spec_t sp = {
+                /* request_type_mask  */ 0u,
+                /* supply_type_mask   */ GHOST_TYPE_0,
+                /* search_mode        */ NGB_SEARCH_SYMMETRIC,
+                /* safety_factor      */ gizmo_ghost_safety_factor(),
+                /* caller_name        */ "mech_fb_v1",
+                /* n_queries          */ nq,
+                /* query_pos          */ (const double (*)[3]) qpos,
+                /* query_h            */ qh
+            };
+            double t_ghost = my_second();
+            ghost_exchange_run(&sp);
+            CPU_Step[CPU_DENSCOMM] += timediff(t_ghost, my_second());
+            free(qpos); free(qh);
             imported_ghosts = 1;
         }
     }
@@ -179,7 +216,16 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
      * (it returns at its own guard); on multi-rank with imported ghosts we
      * participate via a calloc'd zero buffer to keep MPI_Alltoallv consistent. */
     if(num_src == 0) {
-        if(NTask > 1 && ghost_get_num_ghosts() > 0) {
+        /* MULTI-RANK COLLECTIVE CORRECTNESS: ghost_writeback_mechfb is collective
+         * (MPI_Alltoall + Alltoallv inside). Every rank that passes the global-
+         * active-zero gate at line ~152 must enter the collective in lock-step,
+         * EVEN if this rank has 0 local ghosts. With narrow-supply imports
+         * (mech_fb_v1 supply=Type 0), ghost imports are asymmetric: rank-with-
+         * sources gets imports back, rank-without doesn't. Skipping the call
+         * on num_ghosts==0 alone deadlocked the rank-with-imports.  Drop the
+         * `&& ghost_get_num_ghosts() > 0` from the gate; ghost_writeback_mechfb
+         * now participates with empty buffers when num_ghosts==0 (line-876 fix). */
+        if(NTask > 1) {
             struct MechFBGasDelta *zero_gas = (struct MechFBGasDelta *)
                 calloc(num_all > 0 ? num_all : 1, sizeof(struct MechFBGasDelta));
             ghost_writeback_mechfb(zero_gas, gas_delta_host, n_gas);
@@ -216,7 +262,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
-                       NGB_SEARCH_ONEWAY, 1 /* gas only */,
+                       NGB_SEARCH_SYMMETRIC, 1 /* Type 0 only */,
                        &gnl, gpu_step_sidx_ptr(), 1.0, src_radii_host, NULL, "mech_fb");
 
     PRINT_STATUS("  GPU mech_fb: %d sources, %d pairs", num_src, gnl.total_pairs);

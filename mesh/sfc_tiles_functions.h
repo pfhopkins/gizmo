@@ -74,7 +74,14 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
                              /* Optional per-active counters; pass nullptr for fast-path. Compiler
                               * eliminates the null-checks via constant prop when null literal is passed. */
                              int *cnt_candidates_tested = nullptr,
-                             int *cnt_candidates_accepted = nullptr)
+                             int *cnt_candidates_accepted = nullptr,
+                             /* Per-type supply filter (per-type hmax change). When supply_mask == 0x3f
+                              * (all types) and P_gpu == nullptr, this is a no-op: every particle
+                              * passes the type filter. Caller passes supply_mask narrower than ALL
+                              * to skip non-supply types at leaf-accept time. P_gpu must be non-null
+                              * if supply_mask is narrower than ALL. */
+                             const struct particle_data *P_gpu = nullptr,
+                             unsigned int supply_mask = ((1u << 6) - 1u))
 {
     (void)box_sizes;
     (void)box_halves;
@@ -84,6 +91,13 @@ int check_tile_particles_gpu(const float *compact_xyzh, const double pos_i[3], d
     {
         if(cnt_candidates_tested) (*cnt_candidates_tested)++;
         int j = pool[tile->first + s];
+        /* Per-type supply filter at leaf. No-op when supply_mask == 0x3f (default).
+         * Constant-propagated away when caller passes default args. */
+        if(P_gpu) {
+            int pt = (int)P_gpu[j].Type;
+            if(pt < 0 || pt >= 6) continue;
+            if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
+        }
         double dx_raw = pos_i[0] - (double)compact_xyzh[j*4+0];
         double dy_raw = pos_i[1] - (double)compact_xyzh[j*4+1];
         double dz_raw = pos_i[2] - (double)compact_xyzh[j*4+2];
@@ -135,7 +149,15 @@ int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], d
                              int *cnt_nodes_visited = nullptr,
                              int *cnt_tiles_visited = nullptr,
                              int *cnt_candidates_tested = nullptr,
-                             int *cnt_candidates_accepted = nullptr)
+                             int *cnt_candidates_accepted = nullptr,
+                             /* Per-type hmax narrowing (per-type hmax change). Caller passes a
+                              * narrow supply_mask + P_gpu to make the opener compute search_r from
+                              * max-over-supply-types of node->hmax_by_type[t] (not the scalar hmax).
+                              * Default (P_gpu=nullptr, supply_mask=0x3f) preserves the legacy
+                              * scalar-hmax opener behavior — used by existing call sites that walk
+                              * a tree whose pool is already supply-mask filtered. */
+                             const struct particle_data *P_gpu = nullptr,
+                             unsigned int supply_mask = ((1u << 6) - 1u))
 {
     (void)ntiles;
     double h2_i = h_i * h_i;
@@ -152,8 +174,20 @@ int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], d
         tile_bvh_node_t *node = &bvh[node_idx];
         if(cnt_nodes_visited) (*cnt_nodes_visited)++;
 
-        /* Compute search radius for this node: for SYMMETRIC, use node's subtree hmax */
-        double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node->hmax) ? h_i : node->hmax);
+        /* Compute search radius for this node. Per-type hmax filter when P_gpu given;
+         * else scalar hmax (legacy behavior). For supply_mask = 0x3f the per-type
+         * branch evaluates max over all 6 types == scalar hmax → identical result. */
+        double node_hmax_eff;
+        if(P_gpu) {
+            node_hmax_eff = 0;
+            for(int t = 0; t < 6; t++) {
+                if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
+                if(node->hmax_by_type[t] > node_hmax_eff) node_hmax_eff = node->hmax_by_type[t];
+            }
+        } else {
+            node_hmax_eff = node->hmax;
+        }
+        double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node_hmax_eff) ? h_i : node_hmax_eff);
         double search_r2 = search_r * search_r;
 
         /* Check if node's bbox (expanded by search_r) overlaps particle i */
@@ -169,7 +203,8 @@ int search_neighbors_sfc_gpu(const float *compact_xyzh, const double pos_i[3], d
             count = check_tile_particles_gpu(compact_xyzh, pos_i, h_i, h2_i, &tiles[tile_idx], pool, search_mode,
                                              store_neighbors, count, max_store,
                                              box_sizes, box_halves, periodic_flags,
-                                             cnt_candidates_tested, cnt_candidates_accepted);
+                                             cnt_candidates_tested, cnt_candidates_accepted,
+                                             P_gpu, supply_mask);
         }
         else
         {

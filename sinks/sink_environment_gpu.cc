@@ -90,7 +90,7 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
      * sink_env1/feed/swk all share). j_type_bitmask MUST be 0x3f for cache
      * consistency. */
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
-                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl,
+                       NGB_SEARCH_SYMMETRIC, j_type_bitmask, &gnl,
                        gpu_step_sidx_alltypes_ptr(),
                        1.0, i_radii_host, NULL, "sink_env1");
 
@@ -351,7 +351,7 @@ void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
     gpu_neighbor_list_t gnl;
     /* Same all-types cache as sink_env1 (see gpu_neighbor_list.h). */
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
-                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl,
+                       NGB_SEARCH_SYMMETRIC, j_type_bitmask, &gnl,
                        gpu_step_sidx_alltypes_ptr(),
                        1.0, i_radii_host, NULL, "sink_env2");
 

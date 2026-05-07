@@ -62,14 +62,6 @@ void sink_environment_loop(void)
         return;
     }
 
-    /* Import ghost particles only if not already present (e.g. TRANSPORT_SUBCYCLE
-       keeps hydro ghosts alive past hydro_force; double-importing would corrupt P). */
-    bool sinkenv_imported_ghosts = (ghost_get_num_ghosts() == 0);
-    if(sinkenv_imported_ghosts) {
-        double ags_ghost_safety = gizmo_ghost_safety_factor();
-        gizmo_density_prep_ghosts(ags_ghost_safety);
-    }
-
     int *nl_active = (int *) mymalloc("sinkenv_nl_active", (num_active > 0 ? num_active : 1) * sizeof(int));
     double *nl_radii = (double *) mymalloc("sinkenv_nl_radii", (num_active > 0 ? num_active : 1) * sizeof(double));
     struct sink_env_gpu_out *nl_outs = (struct sink_env_gpu_out *)
@@ -79,6 +71,12 @@ void sink_environment_loop(void)
     for(int i : ActiveParticleList) {
         if(sink_isactive(i)) { nl_active[aa] = i; nl_radii[aa] = P[i].KernelRadius; aa++; }
     }
+
+    /* Build a fresh caller-specific ghost pool collectively on all ranks.
+       Sink kernels are symmetric in radius, not density-like one-way searches. */
+    bool sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+        "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
+        nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
 
     ghost_write_detector_begin("sink_environment");
 #ifdef SINGLE_STAR_SINK_DYNAMICS
@@ -172,10 +170,6 @@ void sink_environment_second_loop(void)
         return;
     }
 
-    bool sinkenv2_imported_ghosts = (ghost_get_num_ghosts() == 0);
-    if(sinkenv2_imported_ghosts) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-    }
     int alloc_n = (num_active > 0 ? num_active : 1);
     int    *nl_active   = (int *)    mymalloc("sinkenv2_nl_active", alloc_n * sizeof(int));
     double *nl_radii    = (double *) mymalloc("sinkenv2_nl_radii",  alloc_n * sizeof(double));
@@ -195,6 +189,10 @@ void sink_environment_second_loop(void)
         }
         aa++;
     }}
+
+    bool sinkenv2_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+        "sink_env2", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
+        nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
 
     ghost_write_detector_begin("sink_environment_second");
     sink_environment_second_evaluate_gpu(P, CellP, NumPart,

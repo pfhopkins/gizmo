@@ -148,6 +148,13 @@ void run(void)
                                      * drifts; alltypes SIDX is full-freed since it's
                                      * less hot). domain_decomp boundary below triggers
                                      * the full rebuild via gpu_step_sidx_invalidate_full(). */
+        ghost_exchange_local_tree_invalidate_drift(); /* Bucket 3: drop the
+                                     * persistent local-tree cache used by request-driven
+                                     * ghost_exchange. Drift may have moved pool positions,
+                                     * so cached compact_xyzh/tiles are stale. Cheap (frees
+                                     * a few malloc buffers); next ghost_exchange of the
+                                     * step pays the rebuild once and amortizes across N
+                                     * physics calls within the step. */
 
         STEP_PHASE_TIME("output_log_messages", output_log_messages());	/* write some info to log-files */
 
@@ -190,6 +197,10 @@ void run(void)
              * drift-time refresh path can't fix it. Force a full rebuild on next use,
              * which also reseeds per-tile original-extent tracking. */
             gpu_step_sidx_invalidate_full();
+            ghost_exchange_local_tree_invalidate_full(); /* Bucket 3: drop ghost-exchange
+                                     * local-tree cache too — domain_decomp shuffles
+                                     * particle indices so cached pool[]/tile assignments
+                                     * are stale. Same shape as gpu_step_sidx_invalidate_full. */
             /* Trigger a cpu.txt summary at the start of the NEXT iteration (when
              * write_cpu_log fires) — domain-decomp steps are inherently expensive,
              * a per-decomp summary is the most informative cheap-cadence sample. */

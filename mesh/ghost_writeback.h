@@ -139,10 +139,16 @@ void ghost_writeback_rtsrcinjection(void);
 void ghost_write_detector_begin(const char *kernel_name);
 void ghost_write_detector_end(void);
 void ghost_write_detector_register_writeback(void);
+/* Re-snapshot ghost state at the current point. Used by gpu_ngb_list_build's
+ * lazy-drift loop to move the detector baseline past the per-ghost drift
+ * (Ti_current + Pos updates), so the kernel-window comparison flags only
+ * genuine kernel-side writes that need a writeback. */
+void ghost_write_detector_resnapshot_after_lazy_drift(void);
 #else
 static inline void ghost_write_detector_begin(const char *k) { (void)k; }
 static inline void ghost_write_detector_end(void) {}
 static inline void ghost_write_detector_register_writeback(void) {}
+static inline void ghost_write_detector_resnapshot_after_lazy_drift(void) {}
 #endif
 
 /* Accessors from ghost_exchange.cc */

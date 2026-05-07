@@ -20,6 +20,15 @@
 #define TILE_TARGET_SIZE 64  /* particles per tile (tunable) */
 #define TILE_BVH_STACK_SIZE 64  /* traversal stack depth (log2(ntiles) + margin) */
 
+/* Per-type hmax: stored as fixed-size vector indexed by P[].Type ∈ [0,5].
+ * Dimension matches the GHOST_TYPE_* bitmask (bit k ↔ Type k). hmax_by_type[t]
+ * is the max KernelRadius across particles of Type t in the subtree; 0 if
+ * none. Opener computes hmax_eff = max over t in supply_mask of hmax_by_type[t]
+ * — this avoids the scalar-hmax contamination where a single DM particle
+ * with KernelRadius=582 poisons every search whose supply mask doesn't even
+ * include DM. (See ghost_exchange_roadmap_2026-05-05.md "per-type hmax".) */
+#define TILE_NUM_PTYPES 6
+
 /* Axis periodicity flags for tile-based neighbor search and ghost exchange */
 #if defined(BOX_PERIODIC) && !defined(BOX_REFLECT_X) && !defined(BOX_OUTFLOW_X)
 #define TILE_PERIODIC_X 1
@@ -38,20 +47,22 @@
 #endif
 
 struct sfc_tile_t {
-    int first;          /* first particle index (into pool index array) */
-    int count;          /* number of particles in this tile */
-    double lo[3];       /* bounding box lower corner */
-    double hi[3];       /* bounding box upper corner */
-    double hmax;        /* max kernel radius in tile */
+    int first;                        /* first particle index (into pool index array) */
+    int count;                        /* number of particles in this tile */
+    double lo[3];                     /* bounding box lower corner */
+    double hi[3];                     /* bounding box upper corner */
+    double hmax;                      /* max kernel radius in tile (any type) — kept for back-compat callers */
+    double hmax_by_type[TILE_NUM_PTYPES]; /* max kernel radius PER TYPE (Bucket roadmap) */
 };
 
 /* BVH node over SFC tiles. Built bottom-up from SFC-sorted tiles via
  * recursive midpoint subdivision. Enables O(log ntiles) spatial pruning
  * for neighbor search, critical for zoom-in sims with h/box ~ 10^-6. */
 struct tile_bvh_node_t {
-    double lo[3], hi[3]; /* bounding box of subtree */
-    double hmax;         /* max kernel radius in subtree */
-    int left, right;     /* children: >= 0 = internal node index, < 0 = -(tile_index+1) for leaf */
+    double lo[3], hi[3];                  /* bounding box of subtree */
+    double hmax;                          /* max kernel radius in subtree (any type) — back-compat */
+    double hmax_by_type[TILE_NUM_PTYPES]; /* max kernel radius PER TYPE in subtree */
+    int left, right;                      /* children: >= 0 = internal node index, < 0 = -(tile_index+1) for leaf */
 };
 
 /* Build BVH over tiles. Returns number of internal nodes.

@@ -164,7 +164,12 @@ void density_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Ce
                 int ii = active_indices_host[aa];
                 P_gpu[ii].KernelRadius = P_host[ii].KernelRadius;
             }
-            gpu_compact_xyzh_mark_h_dirty_indices(active_indices_host, num_active);
+            /* Density iteration just mutated KernelRadius for active gas.
+             * Mark dirty in BOTH the GPU SIDX tracker (gas-only and alltypes
+             * caches both pick it up via range-route) AND the host glt cache
+             * tracker (so the next ghost_exchange narrow-refits just those
+             * tiles, ~ms vs ~0.2-0.5s full rescan). One helper call. */
+            gizmo_mark_kernel_radius_dirty_indices(active_indices_host, num_active);
         }
     } else {
         P_gpu = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_total * sizeof(struct particle_data));

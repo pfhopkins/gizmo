@@ -167,8 +167,12 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 #endif
 
     gpu_neighbor_list_t gnl;
+    /* Kernel at lines 292,294 rejects only when both r > h_i AND r > h_j (or
+     * r > h_i+h_j); that's the symmetric pair predicate, so neighbor pool must
+     * include j with h_j > h_i and r > h_i. Was ONEWAY which silently dropped
+     * those pairs. Same class of bug Codex caught for sink/mech_fb. */
     gpu_ngb_list_build(P_gpu, num_total, i_active_host, num_active,
-                       NGB_SEARCH_ONEWAY, j_type_bitmask, &gnl, NULL,
+                       NGB_SEARCH_SYMMETRIC, j_type_bitmask, &gnl, NULL,
                        sr_fac, i_radii_host, NULL, "ags_force");
 
     double *d_radii = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(

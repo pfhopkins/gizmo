@@ -3,3 +3,13 @@ Makefile.systype
 *.a
 GIZMO
 .git
+test/fire/output
+test/fire/fire_ics.hdf5
+test/fire/spcool_tables
+test/fire/ewald_spc_table_64_dbl.dat
+test/fire/TREECOOL
+test/fire/restartfiles
+test/fire/local_smoke.*
+test/fire/run.log
+test/benchmark/step15
+test/fire_m11i

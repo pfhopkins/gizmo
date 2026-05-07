@@ -87,9 +87,15 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     int num_src = num_active;
 
     int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
+    {
+        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+        int need_import = 0;
+        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(need_import) {
+            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            imported_ghosts = 1;
+        }
     }
 
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
@@ -235,9 +241,15 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
     GIZMO_GPU_ENSURE_ALL_FRESH(grainphysics);
 
     int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
+    {
+        int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+        int need_import = 0;
+        MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(need_import) {
+            if(ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
+            gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
+            imported_ghosts = 1;
+        }
     }
 
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
@@ -270,9 +282,13 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
         }
 
         gpu_neighbor_list_t gnl;
+        /* Kernel at line 303 rejects on r >= h_j (not h_i). With ONEWAY the BVH
+         * walks at h_i and would miss valid pairs where h_j > h_i; per-Phil's
+         * "when in doubt sym" rule + the kernel's h_j filter means the right
+         * mode is SYMMETRIC, kernel keeps the h_j accept. */
         gpu_ngb_list_build(P_gpu, num_all,
                            i_active_gas_host, num_src,
-                           NGB_SEARCH_ONEWAY, GRAIN_PTYPES,
+                           NGB_SEARCH_SYMMETRIC, GRAIN_PTYPES,
                            &gnl, NULL, 1.0, src_radii_gas_host);
 
         PRINT_STATUS("  GPU gasgrain_rt (gas->grains): %d sources, %d pairs", num_src, gnl.total_pairs);

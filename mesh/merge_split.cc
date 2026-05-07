@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 #include "../system/gpu_particles_arena.h"
 
 #include <vector>
@@ -786,6 +787,7 @@ int merge_particles_ij(int i, int j)
         P[j].GravPM = P[j].GravPM * wt_j + P[i].GravPM * wt_i; // force-conserving //
 #endif
         P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); // volume-conserving to leading order //
+        gizmo_mark_kernel_radius_dirty_indices(&j, 1); /* survivor h changed: mark h-dirty across all caches */
 #ifdef METALS
         for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} // metal-mass conserving (includes nuclear species) //
 #endif
@@ -912,6 +914,7 @@ int merge_particles_ij(int i, int j)
     // to be conservative adopt the maximum signal velocity and kernel length //
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
     P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); /* sum the volume of the two particles */
+    gizmo_mark_kernel_radius_dirty_indices(&j, 1); /* survivor h changed: mark h-dirty across all caches */
     CellP[j].ConditionNumber = CellP[j].ConditionNumber + CellP[i].ConditionNumber; /* sum to be conservative */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     CellP[j].MaxKineticEnergyNgb = DMAX(CellP[j].MaxKineticEnergyNgb,CellP[i].MaxKineticEnergyNgb); /* for the entropy/energy switch condition */

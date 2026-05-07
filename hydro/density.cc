@@ -860,10 +860,12 @@ void cellcorrections_calc(void)
         }
 
         int num_src = (int)active_idx.size();
+        int num_src_global = 0;
+        MPI_Allreduce(&num_src, &num_src_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int imported_ghosts = 0;
-        if (num_src > 0) {
+        if (num_src_global > 0) {
             /* Defensive ghost prep: legacy used code_block_xchange MPI export to
              * pull in cross-rank j-neighbors. Modern path replaces that with
              * symmetric ghost particles. cellcorrections_calc is called between
@@ -871,7 +873,11 @@ void cellcorrections_calc(void)
              * if a future caller invokes this with no ghosts (e.g. standalone
              * diagnostic), import them here so cross-rank contributions to
              * Volume_1 are NOT silently dropped. */
-            if (ghost_get_num_ghosts() <= 0) {
+            int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
+            int need_import = 0;
+            MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if (need_import) {
+                if (ghost_get_num_ghosts() > 0) ghost_exchange_cleanup();
                 gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
                 imported_ghosts = 1;
             }
@@ -879,16 +885,18 @@ void cellcorrections_calc(void)
             if (local_count <= 0) local_count = NumPart;
             int num_all = local_count + ghost_get_num_ghosts();
             if (num_all <= 0) num_all = NumPart;
-            gpu_particles_arena_acquire(num_all, P, CellP);
-            struct particle_data *P_gpu = gpu_particles_arena_P();
-            gpu_ngb_list_build(P_gpu, num_all,
-                               active_idx.data(), num_src,
-                               NGB_SEARCH_SYMMETRIC, 1 /* gas only */,
-                               &gnl, NULL, 1.0, radii.data(), NULL, "dens-vol1");
-            /* gnl.neighbors is DEVICE_SPACE; host loop below indexes it. */
-            if (gnl.total_pairs > 0) {
-                gnl_neighbors_host.resize(gnl.total_pairs);
-                gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+            if (num_src > 0) {
+                gpu_particles_arena_acquire(num_all, P, CellP);
+                struct particle_data *P_gpu = gpu_particles_arena_P();
+                gpu_ngb_list_build(P_gpu, num_all,
+                                   active_idx.data(), num_src,
+                                   NGB_SEARCH_SYMMETRIC, 1 /* gas only */,
+                                   &gnl, NULL, 1.0, radii.data(), NULL, "dens-vol1");
+                /* gnl.neighbors is DEVICE_SPACE; host loop below indexes it. */
+                if (gnl.total_pairs > 0) {
+                    gnl_neighbors_host.resize(gnl.total_pairs);
+                    gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
+                }
             }
         }
         const int *gnl_neighbors = gnl_neighbors_host.empty() ? NULL : gnl_neighbors_host.data();

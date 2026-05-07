@@ -140,11 +140,9 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     if(global_num_src == 0) { return; } /* nothing to do anywhere; ghost_writeback's writes would be no-ops */
 
     /* Prep ghosts */
-    int imported_ghosts = 0;
-    if(ghost_get_num_ghosts() <= 0) {
-        gizmo_density_prep_ghosts(gizmo_ghost_safety_factor());
-        imported_ghosts = 1;
-    }
+    int imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+        "sink_feed", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
+        i_active_host, num_src, src_radii_host, gizmo_ghost_safety_factor());
 
     /* Fill per-source input structs (1-element backstop when num_src==0) */
     std::vector<struct SinkFeedLocalIn> src_local(num_src > 0 ? num_src : 1);
@@ -225,11 +223,12 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
 
     /* Build neighbor list: Type-5 sources → SINK_NEIGHBOR_BITFLAG types.
      * Use the all-types step-persistent SIDX cache (sink_env1/feed/swk all
-     * share; saves ~1.5s per step on every sink-active step). */
+     * share; saves ~1.5s per step on every sink-active step). Sink kernels
+     * use two-sided predicates, so this must be symmetric. */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_all,
                        i_active_host, num_src,
-                       NGB_SEARCH_ONEWAY, SINK_NEIGHBOR_BITFLAG,
+                       NGB_SEARCH_SYMMETRIC, SINK_NEIGHBOR_BITFLAG,
                        &gnl, gpu_step_sidx_alltypes_ptr(),
                        1.0, src_radii_host, NULL, "sink_feed");
 

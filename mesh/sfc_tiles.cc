@@ -61,6 +61,12 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
         tiles[t].first = start;
         tiles[t].count = count;
         tiles[t].hmax = 0;
+        for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) tiles[t].hmax_by_type[tt] = 0;
+
+        if(count <= 0) {
+            for(int k = 0; k < 3; k++) { tiles[t].lo[k] = 0; tiles[t].hi[k] = 0; }
+            continue;
+        }
 
         /* Initialize bbox from first particle */
         int j0 = pool[start];
@@ -68,6 +74,12 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
         tiles[t].lo[1] = tiles[t].hi[1] = P[j0].Pos[1];
         tiles[t].lo[2] = tiles[t].hi[2] = P[j0].Pos[2];
         if(P[j0].KernelRadius > tiles[t].hmax) tiles[t].hmax = P[j0].KernelRadius;
+        {
+            int t0 = (int)P[j0].Type;
+            if(t0 >= 0 && t0 < TILE_NUM_PTYPES &&
+               P[j0].KernelRadius > tiles[t].hmax_by_type[t0])
+                tiles[t].hmax_by_type[t0] = P[j0].KernelRadius;
+        }
 
         /* Expand bbox with remaining particles */
         int s;
@@ -80,6 +92,10 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
                 if(P[j].Pos[k] > tiles[t].hi[k]) tiles[t].hi[k] = P[j].Pos[k];
             }
             if(P[j].KernelRadius > tiles[t].hmax) tiles[t].hmax = P[j].KernelRadius;
+            int tj = (int)P[j].Type;
+            if(tj >= 0 && tj < TILE_NUM_PTYPES &&
+               P[j].KernelRadius > tiles[t].hmax_by_type[tj])
+                tiles[t].hmax_by_type[tj] = P[j].KernelRadius;
         }
     }
 
@@ -116,6 +132,7 @@ static int build_bvh_recursive(sfc_tile_t *tiles, int tile_start, int tile_end,
         int t = tile_start;
         for(int k = 0; k < 3; k++) { bvh[idx].lo[k] = tiles[t].lo[k]; bvh[idx].hi[k] = tiles[t].hi[k]; }
         bvh[idx].hmax = tiles[t].hmax;
+        for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) bvh[idx].hmax_by_type[tt] = tiles[t].hmax_by_type[tt];
         bvh[idx].left = -(t + 1);   /* negative encoding: leaf = -(tile_index + 1) */
         bvh[idx].right = -(t + 1);  /* same tile for both (signals leaf) */
         return idx;
@@ -135,6 +152,8 @@ static int build_bvh_recursive(sfc_tile_t *tiles, int tile_start, int tile_end,
         bvh[idx].hi[k] = DMAX(bvh[left_idx].hi[k], bvh[right_idx].hi[k]);
     }
     bvh[idx].hmax = DMAX(bvh[left_idx].hmax, bvh[right_idx].hmax);
+    for(int tt = 0; tt < TILE_NUM_PTYPES; tt++)
+        bvh[idx].hmax_by_type[tt] = DMAX(bvh[left_idx].hmax_by_type[tt], bvh[right_idx].hmax_by_type[tt]);
     bvh[idx].left = left_idx;
     bvh[idx].right = right_idx;
     return idx;

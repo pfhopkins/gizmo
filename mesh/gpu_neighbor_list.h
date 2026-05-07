@@ -16,6 +16,7 @@
 #ifndef GPU_NEIGHBOR_LIST_H
 #define GPU_NEIGHBOR_LIST_H
 
+#include <stdint.h>
 #include "sfc_tiles.h"
 
 /* GPU-resident neighbor list: CSR arrays.
@@ -64,6 +65,7 @@ struct gpu_spatial_index_t {
     float *d_compact_xyzh;
     int num_total;  /* particle count when built; mismatch → invalidate */
     int valid;  /* 1 if built and usable */
+    int dirty_handle = -1; /* gpu_dirty_tracker handle; -1 when not registered */
     /* Host-side persistent copies kept alive across drifts to support
      * gpu_step_sidx_invalidate's incremental refresh path: tile bboxes
      * are recomputed in place from current particle positions, the BVH
@@ -166,11 +168,61 @@ void gpu_compact_xyzh_mark_h_dirty_idx(int i);
 void gpu_compact_xyzh_mark_h_dirty_range(int start, int end);
 void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n);
 void gpu_compact_xyzh_mark_h_dirty_all(void);
+/* Filter the dirty list, dropping any indices >= threshold. Used by
+ * ghost_exchange_cleanup to scrub ghost-slot indices when ghost slots leave
+ * scope, instead of escalating to mark_h_dirty_all (which forces a 1.5s
+ * full-pool refresh on every cached build until next clear). No-op when
+ * dirty_all is already set or when the list is empty. */
+void gpu_compact_xyzh_dirty_drop_above(int threshold);
+
+/* SIDX lifecycle notification hooks. ghost_exchange owns the import/cleanup
+ * lifecycle; SIDX owns the spatial-index representation. These are the
+ * lifecycle signals SIDX consumes (currently just bumps epochs + diagnostic
+ * counters; consumed by the segmented SIDX in a later commit).
+ *
+ * Contract:
+ *  - ghost_imported(start, count): MUST be called on every rank at the end of
+ *    every ghost_exchange_*_impl path, INCLUDING the count==0 / no-receive
+ *    case. count==0 invalidates any cached ghost segment from a prior import
+ *    (so a ghost->no-ghost transition can never leave stale ghost data behind).
+ *  - ghost_cleanup(): called from ghost_exchange_cleanup BEFORE NumPart shrinks.
+ *    Frees any cached ghost segment synchronously (memory safety).
+ *  - pool_changed(): called whenever the home pool's membership may have
+ *    changed in ways that aren't NumPart_local (Type write, Mass<=0, particle
+ *    creation/deletion, merge_split). Bumps pool_epoch so home segment is
+ *    rebuilt on next NGL build. */
+void gpu_sidx_notify_ghost_imported(int start, int count);
+void gpu_sidx_notify_ghost_cleanup(void);
+void gpu_sidx_notify_pool_changed(void);
+
+/* Diagnostic accessors for the SIDX lifecycle counters. Used by GX_RD_CACHE /
+ * DIAG_NGL prints under the verbose-diag gate. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint64_t gpu_sidx_ghost_epoch(void);
+uint64_t gpu_sidx_pool_epoch(void);
+int      gpu_sidx_last_ghost_start(void);
+int      gpu_sidx_last_ghost_count(void);
+#ifdef __cplusplus
+}
+#endif
 
 /* Backwards-compat alias for callers that haven't been updated yet (treats
  * any unknown mutation as "all dirty"). New code should use the index-aware
  * variants above. */
 void gpu_compact_xyzh_mark_h_dirty(void);
+
+/* SSOT helpers for "P[i].KernelRadius was just written" — call ONE function
+ * after any KernelRadius mutation and BOTH the GPU SIDX dirty tracker AND
+ * the host glt cache dirty tracker get marked. Future caches added to either
+ * layer pick this up automatically.
+ *
+ * Order between the two underlying marks is irrelevant — neither is consumed
+ * until the next gpu_ngb_list_build (GPU side) or next ghost_exchange_run
+ * (host side); both happen before return. */
+void gizmo_mark_kernel_radius_dirty_indices(const int *indices, int n);
+void gizmo_mark_kernel_radius_dirty_range(int start, int end);
 
 /* Build GPU-accelerated CSR neighbor list.
    If cached_idx is non-NULL and valid, reuses its tiles+BVH.

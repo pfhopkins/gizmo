@@ -9,6 +9,7 @@
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
+#include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -48,9 +49,6 @@ void sink_swallow_and_kick_loop(void)
             return;
         }
 
-        bool imported_ghosts = (ghost_get_num_ghosts() == 0);
-        if(imported_ghosts) { gizmo_density_prep_ghosts(gizmo_ghost_safety_factor()); }
-
         int alloc_n = (num_active > 0) ? num_active : 1;
         int *nl_active = (int *) mymalloc("sinkswallow_nl_active", alloc_n * sizeof(int));
         double *nl_radii = (double *) mymalloc("sinkswallow_nl_radii", alloc_n * sizeof(double));
@@ -59,6 +57,9 @@ void sink_swallow_and_kick_loop(void)
                 nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
             }
         }}
+        bool imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+            "sink_swk", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
+            nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
         sink_swallow_and_kick_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii, SINK_NEIGHBOR_BITFLAG);
         myfree(nl_radii); myfree(nl_active);
         if(imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
@@ -656,6 +657,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             CellP[j].Density = P[i].DensityAroundParticle;
             P[j].KernelRadius = P[i].KernelRadius;
         }
+        /* New particle's KernelRadius was just initialized. Mark h-dirty for
+         * all caches that survive across this spawn (caches whose range covers
+         * j). Pool-membership for this new index will be handled in commit C
+         * via notify_pool_changed; for now this h-dirty mark keeps the
+         * compact_xyzh.h slot fresh-on-next-build. */
+        gizmo_mark_kernel_radius_dirty_indices(&j, 1);
 #endif
 #endif
         /* note, if you want to use this routine to inject magnetic flux or cosmic rays, do this below */
