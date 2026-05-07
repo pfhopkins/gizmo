@@ -33,9 +33,11 @@ def _interp_along_profile(r_query, prof, key):
 
 
 def _equal_mass_shell_radii(prof, n_shells):
-    """Return shell-boundary radii at equal mass. r_b[0]=0, r_b[n_shells]=R."""
+    """Return shell-boundary radii at equal mass. r_b[0]=0, r_b[n_shells]=R.
+    prof['m'] is mass enclosed within r (m(R)=M_total, m(0)=0); after [::-1]
+    it ascends from 0 to M_total as r ascends from 0 to R."""
     r_in = prof["r"][::-1]
-    m_in = prof["M_total"] - prof["m"][::-1]   # mass interior to r
+    m_in = prof["m"][::-1].copy()
     m_in[0] = 0.0; m_in[-1] = prof["M_total"]
     m_in = np.maximum.accumulate(m_in)        # enforce monotone (rounding guard)
     targets = np.linspace(0.0, prof["M_total"], n_shells + 1)

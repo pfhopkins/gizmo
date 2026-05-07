@@ -1,0 +1,7 @@
+GIZMO
+GIZMO_nograv
+output/
+output_nograv/
+*.log
+*.params-usedvalues
+hse_earth_smoke_ics.hdf5
