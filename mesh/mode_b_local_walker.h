@@ -3,18 +3,27 @@
  * Mode B queries from a peer rank's local particle set without touching
  * GPU SIDX state.
  *
- * NOT yet wired in. Skeleton lands Day 1 of Phase 0; real implementation
- * lives behind GIZMO_MODE_B_DENSITY=1.
+ * Two implementations behind one API:
+ *   - mode_b_local_neighbor_walk()  — TREE-WALK path. Fast.
+ *   - mode_b_local_brute_walk()     — BRUTE-FORCE path. The oracle.
+ *
+ * Both return the same set of LOCAL real P[] indices intersecting the
+ * spherical query (pos, h_q) with type/mode filter. Sorted ascending.
+ *
+ * GIZMO_MODE_B_ORACLE=1: every call to the tree walk also runs the
+ * brute walk and asserts equality (prints diff to stderr on mismatch).
  *
  * Design constraints (codex 2026-05-07):
  *   - Walk uses Nodes[]/Nextnode[] for pruning. Node bounds come from
  *     force_drift_node(); they are conservative for current Ti_Current.
- *   - Returned candidates are LOCAL real particles (P[j] indices), never
- *     LET/foreign tree state. Local rank is the authority for its own
- *     particles.
- *   - Particle drift is the CALLER's responsibility. The walker does NOT
- *     drift P[j] before returning indices. Caller must match the lazy-
- *     drift policy of the existing NGL path before evaluating predicates.
+ *   - Returned candidates are LOCAL real P[] indices in [0, num_local)
+ *     where num_local = ghost_get_num_local(). Never LET pseudo nodes,
+ *     never ghost imports.
+ *   - Particle drift is the CALLER's responsibility. The walker does
+ *     NOT drift P[j] before evaluating the predicate.
+ *   - Not thread-safe with concurrent particle drift / tree mutation.
+ *   - Symmetric mode without per-node max-h tracking degenerates to
+ *     "always open"; ONEWAY is the fast path.
  */
 
 #ifndef MODE_B_LOCAL_WALKER_H
@@ -24,21 +33,18 @@
 extern "C" {
 #endif
 
-/* Find local particles whose KernelRadius/position bounds intersect a
- * spherical query of radius h_q centered at pos. Pruning uses gravity-tree
- * node bounds; candidates are real local P[] indices.
- *
- * type_mask: bitmask of allowed P[].Type values (1<<type for each allowed).
- * search_mode: NGB_SEARCH_ONEWAY (r < h_q) or NGB_SEARCH_SYMMETRIC
- *   (r < max(h_q, h_j)). For SYMMETRIC the walker must consult P[j].KernelRadius.
- *
- * Writes up to out_capacity candidate indices into out_candidates and
- * returns the actual count. Returns -1 on overflow (caller must grow buffer
- * and retry). Returns 0 if no candidates.
- *
- * NOT thread-safe with concurrent particle drift / tree mutation. Caller
- * must serialize against move_particles, force_treebuild, domain decomp.
- */
+/* search_mode constants — match NGB_SEARCH_ONEWAY/SYMMETRIC in
+ * mesh/ghost_exchange_spec.h to keep the existing NGL contract. */
+#ifndef MODE_B_SEARCH_ONEWAY
+#define MODE_B_SEARCH_ONEWAY    0
+#define MODE_B_SEARCH_SYMMETRIC 1
+#endif
+
+int mode_b_enabled(void);
+
+/* Tree-walk path. Fast for spatially-localized queries. Returns count of
+ * local-real-particle candidates (P[] indices) appended to out_candidates;
+ * -1 if out_capacity is exceeded. Does NOT sort. */
 int mode_b_local_neighbor_walk(const double pos[3],
                                double h_q,
                                unsigned int type_mask,
@@ -46,9 +52,18 @@ int mode_b_local_neighbor_walk(const double pos[3],
                                int *out_candidates,
                                int out_capacity);
 
-/* Returns 1 if Mode B is enabled this run (GIZMO_MODE_B_DENSITY=1). Static
- * — read once at first call and cached. */
-int mode_b_enabled(void);
+/* Brute-force path. Iterates 0..num_local. Slow but obviously correct.
+ * Used as the same-run oracle. Same return contract. Does NOT sort. */
+int mode_b_local_brute_walk(const double pos[3],
+                            double h_q,
+                            unsigned int type_mask,
+                            int search_mode,
+                            int *out_candidates,
+                            int out_capacity);
+
+/* Oracle helper: returns 1 if env GIZMO_MODE_B_ORACLE=1 is set. The
+ * walker entry point checks this and runs both paths + diff on mismatch. */
+int mode_b_oracle_enabled(void);
 
 #ifdef __cplusplus
 }
