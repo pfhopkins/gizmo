@@ -846,10 +846,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             fflush(stdout);
         }
         if(phase0_on) {
-            printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d N=0 Ntot=%d "
-                   "dt_ghost_import=-1 dt_sidx_dec=0 dt_refresh=0 dt_gpu=0 total_pairs=0\n",
+            const char *sidx_id_eo = "none";
+            if(idx_for_stubs == &g_step_sidx_alltypes)      sidx_id_eo = "alltypes";
+            else if(idx_for_stubs == &g_step_sidx)          sidx_id_eo = "step";
+            else if(idx_for_stubs)                          sidx_id_eo = "other";
+            printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d sidx_id=%s "
+                   "N=0 Ntot=%d dt_ghost_import=-1 dt_sidx_dec=0 dt_refresh=0 dt_gpu=0 total_pairs=0\n",
                    ThisTask, this_phase0_call, caller_label ? caller_label : "?",
-                   type_bitmask, idx_for_stubs ? 1 : 0, num_total);
+                   type_bitmask, idx_for_stubs ? 1 : 0, sidx_id_eo, num_total);
             fflush(stdout);
         }
         return;
@@ -1519,10 +1523,18 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double dt_refresh  = did_refresh ? (timediff(t_refresh_launch_in, t_refresh_launch_out)
                                           + timediff(t_refresh_launch_out, t_refresh_fence_out)) : 0;
         double dt_gpu      = (num_active > 0) ? timediff(t_fused_launch_in, t_nl1) : 0;
-        printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d N=%d Ntot=%d "
-               "dt_ghost_import=-1 dt_sidx_dec=%.6f dt_refresh=%.6f dt_gpu=%.6f total_pairs=%d\n",
+        /* Identify which step-cache (if any) was used so post-processing can
+         * disambiguate the sidx_dec cliff. sidx_id: "alltypes" / "step" /
+         * "other" (caller-owned local struct) / "none" (no cached_idx). */
+        const char *sidx_id = "none";
+        if(cached_idx == &g_step_sidx_alltypes)      sidx_id = "alltypes";
+        else if(cached_idx == &g_step_sidx)          sidx_id = "step";
+        else if(cached_idx)                          sidx_id = "other";
+        printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d sidx_id=%s "
+               "N=%d Ntot=%d dt_ghost_import=-1 dt_sidx_dec=%.6f dt_refresh=%.6f "
+               "dt_gpu=%.6f total_pairs=%d\n",
                ThisTask, this_phase0_call, caller_label ? caller_label : "?",
-               type_bitmask, sidx_cached_now, num_active, num_total,
+               type_bitmask, sidx_cached_now, sidx_id, num_active, num_total,
                dt_sidx_dec, dt_refresh, dt_gpu, total);
         fflush(stdout);
     }

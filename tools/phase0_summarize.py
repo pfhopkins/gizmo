@@ -20,7 +20,7 @@ N_BINS = [(0, 0), (1, 1), (2, 4), (5, 16), (17, 64), (65, 256),
 
 NGL_RE = re.compile(
     r"^PHASE0_NGL rank=(\d+) call=(\d+) caller=(\S+) mode=0x([0-9a-fA-F]+) "
-    r"cache=(\d+) N=(\d+) Ntot=(\d+) "
+    r"cache=(\d+)(?: sidx_id=(\S+))? N=(\d+) Ntot=(\d+) "
     r"dt_ghost_import=(\S+) dt_sidx_dec=(\S+) dt_refresh=(\S+) "
     r"dt_gpu=(\S+) total_pairs=(\d+)")
 
@@ -68,9 +68,10 @@ def main():
         for line in f:
             m = NGL_RE.match(line)
             if m:
-                rank, call, caller, mode, cache, N, Ntot, dghi, dsdec, dref, dgpu, pairs = m.groups()
+                rank, call, caller, mode, cache, sidx_id, N, Ntot, dghi, dsdec, dref, dgpu, pairs = m.groups()
                 row = dict(rank=int(rank), call=int(call), caller=caller,
-                           mode=int(mode, 16), cache=int(cache), N=int(N),
+                           mode=int(mode, 16), cache=int(cache),
+                           sidx_id=sidx_id or "?", N=int(N),
                            Ntot=int(Ntot), dt_ghost_import=float(dghi),
                            dt_sidx_dec=float(dsdec), dt_refresh=float(dref),
                            dt_gpu=float(dgpu), pairs=int(pairs))
