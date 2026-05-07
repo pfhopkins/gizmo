@@ -325,10 +325,15 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
     if(num_local <= 0) return d;   /* no local pool */
     std::vector<int> candidates(num_local);
     double pos_arr[3] = {q.pos[0], q.pos[1], q.pos[2]};
+    /* sink_env1 uses MODE_B_RADIUS_DEFAULT: SYMMETRIC on gas (Type=0) via
+     * KernelRadius; non-gas types fall back to ONEWAY (their P[].KernelRadius
+     * is not physically meaningful as a symmetric-search radius). This matches
+     * old GIZMO's gas-only Hmax convention. (Phil + codex 2026-05-07.) */
     int n_cand = mode_b_local_neighbor_walk(pos_arr,
                                             q.h_search,
                                             (unsigned int)SINK_NEIGHBOR_BITFLAG,
                                             MODE_B_SEARCH_SYMMETRIC,
+                                            MODE_B_RADIUS_DEFAULT,
                                             candidates.data(), (int)candidates.size());
     if(n_cand < 0) {
         /* Even num_local was insufficient — shouldn't happen with this cap
@@ -390,6 +395,7 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
                                               q.h_search,
                                               (unsigned int)SINK_NEIGHBOR_BITFLAG,
                                               MODE_B_SEARCH_SYMMETRIC,
+                                              MODE_B_RADIUS_DEFAULT,
                                               brute_cand.data(), (int)brute_cand.size());
         if(n_brute < 0) {
             fprintf(stderr,

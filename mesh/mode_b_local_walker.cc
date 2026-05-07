@@ -42,12 +42,35 @@ int mode_b_oracle_enabled(void)
     return cached;
 }
 
+/* Public helper: per-j symmetric radius under policy. See header. */
+double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy)
+{
+    /* Gas: KernelRadius represents finite-volume cell extent. Always
+     * physically meaningful for gas. */
+    if(P[j].Type == 0) {
+        if(policy & MODE_B_RADIUS_GAS_KERNEL) return (double)P[j].KernelRadius;
+        return 0.0;
+    }
+    /* Non-gas: P[j].KernelRadius is NOT physical extent (it's stale-IC or
+     * the density-search radius for THIS particle's gas neighbors, not
+     * its own physical kernel). For SYMMETRIC pair searches the correct
+     * source is AGS_KernelRadius, used only by AGS/SIDM/grain physics. */
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    if(policy & MODE_B_RADIUS_AGS_FOR_NONGAS) {
+        return (double)P[j].AGS_KernelRadius;
+    }
+#endif
+    /* Default for non-gas: 0 → SYMMETRIC degenerates to ONEWAY for this j. */
+    return 0.0;
+}
+
 /* Predicate: does P[j] satisfy the query (pos, h_q) under search_mode? */
 static inline int particle_passes(int j,
                                   const double pos[3],
                                   double h_q,
                                   unsigned int type_mask,
-                                  int search_mode)
+                                  int search_mode,
+                                  mode_b_radius_policy_t radius_policy)
 {
     if(!(type_mask & (1u << P[j].Type))) return 0;
     if(P[j].Mass <= 0) return 0;
@@ -58,7 +81,12 @@ static inline int particle_passes(int j,
     double r2 = dx*dx + dy*dy + dz*dz;
     double cutoff = h_q;
     if(search_mode == MODE_B_SEARCH_SYMMETRIC) {
-        double hj = (double)P[j].KernelRadius;
+        /* Type-aware: only use h_j when it's physically meaningful for
+         * j's type under the active radius_policy. For non-gas types
+         * without AGS opt-in, h_j contribution is 0 and the test
+         * collapses to ONEWAY r < h_q for that j. (Phil + codex 2026-05-07.)
+         */
+        double hj = mode_b_neighbor_symmetric_radius(j, radius_policy);
         if(hj > cutoff) cutoff = hj;
     }
     return r2 < cutoff * cutoff;
@@ -68,13 +96,14 @@ int mode_b_local_brute_walk(const double pos[3],
                             double h_q,
                             unsigned int type_mask,
                             int search_mode,
+                            mode_b_radius_policy_t radius_policy,
                             int *out_candidates,
                             int out_capacity)
 {
     const int num_local = ghost_get_num_local();
     int count = 0;
     for(int j = 0; j < num_local; j++) {
-        if(!particle_passes(j, pos, h_q, type_mask, search_mode)) continue;
+        if(!particle_passes(j, pos, h_q, type_mask, search_mode, radius_policy)) continue;
         if(count >= out_capacity) return -1;
         out_candidates[count++] = j;
     }
@@ -102,6 +131,7 @@ int mode_b_local_neighbor_walk(const double pos[3],
                                double h_q,
                                unsigned int type_mask,
                                int search_mode,
+                               mode_b_radius_policy_t radius_policy,
                                int *out_candidates,
                                int out_capacity)
 {
@@ -122,7 +152,7 @@ int mode_b_local_neighbor_walk(const double pos[3],
         if(no < max_part) {
             /* Particle leaf. Only return if it's a domain-owned local
              * particle (not a ghost import). */
-            if(no < num_local && particle_passes(no, pos, h_q, type_mask, search_mode)) {
+            if(no < num_local && particle_passes(no, pos, h_q, type_mask, search_mode, radius_policy)) {
                 if(count >= out_capacity) return -1;
                 out_candidates[count++] = no;
             }
@@ -221,13 +251,16 @@ extern "C" int mode_b_local_walk_with_oracle(const double pos[3],
                                              int *out_candidates,
                                              int out_capacity)
 {
+    /* Default policy for the generic wrapper: gas-only KernelRadius for
+     * SYMMETRIC. Callers needing AGS opt in via the per-walker entry points. */
+    const mode_b_radius_policy_t policy = MODE_B_RADIUS_DEFAULT;
     int n_tree = mode_b_local_neighbor_walk(pos, h_q, type_mask, search_mode,
-                                            out_candidates, out_capacity);
+                                            policy, out_candidates, out_capacity);
     if(mode_b_oracle_enabled()) {
         const int CAP = 4096;
         int *brute = (int*)malloc(CAP * sizeof(int));
         int n_brute = mode_b_local_brute_walk(pos, h_q, type_mask, search_mode,
-                                              brute, CAP);
+                                              policy, brute, CAP);
         if(n_brute < 0) {
             fprintf(stderr, "[mode_b ORACLE] brute capacity exceeded (>%d); "
                             "skipping diff for this call\n", CAP);

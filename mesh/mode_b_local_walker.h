@@ -40,15 +40,47 @@ extern "C" {
 #define MODE_B_SEARCH_SYMMETRIC 1
 #endif
 
+/* Type-aware "symmetric radius" policy (Phil + codex 2026-05-07).
+ *
+ * For SYMMETRIC search, the test is r < max(h_query, h_j). But h_j is only
+ * physically meaningful for some particle types — and only via specific
+ * fields per type. Old GIZMO's tree Hmax was GAS-ONLY because gas cells
+ * have finite volume that may overlap a sink even if the cell's mesh-point
+ * is outside the sink's KernelRadius. Non-gas types (DM, stars, sinks) are
+ * point-like in the relevant physics; their `KernelRadius` field is either
+ * stale-from-IC or set by density() purely for THEIR gas-neighbor search,
+ * not as a physical extent.
+ *
+ * Exception: physics with type-mutual interactions (AGSForce, SIDM,
+ * grain collisions, dm_fuzzy, cbe) uses `AGS_KernelRadius` as the
+ * symmetric radius for non-gas particles.
+ *
+ * Most callers want the default (gas via KernelRadius, non-gas → 0 →
+ * SYMMETRIC degenerates to ONEWAY for those types). AGS-physics callers
+ * opt in via the bitflag.
+ */
+typedef unsigned int mode_b_radius_policy_t;
+#define MODE_B_RADIUS_GAS_KERNEL          (1u << 0)  /* Type=0 SYM uses P[j].KernelRadius (always recommended) */
+#define MODE_B_RADIUS_AGS_FOR_NONGAS      (1u << 1)  /* non-gas SYM uses P[j].AGS_KernelRadius (AGSForce/SIDM/grain) */
+#define MODE_B_RADIUS_DEFAULT             (MODE_B_RADIUS_GAS_KERNEL)
+
+/* Returns the per-j symmetric radius to use under the given policy.
+ * Returns 0 when SYMMETRIC should degenerate to ONEWAY for this j's type. */
+double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy);
+
 int mode_b_enabled(void);
 
 /* Tree-walk path. Fast for spatially-localized queries. Returns count of
  * local-real-particle candidates (P[] indices) appended to out_candidates;
- * -1 if out_capacity is exceeded. Does NOT sort. */
+ * -1 if out_capacity is exceeded. Does NOT sort.
+ *
+ * radius_policy controls how SYMMETRIC search uses h_j for non-gas types.
+ * Most callers want MODE_B_RADIUS_DEFAULT (gas KR only). */
 int mode_b_local_neighbor_walk(const double pos[3],
                                double h_q,
                                unsigned int type_mask,
                                int search_mode,
+                               mode_b_radius_policy_t radius_policy,
                                int *out_candidates,
                                int out_capacity);
 
@@ -58,6 +90,7 @@ int mode_b_local_brute_walk(const double pos[3],
                             double h_q,
                             unsigned int type_mask,
                             int search_mode,
+                            mode_b_radius_policy_t radius_policy,
                             int *out_candidates,
                             int out_capacity);
 
