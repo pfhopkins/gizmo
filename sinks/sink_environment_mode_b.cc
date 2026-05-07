@@ -311,21 +311,28 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
     /* Mass>0 check: handled at pack_query time conceptually; an explicitly
      * invalid active wouldn't appear in nl_active[]. But guard here too. */
 
-    /* Walker buffer — sized generously for tiny-N. Spike: 4096 should be huge
-     * for sink_env1 at h=KernelRadius. If overflow, fall through to error. */
-    constexpr int CAP = 8192;
-    int candidates[CAP];
+    /* Walker buffer — sized to worst case (num_local). For SYMMETRIC search
+     * the always-open walker has no h-bound pre-pruning, so legitimate
+     * neighbor count can be a substantial fraction of num_local for sinks
+     * embedded in dense regions. Allocating num_local ints (~50MB on
+     * fire_m11i) per query is fine for tiny-N spike — worst case total
+     * memory = Nactive × num_local × sizeof(int) = ~200MB on 96GB GH200. */
+    const int num_local = ghost_get_num_local();
+    if(num_local <= 0) return d;   /* no local pool */
+    std::vector<int> candidates(num_local);
     double pos_arr[3] = {q.pos[0], q.pos[1], q.pos[2]};
     int n_cand = mode_b_local_neighbor_walk(pos_arr,
                                             q.h_search,
                                             (unsigned int)SINK_NEIGHBOR_BITFLAG,
                                             MODE_B_SEARCH_SYMMETRIC,
-                                            candidates, CAP);
+                                            candidates.data(), (int)candidates.size());
     if(n_cand < 0) {
+        /* Even num_local was insufficient — shouldn't happen with this cap
+         * unless the walker bug itself returns duplicates. Abort loudly. */
         fprintf(stderr,
-                "[mode_b sink_env1 ABORT rank=%d] walker overflowed (>%d). "
-                "Increase CAP or detect this case earlier.\n",
-                ThisTask, CAP);
+                "[mode_b sink_env1 ABORT rank=%d] walker overflowed even at "
+                "num_local=%d capacity. Walker bug?\n",
+                ThisTask, num_local);
         fflush(stderr);
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
@@ -333,12 +340,12 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
 
     /* Optional brute oracle: same kernel, brute search, compare AccumData. */
     if(mode_b_oracle_enabled()) {
-        int brute_cand[CAP];
+        std::vector<int> brute_cand(num_local);
         int n_brute = mode_b_local_brute_walk(pos_arr,
                                               q.h_search,
                                               (unsigned int)SINK_NEIGHBOR_BITFLAG,
                                               MODE_B_SEARCH_SYMMETRIC,
-                                              brute_cand, CAP);
+                                              brute_cand.data(), (int)brute_cand.size());
         struct sink_env_gpu_out out_brute;
         memset(&out_brute, 0, sizeof(out_brute));
         for(int i = 0; i < n_brute; i++) {
