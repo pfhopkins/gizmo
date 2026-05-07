@@ -288,6 +288,47 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
      * Inside SINGLE_STAR_SINK_DYNAMICS: scatter SwallowTime sparsely over the
      * CSR-touched j set (gnl.neighbors[], deep-copied to host). */
     memcpy(out_host, d_out, num_active * sizeof(struct sink_env_gpu_out));
+
+    /* MODEB_XVAL_NB diagnostic: first-call-only dump of the GPU NGL neighbor
+     * set per active. Lets us diff Mode B's host walker output against the
+     * GPU SIDX path on identical state. Env-gated; instrumentation only. */
+    {
+        static const char *xv_nb_env = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
+        static const int xv_nb_on = (xv_nb_env && xv_nb_env[0] == '1') ? 1 : 0;
+        static int xv_nb_fired = 0;
+        if(xv_nb_on && !xv_nb_fired && gnl.total_pairs > 0) {
+            std::vector<int> nbrs_host(gnl.total_pairs);
+            gpu_ngb_copy_neighbors_to_host(&gnl, nbrs_host.data());
+            int *offsets = gnl.offsets;
+            for(int aa = 0; aa < num_active; aa++) {
+                int ii = i_active_host[aa];
+                double h_i = i_radii_host[aa];
+                int start = offsets[aa], end = offsets[aa + 1];
+                int nj = end - start;
+                printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=gpu_ngl "
+                       "h_search=%.17g i_pos=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
+                       ThisTask, aa, h_i,
+                       (double)P_host[ii].Pos[0], (double)P_host[ii].Pos[1], (double)P_host[ii].Pos[2],
+                       (unsigned long long)P_host[ii].ID, nj);
+                for(int idx = start; idx < end; idx++) {
+                    int j = nbrs_host[idx];
+                    double dx = (double)P_host[j].Pos[0] - (double)P_host[ii].Pos[0];
+                    double dy = (double)P_host[j].Pos[1] - (double)P_host[ii].Pos[1];
+                    double dz = (double)P_host[j].Pos[2] - (double)P_host[ii].Pos[2];
+                    NEAREST_XYZ(dx, dy, dz, 1);
+                    double r2 = dx*dx + dy*dy + dz*dz;
+                    printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=gpu_ngl "
+                           "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g ID=%llu\n",
+                           ThisTask, aa, j, (int)P_host[j].Type,
+                           (double)P_host[j].Mass, (double)P_host[j].KernelRadius,
+                           r2, (unsigned long long)P_host[j].ID);
+                }
+            }
+            fflush(stdout);
+            xv_nb_fired = 1;
+        }
+    }
+
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
     if(gnl.total_pairs > 0) {
         std::vector<int> gnl_neighbors_host(gnl.total_pairs);

@@ -65,6 +65,10 @@ static int phase0_diag_enabled(void)
     return cached;
 }
 
+/* File-scope call counter for the MODEB_XVAL_NB diagnostic so the per-query
+ * dump in sink_env1_evaluate_one_query_local knows which call it's in. */
+static long long g_mode_b_eval_call_id = 0;
+
 /* -----------------------------------------------------------------------
  * Cosmology + physical scalars the pair body needs. Captured once per
  * evaluator call from globals; passed by value into the kernel. No
@@ -338,6 +342,34 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
     }
     d.n_candidates = n_cand;
 
+    /* MODEB_XVAL_NB diagnostic: first-call-only dump. Pair with the env-off
+     * dump in sink_environment_gpu.cc for offline j-set diff. */
+    {
+        static const char *xv_nb_env = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
+        static const int xv_nb_on = (xv_nb_env && xv_nb_env[0] == '1') ? 1 : 0;
+        if(xv_nb_on && g_mode_b_eval_call_id == 1 && n_cand > 0) {
+            printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=mode_b "
+                   "h_search=%.17g i_pos=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
+                   ThisTask, q.origin_local_idx, q.h_search,
+                   q.pos[0], q.pos[1], q.pos[2],
+                   (unsigned long long)q.id, n_cand);
+            for(int i = 0; i < n_cand; i++) {
+                int j = candidates[i];
+                double dx = (double)P[j].Pos[0] - q.pos[0];
+                double dy = (double)P[j].Pos[1] - q.pos[1];
+                double dz = (double)P[j].Pos[2] - q.pos[2];
+                NEAREST_XYZ(dx, dy, dz, 1);
+                double r2 = dx*dx + dy*dy + dz*dz;
+                printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=mode_b "
+                       "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g ID=%llu\n",
+                       ThisTask, q.origin_local_idx, j, (int)P[j].Type,
+                       (double)P[j].Mass, (double)P[j].KernelRadius,
+                       r2, (unsigned long long)P[j].ID);
+            }
+            fflush(stdout);
+        }
+    }
+
     /* Optional brute oracle: same kernel, brute search, compare AccumData. */
     if(mode_b_oracle_enabled()) {
         std::vector<int> brute_cand(num_local);
@@ -461,6 +493,7 @@ void sink_env1_mode_b_evaluate(struct particle_data *P,
                                struct sink_env_gpu_out *nl_outs)
 {
     double t_entry = my_second();
+    g_mode_b_eval_call_id++;     /* used by MODEB_XVAL_NB first-call gating */
     sink_env1_scalars_t sc = snapshot_scalars();
 
     /* Zero local outs (caller may have left them at whatever; be safe). */
