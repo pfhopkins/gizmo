@@ -113,6 +113,31 @@ void sink_environment_loop(void)
         ghost_writeback_swallowtime();
 #endif
         ghost_write_detector_end();
+
+        /* MODEB_XVAL pre-scatter dump for cross-validation against env-on
+         * (Mode B) run. Same line shape as sink_environment_mode_b.cc emits.
+         * Gated by GIZMO_MODE_B_XVAL_DUMP=1. Instrumentation-only; no behavior
+         * change when off. */
+        {
+            static const char *xv_env = getenv("GIZMO_MODE_B_XVAL_DUMP");
+            static const int xv_on = (xv_env && xv_env[0] == '1') ? 1 : 0;
+            if(xv_on) {
+                for(int a = 0; a < num_active; a++) {
+                    printf("MODEB_XVAL rank=%d caller=sink_env1 active_local=%d "
+                           "Mgas=%g Mstar=%g Malt=%g IE=%g "
+                           "Jgas=%g,%g,%g Jstar=%g,%g,%g Jalt=%g,%g,%g\n",
+                           ThisTask, a,
+                           (double)nl_outs[a].Mgas_in_Kernel,
+                           (double)nl_outs[a].Mstar_in_Kernel,
+                           (double)nl_outs[a].Malt_in_Kernel,
+                           (double)nl_outs[a].Sink_SurroudingGasInternalEnergy,
+                           (double)nl_outs[a].Jgas_in_Kernel[0], (double)nl_outs[a].Jgas_in_Kernel[1], (double)nl_outs[a].Jgas_in_Kernel[2],
+                           (double)nl_outs[a].Jstar_in_Kernel[0], (double)nl_outs[a].Jstar_in_Kernel[1], (double)nl_outs[a].Jstar_in_Kernel[2],
+                           (double)nl_outs[a].Jalt_in_Kernel[0], (double)nl_outs[a].Jalt_in_Kernel[1], (double)nl_outs[a].Jalt_in_Kernel[2]);
+                }
+                fflush(stdout);
+            }
+        }
     }
 
     /* Scatter per-active-sink outputs into SinkTempInfo */
