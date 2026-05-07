@@ -15,7 +15,7 @@
 | 2 | tiny-N phase costs | **`sidx_id=alltypes` cache: 102 calls, 57.3s sidx_dec; `step` cache: 1111 calls, 362μs total. >150,000× per-call asymmetry.** | sidx_id breakdown |
 | 3 | ghost/SIDX touched? (must be 0 under Mode B) | baseline: ghost/NGL ratio = 0.514; 34 tiny-N calls with sidx_dec >100us | PHASE0 R1T72 |
 | 4 | gravity tree reusable? | **YES, with three constraints** | codex 2026-05-07 |
-| 5 | rank-scaling tiny-N | **3.7× anti-scaling R1T72 → R2T36; tiny-N (N=1) is 420× slower; step-cache sidx_dec 650,000× slower** | PHASE0 R2T36 (697734) |
+| 5 | rank-scaling tiny-N | **multi-rank tax ≠ GPU-sharing tax; 70× anti-scaling at N=1 even with separate GPUs; step-cache cross-rank sync is the source** | PHASE0 R1T72/R2T36/R2T72 (697718/734/745) |
 | 6 | Mode B first target | **`sink_env1` (single-Nbin canary, 60% of NGL cost). Density tiny-N is broader-leverage second target.** | per-caller table |
 
 ---
@@ -92,26 +92,33 @@ Use the existing host-resident gravity tree (`Nodes[]`/`Nextnode[]`/`sibling`) f
 
 **Fallback** (minimal per-domain persistent local host BVH): only if gravity-tree freshness or LET entanglement becomes a real blocker — not a precaution.
 
-## Row 5 — Rank-scaling tiny-N (R1T72 vs R2T36, jobs 697718 / 697734)
+## Row 5 — Rank-scaling tiny-N (R1T72 / R2T36 / R2T72, jobs 697718 / 697734 / 697745)
 
-Same fire_m11i problem, same code, same wall-time budget. R2T36 is dramatically slower:
+Same fire_m11i problem, same binary, same wall-time budget across three configs:
+- **R1T72**: 1 node, 1 rank, 72 OMP threads. Single-rank baseline.
+- **R2T36**: 1 node, 2 ranks, 36 OMP each. Both ranks share the one GH200 GPU.
+- **R2T72-2node**: 2 nodes, 1 rank/node, 72 OMP each. Each rank has its own GH200.
 
-| metric | R1T72 (697718) | R2T36 (697734) | ratio |
+| metric | R1T72 | R2T36 | R2T72-2node |
 |---|---|---|---|
-| Total NGL cost | ~103s | ~382s | **3.7× worse** |
-| N=1 median total | 1.29ms | 542ms | **420× worse** |
-| N=1 p90 total | 1.62ms | 1.287s | **794× worse** |
-| step-cache sidx_dec sum | 362μs | 237.9s | **650,000× worse** |
-| ghost/NGL ratio | 0.514 | 1.07 | 2× more ghost per NGL |
-| symlist tot_sum | 2.8s | 153.0s | 55× worse |
-| density tot_sum | 24.0s | 144.6s | 6× worse |
-| sink_env1 tot_sum | 62.3s | 41.1s | (per-call similar; fewer calls reached) |
+| Total NGL cost | ~103s | ~382s | ~298s |
+| N=1 median total | 1.29ms | 542ms | 89ms |
+| N=1 p90 total | 1.62ms | 1.287s | 916ms |
+| step-cache sidx_dec sum | 362μs | 237.9s | 186.5s |
+| ghost/NGL ratio | 0.51 | 1.07 | 1.11 |
+| sink_env1 tot_sum | 62.3s | 41.1s | 25.9s |
+| density tot_sum | 24.0s | 144.6s | 110.1s |
+| symlist tot_sum | 2.8s | 153.0s | 127.8s |
 
-The anti-scaling source is unambiguous: **the global-state caches** (step + alltypes SIDX) **and ghost exchange** explode under multi-rank cross-rank synchronization. The step cache that was nearly free at single-rank costs ~443ms/call across 537 calls at R2T36.
+Three findings:
 
-**Implication for Mode B Day-1 protocol design**: peer protocol MUST avoid collectives. Codex's spec already mandates this; the data confirms it's not theoretical caution. Any collective-bearing path inherits the 100s-of-seconds anti-scaling tax.
+**1. Multi-rank tax ≠ GPU-sharing tax.** R2T72 (separate GPUs) is ~6× better than R2T36 at tiny-N (N=1: 89ms vs 542ms), but still **~70× worse than R1T72's 1.29ms**. Most of the anti-scaling is cross-rank state synchronization that exists independent of GPU layout.
 
-R2T72-2node (697745, queued) will tell us whether the explosion is per-rank-shared-GPU or scales with node count.
+**2. Step cache is the explosion source in both multi-rank configs.** ~186s on R2T72, ~238s on R2T36, vs 362μs on R1T72. Going from shared to separate GPUs only saved ~50s — the rest of the cost is cross-rank pool/cache management, not GPU work.
+
+**3. Ghost/NGL ratio doubles** in both multi-rank configs (~1.1) vs single-rank (0.51). Ghost exchange runs roughly per-NGL-call once you have multiple ranks.
+
+**Implication for Mode B Day-1 protocol design**: peer protocol MUST avoid collectives. Codex's spec already mandates this; the data confirms it's not theoretical caution. **Any collective-bearing path inherits 70-300× per-call anti-scaling at tiny-N.** Mode B's "no global state" architecture is the only path that escapes both the step-cache cross-rank tax AND the ghost-exchange explosion.
 
 ## Row 6 — Mode B first target (revised after R1T72 data)
 
