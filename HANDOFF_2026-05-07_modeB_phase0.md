@@ -11,42 +11,66 @@
 
 | row | required answer | status | source |
 |---|---|---|---|
-| 1 | density Nactive histogram + threshold | __TBD (Vista 697487 np=2)__ | `tools/phase0_summarize.py` |
-| 2 | density tiny-N phase costs (sidx_dec / refresh / ghost / GPU) | __TBD (Vista 697487)__ | PHASE0_NGL + PHASE0_GHOST |
-| 3 | ghost/SIDX touched? (must be 0 under Mode B) | acceptance assertion only — pre-Mode-B baseline ≠ 0 | PHASE0_GHOST count |
+| 1 | Nactive histogram + threshold | **N=64 below → Mode B; bimodal at N=2-4 (median 1.77ms / p90 1.76s)** | Vista 697718 fire_m11i R1T72 |
+| 2 | tiny-N phase costs | **`sidx_id=alltypes` cache: 102 calls, 57.3s sidx_dec; `step` cache: 1111 calls, 362μs total. >150,000× per-call asymmetry.** | sidx_id breakdown |
+| 3 | ghost/SIDX touched? (must be 0 under Mode B) | baseline: ghost/NGL ratio = 0.514; 34 tiny-N calls with sidx_dec >100us | PHASE0 R1T72 |
 | 4 | gravity tree reusable? | **YES, with three constraints** | codex 2026-05-07 |
-| 5 | rank-scaling tiny-N (-np 2/4/8) | __TBD (Vista 697488/9)__ | PHASE0_NGL ratios |
-| 6 | Mode B first target | __density tiny-N tail; sink_env1 secondary canary__ (legacy preview) | per-caller table |
+| 5 | rank-scaling tiny-N | __TBD (697734 R2T36 queued; R2T72-2node next)__ | PHASE0 sweep |
+| 6 | Mode B first target | **`sink_env1` (single-Nbin canary, 60% of NGL cost). Density tiny-N is broader-leverage second target.** | per-caller table |
 
 ---
 
-## Row 1 — Nactive histogram + threshold
+## Row 1 — Nactive histogram + cost curve (R1T72 fire_m11i, job 697718)
 
-[populate from `phase0_summarize.py phase0_*_jid697487*/np2/run.log`]
-
-**Legacy preview (rank 0 only, run.log 2026-05-06):**
-
-```
-N range           count
-      1              89
-      2-4            51
-      5-16           56
-     17-64           92
-     65-256          68
-    257-1024         53
-   1025-4096         26
-   4097-16384         6
-  16385-65536         9
-  65537-262144       15
+```text
+N range          count   tot_med  tot_p90    sidx_dec_med  sidx_dec_p90  refresh_med  gpu_med
+     1              97   1.29ms   1.62ms     0us           1us           303us        537us
+     2-4           290   1.77ms   1.760s     0us           1.562s        365us        1.55ms
+     5-16          265   1.49ms   2.49ms     0us           1us           176us        656us
+    17-64          181   1.30ms   3.44ms     0us           1us           165us        959us
+    65-256         141   3.11ms   89.80ms    0us           1us           178us        1.40ms
+   257-1024        126   4.51ms   24.50ms    0us           1us           613us        4.08ms
+  1025-4096         10   11.69ms  17.29ms    0us           1us           1.57ms       10.46ms
+  4097-16384        74   20.30ms  65.64ms    1us           1us           17.22ms      4.24ms
+  16385-65536        9   94.90ms  1.224s     1us           1us           59.68ms      8.94ms
+  65537-262144       5   98.06ms  1.211s     1us           1us           63.41ms      16.45ms
+ 262145-1048576      3   1.218s   1.224s     1us           1us           1.202s       16.30ms
+ 1048577+           10   930.91ms 1.300s     1us           1us           866.94ms     66.63ms
 ```
 
-**Tentative threshold**: N=64 — below, Mode B; at/above, Mode A. Refines after Vista data shows the cost-vs-N curve from PHASE0 lines.
+The N=2-4 row is bimodal: median 1.77ms, p90 1.760s. The p90 calls are sink_env1 (single Nbin=4, see Row 6).
 
-## Row 2 — Density tiny-N cost breakdown
+**Threshold**: N=64 stays as the Mode A/B boundary. Below 64, median total is 1.3-1.8ms — Mode B target if the global-state burden is removed. Above 64, costs scale with N (gpu_med rises from 1.4ms → 66ms across the bins).
 
-[populate from PHASE0_NGL caller=density rows in 697487/np2 log]
+## Row 2 — Phase-cost decomposition (R1T72)
 
-**Legacy rank-0 preview** (median totals at N=1: 4ms; refresh dominates; sidx_dec≈0 at the very tail; sidx_dec=20ms in N=65–1024 band — driven by `sidx_id` cache-id swap, not Nactive itself; codex caveat 1).
+The dominant cost is sidx_dec but ONLY on the alltypes cache; refresh is the secondary cost; gpu walk itself is negligible at tiny-N:
+
+| sidx_id | calls | sidx_dec_med | sidx_dec_p90 | sidx_dec_sum |
+|---|---|---|---|---|
+| alltypes | 102 | 0us | **1.761s** | **57.3s** |
+| step | 1111 | 0us | 1us | 362us |
+
+Per-call asymmetry: alltypes takes >150,000× longer than step on the rare paths that hit it. **The cliff codex predicted is real and is the alltypes cache rebuild, not Nactive.**
+
+Refresh (compact_h refresh) dominates at large N: median 866ms at N>1M, scaling roughly with num_total. That's a Mode A target for commit C, not Mode B.
+
+GPU walk itself at tiny-N is sub-ms — the work is real but cheap. The expensive part is everything around it.
+
+## Per-caller summary (R1T72)
+
+| caller | calls | N range | tot_sum | leverage |
+|---|---|---|---|---|
+| **sink_env1** | **34** | **all N=4** | **62.3s** | **highest — single Nbin, deterministic, all alltypes hits** |
+| density | 591 | 1 - 4.58M | 24.0s | broad; tiny-N tail (N=1) is 1.3ms median |
+| sink_feed | 34 | all N=4 | 6.4s | step cache, 190ms/call (refresh-dominated) |
+| sink_swk | 34 | all N=4 | 6.3s | step cache, 190ms/call (refresh-dominated) |
+| symlist | 452 | 0 - 4.57M | 2.8s | density's broad sibling |
+| hii_fb | 25 | 1 - 612 | 0.4s | event-fired every call here (probabilistic gate; lucky) |
+| mech_fb | 19 | 1 - 6641 | 0.4s | event-fired every call here |
+| radfb_g | 24 | 1 - 543 | 0.3s | event-fired every call here |
+
+**sink_env1 alone is 60% of all NGL cost on this run.**
 
 ## Row 3 — Ghost/SIDX touched? (Mode B target = 0)
 
@@ -74,15 +98,21 @@ Use the existing host-resident gravity tree (`Nodes[]`/`Nextnode[]`/`sibling`) f
 
 Looking for: super-linear cost growth with rank count at tiny-N, which would indicate Mode B's peer protocol must avoid collectives Day 1 (codex spec).
 
-## Row 6 — Mode B first target
+## Row 6 — Mode B first target (revised after R1T72 data)
 
-**Primary**: `density` tiny-N tail (N < 64). Many calls per step, deterministic (no probabilistic gate), broad range so the threshold dispatch logic gets exercised early.
+**Primary: `sink_env1`.** 34 calls all at Nactive=4 → 62.3s total NGL cost, **60% of the entire run**. Each call pays ~1.85s in `alltypes` SIDX rebuild to find ~4 neighbors. Single-Nbin (no threshold dispatch needed yet). Deterministic in this run (no probabilistic gate). Clean win-or-fail validation: if Mode B drops sink_env1 from 1.85s to milliseconds the row-3 assertions also pass.
 
-**Secondary canary**: `sink_env1`. Legacy preview shows 32 calls at N=1–3 with `sidx_dec_sum=1.638s` total — paying ~50ms/call for ~1 neighbor is the textbook tiny-N global-state penalty. Clean validation case for Mode B's "no hidden global work" assertion.
+**Secondary: `density` tiny-N tail (N=1).** 97 calls at median 1.29ms. Lower per-call leverage but exercises the threshold dispatch logic (N=1 < 64 → Mode B; N>>64 → Mode A) and the broad-N CSR merge integration. Lands after sink_env1 passes acceptance.
 
-**Probabilistic-gate callers** (`sink_swk`, `sink_feed`, `radfb_g`, `mech_fb`, `hii_fb`) — defer until later. Per Phil caution: a sample where the event didn't fire shows misleadingly low cost; can't dismiss as "no work forever."
+**Tertiary: `sink_feed` / `sink_swk`.** 34 calls each at N=4, 190ms median. Both hit `step` cache (not alltypes), so leverage per call is lower than sink_env1 — refresh dominates. Mode B should still help (no global state), but win is ~6s each, not 60s.
+
+**Defer**: `symlist`, `hii_fb`, `mech_fb`, `radfb_g`. Probabilistic gates (Phil caveat) — they all fired in this run but won't always; lower per-call cost in this sample.
 
 **Day 1 oracle strategy**: `GIZMO_MODE_B_ORACLE=1` runs `mode_b_local_brute_walk` alongside the tree walk every call, sorts both, asserts equality. Auto-disable after first 100 calls if no mismatch (set TODO).
+
+### Why sink_env1 was demoted to "secondary canary" in the legacy preview, and why it's now primary
+
+Legacy preview was rank-0-only on the downscoped `test/fire/` problem (different IC, different physics scale). Real fire_m11i shows sink_env1 paying **1.85s/call** (vs ~50ms/call in legacy) — 35× larger absolute cost, 60% of all NGL work. The order is dictated by the production-target data, not the downscoped preview.
 
 ---
 
