@@ -488,10 +488,35 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
 {
     const int rd_enabled = ghost_request_driven_enabled();
     const int caller_safe = ghost_request_driven_caller_safe(spec);
+    /* Phase 0 instrumentation: env-gated, all-ranks. Brackets dispatch so
+     * both impls are captured without duplication. Off ⇒ no work beyond
+     * one static int read. */
+    static const char *g_phase0_env_raw = getenv("GIZMO_PHASE0_DIAG");
+    static const int phase0_on = (g_phase0_env_raw && g_phase0_env_raw[0] == '1') ? 1 : 0;
+    static long long g_phase0_ghost_call_id = 0;
+    long long this_phase0_call = 0;
+    double t_phase0_start = 0;
+    int nlocal_pre = 0;
+    if(phase0_on) {
+        this_phase0_call = ++g_phase0_ghost_call_id;
+        t_phase0_start = my_second();
+        nlocal_pre = NumPart;
+    }
     if(rd_enabled && caller_safe) {
         ghost_exchange_request_driven_impl(spec);
     } else {
         ghost_exchange_tile_overlap_impl(spec);
+    }
+    if(phase0_on) {
+        double dt_ghost_import = timediff(t_phase0_start, my_second());
+        int ghost_added = NumPart - nlocal_pre;
+        printf("PHASE0_GHOST rank=%d call=%lld caller=%s impl=%s "
+               "nlocal_pre=%d ghost_added=%d ntotal_post=%d dt_ghost_import=%.6f\n",
+               ThisTask, this_phase0_call,
+               spec->caller_name ? spec->caller_name : "?",
+               (rd_enabled && caller_safe) ? "request_driven" : "tile_overlap",
+               nlocal_pre, ghost_added, NumPart, dt_ghost_import);
+        fflush(stdout);
     }
 }
 

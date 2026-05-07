@@ -786,6 +786,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 {
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
+    /* Phase 0 instrumentation: env-gated, all-ranks, per-call line for
+     * Nactive histogram + tiny-N phase-cost decomposition. Off ⇒ no work. */
+    static const char *g_phase0_env_raw = getenv("GIZMO_PHASE0_DIAG");
+    static const int phase0_on = (g_phase0_env_raw && g_phase0_env_raw[0] == '1') ? 1 : 0;
+    static long long g_phase0_call_id = 0;
+    long long this_phase0_call = phase0_on ? (++g_phase0_call_id) : 0;
     /* HANG_DBG: dense per-phase tracing for the sink_swk hang. Gated on
      * GIZMO_HANG_DBG=1 + caller label match (sink_swk by default). Every
      * phase prints rank+caller+phase to stderr so we can see exactly which
@@ -837,6 +843,13 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                    "total=%.3f\n",
                    caller_label ? caller_label : "?", type_bitmask, num_total,
                    idx_for_stubs ? 1 : 0, timediff(t_entry, my_second()));
+            fflush(stdout);
+        }
+        if(phase0_on) {
+            printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d N=0 Ntot=%d "
+                   "dt_ghost_import=-1 dt_sidx_dec=0 dt_refresh=0 dt_gpu=0 total_pairs=0\n",
+                   ThisTask, this_phase0_call, caller_label ? caller_label : "?",
+                   type_bitmask, idx_for_stubs ? 1 : 0, num_total);
             fflush(stdout);
         }
         return;
@@ -1495,6 +1508,22 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                compact_launch, compact_fence,
                timediff(t_free0, t_free1),
                timediff(t_entry, t_free1));
+        fflush(stdout);
+    }
+    if(phase0_on) {
+        /* All ranks. dt_gpu folds fused launch+fence (the actual neighbor walk).
+         * dt_refresh folds compact_h_refresh launch+fence (=0 if not run).
+         * dt_ghost_import is not in scope here — emitted as -1 and tracked
+         * separately by PHASE0_GHOST in ghost_exchange_impl. */
+        double dt_sidx_dec = timediff(t_entry, t_after_sidx);
+        double dt_refresh  = did_refresh ? (timediff(t_refresh_launch_in, t_refresh_launch_out)
+                                          + timediff(t_refresh_launch_out, t_refresh_fence_out)) : 0;
+        double dt_gpu      = (num_active > 0) ? timediff(t_fused_launch_in, t_nl1) : 0;
+        printf("PHASE0_NGL rank=%d call=%lld caller=%s mode=0x%x cache=%d N=%d Ntot=%d "
+               "dt_ghost_import=-1 dt_sidx_dec=%.6f dt_refresh=%.6f dt_gpu=%.6f total_pairs=%d\n",
+               ThisTask, this_phase0_call, caller_label ? caller_label : "?",
+               type_bitmask, sidx_cached_now, num_active, num_total,
+               dt_sidx_dec, dt_refresh, dt_gpu, total);
         fflush(stdout);
     }
 
