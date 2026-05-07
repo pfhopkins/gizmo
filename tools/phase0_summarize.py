@@ -148,17 +148,60 @@ def main():
                   f"{fmt_us(median(ds))} {fmt_us(percentile(ds, 90))} {fmt_us(sum(ds))}  "
                   f"{sum(adds) / len(adds):>10.0f}")
 
-    # ---- 4. "No hidden global work" assertion (Mode B target) ----
-    print("\n## Row 3 assertions (under Mode B these MUST be 0):")
+    # ---- 4. sidx_id breakdown (codex caveat 1: sidx_dec is correlated with cache id, not Nactive) ----
+    have_sidx_id = any(r.get("sidx_id", "?") != "?" for r in ngl_rows)
+    if have_sidx_id:
+        print("\n## sidx_id breakdown (codex caveat 1: cache-thrash signature)")
+        print(f"{'sidx_id':<10}  {'calls':>6}  {'sidx_dec_med':>13} {'sidx_dec_p90':>13} {'sidx_dec_sum':>13}")
+        sb = defaultdict(list)
+        for r in ngl_rows:
+            sb[r.get("sidx_id", "?")].append(r)
+        for sid in sorted(sb.keys()):
+            rs = sb[sid]
+            sd = [r["dt_sidx_dec"] for r in rs]
+            print(f"{sid:<10}  {len(rs):>6}  "
+                  f"{fmt_us(median(sd)):>13} {fmt_us(percentile(sd, 90)):>13} {fmt_us(sum(sd)):>13}")
+
+    # ---- 5. Probabilistic-gate caller detection (Phil caveat) ----
+    # Flag callers whose dt_total distribution has a heavy tail at zero AND
+    # nonzero — suggests the routine has a probabilistic event gate (sink_swk,
+    # mech_fb, radfb_g, sink_feed). Don't dismiss based on per-call sample.
+    PROBABILISTIC_GATE_CALLERS = {"sink_swk", "sink_feed", "radfb_g", "mech_fb", "hii_fb"}
+    print("\n## Probabilistic-gate callers (Phil caveat: don't dismiss low-cost samples)")
+    print(f"{'caller':<28}  {'calls':>6}  {'zero_work':>10}  {'nonzero':>8}  {'gate_pct':>9}  {'flagged':>8}")
+    for caller in sorted(by_caller.keys()):
+        rs = by_caller[caller]
+        zero = sum(1 for r in rs
+                   if r["dt_sidx_dec"] + r["dt_refresh"] + r["dt_gpu"] < 1e-5)
+        nz = len(rs) - zero
+        pct = 100.0 * zero / len(rs) if rs else 0
+        flagged = caller in PROBABILISTIC_GATE_CALLERS or (zero >= 0.3 * len(rs) and nz > 0)
+        if flagged or zero == 0:
+            tag = "GATED" if caller in PROBABILISTIC_GATE_CALLERS else ("?" if flagged else "")
+            print(f"{caller:<28}  {len(rs):>6}  {zero:>10}  {nz:>8}  {pct:>7.1f}%  {tag:>8}")
+
+    # ---- 6. Mode B "no hidden global work" assertions (row 3) ----
+    print("\n## Row 3 assertions (under Mode B these MUST be 0 for tiny-N targets):")
     sus_sidx = sum(1 for r in ngl_rows if r["dt_sidx_dec"] > 1e-4 and r["N"] < 100)
     sus_gpu = sum(1 for r in ngl_rows if r["dt_gpu"] > 0 and r["N"] == 0)
-    sus_ghost_tinyN_callers = set()
     print(f"  PHASE0_NGL calls with N<100 AND sidx_dec > 100us : {sus_sidx}  "
           f"(Mode B target: 0 for tiny-N callers)")
     print(f"  PHASE0_NGL calls with N=0 AND dt_gpu>0           : {sus_gpu}  "
           f"(should be 0 already from early-out)")
     print(f"  PHASE0_GHOST total calls                         : {len(ghost_rows)}  "
           f"(Mode B target: tiny-N steps don't trigger ghost)")
+    if ghost_rows and ngl_rows:
+        # Correlate by rank: ghost calls per ngl-call ratio
+        ghost_per_rank = defaultdict(int)
+        ngl_per_rank   = defaultdict(int)
+        for r in ghost_rows: ghost_per_rank[r["rank"]] += 1
+        for r in ngl_rows:   ngl_per_rank[r["rank"]] += 1
+        ratios = []
+        for rk in sorted(ngl_per_rank.keys()):
+            if ngl_per_rank[rk]:
+                ratios.append(ghost_per_rank.get(rk, 0) / ngl_per_rank[rk])
+        if ratios:
+            print(f"  ghost/NGL call ratio (mean across ranks)         : {sum(ratios)/len(ratios):.3f}")
 
 
 if __name__ == "__main__":
