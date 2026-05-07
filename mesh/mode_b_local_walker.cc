@@ -19,6 +19,7 @@
 #include "../core/proto.h"
 #include "../gravity/forcetree.h"
 #include "ghost_writeback.h"      /* ghost_get_num_local */
+#include "gpu_neighbor_list.h"    /* gizmo_mark_kernel_radius_dirty_indices */
 #include "mode_b_local_walker.h"
 
 int mode_b_enabled(void)
@@ -155,6 +156,29 @@ int mode_b_local_neighbor_walk(const double pos[3],
         }
     }
     return count;
+}
+
+/* Lazy-drift Mode B candidates to current Ti before the pair kernel reads
+ * P[j] / CellP[j]. Mirrors gpu_ngb_list_build:1542-1580 contract. */
+void mode_b_lazy_drift_candidates(const int *indices, int n)
+{
+    if(!indices || n <= 0) return;
+    const int num_local = ghost_get_num_local();
+    integertime time1 = All.Ti_Current;
+    for(int k = 0; k < n; k++) {
+        int j = indices[k];
+        if(j >= 0 && j < num_local) {
+            /* drift_particle's early-return on time1==time0 makes repeat
+             * calls a fast no-op (e.g. j touched by an earlier query in
+             * this same evaluator call). */
+            drift_particle(j, time1);
+        }
+    }
+    /* drift_particle mutates Pos and KernelRadius (the *= exp(divv_fac/N)
+     * factor in predict.cc:160,229). The next gpu_ngb_list_build call (for
+     * non-Mode-B callers) needs to refresh compact_h from these freshly
+     * drifted KernelRadius values. */
+    gizmo_mark_kernel_radius_dirty_indices(indices, n);
 }
 
 /* Sorted bit-exact diff of two index lists. Returns 0 if equal, prints

@@ -370,62 +370,92 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
         }
     }
 
-    /* Optional brute oracle: same kernel, brute search, compare AccumData. */
+    /* CRITICAL: Mode B must honor the GPU NGL lazy-drift contract:
+     *   1. walk candidates on whatever P[j] state exists (may be slightly stale)
+     *   2. drift each candidate j to All.Ti_Current via drift_particle()
+     *   3. THEN run pair kernel reading drifted P[j] / CellP[j]
+     *
+     * Skipping step 2 was the cause of the XVAL Jalt 13% divergence (env-on
+     * vs env-off): GPU NGL drifts j's between walk and kernel; old Mode B
+     * code did not, so the pair body read stale positions. (gpu_ngb_list_build:
+     * 1542-1580 has the original contract.) */
+
     if(mode_b_oracle_enabled()) {
+        /* Oracle path: collect BOTH candidate sets BEFORE any P[] mutation.
+         * Otherwise the brute walk would test against drifted state while
+         * the tree walk tested against pre-drift state, and the oracle
+         * itself would pollute what it's measuring. */
         std::vector<int> brute_cand(num_local);
         int n_brute = mode_b_local_brute_walk(pos_arr,
                                               q.h_search,
                                               (unsigned int)SINK_NEIGHBOR_BITFLAG,
                                               MODE_B_SEARCH_SYMMETRIC,
                                               brute_cand.data(), (int)brute_cand.size());
-        struct sink_env_gpu_out out_brute;
-        memset(&out_brute, 0, sizeof(out_brute));
-        for(int i = 0; i < n_brute; i++) {
-            int j = brute_cand[i];
-            const struct gas_cell_data *kc_j_ptr =
-                (P[j].Type == 0 && CellP) ? &CellP[j] : nullptr;
-            sink_env1_pair_kernel_host(q, P[j], kc_j_ptr, sc, out_brute);
-        }
-        /* Accumulate via tree walker (the path under test). */
-        struct sink_env_gpu_out out_tree;
-        memset(&out_tree, 0, sizeof(out_tree));
-        for(int i = 0; i < n_cand; i++) {
-            int j = candidates[i];
-            const struct gas_cell_data *kc_j_ptr =
-                (P[j].Type == 0 && CellP) ? &CellP[j] : nullptr;
-            sink_env1_pair_kernel_host(q, P[j], kc_j_ptr, sc, out_tree);
-        }
-        /* Field-by-field compare with FP tolerance. */
-        const double tol = 1e-9;   /* relative; conservative for double-precision sums */
-        bool mismatch = false;
-        #define CHECK(field) do { \
-            double a = (double)out_tree.field, b = (double)out_brute.field; \
-            double denom = fmax(fabs(a), fabs(b)) + 1e-30; \
-            if(fabs(a - b) / denom > tol) mismatch = true; \
-        } while(0)
-        CHECK(Sink_SurroudingGasInternalEnergy);
-        CHECK(Mgas_in_Kernel); CHECK(Mstar_in_Kernel); CHECK(Malt_in_Kernel);
-        for(int kv = 0; kv < 3; kv++) {
-            CHECK(Jgas_in_Kernel[kv]); CHECK(Jstar_in_Kernel[kv]); CHECK(Jalt_in_Kernel[kv]);
-        }
-        #undef CHECK
-        if(mismatch) {
+        if(n_brute < 0) {
             fprintf(stderr,
-                    "[mode_b ORACLE MISMATCH rank=%d caller=sink_env1 active_id=%llu] "
-                    "tree: Mgas=%g Mstar=%g, brute: Mgas=%g Mstar=%g (n_cand_tree=%d n_brute=%d)\n",
-                    ThisTask, (unsigned long long)q.id,
-                    (double)out_tree.Mgas_in_Kernel, (double)out_tree.Mstar_in_Kernel,
-                    (double)out_brute.Mgas_in_Kernel, (double)out_brute.Mstar_in_Kernel,
-                    n_cand, n_brute);
-            fflush(stderr);
+                    "[mode_b ORACLE rank=%d] brute walker overflowed (>num_local=%d). "
+                    "Skipping oracle for this query.\n", ThisTask, num_local);
+        } else {
+            /* Drift the UNION of (tree, brute). drift_particle dedupes via
+             * its time1==time0 early-return, so passing duplicates is fine. */
+            mode_b_lazy_drift_candidates(candidates.data(), n_cand);
+            mode_b_lazy_drift_candidates(brute_cand.data(), n_brute);
+
+            /* Now P[] is at Ti_Current for the union. Compute both accums. */
+            struct sink_env_gpu_out out_tree;
+            memset(&out_tree, 0, sizeof(out_tree));
+            for(int i = 0; i < n_cand; i++) {
+                int j = candidates[i];
+                const struct gas_cell_data *kc_j_ptr =
+                    (P[j].Type == 0 && CellP) ? &CellP[j] : nullptr;
+                sink_env1_pair_kernel_host(q, P[j], kc_j_ptr, sc, out_tree);
+            }
+            struct sink_env_gpu_out out_brute;
+            memset(&out_brute, 0, sizeof(out_brute));
+            for(int i = 0; i < n_brute; i++) {
+                int j = brute_cand[i];
+                const struct gas_cell_data *kc_j_ptr =
+                    (P[j].Type == 0 && CellP) ? &CellP[j] : nullptr;
+                sink_env1_pair_kernel_host(q, P[j], kc_j_ptr, sc, out_brute);
+            }
+
+            /* Field-by-field compare with FP tolerance. */
+            const double tol = 1e-9;
+            bool mismatch = false;
+            #define CHECK(field) do { \
+                double a = (double)out_tree.field, b = (double)out_brute.field; \
+                double denom = fmax(fabs(a), fabs(b)) + 1e-30; \
+                if(fabs(a - b) / denom > tol) mismatch = true; \
+            } while(0)
+            CHECK(Sink_SurroudingGasInternalEnergy);
+            CHECK(Mgas_in_Kernel); CHECK(Mstar_in_Kernel); CHECK(Malt_in_Kernel);
+            for(int kv = 0; kv < 3; kv++) {
+                CHECK(Jgas_in_Kernel[kv]); CHECK(Jstar_in_Kernel[kv]); CHECK(Jalt_in_Kernel[kv]);
+            }
+            #undef CHECK
+            if(mismatch) {
+                fprintf(stderr,
+                        "[mode_b ORACLE MISMATCH rank=%d caller=sink_env1 active_id=%llu] "
+                        "tree: Mgas=%g Mstar=%g Jalt=%g,%g,%g, brute: Mgas=%g Mstar=%g Jalt=%g,%g,%g "
+                        "(n_cand_tree=%d n_brute=%d)\n",
+                        ThisTask, (unsigned long long)q.id,
+                        (double)out_tree.Mgas_in_Kernel, (double)out_tree.Mstar_in_Kernel,
+                        (double)out_tree.Jalt_in_Kernel[0], (double)out_tree.Jalt_in_Kernel[1], (double)out_tree.Jalt_in_Kernel[2],
+                        (double)out_brute.Mgas_in_Kernel, (double)out_brute.Mstar_in_Kernel,
+                        (double)out_brute.Jalt_in_Kernel[0], (double)out_brute.Jalt_in_Kernel[1], (double)out_brute.Jalt_in_Kernel[2],
+                        n_cand, n_brute);
+                fflush(stderr);
+            }
+            /* Use tree result (the path under test). */
+            out = out_tree;
+            d.n_accepted = n_cand;
+            return d;
         }
-        /* Use the tree result going forward (this is the path under test). */
-        out = out_tree;
-        d.n_accepted = n_cand;   /* approximate; treat all candidates as accepted-or-filtered-by-kernel */
-        return d;
+        /* Fall through to non-oracle path on brute overflow. */
     }
 
-    /* Non-oracle path: just walk candidates and accumulate. */
+    /* Non-oracle path: drift candidates, then accumulate. */
+    mode_b_lazy_drift_candidates(candidates.data(), n_cand);
     for(int i = 0; i < n_cand; i++) {
         int j = candidates[i];
         const struct gas_cell_data *kc_j_ptr =

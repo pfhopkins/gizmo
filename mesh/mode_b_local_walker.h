@@ -65,6 +65,25 @@ int mode_b_local_brute_walk(const double pos[3],
  * walker entry point checks this and runs both paths + diff on mismatch. */
 int mode_b_oracle_enabled(void);
 
+/* Lazy-drift contract for Mode B (mirrors gpu_ngb_list_build:1542-1580).
+ *
+ * GPU NGL contract: candidate walk runs on whatever P[j].Pos state exists,
+ * THEN drift_particle(j, All.Ti_Current) is called for each j in the CSR,
+ * THEN the pair kernel reads drifted P[j]. The walk may see slightly stale
+ * positions (h-slack absorbs that); the kernel always reads fresh.
+ *
+ * Mode B must honor the same contract. Walker collects candidates first;
+ * call this helper to drift them; then run the pair kernel.
+ *
+ * Drifts each j in indices[] to current Ti via drift_particle(). Marks
+ * kernel-radius dirty for the GPU SIDX tracker so the next gpu_ngb_list_build
+ * call sees fresh compact_h. drift_particle's early-return on time1==time0
+ * dedupes naturally.
+ *
+ * NOT thread-safe with concurrent drift / tree mutation. Caller serializes.
+ */
+void mode_b_lazy_drift_candidates(const int *indices, int n);
+
 #ifdef __cplusplus
 }
 #endif
