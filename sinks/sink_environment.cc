@@ -12,6 +12,7 @@
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "sinks_gpu_decls.h"
+#include "sink_environment_mode_b.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -72,22 +73,47 @@ void sink_environment_loop(void)
         if(sink_isactive(i)) { nl_active[aa] = i; nl_radii[aa] = P[i].KernelRadius; aa++; }
     }
 
-    /* Build a fresh caller-specific ghost pool collectively on all ranks.
-       Sink kernels are symmetric in radius, not density-like one-way searches. */
-    bool sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
-        "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
-        nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
+    /* Mode B SPIKE dispatch (env-gated, 2026-05-07). When the env flag is OFF,
+     * this branch is bypassed entirely — no new collective, no behavior change.
+     * When ON, the dispatch is collective (Allreduce sum/max of num_active)
+     * and ALL ranks take the same Mode B vs legacy path.
+     *
+     * SPIKE GUARDS — both DELETE in runner extraction. The real Mode A/B
+     * dispatch threshold lives in the runner spec, not as a hard-coded constant. */
+    bool sinkenv_imported_ghosts = false;
+    bool mode_b_taken             = false;
+    if(sink_env1_mode_b_env_enabled()) {
+        const int MODE_B_SINK_ENV1_SPIKE_GUARD_SUM = 64;
+        const int MODE_B_SINK_ENV1_SPIKE_GUARD_MAX = 64;
+        int local_act = num_active;
+        int sum_act = 0, max_act = 0;
+        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        mode_b_taken = (sum_act > 0)
+                    && (sum_act <= MODE_B_SINK_ENV1_SPIKE_GUARD_SUM)
+                    && (max_act <= MODE_B_SINK_ENV1_SPIKE_GUARD_MAX);
+        if(mode_b_taken) {
+            /* SPIKE: Mode B path. NO ghost prep, NO GPU NGL, NO SIDX. */
+            sink_env1_mode_b_evaluate(P, CellP, nl_active, num_active, nl_radii, nl_outs);
+        }
+    }
+    if(!mode_b_taken) {
+        /* Existing path — byte-identical to pre-spike when env is off. */
+        sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+            "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
+            nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
 
-    ghost_write_detector_begin("sink_environment");
+        ghost_write_detector_begin("sink_environment");
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-    ghost_writeback_zero_swallowtime();
+        ghost_writeback_zero_swallowtime();
 #endif
-    sink_environment_evaluate_gpu(P, CellP, NumPart, nl_active, num_active,
-                                  nl_radii, SINK_NEIGHBOR_BITFLAG, nl_outs);
+        sink_environment_evaluate_gpu(P, CellP, NumPart, nl_active, num_active,
+                                      nl_radii, SINK_NEIGHBOR_BITFLAG, nl_outs);
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-    ghost_writeback_swallowtime();
+        ghost_writeback_swallowtime();
 #endif
-    ghost_write_detector_end();
+        ghost_write_detector_end();
+    }
 
     /* Scatter per-active-sink outputs into SinkTempInfo */
     for(int a = 0; a < num_active; a++) {

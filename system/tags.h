@@ -112,3 +112,12 @@
 #define TAG_MPI_GENERIC_COM_BUFFER_A 103
 #define TAG_MPI_GENERIC_COM_BUFFER_B 104
 
+/* Mode B tiny-N P2P transport — reserved tag block, distinct from all
+ * other GIZMO collectives/exchanges. Base is well above existing 104 so
+ * a future TAG_FOO=105 doesn't collide. */
+#define TAG_MODE_B_BASE              200
+#define TAG_MODE_B_QUERY_COUNT       (TAG_MODE_B_BASE + 1)
+#define TAG_MODE_B_QUERY_PAYLOAD     (TAG_MODE_B_BASE + 2)
+#define TAG_MODE_B_REPLY_COUNT       (TAG_MODE_B_BASE + 3)
+#define TAG_MODE_B_REPLY_PAYLOAD     (TAG_MODE_B_BASE + 4)
+

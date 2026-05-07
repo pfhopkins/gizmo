@@ -29,6 +29,16 @@ GHOST_RE = re.compile(
     r"nlocal_pre=(\d+) ghost_added=(-?\d+) ntotal_post=(\d+) "
     r"dt_ghost_import=(\S+)")
 
+MODEB_RE = re.compile(
+    r"^PHASE0_MODEB_NGL rank=(\d+) caller=(\S+) "
+    r"n_active_local=(\d+) n_query_sent=(\d+) n_query_recv=(\d+) "
+    r"n_cand_self=(\d+) n_cand_remote=(\d+) "
+    r"bytes_q_sent=(\d+) bytes_q_recv=(\d+) bytes_r_sent=(\d+) bytes_r_recv=(\d+) "
+    r"peers_sent_to=(\d+) peers_recv_from=(\d+) "
+    r"dt_pack=(\S+) dt_self_walk=(\S+) dt_query_xchg=(\S+) "
+    r"dt_remote_walk=(\S+) dt_reply_xchg=(\S+) dt_total=(\S+) "
+    r"ghost_imports=0 sidx_dec=0 gpu_ngl=0")
+
 
 def n_bin_label(n):
     for lo, hi in N_BINS:
@@ -64,6 +74,7 @@ def main():
 
     ngl_rows = []
     ghost_rows = []
+    modeb_rows = []
     with open(args.log, "r", errors="replace") as f:
         for line in f:
             m = NGL_RE.match(line)
@@ -93,11 +104,61 @@ def main():
                 if args.caller is not None and row["caller"] != args.caller:
                     continue
                 ghost_rows.append(row)
+                continue
+            m = MODEB_RE.match(line)
+            if m:
+                (rank, caller, na_local, q_sent, q_recv, c_self, c_remote,
+                 bqs, bqr, brs, brr, ps, pr,
+                 dt_pack, dt_self, dt_qx, dt_rwalk, dt_rx, dt_tot) = m.groups()
+                row = dict(rank=int(rank), caller=caller,
+                           n_active_local=int(na_local),
+                           n_query_sent=int(q_sent), n_query_recv=int(q_recv),
+                           n_cand_self=int(c_self), n_cand_remote=int(c_remote),
+                           bytes_q_sent=int(bqs), bytes_q_recv=int(bqr),
+                           bytes_r_sent=int(brs), bytes_r_recv=int(brr),
+                           peers_sent_to=int(ps), peers_recv_from=int(pr),
+                           dt_pack=float(dt_pack), dt_self_walk=float(dt_self),
+                           dt_query_xchg=float(dt_qx), dt_remote_walk=float(dt_rwalk),
+                           dt_reply_xchg=float(dt_rx), dt_total=float(dt_tot))
+                if args.rank is not None and row["rank"] != args.rank:
+                    continue
+                if args.caller is not None and row["caller"] != args.caller:
+                    continue
+                modeb_rows.append(row)
 
-    print(f"# Parsed {len(ngl_rows)} PHASE0_NGL rows, {len(ghost_rows)} PHASE0_GHOST rows")
-    if not ngl_rows and not ghost_rows:
+    print(f"# Parsed {len(ngl_rows)} PHASE0_NGL rows, {len(ghost_rows)} PHASE0_GHOST rows, {len(modeb_rows)} PHASE0_MODEB_NGL rows")
+    if not ngl_rows and not ghost_rows and not modeb_rows:
         print("# No PHASE0 lines in log. Did you set GIZMO_PHASE0_DIAG=1?")
         sys.exit(0)
+
+    # ---- Mode B (sink_env1 spike) summary ----
+    if modeb_rows:
+        print("\n## Mode B sink_env1 SPIKE — per-rank summary")
+        print(f"{'rank':>4}  {'calls':>6}  {'na_loc_med':>10} "
+              f"{'tot_med':>9} {'tot_p90':>9} {'tot_sum':>9}  "
+              f"{'cand_self_med':>13} {'cand_remote_med':>15}  "
+              f"{'q_sent_sum':>10} {'q_recv_sum':>10}")
+        by_rank = defaultdict(list)
+        for r in modeb_rows:
+            by_rank[r["rank"]].append(r)
+        for rk in sorted(by_rank.keys()):
+            rs = by_rank[rk]
+            tot = [r["dt_total"] for r in rs]
+            cs  = [r["n_cand_self"] for r in rs]
+            cr  = [r["n_cand_remote"] for r in rs]
+            qs  = sum(r["n_query_sent"] for r in rs)
+            qr  = sum(r["n_query_recv"] for r in rs)
+            na  = sorted(r["n_active_local"] for r in rs)
+            print(f"{rk:>4}  {len(rs):>6}  {na[len(na)//2]:>10}  "
+                  f"{fmt_us(median(tot))} {fmt_us(percentile(tot, 90))} {fmt_us(sum(tot))}  "
+                  f"{int(median(cs)):>13} {int(median(cr)):>15}  "
+                  f"{qs:>10} {qr:>10}")
+        # Acceptance gate
+        all_tot = [r["dt_total"] for r in modeb_rows]
+        print(f"\n## Mode B acceptance check")
+        print(f"  median total : {fmt_us(median(all_tot))} (target: ≤5ms at Nactive≤4)")
+        print(f"  p90 total    : {fmt_us(percentile(all_tot, 90))}")
+        print(f"  max total    : {fmt_us(max(all_tot))}")
 
     # ---- 1. Nactive histogram + per-bin cost breakdown ----
     print("\n## Row 1+2: Nactive histogram + per-bin cost breakdown (all callers, all ranks)")
