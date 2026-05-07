@@ -1,7 +1,11 @@
 GIZMO
 GIZMO_nograv
+GIZMO_fixed
 output/
 output_nograv/
+output_basalt/
 *.log
 *.params-usedvalues
 hse_earth_smoke_ics.hdf5
+hse_basalt_ics.hdf5
+analyze_basalt.py
