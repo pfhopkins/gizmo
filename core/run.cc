@@ -5,6 +5,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <vector>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -702,8 +703,13 @@ void find_next_sync_point_and_drift(void)
 
   /* move the new set of active/synchronized particles. Note: We do not yet call make_list_of_active_particles(), since we
    * may still need to old list in the dynamic tree update */
+  /* drift_particle modifies KernelRadius — batch-mark h-dirty for SIDX. */
+  std::vector<int> _drift_marked;
   for(n = 0, prev = -1; n < TIMEBINS; n++)
-    {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current);}}}
+    {if(TimeBinActive[n]) {for(i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {drift_particle(i, All.Ti_Current); _drift_marked.push_back(i);}}}
+  if(!_drift_marked.empty()) {
+      gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
+  }
 
   refresh_timestep_dilation_factors_for_gpu();
 

@@ -8,6 +8,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
+#include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
 
 
 /*! \file domain.c
@@ -237,6 +238,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #pragma omp parallel for schedule(dynamic, 256)
 #endif
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
+    gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     t_drift_loop = timediff(t_tmp, my_second());
 
     t_tmp = my_second();
@@ -448,6 +450,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
 #pragma omp parallel for schedule(dynamic, 256)
 #endif
     for(i = 0; i < NumPart; i++) {if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}}
+    gizmo_mark_kernel_radius_dirty_range(0, NumPart);
     t_light_drift = timediff(t_tmp2, my_second());
 
 #ifdef BOX_PERIODIC

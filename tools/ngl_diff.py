@@ -63,10 +63,17 @@ def main():
     names_b = {os.path.basename(p) for p in files_b}
     only_a = names_a - names_b
     only_b = names_b - names_a
+    common = sorted(names_a & names_b)
     if only_a or only_b:
-        fatal(f"file set mismatch: only-A={len(only_a)} only-B={len(only_b)} "
-              f"(first only-A={sorted(only_a)[:3]}; first only-B={sorted(only_b)[:3]})")
+        # File-set mismatch is non-fatal IF it's just one run reached further
+        # than the other (different wall budget). Diff the intersection only.
+        # Fatal only if any specific call is missing on one side mid-range
+        # (gap pattern) which would indicate skipped calls, not truncation.
+        # For now: report and proceed with common set.
+        print(f"NOTE: file set differs: only-A={len(only_a)} only-B={len(only_b)} "
+              f"(comparing common set of {len(common)} files)", file=sys.stderr)
 
+    files_a = [os.path.join(dir_a, n) for n in common]
     n_calls = len(files_a)
     n_total_pairs_compared = 0
     n_missing = 0

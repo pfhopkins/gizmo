@@ -11,8 +11,10 @@
 #include <cstring>
 #include <cstdint>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <iterator>
 #include <Kokkos_Core.hpp>
 
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
@@ -64,6 +66,119 @@ gpu_spatial_index_t *gpu_step_sidx_alltypes_ptr(void) { return &g_step_sidx_allt
  * DIAG_SIDX / DIAG_DENS / DIAG_GRAD / DIAG_SYMNL / GPU_WALK_* prints share
  * the same env var so production runs are silent by default. */
 extern "C" int gizmo_ngb_diag_quiet(void) { return !gizmo_verbose_diag(); }
+
+static int env_int_or_default(const char *name, int def)
+{
+    const char *e = getenv(name);
+    if(!e || !e[0]) return def;
+    return atoi(e);
+}
+
+static double ngl_periodic_pair_r2_host(const float *compact_xyzh,
+                                        const double pos_i[3], int j)
+{
+    MyDouble xtmp = 0; (void)xtmp;
+    double dx_raw = pos_i[0] - (double)compact_xyzh[j*4+0];
+    double dy_raw = pos_i[1] - (double)compact_xyzh[j*4+1];
+    double dz_raw = pos_i[2] - (double)compact_xyzh[j*4+2];
+    double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+    double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+    double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
+    return adx * adx + ady * ady + adz * adz;
+}
+
+static int ngl_pair_accepts_host(const float *compact_xyzh,
+                                 const double pos_i[3], double h_i,
+                                 int j, int search_mode, double *r2_out,
+                                 double *cut2_out)
+{
+    double h2_i = h_i * h_i;
+    double pair_search_r2;
+    if(search_mode == NGB_SEARCH_ONEWAY) {
+        pair_search_r2 = h2_i;
+    } else {
+        double h_j = (double)compact_xyzh[j*4+3];
+        double h_max = (h_i > h_j) ? h_i : h_j;
+        pair_search_r2 = h_max * h_max;
+    }
+    double r2 = ngl_periodic_pair_r2_host(compact_xyzh, pos_i, j);
+    if(r2_out) *r2_out = r2;
+    if(cut2_out) *cut2_out = pair_search_r2;
+    return (r2 < pair_search_r2);
+}
+
+static int bvh_subtree_contains_tile_host(const tile_bvh_node_t *bvh,
+                                          int node_idx, int target_tile)
+{
+    if(node_idx < 0) return 0;
+    const tile_bvh_node_t *node = &bvh[node_idx];
+    if(node->left < 0) {
+        int tile_idx = -(node->left + 1);
+        return tile_idx == target_tile;
+    }
+    return bvh_subtree_contains_tile_host(bvh, node->left, target_tile) ||
+           bvh_subtree_contains_tile_host(bvh, node->right, target_tile);
+}
+
+static void ngl_trace_tile_prune_host(const gpu_spatial_index_t *idx,
+                                      const double pos_i[3], double search_r,
+                                      int target_tile)
+{
+    if(!idx || !idx->h_bvh || !idx->h_tiles || idx->bvh_root < 0) return;
+    double search_r2 = search_r * search_r;
+    int pf[3] = {idx->periodic_flags[0], idx->periodic_flags[1], idx->periodic_flags[2]};
+    int stack[TILE_BVH_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = idx->bvh_root;
+    while(sp > 0) {
+        int node_idx = stack[--sp];
+        const tile_bvh_node_t *node = &idx->h_bvh[node_idx];
+        if(!bvh_subtree_contains_tile_host(idx->h_bvh, node_idx, target_tile)) continue;
+        int overlaps = bbox_overlaps_sphere_gpu(node->lo, node->hi, pos_i,
+                                                search_r, search_r2,
+                                                pf, idx->box_sizes);
+        if(!overlaps) {
+            fprintf(stderr,
+                    "[NGL_ORACLE_TRACE rank=%d] target_tile=%d pruned_at_node=%d "
+                    "node_lo=(%.9g,%.9g,%.9g) node_hi=(%.9g,%.9g,%.9g) "
+                    "pos=(%.9g,%.9g,%.9g) search_r=%.9g\n",
+                    ThisTask, target_tile, node_idx,
+                    node->lo[0], node->lo[1], node->lo[2],
+                    node->hi[0], node->hi[1], node->hi[2],
+                    pos_i[0], pos_i[1], pos_i[2], search_r);
+            return;
+        }
+        if(node->left < 0) {
+            fprintf(stderr,
+                    "[NGL_ORACLE_TRACE rank=%d] target_tile=%d reached_leaf node=%d\n",
+                    ThisTask, target_tile, node_idx);
+            return;
+        }
+        if(sp + 2 > TILE_BVH_STACK_SIZE) {
+            fprintf(stderr,
+                    "[NGL_ORACLE_TRACE rank=%d] target_tile=%d stack_overflow_before_children node=%d\n",
+                    ThisTask, target_tile, node_idx);
+            return;
+        }
+        stack[sp++] = node->left;
+        stack[sp++] = node->right;
+    }
+    fprintf(stderr,
+            "[NGL_ORACLE_TRACE rank=%d] target_tile=%d not_reached_without_prune\n",
+            ThisTask, target_tile);
+}
+
+static int ngl_find_tile_for_particle_host(const gpu_spatial_index_t *idx, int j)
+{
+    if(!idx || !idx->h_tiles || !idx->h_pool) return -1;
+    for(int t = 0; t < idx->ntiles; t++) {
+        const sfc_tile_t *tile = &idx->h_tiles[t];
+        for(int s = 0; s < tile->count; s++) {
+            if(idx->h_pool[tile->first + s] == j) return t;
+        }
+    }
+    return -1;
+}
 
 /* Dirty-index tracking for compact_xyzh.h field.
  *
@@ -732,6 +847,22 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * enables persistent caching across calls — caller controls invalidation). */
     gpu_spatial_index_t local_idx = {NULL, NULL, NULL, 0, 0, {0}, {0}, {0}, NULL, 0, 0};
     gpu_spatial_index_t *idx;
+    /* Mechanism-isolation toggle: force a fresh SFC tile/BVH/compact build before
+     * every NGL call. This is intentionally stronger than
+     * GIZMO_SIDX_FORCE_H_ALLDIRTY: it refreshes positions, tile bboxes, BVH,
+     * pool, and compact_xyzh from scratch. */
+    static int g_force_full_rebuild_inited = 0;
+    static int g_force_full_rebuild = 0;
+    if(!g_force_full_rebuild_inited) {
+        const char *e = getenv("GIZMO_SIDX_FORCE_FULL_REBUILD");
+        g_force_full_rebuild = (e && e[0] == '1') ? 1 : 0;
+        g_force_full_rebuild_inited = 1;
+    }
+    if(g_force_full_rebuild && cached_idx && cached_idx->valid) {
+        HDBG("sidx_force_full_rebuild");
+        gpu_spatial_index_free(cached_idx);
+    }
+
     /* Invalidate cached SIDX if num_total changed (ghost exchange redo, particle creation, etc.).
      * The compact_xyzh and pool arrays were sized for the old count; accessing beyond them is UB. */
     if(cached_idx && cached_idx->valid && cached_idx->num_total != num_total) {
@@ -785,6 +916,21 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     if(cached_idx && cached_idx->valid && handle >= 0) {
         if(gpu_dirty_tracker_is_all_dirty(handle)) { do_refresh = 1; refresh_all = 1; }
         else if(gpu_dirty_tracker_popcount(handle) > 0) { do_refresh = 1; refresh_all = 0; }
+    }
+    /* Mechanism-isolation toggle (codex round-12 plan): force every cached NGL
+     * build to do a full-pool h refresh, regardless of tracker state. If this
+     * makes B-vs-B -np 2 deterministic, the divergence is in h-mark tracking
+     * (missed marks or stale bitset). If divergence persists, the issue is
+     * elsewhere (positions, ghost state, BVH, etc.). */
+    static int g_force_h_alldirty_inited = 0;
+    static int g_force_h_alldirty = 0;
+    if(!g_force_h_alldirty_inited) {
+        const char *e = getenv("GIZMO_SIDX_FORCE_H_ALLDIRTY");
+        g_force_h_alldirty = (e && e[0] == '1') ? 1 : 0;
+        g_force_h_alldirty_inited = 1;
+    }
+    if(g_force_h_alldirty && cached_idx && cached_idx->valid) {
+        do_refresh = 1; refresh_all = 1;
     }
     if(do_refresh) {
         HDBG(refresh_all ? "compact_h_refresh_all_start" : "compact_h_refresh_idx_start");
@@ -1186,6 +1332,129 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
     double t_nl3 = my_second(); /* DIAG: after compact pass */
 
+    /* Same-run oracle: compare the GPU BVH walker's row against a brute-force
+     * pass over idx->h_pool using the exact compact_xyzh/search state that the
+     * walker used for THIS call. This separates "run A and run B evolved
+     * differently" from "the walker missed a valid same-state candidate".
+     *
+     * Example:
+     *   GIZMO_NGL_ORACLE_CALL=19 GIZMO_NGL_ORACLE_RANK=0 \
+     *   GIZMO_NGL_ORACLE_ACTIVE=336590
+     *
+     * Optional GIZMO_NGL_ORACLE_ACTIVE_POS selects by active-list position
+     * instead. If neither selector is set, all active rows in the target call
+     * are checked, which can be expensive. */
+    {
+        static int oracle_call_seq = 0;
+        int my_oracle_seq = oracle_call_seq++;
+        static int oracle_inited = 0;
+        static int oracle_call = -1, oracle_rank = -1, oracle_active = -1, oracle_active_pos = -1;
+        if(!oracle_inited) {
+            oracle_call = env_int_or_default("GIZMO_NGL_ORACLE_CALL", -1);
+            oracle_rank = env_int_or_default("GIZMO_NGL_ORACLE_RANK", -1);
+            oracle_active = env_int_or_default("GIZMO_NGL_ORACLE_ACTIVE", -1);
+            oracle_active_pos = env_int_or_default("GIZMO_NGL_ORACLE_ACTIVE_POS", -1);
+            oracle_inited = 1;
+        }
+        if(oracle_call >= 0 && my_oracle_seq == oracle_call &&
+           (oracle_rank < 0 || oracle_rank == ThisTask) && idx && idx->h_pool && idx->num_pool > 0) {
+            fprintf(stderr,
+                    "[NGL_ORACLE rank=%d call=%d caller=%s] start na=%d ntotal=%d pool=%d mode=%d tbm=0x%x total_pairs=%d active=%d active_pos=%d cached=%d\n",
+                    ThisTask, my_oracle_seq, caller_label ? caller_label : "?",
+                    num_active, num_total, idx->num_pool, search_mode, type_bitmask,
+                    gnl->total_pairs, oracle_active, oracle_active_pos,
+                    (cached_idx && cached_idx->valid) ? 1 : 0);
+            std::vector<float> compact_host((size_t)num_total * 4);
+            {
+                using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
+                Kokkos::View<float*, Kokkos::HostSpace, UV> hv(compact_host.data(), (size_t)num_total * 4);
+                Kokkos::View<float*, GIZMO_KOKKOS_DEVICE_SPACE, UV> dv(idx->d_compact_xyzh, (size_t)num_total * 4);
+                Kokkos::deep_copy(hv, dv);
+            }
+            std::vector<int> walker_host;
+            if(gnl->total_pairs > 0) {
+                walker_host.resize(gnl->total_pairs);
+                gpu_ngb_copy_neighbors_to_host(gnl, walker_host.data());
+            }
+            int checked = 0, bad_rows = 0;
+            for(int aa = 0; aa < num_active; aa++) {
+                int i = active_indices_host[aa];
+                if(oracle_active >= 0 && i != oracle_active) continue;
+                if(oracle_active_pos >= 0 && aa != oracle_active_pos) continue;
+                checked++;
+                double h_i = ((search_radii_host) ? search_radii_host[aa] : (double)compact_host[i*4+3]) * search_radius_factor;
+                double pos_i[3];
+                if(source_positions_host) {
+                    pos_i[0] = source_positions_host[aa*3+0];
+                    pos_i[1] = source_positions_host[aa*3+1];
+                    pos_i[2] = source_positions_host[aa*3+2];
+                } else {
+                    pos_i[0] = (double)compact_host[i*4+0];
+                    pos_i[1] = (double)compact_host[i*4+1];
+                    pos_i[2] = (double)compact_host[i*4+2];
+                }
+                std::vector<int> brute;
+                brute.reserve(256);
+                for(int pp = 0; pp < idx->num_pool; pp++) {
+                    int j = idx->h_pool[pp];
+                    if(j < 0 || j >= num_total) continue;
+                    if(ngl_pair_accepts_host(compact_host.data(), pos_i, h_i, j, search_mode, NULL, NULL)) {
+                        brute.push_back(j);
+                    }
+                }
+                std::sort(brute.begin(), brute.end());
+                int beg = gnl->offsets[aa], end = gnl->offsets[aa + 1];
+                std::vector<int> walker;
+                if(end > beg) {
+                    walker.assign(walker_host.begin() + beg, walker_host.begin() + end);
+                    std::sort(walker.begin(), walker.end());
+                }
+                std::vector<int> missing, extra;
+                std::set_difference(brute.begin(), brute.end(), walker.begin(), walker.end(),
+                                    std::back_inserter(missing));
+                std::set_difference(walker.begin(), walker.end(), brute.begin(), brute.end(),
+                                    std::back_inserter(extra));
+                if(!missing.empty() || !extra.empty()) {
+                    bad_rows++;
+                    fprintf(stderr,
+                            "[NGL_ORACLE rank=%d call=%d caller=%s] ROW_MISMATCH aa=%d i=%d brute=%zu walker=%zu missing=%zu extra=%zu h_i=%.9g pos=(%.9g,%.9g,%.9g)\n",
+                            ThisTask, my_oracle_seq, caller_label ? caller_label : "?",
+                            aa, i, brute.size(), walker.size(), missing.size(), extra.size(),
+                            h_i, pos_i[0], pos_i[1], pos_i[2]);
+                    int nprint_m = (missing.size() < 8) ? (int)missing.size() : 8;
+                    for(int mm = 0; mm < nprint_m; mm++) {
+                        int j = missing[mm];
+                        double r2 = 0, cut2 = 0;
+                        (void)ngl_pair_accepts_host(compact_host.data(), pos_i, h_i, j, search_mode, &r2, &cut2);
+                        int tile = ngl_find_tile_for_particle_host(idx, j);
+                        fprintf(stderr,
+                                "[NGL_ORACLE rank=%d] missing j=%d tile=%d r=%.9g cutoff=%.9g margin=%.9g compact_j=(%.9g,%.9g,%.9g,%.9g)\n",
+                                ThisTask, j, tile, sqrt(r2), sqrt(cut2), (cut2 > 0 ? (r2 - cut2) / cut2 : 0.0),
+                                (double)compact_host[j*4+0], (double)compact_host[j*4+1],
+                                (double)compact_host[j*4+2], (double)compact_host[j*4+3]);
+                        if(tile >= 0) ngl_trace_tile_prune_host(idx, pos_i, sqrt(cut2), tile);
+                    }
+                    int nprint_e = (extra.size() < 8) ? (int)extra.size() : 8;
+                    for(int ee = 0; ee < nprint_e; ee++) {
+                        int j = extra[ee];
+                        double r2 = 0, cut2 = 0;
+                        (void)ngl_pair_accepts_host(compact_host.data(), pos_i, h_i, j, search_mode, &r2, &cut2);
+                        int tile = ngl_find_tile_for_particle_host(idx, j);
+                        fprintf(stderr,
+                                "[NGL_ORACLE rank=%d] extra j=%d tile=%d r=%.9g cutoff=%.9g margin=%.9g compact_j=(%.9g,%.9g,%.9g,%.9g)\n",
+                                ThisTask, j, tile, sqrt(r2), sqrt(cut2), (cut2 > 0 ? (r2 - cut2) / cut2 : 0.0),
+                                (double)compact_host[j*4+0], (double)compact_host[j*4+1],
+                                (double)compact_host[j*4+2], (double)compact_host[j*4+3]);
+                    }
+                }
+            }
+            fprintf(stderr,
+                    "[NGL_ORACLE rank=%d call=%d caller=%s] done checked=%d bad_rows=%d\n",
+                    ThisTask, my_oracle_seq, caller_label ? caller_label : "?", checked, bad_rows);
+            fflush(stderr);
+        }
+    }
+
     /* Free temporaries */
     double t_free0 = my_second(); /* DIAG */
     HDBG("free_start");
@@ -1275,22 +1544,32 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
     /* Strict A/B dump: env-gated. Writes per-call binary file with sorted
      * neighbor rows so a diff tool can verify pair-set equivalence across
-     * code revisions. Captures GPU-built neighbor set BEFORE lazy drift
-     * mutates anything (lazy drift is read-only on gnl above this point).
-     * File path: $GIZMO_NGL_DUMP_DIR/ngl_rank<R>_call<N>.bin */
+     * code revisions. The neighbor rows are the GPU-built set from the walk
+     * above, but this dump happens after lazy drift. Therefore DETAIL mode's
+     * P[] positions/h can reflect lazy-drifted state; use GIZMO_NGL_ORACLE_*
+     * for exact same-state walker-vs-bruteforce forensics.
+     * File path: $GIZMO_NGL_DUMP_DIR/ngl_rank<R>_call<N>.bin
+     *
+     * GIZMO_NGL_DUMP_DETAIL=1 additionally appends per-active and per-pool-
+     * member positions/h actually used by the walker, so a forensic can
+     * compute r²/cutoff/margin for any pair post-hoc.  Cost is large
+     * (~80 bytes per active + 32 bytes per neighbor); only enable for
+     * targeted diagnostic runs. */
     {
         const char *dump_dir = getenv("GIZMO_NGL_DUMP_DIR");
         if(dump_dir && dump_dir[0] && gnl->offsets && (gnl->total_pairs == 0 || gnl->neighbors)) {
             static int call_seq = 0;
             int my_seq = call_seq++;
+            const char *dump_detail_env = getenv("GIZMO_NGL_DUMP_DETAIL");
+            int dump_detail = (dump_detail_env && dump_detail_env[0] == '1') ? 1 : 0;
             char path[512];
             snprintf(path, sizeof(path), "%s/ngl_rank%d_call%05d.bin",
                      dump_dir, ThisTask, my_seq);
             FILE *f = fopen(path, "wb");
             if(f) {
-                /* Header: magic + rank + call_seq + caller_label + num_active +
-                 * num_total + total_pairs */
-                const char magic[8] = {'N','G','L','D','M','P','v','1'};
+                /* Magic v1=basic, v2=basic+detail. */
+                const char magic[8] = {'N','G','L','D','M','P', dump_detail ? 'v' : 'v',
+                                       dump_detail ? '2' : '1'};
                 fwrite(magic, 8, 1, f);
                 int32_t r32 = (int32_t)ThisTask;
                 int32_t s32 = (int32_t)my_seq;
@@ -1310,16 +1589,70 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 /* Offsets [num_active+1]. */
                 fwrite(gnl->offsets, sizeof(int), num_active + 1, f);
                 /* Neighbors: copy device→host once, sort each row, write. */
+                std::vector<int> ngb_host;
                 if(gnl->total_pairs > 0) {
-                    std::vector<int> ngb_host(gnl->total_pairs);
+                    ngb_host.resize(gnl->total_pairs);
                     gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
-                    /* Sort each row to make the dump order-invariant for diff. */
                     for(int a = 0; a < num_active; a++) {
                         int beg = gnl->offsets[a];
                         int end = gnl->offsets[a + 1];
                         if(end > beg) std::sort(ngb_host.begin() + beg, ngb_host.begin() + end);
                     }
                     fwrite(ngb_host.data(), sizeof(int), gnl->total_pairs, f);
+                }
+                if(dump_detail) {
+                    /* search_mode (int32), search_radius_factor (double),
+                     * h_inflate (double), periodic_flags[3] (int32), box_sizes[3] (double). */
+                    int32_t sm32 = (int32_t)search_mode;
+                    fwrite(&sm32, sizeof(int32_t), 1, f);
+                    double srf = search_radius_factor, hinf = (double)(1.0 + SIDX_H_SLACK);
+                    fwrite(&srf, sizeof(double), 1, f);
+                    fwrite(&hinf, sizeof(double), 1, f);
+                    int32_t pflags[3] = { (int32_t)gnl->periodic_flags[0],
+                                          (int32_t)gnl->periodic_flags[1],
+                                          (int32_t)gnl->periodic_flags[2] };
+                    fwrite(pflags, sizeof(int32_t), 3, f);
+                    fwrite(gnl->box_sizes, sizeof(double), 3, f);
+                    /* Per-active: 3 doubles (pos) + 1 double (h_query) + 1 double (h_p_kernel). */
+                    for(int a = 0; a < num_active; a++) {
+                        int i = active_indices_host[a];
+                        double xyz[3] = { (double)P_shared[i].Pos[0], (double)P_shared[i].Pos[1], (double)P_shared[i].Pos[2] };
+                        fwrite(xyz, sizeof(double), 3, f);
+                        double h_q = (search_radii_host && search_radii_host[a] > 0)
+                                     ? search_radii_host[a]
+                                     : (double)P_shared[i].KernelRadius;
+                        fwrite(&h_q, sizeof(double), 1, f);
+                        double hk = (double)P_shared[i].KernelRadius;
+                        fwrite(&hk, sizeof(double), 1, f);
+                    }
+                    /* Per-neighbor (in CSR order, matching ngb_host): 3 doubles (P[j].Pos)
+                     * + 1 double (P[j].KernelRadius). compact_xyzh[j*4+3] is what the
+                     * walker actually used at acceptance; we capture that too. */
+                    if(gnl->total_pairs > 0) {
+                        /* Stage compact_xyzh from device to host once. */
+                        std::vector<float> compact_host(num_total * 4);
+                        Kokkos::View<float*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                            hv(compact_host.data(), num_total * 4);
+                        Kokkos::View<float*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                            dv(idx->d_compact_xyzh, num_total * 4);
+                        Kokkos::deep_copy(hv, dv);
+                        for(int p = 0; p < (int)gnl->total_pairs; p++) {
+                            int j = ngb_host[p];
+                            double pos[3], hk; float ch;
+                            if(j >= 0 && j < num_total) {
+                                pos[0] = (double)P_shared[j].Pos[0];
+                                pos[1] = (double)P_shared[j].Pos[1];
+                                pos[2] = (double)P_shared[j].Pos[2];
+                                hk = (double)P_shared[j].KernelRadius;
+                                ch = compact_host[j * 4 + 3];
+                            } else {
+                                pos[0] = pos[1] = pos[2] = 0.0; hk = 0.0; ch = 0.0f;
+                            }
+                            fwrite(pos, sizeof(double), 3, f);
+                            fwrite(&hk, sizeof(double), 1, f);
+                            fwrite(&ch, sizeof(float), 1, f);
+                        }
+                    }
                 }
                 fclose(f);
             }
@@ -1470,4 +1803,3 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
 GPU_ALL_SYNC_FUNC(ngb)
-

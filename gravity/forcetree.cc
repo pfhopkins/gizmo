@@ -8,6 +8,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "let_data.h"   /* Phase 9.1b: LET wire format + per-rank payload structs (compile-only here; consumers will land in 9.1c-e) */
+#include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
 #endif
@@ -1749,7 +1750,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #pragma omp critical(_particledriftforce_)
 #endif
                     {
-                        if(P[no].Ti_current != ti_Current) {drift_particle(no, ti_Current);}
+                        if(P[no].Ti_current != ti_Current) {
+                            drift_particle(no, ti_Current);
+                            gizmo_mark_kernel_radius_dirty_indices(&no, 1);
+                        }
                     }
                 }
                 dr = P[no].Pos - pos;
@@ -2795,7 +2799,10 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
 #pragma omp critical(_particledriftewald_)
 #endif
                     {
-                        if(P[no].Ti_current != All.Ti_Current) {drift_particle(no, All.Ti_Current);}
+                        if(P[no].Ti_current != All.Ti_Current) {
+                            drift_particle(no, All.Ti_Current);
+                            gizmo_mark_kernel_radius_dirty_indices(&no, 1);
+                        }
                     }
                 }
 
@@ -3137,7 +3144,18 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
             {
                 /* the index of the node is the index of the particle */
                 /* observe the sign  */
-                if(P[no].Ti_current != All.Ti_Current) {drift_particle(no, All.Ti_Current);}
+                if(P[no].Ti_current != All.Ti_Current) {
+                    /* Wrap drift+mark in critical: this branch had no critical block before. */
+#ifdef _OPENMP
+#pragma omp critical(_particledriftpotential_)
+#endif
+                    {
+                        if(P[no].Ti_current != All.Ti_Current) {
+                            drift_particle(no, All.Ti_Current);
+                            gizmo_mark_kernel_radius_dirty_indices(&no, 1);
+                        }
+                    }
+                }
                 dx = P[no].Pos[0] - pos_x;
                 dy = P[no].Pos[1] - pos_y;
                 dz = P[no].Pos[2] - pos_z;
