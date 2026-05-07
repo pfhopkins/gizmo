@@ -15,7 +15,7 @@
 | 2 | tiny-N phase costs | **`sidx_id=alltypes` cache: 102 calls, 57.3s sidx_dec; `step` cache: 1111 calls, 362μs total. >150,000× per-call asymmetry.** | sidx_id breakdown |
 | 3 | ghost/SIDX touched? (must be 0 under Mode B) | baseline: ghost/NGL ratio = 0.514; 34 tiny-N calls with sidx_dec >100us | PHASE0 R1T72 |
 | 4 | gravity tree reusable? | **YES, with three constraints** | codex 2026-05-07 |
-| 5 | rank-scaling tiny-N | __TBD (697734 R2T36 queued; R2T72-2node next)__ | PHASE0 sweep |
+| 5 | rank-scaling tiny-N | **3.7× anti-scaling R1T72 → R2T36; tiny-N (N=1) is 420× slower; step-cache sidx_dec 650,000× slower** | PHASE0 R2T36 (697734) |
 | 6 | Mode B first target | **`sink_env1` (single-Nbin canary, 60% of NGL cost). Density tiny-N is broader-leverage second target.** | per-caller table |
 
 ---
@@ -92,11 +92,26 @@ Use the existing host-resident gravity tree (`Nodes[]`/`Nextnode[]`/`sibling`) f
 
 **Fallback** (minimal per-domain persistent local host BVH): only if gravity-tree freshness or LET entanglement becomes a real blocker — not a precaution.
 
-## Row 5 — Rank-scaling tiny-N
+## Row 5 — Rank-scaling tiny-N (R1T72 vs R2T36, jobs 697718 / 697734)
 
-[populate from PHASE0_NGL across np=2 (697487) / np=4 (697488) / np=8 (697489) at matched Nactive bins]
+Same fire_m11i problem, same code, same wall-time budget. R2T36 is dramatically slower:
 
-Looking for: super-linear cost growth with rank count at tiny-N, which would indicate Mode B's peer protocol must avoid collectives Day 1 (codex spec).
+| metric | R1T72 (697718) | R2T36 (697734) | ratio |
+|---|---|---|---|
+| Total NGL cost | ~103s | ~382s | **3.7× worse** |
+| N=1 median total | 1.29ms | 542ms | **420× worse** |
+| N=1 p90 total | 1.62ms | 1.287s | **794× worse** |
+| step-cache sidx_dec sum | 362μs | 237.9s | **650,000× worse** |
+| ghost/NGL ratio | 0.514 | 1.07 | 2× more ghost per NGL |
+| symlist tot_sum | 2.8s | 153.0s | 55× worse |
+| density tot_sum | 24.0s | 144.6s | 6× worse |
+| sink_env1 tot_sum | 62.3s | 41.1s | (per-call similar; fewer calls reached) |
+
+The anti-scaling source is unambiguous: **the global-state caches** (step + alltypes SIDX) **and ghost exchange** explode under multi-rank cross-rank synchronization. The step cache that was nearly free at single-rank costs ~443ms/call across 537 calls at R2T36.
+
+**Implication for Mode B Day-1 protocol design**: peer protocol MUST avoid collectives. Codex's spec already mandates this; the data confirms it's not theoretical caution. Any collective-bearing path inherits the 100s-of-seconds anti-scaling tax.
+
+R2T72-2node (697745, queued) will tell us whether the explosion is per-rank-shared-GPU or scales with node count.
 
 ## Row 6 — Mode B first target (revised after R1T72 data)
 
