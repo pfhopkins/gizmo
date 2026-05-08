@@ -226,6 +226,14 @@ struct SinkEnv1Spec {
     static void apply_active_writeback(const neighbor_loop_args& args,
                                         int active_slot, int i,
                                         const AccumData& out);
+
+    /* Per-field merge of a peer-rank reply (src) into a local accumulator
+     * (dst). Used by run_mode_b_remote at the cross-rank boundary; per-field
+     * reduction op matches the pair_kernel writes (sum for additive fields,
+     * MAX for DF_mmax_particles). Lifted byte-exact from the legacy
+     * sinks/sink_environment_mode_b.cc:446-486 merge_into helper, including
+     * all #ifdef-gated optional fields. */
+    static void merge_accum(AccumData& dst, const AccumData& src);
 };
 
 #endif /* SINK_PARTICLES */

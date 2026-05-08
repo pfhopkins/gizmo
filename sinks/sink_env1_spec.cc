@@ -151,4 +151,55 @@ double SinkEnv1Spec::compare_accum(const AccumData& a, const AccumData& b)
     return max_rel;
 }
 
+/* ----------------------------------------------------------------------------
+ * merge_accum
+ *
+ * Per-field merge of a peer's contribution (src) into a local accumulator
+ * (dst). Per-field op MUST match the pair_kernel writes (sum for additive
+ * fields, MAX for DF_mmax_particles). Lifted byte-exact from the legacy
+ * sinks/sink_environment_mode_b.cc::merge_into (lines 446-486) including
+ * all #ifdef-gated optional fields. Used by run_mode_b_remote at the
+ * cross-rank boundary.
+ * --------------------------------------------------------------------------*/
+void SinkEnv1Spec::merge_accum(AccumData& dst, const AccumData& src)
+{
+    dst.Sink_SurroudingGasInternalEnergy += src.Sink_SurroudingGasInternalEnergy;
+    dst.Mgas_in_Kernel  += src.Mgas_in_Kernel;
+    dst.Mstar_in_Kernel += src.Mstar_in_Kernel;
+    dst.Malt_in_Kernel  += src.Malt_in_Kernel;
+    for(int kv = 0; kv < 3; kv++) {
+        dst.Jgas_in_Kernel[kv]  += src.Jgas_in_Kernel[kv];
+        dst.Jstar_in_Kernel[kv] += src.Jstar_in_Kernel[kv];
+        dst.Jalt_in_Kernel[kv]  += src.Jalt_in_Kernel[kv];
+    }
+#ifdef SINK_REPOSITION_ON_POTMIN
+    dst.DF_rms_vel += src.DF_rms_vel;
+    for(int kv = 0; kv < 3; kv++) dst.DF_mean_vel[kv] += src.DF_mean_vel[kv];
+    if(src.DF_mmax_particles > dst.DF_mmax_particles) dst.DF_mmax_particles = src.DF_mmax_particles;
+#endif
+#if defined(SINK_OUTPUT_MOREINFO)
+    dst.Sfr_in_Kernel += src.Sfr_in_Kernel;
+#endif
+#if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
+    for(int kv = 0; kv < 3; kv++) dst.Sink_SurroundingGasVel[kv] += src.Sink_SurroundingGasVel[kv];
+#endif
+#ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
+    for(int kv = 0; kv < 3; kv++) dst.Sink_SurroundingGasCOM[kv] += src.Sink_SurroundingGasCOM[kv];
+#endif
+#if (SINK_GRAVACCRETION == 8)
+    dst.hubber_mdot_bondi_limiter   += src.hubber_mdot_bondi_limiter;
+    dst.hubber_mdot_vr_estimator    += src.hubber_mdot_vr_estimator;
+    dst.hubber_mdot_disk_estimator  += src.hubber_mdot_disk_estimator;
+#endif
+#if defined(SINK_GRAVCAPTURE_GAS)
+    dst.mass_to_swallow_edd += src.mass_to_swallow_edd;
+#endif
+#if defined(SINK_RETURN_ANGMOM_TO_GAS)
+    for(int kv = 0; kv < 3; kv++) dst.angmom_prepass_sum_for_passback[kv] += src.angmom_prepass_sum_for_passback[kv];
+#endif
+#if defined(SINK_RETURN_BFLUX)
+    dst.kernel_norm_topass_in_swallowloop += src.kernel_norm_topass_in_swallowloop;
+#endif
+}
+
 #endif /* SINK_PARTICLES */

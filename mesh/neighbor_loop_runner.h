@@ -380,6 +380,16 @@ enum class DispatchPath : int {
  *                                        int active_slot, int i,
  *                                        const AccumData& out);
  *
+ *     // (Host) Merge a partial AccumData (e.g. from a peer rank's local-pool
+ *     // contribution to the same active) into a destination AccumData. Used
+ *     // by run_mode_b_remote to combine self-rank self-pair accums with
+ *     // per-peer reply accums. Per-field reduction op is spec-determined
+ *     // (e.g. sum for additive fields, MAX for DF_mmax_particles). Within a
+ *     // single rank's evaluator, accumulation is via repeated pair_kernel
+ *     // calls (which already encode the right per-field op) — merge_accum is
+ *     // ONLY used at the cross-rank boundary.
+ *     static void merge_accum(AccumData& dst, const AccumData& src);
+ *
  *     // ---- Conditional hooks ----
  *
  *     // For SymmetricPairScatter / NeighborScatter / GhostWritebackRequired:
@@ -444,14 +454,72 @@ void run_neighbor_loop(const neighbor_loop_args& args);
 
 /* ============================================================================
  * Dispatch threshold + force-mode env gates
+ *
+ * Hierarchy (per-loop > global > spec constexpr default), resolved at runtime:
+ *
+ *   Per-loop:  GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_SUM / _MAX
+ *              e.g. GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM=128
+ *   Global:    GIZMO_NLR_MODEB_THRESHOLD_SUM / _MAX
+ *   Default:   Spec::modeb_threshold_sum / _max if present, else 64 / 64
+ *
+ * The runner queries `gizmo_nlr_modeb_threshold_{sum,max}_for(loop_name)` which
+ * walks per-loop → global → caller-supplied default in that order.
+ *
+ * Legacy precedence — see gizmo_nlr_legacy_modeb_owns_for(): when the legacy
+ * SPIKE env (e.g. GIZMO_MODE_B_SINK_ENV1=1) owns Mode B selection for a loop,
+ * the runner's threshold dispatch is disabled for that loop (auto-falls to
+ * Mode A). GIZMO_NLR_FORCE_MODEB=1 overrides legacy precedence (testers' knob).
  * ========================================================================== */
 
 int  gizmo_nlr_default_modeb_threshold_sum(void);
 int  gizmo_nlr_default_modeb_threshold_max(void);
+int  gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default);
+int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
 bool gizmo_nlr_force_mode_b_global(void);
 bool gizmo_nlr_force_mode_a_global(void);
+bool gizmo_nlr_dispatch_trace_enabled(void);
 
 bool gizmo_nlr_oracle_enabled_global(void);
 bool gizmo_nlr_oracle_enabled_for(const char *loop_name);
+
+/* Legacy SPIKE precedence: returns true if legacy env for the named loop is
+ * set to "1", in which case the legacy SPIKE branch in the caller (e.g.
+ * sink_environment.cc) owns Mode B selection and the runner must NOT auto-
+ * select Mode B via threshold. Force-MODEB env overrides this. */
+bool gizmo_nlr_legacy_modeb_owns_for(const char *loop_name);
+
+/* ============================================================================
+ * NlrQueryEnvelope — runner-owned transport wrapper for cross-rank queries.
+ *
+ * Wraps Spec::ActiveData with origin metadata so reply merge does NOT depend
+ * on transport ordering (Option C from the 3c.3 design lock-in). Codex
+ * invariant: "carrying origin_slot prevents a nasty future silent bug" even
+ * though current transport (mode_b_p2p_transport) preserves order — the
+ * runner's contract is robust to any future transport substitution.
+ *
+ * origin_rank kept for diagnostics + sanity asserts (reply receiver can
+ * verify envelope.origin_rank == ThisTask).
+ *
+ * Trivially-copyable iff Spec::ActiveData is — already enforced at the top
+ * of run_neighbor_loop<Spec>.
+ * ========================================================================== */
+template <typename ActiveData>
+struct NlrQueryEnvelope {
+    int        origin_slot;   /* active_slot on the origin rank (== aa) */
+    int        origin_rank;   /* ThisTask of origin rank; for diagnostics */
+    ActiveData active;
+};
+
+/* Symmetric reply envelope: peer copies {origin_slot, origin_rank} back from
+ * the received query envelope into its reply, so the active rank can merge
+ * by slot WITHOUT relying on transport ordering. Receive-side asserts
+ * origin_rank == ThisTask as a sanity check. Trivially-copyable iff
+ * AccumData is — already enforced at the top of run_neighbor_loop<Spec>. */
+template <typename AccumData>
+struct NlrReplyEnvelope {
+    int       origin_slot;
+    int       origin_rank;
+    AccumData accum;
+};
 
 #endif /* GIZMO_NEIGHBOR_LOOP_RUNNER_H */
