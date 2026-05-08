@@ -1,6 +1,15 @@
 # HANDOFF — Mode B Phase 0 decision table (2026-05-07)
 
-**Status: DRAFT — rows 1/2/3/5/6 fill in when Vista 697487/8/9 land. Row 4 final.**
+**Status: Phase 0 COMPLETE; Mode B SPIKE built; XVAL Vista jobs 698444/698445 PD. See `~/.claude/projects/-Users-phopkins-Documents-work-code-gizmo-gizmo-vscode-gpu-bench-new/memory/STATE_2026-05-07_session9_spike_in_progress.md` for current state.**
+
+## Current snapshot (end-of-session 9)
+
+- Phase 0 decision table fully populated below (rows 1-6).
+- Mode B SPIKE for sink_env1 BUILT, env-gated (`GIZMO_MODE_B_SINK_ENV1=1`).
+- Two correctness fixes applied during XVAL: lazy-drift contract (commit `b601b4d1`) + type-aware SYMMETRIC predicate (commit `580fd8d0`).
+- Spike commits in order: `eec04424` → `1b8ba45a` → `3b8d6480` → `3efd0ecb` → `b601b4d1` → `580fd8d0`.
+- Vista jobs `698444` (env-off) + `698445` (env-on) PD on gh-dev measuring whether nl_outs Jalt diff collapsed (was 13% pre-fix).
+- Spike is correctness-internal-consistent (zero `[mode_b ORACLE MISMATCH]`), but **slow** (6s/call vs 1.85s legacy) due to brute-force SYMMETRIC walking. Step 4 (per-type hmax in extNODE) is the next code change.
 
 ## Pin
 
