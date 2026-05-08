@@ -69,6 +69,44 @@ static int phase0_diag_enabled(void)
  * dump in sink_env1_evaluate_one_query_local knows which call it's in. */
 static long long g_mode_b_eval_call_id = 0;
 
+/* MODEB_XVAL_NB diagnostic helper. Emits the per-query header + per-j detail
+ * lines AFTER lazy-drift so Pos/Vel reflect the same Ti_Current snapshot the
+ * pair kernel uses. Replay-grade format: includes i_vel, Pos[j], Vel[j] so
+ * J = m * (Pos[j]-i_pos) x (Vel[j]-i_vel) can be reconstructed offline.
+ * First-call only; gated by GIZMO_MODE_B_XVAL_NB_DUMP=1. */
+static void mode_b_xval_nb_dump(const struct particle_data *P,
+                                const sink_env1_query_t& q,
+                                const int *cand, int n_cand)
+{
+    static const char *xv_nb_env = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
+    static const int xv_nb_on = (xv_nb_env && xv_nb_env[0] == '1') ? 1 : 0;
+    if(!xv_nb_on || g_mode_b_eval_call_id != 1 || n_cand <= 0) return;
+    printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=mode_b "
+           "h_search=%.17g i_pos=%.17g,%.17g,%.17g "
+           "i_vel=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
+           ThisTask, q.origin_local_idx, q.h_search,
+           q.pos[0], q.pos[1], q.pos[2],
+           q.vel[0], q.vel[1], q.vel[2],
+           (unsigned long long)q.id, n_cand);
+    for(int i = 0; i < n_cand; i++) {
+        int j = cand[i];
+        double dx = (double)P[j].Pos[0] - q.pos[0];
+        double dy = (double)P[j].Pos[1] - q.pos[1];
+        double dz = (double)P[j].Pos[2] - q.pos[2];
+        NEAREST_XYZ(dx, dy, dz, 1);
+        double r2 = dx*dx + dy*dy + dz*dz;
+        printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=mode_b "
+               "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g "
+               "Pos=%.17g,%.17g,%.17g Vel=%.17g,%.17g,%.17g ID=%llu\n",
+               ThisTask, q.origin_local_idx, j, (int)P[j].Type,
+               (double)P[j].Mass, (double)P[j].KernelRadius, r2,
+               (double)P[j].Pos[0], (double)P[j].Pos[1], (double)P[j].Pos[2],
+               (double)P[j].Vel[0], (double)P[j].Vel[1], (double)P[j].Vel[2],
+               (unsigned long long)P[j].ID);
+    }
+    fflush(stdout);
+}
+
 /* -----------------------------------------------------------------------
  * Cosmology + physical scalars the pair body needs. Captured once per
  * evaluator call from globals; passed by value into the kernel. No
@@ -347,33 +385,10 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
     }
     d.n_candidates = n_cand;
 
-    /* MODEB_XVAL_NB diagnostic: first-call-only dump. Pair with the env-off
-     * dump in sink_environment_gpu.cc for offline j-set diff. */
-    {
-        static const char *xv_nb_env = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
-        static const int xv_nb_on = (xv_nb_env && xv_nb_env[0] == '1') ? 1 : 0;
-        if(xv_nb_on && g_mode_b_eval_call_id == 1 && n_cand > 0) {
-            printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=mode_b "
-                   "h_search=%.17g i_pos=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
-                   ThisTask, q.origin_local_idx, q.h_search,
-                   q.pos[0], q.pos[1], q.pos[2],
-                   (unsigned long long)q.id, n_cand);
-            for(int i = 0; i < n_cand; i++) {
-                int j = candidates[i];
-                double dx = (double)P[j].Pos[0] - q.pos[0];
-                double dy = (double)P[j].Pos[1] - q.pos[1];
-                double dz = (double)P[j].Pos[2] - q.pos[2];
-                NEAREST_XYZ(dx, dy, dz, 1);
-                double r2 = dx*dx + dy*dy + dz*dz;
-                printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=mode_b "
-                       "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g ID=%llu\n",
-                       ThisTask, q.origin_local_idx, j, (int)P[j].Type,
-                       (double)P[j].Mass, (double)P[j].KernelRadius,
-                       r2, (unsigned long long)P[j].ID);
-            }
-            fflush(stdout);
-        }
-    }
+    /* MODEB_XVAL_NB diagnostic now fires AFTER lazy-drift via helper calls
+     * below (oracle and non-oracle paths each emit their own post-drift
+     * snapshot). Emitting pre-drift gave the wrong snapshot for the J
+     * reconstruction the dump exists to support. */
 
     /* CRITICAL: Mode B must honor the GPU NGL lazy-drift contract:
      *   1. walk candidates on whatever P[j] state exists (may be slightly stale)
@@ -406,6 +421,11 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
              * its time1==time0 early-return, so passing duplicates is fine. */
             mode_b_lazy_drift_candidates(candidates.data(), n_cand);
             mode_b_lazy_drift_candidates(brute_cand.data(), n_brute);
+
+            /* Post-drift NB dump: tree-walker candidates only (the path under
+             * test). State is now at Ti_Current matching what the pair kernel
+             * will read. */
+            mode_b_xval_nb_dump(P, q, candidates.data(), n_cand);
 
             /* Now P[] is at Ti_Current for the union. Compute both accums. */
             struct sink_env_gpu_out out_tree;
@@ -462,6 +482,7 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
 
     /* Non-oracle path: drift candidates, then accumulate. */
     mode_b_lazy_drift_candidates(candidates.data(), n_cand);
+    mode_b_xval_nb_dump(P, q, candidates.data(), n_cand);
     for(int i = 0; i < n_cand; i++) {
         int j = candidates[i];
         const struct gas_cell_data *kc_j_ptr =

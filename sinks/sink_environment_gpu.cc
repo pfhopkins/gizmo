@@ -306,9 +306,11 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
                 int start = offsets[aa], end = offsets[aa + 1];
                 int nj = end - start;
                 printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=gpu_ngl "
-                       "h_search=%.17g i_pos=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
+                       "h_search=%.17g i_pos=%.17g,%.17g,%.17g "
+                       "i_vel=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
                        ThisTask, aa, h_i,
                        (double)P_host[ii].Pos[0], (double)P_host[ii].Pos[1], (double)P_host[ii].Pos[2],
+                       (double)P_host[ii].Vel[0], (double)P_host[ii].Vel[1], (double)P_host[ii].Vel[2],
                        (unsigned long long)P_host[ii].ID, nj);
                 for(int idx = start; idx < end; idx++) {
                     int j = nbrs_host[idx];
@@ -318,10 +320,13 @@ void sink_environment_evaluate_gpu(struct particle_data *P_host,
                     NEAREST_XYZ(dx, dy, dz, 1);
                     double r2 = dx*dx + dy*dy + dz*dz;
                     printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=gpu_ngl "
-                           "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g ID=%llu\n",
+                           "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g "
+                           "Pos=%.17g,%.17g,%.17g Vel=%.17g,%.17g,%.17g ID=%llu\n",
                            ThisTask, aa, j, (int)P_host[j].Type,
-                           (double)P_host[j].Mass, (double)P_host[j].KernelRadius,
-                           r2, (unsigned long long)P_host[j].ID);
+                           (double)P_host[j].Mass, (double)P_host[j].KernelRadius, r2,
+                           (double)P_host[j].Pos[0], (double)P_host[j].Pos[1], (double)P_host[j].Pos[2],
+                           (double)P_host[j].Vel[0], (double)P_host[j].Vel[1], (double)P_host[j].Vel[2],
+                           (unsigned long long)P_host[j].ID);
                 }
             }
             fflush(stdout);
