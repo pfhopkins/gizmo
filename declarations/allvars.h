@@ -947,7 +947,21 @@ extern struct extNODE
 #endif
   Vec3<MyFloat> vs;
   MyFloat vmax;
-  MyFloat hmax;			/*!< maximum gas kernel length in node. Only used for gas particles */
+  MyFloat hmax;			/*!< maximum gas kernel length in node. Legacy aggregate:
+				   gas-only at tree build, AGS-aware after force_update_hmax
+				   in ADAPTIVE_GRAVSOFT_FORALL builds. Read by legacy
+				   gravity / GPU SoA / LET pack code. */
+  /* Mode B per-type kernel-radius bands. Invariant:
+   *   hmax_per_type[0]      = max(P[j].KernelRadius)        over Type==0  in subtree (gas-only)
+   *   hmax_per_type[t > 0]  = max(P[j].AGS_KernelRadius)    over Type==t  in subtree IFF
+   *                            ((1 << t) & ADAPTIVE_GRAVSOFT_FORALL); else 0
+   * Used by Mode B SYMMETRIC walker pruning under a radius_policy that maps
+   * type -> which band to consider. ONEWAY walks never read this field.
+   * NOTE: cross-rank DomainMoment exchange of these bands is NOT YET WIRED
+   * (Stage 3 deferred). At single-rank, host-only Mode B walker uses these
+   * directly. Multi-rank Mode B SYMMETRIC walks must NOT rely on per-type
+   * bands across pseudo-particles until Stage 3 lands. */
+  MyFloat hmax_per_type[6];
   MyFloat divVmax;
   integertime Ti_lastkicked;
   int Flag;

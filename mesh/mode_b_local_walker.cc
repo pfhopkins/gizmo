@@ -127,6 +127,50 @@ static inline int sphere_aabb_overlap(const double pos[3],
     return (dx*dx + dy*dy + dz*dz) < r_max * r_max;
 }
 
+/* Mode B SYMMETRIC effective radius for an internal node, given a type-mask
+ * (which types the caller is searching for) and a radius policy (which
+ * particle radius source is meaningful per type — see mode_b_neighbor_
+ * symmetric_radius). Returns max over types-in-mask of the relevant
+ * Extnodes[no].hmax_per_type[t] band, multiplied by a slack factor.
+ * Returns 0 if no type contributes (collapses SYMMETRIC pruning to ONEWAY).
+ *
+ * Slack rationale (matches mesh/gpu_neighbor_list.cc:SIDX_H_SLACK = 0.5):
+ * between force_update_hmax() refreshes, per-particle KernelRadius can
+ * grow under drift up to factor exp(divv_fac_max/NUMDIMS) ≈ 1.105 (gas)
+ * or exp(4/3) ≈ 3.79 (AGS-active). Node hmax decays under a different
+ * (looser) clamp and can fall BELOW the live max-particle radius. The
+ * 50% inflation absorbs this asymmetry conservatively — over-search is
+ * safe (extra candidates → physics kernel filters), under-search is a
+ * correctness bug. Same convention as GPU NGL's BVH tile-overlap test. */
+static inline double mode_b_node_symmetric_radius(int no,
+                                                  unsigned int type_mask,
+                                                  mode_b_radius_policy_t policy)
+{
+    static constexpr double H_SLACK = 0.5;  /* matches SIDX_H_SLACK */
+    double rmax = 0.0;
+    /* Type 0 (gas): always contributes if requested AND policy includes
+     * the gas-kernel source (default for sink_env1 / density-style callers). */
+    if((type_mask & (1u << 0)) && (policy & MODE_B_RADIUS_GAS_KERNEL)) {
+        double v = (double)Extnodes[no].hmax_per_type[0];
+        if(v > rmax) rmax = v;
+    }
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    /* Non-gas types (1..5): contribute only if the caller requests them in
+     * the type_mask AND the policy permits AGS as the radius source AND
+     * the type is in ADAPTIVE_GRAVSOFT_FORALL bitmask (so the band was
+     * actually populated at tree-build time). */
+    if(policy & MODE_B_RADIUS_AGS_FOR_NONGAS) {
+        for(int t = 1; t < 6; t++) {
+            if(!(type_mask & (1u << t))) continue;
+            if(!((1 << t) & ADAPTIVE_GRAVSOFT_FORALL)) continue;
+            double v = (double)Extnodes[no].hmax_per_type[t];
+            if(v > rmax) rmax = v;
+        }
+    }
+#endif
+    return rmax * (1.0 + H_SLACK);
+}
+
 int mode_b_local_neighbor_walk(const double pos[3],
                                double h_q,
                                unsigned int type_mask,
@@ -140,10 +184,23 @@ int mode_b_local_neighbor_walk(const double pos[3],
     const int max_part  = All.MaxPart;
     const int last_node = max_part + Numnodestree;
 
-    /* SYMMETRIC mode without per-node max-h: must always open internal
-     * nodes (cannot prune by h_q alone). Falls through to behaviour ~=
-     * brute walk over all leaves; oracle will catch any mismatch. */
-    const int prune_internal = (search_mode == MODE_B_SEARCH_ONEWAY);
+    /* Stage 4 v1: SYMMETRIC pruning uses per-type hmax bands maintained in
+     * extNODE (see allvars.h). For each internal node we compute
+     *   R_eff = max(h_query, max_{t in type_mask, populated under policy}
+     *                          Extnodes[no].hmax_per_type[t])
+     * then sphere-vs-AABB overlap with R_eff. Matches old GIZMO's
+     * scalar-hmax pattern at the per-type level (legacy_hmax_archaeology.md).
+     * ONEWAY ignores hmax entirely and uses h_query alone.
+     *
+     * NOTE (Stage 3 deferred): cross-rank DomainMoment exchange of per-type
+     * bands is not yet wired. At single-rank, host-only, all values are
+     * locally consistent. Multi-rank Mode B SYMMETRIC walks reading
+     * pseudo-particle nodes with stale hmax_per_type[] could under-prune
+     * (return extra candidates → still correct, but slower) or over-prune
+     * (return missing candidates → INCORRECT). The walker currently never
+     * descends into foreign-pseudo nodes (they're skipped at the bottom of
+     * the loop), so this is only a perf concern at np>1 today. */
+    const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
 
     int count = 0;
     int no = max_part; /* root node */
@@ -170,12 +227,15 @@ int mode_b_local_neighbor_walk(const double pos[3],
                     }
                 }
             }
-            int do_open;
-            if(prune_internal) {
-                do_open = sphere_aabb_overlap(pos, nop, h_q);
+            double R_eff;
+            if(oneway) {
+                R_eff = h_q;
             } else {
-                do_open = 1;  /* SYMMETRIC: always open until per-node max-h tracked */
+                /* SYMMETRIC: R_eff = max(h_q, per-type hmax under policy/mask) */
+                double node_h = mode_b_node_symmetric_radius(no, type_mask, radius_policy);
+                R_eff = (node_h > h_q) ? node_h : h_q;
             }
+            int do_open = sphere_aabb_overlap(pos, nop, R_eff);
             no = do_open ? nop->u.d.nextnode : nop->u.d.sibling;
         } else {
             /* Foreign pseudo-particle node (LET / cross-rank). Codex

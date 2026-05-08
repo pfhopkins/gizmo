@@ -543,6 +543,41 @@ sink_env1_evaluate_one_query_local(struct particle_data *P,
                         (double)out_brute.Mgas_in_Kernel, (double)out_brute.Mstar_in_Kernel,
                         (double)out_brute.Jalt_in_Kernel[0], (double)out_brute.Jalt_in_Kernel[1], (double)out_brute.Jalt_in_Kernel[2],
                         n_cand, n_brute);
+                /* Find which j's are in brute but not tree (the missing ones)
+                 * and walk their ancestor chain to expose the staleness. */
+                std::vector<int> tree_sorted(candidates.begin(), candidates.begin() + n_cand);
+                std::sort(tree_sorted.begin(), tree_sorted.end());
+                for(int bi = 0; bi < n_brute; bi++) {
+                    int j = brute_cand[bi];
+                    if(std::binary_search(tree_sorted.begin(), tree_sorted.end(), j)) continue;
+                    /* j missing from tree result. Dump particle info + ancestor band[0]s. */
+                    double dx = (double)P[j].Pos[0] - q.pos[0];
+                    double dy = (double)P[j].Pos[1] - q.pos[1];
+                    double dz = (double)P[j].Pos[2] - q.pos[2];
+                    NEAREST_XYZ(dx, dy, dz, 1);
+                    double r2 = dx*dx + dy*dy + dz*dz;
+                    fprintf(stderr,
+                            "  MISSING j=%d ID=%llu Type=%d Mass=%g KernelRadius=%.6e r=%.6e h_q=%.6e\n",
+                            j, (unsigned long long)P[j].ID, (int)P[j].Type,
+                            (double)P[j].Mass, (double)P[j].KernelRadius, sqrt(r2), q.h_search);
+                    /* Walk ancestor chain: Father[j] up to root, dump len + hmax_per_type[0]. */
+                    int chain_n = 0;
+                    int no = Father[j];
+                    while(no >= 0 && chain_n < 12) {
+                        struct NODE *nop = &Nodes[no];
+                        fprintf(stderr,
+                                "    anc[%d] no=%d Ti_cur=%lld len=%.6e center=%.4f,%.4f,%.4f "
+                                "hmax_scalar=%.6e hmax_per_type[0]=%.6e divVmax=%.3e\n",
+                                chain_n, no, (long long)nop->Ti_current,
+                                (double)nop->len,
+                                (double)nop->center[0], (double)nop->center[1], (double)nop->center[2],
+                                (double)Extnodes[no].hmax,
+                                (double)Extnodes[no].hmax_per_type[0],
+                                (double)Extnodes[no].divVmax);
+                        no = nop->u.d.father;
+                        chain_n++;
+                    }
+                }
                 fflush(stderr);
             }
             /* Use tree result (the path under test). */

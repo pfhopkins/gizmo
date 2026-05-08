@@ -275,6 +275,15 @@ void force_drift_node(int no, integertime time1)
 #endif
 
     if(Extnodes[no].hmax > 0) {Extnodes[no].hmax *= exp(DMAX(-1.,DMIN(1.,Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));}
+    /* Mode B per-type bands: same conservative single-divVmax decay. */
+    {
+        double decay_fac = exp(DMAX(-1., DMIN(1., Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));
+        for(int t = 0; t < 6; t++) {
+            if(Extnodes[no].hmax_per_type[t] > 0) {
+                Extnodes[no].hmax_per_type[t] *= (MyFloat)decay_fac;
+            }
+        }
+    }
     Nodes[no].Ti_current = time1;
 }
 
@@ -331,6 +340,22 @@ void force_update_hmax(void)
         int no = Father[i];
         double divVel = P[i].Particle_DivVel;
 
+        /* Mode B per-type contribution. Gas: always P[i].KernelRadius into band[0].
+         * Non-gas under ADAPTIVE_GRAVSOFT_FORALL bitmask: P[i].AGS_KernelRadius
+         * into band[Type]. Otherwise no per-type contribution from this i. */
+        int per_type_band = -1;
+        double per_type_htmp = 0.0;
+        if(P[i].Type == 0) {
+            per_type_band = 0;
+            per_type_htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
+        }
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+        else if((1 << P[i].Type) & ADAPTIVE_GRAVSOFT_FORALL) {
+            per_type_band = (int)P[i].Type;
+            per_type_htmp = DMIN(P[i].AGS_KernelRadius, All.MaxKernelRadius);
+        }
+#endif
+
         while(no >= 0)
         {
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
@@ -340,7 +365,12 @@ void force_update_hmax(void)
 #else
             double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
 #endif
-            if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax)
+            int per_type_grew = 0;
+            if(per_type_band >= 0 && per_type_htmp > Extnodes[no].hmax_per_type[per_type_band]) {
+                atomic_max_double(&Extnodes[no].hmax_per_type[per_type_band], per_type_htmp);
+                per_type_grew = 1;
+            }
+            if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax || per_type_grew)
             {
                 atomic_max_double(&Extnodes[no].hmax, htmp);
                 atomic_max_double(&Extnodes[no].divVmax, divVel);

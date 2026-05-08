@@ -189,6 +189,63 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
 /*! This function is a driver routine for constructing the gravitational
  *  oct-tree, which is done by calling a small number of other functions.
  */
+/*! Mode B per-type hmax host-side re-seed.
+ *
+ *  Why this exists: gpu_moment_refresh() writes scalar Extnodes[no].hmax to
+ *  AoS but does NOT compute Extnodes[no].hmax_per_type[] (the GPU SoA does
+ *  not yet carry per-type bands; Stage 3 deferred). Without this pass, every
+ *  full force_treebuild and every force_refresh_node_moments leaves
+ *  hmax_per_type[] at zero (set by Stage-1 host code that the GPU early-
+ *  return bypasses). Mode B's SYMMETRIC walker reading those zero bands
+ *  would over-prune (collapse to ONEWAY) — exactly the oracle mismatch
+ *  observed on fire_m11i.
+ *
+ *  Behavior: zero all internal-node bands, leaf-seed each particle's
+ *  contribution into Father[i]'s band per the type/AGS rules in
+ *  legacy_hmax_archaeology.md, then bottom-up max-over-children.
+ *  Mirrors the dead-code Steps-1/2/3 in force_refresh_node_moments below
+ *  but limited to per-type bands only (cheap host loop ~O(NumPart + Nnodes)).
+ *  Caller-restriction: must run AFTER gpu_moment_refresh has populated
+ *  Father[] / Nodes[].u.d.father, since Step 3 walks via father chain.
+ */
+static void force_refresh_hmax_per_type_host(int Numnodestree)
+{
+    /* Step 1: zero per-type bands in all internal nodes. */
+    for(int no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {
+        for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = 0;
+    }
+    /* Step 2: leaf seed — Father[i] only (per-particle to its immediate
+     * parent), in the same form as the existing dynamic-update CPU path. */
+    for(int i = 0; i < NumPart; i++) {
+        int no = Father[i];
+        if(no < 0) continue;
+        struct particle_data *pa = &P[i];
+        if(pa->Mass <= 0) continue;
+        if(pa->Type == 0) {
+            double htmp = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
+            if(htmp > Extnodes[no].hmax_per_type[0]) Extnodes[no].hmax_per_type[0] = (MyFloat)htmp;
+        }
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+        else if((1 << pa->Type) & ADAPTIVE_GRAVSOFT_FORALL) {
+            double htmp = DMIN(All.MaxKernelRadius, P[i].AGS_KernelRadius);
+            if(htmp > Extnodes[no].hmax_per_type[pa->Type]) Extnodes[no].hmax_per_type[pa->Type] = (MyFloat)htmp;
+        }
+#endif
+    }
+    /* Step 3: bottom-up max-over-children via father chain. Children always
+     * allocated at higher indices than parents, so reverse iteration gives
+     * children-before-parent order without an explicit DAG sort. */
+    for(int no = All.MaxPart + Numnodestree - 1; no >= All.MaxPart; no--) {
+        int father = Nodes[no].u.d.father;
+        if(father < All.MaxPart || father >= All.MaxPart + Numnodestree) continue;
+        for(int t = 0; t < 6; t++) {
+            if(Extnodes[no].hmax_per_type[t] > Extnodes[father].hmax_per_type[t]) {
+                Extnodes[father].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
+            }
+        }
+    }
+}
+
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
@@ -234,6 +291,12 @@ int force_treebuild(int npart, struct unbind_data *mp)
     if(gpu_moment_refresh(-1) != 0) {endrun(913311);}
     if(gpu_nextnode_thread() != 0) {endrun(913312);}
     if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(913322);}
+    /* Mode B: GPU moment refresh writes scalar hmax but not per-type bands;
+     * re-seed those host-side now. MUST run AFTER gpu_topology_writeback_d_to_aos
+     * because force_refresh_hmax_per_type_host's Step 3 propagation walks via
+     * Nodes[no].u.d.father, which is only valid post-writeback (the SoA→AoS
+     * writeback overwrites the union slot from the build-time u.suns layout). */
+    force_refresh_hmax_per_type_host(Numnodestree);
     /* Phase 6.7a: set TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS bitflags in SoA
      * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
      * which still run on CPU in 6.7a). */
@@ -474,6 +537,8 @@ void force_update_node_recursive(int no, int sib, int father)
 {
     int j, jj, k, p, pp, nextsib, suns[8], count_particles, multiple_flag;
     MyFloat hmax, vmax, v, divVmax, divVel, mass;
+    /* Mode B per-type kernel-radius bands. See extNODE doc in allvars.h. */
+    MyFloat hmax_per_type[6];
     Vec3<MyFloat> s, vs;
     struct particle_data *pa;
     
@@ -546,14 +611,16 @@ void force_update_node_recursive(int no, int sib, int father)
         mass_dm = 0;
         s_dm = vs_dm = {};
 #endif
+
         mass = 0;
         s = vs = {};
         hmax = 0;
+        for(int t = 0; t < 6; t++) hmax_per_type[t] = 0;
         vmax = 0;
         divVmax = 0;
         count_particles = 0;
         maxsoft = 0;
-        
+
         for(j = 0; j < 8; j++)
         {
             if((p = suns[j]) >= 0)
@@ -633,6 +700,9 @@ void force_update_node_recursive(int no, int sib, int father)
 #endif
                         if(Nodes[p].u.d.mass > 0) {count_particles += Nodes[p].N_part;} // we're saving the number of particles in the node, so simply add it
                         if(Extnodes[p].hmax > hmax) {hmax = Extnodes[p].hmax;}
+                        for(int t = 0; t < 6; t++) {
+                            if(Extnodes[p].hmax_per_type[t] > hmax_per_type[t]) {hmax_per_type[t] = Extnodes[p].hmax_per_type[t];}
+                        }
                         if(Extnodes[p].vmax > vmax) {vmax = Extnodes[p].vmax;}
                         if(Extnodes[p].divVmax > divVmax) {divVmax = Extnodes[p].divVmax;}
                         
@@ -738,10 +808,21 @@ void force_update_node_recursive(int no, int sib, int father)
                     {
                         double htmp = DMIN(All.MaxKernelRadius, P[p].KernelRadius);
                         if(htmp > hmax) {hmax = htmp;}
+                        if(htmp > hmax_per_type[0]) {hmax_per_type[0] = htmp;}
                         divVel = P[p].Particle_DivVel;
                         if(divVel > divVmax) {divVmax = divVel;}
                     }
-                    
+                    /* Mode B per-type seed for non-gas: AGS opt-in via bitmask. Scalar
+                     * `hmax` is intentionally NOT touched here; force_update_hmax()
+                     * folds non-gas AGS into the legacy scalar after density. */
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+                    if(pa->Type != 0 && ((1 << pa->Type) & ADAPTIVE_GRAVSOFT_FORALL))
+                    {
+                        double htmp = DMIN(All.MaxKernelRadius, P[p].AGS_KernelRadius);
+                        if(htmp > hmax_per_type[pa->Type]) {hmax_per_type[pa->Type] = htmp;}
+                    }
+#endif
+
                     for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax) {vmax = v;}}
                     
                     /* update of the maximum gravitational softening  */
@@ -863,10 +944,11 @@ void force_update_node_recursive(int no, int sib, int father)
         Extnodes[no].Flag = GlobFlag;
         Extnodes[no].vs = vs;
         Extnodes[no].hmax = hmax;
+        for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = hmax_per_type[t];
         Extnodes[no].vmax = vmax;
         Extnodes[no].divVmax = divVmax;
         Extnodes[no].dp = {};
-        
+
         Nodes[no].N_part = count_particles; /* save this value */
         if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);} else {multiple_flag = 0;} /* this flags that the node represents more than one particle */
         Nodes[no].u.d.bitflags = multiple_flag;
@@ -1169,6 +1251,7 @@ void force_treeupdate_pseudos(int no)
 {
     int j, p, count_particles, multiple_flag;
     MyFloat hmax, vmax;
+    MyFloat hmax_per_type[6];
     MyFloat divVmax;
     Vec3<MyFloat> s, vs; MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
@@ -1223,11 +1306,12 @@ void force_treeupdate_pseudos(int no)
     mass = 0;
     s = vs = {};
     hmax = 0;
+    for(int t = 0; t < 6; t++) hmax_per_type[t] = 0;
     vmax = 0;
     divVmax = 0;
     count_particles = 0;
     maxsoft = 0;
-    
+
     p = Nodes[no].u.d.nextnode;
     
     for(j = 0; j < 8; j++)    /* since we are dealing with top-level nodes, we now that there are 8 consecutive daughter nodes */
@@ -1288,6 +1372,9 @@ void force_treeupdate_pseudos(int no)
             vs += Nodes[p].u.d.mass * Extnodes[p].vs;
             
             if(Extnodes[p].hmax > hmax) {hmax = Extnodes[p].hmax;}
+            for(int t = 0; t < 6; t++) {
+                if(Extnodes[p].hmax_per_type[t] > hmax_per_type[t]) {hmax_per_type[t] = Extnodes[p].hmax_per_type[t];}
+            }
             if(Extnodes[p].vmax > vmax) {vmax = Extnodes[p].vmax;}
             if(Extnodes[p].divVmax > divVmax) {divVmax = Extnodes[p].divVmax;}
             if(Nodes[p].u.d.mass > 0) {count_particles += Nodes[p].N_part;} // saved, so directly add
@@ -1403,6 +1490,7 @@ void force_treeupdate_pseudos(int no)
 #endif
     
     Extnodes[no].hmax = hmax;
+    for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = hmax_per_type[t];
     Extnodes[no].vmax = vmax;
     Extnodes[no].divVmax = divVmax;
     Extnodes[no].Flag = GlobFlag;
@@ -1504,6 +1592,24 @@ void force_add_element_to_tree(int iparent, int ichild)
     // update parent node properties [maximum softening, speed] for opening criteria
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
+    /* Mode B per-type incremental update — only the band corresponding to
+     * iparent's type. Other bands unchanged (correct: this insertion adds
+     * one particle, only its type's band can grow). */
+    {
+        int ptype = (int)P[iparent].Type;
+        double htmp = 0.0;
+        if(ptype == 0) {
+            htmp = DMIN(P[iparent].KernelRadius, All.MaxKernelRadius);
+        }
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+        else if((1 << ptype) & ADAPTIVE_GRAVSOFT_FORALL) {
+            htmp = DMIN(P[iparent].AGS_KernelRadius, All.MaxKernelRadius);
+        }
+#endif
+        if(htmp > Extnodes[father].hmax_per_type[ptype]) {
+            Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
+        }
+    }
     double new_vmax = Extnodes[father].vmax;
     for(int k = 0; k < 3; k++) {if(fabs(P[ichild].Vel[k]) > new_vmax) {new_vmax = fabs(P[ichild].Vel[k]);}}
     Extnodes[father].vmax = (MyFloat) new_vmax;
@@ -4022,6 +4128,11 @@ void force_refresh_node_moments(void)
 #endif
         }
         if(gpu_moment_refresh(-1) != 0)          {endrun(913310);}
+        /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
+         * hmax to AoS but not per-type. Without this, hmax_per_type[] are
+         * left at zero by the GPU bypass and Mode B's SYMMETRIC walker
+         * over-prunes (oracle mismatches). */
+        force_refresh_hmax_per_type_host(Numnodestree);
         if(gpu_force_flag_localnodes() != 0)     {endrun(913340);}
         force_exchange_pseudodata();
         if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(913341);}
@@ -4043,6 +4154,7 @@ void force_refresh_node_moments(void)
         Nodes[no].u.d.bitflags = saved_bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT) | (1 << BITFLAG_INTERNAL_TOPLEVEL));
         Extnodes[no].vs = {};
         Extnodes[no].hmax = 0;
+        for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = 0;
         Extnodes[no].vmax = 0;
         Extnodes[no].divVmax = 0;
         Extnodes[no].dp = {};
@@ -4121,8 +4233,16 @@ void force_refresh_node_moments(void)
         {
             double htmp = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
             if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
+            if(htmp > Extnodes[no].hmax_per_type[0]) {Extnodes[no].hmax_per_type[0] = htmp;}
             if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
         }
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+        if(pa->Type != 0 && ((1 << pa->Type) & ADAPTIVE_GRAVSOFT_FORALL))
+        {
+            double htmp = DMIN(All.MaxKernelRadius, P[i].AGS_KernelRadius);
+            if(htmp > Extnodes[no].hmax_per_type[pa->Type]) {Extnodes[no].hmax_per_type[pa->Type] = htmp;}
+        }
+#endif
 
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         if(pa->Type == 0) {Nodes[no].gasmass += pa->Mass;}
@@ -4203,6 +4323,9 @@ void force_refresh_node_moments(void)
         Extnodes[father].vs += Extnodes[no].vs;
         Nodes[father].N_part += Nodes[no].N_part;
         if(Extnodes[no].hmax > Extnodes[father].hmax) {Extnodes[father].hmax = Extnodes[no].hmax;}
+        for(int t = 0; t < 6; t++) {
+            if(Extnodes[no].hmax_per_type[t] > Extnodes[father].hmax_per_type[t]) {Extnodes[father].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];}
+        }
         if(Extnodes[no].vmax > Extnodes[father].vmax) {Extnodes[father].vmax = Extnodes[no].vmax;}
         if(Extnodes[no].divVmax > Extnodes[father].divVmax) {Extnodes[father].divVmax = Extnodes[no].divVmax;}
         if(Nodes[no].maxsoft > Nodes[father].maxsoft) {Nodes[father].maxsoft = Nodes[no].maxsoft;}
