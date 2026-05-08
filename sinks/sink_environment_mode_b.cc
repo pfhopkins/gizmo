@@ -30,6 +30,14 @@
 #include "../mesh/ghost_writeback.h"           /* ghost_get_num_local */
 #include "sink_environment_mode_b.h"
 
+/* Forward decl of a tiny shim defined in mesh/gpu_neighbor_list.cc (compiled
+ * with nvcc, so it can include <Kokkos_Core.hpp>). Calls Kokkos::fence() —
+ * waits for pending GPU work and makes pending writes coherent for the host.
+ * Used as an A/B diagnostic here for the XVAL freshness hypothesis. */
+extern "C" void gpu_host_fence(void);
+extern "C" void gpu_xval_readback_pv(const int *indices, int n,
+                                     double *out_pv, long long *out_ti);
+
 #ifdef SINK_PARTICLES
 
 /* -----------------------------------------------------------------------
@@ -81,6 +89,20 @@ static void mode_b_xval_nb_dump(const struct particle_data *P,
     static const char *xv_nb_env = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
     static const int xv_nb_on = (xv_nb_env && xv_nb_env[0] == '1') ? 1 : 0;
     if(!xv_nb_on || g_mode_b_eval_call_id != 1 || n_cand <= 0) return;
+
+    /* In-process CPU-vs-GPU readback diagnostic. Same memory (UVM-aliased
+     * arena), but read once via a host pointer and once via a Kokkos kernel
+     * that touches the same UVM bytes. If outputs differ, freshness/coherence
+     * issue. Includes the active i (index q.origin_local_idx) at the head of
+     * the index list so we can also see active i's CPU vs GPU view. */
+    std::vector<int> idx_list;
+    idx_list.reserve(n_cand + 1);
+    idx_list.push_back(q.origin_local_idx);
+    for(int i = 0; i < n_cand; i++) idx_list.push_back(cand[i]);
+    std::vector<double> out_pv(9 * idx_list.size());
+    std::vector<long long> out_ti(idx_list.size());
+    gpu_xval_readback_pv(idx_list.data(), (int)idx_list.size(),
+                         out_pv.data(), out_ti.data());
     printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=mode_b "
            "h_search=%.17g i_pos=%.17g,%.17g,%.17g "
            "i_vel=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
@@ -88,6 +110,23 @@ static void mode_b_xval_nb_dump(const struct particle_data *P,
            q.pos[0], q.pos[1], q.pos[2],
            q.vel[0], q.vel[1], q.vel[2],
            (unsigned long long)q.id, n_cand);
+    /* Active i CPU-vs-GPU comparison. idx_list[0] is the active. */
+    {
+        int ii = q.origin_local_idx;
+        double *pv = out_pv.data() + 0;
+        printf("MODEB_XVAL_I_CMP rank=%d call=1 active=%d ii=%d ID=%llu Type=%d "
+               "Ti_current_host=%lld Ti_current_gpu=%lld "
+               "PosHost=%.17g,%.17g,%.17g PosGpu=%.17g,%.17g,%.17g "
+               "VelHost=%.17g,%.17g,%.17g VelGpu=%.17g,%.17g,%.17g "
+               "VelPredGpu=%.17g,%.17g,%.17g\n",
+               ThisTask, ii, ii, (unsigned long long)P[ii].ID, (int)P[ii].Type,
+               (long long)P[ii].Ti_current, out_ti[0],
+               (double)P[ii].Pos[0], (double)P[ii].Pos[1], (double)P[ii].Pos[2],
+               pv[0], pv[1], pv[2],
+               (double)P[ii].Vel[0], (double)P[ii].Vel[1], (double)P[ii].Vel[2],
+               pv[3], pv[4], pv[5],
+               pv[6], pv[7], pv[8]);
+    }
     for(int i = 0; i < n_cand; i++) {
         int j = cand[i];
         double dx = (double)P[j].Pos[0] - q.pos[0];
@@ -103,7 +142,41 @@ static void mode_b_xval_nb_dump(const struct particle_data *P,
                (double)P[j].Pos[0], (double)P[j].Pos[1], (double)P[j].Pos[2],
                (double)P[j].Vel[0], (double)P[j].Vel[1], (double)P[j].Vel[2],
                (unsigned long long)P[j].ID);
+        /* Same j read via GPU. idx_list[1+i] = cand[i]. Only print MISMATCHES
+         * (host bytes != gpu bytes) to keep dump tractable; suppress the
+         * 99% byte-equal case. */
+        const int slot = 1 + i;
+        const double *pv = out_pv.data() + 9*slot;
+        bool pos_diff = (pv[0] != (double)P[j].Pos[0]) || (pv[1] != (double)P[j].Pos[1])
+                        || (pv[2] != (double)P[j].Pos[2]);
+        bool vel_diff = (pv[3] != (double)P[j].Vel[0]) || (pv[4] != (double)P[j].Vel[1])
+                        || (pv[5] != (double)P[j].Vel[2]);
+        bool ti_diff  = (out_ti[slot] != (long long)P[j].Ti_current);
+        if(pos_diff || vel_diff || ti_diff) {
+            printf("MODEB_XVAL_NB_J_GPUDIFF rank=%d call=1 active=%d j=%d ID=%llu "
+                   "Type=%d Ti_h=%lld Ti_g=%lld "
+                   "PosHost=%.17g,%.17g,%.17g PosGpu=%.17g,%.17g,%.17g "
+                   "VelHost=%.17g,%.17g,%.17g VelGpu=%.17g,%.17g,%.17g\n",
+                   ThisTask, q.origin_local_idx, j, (unsigned long long)P[j].ID,
+                   (int)P[j].Type, (long long)P[j].Ti_current, out_ti[slot],
+                   (double)P[j].Pos[0], (double)P[j].Pos[1], (double)P[j].Pos[2],
+                   pv[0], pv[1], pv[2],
+                   (double)P[j].Vel[0], (double)P[j].Vel[1], (double)P[j].Vel[2],
+                   pv[3], pv[4], pv[5]);
+        }
     }
+    /* Also emit a summary count so we know whether ANY mismatches were found. */
+    int n_pos_mm = 0, n_vel_mm = 0, n_ti_mm = 0;
+    for(int i = 0; i < n_cand; i++) {
+        int j = cand[i];
+        const double *pv = out_pv.data() + 9*(1+i);
+        if(pv[0] != (double)P[j].Pos[0] || pv[1] != (double)P[j].Pos[1] || pv[2] != (double)P[j].Pos[2]) n_pos_mm++;
+        if(pv[3] != (double)P[j].Vel[0] || pv[4] != (double)P[j].Vel[1] || pv[5] != (double)P[j].Vel[2]) n_vel_mm++;
+        if(out_ti[1+i] != (long long)P[j].Ti_current) n_ti_mm++;
+    }
+    printf("MODEB_XVAL_GPUDIFF_SUMMARY rank=%d call=1 active=%d n_cand=%d "
+           "n_pos_diff=%d n_vel_diff=%d n_ti_diff=%d\n",
+           ThisTask, q.origin_local_idx, n_cand, n_pos_mm, n_vel_mm, n_ti_mm);
     fflush(stdout);
 }
 
@@ -551,6 +624,19 @@ void sink_env1_mode_b_evaluate(struct particle_data *P,
 {
     double t_entry = my_second();
     g_mode_b_eval_call_id++;     /* used by MODEB_XVAL_NB first-call gating */
+
+    /* DIAG: fence to make pending GPU writes (e.g. earlier gravity/hydro/kick
+     * kernels) visible to host before we read P[].Vel / Pos. P[] lives in
+     * SharedSpace (UVM), but UVM coherence is fence-bracketed on Cuda — the
+     * env-off path implicitly fences inside the GPU NGL pipeline; Mode B does
+     * no GPU work and so reads whatever cached host view exists.
+     * Gated by GIZMO_MODE_B_FENCE_AT_ENTRY=1 so we can A/B test cleanly. */
+    {
+        static const char *fe = getenv("GIZMO_MODE_B_FENCE_AT_ENTRY");
+        static const int fence_on = (fe && fe[0] == '1') ? 1 : 0;
+        if(fence_on) gpu_host_fence();
+    }
+
     sink_env1_scalars_t sc = snapshot_scalars();
 
     /* Zero local outs (caller may have left them at whatever; be safe). */

@@ -17,6 +17,10 @@
 #include <iterator>
 #include <Kokkos_Core.hpp>
 
+/* Tiny shim used by host-only TUs (e.g. sinks/sink_environment_mode_b.cc
+ * compiled without nvcc, so they cannot include <Kokkos_Core.hpp>). */
+extern "C" void gpu_host_fence(void) { Kokkos::fence(); }
+
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
@@ -30,6 +34,44 @@
 #include "gpu_dirty_tracker.h"
 #include "neighbor_list.h"
 #include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift */
+
+/* XVAL readback: GPU reads P[indices[k]].Pos/Vel and (if gas) CellP[].VelPred
+ * via a Kokkos parallel_for over the same UVM memory, writes the results into
+ * a host-readable scratch buffer. After fence, host can byte-compare these
+ * GPU-sourced values against direct host reads of the same indices.
+ * Layout of out_pv (9*n doubles): pos[3] vel[3] velpred[3] per index.
+ * out_ti (n longs): P[idx].Ti_current as read by GPU. */
+extern "C" void gpu_xval_readback_pv(const int *indices, int n,
+                                     double *out_pv, long long *out_ti)
+{
+    if(n <= 0) { return; }
+    Kokkos::View<int*,        GIZMO_KOKKOS_SHARED_SPACE> v_idx("xval_idx", n);
+    Kokkos::View<double*,     GIZMO_KOKKOS_SHARED_SPACE> v_pv ("xval_pv",  9*n);
+    Kokkos::View<long long*,  GIZMO_KOKKOS_SHARED_SPACE> v_ti ("xval_ti",  n);
+    for(int k = 0; k < n; k++) { v_idx(k) = indices[k]; }
+    auto P_loc     = P;
+    auto CellP_loc = CellP;
+    Kokkos::parallel_for("xval_readback", n, KOKKOS_LAMBDA(const int k) {
+        const int j = v_idx(k);
+        v_pv(9*k+0) = (double)P_loc[j].Pos[0];
+        v_pv(9*k+1) = (double)P_loc[j].Pos[1];
+        v_pv(9*k+2) = (double)P_loc[j].Pos[2];
+        v_pv(9*k+3) = (double)P_loc[j].Vel[0];
+        v_pv(9*k+4) = (double)P_loc[j].Vel[1];
+        v_pv(9*k+5) = (double)P_loc[j].Vel[2];
+        if(P_loc[j].Type == 0 && CellP_loc) {
+            v_pv(9*k+6) = (double)CellP_loc[j].VelPred[0];
+            v_pv(9*k+7) = (double)CellP_loc[j].VelPred[1];
+            v_pv(9*k+8) = (double)CellP_loc[j].VelPred[2];
+        } else {
+            v_pv(9*k+6) = 0.0; v_pv(9*k+7) = 0.0; v_pv(9*k+8) = 0.0;
+        }
+        v_ti(k) = (long long)P_loc[j].Ti_current;
+    });
+    Kokkos::fence();
+    for(int k = 0; k < n;   k++) { out_ti[k] = v_ti(k); }
+    for(int k = 0; k < 9*n; k++) { out_pv[k] = v_pv(k); }
+}
 
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
