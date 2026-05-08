@@ -522,4 +522,79 @@ struct NlrReplyEnvelope {
     AccumData accum;
 };
 
+/* ============================================================================
+ * Diagnostic views and SFINAE-detected optional Spec hooks (3c.4a)
+ *
+ * Optional, never part of the physics API. Specs opt in by defining the
+ * static method; the runner SFINAE-detects and only calls when present.
+ *
+ * View structs carry full identity fields (rank, origin_rank, origin_slot,
+ * active_slot, path, call_id) even where some are redundant for self/local
+ * in 3c.4a. Locking the shape now avoids a future change when peer-side
+ * dumps land.
+ *
+ * `path` strings preserved byte-identical to legacy:
+ *   "gpu_ngl" — Mode A GPU NGL path
+ *   "mode_b"  — Mode B local OR Mode B remote (active rank's own actives)
+ *
+ * Accum dump fires for both Mode A and runner-driven Mode B paths. NB dump
+ * fires Mode A only in 3c.4a (Mode B local NB + UVM-readback diagnostic
+ * remains in legacy SPIKE branch until 3c.5; Mode B remote peer-side NB
+ * dump is deferred — see OPEN_modeb_nb_dump.md in memory). The legacy
+ * SPIKE branch self-emits MODEB_XVAL/MODEB_XVAL_NB and bypasses the runner
+ * entirely; no double-print at the same call.
+ *
+ * Cached env-gate accessors below are first-use cached; mid-run env
+ * changes do NOT take effect, matching this code's cached-env convention.
+ * ========================================================================== */
+
+template <typename Spec>
+struct ActiveDumpView {
+    int rank;
+    int origin_rank;
+    int origin_slot;
+    int active_slot;
+    const char *path;
+    int call_id;
+    const struct neighbor_loop_args *args;
+    const typename Spec::ActiveData *active;     /* may be nullptr if spec/path doesn't supply */
+    const typename Spec::AccumData  *accum;
+};
+
+template <typename Spec>
+struct NeighborListDumpView {
+    int rank;
+    int origin_rank;
+    int origin_slot;
+    int active_slot;
+    const char *path;
+    int call_id;
+    const struct neighbor_loop_args *args;
+    const typename Spec::ActiveData *active;
+    const int *candidate_ids;                    /* host-resident; runner-owned, valid only during call */
+    int n_candidates;
+};
+
+/* Detection traits. SFINAE on the static call expression. */
+template <typename Spec, typename = void>
+struct spec_has_dump_active : std::false_type {};
+template <typename Spec>
+struct spec_has_dump_active<Spec, std::void_t<decltype(
+    Spec::diagnostic_dump_active(std::declval<const ActiveDumpView<Spec>&>()))>>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct spec_has_dump_neighbor_list : std::false_type {};
+template <typename Spec>
+struct spec_has_dump_neighbor_list<Spec, std::void_t<decltype(
+    Spec::diagnostic_dump_neighbor_list(std::declval<const NeighborListDumpView<Spec>&>()))>>
+    : std::true_type {};
+
+/* Cached env-gate accessors. Read-once-per-process; mid-run env changes
+ * do not take effect. Names preserved byte-identical to legacy:
+ *   GIZMO_MODE_B_XVAL_DUMP=1     → per-active accumulator dump
+ *   GIZMO_MODE_B_XVAL_NB_DUMP=1  → first-call Mode A NGL neighbor-list dump */
+bool gizmo_nlr_xval_dump_enabled(void);
+bool gizmo_nlr_xval_nb_dump_enabled(void);
+
 #endif /* GIZMO_NEIGHBOR_LOOP_RUNNER_H */

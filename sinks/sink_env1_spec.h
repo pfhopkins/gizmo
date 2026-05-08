@@ -234,6 +234,30 @@ struct SinkEnv1Spec {
      * sinks/sink_environment_mode_b.cc:446-486 merge_into helper, including
      * all #ifdef-gated optional fields. */
     static void merge_accum(AccumData& dst, const AccumData& src);
+
+    /* ============================================================================
+     * Optional diagnostic hooks (3c.4a)
+     *
+     * SFINAE-detected by the runner. Fires only when the corresponding env
+     * gate is on:
+     *   GIZMO_MODE_B_XVAL_DUMP=1     -> diagnostic_dump_active per-active
+     *   GIZMO_MODE_B_XVAL_NB_DUMP=1  -> diagnostic_dump_neighbor_list (Mode A
+     *                                    only; first-call gated inside hook)
+     *
+     * Active dump line shape preserved byte-identical to the legacy emit
+     * sites in sinks/sink_environment.cc:140-159 (env-off, deleted in 3c.4a)
+     * and sinks/sink_environment_mode_b.cc:621-636 (SPIKE branch, retires
+     * in 3c.5). NB dump line shape preserved byte-identical to the legacy
+     * emit site in sinks/sink_environment_gpu.cc:209-249 (dead code post-
+     * 3c.1c; retires in 3c.5 with the whole legacy evaluator).
+     *
+     * Mode B local NB / I_CMP / GPUDIFF UVM-readback diagnostic stays in
+     * sinks/sink_environment_mode_b.cc until 3c.5 — that machinery is
+     * SPIKE-specific UVM forensics, not generic neighbor dumping. Mode B
+     * remote peer-side NB dump deferred (parser-compatible format TBD).
+     * ========================================================================== */
+    static void diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v);
+    static void diagnostic_dump_neighbor_list(const NeighborListDumpView<SinkEnv1Spec>& v);
 };
 
 #endif /* SINK_PARTICLES */

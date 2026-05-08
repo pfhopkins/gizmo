@@ -141,6 +141,26 @@ bool gizmo_nlr_dispatch_trace_enabled(void) {
     return cached != 0;
 }
 
+/* Cached env-gate accessors for diagnostic dumps (3c.4a). Names preserved
+ * byte-identical to legacy. First-use cached; mid-run env changes do not
+ * take effect, matching this code's cached-env convention. */
+bool gizmo_nlr_xval_dump_enabled(void) {
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_MODE_B_XVAL_DUMP");
+        cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    return cached != 0;
+}
+bool gizmo_nlr_xval_nb_dump_enabled(void) {
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
+        cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    return cached != 0;
+}
+
 /* Legacy SPIKE precedence. Per codex amendment: trigger ONLY on
  * GIZMO_MODE_B_<UPPER_LOOP>=1 (e[0]=='1'); merely "set to anything" is
  * surprising. Same intrusive 8-entry cache. */
@@ -484,6 +504,52 @@ static void build_self_actives_host_pre_drift(
     }
 }
 
+/* ============================================================================
+ * Diagnostic active-dump emit helper (3c.4a)
+ *
+ * Iterates per-active and calls Spec::diagnostic_dump_active when the env
+ * gate is on AND the spec opts in via the SFINAE-detected hook.
+ *
+ * Timing invariant: post-Spec::apply_active_writeback, pre-caller-side
+ * SinkTempInfo scatter. Fires inside the runner before returning to the
+ * caller, so the caller's ghost_write_detector_end / scatter loop have
+ * not yet run. (The legacy emit at sinks/sink_environment.cc:140-159 fired
+ * post-ghost-detector but pre-scatter; the runner-driven emit fires pre-
+ * ghost-detector but still pre-scatter. Accumulator values are byte-
+ * identical between the two timing points — writeback is the last write
+ * into nl_outs before scatter — so MODEB_XVAL line content is unchanged.)
+ *
+ * Mode A path supplies actives_or_null = d_actives (UVM-resident; host-
+ * coherent post-fence). Mode B local/remote supply host-frozen actives.
+ * Spec hooks read view.active->q.* fields when needed.
+ * ========================================================================== */
+template <typename Spec>
+static void runner_emit_active_dumps(const neighbor_loop_args& args,
+                                      const typename Spec::AccumData *accums,
+                                      const typename Spec::ActiveData *actives_or_null,
+                                      const char *path)
+{
+    if(!gizmo_nlr_xval_dump_enabled()) return;
+    if constexpr (spec_has_dump_active<Spec>::value) {
+        int rank = 0;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        for(int aa = 0; aa < args.num_active; aa++) {
+            ActiveDumpView<Spec> v;
+            v.rank        = rank;
+            v.origin_rank = rank;
+            v.origin_slot = aa;
+            v.active_slot = aa;
+            v.path        = path;
+            v.call_id     = 0;
+            v.args        = &args;
+            v.active      = actives_or_null ? &actives_or_null[aa] : nullptr;
+            v.accum       = &accums[aa];
+            Spec::diagnostic_dump_active(v);
+        }
+        std::fflush(stdout);
+    }
+}
+
 template <typename Spec>
 static void run_mode_b_local(const neighbor_loop_args& args)
 {
@@ -529,6 +595,7 @@ static void run_mode_b_local(const neighbor_loop_args& args)
     for(int aa = 0; aa < N; aa++) {
         Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
     }
+    runner_emit_active_dumps<Spec>(args, accums.data(), actives.data(), "mode_b");
 }
 
 /* run_mode_b_local_with_oracle<Spec>: collects BOTH Mode B and Brute candidate
@@ -633,6 +700,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args)
     for(int aa = 0; aa < N; aa++) {
         Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
     }
+    runner_emit_active_dumps<Spec>(args, accums_modeB.data(), actives.data(), "mode_b");
 }
 
 /* ============================================================================
@@ -902,6 +970,8 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
     for(int aa = 0; aa < N; aa++) {
         Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_self[aa]);
     }
+    runner_emit_active_dumps<Spec>(args, accums_self.data(),
+                                    (N > 0) ? actives.data() : nullptr, "mode_b");
 }
 
 template <typename Spec>
@@ -1023,6 +1093,38 @@ static void run_mode_a(const neighbor_loop_args& args)
     for(int aa = 0; aa < N; aa++) {
         Spec::apply_active_writeback(args, aa, args.active_list[aa], d_accums[aa]);
     }
+
+    /* (5) Optional diagnostic dumps (3c.4a). Order matches legacy whole-log
+     * shape: NB lines first (legacy emitted from sink_environment_gpu.cc
+     * BEFORE returning to sink_environment.cc, where the accumulator dump
+     * fired), then accumulator lines. NB dump is Mode A only; the GPU CSR
+     * host-copy is allocated only when its env gate is on (zero overhead
+     * off). Accumulator dump preserves legacy line shape. */
+    if constexpr (spec_has_dump_neighbor_list<Spec>::value) {
+        if(gizmo_nlr_xval_nb_dump_enabled() && gnl.total_pairs > 0) {
+            std::vector<int> nbrs_host((size_t)gnl.total_pairs);
+            gpu_ngb_copy_neighbors_to_host(&gnl, nbrs_host.data());
+            int *offsets = gnl.offsets;
+            int rank = 0;
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+            for(int aa = 0; aa < N; aa++) {
+                NeighborListDumpView<Spec> v;
+                v.rank          = rank;
+                v.origin_rank   = rank;
+                v.origin_slot   = aa;
+                v.active_slot   = aa;
+                v.path          = "gpu_ngl";
+                v.call_id       = 1;
+                v.args          = &args;
+                v.active        = &d_actives[aa];
+                v.candidate_ids = nbrs_host.data() + offsets[aa];
+                v.n_candidates  = offsets[aa + 1] - offsets[aa];
+                Spec::diagnostic_dump_neighbor_list(v);
+            }
+            std::fflush(stdout);
+        }
+    }
+    runner_emit_active_dumps<Spec>(args, d_accums, d_actives, "gpu_ngl");
 
     /* Cleanup. SIDX cache pointer passed so the free leaves cached storage
      * intact for sink_feed/sink_swk reuse (matches existing

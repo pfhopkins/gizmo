@@ -202,4 +202,88 @@ void SinkEnv1Spec::merge_accum(AccumData& dst, const AccumData& src)
 #endif
 }
 
+/* ----------------------------------------------------------------------------
+ * Optional diagnostic hooks (3c.4a)
+ *
+ * Line shapes preserved byte-identical to legacy emit sites. The runner
+ * gates these via cached env reads (gizmo_nlr_xval_dump_enabled() /
+ * gizmo_nlr_xval_nb_dump_enabled()) and SFINAE-detects the hooks; both are
+ * optional from the runner's perspective.
+ * --------------------------------------------------------------------------*/
+
+/* MODEB_XVAL accumulator dump. Byte-identical to:
+ *   sinks/sink_environment.cc:140-159 (env-off, deleted in 3c.4a)
+ *   sinks/sink_environment_mode_b.cc:621-636 (SPIKE branch, retires in 3c.5)
+ * Both legacy sites use caller="sink_env1" (hardcoded) and active_local=<slot>;
+ * preserved here. */
+void SinkEnv1Spec::diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v)
+{
+    const AccumData& a = *v.accum;
+    std::printf("MODEB_XVAL rank=%d caller=sink_env1 active_local=%d "
+                "Mgas=%g Mstar=%g Malt=%g IE=%g "
+                "Jgas=%g,%g,%g Jstar=%g,%g,%g Jalt=%g,%g,%g\n",
+                v.rank, v.active_slot,
+                (double)a.Mgas_in_Kernel,
+                (double)a.Mstar_in_Kernel,
+                (double)a.Malt_in_Kernel,
+                (double)a.Sink_SurroudingGasInternalEnergy,
+                (double)a.Jgas_in_Kernel[0], (double)a.Jgas_in_Kernel[1], (double)a.Jgas_in_Kernel[2],
+                (double)a.Jstar_in_Kernel[0], (double)a.Jstar_in_Kernel[1], (double)a.Jstar_in_Kernel[2],
+                (double)a.Jalt_in_Kernel[0], (double)a.Jalt_in_Kernel[1], (double)a.Jalt_in_Kernel[2]);
+}
+
+/* MODEB_XVAL_NB neighbor-list dump. Byte-identical to legacy emit at
+ * sinks/sink_environment_gpu.cc:209-249 (Mode A only). First-call gated
+ * per-process via static, matching legacy semantics. The runner only
+ * invokes this hook when:
+ *   (a) GIZMO_MODE_B_XVAL_NB_DUMP=1 (cached env)
+ *   (b) the call is on the Mode A path with a live GPU NGL CSR
+ * so the hook itself only needs the per-process first-call gate. */
+void SinkEnv1Spec::diagnostic_dump_neighbor_list(const NeighborListDumpView<SinkEnv1Spec>& v)
+{
+    static int s_fired = 0;
+    if(s_fired) return;
+    /* Per-call: once the FIRST active in the FIRST call has been printed,
+     * the rest of that call's actives keep printing (same behavior as the
+     * legacy block which wraps the entire per-active loop in the !fired
+     * guard, then sets fired=1 after the loop). The runner calls this hook
+     * once per active; we mirror legacy by gating on s_fired and only
+     * setting it when the runner signals end-of-call (active_slot == last).
+     * Simpler approach: print every active in every call until we've
+     * printed N-1; then flip the flag. This matches legacy because in
+     * legacy the static was process-scoped and flipped after the FIRST
+     * call's loop completed. */
+    const struct neighbor_loop_args& args = *v.args;
+    const struct particle_data *P_host = args.P;
+    const int ii = args.active_list[v.active_slot];
+    const double h_i = (double)v.active->q.h_search;
+    std::printf("MODEB_XVAL_NB rank=%d call=1 active=%d path=%s "
+                "h_search=%.17g i_pos=%.17g,%.17g,%.17g "
+                "i_vel=%.17g,%.17g,%.17g i_id=%llu n_j=%d\n",
+                v.rank, v.active_slot, v.path, h_i,
+                (double)P_host[ii].Pos[0], (double)P_host[ii].Pos[1], (double)P_host[ii].Pos[2],
+                (double)P_host[ii].Vel[0], (double)P_host[ii].Vel[1], (double)P_host[ii].Vel[2],
+                (unsigned long long)P_host[ii].ID, v.n_candidates);
+    for(int idx = 0; idx < v.n_candidates; idx++) {
+        const int j = v.candidate_ids[idx];
+        double dx = (double)P_host[j].Pos[0] - (double)P_host[ii].Pos[0];
+        double dy = (double)P_host[j].Pos[1] - (double)P_host[ii].Pos[1];
+        double dz = (double)P_host[j].Pos[2] - (double)P_host[ii].Pos[2];
+        NEAREST_XYZ(dx, dy, dz, 1);
+        const double r2 = dx*dx + dy*dy + dz*dz;
+        std::printf("MODEB_XVAL_NB_J rank=%d call=1 active=%d path=%s "
+                    "j=%d Type=%d Mass=%.17g KernelRadius=%.17g r2=%.17g "
+                    "Pos=%.17g,%.17g,%.17g Vel=%.17g,%.17g,%.17g ID=%llu\n",
+                    v.rank, v.active_slot, v.path, j, (int)P_host[j].Type,
+                    (double)P_host[j].Mass, (double)P_host[j].KernelRadius, r2,
+                    (double)P_host[j].Pos[0], (double)P_host[j].Pos[1], (double)P_host[j].Pos[2],
+                    (double)P_host[j].Vel[0], (double)P_host[j].Vel[1], (double)P_host[j].Vel[2],
+                    (unsigned long long)P_host[j].ID);
+    }
+    /* Flip the gate when the LAST active of this call has been printed,
+     * matching legacy where xv_nb_fired=1 was set after the per-active
+     * loop completed inside the if(!fired) block. */
+    if(v.active_slot == args.num_active - 1) s_fired = 1;
+}
+
 #endif /* SINK_PARTICLES */
