@@ -104,6 +104,7 @@ void SinkEnv1Spec::apply_active_writeback(const neighbor_loop_args& args,
 double SinkEnv1Spec::compare_accum(const AccumData& a, const AccumData& b)
 {
     double max_rel = 0.0;
+    size_t max_rel_field = 0;
     /* Flatten as MyFloat array. AccumData layout is exclusively MyFloat
      * scalars and MyFloat[3] arrays (see sinks/sinks_gpu_decls.h:50-86). */
     const MyFloat *pa = reinterpret_cast<const MyFloat*>(&a);
@@ -116,7 +117,36 @@ double SinkEnv1Spec::compare_accum(const AccumData& a, const AccumData& b)
         double denom = std::fmax(std::fabs(va), std::fabs(vb));
         double diff  = std::fabs(va - vb);
         double rel   = (denom > 0.0) ? (diff / denom) : diff;
-        if(rel > max_rel) max_rel = rel;
+        if(rel > max_rel) { max_rel = rel; max_rel_field = k; }
+    }
+    /* Diagnostic: when GIZMO_NLR_ORACLE_DUMP=1 and max_rel > accum_tolerance,
+     * dump every nonzero-diff field with absolute and relative diffs. Lets us
+     * tell summation-reorder roundoff (small abs, small rel on fields whose
+     * magnitude swamps eps) from physics drift (large abs OR small abs on
+     * a near-zero-denom field where rel spikes). Print cap = 16 calls. */
+    static int s_dump_cached = -1;
+    if(s_dump_cached < 0) {
+        const char *e = std::getenv("GIZMO_NLR_ORACLE_DUMP");
+        s_dump_cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    static int s_dump_count = 0;
+    if(s_dump_cached && max_rel > 1e-10 && s_dump_count < 16) {
+        std::fprintf(stderr, "[compare_accum DUMP call=%d max_rel=%g (field=%zu) abs=%g a=%g b=%g]\n",
+                     s_dump_count, max_rel, max_rel_field,
+                     std::fabs((double)pa[max_rel_field] - (double)pb[max_rel_field]),
+                     (double)pa[max_rel_field], (double)pb[max_rel_field]);
+        for(size_t k = 0; k < n; k++) {
+            double va = (double)pa[k], vb = (double)pb[k];
+            double denom = std::fmax(std::fabs(va), std::fabs(vb));
+            double diff  = std::fabs(va - vb);
+            double rel   = (denom > 0.0) ? (diff / denom) : diff;
+            if(diff > 0.0) {
+                std::fprintf(stderr, "  field[%zu] a=%.17g b=%.17g abs=%.6g rel=%.6g\n",
+                             k, va, vb, diff, rel);
+            }
+        }
+        std::fflush(stderr);
+        s_dump_count++;
     }
     return max_rel;
 }

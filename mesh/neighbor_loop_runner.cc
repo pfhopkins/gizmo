@@ -1,19 +1,25 @@
 /* mesh/neighbor_loop_runner.cc — generic NeighborLoopSpec runner.
  *
- * 3c.1 scope: WritePattern::ActiveReduceOnly, RemoteEvalMode::RemoteComputesAccum,
- * non-iterative, NoIdentity, NoScatter — sufficient for SinkEnv1Spec migration.
+ * Current scope (3c.2): WritePattern::ActiveReduceOnly,
+ * RemoteEvalMode::RemoteComputesAccum, non-iterative, NoIdentity, NoScatter
+ * — sufficient for SinkEnv1Spec migration.
  *
- * Mode A (GPU NGL pipeline): IMPLEMENTED. Stages caller-supplied radii and
- * per-call CallScalars host-side pre-arena, runs gpu_particles_arena_acquire
- * + gpu_ngb_list_build, then a tiny Kokkos parallel_for that calls
- * Spec::load_active to fill ActiveData[] in UVM (same device epoch as the
- * legacy lambda's q-packing), then the parametric pair-kernel parallel_for
- * calling Spec::load_neighbor + Spec::pair_kernel. Both launches go through
- * gizmo_gpu_kernel_launch (project's parallel_for + fence + check_last_error).
+ * Mode A (GPU NGL pipeline): IMPLEMENTED in 3c.1. Stages caller-supplied
+ * radii and per-call CallScalars host-side pre-arena, runs
+ * gpu_particles_arena_acquire + gpu_ngb_list_build, then a tiny Kokkos
+ * parallel_for that calls Spec::load_active to fill ActiveData[] in UVM
+ * (same device epoch as the legacy lambda's q-packing), then the parametric
+ * pair-kernel parallel_for calling Spec::load_neighbor + Spec::pair_kernel.
+ * Both launches go through gizmo_gpu_kernel_launch (project's parallel_for
+ * + fence + check_last_error).
  *
- * Mode B / Brute paths: NOT YET IMPLEMENTED — abort with endrun if dispatch
- * lands on them. Wired in 3c.2 (Mode B local) and 3c.3 (Mode B remote /
- * Brute oracle).
+ * Mode B local + Brute oracle: IMPLEMENTED in 3c.2 (single-rank only). Same
+ * Spec::load_active / Spec::load_neighbor / Spec::pair_kernel — host-side
+ * KOKKOS_INLINE_FUNCTION invocation. Lazy-drift function-boundary invariant
+ * structurally encoded as collect_candidates_pre_drift →
+ * lazy_drift_candidates → evaluate_pairs_post_drift; Brute oracle uses the
+ * SAME drift epoch as Mode B. Multi-rank P2P is deferred to 3c.3 — runtime
+ * abort guards GIZMO_NLR_FORCE_MODEB on NTask>1.
  *
  * Architecture binding contract:
  *   ~/.claude/memory/reference_neighbor_loop_contract.md
@@ -29,8 +35,8 @@
 #include <type_traits>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"          /* MUST precede allvars.h: #define All All_dev for device code */
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_mirror.h"          /* GIZMO_GPU_ENSURE_ALL_FRESH, GPU_ALL_SYNC_FUNC */
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
 #include "../declarations/gpu_dispatch_templates.h"  /* gizmo_gpu_kernel_launch */
@@ -38,6 +44,12 @@
 #include "neighbor_loop_runner.h"
 #include "gpu_neighbor_list.h"
 #include "kernel.h"  /* MUST precede sink_env1_spec.h (kernel_main, NEAREST_XYZ) */
+#include "ghost_writeback.h"     /* ghost_get_num_local */
+#include "mode_b_local_walker.h" /* mode_b_local_neighbor_walk, brute, lazy_drift */
+
+#include <vector>
+#include <cmath>
+#include <cctype>
 
 /* Spec instantiations supported in 3c.1. Each #include declares one Spec
  * type whose explicit template instantiation appears at the bottom of
@@ -45,27 +57,74 @@
 #include "../sinks/sink_env1_spec.h"
 
 /* ============================================================================
- * Env-gate stub functions (3c.1: dispatch always selects Mode A; these
- * stubs always return false / sane defaults. Real wiring lands in 3c.2.)
+ * Env-gate functions (3c.2: real implementations).
+ *
+ * Cached statics — env read once on first call, identical pattern to
+ * sink_env1_mode_b_env_enabled (sinks/sink_environment_mode_b.cc:47).
+ *
+ * Threshold-based dispatch (Allreduce sum/max) is deferred to 3c.3 — needs
+ * multi-rank wiring. 3c.2 keeps the threshold getters as 0 (= "no threshold,
+ * force-mode is the only selector").
  * ========================================================================== */
 
 int gizmo_nlr_default_modeb_threshold_sum(void) { return 0; }
 int gizmo_nlr_default_modeb_threshold_max(void) { return 0; }
 
 bool gizmo_nlr_force_mode_b_global(void) {
-    /* 3c.1 stub: always false. Real impl reads GIZMO_NLR_FORCE_MODEB. */
-    return false;
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_NLR_FORCE_MODEB");
+        cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    return cached != 0;
 }
 bool gizmo_nlr_force_mode_a_global(void) {
-    /* 3c.1 stub: always false. Real impl reads GIZMO_NLR_FORCE_MODEA. */
-    return false;
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_NLR_FORCE_MODEA");
+        cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    return cached != 0;
 }
 bool gizmo_nlr_oracle_enabled_global(void) {
-    /* 3c.1 stub: always false. Real impl reads GIZMO_NLR_ORACLE in 3c.2. */
-    return false;
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_NLR_ORACLE");
+        cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    return cached != 0;
 }
-bool gizmo_nlr_oracle_enabled_for(const char * /*loop_name*/) {
-    /* 3c.1 stub: always false. Real impl reads GIZMO_<LOOP>_ORACLE in 3c.2. */
+bool gizmo_nlr_oracle_enabled_for(const char *loop_name) {
+    /* Per-loop env: GIZMO_<UPPERCASE_LOOP_NAME>_ORACLE. Lookup is per-call
+     * but loop_name is a Spec::loop_name constexpr literal, so the env-name
+     * derivation is deterministic; we cache via a small intrusive map of up
+     * to 8 entries (cheap linear scan). 8 covers every Spec we expect through
+     * 3c-3g; bump if a future stage exceeds. */
+    if(!loop_name || !loop_name[0]) return false;
+    struct entry_t { const char *name; int cached; };
+    static entry_t cache[8] = {
+        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0},
+        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0}};
+    for(int k = 0; k < 8; k++) {
+        if(cache[k].name == loop_name) return cache[k].cached != 0;
+        if(cache[k].name == nullptr) {
+            char env_name[128];
+            int j = 0;
+            const char *prefix = "GIZMO_";
+            for(int p = 0; prefix[p] && j < 120; p++) env_name[j++] = prefix[p];
+            for(int p = 0; loop_name[p] && j < 120; p++) {
+                env_name[j++] = (char)toupper((unsigned char)loop_name[p]);
+            }
+            const char *suffix = "_ORACLE";
+            for(int p = 0; suffix[p] && j < 127; p++) env_name[j++] = suffix[p];
+            env_name[j] = '\0';
+            const char *e = getenv(env_name);
+            cache[k].name   = loop_name;
+            cache[k].cached = (e && e[0] == '1') ? 1 : 0;
+            return cache[k].cached != 0;
+        }
+    }
+    /* Cache full — fall through with a one-shot lookup, no caching. */
     return false;
 }
 
@@ -89,6 +148,282 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
     fflush(stderr);
     endrun(81030);
     return nullptr;
+}
+
+/* ============================================================================
+ * Mode B local self-rank helpers (3c.2)
+ *
+ * These three helpers STRUCTURALLY ENCODE the lazy-drift invariant from the
+ * neighbor-loop binding contract:
+ *
+ *     collect_candidates_pre_drift<Spec>   — search backend (tree or brute)
+ *                                            runs against possibly-stale P[j]
+ *     lazy_drift_candidates<Spec>          — drift_particle on every j to
+ *                                            All.Ti_Current (idempotent;
+ *                                            duplicate j's between Mode B and
+ *                                            Brute oracle are dedupe-free
+ *                                            via drift_particle's
+ *                                            time1==time0 early-return)
+ *     evaluate_pairs_post_drift<Spec>      — calls Spec::pair_kernel via the
+ *                                            same KOKKOS_INLINE_FUNCTION
+ *                                            Spec::load_active /
+ *                                            Spec::load_neighbor used by
+ *                                            run_mode_a (host invocation here)
+ *
+ * Brute oracle uses the SAME drift epoch as Mode B (we collect both candidate
+ * sets before drifting either — see run_mode_b_local_with_oracle). Annotation
+ * on each helper makes the ordering enforcement structural.
+ *
+ * Self-rank only in 3c.2: candidates are local real P[] indices in
+ * [0, num_local). Cross-rank P2P comes in 3c.3.
+ *
+ * Walker buffer sized to num_local — same convention as legacy
+ * sinks/sink_environment_mode_b.cc:267-275 (worst-case SYMMETRIC, no h-bound
+ * pre-pruning).
+ * ========================================================================== */
+
+template <typename Spec>
+static void collect_candidates_pre_drift(const neighbor_loop_args& args,
+                                          const double *radii,
+                                          DispatchPath backend,
+                                          std::vector<std::vector<int>>& per_active_cands)
+{
+    const int N = args.num_active;
+    const int num_local = ghost_get_num_local();
+    per_active_cands.assign(N, std::vector<int>{});
+    if(num_local <= 0) return;
+    for(int aa = 0; aa < N; aa++) {
+        const int i = args.active_list[aa];
+        const double h_q = radii[aa];
+        if(h_q <= 0) continue;
+        std::vector<int>& cands = per_active_cands[aa];
+        cands.assign(num_local, 0);
+        double pos_arr[3] = {(double)args.P[i].Pos[0],
+                              (double)args.P[i].Pos[1],
+                              (double)args.P[i].Pos[2]};
+        int n;
+        if(backend == DispatchPath::ModeB_HostWalker) {
+            n = mode_b_local_neighbor_walk(pos_arr, h_q,
+                                            (unsigned int)Spec::neighbor_type_mask,
+                                            Spec::search_mode,
+                                            Spec::radius_policy,
+                                            cands.data(), (int)cands.size());
+        } else if(backend == DispatchPath::Brute_Oracle) {
+            n = mode_b_local_brute_walk(pos_arr, h_q,
+                                         (unsigned int)Spec::neighbor_type_mask,
+                                         Spec::search_mode,
+                                         Spec::radius_policy,
+                                         cands.data(), (int)cands.size());
+        } else {
+            fprintf(stderr, "neighbor_loop_runner: collect_candidates_pre_drift "
+                    "called with non-Mode-B/Brute backend (%d) for loop '%s'\n",
+                    (int)backend, Spec::loop_name);
+            fflush(stderr);
+            endrun(81033);
+            return;
+        }
+        if(n < 0) {
+            fprintf(stderr, "neighbor_loop_runner: %s walker overflowed at "
+                    "num_local=%d capacity for loop '%s' active_slot=%d. "
+                    "Walker bug?\n",
+                    (backend == DispatchPath::Brute_Oracle ? "brute" : "tree"),
+                    num_local, Spec::loop_name, aa);
+            fflush(stderr);
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+        cands.resize(n);
+    }
+}
+
+/* SAME drift epoch as Mode B. Idempotent: drift_particle's time1==time0
+ * early-return makes calling this twice (e.g. once on Mode B candidates,
+ * once on Brute candidates) safe. */
+template <typename Spec>
+static void lazy_drift_candidates(std::vector<std::vector<int>>& per_active_cands)
+{
+    for(auto& v : per_active_cands) {
+        if(!v.empty()) {
+            mode_b_lazy_drift_candidates(v.data(), (int)v.size());
+        }
+    }
+}
+
+template <typename Spec>
+static void evaluate_pairs_post_drift(const neighbor_loop_args& args,
+                                       const NeighborLoopDeviceContextBase& ctx,
+                                       const double *radii,
+                                       const typename Spec::CallScalars& cs,
+                                       const std::vector<std::vector<int>>& per_active_cands,
+                                       typename Spec::AccumData *accums)
+{
+    using ActiveData   = typename Spec::ActiveData;
+    using NeighborData = typename Spec::NeighborData;
+    using ScatterData  = typename Spec::ScatterData;
+    const int N = args.num_active;
+    for(int aa = 0; aa < N; aa++) {
+        Spec::zero_accum(accums[aa]);
+        const int i = args.active_list[aa];
+        ActiveData a = Spec::load_active(ctx, aa, i, radii[aa], cs);
+        ScatterData s{};                              /* NoScatter for ActiveReduceOnly */
+        const auto& cands = per_active_cands[aa];
+        for(size_t kk = 0; kk < cands.size(); kk++) {
+            int j = cands[kk];
+            IdentitySidecar id{};                     /* NoIdentity */
+            NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
+            Spec::pair_kernel(a, nb, accums[aa], s);
+        }
+    }
+}
+
+/* ============================================================================
+ * run_mode_b_local<Spec> — single-rank Mode B path.
+ *
+ * Three-epoch staging contract (matches Mode A timing exactly except step 3
+ * runs host-side per query instead of inside a Kokkos kernel):
+ *   (1) host pre-drift: Spec::search_radius_host  → radii[num_active]
+ *   (2) host pre-drift: Spec::populate_call_scalars_host → CallScalars cs
+ *   (3) host post-drift: Spec::load_active per query (KOKKOS_INLINE_FUNCTION
+ *                         invoked host-side; same UVM/Pos epoch as Mode A's
+ *                         device kernel)
+ *
+ * No Kokkos kernels in this path → no fence (project rule from contract).
+ * No GPU NGL build, no SIDX, no arena_acquire — Mode B's whole point is
+ * escaping that overhead for tiny-N. `compare_accum`-gated brute oracle is
+ * orchestrated by run_mode_b_local_with_oracle below.
+ * ========================================================================== */
+
+template <typename Spec>
+static void run_mode_b_local(const neighbor_loop_args& args)
+{
+    using AccumData = typename Spec::AccumData;
+    using DeviceCtx = NeighborLoopDeviceContextBase;
+
+    const int N = args.num_active;
+    if(N <= 0) {
+        /* Local-zero with global-positive (peer with no actives). 3c.2 is
+         * single-rank — this branch is mostly defensive against caller
+         * shape; 3c.3 makes it load-bearing for collective P2P. */
+        return;
+    }
+
+    /* (1) Host pre-drift: caller-supplied radii from external state. */
+    std::vector<double> radii(N);
+    for(int aa = 0; aa < N; aa++) {
+        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
+    }
+
+    /* (2) Host pre-drift: per-call scalar globals into POD. */
+    typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
+
+    /* DeviceContext (host-side bytes; ctx.P / ctx.CellP point at the host
+     * particle arrays directly — same KOKKOS_INLINE_FUNCTION load_active /
+     * load_neighbor that runs on UVM in Mode A). */
+    DeviceCtx ctx;
+    ctx.P         = args.P;
+    ctx.CellP     = args.CellP;
+    ctx.num_total = args.num_total;
+
+    /* Helper layout: collect → drift → evaluate. SAME drift epoch as Brute. */
+    std::vector<std::vector<int>> cand_modeB;
+    collect_candidates_pre_drift<Spec>(args, radii.data(),
+                                        DispatchPath::ModeB_HostWalker, cand_modeB);
+    lazy_drift_candidates<Spec>(cand_modeB);
+
+    std::vector<AccumData> accums(N);
+    evaluate_pairs_post_drift<Spec>(args, ctx, radii.data(), cs, cand_modeB,
+                                     accums.data());
+
+    /* Host writeback — same code path as Mode A's writeback. */
+    for(int aa = 0; aa < N; aa++) {
+        Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
+    }
+}
+
+/* run_mode_b_local_with_oracle<Spec>: collects BOTH Mode B and Brute candidate
+ * sets BEFORE drifting either, then drifts the union (drift_particle is
+ * idempotent so two separate lazy_drift calls dedupe naturally). Matches the
+ * legacy oracle pattern in sinks/sink_environment_mode_b.cc:314-422.
+ *
+ * Mode B path is the result; Brute is the comparison. Mismatches print the
+ * legacy line shape `[mode_b ORACLE MISMATCH ...]` so existing parser scripts
+ * keep working.
+ *
+ * Brute oracle uses ONLY Mode B / Brute machinery — no GPU NGL, no SIDX, no
+ * arena. Codex invariant: "the oracle's pair kernel is the SAME pair_kernel
+ * Mode B runs; only the search differs." */
+template <typename Spec>
+static void run_mode_b_local_with_oracle(const neighbor_loop_args& args)
+{
+    using AccumData = typename Spec::AccumData;
+    using DeviceCtx = NeighborLoopDeviceContextBase;
+
+    const int N = args.num_active;
+    if(N <= 0) { return; }
+
+    std::vector<double> radii(N);
+    for(int aa = 0; aa < N; aa++) {
+        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
+    }
+    typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
+
+    DeviceCtx ctx;
+    ctx.P         = args.P;
+    ctx.CellP     = args.CellP;
+    ctx.num_total = args.num_total;
+
+    /* Collect BOTH BEFORE any drift — preserves identical pre-drift state for
+     * each search backend. */
+    std::vector<std::vector<int>> cand_modeB, cand_brute;
+    collect_candidates_pre_drift<Spec>(args, radii.data(),
+                                        DispatchPath::ModeB_HostWalker, cand_modeB);
+    collect_candidates_pre_drift<Spec>(args, radii.data(),
+                                        DispatchPath::Brute_Oracle, cand_brute);
+
+    /* Drift the union. drift_particle's early-return on time1==time0 means
+     * order doesn't matter and duplicates are free. */
+    lazy_drift_candidates<Spec>(cand_modeB);
+    lazy_drift_candidates<Spec>(cand_brute);
+
+    std::vector<AccumData> accums_modeB(N);
+    std::vector<AccumData> accums_brute(N);
+    evaluate_pairs_post_drift<Spec>(args, ctx, radii.data(), cs, cand_modeB,
+                                     accums_modeB.data());
+    evaluate_pairs_post_drift<Spec>(args, ctx, radii.data(), cs, cand_brute,
+                                     accums_brute.data());
+
+    /* Compare per-active. Mismatch shape kept compatible with legacy
+     * sinks/sink_environment_mode_b.cc:374 line for parser reuse. Auto-cap
+     * the print volume so a long mismatched run doesn't hose stderr. */
+    int rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    static long long s_mismatch_print_count = 0;
+    static const long long kMismatchPrintCap = 1024;
+    for(int aa = 0; aa < N; aa++) {
+        double resid = Spec::compare_accum(accums_modeB[aa], accums_brute[aa]);
+        if(!(resid <= Spec::accum_tolerance)) {  /* NaN-safe */
+            if(s_mismatch_print_count < kMismatchPrintCap) {
+                fprintf(stderr,
+                        "[mode_b ORACLE MISMATCH rank=%d caller=%s active_slot=%d "
+                        "resid=%g (tol=%g)]\n",
+                        rank, Spec::loop_name, aa, resid,
+                        (double)Spec::accum_tolerance);
+                fflush(stderr);
+                s_mismatch_print_count++;
+                if(s_mismatch_print_count == kMismatchPrintCap) {
+                    fprintf(stderr,
+                            "[mode_b ORACLE rank=%d caller=%s] mismatch print cap "
+                            "reached (%lld); suppressing further mismatches.\n",
+                            rank, Spec::loop_name, (long long)kMismatchPrintCap);
+                    fflush(stderr);
+                }
+            }
+        }
+    }
+
+    /* Mode B path is the result. */
+    for(int aa = 0; aa < N; aa++) {
+        Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
+    }
 }
 
 /* ============================================================================
@@ -243,29 +578,69 @@ void run_neighbor_loop(const neighbor_loop_args& args)
 
     /* ---- Dispatch ---- */
 
-    /* 3c.1: dispatch always selects Mode A. Mode B / Brute paths abort
-     * loudly (force-mode unsupported feature → abort per design doc).
-     * 3c.2 wires the real dispatch (Allreduce sum/max thresholds + force
-     * envs + oracle compare). */
-    if(gizmo_nlr_force_mode_b_global()) {
-        fprintf(stderr, "neighbor_loop_runner: GIZMO_NLR_FORCE_MODEB=1 set "
-                "but Mode B is not yet implemented for loop '%s' in 3c.1 "
-                "(lands in 3c.2). Run without the force flag.\n",
-                Spec::loop_name);
+    /* 3c.2 dispatch: force-mode envs select between Mode A and Mode B local.
+     * Threshold-based dispatch (Allreduce sum/max) is deferred to 3c.3 — it
+     * needs multi-rank coordination, and 3c.2 is single-rank only.
+     *
+     * Decision tree:
+     *   GIZMO_NLR_FORCE_MODEA=1 → Mode A unconditionally (regression baseline).
+     *                              Oracle is ignored for Mode A in 3c.2 — the
+     *                              oracle pairs Mode B against Brute.
+     *   GIZMO_NLR_FORCE_MODEB=1 → Mode B local. Oracle (if enabled) runs Brute
+     *                              alongside.
+     *   default                 → Mode A (3c.2 has no auto Mode B trigger;
+     *                              3c.3 adds threshold-based selection).
+     *
+     * Co-existence with legacy GIZMO_MODE_B_SINK_ENV1 SPIKE: the SPIKE branch
+     * in sinks/sink_environment.cc:87 short-circuits BEFORE entering this
+     * function, so the two env-gate sets do not overlap. User must enable
+     * EITHER legacy SPIKE or new NLR force, not both. 3c.5 retires the
+     * legacy SPIKE. */
+    const bool force_a = gizmo_nlr_force_mode_a_global();
+    const bool force_b = gizmo_nlr_force_mode_b_global();
+    const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
+                            gizmo_nlr_oracle_enabled_for(Spec::loop_name);
+
+    if(force_a && force_b) {
+        fprintf(stderr, "neighbor_loop_runner: both GIZMO_NLR_FORCE_MODEA and "
+                "GIZMO_NLR_FORCE_MODEB set for loop '%s' — these are mutually "
+                "exclusive. Pick one.\n", Spec::loop_name);
         fflush(stderr);
-        endrun(81031);
-    }
-    if(gizmo_nlr_oracle_enabled_global() ||
-       gizmo_nlr_oracle_enabled_for(Spec::loop_name)) {
-        fprintf(stderr, "neighbor_loop_runner: GIZMO_NLR_*_ORACLE=1 set but "
-                "Brute oracle is not yet implemented for loop '%s' in 3c.1 "
-                "(lands in 3c.2). Run without the oracle flag (the legacy "
-                "GIZMO_MODE_B_SINK_ENV1 SPIKE path's oracle is still active).\n",
-                Spec::loop_name);
-        fflush(stderr);
-        endrun(81032);
+        endrun(81034);
     }
 
+    if(force_b) {
+        /* HARD GUARD: 3c.2 Mode B is single-rank only. The local walker
+         * returns candidates only from [0, ghost_get_num_local()) on this
+         * rank — multi-rank would silently drop remote contributions. P2P
+         * exchange lands in 3c.3; until then, force-Mode-B on NTask>1 must
+         * abort loudly rather than produce wrong physics. */
+        int ntask = 1;
+        MPI_Comm_size(MPI_COMM_WORLD, &ntask);
+        if(ntask > 1) {
+            int rank = 0;
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+            if(rank == 0) {
+                fprintf(stderr,
+                    "neighbor_loop_runner: GIZMO_NLR_FORCE_MODEB=1 set with "
+                    "NTask=%d for loop '%s', but 3c.2 Mode B is single-rank "
+                    "only (no remote P2P). Multi-rank Mode B lands in 3c.3. "
+                    "Run on -np 1 or unset GIZMO_NLR_FORCE_MODEB.\n",
+                    ntask, Spec::loop_name);
+                fflush(stderr);
+            }
+            endrun(81035);
+        }
+        if(oracle_on) {
+            run_mode_b_local_with_oracle<Spec>(args);
+        } else {
+            run_mode_b_local<Spec>(args);
+        }
+        return;
+    }
+
+    /* Mode A path. Oracle on Mode A is a no-op in 3c.2 (oracle compares Mode B
+     * vs Brute; no Brute-vs-Mode-A oracle in scope). */
     run_mode_a<Spec>(args);
 }
 

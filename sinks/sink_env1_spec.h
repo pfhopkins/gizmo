@@ -97,14 +97,18 @@ struct SinkEnv1Spec {
     static constexpr SidxCacheKind           sidx_cache_kind    = SidxCacheKind::AllTypes;
 
     /* ---- Oracle compare ----
-     * Pair kernel is deterministic per active under fixed neighbor order,
-     * which is the case here (same gpu_ngb_list_build → same offsets/
-     * neighbors → same accumulation order). Oracle-vs-Mode-B in 3c.2 should
-     * agree to floor; tolerance is set just above the strict-zero floor to
-     * give a tiny margin for any accidental compiler-induced reorder of
-     * trivial host-side ops. (Mode A bit-equivalence vs legacy is checked
-     * separately in 3c.1 with byte-exact target.) */
-    static constexpr double accum_tolerance = 1e-12;
+     * Mode B vs Brute oracle: same pair_kernel, same candidate SET, but
+     * DIFFERENT iteration order (tree-walk returns walk-order; brute returns
+     * ascending P[] index order). Per-active accumulators sum the same
+     * MyFloat contributions in different orders → double-precision floor of
+     * ~N·eps_machine relative residual, plus possible cancellation
+     * amplification on small-magnitude fields. 1e-10 is one decade tighter
+     * than the legacy precedent (sinks/sink_environment_mode_b.cc:360 uses
+     * 1e-9 for the identical tree-vs-brute comparison) — sharp enough to
+     * catch real bugs, loose enough to not trip on summation reorder noise.
+     * (Mode A bit-equivalence vs legacy is checked separately in 3c.1 with
+     * byte-exact target.) */
+    static constexpr double accum_tolerance = 1e-10;
     static double compare_accum(const AccumData& a, const AccumData& b);
 
     /* ============================================================================
