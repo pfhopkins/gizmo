@@ -452,7 +452,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o mesh/gpu_neighbor_list.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_gpu.o solids/grain_drag_gpu.o galaxy_sf/dm_dispersion_gpu.o gravity/ags_density_gpu.o gravity/ags_force_gpu.o sidm/dm_fuzzy_gpu.o sinks/sink_environment_gpu.o sidm/cbe_integrator_gpu.o radiation/rt_source_injection_gpu.o galaxy_sf/thermal_fb_gpu.o sinks/sink_feed_gpu.o galaxy_sf/mechanical_fb_gpu.o solids/grain_physics_gpu.o sinks/sink_swallow_and_kick_gpu.o galaxy_sf/radfb_local_gpu.o system/gpu_particles_arena.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
+GPU_OBJS = cooling/cooling.o eos/eos.o hydro/density_gpu.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_gpu.o solids/grain_drag_gpu.o galaxy_sf/dm_dispersion_gpu.o gravity/ags_density_gpu.o gravity/ags_force_gpu.o sidm/dm_fuzzy_gpu.o sinks/sink_environment_gpu.o sidm/cbe_integrator_gpu.o radiation/rt_source_injection_gpu.o galaxy_sf/thermal_fb_gpu.o sinks/sink_feed_gpu.o galaxy_sf/mechanical_fb_gpu.o solids/grain_physics_gpu.o sinks/sink_swallow_and_kick_gpu.o galaxy_sf/radfb_local_gpu.o system/gpu_particles_arena.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -475,6 +475,7 @@ STARFORM_OBJS = galaxy_sf/sfr_eff.o \
 SINK_OBJS = sinks/sink.o \
             sinks/sink_util.o \
             sinks/sink_environment.o \
+            sinks/sink_env1_spec.o \
             sinks/sink_feed.o \
             sinks/sink_swallow_and_kick.o
 
@@ -636,6 +637,8 @@ nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics_functions.h $(INCL
 hydro/density_gpu.o: hydro/density_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 mesh/gpu_neighbor_list.o: mesh/gpu_neighbor_list.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+mesh/neighbor_loop_runner.o: mesh/neighbor_loop_runner.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 radiation/rt_chem.o: radiation/rt_chem.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

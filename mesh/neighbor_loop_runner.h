@@ -14,26 +14,42 @@
  * if force-Mode-B; static_assert only for internally inconsistent specs).
  *
  * ============================================================================
- * Host / device split
+ * Three-epoch host/device staging contract
  * ============================================================================
  *
- *   pair_kernel runs on BOTH host (Mode B walker, Brute oracle) AND device
- *   (Mode A GPU lambda). The interface draws a clear line between host-side
- *   packing and device-callable construction/execution.
+ *   The runner separates per-active staging into three timing points so a
+ *   spec can match the byte-exact state epoch the legacy device kernel saw.
+ *   For sink_env1 these epochs reproduce the prior sink_environment.cc /
+ *   sink_environment_gpu.cc timing exactly.
  *
- *   ActiveData is HOST-PACKED into a UVM-resident array:
- *     load_active_host(args, slot, i, iter) -> ActiveData
- *     The runner stages an ActiveData[num_active] flat array in
- *     GIZMO_KOKKOS_SHARED_SPACE (UVM) before dispatch. Mode A reads it
- *     device-side; Mode B/Brute iterates host-side.
+ *   (1) HOST, pre-arena:
+ *         search_radius_host(args, slot, i) -> double
+ *       Reads external state (e.g. P[i].KernelRadius) BEFORE arena_acquire
+ *       / drift / freshness. Equivalent to the radii staging that legacy
+ *       callers performed in their host loop just after building the
+ *       active-particle list. Result is staged into a UVM radii[num_active]
+ *       array; Mode A's gpu_ngb_list_build receives it directly, Mode B's
+ *       walker reads it per-query.
  *
- *   Per-active search radius (host-extracted from ActiveData):
- *     search_radius(active) -> double
- *     The runner extracts a radii[num_active] array via this hook BEFORE
- *     dispatch, so Mode A's gpu_ngb_list_build receives radii (its existing
- *     contract) and Mode B's per-query walker has h_search per active.
+ *   (2) HOST, pre-arena:
+ *         populate_call_scalars_host(args) -> CallScalars
+ *       Captures per-call scalar globals (cosmology factors, gravity
+ *       constant, kernel radii, etc.) into a typed POD struct. Captured
+ *       once per call; replicated by-value into the device-side lambda
+ *       capture so the kernel never reaches into globals. CallScalars
+ *       must be std::is_trivially_copyable_v.
  *
- *   NeighborData is DEVICE-CALLABLE:
+ *   (3) DEVICE (or host for Mode B walker), post-NGL-build:
+ *         KOKKOS_INLINE_FUNCTION
+ *         load_active(ctx, slot, i, h_search, cs) -> ActiveData
+ *       Reads ctx.P[i] / ctx.CellP[i] (UVM-resident, post-arena/drift)
+ *       and combines with the host-staged h_search and CallScalars.
+ *       Runner launches a tiny Kokkos parallel_for that fills
+ *       ActiveData[num_active] in UVM. Mode A's pair-kernel launch reads
+ *       this array; Mode B/Brute walker calls the SAME function host-side
+ *       per query. Same KOKKOS_INLINE_FUNCTION on both paths.
+ *
+ *   NeighborData is DEVICE-CALLABLE (and host-callable in Mode B):
  *     KOKKOS_INLINE_FUNCTION
  *     load_neighbor(ctx, j, id, active) -> NeighborData
  *     Receives a DeviceContext containing UVM-resident pointers (P, CellP,
@@ -42,6 +58,12 @@
  *     Brute) — KOKKOS_INLINE_FUNCTION compiles to inline on both.
  *     Implementation must use only device-safe constructs (no std:: I/O,
  *     no host-only helpers); same constraint as the pair_kernel.
+ *
+ *   Accumulator zeroing:
+ *     KOKKOS_INLINE_FUNCTION zero_accum(AccumData& out)
+ *     Spec-owned. Generic runner does NOT bake in memset on AccumData;
+ *     the spec decides (e.g. memset for POD, structured zeroing for
+ *     non-trivial members).
  *
  *   Writebacks are HOST-ONLY:
  *     apply_active_writeback(args, slot, i, accum)
@@ -197,6 +219,24 @@ struct IdentitySidecar {
 };
 
 /* ============================================================================
+ * SidxCacheKind — Mode A SIDX (spatial-index cache) selection
+ *
+ * Each spec declares which step-persistent SIDX cache its NGL build should
+ * reuse. Caches are step-scoped and shared across cooperating callers
+ * (e.g. sink_env1, sink_feed, sink_swk all share the all-types cache to
+ * amortize the SFC sort + BVH build). The runner resolves the kind to a
+ * gpu_spatial_index_t* internally; specs never name the global accessor.
+ *
+ * 3c.1: only AllTypes is implemented. Other kinds abort with a clear
+ * message until the corresponding callers land.
+ * ========================================================================== */
+
+enum class SidxCacheKind : int {
+    AllTypes = 0,   /* gpu_step_sidx_alltypes_ptr — sink_env1/feed/swk shared */
+    /* future: PerSpecMask (3d), None (3f) — implement when first caller arrives. */
+};
+
+/* ============================================================================
  * DeviceContext base
  *
  * Specs may extend by typedef-ing `DeviceContext` to a struct that publicly
@@ -255,8 +295,9 @@ enum class DispatchPath : int {
  *     // ---- Required identifiers ----
  *     static constexpr const char* loop_name = "my_loop";
  *
- *     // ---- Required types ----
- *     struct ActiveData    { ... };       // host-packed; lives in UVM array
+ *     // ---- Required types (all must be std::is_trivially_copyable_v) ----
+ *     struct CallScalars   { ... };       // per-call globals; replicated to device
+ *     struct ActiveData    { ... };       // device-built post-NGL into UVM array
  *     struct NeighborData  { ... };       // built device-side via load_neighbor
  *     struct AccumData     { ... };       // or NoAccum if NeighborScatter
  *     struct ScatterData   { ... };       // or NoScatter if ActiveReduceOnly
@@ -273,6 +314,7 @@ enum class DispatchPath : int {
  *     static constexpr unsigned int  neighbor_type_mask = (1u<<0);
  *     static constexpr mode_b_radius_policy_t radius_policy = MODE_B_RADIUS_DEFAULT;
  *     static constexpr WritePattern  write_pattern      = WritePattern::ActiveReduceOnly;
+ *     static constexpr SidxCacheKind sidx_cache_kind    = SidxCacheKind::AllTypes;
  *     // optional override (else inferred from write_pattern):
  *     // static constexpr RemoteEvalMode remote_eval_mode_override =
  *     //     RemoteEvalMode::RemoteComputesAccum;
@@ -289,28 +331,51 @@ enum class DispatchPath : int {
  *
  *     // ---- Required hooks ----
  *
- *     // Host-only: pack active state for slot.
- *     static ActiveData load_active_host(const struct neighbor_loop_args& args,
- *                                        int active_slot, int i, int iter);
+ *     // (Host, pre-arena epoch) Per-active search radius from external
+ *     // state (e.g. P[i].KernelRadius). Runner stages radii[num_active]
+ *     // for gpu_ngb_list_build (Mode A) and per-query h_search (Mode B).
+ *     static double search_radius_host(const struct neighbor_loop_args& args,
+ *                                       int active_slot, int i);
  *
- *     // Host-only: per-active search radius. Runner builds radii[num_active]
- *     // for Mode A's gpu_ngb_list_build and Mode B's per-query h_search.
- *     static double search_radius(const ActiveData& a);
+ *     // (Host, pre-arena epoch) Capture per-call scalar globals into POD.
+ *     // Captured once per call; passed by value into device lambdas.
+ *     static CallScalars populate_call_scalars_host(
+ *         const struct neighbor_loop_args& args);
  *
- *     // Device-callable: build NeighborData for j given context + identity + active.
+ *     // (Device, post-NGL-build epoch) Build ActiveData for slot. Reads
+ *     // ctx.P[i] / ctx.CellP[i] (UVM, post-arena/drift) and combines with
+ *     // the host-staged h_search + CallScalars. Same function called
+ *     // host-side from Mode B/Brute walker.
+ *     KOKKOS_INLINE_FUNCTION
+ *     static ActiveData load_active(const DeviceContext& ctx,
+ *                                    int active_slot, int i,
+ *                                    double h_search,
+ *                                    const CallScalars& cs);
+ *
+ *     // (Device or host) Zero-init AccumData. Spec decides (memset for POD,
+ *     // structured zeroing for non-trivial). Generic runner never bakes
+ *     // in memset on AccumData.
+ *     KOKKOS_INLINE_FUNCTION
+ *     static void zero_accum(AccumData& out);
+ *
+ *     // (Device, host-callable) Build NeighborData for j given ctx +
+ *     // identity + active.
  *     KOKKOS_INLINE_FUNCTION
  *     static NeighborData load_neighbor(const DeviceContext& ctx, int j,
  *                                       const IdentitySidecar& id,
  *                                       const ActiveData& a);
  *
- *     // Device-callable: the physics. Pure. Both outputs always present.
+ *     // (Device, host-callable) The physics. Pure. Both outputs always
+ *     // present. ScatterData=NoScatter / AccumData=NoAccum compile to
+ *     // zero cost. NEVER split into "active-side" + "neighbor-side"
+ *     // kernels (the SPIKE-duplicate trap).
  *     KOKKOS_INLINE_FUNCTION
  *     static void pair_kernel(const ActiveData& a,
  *                             const NeighborData& nb,
  *                             AccumData& active_out,
  *                             ScatterData& nb_out);
  *
- *     // Host-only: scatter per-active accumulator back to sim state.
+ *     // (Host) Scatter per-active accumulator back to sim state.
  *     static void apply_active_writeback(const struct neighbor_loop_args& args,
  *                                        int active_slot, int i,
  *                                        const AccumData& out);
@@ -369,6 +434,12 @@ void run_neighbor_loop(const neighbor_loop_args& args);
  *                                                  compare_scatter
  *   DeviceContext != NeighborLoopDeviceContextBase
  *                                          requires populate_device_context
+ *
+ *   POD/device-copy contract (enforced at the top of run_neighbor_loop<Spec>):
+ *     std::is_trivially_copyable_v<Spec::CallScalars>  (lambda-captured by value)
+ *     std::is_trivially_copyable_v<Spec::ActiveData>   (UVM-staged)
+ *     std::is_trivially_copyable_v<Spec::NeighborData> (built per-pair on device)
+ *     std::is_trivially_copyable_v<Spec::AccumData>    (UVM-staged)
  * ========================================================================== */
 
 /* ============================================================================
