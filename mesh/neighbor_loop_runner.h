@@ -593,8 +593,45 @@ struct spec_has_dump_neighbor_list<Spec, std::void_t<decltype(
 /* Cached env-gate accessors. Read-once-per-process; mid-run env changes
  * do not take effect. Names preserved byte-identical to legacy:
  *   GIZMO_MODE_B_XVAL_DUMP=1     → per-active accumulator dump
- *   GIZMO_MODE_B_XVAL_NB_DUMP=1  → first-call Mode A NGL neighbor-list dump */
+ *   GIZMO_MODE_B_XVAL_NB_DUMP=1  → first-call Mode A NGL neighbor-list dump
+ *   GIZMO_PHASE0_DIAG=1          → per-call PHASE0_NLR timing line (3c.4b) */
 bool gizmo_nlr_xval_dump_enabled(void);
 bool gizmo_nlr_xval_nb_dump_enabled(void);
+bool gizmo_nlr_phase0_diag_enabled(void);
+
+/* ============================================================================
+ * RunnerStageTimer — timing accumulator populated when GIZMO_PHASE0_DIAG=1
+ *
+ * Each path function (run_mode_a / run_mode_b_local / run_mode_b_remote)
+ * receives a pointer; nullptr means "phase0 off, skip all timing." Path
+ * fills only the fields that apply to its dispatch:
+ *
+ *   path=gpu_ngl         dt_collect (NGL build) + dt_walk_self (pair kernel)
+ *                          + dt_writeback. Others = 0.
+ *   path=mode_b_local    dt_collect + dt_drift + dt_walk_self + dt_writeback.
+ *                          Others = 0.
+ *   path=mode_b_remote   all 8 fields. dt_collect = self+peer pre-drift
+ *                          collection; dt_walk_self = self_tree evaluate;
+ *                          dt_walk_peer = peer_tree evaluate; dt_exchange_q,
+ *                          dt_exchange_r = P2P comm; dt_reduce = reply merge;
+ *                          dt_writeback = writeback loop; dt_drift = lazy
+ *                          drift on union.
+ *
+ * dt_total measured wall-clock from runner entry to runner exit, BEFORE
+ * the caller's ghost prep / detector / scatter (codex constraint: PHASE0_NLR
+ * measures only runner-owned time, not outer caller-side work).
+ * ========================================================================== */
+
+struct RunnerStageTimer {
+    double dt_collect;
+    double dt_drift;
+    double dt_walk_self;
+    double dt_walk_peer;
+    double dt_exchange_q;
+    double dt_exchange_r;
+    double dt_reduce;
+    double dt_writeback;
+    double dt_total;
+};
 
 #endif /* GIZMO_NEIGHBOR_LOOP_RUNNER_H */

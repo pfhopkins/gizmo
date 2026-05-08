@@ -160,6 +160,42 @@ bool gizmo_nlr_xval_nb_dump_enabled(void) {
     }
     return cached != 0;
 }
+bool gizmo_nlr_phase0_diag_enabled(void) {
+    static int cached = -1;
+    if(cached < 0) {
+        const char *e = getenv("GIZMO_PHASE0_DIAG");
+        cached = (e && e[0] == '1') ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+/* ============================================================================
+ * StageTimer — internal RAII helper for PHASE0 timing (3c.4b)
+ *
+ * `target == nullptr` means phase0 is off: ctor and dtor do nothing except
+ * a single predictable nullptr branch. NO MPI_Wtime call when off — codex
+ * constraint that "MPI_Wtime is not zero overhead" addressed at the call
+ * site, not just at the gating env var.
+ *
+ * Targets are accumulators: multiple StageTimer scopes can target the same
+ * field (e.g. Mode B remote's dt_collect spans BOTH self and peer pre-drift
+ * collection — two scopes accumulate). dt_total spans the whole runner call
+ * and is set explicitly at top-level, not via this helper.
+ * ========================================================================== */
+namespace {
+struct StageTimer {
+    double *target;
+    double t0;
+    explicit StageTimer(double *tgt) : target(tgt), t0(0.0) {
+        if(target) t0 = MPI_Wtime();
+    }
+    ~StageTimer() {
+        if(target) *target += MPI_Wtime() - t0;
+    }
+    StageTimer(const StageTimer&) = delete;
+    StageTimer& operator=(const StageTimer&) = delete;
+};
+} /* anonymous namespace */
 
 /* Legacy SPIKE precedence. Per codex amendment: trigger ONLY on
  * GIZMO_MODE_B_<UPPER_LOOP>=1 (e[0]=='1'); merely "set to anything" is
@@ -551,7 +587,7 @@ static void runner_emit_active_dumps(const neighbor_loop_args& args,
 }
 
 template <typename Spec>
-static void run_mode_b_local(const neighbor_loop_args& args)
+static void run_mode_b_local(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
@@ -584,16 +620,28 @@ static void run_mode_b_local(const neighbor_loop_args& args)
 
     /* Helper layout: collect → drift → evaluate. */
     std::vector<std::vector<int>> cand_modeB;
-    collect_candidates_pre_drift<Spec>(args, radii.data(),
-                                        DispatchPath::ModeB_HostWalker, cand_modeB);
-    lazy_drift_candidates<Spec>(cand_modeB);
+    {
+        StageTimer t(tim ? &tim->dt_collect : nullptr);
+        collect_candidates_pre_drift<Spec>(args, radii.data(),
+                                            DispatchPath::ModeB_HostWalker, cand_modeB);
+    }
+    {
+        StageTimer t(tim ? &tim->dt_drift : nullptr);
+        lazy_drift_candidates<Spec>(cand_modeB);
+    }
 
     std::vector<AccumData> accums(N);
-    evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data());
+    {
+        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data());
+    }
 
     /* Host writeback — same code path as Mode A's writeback. */
-    for(int aa = 0; aa < N; aa++) {
-        Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
+    {
+        StageTimer t(tim ? &tim->dt_writeback : nullptr);
+        for(int aa = 0; aa < N; aa++) {
+            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
+        }
     }
     runner_emit_active_dumps<Spec>(args, accums.data(), actives.data(), "mode_b");
 }
@@ -645,7 +693,7 @@ static void emit_oracle_mismatch_if_any(int rank, int active_slot,
 }
 
 template <typename Spec>
-static void run_mode_b_local_with_oracle(const neighbor_loop_args& args)
+static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
@@ -670,21 +718,31 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args)
     build_self_actives_host_pre_drift<Spec>(args, ctx, radii.data(), cs, actives.data());
 
     /* Collect BOTH BEFORE any drift — preserves identical pre-drift state for
-     * each search backend. */
+     * each search backend. PHASE0 timing covers ONLY the Mode B path stages,
+     * not the Brute oracle (diagnostic-only, not production cost). */
     std::vector<std::vector<int>> cand_modeB, cand_brute;
-    collect_candidates_pre_drift<Spec>(args, radii.data(),
-                                        DispatchPath::ModeB_HostWalker, cand_modeB);
+    {
+        StageTimer t(tim ? &tim->dt_collect : nullptr);
+        collect_candidates_pre_drift<Spec>(args, radii.data(),
+                                            DispatchPath::ModeB_HostWalker, cand_modeB);
+    }
     collect_candidates_pre_drift<Spec>(args, radii.data(),
                                         DispatchPath::Brute_Oracle, cand_brute);
 
     /* Drift the union. drift_particle's early-return on time1==time0 means
      * order doesn't matter and duplicates are free. */
-    lazy_drift_candidates<Spec>(cand_modeB);
+    {
+        StageTimer t(tim ? &tim->dt_drift : nullptr);
+        lazy_drift_candidates<Spec>(cand_modeB);
+    }
     lazy_drift_candidates<Spec>(cand_brute);
 
     std::vector<AccumData> accums_modeB(N);
     std::vector<AccumData> accums_brute(N);
-    evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data());
+    {
+        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data());
+    }
     evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_brute, accums_brute.data());
 
     int rank = 0;
@@ -697,8 +755,11 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args)
     }
 
     /* Mode B path is the result. */
-    for(int aa = 0; aa < N; aa++) {
-        Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
+    {
+        StageTimer t(tim ? &tim->dt_writeback : nullptr);
+        for(int aa = 0; aa < N; aa++) {
+            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_modeB[aa]);
+        }
     }
     runner_emit_active_dumps<Spec>(args, accums_modeB.data(), actives.data(), "mode_b");
 }
@@ -744,7 +805,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args)
  * ========================================================================== */
 
 template <typename Spec, bool ORACLE>
-static void run_mode_b_remote_impl(const neighbor_loop_args& args)
+static void run_mode_b_remote_impl(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
@@ -803,9 +864,12 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
     /* Stage 3: collect SELF candidate sets PRE-DRIFT. */
     std::vector<std::vector<int>> cand_self_tree, cand_self_brute;
     if(N > 0) {
-        collect_candidates_pre_drift<Spec>(args, radii.data(),
-                                            DispatchPath::ModeB_HostWalker,
-                                            cand_self_tree);
+        {
+            StageTimer t(tim ? &tim->dt_collect : nullptr);
+            collect_candidates_pre_drift<Spec>(args, radii.data(),
+                                                DispatchPath::ModeB_HostWalker,
+                                                cand_self_tree);
+        }
         if(ORACLE) {
             collect_candidates_pre_drift<Spec>(args, radii.data(),
                                                 DispatchPath::Brute_Oracle,
@@ -815,7 +879,10 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
 
     /* Stage 4: exchange queries (collective). Every rank participates even
      * if N == 0 (peers may have queries directed at this rank's pool). */
-    auto state = mode_b_exchange_queries<Envelope>(queries_per_peer);
+    auto state = [&]{
+        StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
+        return mode_b_exchange_queries<Envelope>(queries_per_peer);
+    }();
 
     /* Stage 5: flatten received envelopes and build provenance map.
      * provenance[k] carries:
@@ -855,9 +922,12 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
 
     /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
     std::vector<std::vector<int>> cand_peer_tree, cand_peer_brute;
-    collect_candidates_for_remote_queries<Spec>(peer_actives,
-                                                 DispatchPath::ModeB_HostWalker,
-                                                 cand_peer_tree);
+    {
+        StageTimer t(tim ? &tim->dt_collect : nullptr);
+        collect_candidates_for_remote_queries<Spec>(peer_actives,
+                                                     DispatchPath::ModeB_HostWalker,
+                                                     cand_peer_tree);
+    }
     if(ORACLE) {
         collect_candidates_for_remote_queries<Spec>(peer_actives,
                                                      DispatchPath::Brute_Oracle,
@@ -865,19 +935,25 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
     }
 
     /* Stage 7: drift the UNION of all candidate sets that touch MY pool. */
-    if(N > 0) {
-        lazy_drift_candidates<Spec>(cand_self_tree);
-        if(ORACLE) lazy_drift_candidates<Spec>(cand_self_brute);
+    {
+        StageTimer t(tim ? &tim->dt_drift : nullptr);
+        if(N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
+        lazy_drift_candidates<Spec>(cand_peer_tree);
     }
-    lazy_drift_candidates<Spec>(cand_peer_tree);
-    if(ORACLE) lazy_drift_candidates<Spec>(cand_peer_brute);
+    if(ORACLE) {
+        if(N > 0) lazy_drift_candidates<Spec>(cand_self_brute);
+        lazy_drift_candidates<Spec>(cand_peer_brute);
+    }
 
     /* Stage 8: evaluate SELF post-drift; oracle compare BEFORE merge. */
     std::vector<AccumData> accums_self(N);
     std::vector<AccumData> accums_self_brute;
     if(N > 0) {
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                          cand_self_tree, accums_self.data());
+        {
+            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+                                              cand_self_tree, accums_self.data());
+        }
         if(ORACLE) {
             accums_self_brute.assign(N, AccumData{});
             evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
@@ -897,8 +973,11 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
     std::vector<AccumData> peer_replies(K);
     std::vector<AccumData> peer_replies_brute;
     if(K > 0) {
-        evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                          cand_peer_tree, peer_replies.data());
+        {
+            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
+            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
+                                              cand_peer_tree, peer_replies.data());
+        }
         if(ORACLE) {
             peer_replies_brute.assign(K, AccumData{});
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
@@ -932,55 +1011,63 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args)
         re.accum       = peer_replies[k];
     }
 
-    auto recv_replies = mode_b_exchange_replies<Envelope, ReplyEnvelope>(
-        replies_per_peer, state);
+    auto recv_replies = [&]{
+        StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
+        return mode_b_exchange_replies<Envelope, ReplyEnvelope>(replies_per_peer, state);
+    }();
 
     /* Stage 11: merge replies into accums_self by envelope.origin_slot.
      * Pinned deterministic order: ascending peer rank (self contribution
      * already in accums_self from stage 8). Asserts each reply envelope's
      * origin_rank == ThisTask — a transport-corruption sanity check. */
-    if(N > 0) {
-        for(int p = 0; p < nt; p++) {
-            if(p == rank) continue;
-            const int q_to_p = state.sent_counts[p];
-            for(int qi = 0; qi < q_to_p; qi++) {
-                const ReplyEnvelope& re = recv_replies[p][qi];
-                if(re.origin_rank != rank) {
-                    fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
-                            "reply envelope origin_rank=%d != ThisTask=%d from "
-                            "peer=%d qi=%d. Transport/peer-side corruption?\n",
-                            rank, Spec::loop_name, re.origin_rank, rank, p, qi);
-                    fflush(stderr);
-                    MPI_Abort(MPI_COMM_WORLD, 1);
+    {
+        StageTimer t(tim ? &tim->dt_reduce : nullptr);
+        if(N > 0) {
+            for(int p = 0; p < nt; p++) {
+                if(p == rank) continue;
+                const int q_to_p = state.sent_counts[p];
+                for(int qi = 0; qi < q_to_p; qi++) {
+                    const ReplyEnvelope& re = recv_replies[p][qi];
+                    if(re.origin_rank != rank) {
+                        fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
+                                "reply envelope origin_rank=%d != ThisTask=%d from "
+                                "peer=%d qi=%d. Transport/peer-side corruption?\n",
+                                rank, Spec::loop_name, re.origin_rank, rank, p, qi);
+                        fflush(stderr);
+                        MPI_Abort(MPI_COMM_WORLD, 1);
+                    }
+                    const int slot = re.origin_slot;
+                    if(slot < 0 || slot >= N) {
+                        fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
+                                "reply envelope slot %d out of range [0,%d) from peer %d.\n",
+                                rank, Spec::loop_name, slot, N, p);
+                        fflush(stderr);
+                        MPI_Abort(MPI_COMM_WORLD, 1);
+                    }
+                    Spec::merge_accum(accums_self[slot], re.accum);
                 }
-                const int slot = re.origin_slot;
-                if(slot < 0 || slot >= N) {
-                    fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
-                            "reply envelope slot %d out of range [0,%d) from peer %d.\n",
-                            rank, Spec::loop_name, slot, N, p);
-                    fflush(stderr);
-                    MPI_Abort(MPI_COMM_WORLD, 1);
-                }
-                Spec::merge_accum(accums_self[slot], re.accum);
             }
         }
     }
 
     /* Stage 12: writeback. */
-    for(int aa = 0; aa < N; aa++) {
-        Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_self[aa]);
+    {
+        StageTimer t(tim ? &tim->dt_writeback : nullptr);
+        for(int aa = 0; aa < N; aa++) {
+            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_self[aa]);
+        }
     }
     runner_emit_active_dumps<Spec>(args, accums_self.data(),
                                     (N > 0) ? actives.data() : nullptr, "mode_b");
 }
 
 template <typename Spec>
-static void run_mode_b_remote(const neighbor_loop_args& args) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/false>(args);
+static void run_mode_b_remote(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr) {
+    run_mode_b_remote_impl<Spec, /*ORACLE=*/false>(args, tim);
 }
 template <typename Spec>
-static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/true>(args);
+static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr) {
+    run_mode_b_remote_impl<Spec, /*ORACLE=*/true>(args, tim);
 }
 
 /* ============================================================================
@@ -998,7 +1085,7 @@ static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args) {
  * ========================================================================== */
 
 template <typename Spec>
-static void run_mode_a(const neighbor_loop_args& args)
+static void run_mode_a(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
 {
     using ActiveData   = typename Spec::ActiveData;
     using AccumData    = typename Spec::AccumData;
@@ -1040,12 +1127,15 @@ static void run_mode_a(const neighbor_loop_args& args)
     gpu_neighbor_list_t gnl;
     gpu_spatial_index_t *sidx = nlr_resolve_sidx_cache(Spec::sidx_cache_kind,
                                                        Spec::loop_name);
-    gpu_ngb_list_build(P_gpu, args.num_total,
-                       args.active_list, N,
-                       Spec::search_mode,
-                       (int)Spec::neighbor_type_mask,
-                       &gnl, sidx,
-                       1.0, radii_uvm, NULL, Spec::loop_name);
+    {
+        StageTimer t(tim ? &tim->dt_collect : nullptr);
+        gpu_ngb_list_build(P_gpu, args.num_total,
+                           args.active_list, N,
+                           Spec::search_mode,
+                           (int)Spec::neighbor_type_mask,
+                           &gnl, sidx,
+                           1.0, radii_uvm, NULL, Spec::loop_name);
+    }
 
     /* UVM-allocate ActiveData[] and AccumData[] arrays. */
     ActiveData *d_actives = (ActiveData *)
@@ -1071,6 +1161,7 @@ static void run_mode_a(const neighbor_loop_args& args)
 
     /* Pair-kernel launch — generic over Spec. */
     {
+        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         int *offsets   = gnl.offsets;
         int *neighbors = gnl.neighbors;
         gizmo_gpu_kernel_launch(Spec::loop_name, N, KOKKOS_LAMBDA(int aa) {
@@ -1090,8 +1181,11 @@ static void run_mode_a(const neighbor_loop_args& args)
      * coherent → host can read d_accums directly. */
 
     /* (4) Host writeback via spec. */
-    for(int aa = 0; aa < N; aa++) {
-        Spec::apply_active_writeback(args, aa, args.active_list[aa], d_accums[aa]);
+    {
+        StageTimer t(tim ? &tim->dt_writeback : nullptr);
+        for(int aa = 0; aa < N; aa++) {
+            Spec::apply_active_writeback(args, aa, args.active_list[aa], d_accums[aa]);
+        }
     }
 
     /* (5) Optional diagnostic dumps (3c.4a). Order matches legacy whole-log
@@ -1257,21 +1351,45 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         }
     }
 
+    /* PHASE0 timing scaffolding (3c.4b). Cached env-gate; mid-run env
+     * changes do not take effect. When on, ALL MPI_Wtime calls inside the
+     * runner are gated; off-path overhead is one branch per StageTimer
+     * scope, no MPI_Wtime call. PHASE0_NLR measures only RUNNER-OWNED time:
+     * caller-side ghost prep / detector / SinkTempInfo scatter are NOT
+     * included. Legacy SPIKE-branch PHASE0_MODEB_NGL line in
+     * sink_environment_mode_b.cc is untouched (retires in 3c.5). */
+    const bool phase0_on = gizmo_nlr_phase0_diag_enabled();
+    RunnerStageTimer tim = {};
+    RunnerStageTimer *tim_ptr = phase0_on ? &tim : nullptr;
+    const double t_runner_start = phase0_on ? MPI_Wtime() : 0.0;
+
     /* Threshold dispatch. Allreduce sum + max of args.num_active.
      * Skipped when force-mode envs are set (cheap path). When legacy SPIKE
-     * owns the loop, runner forces Mode A regardless of threshold. */
+     * owns the loop, runner forces Mode A regardless of threshold.
+     * PHASE0 num_active_global is captured here when the threshold path
+     * already did the Allreduce; on force/legacy paths an extra Allreduce
+     * is done ONLY when phase0_on (codex constraint #4). */
     bool select_mode_b = force_b;
+    int phase0_sum_active = -1;       /* -1 = not yet computed */
     if(!force_a && !force_b && !legacy_owns) {
         int local_act = args.num_active;
         int sum_act = 0, max_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        phase0_sum_active = sum_act;
         /* Spec::modeb_threshold_{sum,max} via SFINAE; default 64/64. */
         const int spec_default_sum = nlr_spec_threshold_sum<Spec>(64);
         const int spec_default_max = nlr_spec_threshold_max<Spec>(64);
         const int TS = gizmo_nlr_modeb_threshold_sum_for(Spec::loop_name, spec_default_sum);
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
+    } else if(phase0_on) {
+        /* Force path or legacy_owns path: dispatch logic skipped the
+         * Allreduce. Do it here ONLY for phase0 num_active_global. */
+        int local_act = args.num_active;
+        int sum_act = 0;
+        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        phase0_sum_active = sum_act;
     }
 
     /* Optional dispatch trace. Rank-0 only to avoid spam. */
@@ -1290,20 +1408,48 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         }
     }
 
+    const char *phase0_path =
+        select_mode_b ? (NTask > 1 ? "mode_b_remote" : "mode_b_local") : "gpu_ngl";
+
     if(select_mode_b) {
         if(NTask <= 1) {
-            if(oracle_on) run_mode_b_local_with_oracle<Spec>(args);
-            else          run_mode_b_local<Spec>(args);
+            if(oracle_on) run_mode_b_local_with_oracle<Spec>(args, tim_ptr);
+            else          run_mode_b_local<Spec>(args, tim_ptr);
         } else {
-            if(oracle_on) run_mode_b_remote_with_oracle<Spec>(args);
-            else          run_mode_b_remote<Spec>(args);
+            if(oracle_on) run_mode_b_remote_with_oracle<Spec>(args, tim_ptr);
+            else          run_mode_b_remote<Spec>(args, tim_ptr);
         }
-        return;
+    } else {
+        /* Mode A path. Oracle on Mode A is a no-op (oracle compares Mode B vs
+         * Brute; no Brute-vs-Mode-A oracle in scope for 3c.x). */
+        run_mode_a<Spec>(args, tim_ptr);
     }
 
-    /* Mode A path. Oracle on Mode A is a no-op (oracle compares Mode B vs
-     * Brute; no Brute-vs-Mode-A oracle in scope for 3c.x). */
-    run_mode_a<Spec>(args);
+    /* PHASE0_NLR emit (3c.4b). Stable prefix `PHASE0_NLR`. `caller=` is a
+     * field, not part of the token, so future Specs (sink_feed/swk/density)
+     * keep the same parser regex. Fixed shape: irrelevant fields print 0,
+     * never omitted. Each rank emits its own line (use `rank=` to filter). */
+    if(phase0_on) {
+        tim.dt_total = MPI_Wtime() - t_runner_start;
+        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        /* Per-call counter; per-process, per-Spec. Same count is shared
+         * across all ranks because every rank enters this collective when
+         * Mode B is selected (Mode A is rank-independent but increments
+         * the same way). */
+        static long long s_call_id = 0;
+        ++s_call_id;
+        std::printf("PHASE0_NLR rank=%d caller=%s path=%s call_id=%lld "
+                    "num_active_local=%d num_active_global=%d "
+                    "dt_collect=%.6g dt_drift=%.6g dt_walk_self=%.6g "
+                    "dt_walk_peer=%.6g dt_exchange_q=%.6g dt_exchange_r=%.6g "
+                    "dt_reduce=%.6g dt_writeback=%.6g dt_total=%.6g\n",
+                    rank, Spec::loop_name, phase0_path, s_call_id,
+                    args.num_active, phase0_sum_active,
+                    tim.dt_collect, tim.dt_drift, tim.dt_walk_self,
+                    tim.dt_walk_peer, tim.dt_exchange_q, tim.dt_exchange_r,
+                    tim.dt_reduce, tim.dt_writeback, tim.dt_total);
+        std::fflush(stdout);
+    }
 }
 
 /* ============================================================================
