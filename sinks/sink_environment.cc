@@ -13,6 +13,8 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "sinks_gpu_decls.h"
 #include "sink_environment_mode_b.h"
+#include "../mesh/neighbor_loop_runner.h"
+#include "sink_env1_spec.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -98,7 +100,14 @@ void sink_environment_loop(void)
         }
     }
     if(!mode_b_taken) {
-        /* Existing path — byte-identical to pre-spike when env is off. */
+        /* Env-off path: routed through run_neighbor_loop<SinkEnv1Spec> as of
+         * 3c.1c. Ghost prep / writeback / detector remain at this site for now
+         * (the runner does not yet own ghost lifecycle; that promotion is a
+         * later stage). Mode A inner kernel now flows through the generic
+         * runner: Spec::load_active (device staging post-NGL-build),
+         * Spec::load_neighbor + Spec::pair_kernel (parametric pair launch).
+         * sinks/sink_environment_evaluate_gpu remains in tree as legacy
+         * reference until 3c.5; nothing in this build calls it for env-off. */
         sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
             "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
             nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
@@ -107,8 +116,18 @@ void sink_environment_loop(void)
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         ghost_writeback_zero_swallowtime();
 #endif
-        sink_environment_evaluate_gpu(P, CellP, NumPart, nl_active, num_active,
-                                      nl_radii, SINK_NEIGHBOR_BITFLAG, nl_outs);
+
+        SinkEnv1Aux aux;
+        aux.nl_outs = nl_outs;
+        neighbor_loop_args args;
+        args.P            = P;
+        args.CellP        = (All.TotN_gas > 0) ? CellP : nullptr;
+        args.num_total    = NumPart;
+        args.active_list  = nl_active;
+        args.num_active   = num_active;
+        args.aux          = &aux;
+        run_neighbor_loop<SinkEnv1Spec>(args);
+
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         ghost_writeback_swallowtime();
 #endif

@@ -1,5 +1,14 @@
 /* sink_environment_gpu.cc — GPU-accelerated sink environment loop (B4).
  *
+ * MIGRATING (3c.1c): the env-off path in sinks/sink_environment.cc now flows
+ * through mesh/neighbor_loop_runner.cc::run_mode_a<SinkEnv1Spec>, which uses
+ * the SSOT pair body sinks/sink_env1_pair_kernel.h. This evaluator
+ * (sink_environment_evaluate_gpu) is retained as the legacy reference until
+ * 3c.5 retires it. q-packing exists in two sites during 3c.1-3c.4
+ * (SSOT-DUPLICATE-3c.1 markers); the load-bearing SSOT — sink_env1_pair_kernel
+ * itself — remains single-source. MODEB_XVAL_NB diagnostic dump (lines ~200)
+ * is dormant for env-off until 3c.4 promotes it as a Spec-owned hook.
+ *
  * Ports sink_environment_evaluate (sinks/sink_environment.cc:163-293) to a
  * Kokkos parallel_for kernel.  i-particles are active sinks (Type=5);
  * j-particles are all types (SINK_NEIGHBOR_BITFLAG).  The neighbor list is
