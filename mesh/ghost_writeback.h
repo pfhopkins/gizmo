@@ -21,25 +21,42 @@
 #include <stddef.h>
 
 /* ============================================================================
- * Generic ghost-writeback scaffold (Pass B.iv).
+ * Generic ghost-writeback scaffold (Pass B.iv + B.iv.1 bundle-level exchange).
  *
  * One bundle owns N callbacks; each callback is one (op, field) pair.
  * The scaffold owns: ghost-count + home-rank/home-index lookups, snapshot
- * dispatch, count + pack passes, MPI exchange, apply pass, free, exactly-
- * once detector-register, exactly-once arena_invalidate, cleanup dispatch.
+ * dispatch, single count pass, single pack pass, ONE Alltoall (count
+ * matrix) + ONE gizmo_mpi_alltoallv_typed (data bytes), single apply
+ * pass, exactly-once detector-register, exactly-once arena_invalidate,
+ * cleanup dispatch.
  *
- * Strict no-op semantics: empty bundle (n_callbacks==0) returns immediately
- * from begin_bundle and end_bundle without any snapshot / register /
+ * MPI-call invariant: total MPI calls per non-trivial end_bundle is O(1)
+ * regardless of the number of callbacks. All callbacks in one bundle
+ * share one count exchange and one byte exchange; the receiver
+ * demultiplexes by canonical bundle order. This makes it safe to put
+ * dozens-to-hundreds of writeback fields in one Spec's manifest (mechFB,
+ * chemistry, etc.) without ballooning MPI cost.
+ *
+ * Strict no-op semantics: empty bundle (n_callbacks==0) returns from
+ * begin_bundle and end_bundle at line 1, before any snapshot / register /
  * invalidate / MPI / cleanup call. Default builds without ghost-writeback
  * physics flags behave identically to "writeback absent."
  *
  * Legacy invalidation timing preserved exactly:
  *   begin: gpu_particles_arena_invalidate() only when num_ghosts > 0
  *   end:   gpu_particles_arena_invalidate() only when NTask > 1
+ *   end:   register_writeback always (when bundle non-empty)
+ *
+ * Mode B paths (local + remote): bundle hooks are NOT called by the
+ * neighbor-loop runner — j-side writes happen on the rank that owns j
+ * (Mode B local: same rank as walker; Mode B remote: peer rank running
+ * the walker on its own pool), so no reverse-comm is needed. The runner's
+ * nlr_path_uses_imported_ghosts predicate gates begin_bundle/end_bundle
+ * to Mode A only.
  *
  * Physics-author surface: see mesh/ghost_writeback_ops.h for the manifest
- * macros (GHOST_WRITEBACK_BUNDLE_BEGIN, GHOST_WRITEBACK_PARTICLE_MIN,
- * future GHOST_WRITEBACK_*_*) that hide the callback / context plumbing.
+ * macros (GHOST_WRITEBACK_BUNDLE_BEGIN, GHOST_WRITEBACK_PARTICLE_MIN, ...)
+ * that hide the callback / context plumbing.
  * ========================================================================== */
 
 struct ghost_writeback_callback {

@@ -19,7 +19,7 @@
 
 
 /* ============================================================================
- * Generic ghost-writeback scaffold (Pass B.iv).
+ * Generic ghost-writeback scaffold (Pass B.iv + B.iv.1 bundle-level exchange).
  *
  * begin_bundle: per-callback snapshot when num_ghosts>0; exactly-once
  *               arena_invalidate when num_ghosts>0. Strict no-op when
@@ -27,20 +27,39 @@
  *               cleanup).
  *
  * end_bundle:   exactly-once register_writeback (always, when bundle
- *               non-empty); per-callback count + pack + alltoallv + apply
- *               (NTask>1 only); per-callback cleanup; exactly-once
- *               arena_invalidate (NTask>1 only). Strict no-op when
- *               n_callbacks==0.
+ *               non-empty); BUNDLE-LEVEL single-pass count + pack +
+ *               ONE Alltoall + ONE Alltoallv + apply (NTask>1 only);
+ *               per-callback cleanup; exactly-once arena_invalidate
+ *               (NTask>1 only). Strict no-op when n_callbacks==0.
  *
- * Single-callback case is byte-equivalent to the legacy swallowtime
- * functions (one alltoallv with the callback's delta_size). Multi-callback
- * case loops the same body per callback (per-callback alltoallv); a future
- * optimization may collapse this into one tagged bundle-level alltoallv
- * without changing the user-facing manifest API.
+ * MPI-call invariant: total MPI calls per non-trivial end_bundle is O(1)
+ * in the number of callbacks, NOT O(n_callbacks). All callbacks in a bundle
+ * share one Alltoall (count exchange) and one gizmo_mpi_alltoallv_typed
+ * (data exchange); the receiver demultiplexes by canonical callback order.
+ * This makes it safe to put dozens-to-hundreds of writeback fields in one
+ * Spec's manifest (mechFB, chemistry, etc.) without ballooning MPI cost.
  *
- * Legacy invalidation timing preserved exactly: see the audit table in
- * Pass B.iv design notes (begin gates on num_ghosts>0; end gates on
- * NTask>1).
+ * Per-rank send-buffer layout (rank-major, callback-minor):
+ *
+ *     [rank 0 segment][rank 1 segment]...[rank NTask-1 segment]
+ *
+ *     each rank-t segment = concatenation in canonical bundle order:
+ *       [ cb0 records to t | cb1 records to t | ... | cb(N-1) records to t ]
+ *
+ * Both sender and receiver derive offsets from the per-callback per-rank
+ * count matrix (exchanged by the count Alltoall). Canonical bundle order
+ * is the same on every rank because the bundle pointer is identical there.
+ *
+ * Mode B paths (local + remote): bundle hooks are NOT called by the runner
+ * — j-side writes happen on the rank that owns j (Mode B local: same rank
+ * as walker; Mode B remote: peer rank running the walker on its own pool),
+ * so no reverse-comm is needed. The runner's nlr_path_uses_imported_ghosts
+ * predicate gates the begin_bundle/end_bundle calls to Mode A only.
+ *
+ * Legacy invalidation timing preserved exactly:
+ *   begin: arena_invalidate only when num_ghosts > 0
+ *   end:   arena_invalidate only when NTask > 1
+ *   end:   register_writeback always (when bundle non-empty)
  * ========================================================================== */
 
 void ghost_writeback_begin_bundle(const struct ghost_writeback_bundle *bundle)
@@ -67,68 +86,149 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
 
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
+    const int N = bundle->n_callbacks;
 
     if (NTask <= 1) {
         /* No reverse-comm needed; still let each callback free its snap. */
-        for (int c = 0; c < bundle->n_callbacks; c++) {
+        for (int c = 0; c < N; c++) {
             const ghost_writeback_callback *cb = bundle->callbacks[c];
             cb->cleanup(cb->ctx);
         }
         return;  /* NO arena_invalidate on NTask<=1 (matches legacy). */
     }
 
-    /* Per-callback count + pack + alltoallv + apply. Body mirrors the
-     * legacy ghost_writeback_swallowtime structure, parameterized by the
-     * callback's delta_size, delta_for_ghost, pack_delta, apply_delta. */
     int *home_rank  = ghost_get_home_rank();
-    for (int c = 0; c < bundle->n_callbacks; c++) {
-        const ghost_writeback_callback *cb = bundle->callbacks[c];
-        const size_t ds = cb->delta_size;
+    int *home_index = ghost_get_home_index();
+    (void)home_index;  /* used by callbacks; some need it indirectly */
 
-        int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-        for (int g = 0; g < num_ghosts; g++) {
+    /* ---- Per-callback per-rank count matrix.
+     * send_count[c * NTask + t] = number of cb-c records to send to rank t. */
+    int *send_count = (int *) calloc((size_t)N * NTask, sizeof(int));
+
+    /* ---- SINGLE COUNT PASS over ghosts (not per-callback). For each ghost
+     * and each callback, ask whether it contributes; accumulate into the
+     * count matrix. Hot path: N predicate calls per ghost. */
+    for (int g = 0; g < num_ghosts; g++) {
+        int t = home_rank[g];
+        for (int c = 0; c < N; c++) {
+            const ghost_writeback_callback *cb = bundle->callbacks[c];
             if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
-                delta_send_count[home_rank[g]]++;
+                send_count[c * NTask + t]++;
             }
         }
-        int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
-        delta_send_disp[0] = 0;
-        for (int t = 1; t < NTask; t++) delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1];
-        int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
-
-        char *send_buf = (char *) malloc((total_send > 0 ? total_send : 1) * ds);
-        int *pack_offset = (int *) malloc(NTask * sizeof(int));
-        memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
-        for (int g = 0; g < num_ghosts; g++) {
-            if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
-                int task = home_rank[g];
-                int off  = pack_offset[task]++;
-                cb->pack_delta(cb->ctx, g, num_local, send_buf + (size_t)off * ds);
-            }
-        }
-        free(pack_offset);
-
-        int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
-        MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
-        int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
-        delta_recv_disp[0] = 0;
-        for (int t = 1; t < NTask; t++) delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1];
-        int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
-
-        char *recv_buf = (char *) malloc((total_recv > 0 ? total_recv : 1) * ds);
-        gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
-                                  recv_buf, delta_recv_count, delta_recv_disp,
-                                  ds, MPI_COMM_WORLD);
-        free(send_buf); free(delta_send_count); free(delta_send_disp);
-
-        for (int d = 0; d < total_recv; d++) {
-            cb->apply_delta(cb->ctx, recv_buf + (size_t)d * ds);
-        }
-        free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
     }
 
+    /* ---- Per-rank send byte counts and displacements. */
+    int *send_bytes     = (int *) calloc(NTask, sizeof(int));
+    for (int c = 0; c < N; c++) {
+        const size_t ds = bundle->callbacks[c]->delta_size;
+        for (int t = 0; t < NTask; t++) {
+            send_bytes[t] += send_count[c * NTask + t] * (int)ds;
+        }
+    }
+    int *send_byte_disp = (int *) malloc(NTask * sizeof(int));
+    send_byte_disp[0] = 0;
+    for (int t = 1; t < NTask; t++) send_byte_disp[t] = send_byte_disp[t-1] + send_bytes[t-1];
+    int total_send_bytes = send_byte_disp[NTask-1] + send_bytes[NTask-1];
+
+    /* ---- Per-rank per-callback OFFSET within the rank's segment.
+     * cb_off[c * NTask + t] = start of cb-c records inside rank-t's segment
+     * (relative to send_byte_disp[t]). */
+    int *cb_off = (int *) calloc((size_t)N * NTask, sizeof(int));
+    for (int t = 0; t < NTask; t++) {
+        int running = 0;
+        for (int c = 0; c < N; c++) {
+            cb_off[c * NTask + t] = running;
+            running += send_count[c * NTask + t] * (int)bundle->callbacks[c]->delta_size;
+        }
+    }
+
+    /* ---- Single send buffer, packed in canonical (rank, callback) order. */
+    char *send_buf = (char *) malloc((size_t)(total_send_bytes > 0 ? total_send_bytes : 1));
+
+    /* ---- SINGLE PACK PASS over ghosts. Per-(c, t) progress counters track
+     * how many cb-c records have already been packed for rank t inside its
+     * segment. */
+    int *pack_progress = (int *) calloc((size_t)N * NTask, sizeof(int));
+    for (int g = 0; g < num_ghosts; g++) {
+        int t = home_rank[g];
+        for (int c = 0; c < N; c++) {
+            const ghost_writeback_callback *cb = bundle->callbacks[c];
+            if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
+                const size_t ds = cb->delta_size;
+                int p = pack_progress[c * NTask + t]++;
+                size_t offset = (size_t)send_byte_disp[t]
+                              + (size_t)cb_off[c * NTask + t]
+                              + (size_t)p * ds;
+                cb->pack_delta(cb->ctx, g, num_local, send_buf + offset);
+            }
+        }
+    }
+    free(pack_progress);
+    free(cb_off);
+
+    /* ---- ONE MPI_Alltoall on the count matrix. Each rank sends N integers
+     * (one per callback) to every other rank, packaged as "what I'm going
+     * to send to you, broken down by callback." Receiver gets the per-cb
+     * counts of records arriving FROM each rank. */
+    int *alltoall_send = (int *) malloc((size_t)NTask * N * sizeof(int));
+    int *alltoall_recv = (int *) malloc((size_t)NTask * N * sizeof(int));
+    for (int t = 0; t < NTask; t++) {
+        for (int c = 0; c < N; c++) {
+            alltoall_send[t * N + c] = send_count[c * NTask + t];
+        }
+    }
+    MPI_Alltoall(alltoall_send, N, MPI_INT, alltoall_recv, N, MPI_INT, MPI_COMM_WORLD);
+    /* Untranspose to recv_count[c * NTask + t] = # cb-c records arriving from rank t. */
+    int *recv_count = (int *) calloc((size_t)N * NTask, sizeof(int));
+    for (int t = 0; t < NTask; t++) {
+        for (int c = 0; c < N; c++) {
+            recv_count[c * NTask + t] = alltoall_recv[t * N + c];
+        }
+    }
+    free(alltoall_send); free(alltoall_recv);
+
+    /* ---- Per-rank recv byte counts and displacements. */
+    int *recv_bytes     = (int *) calloc(NTask, sizeof(int));
+    for (int c = 0; c < N; c++) {
+        const size_t ds = bundle->callbacks[c]->delta_size;
+        for (int t = 0; t < NTask; t++) {
+            recv_bytes[t] += recv_count[c * NTask + t] * (int)ds;
+        }
+    }
+    int *recv_byte_disp = (int *) malloc(NTask * sizeof(int));
+    recv_byte_disp[0] = 0;
+    for (int t = 1; t < NTask; t++) recv_byte_disp[t] = recv_byte_disp[t-1] + recv_bytes[t-1];
+    int total_recv_bytes = recv_byte_disp[NTask-1] + recv_bytes[NTask-1];
+
+    char *recv_buf = (char *) malloc((size_t)(total_recv_bytes > 0 ? total_recv_bytes : 1));
+
+    /* ---- ONE gizmo_mpi_alltoallv_typed on the byte stream (size = 1). */
+    gizmo_mpi_alltoallv_typed(send_buf, send_bytes, send_byte_disp,
+                              recv_buf, recv_bytes, recv_byte_disp,
+                              1, MPI_COMM_WORLD);
+    free(send_buf); free(send_bytes); free(send_byte_disp); free(send_count);
+
+    /* ---- SINGLE APPLY PASS over received bytes. For each rank-t segment
+     * (in canonical rank order), demultiplex by callback in canonical
+     * bundle order using the per-cb-per-rank recv_count. */
+    for (int t = 0; t < NTask; t++) {
+        size_t cb_base = (size_t)recv_byte_disp[t];
+        for (int c = 0; c < N; c++) {
+            const ghost_writeback_callback *cb = bundle->callbacks[c];
+            const size_t ds = cb->delta_size;
+            int n_records = recv_count[c * NTask + t];
+            for (int r = 0; r < n_records; r++) {
+                cb->apply_delta(cb->ctx, recv_buf + cb_base + (size_t)r * ds);
+            }
+            cb_base += (size_t)n_records * ds;
+        }
+    }
+
+    free(recv_buf); free(recv_bytes); free(recv_byte_disp); free(recv_count);
+
     /* Per-callback cleanup, then exactly-once arena_invalidate. */
-    for (int c = 0; c < bundle->n_callbacks; c++) {
+    for (int c = 0; c < N; c++) {
         const ghost_writeback_callback *cb = bundle->callbacks[c];
         cb->cleanup(cb->ctx);
     }
