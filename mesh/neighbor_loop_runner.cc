@@ -19,7 +19,7 @@
  * structurally encoded as collect_candidates_pre_drift →
  * lazy_drift_candidates → evaluate_pairs_post_drift; Brute oracle uses the
  * SAME drift epoch as Mode B. Multi-rank peer-to-peer is deferred to 3c.3 — runtime
- * abort guards GIZMO_NLR_FORCE_MODEB on NTask>1.
+ * abort guards GIZMO_NLR_FORCE_MODE=B on NTask>1.
  *
  * Architecture binding contract:
  *   ~/.claude/memory/reference_neighbor_loop_contract.md
@@ -28,6 +28,7 @@
  */
 
 #include <mpi.h>
+#include <cstdarg>                                   /* va_list, vfprintf for nlr_warn_once_rank0 */
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -168,42 +169,229 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
     return spec_default;
 }
 
-bool gizmo_nlr_dispatch_trace_enabled(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_NLR_DISPATCH_TRACE");
-        cached = (e && e[0] == '1') ? 1 : 0;
+/* ============================================================================
+ * NLR env config (Pass B.i unified API).
+ *
+ * Single canonical surface for diagnostic, control, and spike (cross-
+ * validation) env vars. Old names are accepted as aliases for one cycle
+ * with rank-0 deprecation warnings; explicit retire queued for the next
+ * cleanup pass after Pass B.
+ *
+ * Conflict policy and alias precedence: see the comment block on the
+ * declarations at the top of mesh/neighbor_loop_runner.h.
+ *
+ * All accessors are first-use cached and lock-free (single load per call).
+ * Initialization may call endrun on a hard conflict; endrun is collective,
+ * and TACC env vars are uniform across ranks, so all ranks reach the same
+ * decision and abort together.
+ * ========================================================================== */
+
+namespace {
+
+/* One-shot rank-0 warning helper. Cached set keyed by string-literal
+ * pointer (so each call site occupies one slot). Cap is generous; if hit,
+ * subsequent warnings are silently dropped — they are diagnostics, not
+ * correctness gates. */
+static void nlr_warn_once_rank0(const char *key, const char *fmt, ...)
+{
+    if(ThisTask != 0) return;
+    static const char *seen[32];
+    static int seen_n = 0;
+    for(int i = 0; i < seen_n; i++) { if(seen[i] == key) return; }
+    if(seen_n < 32) { seen[seen_n++] = key; }
+    fprintf(stderr, "[NLR env] ");
+    va_list ap; va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+    fflush(stderr);
+}
+
+static bool nlr_env_is_one(const char *name) {
+    const char *e = getenv(name);
+    return (e && e[0] == '1' && e[1] == '\0');
+}
+
+/* Initialize diag level. Reads new var first, then aliases. */
+static int nlr_init_diag_level(void)
+{
+    const char *raw = getenv("GIZMO_NLR_DIAG");
+    int new_set_level = -1;
+    if(raw && raw[0]) {
+        char *endp = nullptr;
+        long v = strtol(raw, &endp, 10);
+        if(!endp || *endp != '\0' || v < 0 || v > 3) {
+            if(ThisTask == 0) {
+                fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_DIAG=\"%s\" must be in {0,1,2,3}.\n",
+                        raw);
+                fflush(stderr);
+            }
+            endrun(81100);
+        }
+        new_set_level = (int)v;
     }
+
+    bool old_phase0   = nlr_env_is_one("GIZMO_PHASE0_DIAG");
+    bool old_dispatch = nlr_env_is_one("GIZMO_NLR_DISPATCH_TRACE");
+
+    int level;
+    if(new_set_level >= 0) {
+        level = new_set_level;
+        if(old_phase0) {
+            nlr_warn_once_rank0("alias_phase0_overridden",
+                "GIZMO_PHASE0_DIAG ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
+        }
+        if(old_dispatch) {
+            nlr_warn_once_rank0("alias_dispatch_overridden",
+                "GIZMO_NLR_DISPATCH_TRACE ignored; GIZMO_NLR_DIAG=%d takes precedence.", level);
+        }
+    } else {
+        level = 0;
+        if(old_phase0) {
+            nlr_warn_once_rank0("alias_phase0_deprecated",
+                "GIZMO_PHASE0_DIAG=1 is deprecated; use GIZMO_NLR_DIAG=1 instead.");
+            if(level < 1) level = 1;
+        }
+        if(old_dispatch) {
+            nlr_warn_once_rank0("alias_dispatch_deprecated",
+                "GIZMO_NLR_DISPATCH_TRACE=1 is deprecated; use GIZMO_NLR_DIAG=2 instead.");
+            if(level < 2) level = 2;
+        }
+    }
+
+    if(level == 3) {
+        nlr_warn_once_rank0("level_3_reserved",
+            "GIZMO_NLR_DIAG=3: level 3 currently has no extra diagnostics; "
+            "reserved for future scalar-only extensions. Behaving as level 2.");
+    }
+
+    return level;
+}
+
+/* Initialize force mode. Conflict cases endrun (collective). */
+static NlrForceMode nlr_init_force_mode(void)
+{
+    const char *raw_new = getenv("GIZMO_NLR_FORCE_MODE");
+    bool new_set = (raw_new && raw_new[0]);
+    bool old_a   = nlr_env_is_one("GIZMO_NLR_FORCE_MODEA");
+    bool old_b   = nlr_env_is_one("GIZMO_NLR_FORCE_MODEB");
+
+    if(new_set && (old_a || old_b)) {
+        if(ThisTask == 0) {
+            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODE='%s' is set AND "
+                    "old GIZMO_NLR_FORCE_MODEA=%d / GIZMO_NLR_FORCE_MODEB=%d are set. "
+                    "Use only one. Old names are deprecated.\n",
+                    raw_new, (int)old_a, (int)old_b);
+            fflush(stderr);
+        }
+        endrun(81101);
+    }
+    if(old_a && old_b) {
+        if(ThisTask == 0) {
+            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODEA and GIZMO_NLR_FORCE_MODEB "
+                    "are both set; mutually exclusive.\n");
+            fflush(stderr);
+        }
+        endrun(81102);
+    }
+
+    if(new_set) {
+        if(raw_new[0] == 'A' && raw_new[1] == '\0') return NlrForceMode::A;
+        if(raw_new[0] == 'B' && raw_new[1] == '\0') return NlrForceMode::B;
+        if(ThisTask == 0) {
+            fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_FORCE_MODE=\"%s\" must be 'A' or 'B'.\n",
+                    raw_new);
+            fflush(stderr);
+        }
+        endrun(81103);
+    }
+
+    if(old_a) {
+        nlr_warn_once_rank0("alias_force_modea_deprecated",
+            "GIZMO_NLR_FORCE_MODEA=1 is deprecated; use GIZMO_NLR_FORCE_MODE=A instead.");
+        return NlrForceMode::A;
+    }
+    if(old_b) {
+        nlr_warn_once_rank0("alias_force_modeb_deprecated",
+            "GIZMO_NLR_FORCE_MODEB=1 is deprecated; use GIZMO_NLR_FORCE_MODE=B instead.");
+        return NlrForceMode::B;
+    }
+    return NlrForceMode::None;
+}
+
+static bool nlr_init_spike_accum_dump(void)
+{
+    bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_ACCUM_DUMP");
+    bool old_set = nlr_env_is_one("GIZMO_MODE_B_XVAL_DUMP");
+    if(new_set) {
+        if(old_set) {
+            nlr_warn_once_rank0("alias_xval_dump_overridden",
+                "GIZMO_MODE_B_XVAL_DUMP ignored; GIZMO_NLR_SPIKE_ACCUM_DUMP takes precedence.");
+        }
+        return true;
+    }
+    if(old_set) {
+        nlr_warn_once_rank0("alias_xval_dump_deprecated",
+            "GIZMO_MODE_B_XVAL_DUMP=1 is deprecated; use GIZMO_NLR_SPIKE_ACCUM_DUMP=1 instead.");
+        return true;
+    }
+    return false;
+}
+
+static bool nlr_init_spike_nb_dump(void)
+{
+    bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_NB_DUMP");
+    bool old_set = nlr_env_is_one("GIZMO_MODE_B_XVAL_NB_DUMP");
+    if(new_set) {
+        if(old_set) {
+            nlr_warn_once_rank0("alias_xval_nb_dump_overridden",
+                "GIZMO_MODE_B_XVAL_NB_DUMP ignored; GIZMO_NLR_SPIKE_NB_DUMP takes precedence.");
+        }
+        return true;
+    }
+    if(old_set) {
+        nlr_warn_once_rank0("alias_xval_nb_dump_deprecated",
+            "GIZMO_MODE_B_XVAL_NB_DUMP=1 is deprecated; use GIZMO_NLR_SPIKE_NB_DUMP=1 instead.");
+        return true;
+    }
+    return false;
+}
+
+} /* anonymous namespace */
+
+int gizmo_nlr_diag_level(void)
+{
+    static int cached = -1;
+    if(cached < 0) cached = nlr_init_diag_level();
+    return cached;
+}
+
+NlrForceMode gizmo_nlr_force_mode(void)
+{
+    static int  cached_int   = -1;          /* -1 = uninit; 0/1/2 = enum */
+    if(cached_int < 0) cached_int = (int)nlr_init_force_mode();
+    return (NlrForceMode)cached_int;
+}
+
+bool gizmo_nlr_spike_accum_dump_enabled(void)
+{
+    static int cached = -1;
+    if(cached < 0) cached = nlr_init_spike_accum_dump() ? 1 : 0;
     return cached != 0;
 }
 
-/* Cached env-gate accessors for diagnostic dumps (3c.4a). Names preserved
- * byte-identical to legacy. First-use cached; mid-run env changes do not
- * take effect, matching this code's cached-env convention. */
-bool gizmo_nlr_xval_dump_enabled(void) {
+bool gizmo_nlr_spike_nb_dump_enabled(void)
+{
     static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_MODE_B_XVAL_DUMP");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
+    if(cached < 0) cached = nlr_init_spike_nb_dump() ? 1 : 0;
     return cached != 0;
 }
-bool gizmo_nlr_xval_nb_dump_enabled(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_MODE_B_XVAL_NB_DUMP");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached != 0;
-}
-bool gizmo_nlr_phase0_diag_enabled(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_PHASE0_DIAG");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached != 0;
-}
+
+/* Adapters — preserve existing call-site names. */
+bool gizmo_nlr_phase0_diag_enabled(void)    { return gizmo_nlr_diag_level() >= 1; }
+bool gizmo_nlr_dispatch_trace_enabled(void) { return gizmo_nlr_diag_level() >= 2; }
+bool gizmo_nlr_xval_dump_enabled(void)      { return gizmo_nlr_spike_accum_dump_enabled(); }
+bool gizmo_nlr_xval_nb_dump_enabled(void)   { return gizmo_nlr_spike_nb_dump_enabled(); }
 
 /* ============================================================================
  * NeighborLoopPlan path predicates — single source of truth keyed on path.
@@ -289,22 +477,8 @@ struct StageTimer {
 };
 } /* anonymous namespace */
 
-bool gizmo_nlr_force_mode_b_global(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_NLR_FORCE_MODEB");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached != 0;
-}
-bool gizmo_nlr_force_mode_a_global(void) {
-    static int cached = -1;
-    if(cached < 0) {
-        const char *e = getenv("GIZMO_NLR_FORCE_MODEA");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached != 0;
-}
+bool gizmo_nlr_force_mode_b_global(void) { return gizmo_nlr_force_mode() == NlrForceMode::B; }
+bool gizmo_nlr_force_mode_a_global(void) { return gizmo_nlr_force_mode() == NlrForceMode::A; }
 bool gizmo_nlr_oracle_enabled_global(void) {
     static int cached = -1;
     if(cached < 0) {
@@ -1515,35 +1689,31 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     static_assert(std::is_trivially_copyable<typename Spec::AccumData>::value,
         "Spec::AccumData must be trivially-copyable (UVM-staged)");
 
-    /* ---- Dispatch (3c.3) ----
+    /* ---- Dispatch ----
      *
      * Selection precedence (highest first):
-     *   1. GIZMO_NLR_FORCE_MODEA + GIZMO_NLR_FORCE_MODEB both set → endrun.
-     *   2. GIZMO_NLR_FORCE_MODEA=1 → Mode A unconditionally.
-     *   3. GIZMO_NLR_FORCE_MODEB=1 → Mode B (local if NTask==1, remote else).
-     *   4. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
+     *   1. GIZMO_NLR_FORCE_MODE=A → Mode A unconditionally.
+     *   2. GIZMO_NLR_FORCE_MODE=B → Mode B (local if NTask==1, remote else).
+     *   3. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
      *      max_active<=TM) → Mode B; else Mode A. Hierarchy of TS/TM:
      *      per-loop env > global env > Spec::modeb_threshold_{sum,max}
-     *      constexpr (default 64/64).
+     *      constexpr defaults (64/64 today).
+     *
+     * Force-mode conflict cases (both old and new vars set, both old vars
+     * set together, invalid value) are caught and endrun'd centrally inside
+     * gizmo_nlr_force_mode(); see the env-config block earlier in this TU.
      *
      * Codex nuance (active-epoch caveat): Mode B host-frozen actives[] are
-     * NOT bit-equivalent to Mode A's device-staged post-NGL-build actives.
-     * Oracle in this dispatch is Mode B tree vs Mode B brute on the same
-     * frozen query — it does NOT cross-validate Mode A. Mode A vs Mode B
-     * active-epoch consistency is a separate concern, deferred.
+     * NOT bit-equivalent to Mode A's device-staged post-neighbor-list-build
+     * actives. Oracle in this dispatch is Mode B tree vs Mode B brute on the
+     * same frozen query — it does NOT cross-validate Mode A. Mode A vs
+     * Mode B active-epoch consistency is a separate concern, deferred.
      */
-    const bool force_a   = gizmo_nlr_force_mode_a_global();
-    const bool force_b   = gizmo_nlr_force_mode_b_global();
+    const NlrForceMode force_mode = gizmo_nlr_force_mode();
+    const bool force_a   = (force_mode == NlrForceMode::A);
+    const bool force_b   = (force_mode == NlrForceMode::B);
     const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
                             gizmo_nlr_oracle_enabled_for(Spec::loop_name);
-
-    if(force_a && force_b) {
-        fprintf(stderr, "neighbor_loop_runner: both GIZMO_NLR_FORCE_MODEA and "
-                "GIZMO_NLR_FORCE_MODEB set for loop '%s' — these are mutually "
-                "exclusive. Pick one.\n", Spec::loop_name);
-        fflush(stderr);
-        endrun(81034);
-    }
 
     /* PHASE0 timing scaffolding (3c.4b). Cached env-gate; mid-run env
      * changes do not take effect. When on, ALL MPI_Wtime calls inside the

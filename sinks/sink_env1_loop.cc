@@ -191,10 +191,14 @@ void SinkEnv1Spec::sidechannel_writeback_end(const neighbor_loop_args& /*args*/,
  *                       (cross-validation probes from the Mode B bring-up;
  *                       scheduled retire after 3d ports complete)
  *
- * Env-var name unification (single GIZMO_NLR_DIAG=<level>) is queued for
- * the runner-template-hardening pass; today's vars (GIZMO_NLR_ORACLE,
- * GIZMO_NLR_ORACLE_DUMP, GIZMO_MODE_B_XVAL_DUMP, GIZMO_MODE_B_XVAL_NB_DUMP)
- * remain as-is for compatibility with existing scripts.
+ * Canonical env vars (Pass B.i):
+ *   GIZMO_NLR_ORACLE=1                gates compare_accum invocation
+ *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
+ *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      per-active accumulator dump (SPIKE)
+ *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call neighbor-list dump (SPIKE)
+ * Old names (GIZMO_MODE_B_XVAL_DUMP, GIZMO_MODE_B_XVAL_NB_DUMP) accepted as
+ * aliases with rank-0 deprecation warning. See mesh/neighbor_loop_runner.h
+ * env-config block for the full alias / conflict policy.
  * ========================================================================== */
 
 /* PERMANENT_DIAGNOSTIC — oracle compare.
@@ -276,8 +280,9 @@ void SinkEnv1Spec::diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v)
 }
 
 /* SPIKE_DIAGNOSTIC — neighbor-list dump (Mode A only; first call per
- * process). Runner only invokes this when GIZMO_MODE_B_XVAL_NB_DUMP=1
- * and the call is on the Mode A path with a live GPU neighbor-list CSR.
+ * process). Runner only invokes this when GIZMO_NLR_SPIKE_NB_DUMP=1
+ * (or its old alias GIZMO_MODE_B_XVAL_NB_DUMP=1) and the call is on the
+ * Mode A path with a live GPU neighbor-list CSR.
  *
  * The runner calls this hook once per active in slot order
  * (0..num_active-1). The first-call gate sets s_fired only after the

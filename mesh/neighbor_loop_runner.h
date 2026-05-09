@@ -736,6 +736,52 @@ int  gizmo_nlr_default_modeb_threshold_sum(void);
 int  gizmo_nlr_default_modeb_threshold_max(void);
 int  gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default);
 int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
+
+/* ============================================================================
+ * NLR env config — unified surface for diagnostic, control, and spike vars.
+ *
+ * Canonical (Pass B.i):
+ *   GIZMO_NLR_DIAG=<0|1|2|3>          0=off, 1=PHASE0 timing line per call,
+ *                                     2=+dispatch trace, 3=reserved (today
+ *                                     equivalent to level 2; rank-0 note)
+ *   GIZMO_NLR_FORCE_MODE=A|B          tester force-mode override
+ *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      cross-validation per-active accumulator
+ *                                     dump (SPIKE; retire after 3d ports)
+ *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call Mode A neighbor-list dump
+ *                                     (SPIKE; retire after 3d ports)
+ *   GIZMO_NLR_ORACLE=1                correctness gate (separate concern)
+ *   GIZMO_NLR_ORACLE_DUMP=1           field-by-field oracle mismatch dump
+ *
+ * Aliases (DEPRECATED; accepted for one cycle with rank-0 warning; explicit
+ * removal queued for the next cleanup pass after Pass B):
+ *   GIZMO_PHASE0_DIAG=1            -> GIZMO_NLR_DIAG=1
+ *   GIZMO_NLR_DISPATCH_TRACE=1     -> GIZMO_NLR_DIAG=2
+ *   GIZMO_NLR_FORCE_MODEA=1        -> GIZMO_NLR_FORCE_MODE=A
+ *   GIZMO_NLR_FORCE_MODEB=1        -> GIZMO_NLR_FORCE_MODE=B
+ *   GIZMO_MODE_B_XVAL_DUMP=1       -> GIZMO_NLR_SPIKE_ACCUM_DUMP=1
+ *   GIZMO_MODE_B_XVAL_NB_DUMP=1    -> GIZMO_NLR_SPIKE_NB_DUMP=1
+ *
+ * Conflict policy (collective; all ranks endrun):
+ *   GIZMO_NLR_FORCE_MODE set + any old _FORCE_MODE{A,B} set     -> endrun
+ *   _FORCE_MODEA=1 AND _FORCE_MODEB=1                           -> endrun
+ *   GIZMO_NLR_FORCE_MODE invalid value (not A or B)             -> endrun
+ *   GIZMO_NLR_DIAG invalid (non-integer, <0, or >3)             -> endrun
+ *
+ * Diagnostic alias precedence (NEW WINS, old-set produces ignore note):
+ *   GIZMO_NLR_DIAG set + diagnostic alias set -> new wins, alias ignored
+ *
+ * Warnings: rank-0 only, cached one-shot per env-var key.
+ * ========================================================================== */
+
+enum class NlrForceMode { None = 0, A = 1, B = 2 };
+
+int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
+NlrForceMode gizmo_nlr_force_mode(void);              /* None / A / B */
+bool         gizmo_nlr_spike_accum_dump_enabled(void);
+bool         gizmo_nlr_spike_nb_dump_enabled(void);
+
+/* Convenience adapters — preserved for existing callers, all delegating
+ * to the unified API above. */
 bool gizmo_nlr_force_mode_b_global(void);
 bool gizmo_nlr_force_mode_a_global(void);
 bool gizmo_nlr_dispatch_trace_enabled(void);
@@ -843,11 +889,17 @@ struct spec_has_dump_neighbor_list<Spec, std::void_t<decltype(
     Spec::diagnostic_dump_neighbor_list(std::declval<const NeighborListDumpView<Spec>&>()))>>
     : std::true_type {};
 
-/* Cached env-gate accessors. Read-once-per-process; mid-run env changes
- * do not take effect. Names preserved byte-identical to legacy:
- *   GIZMO_MODE_B_XVAL_DUMP=1     → per-active accumulator dump
- *   GIZMO_MODE_B_XVAL_NB_DUMP=1  → first-call Mode A NGL neighbor-list dump
- *   GIZMO_PHASE0_DIAG=1          → per-call PHASE0_NLR timing line (3c.4b) */
+/* Cached env-gate adapters. Read-once-per-process; mid-run env changes
+ * do not take effect. All delegate to the unified gizmo_nlr_diag_level /
+ * gizmo_nlr_spike_*_enabled accessors documented at the top of this header.
+ *
+ * Mapping:
+ *   gizmo_nlr_xval_dump_enabled()    -> gizmo_nlr_spike_accum_dump_enabled()
+ *   gizmo_nlr_xval_nb_dump_enabled() -> gizmo_nlr_spike_nb_dump_enabled()
+ *   gizmo_nlr_phase0_diag_enabled()  -> (gizmo_nlr_diag_level() >= 1)
+ *
+ * The xval_* names are kept on existing call sites for now and will be
+ * renamed alongside the env-name retire in a follow-up cleanup pass. */
 bool gizmo_nlr_xval_dump_enabled(void);
 bool gizmo_nlr_xval_nb_dump_enabled(void);
 bool gizmo_nlr_phase0_diag_enabled(void);
