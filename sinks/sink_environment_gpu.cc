@@ -1,9 +1,10 @@
 /* sink_environment_gpu.cc — GPU-accelerated sink environment, Stage E2 only.
  *
- * Stage E1 (sink_environment_evaluate, "first pass") flows through
+ * Stage E1 (sink_environment, "first pass") flows through
  * mesh/neighbor_loop_runner.cc::run_neighbor_loop<SinkEnv1Spec>, which uses
- * the SSOT pair body sinks/sink_env1_pair_kernel.h with Mode A (GPU NGL),
- * Mode B local, and Mode B remote (P2P) paths selected by threshold dispatch.
+ * the inline pair body in sinks/sink_env1_loop.h with the Mode A (GPU
+ * neighbor list), Mode B local, and Mode B remote (peer-to-peer) paths
+ * selected by threshold dispatch.
  *
  * The only GPU evaluator that lives in this file is the Stage E2 aggregator
  * sink_environment_second_evaluate_gpu (Bulge-Disk; SINK_GRAVACCRETION==0).

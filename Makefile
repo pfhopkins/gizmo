@@ -476,7 +476,7 @@ STARFORM_OBJS = galaxy_sf/sfr_eff.o \
 SINK_OBJS = sinks/sink.o \
             sinks/sink_util.o \
             sinks/sink_environment.o \
-            sinks/sink_env1_spec.o \
+            sinks/sink_env1_loop.o \
             sinks/sink_feed.o \
             sinks/sink_swallow_and_kick.o
 

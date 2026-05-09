@@ -13,7 +13,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "sinks_gpu_decls.h"
 #include "../mesh/neighbor_loop_runner.h"
-#include "sink_env1_spec.h"
+#include "sink_env1_loop.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -43,122 +43,99 @@ static void sink_normalize_temp_info_struct_after_environment_loop(int i)
 }
 
 
+/* Scatter the per-active accumulator buffer back into SinkTempInfo. Pure
+ * code motion from the inline loop body that used to live in
+ * sink_environment_loop; per-loop physics, no engine. */
+static void sink_env1_scatter_to_temp_info(const int *active_list,
+                                            int num_active,
+                                            const struct sink_env_gpu_out *per_active_accum)
+{
+    for(int a = 0; a < num_active; a++) {
+        int i = active_list[a];
+        int t = P[i].IndexMapToTempStruc;
+        SinkTempInfo[t].Sink_SurroudingGasInternalEnergy += per_active_accum[a].Sink_SurroudingGasInternalEnergy;
+        SinkTempInfo[t].Mgas_in_Kernel  += per_active_accum[a].Mgas_in_Kernel;
+        SinkTempInfo[t].Mstar_in_Kernel += per_active_accum[a].Mstar_in_Kernel;
+        SinkTempInfo[t].Malt_in_Kernel  += per_active_accum[a].Malt_in_Kernel;
+        for(int k = 0; k < 3; k++) {
+            SinkTempInfo[t].Jgas_in_Kernel[k]  += per_active_accum[a].Jgas_in_Kernel[k];
+            SinkTempInfo[t].Jstar_in_Kernel[k] += per_active_accum[a].Jstar_in_Kernel[k];
+            SinkTempInfo[t].Jalt_in_Kernel[k]  += per_active_accum[a].Jalt_in_Kernel[k];
+        }
+#ifdef SINK_REPOSITION_ON_POTMIN
+        SinkTempInfo[t].DF_rms_vel += per_active_accum[a].DF_rms_vel;
+        for(int k = 0; k < 3; k++) SinkTempInfo[t].DF_mean_vel[k] += per_active_accum[a].DF_mean_vel[k];
+        if(per_active_accum[a].DF_mmax_particles > SinkTempInfo[t].DF_mmax_particles)
+            SinkTempInfo[t].DF_mmax_particles = per_active_accum[a].DF_mmax_particles;
+#endif
+#if defined(SINK_OUTPUT_MOREINFO)
+        SinkTempInfo[t].Sfr_in_Kernel += per_active_accum[a].Sfr_in_Kernel;
+#endif
+#if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
+        for(int k = 0; k < 3; k++) SinkTempInfo[t].Sink_SurroundingGasVel[k] += per_active_accum[a].Sink_SurroundingGasVel[k];
+#endif
+#if defined(JET_DIRECTION_FROM_KERNEL_AND_SINK)
+        for(int k = 0; k < 3; k++) SinkTempInfo[t].Sink_SurroundingGasCOM[k] += per_active_accum[a].Sink_SurroundingGasCOM[k];
+#endif
+#if (SINK_GRAVACCRETION == 8)
+        SinkTempInfo[t].hubber_mdot_bondi_limiter   += per_active_accum[a].hubber_mdot_bondi_limiter;
+        SinkTempInfo[t].hubber_mdot_vr_estimator    += per_active_accum[a].hubber_mdot_vr_estimator;
+        SinkTempInfo[t].hubber_mdot_disk_estimator  += per_active_accum[a].hubber_mdot_disk_estimator;
+#endif
+#if defined(SINK_GRAVCAPTURE_GAS)
+        SinkTempInfo[t].mass_to_swallow_edd += per_active_accum[a].mass_to_swallow_edd;
+#endif
+#if defined(SINK_RETURN_ANGMOM_TO_GAS)
+        for(int k = 0; k < 3; k++) SinkTempInfo[t].angmom_prepass_sum_for_passback[k] += per_active_accum[a].angmom_prepass_sum_for_passback[k];
+#endif
+#if defined(SINK_RETURN_BFLUX)
+        SinkTempInfo[t].kernel_norm_topass_in_swallowloop += per_active_accum[a].kernel_norm_topass_in_swallowloop;
+#endif
+    }
+}
+
+
 void sink_environment_loop(void)
 {
-    /* GPU neighbor-list path: build active-sink index + radius arrays, dispatch
-       GPU kernel, scatter outputs into SinkTempInfo. */
     CPU_Step[CPU_SINK_ENV] += measure_time();
 
-    /* Count active sinks FIRST (cheap host loop over ActiveParticleList).
-     * If no rank has any active sinks, skip ghost_prep + arena_acquire +
-     * everything else. ghost_prep does an all-particles drift loop (12.4M
-     * cache-miss reads on fire_m11i) so this guard saves ~1s/step on
-     * sink-inactive timebins. Multi-rank correctness requires the
-     * MPI_Allreduce so all ranks agree to skip or proceed together. */
-    int num_active = 0;
-    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
-    int global_num_active = num_active;
-    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if(global_num_active == 0) {
+    /* ---------- engine: build active list (count + Allreduce + skip-if-empty + fill) ---------- */
+    int *active_list = nullptr;
+    int  num_active = 0, num_global_active = 0;
+    if(!nlr_build_active_list(SinkEnv1Spec::is_active,
+                               &active_list, &num_active, &num_global_active,
+                               "sinkenv_active_list")) {
         CPU_Step[CPU_SINK_ENV] += measure_time();
         return;
     }
 
-    int *nl_active = (int *) mymalloc("sinkenv_nl_active", (num_active > 0 ? num_active : 1) * sizeof(int));
-    struct sink_env_gpu_out *nl_outs = (struct sink_env_gpu_out *)
-        mymalloc("sinkenv_nl_outs", (num_active > 0 ? num_active : 1) * sizeof(struct sink_env_gpu_out));
+    /* ---------- physics: per-active accumulator buffer + Spec::Aux pointer ---------- */
+    int alloc_n = (num_active > 0) ? num_active : 1;
+    struct sink_env_gpu_out *per_active_accum = (struct sink_env_gpu_out *)
+        mymalloc("sinkenv_per_active_accum", alloc_n * sizeof(struct sink_env_gpu_out));
+    SinkEnv1Spec::Aux aux;
+    aux.per_active_accum = per_active_accum;
 
-    int aa = 0;
-    for(int i : ActiveParticleList) {
-        if(sink_isactive(i)) { nl_active[aa] = i; aa++; }
+    /* ---------- engine: hand off to runner ---------- */
+    neighbor_loop_args args = nlr_default_args();
+    args.active_list = active_list;
+    args.num_active  = num_active;
+    args.aux         = &aux;
+    run_neighbor_loop<SinkEnv1Spec>(args);
+
+    /* ---------- physics: scatter into SinkTempInfo ---------- */
+    sink_env1_scatter_to_temp_info(active_list, num_active, per_active_accum);
+
+    /* ---------- engine: free + post-pass normalize ---------- */
+    myfree(per_active_accum);
+    nlr_free_active_list(active_list);
+
+    /* ---------- physics: per-active normalization ---------- */
+    for(int i = 0; i < N_active_loc_Sink; i++) {
+        sink_normalize_temp_info_struct_after_environment_loop(i);
     }
 
-    /* Stage E1 dispatch flows entirely through run_neighbor_loop<SinkEnv1Spec>.
-     * The runner internally:
-     *   - chooses path (Mode A GPU NGL / Mode B local / Mode B remote) via
-     *     threshold dispatch on num_active_global vs Spec::modeb_threshold_*
-     *     (default 64/64), with GIZMO_NLR_FORCE_MODE{A,B} as testers' overrides
-     *   - stages per-active radii via SinkEnv1Spec::search_radius_host
-     *   - calls gizmo_request_filtered_ghost_import_fresh ONLY on Mode A
-     *     (Mode B paths skip global drift + ghost import entirely, preserving
-     *      the lazy-drift tiny-N corridor)
-     *   - calls SinkEnv1Spec ghost_write_detector_*, sidechannel_writeback_*
-     *     (SSD-only) hooks on imported-ghost paths only, in the codex-locked
-     *     order
-     *   - enforces hard-corridor invariants on Mode B paths (HARD ABORT if
-     *     move_particles / ghost_exchange_impl / gpu_particles_arena_acquire /
-     *     NumPart change across the runner body)
-     *
-     * The caller's only physics responsibilities are: the active set, the
-     * per-call aux, and a ghost-safety-factor value (used by the runner only
-     * on Mode A). See the runner-prep contract in mesh/neighbor_loop_runner.h.
-     */
-    {
-        SinkEnv1Aux aux;
-        aux.nl_outs = nl_outs;
-        neighbor_loop_args args;
-        args.P                   = P;
-        args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
-        args.num_total           = NumPart;
-        args.active_list         = nl_active;
-        args.num_active          = num_active;
-        args.aux                 = &aux;
-        args.ghost_safety_factor = gizmo_ghost_safety_factor();
-        run_neighbor_loop<SinkEnv1Spec>(args);
-    }
-
-    /* Scatter per-active-sink outputs into SinkTempInfo */
-    for(int a = 0; a < num_active; a++) {
-        int i = nl_active[a];
-        int t = P[i].IndexMapToTempStruc;
-        SinkTempInfo[t].Sink_SurroudingGasInternalEnergy += nl_outs[a].Sink_SurroudingGasInternalEnergy;
-        SinkTempInfo[t].Mgas_in_Kernel  += nl_outs[a].Mgas_in_Kernel;
-        SinkTempInfo[t].Mstar_in_Kernel += nl_outs[a].Mstar_in_Kernel;
-        SinkTempInfo[t].Malt_in_Kernel  += nl_outs[a].Malt_in_Kernel;
-        for(int k = 0; k < 3; k++) {
-            SinkTempInfo[t].Jgas_in_Kernel[k]  += nl_outs[a].Jgas_in_Kernel[k];
-            SinkTempInfo[t].Jstar_in_Kernel[k] += nl_outs[a].Jstar_in_Kernel[k];
-            SinkTempInfo[t].Jalt_in_Kernel[k]  += nl_outs[a].Jalt_in_Kernel[k];
-        }
-#ifdef SINK_REPOSITION_ON_POTMIN
-        SinkTempInfo[t].DF_rms_vel += nl_outs[a].DF_rms_vel;
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].DF_mean_vel[k] += nl_outs[a].DF_mean_vel[k];
-        if(nl_outs[a].DF_mmax_particles > SinkTempInfo[t].DF_mmax_particles)
-            SinkTempInfo[t].DF_mmax_particles = nl_outs[a].DF_mmax_particles;
-#endif
-#if defined(SINK_OUTPUT_MOREINFO)
-        SinkTempInfo[t].Sfr_in_Kernel += nl_outs[a].Sfr_in_Kernel;
-#endif
-#if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].Sink_SurroundingGasVel[k] += nl_outs[a].Sink_SurroundingGasVel[k];
-#endif
-#if defined(JET_DIRECTION_FROM_KERNEL_AND_SINK)
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].Sink_SurroundingGasCOM[k] += nl_outs[a].Sink_SurroundingGasCOM[k];
-#endif
-#if (SINK_GRAVACCRETION == 8)
-        SinkTempInfo[t].hubber_mdot_bondi_limiter   += nl_outs[a].hubber_mdot_bondi_limiter;
-        SinkTempInfo[t].hubber_mdot_vr_estimator    += nl_outs[a].hubber_mdot_vr_estimator;
-        SinkTempInfo[t].hubber_mdot_disk_estimator  += nl_outs[a].hubber_mdot_disk_estimator;
-#endif
-#if defined(SINK_GRAVCAPTURE_GAS)
-        SinkTempInfo[t].mass_to_swallow_edd += nl_outs[a].mass_to_swallow_edd;
-#endif
-#if defined(SINK_RETURN_ANGMOM_TO_GAS)
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].angmom_prepass_sum_for_passback[k] += nl_outs[a].angmom_prepass_sum_for_passback[k];
-#endif
-#if defined(SINK_RETURN_BFLUX)
-        SinkTempInfo[t].kernel_norm_topass_in_swallowloop += nl_outs[a].kernel_norm_topass_in_swallowloop;
-#endif
-    }
-
-    myfree(nl_outs); myfree(nl_active);
-    /* ghost_exchange_cleanup() now lives inside run_neighbor_loop<SinkEnv1Spec>,
-     * gated on the chosen path importing ghosts (Mode A only) AND NTask > 1.
-     * Caller no longer participates in ghost lifecycle. */
-
-    /* final operations on results */
-    {int i; for(i=0; i<N_active_loc_Sink; i++) {sink_normalize_temp_info_struct_after_environment_loop(i);}}
-    CPU_Step[CPU_SINK_ENV] += measure_time(); /* collect timings and reset clock for next timing */
+    CPU_Step[CPU_SINK_ENV] += measure_time();
 }
 
 

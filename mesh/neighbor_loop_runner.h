@@ -1,17 +1,16 @@
 /* mesh/neighbor_loop_runner.h — generic neighbor-loop runner for GIZMO.
  *
- * Goal: provide the SSOT interface that every GIZMO neighbor loop will be
- * migrated onto over time. The interface is the binding contract; the runner
- * implementation is built incrementally.
+ * Single source of truth for the neighbor-loop interface every GIZMO physics
+ * loop is migrated onto. The interface is the binding contract; new patterns
+ * (write modes, iterative loops, identity sidecars) are DECLARED in the
+ * interface so callers don't reshape when their needs are added; runtime
+ * policy on unsupported features is documented below (TL;DR: Mode A fallback
+ * in production; abort if force-Mode-B; static_assert only for internally
+ * inconsistent specs).
  *
- * Initial coverage (this commit): WritePattern::ActiveReduceOnly with the
- * default RemoteEvalMode::RemoteComputesAccum, single iteration, NoIdentity,
- * NoScatter. Sufficient for sink_env1 migration.
- *
- * Other patterns / modes are DECLARED in the interface so callers don't
- * have to reshape when their needs are added; runtime policy on unsupported
- * features is documented below (TL;DR: Mode A fallback in production; abort
- * if force-Mode-B; static_assert only for internally inconsistent specs).
+ * The user-facing copy-pasteable Spec skeleton is below ("NeighborLoopSpec —
+ * copy-pasteable skeleton for a new physics loop"). For a worked example,
+ * read sinks/sink_env1_loop.h.
  *
  * ============================================================================
  * Three-epoch host/device staging contract
@@ -23,7 +22,7 @@
  *   sink_environment_gpu.cc timing exactly.
  *
  *   (1) HOST, pre-arena:
- *         search_radius_host(args, slot, i) -> double
+ *         search_radius(args, slot, i) -> double
  *       Reads external state (e.g. P[i].KernelRadius) BEFORE arena_acquire
  *       / drift / freshness. Equivalent to the radii staging that legacy
  *       callers performed in their host loop just after building the
@@ -32,7 +31,7 @@
  *       walker reads it per-query.
  *
  *   (2) HOST, pre-arena:
- *         populate_call_scalars_host(args) -> CallScalars
+ *         populate_call_scalars(args) -> CallScalars
  *       Captures per-call scalar globals (cosmology factors, gravity
  *       constant, kernel radii, etc.) into a typed POD struct. Captured
  *       once per call; replicated by-value into the device-side lambda
@@ -73,7 +72,7 @@
  *     writebacks on the host. Spec is responsible for any further state
  *     scatter (e.g. SinkTempInfo population).
  *
- *   pair_kernel signature (SSOT lever; contract §"Pair kernel signature"):
+ *   pair_kernel signature (single-source-of-truth lever; contract §"Pair kernel signature"):
  *     KOKKOS_INLINE_FUNCTION
  *     static void pair_kernel(const ActiveData& a,
  *                             const NeighborData& nb,
@@ -135,7 +134,8 @@
  *     - iter driver:      IterControl after_iter() (defaults NotIterative)
  *     - oracle compare:   compare_accum, accum_tolerance (compare_scatter +
  *                         scatter_tolerance for scatter specs)
- *     - hooks (host):     load_active_host, apply_active_writeback,
+ *     - hooks (host):     search_radius, populate_call_scalars,
+ *                         apply_active_writeback,
  *                         apply_neighbor_writeback (scatter only),
  *                         populate_device_context (optional extension)
  *     - hooks (device):   load_neighbor, pair_kernel
@@ -144,7 +144,7 @@
  *     - dispatch:  Mode A vs Mode B vs Brute — runtime choice from
  *                  Allreduce'd Nactive vs threshold + force-mode env
  *     - search:    coarse predicate, type mask + per-type hmax pruning
- *     - transport: ghost (Mode A) or P2P (Mode B)
+ *     - transport: ghost (Mode A) or peer-to-peer (Mode B)
  *     - drift:     lazy drift_particle on j candidates pre-kernel
  *     - oracle:    GIZMO_<LOOP>_ORACLE=1 → run Mode B + Brute, compare via
  *                  Spec::compare_accum within Spec::accum_tolerance
@@ -257,6 +257,50 @@ struct NeighborLoopDeviceContextBase {
 };
 
 /* ============================================================================
+ * NlrCommonScalars — cosmology + gravity scalars almost every Spec needs.
+ *
+ * Specs include this by composition in their CallScalars struct:
+ *
+ *     struct MyLoopCallScalars {
+ *         NlrCommonScalars common;
+ *         double           my_loop_specific_scalar;
+ *     };
+ *
+ *     static MyLoopCallScalars populate_call_scalars(...) {
+ *         MyLoopCallScalars s;
+ *         s.common = nlr_common_scalars_from_all();
+ *         s.my_loop_specific_scalar = ...;
+ *         return s;
+ *     }
+ *
+ * Trivially copyable — rides the device lambda capture and any cross-rank
+ * transport without special handling. Not opt-out: missing-when-needed is
+ * silent floating-point corruption, so the cost of always populating these
+ * (a few doubles per call) is the safer default.
+ *
+ * Slightly overcomplete by design: includes fields not strictly needed by
+ * every loop, so a new Spec author copying this template gets the obvious
+ * cosmology factors without remembering to re-derive them.
+ *
+ * Unit conversion factors (All.UnitMass_in_g, UnitLength_in_cm, etc.) are
+ * NOT in this struct. They are invariant for the run, so a parallel
+ * NlrUnitScalars helper can be added when the first loop needs them in a
+ * device-side gas-physics helper. Until then, host-side code reads
+ * All.Unit* directly.
+ * ========================================================================== */
+struct NlrCommonScalars {
+    double cf_atime;
+    double cf_a2inv;
+    double cf_a3inv;
+    double cf_hubble_a;
+    double newton_G;                /* All.G — Newton's gravitational constant in code units */
+    double hubble;                  /* All.HubbleParam */
+    int    comoving_integration_on;
+};
+
+NlrCommonScalars nlr_common_scalars_from_all(void);
+
+/* ============================================================================
  * Iteration driver
  * ========================================================================== */
 
@@ -289,125 +333,131 @@ enum class DispatchPath : int {
 };
 
 /* ============================================================================
- * Required-shape reference for NeighborLoopSpec
+ * NeighborLoopSpec — copy-pasteable skeleton for a new physics loop
+ *
+ * Copy this block verbatim into your loop's <loop_name>_loop.h, replace the
+ * physics, and you're done. The runner contract is what's below; everything
+ * else is engine. See sinks/sink_env1_loop.h for a worked example.
+ *
+ * Per-spec layout convention (mirrors sink_env1_loop.h):
+ *   PHYSICS BLOCK   — edit when changing the loop's physics
+ *   ENGINE APPARATUS — touch only when changing the runner contract itself
+ *   DIAGNOSTICS     — env-gated (see GIZMO_*_DIAG / _ORACLE / _SPIKE_*)
  *
  *   struct MyLoopSpec {
- *     // ---- Required identifiers ----
- *     static constexpr const char* loop_name = "my_loop";
+ *     // ============ PHYSICS BLOCK ============
  *
- *     // ---- Required types (all must be std::is_trivially_copyable_v) ----
- *     struct CallScalars   { ... };       // per-call globals; replicated to device
- *     struct ActiveData    { ... };       // device-built post-NGL into UVM array
- *     struct NeighborData  { ... };       // built device-side via load_neighbor
- *     struct AccumData     { ... };       // or NoAccum if NeighborScatter
- *     struct ScatterData   { ... };       // or NoScatter if ActiveReduceOnly
- *     using IdentityFields = NoIdentity;
- *     using IterControl    = NotIterative;
+ *     // (1) Loop identity (drives env-var prefixes + diagnostic labels)
+ *     static constexpr const char *loop_name = "my_loop";
  *
- *     // Optional spec-extended device context. If absent: DeviceContext =
- *     // NeighborLoopDeviceContextBase. If present, must inherit the base
- *     // and the spec MUST also provide populate_device_context (see below).
+ *     // (2) Search policy
+ *     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
+ *     static constexpr unsigned int            neighbor_type_mask = (1u<<0);
+ *     static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
+ *
+ *     // (3) Writeback policy
+ *     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
+ *     static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
+ *
+ *     // (4) Tolerances
+ *     static constexpr double accum_tolerance = 1e-9;
+ *
+ *     // (5) Active-particle predicate. Caller passes this to nlr_build_active_list.
+ *     static bool is_active(int particle_index);
+ *
+ *     // (6) Per-pair physics types (all trivially copyable; see TRAP 5)
+ *     struct CallScalars   { NlrCommonScalars common; ... };
+ *     struct ActiveData    { ...; CallScalars scalars; };
+ *     struct NeighborData  { const struct particle_data* neighbor_particle; ... };
+ *     using  AccumData     = my_loop_accum_t;
+ *     using  ScatterData   = NoScatter;        // or your scatter type
+ *     using  IdentityFields = NoIdentity;      // see runner header for non-default
+ *     using  IterControl   = NotIterative;
+ *
+ *     // (7) Per-active aux passed by caller through neighbor_loop_args::aux
+ *     struct Aux { my_loop_accum_t *out_buffer; };
+ *
+ *     // (8) Per-pair physics body. Forward to a header-inline single-source-of-truth helper if
+ *     //     you want the same body callable from device (Mode A) and host
+ *     //     (Mode B walker, oracle). See TRAP 3.
+ *     KOKKOS_INLINE_FUNCTION
+ *     static void pair_kernel(const ActiveData& active, const NeighborData& neighbor,
+ *                             AccumData& accum, ScatterData& scatter);
+ *
+ *     // (9) Per-active and per-call hooks
+ *     static double      search_radius(const neighbor_loop_args& args,
+ *                                      int active_slot, int i);
+ *     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
+ *     KOKKOS_INLINE_FUNCTION
+ *     static ActiveData  load_active(const NeighborLoopDeviceContextBase& ctx,
+ *                                    int active_slot, int i,
+ *                                    double h_search, const CallScalars& scalars);
+ *     KOKKOS_INLINE_FUNCTION
+ *     static NeighborData load_neighbor(const NeighborLoopDeviceContextBase& ctx,
+ *                                       int j, const IdentitySidecar& id,
+ *                                       const ActiveData& active);
+ *     KOKKOS_INLINE_FUNCTION static void zero_accum(AccumData& accum);
+ *     static void apply_active_writeback(const neighbor_loop_args& args,
+ *                                        int active_slot, int i,
+ *                                        const AccumData& accum);
+ *     static void merge_accum(AccumData& local_accum,
+ *                             const AccumData& peer_accum);
+ *
+ *     // (10) Ghost-side writeback hooks (often empty). Trait-gated.
+ *     static constexpr bool uses_ghost_write_detector = true;
+ *     static constexpr bool uses_ghost_writeback      = false;
+ *     static void ghost_write_detector_begin(const neighbor_loop_args&,
+ *                                             const NeighborLoopPlan&);
+ *     static void ghost_write_detector_end  (const neighbor_loop_args&,
+ *                                             const NeighborLoopPlan&);
+ *     // ...writeback variants as needed
+ *
+ *     // ============ ENGINE APPARATUS ============
+ *     // Optional: extended device context (rare). If defined, also provide
+ *     // populate_device_context. Default = NeighborLoopDeviceContextBase.
  *     // using DeviceContext = MyLoopDeviceContext;
  *
- *     // ---- Required search/writeback constexprs ----
- *     static constexpr int           search_mode        = MODE_B_SEARCH_SYMMETRIC;
- *     static constexpr unsigned int  neighbor_type_mask = (1u<<0);
- *     static constexpr mode_b_radius_policy_t radius_policy = MODE_B_RADIUS_DEFAULT;
- *     static constexpr WritePattern  write_pattern      = WritePattern::ActiveReduceOnly;
- *     static constexpr SidxCacheKind sidx_cache_kind    = SidxCacheKind::AllTypes;
- *     // optional override (else inferred from write_pattern):
- *     // static constexpr RemoteEvalMode remote_eval_mode_override =
- *     //     RemoteEvalMode::RemoteComputesAccum;
- *     // optional: force unsupported Mode B features to abort instead of
- *     // falling back to Mode A. Default false.
- *     // static constexpr bool force_modeb_required = false;
- *
- *     // ---- Required oracle compare ----
- *     static double compare_accum(const AccumData& a, const AccumData& b);
- *     static constexpr double accum_tolerance = 1e-9;
- *     // For specs with ScatterData != NoScatter:
- *     // static double compare_scatter(const ScatterData& a, const ScatterData& b);
- *     // static constexpr double scatter_tolerance = 1e-9;
- *
- *     // ---- Required hooks ----
- *
- *     // (Host, pre-arena epoch) Per-active search radius from external
- *     // state (e.g. P[i].KernelRadius). Runner stages radii[num_active]
- *     // for gpu_ngb_list_build (Mode A) and per-query h_search (Mode B).
- *     static double search_radius_host(const struct neighbor_loop_args& args,
- *                                       int active_slot, int i);
- *
- *     // (Host, pre-arena epoch) Capture per-call scalar globals into POD.
- *     // Captured once per call; passed by value into device lambdas.
- *     static CallScalars populate_call_scalars_host(
- *         const struct neighbor_loop_args& args);
- *
- *     // (Device, post-NGL-build epoch) Build ActiveData for slot. Reads
- *     // ctx.P[i] / ctx.CellP[i] (UVM, post-arena/drift) and combines with
- *     // the host-staged h_search + CallScalars. Same function called
- *     // host-side from Mode B/Brute walker.
- *     KOKKOS_INLINE_FUNCTION
- *     static ActiveData load_active(const DeviceContext& ctx,
- *                                    int active_slot, int i,
- *                                    double h_search,
- *                                    const CallScalars& cs);
- *
- *     // (Device or host) Zero-init AccumData. Spec decides (memset for POD,
- *     // structured zeroing for non-trivial). Generic runner never bakes
- *     // in memset on AccumData.
- *     KOKKOS_INLINE_FUNCTION
- *     static void zero_accum(AccumData& out);
- *
- *     // (Device, host-callable) Build NeighborData for j given ctx +
- *     // identity + active.
- *     KOKKOS_INLINE_FUNCTION
- *     static NeighborData load_neighbor(const DeviceContext& ctx, int j,
- *                                       const IdentitySidecar& id,
- *                                       const ActiveData& a);
- *
- *     // (Device, host-callable) The physics. Pure. Both outputs always
- *     // present. ScatterData=NoScatter / AccumData=NoAccum compile to
- *     // zero cost. NEVER split into "active-side" + "neighbor-side"
- *     // kernels (the SPIKE-duplicate trap).
- *     KOKKOS_INLINE_FUNCTION
- *     static void pair_kernel(const ActiveData& a,
- *                             const NeighborData& nb,
- *                             AccumData& active_out,
- *                             ScatterData& nb_out);
- *
- *     // (Host) Scatter per-active accumulator back to sim state.
- *     static void apply_active_writeback(const struct neighbor_loop_args& args,
- *                                        int active_slot, int i,
- *                                        const AccumData& out);
- *
- *     // (Host) Merge a partial AccumData (e.g. from a peer rank's local-pool
- *     // contribution to the same active) into a destination AccumData. Used
- *     // by run_mode_b_remote to combine self-rank self-pair accums with
- *     // per-peer reply accums. Per-field reduction op is spec-determined
- *     // (e.g. sum for additive fields, MAX for DF_mmax_particles). Within a
- *     // single rank's evaluator, accumulation is via repeated pair_kernel
- *     // calls (which already encode the right per-field op) — merge_accum is
- *     // ONLY used at the cross-rank boundary.
- *     static void merge_accum(AccumData& dst, const AccumData& src);
- *
- *     // ---- Conditional hooks ----
- *
- *     // For SymmetricPairScatter / NeighborScatter / GhostWritebackRequired:
- *     // static void apply_neighbor_writeback(const struct neighbor_loop_args& args,
- *     //                                      int j, const ScatterData& s);
- *
- *     // For specs with extended DeviceContext:
- *     // static void populate_device_context(const struct neighbor_loop_args& args,
- *     //                                     DeviceContext& ctx);
- *
- *     // For iterative loops:
- *     // using IterControl = ::IterControl;
- *     // static IterControl after_iter(const AccumData& out, ActiveData& a, int iter);
- *
- *     // Optional dispatch-threshold override:
+ *     // Optional: per-loop dispatch-threshold override
  *     // static constexpr int modeb_threshold_sum = 64;
  *     // static constexpr int modeb_threshold_max = 64;
+ *
+ *     // ============ DIAGNOSTICS (env-gated) ============
+ *     static double compare_accum(const AccumData& local, const AccumData& oracle);
+ *     static void   diagnostic_dump_active(const ActiveDumpView<MyLoopSpec>& v);
+ *     static void   diagnostic_dump_neighbor_list(const NeighborListDumpView<MyLoopSpec>& v);
  *   };
+ *
+ * ============================================================================
+ * TRAPS — invariants a new Spec author will silently violate without these
+ * ============================================================================
+ *
+ *   TRAP 1: populate_call_scalars is host->device VALUE CAPTURE, not
+ *           inter-rank sync. Globals enter the kernel via this function only
+ *           — the pair_kernel must NEVER read All.* directly. Threading
+ *           CallScalars through ActiveData is what makes Mode A and Mode B
+ *           bit-identical (single source of truth for per-call state).
+ *
+ *   TRAP 2: load_active runs on the device. KOKKOS_INLINE_FUNCTION is the
+ *           contract: no std::, no host-only helpers. Same for load_neighbor,
+ *           pair_kernel, zero_accum.
+ *
+ *   TRAP 3: pair_kernel body MUST be header-inlined (in <loop>_loop.h). A
+ *           definition in the .cc breaks Kokkos device compilation with
+ *           obscure linkage errors.
+ *
+ *   TRAP 4: merge_accum per-field op MUST match the per-field op pair_kernel
+ *           writes. Sum for additive fields, MAX for max-reduced fields.
+ *           Mismatch = silent multi-rank corruption (no compile error; only
+ *           the oracle catches it).
+ *
+ *   TRAP 5: CallScalars, ActiveData, NeighborData, AccumData must all be
+ *           std::is_trivially_copyable_v. Adding a std::vector member compiles
+ *           fine and breaks transport silently in Mode B remote. Runner
+ *           static_asserts at the explicit-instantiation site.
+ *
+ *   TRAP 6: diagnostic_dump_neighbor_list is called once per active, in slot
+ *           order 0..num_active-1. State machines that rely on slot ordering
+ *           (e.g. first-call-only gates) are safe.
  * ========================================================================== */
 
 /* ============================================================================
@@ -442,14 +492,15 @@ enum class DispatchPath : int {
  *                     particle index.
  *   num_active      — length of active_list.
  *   aux             — Spec-defined POD pointer for per-active side arrays
- *                     (e.g. SinkEnv1Aux::nl_outs). Spec-internal contract.
+ *                     (e.g. SinkEnv1Spec::Aux::per_active_accum). Recover
+ *                     the typed pointer with nlr_aux<Spec>(args).
  *   ghost_safety_factor — caller fills unconditionally from
  *                     gizmo_ghost_safety_factor(); the runner uses it only
  *                     on paths that import ghosts (Mode A today). Mode B
  *                     paths ignore it.
  *
  * The caller does NOT compute or stage per-active radii. The runner stages
- * radii once via Spec::search_radius_host and reuses them for any prep
+ * radii once via Spec::search_radius and reuses them for any prep
  * (Mode A) and the chosen walker.
  * ========================================================================== */
 struct neighbor_loop_args {
@@ -458,16 +509,70 @@ struct neighbor_loop_args {
     int    num_total;
     int   *active_list;          /* args.active_list[slot] = particle index */
     int    num_active;
-    void  *aux;                  /* spec-defined POD for per-active side arrays */
+    void  *aux;                  /* spec-defined POD for per-active side arrays;
+                                  * recover the typed pointer with nlr_aux<Spec>(args). */
     double ghost_safety_factor;  /* caller fills via gizmo_ghost_safety_factor()
                                   * unconditionally; runner uses ONLY on paths
                                   * that call gizmo_request_filtered_ghost_import. */
 };
 
 /* ============================================================================
+ * Caller-side helpers (collapse boilerplate; physics stays visible)
+ *
+ * Pattern for the caller of run_neighbor_loop<Spec>:
+ *
+ *   int *active_list, num_active, num_global_active;
+ *   if (!nlr_build_active_list(MyLoopSpec::is_active, &active_list,
+ *                              &num_active, &num_global_active,
+ *                              "myloop_active")) {
+ *       return;                                       // no active particles anywhere
+ *   }
+ *   MyLoopAccum *out_buffer = (MyLoopAccum*)mymalloc("myloop_out", ...);
+ *   MyLoopSpec::Aux aux{out_buffer};
+ *
+ *   neighbor_loop_args args = nlr_default_args();
+ *   args.active_list = active_list;
+ *   args.num_active  = num_active;
+ *   args.aux         = &aux;
+ *   run_neighbor_loop<MyLoopSpec>(args);
+ *
+ *   // ...physics scatter from out_buffer into your per-loop temp struct...
+ *
+ *   myfree(out_buffer);
+ *   nlr_free_active_list(active_list);
+ * ========================================================================== */
+
+/* Recover the typed Spec::Aux* from neighbor_loop_args.aux, replacing
+ * hand-written reinterpret_cast at every hook site. */
+template <typename Spec>
+typename Spec::Aux *nlr_aux(const neighbor_loop_args& args)
+{
+    return reinterpret_cast<typename Spec::Aux*>(args.aux);
+}
+
+/* Count active particles via predicate, MPI_Allreduce, malloc + fill.
+ * Returns false if global count is zero (caller should early-return);
+ * otherwise *list_out is mymalloc'd and must be released via
+ * nlr_free_active_list. malloc_label is forwarded to mymalloc. */
+template <typename ActivePredicate>
+bool nlr_build_active_list(ActivePredicate is_active,
+                           int **list_out,
+                           int  *num_local_active_out,
+                           int  *num_global_active_out,
+                           const char *malloc_label);
+
+void nlr_free_active_list(int *active_list);
+
+/* Fills the engine fields of neighbor_loop_args from current globals
+ * (P, CellP, NumPart, ghost_safety_factor). Caller fills active_list,
+ * num_active, aux. Out-of-line so changes to global plumbing are
+ * caller-invisible. */
+neighbor_loop_args nlr_default_args(void);
+
+/* ============================================================================
  * NeighborLoopPlan — runner-internal execution policy descriptor.
  *
- * `path` is the SSOT. Properties (needs imported ghosts, may acquire GPU
+ * `path` is the single-source-of-truth. Properties (needs imported ghosts, may acquire GPU
  * arena, may mutate NumPart, etc.) are derived via the nlr_path_*() helpers
  * below — never stored as separate boolean fields on the plan, so a new
  * path adds cases to the helpers and never new fields to this struct.
@@ -482,7 +587,7 @@ struct NeighborLoopPlan {
                           * — future work may swap helpers without changing
                           * the path. Do not equate Mode A with "global drift". */
         ModeB_Local,     /* Host walker on local pool; no global mutation. */
-        ModeB_Remote     /* P2P request/reply; no global mutation. */
+        ModeB_Remote     /* peer-to-peer request/reply; no global mutation. */
         /* Future paths: add cases here AND to nlr_path_*() predicates below. */
     };
     Path path;
@@ -510,7 +615,7 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
 /* ============================================================================
  * run_neighbor_loop<Spec>(args) — the runner.
  *
- * Numerical execution policy SSOT for one neighbor loop. The caller hands
+ * Numerical execution policy single-source-of-truth for one neighbor loop. The caller hands
  * over physics; the runner picks the substrate and runs it.
  *
  *   CALLER OWNS                       RUNNER OWNS
@@ -529,7 +634,7 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
  * num_active_global vs Spec::modeb_threshold_{sum,max} > Spec defaults.
  * Future paths add a case to the dispatch + the path-predicate helpers
  * (nlr_path_uses_imported_ghosts, nlr_path_uses_gpu_arena, etc.) and never
- * add fields to the plan struct itself — path is the SSOT.
+ * add fields to the plan struct itself — path is the single-source-of-truth.
  *
  * Tiny-N hard-corridor invariants (HARD ABORT on violation, always-on,
  * every build, enforced via global lifecycle counters):
@@ -559,7 +664,7 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
  *   ModeA_GpuNgl       : may move_particles, may ghost_exchange_impl,
  *                        may grow NumPart, may acquire GPU arena
  *   ModeB_Local        : none of the above
- *   ModeB_Remote       : none of the above (uses P2P request/reply
+ *   ModeB_Remote       : none of the above (uses peer-to-peer request/reply
  *                        substrate; peer-local walks; lazy drift on
  *                        touched candidates)
  *
@@ -761,7 +866,7 @@ bool gizmo_nlr_phase0_diag_enabled(void);
  *   path=mode_b_remote   all 8 fields. dt_collect = self+peer pre-drift
  *                          collection; dt_walk_self = self_tree evaluate;
  *                          dt_walk_peer = peer_tree evaluate; dt_exchange_q,
- *                          dt_exchange_r = P2P comm; dt_reduce = reply merge;
+ *                          dt_exchange_r = peer-to-peer comm; dt_reduce = reply merge;
  *                          dt_writeback = writeback loop; dt_drift = lazy
  *                          drift on union.
  *
@@ -785,5 +890,37 @@ struct RunnerStageTimer {
     double dt_writeback;
     double dt_total;
 };
+
+/* ============================================================================
+ * nlr_build_active_list inline definition.
+ *
+ * Header-defined because the predicate is templated. Instantiated in the
+ * caller's TU, which already pulls in declarations/allvars.h (NumPart,
+ * ActiveParticleList) and core/proto.h (mymalloc) via the loop's spec
+ * header.
+ * ========================================================================== */
+template <typename ActivePredicate>
+bool nlr_build_active_list(ActivePredicate is_active,
+                           int **list_out,
+                           int  *num_local_active_out,
+                           int  *num_global_active_out,
+                           const char *malloc_label)
+{
+    int num_local = 0;
+    for(int i : ActiveParticleList) { if(is_active(i)) num_local++; }
+    int num_global = 0;
+    MPI_Allreduce(&num_local, &num_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    *num_local_active_out  = num_local;
+    *num_global_active_out = num_global;
+    if(num_global == 0) { *list_out = nullptr; return false; }
+
+    int alloc_n = (num_local > 0) ? num_local : 1;
+    *list_out = (int *) mymalloc(malloc_label, alloc_n * sizeof(int));
+    int slot = 0;
+    for(int i : ActiveParticleList) {
+        if(is_active(i)) { (*list_out)[slot++] = i; }
+    }
+    return true;
+}
 
 #endif /* GIZMO_NEIGHBOR_LOOP_RUNNER_H */

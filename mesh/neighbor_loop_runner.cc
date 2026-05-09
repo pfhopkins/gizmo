@@ -18,7 +18,7 @@
  * KOKKOS_INLINE_FUNCTION invocation. Lazy-drift function-boundary invariant
  * structurally encoded as collect_candidates_pre_drift →
  * lazy_drift_candidates → evaluate_pairs_post_drift; Brute oracle uses the
- * SAME drift epoch as Mode B. Multi-rank P2P is deferred to 3c.3 — runtime
+ * SAME drift epoch as Mode B. Multi-rank peer-to-peer is deferred to 3c.3 — runtime
  * abort guards GIZMO_NLR_FORCE_MODEB on NTask>1.
  *
  * Architecture binding contract:
@@ -45,7 +45,7 @@
 
 #include "neighbor_loop_runner.h"
 #include "gpu_neighbor_list.h"
-#include "kernel.h"  /* MUST precede sink_env1_spec.h (kernel_main, NEAREST_XYZ) */
+#include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
@@ -56,10 +56,47 @@
 
 #include "mode_b_p2p_transport.h"  /* mode_b_exchange_queries / _replies */
 
-/* Spec instantiations supported in 3c.1. Each #include declares one Spec
- * type whose explicit template instantiation appears at the bottom of
- * this file. */
-#include "../sinks/sink_env1_spec.h"
+/* Spec instantiations. Each #include declares one Spec type whose explicit
+ * template instantiation appears at the bottom of this file. */
+#include "../sinks/sink_env1_loop.h"
+
+/* ============================================================================
+ * Caller-side helpers (declared in runner.h).
+ *
+ * Out-of-line so changes to global plumbing (NumPart, P, CellP fetch site,
+ * ghost-safety-factor source, etc.) are caller-invisible.
+ * ========================================================================== */
+
+NlrCommonScalars nlr_common_scalars_from_all(void)
+{
+    NlrCommonScalars s;
+    s.cf_atime                = All.cf_atime;
+    s.cf_a2inv                = All.cf_a2inv;
+    s.cf_a3inv                = All.cf_a3inv;
+    s.cf_hubble_a             = All.cf_hubble_a;
+    s.newton_G                = All.G;
+    s.hubble                  = All.HubbleParam;
+    s.comoving_integration_on = All.ComovingIntegrationOn;
+    return s;
+}
+
+neighbor_loop_args nlr_default_args(void)
+{
+    neighbor_loop_args args;
+    args.P                   = P;
+    args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
+    args.num_total           = NumPart;
+    args.active_list         = nullptr;       /* caller fills */
+    args.num_active          = 0;             /* caller fills */
+    args.aux                 = nullptr;       /* caller fills */
+    args.ghost_safety_factor = gizmo_ghost_safety_factor();
+    return args;
+}
+
+void nlr_free_active_list(int *active_list)
+{
+    if(active_list) myfree(active_list);
+}
 
 /* ============================================================================
  * Env-gate functions.
@@ -357,7 +394,7 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  * on each helper makes the ordering enforcement structural.
  *
  * Self-rank only in 3c.2: candidates are local real P[] indices in
- * [0, num_local). Cross-rank P2P comes in 3c.3.
+ * [0, num_local). Cross-rank peer-to-peer comes in 3c.3.
  *
  * Walker buffer sized to num_local (worst-case SYMMETRIC, no h-bound
  * pre-pruning).
@@ -420,14 +457,14 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
 }
 
 /* WALK-ONLY. Peer-side variant: walks against the LOCAL pool using each
- * remote query's pos/h_search drawn from peer_actives[k].q.{pos,h_search}.
- * Used for queries received from other ranks via the P2P transport.
+ * remote query's pos/h_search drawn from peer_actives[k].{pos,h_search}.
+ * Used for queries received from other ranks via the peer-to-peer transport.
  *
- * Note: pulls pos/h_search via Spec::ActiveData::q.{pos,h_search}. This is
- * the sink_env1-shaped contract (other specs migrating later may carry
- * pos/h_search differently); generalizing this access pattern is tracked
- * for stage 3d when the second spec joins. For 3c.3 sink_env1 is the only
- * caller, so the direct field access is acceptable.
+ * Pulls pos/h_search directly from Spec::ActiveData fields. The current
+ * convention is that every Spec exposes `pos` and `h_search` as flat
+ * ActiveData fields (matches sink_env1_loop.h template). Generalizing
+ * this access pattern (e.g. to a Spec::query_pos/query_h trait pair) is
+ * tracked for the runner-template-hardening pass.
  */
 template <typename Spec>
 static void collect_candidates_for_remote_queries(
@@ -440,13 +477,13 @@ static void collect_candidates_for_remote_queries(
     per_query_cands.assign(K, std::vector<int>{});
     if(num_local <= 0) return;
     for(int k = 0; k < K; k++) {
-        const auto& a = peer_actives[k];
-        const double h_q = (double)a.q.h_search;
+        const auto& active = peer_actives[k];
+        const double h_q = (double)active.h_search;
         if(h_q <= 0) continue;
         std::vector<int>& cands = per_query_cands[k];
         cands.clear();
         if(cands.capacity() == 0) cands.reserve(64);
-        double pos_arr[3] = {(double)a.q.pos[0], (double)a.q.pos[1], (double)a.q.pos[2]};
+        double pos_arr[3] = {(double)active.pos[0], (double)active.pos[1], (double)active.pos[2]};
         if(backend == DispatchPath::ModeB_HostWalker) {
             mode_b_local_neighbor_walk(pos_arr, h_q,
                                         (unsigned int)Spec::neighbor_type_mask,
@@ -519,8 +556,8 @@ static void evaluate_pairs_post_drift(const NeighborLoopDeviceContextBase& ctx,
  *
  * Three-epoch staging contract (matches Mode A timing exactly except step 3
  * runs host-side per query instead of inside a Kokkos kernel):
- *   (1) host pre-drift: Spec::search_radius_host  → radii[num_active]
- *   (2) host pre-drift: Spec::populate_call_scalars_host → CallScalars cs
+ *   (1) host pre-drift: Spec::search_radius  → radii[num_active]
+ *   (2) host pre-drift: Spec::populate_call_scalars → CallScalars cs
  *   (3) host post-drift: Spec::load_active per query (KOKKOS_INLINE_FUNCTION
  *                         invoked host-side; same UVM/Pos epoch as Mode A's
  *                         device kernel)
@@ -560,15 +597,15 @@ static void build_self_actives_host_pre_drift(
  * Timing invariant: post-Spec::apply_active_writeback, pre-caller-side
  * SinkTempInfo scatter. Fires inside the runner before returning to the
  * caller, so the caller's ghost_write_detector_end / scatter loop have
- * not yet run. (The legacy emit at sinks/sink_environment.cc:140-159 fired
- * post-ghost-detector but pre-scatter; the runner-driven emit fires pre-
- * ghost-detector but still pre-scatter. Accumulator values are byte-
- * identical between the two timing points — writeback is the last write
- * into nl_outs before scatter — so MODEB_XVAL line content is unchanged.)
+ * not yet run. (Legacy emit fired post-ghost-detector but pre-scatter; the
+ * runner-driven emit fires pre-ghost-detector but still pre-scatter.
+ * Accumulator values are byte-identical between the two timing points —
+ * writeback is the last write into the per-active accumulator buffer
+ * before scatter — so the cross-validation dump line content is unchanged.)
  *
  * Mode A path supplies actives_or_null = d_actives (UVM-resident; host-
  * coherent post-fence). Mode B local/remote supply host-frozen actives.
- * Spec hooks read view.active->q.* fields when needed.
+ * Spec hooks read view.active->{pos,h_search,...} fields when needed.
  * ========================================================================== */
 template <typename Spec>
 static void runner_emit_active_dumps(const neighbor_loop_args& args,
@@ -616,7 +653,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
      * only (do not store). See run_neighbor_loop contract in the header. */
 
     /* (2) Host pre-drift: per-call scalar globals into POD. */
-    typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
+    typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
 
     DeviceCtx ctx;
     ctx.P         = args.P;
@@ -712,7 +749,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
     if(N <= 0) { return; }
 
     /* Radii runner-staged and passed in; pointer is call-lifetime only. */
-    typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
+    typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
 
     DeviceCtx ctx;
     ctx.P         = args.P;
@@ -788,7 +825,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
  *   stage 1 (active rank) build self radii, cs, frozen actives[]
  *   stage 2 (active rank) build envelopes, ALL peers in broadcast pattern
  *   stage 3 (this rank)   collect self_tree[, self_brute] pre-drift
- *   stage 4 (collective)  exchange queries (P2P) -> recv envelopes
+ *   stage 4 (collective)  exchange queries (peer-to-peer) -> recv envelopes
  *   stage 5 (this rank)   flatten envelopes to peer_actives[] + provenance[]
  *   stage 6 (this rank)   collect peer_tree[, peer_brute] pre-drift
  *   stage 7 (this rank)   drift UNION of (self_tree, self_brute, peer_tree,
@@ -830,7 +867,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     const int rank = ThisTask;
 
     /* Radii runner-staged and passed in; pointer is call-lifetime only. */
-    typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
+    typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
 
     DeviceCtx ctx;
     ctx.P         = args.P;
@@ -1079,8 +1116,8 @@ static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const 
  * run_mode_a<Spec> — generic Mode A path through the GPU NGL pipeline.
  *
  * Three-epoch staging contract (see neighbor_loop_runner.h doc):
- *   (1) host pre-arena: Spec::search_radius_host  → radii_uvm[num_active]
- *   (2) host pre-arena: Spec::populate_call_scalars_host → CallScalars cs
+ *   (1) host pre-arena: Spec::search_radius  → radii_uvm[num_active]
+ *   (2) host pre-arena: Spec::populate_call_scalars → CallScalars cs
  *   (3) device post-NGL-build: Spec::load_active → d_actives[num_active]
  *
  * Both Kokkos launches go through gizmo_gpu_kernel_launch which wraps
@@ -1120,7 +1157,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     }
 
     /* (2) Host, pre-arena: capture per-call scalar globals into a POD. */
-    CallScalars cs = Spec::populate_call_scalars_host(args);
+    CallScalars cs = Spec::populate_call_scalars(args);
 
     /* Arena + freshness (matches sinks/sink_environment_gpu.cc:76,86). The
      * caller is responsible for the args.CellP=NULL-when-no-gas decision;
@@ -1548,7 +1585,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     }
 
     /* Compute the execution plan from the dispatch decision. Path is the
-     * SSOT; predicates derive from it. */
+     * single-source-of-truth; predicates derive from it. */
     NeighborLoopPlan plan;
     if(force_a) {
         plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
@@ -1576,12 +1613,12 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     }
 
     /* ---- Stage radii once ---- */
-    /* Computed via Spec::search_radius_host. Used for any path-conditional
+    /* Computed via Spec::search_radius. Used for any path-conditional
      * prep (Mode A) AND the chosen walker. Pointer is call-lifetime only;
      * see contract in mesh/neighbor_loop_runner.h. */
     std::vector<double> radii(args.num_active);
     for(int aa = 0; aa < args.num_active; ++aa) {
-        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
+        radii[aa] = Spec::search_radius(args, aa, args.active_list[aa]);
     }
 
     /* ---- Hard-corridor counter snapshot (always-on, every build) ---- */
@@ -1625,7 +1662,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      *   request_filtered_ghost_import_fresh  (above)
      *   ghost_write_detector_begin           (this hook)
      *   ghost_writeback_begin                (this hook; SinkEnv1Spec no-op)
-     *   sidechannel_writeback_begin          (this hook; SSD-gated)
+     *   sidechannel_writeback_begin          (this hook; SINGLE_STAR_SINK_DYNAMICS-gated)
      *   <run_mode_a kernel>
      *   sidechannel_writeback_end            (reverse order, below)
      *   ghost_writeback_end
