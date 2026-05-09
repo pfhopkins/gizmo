@@ -10,8 +10,9 @@
  * Both return the same set of LOCAL real P[] indices intersecting the
  * spherical query (pos, h_q) with type/mode filter. Sorted ascending.
  *
- * GIZMO_MODE_B_ORACLE=1: every call to the tree walk also runs the
- * brute walk and asserts equality (prints diff to stderr on mismatch).
+ * Oracle: cross-rank Mode B oracle is owned by the runner via
+ * GIZMO_NLR_ORACLE (mesh/neighbor_loop_runner.cc). The runner calls
+ * both walks for each query and diffs results.
  *
  * Design constraints (codex 2026-05-07):
  *   - Walk uses Nodes[]/Nextnode[] for pruning. Node bounds come from
@@ -68,8 +69,6 @@ typedef unsigned int mode_b_radius_policy_t;
  * Returns 0 when SYMMETRIC should degenerate to ONEWAY for this j's type. */
 double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy);
 
-int mode_b_enabled(void);
-
 /* Tree-walk path. Fast for spatially-localized queries. Returns count of
  * local-real-particle candidates (P[] indices) appended to out_candidates;
  * -1 if out_capacity is exceeded. Does NOT sort.
@@ -85,7 +84,7 @@ int mode_b_local_neighbor_walk(const double pos[3],
                                int out_capacity);
 
 /* Brute-force path. Iterates 0..num_local. Slow but obviously correct.
- * Used as the same-run oracle. Same return contract. Does NOT sort. */
+ * Used as the runner-owned oracle. Same return contract. Does NOT sort. */
 int mode_b_local_brute_walk(const double pos[3],
                             double h_q,
                             unsigned int type_mask,
@@ -93,10 +92,6 @@ int mode_b_local_brute_walk(const double pos[3],
                             mode_b_radius_policy_t radius_policy,
                             int *out_candidates,
                             int out_capacity);
-
-/* Oracle helper: returns 1 if env GIZMO_MODE_B_ORACLE=1 is set. The
- * walker entry point checks this and runs both paths + diff on mismatch. */
-int mode_b_oracle_enabled(void);
 
 /* Lazy-drift contract for Mode B (mirrors gpu_ngb_list_build:1542-1580).
  *

@@ -22,26 +22,6 @@
 #include "gpu_neighbor_list.h"    /* gizmo_mark_kernel_radius_dirty_indices */
 #include "mode_b_local_walker.h"
 
-int mode_b_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) {
-        const char *env = getenv("GIZMO_MODE_B_DENSITY");
-        cached = (env && env[0] == '1') ? 1 : 0;
-    }
-    return cached;
-}
-
-int mode_b_oracle_enabled(void)
-{
-    static int cached = -1;
-    if(cached < 0) {
-        const char *env = getenv("GIZMO_MODE_B_ORACLE");
-        cached = (env && env[0] == '1') ? 1 : 0;
-    }
-    return cached;
-}
-
 /* Public helper: per-j symmetric radius under policy. See header. */
 double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy)
 {
@@ -271,68 +251,8 @@ void mode_b_lazy_drift_candidates(const int *indices, int n)
     gizmo_mark_kernel_radius_dirty_indices(indices, n);
 }
 
-/* Sorted bit-exact diff of two index lists. Returns 0 if equal, prints
- * details to stderr and returns 1 if different. */
-static int diff_index_lists(const int *a, int na, const int *b, int nb,
-                            const char *label)
-{
-    int *as = (int*)malloc(na > 0 ? na * sizeof(int) : 1);
-    int *bs = (int*)malloc(nb > 0 ? nb * sizeof(int) : 1);
-    if(na > 0) memcpy(as, a, na * sizeof(int));
-    if(nb > 0) memcpy(bs, b, nb * sizeof(int));
-    std::sort(as, as + na);
-    std::sort(bs, bs + nb);
-    int eq = (na == nb);
-    if(eq) for(int i = 0; i < na; i++) if(as[i] != bs[i]) { eq = 0; break; }
-    if(!eq) {
-        fprintf(stderr, "[mode_b ORACLE MISMATCH %s rank=%d] tree=%d brute=%d ",
-                label, ThisTask, na, nb);
-        if(na <= 16 && nb <= 16) {
-            fprintf(stderr, "tree_idx={");
-            for(int i = 0; i < na; i++) fprintf(stderr, "%s%d", i?",":"", as[i]);
-            fprintf(stderr, "} brute_idx={");
-            for(int i = 0; i < nb; i++) fprintf(stderr, "%s%d", i?",":"", bs[i]);
-            fprintf(stderr, "}");
-        }
-        fprintf(stderr, "\n");
-        fflush(stderr);
-    }
-    free(as); free(bs);
-    return eq ? 0 : 1;
-}
-
-/* Public oracle-wrapped entry: if GIZMO_MODE_B_ORACLE=1, runs both paths
- * and diffs. Returns the tree-walk count (treats tree as authoritative
- * once oracle has passed for a session). */
-extern "C" int mode_b_local_walk_with_oracle(const double pos[3],
-                                             double h_q,
-                                             unsigned int type_mask,
-                                             int search_mode,
-                                             int *out_candidates,
-                                             int out_capacity)
-{
-    /* Default policy for the generic wrapper: gas-only KernelRadius for
-     * SYMMETRIC. Callers needing AGS opt in via the per-walker entry points. */
-    const mode_b_radius_policy_t policy = MODE_B_RADIUS_DEFAULT;
-    int n_tree = mode_b_local_neighbor_walk(pos, h_q, type_mask, search_mode,
-                                            policy, out_candidates, out_capacity);
-    if(mode_b_oracle_enabled()) {
-        const int CAP = 4096;
-        int *brute = (int*)malloc(CAP * sizeof(int));
-        int n_brute = mode_b_local_brute_walk(pos, h_q, type_mask, search_mode,
-                                              policy, brute, CAP);
-        if(n_brute < 0) {
-            fprintf(stderr, "[mode_b ORACLE] brute capacity exceeded (>%d); "
-                            "skipping diff for this call\n", CAP);
-            fflush(stderr);
-        } else if(n_tree < 0) {
-            fprintf(stderr, "[mode_b ORACLE] tree capacity exceeded (>%d); "
-                            "skipping diff for this call\n", out_capacity);
-            fflush(stderr);
-        } else {
-            diff_index_lists(out_candidates, n_tree, brute, n_brute, "walk");
-        }
-        free(brute);
-    }
-    return n_tree;
-}
+/* Per-call same-rank tree-vs-brute oracle is owned by the runner via
+ * GIZMO_NLR_ORACLE in mesh/neighbor_loop_runner.cc::run_mode_b_*_with_oracle.
+ * The legacy public wrapper mode_b_local_walk_with_oracle() and its
+ * GIZMO_MODE_B_ORACLE env helper were retired in this commit; both had
+ * zero callers post-3c.3. */
