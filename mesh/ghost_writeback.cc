@@ -48,7 +48,9 @@
  *
  * Both sender and receiver derive offsets from the per-callback per-rank
  * count matrix (exchanged by the count Alltoall). Canonical bundle order
- * is the same on every rank because the bundle pointer is identical there.
+ * is identical across ranks because every rank assembles the same
+ * manifest; the per-process bundle pointer addresses differ but the
+ * ordered list of callbacks they describe is the same.
  *
  * Mode B paths (local + remote): bundle hooks are NOT called by the runner
  * — j-side writes happen on the rank that owns j (Mode B local: same rank

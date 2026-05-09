@@ -43,9 +43,15 @@ static void sink_normalize_temp_info_struct_after_environment_loop(int i)
 }
 
 
-/* Scatter the per-active accumulator buffer back into SinkTempInfo. Pure
- * code motion from the inline loop body that used to live in
- * sink_environment_loop; per-loop physics, no engine. */
+/* Scatter the per-active accumulator buffer back into SinkTempInfo.
+ * Per-loop physics; the runner doesn't see this. Operations match the
+ * pair_kernel per-field write ops (the oracle protects merge_accum
+ * specifically, but this scatter manifest must agree on op semantics
+ * field-for-field — drift is silent because it lives downstream of the
+ * runner's oracle gate).
+ *
+ * Adding a new scattered field for this loop = ONE LINE under the
+ * appropriate physics flag's #ifdef. */
 static void sink_env1_scatter_to_temp_info(const int *active_list,
                                             int num_active,
                                             const struct sink_env_gpu_out *per_active_accum)
@@ -53,44 +59,53 @@ static void sink_env1_scatter_to_temp_info(const int *active_list,
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
         int t = P[i].IndexMapToTempStruc;
-        SinkTempInfo[t].Sink_SurroudingGasInternalEnergy += per_active_accum[a].Sink_SurroudingGasInternalEnergy;
-        SinkTempInfo[t].Mgas_in_Kernel  += per_active_accum[a].Mgas_in_Kernel;
-        SinkTempInfo[t].Mstar_in_Kernel += per_active_accum[a].Mstar_in_Kernel;
-        SinkTempInfo[t].Malt_in_Kernel  += per_active_accum[a].Malt_in_Kernel;
-        for(int k = 0; k < 3; k++) {
-            SinkTempInfo[t].Jgas_in_Kernel[k]  += per_active_accum[a].Jgas_in_Kernel[k];
-            SinkTempInfo[t].Jstar_in_Kernel[k] += per_active_accum[a].Jstar_in_Kernel[k];
-            SinkTempInfo[t].Jalt_in_Kernel[k]  += per_active_accum[a].Jalt_in_Kernel[k];
-        }
+
+        /* Local op macros — scoped to this loop body via #undef below.
+         * Semantically identical expansion to the prior hand-written
+         * per-field assignment statements. */
+#define SCATTER_ADD(field)       SinkTempInfo[t].field += per_active_accum[a].field;
+#define SCATTER_ADD_VEC3(field)  for(int k = 0; k < 3; k++) SinkTempInfo[t].field[k] += per_active_accum[a].field[k];
+#define SCATTER_MAX(field)       if(per_active_accum[a].field > SinkTempInfo[t].field) SinkTempInfo[t].field = per_active_accum[a].field;
+
+        SCATTER_ADD(Sink_SurroudingGasInternalEnergy)
+        SCATTER_ADD(Mgas_in_Kernel)
+        SCATTER_ADD(Mstar_in_Kernel)
+        SCATTER_ADD(Malt_in_Kernel)
+        SCATTER_ADD_VEC3(Jgas_in_Kernel)
+        SCATTER_ADD_VEC3(Jstar_in_Kernel)
+        SCATTER_ADD_VEC3(Jalt_in_Kernel)
 #ifdef SINK_REPOSITION_ON_POTMIN
-        SinkTempInfo[t].DF_rms_vel += per_active_accum[a].DF_rms_vel;
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].DF_mean_vel[k] += per_active_accum[a].DF_mean_vel[k];
-        if(per_active_accum[a].DF_mmax_particles > SinkTempInfo[t].DF_mmax_particles)
-            SinkTempInfo[t].DF_mmax_particles = per_active_accum[a].DF_mmax_particles;
+        SCATTER_ADD(DF_rms_vel)
+        SCATTER_ADD_VEC3(DF_mean_vel)
+        SCATTER_MAX(DF_mmax_particles)
 #endif
 #if defined(SINK_OUTPUT_MOREINFO)
-        SinkTempInfo[t].Sfr_in_Kernel += per_active_accum[a].Sfr_in_Kernel;
+        SCATTER_ADD(Sfr_in_Kernel)
 #endif
 #if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].Sink_SurroundingGasVel[k] += per_active_accum[a].Sink_SurroundingGasVel[k];
+        SCATTER_ADD_VEC3(Sink_SurroundingGasVel)
 #endif
 #if defined(JET_DIRECTION_FROM_KERNEL_AND_SINK)
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].Sink_SurroundingGasCOM[k] += per_active_accum[a].Sink_SurroundingGasCOM[k];
+        SCATTER_ADD_VEC3(Sink_SurroundingGasCOM)
 #endif
 #if (SINK_GRAVACCRETION == 8)
-        SinkTempInfo[t].hubber_mdot_bondi_limiter   += per_active_accum[a].hubber_mdot_bondi_limiter;
-        SinkTempInfo[t].hubber_mdot_vr_estimator    += per_active_accum[a].hubber_mdot_vr_estimator;
-        SinkTempInfo[t].hubber_mdot_disk_estimator  += per_active_accum[a].hubber_mdot_disk_estimator;
+        SCATTER_ADD(hubber_mdot_bondi_limiter)
+        SCATTER_ADD(hubber_mdot_vr_estimator)
+        SCATTER_ADD(hubber_mdot_disk_estimator)
 #endif
 #if defined(SINK_GRAVCAPTURE_GAS)
-        SinkTempInfo[t].mass_to_swallow_edd += per_active_accum[a].mass_to_swallow_edd;
+        SCATTER_ADD(mass_to_swallow_edd)
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS)
-        for(int k = 0; k < 3; k++) SinkTempInfo[t].angmom_prepass_sum_for_passback[k] += per_active_accum[a].angmom_prepass_sum_for_passback[k];
+        SCATTER_ADD_VEC3(angmom_prepass_sum_for_passback)
 #endif
 #if defined(SINK_RETURN_BFLUX)
-        SinkTempInfo[t].kernel_norm_topass_in_swallowloop += per_active_accum[a].kernel_norm_topass_in_swallowloop;
+        SCATTER_ADD(kernel_norm_topass_in_swallowloop)
 #endif
+
+#undef SCATTER_ADD
+#undef SCATTER_ADD_VEC3
+#undef SCATTER_MAX
     }
 }
 

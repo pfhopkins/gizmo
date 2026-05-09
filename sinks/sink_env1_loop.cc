@@ -76,50 +76,66 @@ void SinkEnv1Spec::apply_active_writeback(const neighbor_loop_args& args,
 
 /* Per-field merge of a peer rank's contribution into a local accumulator.
  * Per-field op MUST match the pair_kernel writes (sum for additive fields,
- * MAX for DF_mmax_particles). Used by run_mode_b_remote at the cross-rank
- * boundary; within a single rank, accumulation is via repeated pair_kernel
- * calls (which already encode the right per-field op). */
+ * MAX for max-reduced fields, componentwise sum for vec3). Used by
+ * run_mode_b_remote at the cross-rank boundary; within a single rank,
+ * accumulation is via repeated pair_kernel calls (which already encode
+ * the right per-field op).
+ *
+ * The oracle (GIZMO_NLR_FORCE_MODE=B + GIZMO_NLR_ORACLE=1) catches drift
+ * between this manifest and pair_kernel writes — any mismatch surfaces
+ * as ORACLE MISMATCH on the next run.
+ *
+ * Adding a new accumulator field for this loop = ONE LINE under the
+ * appropriate physics flag's #ifdef. Operations available below; extend
+ * by adding new ACCUM_* defines if a field needs different op semantics. */
 void SinkEnv1Spec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
 {
-    local_accum.Sink_SurroudingGasInternalEnergy += peer_accum.Sink_SurroudingGasInternalEnergy;
-    local_accum.Mgas_in_Kernel  += peer_accum.Mgas_in_Kernel;
-    local_accum.Mstar_in_Kernel += peer_accum.Mstar_in_Kernel;
-    local_accum.Malt_in_Kernel  += peer_accum.Malt_in_Kernel;
-    for(int kv = 0; kv < 3; kv++) {
-        local_accum.Jgas_in_Kernel[kv]  += peer_accum.Jgas_in_Kernel[kv];
-        local_accum.Jstar_in_Kernel[kv] += peer_accum.Jstar_in_Kernel[kv];
-        local_accum.Jalt_in_Kernel[kv]  += peer_accum.Jalt_in_Kernel[kv];
-    }
+    /* Local op macros — scoped to this function via #undef below. The
+     * macros expand to the same statements as the prior hand-written
+     * field listing (semantically identical expansion). */
+#define ACCUM_ADD(field)       local_accum.field += peer_accum.field;
+#define ACCUM_ADD_VEC3(field)  for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
+#define ACCUM_MAX(field)       if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
+
+    ACCUM_ADD(Sink_SurroudingGasInternalEnergy)
+    ACCUM_ADD(Mgas_in_Kernel)
+    ACCUM_ADD(Mstar_in_Kernel)
+    ACCUM_ADD(Malt_in_Kernel)
+    ACCUM_ADD_VEC3(Jgas_in_Kernel)
+    ACCUM_ADD_VEC3(Jstar_in_Kernel)
+    ACCUM_ADD_VEC3(Jalt_in_Kernel)
 #ifdef SINK_REPOSITION_ON_POTMIN
-    local_accum.DF_rms_vel += peer_accum.DF_rms_vel;
-    for(int kv = 0; kv < 3; kv++) local_accum.DF_mean_vel[kv] += peer_accum.DF_mean_vel[kv];
-    if(peer_accum.DF_mmax_particles > local_accum.DF_mmax_particles) {
-        local_accum.DF_mmax_particles = peer_accum.DF_mmax_particles;
-    }
+    ACCUM_ADD(DF_rms_vel)
+    ACCUM_ADD_VEC3(DF_mean_vel)
+    ACCUM_MAX(DF_mmax_particles)
 #endif
 #if defined(SINK_OUTPUT_MOREINFO)
-    local_accum.Sfr_in_Kernel += peer_accum.Sfr_in_Kernel;
+    ACCUM_ADD(Sfr_in_Kernel)
 #endif
 #if (SINK_GRAVACCRETION >= 5) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_TIMESTEPPING)
-    for(int kv = 0; kv < 3; kv++) local_accum.Sink_SurroundingGasVel[kv] += peer_accum.Sink_SurroundingGasVel[kv];
+    ACCUM_ADD_VEC3(Sink_SurroundingGasVel)
 #endif
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK
-    for(int kv = 0; kv < 3; kv++) local_accum.Sink_SurroundingGasCOM[kv] += peer_accum.Sink_SurroundingGasCOM[kv];
+    ACCUM_ADD_VEC3(Sink_SurroundingGasCOM)
 #endif
 #if (SINK_GRAVACCRETION == 8)
-    local_accum.hubber_mdot_bondi_limiter   += peer_accum.hubber_mdot_bondi_limiter;
-    local_accum.hubber_mdot_vr_estimator    += peer_accum.hubber_mdot_vr_estimator;
-    local_accum.hubber_mdot_disk_estimator  += peer_accum.hubber_mdot_disk_estimator;
+    ACCUM_ADD(hubber_mdot_bondi_limiter)
+    ACCUM_ADD(hubber_mdot_vr_estimator)
+    ACCUM_ADD(hubber_mdot_disk_estimator)
 #endif
 #if defined(SINK_GRAVCAPTURE_GAS)
-    local_accum.mass_to_swallow_edd += peer_accum.mass_to_swallow_edd;
+    ACCUM_ADD(mass_to_swallow_edd)
 #endif
 #if defined(SINK_RETURN_ANGMOM_TO_GAS)
-    for(int kv = 0; kv < 3; kv++) local_accum.angmom_prepass_sum_for_passback[kv] += peer_accum.angmom_prepass_sum_for_passback[kv];
+    ACCUM_ADD_VEC3(angmom_prepass_sum_for_passback)
 #endif
 #if defined(SINK_RETURN_BFLUX)
-    local_accum.kernel_norm_topass_in_swallowloop += peer_accum.kernel_norm_topass_in_swallowloop;
+    ACCUM_ADD(kernel_norm_topass_in_swallowloop)
 #endif
+
+#undef ACCUM_ADD
+#undef ACCUM_ADD_VEC3
+#undef ACCUM_MAX
 }
 
 /* ============================================================================
