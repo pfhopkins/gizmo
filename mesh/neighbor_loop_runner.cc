@@ -378,6 +378,12 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
 {
     const int N = args.num_active;
     const int num_local = ghost_get_num_local();
+    /* Per-call ownership: each inner vector owns its capacity for the
+     * duration of this call. .assign(N, {}) clobbers any stale residue
+     * from a previous call. Stage 4 contract: walker appends via
+     * push_back; geometric growth handles any-size match set without
+     * imposing the previous full-pool .assign(num_local, 0) cost
+     * (~24 MB × N_active on fire_m11i). */
     per_active_cands.assign(N, std::vector<int>{});
     if(num_local <= 0) return;
     for(int aa = 0; aa < N; aa++) {
@@ -385,23 +391,23 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
         const double h_q = radii[aa];
         if(h_q <= 0) continue;
         std::vector<int>& cands = per_active_cands[aa];
-        cands.assign(num_local, 0);
+        cands.clear();
+        if(cands.capacity() == 0) cands.reserve(64); /* small initial; grows geometrically */
         double pos_arr[3] = {(double)args.P[i].Pos[0],
                               (double)args.P[i].Pos[1],
                               (double)args.P[i].Pos[2]};
-        int n;
         if(backend == DispatchPath::ModeB_HostWalker) {
-            n = mode_b_local_neighbor_walk(pos_arr, h_q,
-                                            (unsigned int)Spec::neighbor_type_mask,
-                                            Spec::search_mode,
-                                            Spec::radius_policy,
-                                            cands.data(), (int)cands.size());
+            mode_b_local_neighbor_walk(pos_arr, h_q,
+                                        (unsigned int)Spec::neighbor_type_mask,
+                                        Spec::search_mode,
+                                        Spec::radius_policy,
+                                        cands);
         } else if(backend == DispatchPath::Brute_Oracle) {
-            n = mode_b_local_brute_walk(pos_arr, h_q,
-                                         (unsigned int)Spec::neighbor_type_mask,
-                                         Spec::search_mode,
-                                         Spec::radius_policy,
-                                         cands.data(), (int)cands.size());
+            mode_b_local_brute_walk(pos_arr, h_q,
+                                     (unsigned int)Spec::neighbor_type_mask,
+                                     Spec::search_mode,
+                                     Spec::radius_policy,
+                                     cands);
         } else {
             fprintf(stderr, "neighbor_loop_runner: collect_candidates_pre_drift "
                     "called with non-Mode-B/Brute backend (%d) for loop '%s'\n",
@@ -410,16 +416,6 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
             endrun(81033);
             return;
         }
-        if(n < 0) {
-            fprintf(stderr, "neighbor_loop_runner: %s walker overflowed at "
-                    "num_local=%d capacity for loop '%s' active_slot=%d. "
-                    "Walker bug?\n",
-                    (backend == DispatchPath::Brute_Oracle ? "brute" : "tree"),
-                    num_local, Spec::loop_name, aa);
-            fflush(stderr);
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        cands.resize(n);
     }
 }
 
@@ -448,21 +444,21 @@ static void collect_candidates_for_remote_queries(
         const double h_q = (double)a.q.h_search;
         if(h_q <= 0) continue;
         std::vector<int>& cands = per_query_cands[k];
-        cands.assign(num_local, 0);
+        cands.clear();
+        if(cands.capacity() == 0) cands.reserve(64);
         double pos_arr[3] = {(double)a.q.pos[0], (double)a.q.pos[1], (double)a.q.pos[2]};
-        int n;
         if(backend == DispatchPath::ModeB_HostWalker) {
-            n = mode_b_local_neighbor_walk(pos_arr, h_q,
-                                            (unsigned int)Spec::neighbor_type_mask,
-                                            Spec::search_mode,
-                                            Spec::radius_policy,
-                                            cands.data(), (int)cands.size());
+            mode_b_local_neighbor_walk(pos_arr, h_q,
+                                        (unsigned int)Spec::neighbor_type_mask,
+                                        Spec::search_mode,
+                                        Spec::radius_policy,
+                                        cands);
         } else if(backend == DispatchPath::Brute_Oracle) {
-            n = mode_b_local_brute_walk(pos_arr, h_q,
-                                         (unsigned int)Spec::neighbor_type_mask,
-                                         Spec::search_mode,
-                                         Spec::radius_policy,
-                                         cands.data(), (int)cands.size());
+            mode_b_local_brute_walk(pos_arr, h_q,
+                                     (unsigned int)Spec::neighbor_type_mask,
+                                     Spec::search_mode,
+                                     Spec::radius_policy,
+                                     cands);
         } else {
             fprintf(stderr, "neighbor_loop_runner: collect_candidates_for_remote_queries"
                     " bad backend %d for loop '%s'\n", (int)backend, Spec::loop_name);
@@ -470,15 +466,6 @@ static void collect_candidates_for_remote_queries(
             endrun(81033);
             return;
         }
-        if(n < 0) {
-            fprintf(stderr, "neighbor_loop_runner: %s walker overflowed for remote "
-                    "query at num_local=%d for loop '%s' k=%d. Walker bug?\n",
-                    (backend == DispatchPath::Brute_Oracle ? "brute" : "tree"),
-                    num_local, Spec::loop_name, k);
-            fflush(stderr);
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
-        cands.resize(n);
     }
 }
 

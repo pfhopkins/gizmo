@@ -72,22 +72,18 @@ static inline int particle_passes(int j,
     return r2 < cutoff * cutoff;
 }
 
-int mode_b_local_brute_walk(const double pos[3],
-                            double h_q,
-                            unsigned int type_mask,
-                            int search_mode,
-                            mode_b_radius_policy_t radius_policy,
-                            int *out_candidates,
-                            int out_capacity)
+void mode_b_local_brute_walk(const double pos[3],
+                             double h_q,
+                             unsigned int type_mask,
+                             int search_mode,
+                             mode_b_radius_policy_t radius_policy,
+                             std::vector<int>& out)
 {
     const int num_local = ghost_get_num_local();
-    int count = 0;
     for(int j = 0; j < num_local; j++) {
         if(!particle_passes(j, pos, h_q, type_mask, search_mode, radius_policy)) continue;
-        if(count >= out_capacity) return -1;
-        out_candidates[count++] = j;
+        out.push_back(j);
     }
-    return count;
 }
 
 /* Sphere-vs-AABB pruning test. Returns 1 if the sphere of radius R
@@ -151,15 +147,14 @@ static inline double mode_b_node_symmetric_radius(int no,
     return rmax * (1.0 + H_SLACK);
 }
 
-int mode_b_local_neighbor_walk(const double pos[3],
-                               double h_q,
-                               unsigned int type_mask,
-                               int search_mode,
-                               mode_b_radius_policy_t radius_policy,
-                               int *out_candidates,
-                               int out_capacity)
+void mode_b_local_neighbor_walk(const double pos[3],
+                                double h_q,
+                                unsigned int type_mask,
+                                int search_mode,
+                                mode_b_radius_policy_t radius_policy,
+                                std::vector<int>& out)
 {
-    if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return 0;
+    if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
     const int max_part  = All.MaxPart;
     const int last_node = max_part + Numnodestree;
@@ -182,7 +177,6 @@ int mode_b_local_neighbor_walk(const double pos[3],
      * the loop), so this is only a perf concern at np>1 today. */
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
 
-    int count = 0;
     int no = max_part; /* root node */
 
     while(no >= 0) {
@@ -190,8 +184,7 @@ int mode_b_local_neighbor_walk(const double pos[3],
             /* Particle leaf. Only return if it's a domain-owned local
              * particle (not a ghost import). */
             if(no < num_local && particle_passes(no, pos, h_q, type_mask, search_mode, radius_policy)) {
-                if(count >= out_capacity) return -1;
-                out_candidates[count++] = no;
+                out.push_back(no);
             }
             no = Nextnode[no];
         } else if(no < last_node) {
@@ -225,7 +218,6 @@ int mode_b_local_neighbor_walk(const double pos[3],
             no = Nodes[no].u.d.sibling;
         }
     }
-    return count;
 }
 
 /* Lazy-drift Mode B candidates to current Ti before the pair kernel reads

@@ -30,9 +30,7 @@
 #ifndef MODE_B_LOCAL_WALKER_H
 #define MODE_B_LOCAL_WALKER_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <vector>
 
 /* search_mode constants — match NGB_SEARCH_ONEWAY/SYMMETRIC in
  * mesh/ghost_exchange_spec.h to keep the existing NGL contract. */
@@ -69,29 +67,38 @@ typedef unsigned int mode_b_radius_policy_t;
  * Returns 0 when SYMMETRIC should degenerate to ONEWAY for this j's type. */
 double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy);
 
-/* Tree-walk path. Fast for spatially-localized queries. Returns count of
- * local-real-particle candidates (P[] indices) appended to out_candidates;
- * -1 if out_capacity is exceeded. Does NOT sort.
+/* Tree-walk path. Fast for spatially-localized queries. APPENDS local-
+ * real-particle candidates (P[] indices) onto `out` via push_back; the
+ * caller passes a (typically `clear()`'d) vector and the walker grows it
+ * geometrically as needed. Does NOT clear `out` itself (so callers may
+ * accumulate across queries if desired). Does NOT sort.
  *
  * radius_policy controls how SYMMETRIC search uses h_j for non-gas types.
- * Most callers want MODE_B_RADIUS_DEFAULT (gas KR only). */
-int mode_b_local_neighbor_walk(const double pos[3],
-                               double h_q,
-                               unsigned int type_mask,
-                               int search_mode,
-                               mode_b_radius_policy_t radius_policy,
-                               int *out_candidates,
-                               int out_capacity);
+ * Most callers want MODE_B_RADIUS_DEFAULT (gas KR only).
+ *
+ * Stage 4 contract change: previous int*+capacity signature replaced by
+ * std::vector<int>& to remove the per-query num_local-sized allocation
+ * the runner used to make ahead of each call (~24 MB × N_active on
+ * fire_m11i — the dominant tiny-N cost post-Stage 2). Geometric growth
+ * via push_back handles correctness for any-size match set without
+ * imposing full-pool memory traffic on tiny-N. */
+void mode_b_local_neighbor_walk(const double pos[3],
+                                double h_q,
+                                unsigned int type_mask,
+                                int search_mode,
+                                mode_b_radius_policy_t radius_policy,
+                                std::vector<int>& out);
 
 /* Brute-force path. Iterates 0..num_local. Slow but obviously correct.
- * Used as the runner-owned oracle. Same return contract. Does NOT sort. */
-int mode_b_local_brute_walk(const double pos[3],
-                            double h_q,
-                            unsigned int type_mask,
-                            int search_mode,
-                            mode_b_radius_policy_t radius_policy,
-                            int *out_candidates,
-                            int out_capacity);
+ * Used as the runner-owned oracle. Same append-oriented contract as the
+ * tree walker: appends matches to `out` via push_back; does NOT clear
+ * or sort. */
+void mode_b_local_brute_walk(const double pos[3],
+                             double h_q,
+                             unsigned int type_mask,
+                             int search_mode,
+                             mode_b_radius_policy_t radius_policy,
+                             std::vector<int>& out);
 
 /* Lazy-drift contract for Mode B (mirrors gpu_ngb_list_build:1542-1580).
  *
@@ -111,9 +118,5 @@ int mode_b_local_brute_walk(const double pos[3],
  * NOT thread-safe with concurrent drift / tree mutation. Caller serializes.
  */
 void mode_b_lazy_drift_candidates(const int *indices, int n);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* MODE_B_LOCAL_WALKER_H */
