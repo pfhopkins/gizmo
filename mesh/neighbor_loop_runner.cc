@@ -62,6 +62,35 @@
 #include "../sinks/sink_env1_loop.h"
 
 /* ============================================================================
+ * Shared NLR utility helpers (used by env-config and threshold blocks below).
+ * File-scope static; TU-local linkage. Defined here so the threshold helpers
+ * (which are file-scope `extern` for runner.h API) can call them.
+ * ========================================================================== */
+
+/* One-shot rank-0 warning helper. Cached set keyed by string-literal pointer
+ * (so each call site occupies one slot). Cap is generous; if hit, subsequent
+ * warnings are silently dropped — they are diagnostics, not correctness gates. */
+static void nlr_warn_once_rank0(const char *key, const char *fmt, ...)
+{
+    if(ThisTask != 0) return;
+    static const char *seen[32];
+    static int seen_n = 0;
+    for(int i = 0; i < seen_n; i++) { if(seen[i] == key) return; }
+    if(seen_n < 32) { seen[seen_n++] = key; }
+    fprintf(stderr, "[NLR env] ");
+    va_list ap; va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+    fflush(stderr);
+}
+
+static bool nlr_env_is_one(const char *name) {
+    const char *e = getenv(name);
+    return (e && e[0] == '1' && e[1] == '\0');
+}
+
+/* ============================================================================
  * Caller-side helpers (declared in runner.h).
  *
  * Out-of-line so changes to global plumbing (NumPart, P, CellP fetch site,
@@ -100,14 +129,43 @@ void nlr_free_active_list(int *active_list)
 }
 
 /* ============================================================================
- * Env-gate functions.
+ * TESTERS' KNOBS — not production policy
  *
- * Cached statics — env read once on first call. Threshold dispatch is the
- * default Mode A vs Mode B selector; force-mode envs override.
+ * The four env vars below are dispatch-threshold overrides that exist purely
+ * for testing the runner's Mode A / Mode B selection. They are NOT part of
+ * GIZMO's production interface, NOT promoted to params.txt or Config.sh,
+ * and not intended for end-user tuning.
+ *
+ * Production dispatch policy is the constexpr Spec::modeb_threshold_sum and
+ * Spec::modeb_threshold_max in each NeighborLoopSpec — those are code-level
+ * dispatch policy constants for the loop, decided alongside the physics.
+ *
+ * Recognized env vars (all integer-valued):
+ *   GIZMO_NLR_MODEB_THRESHOLD_SUM            global override; sum-of-active
+ *   GIZMO_NLR_MODEB_THRESHOLD_MAX            global override; max-rank-active
+ *   GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_SUM   per-loop override (e.g.
+ *   GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_MAX   GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM)
+ *
+ * Resolution precedence (first wins; per-loop override beats global):
+ *   1. per-loop env GIZMO_<LOOP>_MODEB_THRESHOLD_<SUM|MAX>
+ *   2. global env  GIZMO_NLR_MODEB_THRESHOLD_<SUM|MAX>
+ *   3. Spec::modeb_threshold_<sum|max> constexpr (code default)
+ *
+ * Invalid env values (non-integer / negative / > 1e9) are silently ignored
+ * and the next precedence level is consulted. This preserves the existing
+ * behavior; promoting invalid values to a hard endrun is an explicit policy
+ * change deferred until threshold semantics stabilize.
+ *
+ * When an env override is actually consumed (level 1 or 2), a single rank-0
+ * one-shot warning is emitted naming the env var, the resolved value, and
+ * the spec_default it overrode, with a "tester only" tag.
+ *
+ * Force-mode env vars (Pass B.i) take precedence over threshold dispatch:
+ * GIZMO_NLR_FORCE_MODE=A|B selects unconditionally; thresholds are not
+ * consulted on force paths (except when GIZMO_NLR_DIAG>=1, where the
+ * runner does an extra Allreduce to populate PHASE0_NLR num_active_global).
  * ========================================================================== */
 
-/* Global threshold defaults via env override. Returns -1 if env unset, so the
- * caller's hierarchy resolver can fall through to spec/default. */
 static int s_global_threshold_sum_cached = -2;
 static int s_global_threshold_max_cached = -2;
 static int parse_int_env(const char *name)
@@ -133,10 +191,13 @@ int gizmo_nlr_default_modeb_threshold_max(void) {
 }
 
 /* Per-loop env lookup: GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_<SUM|MAX>.
- * Same 8-entry intrusive cache pattern as oracle_enabled_for, keyed by
- * Spec::loop_name pointer (constexpr literal). */
-static int per_loop_threshold_lookup(const char *loop_name, const char *suffix)
+ * Returns the parsed int (or -1 on unset / invalid) AND, on success, writes
+ * the constructed env-var name into out_name (size out_cap) so the caller
+ * can include it in the tester-knob warning text. */
+static int per_loop_threshold_lookup(const char *loop_name, const char *suffix,
+                                      char *out_name, size_t out_cap)
 {
+    if(out_cap > 0) out_name[0] = '\0';
     if(!loop_name || !loop_name[0]) return -1;
     char env_name[160];
     int j = 0;
@@ -149,23 +210,56 @@ static int per_loop_threshold_lookup(const char *loop_name, const char *suffix)
     for(int p = 0; mid[p] && j < 158; p++) env_name[j++] = mid[p];
     for(int p = 0; suffix[p] && j < 159; p++) env_name[j++] = suffix[p];
     env_name[j] = '\0';
-    return parse_int_env(env_name);
+    int v = parse_int_env(env_name);
+    if(v >= 0 && out_cap > 0) {
+        size_t copy_n = (size_t)j;
+        if(copy_n >= out_cap) copy_n = out_cap - 1;
+        memcpy(out_name, env_name, copy_n);
+        out_name[copy_n] = '\0';
+    }
+    return v;
 }
 
 int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
 {
-    int v = per_loop_threshold_lookup(loop_name, "SUM");
-    if(v >= 0) return v;
+    char per_loop_env[160];
+    int v = per_loop_threshold_lookup(loop_name, "SUM", per_loop_env, sizeof(per_loop_env));
+    if(v >= 0) {
+        nlr_warn_once_rank0("tester_per_loop_threshold_sum",
+            "Tester knob in use: %s=%d overrides Spec::modeb_threshold_sum=%d for loop '%s' "
+            "(not a production interface).",
+            per_loop_env, v, spec_default, loop_name ? loop_name : "?");
+        return v;
+    }
     v = gizmo_nlr_default_modeb_threshold_sum();
-    if(v >= 0) return v;
+    if(v >= 0) {
+        nlr_warn_once_rank0("tester_global_threshold_sum",
+            "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_SUM=%d overrides "
+            "Spec::modeb_threshold_sum=%d (loop '%s'; not a production interface).",
+            v, spec_default, loop_name ? loop_name : "?");
+        return v;
+    }
     return spec_default;
 }
 int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
 {
-    int v = per_loop_threshold_lookup(loop_name, "MAX");
-    if(v >= 0) return v;
+    char per_loop_env[160];
+    int v = per_loop_threshold_lookup(loop_name, "MAX", per_loop_env, sizeof(per_loop_env));
+    if(v >= 0) {
+        nlr_warn_once_rank0("tester_per_loop_threshold_max",
+            "Tester knob in use: %s=%d overrides Spec::modeb_threshold_max=%d for loop '%s' "
+            "(not a production interface).",
+            per_loop_env, v, spec_default, loop_name ? loop_name : "?");
+        return v;
+    }
     v = gizmo_nlr_default_modeb_threshold_max();
-    if(v >= 0) return v;
+    if(v >= 0) {
+        nlr_warn_once_rank0("tester_global_threshold_max",
+            "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_MAX=%d overrides "
+            "Spec::modeb_threshold_max=%d (loop '%s'; not a production interface).",
+            v, spec_default, loop_name ? loop_name : "?");
+        return v;
+    }
     return spec_default;
 }
 
@@ -188,29 +282,8 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
 
 namespace {
 
-/* One-shot rank-0 warning helper. Cached set keyed by string-literal
- * pointer (so each call site occupies one slot). Cap is generous; if hit,
- * subsequent warnings are silently dropped — they are diagnostics, not
- * correctness gates. */
-static void nlr_warn_once_rank0(const char *key, const char *fmt, ...)
-{
-    if(ThisTask != 0) return;
-    static const char *seen[32];
-    static int seen_n = 0;
-    for(int i = 0; i < seen_n; i++) { if(seen[i] == key) return; }
-    if(seen_n < 32) { seen[seen_n++] = key; }
-    fprintf(stderr, "[NLR env] ");
-    va_list ap; va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    fputc('\n', stderr);
-    fflush(stderr);
-}
-
-static bool nlr_env_is_one(const char *name) {
-    const char *e = getenv(name);
-    return (e && e[0] == '1' && e[1] == '\0');
-}
+/* nlr_warn_once_rank0 and nlr_env_is_one are defined at file scope above
+ * (near the includes) so the threshold block can use them too. */
 
 /* Initialize diag level. Reads new var first, then aliases. */
 static int nlr_init_diag_level(void)

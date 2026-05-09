@@ -417,7 +417,11 @@ enum class DispatchPath : int {
  *     // populate_device_context. Default = NeighborLoopDeviceContextBase.
  *     // using DeviceContext = MyLoopDeviceContext;
  *
- *     // Optional: per-loop dispatch-threshold override
+ *     // Optional: per-loop dispatch-threshold constants. These are
+ *     // code-level dispatch policy for the loop (chosen alongside the
+ *     // physics), NOT user-tunable runtime parameters. Default 64/64
+ *     // when omitted. Tester env overrides exist but are not production
+ *     // interface; see runner.cc TESTERS' KNOBS block.
  *     // static constexpr int modeb_threshold_sum = 64;
  *     // static constexpr int modeb_threshold_max = 64;
  *
@@ -719,17 +723,24 @@ void run_neighbor_loop(const neighbor_loop_args& args);
  * ========================================================================== */
 
 /* ============================================================================
- * Dispatch threshold + force-mode env gates
+ * Dispatch threshold accessors
  *
- * Hierarchy (per-loop > global > spec constexpr default), resolved at runtime:
+ * Production dispatch policy lives in the constexpr Spec::modeb_threshold_sum
+ * and Spec::modeb_threshold_max in each NeighborLoopSpec — these are
+ * code-level dispatch policy constants for the loop, decided alongside the
+ * physics. They are NOT user-tunable runtime parameters.
  *
- *   Per-loop:  GIZMO_<UPPER_LOOP_NAME>_MODEB_THRESHOLD_SUM / _MAX
- *              e.g. GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM=128
- *   Global:    GIZMO_NLR_MODEB_THRESHOLD_SUM / _MAX
- *   Default:   Spec::modeb_threshold_sum / _max if present, else 64 / 64
+ * Threshold env vars (GIZMO_NLR_MODEB_THRESHOLD_*, GIZMO_<LOOP>_MODEB_THRESHOLD_*)
+ * are TESTERS' KNOBS only — temporary overrides for runner-internal testing.
+ * They are NOT part of the production interface, NOT promoted to params.txt
+ * or Config.sh, and emit a rank-0 one-shot "tester only" warning when
+ * actually consumed. See the TESTERS' KNOBS block in
+ * mesh/neighbor_loop_runner.cc for the full env-var listing, resolution
+ * precedence, and warning semantics.
  *
- * The runner queries `gizmo_nlr_modeb_threshold_{sum,max}_for(loop_name)` which
- * walks per-loop → global → caller-supplied default in that order.
+ * Resolution precedence (per-loop env > global env > Spec constexpr) is
+ * preserved by the _for() lookups; invalid env values silently fall through
+ * to the next level (no policy change in B.ii).
  * ========================================================================== */
 
 int  gizmo_nlr_default_modeb_threshold_sum(void);
