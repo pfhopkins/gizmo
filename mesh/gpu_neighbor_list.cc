@@ -17,10 +17,6 @@
 #include <iterator>
 #include <Kokkos_Core.hpp>
 
-/* Tiny shim used by host-only TUs (e.g. sinks/sink_environment_mode_b.cc
- * compiled without nvcc, so they cannot include <Kokkos_Core.hpp>). */
-extern "C" void gpu_host_fence(void) { Kokkos::fence(); }
-
 /* GPU All mirror: per-TU managed pointer to shared UVM allocation. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"

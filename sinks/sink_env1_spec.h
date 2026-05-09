@@ -29,19 +29,18 @@
 
 /* ----------------------------------------------------------------------------
  * Compile-time guard: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS j-side
- * SwallowTime atomic write is not yet wired through SymmetricPairScatter
- * writeback. Same compile-failure surface as the existing #error in
- * sinks/sink_environment_gpu.cc:179-181 (kept duplicated until 3c.5
- * retires the legacy evaluator). Codex caution: do not narrow the guard.
+ * SwallowTime atomic write is not yet wired through the runner's
+ * SymmetricPairScatter writeback channel. This is the sole guard for that
+ * combination across the sink_env1 stack — do not narrow it.
  * --------------------------------------------------------------------------*/
 #if defined(SINK_GRAVCAPTURE_GAS) && defined(SINGLE_STAR_SINK_DYNAMICS)
-#error "SinkEnv1Spec: SSD + SINK_GRAVCAPTURE_GAS j-side SwallowTime atomic write is not yet wired through the runner's SymmetricPairScatter channel. This guard mirrors the existing #error in sinks/sink_environment_gpu.cc:179-181. Restored in 3c.5 alongside spike retirement; do not enable SSD under runner-Mode-A until then."
+#error "SinkEnv1Spec: SSD + SINK_GRAVCAPTURE_GAS j-side SwallowTime atomic write is not yet wired through the runner's SymmetricPairScatter channel. Do not enable SSD with SINK_GRAVCAPTURE_GAS until the writeback hook lands."
 #endif
 
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "sinks_gpu_decls.h"                  /* struct sink_env_gpu_out */
-#include "sink_environment_mode_b.h"          /* sink_env1_query_t */
+#include "sink_env1_types.h"                  /* sink_env1_query_t */
 /* NOTE: caller TUs must include "../mesh/kernel.h" BEFORE this header.
  * kernel.h has no include guards (defines static inline kernel_main).
  * sink_env1_pair_kernel.h (included below) uses kernel_main + NEAREST_XYZ.
@@ -102,12 +101,8 @@ struct SinkEnv1Spec {
      * ascending P[] index order). Per-active accumulators sum the same
      * MyFloat contributions in different orders → double-precision floor of
      * ~N·eps_machine relative residual, plus possible cancellation
-     * amplification on small-magnitude fields. 1e-10 is one decade tighter
-     * than the legacy precedent (sinks/sink_environment_mode_b.cc:360 uses
-     * 1e-9 for the identical tree-vs-brute comparison) — sharp enough to
-     * catch real bugs, loose enough to not trip on summation reorder noise.
-     * (Mode A bit-equivalence vs legacy is checked separately in 3c.1 with
-     * byte-exact target.) */
+     * amplification on small-magnitude fields. 1e-10 is sharp enough to
+     * catch real bugs, loose enough to not trip on summation reorder noise. */
     static constexpr double accum_tolerance = 1e-10;
     static double compare_accum(const AccumData& a, const AccumData& b);
 
@@ -230,9 +225,7 @@ struct SinkEnv1Spec {
     /* Per-field merge of a peer-rank reply (src) into a local accumulator
      * (dst). Used by run_mode_b_remote at the cross-rank boundary; per-field
      * reduction op matches the pair_kernel writes (sum for additive fields,
-     * MAX for DF_mmax_particles). Lifted byte-exact from the legacy
-     * sinks/sink_environment_mode_b.cc:446-486 merge_into helper, including
-     * all #ifdef-gated optional fields. */
+     * MAX for DF_mmax_particles). Includes all #ifdef-gated optional fields. */
     static void merge_accum(AccumData& dst, const AccumData& src);
 
     /* ============================================================================
@@ -244,17 +237,9 @@ struct SinkEnv1Spec {
      *   GIZMO_MODE_B_XVAL_NB_DUMP=1  -> diagnostic_dump_neighbor_list (Mode A
      *                                    only; first-call gated inside hook)
      *
-     * Active dump line shape preserved byte-identical to the legacy emit
-     * sites in sinks/sink_environment.cc:140-159 (env-off, deleted in 3c.4a)
-     * and sinks/sink_environment_mode_b.cc:621-636 (SPIKE branch, retires
-     * in 3c.5). NB dump line shape preserved byte-identical to the legacy
-     * emit site in sinks/sink_environment_gpu.cc:209-249 (dead code post-
-     * 3c.1c; retires in 3c.5 with the whole legacy evaluator).
-     *
-     * Mode B local NB / I_CMP / GPUDIFF UVM-readback diagnostic stays in
-     * sinks/sink_environment_mode_b.cc until 3c.5 — that machinery is
-     * SPIKE-specific UVM forensics, not generic neighbor dumping. Mode B
-     * remote peer-side NB dump deferred (parser-compatible format TBD).
+     * Active dump and NB dump line shapes are stable across the runner's
+     * Mode A and Mode B paths. Mode B remote peer-side NB dump deferred
+     * (parser-compatible format TBD).
      * ========================================================================== */
     static void diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v);
     static void diagnostic_dump_neighbor_list(const NeighborListDumpView<SinkEnv1Spec>& v);

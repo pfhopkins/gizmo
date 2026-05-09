@@ -59,14 +59,10 @@
 #include "../sinks/sink_env1_spec.h"
 
 /* ============================================================================
- * Env-gate functions (3c.2: real implementations).
+ * Env-gate functions.
  *
- * Cached statics — env read once on first call, identical pattern to
- * sink_env1_mode_b_env_enabled (sinks/sink_environment_mode_b.cc:47).
- *
- * Threshold-based dispatch (Allreduce sum/max) is deferred to 3c.3 — needs
- * multi-rank wiring. 3c.2 keeps the threshold getters as 0 (= "no threshold,
- * force-mode is the only selector").
+ * Cached statics — env read once on first call. Threshold dispatch is the
+ * default Mode A vs Mode B selector; force-mode envs override.
  * ========================================================================== */
 
 /* Global threshold defaults via env override. Returns -1 if env unset, so the
@@ -197,36 +193,6 @@ struct StageTimer {
 };
 } /* anonymous namespace */
 
-/* Legacy SPIKE precedence. Per codex amendment: trigger ONLY on
- * GIZMO_MODE_B_<UPPER_LOOP>=1 (e[0]=='1'); merely "set to anything" is
- * surprising. Same intrusive 8-entry cache. */
-bool gizmo_nlr_legacy_modeb_owns_for(const char *loop_name)
-{
-    if(!loop_name || !loop_name[0]) return false;
-    struct entry_t { const char *name; int cached; };
-    static entry_t cache[8] = {
-        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0},
-        {nullptr,0},{nullptr,0},{nullptr,0},{nullptr,0}};
-    for(int k = 0; k < 8; k++) {
-        if(cache[k].name == loop_name) return cache[k].cached != 0;
-        if(cache[k].name == nullptr) {
-            char env_name[160];
-            int j = 0;
-            const char *prefix = "GIZMO_MODE_B_";
-            for(int p = 0; prefix[p] && j < 150; p++) env_name[j++] = prefix[p];
-            for(int p = 0; loop_name[p] && j < 158; p++) {
-                env_name[j++] = (char)toupper((unsigned char)loop_name[p]);
-            }
-            env_name[j] = '\0';
-            const char *e = getenv(env_name);
-            cache[k].name   = loop_name;
-            cache[k].cached = (e && e[0] == '1') ? 1 : 0;
-            return cache[k].cached != 0;
-        }
-    }
-    return false;
-}
-
 bool gizmo_nlr_force_mode_b_global(void) {
     static int cached = -1;
     if(cached < 0) {
@@ -334,8 +300,7 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
  * Self-rank only in 3c.2: candidates are local real P[] indices in
  * [0, num_local). Cross-rank P2P comes in 3c.3.
  *
- * Walker buffer sized to num_local — same convention as legacy
- * sinks/sink_environment_mode_b.cc:267-275 (worst-case SYMMETRIC, no h-bound
+ * Walker buffer sized to num_local (worst-case SYMMETRIC, no h-bound
  * pre-pruning).
  * ========================================================================== */
 
@@ -648,12 +613,11 @@ static void run_mode_b_local(const neighbor_loop_args& args, RunnerStageTimer *t
 
 /* run_mode_b_local_with_oracle<Spec>: collects BOTH Mode B and Brute candidate
  * sets BEFORE drifting either, then drifts the union (drift_particle is
- * idempotent so two separate lazy_drift calls dedupe naturally). Matches the
- * legacy oracle pattern in sinks/sink_environment_mode_b.cc:314-422.
+ * idempotent so two separate lazy_drift calls dedupe naturally).
  *
  * Mode B path is the result; Brute is the comparison. Mismatches print the
- * legacy line shape `[mode_b ORACLE MISMATCH ...]` so existing parser scripts
- * keep working.
+ * line shape `[mode_b ORACLE MISMATCH ...]` (parser-stable across the runner
+ * extraction).
  *
  * Brute oracle uses ONLY Mode B / Brute machinery — no GPU NGL, no SIDX, no
  * arena. Codex invariant: "the oracle's pair kernel is the SAME pair_kernel
@@ -1298,13 +1262,8 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * Selection precedence (highest first):
      *   1. GIZMO_NLR_FORCE_MODEA + GIZMO_NLR_FORCE_MODEB both set → endrun.
      *   2. GIZMO_NLR_FORCE_MODEA=1 → Mode A unconditionally.
-     *   3. GIZMO_NLR_FORCE_MODEB=1 → Mode B (local if NTask==1, remote else),
-     *                                 overrides legacy SPIKE precedence
-     *                                 (testers' explicit knob).
-     *   4. Legacy SPIKE owns Mode B (e.g. GIZMO_MODE_B_SINK_ENV1=1) →
-     *      runner falls to Mode A; the legacy SPIKE branch in the caller
-     *      (sink_environment.cc) makes the Mode B decision. Retired in 3c.5.
-     *   5. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
+     *   3. GIZMO_NLR_FORCE_MODEB=1 → Mode B (local if NTask==1, remote else).
+     *   4. Threshold dispatch: if (sum_active>0 && sum_active<=TS &&
      *      max_active<=TM) → Mode B; else Mode A. Hierarchy of TS/TM:
      *      per-loop env > global env > Spec::modeb_threshold_{sum,max}
      *      constexpr (default 64/64).
@@ -1319,7 +1278,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     const bool force_b   = gizmo_nlr_force_mode_b_global();
     const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
                             gizmo_nlr_oracle_enabled_for(Spec::loop_name);
-    const bool legacy_owns = gizmo_nlr_legacy_modeb_owns_for(Spec::loop_name);
 
     if(force_a && force_b) {
         fprintf(stderr, "neighbor_loop_runner: both GIZMO_NLR_FORCE_MODEA and "
@@ -1329,49 +1287,25 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         endrun(81034);
     }
 
-    /* One-shot warning when legacy SPIKE owns Mode B selection. */
-    if(legacy_owns && !force_b) {
-        static int s_legacy_warned[8] = {0,0,0,0,0,0,0,0};
-        static const char *s_legacy_warned_name[8] = {nullptr};
-        bool already = false;
-        int free_slot = -1;
-        for(int k = 0; k < 8; k++) {
-            if(s_legacy_warned_name[k] == Spec::loop_name) { already = true; break; }
-            if(s_legacy_warned_name[k] == nullptr && free_slot < 0) free_slot = k;
-        }
-        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        if(!already && rank == 0 && free_slot >= 0) {
-            s_legacy_warned_name[free_slot] = Spec::loop_name;
-            s_legacy_warned[free_slot] = 1;
-            fprintf(stderr, "[neighbor_loop_runner caller=%s] legacy SPIKE env "
-                    "(GIZMO_MODE_B_<LOOP>=1) is set; runner threshold dispatch "
-                    "DISABLED for this loop. Legacy SPIKE owns Mode B selection. "
-                    "Will be retired in 3c.5.\n", Spec::loop_name);
-            fflush(stderr);
-        }
-    }
-
     /* PHASE0 timing scaffolding (3c.4b). Cached env-gate; mid-run env
      * changes do not take effect. When on, ALL MPI_Wtime calls inside the
      * runner are gated; off-path overhead is one branch per StageTimer
      * scope, no MPI_Wtime call. PHASE0_NLR measures only RUNNER-OWNED time:
      * caller-side ghost prep / detector / SinkTempInfo scatter are NOT
-     * included. Legacy SPIKE-branch PHASE0_MODEB_NGL line in
-     * sink_environment_mode_b.cc is untouched (retires in 3c.5). */
+     * included. */
     const bool phase0_on = gizmo_nlr_phase0_diag_enabled();
     RunnerStageTimer tim = {};
     RunnerStageTimer *tim_ptr = phase0_on ? &tim : nullptr;
     const double t_runner_start = phase0_on ? MPI_Wtime() : 0.0;
 
     /* Threshold dispatch. Allreduce sum + max of args.num_active.
-     * Skipped when force-mode envs are set (cheap path). When legacy SPIKE
-     * owns the loop, runner forces Mode A regardless of threshold.
+     * Skipped when force-mode envs are set (cheap path).
      * PHASE0 num_active_global is captured here when the threshold path
-     * already did the Allreduce; on force/legacy paths an extra Allreduce
-     * is done ONLY when phase0_on (codex constraint #4). */
+     * already did the Allreduce; on force paths an extra Allreduce is done
+     * ONLY when phase0_on (codex constraint #4). */
     bool select_mode_b = force_b;
     int phase0_sum_active = -1;       /* -1 = not yet computed */
-    if(!force_a && !force_b && !legacy_owns) {
+    if(!force_a && !force_b) {
         int local_act = args.num_active;
         int sum_act = 0, max_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -1384,8 +1318,8 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
     } else if(phase0_on) {
-        /* Force path or legacy_owns path: dispatch logic skipped the
-         * Allreduce. Do it here ONLY for phase0 num_active_global. */
+        /* Force path: dispatch logic skipped the Allreduce. Do it here
+         * ONLY for phase0 num_active_global. */
         int local_act = args.num_active;
         int sum_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -1399,7 +1333,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
             const char *path =
                 force_a       ? "mode_a (force)" :
                 force_b       ? (NTask > 1 ? "mode_b_remote (force)" : "mode_b_local (force)") :
-                legacy_owns   ? "mode_a (legacy_owns)" :
                 select_mode_b ? (NTask > 1 ? "mode_b_remote (threshold)" : "mode_b_local (threshold)") :
                                 "mode_a (threshold)";
             fprintf(stderr, "[NLR DISPATCH caller=%s path=%s NTask=%d local_active=%d oracle=%d]\n",

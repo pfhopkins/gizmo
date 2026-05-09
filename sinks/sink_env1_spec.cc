@@ -156,10 +156,8 @@ double SinkEnv1Spec::compare_accum(const AccumData& a, const AccumData& b)
  *
  * Per-field merge of a peer's contribution (src) into a local accumulator
  * (dst). Per-field op MUST match the pair_kernel writes (sum for additive
- * fields, MAX for DF_mmax_particles). Lifted byte-exact from the legacy
- * sinks/sink_environment_mode_b.cc::merge_into (lines 446-486) including
- * all #ifdef-gated optional fields. Used by run_mode_b_remote at the
- * cross-rank boundary.
+ * fields, MAX for DF_mmax_particles). Includes all #ifdef-gated optional
+ * fields. Used by run_mode_b_remote at the cross-rank boundary.
  * --------------------------------------------------------------------------*/
 void SinkEnv1Spec::merge_accum(AccumData& dst, const AccumData& src)
 {
@@ -211,11 +209,9 @@ void SinkEnv1Spec::merge_accum(AccumData& dst, const AccumData& src)
  * optional from the runner's perspective.
  * --------------------------------------------------------------------------*/
 
-/* MODEB_XVAL accumulator dump. Byte-identical to:
- *   sinks/sink_environment.cc:140-159 (env-off, deleted in 3c.4a)
- *   sinks/sink_environment_mode_b.cc:621-636 (SPIKE branch, retires in 3c.5)
- * Both legacy sites use caller="sink_env1" (hardcoded) and active_local=<slot>;
- * preserved here. */
+/* MODEB_XVAL accumulator dump. caller="sink_env1" hardcoded; active_local
+ * is the per-call slot. Stable line shape across the runner's Mode A and
+ * Mode B paths. */
 void SinkEnv1Spec::diagnostic_dump_active(const ActiveDumpView<SinkEnv1Spec>& v)
 {
     const AccumData& a = *v.accum;

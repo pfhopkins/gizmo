@@ -1,21 +1,15 @@
 /* sinks/sink_env1_pair_kernel.h — SSOT pair kernel for sink_env1.
  *
- * Pre-runner-extraction step: consolidates the sink_env1 per-pair body into
- * a single KOKKOS_INLINE_FUNCTION called by BOTH the Mode A GPU lambda
- * (sinks/sink_environment_gpu.cc) AND the Mode B host walker
- * (sinks/sink_environment_mode_b.cc). Kills the SPIKE-duplicate trap
- * required by ~/.claude/memory/reference_neighbor_loop_contract.md before
- * extending Mode B to a second caller.
+ * Single source of truth for the sink_env1 per-pair body, called from
+ * SinkEnv1Spec::pair_kernel inside mesh/neighbor_loop_runner.cc. Used by all
+ * three runner paths (Mode A GPU NGL pipeline, Mode B local host walker,
+ * Mode B remote P2P self+peer walks).
  *
- * The function takes references to the j-side particle/cell data (so both
- * GPU lambda — passing &kp[j], &kc[j] — and host helper — passing
- * P[j], &CellP[j] — can share the same body). The signature is host/device-
- * neutral; KOKKOS_INLINE_FUNCTION makes the function callable from both
- * the GPU kernel and from host code.
- *
- * The full NeighborLoopSpec runner (mesh/neighbor_loop_runner.h) abstracts
- * j-side construction into NeighborData; this header is the consolidated
- * physics body, callable from there once the SinkEnv1Spec lands.
+ * The function takes references to the j-side particle/cell data so the
+ * same body works from a GPU lambda (passing &kp[j], &kc[j]) and from host
+ * code (passing P[j], &CellP[j]). The signature is host/device-neutral;
+ * KOKKOS_INLINE_FUNCTION makes the function callable from both the GPU
+ * kernel and from host code.
  */
 #ifndef SINK_ENV1_PAIR_KERNEL_H
 #define SINK_ENV1_PAIR_KERNEL_H
@@ -23,12 +17,12 @@
 #ifdef SINK_PARTICLES
 
 #include "../declarations/allvars.h"
-/* NOTE: ../mesh/kernel.h has no include guards; caller TUs must include it
- * BEFORE this header (both sink_environment_gpu.cc and sink_environment_mode_b.cc
- * already do). Functions used from kernel.h: kernel_main, NEAREST_XYZ macros,
+/* NOTE: ../mesh/kernel.h has no include guards; the runner's translation
+ * unit (mesh/neighbor_loop_runner.cc) must include it BEFORE this header.
+ * Functions used from kernel.h: kernel_main, NEAREST_XYZ macros,
  * nearest_xyz, NGB_SHEARBOX_BOUNDARY_VELCORR_, etc. */
 #include "sinks_gpu_decls.h"           /* struct sink_env_gpu_out */
-#include "sink_environment_mode_b.h"   /* struct sink_env1_query_t */
+#include "sink_env1_types.h"           /* struct sink_env1_query_t */
 
 /* Make sure KOKKOS_INLINE_FUNCTION is defined; if Kokkos is unavailable
  * (host-only TUs), fall back to plain inline. */
@@ -174,14 +168,11 @@ static void sink_env1_pair_kernel(const sink_env1_query_t& q,
     }
 
     /* SINK_GRAVCAPTURE_GAS path. Boundedness check + SwallowID-based
-     * mass-marked-swallow accumulation. Lifted from the GPU lambda
-     * (sinks/sink_environment_gpu.cc:235-274). The j-side atomic write to
-     * kp_j.SwallowTime is only present under SINGLE_STAR_SINK_DYNAMICS;
-     * sink_environment_mode_b.cc refuses to compile under SSD (#error at
-     * its top) so the host TU never instantiates the SSD branch. The GPU
-     * lambda calls THIS header AND has a small SSD-only tail in its own
-     * .cc for the atomic write. Once the SinkEnv1Spec runner with
-     * SymmetricPairScatter writeback lands, even that tail consolidates. */
+     * mass-marked-swallow accumulation. Builds with SINGLE_STAR_SINK_DYNAMICS
+     * are gated by the compile-time #error in sink_env1_spec.h: SSD also
+     * needs a j-side atomic write to kp_j.SwallowTime which the
+     * SymmetricPairScatter writeback channel does not yet carry through the
+     * runner. Restoration is queued for the runner-owned writeback stage. */
 #ifdef SINK_GRAVCAPTURE_GAS
 #ifdef GRAIN_FLUID
     if(kp_j.Mass > 0 && (kp_j.Type == 0 || ((1<<kp_j.Type) & GRAIN_PTYPES)))
@@ -217,9 +208,8 @@ static void sink_env1_pair_kernel(const sink_env1_query_t& q,
 #endif
             if(sink_check_boundedness_gpu(kp_j, kc_j_local, vrel, vbound, dr_code, local_sink_radius) == 1) {
                 /* SINGLE_STAR_SINK_DYNAMICS atomic write to kp_j.SwallowTime
-                 * lives in the GPU lambda's tail, NOT here — see the
-                 * sink_environment_gpu.cc body. (Host helper TU is not built
-                 * under SSD per the #error at top of sink_environment_mode_b.cc.) */
+                 * is not carried through the runner yet; SSD builds are
+                 * compile-guarded out by the #error in sink_env1_spec.h. */
                 if(kp_j.SwallowID < q.id) { out.mass_to_swallow_edd += (MyFloat)kp_j.Mass; }
             }
         }

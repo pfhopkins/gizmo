@@ -41,11 +41,12 @@ void gizmo_gpu_sync_all_sinkswallow(struct global_data_all_processes *);
 
 
 /* ---- sink_environment ----
- * The host driver in sink_environment.cc calls sink_environment_evaluate_gpu()
- * once per active-sink set; results are scattered into SinkTempInfo on the host.
- * Under SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS the kernel also does
- * atomic_min on P[j].SwallowTime; ghost_writeback_{zero_,}swallowtime() must
- * bracket the call to propagate those writes back to home ranks.
+ * Stage E1 (the "first pass" sink-environment loop) runs through
+ * mesh/neighbor_loop_runner.cc::run_neighbor_loop<SinkEnv1Spec>; the per-active
+ * accumulator type is sink_env_gpu_out below, which is also SinkEnv1Spec::AccumData.
+ * Results are scattered into SinkTempInfo on the host by the runner caller
+ * (sink_environment.cc). Stage E2 (sink_environment_second_evaluate_gpu, below)
+ * is a separate Bulge-Disk aggregator under SINK_GRAVACCRETION==0.
  */
 struct sink_env_gpu_out {
     MyFloat Sink_SurroudingGasInternalEnergy;
@@ -84,14 +85,6 @@ struct sink_env_gpu_out {
     MyFloat kernel_norm_topass_in_swallowloop;
 #endif
 };
-
-void sink_environment_evaluate_gpu(struct particle_data *P_host,
-                                   struct gas_cell_data *CellP_host,
-                                   int num_total,
-                                   int *i_active_host, int num_active,
-                                   const double *i_radii_host,
-                                   int j_type_bitmask,
-                                   struct sink_env_gpu_out *out_host);
 
 /* Stage E2 — second environment pass: Bulge-Disk kinematic decomposition
  * (SINK_GRAVACCRETION==0). Pure aggregator, no j-writes. Reads per-sink

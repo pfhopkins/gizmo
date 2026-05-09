@@ -12,7 +12,6 @@
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "sinks_gpu_decls.h"
-#include "sink_environment_mode_b.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "sink_env1_spec.h"
 /*
@@ -75,48 +74,22 @@ void sink_environment_loop(void)
         if(sink_isactive(i)) { nl_active[aa] = i; nl_radii[aa] = P[i].KernelRadius; aa++; }
     }
 
-    /* Mode B SPIKE dispatch (env-gated, 2026-05-07). When the env flag is OFF,
-     * this branch is bypassed entirely — no new collective, no behavior change.
-     * When ON, the dispatch is collective (Allreduce sum/max of num_active)
-     * and ALL ranks take the same Mode B vs legacy path.
-     *
-     * SPIKE GUARDS — both DELETE in runner extraction. The real Mode A/B
-     * dispatch threshold lives in the runner spec, not as a hard-coded constant. */
-    bool sinkenv_imported_ghosts = false;
-    bool mode_b_taken             = false;
-    if(sink_env1_mode_b_env_enabled()) {
-        const int MODE_B_SINK_ENV1_SPIKE_GUARD_SUM = 64;
-        const int MODE_B_SINK_ENV1_SPIKE_GUARD_MAX = 64;
-        int local_act = num_active;
-        int sum_act = 0, max_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        mode_b_taken = (sum_act > 0)
-                    && (sum_act <= MODE_B_SINK_ENV1_SPIKE_GUARD_SUM)
-                    && (max_act <= MODE_B_SINK_ENV1_SPIKE_GUARD_MAX);
-        if(mode_b_taken) {
-            /* SPIKE: Mode B path. NO ghost prep, NO GPU NGL, NO SIDX. */
-            sink_env1_mode_b_evaluate(P, CellP, nl_active, num_active, nl_radii, nl_outs);
-        }
-    }
-    if(!mode_b_taken) {
-        /* Env-off path: routed through run_neighbor_loop<SinkEnv1Spec> as of
-         * 3c.1c. Ghost prep / writeback / detector remain at this site for now
-         * (the runner does not yet own ghost lifecycle; that promotion is a
-         * later stage). Mode A inner kernel now flows through the generic
-         * runner: Spec::load_active (device staging post-NGL-build),
-         * Spec::load_neighbor + Spec::pair_kernel (parametric pair launch).
-         * sinks/sink_environment_evaluate_gpu remains in tree as legacy
-         * reference until 3c.5; nothing in this build calls it for env-off. */
-        sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
-            "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
-            nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
+    /* Stage E1 dispatch flows through run_neighbor_loop<SinkEnv1Spec>. The
+     * runner internally selects Mode A (GPU NGL pipeline), Mode B local, or
+     * Mode B remote (P2P) by threshold (per-loop env > global env >
+     * Spec::modeb_threshold_{sum,max} default 64/64). MODEB_XVAL accumulator
+     * dump and PHASE0_NLR per-call timing are emitted by the runner via the
+     * SFINAE-detected SinkEnv1Spec hooks (3c.4a/3c.4b). */
+    bool sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+        "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
+        nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
 
-        ghost_write_detector_begin("sink_environment");
+    ghost_write_detector_begin("sink_environment");
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-        ghost_writeback_zero_swallowtime();
+    ghost_writeback_zero_swallowtime();
 #endif
 
+    {
         SinkEnv1Aux aux;
         aux.nl_outs = nl_outs;
         neighbor_loop_args args;
@@ -127,19 +100,12 @@ void sink_environment_loop(void)
         args.num_active   = num_active;
         args.aux          = &aux;
         run_neighbor_loop<SinkEnv1Spec>(args);
+    }
 
 #ifdef SINGLE_STAR_SINK_DYNAMICS
-        ghost_writeback_swallowtime();
+    ghost_writeback_swallowtime();
 #endif
-        ghost_write_detector_end();
-
-        /* MODEB_XVAL accumulator dump rehomed to SinkEnv1Spec::diagnostic_dump_active
-         * in 3c.4a; runner emits via the SFINAE-detected hook (path="gpu_ngl"
-         * for Mode A, path="mode_b" for runner Mode B local/remote). Legacy
-         * SPIKE branch in sink_environment_mode_b.cc still emits its own copy;
-         * the two paths are mutually exclusive at the same call so no double-
-         * print. */
-    }
+    ghost_write_detector_end();
 
     /* Scatter per-active-sink outputs into SinkTempInfo */
     for(int a = 0; a < num_active; a++) {

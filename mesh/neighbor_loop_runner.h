@@ -464,11 +464,6 @@ void run_neighbor_loop(const neighbor_loop_args& args);
  *
  * The runner queries `gizmo_nlr_modeb_threshold_{sum,max}_for(loop_name)` which
  * walks per-loop → global → caller-supplied default in that order.
- *
- * Legacy precedence — see gizmo_nlr_legacy_modeb_owns_for(): when the legacy
- * SPIKE env (e.g. GIZMO_MODE_B_SINK_ENV1=1) owns Mode B selection for a loop,
- * the runner's threshold dispatch is disabled for that loop (auto-falls to
- * Mode A). GIZMO_NLR_FORCE_MODEB=1 overrides legacy precedence (testers' knob).
  * ========================================================================== */
 
 int  gizmo_nlr_default_modeb_threshold_sum(void);
@@ -481,12 +476,6 @@ bool gizmo_nlr_dispatch_trace_enabled(void);
 
 bool gizmo_nlr_oracle_enabled_global(void);
 bool gizmo_nlr_oracle_enabled_for(const char *loop_name);
-
-/* Legacy SPIKE precedence: returns true if legacy env for the named loop is
- * set to "1", in which case the legacy SPIKE branch in the caller (e.g.
- * sink_environment.cc) owns Mode B selection and the runner must NOT auto-
- * select Mode B via threshold. Force-MODEB env overrides this. */
-bool gizmo_nlr_legacy_modeb_owns_for(const char *loop_name);
 
 /* ============================================================================
  * NlrQueryEnvelope — runner-owned transport wrapper for cross-rank queries.
@@ -538,11 +527,9 @@ struct NlrReplyEnvelope {
  *   "mode_b"  — Mode B local OR Mode B remote (active rank's own actives)
  *
  * Accum dump fires for both Mode A and runner-driven Mode B paths. NB dump
- * fires Mode A only in 3c.4a (Mode B local NB + UVM-readback diagnostic
- * remains in legacy SPIKE branch until 3c.5; Mode B remote peer-side NB
- * dump is deferred — see OPEN_modeb_nb_dump.md in memory). The legacy
- * SPIKE branch self-emits MODEB_XVAL/MODEB_XVAL_NB and bypasses the runner
- * entirely; no double-print at the same call.
+ * fires Mode A only; Mode B local NB + UVM-readback diagnostic and Mode B
+ * remote peer-side NB dump are deferred (see OPEN_modeb_nb_dump.md in
+ * memory).
  *
  * Cached env-gate accessors below are first-use cached; mid-run env
  * changes do NOT take effect, matching this code's cached-env convention.
