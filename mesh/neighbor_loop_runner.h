@@ -634,7 +634,7 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
  *
  * Execution path is chosen by the runner from a small enum (Mode A GPU NGL,
  * Mode B local, Mode B remote, future paths). Selection precedence: env
- * force-mode > legacy precedence (retired) > threshold dispatch on
+ * force-mode > threshold dispatch on
  * num_active_global vs Spec::modeb_threshold_{sum,max} > Spec defaults.
  * Future paths add a case to the dispatch + the path-predicate helpers
  * (nlr_path_uses_imported_ghosts, nlr_path_uses_gpu_arena, etc.) and never

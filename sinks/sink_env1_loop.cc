@@ -27,8 +27,9 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../mesh/kernel.h"            /* MUST precede sink_env1_loop.h */
-#include "../mesh/ghost_writeback.h"   /* ghost_write_detector_*, ghost_writeback_*swallowtime */
+#include "../mesh/kernel.h"               /* MUST precede sink_env1_loop.h */
+#include "../mesh/ghost_writeback.h"      /* scaffold + detector */
+#include "../mesh/ghost_writeback_ops.h"  /* manifest macros (B.iv) */
 #include "sink_env1_loop.h"
 
 #ifdef SINK_PARTICLES
@@ -131,15 +132,32 @@ void SinkEnv1Spec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
  *   - Mode A (imported-ghost lifecycle): the runner preserves the order
  *     detector_begin -> writeback_begin -> kernel -> writeback_end ->
  *     detector_end. Behavior is byte-identical to the prior caller-side
- *     sequence and to the prior three-channel runner orchestration under
- *     all relevant compile configs.
+ *     sequence under all relevant compile configs.
  *   - Mode B paths: the runner skips both pairs. There is no imported-
  *     ghost lifecycle for them to attend to (lazy-drift corridor).
  *
- * Adding a new physics flag that needs ghost writeback: extend the
- * uses_ghost_writeback trait's #if condition AND the writeback_begin /
- * writeback_end bodies' #ifdef union below. Do NOT add a new channel.
+ * GHOST WRITEBACK MANIFEST (Pass B.iv).
+ *
+ * Below is the entire manifest of ghost-written fields for sink_env1.
+ * Adding a new ghost-written field for this loop = ADDING ONE LINE under
+ * its physics flag's #ifdef. The scaffold (mesh/ghost_writeback.cc)
+ * generates the snapshot, change-predicate, pack, exchange, apply, and
+ * cleanup machinery from each manifest line.
+ *
+ * Operations available: see mesh/ghost_writeback_ops.h.
+ *
+ * Empty bundle (no flags active): scaffold short-circuits at line 1 of
+ * begin_bundle and end_bundle — strict no-op, identical to "writeback
+ * absent." Default builds without SINGLE_STAR_SINK_DYNAMICS pay no cost.
  * ========================================================================== */
+
+GHOST_WRITEBACK_BUNDLE_BEGIN(sink_env1)
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime)
+#endif
+    /* future ghost-written fields: add one line per (op, field) under the
+     * appropriate physics flag #ifdef. */
+GHOST_WRITEBACK_BUNDLE_END(sink_env1)
 
 void SinkEnv1Spec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
                                                const NeighborLoopPlan& /*plan*/)
@@ -156,22 +174,13 @@ void SinkEnv1Spec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
 void SinkEnv1Spec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)
 {
-    /* Per-flag union of pre-kernel ghost-state snapshots. uses_ghost_writeback
-     * is the OR of these conditions; runner gates the call accordingly. */
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    ::ghost_writeback_zero_swallowtime();
-#endif
+    ghost_writeback_begin_bundle(sink_env1_ghost_writeback_bundle_ptr());
 }
 
 void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                         const NeighborLoopPlan& /*plan*/)
 {
-    /* Per-flag union of post-kernel ghost->home reverse-comm. Reverse order
-     * relative to writeback_begin, matching the imported-ghost-lifecycle
-     * contract. */
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    ::ghost_writeback_swallowtime();
-#endif
+    ghost_writeback_end_bundle(sink_env1_ghost_writeback_bundle_ptr());
 }
 
 /* ============================================================================

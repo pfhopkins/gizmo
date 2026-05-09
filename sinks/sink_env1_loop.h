@@ -27,13 +27,19 @@
 #ifdef SINK_PARTICLES
 
 /* ----------------------------------------------------------------------------
- * Compile-time guard: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS j-side
- * SwallowTime atomic write is not yet wired through the runner's
- * SymmetricPairScatter writeback channel. This is the sole guard for that
- * combination across the sink_env1 stack — do not narrow it.
+ * Compile-time guard: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS path
+ * needs a per-pair atomic min on neighbor_particle.SwallowTime inside the
+ * pair_kernel (not just a snapshot-diff reverse-comm in ghost_writeback).
+ * That j-side atomic-write substrate is not yet wired through the runner
+ * (SymmetricPairScatter / future per-pair scatter channel). The Pass B.iv
+ * ghost-writeback scaffold + manifest carries the i-active snapshot-diff
+ * SwallowTime path, but the SINK_GRAVCAPTURE_GAS combination additionally
+ * needs the per-pair atomic write inside the pair body, which is still
+ * gated out here. This is the sole guard for that combination across the
+ * sink_env1 stack — do not narrow it.
  * --------------------------------------------------------------------------*/
 #if defined(SINK_GRAVCAPTURE_GAS) && defined(SINGLE_STAR_SINK_DYNAMICS)
-#error "SinkEnv1Spec: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS j-side SwallowTime atomic write is not yet wired through the runner's SymmetricPairScatter channel. Do not enable SINGLE_STAR_SINK_DYNAMICS with SINK_GRAVCAPTURE_GAS until the writeback hook lands."
+#error "SinkEnv1Spec: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS j-side SwallowTime atomic write inside the pair_kernel is not yet wired through the runner's per-pair scatter substrate. The ghost-writeback path is wired (Pass B.iv) but is i-active snapshot-diff only. Do not enable SINGLE_STAR_SINK_DYNAMICS with SINK_GRAVCAPTURE_GAS until the per-pair scatter substrate lands."
 #endif
 
 #include "../mesh/neighbor_loop_runner.h"
@@ -336,16 +342,15 @@ struct SinkEnv1Spec {
      *                 before the kernel and reverse-communicate any
      *                 j-side writes back to home ranks afterwards.
      *
-     * For SinkEnv1Spec the writeback channel is needed only under
-     * SINGLE_STAR_SINK_DYNAMICS (j-side SwallowTime atomic min). Future
-     * physics flags that need ghost writeback add their pre/post calls
-     * inside the union body of the existing pair, NOT a new channel. */
+     * uses_ghost_writeback is set true permanently for sink_env1: the actual
+     * work is governed by the contents of the manifest in
+     * sinks/sink_env1_loop.cc (GHOST_WRITEBACK_BUNDLE_BEGIN/END). When no
+     * physics flag inside that manifest is active, the bundle has zero
+     * callbacks and the scaffold short-circuits to a strict no-op.
+     * Adding a new ghost-written field is a one-line edit in the manifest;
+     * this trait does not change. */
     static constexpr bool uses_ghost_write_detector  = true;
-#if defined(SINGLE_STAR_SINK_DYNAMICS)
     static constexpr bool uses_ghost_writeback       = true;
-#else
-    static constexpr bool uses_ghost_writeback       = false;
-#endif
 
     /* Hook method declarations. The runner invokes each only when the
      * corresponding `uses_*` trait above is true AND the chosen path

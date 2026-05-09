@@ -18,6 +18,124 @@
 #endif
 
 
+/* ============================================================================
+ * Generic ghost-writeback scaffold (Pass B.iv).
+ *
+ * begin_bundle: per-callback snapshot when num_ghosts>0; exactly-once
+ *               arena_invalidate when num_ghosts>0. Strict no-op when
+ *               n_callbacks==0 (no snapshot, no invalidate, no MPI, no
+ *               cleanup).
+ *
+ * end_bundle:   exactly-once register_writeback (always, when bundle
+ *               non-empty); per-callback count + pack + alltoallv + apply
+ *               (NTask>1 only); per-callback cleanup; exactly-once
+ *               arena_invalidate (NTask>1 only). Strict no-op when
+ *               n_callbacks==0.
+ *
+ * Single-callback case is byte-equivalent to the legacy swallowtime
+ * functions (one alltoallv with the callback's delta_size). Multi-callback
+ * case loops the same body per callback (per-callback alltoallv); a future
+ * optimization may collapse this into one tagged bundle-level alltoallv
+ * without changing the user-facing manifest API.
+ *
+ * Legacy invalidation timing preserved exactly: see the audit table in
+ * Pass B.iv design notes (begin gates on num_ghosts>0; end gates on
+ * NTask>1).
+ * ========================================================================== */
+
+void ghost_writeback_begin_bundle(const struct ghost_writeback_bundle *bundle)
+{
+    if (!bundle || bundle->n_callbacks == 0) return;  /* strict no-op */
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+    if (num_ghosts <= 0) return;                       /* legacy gate */
+    for (int c = 0; c < bundle->n_callbacks; c++) {
+        const ghost_writeback_callback *cb = bundle->callbacks[c];
+        cb->snapshot(cb->ctx, num_ghosts, num_local);
+    }
+    gpu_particles_arena_invalidate();
+}
+
+void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
+{
+    if (!bundle || bundle->n_callbacks == 0) return;  /* strict no-op */
+
+    /* Always register the writeback when the bundle is non-empty, even on
+     * NTask<=1 short-circuit. Matches legacy ghost_writeback_swallowtime's
+     * unconditional ghost_write_detector_register_writeback() call. */
+    ghost_write_detector_register_writeback();
+
+    int num_ghosts = ghost_get_num_ghosts();
+    int num_local  = ghost_get_num_local();
+
+    if (NTask <= 1) {
+        /* No reverse-comm needed; still let each callback free its snap. */
+        for (int c = 0; c < bundle->n_callbacks; c++) {
+            const ghost_writeback_callback *cb = bundle->callbacks[c];
+            cb->cleanup(cb->ctx);
+        }
+        return;  /* NO arena_invalidate on NTask<=1 (matches legacy). */
+    }
+
+    /* Per-callback count + pack + alltoallv + apply. Body mirrors the
+     * legacy ghost_writeback_swallowtime structure, parameterized by the
+     * callback's delta_size, delta_for_ghost, pack_delta, apply_delta. */
+    int *home_rank  = ghost_get_home_rank();
+    for (int c = 0; c < bundle->n_callbacks; c++) {
+        const ghost_writeback_callback *cb = bundle->callbacks[c];
+        const size_t ds = cb->delta_size;
+
+        int *delta_send_count = (int *) calloc(NTask, sizeof(int));
+        for (int g = 0; g < num_ghosts; g++) {
+            if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
+                delta_send_count[home_rank[g]]++;
+            }
+        }
+        int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
+        delta_send_disp[0] = 0;
+        for (int t = 1; t < NTask; t++) delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1];
+        int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
+
+        char *send_buf = (char *) malloc((total_send > 0 ? total_send : 1) * ds);
+        int *pack_offset = (int *) malloc(NTask * sizeof(int));
+        memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
+        for (int g = 0; g < num_ghosts; g++) {
+            if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
+                int task = home_rank[g];
+                int off  = pack_offset[task]++;
+                cb->pack_delta(cb->ctx, g, num_local, send_buf + (size_t)off * ds);
+            }
+        }
+        free(pack_offset);
+
+        int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
+        MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+        int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
+        delta_recv_disp[0] = 0;
+        for (int t = 1; t < NTask; t++) delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1];
+        int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
+
+        char *recv_buf = (char *) malloc((total_recv > 0 ? total_recv : 1) * ds);
+        gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
+                                  recv_buf, delta_recv_count, delta_recv_disp,
+                                  ds, MPI_COMM_WORLD);
+        free(send_buf); free(delta_send_count); free(delta_send_disp);
+
+        for (int d = 0; d < total_recv; d++) {
+            cb->apply_delta(cb->ctx, recv_buf + (size_t)d * ds);
+        }
+        free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
+    }
+
+    /* Per-callback cleanup, then exactly-once arena_invalidate. */
+    for (int c = 0; c < bundle->n_callbacks; c++) {
+        const ghost_writeback_callback *cb = bundle->callbacks[c];
+        cb->cleanup(cb->ctx);
+    }
+    gpu_particles_arena_invalidate();
+}
+
+
 /* Compact delta struct for hydro j-writes.
  * Contains only the fields that hydro_force writes to j-particles. */
 struct ghost_delta_hydro_t {
@@ -429,97 +547,45 @@ void ghost_writeback_agsforce(void)
 
 
 /* --- SwallowTime variant ------------------------------------------------- */
-/* SwallowTime exists only when SINGLE_STAR_SINK_DYNAMICS is enabled. */
+/* SwallowTime exists only when SINGLE_STAR_SINK_DYNAMICS is enabled.
+ *
+ * Pass B.iv: the legacy hand-written zero_swallowtime / swallowtime bodies
+ * are replaced by thin singleton-bundle wrappers around the generic
+ * ghost-writeback scaffold (begin_bundle / end_bundle). The op
+ * (PARTICLE_MIN on particle_data::SwallowTime) and its callback set are
+ * generated by the gw_detail::ParticleMinOp template in
+ * mesh/ghost_writeback_ops.h.
+ *
+ * Behavior is byte-equivalent to the prior implementation for the
+ * single-callback case (one Alltoallv, same delta layout, same gating
+ * on num_ghosts and NTask, same exactly-once detector-register +
+ * arena_invalidate).
+ *
+ * These public names are retained as compatibility wrappers for any
+ * non-Spec caller. The SinkEnv1Spec ghost-writeback hooks DO NOT call
+ * them — they call ghost_writeback_begin_bundle / _end_bundle directly
+ * with the manifest-generated bundle. New physics flags should add a
+ * GHOST_WRITEBACK_*(field) line to the appropriate Spec's bundle, NOT
+ * a new public function alongside this one. */
 #ifdef SINGLE_STAR_SINK_DYNAMICS
 
-struct ghost_delta_swallowtime_t {
-    int home_index;
-    MyFloat SwallowTime;
+#include "ghost_writeback_ops.h"  /* gw_detail::ParticleMinOp template */
+
+namespace {
+static const ghost_writeback_callback *const swallowtime_singleton_cbs[] = {
+    & gw_detail::ParticleMinOp<MyFloat, &particle_data::SwallowTime>::callback
 };
+static const ghost_writeback_bundle swallowtime_singleton_bundle = {
+    swallowtime_singleton_cbs, 1
+};
+} /* anonymous namespace */
 
-static MyFloat *swallowtime_ghost0 = NULL;
-
-
-void ghost_writeback_zero_swallowtime(void)
-{
-    int num_ghosts = ghost_get_num_ghosts();
-    int num_local  = ghost_get_num_local();
-    if(num_ghosts <= 0) return;
-
-    swallowtime_ghost0 = (MyFloat *) malloc(num_ghosts * sizeof(MyFloat));
-    for(int g = 0; g < num_ghosts; g++) {
-        swallowtime_ghost0[g] = P[num_local + g].SwallowTime;
-    }
-    gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
+void ghost_writeback_zero_swallowtime(void) {
+    ghost_writeback_begin_bundle(&swallowtime_singleton_bundle);
 }
 
-
-void ghost_writeback_swallowtime(void)
-{
-    ghost_write_detector_register_writeback();
-    int num_ghosts = ghost_get_num_ghosts();
-    int num_local  = ghost_get_num_local();
-
-    /* Multi-rank collective correctness: see ghost_writeback_agsforce. */
-    if(NTask <= 1) {
-        if(swallowtime_ghost0) { free(swallowtime_ghost0); swallowtime_ghost0 = NULL; }
-        return;
-    }
-    int have_snap = (swallowtime_ghost0 != NULL && num_ghosts > 0);
-
-    int *home_rank  = ghost_get_home_rank();
-    int *home_index = ghost_get_home_index();
-
-    int *delta_send_count = (int *) calloc(NTask, sizeof(int));
-    if(have_snap) {
-        for(int g = 0; g < num_ghosts; g++) {
-            if(P[num_local + g].SwallowTime < swallowtime_ghost0[g]) { delta_send_count[home_rank[g]]++; }
-        }
-    }
-    int *delta_send_disp = (int *) malloc(NTask * sizeof(int));
-    delta_send_disp[0] = 0;
-    for(int t = 1; t < NTask; t++) { delta_send_disp[t] = delta_send_disp[t-1] + delta_send_count[t-1]; }
-    int total_send = delta_send_disp[NTask-1] + delta_send_count[NTask-1];
-
-    struct ghost_delta_swallowtime_t *send_buf = (struct ghost_delta_swallowtime_t *)
-        malloc((total_send > 0 ? total_send : 1) * sizeof(struct ghost_delta_swallowtime_t));
-    int *pack_offset = (int *) malloc(NTask * sizeof(int));
-    memcpy(pack_offset, delta_send_disp, NTask * sizeof(int));
-    if(have_snap) {
-        for(int g = 0; g < num_ghosts; g++) {
-            int j = num_local + g;
-            if(P[j].SwallowTime >= swallowtime_ghost0[g]) continue;
-            int task = home_rank[g];
-            int off = pack_offset[task]++;
-            send_buf[off].home_index = home_index[g];
-            send_buf[off].SwallowTime = P[j].SwallowTime;
-        }
-    }
-    free(pack_offset);
-
-    int *delta_recv_count = (int *) calloc(NTask, sizeof(int));
-    MPI_Alltoall(delta_send_count, 1, MPI_INT, delta_recv_count, 1, MPI_INT, MPI_COMM_WORLD);
-    int *delta_recv_disp = (int *) malloc(NTask * sizeof(int));
-    delta_recv_disp[0] = 0;
-    for(int t = 1; t < NTask; t++) { delta_recv_disp[t] = delta_recv_disp[t-1] + delta_recv_count[t-1]; }
-    int total_recv = delta_recv_disp[NTask-1] + delta_recv_count[NTask-1];
-
-    struct ghost_delta_swallowtime_t *recv_buf = (struct ghost_delta_swallowtime_t *)
-        malloc((total_recv > 0 ? total_recv : 1) * sizeof(struct ghost_delta_swallowtime_t));
-
-    gizmo_mpi_alltoallv_typed(send_buf, delta_send_count, delta_send_disp,
-                              recv_buf, delta_recv_count, delta_recv_disp,
-                              sizeof(struct ghost_delta_swallowtime_t), MPI_COMM_WORLD);
-    free(send_buf); free(delta_send_count); free(delta_send_disp);
-
-    for(int d = 0; d < total_recv; d++) {
-        int idx = recv_buf[d].home_index;
-        if(recv_buf[d].SwallowTime < P[idx].SwallowTime) { P[idx].SwallowTime = recv_buf[d].SwallowTime; }
-    }
-
-    free(recv_buf); free(delta_recv_count); free(delta_recv_disp);
-    free(swallowtime_ghost0); swallowtime_ghost0 = NULL;
-    gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
+void ghost_writeback_swallowtime(void) {
+    ghost_writeback_end_bundle(&swallowtime_singleton_bundle);
 }
 
 #endif /* SINGLE_STAR_SINK_DYNAMICS */
