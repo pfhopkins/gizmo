@@ -419,6 +419,40 @@ enum class DispatchPath : int {
  * Forgetting the instantiation = clean linker error (not silent template bloat).
  * ========================================================================== */
 
+/* ============================================================================
+ * neighbor_loop_args — physics inputs to run_neighbor_loop<Spec>.
+ *
+ * The caller fills these with PHYSICS facts ONLY. The caller does not pick
+ * the dispatch path, run any prep, or know which substrate (Mode A GPU NGL,
+ * Mode B local, Mode B remote, future paths) will execute. The runner owns
+ * all of that.
+ *
+ * Field semantics:
+ *   P, CellP        — particle data view at call time. The runner takes a
+ *                     local working copy; on paths that mutate the global
+ *                     particle arrays (today: only Mode A's ghost-import
+ *                     prep), the runner refreshes its working copy after
+ *                     mutation. Callers MUST NOT pass pointers that go
+ *                     stale across the call.
+ *   num_total       — = NumPart at call time. The runner refreshes this
+ *                     internally on paths that grow NumPart via ghost
+ *                     import (Mode A).
+ *   active_list     — caller-owned active-particle indices, valid for the
+ *                     duration of the call. args.active_list[slot] =
+ *                     particle index.
+ *   num_active      — length of active_list.
+ *   aux             — Spec-defined POD pointer for per-active side arrays
+ *                     (e.g. SinkEnv1Aux::nl_outs). Spec-internal contract.
+ *
+ * Future fields (Stage 2 of the runner-owned-prep milestone): a
+ * ghost_safety_factor double, filled unconditionally by the caller from
+ * gizmo_ghost_safety_factor() and used by the runner only on paths that
+ * call gizmo_request_filtered_ghost_import_fresh.
+ *
+ * The caller does NOT compute or stage per-active radii. The runner stages
+ * radii once via Spec::search_radius_host and reuses them for any prep
+ * (Mode A) and the chosen walker.
+ * ========================================================================== */
 struct neighbor_loop_args {
     struct particle_data *P;
     struct gas_cell_data *CellP;
@@ -428,6 +462,88 @@ struct neighbor_loop_args {
     void *aux;             /* spec-defined POD for per-active side arrays */
 };
 
+/* ============================================================================
+ * run_neighbor_loop<Spec>(args) — the runner.
+ *
+ * Numerical execution policy SSOT for one neighbor loop. The caller hands
+ * over physics; the runner picks the substrate and runs it.
+ *
+ *   CALLER OWNS                       RUNNER OWNS
+ *   -----------                       -----------
+ *   Active set                        Selected execution path
+ *   Search predicate (Spec traits)    Whether ghost import runs
+ *   Per-loop physics data (Spec)      Drift strategy
+ *   Write pattern (Spec trait)        Transport strategy
+ *   Ghost safety factor (args field)  Per-active radii staging
+ *                                     Lifecycle hooks (detector, writeback)
+ *                                     Hard-corridor invariant enforcement
+ *
+ * Execution path is chosen by the runner from a small enum (Mode A GPU NGL,
+ * Mode B local, Mode B remote, future paths). Selection precedence: env
+ * force-mode > legacy precedence (retired) > threshold dispatch on
+ * num_active_global vs Spec::modeb_threshold_{sum,max} > Spec defaults.
+ * Future paths add a case to the dispatch + the path-predicate helpers
+ * (nlr_path_uses_imported_ghosts, nlr_path_uses_gpu_arena, etc.) and never
+ * add fields to the plan struct itself — path is the SSOT.
+ *
+ * Tiny-N hard-corridor invariants (HARD ABORT on violation, always-on,
+ * every build, enforced via global lifecycle counters):
+ *
+ *   On Mode B (local OR remote) paths, from runner entry to runner exit:
+ *     - NO move_particles call (g_global_drift_counter unchanged)
+ *     - NO ghost_exchange_impl call (g_ghost_import_counter unchanged)
+ *     - NO gpu_particles_arena_acquire call
+ *       (g_gpu_arena_acquire_counter unchanged)
+ *     - NO change to NumPart
+ *
+ *   These invariants protect the lazy-drift architecture: Mode B reads
+ *   owner-local args.P[j] / args.CellP[j] freely during evaluation and
+ *   drifts only touched candidates via mode_b_lazy_drift_candidates. The
+ *   invariant is NO GLOBAL MUTATION, not no read. A full global drift in
+ *   the prep layer would defeat lazy drift; the corridor enforcement
+ *   prevents that regression.
+ *
+ *   Mode A path retains ghost import + global drift (today's substrate).
+ *   That cost is appropriate for large-N where the import + drift amortizes
+ *   over millions of pair evaluations. Forced Mode A on tiny-N is
+ *   tester/baseline territory: expensive but correct.
+ *
+ * Path -> required-data matrix (today; future paths extend by adding cases
+ * to nlr_path_*() predicates):
+ *
+ *   ModeA_GpuNgl       : may move_particles, may ghost_exchange_impl,
+ *                        may grow NumPart, may acquire GPU arena
+ *   ModeB_Local        : none of the above
+ *   ModeB_Remote       : none of the above (uses P2P request/reply
+ *                        substrate; peer-local walks; lazy drift on
+ *                        touched candidates)
+ *
+ * Lazy-drift contract inside Mode B:
+ *   collect candidates pre-drift -> mode_b_lazy_drift_candidates(touched)
+ *   -> evaluate pairs post-drift. drift_particle is per-particle and
+ *   short-circuits on time1 == time0. Repeat candidates between queries
+ *   in the same call are a fast no-op.
+ *
+ * radii lifetime: the runner stages a std::vector<double> radii of size
+ * args.num_active and passes radii.data() to path-specific functions and
+ * (on Mode A) to gizmo_request_filtered_ghost_import_fresh. The pointer
+ * is RUNNER-CALL-LIFETIME ONLY. Callees MUST NOT store the pointer; if a
+ * callee needs to retain values, it copies. The vector goes out of scope
+ * at the end of run_neighbor_loop.
+ *
+ * Spec lifecycle hooks (three independent, optional, SFINAE-detected;
+ * default no-op; per-Spec gating decided per-hook by audit):
+ *   spec_ghost_write_detector_begin/end<Spec>
+ *   spec_ghost_writeback_begin/end<Spec>
+ *   spec_sidechannel_writeback_begin/end<Spec>
+ * Whether each hook fires on all paths or only on imported-ghost paths is
+ * a per-Spec decision settled by reading the underlying call's actual
+ * semantics; no blanket rule.
+ *
+ * For the full Spec contract (load_active, load_neighbor, pair_kernel,
+ * accum/scatter writeback, optional iterative loop semantics), see the
+ * Spec-shape comment block above this declaration.
+ * ========================================================================== */
 template <typename Spec>
 void run_neighbor_loop(const neighbor_loop_args& args);
 
