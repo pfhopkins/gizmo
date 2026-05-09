@@ -124,19 +124,21 @@ void SinkEnv1Spec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 /* ============================================================================
  * IMPORTED-GHOST LIFECYCLE
  *
- * The runner gates each pair on (a) the corresponding `uses_*` trait being
- * true AND (b) nlr_path_uses_imported_ghosts(plan.path) being true. Bodies
- * here are thin wrappers around the existing global lifecycle calls.
+ * Two channels: write detector + ghost writeback. The runner gates each
+ * pair on (a) the corresponding `uses_*` trait being true AND (b)
+ * nlr_path_uses_imported_ghosts(plan.path) being true.
  *
- *   - On Mode A path (imported-ghost lifecycle): byte-identical to the old
- *     caller-side sequence under all relevant compile configs.
- *   - On Mode B paths: the runner skips these hooks because there is no
- *     imported-ghost lifecycle for them to attend to. The skip is the
- *     intended decontamination of the tiny-N corridor.
+ *   - Mode A (imported-ghost lifecycle): the runner preserves the order
+ *     detector_begin -> writeback_begin -> kernel -> writeback_end ->
+ *     detector_end. Behavior is byte-identical to the prior caller-side
+ *     sequence and to the prior three-channel runner orchestration under
+ *     all relevant compile configs.
+ *   - Mode B paths: the runner skips both pairs. There is no imported-
+ *     ghost lifecycle for them to attend to (lazy-drift corridor).
  *
- * The three-channel split (detector / writeback / sidechannel_writeback) is
- * a transitional shape — collapse to a single ghost-writeback scaffold is
- * scheduled for the runner-template-hardening pass.
+ * Adding a new physics flag that needs ghost writeback: extend the
+ * uses_ghost_writeback trait's #if condition AND the writeback_begin /
+ * writeback_end bodies' #ifdef union below. Do NOT add a new channel.
  * ========================================================================== */
 
 void SinkEnv1Spec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
@@ -154,28 +156,19 @@ void SinkEnv1Spec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
 void SinkEnv1Spec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)
 {
-    /* SinkEnv1Spec is ActiveReduceOnly with no j-side writes outside
-     * SINGLE_STAR_SINK_DYNAMICS; the regular ghost-writeback channel is a
-     * no-op. uses_ghost_writeback is false so the runner won't call this. */
-}
-
-void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
-                                        const NeighborLoopPlan& /*plan*/)
-{
-    /* See ghost_writeback_begin. */
-}
-
-void SinkEnv1Spec::sidechannel_writeback_begin(const neighbor_loop_args& /*args*/,
-                                                const NeighborLoopPlan& /*plan*/)
-{
+    /* Per-flag union of pre-kernel ghost-state snapshots. uses_ghost_writeback
+     * is the OR of these conditions; runner gates the call accordingly. */
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     ::ghost_writeback_zero_swallowtime();
 #endif
 }
 
-void SinkEnv1Spec::sidechannel_writeback_end(const neighbor_loop_args& /*args*/,
-                                              const NeighborLoopPlan& /*plan*/)
+void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
+                                        const NeighborLoopPlan& /*plan*/)
 {
+    /* Per-flag union of post-kernel ghost->home reverse-comm. Reverse order
+     * relative to writeback_begin, matching the imported-ghost-lifecycle
+     * contract. */
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     ::ghost_writeback_swallowtime();
 #endif

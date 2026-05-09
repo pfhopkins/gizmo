@@ -685,13 +685,14 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
  * callee needs to retain values, it copies. The vector goes out of scope
  * at the end of run_neighbor_loop.
  *
- * Spec lifecycle hooks (three independent, optional, SFINAE-detected;
- * default no-op; per-Spec gating decided per-hook by audit):
- *   spec_ghost_write_detector_begin/end<Spec>
- *   spec_ghost_writeback_begin/end<Spec>
- *   spec_sidechannel_writeback_begin/end<Spec>
- * Whether each hook fires on all paths or only on imported-ghost paths is
- * a per-Spec decision settled by reading the underlying call's actual
+ * Spec lifecycle hooks (two channels, optional, SFINAE-detected;
+ * default no-op; per-Spec gating decided per-channel by audit):
+ *   detector  : Spec::ghost_write_detector_begin/end<Spec> — audit/debug.
+ *   writeback : Spec::ghost_writeback_begin/end<Spec> — physics state
+ *               propagation. Spec body is the per-flag #ifdef union of
+ *               all enabled physics-flag writebacks for that loop.
+ * Whether each channel fires on all paths or only on imported-ghost paths
+ * is a per-Spec decision settled by reading the underlying call's actual
  * semantics; no blanket rule.
  *
  * For the full Spec contract (load_active, load_neighbor, pair_kernel,

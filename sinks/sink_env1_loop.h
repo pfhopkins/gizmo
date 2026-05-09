@@ -323,41 +323,40 @@ struct SinkEnv1Spec {
 
     /* (8) Imported-ghost lifecycle traits.
      *
-     * Three independent traits, each gating a hook-method pair below. The
+     * Two independent traits, each gating a hook-method pair below. The
      * runner calls each pair only when (a) the trait is true AND (b) the
      * chosen path imports ghosts (nlr_path_uses_imported_ghosts(plan.path)).
+     * Mode B paths run zero lifecycle hooks (no ghost import to attend to).
      *
-     * For SinkEnv1Spec specifically:
-     *   - detector: ON (catches illegal kernel writes to imported ghosts;
-     *     compiles to no-op outside GIZMO_GPU_ARENA_DEBUG)
-     *   - ghost_writeback: OFF (ActiveReduceOnly with no j-side writes
-     *     outside SINGLE_STAR_SINK_DYNAMICS; the regular writeback channel
-     *     has nothing to do)
-     *   - sidechannel_writeback: ON only under SINGLE_STAR_SINK_DYNAMICS
-     *     (wraps ghost_writeback_zero_swallowtime / _swallowtime).
+     * Detector vs writeback are distinct concepts:
+     *   - detector  : audit/debug — catches illegal kernel writes to
+     *                 imported ghosts (compiles to no-op outside
+     *                 GIZMO_GPU_ARENA_DEBUG).
+     *   - writeback : physics state propagation — snapshot ghost state
+     *                 before the kernel and reverse-communicate any
+     *                 j-side writes back to home ranks afterwards.
      *
-     * The three-channel split is a transitional shape; consolidation into
-     * a single ghost-writeback scaffold is queued for the runner-template-
-     * hardening pass. */
+     * For SinkEnv1Spec the writeback channel is needed only under
+     * SINGLE_STAR_SINK_DYNAMICS (j-side SwallowTime atomic min). Future
+     * physics flags that need ghost writeback add their pre/post calls
+     * inside the union body of the existing pair, NOT a new channel. */
     static constexpr bool uses_ghost_write_detector  = true;
-    static constexpr bool uses_ghost_writeback       = false;
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    static constexpr bool uses_sidechannel_writeback = true;
+#if defined(SINGLE_STAR_SINK_DYNAMICS)
+    static constexpr bool uses_ghost_writeback       = true;
 #else
-    static constexpr bool uses_sidechannel_writeback = false;
+    static constexpr bool uses_ghost_writeback       = false;
 #endif
 
     /* Hook method declarations. The runner invokes each only when the
      * corresponding `uses_*` trait above is true AND the chosen path
-     * imports ghosts. On Mode A path the runner preserves this exact order:
+     * imports ghosts. On the Mode A path the runner preserves this exact
+     * order:
      *
      *   gizmo_request_filtered_ghost_import (in runner)
      *   ghost_write_detector_begin
-     *   ghost_writeback_begin                (no-op for SinkEnv1Spec)
-     *   sidechannel_writeback_begin          (SINGLE_STAR_SINK_DYNAMICS-gated)
+     *   ghost_writeback_begin                (per-flag #ifdef union body)
      *   <run_mode_a kernel>
-     *   sidechannel_writeback_end            (reverse order)
-     *   ghost_writeback_end
+     *   ghost_writeback_end                  (reverse order)
      *   ghost_write_detector_end
      *   ghost_exchange_cleanup               (in runner; NTask>1 only)
      */
@@ -368,10 +367,6 @@ struct SinkEnv1Spec {
     static void ghost_writeback_begin      (const struct neighbor_loop_args&,
                                              const struct NeighborLoopPlan&);
     static void ghost_writeback_end        (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
-    static void sidechannel_writeback_begin(const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
-    static void sidechannel_writeback_end  (const struct neighbor_loop_args&,
                                              const struct NeighborLoopPlan&);
 
     /* (9) Per-active host hooks (pre-arena epoch). */

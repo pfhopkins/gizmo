@@ -67,16 +67,32 @@
  * (which are file-scope `extern` for runner.h API) can call them.
  * ========================================================================== */
 
-/* One-shot rank-0 warning helper. Cached set keyed by string-literal pointer
- * (so each call site occupies one slot). Cap is generous; if hit, subsequent
- * warnings are silently dropped — they are diagnostics, not correctness gates. */
+/* One-shot rank-0 warning helper.
+ *
+ * Cached set keyed by string CONTENT (strcmp), not pointer identity, so
+ * dynamically-constructed keys (e.g. per-loop env var names like
+ * "GIZMO_SINK_ENV1_MODEB_THRESHOLD_SUM" assembled at runtime) dedupe
+ * correctly per distinct env var rather than per category. Costs a 64x192
+ * BSS array (~12 KB) and an O(N) lookup per call; both fine for a warning
+ * surface.
+ *
+ * Cap is generous (64 distinct keys); if hit, subsequent warnings are
+ * silently dropped — they are diagnostics, not correctness gates. */
 static void nlr_warn_once_rank0(const char *key, const char *fmt, ...)
 {
     if(ThisTask != 0) return;
-    static const char *seen[32];
-    static int seen_n = 0;
-    for(int i = 0; i < seen_n; i++) { if(seen[i] == key) return; }
-    if(seen_n < 32) { seen[seen_n++] = key; }
+    static char seen[64][192];
+    static int  seen_n = 0;
+    for(int i = 0; i < seen_n; i++) {
+        if(strcmp(seen[i], key) == 0) return;
+    }
+    if(seen_n < 64) {
+        size_t n = strlen(key);
+        if(n >= sizeof(seen[0])) n = sizeof(seen[0]) - 1;
+        memcpy(seen[seen_n], key, n);
+        seen[seen_n][n] = '\0';
+        seen_n++;
+    }
     fprintf(stderr, "[NLR env] ");
     va_list ap; va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
@@ -225,7 +241,9 @@ int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
     char per_loop_env[160];
     int v = per_loop_threshold_lookup(loop_name, "SUM", per_loop_env, sizeof(per_loop_env));
     if(v >= 0) {
-        nlr_warn_once_rank0("tester_per_loop_threshold_sum",
+        /* Dedup key = the per-loop env-var name itself, so distinct loops
+         * each fire their own warning when their per-loop overrides are used. */
+        nlr_warn_once_rank0(per_loop_env,
             "Tester knob in use: %s=%d overrides Spec::modeb_threshold_sum=%d for loop '%s' "
             "(not a production interface).",
             per_loop_env, v, spec_default, loop_name ? loop_name : "?");
@@ -233,7 +251,7 @@ int gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default)
     }
     v = gizmo_nlr_default_modeb_threshold_sum();
     if(v >= 0) {
-        nlr_warn_once_rank0("tester_global_threshold_sum",
+        nlr_warn_once_rank0("GIZMO_NLR_MODEB_THRESHOLD_SUM",
             "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_SUM=%d overrides "
             "Spec::modeb_threshold_sum=%d (loop '%s'; not a production interface).",
             v, spec_default, loop_name ? loop_name : "?");
@@ -246,7 +264,8 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
     char per_loop_env[160];
     int v = per_loop_threshold_lookup(loop_name, "MAX", per_loop_env, sizeof(per_loop_env));
     if(v >= 0) {
-        nlr_warn_once_rank0("tester_per_loop_threshold_max",
+        /* Dedup key = the per-loop env-var name itself (see _sum_for). */
+        nlr_warn_once_rank0(per_loop_env,
             "Tester knob in use: %s=%d overrides Spec::modeb_threshold_max=%d for loop '%s' "
             "(not a production interface).",
             per_loop_env, v, spec_default, loop_name ? loop_name : "?");
@@ -254,7 +273,7 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
     }
     v = gizmo_nlr_default_modeb_threshold_max();
     if(v >= 0) {
-        nlr_warn_once_rank0("tester_global_threshold_max",
+        nlr_warn_once_rank0("GIZMO_NLR_MODEB_THRESHOLD_MAX",
             "Tester knob in use: GIZMO_NLR_MODEB_THRESHOLD_MAX=%d overrides "
             "Spec::modeb_threshold_max=%d (loop '%s'; not a production interface).",
             v, spec_default, loop_name ? loop_name : "?");
@@ -1559,14 +1578,22 @@ static int nlr_spec_threshold_max(int fallback) {
 
 /* ============================================================================
  * SFINAE: detect optional Spec::uses_* lifecycle traits (default false) and
- * dispatch to the corresponding hook methods (default no-op). The runner
- * gates each hook on (a) the trait being true AND (b) whether the chosen
- * path imports ghosts (per-Spec audit decided imported-ghost-only for the
- * detector + writeback + sidechannel hooks; future Specs may differ).
+ * dispatch to the corresponding hook methods (default no-op). Two channels:
+ *
+ *   detector  : audit/debug — catches illegal kernel writes to imported
+ *               ghosts. Trait `uses_ghost_write_detector`.
+ *   writeback : physics state propagation — pre-kernel ghost-state snapshot
+ *               + post-kernel reverse-comm of any j-side writes. Trait
+ *               `uses_ghost_writeback`. Spec body is the per-flag #ifdef
+ *               union of all enabled physics-flag writebacks.
+ *
+ * Each hook is gated on (a) the trait being true AND (b) whether the chosen
+ * path imports ghosts (per-Spec audit decided imported-ghost-only for these
+ * hooks; future Specs may differ).
  * ========================================================================== */
 
-/* Trait detection: Spec::uses_ghost_write_detector / _ghost_writeback /
- * _sidechannel_writeback. Absent ⇒ false. */
+/* Trait detection: Spec::uses_ghost_write_detector / _ghost_writeback.
+ * Absent ⇒ false. */
 template <typename Spec, typename = void>
 struct nlr_has_uses_ghost_write_detector : std::false_type {};
 template <typename Spec>
@@ -1579,12 +1606,6 @@ template <typename Spec>
 struct nlr_has_uses_ghost_writeback<Spec, decltype((void)Spec::uses_ghost_writeback)>
     : std::true_type {};
 
-template <typename Spec, typename = void>
-struct nlr_has_uses_sidechannel_writeback : std::false_type {};
-template <typename Spec>
-struct nlr_has_uses_sidechannel_writeback<Spec, decltype((void)Spec::uses_sidechannel_writeback)>
-    : std::true_type {};
-
 template <typename Spec> static constexpr bool nlr_uses_ghost_write_detector_v() {
     if constexpr (nlr_has_uses_ghost_write_detector<Spec>::value) {
         return Spec::uses_ghost_write_detector;
@@ -1593,11 +1614,6 @@ template <typename Spec> static constexpr bool nlr_uses_ghost_write_detector_v()
 template <typename Spec> static constexpr bool nlr_uses_ghost_writeback_v() {
     if constexpr (nlr_has_uses_ghost_writeback<Spec>::value) {
         return Spec::uses_ghost_writeback;
-    } else { return false; }
-}
-template <typename Spec> static constexpr bool nlr_uses_sidechannel_writeback_v() {
-    if constexpr (nlr_has_uses_sidechannel_writeback<Spec>::value) {
-        return Spec::uses_sidechannel_writeback;
     } else { return false; }
 }
 
@@ -1633,22 +1649,6 @@ template <typename Spec>
 struct nlr_has_hook_gwb_end<Spec,
     decltype(Spec::ghost_writeback_end(std::declval<const neighbor_loop_args&>(),
                                        std::declval<const NeighborLoopPlan&>()))>
-    : std::true_type {};
-
-template <typename Spec, typename = void>
-struct nlr_has_hook_swb_begin : std::false_type {};
-template <typename Spec>
-struct nlr_has_hook_swb_begin<Spec,
-    decltype(Spec::sidechannel_writeback_begin(std::declval<const neighbor_loop_args&>(),
-                                               std::declval<const NeighborLoopPlan&>()))>
-    : std::true_type {};
-
-template <typename Spec, typename = void>
-struct nlr_has_hook_swb_end : std::false_type {};
-template <typename Spec>
-struct nlr_has_hook_swb_end<Spec,
-    decltype(Spec::sidechannel_writeback_end(std::declval<const neighbor_loop_args&>(),
-                                             std::declval<const NeighborLoopPlan&>()))>
     : std::true_type {};
 
 /* Dispatch wrappers. Each gates on:
@@ -1708,31 +1708,6 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
         }
     }
 }
-template <typename Spec>
-static void nlr_dispatch_sidechannel_writeback_begin(const neighbor_loop_args& args,
-                                                     const NeighborLoopPlan& plan)
-{
-    if constexpr (nlr_uses_sidechannel_writeback_v<Spec>()) {
-        if(nlr_path_uses_imported_ghosts(plan.path)) {
-            if constexpr (nlr_has_hook_swb_begin<Spec>::value) {
-                Spec::sidechannel_writeback_begin(args, plan);
-            }
-        }
-    }
-}
-template <typename Spec>
-static void nlr_dispatch_sidechannel_writeback_end(const neighbor_loop_args& args,
-                                                   const NeighborLoopPlan& plan)
-{
-    if constexpr (nlr_uses_sidechannel_writeback_v<Spec>()) {
-        if(nlr_path_uses_imported_ghosts(plan.path)) {
-            if constexpr (nlr_has_hook_swb_end<Spec>::value) {
-                Spec::sidechannel_writeback_end(args, plan);
-            }
-        }
-    }
-}
-
 /* ============================================================================
  * Public entry: run_neighbor_loop<Spec>
  * ========================================================================== */
@@ -1901,23 +1876,23 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     }
 
     /* ---- Spec lifecycle hooks (begin) ---- */
-    /* Mode A ordering invariant (codex constraint, Stage 2c audit):
+    /* Mode A imported-ghost ordering invariant (two channels: detector +
+     * writeback). The Spec's writeback_begin/_end body is the per-flag
+     * #ifdef union of all enabled physics-flag writebacks for that loop:
+     *
      *   request_filtered_ghost_import_fresh  (above)
      *   ghost_write_detector_begin           (this hook)
-     *   ghost_writeback_begin                (this hook; SinkEnv1Spec no-op)
-     *   sidechannel_writeback_begin          (this hook; SINGLE_STAR_SINK_DYNAMICS-gated)
+     *   ghost_writeback_begin                (this hook; per-flag union)
      *   <run_mode_a kernel>
-     *   sidechannel_writeback_end            (reverse order, below)
-     *   ghost_writeback_end
+     *   ghost_writeback_end                  (reverse order, below)
      *   ghost_write_detector_end
      *   ghost_exchange_cleanup               (below)
      *
      * Each dispatch helper checks both the Spec's `uses_*` trait AND the
      * path-imports-ghosts predicate; on Mode B paths the predicate is
-     * false and all six hook calls compile to no-ops. */
+     * false and all four hook calls compile to no-ops. */
     nlr_dispatch_ghost_write_detector_begin<Spec>(effective_args, plan);
     nlr_dispatch_ghost_writeback_begin<Spec>(effective_args, plan);
-    nlr_dispatch_sidechannel_writeback_begin<Spec>(effective_args, plan);
 
     /* ---- Path dispatch ---- */
     switch(plan.path) {
@@ -1937,7 +1912,6 @@ void run_neighbor_loop(const neighbor_loop_args& args)
     }
 
     /* ---- Spec lifecycle hooks (end, reverse order) ---- */
-    nlr_dispatch_sidechannel_writeback_end<Spec>(effective_args, plan);
     nlr_dispatch_ghost_writeback_end<Spec>(effective_args, plan);
     nlr_dispatch_ghost_write_detector_end<Spec>(effective_args, plan);
 
