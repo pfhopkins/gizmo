@@ -17,6 +17,7 @@
  * the include order in hydro/density_gpu.cc and other GPU TUs. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
 #include "gpu_particles_arena.h"
@@ -41,6 +42,11 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
                                             struct particle_data *P_host,
                                             struct gas_cell_data *CellP_host)
 {
+    /* Tiny-N corridor counter: increments on API entry. Mode B paths in
+     * run_neighbor_loop must NOT enter this function. See
+     * declarations/lifecycle_counters.h. */
+    g_gpu_arena_acquire_counter++;
+
     if(min_capacity <= 0) {min_capacity = 1;}
     gizmo_step_phase_record("arena_acquire_calls", 1.0);
     arena_P         = P_host;

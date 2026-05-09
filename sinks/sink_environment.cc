@@ -65,47 +65,47 @@ void sink_environment_loop(void)
     }
 
     int *nl_active = (int *) mymalloc("sinkenv_nl_active", (num_active > 0 ? num_active : 1) * sizeof(int));
-    double *nl_radii = (double *) mymalloc("sinkenv_nl_radii", (num_active > 0 ? num_active : 1) * sizeof(double));
     struct sink_env_gpu_out *nl_outs = (struct sink_env_gpu_out *)
         mymalloc("sinkenv_nl_outs", (num_active > 0 ? num_active : 1) * sizeof(struct sink_env_gpu_out));
 
     int aa = 0;
     for(int i : ActiveParticleList) {
-        if(sink_isactive(i)) { nl_active[aa] = i; nl_radii[aa] = P[i].KernelRadius; aa++; }
+        if(sink_isactive(i)) { nl_active[aa] = i; aa++; }
     }
 
-    /* Stage E1 dispatch flows through run_neighbor_loop<SinkEnv1Spec>. The
-     * runner internally selects Mode A (GPU NGL pipeline), Mode B local, or
-     * Mode B remote (P2P) by threshold (per-loop env > global env >
-     * Spec::modeb_threshold_{sum,max} default 64/64). MODEB_XVAL accumulator
-     * dump and PHASE0_NLR per-call timing are emitted by the runner via the
-     * SFINAE-detected SinkEnv1Spec hooks (3c.4a/3c.4b). */
-    bool sinkenv_imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
-        "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
-        nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
-
-    ghost_write_detector_begin("sink_environment");
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    ghost_writeback_zero_swallowtime();
-#endif
-
+    /* Stage E1 dispatch flows entirely through run_neighbor_loop<SinkEnv1Spec>.
+     * The runner internally:
+     *   - chooses path (Mode A GPU NGL / Mode B local / Mode B remote) via
+     *     threshold dispatch on num_active_global vs Spec::modeb_threshold_*
+     *     (default 64/64), with GIZMO_NLR_FORCE_MODE{A,B} as testers' overrides
+     *   - stages per-active radii via SinkEnv1Spec::search_radius_host
+     *   - calls gizmo_request_filtered_ghost_import_fresh ONLY on Mode A
+     *     (Mode B paths skip global drift + ghost import entirely, preserving
+     *      the lazy-drift tiny-N corridor)
+     *   - calls SinkEnv1Spec ghost_write_detector_*, sidechannel_writeback_*
+     *     (SSD-only) hooks on imported-ghost paths only, in the codex-locked
+     *     order
+     *   - enforces hard-corridor invariants on Mode B paths (HARD ABORT if
+     *     move_particles / ghost_exchange_impl / gpu_particles_arena_acquire /
+     *     NumPart change across the runner body)
+     *
+     * The caller's only physics responsibilities are: the active set, the
+     * per-call aux, and a ghost-safety-factor value (used by the runner only
+     * on Mode A). See the runner-prep contract in mesh/neighbor_loop_runner.h.
+     */
     {
         SinkEnv1Aux aux;
         aux.nl_outs = nl_outs;
         neighbor_loop_args args;
-        args.P            = P;
-        args.CellP        = (All.TotN_gas > 0) ? CellP : nullptr;
-        args.num_total    = NumPart;
-        args.active_list  = nl_active;
-        args.num_active   = num_active;
-        args.aux          = &aux;
+        args.P                   = P;
+        args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
+        args.num_total           = NumPart;
+        args.active_list         = nl_active;
+        args.num_active          = num_active;
+        args.aux                 = &aux;
+        args.ghost_safety_factor = gizmo_ghost_safety_factor();
         run_neighbor_loop<SinkEnv1Spec>(args);
     }
-
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    ghost_writeback_swallowtime();
-#endif
-    ghost_write_detector_end();
 
     /* Scatter per-active-sink outputs into SinkTempInfo */
     for(int a = 0; a < num_active; a++) {
@@ -151,8 +151,11 @@ void sink_environment_loop(void)
 #endif
     }
 
-    myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
-    if(sinkenv_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
+    myfree(nl_outs); myfree(nl_active);
+    /* ghost_exchange_cleanup() now lives inside run_neighbor_loop<SinkEnv1Spec>,
+     * gated on the chosen path importing ghosts (Mode A only) AND NTask > 1.
+     * Caller no longer participates in ghost lifecycle. */
+
     /* final operations on results */
     {int i; for(i=0; i<N_active_loc_Sink; i++) {sink_normalize_temp_info_struct_after_environment_loop(i);}}
     CPU_Step[CPU_SINK_ENV] += measure_time(); /* collect timings and reset clock for next timing */

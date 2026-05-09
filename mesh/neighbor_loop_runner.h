@@ -443,11 +443,10 @@ enum class DispatchPath : int {
  *   num_active      — length of active_list.
  *   aux             — Spec-defined POD pointer for per-active side arrays
  *                     (e.g. SinkEnv1Aux::nl_outs). Spec-internal contract.
- *
- * Future fields (Stage 2 of the runner-owned-prep milestone): a
- * ghost_safety_factor double, filled unconditionally by the caller from
- * gizmo_ghost_safety_factor() and used by the runner only on paths that
- * call gizmo_request_filtered_ghost_import_fresh.
+ *   ghost_safety_factor — caller fills unconditionally from
+ *                     gizmo_ghost_safety_factor(); the runner uses it only
+ *                     on paths that import ghosts (Mode A today). Mode B
+ *                     paths ignore it.
  *
  * The caller does NOT compute or stage per-active radii. The runner stages
  * radii once via Spec::search_radius_host and reuses them for any prep
@@ -456,11 +455,57 @@ enum class DispatchPath : int {
 struct neighbor_loop_args {
     struct particle_data *P;
     struct gas_cell_data *CellP;
-    int  num_total;
-    int *active_list;     /* args.active_list[slot] = particle index */
-    int  num_active;
-    void *aux;             /* spec-defined POD for per-active side arrays */
+    int    num_total;
+    int   *active_list;          /* args.active_list[slot] = particle index */
+    int    num_active;
+    void  *aux;                  /* spec-defined POD for per-active side arrays */
+    double ghost_safety_factor;  /* caller fills via gizmo_ghost_safety_factor()
+                                  * unconditionally; runner uses ONLY on paths
+                                  * that call gizmo_request_filtered_ghost_import. */
 };
+
+/* ============================================================================
+ * NeighborLoopPlan — runner-internal execution policy descriptor.
+ *
+ * `path` is the SSOT. Properties (needs imported ghosts, may acquire GPU
+ * arena, may mutate NumPart, etc.) are derived via the nlr_path_*() helpers
+ * below — never stored as separate boolean fields on the plan, so a new
+ * path adds cases to the helpers and never new fields to this struct.
+ * ========================================================================== */
+struct NeighborLoopPlan {
+    enum class Path {
+        ModeA_GpuNgl,    /* GPU NGL pipeline. Current substrate uses imported
+                          * ghosts; freshness is satisfied by today's import
+                          * helper (gizmo_request_filtered_ghost_import). The
+                          * substrate is what the path REQUIRES; the helper is
+                          * one (current) way of satisfying that requirement
+                          * — future work may swap helpers without changing
+                          * the path. Do not equate Mode A with "global drift". */
+        ModeB_Local,     /* Host walker on local pool; no global mutation. */
+        ModeB_Remote     /* P2P request/reply; no global mutation. */
+        /* Future paths: add cases here AND to nlr_path_*() predicates below. */
+    };
+    Path path;
+
+    /* Global active-particle count after MPI_Allreduce. Sentinel: -1 means
+     * "not populated" — happens on force-mode paths
+     * (GIZMO_NLR_FORCE_MODE{A,B}=1) when GIZMO_PHASE0_DIAG is OFF, since the
+     * runner skips the Allreduce in that case to avoid an extra collective.
+     * Hooks/consumers MUST check for -1 before assuming this field reflects
+     * a real global count. Threshold-dispatch paths and any path with
+     * PHASE0_DIAG on always populate it. */
+    int  num_active_global;
+};
+
+/* Path-derived predicate helpers. Single source of truth: keyed on path. */
+bool nlr_path_uses_imported_ghosts(NeighborLoopPlan::Path path);
+bool nlr_path_uses_gpu_arena(NeighborLoopPlan::Path path);
+bool nlr_path_permits_global_numpart_mutation(NeighborLoopPlan::Path path);
+bool nlr_path_uses_lazy_drift(NeighborLoopPlan::Path path);
+
+/* Stable string label for diagnostics (PHASE0_NLR `path=...` field).
+ * Stable across the runner's lifetime; future path cases extend this. */
+const char *nlr_path_label(NeighborLoopPlan::Path path);
 
 /* ============================================================================
  * run_neighbor_loop<Spec>(args) — the runner.
@@ -720,12 +765,16 @@ bool gizmo_nlr_phase0_diag_enabled(void);
  *                          dt_writeback = writeback loop; dt_drift = lazy
  *                          drift on union.
  *
- * dt_total measured wall-clock from runner entry to runner exit, BEFORE
- * the caller's ghost prep / detector / scatter (codex constraint: PHASE0_NLR
- * measures only runner-owned time, not outer caller-side work).
+ * dt_total measured wall-clock from runner entry to runner exit. Now
+ * includes the runner-owned prep step (dt_prep_import); the caller has
+ * been simplified and no longer runs prep before the runner.
+ *
+ * dt_prep_import is the wall around gizmo_request_filtered_ghost_import_fresh
+ * on Mode A paths; 0 on Mode B paths (genuine 0 — the API isn't called).
  * ========================================================================== */
 
 struct RunnerStageTimer {
+    double dt_prep_import;   /* Mode A only; 0 on Mode B paths. */
     double dt_collect;
     double dt_drift;
     double dt_walk_self;

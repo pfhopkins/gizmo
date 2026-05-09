@@ -5,6 +5,7 @@
 #include <math.h>
 #include <vector>
 #include "../declarations/allvars.h"
+#include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
 #include "../system/gpu_particles_arena.h"
@@ -302,6 +303,12 @@ void gizmo_full_drift_to(integertime time1)
 
 void move_particles(integertime time1)
 {
+    /* Tiny-N corridor counter: increments on API entry, including the
+     * cache-hit early-return below. Mode B paths in run_neighbor_loop must
+     * NOT enter this function regardless of whether it would do work. See
+     * declarations/lifecycle_counters.h. */
+    g_global_drift_counter++;
+
     gizmo_step_phase_record("mp_calls", 1.0);
     if(time1 <= g_last_full_drift_Ti) {
         gizmo_step_phase_record("mp_hits", 1.0); /* cache hit — already drifted */

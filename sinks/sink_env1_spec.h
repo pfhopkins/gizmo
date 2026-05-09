@@ -95,6 +95,60 @@ struct SinkEnv1Spec {
     static constexpr WritePattern            write_pattern      = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind           sidx_cache_kind    = SidxCacheKind::AllTypes;
 
+    /* ---- Imported-ghost lifecycle hooks (audit Stage 2c, 2026-05-08) ----
+     *
+     * Three independent traits, each gating a hook-method pair below. The
+     * runner calls each pair only when (a) the trait is true AND (b) the
+     * chosen path imports ghosts (nlr_path_uses_imported_ghosts(plan.path)).
+     *
+     * For SinkEnv1Spec specifically:
+     *   - detector: ON (catches illegal kernel writes to imported ghosts;
+     *     compiles to no-op outside GIZMO_GPU_ARENA_DEBUG, which is the
+     *     normal production state)
+     *   - ghost_writeback: OFF (ActiveReduceOnly with no j-side writes
+     *     outside SSD; nothing for the regular writeback channel to do)
+     *   - sidechannel_writeback: ON only under SINGLE_STAR_SINK_DYNAMICS
+     *     (wraps ghost_writeback_zero_swallowtime / _swallowtime)
+     *
+     * Future Specs decide their own gating; codex Stage-2c constraint:
+     * imported-ghost-only is correct for THIS Spec and these hooks, NOT a
+     * universal rule for all future detector/writeback work. */
+    static constexpr bool uses_ghost_write_detector  = true;
+    static constexpr bool uses_ghost_writeback       = false;
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    static constexpr bool uses_sidechannel_writeback = true;
+#else
+    static constexpr bool uses_sidechannel_writeback = false;
+#endif
+
+    /* Hook method declarations. The runner invokes each only when the
+     * corresponding `uses_*` trait above is true AND the chosen path
+     * imports ghosts. For Mode A path the runner preserves this exact
+     * order:
+     *
+     *   request_filtered_ghost_import (in runner)
+     *   ghost_write_detector_begin    (this hook)
+     *   ghost_writeback_begin         (this hook; no-op for SinkEnv1Spec)
+     *   sidechannel_writeback_begin   (this hook; SSD-gated)
+     *   <run_mode_a kernel>
+     *   sidechannel_writeback_end     (reverse order)
+     *   ghost_writeback_end
+     *   ghost_write_detector_end
+     *   ghost_exchange_cleanup        (in runner; NTask>1 only)
+     */
+    static void ghost_write_detector_begin (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+    static void ghost_write_detector_end   (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+    static void ghost_writeback_begin      (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+    static void ghost_writeback_end        (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+    static void sidechannel_writeback_begin(const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+    static void sidechannel_writeback_end  (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+
     /* ---- Oracle compare ----
      * Mode B vs Brute oracle: same pair_kernel, same candidate SET, but
      * DIFFERENT iteration order (tree-walk returns walk-order; brute returns

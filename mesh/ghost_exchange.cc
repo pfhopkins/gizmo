@@ -30,6 +30,7 @@
 #include <math.h>
 #include <vector>
 #include "../declarations/allvars.h"
+#include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
 #include "../system/mpi_alltoallv_typed.h"
 #include "../core/step_phases.h"   /* gizmo_verbose_diag() */
@@ -486,6 +487,12 @@ static int ghost_request_driven_caller_safe(const struct ghost_exchange_spec_t *
 
 static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
 {
+    /* Tiny-N corridor counter: increments on API entry, before any
+     * dispatch. Mode B paths in run_neighbor_loop must NOT enter this
+     * function. Counts even single-rank early-out cases by design. See
+     * declarations/lifecycle_counters.h. */
+    g_ghost_import_counter++;
+
     const int rd_enabled = ghost_request_driven_enabled();
     const int caller_safe = ghost_request_driven_caller_safe(spec);
     /* Phase 0 instrumentation: env-gated, all-ranks. Brackets dispatch so

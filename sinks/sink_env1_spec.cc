@@ -19,7 +19,8 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../mesh/kernel.h"           /* MUST precede sink_env1_spec.h */
+#include "../mesh/kernel.h"            /* MUST precede sink_env1_spec.h */
+#include "../mesh/ghost_writeback.h"   /* ghost_write_detector_*, ghost_writeback_*swallowtime */
 #include "sink_env1_spec.h"
 
 #ifdef SINK_PARTICLES
@@ -280,6 +281,74 @@ void SinkEnv1Spec::diagnostic_dump_neighbor_list(const NeighborListDumpView<Sink
      * matching legacy where xv_nb_fired=1 was set after the per-active
      * loop completed inside the if(!fired) block. */
     if(v.active_slot == args.num_active - 1) s_fired = 1;
+}
+
+/* ----------------------------------------------------------------------------
+ * Imported-ghost lifecycle hooks (Stage 2 of 3c.5+ runner-owned-prep work).
+ *
+ * The runner gates each pair on (a) the corresponding `uses_*` trait being
+ * true AND (b) nlr_path_uses_imported_ghosts(plan.path) being true. Bodies
+ * here are thin wrappers around the existing global lifecycle calls that
+ * previously lived in sinks/sink_environment.cc:87-108.
+ *
+ * Equivalence claim is path-specific:
+ *   - On Mode A path (imported-ghost lifecycle): byte-identical to the old
+ *     caller-side sequence under all relevant compile configs (default,
+ *     GIZMO_GPU_ARENA_DEBUG, SINGLE_STAR_SINK_DYNAMICS). Same calls, same
+ *     gating, same compile-time conditionals; just runner-orchestrated.
+ *   - On Mode B paths: NOT byte-identical to pre-Stage 2 behavior, by
+ *     design. The pre-Stage 2 caller ran detector/writeback unconditionally
+ *     (the functions then self-no-op'd against the imported-ghost lifecycle
+ *     they expect). Post-Stage 2, the runner skips these hooks on Mode B
+ *     paths because there is no imported-ghost lifecycle for them to
+ *     attend to. The skip is the intended decontamination of the tiny-N
+ *     corridor.
+ * --------------------------------------------------------------------------*/
+
+void SinkEnv1Spec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
+                                               const NeighborLoopPlan& /*plan*/)
+{
+    ::ghost_write_detector_begin("sink_environment");
+}
+
+void SinkEnv1Spec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
+                                             const NeighborLoopPlan& /*plan*/)
+{
+    ::ghost_write_detector_end();
+}
+
+void SinkEnv1Spec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
+                                          const NeighborLoopPlan& /*plan*/)
+{
+    /* SinkEnv1Spec is ActiveReduceOnly with no j-side writes outside SSD;
+     * the regular ghost-writeback channel is a no-op. The trait
+     * uses_ghost_writeback is false so the runner won't call this; the
+     * definition is here for symmetry and to make the no-op explicit. */
+}
+
+void SinkEnv1Spec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
+                                        const NeighborLoopPlan& /*plan*/)
+{
+    /* See ghost_writeback_begin. */
+}
+
+void SinkEnv1Spec::sidechannel_writeback_begin(const neighbor_loop_args& /*args*/,
+                                                const NeighborLoopPlan& /*plan*/)
+{
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    ::ghost_writeback_zero_swallowtime();
+#else
+    /* Compile-time no-op when SSD is disabled; runner won't call this
+     * anyway since uses_sidechannel_writeback is false in that build. */
+#endif
+}
+
+void SinkEnv1Spec::sidechannel_writeback_end(const neighbor_loop_args& /*args*/,
+                                              const NeighborLoopPlan& /*plan*/)
+{
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    ::ghost_writeback_swallowtime();
+#endif
 }
 
 #endif /* SINK_PARTICLES */

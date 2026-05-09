@@ -33,10 +33,12 @@
 #include <cstring>
 #include <cstdint>
 #include <type_traits>
+#include <utility>                                   /* std::declval for SFINAE hook detection */
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"          /* MUST precede allvars.h: #define All All_dev for device code */
 #include "../declarations/allvars.h"
+#include "../declarations/lifecycle_counters.h"      /* g_global_drift_counter etc. for Mode B corridor */
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
 #include "../declarations/gpu_dispatch_templates.h"  /* gizmo_gpu_kernel_launch */
@@ -44,8 +46,9 @@
 #include "neighbor_loop_runner.h"
 #include "gpu_neighbor_list.h"
 #include "kernel.h"  /* MUST precede sink_env1_spec.h (kernel_main, NEAREST_XYZ) */
-#include "ghost_writeback.h"     /* ghost_get_num_local */
-#include "mode_b_local_walker.h" /* mode_b_local_neighbor_walk, brute, lazy_drift */
+#include "ghost_writeback.h"             /* ghost_get_num_local */
+#include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
+#include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
 
 #include <vector>
 #include <cmath>
@@ -163,6 +166,62 @@ bool gizmo_nlr_phase0_diag_enabled(void) {
         cached = (e && e[0] == '1') ? 1 : 0;
     }
     return cached != 0;
+}
+
+/* ============================================================================
+ * NeighborLoopPlan path predicates — single source of truth keyed on path.
+ *
+ * New paths (future Mode C, dual-tree large-N, etc.) extend the switch
+ * statements below; never add fields to NeighborLoopPlan.
+ * ========================================================================== */
+bool nlr_path_uses_imported_ghosts(NeighborLoopPlan::Path path)
+{
+    switch(path) {
+        case NeighborLoopPlan::Path::ModeA_GpuNgl: return true;
+        case NeighborLoopPlan::Path::ModeB_Local:  return false;
+        case NeighborLoopPlan::Path::ModeB_Remote: return false;
+    }
+    return false;
+}
+
+bool nlr_path_uses_gpu_arena(NeighborLoopPlan::Path path)
+{
+    switch(path) {
+        case NeighborLoopPlan::Path::ModeA_GpuNgl: return true;
+        case NeighborLoopPlan::Path::ModeB_Local:  return false;
+        case NeighborLoopPlan::Path::ModeB_Remote: return false;
+    }
+    return false;
+}
+
+bool nlr_path_permits_global_numpart_mutation(NeighborLoopPlan::Path path)
+{
+    switch(path) {
+        case NeighborLoopPlan::Path::ModeA_GpuNgl: return true;
+        case NeighborLoopPlan::Path::ModeB_Local:  return false;
+        case NeighborLoopPlan::Path::ModeB_Remote: return false;
+    }
+    return false;
+}
+
+bool nlr_path_uses_lazy_drift(NeighborLoopPlan::Path path)
+{
+    switch(path) {
+        case NeighborLoopPlan::Path::ModeA_GpuNgl: return false;
+        case NeighborLoopPlan::Path::ModeB_Local:  return true;
+        case NeighborLoopPlan::Path::ModeB_Remote: return true;
+    }
+    return false;
+}
+
+const char *nlr_path_label(NeighborLoopPlan::Path path)
+{
+    switch(path) {
+        case NeighborLoopPlan::Path::ModeA_GpuNgl: return "gpu_ngl";
+        case NeighborLoopPlan::Path::ModeB_Local:  return "mode_b_local";
+        case NeighborLoopPlan::Path::ModeB_Remote: return "mode_b_remote";
+    }
+    return "unknown";
 }
 
 /* ============================================================================
@@ -552,7 +611,8 @@ static void runner_emit_active_dumps(const neighbor_loop_args& args,
 }
 
 template <typename Spec>
-static void run_mode_b_local(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
+static void run_mode_b_local(const neighbor_loop_args& args, const double *radii,
+                             RunnerStageTimer *tim = nullptr)
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
@@ -565,11 +625,8 @@ static void run_mode_b_local(const neighbor_loop_args& args, RunnerStageTimer *t
         return;
     }
 
-    /* (1) Host pre-drift: caller-supplied radii from external state. */
-    std::vector<double> radii(N);
-    for(int aa = 0; aa < N; aa++) {
-        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
-    }
+    /* (1) Radii are runner-staged and passed in; pointer is call-lifetime
+     * only (do not store). See run_neighbor_loop contract in the header. */
 
     /* (2) Host pre-drift: per-call scalar globals into POD. */
     typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
@@ -581,13 +638,13 @@ static void run_mode_b_local(const neighbor_loop_args& args, RunnerStageTimer *t
 
     /* Freeze active snapshots host-side BEFORE drift. */
     std::vector<ActiveData> actives(N);
-    build_self_actives_host_pre_drift<Spec>(args, ctx, radii.data(), cs, actives.data());
+    build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs, actives.data());
 
     /* Helper layout: collect → drift → evaluate. */
     std::vector<std::vector<int>> cand_modeB;
     {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
-        collect_candidates_pre_drift<Spec>(args, radii.data(),
+        collect_candidates_pre_drift<Spec>(args, radii,
                                             DispatchPath::ModeB_HostWalker, cand_modeB);
     }
     {
@@ -657,7 +714,8 @@ static void emit_oracle_mismatch_if_any(int rank, int active_slot,
 }
 
 template <typename Spec>
-static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
+static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const double *radii,
+                                         RunnerStageTimer *tim = nullptr)
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
@@ -666,10 +724,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, RunnerS
     const int N = args.num_active;
     if(N <= 0) { return; }
 
-    std::vector<double> radii(N);
-    for(int aa = 0; aa < N; aa++) {
-        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
-    }
+    /* Radii runner-staged and passed in; pointer is call-lifetime only. */
     typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
 
     DeviceCtx ctx;
@@ -679,7 +734,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, RunnerS
 
     /* Freeze actives BEFORE drift (same snapshot for tree and brute). */
     std::vector<ActiveData> actives(N);
-    build_self_actives_host_pre_drift<Spec>(args, ctx, radii.data(), cs, actives.data());
+    build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs, actives.data());
 
     /* Collect BOTH BEFORE any drift — preserves identical pre-drift state for
      * each search backend. PHASE0 timing covers ONLY the Mode B path stages,
@@ -687,10 +742,10 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, RunnerS
     std::vector<std::vector<int>> cand_modeB, cand_brute;
     {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
-        collect_candidates_pre_drift<Spec>(args, radii.data(),
+        collect_candidates_pre_drift<Spec>(args, radii,
                                             DispatchPath::ModeB_HostWalker, cand_modeB);
     }
-    collect_candidates_pre_drift<Spec>(args, radii.data(),
+    collect_candidates_pre_drift<Spec>(args, radii,
                                         DispatchPath::Brute_Oracle, cand_brute);
 
     /* Drift the union. drift_particle's early-return on time1==time0 means
@@ -769,7 +824,8 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, RunnerS
  * ========================================================================== */
 
 template <typename Spec, bool ORACLE>
-static void run_mode_b_remote_impl(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
+static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double *radii,
+                                   RunnerStageTimer *tim = nullptr)
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
@@ -786,11 +842,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, RunnerStageTi
     const int nt   = NTask;
     const int rank = ThisTask;
 
-    /* Stage 1: host pre-drift staging on the active rank. */
-    std::vector<double> radii(N > 0 ? N : 0);
-    for(int aa = 0; aa < N; aa++) {
-        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
-    }
+    /* Radii runner-staged and passed in; pointer is call-lifetime only. */
     typename Spec::CallScalars cs = Spec::populate_call_scalars_host(args);
 
     DeviceCtx ctx;
@@ -803,7 +855,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, RunnerStageTi
      * skew on the active rank). */
     std::vector<ActiveData> actives(N);
     if(N > 0) {
-        build_self_actives_host_pre_drift<Spec>(args, ctx, radii.data(), cs,
+        build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
                                                   actives.data());
     }
 
@@ -830,12 +882,12 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, RunnerStageTi
     if(N > 0) {
         {
             StageTimer t(tim ? &tim->dt_collect : nullptr);
-            collect_candidates_pre_drift<Spec>(args, radii.data(),
+            collect_candidates_pre_drift<Spec>(args, radii,
                                                 DispatchPath::ModeB_HostWalker,
                                                 cand_self_tree);
         }
         if(ORACLE) {
-            collect_candidates_pre_drift<Spec>(args, radii.data(),
+            collect_candidates_pre_drift<Spec>(args, radii,
                                                 DispatchPath::Brute_Oracle,
                                                 cand_self_brute);
         }
@@ -1026,12 +1078,14 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, RunnerStageTi
 }
 
 template <typename Spec>
-static void run_mode_b_remote(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/false>(args, tim);
+static void run_mode_b_remote(const neighbor_loop_args& args, const double *radii,
+                              RunnerStageTimer *tim = nullptr) {
+    run_mode_b_remote_impl<Spec, /*ORACLE=*/false>(args, radii, tim);
 }
 template <typename Spec>
-static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr) {
-    run_mode_b_remote_impl<Spec, /*ORACLE=*/true>(args, tim);
+static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const double *radii,
+                                          RunnerStageTimer *tim = nullptr) {
+    run_mode_b_remote_impl<Spec, /*ORACLE=*/true>(args, radii, tim);
 }
 
 /* ============================================================================
@@ -1049,7 +1103,8 @@ static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, Runner
  * ========================================================================== */
 
 template <typename Spec>
-static void run_mode_a(const neighbor_loop_args& args, RunnerStageTimer *tim = nullptr)
+static void run_mode_a(const neighbor_loop_args& args, const double *radii,
+                       RunnerStageTimer *tim = nullptr)
 {
     using ActiveData   = typename Spec::ActiveData;
     using AccumData    = typename Spec::AccumData;
@@ -1067,11 +1122,14 @@ static void run_mode_a(const neighbor_loop_args& args, RunnerStageTimer *tim = n
         return;
     }
 
-    /* (1) Host, pre-arena: stage caller-supplied radii from external state. */
+    /* (1) Host, pre-arena: stage caller-supplied radii into UVM for the
+     * device-visible NGL build. Source `radii` is runner-staged on host
+     * (call-lifetime only); we copy into shared/UVM so gpu_ngb_list_build
+     * and the device pair kernel can read the per-active values. */
     double *radii_uvm = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
         N * sizeof(double));
     for(int aa = 0; aa < N; aa++) {
-        radii_uvm[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
+        radii_uvm[aa] = radii[aa];
     }
 
     /* (2) Host, pre-arena: capture per-call scalar globals into a POD. */
@@ -1229,6 +1287,182 @@ static int nlr_spec_threshold_max(int fallback) {
 }
 
 /* ============================================================================
+ * SFINAE: detect optional Spec::uses_* lifecycle traits (default false) and
+ * dispatch to the corresponding hook methods (default no-op). The runner
+ * gates each hook on (a) the trait being true AND (b) whether the chosen
+ * path imports ghosts (per-Spec audit decided imported-ghost-only for the
+ * detector + writeback + sidechannel hooks; future Specs may differ).
+ * ========================================================================== */
+
+/* Trait detection: Spec::uses_ghost_write_detector / _ghost_writeback /
+ * _sidechannel_writeback. Absent ⇒ false. */
+template <typename Spec, typename = void>
+struct nlr_has_uses_ghost_write_detector : std::false_type {};
+template <typename Spec>
+struct nlr_has_uses_ghost_write_detector<Spec, decltype((void)Spec::uses_ghost_write_detector)>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_uses_ghost_writeback : std::false_type {};
+template <typename Spec>
+struct nlr_has_uses_ghost_writeback<Spec, decltype((void)Spec::uses_ghost_writeback)>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_uses_sidechannel_writeback : std::false_type {};
+template <typename Spec>
+struct nlr_has_uses_sidechannel_writeback<Spec, decltype((void)Spec::uses_sidechannel_writeback)>
+    : std::true_type {};
+
+template <typename Spec> static constexpr bool nlr_uses_ghost_write_detector_v() {
+    if constexpr (nlr_has_uses_ghost_write_detector<Spec>::value) {
+        return Spec::uses_ghost_write_detector;
+    } else { return false; }
+}
+template <typename Spec> static constexpr bool nlr_uses_ghost_writeback_v() {
+    if constexpr (nlr_has_uses_ghost_writeback<Spec>::value) {
+        return Spec::uses_ghost_writeback;
+    } else { return false; }
+}
+template <typename Spec> static constexpr bool nlr_uses_sidechannel_writeback_v() {
+    if constexpr (nlr_has_uses_sidechannel_writeback<Spec>::value) {
+        return Spec::uses_sidechannel_writeback;
+    } else { return false; }
+}
+
+/* Hook-method detection: Spec::ghost_write_detector_begin etc. Absent ⇒
+ * runner skips the call (compile-time short-circuit; no runtime cost). */
+template <typename Spec, typename = void>
+struct nlr_has_hook_gwd_begin : std::false_type {};
+template <typename Spec>
+struct nlr_has_hook_gwd_begin<Spec,
+    decltype(Spec::ghost_write_detector_begin(std::declval<const neighbor_loop_args&>(),
+                                              std::declval<const NeighborLoopPlan&>()))>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_hook_gwd_end : std::false_type {};
+template <typename Spec>
+struct nlr_has_hook_gwd_end<Spec,
+    decltype(Spec::ghost_write_detector_end(std::declval<const neighbor_loop_args&>(),
+                                             std::declval<const NeighborLoopPlan&>()))>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_hook_gwb_begin : std::false_type {};
+template <typename Spec>
+struct nlr_has_hook_gwb_begin<Spec,
+    decltype(Spec::ghost_writeback_begin(std::declval<const neighbor_loop_args&>(),
+                                         std::declval<const NeighborLoopPlan&>()))>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_hook_gwb_end : std::false_type {};
+template <typename Spec>
+struct nlr_has_hook_gwb_end<Spec,
+    decltype(Spec::ghost_writeback_end(std::declval<const neighbor_loop_args&>(),
+                                       std::declval<const NeighborLoopPlan&>()))>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_hook_swb_begin : std::false_type {};
+template <typename Spec>
+struct nlr_has_hook_swb_begin<Spec,
+    decltype(Spec::sidechannel_writeback_begin(std::declval<const neighbor_loop_args&>(),
+                                               std::declval<const NeighborLoopPlan&>()))>
+    : std::true_type {};
+
+template <typename Spec, typename = void>
+struct nlr_has_hook_swb_end : std::false_type {};
+template <typename Spec>
+struct nlr_has_hook_swb_end<Spec,
+    decltype(Spec::sidechannel_writeback_end(std::declval<const neighbor_loop_args&>(),
+                                             std::declval<const NeighborLoopPlan&>()))>
+    : std::true_type {};
+
+/* Dispatch wrappers. Each gates on:
+ *   (a) `uses_*` trait true (Spec opted in)
+ *   (b) `nlr_path_uses_imported_ghosts(plan.path)` — for SinkEnv1Spec these
+ *        hooks are imported-ghost-only per Stage 2c audit. The path gate
+ *        IS the policy; the hook trait is the Spec opt-in.
+ *   (c) hook method exists (SFINAE; absent ⇒ silent no-op).
+ * Future Specs that need a different gating may add their own dispatch
+ * helpers; this set covers SinkEnv1Spec E1. */
+
+template <typename Spec>
+static void nlr_dispatch_ghost_write_detector_begin(const neighbor_loop_args& args,
+                                                    const NeighborLoopPlan& plan)
+{
+    if constexpr (nlr_uses_ghost_write_detector_v<Spec>()) {
+        if(nlr_path_uses_imported_ghosts(plan.path)) {
+            if constexpr (nlr_has_hook_gwd_begin<Spec>::value) {
+                Spec::ghost_write_detector_begin(args, plan);
+            }
+        }
+    }
+}
+template <typename Spec>
+static void nlr_dispatch_ghost_write_detector_end(const neighbor_loop_args& args,
+                                                  const NeighborLoopPlan& plan)
+{
+    if constexpr (nlr_uses_ghost_write_detector_v<Spec>()) {
+        if(nlr_path_uses_imported_ghosts(plan.path)) {
+            if constexpr (nlr_has_hook_gwd_end<Spec>::value) {
+                Spec::ghost_write_detector_end(args, plan);
+            }
+        }
+    }
+}
+template <typename Spec>
+static void nlr_dispatch_ghost_writeback_begin(const neighbor_loop_args& args,
+                                               const NeighborLoopPlan& plan)
+{
+    if constexpr (nlr_uses_ghost_writeback_v<Spec>()) {
+        if(nlr_path_uses_imported_ghosts(plan.path)) {
+            if constexpr (nlr_has_hook_gwb_begin<Spec>::value) {
+                Spec::ghost_writeback_begin(args, plan);
+            }
+        }
+    }
+}
+template <typename Spec>
+static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
+                                             const NeighborLoopPlan& plan)
+{
+    if constexpr (nlr_uses_ghost_writeback_v<Spec>()) {
+        if(nlr_path_uses_imported_ghosts(plan.path)) {
+            if constexpr (nlr_has_hook_gwb_end<Spec>::value) {
+                Spec::ghost_writeback_end(args, plan);
+            }
+        }
+    }
+}
+template <typename Spec>
+static void nlr_dispatch_sidechannel_writeback_begin(const neighbor_loop_args& args,
+                                                     const NeighborLoopPlan& plan)
+{
+    if constexpr (nlr_uses_sidechannel_writeback_v<Spec>()) {
+        if(nlr_path_uses_imported_ghosts(plan.path)) {
+            if constexpr (nlr_has_hook_swb_begin<Spec>::value) {
+                Spec::sidechannel_writeback_begin(args, plan);
+            }
+        }
+    }
+}
+template <typename Spec>
+static void nlr_dispatch_sidechannel_writeback_end(const neighbor_loop_args& args,
+                                                   const NeighborLoopPlan& plan)
+{
+    if constexpr (nlr_uses_sidechannel_writeback_v<Spec>()) {
+        if(nlr_path_uses_imported_ghosts(plan.path)) {
+            if constexpr (nlr_has_hook_swb_end<Spec>::value) {
+                Spec::sidechannel_writeback_end(args, plan);
+            }
+        }
+    }
+}
+
+/* ============================================================================
  * Public entry: run_neighbor_loop<Spec>
  * ========================================================================== */
 
@@ -1326,58 +1560,170 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         phase0_sum_active = sum_act;
     }
 
+    /* Compute the execution plan from the dispatch decision. Path is the
+     * SSOT; predicates derive from it. */
+    NeighborLoopPlan plan;
+    if(force_a) {
+        plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
+    } else if(force_b || select_mode_b) {
+        plan.path = (NTask > 1) ? NeighborLoopPlan::Path::ModeB_Remote
+                                : NeighborLoopPlan::Path::ModeB_Local;
+    } else {
+        plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
+    }
+    plan.num_active_global = phase0_sum_active;   /* may be -1 when phase0_on=false */
+
     /* Optional dispatch trace. Rank-0 only to avoid spam. */
     if(gizmo_nlr_dispatch_trace_enabled()) {
         int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         if(rank == 0) {
-            const char *path =
-                force_a       ? "mode_a (force)" :
-                force_b       ? (NTask > 1 ? "mode_b_remote (force)" : "mode_b_local (force)") :
-                select_mode_b ? (NTask > 1 ? "mode_b_remote (threshold)" : "mode_b_local (threshold)") :
-                                "mode_a (threshold)";
-            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s NTask=%d local_active=%d oracle=%d]\n",
-                    Spec::loop_name, path, NTask, args.num_active, (int)oracle_on);
+            const char *src =
+                force_a       ? "force" :
+                force_b       ? "force" :
+                                "threshold";
+            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s (%s) NTask=%d local_active=%d oracle=%d]\n",
+                    Spec::loop_name, nlr_path_label(plan.path), src,
+                    NTask, args.num_active, (int)oracle_on);
             fflush(stderr);
         }
     }
 
-    const char *phase0_path =
-        select_mode_b ? (NTask > 1 ? "mode_b_remote" : "mode_b_local") : "gpu_ngl";
-
-    if(select_mode_b) {
-        if(NTask <= 1) {
-            if(oracle_on) run_mode_b_local_with_oracle<Spec>(args, tim_ptr);
-            else          run_mode_b_local<Spec>(args, tim_ptr);
-        } else {
-            if(oracle_on) run_mode_b_remote_with_oracle<Spec>(args, tim_ptr);
-            else          run_mode_b_remote<Spec>(args, tim_ptr);
-        }
-    } else {
-        /* Mode A path. Oracle on Mode A is a no-op (oracle compares Mode B vs
-         * Brute; no Brute-vs-Mode-A oracle in scope for 3c.x). */
-        run_mode_a<Spec>(args, tim_ptr);
+    /* ---- Stage radii once ---- */
+    /* Computed via Spec::search_radius_host. Used for any path-conditional
+     * prep (Mode A) AND the chosen walker. Pointer is call-lifetime only;
+     * see contract in mesh/neighbor_loop_runner.h. */
+    std::vector<double> radii(args.num_active);
+    for(int aa = 0; aa < args.num_active; ++aa) {
+        radii[aa] = Spec::search_radius_host(args, aa, args.active_list[aa]);
     }
 
-    /* PHASE0_NLR emit (3c.4b). Stable prefix `PHASE0_NLR`. `caller=` is a
-     * field, not part of the token, so future Specs (sink_feed/swk/density)
-     * keep the same parser regex. Fixed shape: irrelevant fields print 0,
-     * never omitted. Each rank emits its own line (use `rank=` to filter). */
+    /* ---- Hard-corridor counter snapshot (always-on, every build) ---- */
+    /* Mode B paths must NOT enter move_particles, ghost_exchange_impl, or
+     * gpu_particles_arena_acquire, and must NOT mutate NumPart. Counters
+     * live in declarations/lifecycle_counters.h, incremented at API entry
+     * by the owner TUs. */
+    const uint64_t s_drift0 = g_global_drift_counter;
+    const uint64_t s_ghost0 = g_ghost_import_counter;
+    const uint64_t s_arena0 = g_gpu_arena_acquire_counter;
+    const int      s_np0    = NumPart;
+
+    /* ---- Working copy of args; refreshed after path-conditional prep ---- */
+    neighbor_loop_args effective_args = args;
+
+    /* ---- Path-conditional prep on imported-ghost paths ---- */
+    /* Mode A's substrate today satisfies its freshness + neighbor-pool
+     * requirements via gizmo_request_filtered_ghost_import_fresh (full
+     * global drift + ghost import). Mode B paths skip this entirely;
+     * peer-local pool + lazy candidate drift is sufficient. The dt_prep_import
+     * timer is 0 for Mode B paths (genuine 0 — the API isn't called). */
+    if(nlr_path_uses_imported_ghosts(plan.path)) {
+        StageTimer t_prep(tim_ptr ? &tim_ptr->dt_prep_import : nullptr);
+        gizmo_request_filtered_ghost_import_fresh(Spec::loop_name,
+                                                   Spec::search_mode,
+                                                   Spec::neighbor_type_mask,
+                                                   args.active_list,
+                                                   args.num_active,
+                                                   radii.data(),
+                                                   args.ghost_safety_factor);
+        /* Ghost import grew NumPart and may have realloc'd P/CellP. Refresh
+         * the runner's data view; only paths that imported ghosts read this
+         * extended view (Mode B paths use the original args via copy). */
+        effective_args.num_total = NumPart;
+        effective_args.P         = P;
+        effective_args.CellP     = (All.TotN_gas > 0) ? CellP : nullptr;
+    }
+
+    /* ---- Spec lifecycle hooks (begin) ---- */
+    /* Mode A ordering invariant (codex constraint, Stage 2c audit):
+     *   request_filtered_ghost_import_fresh  (above)
+     *   ghost_write_detector_begin           (this hook)
+     *   ghost_writeback_begin                (this hook; SinkEnv1Spec no-op)
+     *   sidechannel_writeback_begin          (this hook; SSD-gated)
+     *   <run_mode_a kernel>
+     *   sidechannel_writeback_end            (reverse order, below)
+     *   ghost_writeback_end
+     *   ghost_write_detector_end
+     *   ghost_exchange_cleanup               (below)
+     *
+     * Each dispatch helper checks both the Spec's `uses_*` trait AND the
+     * path-imports-ghosts predicate; on Mode B paths the predicate is
+     * false and all six hook calls compile to no-ops. */
+    nlr_dispatch_ghost_write_detector_begin<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_writeback_begin<Spec>(effective_args, plan);
+    nlr_dispatch_sidechannel_writeback_begin<Spec>(effective_args, plan);
+
+    /* ---- Path dispatch ---- */
+    switch(plan.path) {
+        case NeighborLoopPlan::Path::ModeA_GpuNgl:
+            /* Oracle on Mode A is a no-op (oracle compares Mode B vs Brute;
+             * no Brute-vs-Mode-A oracle in scope). */
+            run_mode_a<Spec>(effective_args, radii.data(), tim_ptr);
+            break;
+        case NeighborLoopPlan::Path::ModeB_Local:
+            if(oracle_on) run_mode_b_local_with_oracle<Spec>(effective_args, radii.data(), tim_ptr);
+            else          run_mode_b_local<Spec>(effective_args, radii.data(), tim_ptr);
+            break;
+        case NeighborLoopPlan::Path::ModeB_Remote:
+            if(oracle_on) run_mode_b_remote_with_oracle<Spec>(effective_args, radii.data(), tim_ptr);
+            else          run_mode_b_remote<Spec>(effective_args, radii.data(), tim_ptr);
+            break;
+    }
+
+    /* ---- Spec lifecycle hooks (end, reverse order) ---- */
+    nlr_dispatch_sidechannel_writeback_end<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_writeback_end<Spec>(effective_args, plan);
+    nlr_dispatch_ghost_write_detector_end<Spec>(effective_args, plan);
+
+    /* ---- Imported-ghost cleanup ---- */
+    if(nlr_path_uses_imported_ghosts(plan.path) && NTask > 1) {
+        ghost_exchange_cleanup();
+    }
+
+    /* ---- Hard-corridor enforcement (Mode B paths) ---- */
+    /* HARD ABORT on any counter advance or NumPart change across the path
+     * body. Always-on; cheap (4 uint64 compares + one int compare). */
+    if(plan.path == NeighborLoopPlan::Path::ModeB_Local ||
+       plan.path == NeighborLoopPlan::Path::ModeB_Remote) {
+        const bool drift_violation = (g_global_drift_counter      != s_drift0);
+        const bool ghost_violation = (g_ghost_import_counter      != s_ghost0);
+        const bool arena_violation = (g_gpu_arena_acquire_counter != s_arena0);
+        const bool np_violation    = (NumPart != s_np0);
+        if(drift_violation || ghost_violation || arena_violation || np_violation) {
+            int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+            fprintf(stderr,
+                    "[NLR CORRIDOR ABORT rank=%d caller=%s path=%s] Mode B path "
+                    "violated tiny-N corridor invariant during run_neighbor_loop. "
+                    "Counter deltas: drift=%llu ghost=%llu arena=%llu NumPart_pre=%d NumPart_post=%d\n",
+                    rank, Spec::loop_name, nlr_path_label(plan.path),
+                    (unsigned long long)(g_global_drift_counter - s_drift0),
+                    (unsigned long long)(g_ghost_import_counter - s_ghost0),
+                    (unsigned long long)(g_gpu_arena_acquire_counter - s_arena0),
+                    s_np0, NumPart);
+            fflush(stderr);
+            MPI_Abort(MPI_COMM_WORLD, 81036);
+        }
+    }
+
+    /* ---- PHASE0_NLR emit ---- */
+    /* Stable prefix `PHASE0_NLR`. `caller=` is a field, not part of the
+     * token, so future Specs keep the parser regex stable. The new
+     * dt_prep_import field measures the runner-internal prep wall (Mode A
+     * only; 0 on Mode B paths). Other fields per the path-specific
+     * documentation in neighbor_loop_runner.h. */
     if(phase0_on) {
         tim.dt_total = MPI_Wtime() - t_runner_start;
         int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        /* Per-call counter; per-process, per-Spec. Same count is shared
-         * across all ranks because every rank enters this collective when
-         * Mode B is selected (Mode A is rank-independent but increments
-         * the same way). */
         static long long s_call_id = 0;
         ++s_call_id;
         std::printf("PHASE0_NLR rank=%d caller=%s path=%s call_id=%lld "
                     "num_active_local=%d num_active_global=%d "
+                    "dt_prep_import=%.6g "
                     "dt_collect=%.6g dt_drift=%.6g dt_walk_self=%.6g "
                     "dt_walk_peer=%.6g dt_exchange_q=%.6g dt_exchange_r=%.6g "
                     "dt_reduce=%.6g dt_writeback=%.6g dt_total=%.6g\n",
-                    rank, Spec::loop_name, phase0_path, s_call_id,
+                    rank, Spec::loop_name, nlr_path_label(plan.path), s_call_id,
                     args.num_active, phase0_sum_active,
+                    tim.dt_prep_import,
                     tim.dt_collect, tim.dt_drift, tim.dt_walk_self,
                     tim.dt_walk_peer, tim.dt_exchange_q, tim.dt_exchange_r,
                     tim.dt_reduce, tim.dt_writeback, tim.dt_total);
