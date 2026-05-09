@@ -57,7 +57,7 @@ void sink_swallow_and_kick_loop(void)
                 nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
             }
         }}
-        bool imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+        bool imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
             "sink_swk", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
             nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
         sink_swallow_and_kick_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii, SINK_NEIGHBOR_BITFLAG);

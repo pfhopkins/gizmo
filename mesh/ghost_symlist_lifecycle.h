@@ -53,19 +53,42 @@ static inline void gizmo_density_prep_ghosts(double safety)
     CPU_Step[CPU_DENSCOMM] += t_ghost;
 }
 
-/* Explicit-query ghost prep for caller-owned active lists.
+/* gizmo_request_filtered_ghost_import — drift + caller-list ghost import.
  *
- * This preserves a single ghost_exchange implementation while letting physics
- * loops provide their exact source list and search semantics. Most loops are
- * symmetric; only use NGB_SEARCH_ONEWAY when the actual kernel predicate is
- * strictly r_ij < h_i (density-like calls). */
-static inline void gizmo_explicit_query_prep_ghosts(const char *caller_name,
-                                                    int search_mode,
-                                                    unsigned int supply_type_mask,
-                                                    const int *active_indices,
-                                                    int num_active,
-                                                    const double *active_radii,
-                                                    double safety)
+ * Performs a full global drift via move_particles(All.Ti_Current), then runs
+ * ghost_exchange_run with the caller's exact active-source list and search
+ * semantics. Result: ghost particles for the caller-named loop appended at
+ * P[NumPart..NumPart+N_ghost], ready for kernel walks that read imported
+ * ghost state.
+ *
+ * IMPORTANT NAMING: this routine performs full global drift AND ghost import.
+ * "request_filtered" means the GHOST POOL is filtered to the caller's active
+ * source list — it does NOT mean the routine is request-driven in the
+ * Mode B P2P sense. Callers needing ghostless P2P request/reply should NOT
+ * call this; they go through run_neighbor_loop<Spec> which selects the
+ * Mode B path that does no global drift and no ghost import.
+ *
+ * Runner-migrated loops (those whose dispatch flows through
+ * mesh/neighbor_loop_runner::run_neighbor_loop<Spec>) MUST NOT call this
+ * directly. The runner decides whether to call it based on the chosen path
+ * (only paths that need imported ghosts use it; Mode B paths skip it
+ * entirely, by design, to preserve the lazy-drift / no-global-mutation
+ * tiny-N corridor).
+ *
+ * Legacy non-runner callers may continue to use this API until each is
+ * migrated to the runner. New callers should NOT be added — express the
+ * loop as a Spec for the runner.
+ *
+ * Most loops are symmetric; only use NGB_SEARCH_ONEWAY when the actual
+ * kernel predicate is strictly r_ij < h_i (density-like calls).
+ */
+static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
+                                                       int search_mode,
+                                                       unsigned int supply_type_mask,
+                                                       const int *active_indices,
+                                                       int num_active,
+                                                       const double *active_radii,
+                                                       double safety)
 {
     double t0 = my_second();
     move_particles(All.Ti_Current);
@@ -102,21 +125,28 @@ static inline void gizmo_explicit_query_prep_ghosts(const char *caller_name,
     CPU_Step[CPU_DENSCOMM] += t_ghost;
 }
 
-/* Collective-safe explicit-query prep for phases that must always build a
- * caller-specific ghost pool. A local ghost-count guard is illegal here:
- * exporter-only ranks can have zero received ghosts while importer ranks have
- * nonzero ghosts, causing only some ranks to enter the collective exchange. */
-static inline int gizmo_explicit_query_prep_ghosts_fresh(const char *caller_name,
-                                                        int search_mode,
-                                                        unsigned int supply_type_mask,
-                                                        const int *active_indices,
-                                                        int num_active,
-                                                        const double *active_radii,
-                                                        double safety)
+/* gizmo_request_filtered_ghost_import_fresh — collective-safe variant.
+ *
+ * Same semantics as gizmo_request_filtered_ghost_import, with a preceding
+ * unconditional ghost_exchange_cleanup so every rank enters the import in
+ * the same state. A local ghost-count guard is illegal here: exporter-only
+ * ranks can have zero received ghosts while importer ranks have nonzero
+ * ghosts, causing only some ranks to enter the collective exchange.
+ *
+ * Same caller restriction as the base routine: runner-migrated loops MUST
+ * NOT call this directly.
+ */
+static inline int gizmo_request_filtered_ghost_import_fresh(const char *caller_name,
+                                                           int search_mode,
+                                                           unsigned int supply_type_mask,
+                                                           const int *active_indices,
+                                                           int num_active,
+                                                           const double *active_radii,
+                                                           double safety)
 {
     ghost_exchange_cleanup();
-    gizmo_explicit_query_prep_ghosts(caller_name, search_mode, supply_type_mask,
-                                     active_indices, num_active, active_radii, safety);
+    gizmo_request_filtered_ghost_import(caller_name, search_mode, supply_type_mask,
+                                        active_indices, num_active, active_radii, safety);
     return 1;
 }
 

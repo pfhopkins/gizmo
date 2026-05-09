@@ -140,7 +140,7 @@ void sink_feed_evaluate_gpu(struct particle_data *P_host,
     if(global_num_src == 0) { return; } /* nothing to do anywhere; ghost_writeback's writes would be no-ops */
 
     /* Prep ghosts */
-    int imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+    int imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
         "sink_feed", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
         i_active_host, num_src, src_radii_host, gizmo_ghost_safety_factor());
 

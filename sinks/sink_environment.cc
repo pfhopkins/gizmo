@@ -80,7 +80,7 @@ void sink_environment_loop(void)
      * Spec::modeb_threshold_{sum,max} default 64/64). MODEB_XVAL accumulator
      * dump and PHASE0_NLR per-call timing are emitted by the runner via the
      * SFINAE-detected SinkEnv1Spec hooks (3c.4a/3c.4b). */
-    bool sinkenv_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+    bool sinkenv_imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
         "sink_env1", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
         nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
 
@@ -208,7 +208,7 @@ void sink_environment_second_loop(void)
         aa++;
     }}
 
-    bool sinkenv2_imported_ghosts = gizmo_explicit_query_prep_ghosts_fresh(
+    bool sinkenv2_imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
         "sink_env2", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
         nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
 
