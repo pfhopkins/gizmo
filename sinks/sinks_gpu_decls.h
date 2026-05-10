@@ -43,8 +43,11 @@ void gizmo_gpu_sync_all_sinkswallow(struct global_data_all_processes *);
  * mesh/neighbor_loop_runner.cc::run_neighbor_loop<SinkEnv1Spec>; the per-active
  * accumulator type is sink_env_gpu_out below, which is also SinkEnv1Spec::AccumData.
  * Results are scattered into SinkTempInfo on the host by the runner caller
- * (sink_environment.cc). Stage E2 (sink_environment_second_evaluate_gpu, below)
- * is a separate Bulge-Disk aggregator under SINK_GRAVACCRETION==0.
+ * (sink_environment.cc). Stage E2 (Bulge-Disk aggregator under
+ * SINK_GRAVACCRETION==0) was ported in 3d.2 and now runs through
+ * run_neighbor_loop<SinkEnv2Spec> (sinks/sink_env2_loop.h); only the
+ * AccumData struct (sink_env_second_gpu_out) remains here for the
+ * caller-side scatter manifest to share with the Spec.
  */
 struct sink_env_gpu_out {
     MyFloat Sink_SurroudingGasInternalEnergy;
@@ -85,24 +88,15 @@ struct sink_env_gpu_out {
 };
 
 /* Stage E2 — second environment pass: Bulge-Disk kinematic decomposition
- * (SINK_GRAVACCRETION==0). Pure aggregator, no j-writes. Reads per-sink
- * Jgas/Jstar from SinkTempInfo (populated by the first pass) and returns
- * MgasBulge / MstarBulge to be scattered back into SinkTempInfo on host. */
+ * (SINK_GRAVACCRETION==0). Pure aggregator, no j-writes. Ported to
+ * runner template in 3d.2 (sinks/sink_env2_loop.h). Output struct
+ * remains here for the caller-side scatter manifest in
+ * sinks/sink_environment.cc to share with SinkEnv2Spec::AccumData. */
 #if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
 struct sink_env_second_gpu_out {
     MyFloat MgasBulge_in_Kernel;
     MyFloat MstarBulge_in_Kernel;
 };
-
-void sink_environment_second_evaluate_gpu(struct particle_data *P_host,
-                                           struct gas_cell_data *CellP_host,
-                                           int num_total,
-                                           int *i_active_host, int num_active,
-                                           const double *i_radii_host,
-                                           const MyFloat (*i_Jgas_host)[3],
-                                           const MyFloat (*i_Jstar_host)[3],
-                                           int j_type_bitmask,
-                                           struct sink_env_second_gpu_out *out_host);
 #endif
 
 void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *);
