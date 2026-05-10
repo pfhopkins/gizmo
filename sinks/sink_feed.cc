@@ -9,14 +9,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdint>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_writeback.h"
-#include "../mesh/ghost_symlist_lifecycle.h"  /* ghost_get_num_local */
 #include "../mesh/neighbor_loop_runner.h"
 #include "sink_functions.h"
 #include "sink_feed_loop.h"
@@ -27,86 +25,6 @@
 */
 
 #ifdef SINK_PARTICLES // top-level flag
-
-
-#ifdef GIZMO_NLR_JSIDE_HASH_TEST
-/* TRANSIENT j-side validation harness (per OPEN_3d_sinkfeed_design.md §E.2;
- * codex invariant 9). Compile-flag gated; remove or move engine-facing
- * before final commit. Dumps collision-resistant hashes of P[j].SwallowID
- * and CellP[j].Injected_Sink_Energy across all owner-local j's
- * (num_local — excludes imported ghosts). Used to compare runner Mode A
- * vs Mode B vs legacy on the same step. Safe at any path; fires once
- * per sink_feed_loop call. */
-static inline uint64_t jside_splitmix64(uint64_t x) {
-    x += 0x9E3779B97F4A7C15ULL;
-    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
-    return x ^ (x >> 31);
-}
-static inline uint64_t jside_rotl64(uint64_t x, int k) {
-    return (x << (k & 63)) | (x >> ((64 - k) & 63));
-}
-static void jside_hash_dump(const char *path_label)
-{
-    /* Walk owner-local j's (skip ghosts). NumPart includes both; ghost
-     * counters split it. Be conservative: use NumPart - num_ghosts. */
-    int num_ghosts = ghost_get_num_ghosts();
-    int num_local  = NumPart - num_ghosts;
-    if(num_local < 0) num_local = NumPart;
-
-    long sw_count_nonzero_loc = 0;
-    unsigned long long sw_max_loc = 0;
-    uint64_t sw_pair_hash_loc = 0;
-#ifdef SINK_THERMALFEEDBACK
-    long ie_count_nonzero_loc = 0;
-    double ie_sum_loc = 0.0, ie_abs_sum_loc = 0.0;
-#endif
-    for(int j = 0; j < num_local; j++) {
-        unsigned long long sw = (unsigned long long)P[j].SwallowID;
-        if(sw != 0) {
-            sw_count_nonzero_loc++;
-            if(sw > sw_max_loc) sw_max_loc = sw;
-        }
-        uint64_t h_id = jside_splitmix64((uint64_t)P[j].ID);
-        uint64_t h_sw = jside_splitmix64((uint64_t)sw);
-        sw_pair_hash_loc ^= (h_id ^ jside_rotl64(h_sw, 1));
-#ifdef SINK_THERMALFEEDBACK
-        if(P[j].Type == 0) {
-            double v = (double)CellP[j].Injected_Sink_Energy;
-            if(v != 0.0) ie_count_nonzero_loc++;
-            ie_sum_loc     += v;
-            ie_abs_sum_loc += (v >= 0.0 ? v : -v);
-        }
-#endif
-    }
-    long sw_count_nonzero = 0;
-    unsigned long long sw_max = 0;
-    uint64_t sw_pair_hash = 0;
-    MPI_Allreduce(&sw_count_nonzero_loc, &sw_count_nonzero, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&sw_max_loc, &sw_max, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&sw_pair_hash_loc, &sw_pair_hash, 1, MPI_UINT64_T, MPI_BXOR, MPI_COMM_WORLD);
-#ifdef SINK_THERMALFEEDBACK
-    long ie_count_nonzero = 0;
-    double ie_sum = 0.0, ie_abs_sum = 0.0;
-    MPI_Allreduce(&ie_count_nonzero_loc, &ie_count_nonzero, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&ie_sum_loc,           &ie_sum,           1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&ie_abs_sum_loc,       &ie_abs_sum,       1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-#endif
-    if(ThisTask == 0) {
-        std::printf("JSIDE_HASH sink_feed step=%lld path=%s "
-                    "sw_count_nonzero=%ld sw_max=0x%llx sw_pair_hash=0x%016lx",
-                    (long long)All.NumCurrentTiStep, path_label,
-                    sw_count_nonzero, sw_max,
-                    (unsigned long)sw_pair_hash);
-#ifdef SINK_THERMALFEEDBACK
-        std::printf(" ie_count_nonzero=%ld ie_sum=%a ie_abs_sum=%a",
-                    ie_count_nonzero, ie_sum, ie_abs_sum);
-#endif
-        std::printf("\n");
-        std::fflush(stdout);
-    }
-}
-#endif /* GIZMO_NLR_JSIDE_HASH_TEST */
 
 
 /* Host-side fill of SinkFeedLocalIn for source particle i. Mirrors the
@@ -258,16 +176,6 @@ void sink_feed_loop(void)
     args.num_active  = num_active;
     args.aux         = &aux;
     run_neighbor_loop<SinkFeedSpec>(args);
-
-#ifdef GIZMO_NLR_JSIDE_HASH_TEST
-    /* TRANSIENT — see jside_hash_dump comment above. Path label captured
-     * via env var so a single binary can label each runner-driven path. */
-    {
-        const char *path_label = std::getenv("GIZMO_NLR_FORCE_MODE");
-        if(!path_label || !path_label[0]) path_label = "default";
-        jside_hash_dump(path_label);
-    }
-#endif
 
     /* ---------- physics: caller scatter into SinkTempInfo + P[i] ----------
      * Order-preserved per legacy sink_feed_gpu.cc:320 (ghost_writeback)

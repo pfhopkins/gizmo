@@ -159,13 +159,9 @@ void ghost_writeback_zero_thermalfb(void);
 void ghost_writeback_thermalfb(void);
 #endif
 
-/* SinkFeed variant: snapshot-based reverse communication for sink_feed_evaluate
- * j-particle writes (SwallowID, and optionally Injected_Sink_Energy).
- * Call zero before the GPU kernel; writeback after the scatter memcpy. */
-#ifdef SINK_PARTICLES
-void ghost_writeback_zero_sinkfeed(void);
-void ghost_writeback_sinkfeed(void);
-#endif
+/* sinkfeed retired in 3d.1: replaced by the bundle scaffold in
+ * sinks/sink_feed_loop.cc (PARTICLE_MAX(SwallowID) +
+ * GAS_ADD(Injected_Sink_Energy) ops). */
 
 /* MechFB variant: reverse communication for mechanical_fb GPU kernel per-gas
  * MechFBGasDelta accumulator. Unlike the snapshot-based patterns above,
