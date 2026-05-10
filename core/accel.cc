@@ -146,7 +146,12 @@ void compute_stellar_feedback(void)
     thermal_fb_calc(); /* thermal feedback */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
-    
+
+#ifdef GALSF_RESOLVEDISM_FB
+    resolvedism_inject_sn_energy(); /* resolved-ISM SN/AGB/wind/radpressure injection — runs here (right after density()) so wt_sum = DensityAroundParticle is fresh, mirroring FIRE's pattern */
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time();
+#endif
+
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     HII_heating_singledomain(); /* local photo-ionization heating */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */

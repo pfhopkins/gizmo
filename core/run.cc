@@ -178,20 +178,9 @@ void run(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
         resolvedism_determine_SNe(); // resolved ISM SN event flagging
-
-        {   int saved_wakeup = NeedToWakeupParticles_local;
-            NeedToWakeupParticles_local = 0;
-            resolvedism_inject_sn_energy(); // resolved ISM SN energy injection — must run before merge/split/rearrange to avoid stale active list
-            int fb_flag = NeedToWakeupParticles_local;
-            NeedToWakeupParticles_local = saved_wakeup;
-            int fb_recompute = 0;
-            MPI_Allreduce(&fb_flag, &fb_recompute, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-            if(fb_recompute > 0) {
-                if(ThisTask == 0) printf("RESOLVEDISM: Recomputing hydro for feedback-affected cells\n");
-                compute_hydro_densities_and_forces();
-            }
-        }
-
+        /* Injection happens later in compute_stellar_feedback() (called from
+           compute_hydro_densities_and_forces()), AFTER density() refreshes
+           DensityAroundParticle. Mirrors FIRE's pattern; avoids stale wt_sum. */
 #endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
