@@ -61,6 +61,9 @@
  * template instantiation appears at the bottom of this file. */
 #include "../sinks/sink_env1_loop.h"
 #include "../sinks/sink_feed_loop.h"
+#if defined(SINK_PARTICLES) && defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
+#include "../sinks/sink_env2_loop.h"
+#endif
 
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
@@ -2035,6 +2038,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
 template void run_neighbor_loop<SinkEnv1Spec>(const neighbor_loop_args&);
 #ifdef SINK_PARTICLES
 template void run_neighbor_loop<SinkFeedSpec>(const neighbor_loop_args&);
+#if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
+template void run_neighbor_loop<SinkEnv2Spec>(const neighbor_loop_args&);
+#endif
 #endif
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH

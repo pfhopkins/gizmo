@@ -14,6 +14,9 @@
 #include "sinks_gpu_decls.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "sink_env1_loop.h"
+#if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
+#include "sink_env2_loop.h"
+#endif
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -167,62 +170,83 @@ void sink_environment_loop(void)
 #if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
 
 
+/* Caller-side scatter for sink_env2. Two additive fields into SinkTempInfo;
+ * adding a new scattered field for this loop = ONE LINE under its
+ * physics flag's #ifdef. */
+static void sink_env2_scatter_to_temp_info(const int *active_list,
+                                            int num_active,
+                                            const struct sink_env_second_gpu_out *per_active_accum)
+{
+    for(int a = 0; a < num_active; a++) {
+        int i = active_list[a];
+        int t = P[i].IndexMapToTempStruc;
+
+#define SCATTER_ADD(dst, src_field)  dst += per_active_accum[a].src_field;
+
+        SCATTER_ADD(SinkTempInfo[t].MgasBulge_in_Kernel,  MgasBulge_in_Kernel)
+        SCATTER_ADD(SinkTempInfo[t].MstarBulge_in_Kernel, MstarBulge_in_Kernel)
+
+#undef SCATTER_ADD
+        (void)t;
+    }
+}
+
+
 void sink_environment_second_loop(void)
 {
-    /* Stage E2: GPU path — pure aggregator, no j-writes, same active set + radii +
-     * j_type_bitmask as the first environment pass. */
+    /* Stage E2: pure aggregator (Bulge-Disk kinematic decomposition).
+     * Phase 4 3d.2 — runner-driven via SinkEnv2Spec. Same active set +
+     * radii + j_type_bitmask as Stage E1 (sink_environment_loop). */
     CPU_Step[CPU_SINK_ENV] += measure_time();
 
-    /* Count-first guard (see sink_environment_loop for rationale). */
-    int num_active = 0;
-    for(int i : ActiveParticleList) { if(sink_isactive(i)) num_active++; }
-    int global_num_active = num_active;
-    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if(global_num_active == 0) {
+    /* ---------- engine: build active list ---------- */
+    int *active_list = nullptr;
+    int  num_active = 0, num_global_active = 0;
+    if(!nlr_build_active_list(SinkEnv2Spec::is_active,
+                               &active_list, &num_active, &num_global_active,
+                               "sinkenv2_active_list")) {
         CPU_Step[CPU_SINK_ENV] += measure_time();
         return;
     }
 
-    int alloc_n = (num_active > 0 ? num_active : 1);
-    int    *nl_active   = (int *)    mymalloc("sinkenv2_nl_active", alloc_n * sizeof(int));
-    double *nl_radii    = (double *) mymalloc("sinkenv2_nl_radii",  alloc_n * sizeof(double));
-    MyFloat (*nl_Jgas)[3]  = (MyFloat (*)[3]) mymalloc("sinkenv2_Jgas",  alloc_n * sizeof(MyFloat[3]));
-    MyFloat (*nl_Jstar)[3] = (MyFloat (*)[3]) mymalloc("sinkenv2_Jstar", alloc_n * sizeof(MyFloat[3]));
-    struct sink_env_second_gpu_out *nl_outs = (struct sink_env_second_gpu_out *)
-        mymalloc("sinkenv2_outs", alloc_n * sizeof(struct sink_env_second_gpu_out));
+    /* ---------- physics: per-active accumulator + per-active host inputs ---------- */
+    int alloc_n = (num_active > 0) ? num_active : 1;
+    struct sink_env_second_gpu_out *per_active_accum = (struct sink_env_second_gpu_out *)
+        mymalloc("sinkenv2_per_active_accum", alloc_n * sizeof(struct sink_env_second_gpu_out));
+    SinkEnv2PerActiveIn *host_inputs = (SinkEnv2PerActiveIn *)
+        mymalloc("sinkenv2_host_inputs", alloc_n * sizeof(SinkEnv2PerActiveIn));
 
-    {int aa = 0; for(int i : ActiveParticleList) {
-        if(!sink_isactive(i)) continue;
-        int t = P[i].IndexMapToTempStruc;
-        nl_active[aa] = i;
-        nl_radii[aa]  = P[i].KernelRadius;
-        for(int k = 0; k < 3; k++) {
-            nl_Jgas[aa][k]  = SinkTempInfo[t].Jgas_in_Kernel[k];
-            nl_Jstar[aa][k] = SinkTempInfo[t].Jstar_in_Kernel[k];
-        }
-        aa++;
-    }}
-
-    bool sinkenv2_imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
-        "sink_env2", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
-        nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
-
-    ghost_write_detector_begin("sink_environment_second");
-    sink_environment_second_evaluate_gpu(P, CellP, NumPart,
-                                          nl_active, num_active, nl_radii,
-                                          nl_Jgas, nl_Jstar,
-                                          SINK_NEIGHBOR_BITFLAG, nl_outs);
-    ghost_write_detector_end();
-
+    /* Fill per-active Jgas / Jstar from SinkTempInfo (populated by
+     * Stage E1's first pass). populate_device_context will copy this
+     * into the UVM array attached to the runner's DeviceContext. */
     for(int a = 0; a < num_active; a++) {
-        int i = nl_active[a];
+        int i = active_list[a];
         int t = P[i].IndexMapToTempStruc;
-        SinkTempInfo[t].MgasBulge_in_Kernel  += nl_outs[a].MgasBulge_in_Kernel;
-        SinkTempInfo[t].MstarBulge_in_Kernel += nl_outs[a].MstarBulge_in_Kernel;
+        for(int k = 0; k < 3; k++) {
+            host_inputs[a].Jgas[k]  = SinkTempInfo[t].Jgas_in_Kernel[k];
+            host_inputs[a].Jstar[k] = SinkTempInfo[t].Jstar_in_Kernel[k];
+        }
     }
 
-    myfree(nl_outs); myfree(nl_Jstar); myfree(nl_Jgas); myfree(nl_radii); myfree(nl_active);
-    if(sinkenv2_imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
+    SinkEnv2Spec::Aux aux;
+    aux.per_active_accum = per_active_accum;
+    aux.host_inputs      = host_inputs;
+
+    /* ---------- engine: hand off to runner ---------- */
+    neighbor_loop_args args = nlr_default_args();
+    args.active_list = active_list;
+    args.num_active  = num_active;
+    args.aux         = &aux;
+    run_neighbor_loop<SinkEnv2Spec>(args);
+
+    /* ---------- physics: caller scatter into SinkTempInfo ---------- */
+    myfree(host_inputs);
+    sink_env2_scatter_to_temp_info(active_list, num_active, per_active_accum);
+
+    /* ---------- engine: free + return ---------- */
+    myfree(per_active_accum);
+    nlr_free_active_list(active_list);
+
     CPU_Step[CPU_SINK_ENV] += measure_time();
 }
 
