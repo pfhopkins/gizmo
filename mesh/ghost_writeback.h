@@ -185,14 +185,9 @@ void ghost_writeback_zero_grainbackrx(void);
 void ghost_writeback_grainbackrx(void);
 #endif
 
-/* SinkSwallow (D1): snapshot-based reverse communication for
- * sink_swallow_and_kick_evaluate j-particle writes. Mass / Vel / dp / VelPred /
- * InternalEnergy(Pred) / MassTrue (additive), B / BPred (additive), plus
- * sink-merger Sink_Mass/Sink_Mdot/Sink_Mass_Reservoir zeroing. */
-#ifdef SINK_PARTICLES
-void ghost_writeback_zero_sinkswallow(void);
-void ghost_writeback_sinkswallow(void);
-#endif
+/* sinkswallow retired in 3d.3 (port + cleanup): replaced by the bundle
+ * scaffold's compound callback in sinks/sink_swk_loop.cc (snapshot +
+ * CR/B-aware predicate + clamped apply). */
 
 /* RadFBRP variant: snapshot-based reverse communication for
  * radiation_pressure_winds GPU kernel j-particle writes (Vel, VelPred, dp). */

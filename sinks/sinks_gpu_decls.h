@@ -21,21 +21,12 @@
  * build in this commit; source files deleted in follow-up cleanup). */
 
 
-/* ---- sink_swallow_and_kick (D1) ----
- * The host driver in sink_swallow_and_kick.cc builds a LOCAL active-sink list
- * (matching sink_isactive(i) && P[i].SwallowID==0), packs per-source
- * SinkSwallowLocalIn + per-source SinkSwallowOut buffers, and invokes
- * sink_swallow_and_kick_evaluate_gpu().  Results are scattered into
- * SinkTempInfo + P[i] on the host after kernel completion.  MPI_Reduce on the
- * per-source swallow counters reproduces today's logging behavior.
- */
-void sink_swallow_and_kick_evaluate_gpu(struct particle_data *P_host,
-                                         struct gas_cell_data *CellP_host,
-                                         int num_total,
-                                         int *i_active_host, int num_active,
-                                         const double *i_radii_host,
-                                         int j_type_bitmask);
-void gizmo_gpu_sync_all_sinkswallow(struct global_data_all_processes *);
+/* ---- sink_swallow_and_kick ----
+ * Ported to runner template in 3d.3; declarations live in sinks/sink_swk_loop.h
+ * (SinkSwkSpec + SinkSwallowLocalIn + SinkSwallowOut). Legacy
+ * sink_swallow_and_kick_evaluate_gpu + gizmo_gpu_sync_all_sinkswallow retired
+ * (sinks/sink_swallow_and_kick_gpu.cc + sinks/sink_swallow_and_kick_functions.h
+ * deleted in this commit). */
 
 
 /* ---- sink_environment ----

@@ -61,6 +61,7 @@
  * template instantiation appears at the bottom of this file. */
 #include "../sinks/sink_env1_loop.h"
 #include "../sinks/sink_feed_loop.h"
+#include "../sinks/sink_swk_loop.h"
 #if defined(SINK_PARTICLES) && defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
 #include "../sinks/sink_env2_loop.h"
 #endif
@@ -1068,19 +1069,24 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
 
     std::vector<AccumData> accums_modeB(N);
     std::vector<AccumData> accums_brute(N);
-    {
-        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data());
-    }
-    /* Brute oracle pass: copy ctx and flag dry-run so j-side-write Specs can
-     * suppress side effects (atomic_exchange / atomic_add into P[j] / CellP[j])
-     * — otherwise the oracle path corrupts additive fields. Specs without the
-     * hook get an unmodified ctx (default behavior preserved). */
+    /* ORDERING: for j-write Specs, the brute oracle pass must run BEFORE the
+     * tree pass so that brute reads the same pre-mutation j-state the tree
+     * pass starts from. With the previous (tree-first) order, dry-run blocked
+     * the brute's writes but did not restore the post-tree state, so brute
+     * read e.g. zeroed Mass / changed SwallowID and produced a different
+     * accumulator than tree -- a silent false-pass on the oracle whenever no
+     * actual j-writes happened in the test config (codex review 2026-05-10).
+     * For non-j-write Specs the order is irrelevant; we use brute-first
+     * universally for one consistent oracle shape. */
     DeviceCtx ctx_oracle = ctx;
     if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
         Spec::set_oracle_brute_pass(ctx_oracle, true);
     }
     evaluate_pairs_post_drift<Spec>(ctx_oracle, actives.data(), N, cand_brute, accums_brute.data());
+    {
+        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data());
+    }
 
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1291,11 +1297,9 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     std::vector<AccumData> accums_self(N);
     std::vector<AccumData> accums_self_brute;
     if(N > 0) {
-        {
-            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                              cand_self_tree, accums_self.data());
-        }
+        /* ORACLE FIRST (dry-run, no j-writes), THEN tree (real writes).
+         * See run_mode_b_local_with_oracle for the rationale (codex review
+         * 2026-05-10). For non-j-write Specs the order is irrelevant. */
         if(ORACLE) {
             accums_self_brute.assign(N, AccumData{});
             DeviceCtx ctx_oracle_self = ctx;
@@ -1304,6 +1308,13 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
             }
             evaluate_pairs_post_drift<Spec>(ctx_oracle_self, actives.data(), N,
                                               cand_self_brute, accums_self_brute.data());
+        }
+        {
+            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
+            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+                                              cand_self_tree, accums_self.data());
+        }
+        if(ORACLE) {
             static long long s_self_mismatch_count = 0;
             for(int aa = 0; aa < N; aa++) {
                 emit_oracle_mismatch_if_any<Spec>(rank, aa, accums_self[aa],
@@ -1319,11 +1330,8 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     std::vector<AccumData> peer_replies(K);
     std::vector<AccumData> peer_replies_brute;
     if(K > 0) {
-        {
-            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
-            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                              cand_peer_tree, peer_replies.data());
-        }
+        /* ORACLE FIRST (dry-run), THEN tree (real writes). Same rationale
+         * as the self-side path above. */
         if(ORACLE) {
             peer_replies_brute.assign(K, AccumData{});
             DeviceCtx ctx_oracle_peer = ctx;
@@ -1332,6 +1340,13 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
             }
             evaluate_pairs_post_drift<Spec>(ctx_oracle_peer, peer_actives.data(), K,
                                               cand_peer_brute, peer_replies_brute.data());
+        }
+        {
+            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
+            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
+                                              cand_peer_tree, peer_replies.data());
+        }
+        if(ORACLE) {
             static long long s_peer_mismatch_count = 0;
             for(int k = 0; k < K; k++) {
                 /* Print the ORIGIN active slot (from the query envelope) so
@@ -2038,6 +2053,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
 template void run_neighbor_loop<SinkEnv1Spec>(const neighbor_loop_args&);
 #ifdef SINK_PARTICLES
 template void run_neighbor_loop<SinkFeedSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<SinkSwkSpec>(const neighbor_loop_args&);
 #if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
 template void run_neighbor_loop<SinkEnv2Spec>(const neighbor_loop_args&);
 #endif

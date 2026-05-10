@@ -79,8 +79,10 @@ struct SinkEnv2DeviceContext : NeighborLoopDeviceContextBase {
  * Inline pair body — single source of truth for sink_env2 per-pair physics.
  * Pure i-side: writes only to `accum`, never to neighbor_particle. No
  * atomics, no Kokkos:: refs (so no Kokkos_Core.hpp include required from
- * this header — sink_env2_loop.cc is host-pattern compiled, NOT in
- * GPU_OBJS, simpler than sink_feed_loop.cc).
+ * this header. sink_env2_loop.cc IS in GPU_OBJS because populate_device_context
+ * uses Kokkos::kokkos_malloc / kokkos_free for the per-active Jgas/Jstar
+ * UVM staging — the CUDA backend requires nvcc_wrapper compilation for
+ * the .cc TU even though the inline pair body itself is Kokkos-free).
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION

@@ -1,15 +1,26 @@
 /*! \file sink_swallow_and_kick.c
 *  \brief routines for gas accretion onto sink particles, and sink particle mergers
 */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+/* Stdlib + Kokkos MUST come before any project header (allvars.h pulls
+ * macros.h which #defines `terminate(...)` and would mangle the C++
+ * <exception> declarations Kokkos transitively pulls in). Same pattern
+ * as sinks/sink_feed.cc and mesh/neighbor_loop_runner.cc. */
+#include <mpi.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <Kokkos_Core.hpp>
+
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
+#include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
+#include "sink_functions.h"
+#include "sink_swk_loop.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
 * see notes in sink.c for details on code history.
@@ -31,40 +42,354 @@ static int N_gas_swallowed, N_star_swallowed, N_dm_swallowed, N_sink_swallowed;
 
 
 
-void sink_swallow_and_kick_loop(void)
+/* Host-side fill of SinkSwallowLocalIn for source particle i. Mirrors
+ * legacy sink_swallow_local_fill from sinks/sink_swallow_and_kick_gpu.cc:47-87,
+ * with one addition: precomputed mom_budget under SINK_CALC_LOCAL_ANGLEWEIGHTS
+ * (sink_lum_bol is host-only). */
+static void sink_swk_fill_local(int i, struct SinkSwallowLocalIn *loc)
 {
-    N_gas_swallowed = N_star_swallowed = N_dm_swallowed = N_sink_swallowed = 0;
-    /* D1 GPU path — atomic j-writes + ghost writeback; per-source output scatter
-     * and MPI_Reduce of swallow counters handled inside the launcher. */
-    {
-#include "../sinks/sinks_gpu_decls.h"
-        /* Count-first guard: skip ghost_prep entirely when no rank has any
-         * active sink. ghost_prep does the all-particles drift loop. */
-        int num_active = 0;
-        for(int i : ActiveParticleList) { if(sink_isactive(i) && P[i].SwallowID == 0) num_active++; }
-        int global_num_active = num_active;
-        MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        if(global_num_active == 0) {
-            CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
-            return;
+    int j_tempinfo = P[i].IndexMapToTempStruc;
+    loc->Pos             = P[i].Pos;
+    loc->Vel             = P[i].Vel;
+    loc->KernelRadius    = P[i].KernelRadius;
+    loc->Mass            = P[i].Mass;
+    loc->Sink_Mass       = P[i].Sink_Mass;
+    loc->ID              = P[i].ID;
+    loc->ID_child_number = P[i].ID_child_number;
+    loc->ID_generation   = P[i].ID_generation;
+    loc->Mdot            = P[i].Sink_Mdot;
+#if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) || defined(SINK_WIND_KICK)
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+    loc->Jgas_in_Kernel = P[i].Sink_Specific_AngMom;
+#else
+    loc->Jgas_in_Kernel = SinkTempInfo[j_tempinfo].Jgas_in_Kernel;
+#endif
+#endif
+#ifdef SINK_ALPHADISK_ACCRETION
+    loc->Sink_Mass_Reservoir = P[i].Sink_Mass_Reservoir;
+#endif
+#if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
+    loc->Sink_angle_weighted_kernel_sum = SinkTempInfo[j_tempinfo].Sink_angle_weighted_kernel_sum;
+#endif
+    loc->Dt = (MyFloat)get_particle_feedback_timestep_in_physical(i);
+#ifdef SINK_INTERACT_ON_GAS_TIMESTEP
+    loc->Dt = P[i].dt_since_last_gas_search;
+#endif
+#if defined(SINK_RETURN_ANGMOM_TO_GAS)
+    loc->Sink_Specific_AngMom = P[i].Sink_Specific_AngMom;
+    loc->angmom_norm_topass_in_swallowloop = SinkTempInfo[j_tempinfo].angmom_norm_topass_in_swallowloop;
+#endif
+#if defined(SINK_RETURN_BFLUX)
+    loc->B = P[i].B;
+    loc->kernel_norm_topass_in_swallowloop = SinkTempInfo[j_tempinfo].kernel_norm_topass_in_swallowloop;
+#endif
+#ifdef SINGLE_STAR_FB_LOCAL_RP
+    loc->Luminosity = (MyFloat)sink_lum_bol(loc->Mdot, loc->Sink_Mass, i);
+#endif
+#if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
+#if defined(SINGLE_STAR_FB_LOCAL_RP)
+    loc->mom_budget = (MyFloat)((double)loc->Luminosity * (double)loc->Dt / C_LIGHT_CODE);
+#else
+    loc->mom_budget = (MyFloat)(sink_lum_bol((double)loc->Mdot, (double)loc->Sink_Mass, -1)
+                                 * (double)loc->Dt / C_LIGHT_CODE);
+#endif
+#endif
+}
+
+
+/* Caller-side scatter from per-active accum into SinkTempInfo + globals.
+ * Mirrors legacy sink_swallow_apply_out (sink_swallow_and_kick_gpu.cc:92-132)
+ * including the StellarAge MIN-replace from out.Accreted_Age. */
+static void sink_swk_scatter(const int *active_list, int num_active,
+                              const struct SinkSwallowOut *per_active_accum,
+                              int *N_gas_sw, int *N_sink_sw,
+                              int *N_star_sw, int *N_dm_sw)
+{
+    *N_gas_sw = *N_sink_sw = *N_star_sw = *N_dm_sw = 0;
+    for(int a = 0; a < num_active; a++) {
+        int i = active_list[a];
+        const struct SinkSwallowOut& out = per_active_accum[a];
+        int t = P[i].IndexMapToTempStruc;
+
+#define SCATTER_ADD(dst, src)        dst += out.src;
+#define SCATTER_ADD_VEC3(dst, src)   for(int k = 0; k < 3; k++) dst[k] += out.src[k];
+#define SCATTER_MIN(dst, src)        if(out.src < (dst)) (dst) = out.src;
+
+        SCATTER_ADD(SinkTempInfo[t].accreted_Mass,                   accreted_Mass)
+        SCATTER_ADD(SinkTempInfo[t].accreted_Sink_Mass,              accreted_Sink_Mass)
+        SCATTER_ADD(SinkTempInfo[t].accreted_Sink_Mass_reservoir,    accreted_Sink_Mass_reservoir)
+#if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
+        SCATTER_ADD(SinkTempInfo[t].Sink_AccretionDeficit,           Sink_AccretionDeficit)
+#endif
+#ifdef GRAIN_FLUID
+        SCATTER_ADD(SinkTempInfo[t].accreted_dust_Mass,              accreted_dust_Mass)
+#endif
+#ifdef RT_REINJECT_ACCRETED_PHOTONS
+        SCATTER_ADD(SinkTempInfo[t].accreted_photon_energy,          accreted_photon_energy)
+#endif
+#if defined(SINK_FOLLOW_ACCRETED_MOMENTUM)
+        SCATTER_ADD_VEC3(SinkTempInfo[t].accreted_momentum,          accreted_momentum)
+#endif
+#if defined(SINK_FOLLOW_ACCRETED_COM)
+        SCATTER_ADD_VEC3(SinkTempInfo[t].accreted_centerofmass,      accreted_centerofmass)
+#endif
+#if defined(SINK_RETURN_BFLUX)
+        SCATTER_ADD_VEC3(SinkTempInfo[t].accreted_B,                 accreted_B)
+#endif
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+        SCATTER_ADD_VEC3(SinkTempInfo[t].accreted_J,                 accreted_J)
+#endif
+#ifdef SINK_COUNTPROGS
+        P[i].Sink_CountProgs += out.Sink_CountProgs;
+#endif
+#ifdef GALSF
+        SCATTER_MIN(P[i].StellarAge, Accreted_Age)
+#endif
+        for(int b = 0; b < TIMEBINS; b++) {
+            TimeBin_Sink_mass[b]          += out.delta_TimeBin_Sink_mass[b];
+            TimeBin_Sink_dynamicalmass[b] += out.delta_TimeBin_Sink_dynamicalmass[b];
+            TimeBin_Sink_Mdot[b]          += out.delta_TimeBin_Sink_Mdot[b];
+            TimeBin_Sink_Medd[b]          += out.delta_TimeBin_Sink_Medd[b];
         }
 
-        int alloc_n = (num_active > 0) ? num_active : 1;
-        int *nl_active = (int *) mymalloc("sinkswallow_nl_active", alloc_n * sizeof(int));
-        double *nl_radii = (double *) mymalloc("sinkswallow_nl_radii", alloc_n * sizeof(double));
-        {int aa = 0; for(int i : ActiveParticleList) {
-            if(sink_isactive(i) && P[i].SwallowID == 0) {
-                nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
-            }
-        }}
-        bool imported_ghosts = gizmo_request_filtered_ghost_import_fresh(
-            "sink_swk", NGB_SEARCH_SYMMETRIC, (unsigned int)SINK_NEIGHBOR_BITFLAG,
-            nl_active, num_active, nl_radii, gizmo_ghost_safety_factor());
-        sink_swallow_and_kick_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii, SINK_NEIGHBOR_BITFLAG);
-        myfree(nl_radii); myfree(nl_active);
-        if(imported_ghosts && NTask > 1) { ghost_exchange_cleanup(); }
-        CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+        *N_gas_sw  += out.n_gas_swallowed;
+        *N_sink_sw += out.n_sink_swallowed;
+        *N_star_sw += out.n_star_swallowed;
+        *N_dm_sw   += out.n_dm_swallowed;
+
+#undef SCATTER_ADD
+#undef SCATTER_ADD_VEC3
+#undef SCATTER_MIN
+        (void)t;
     }
+}
+
+
+#ifdef GIZMO_NLR_JSIDE_HASH_TEST
+/* Mandatory j-side hash harness (per OPEN_3d_sinkswk_design.md sec E.2).
+ * Walks owner-local j's, Allreduce'd cross-mode invariants. Removed in
+ * cleanup commit. */
+static inline uint64_t sk_splitmix64(uint64_t x)
+{
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+static inline uint64_t sk_pair(uint64_t id, double v)
+{
+    uint64_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    return sk_splitmix64(id ^ sk_splitmix64(bits));
+}
+
+static void sink_swk_dump_jside_hashes(const char *label,
+                                        const struct SinkSwallowOut *per_active_accum,
+                                        int num_active)
+{
+    int num_local = ghost_get_num_local();
+    if(num_local <= 0) num_local = NumPart;
+
+    double mass_sum = 0, sm_sum = 0, smdot_sum = 0;
+    long  mass_count = 0;
+    uint64_t vel_h = 0, dp_h = 0, vp_h = 0;
+    double mt_sum = 0, ie_sum = 0, ip_sum = 0;
+#ifdef SINK_ALPHADISK_ACCRETION
+    double smr_sum = 0;
+#endif
+#ifdef MAGNETIC
+    uint64_t bh = 0, bph = 0;
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+    double dt_sum = 0;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
+    /* CR coverage: ID-keyed pair-hashes for energy, energyPred, flux, fluxPred.
+     * Sums alone hide spatially wrong updates (same total, different per-cell
+     * distribution) — codex review 2026-05-10. */
+    uint64_t cre_h = 0, crep_h = 0, crf_h = 0, crfp_h = 0;
+#endif
+    for(int j = 0; j < num_local; j++) {
+        uint64_t id = (uint64_t)P[j].ID;
+        double m = (double)P[j].Mass;
+        if(m != 0) { mass_sum += m; mass_count++; }
+        for(int k = 0; k < 3; k++) {
+            vel_h ^= sk_pair(id + 11 + k, (double)P[j].Vel[k]);
+            dp_h  ^= sk_pair(id + 21 + k, (double)P[j].dp[k]);
+        }
+        sm_sum    += (double)P[j].Sink_Mass;
+        smdot_sum += (double)P[j].Sink_Mdot;
+#ifdef SINK_ALPHADISK_ACCRETION
+        smr_sum   += (double)P[j].Sink_Mass_Reservoir;
+#endif
+        if(P[j].Type == 0) {
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            mt_sum += (double)CellP[j].MassTrue;
+#endif
+            ie_sum += (double)CellP[j].InternalEnergy;
+            ip_sum += (double)CellP[j].InternalEnergyPred;
+            for(int k = 0; k < 3; k++) {
+                vp_h ^= sk_pair(id + 31 + k, (double)CellP[j].VelPred[k]);
+            }
+#ifdef MAGNETIC
+            for(int k = 0; k < 3; k++) {
+                bh  ^= sk_pair(id + 41 + k, (double)CellP[j].B[k]);
+                bph ^= sk_pair(id + 51 + k, (double)CellP[j].BPred[k]);
+            }
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+            dt_sum += (double)CellP[j].DelayTime;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
+            for(int kc = 0; kc < N_CR_PARTICLE_BINS; kc++) {
+                cre_h  ^= sk_pair(id + 1001 + kc, (double)CellP[j].CosmicRayEnergy[kc]);
+                crep_h ^= sk_pair(id + 2001 + kc, (double)CellP[j].CosmicRayEnergyPred[kc]);
+                for(int kk = 0; kk < 3; kk++) {
+                    crf_h  ^= sk_pair(id + 3001 + 4*kc + kk, (double)CellP[j].CosmicRayFlux[kc][kk]);
+                    crfp_h ^= sk_pair(id + 4001 + 4*kc + kk, (double)CellP[j].CosmicRayFluxPred[kc][kk]);
+                }
+            }
+#endif
+        }
+    }
+    double am_sum = 0, asm_sum = 0;
+    long ng_sw = 0, ns_sw = 0, nst_sw = 0, nd_sw = 0;
+    for(int a = 0; a < num_active; a++) {
+        am_sum  += (double)per_active_accum[a].accreted_Mass;
+        asm_sum += (double)per_active_accum[a].accreted_Sink_Mass;
+        ng_sw   += per_active_accum[a].n_gas_swallowed;
+        ns_sw   += per_active_accum[a].n_sink_swallowed;
+        nst_sw  += per_active_accum[a].n_star_swallowed;
+        nd_sw   += per_active_accum[a].n_dm_swallowed;
+    }
+
+    /* Sums (double): 0..7 mass/sm/smdot/mt/ie/iep/am/asm, 8 dt_sum,
+     *                9 smr_sum (Sink_Mass_Reservoir).  */
+    double dvals[10] = {mass_sum, sm_sum, smdot_sum, mt_sum, ie_sum, ip_sum, am_sum, asm_sum, 0, 0};
+    long   lvals[6]  = {mass_count, ng_sw, ns_sw, nst_sw, nd_sw, 0};
+    /* Hashes (uint64): 0 vel, 1 dp, 2 vp, 3 B, 4 BPred,
+     *                   5 cre, 6 crep, 7 crf, 8 crfp. */
+    uint64_t hvals[9] = {vel_h, dp_h, vp_h, 0, 0, 0, 0, 0, 0};
+#ifdef MAGNETIC
+    hvals[3] = bh; hvals[4] = bph;
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+    dvals[8] = dt_sum;
+#endif
+#ifdef SINK_ALPHADISK_ACCRETION
+    dvals[9] = smr_sum;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
+    hvals[5] = cre_h;  hvals[6] = crep_h;
+    hvals[7] = crf_h;  hvals[8] = crfp_h;
+#endif
+    double dout[10]; long lout[6]; uint64_t hout[9];
+    MPI_Allreduce(dvals, dout, 10, MPI_DOUBLE,    MPI_SUM,  MPI_COMM_WORLD);
+    MPI_Allreduce(lvals, lout, 6,  MPI_LONG,      MPI_SUM,  MPI_COMM_WORLD);
+    MPI_Allreduce(hvals, hout, 9,  MPI_UINT64_T,  MPI_BXOR, MPI_COMM_WORLD);
+
+    if(ThisTask == 0) {
+        printf("[JSIDE_HASH sink_swk %s] mass_sum=%.17g count=%ld vel_h=%016llx dp_h=%016llx\n",
+               label, dout[0], lout[0],
+               (unsigned long long)hout[0], (unsigned long long)hout[1]);
+        printf("[JSIDE_HASH sink_swk %s] sm_sum=%.17g smdot_sum=%.17g mt_sum=%.17g\n",
+               label, dout[1], dout[2], dout[3]);
+        printf("[JSIDE_HASH sink_swk %s] ie_sum=%.17g iep_sum=%.17g vp_h=%016llx\n",
+               label, dout[4], dout[5], (unsigned long long)hout[2]);
+#ifdef SINK_ALPHADISK_ACCRETION
+        printf("[JSIDE_HASH sink_swk %s] smr_sum=%.17g\n", label, dout[9]);
+#endif
+#ifdef MAGNETIC
+        printf("[JSIDE_HASH sink_swk %s] B_h=%016llx BPred_h=%016llx\n",
+               label, (unsigned long long)hout[3], (unsigned long long)hout[4]);
+#endif
+#ifdef GALSF_SUBGRID_WINDS
+        printf("[JSIDE_HASH sink_swk %s] DelayTime_sum=%.17g\n", label, dout[8]);
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
+        printf("[JSIDE_HASH sink_swk %s] CR_E_h=%016llx EPred_h=%016llx Flux_h=%016llx FluxPred_h=%016llx\n",
+               label,
+               (unsigned long long)hout[5], (unsigned long long)hout[6],
+               (unsigned long long)hout[7], (unsigned long long)hout[8]);
+#endif
+        printf("[JSIDE_HASH sink_swk %s] iside accreted_Mass_sum=%.17g accreted_Sink_Mass_sum=%.17g\n",
+               label, dout[6], dout[7]);
+        printf("[JSIDE_HASH sink_swk %s] iside n_gas_sw=%ld n_sink_sw=%ld n_star_sw=%ld n_dm_sw=%ld\n",
+               label, lout[1], lout[2], lout[3], lout[4]);
+        fflush(stdout);
+    }
+}
+#endif /* GIZMO_NLR_JSIDE_HASH_TEST */
+
+
+void sink_swallow_and_kick_loop(void)
+{
+    CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+    (void)N_gas_swallowed; (void)N_star_swallowed; (void)N_dm_swallowed; (void)N_sink_swallowed;
+    /* D1 GPU path — atomic j-writes + ghost writeback; per-source output scatter
+     * and MPI_Reduce of swallow counters handled inside the launcher. */
+    /* engine: build active list */
+    int *active_list = nullptr;
+    int  num_active = 0, num_global_active = 0;
+    if(!nlr_build_active_list(SinkSwkSpec::is_active,
+                               &active_list, &num_active, &num_global_active,
+                               "sinkswk_active_list")) {
+        CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+        return;
+    }
+
+    /* physics: per-active accumulator + per-active host-fill */
+    int alloc_n = (num_active > 0) ? num_active : 1;
+    struct SinkSwallowOut *per_active_accum = (struct SinkSwallowOut *)
+        mymalloc("sinkswk_per_active_accum", alloc_n * sizeof(struct SinkSwallowOut));
+    struct SinkSwallowLocalIn *host_locals = (struct SinkSwallowLocalIn *)
+        mymalloc("sinkswk_host_locals", alloc_n * sizeof(struct SinkSwallowLocalIn));
+
+    for(int a = 0; a < num_active; a++) {
+        sink_swk_fill_local(active_list[a], &host_locals[a]);
+    }
+
+    SinkSwkSpec::Aux aux;
+    aux.per_active_accum = per_active_accum;
+    aux.host_locals      = host_locals;
+
+    /* engine: hand off to runner */
+    neighbor_loop_args args = nlr_default_args();
+    args.active_list = active_list;
+    args.num_active  = num_active;
+    args.aux         = &aux;
+    run_neighbor_loop<SinkSwkSpec>(args);
+
+    /* physics: caller scatter + MPI_Reduce of swallow counters */
+    int N_gas_sw = 0, N_sink_sw = 0, N_star_sw = 0, N_dm_sw = 0;
+    sink_swk_scatter(active_list, num_active, per_active_accum,
+                     &N_gas_sw, &N_sink_sw, &N_star_sw, &N_dm_sw);
+
+#ifdef GIZMO_NLR_JSIDE_HASH_TEST
+    {
+        const char *mode_env = getenv("GIZMO_NLR_FORCE_MODE");
+        const char *label = mode_env ? mode_env : "default";
+        sink_swk_dump_jside_hashes(label, per_active_accum, num_active);
+    }
+#endif
+
+    int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
+    MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0 && (Ntot_gas || Ntot_sink || Ntot_star || Ntot_dm)) {
+        printf("Accretion done: swallowed %d gas, %d star, %d dm, and %d sink particles\n",
+               Ntot_gas, Ntot_star, Ntot_dm, Ntot_sink);
+        fflush(stdout);
+    }
+
+    /* engine: free + return */
+    myfree(host_locals);
+    myfree(per_active_accum);
+    nlr_free_active_list(active_list);
+
+    CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
 }
 
 
