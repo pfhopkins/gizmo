@@ -172,8 +172,20 @@
  * Writeback specification
  * ========================================================================== */
 
+/* WritePattern describes the runner-managed accum/scatter buffers ONLY.
+ * It is ORTHOGONAL to whether the pair_kernel does direct j-side writes
+ * (which is governed by `uses_ghost_writeback` and the bundle manifest in
+ * the Spec's .cc). A Spec may declare `ActiveReduceOnly` and still write
+ * to neighbor_particle.field / neighbor_cell->field from the kernel, as
+ * long as it sets `uses_ghost_writeback = true` and supplies a bundle.
+ * Mode A's bundle handles reverse-comm of those writes to home ranks;
+ * Mode B local + Mode B remote skip the bundle (j-side writes are local
+ * on the rank that owns j). sink_feed (3d.1) is the first port to
+ * combine `ActiveReduceOnly` with a non-empty ghost-writeback bundle. */
 enum class WritePattern : int {
-    ActiveReduceOnly       = 0,  /* AccumData filled; ScatterData == NoScatter */
+    ActiveReduceOnly       = 0,  /* AccumData filled; ScatterData == NoScatter.
+                                    Direct j-side writes still allowed via
+                                    uses_ghost_writeback bundle (orthogonal). */
     SymmetricPairScatter   = 1,  /* both filled */
     NeighborScatter        = 2,  /* AccumData == NoAccum; ScatterData filled */
     GhostWritebackRequired = 3,  /* j may live on remote rank; writeback channel */
@@ -369,6 +381,28 @@ struct nlr_spec_has_cleanup_device_context<
 template <typename Spec>
 constexpr bool nlr_spec_has_cleanup_device_context_v =
     nlr_spec_has_cleanup_device_context<Spec>::value;
+
+/* SFINAE detection of optional Spec::set_oracle_brute_pass. j-side-write
+ * Specs use this to suppress side-effects on the oracle's BRUTE pass —
+ * without it, the runner's oracle path (run_mode_b_local_with_oracle,
+ * run_mode_b_remote_impl<true>) would call the pair body twice (tree + brute)
+ * and apply j-side writes (atomic_exchange / atomic_add into P[j] / CellP[j])
+ * twice, corrupting additive fields like Injected_Sink_Energy. Oracle is a
+ * VALIDATION-ONLY path so this is debug-relevant only; production paths
+ * (default, force-A, force-B-without-oracle) never call this hook. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_set_oracle_brute_pass : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_set_oracle_brute_pass<
+    Spec,
+    std::void_t<decltype(Spec::set_oracle_brute_pass(
+        std::declval<typename Spec::DeviceContext&>(), bool{}))>>
+    : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_has_set_oracle_brute_pass_v =
+    nlr_spec_has_set_oracle_brute_pass<Spec>::value;
 
 /* RAII cleanup guard for the runner's DeviceContext. Construct one right
  * after Spec::populate_device_context returns; destruction at function exit

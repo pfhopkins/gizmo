@@ -60,6 +60,7 @@
 /* Spec instantiations. Each #include declares one Spec type whose explicit
  * template instantiation appears at the bottom of this file. */
 #include "../sinks/sink_env1_loop.h"
+#include "../sinks/sink_feed_loop.h"
 
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
@@ -1068,7 +1069,15 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums_modeB.data());
     }
-    evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_brute, accums_brute.data());
+    /* Brute oracle pass: copy ctx and flag dry-run so j-side-write Specs can
+     * suppress side effects (atomic_exchange / atomic_add into P[j] / CellP[j])
+     * — otherwise the oracle path corrupts additive fields. Specs without the
+     * hook get an unmodified ctx (default behavior preserved). */
+    DeviceCtx ctx_oracle = ctx;
+    if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+        Spec::set_oracle_brute_pass(ctx_oracle, true);
+    }
+    evaluate_pairs_post_drift<Spec>(ctx_oracle, actives.data(), N, cand_brute, accums_brute.data());
 
     int rank = 0;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -1286,7 +1295,11 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         }
         if(ORACLE) {
             accums_self_brute.assign(N, AccumData{});
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+            DeviceCtx ctx_oracle_self = ctx;
+            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+                Spec::set_oracle_brute_pass(ctx_oracle_self, true);
+            }
+            evaluate_pairs_post_drift<Spec>(ctx_oracle_self, actives.data(), N,
                                               cand_self_brute, accums_self_brute.data());
             static long long s_self_mismatch_count = 0;
             for(int aa = 0; aa < N; aa++) {
@@ -1310,7 +1323,11 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
         }
         if(ORACLE) {
             peer_replies_brute.assign(K, AccumData{});
-            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
+            DeviceCtx ctx_oracle_peer = ctx;
+            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+                Spec::set_oracle_brute_pass(ctx_oracle_peer, true);
+            }
+            evaluate_pairs_post_drift<Spec>(ctx_oracle_peer, peer_actives.data(), K,
                                               cand_peer_brute, peer_replies_brute.data());
             static long long s_peer_mismatch_count = 0;
             for(int k = 0; k < K; k++) {
@@ -2016,6 +2033,9 @@ void run_neighbor_loop(const neighbor_loop_args& args)
  * ========================================================================== */
 
 template void run_neighbor_loop<SinkEnv1Spec>(const neighbor_loop_args&);
+#ifdef SINK_PARTICLES
+template void run_neighbor_loop<SinkFeedSpec>(const neighbor_loop_args&);
+#endif
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH
  * in run_mode_a). Same idiom as sink_environment_gpu.cc:388. */

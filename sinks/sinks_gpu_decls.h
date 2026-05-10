@@ -14,13 +14,11 @@
 #include "../declarations/allvars.h"
 
 
-/* ---- sink_feed (C3) ---- */
-void sink_feed_evaluate_gpu(struct particle_data *p,
-                              struct gas_cell_data *cp,
-                              int num_total,
-                              int *i_active_host, int num_active,
-                              const double *src_radii_host);
-void gizmo_gpu_sync_all_sinkfeed(struct global_data_all_processes *p);
+/* ---- sink_feed (3d.1) ----
+ * Ported to runner template; declarations live in sinks/sink_feed_loop.h.
+ * Legacy `sink_feed_evaluate_gpu` + `gizmo_gpu_sync_all_sinkfeed` retired
+ * (sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h removed from
+ * build in this commit; source files deleted in follow-up cleanup). */
 
 
 /* ---- sink_swallow_and_kick (D1) ----

@@ -17,15 +17,15 @@
  * `my_loop_ghost_writeback_bundle_ptr()` returning the bundle. Spec hooks
  * call ghost_writeback_begin_bundle / _end_bundle with this pointer.
  *
- * Operations available in B.iv:
- *   GHOST_WRITEBACK_PARTICLE_MIN(field)   home P[j].field = min(home, ghost)
+ * Operations available:
+ *   GHOST_WRITEBACK_PARTICLE_MIN(field)   home P[j].field = min(home, ghost)             [B.iv]
+ *   GHOST_WRITEBACK_PARTICLE_MAX(field)   home P[j].field = max(home, ghost)             [3d.1]
+ *   GHOST_WRITEBACK_GAS_ADD(field)        snapshot-diff additive on CellP[j].field       [3d.1]
  *
  * Future ops (NOT yet shipped — add when a migrated caller actually needs
  * them, then implement + test on the same Vista validation matrix):
- *   GHOST_WRITEBACK_PARTICLE_MAX(field)   home P[j].field = max(home, ghost)
- *   GHOST_WRITEBACK_PARTICLE_ADD(field)   delta = post - snapshot
- *   GHOST_WRITEBACK_GAS_ADD(field)        same as _ADD but on CellP[j]
- *   ...vector variants, snapshot-diff variants, etc.
+ *   GHOST_WRITEBACK_PARTICLE_ADD(field)   delta = post - snapshot, additive at home
+ *   ...vector variants, etc.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
@@ -123,6 +123,155 @@ const ghost_writeback_callback ParticleMinOp<FieldT, MemPtr>::callback = {
     & ParticleMinOp<FieldT, MemPtr>::s_ctx,
 };
 
+/* ParticleMaxOp — symmetric MAX variant of ParticleMinOp. Home keeps the
+ * larger of (home, ghost) per delta record. Used by sink_feed for
+ * P[j].SwallowID (D1/S-SYNC max-ID-wins tiebreak across ranks). */
+template <typename FieldT, FieldT particle_data::*MemPtr>
+struct ParticleMaxOp {
+    static_assert(std::is_arithmetic<FieldT>::value || std::is_integral<FieldT>::value,
+                  "GHOST_WRITEBACK_PARTICLE_MAX requires a comparable scalar field");
+
+    struct Ctx {
+        FieldT *snap;
+        int     num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int    home_index;
+        FieldT value;
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (FieldT*) malloc(num_ghosts * sizeof(FieldT));
+        for (int g = 0; g < num_ghosts; g++) {
+            c->snap[g] = P[num_local + g].*MemPtr;
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        return (P[num_local + g].*MemPtr > c->snap[g]) ? 1 : 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        (void)vctx;
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        d->value      = P[num_local + g].*MemPtr;
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        if (d->value > P[d->home_index].*MemPtr) {
+            P[d->home_index].*MemPtr = d->value;
+        }
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename FieldT, FieldT particle_data::*MemPtr>
+typename ParticleMaxOp<FieldT, MemPtr>::Ctx
+ParticleMaxOp<FieldT, MemPtr>::s_ctx{nullptr, 0};
+
+template <typename FieldT, FieldT particle_data::*MemPtr>
+const ghost_writeback_callback ParticleMaxOp<FieldT, MemPtr>::callback = {
+    sizeof(typename ParticleMaxOp<FieldT, MemPtr>::Delta),
+    & ParticleMaxOp<FieldT, MemPtr>::snapshot_fn,
+    & ParticleMaxOp<FieldT, MemPtr>::delta_for_ghost_fn,
+    & ParticleMaxOp<FieldT, MemPtr>::pack_fn,
+    & ParticleMaxOp<FieldT, MemPtr>::apply_fn,
+    & ParticleMaxOp<FieldT, MemPtr>::cleanup_fn,
+    & ParticleMaxOp<FieldT, MemPtr>::s_ctx,
+};
+
+/* GasAddOp — snapshot-diff additive reverse-comm for any arithmetic field
+ * on gas_cell_data. Snapshot pre-kernel; pack post-kernel delta = post -
+ * snapshot; home applies +=. Used by sink_feed for
+ * CellP[j].Injected_Sink_Energy (additive across multi-rank contributors). */
+template <typename FieldT, FieldT gas_cell_data::*MemPtr>
+struct GasAddOp {
+    static_assert(std::is_arithmetic<FieldT>::value,
+                  "GHOST_WRITEBACK_GAS_ADD requires an arithmetic scalar field");
+
+    struct Ctx {
+        FieldT *snap;
+        int     num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int    home_index;
+        FieldT delta;
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (FieldT*) malloc(num_ghosts * sizeof(FieldT));
+        for (int g = 0; g < num_ghosts; g++) {
+            c->snap[g] = CellP[num_local + g].*MemPtr;
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        return (CellP[num_local + g].*MemPtr != c->snap[g]) ? 1 : 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        d->delta      = CellP[num_local + g].*MemPtr - c->snap[g];
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        CellP[d->home_index].*MemPtr += d->delta;
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename FieldT, FieldT gas_cell_data::*MemPtr>
+typename GasAddOp<FieldT, MemPtr>::Ctx
+GasAddOp<FieldT, MemPtr>::s_ctx{nullptr, 0};
+
+template <typename FieldT, FieldT gas_cell_data::*MemPtr>
+const ghost_writeback_callback GasAddOp<FieldT, MemPtr>::callback = {
+    sizeof(typename GasAddOp<FieldT, MemPtr>::Delta),
+    & GasAddOp<FieldT, MemPtr>::snapshot_fn,
+    & GasAddOp<FieldT, MemPtr>::delta_for_ghost_fn,
+    & GasAddOp<FieldT, MemPtr>::pack_fn,
+    & GasAddOp<FieldT, MemPtr>::apply_fn,
+    & GasAddOp<FieldT, MemPtr>::cleanup_fn,
+    & GasAddOp<FieldT, MemPtr>::s_ctx,
+};
+
 } /* namespace gw_detail */
 
 /* ============================================================================
@@ -135,6 +284,16 @@ const ghost_writeback_callback ParticleMinOp<FieldT, MemPtr>::callback = {
 #define GHOST_WRITEBACK_PARTICLE_MIN(field)                                   \
     & ::gw_detail::ParticleMinOp<                                             \
         decltype(particle_data::field), &particle_data::field                 \
+      >::callback,
+
+#define GHOST_WRITEBACK_PARTICLE_MAX(field)                                   \
+    & ::gw_detail::ParticleMaxOp<                                             \
+        decltype(particle_data::field), &particle_data::field                 \
+      >::callback,
+
+#define GHOST_WRITEBACK_GAS_ADD(field)                                        \
+    & ::gw_detail::GasAddOp<                                                  \
+        decltype(gas_cell_data::field), &gas_cell_data::field                 \
       >::callback,
 
 /* Bundle assembly. BUNDLE_BEGIN(loop) opens an anonymous-namespace block
