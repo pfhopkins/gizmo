@@ -474,6 +474,10 @@ struct SinkEnv1Spec {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
+    /* sink_env1 uses base DeviceContext unchanged. Specs that need host-
+     * staged per-active state (e.g., sink_feed) declare a derived
+     * DeviceContext + populate_device_context per Phase 4.A.0. */
+    using DeviceContext  = NeighborLoopDeviceContextBase;
 
     /* ====================================================================
      * DIAGNOSTICS — env-gated; safe to ignore for physics edits.

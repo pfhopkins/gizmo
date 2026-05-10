@@ -794,8 +794,8 @@ static void lazy_drift_candidates(std::vector<std::vector<int>>& per_active_cand
  * Same KOKKOS_INLINE_FUNCTION Spec::load_neighbor + Spec::pair_kernel either
  * way.
  */
-template <typename Spec>
-static void evaluate_pairs_post_drift(const NeighborLoopDeviceContextBase& ctx,
+template <typename Spec, typename DeviceCtx>
+static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                                        const typename Spec::ActiveData *actives,
                                        int N,
                                        const std::vector<std::vector<int>>& per_active_cands,
@@ -839,10 +839,10 @@ static void evaluate_pairs_post_drift(const NeighborLoopDeviceContextBase& ctx,
  * epoch. (Codex nuance: this is NOT the same epoch as Mode A's device-staged
  * load_active post-NGL-build; documented at run_neighbor_loop dispatch site.)
  */
-template <typename Spec>
+template <typename Spec, typename DeviceCtx>
 static void build_self_actives_host_pre_drift(
     const neighbor_loop_args& args,
-    const NeighborLoopDeviceContextBase& ctx,
+    const DeviceCtx& ctx,
     const double *radii,
     const typename Spec::CallScalars& cs,
     typename Spec::ActiveData *actives_out)
@@ -906,7 +906,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
-    using DeviceCtx  = NeighborLoopDeviceContextBase;
+    using DeviceCtx  = typename Spec::DeviceContext;
 
     const int N = args.num_active;
     if(N <= 0) {
@@ -925,6 +925,14 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     ctx.P         = args.P;
     ctx.CellP     = args.CellP;
     ctx.num_total = args.num_total;
+    static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
+                  "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
+    static_assert(std::is_trivially_copyable<DeviceCtx>::value,
+                  "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
+    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
+        Spec::populate_device_context(args, ctx);
+    }
+    NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
 
     /* Freeze active snapshots host-side BEFORE drift. */
     std::vector<ActiveData> actives(N);
@@ -1009,7 +1017,7 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
-    using DeviceCtx  = NeighborLoopDeviceContextBase;
+    using DeviceCtx  = typename Spec::DeviceContext;
 
     const int N = args.num_active;
     if(N <= 0) { return; }
@@ -1021,6 +1029,14 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
     ctx.P         = args.P;
     ctx.CellP     = args.CellP;
     ctx.num_total = args.num_total;
+    static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
+                  "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
+    static_assert(std::is_trivially_copyable<DeviceCtx>::value,
+                  "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
+    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
+        Spec::populate_device_context(args, ctx);
+    }
+    NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
 
     /* Freeze actives BEFORE drift (same snapshot for tree and brute). */
     std::vector<ActiveData> actives(N);
@@ -1121,7 +1137,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     using AccumData     = typename Spec::AccumData;
     using Envelope      = NlrQueryEnvelope<ActiveData>;
     using ReplyEnvelope = NlrReplyEnvelope<AccumData>;
-    using DeviceCtx     = NeighborLoopDeviceContextBase;
+    using DeviceCtx     = typename Spec::DeviceContext;
 
     static_assert(std::is_trivially_copyable<Envelope>::value,
         "NlrQueryEnvelope must be trivially-copyable for byte-level MPI transfer");
@@ -1139,6 +1155,14 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     ctx.P         = args.P;
     ctx.CellP     = args.CellP;
     ctx.num_total = args.num_total;
+    static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
+                  "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
+    static_assert(std::is_trivially_copyable<DeviceCtx>::value,
+                  "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
+    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
+        Spec::populate_device_context(args, ctx);
+    }
+    NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
 
     /* Freeze actives host-side pre-drift (same snapshot used for self-pair
      * AND for ship-to-peers; codex requirement to prevent self/remote epoch
@@ -1401,7 +1425,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     using ScatterData  = typename Spec::ScatterData;
     using NeighborData = typename Spec::NeighborData;
     using CallScalars  = typename Spec::CallScalars;
-    using DeviceCtx    = NeighborLoopDeviceContextBase;
+    using DeviceCtx    = typename Spec::DeviceContext;
 
     const int N = args.num_active;
     if(N <= 0) {
@@ -1455,11 +1479,21 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     AccumData *d_accums = (AccumData *)
         Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(AccumData));
 
-    /* Build DeviceContext (base only in 3c.1; future specs may extend). */
+    /* Build DeviceContext. Specs that extend Spec::DeviceContext beyond
+     * NeighborLoopDeviceContextBase get populate_device_context invoked
+     * here (Phase 4.A.0); base-only Specs skip the call (trait check). */
     DeviceCtx ctx;
     ctx.P         = P_gpu;
     ctx.CellP     = CellP_gpu;
     ctx.num_total = args.num_total;
+    static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
+                  "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
+    static_assert(std::is_trivially_copyable<DeviceCtx>::value,
+                  "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
+    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
+        Spec::populate_device_context(args, ctx);
+    }
+    NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
 
     /* (3) Device, post-NGL-build: stage ActiveData. Same device epoch as
      * the legacy GPU lambda's q-packing. d_active is gnl-resident. */

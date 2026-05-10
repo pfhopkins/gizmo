@@ -300,6 +300,96 @@ struct NlrCommonScalars {
 
 NlrCommonScalars nlr_common_scalars_from_all(void);
 
+/* Forward declaration — full struct neighbor_loop_args is defined later in
+ * this header. The DeviceContext trait helpers below need it as a parameter
+ * type only (no member access), so the forward decl is sufficient. */
+struct neighbor_loop_args;
+
+/* ============================================================================
+ * DeviceContext extension trait (Phase 4.A.0)
+ *
+ * Detects whether a Spec extends DeviceContext beyond NeighborLoopDeviceContextBase.
+ * When true, the runner invokes Spec::populate_device_context(args, ctx) after
+ * the base members (P, CellP, num_total) are initialised, letting the Spec
+ * stash UVM-resident pointers (e.g., per-active host-staged input buffers)
+ * into the extended ctx for device-side load_active / load_neighbor / pair_kernel.
+ * After the runner's evaluate phase completes, the runner invokes
+ * Spec::cleanup_device_context(args, ctx) on every path so the Spec can free
+ * any UVM allocations made during populate. cleanup is also detected
+ * conditionally — if the Spec doesn't define it (e.g., a derived ctx that only
+ * caches an externally-owned pointer), the runner emits no call.
+ *
+ * When DeviceContext == base (sink_env1 and any Spec that uses base ctx
+ * unmodified), the runner skips both populate and cleanup — no behavior change
+ * vs. pre-4.A.0.
+ *
+ * Spec contract: every Spec MUST declare `using DeviceContext = ...;` (either
+ * the base or its own derived type). Specs whose DeviceContext derives MUST
+ * also provide `static void populate_device_context(const neighbor_loop_args&,
+ * DeviceContext&);` and SHOULD provide
+ * `static void cleanup_device_context(const neighbor_loop_args&, DeviceContext&);`
+ * if populate_device_context allocated owning resources. populate without
+ * cleanup is allowed when populate only caches pointers to memory whose
+ * lifetime is externally guaranteed (e.g., args.aux-rooted host buffers).
+ *
+ * Compile-time DeviceContext invariants:
+ *   - Spec::DeviceContext MUST publicly derive from NeighborLoopDeviceContextBase
+ *     (or BE the base) so the helper templates can pass it as `const Base&`
+ *     when convenient.
+ *   - Spec::DeviceContext MUST be trivially copyable: the runner captures it
+ *     by value into Kokkos device lambdas. No std::vector, no owning smart
+ *     pointers, no objects with non-trivial copy / dtor.
+ * Both invariants are checked by static_assert at the runner call sites.
+ * ========================================================================== */
+template <typename Spec>
+struct nlr_spec_has_extended_device_context {
+    static constexpr bool value =
+        !std::is_same<typename Spec::DeviceContext,
+                      NeighborLoopDeviceContextBase>::value;
+};
+
+template <typename Spec>
+constexpr bool nlr_spec_has_extended_device_context_v =
+    nlr_spec_has_extended_device_context<Spec>::value;
+
+/* SFINAE detection of optional Spec::cleanup_device_context. Returns false
+ * for Specs that don't define it; the runner uses if constexpr to skip the
+ * call when absent. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_cleanup_device_context : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_cleanup_device_context<
+    Spec,
+    std::void_t<decltype(Spec::cleanup_device_context(
+        std::declval<const neighbor_loop_args&>(),
+        std::declval<typename Spec::DeviceContext&>()))>>
+    : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_has_cleanup_device_context_v =
+    nlr_spec_has_cleanup_device_context<Spec>::value;
+
+/* RAII cleanup guard for the runner's DeviceContext. Construct one right
+ * after Spec::populate_device_context returns; destruction at function exit
+ * (any path) conditionally invokes Spec::cleanup_device_context if the Spec
+ * defined one. No-op for base-ctx Specs. */
+template <typename Spec>
+struct NlrDeviceContextCleanupGuard {
+    const neighbor_loop_args& args;
+    typename Spec::DeviceContext& ctx;
+    NlrDeviceContextCleanupGuard(const neighbor_loop_args& a,
+                                  typename Spec::DeviceContext& c)
+        : args(a), ctx(c) {}
+    NlrDeviceContextCleanupGuard(const NlrDeviceContextCleanupGuard&) = delete;
+    NlrDeviceContextCleanupGuard& operator=(const NlrDeviceContextCleanupGuard&) = delete;
+    ~NlrDeviceContextCleanupGuard() {
+        if constexpr (nlr_spec_has_cleanup_device_context_v<Spec>) {
+            Spec::cleanup_device_context(args, ctx);
+        }
+    }
+};
+
 /* ============================================================================
  * Iteration driver
  * ========================================================================== */
@@ -374,6 +464,25 @@ enum class DispatchPath : int {
  *     using  IdentityFields = NoIdentity;      // see runner header for non-default
  *     using  IterControl   = NotIterative;
  *
+ *     // (6b) DeviceContext — REQUIRED. Most Specs declare base unchanged:
+ *     using  DeviceContext = NeighborLoopDeviceContextBase;
+ *     // To extend (e.g., Specs that need host-staged per-active UVM input
+ *     // arrays visible inside load_active / load_neighbor on device):
+ *     //   struct MyLoopDeviceContext : NeighborLoopDeviceContextBase {
+ *     //       const my_per_active_t *per_active_local;  // UVM
+ *     //   };
+ *     //   using DeviceContext = MyLoopDeviceContext;
+ *     // Then provide:
+ *     //   static void populate_device_context(const neighbor_loop_args& args,
+ *     //                                       DeviceContext& ctx);
+ *     //   static void cleanup_device_context (const neighbor_loop_args& args,
+ *     //                                       DeviceContext& ctx);   // optional;
+ *     //                                       only required if populate
+ *     //                                       allocated owning resources.
+ *     // Compile-time invariants enforced by static_assert in the runner:
+ *     //   - DeviceContext publicly derives from (or IS) NeighborLoopDeviceContextBase
+ *     //   - DeviceContext is trivially copyable (captured by value into Kokkos lambdas)
+ *
  *     // (7) Per-active aux passed by caller through neighbor_loop_args::aux
  *     struct Aux { my_loop_accum_t *out_buffer; };
  *
@@ -413,9 +522,8 @@ enum class DispatchPath : int {
  *     // ...writeback variants as needed
  *
  *     // ============ ENGINE APPARATUS ============
- *     // Optional: extended device context (rare). If defined, also provide
- *     // populate_device_context. Default = NeighborLoopDeviceContextBase.
- *     // using DeviceContext = MyLoopDeviceContext;
+ *     // (DeviceContext declaration is part of the REQUIRED block above —
+ *     //  see (6b) earlier in this skeleton.)
  *
  *     // Optional: per-loop dispatch-threshold constants. These are
  *     // code-level dispatch policy for the loop (chosen alongside the
