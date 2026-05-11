@@ -163,15 +163,35 @@
 #include <type_traits>
 #include "mode_b_local_walker.h"  /* SearchMode, RadiusPolicy already declared */
 
-/* Fallback definition for KOKKOS_INLINE_FUNCTION when this header is consumed
- * by a non-GPU TU (compiled with plain mpicxx, e.g. mesh/ghost_writeback.cc).
- * GPU TUs include <Kokkos_Core.hpp> themselves before runner.h, so the macro
- * is already defined with __host__ __device__ attributes by the time this
- * fallback is checked — the #ifndef guard skips re-defining. Without this
- * fallback, NeighborLoopDeviceContextBase::particle_type below would refer to
- * an undefined macro from any consumer that hasn't included Kokkos_Core. */
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
+/* NLR_INLINE_FUNCTION — private host+device-callable macro for runner-owned
+ * accessors (currently just NeighborLoopDeviceContextBase::particle_type).
+ *
+ * Aliases to KOKKOS_INLINE_FUNCTION when the consuming TU has already
+ * included <Kokkos_Core.hpp> (true of all GPU TUs in this codebase: they
+ * include Kokkos_Core.hpp before any header chain that pulls runner.h);
+ * otherwise falls back to plain `inline` (host-only).
+ *
+ * Why NOT a fallback `#define KOKKOS_INLINE_FUNCTION inline` (codex round-6
+ * footgun): defining the global Kokkos macro to plain `inline` from this
+ * header poisons future includes of <Kokkos_Core.hpp> — Kokkos guards its
+ * own definition with `#ifndef`, so a misordered include (runner.h first,
+ * then Kokkos_Core.hpp) leaves KOKKOS_INLINE_FUNCTION permanently
+ * mis-defined as plain inline for the rest of compilation. Every Kokkos-
+ * style accessor in that TU would silently become host-only. The
+ * NLR_INLINE_FUNCTION indirection avoids the global poisoning: only
+ * runner-tagged accessors are affected by the fallback, and only in TUs
+ * that include runner.h before Kokkos (i.e., currently never).
+ *
+ * Audit invariant: every GPU TU including this header MUST include
+ * <Kokkos_Core.hpp> first. Verified true for all 8 current GPU consumers
+ * (gravity/ags_density_gpu.cc, gravity/ags_force_gpu.cc, hydro/density_gpu.cc,
+ * sinks/sink_feed_loop.cc, sinks/sink_env2_loop.cc, sinks/sink_swk_loop.cc,
+ * mesh/neighbor_loop_runner.cc, mesh/test_iter_harness_loop.cc).
+ */
+#ifdef KOKKOS_INLINE_FUNCTION
+#define NLR_INLINE_FUNCTION KOKKOS_INLINE_FUNCTION
+#else
+#define NLR_INLINE_FUNCTION inline
 #endif
 #include "gpu_neighbor_list.h"    /* gpu_neighbor_list_t (NlrIterDriver Mode A fields, step 2c.2) */
 
@@ -286,11 +306,12 @@ struct NeighborLoopDeviceContextBase {
      * NEVER reads global P (preserves guideline #3: no globals on Mode B
      * tiny-N path).
      *
-     * host+device callable (codex round-5): the partition-key assertion in
-     * run_neighbor_loop_iterative calls this from host driver code, and
-     * future Specs may call it from device-side helpers via
-     * Spec::active_subgroup_key. */
-    KOKKOS_INLINE_FUNCTION
+     * host+device callable (codex round-5) via NLR_INLINE_FUNCTION, which
+     * aliases to KOKKOS_INLINE_FUNCTION when Kokkos is available. The
+     * partition-key assertion in run_neighbor_loop_iterative calls this
+     * from host driver code, and future Specs may call it from device-side
+     * helpers via Spec::active_subgroup_key. */
+    NLR_INLINE_FUNCTION
     short int particle_type(int i) const { return P[i].Type; }
 };
 
