@@ -443,7 +443,7 @@ void ghost_writeback_wakeup(void)
     int wakeups_applied = 0;
     for(int d = 0; d < total_recv; d++) {
         int idx = recv_buf[d].home_index;
-        if(recv_buf[d].wakeup > P[idx].wakeup) {
+        if(recv_buf[d].wakeup != 0 && recv_buf[d].wakeup > P[idx].wakeup) {
             P[idx].wakeup = recv_buf[d].wakeup;
             wakeups_applied++;
         }
@@ -467,7 +467,7 @@ void ghost_writeback_wakeup(void)
  *   - Vel delta (ADD)    [always present — AGS core carries Vel field]
  *   - dp delta  (ADD)    [populated under DM_SIDM]
  *   - NInteractions  (ADD)  [DM_SIDM only]
- *   - wakeup          (MAX in {0,-1}) [CBE + SIDM wakeup condition]
+ *   - wakeup          (MAX, hydro-convention TimeBin+1) [CBE + SIDM wakeup condition]
  *
  * Zero version: snapshots ghost Vel/dp/NInteractions so post-kernel values
  * ARE the per-timestep deltas. Wakeup is zeroed outright. */

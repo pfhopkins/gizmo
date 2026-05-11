@@ -34,8 +34,9 @@ struct ags_density_gpu_out {
    - i_active_host: indices of searcher particles (all share j_type_bitmask)
    - i_radii_host:  per-searcher AGS_KernelRadius values
    - j_type_bitmask: shared neighbor-type bitmask for this group
-   Atomically writes P[j].wakeup = -1 for any neighbor that fires the wakeup
-   condition; writes NeedToWakeupParticles_local = 1 if any wakeup occurred. */
+   Atomically MAXes P[j].wakeup with (active i's TimeBin + 1, hydro convention)
+   for any neighbor that fires the wakeup condition; writes
+   NeedToWakeupParticles_local = 1 if any wakeup occurred. */
 void ags_density_evaluate_gpu(struct particle_data *P_host,
                               struct gas_cell_data *CellP_host,
                               int num_total,

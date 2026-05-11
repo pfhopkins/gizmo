@@ -121,25 +121,30 @@ typedef struct ags_force_gpu_out ags_force_dev_out_t;
 
 
 /* ================================================================
-   GPU AGS-force evaluator (LATENT for fire_m11i — SIDM-only j-writes)
+   GPU AGS-force evaluator
    ----------------------------------------------------------------
    Kernel writes (host-visible, by index):
      i-side: kout[aa] (per-active output: AGS-corrections, gravitational
                        softening sums)
      j-side (neighbors, indexed by j = neighbors[nn]):
+       #if defined(CBE_INTEGRATOR)
+       P_gpu[j].wakeup                        — atomic_max(local.TimeBin+1)
+                                                  (CBE wakeup; hydro convention)
+       #endif
        #if defined(DM_SIDM)
-       P_gpu[j].wakeup                        — atomic_store(-1)  (SIDM scatter)
+       P_gpu[j].wakeup                        — atomic_max(local.TimeBin+1)
+                                                  (SIDM wakeup; hydro convention)
        P_gpu[j].Vel[kv]                       — atomic_add (k = 0..2)
        P_gpu[j].dp[kv]                        — atomic_add (k = 0..2)
        P_gpu[j].NInteractions                 — atomic_add(1)
        #endif
-     Without DM_SIDM: NO j-side writes.
+     Without DM_SIDM and without CBE_INTEGRATOR: NO j-side writes.
 
-   Sparse-scatter target:
-     - WITH DM_SIDM: walk neighbors[] CSR, scatter the four fields above
-       (or per-touched-j struct copy of P).
-     - WITHOUT (fire_m11i): delete the full memcpy(P_host, P_gpu, num_total*...)
-       at line ~316 (Case 1).
+   Sparse-scatter target (legacy, pre-UVM):
+     - Under UVM-canonical particles (commit 0d9e74b4), P_gpu/P_host are pointer
+       aliases of the same SharedSpace allocation; device atomic writes ARE the
+       host writes. The DM_SIDM-gated sparse scatter below is a no-op under UVM
+       but preserved for documentation / discrete-memory fallback.
    ================================================================ */
 void ags_force_evaluate_gpu(struct particle_data *P_host,
                             int num_total,
@@ -228,6 +233,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
             local.Vel = kp[ii].Vel;
             local.Type = kp[ii].Type;
             local.dtime = get_particle_timestep_in_physical(ii, kp);
+            short int local_TimeBin = kp[ii].TimeBin;  /* active i's bin; for hydro-convention wakeup write */
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
             local.V_i = get_particle_volume_ags_P(ii, kp);
             for(int a = 0; a < 3; a++) for(int b = 0; b < 3; b++) local.NV_T[a][b] = kp[ii].NV_T[a][b];
@@ -318,7 +324,9 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
                 {
                     CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(local, j, kp, kernel, out, tba_cap.v);
                     if(cbe_r.set_wakeup_j) {
-                        Kokkos::atomic_store(&kp[j].wakeup, (short int)-1);
+                        /* Hydro-convention wakeup (was -1; MAX-reverse-comm silently dropped). */
+                        short int wakeup_val = (short int)(local_TimeBin + 1);
+                        Kokkos::atomic_max(&kp[j].wakeup, wakeup_val);
                         Kokkos::atomic_store(need_wakeup, 1);
                     }
                 }
@@ -333,7 +341,9 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
                     SidmScatterResult sidm_r = sidm_core_flux_compute_pair(local, j, kp, kernel, out, geofactor, tba_cap.v);
                     if(sidm_r.scattered) {
                         if(sidm_r.set_wakeup_j) {
-                            Kokkos::atomic_store(&kp[j].wakeup, (short int)-1);
+                            /* Hydro-convention wakeup (was -1; MAX-reverse-comm silently dropped). */
+                            short int wakeup_val = (short int)(local_TimeBin + 1);
+                            Kokkos::atomic_max(&kp[j].wakeup, wakeup_val);
                             Kokkos::atomic_store(need_wakeup, 1);
                         }
                         for(int kv = 0; kv < 3; kv++) {
@@ -350,12 +360,32 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
         });
     }
 
-    /* Row 6b of arena-scope sweep: kernel-writes audit (a06e30ca) shows
-     * j-side writes ONLY under DM_SIDM (wakeup, Vel[kv], dp[kv], NInteractions
-     * — all atomic). Outside DM_SIDM (e.g. fire_m11i): kernel writes only
-     * per-active kout[aa]; the former full memcpy(P_host, P_gpu, num_total*...)
-     * was cargo-cult and is DELETED. Inside DM_SIDM: sparse scatter of touched
-     * j fields over gnl.neighbors[] (deep-copied to host since DEVICE_SPACE). */
+    /* Row 6b of arena-scope sweep (kernel-writes audit a06e30ca, updated
+     * post-047ed629 to reflect the CBE+hydro-convention wakeup fix):
+     *   j-side kernel writes:
+     *     - CBE_INTEGRATOR: P_gpu[j].wakeup            atomic_max(TimeBin+1)
+     *     - DM_SIDM:        P_gpu[j].wakeup            atomic_max(TimeBin+1)
+     *                       P_gpu[j].Vel[kv]           atomic_add
+     *                       P_gpu[j].dp[kv]            atomic_add
+     *                       P_gpu[j].NInteractions     atomic_add(1)
+     *     - Without DM_SIDM and without CBE_INTEGRATOR: NO j-side writes
+     *       (kernel writes only per-active kout[aa]).
+     *   The former full memcpy(P_host, P_gpu, num_total*...) was cargo-cult
+     *   and is DELETED.
+     *
+     *   Host visibility of j-side writes:
+     *     - Under UVM-canonical particles (current contract, commit 0d9e74b4):
+     *       P_host[j] and P_gpu[j] are aliases of the same SharedSpace
+     *       allocation. Device atomic writes ARE the host writes; no scatter
+     *       needed for ANY j-side fields. The DM_SIDM-gated sparse scatter
+     *       below is therefore a no-op under UVM (memcpy of identical
+     *       pointers); it is preserved as a documented fallback for any
+     *       future discrete-memory build path.
+     *     - If a non-UVM mode is ever resurrected, the DM_SIDM-gated scatter
+     *       would NOT cover CBE-only j-side wakeup writes — the gate would
+     *       need to be widened to `#if defined(DM_SIDM) || defined(CBE_INTEGRATOR)`.
+     *       Flagged here so the audit is explicit, not implicit.
+     */
     memcpy(out_host, d_out, num_active * sizeof(struct ags_force_gpu_out));
 #if defined(DM_SIDM)
     if(gnl.total_pairs > 0) {

@@ -4,7 +4,8 @@
  * — see project_tier_b_infra_scope.md for the partition-by-bitmask design.
  *
  * Ports the per-pair body at ags_rkern.cc:174-229 verbatim except for:
- *   - wakeup writes use Kokkos::atomic_store (not #pragma omp atomic)
+ *   - wakeup writes use Kokkos::atomic_max with hydro-convention (TimeBin+1)
+ *     value (not #pragma omp atomic, not -1 sentinel — see commit fix)
  *   - NeedToWakeupParticles_local gets atomic_or'd from the kernel
  *   - TimeBinActive[] is captured by value (TIMEBINS=60, negligible)
  *
@@ -128,6 +129,7 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
 
             Vec3<double> pos_i = kp[ii].Pos;
             Vec3<double> vel_i = kp[ii].Vel;   /* AGS uses P[i].Vel (non-gas side) */
+            short int local_TimeBin = kp[ii].TimeBin;  /* active i's bin; positive (isactive() excludes negated markers) */
 
             double Ngb = 0, DrkernNgb = 0, AGS_zeta = 0, AGS_vsig = 0, Particle_DivVel = 0;
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
@@ -173,7 +175,11 @@ void ags_density_evaluate_gpu(struct particle_data *P_host,
                     }
 #endif
                     if(wakeup_condition) {
-                        Kokkos::atomic_store(&kp[j].wakeup, (short int)-1);
+                        /* Hydro-convention wakeup: write active i's bin (TimeBin+1, positive)
+                         * so ghost_writeback_wakeup MAX reverse-comm propagates correctly across
+                         * ranks. Legacy wrote -1 here, which MAX-dropped vs home=0 — silent bug. */
+                        short int wakeup_val = (short int)(local_TimeBin + 1);
+                        Kokkos::atomic_max(&kp[j].wakeup, wakeup_val);
                         Kokkos::atomic_store(need_wakeup, 1);
                     }
 #endif
