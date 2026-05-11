@@ -513,6 +513,37 @@ void begrun(void)
                             The early sync at line 100 runs before init() sets All.SolarAbundances and other fields.
                             Without this re-sync, GPU TUs see stale All_dev with SolarAbundances[0]==0,
                             causing division-by-zero in gas_dust_heating_coeff on the first kick. */
+
+#ifdef GIZMO_NLR_ITER_HARNESS_TEST
+  /* Phase 4.B.0 step 3: synthetic iterative harness opt-in.
+   *
+   * KNOWN HARNESS LIMITATION (codex 2026-05-10 step-3 review):
+   * Iterative Mode A ghost-writeback reverse-comm CANNOT be validated
+   * from this begrun-end placement: at this point the simulation has
+   * not yet entered run() and the ghost-exchange/tree machinery isn't
+   * fully primed, so `gizmo_request_filtered_ghost_import_fresh`
+   * returns 0 ghosts regardless of where rank 0 places its actives in
+   * space (probe loop over 64 rank-1 candidates verified).
+   *
+   * The harness's IterHarnessGhostSpec subtest detects this case via
+   * its probe loop and emits VP 11 SKIP with a clear message rather
+   * than a misleading PASS or FAIL. Real Mode A reverse-comm coverage
+   * falls to ags_density 3d.4 (the first iterative+ghost_writeback
+   * production user). All other VPs (1, 2, 3, 4, 5, 7, 8, 9, 11
+   * ctx-reset-symmetry, 11 Mode B suppression+parity) ARE validated
+   * by the harness here.
+   *
+   * Future extension to make Mode A reverse-comm testable: move this
+   * invocation to core/run.cc after first-step setup, OR build a
+   * uniform mini-IC for the harness. Both are non-trivial; deferred. */
+  {
+    extern bool gizmo_nlr_iter_harness_run_enabled(void);
+    extern void run_iter_harness_tests(void);
+    if (gizmo_nlr_iter_harness_run_enabled()) {
+      run_iter_harness_tests();  /* never returns; endrun(0) inside */
+    }
+  }
+#endif
 }
 
 

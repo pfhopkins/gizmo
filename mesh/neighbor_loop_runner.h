@@ -159,8 +159,10 @@
 #define GIZMO_NEIGHBOR_LOOP_RUNNER_H
 
 #include <cstdint>
+#include <vector>
 #include <type_traits>
 #include "mode_b_local_walker.h"  /* SearchMode, RadiusPolicy already declared */
+#include "gpu_neighbor_list.h"    /* gpu_neighbor_list_t (NlrIterDriver Mode A fields, step 2c.2) */
 
 /* ============================================================================
  * Reused enums:
@@ -424,18 +426,144 @@ struct NlrDeviceContextCleanupGuard {
     }
 };
 
-/* ============================================================================
- * Iteration driver
- * ========================================================================== */
+/* RAII brute-pass guard (step 2c.4). Construct at entry of an oracle
+ * dispatch helper; destructor flips set_oracle_brute_pass(false) at scope
+ * exit even on mid-walk abort. SFINAE-no-op for Specs without
+ * Spec::set_oracle_brute_pass. Bound to the OWNING ctx_oracle reference
+ * — production ctx is NEVER touched. */
+template <typename Spec>
+struct NlrOracleBrutePassGuard {
+    typename Spec::DeviceContext& ctx_oracle;
+    bool toggled = false;
 
-struct NotIterative {};
-
-enum class IterStatus : int {
-    Converged = 0, Adjust = 1, NeedsMore = 2,
+    explicit NlrOracleBrutePassGuard(typename Spec::DeviceContext& c)
+        : ctx_oracle(c) {
+        if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+            Spec::set_oracle_brute_pass(ctx_oracle, true);
+            toggled = true;
+        }
+    }
+    ~NlrOracleBrutePassGuard() {
+        if (toggled) {
+            Spec::set_oracle_brute_pass(ctx_oracle, false);
+        }
+    }
+    NlrOracleBrutePassGuard(const NlrOracleBrutePassGuard&) = delete;
+    NlrOracleBrutePassGuard& operator=(const NlrOracleBrutePassGuard&) = delete;
 };
 
-struct IterControl {
+/* SFINAE detection of optional Spec::radius_tolerance (step 2c.4 — codex
+ * v3 Q2 semantic split: radius convergence tolerance is not the same
+ * semantic object as the accumulator comparison tolerance). Defaults to
+ * Spec::accum_tolerance when not declared — iterative Specs SHOULD declare
+ * their own value (ags_density's 3d.4 design will set it). */
+template <typename Spec, typename = void>
+struct nlr_spec_has_radius_tolerance : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_radius_tolerance<
+    Spec,
+    std::void_t<decltype(Spec::radius_tolerance)>> : std::true_type {};
+
+template <typename Spec>
+constexpr double nlr_spec_radius_tolerance_v =
+    nlr_spec_has_radius_tolerance<Spec>::value
+        ? static_cast<double>(Spec::radius_tolerance)
+        : static_cast<double>(Spec::accum_tolerance);
+
+/* Remote-helper evaluation mode (step 2c.4 SSOT guardrail). Replaces the
+ * boolean ORACLE template parameter on mode_b_remote_evaluate_into_buffer.
+ * (Distinct from RemoteEvalMode above, which is the Mode B comm strategy
+ * enum for callers; this one is the *helper*-internal mode selector.)
+ *
+ *   Production       — tree walk only; writes tree result into accums_out.
+ *                      Production iter dispatch + non-iter non-oracle.
+ *   OracleCompare    — tree + brute + internal compare (emit per-slot
+ *                      mismatches inline). Writes tree result into
+ *                      accums_out. Non-iter oracle wrapper only.
+ *   OracleBrutePass  — brute walk only against caller-owned brute-pass-
+ *                      guarded ctx; writes brute result into accums_out.
+ *                      Iterative oracle dispatch — caller-side per-iter
+ *                      4-thing compare handles divergence detection. */
+enum class RemoteHelperMode : int {
+    Production       = 0,
+    OracleCompare    = 1,
+    OracleBrutePass  = 2,
+};
+
+/* ============================================================================
+ * Iteration driver — Phase 4.B.0 contract (see OPEN_phase4_b0_iterative_design.md)
+ *
+ * Spec opts in by declaring `using IterControl = Iterative;`. NotIterative
+ * Specs (every Wave-1 sink loop today) declare nothing extra and the runner's
+ * iteration machinery is compile-time elided.
+ *
+ * ALL EXISTING SPECS DECLARE `using IterControl = NotIterative;` AND ARE
+ * UNCHANGED. The Iterative path is greenfield for 4.B.0+ ports.
+ * ========================================================================== */
+
+struct NotIterative {};                /* default marker; existing Specs */
+struct Iterative   {};                 /* opt-in marker for h-iteration loops */
+
+/* Per-active iteration outcome returned by Spec::after_iter (host-side, post
+ * AccumData reduction, before apply_active_writeback). */
+enum class IterStatus : int {
+    Converged    = 0,                  /* this active is done; runner removes from active_set */
+    NeedsMore    = 1,                  /* re-iterate; do NOT change radius */
+    AdjustRadius = 2,                  /* re-iterate WITH the new radius below */
+};
+
+struct IterResult {
     IterStatus status;
+    double     new_h_search;           /* honored only when status == AdjustRadius */
+};
+
+/* Empty marker for Specs that don't carry per-active state across iterations.
+ * Iterative Specs MUST declare `using IterScratch = ...;` explicitly — there
+ * is no magic default — but the empty form is `using IterScratch = NoIterScratch;`. */
+struct NoIterScratch {};
+
+/* SupportsSubgroups (v4.2 EXPLICIT trait):
+ *
+ * Multi-subgroup-using Specs (ags_density partitions actives by j_type_bitmask
+ * and runs one kernel per bm group within each iter; preserves legacy nesting
+ * `for iter` outer / `for bm` inner) declare `using SupportsSubgroups = std::true_type;`
+ * in the Spec body. Single-subgroup Specs (density, harness) declare nothing —
+ * default is `std::false_type`. The CALLER passes a 1-element `subgroups[]`
+ * list whose `j_type_bitmask` matches the loop's natural neighbor type mask.
+ * (If a future helper synthesizes the 1-element list from base
+ * `neighbor_loop_args` for callers who don't want to hand-fill it, that's a
+ * separate API — not part of step 1.)
+ *
+ * Runner runtime check (in the iterative driver, NOT yet wired in step 1):
+ * if `args.num_subgroups > 1 && !Spec::SupportsSubgroups::value`, hard-abort
+ * with a loud message naming the loop. This prevents silent contract drift
+ * (a Spec accidentally entering with multi-subgroup args without intending
+ * to support the legacy bm-loop semantics). */
+
+/* NlrSubgroup — one entry per j_type_bitmask group within an iterative call.
+ *
+ * Caller-filled (mirrors legacy gravity/ags_rkern.cc:115-145 partition + line
+ * 128 Allreduce-BOR on global_bm_presence). For single-subgroup loops
+ * (density, synthetic harness), caller passes a 1-element list with the
+ * loop's natural neighbor_type_mask.
+ *
+ * Collective-symmetry invariant (v4.1, v4.2 LOCKED): subgroups[] length and
+ * ordering — meaning each subgroups[i].j_type_bitmask value at each index i —
+ * MUST be identical across all ranks. A rank may have num_active_local = 0
+ * for some entries (its empty bm keys), but the entry MUST be present so the
+ * per-iter `for sg in subgroups[]` loop fires the same number of
+ * ghost_writeback_* collectives on every rank. Caller-side empty short-
+ * circuit: if the global active total across the union is 0, caller MUST
+ * skip run_neighbor_loop_iterative entirely; entering with num_subgroups = 0
+ * is a caller bug (runner asserts num_subgroups >= 1 at entry). */
+struct NlrSubgroup {
+    unsigned int j_type_bitmask;       /* per-subgroup neighbor type mask */
+    int         *active_indices;       /* host-staged; sub_actives for this bm */
+    int          num_active_local;     /* may be 0 on this rank */
+    /* Runner-derived per call (filled by NlrIterDriver, NOT by the caller):
+     *   per-sub_active radii UVM, active_set UVM, per-subgroup CSR cache
+     *   on Mode A, oracle scratch arrays. Out-of-band from this struct in
+     *   step 1; concrete shapes land with the driver in step 2. */
 };
 
 /* ============================================================================
@@ -555,6 +683,53 @@ enum class DispatchPath : int {
  *                                             const NeighborLoopPlan&);
  *     // ...writeback variants as needed
  *
+ *     // ============ ITERATIVE BLOCK (only when IterControl = Iterative) ============
+ *     //
+ *     // ALL of the following REQUIRED for `using IterControl = Iterative;` Specs;
+ *     // ALL of the following ABSENT for `using IterControl = NotIterative;` Specs.
+ *     //
+ *     // using IterScratch — per-active POD that PERSISTS across iterations of a
+ *     //   single iterative call. Empty form: `using IterScratch = NoIterScratch;`
+ *     //   (no magic default; explicit declaration required). See TRAP 8.
+ *     using  IterScratch = NoIterScratch;       // or struct IterScratch { ...; };
+ *
+ *     // max_iters — hard cap. Runner default behavior on exceedance is
+ *     //   endrun(1155) + diagnostic. Override via on_max_iter_exceeded if a
+ *     //   port's legacy policy differs (rare; density / ags_density already
+ *     //   endrun in legacy).
+ *     static constexpr int max_iters = 64;
+ *
+ *     // mode_a_csr_buffer_factor — Mode A oversized-CSR buffer factor for
+ *     //   h-iteration reuse. REQUIRED (no default magic); each port states
+ *     //   explicitly. Density legacy = 1.3 (DENSITY_H_BUFFER_FACTOR). Synthetic
+ *     //   harness uses 1.05 to force rebuild paths. Static_assert > 1.0.
+ *     static constexpr double mode_a_csr_buffer_factor = 1.3;
+ *
+ *     // SupportsSubgroups (OPTIONAL, default std::false_type) — declare
+ *     //   `std::true_type` if the loop legitimately partitions actives by
+ *     //   j_type_bitmask (ags_density). Single-subgroup loops (density,
+ *     //   harness) omit this. Runner runtime check: num_subgroups > 1
+ *     //   without this trait = hard abort. See §0.1 of the design doc.
+ *     // using SupportsSubgroups = std::true_type;          // ags_density only
+ *
+ *     // after_iter — REQUIRED. Runs HOST-side per active after AccumData
+ *     //   reduction, before apply_active_writeback. Returns IterResult to
+ *     //   tell the runner what to do next for this active.
+ *     static IterResult after_iter(const AfterIterContext<MyLoopSpec>& ctx,
+ *                                   const AccumData& accum);
+ *
+ *     // after_iter_global — OPTIONAL. Per-rank post-iter side-effect hook.
+ *     //   ===== HOST-ONLY, NO-MPI, LOCAL-RANK-ONLY (TRAP 7) =====
+ *     //   Use case: ags_density's NeedToWakeupParticles_local OR-from-counter.
+ *     //   Default if absent: runner-supplied no-op.
+ *     // static void after_iter_global(const neighbor_loop_args& args,
+ *     //                               const NlrIterDriver<MyLoopSpec>& drv);
+ *
+ *     // on_max_iter_exceeded — OPTIONAL. Default = runner-supplied
+ *     //   endrun(1155) + diagnostic. Override only when port's legacy policy
+ *     //   differs and Phil has approved.
+ *     // static void on_max_iter_exceeded(const NlrIterDriver<MyLoopSpec>& drv);
+ *
  *     // ============ ENGINE APPARATUS ============
  *     // (DeviceContext declaration is part of the REQUIRED block above —
  *     //  see (6b) earlier in this skeleton.)
@@ -604,6 +779,44 @@ enum class DispatchPath : int {
  *   TRAP 6: diagnostic_dump_neighbor_list is called once per active, in slot
  *           order 0..num_active-1. State machines that rely on slot ordering
  *           (e.g. first-call-only gates) are safe.
+ *
+ *   TRAP 7: after_iter_global is HOST-ONLY, NO-MPI, LOCAL-RANK-ONLY. NEVER
+ *           issue MPI inside it (no MPI_Allreduce / Bcast / Send / Recv /
+ *           collective of any kind) — the runner issues the per-iter
+ *           Allreduce AFTER the hook returns. Calling MPI inside risks
+ *           deadlock and breaks the runner's collective-symmetry contract.
+ *           Doc-only enforcement (no static check possible).
+ *           Cross-rank iter symmetry IS preserved (v4.1 §0.2 invariant):
+ *           every rank enters the same outer iter count for the call,
+ *           INCLUDING empty ranks, until the runner's Allreduce on total
+ *           active count breaks the loop. The hook fires once per outer
+ *           iter on every rank. What VARIES per rank is the local active
+ *           count and which slots are still in the active_set — NOT the
+ *           iter count itself. Read those local-only quantities freely;
+ *           don't broadcast / Allreduce them inside the hook.
+ *
+ *   TRAP 8: IterScratch is the ONLY per-active state that PERSISTS across
+ *           iterations of a single iterative call. AccumData is byte-zeroed
+ *           pre-each-iter via Spec::zero_accum (same channel as today).
+ *           radii[slot] is mutated by the runner only (from Spec::search_radius
+ *           at iter 0 / from IterResult::new_h_search on AdjustRadius);
+ *           Specs MUST NOT touch radii directly. IterScratch is host-only,
+ *           visible inside after_iter and after_iter_global; NOT inside
+ *           pair_kernel. Conflating AccumData and IterScratch is the classic
+ *           density-iteration quiet bug; the type system prevents it here.
+ *
+ *   TRAP 9: SupportsSubgroups is OPT-IN EXPLICIT (default false_type).
+ *           Multi-subgroup Specs (ags_density partitions actives by
+ *           j_type_bitmask) MUST declare `using SupportsSubgroups = std::true_type;`
+ *           — the runner runtime-aborts loudly if it sees num_subgroups > 1
+ *           without the trait. Single-subgroup Specs (density, harness)
+ *           omit the trait; the CALLER passes a 1-element subgroups[] list
+ *           with the loop's natural neighbor type mask.
+ *           Caller-side: subgroups[] length AND ordering MUST match across
+ *           ranks; per-rank num_active_local = 0 for some entries is OK
+ *           (collective-symmetry filler), but the entry MUST be present.
+ *           Caller-side empty short-circuit: if global active total = 0,
+ *           caller MUST skip the runner entirely.
  * ========================================================================== */
 
 /* ============================================================================
@@ -660,6 +873,28 @@ struct neighbor_loop_args {
     double ghost_safety_factor;  /* caller fills via gizmo_ghost_safety_factor()
                                   * unconditionally; runner uses ONLY on paths
                                   * that call gizmo_request_filtered_ghost_import. */
+};
+
+/* Iterative-call args — extends neighbor_loop_args with subgroup batch.
+ *
+ * Used only for `using IterControl = Iterative;` Specs. NotIterative loops
+ * pass plain `neighbor_loop_args` and the runner never sees a subgroups list.
+ *
+ * The caller (e.g., gravity/ags_rkern.cc port for 3d.4) builds subgroups[]
+ * from the global_bm_presence union via Allreduce-BOR, mirroring legacy
+ * gravity/ags_rkern.cc:115-128 exactly. For loops without bm partitioning
+ * (hydro/density.cc port for 3d.5; the synthetic harness), the caller
+ * passes a 1-element subgroup list whose j_type_bitmask matches the loop's
+ * natural neighbor_type_mask.
+ *
+ * active_list / num_active in the base struct are the UNION across all
+ * subgroups — used for caller-side helpers (nlr_build_active_list etc.).
+ * Per-subgroup actives live inside subgroups[i].active_indices /
+ * num_active_local. The runner does NOT use the union list for dispatch;
+ * it walks the subgroups list. */
+struct neighbor_loop_args_iterative : neighbor_loop_args {
+    NlrSubgroup *subgroups;          /* host array, length num_subgroups */
+    int          num_subgroups;      /* >= 1; caller short-circuits if 0 globally */
 };
 
 /* ============================================================================
@@ -845,14 +1080,444 @@ template <typename Spec>
 void run_neighbor_loop(const neighbor_loop_args& args);
 
 /* ============================================================================
- * Compile-time spec consistency checks (used at the top of run_neighbor_loop):
+ * Iterative entry point (Phase 4.B.0+, only for `using IterControl = Iterative;`)
+ *
+ * Caller fills `neighbor_loop_args_iterative` (extends neighbor_loop_args with
+ * subgroups[] + num_subgroups). Caller is responsible for the per-iter
+ * collective symmetry of subgroups[] across ranks (length + ordering match;
+ * see TRAP 9 + design doc §0.1). NotIterative Specs MUST NOT call this entry;
+ * they call run_neighbor_loop above.
+ *
+ * Body lands in step 2 of §12 (driver). Step 1 (this commit) provides the
+ * declaration only — call sites can compile against the API while step 2 is
+ * in review.
+ * ========================================================================== */
+template <typename Spec>
+void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args);
+
+/* ============================================================================
+ * NlrIterDriver<Spec> — runner-internal iterative state owner (Phase 4.B.0+).
+ *
+ * Owns ALL per-call state for one `run_neighbor_loop_iterative<Spec>` call:
+ *
+ *   ============ LIFETIME / ZEROING CONTRACT (codex v4.3 step-2a constraints) ============
+ *
+ *   Per-active arrays are keyed by (subgroup_index, subgroup_slot). Every
+ *   active particle belongs to exactly ONE subgroup; that subgroup's
+ *   `active_set` and per-active arrays are the only place its state lives.
+ *
+ *   IterScratch (per-active POD)
+ *       - Allocated ONCE per call, at iter 0, before any subgroup dispatch.
+ *       - Byte-zeroed ONCE before iter 0.
+ *       - PERSISTS across iterations — the runner NEVER zeros it between
+ *         iters. Spec::after_iter mutates it freely; that's the carry-
+ *         forward channel for bisection state, history, etc.
+ *       - Freed at end of call.
+ *
+ *   AccumData (per-active POD)
+ *       - Same key shape as IterScratch (subgroup_index, subgroup_slot).
+ *       - Zeroed via `Spec::zero_accum` BEFORE EACH iteration's pair_kernel
+ *         dispatch (NOT once per call). Resets per iter so each iter's
+ *         pair_kernel sees a fresh accumulator. This is the classic
+ *         density-iteration contract — stale AccumData across iters is
+ *         the quiet bug the type system prevents.
+ *       - Lives until end of call (final iter's contents are what
+ *         apply_active_writeback reads).
+ *
+ *   radii (per-active double, UVM)
+ *       - Initialized at iter 0 from Spec::search_radius.
+ *       - Mutated by RUNNER ONLY, ONLY in response to a Spec::after_iter
+ *         returning IterStatus::AdjustRadius with new_h_search. Specs
+ *         MUST NOT touch radii directly. h_search_current in
+ *         AfterIterContext is a value-snapshot read FROM radii at hook
+ *         entry — NOT a reference, NOT mutable through the context.
+ *
+ *   active_set (per-subgroup int array, UVM)
+ *       - Initialized at iter 0 to {0..num_active_local-1} for each subgroup.
+ *       - Compacted (Converged slots removed) AFTER each iter's
+ *         after_iter pass. Slot identity preserved: the int values are
+ *         the subgroup-local slot indices, never re-keyed.
+ *
+ *   CallScalars (per-call POD)
+ *       - Captured ONCE via `Spec::populate_call_scalars(args)` at call
+ *         entry. The DRIVER OWNS the CallScalars value for the whole
+ *         iterative call (NOT a stack temporary inside any subgroup
+ *         loop). All hooks (pair_kernel via load_active, after_iter via
+ *         AfterIterContext, after_iter_global via NlrIterDriver const&)
+ *         see the SAME object lifetime.
+ *
+ *   ============ Mode-A-only fields (NOT touched on Mode B paths) ============
+ *
+ *   csr_cache       — per-subgroup cached oversized CSR + offset_lookup +
+ *                     buffered_h. Built at iter 0; rebuilt on h-exceeds-buffer
+ *                     trigger (mirrors hydro/density_gpu.cc:152-188 legacy).
+ *
+ *   ============ Oracle-only fields (only when GIZMO_NLR_ORACLE=1) ============
+ *
+ *   Separate radii_oracle / scratch_oracle / accum_oracle arrays so brute-
+ *   force trajectory is independent of production. Brute dry-run runs FIRST
+ *   per iter, production SECOND (extends 3d.3 fix from session 24).
+ *
+ *   ============ Step 2a vs 2b ============
+ *
+ *   Step 2a (this commit): struct definition + lifetime contracts above.
+ *   Method bodies STUBBED — `run_neighbor_loop_iterative<Spec>` aborts at
+ *   entry before allocating or touching any field below. The struct
+ *   declares fields so the API contract (AfterIterContext referencing
+ *   NlrIterDriver) is concrete for codex review.
+ *
+ *   Step 2b: NlrIterDriver method bodies + run_iterative_mode_a /
+ *   run_iterative_mode_b bodies. Allocation, subgroup loop, MPI Allreduce,
+ *   per-iter ghost_writeback, oracle ordering all land in 2b.
+ * ========================================================================== */
+template <typename Spec>
+struct NlrIterDriver {
+    /* Driver-owned for whole call (codex constraint 4). */
+    const neighbor_loop_args_iterative& args;
+    typename Spec::CallScalars          cs;          /* value-owned, NOT a reference */
+
+    int iter_index;                                  /* 0-based; shared across all subgroups */
+    int local_active_total;                          /* sum of local_active_per_sg; refreshed per iter */
+    int global_active_total;                         /* sum of global_active_per_sg; -1 = "not populated yet" */
+
+    /* Per-subgroup activity tracking (codex 2c.3 plan v2 tightening 2):
+     * legacy ags re-partitions bm_groups each outer iter; with fixed
+     * subgroups[] we instead Allreduce-SUM per-subgroup local counts to get
+     * global activity per subgroup. Globally-converged subgroups skip the
+     * per-iter dispatch + collective. Single-subgroup case: length-1
+     * vectors; behavior unchanged. */
+    std::vector<int>                  local_active_per_sg;        /* [num_subgroups]; per-rank, post-compaction */
+    std::vector<int>                  global_active_per_sg;       /* [num_subgroups]; Allreduce-SUM each iter */
+
+    /* Driver-owned DeviceContext (Phase 4.B.0 step 2c.1).
+     *
+     * `ctx` is a host-side trivially-copyable VALUE. Members may point to
+     * UVM/device-visible storage (e.g., per-active host-staged UVM arrays
+     * from Spec::populate_device_context, or arena-resident P/CellP set by
+     * Mode A). The struct ITSELF is captured by VALUE into Kokkos device
+     * lambdas, exactly like the per-call DeviceCtx in run_mode_a /
+     * run_mode_b_*. `ctx` is NOT UVM-resident.
+     *
+     * Population is path-dependent and happens AFTER path selection:
+     *   Mode B: initialize_device_context_mode_b() at iter-0 entry binds
+     *           ctx.P = args.P, ctx.CellP = args.CellP, num_total = args.num_total.
+     *   Mode A: initialize_device_context_mode_a_after_arena() AFTER
+     *           gpu_particles_arena_acquire binds ctx.P = arena_P(),
+     *           ctx.CellP = arena_CellP(). Body lands in step 2c.2.
+     * Both methods call Spec::populate_device_context(args, ctx) if extended,
+     * then set ctx_initialized = true.
+     *
+     * `ctx_initialized` guards destructor cleanup (codex 2c.1 review fix):
+     * if init was stubbed/hard-aborted before populate_device_context ran,
+     * destructor must NOT call cleanup_device_context. Only fire cleanup
+     * when init actually completed. */
+    typename Spec::DeviceContext ctx;
+    bool                         ctx_initialized = false;
+
+    /* Per-subgroup state (DYNAMICALLY SIZED to args.num_subgroups; codex v4.3).
+     *
+     * Each std::vector<...> is host-side, sized at construction to
+     * args.num_subgroups. The pointers it holds reference per-subgroup
+     * UVM-allocated arrays; pair_kernel / Mode B walker / oracle paths see
+     * the right addresses through these pointers.
+     *
+     * Lifetime: allocated by NlrIterDriver constructor, freed by destructor.
+     * No fixed cap — global_bm_presence can span up to 64 bitmask values.
+     *
+     * Mode A iterative-specific fields (cached CSR + arena/session) and
+     * Oracle-specific fields (separate scratch + radii arrays for brute
+     * trajectory) are NOT yet declared — they land in step 2c when those
+     * dispatch paths are implemented. Step 2b ships Mode B local dispatch
+     * only; Mode A iter / Mode B remote iter / oracle iter all HARD STUB. */
+    std::vector<typename Spec::IterScratch *> scratch_uvm;     /* [num_subgroups][num_active_local] */
+    std::vector<typename Spec::AccumData   *> accum_uvm;       /* [num_subgroups][num_active_local] */
+    std::vector<double *>                     radii_uvm;       /* [num_subgroups][num_active_local] */
+    std::vector<int    *>                     active_set_uvm;  /* [num_subgroups][num_active_local], compacted */
+    std::vector<int>                          active_set_size; /* [num_subgroups], shrinks on Converged compaction */
+
+    /* Mode A iterative cached CSR/session state (step 2c.2).
+     * Allocated lazily on first Mode A iter dispatch; left empty on Mode B paths.
+     * Lifecycle: arena_acquire ONCE per call (via acquire_arena_and_init_ctx_mode_a),
+     * CSR built once per subgroup at iter 0, rebuilt on h-exceeds-buffer trigger,
+     * all freed in driver destructor (passing SIDX to gpu_ngb_list_free so the
+     * step-persistent SIDX cache survives — matches sink_env1/feed/swk idiom).
+     *
+     * CSR row-key invariant (codex v4.1 §2.A.1): mode_a_csr_offset_lookup[sg][slot]
+     * is keyed on subgroup-slot-AT-BUILD-TIME, NOT on the (possibly compacted)
+     * current active_set position. Compaction (Converged-slot removal) NEVER
+     * rewrites old row identity; rebuild creates a new lookup and discards
+     * the old one. */
+    bool                              arena_acquired      = false;
+    bool                              ghost_import_done   = false;     /* Mode A only; cleaned in destructor */
+    std::vector<gpu_neighbor_list_t>  mode_a_cached_gnl;             /* [num_subgroups] */
+    std::vector<int    *>             mode_a_csr_offset_lookup;      /* [num_subgroups][num_active_local]; UVM */
+    std::vector<double *>             mode_a_csr_buffered_h;         /* [num_subgroups][num_active_local]; UVM */
+    std::vector<bool>                 mode_a_csr_valid;              /* [num_subgroups] */
+
+    /* ========================================================================
+     * Iterative-oracle state (step 2c.4).
+     *
+     * Allocated iff `oracle_enabled` is true at iter-0 entry AND the production
+     * path is ModeB_HostWalker. Mode A iterative oracle is hard-stubbed at the
+     * outer body (run_neighbor_loop_iterative step 5.b) with an explicit
+     * endrun + scaffolding-rationale message — oracles are temporary port-
+     * validation scaffolding, the Mode A *production* path is validated by
+     * the synthetic harness (step 3) + Mode B oracle on the same Spec.
+     *
+     * Independent brute trajectory: own IterScratch + radii + accum +
+     * active_set per subgroup. Same slot identity as production (driver
+     * always references args.subgroups[sg].active_indices) so per-slot
+     * compare is unambiguous. Per-iter compare emits four classes of
+     * mismatch line on divergence between production and oracle:
+     * AccumData / IterStatus / new_h_search / active-set membership.
+     * All four share kMismatchPrintCap (=1024) per-call.
+     * ====================================================================== */
+    bool                                      oracle_enabled = false;
+    std::vector<typename Spec::IterScratch *> scratch_oracle_uvm;       /* [num_subgroups][num_active_local] */
+    std::vector<typename Spec::AccumData   *> accum_oracle_uvm;         /* same shape */
+    std::vector<double *>                     radii_oracle_uvm;         /* same shape */
+    std::vector<int    *>                     active_set_oracle_uvm;    /* same shape, compacted */
+    std::vector<int>                          active_set_oracle_size;   /* [num_subgroups] */
+
+    /* Per-iter audit instrumentation (codex 2c.4 v2 P2 — 4-thing compare).
+     * Stored as int (IterStatus) UVM arrays via static_cast for trivially-
+     * copyable transit. new_h_*_uvm holds AdjustRadius candidate; for
+     * Converged/NeedsMore it holds the current radius (for symmetric init). */
+    std::vector<int    *>                     status_prod_uvm;          /* [num_subgroups][num_active_local] */
+    std::vector<int    *>                     status_oracle_uvm;        /* same shape */
+    std::vector<double *>                     new_h_prod_uvm;           /* same shape */
+    std::vector<double *>                     new_h_oracle_uvm;         /* same shape */
+
+    long long                                 oracle_mismatch_count = 0;  /* per-call, shared across origin tags */
+
+    /* Independent ctx_oracle lifecycle (codex 2c.4 v2 P1). Own
+     * populate_device_context + cleanup_device_context calls; NEVER aliased
+     * to production ctx after init. Brute-pass toggle gated by RAII
+     * NlrOracleBrutePassGuard<Spec> at every dispatch helper entry. */
+    typename Spec::DeviceContext              ctx_oracle;
+    bool                                      ctx_oracle_initialized = false;
+
+    /* ========================================================================
+     * Mode A diagnostic counters (step 3 harness instrumentation).
+     *
+     * Public observability for harness validation; production code should
+     * never read these (zero overhead under default builds). Counts are
+     * per-driver-instance (per iterative call), reset to 0 at construction.
+     *
+     *   csr_rebuild_count       — # times rebuild_mode_a_arena_and_ctx_for_current_active_union
+     *                              completed (Mode A union rebuild fires).
+     *   arena_acquire_count     — # times gpu_particles_arena_acquire fired
+     *                              (iter-0 init + each union rebuild).
+     *   csr_local_rebuild_count — # times a subgroup's CSR was locally
+     *                              freed+rebuilt inside
+     *                              nlr_iter_dispatch_subgroup_mode_a (per sg, summed).
+     * ====================================================================== */
+    int                                       csr_rebuild_count       = 0;
+    int                                       arena_acquire_count     = 0;
+    int                                       csr_local_rebuild_count = 0;
+
+    /* effective_args (codex 2c.2-fix 2026-05-10): writable copy of the base
+     * neighbor_loop_args slice. Mode A iter mutates num_total/P/CellP after
+     * ghost import to reflect the imported-ghost pool (mirrors non-iter
+     * effective_args refresh at runner.cc:2046-2051). Mode B leaves it
+     * equal to the original base args (lazy-drift contract — Mode B reads
+     * owner-local args.P[j] directly). All per-iter dispatch helpers read
+     * effective_args.num_total / P / CellP, NOT args.num_total / P / CellP. */
+    neighbor_loop_args                effective_args;
+
+    /* Constructor (runner-private; only invoked inside run_neighbor_loop_iterative<Spec>):
+     *   - Resizes per-subgroup vectors to args.num_subgroups.
+     *   - Allocates per-subgroup UVM arrays sized to subgroups[sg].num_active_local.
+     *   - Initializes radii from Spec::search_radius for every active in every subgroup.
+     *   - Byte-zeros IterScratch ONCE at construction (persists across iters).
+     *   - Fills active_set with {0..num_active_local-1} per subgroup; active_set_size = num_active_local.
+     *   - AccumData NOT zeroed here — runner zeros via Spec::zero_accum at the start of each iter.
+     *   - DOES NOT touch ctx (path-dependent init via initialize_device_context_*; step 2c.1).
+     * Definition in mesh/neighbor_loop_runner.cc. */
+    explicit NlrIterDriver(const neighbor_loop_args_iterative& a,
+                           const typename Spec::CallScalars& s);
+
+    /* Destructor frees all UVM allocations + cleans DeviceContext IF
+     * ctx_initialized (codex 2c.1 review). */
+    ~NlrIterDriver();
+
+    /* Path-specific DeviceContext init (step 2c.1). Called AFTER path
+     * selection; binds ctx.P/CellP/num_total + runs Spec::populate_device_context
+     * (if extended) + sets ctx_initialized = true.
+     *
+     * Mode B: caller P/CellP pointers (lazy-drift contract — Mode B reads
+     *         args.P[j]/CellP[j] directly).
+     * Mode A: arena-resident P_gpu/CellP_gpu. Body in step 2c.2 (must run
+     *         AFTER gpu_particles_arena_acquire).
+     *
+     * Both methods are runner-private — only called by run_neighbor_loop_iterative
+     * after path selection. */
+    void initialize_device_context_mode_b();
+    void initialize_device_context_mode_a_after_arena();
+
+    /* Step 2c.2: single combined Mode A iter-0 init.
+     *   1. gpu_particles_arena_acquire ONCE per call (arena_acquired = true).
+     *   2. initialize_device_context_mode_a_after_arena() — binds ctx.P/CellP
+     *      to arena-resident pointers + populates extended DeviceContext.
+     * Driver destructor matches: if arena_acquired, mark_clean once on exit. */
+    void acquire_arena_and_init_ctx_mode_a();
+
+    /* Step 2c.3 step 7 (codex plan v2 tightening 5): self-sufficient rebuild
+     * method. NO PARAMETERS. Driver builds the union from its own subgroup
+     * state — current active_set per subgroup, oversized radii via
+     * mode_a_csr_buffer_factor, mask = OR of all globally-active subgroups'
+     * j_type_bitmask. As part of the lifecycle, invalidates ALL subgroup
+     * CSR caches (pitfall 2: any rebuild makes cross-subgroup neighbor
+     * indices stale). */
+    void rebuild_mode_a_arena_and_ctx_for_current_active_union();
+
+    /* Driver owns Kokkos shared allocations — no copy/move. */
+    NlrIterDriver(const NlrIterDriver&) = delete;
+    NlrIterDriver& operator=(const NlrIterDriver&) = delete;
+};
+
+/* ============================================================================
+ * AfterIterContext<Spec> — passed to Spec::after_iter (host-side per active,
+ * post-AccumData reduction, pre-apply_active_writeback).
+ *
+ * Slot identity (codex v4.3): subgroup-local slots ARE the runner execution
+ * slots. IterScratch / radii / AccumData / oracle arrays / final writeback
+ * all keyed by (subgroup_index, subgroup_slot). Particle index `i` always
+ * available. Every active belongs to exactly ONE subgroup (legacy invariant
+ * — actives partitioned by `j_type_bitmask`). If a future port needs a
+ * union-slot key across subgroups, that's an explicit `union_slot_indices`
+ * map at port time, NOT inferred.
+ *
+ * Field semantics (codex v4.3 lifetime constraints):
+ *   - h_search_current is a VALUE SNAPSHOT of radii_uvm[subgroup_index]
+ *     [subgroup_slot] read at hook-entry time. NOT a reference, NOT mutable.
+ *     Radius mutation happens ONLY through the IterResult the hook returns;
+ *     the runner stages new_h_search into radii_uvm before the next iter.
+ *   - scratch is a MUTABLE REFERENCE — the hook is the place it's mutated.
+ *   - scalars is a CONST REFERENCE to the driver-owned CallScalars (whole-
+ *     call lifetime; never a stack temporary).
+ *   - args is the driver's same-call neighbor_loop_args_iterative reference.
+ * ========================================================================== */
+template <typename Spec>
+struct AfterIterContext {
+    const neighbor_loop_args_iterative& args;
+    int    subgroup_index;                           /* 0 .. args.num_subgroups - 1 */
+    int    subgroup_slot;                            /* 0 .. subgroups[subgroup_index].num_active_local - 1 */
+    int    i;                                        /* particle_data index */
+    int    iter_index;                               /* shared across all subgroups in this iter */
+    double h_search_current;                         /* value snapshot; mutate via IterResult only */
+    const typename Spec::CallScalars& scalars;       /* driver-owned; whole-call lifetime */
+    typename Spec::IterScratch&       scratch;       /* mutable; PERSISTS across iters (allocated/zeroed once at iter 0) */
+};
+
+/* ============================================================================
+ * SFINAE detectors for iterative Spec hooks (Phase 4.B.0+).
+ *
+ * Each detector returns a `_v` constexpr bool used by the runner via
+ * `if constexpr (...) { ... }` to fire optional Spec hooks only when declared,
+ * and by `static_assert` at run_neighbor_loop_iterative entry to require the
+ * mandatory ones for Iterative Specs.
+ *
+ * `nlr_spec_has_after_iter_v<Spec>`:
+ *   REQUIRED for IterControl = Iterative. Detector lets the runner emit a
+ *   clean diagnostic naming the missing member (instead of the deeper
+ *   "no matching call" error from inside the driver body) when an Iterative
+ *   Spec forgets to declare `static IterResult after_iter(...)`.
+ *
+ * `nlr_spec_has_after_iter_global_v<Spec>`:
+ *   OPTIONAL hook (per §3.1 of the design). Runner uses if constexpr; default
+ *   absent = no-op.
+ *
+ * `nlr_spec_has_on_max_iter_exceeded_v<Spec>`:
+ *   OPTIONAL hook (per §6 of the design). Runner default = endrun(1155) +
+ *   diagnostic; Spec override only when port's legacy policy differs and
+ *   Phil approved.
+ * ========================================================================== */
+
+template <typename Spec, typename = void>
+struct nlr_spec_has_after_iter : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_after_iter<
+    Spec,
+    std::void_t<decltype(Spec::after_iter(
+        std::declval<const AfterIterContext<Spec>&>(),
+        std::declval<const typename Spec::AccumData&>()))>>
+    : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_spec_has_after_iter_v = nlr_spec_has_after_iter<Spec>::value;
+
+template <typename Spec, typename = void>
+struct nlr_spec_has_after_iter_global : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_after_iter_global<
+    Spec,
+    std::void_t<decltype(Spec::after_iter_global(
+        std::declval<const neighbor_loop_args&>(),
+        std::declval<const NlrIterDriver<Spec>&>()))>>
+    : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_spec_has_after_iter_global_v = nlr_spec_has_after_iter_global<Spec>::value;
+
+template <typename Spec, typename = void>
+struct nlr_spec_has_on_max_iter_exceeded : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_on_max_iter_exceeded<
+    Spec,
+    std::void_t<decltype(Spec::on_max_iter_exceeded(
+        std::declval<const NlrIterDriver<Spec>&>()))>>
+    : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_spec_has_on_max_iter_exceeded_v = nlr_spec_has_on_max_iter_exceeded<Spec>::value;
+
+/* `nlr_spec_has_reset_per_iter_device_context_v<Spec>` (Phase 4.B.0 step 2c.1):
+ *   OPTIONAL host-side hook called once per outer iter BEFORE per-subgroup
+ *   dispatch. Use case: ags_density's `per_iter_wakeup_detected` counter
+ *   (zeros it in DeviceContext at start of each iter). For Specs that
+ *   don't extend DeviceContext (synthetic harness without per-iter UVM
+ *   counters; sink loops which are NotIterative anyway), the hook is
+ *   undeclared → runner skips the call. Signature includes iter_index
+ *   for diagnostic / harness-validation use. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_reset_per_iter_device_context : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_reset_per_iter_device_context<
+    Spec,
+    std::void_t<decltype(Spec::reset_per_iter_device_context(
+        std::declval<const neighbor_loop_args_iterative&>(),
+        std::declval<typename Spec::DeviceContext&>(),
+        std::declval<int>()))>>
+    : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_spec_has_reset_per_iter_device_context_v =
+    nlr_spec_has_reset_per_iter_device_context<Spec>::value;
+
+/* ============================================================================
+ * Compile-time spec consistency checks (used at the top of run_neighbor_loop
+ * and run_neighbor_loop_iterative):
  *
  *   ActiveReduceOnly       requires std::is_same_v<ScatterData, NoScatter>
  *   NeighborScatter        requires std::is_same_v<AccumData,   NoAccum>
  *   SymmetricPairScatter   requires both non-empty (NOT NoScatter / NoAccum)
  *   GhostWritebackRequired requires both non-empty
  *
- *   IterControl != NotIterative           requires after_iter()
+ *   IterControl == NotIterative          requires Spec NOT call run_neighbor_loop_iterative
+ *                                          (verified by SFINAE on after_iter availability —
+ *                                           NotIterative Specs don't declare it; calling
+ *                                           run_neighbor_loop_iterative<NotIterative-Spec>
+ *                                           is a clean compile error).
+ *   IterControl == Iterative             requires:
+ *                                          - `using IterScratch = ...;` declared
+ *                                            (NoIterScratch is the explicit empty form;
+ *                                             no magic default)
+ *                                          - `static constexpr int max_iters >= 1;`
+ *                                          - `static constexpr double mode_a_csr_buffer_factor > 1.0;`
+ *                                          - `static IterResult after_iter(...)` callable
+ *                                          - std::is_trivially_copyable_v<IterScratch>
+ *   IterControl == Iterative AND
+ *     args.num_subgroups > 1              requires `using SupportsSubgroups = std::true_type;`
+ *                                          (RUNTIME check inside run_neighbor_loop_iterative;
+ *                                           hard-aborts loudly on mismatch)
+ *
  *   ScatterData != NoScatter              requires apply_neighbor_writeback,
  *                                                  compare_scatter
  *   DeviceContext != NeighborLoopDeviceContextBase

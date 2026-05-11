@@ -388,6 +388,19 @@ extern ALIGN(32) struct particle_data
         return 1.61199 * KernelRadius / NumNgb; // (4pi/3)^(1/3)
 #endif
     }
+
+#ifdef GIZMO_NLR_ITER_HARNESS_TEST
+    /* Synthetic harness j-side counter (Phase 4.B.0 step 3 Stage B step 3).
+     *
+     * EXISTS ONLY UNDER GIZMO_NLR_ITER_HARNESS_TEST. Not present in
+     * production builds. Used exclusively by IterHarnessGhostSpec's
+     * pair_kernel to write a deterministic value to neighbor P[j], with
+     * PARTICLE_MAX ghost writeback collapsing cross-rank ghost copies
+     * back to the home owner. Brute oracle pass suppresses the write
+     * (ctx.oracle_dry_run); harness asserts the post-call value
+     * distinguishes production-only-fired from oracle-also-fired. */
+    int NlrIterHarnessJFlag;
+#endif
 }
 *P,                /*!< holds particle data on local processor */
 *DomainPartBuf;        /*!< buffer for particle data used in domain decomposition */
