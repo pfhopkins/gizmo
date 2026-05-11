@@ -3657,7 +3657,79 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * exactly the result apply_active_writeback needs. The earlier "defensive
      * cross-iter zero of all slots" in this position was the bug codex
      * caught in 2b review. */
+    /* Phase 4.B.0 v4.3 step 0 (partition-by-subgroup contract): record the
+     * iter-0 per-subgroup j_type_bitmask values so the per-iter partition
+     * assertion below can verify Spec::active_subgroup_key returns the same
+     * key for every active in that subgroup on every iter. Only populated
+     * when the Spec opts into actives_partition_by_subgroup. Compile-time
+     * no-op for Specs that don't. */
+    std::vector<unsigned int> partition_expected_bm_key;
+    if constexpr (nlr_spec_actives_partition_by_subgroup_v<Spec>) {
+        static_assert(nlr_spec_has_active_subgroup_key_v<Spec>,
+                      "Spec::actives_partition_by_subgroup=true requires "
+                      "Spec::active_subgroup_key(const DeviceContext&, int, "
+                      "const CallScalars&) returning int (= bm key). See "
+                      "OPEN_3d_agsdensity_design.md §5a.");
+        partition_expected_bm_key.resize(args.num_subgroups);
+        for (int sg = 0; sg < args.num_subgroups; sg++) {
+            partition_expected_bm_key[sg] = args.subgroups[sg].j_type_bitmask;
+        }
+    }
+
     for (drv.iter_index = 0; drv.iter_index < Spec::max_iters; drv.iter_index++) {
+
+        /* Phase 4.B.0 v4.3 step 0 — mode_a_rebuild_csr_every_iter correctness
+         * fallback (OPEN_3d_agsdensity_design.md §10.2). When the Spec sets
+         * this trait true, force-invalidate every subgroup's Mode A CSR
+         * cache at the start of every iter > 0, bypassing the buffer-
+         * exceedance trigger entirely. The static_assert on
+         * mode_a_csr_buffer_factor > 1.0 is unchanged (factor stays a valid
+         * number even when unused). Iter 0 is exempt — initial CSR build
+         * happens in the per-subgroup dispatch on first invalidation pass. */
+        if constexpr (nlr_spec_mode_a_rebuild_csr_every_iter_v<Spec>) {
+            if (path == DispatchPath::ModeA_GPU_NGL && drv.iter_index > 0) {
+                for (int sg = 0; sg < args.num_subgroups; sg++) {
+                    drv.mode_a_csr_valid[sg] = false;
+                }
+            }
+        }
+
+        /* Phase 4.B.0 v4.3 step 0 — partition-by-subgroup debug assertion
+         * (OPEN_3d_agsdensity_design.md §5a). Gated under DEBUG or the
+         * dedicated env-macro so production builds carry zero overhead.
+         * Calls the path-correct ctx accessor via Spec::active_subgroup_key
+         * for every active in every globally-active subgroup; mismatch with
+         * the iter-0 recorded j_type_bitmask = terminate(). Host-side check
+         * before per-iter dispatch. */
+#if defined(DEBUG) || defined(GIZMO_NLR_ASSERT_PARTITION)
+        if constexpr (nlr_spec_actives_partition_by_subgroup_v<Spec>) {
+            for (int sg = 0; sg < args.num_subgroups; sg++) {
+                /* Skip globally-converged subgroups (iter > 0 only). */
+                if (drv.iter_index > 0 && drv.global_active_per_sg[sg] <= 0) continue;
+                const int n_compacted = drv.active_set_size[sg];
+                const NlrSubgroup& sgr = args.subgroups[sg];
+                const unsigned int expect = partition_expected_bm_key[sg];
+                for (int k = 0; k < n_compacted; k++) {
+                    const int slot = drv.active_set_uvm[sg][k];
+                    const int i    = sgr.active_indices[slot];
+                    const int key  = Spec::active_subgroup_key(drv.ctx, i, drv.cs);
+                    if (static_cast<unsigned int>(key) != expect) {
+                        char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                        snprintf(buf, sizeof(buf),
+                            "[run_neighbor_loop_iterative<%s>] FATAL: Spec contract "
+                            "violation: actives_partition_by_subgroup key drift. "
+                            "sg=%d iter=%d slot=%d i=%d expected_bm=%u got_key=%d. "
+                            "active_subgroup_key MUST be a pure function of "
+                            "state that does not change across iterations. See "
+                            "OPEN_3d_agsdensity_design.md §5a.\n",
+                            Spec::loop_name, sg, drv.iter_index, slot, i,
+                            expect, key);
+                        terminate(buf);
+                    }
+                }
+            }
+        }
+#endif
 
         /* (a-pre) Mode A pre-dispatch invalidation sweep (step 2c.3 step 8).
          * If any subgroup's CSR is invalid (set by the buffer-exceedance

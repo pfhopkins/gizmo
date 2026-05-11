@@ -162,6 +162,17 @@
 #include <vector>
 #include <type_traits>
 #include "mode_b_local_walker.h"  /* SearchMode, RadiusPolicy already declared */
+
+/* Fallback definition for KOKKOS_INLINE_FUNCTION when this header is consumed
+ * by a non-GPU TU (compiled with plain mpicxx, e.g. mesh/ghost_writeback.cc).
+ * GPU TUs include <Kokkos_Core.hpp> themselves before runner.h, so the macro
+ * is already defined with __host__ __device__ attributes by the time this
+ * fallback is checked — the #ifndef guard skips re-defining. Without this
+ * fallback, NeighborLoopDeviceContextBase::particle_type below would refer to
+ * an undefined macro from any consumer that hasn't included Kokkos_Core. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
 #include "gpu_neighbor_list.h"    /* gpu_neighbor_list_t (NlrIterDriver Mode A fields, step 2c.2) */
 
 /* ============================================================================
@@ -268,6 +279,19 @@ struct NeighborLoopDeviceContextBase {
     struct particle_data *P;
     struct gas_cell_data *CellP;
     int                   num_total;
+
+    /* Path-correct accessor for particle Type. Reads through the ctx's own
+     * P pointer (Mode A: arena-resident P_gpu; Mode B: request-driven local
+     * slab — both assigned to ctx.P by the path-specific init paths).
+     * NEVER reads global P (preserves guideline #3: no globals on Mode B
+     * tiny-N path).
+     *
+     * host+device callable (codex round-5): the partition-key assertion in
+     * run_neighbor_loop_iterative calls this from host driver code, and
+     * future Specs may call it from device-side helpers via
+     * Spec::active_subgroup_key. */
+    KOKKOS_INLINE_FUNCTION
+    short int particle_type(int i) const { return P[i].Type; }
 };
 
 /* ============================================================================
@@ -469,6 +493,74 @@ constexpr double nlr_spec_radius_tolerance_v =
     nlr_spec_has_radius_tolerance<Spec>::value
         ? static_cast<double>(Spec::radius_tolerance)
         : static_cast<double>(Spec::accum_tolerance);
+
+/* ============================================================================
+ * Phase 4.B.0 v4.3 (step 0 prep-commit) — partition-by-subgroup contract
+ *
+ * Two value-traits + one SFINAE method-detector that together implement the
+ * "actives_partition_by_subgroup" contract from OPEN_3d_agsdensity_design.md
+ * §5a.
+ *
+ * Value-trait `actives_partition_by_subgroup` (default false): when true, the
+ * runner promises that each active belongs to exactly ONE subgroup (the
+ * subgroup it was placed into at iter-0). The Spec MUST also provide
+ * `active_subgroup_key(ctx, i, scalars)` returning the bm key (= the
+ * subgroup's `j_type_bitmask`) so the runner can assert no drift. Used by
+ * ags_density (Type-fixed → bm-fixed); the harness Specs default to false
+ * (existing union-merge semantics unchanged).
+ *
+ * Method-detector `active_subgroup_key`: detected via SFINAE on the 3-arg
+ * signature (const DeviceContext&, int, const CallScalars&) returning int.
+ * Required when actives_partition_by_subgroup=true; ignored otherwise.
+ *
+ * Value-trait `mode_a_rebuild_csr_every_iter` (default false): correctness
+ * fallback for Specs whose CSR-buffer-reuse semantics can't be validated
+ * against legacy/oracle. When true, the runner unconditionally invalidates
+ * the cached Mode A CSR at the start of every iter > 0 (bypassing the
+ * buffer-exceedance trigger entirely). `Spec::mode_a_csr_buffer_factor`
+ * remains required (>1.0 static_assert) but is not consulted on this path.
+ * Per design v0.4.2 §10.2.
+ * ========================================================================== */
+
+template <typename Spec, typename = void>
+struct nlr_spec_actives_partition_by_subgroup : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_actives_partition_by_subgroup<
+    Spec, std::void_t<decltype(Spec::actives_partition_by_subgroup)>>
+    : std::integral_constant<bool, Spec::actives_partition_by_subgroup> {};
+
+template <typename Spec>
+constexpr bool nlr_spec_actives_partition_by_subgroup_v =
+    nlr_spec_actives_partition_by_subgroup<Spec>::value;
+
+template <typename Spec, typename = void>
+struct nlr_spec_has_active_subgroup_key : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_active_subgroup_key<
+    Spec,
+    std::void_t<decltype(Spec::active_subgroup_key(
+        std::declval<const typename Spec::DeviceContext&>(),
+        int{},
+        std::declval<const typename Spec::CallScalars&>()))>>
+    : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_has_active_subgroup_key_v =
+    nlr_spec_has_active_subgroup_key<Spec>::value;
+
+template <typename Spec, typename = void>
+struct nlr_spec_mode_a_rebuild_csr_every_iter : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_mode_a_rebuild_csr_every_iter<
+    Spec, std::void_t<decltype(Spec::mode_a_rebuild_csr_every_iter)>>
+    : std::integral_constant<bool, Spec::mode_a_rebuild_csr_every_iter> {};
+
+template <typename Spec>
+constexpr bool nlr_spec_mode_a_rebuild_csr_every_iter_v =
+    nlr_spec_mode_a_rebuild_csr_every_iter<Spec>::value;
 
 /* Remote-helper evaluation mode (step 2c.4 SSOT guardrail). Replaces the
  * boolean ORACLE template parameter on mode_b_remote_evaluate_into_buffer.
