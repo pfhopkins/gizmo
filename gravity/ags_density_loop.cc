@@ -35,7 +35,6 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede ags_density_loop.h */
@@ -776,6 +775,12 @@ void ags_density(void)
     CPU_Step[CPU_MISC] += measure_time();
     double t00_truestart = my_second();
 
+    /* Canonical host All accessor. Required even after this TU dropped
+     * gpu_all_mirror.h: keeps reads durable against any future include
+     * topology drift, per the NLR host-All-accessor rule (commit 781ecfb2).
+     * Used at three sites below outside Spec::populate_call_scalars. */
+    const struct global_data_all_processes *host_all = nlr_host_all_ptr();
+
     /* (2) AGS_Prev[] alloc + per-active pre-loop init. AGS_Prev[] is used
      * by the final-final pass; runner's per-active IterScratch.AGS_Prev
      * handles the per-iter clamp internally. */
@@ -888,7 +893,7 @@ void ags_density(void)
     neighbor_loop_args_iterative args{};
     static_cast<neighbor_loop_args&>(args) = nlr_default_args();
     args.P                   = P;
-    args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
+    args.CellP               = (host_all->TotN_gas > 0) ? CellP : nullptr;
     args.num_total           = NumPart;
     args.active_list         = (total_active_local > 0)
                                ? active_list_concat.data() : nullptr;
@@ -923,7 +928,7 @@ void ags_density(void)
                              (VOLUME_NORM_COEFF_FOR_NDIMS *
                               pow(P[i].AGS_KernelRadius, NUMDIMS)));
                 double h_eff = 2.0 * (KERNEL_CORE_SIZE *
-                                      All.ForceSoftening[P[i].Type]);
+                                      host_all->ForceSoftening[P[i].Type]);
                 double Prho = 0 * h_eff * h_eff / 2.0;
                 if(P[i].Particle_DivVel > 0) Prho = -Prho;
                 P[i].AGS_zeta = P[i].Mass * P[i].Mass * P[i].DrkernNgbFactor *
@@ -932,7 +937,7 @@ void ags_density(void)
             } else {
                 P[i].AGS_zeta         = 0;
                 P[i].NumNgb           = 0;
-                P[i].AGS_KernelRadius = All.ForceSoftening[P[i].Type];
+                P[i].AGS_KernelRadius = host_all->ForceSoftening[P[i].Type];
             }
         }
     }
@@ -950,16 +955,5 @@ void ags_density(void)
      * everything in MISC for now — matches the legacy line 458 fallback. */
     CPU_Step[CPU_AGSDENSMISC] += timeall;
 }
-
-/* GPU All_dev sync stub. ags_density_loop.cc is in GPU_OBJS (compiled with
- * nvcc_wrapper because the inline pair body uses Kokkos atomics), but the
- * actual device kernel runs inside the runner's TU (mesh/neighbor_loop_runner.cc)
- * which has its own All_dev sync. Matching the sink_feed_loop.cc pattern:
- * STUB here on CUDA backend (no-op); identical to FUNC on host backend. */
-GPU_ALL_SYNC_FUNC_STUB(agsdensity_loop)
-
-#else  /* !AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */
-
-GPU_ALL_SYNC_FUNC_STUB(agsdensity_loop)
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

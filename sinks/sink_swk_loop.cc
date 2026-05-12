@@ -36,7 +36,6 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_swk_loop.h */
@@ -565,14 +564,5 @@ double SinkSwkSpec::compare_accum(const AccumData& local, const AccumData& oracl
 #undef CMP_ADD_ARRAY
     return max_rel;
 }
-
-/* GPU All_dev sync stub. sink_swk_loop.cc is host-pattern compiled; the
- * device kernel runs inside the runner TU which carries its own All_dev
- * sync. This stub keeps cooling.cc's per-TU sync sweep happy. */
-GPU_ALL_SYNC_FUNC_STUB(sinkswk)
-
-#else  /* !SINK_PARTICLES */
-
-GPU_ALL_SYNC_FUNC_STUB(sinkswk)
 
 #endif /* SINK_PARTICLES */

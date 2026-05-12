@@ -24,7 +24,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_mirror.h"   /* GPU_ALL_SYNC_FUNC */
+#include "../declarations/gpu_all_sync_stub.h"  /* GPU_ALL_SYNC_FUNC_STUB; no #define All All_dev */
 #include "../declarations/gpu_numeric_macros.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_feed_loop.h */
