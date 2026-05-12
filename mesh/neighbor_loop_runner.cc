@@ -122,16 +122,26 @@ static bool nlr_env_is_one(const char *name) {
  * ghost-safety-factor source, etc.) are caller-invisible.
  * ========================================================================== */
 
+/* Canonical accessor for host-side global `All`. See header doc — this
+ * bypasses the per-TU `#define All All_dev` redirect from gpu_all_mirror.h. */
+const struct global_data_all_processes * nlr_host_all_ptr(void)
+{
+    return gizmo_gpu_host_all_ptr();
+}
+
 NlrCommonScalars nlr_common_scalars_from_all(void)
 {
+    /* MUST go through nlr_host_all_ptr(): this TU includes gpu_all_mirror.h,
+     * so bare `All` resolves to the unsynced per-TU All_dev mirror. */
+    const struct global_data_all_processes *h = nlr_host_all_ptr();
     NlrCommonScalars s;
-    s.cf_atime                = All.cf_atime;
-    s.cf_a2inv                = All.cf_a2inv;
-    s.cf_a3inv                = All.cf_a3inv;
-    s.cf_hubble_a             = All.cf_hubble_a;
-    s.newton_G                = All.G;
-    s.hubble                  = All.HubbleParam;
-    s.comoving_integration_on = All.ComovingIntegrationOn;
+    s.cf_atime                = h->cf_atime;
+    s.cf_a2inv                = h->cf_a2inv;
+    s.cf_a3inv                = h->cf_a3inv;
+    s.cf_hubble_a             = h->cf_hubble_a;
+    s.newton_G                = h->G;
+    s.hubble                  = h->HubbleParam;
+    s.comoving_integration_on = h->ComovingIntegrationOn;
     return s;
 }
 

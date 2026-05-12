@@ -207,10 +207,13 @@ struct IterHarnessSpec {
 
     /* ============ Hooks ============ */
     static CallScalars populate_call_scalars(const neighbor_loop_args& /*args*/) {
+        /* Must use nlr_host_all_ptr() — this hook is instantiated in
+         * neighbor_loop_runner.cc which has `#define All All_dev` active. */
+        const struct global_data_all_processes *h = nlr_host_all_ptr();
         CallScalars cs{};
-        cs.common.cf_atime = All.cf_atime;
-        cs.common.cf_a2inv = All.cf_a2inv;
-        cs.common.cf_a3inv = All.cf_a3inv;
+        cs.common.cf_atime = h->cf_atime;
+        cs.common.cf_a2inv = h->cf_a2inv;
+        cs.common.cf_a3inv = h->cf_a3inv;
         cs.harness_run_id  = 0;
         return cs;
     }
@@ -477,10 +480,12 @@ struct IterHarnessGhostSpec {
                                               const struct NeighborLoopPlan&);
 
     static CallScalars populate_call_scalars(const neighbor_loop_args& /*args*/) {
+        /* Must use nlr_host_all_ptr() — see IterHarnessSpec for rationale. */
+        const struct global_data_all_processes *h = nlr_host_all_ptr();
         CallScalars cs{};
-        cs.common.cf_atime = All.cf_atime;
-        cs.common.cf_a2inv = All.cf_a2inv;
-        cs.common.cf_a3inv = All.cf_a3inv;
+        cs.common.cf_atime = h->cf_atime;
+        cs.common.cf_a2inv = h->cf_a2inv;
+        cs.common.cf_a3inv = h->cf_a3inv;
         cs.harness_run_id  = 1;        /* distinguish from IterHarnessSpec calls */
         return cs;
     }

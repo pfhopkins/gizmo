@@ -58,19 +58,23 @@ double SinkSwkSpec::search_radius(const neighbor_loop_args& args,
 SinkSwkSpec::CallScalars
 SinkSwkSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
+    /* MUST go through nlr_host_all_ptr() — this TU has `#define All All_dev`
+     * active via gpu_all_mirror.h, and the per-TU All_dev is unsynced. See
+     * neighbor_loop_runner.h doc on nlr_host_all_ptr(). */
+    const struct global_data_all_processes *h = nlr_host_all_ptr();
     CallScalars scalars;
     scalars.common                   = nlr_common_scalars_from_all();
     scalars.sink_radius_grav         = SinkParticle_GravityKernelRadius;
-    scalars.sink_accreted_fraction   = All.Sink_accreted_fraction;
-    scalars.sink_feedback_factor     = All.SinkFeedbackFactor;
-    scalars.sink_radiative_efficiency= All.SinkRadiativeEfficiency;
-    scalars.sink_outflow_velocity    = All.Sink_outflow_velocity;
-    scalars.sink_rad_momentum_factor = All.Sink_Rad_MomentumFactor;
+    scalars.sink_accreted_fraction   = h->Sink_accreted_fraction;
+    scalars.sink_feedback_factor     = h->SinkFeedbackFactor;
+    scalars.sink_radiative_efficiency= h->SinkRadiativeEfficiency;
+    scalars.sink_outflow_velocity    = h->Sink_outflow_velocity;
+    scalars.sink_rad_momentum_factor = h->Sink_Rad_MomentumFactor;
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
-    scalars.sink_cr_injection_efficiency = All.Sink_CosmicRay_Injection_Efficiency;
+    scalars.sink_cr_injection_efficiency = h->Sink_CosmicRay_Injection_Efficiency;
 #endif
 #ifdef GALSF_SUBGRID_WINDS
-    scalars.wind_free_travel_max_time_factor = All.WindFreeTravelMaxTimeFactor;
+    scalars.wind_free_travel_max_time_factor = h->WindFreeTravelMaxTimeFactor;
 #endif
     return scalars;
 }

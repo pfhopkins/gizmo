@@ -359,6 +359,18 @@ struct NlrCommonScalars {
 
 NlrCommonScalars nlr_common_scalars_from_all(void);
 
+/* Canonical host-side accessor for the global `All` struct.
+ *
+ * Spec::populate_call_scalars() MUST use this (or nlr_common_scalars_from_all())
+ * — NEVER bare `All`. Reason: Spec _loop.cc files are GPU TUs that include
+ * declarations/gpu_all_mirror.h, which `#define All All_dev` to a per-TU
+ * `__managed__` mirror. That mirror is NOT synced from host All for most TUs,
+ * so a host-side hook reading `All.foo` actually reads a zero-initialized
+ * device mirror. nlr_host_all_ptr() bypasses the macro and returns the real
+ * host global. Found 2026-05-11 via codex round-10 trace on AGS density port. */
+struct global_data_all_processes; /* forward decl — full struct in allvars.h */
+const struct global_data_all_processes * nlr_host_all_ptr(void);
+
 /* Forward declaration — full struct neighbor_loop_args is defined later in
  * this header. The DeviceContext trait helpers below need it as a parameter
  * type only (no member access), so the forward decl is sufficient. */

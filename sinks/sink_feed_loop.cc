@@ -66,11 +66,15 @@ double SinkFeedSpec::search_radius(const neighbor_loop_args& args,
 SinkFeedSpec::CallScalars
 SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
+    /* MUST go through nlr_host_all_ptr() — this TU has `#define All All_dev`
+     * active via gpu_all_mirror.h, and the per-TU All_dev is unsynced. See
+     * neighbor_loop_runner.h doc on nlr_host_all_ptr(). */
+    const struct global_data_all_processes *h = nlr_host_all_ptr();
     CallScalars scalars;
     scalars.common                 = nlr_common_scalars_from_all();
     scalars.sink_radius_grav       = SinkParticle_GravityKernelRadius;
-    scalars.sink_accreted_fraction = All.Sink_accreted_fraction;
-    scalars.rng_step               = (uint64_t)All.NumCurrentTiStep ^ 0xfeed5117ULL;
+    scalars.sink_accreted_fraction = h->Sink_accreted_fraction;
+    scalars.rng_step               = (uint64_t)h->NumCurrentTiStep ^ 0xfeed5117ULL;
     return scalars;
 }
 

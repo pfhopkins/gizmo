@@ -72,6 +72,15 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
 
 /* Kokkos OpenMP backend — All is the regular extern from allvars.h.
    Still need the sync function stub so cooling.cc can call it. */
+
+/* Host-backend equivalent of the CUDA `gizmo_gpu_host_all_ptr()` accessor:
+   here `All` is the regular extern host global, so we just return its address.
+   This keeps Spec::populate_call_scalars portable across backends. */
+static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
+    extern struct global_data_all_processes All;
+    return &All;
+}
+
 #define GPU_ALL_SYNC_FUNC(name) \
     void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
 
