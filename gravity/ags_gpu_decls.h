@@ -1,12 +1,12 @@
-/* ags_gpu_decls.h — consolidated GPU dispatch declarations for the AGS
- * adaptive-gravitational-softening kernels (ags_density and ags_force).
- * Step 5 Phase E1c (2026-04-30) — merges ags_density_gpu.h + ags_force_gpu.h.
+/* ags_gpu_decls.h — GPU dispatch declarations for the AGS
+ * adaptive-gravitational-softening kernels.
  *
- * Both entry points are gated by AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE; the
- * host driver in ags_rkern.cc partitions active particles by their shared
- * neighbor-type bitmask (returned by ags_gravity_kernel_shared_BITFLAG) and
- * calls each dispatch once per group.  See project_tier_b_infra_scope.md for
- * the design rationale.
+ * As of 3d.4 (2026-05-11), ags_density is runner-driven via AgsDensitySpec
+ * in gravity/ags_density_loop.{h,cc}; only ags_force_evaluate_gpu remains
+ * here. The legacy ags_density_evaluate_gpu / its bm-group host driver in
+ * ags_rkern.cc were retired by the 3d.4 cleanup commit.
+ *
+ * Entry point is gated by AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -16,35 +16,6 @@
 #include "../declarations/allvars.h"
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-
-/* ---- ags_density ---- */
-struct ags_density_gpu_out {
-    double Ngb;
-    double DrkernNgb;
-    double AGS_zeta;
-    double AGS_vsig;          /* MAX reduction (not sum) */
-    double Particle_DivVel;
-#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    double NV_T[3][3];
-#endif
-};
-
-/* Dispatch entry: builds a cross-type CSR for one bitmask group, runs the
-   AGS-density accumulation kernel, returns per-active outputs.
-   - i_active_host: indices of searcher particles (all share j_type_bitmask)
-   - i_radii_host:  per-searcher AGS_KernelRadius values
-   - j_type_bitmask: shared neighbor-type bitmask for this group
-   Atomically MAXes P[j].wakeup with (active i's TimeBin + 1, hydro convention)
-   for any neighbor that fires the wakeup condition; writes
-   NeedToWakeupParticles_local = 1 if any wakeup occurred. */
-void ags_density_evaluate_gpu(struct particle_data *P_host,
-                              struct gas_cell_data *CellP_host,
-                              int num_total,
-                              int *i_active_host, int num_active,
-                              const double *i_radii_host,
-                              int j_type_bitmask,
-                              void *out_host_void);
-
 
 /* ---- ags_force (B2) ---- */
 struct ags_force_gpu_out {

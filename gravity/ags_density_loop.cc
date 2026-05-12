@@ -61,9 +61,9 @@
  * type-5 sink ID=2190205 with soft=0; legacy passes same config). See
  * OPEN_3d_agsdensity_design.md §3.5 hard-gate sequence.
  *
- * Mirrored in gravity/ags_rkern.cc::ags_density_legacy_path() so runner /
- * legacy traces line up. Production builds without the macro carry no
- * overhead and no print sites. */
+ * Production builds without the macro carry no overhead and no print
+ * sites. The legacy mirror in ags_rkern.cc was deleted with the rest of
+ * the legacy body in the 3d.4 cleanup commit. */
 #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
 static inline void ags_debug_trace_id_state(const char *label, int i)
 {
@@ -638,9 +638,14 @@ void AgsDensitySpec::after_iter_global(const neighbor_loop_args& /*args*/,
  * cross-rank propagation now correctly delivers the largest TimeBin+1 to
  * the home rank's P[j].wakeup. See OPEN_3d_agsdensity_design.md §3a.
  *
- * `ghost_writeback_wakeup` reverse-comm raises NeedToWakeupParticles_local
- * on the home rank when wakeups_applied > 0 (path 2 of design §6;
- * handled inside mesh/ghost_writeback.cc, not here).
+ * The bundle only applies P[j].wakeup on the home rank (PARTICLE_MAX merge);
+ * it does NOT raise NeedToWakeupParticles_local. The global wakeup flag is
+ * raised from the sticky need_wakeup_uvm counter on any rank that generated
+ * a wakeup inside the pair body (see cleanup_device_context), and
+ * timestep.cc's MPI_Allreduce then makes all ranks process the reverse-comm'd
+ * P[j].wakeup. (Pre-3d.4 the now-deleted ghost_writeback_wakeup helper set
+ * the global flag itself; the runner's bundle does not have that side
+ * effect.)
  * ========================================================================== */
 GHOST_WRITEBACK_BUNDLE_BEGIN(ags_density)
     GHOST_WRITEBACK_PARTICLE_MAX(wakeup)
@@ -707,11 +712,10 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
 /* ============================================================================
  * ags_density() — runner-driven caller surface.
  *
- * Replaces the legacy `ags_density()` body that lived in gravity/ags_rkern.cc
- * (now renamed `ags_density_legacy_path()` and reachable only under the
- * `GIZMO_NLR_AGSDENSITY_USE_LEGACY` compile gate for two-binary parity).
- *
- * Default path (compile gate not defined) — runner-driven:
+ * Replaces the legacy ags_density() body that used to live in
+ * gravity/ags_rkern.cc; the legacy body and its GIZMO_NLR_AGSDENSITY_USE_LEGACY
+ * two-binary-parity compile gate were retired by the 3d.4 cleanup commit
+ * after parity passed on Vista.
  *
  *   1. Hard-stub oracle: endrun if GIZMO_NLR_ORACLE=1 is set
  *      (AgsDensitySpec::after_iter mutates P[i], which contaminates
@@ -750,20 +754,11 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *
  * No outer do-while, no per-iter ghost_writeback_zero_wakeup /
  * ghost_writeback_wakeup ladder (the runner's bundle + Spec ghost_writeback
- * hooks subsume it).
+ * hooks subsume it; the legacy wakeup helpers were retired in the cleanup).
  * ========================================================================== */
-
-/* Forward decl matching gravity/ags_rkern.cc rename. */
-void ags_density_legacy_path(void);
 
 void ags_density(void)
 {
-#ifdef GIZMO_NLR_AGSDENSITY_USE_LEGACY
-    /* Compile-gated A/B for two-binary parity (design v0.4.3 §11 step 11). */
-    ags_density_legacy_path();
-    return;
-#else
-
     /* (1) Oracle hard-stub. */
     const char *oracle_env = getenv("GIZMO_NLR_ORACLE");
     if(oracle_env && oracle_env[0] && oracle_env[0] != '0') {
@@ -772,9 +767,7 @@ void ags_density(void)
                 "[ags_density] FATAL: GIZMO_NLR_ORACLE=1 is incompatible with "
                 "AgsDensitySpec. after_iter mutates P[i] (NumNgb, AGS_vsig, ...) "
                 "which contaminates the brute oracle pass's pair_kernel reads of "
-                "P[j].AGS_vsig. Use two-binary parity (runner build vs build "
-                "with -DGIZMO_NLR_AGSDENSITY_USE_LEGACY=1) instead. See "
-                "OPEN_3d_agsdensity_design.md §3a / §7.\n");
+                "P[j].AGS_vsig. See OPEN_3d_agsdensity_design.md §3a / §7.\n");
             fflush(stderr);
         }
         endrun(81350);
@@ -956,7 +949,6 @@ void ags_density(void)
      * (timecomp/timewait/timecomm split) is a Wave 2 follow-on. Lump
      * everything in MISC for now — matches the legacy line 458 fallback. */
     CPU_Step[CPU_AGSDENSMISC] += timeall;
-#endif /* GIZMO_NLR_AGSDENSITY_USE_LEGACY */
 }
 
 /* GPU All_dev sync stub. ags_density_loop.cc is in GPU_OBJS (compiled with

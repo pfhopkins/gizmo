@@ -144,11 +144,10 @@ struct AgsDensityIterScratch {
  * cleanup_device_context (at end of the whole iterative call). It is NOT
  * reset per iter — codex round-7 caught that per-iter reset would lose
  * non-final-iter wakeups (e.g. iter-1 sets need_wakeup, iter-N doesn't,
- * cleanup sees 0). Sticky is the legacy ags_density_evaluate_gpu
- * semantic (the GPU evaluator's *d_need_wakeup was per-CALL, not per-
- * iter; legacy ags_density() ran one evaluator-call per outer iter so
- * the distinction didn't surface, but the runner does the iter loop
- * inside one call so we must accumulate). */
+ * cleanup sees 0). Sticky matches the legacy GPU evaluator's per-CALL
+ * d_need_wakeup semantic (legacy ags_density() ran one evaluator-call
+ * per outer iter so the distinction didn't surface, but the runner does
+ * the iter loop inside one call so we must accumulate). */
 struct AgsDensityDeviceContext : NeighborLoopDeviceContextBase {
     int                     *need_wakeup_uvm;    /* UVM, single int.
                                                   * Sticky across all iters
@@ -342,10 +341,10 @@ struct AgsDensitySpec {
 
     static constexpr const char *loop_name = "ags_density";
 
-    /* search_mode is ONEWAY: legacy ags_density_evaluate_gpu builds CSR with
-     * NGB_SEARCH_ONEWAY (ags_density_gpu.cc:73), and the pair predicate is
-     * one-way (r < h_i only — no h_j check). Symmetric search would over-
-     * include neighbors via h_j logic and inflate NumNgb. AGSForce_calc is
+    /* search_mode is ONEWAY: the legacy ags_density CSR builder used
+     * NGB_SEARCH_ONEWAY, and the pair predicate is one-way (r < h_i only —
+     * no h_j check). Symmetric search would over-include neighbors via
+     * h_j logic and inflate NumNgb. AGSForce_calc is
      * symmetric (overlap filter r > h_i + h_j) — that loop will be a
      * separate port in Wave 3. (Codex round-7 caught this; was wrongly
      * MODE_B_SEARCH_SYMMETRIC in the scaffold.)
