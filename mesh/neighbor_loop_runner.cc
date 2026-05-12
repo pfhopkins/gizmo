@@ -70,6 +70,10 @@
 #include "test_iter_harness_loop.h"
 #endif
 
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+#include "../gravity/ags_density_loop.h"
+#endif
+
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
  * File-scope static; TU-local linkage. Defined here so the threshold helpers
@@ -4236,6 +4240,13 @@ template void run_neighbor_loop<SinkEnv2Spec>(const neighbor_loop_args&);
  * gates. Only the explicit instantiation lives here. */
 template void run_neighbor_loop_iterative<IterHarnessSpec>(const neighbor_loop_args_iterative&);
 template void run_neighbor_loop_iterative<IterHarnessGhostSpec>(const neighbor_loop_args_iterative&);
+#endif
+
+/* 3d.4: AgsDensitySpec — first production iterative Spec consumer of the
+ * 4.B.0 runner + step-0 partition-by-subgroup + sticky-call-scope wakeup
+ * traits. See gravity/ags_density_loop.{h,cc}. */
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_args_iterative&);
 #endif
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH

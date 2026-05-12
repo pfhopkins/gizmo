@@ -82,7 +82,24 @@ int ags_gravity_kernel_shared_BITFLAG(short int particle_type_primary)
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 
-void ags_density(void)
+/* The runner-driven `ags_density(void)` lives in gravity/ags_density_loop.cc
+ * (must compile with nvcc_wrapper because it includes ags_density_loop.h
+ * which pulls in Kokkos_Core.hpp for the inline pair body's atomics).
+ *
+ * The legacy code path below stays in this TU under the name
+ * `ags_density_legacy_path(void)`. It is reachable only when
+ * `GIZMO_NLR_AGSDENSITY_USE_LEGACY` is defined at compile time (two-binary
+ * parity validation). The runner-driven `ags_density()` dispatches to
+ * either this legacy body or the inline runner path based on that gate.
+ * Once two-binary parity passes on Vista, the post-3d.4 cleanup commit
+ * deletes this legacy body + the gate per design v0.4.3 §11 step 11.
+ *
+ * Forward decl (also declared in gravity/ags_density_loop.h consumed by
+ * the runner-driven caller; declared here as `void` so ags_density_loop.cc's
+ * `#ifdef GIZMO_NLR_AGSDENSITY_USE_LEGACY` branch can call it). */
+void ags_density_legacy_path(void);
+
+void ags_density_legacy_path(void)
 {
     /* initialize variables used below, in particlar the structures we need to call throughout the iteration */
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second(); MyFloat *Left, *Right, *AGS_Prev; double fac, fac_lim, desnumngb, desnumngbdev; long long ntot;
@@ -95,7 +112,38 @@ void ags_density(void)
         if(ags_density_isactive(i)) {
             Left[i] = Right[i] = 0; AGS_Prev[i] = P[i].AGS_KernelRadius; P[i].AGS_vsig = 0;
             P[i].wakeup = 0;
+#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
+            if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
+                printf("[AGS_TRACE rank=%d LEGACY pre_solve_init] ID=%lld Type=%d Mass=%g TimeBin=%d "
+                       "AGS_KernelRadius=%g KernelRadius=%g ForceSoftening=%g AGS_Prev=%g\n",
+                       ThisTask, (long long)P[i].ID, (int)P[i].Type,
+                       (double)P[i].Mass, (int)P[i].TimeBin,
+                       (double)P[i].AGS_KernelRadius, (double)P[i].KernelRadius,
+                       (double)P[i].ForceSoftening, (double)AGS_Prev[i]);
+                fflush(stdout);
+            }
+#endif
       }}
+#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
+    /* Mirror runner's pre-solve hard guard. */
+    for (int i : ActiveParticleList) {
+        if(ags_density_isactive(i) && !(P[i].AGS_KernelRadius > 0)) {
+            fprintf(stderr,
+                "[AGS_GUARD rank=%d LEGACY] FATAL: ags-active particle entered "
+                "ags_density_legacy_path() with AGS_KernelRadius <= 0. "
+                "ID=%lld Type=%d Mass=%g TimeBin=%d "
+                "AGS_KernelRadius=%g KernelRadius=%g ForceSoftening=%g "
+                "minsoft=%g maxsoft=%g\n",
+                ThisTask, (long long)P[i].ID, (int)P[i].Type,
+                (double)P[i].Mass, (int)P[i].TimeBin,
+                (double)P[i].AGS_KernelRadius, (double)P[i].KernelRadius,
+                (double)P[i].ForceSoftening,
+                ags_return_minsoft(i), ags_return_maxsoft(i));
+            fflush(stderr);
+            endrun(81361);
+        }
+    }
+#endif
 
     /* GPU neighbor-list path — bitmask partition + per-group cross-type CSR. */
     double timeall=0, timecomp=0, timecomm=0, timewait=0, t0;
@@ -420,7 +468,21 @@ void ags_density(void)
 
     if(NTask > 1) {ghost_exchange_cleanup();}
     myfree(Right); myfree(Left);
-    
+
+#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
+    /* Mirror runner trace site "post_runner_pre_final". */
+    for (int i : ActiveParticleList) {
+        if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
+            printf("[AGS_TRACE rank=%d LEGACY post_iter_loop_pre_final] ID=%lld "
+                   "AGS_KernelRadius=%g NumNgb=%g AGS_zeta=%g AGS_vsig=%g TimeBin=%d\n",
+                   ThisTask, (long long)P[i].ID,
+                   (double)P[i].AGS_KernelRadius, (double)P[i].NumNgb,
+                   (double)P[i].AGS_zeta, (double)P[i].AGS_vsig, (int)P[i].TimeBin);
+            fflush(stdout);
+        }
+    }
+#endif
+
     /* mark as active again */
     for (int i : ActiveParticleList)
     {
@@ -450,6 +512,19 @@ void ags_density(void)
             }
         }
     }
+#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
+    /* Mirror runner trace site "post_final_final". */
+    for (int i : ActiveParticleList) {
+        if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
+            printf("[AGS_TRACE rank=%d LEGACY post_final_final] ID=%lld "
+                   "AGS_KernelRadius=%g NumNgb=%g AGS_zeta=%g AGS_vsig=%g TimeBin=%d\n",
+                   ThisTask, (long long)P[i].ID,
+                   (double)P[i].AGS_KernelRadius, (double)P[i].NumNgb,
+                   (double)P[i].AGS_zeta, (double)P[i].AGS_vsig, (int)P[i].TimeBin);
+            fflush(stdout);
+        }
+    }
+#endif
     myfree(AGS_Prev);
 
     /* collect some timing information */
