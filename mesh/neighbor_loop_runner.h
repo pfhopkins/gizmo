@@ -272,13 +272,22 @@ struct IdentitySidecar {
  * amortize the SFC sort + BVH build). The runner resolves the kind to a
  * gpu_spatial_index_t* internally; specs never name the global accessor.
  *
- * 3c.1: only AllTypes is implemented. Other kinds abort with a clear
- * message until the corresponding callers land.
+ * 3c.1: AllTypes implemented; 3d.5 (density port) adds GasOnly. Specs
+ * with per-subgroup variable masks use None so each CSR build gets a local
+ * SIDX with exactly that subgroup's mask.
+ *
+ * Type-mask invariant (codex 2026-05-12): the chosen cache's recorded
+ * type_bitmask MUST match the Spec's neighbor_type_mask. A mismatch
+ * (e.g. gas-only Spec routing to the all-types cache) lets the walker
+ * return wrong-type neighbors and triggers downstream drift/lazy-drift
+ * aborts. gpu_ngb_list_build hard-aborts on mismatch via cache_tbm.
  * ========================================================================== */
 
 enum class SidxCacheKind : int {
-    AllTypes = 0,   /* gpu_step_sidx_alltypes_ptr — sink_env1/feed/swk shared */
-    /* future: PerSpecMask (3d), None (3f) — implement when first caller arrives. */
+    AllTypes = 0,   /* gpu_step_sidx_alltypes_ptr — sink_env1/feed/swk shared (tbm=0x3f) */
+    GasOnly  = 1,   /* gpu_step_sidx_ptr — gas-only callers (tbm=1), density */
+    None     = 2,   /* no step-persistent cache; required for variable subgroup masks */
+    /* future: PerSpecMask — implement if variable-mask callers need cache reuse. */
 };
 
 /* ============================================================================
@@ -1583,6 +1592,40 @@ struct nlr_spec_has_after_iter_global<
 template <typename Spec>
 constexpr bool nlr_spec_has_after_iter_global_v = nlr_spec_has_after_iter_global<Spec>::value;
 
+/* `nlr_spec_has_apply_active_writeback_iterative_v<Spec>`:
+ *   OPTIONAL hook (codex round-10 oracle-contract fix 2026-05-12). When
+ *   declared, the runner calls this hook INSTEAD OF apply_active_writeback
+ *   in the iterative production-only post-iter-loop writeback (around
+ *   line 4121 of neighbor_loop_runner.cc), passing the converged radius
+ *   and per-active IterScratch alongside the converged AccumData.
+ *
+ *   Rationale: density needs the converged radius for its post-runner
+ *   finalize, but cannot have after_iter write it to Aux (oracle runs
+ *   after_iter twice — production + oracle — sharing args.aux, so the
+ *   oracle pass would overwrite the production radius). The runner's
+ *   final writeback loop IS production-only (oracle has separate
+ *   accum_oracle_uvm + radii_oracle_uvm + no writeback call); routing
+ *   the radius through here is the only clean channel.
+ *
+ *   Specs that don't declare this hook continue to use the original
+ *   apply_active_writeback path (AGS, harness, all sink Specs). */
+template <typename Spec, typename = void>
+struct nlr_spec_has_apply_active_writeback_iterative : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_apply_active_writeback_iterative<
+    Spec,
+    std::void_t<decltype(Spec::apply_active_writeback_iterative(
+        std::declval<const neighbor_loop_args&>(),
+        std::declval<int>(),
+        std::declval<int>(),
+        std::declval<const typename Spec::AccumData&>(),
+        std::declval<double>(),
+        std::declval<const typename Spec::IterScratch&>()))>>
+    : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_spec_has_apply_active_writeback_iterative_v =
+    nlr_spec_has_apply_active_writeback_iterative<Spec>::value;
+
 template <typename Spec, typename = void>
 struct nlr_spec_has_on_max_iter_exceeded : std::false_type {};
 template <typename Spec>
@@ -1689,6 +1732,11 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  *                                     2=+dispatch trace, 3=reserved (today
  *                                     equivalent to level 2; rank-0 note)
  *   GIZMO_NLR_FORCE_MODE=A|B          tester force-mode override
+ *   GIZMO_<LOOP>_FORCE_MODE=A|B       per-loop override; wins over global
+ *   GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE=N
+ *                                     forced Mode B guardrail cap (default
+ *                                     100000); prevents accidental full-N
+ *                                     host-walker/oracle runs
  *   GIZMO_NLR_SPIKE_ACCUM_DUMP=1      cross-validation per-active accumulator
  *                                     dump (SPIKE; retire after 3d ports)
  *   GIZMO_NLR_SPIKE_NB_DUMP=1         first-call Mode A neighbor-list dump
@@ -1721,6 +1769,7 @@ enum class NlrForceMode { None = 0, A = 1, B = 2 };
 
 int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
 NlrForceMode gizmo_nlr_force_mode(void);              /* None / A / B */
+NlrForceMode gizmo_nlr_force_mode_for(const char *loop_name); /* per-loop override, else global */
 bool         gizmo_nlr_spike_accum_dump_enabled(void);
 bool         gizmo_nlr_spike_nb_dump_enabled(void);
 

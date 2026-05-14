@@ -509,7 +509,16 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
         t_phase0_start = my_second();
         nlocal_pre = NumPart;
     }
-    if(rd_enabled && caller_safe) {
+    /* Codex 2026-05-12: explicit-query specs (n_queries >= 0) MUST go
+     * through the request-driven path. Tile-overlap has no way to use
+     * spec->query_pos / spec->query_h — it scans ActiveParticleList and
+     * filters by request_type_mask. For runner-issued specs with
+     * request_type_mask=0u + explicit query list, tile-overlap imports
+     * zero ghosts (all actives filtered out), silently breaking the
+     * caller's neighbor lookup. Force request-driven whenever queries
+     * are explicit, independent of env / allowlist. */
+    const int explicit_queries = (spec && spec->n_queries >= 0);
+    if(explicit_queries || (rd_enabled && caller_safe)) {
         ghost_exchange_request_driven_impl(spec);
     } else {
         ghost_exchange_tile_overlap_impl(spec);
@@ -521,7 +530,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
                "nlocal_pre=%d ghost_added=%d ntotal_post=%d dt_ghost_import=%.6f\n",
                ThisTask, this_phase0_call,
                spec->caller_name ? spec->caller_name : "?",
-               (rd_enabled && caller_safe) ? "request_driven" : "tile_overlap",
+               (explicit_queries || (rd_enabled && caller_safe)) ? "request_driven" : "tile_overlap",
                nlocal_pre, ghost_added, NumPart, dt_ghost_import);
         fflush(stdout);
     }

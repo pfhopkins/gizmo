@@ -74,6 +74,8 @@
 #include "../gravity/ags_density_loop.h"
 #endif
 
+#include "../hydro/density_loop.h"
+
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
  * File-scope static; TU-local linkage. Defined here so the threshold helpers
@@ -444,6 +446,73 @@ static NlrForceMode nlr_init_force_mode(void)
     return NlrForceMode::None;
 }
 
+static NlrForceMode nlr_parse_force_mode_value(const char *env_name,
+                                               const char *raw_value)
+{
+    if(!raw_value || !raw_value[0]) return NlrForceMode::None;
+    if(raw_value[0] == 'A' && raw_value[1] == '\0') return NlrForceMode::A;
+    if(raw_value[0] == 'B' && raw_value[1] == '\0') return NlrForceMode::B;
+    if(ThisTask == 0) {
+        fprintf(stderr, "[NLR env] FATAL: %s=\"%s\" must be 'A' or 'B'.\n",
+                env_name ? env_name : "GIZMO_<LOOP>_FORCE_MODE", raw_value);
+        fflush(stderr);
+    }
+    endrun(81104);
+    return NlrForceMode::None;
+}
+
+static void nlr_loop_env_name(const char *loop_name, const char *suffix,
+                              char *out, int out_size)
+{
+    if(out_size <= 0) return;
+    int j = 0;
+    const char *prefix = "GIZMO_";
+    for(int p = 0; prefix[p] && j < out_size - 1; p++) out[j++] = prefix[p];
+    if(loop_name) {
+        for(int p = 0; loop_name[p] && j < out_size - 1; p++) {
+            out[j++] = (char)toupper((unsigned char)loop_name[p]);
+        }
+    }
+    if(suffix) {
+        for(int p = 0; suffix[p] && j < out_size - 1; p++) out[j++] = suffix[p];
+    }
+    out[j] = '\0';
+}
+
+static int nlr_force_modeb_active_cap_for(const char *loop_name)
+{
+    char env_name[160];
+    nlr_loop_env_name(loop_name, "_FORCE_MODEB_MAX_ACTIVE",
+                      env_name, (int)sizeof(env_name));
+    int cap = parse_int_env(env_name);
+    if(cap >= 0) return cap;
+    cap = parse_int_env("GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE");
+    return (cap >= 0) ? cap : 100000;
+}
+
+static void nlr_abort_if_forced_modeb_too_large(const char *loop_name,
+                                                int local_active,
+                                                int global_active)
+{
+    const int cap = nlr_force_modeb_active_cap_for(loop_name);
+    if(cap >= 0 && global_active > cap) {
+        if(ThisTask == 0) {
+            fprintf(stderr,
+                    "[NLR FORCE_MODE=B] FATAL: caller=%s requested forced "
+                    "Mode B with global_active=%d local_active(rank0)=%d, "
+                    "exceeding cap=%d. This prevents accidental full-N "
+                    "host-walker/oracle runs during startup density setup. "
+                    "Use GIZMO_<LOOP>_FORCE_MODE=A for dense loops, a "
+                    "per-loop Mode-B override for tiny loops, or raise "
+                    "GIZMO_NLR_FORCE_MODEB_MAX_ACTIVE intentionally.\n",
+                    loop_name ? loop_name : "?", global_active,
+                    local_active, cap);
+            fflush(stderr);
+        }
+        endrun(81105);
+    }
+}
+
 static bool nlr_init_spike_accum_dump(void)
 {
     bool new_set = nlr_env_is_one("GIZMO_NLR_SPIKE_ACCUM_DUMP");
@@ -496,6 +565,36 @@ NlrForceMode gizmo_nlr_force_mode(void)
     static int  cached_int   = -1;          /* -1 = uninit; 0/1/2 = enum */
     if(cached_int < 0) cached_int = (int)nlr_init_force_mode();
     return (NlrForceMode)cached_int;
+}
+
+NlrForceMode gizmo_nlr_force_mode_for(const char *loop_name)
+{
+    if(!loop_name || !loop_name[0]) return gizmo_nlr_force_mode();
+    struct entry_t { const char *name; int cached; };
+    static entry_t cache[16] = {
+        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
+        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
+        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1},
+        {nullptr,-1},{nullptr,-1},{nullptr,-1},{nullptr,-1}};
+    for(int k = 0; k < 16; k++) {
+        if(cache[k].name == loop_name) return (NlrForceMode)cache[k].cached;
+        if(cache[k].name == nullptr) {
+            char env_name[160];
+            nlr_loop_env_name(loop_name, "_FORCE_MODE", env_name, (int)sizeof(env_name));
+            const char *raw = getenv(env_name);
+            NlrForceMode mode = raw && raw[0]
+                ? nlr_parse_force_mode_value(env_name, raw)
+                : gizmo_nlr_force_mode();
+            cache[k].name = loop_name;
+            cache[k].cached = (int)mode;
+            return mode;
+        }
+    }
+    char env_name[160];
+    nlr_loop_env_name(loop_name, "_FORCE_MODE", env_name, (int)sizeof(env_name));
+    const char *raw = getenv(env_name);
+    return raw && raw[0] ? nlr_parse_force_mode_value(env_name, raw)
+                         : gizmo_nlr_force_mode();
 }
 
 bool gizmo_nlr_spike_accum_dump_enabled(void)
@@ -664,11 +763,15 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
     switch(k) {
         case SidxCacheKind::AllTypes:
             return gpu_step_sidx_alltypes_ptr();
+        case SidxCacheKind::GasOnly:
+            return gpu_step_sidx_ptr();
+        case SidxCacheKind::None:
+            return nullptr;
     }
-    /* Unreachable in 3c.1 — kept exhaustive for compiler warnings on enum
+    /* Unreachable today — kept exhaustive for compiler warnings on enum
      * additions. Other kinds land alongside their first caller. */
     fprintf(stderr, "neighbor_loop_runner: SidxCacheKind=%d not implemented "
-            "for loop '%s' (3c.1 supports only AllTypes)\n",
+            "for loop '%s'\n",
             (int)k, loop_name ? loop_name : "?");
     fflush(stderr);
     endrun(81030);
@@ -2104,7 +2207,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * same frozen query — it does NOT cross-validate Mode A. Mode A vs
      * Mode B active-epoch consistency is a separate concern, deferred.
      */
-    const NlrForceMode force_mode = gizmo_nlr_force_mode();
+    const NlrForceMode force_mode = gizmo_nlr_force_mode_for(Spec::loop_name);
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
     const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
@@ -2140,13 +2243,17 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         const int TS = gizmo_nlr_modeb_threshold_sum_for(Spec::loop_name, spec_default_sum);
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
-    } else if(phase0_on) {
-        /* Force path: dispatch logic skipped the Allreduce. Do it here
-         * ONLY for phase0 num_active_global. */
+    } else if(phase0_on || force_b) {
+        /* Force path: dispatch logic skipped the Allreduce. Do it here for
+         * phase0 num_active_global and for the forced-Mode-B size guard. */
         int local_act = args.num_active;
         int sum_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         phase0_sum_active = sum_act;
+    }
+    if(force_b) {
+        nlr_abort_if_forced_modeb_too_large(
+            Spec::loop_name, args.num_active, phase0_sum_active);
     }
 
     /* Compute the execution plan from the dispatch decision. Path is the
@@ -2532,7 +2639,11 @@ NlrIterDriver<Spec>::~NlrIterDriver()
     }
 
     /* Imported-ghost cleanup ONCE per call (codex 2c.2-fix; matches non-iter
-     * line 2094-2097). Only fires for Mode A multi-rank paths that imported. */
+     * line 2094-2097). Only fires for Mode A multi-rank paths that imported.
+     * Runner's Mode A imports an exact-query ghost pool sized to the iter's
+     * actives+radii; the caller (e.g. density()) is responsible for any
+     * downstream handoff pool it needs AFTER runner-return (post-finalize
+     * fresh broad import — not "keep this exact-query pool alive"). */
     if (ghost_import_done && NTask > 1) {
         ghost_exchange_cleanup();
         ghost_import_done = false;
@@ -3306,6 +3417,98 @@ static void nlr_iter_dispatch_subgroup_oracle_b_local(NlrIterDriver<Spec>& drv, 
     /* brute_guard destructor flips set_oracle_brute_pass(false) here. */
 }
 
+/* Local Mode-B iterative oracle combined dispatch.
+ *
+ * The separate brute-first helper is not sufficient for local iterative
+ * density: its lazy drift mutates P[] before production snapshots ActiveData,
+ * so oracle and production compare different i-side states. Keep the legacy
+ * Mode-B epoch contract explicit here: snapshot both i-side active arrays and
+ * collect both candidate lists before either path drifts j-side candidates.
+ */
+template <typename Spec>
+static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Spec>& drv, int sg)
+{
+    using ActiveData = typename Spec::ActiveData;
+    using AccumData  = typename Spec::AccumData;
+
+    const NlrSubgroup& sgr = drv.args.subgroups[sg];
+
+    const int n_prod = drv.active_set_size[sg];
+    std::vector<int> active_particle_indices_prod(n_prod > 0 ? n_prod : 0);
+    std::vector<double> radii_compacted_prod(n_prod > 0 ? n_prod : 0);
+    for(int k = 0; k < n_prod; k++) {
+        int slot = drv.active_set_uvm[sg][k];
+        active_particle_indices_prod[k] = sgr.active_indices[slot];
+        radii_compacted_prod[k] = drv.radii_uvm[sg][slot];
+    }
+    neighbor_loop_args sub_prod = drv.args;
+    sub_prod.active_list = (n_prod > 0) ? active_particle_indices_prod.data() : nullptr;
+    sub_prod.num_active  = n_prod;
+
+    const int n_oracle = drv.active_set_oracle_size[sg];
+    std::vector<int> active_particle_indices_oracle(n_oracle > 0 ? n_oracle : 0);
+    std::vector<double> radii_compacted_oracle(n_oracle > 0 ? n_oracle : 0);
+    for(int k = 0; k < n_oracle; k++) {
+        int slot = drv.active_set_oracle_uvm[sg][k];
+        active_particle_indices_oracle[k] = sgr.active_indices[slot];
+        radii_compacted_oracle[k] = drv.radii_oracle_uvm[sg][slot];
+    }
+    neighbor_loop_args sub_oracle = drv.args;
+    sub_oracle.active_list = (n_oracle > 0) ? active_particle_indices_oracle.data() : nullptr;
+    sub_oracle.num_active  = n_oracle;
+
+    std::vector<ActiveData> actives_prod(n_prod > 0 ? n_prod : 0);
+    if(n_prod > 0) {
+        build_self_actives_host_pre_drift<Spec>(sub_prod, drv.ctx,
+                                                radii_compacted_prod.data(),
+                                                drv.cs, actives_prod.data());
+    }
+
+    std::vector<ActiveData> actives_oracle(n_oracle > 0 ? n_oracle : 0);
+    if(n_oracle > 0) {
+        build_self_actives_host_pre_drift<Spec>(sub_oracle, drv.ctx_oracle,
+                                                radii_compacted_oracle.data(),
+                                                drv.cs, actives_oracle.data());
+    }
+
+    std::vector<AccumData> accums_prod(n_prod > 0 ? n_prod : 0);
+    for(int k = 0; k < n_prod; k++) Spec::zero_accum(accums_prod[k]);
+    std::vector<AccumData> accums_oracle(n_oracle > 0 ? n_oracle : 0);
+    for(int k = 0; k < n_oracle; k++) Spec::zero_accum(accums_oracle[k]);
+
+    std::vector<std::vector<int>> cand_prod;
+    collect_candidates_pre_drift<Spec>(sub_prod, radii_compacted_prod.data(),
+                                       (unsigned int)sgr.j_type_bitmask,
+                                       DispatchPath::ModeB_HostWalker, cand_prod);
+
+    std::vector<std::vector<int>> cand_oracle;
+    collect_candidates_pre_drift<Spec>(sub_oracle, radii_compacted_oracle.data(),
+                                       (unsigned int)sgr.j_type_bitmask,
+                                       DispatchPath::Brute_Oracle, cand_oracle);
+
+    lazy_drift_candidates<Spec>(cand_prod);
+    lazy_drift_candidates<Spec>(cand_oracle);
+
+    if(n_prod > 0) {
+        evaluate_pairs_post_drift<Spec>(drv.ctx, actives_prod.data(), n_prod,
+                                        cand_prod, accums_prod.data());
+        for(int k = 0; k < n_prod; k++) {
+            int slot = drv.active_set_uvm[sg][k];
+            drv.accum_uvm[sg][slot] = accums_prod[k];
+        }
+    }
+
+    if(n_oracle > 0) {
+        NlrOracleBrutePassGuard<Spec> brute_guard(drv.ctx_oracle);
+        evaluate_pairs_post_drift<Spec>(drv.ctx_oracle, actives_oracle.data(), n_oracle,
+                                        cand_oracle, accums_oracle.data());
+        for(int k = 0; k < n_oracle; k++) {
+            int slot = drv.active_set_oracle_uvm[sg][k];
+            drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
+        }
+    }
+}
+
 /* ============================================================================
  * nlr_iter_dispatch_subgroup_oracle_b_remote<Spec>(drv, sg) — step 2c.4.
  *
@@ -3483,11 +3686,17 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * num_active for threshold uses the UNION across all subgroups (base
      * args.num_active per the doc convention). 2c.2 is single-subgroup-only;
      * 2c.3 multi-subgroup walker mask-threading lands separately. */
-    const NlrForceMode force_mode = gizmo_nlr_force_mode();
+    const NlrForceMode force_mode = gizmo_nlr_force_mode_for(Spec::loop_name);
     DispatchPath path;
+    int forced_modeb_global_active = -1;
     if (force_mode == NlrForceMode::A) {
         path = DispatchPath::ModeA_GPU_NGL;
     } else if (force_mode == NlrForceMode::B) {
+        int local_act = args.num_active;
+        MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
+                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        nlr_abort_if_forced_modeb_too_large(
+            Spec::loop_name, args.num_active, forced_modeb_global_active);
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
@@ -3527,6 +3736,23 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             fflush(stderr);
         }
         endrun(81203);
+    }
+
+    if(gizmo_nlr_dispatch_trace_enabled()) {
+        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        if(rank == 0) {
+            const char *src =
+                (force_mode == NlrForceMode::A || force_mode == NlrForceMode::B)
+                ? "force" : "threshold";
+            fprintf(stderr,
+                    "[NLR ITER DISPATCH caller=%s path=%s (%s) NTask=%d "
+                    "local_active=%d forced_modeb_global_active=%d oracle=%d]\n",
+                    Spec::loop_name,
+                    path == DispatchPath::ModeA_GPU_NGL ? "gpu_ngl" : "mode_b",
+                    src, NTask, args.num_active,
+                    forced_modeb_global_active, (int)oracle_enabled);
+            fflush(stderr);
+        }
     }
 
     /* ===== CallScalars captured ONCE for whole call (codex constraint 4) ===== */
@@ -3847,7 +4073,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
              * entered on every rank regardless of local n_compacted. */
             if (drv.oracle_enabled) {
                 if (NTask == 1) {
-                    nlr_iter_dispatch_subgroup_oracle_b_local<Spec>(drv, sg);
+                    nlr_iter_dispatch_subgroup_mode_b_local_with_oracle<Spec>(drv, sg);
+                    continue;
                 } else {
                     nlr_iter_dispatch_subgroup_oracle_b_remote<Spec>(drv, sg);
                 }
@@ -4128,7 +4355,21 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
             int i = sgr.active_indices[slot];
-            Spec::apply_active_writeback(sub, slot, i, drv.accum_uvm[sg][slot]);
+            /* Codex round-10 fix 2026-05-12: if Spec opts into the
+             * iterative-variant hook, route the converged radius +
+             * IterScratch through it. Production-only path (oracle has
+             * its own accum_oracle_uvm / radii_oracle_uvm; oracle does
+             * NOT call apply_active_writeback). Specs that don't declare
+             * the iterative hook fall through to the original. */
+            if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
+                Spec::apply_active_writeback_iterative(
+                    sub, slot, i,
+                    drv.accum_uvm[sg][slot],
+                    drv.radii_uvm[sg][slot],
+                    drv.scratch_uvm[sg][slot]);
+            } else {
+                Spec::apply_active_writeback(sub, slot, i, drv.accum_uvm[sg][slot]);
+            }
         }
     }
 
@@ -4257,6 +4498,12 @@ template void run_neighbor_loop_iterative<IterHarnessGhostSpec>(const neighbor_l
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_args_iterative&);
 #endif
+
+/* Phase 4 Wave-1: DensitySpec — hydro density runner port (Step 6).
+ * Single gas-only subgroup, oracle-safe (no after_iter P/CellP writes),
+ * uses apply_active_writeback_iterative for oracle-safe radius
+ * channeling (codex round-10 fix). See hydro/density_loop.{h,cc}. */
+template void run_neighbor_loop_iterative<DensitySpec>(const neighbor_loop_args_iterative&);
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH
  * in run_mode_a). Same idiom as sink_environment_gpu.cc:388. */

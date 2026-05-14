@@ -74,8 +74,8 @@ extern "C" void gpu_xval_readback_pv(const int *indices, int n,
 /* Persistent gas-only SIDX shared across density+symlist within a step.
  * Lifetime: built lazily on first gas (type_bitmask=1) ngb_list_build, reused
  * for all subsequent gas builds, freed by gpu_step_sidx_invalidate() after drift. */
-static gpu_spatial_index_t g_step_sidx = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0};
-static gpu_spatial_index_t g_step_sidx_alltypes = {NULL,NULL,NULL,0,0,{0},{0},{0},NULL,0};
+static gpu_spatial_index_t g_step_sidx{};
+static gpu_spatial_index_t g_step_sidx_alltypes{};
 
 /* Lazy-drift h-slack: under lazy drift, neighbor j's KernelRadius in P[] may
  * be at j's old Ti_current, not at time1. drift_particle's gas-extras block
@@ -761,6 +761,7 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     myfree(h_pool);
 
     idx->num_total = num_total;
+    idx->cache_tbm = type_bitmask;
     idx->valid = 1;
     /* Register this cache with the dirty tracker over [0, num_total). compact_xyzh
      * was just seeded from current P[] — bitset starts clean (all_dirty=0). */
@@ -806,6 +807,8 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
     if(idx->d_pos_buf) { Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(idx->d_pos_buf); idx->d_pos_buf = NULL; }
     idx->h_bvh_nnodes = 0;
     idx->num_pool = 0;
+    idx->num_total = 0;
+    idx->cache_tbm = -1;
     idx->valid = 0;
     if(idx->dirty_handle >= 0) {
         gpu_dirty_tracker_unregister(idx->dirty_handle);
@@ -826,6 +829,32 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 {
     gnl->num_active = num_active;
     double t_entry = my_second(); /* DIAG: entry */
+    /* Codex 2026-05-12 defensive guard: a cached SIDX's compact_xyzh / pool
+     * only contains the originally-built types. If the caller's type_bitmask
+     * differs from the cache's, the walker would return neighbors of types
+     * outside the caller's mask (e.g., DM neighbors leaking into a gas-only
+     * density walk → lazy-drift attempts on Type=1 → drift_particle abort
+     * 'no prediction into past allowed'). HARD-ABORT with a clear message
+     * so any future Spec-author who routes a tbm-mismatched cache fails at
+     * the right layer, not via downstream nonsense. The companion warning
+     * in gpu_neighbor_list.h on gpu_step_sidx_alltypes_ptr documented this
+     * invariant; pre-2026-05-12 no code enforced it. */
+    if (cached_idx && cached_idx->valid && cached_idx->cache_tbm >= 0 &&
+        cached_idx->cache_tbm != type_bitmask) {
+        fprintf(stderr,
+            "gpu_ngb_list_build FATAL: caller='%s' type_bitmask=0x%x but cached "
+            "SIDX was built with tbm=0x%x. The cached compact_xyzh / pool only "
+            "contains the originally-built types — walking it under a different "
+            "mask returns wrong-type neighbors and triggers downstream aborts "
+            "(e.g. drift_particle 'no prediction into past allowed' on Type=1 "
+            "during a gas-only density walk). Spec author: declare "
+            "sidx_cache_kind matching your neighbor_type_mask, or rebuild "
+            "the cache. See gpu_neighbor_list.h docstring on "
+            "gpu_step_sidx_alltypes_ptr.\n",
+            caller_label ? caller_label : "?", type_bitmask, cached_idx->cache_tbm);
+        fflush(stderr);
+        endrun(913005);
+    }
     /* Phase 0 instrumentation: env-gated, all-ranks, per-call line for
      * Nactive histogram + tiny-N phase-cost decomposition. Off ⇒ no work. */
     static const char *g_phase0_env_raw = getenv("GIZMO_PHASE0_DIAG");

@@ -66,6 +66,14 @@ struct gpu_spatial_index_t {
     int num_total;  /* particle count when built; mismatch → invalidate */
     int valid;  /* 1 if built and usable */
     int dirty_handle = -1; /* gpu_dirty_tracker handle; -1 when not registered */
+    /* Type bitmask used at the most recent build. The cached compact_xyzh /
+     * pool only includes the originally-built types; later callers MUST pass
+     * the same tbm to gpu_ngb_list_build. Codex 2026-05-12: density port
+     * exposed a bug where a gas-only caller (tbm=1) used the all-types cache
+     * (tbm=0x3f), causing the walker to return DM neighbors and lazy-drift
+     * to abort on Type=1 particles. gpu_ngb_list_build now hard-aborts on
+     * mismatch instead of silently mis-walking. Default -1 = "no build yet". */
+    int cache_tbm = -1;
     /* Host-side persistent copies kept alive across drifts to support
      * gpu_step_sidx_invalidate's incremental refresh path: tile bboxes
      * are recomputed in place from current particle positions, the BVH

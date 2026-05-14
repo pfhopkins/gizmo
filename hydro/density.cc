@@ -126,6 +126,15 @@ int density_isactive(int n)
  * and rotation of the velocity field.  This is used then to compute the effective volume of the element in MFM/MFV/SPH-type methods, which is then used to
  * update volumetric quantities like density and pressure. The routine iterates to attempt to find a target kernel size set adaptively -- see code user guide for details
  */
+/* Phase 4 Wave-1 density port (OPEN_3d_density_design.md §9.D): legacy
+ * body gated on GIZMO_NLR_DENSITY_USE_LEGACY. When the flag is set, this
+ * body provides density(); else hydro/density_loop.cc::density() runs
+ * the runner-driven path. The cleanup commit (Step 8) retires this
+ * gated body after Step 7 two-binary parity validation closes.
+ * density_isactive, cellcorrections_calc, and
+ * cellcorrections_final_operations_and_cleanup remain UNGATED — they
+ * are peer step phases / declarations used by other parts of the code. */
+#ifdef GIZMO_NLR_DENSITY_USE_LEGACY
 void density(void)
 {
     /* DM-only / N-body runs can have zero gas globally. Everything below operates
@@ -805,6 +814,7 @@ void density(void)
        redo to match the hydro-typed prep above (gas-only, one-way). */
     gizmo_hydro_density_redo_ghosts_if_needed(gsl_safety);
 }
+#endif /* GIZMO_NLR_DENSITY_USE_LEGACY */
 
 
 /* Routines for a loop after the iterative density loop needed to find neighbors, etc, once all have converged, to apply additional correction terms to the cell volumes and faces (for those needed -before- the gradients loop because they alter primitive quantities needed for gradients, such as particle densities, pressures, etc.)

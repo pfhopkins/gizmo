@@ -358,7 +358,11 @@ struct AgsDensitySpec {
     static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
 
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
-    static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::AllTypes;
+    /* AGS partitions actives into subgroups with different j_type_bitmask
+     * values. A step-persistent SIDX is built for exactly one type mask, so
+     * sharing AllTypes/GasOnly across AGS subgroups or later sink calls is
+     * invalid. Build a local SIDX per CSR until/unless a per-mask cache lands. */
+    static constexpr SidxCacheKind  sidx_cache_kind = SidxCacheKind::None;
 
     static constexpr double accum_tolerance  = 1e-10;
     /* Runner reads radius_tolerance for iterative Specs (separate semantic

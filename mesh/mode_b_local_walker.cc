@@ -157,7 +157,7 @@ void mode_b_local_neighbor_walk(const double pos[3],
     if(All.MaxPart <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
     const int max_part  = All.MaxPart;
-    const int last_node = max_part + Numnodestree;
+    const int pseudo_start = max_part + MaxNodes + MaxForeignNodes;
 
     /* Stage 4 v1: SYMMETRIC pruning uses per-type hmax bands maintained in
      * extNODE (see allvars.h). For each internal node we compute
@@ -187,7 +187,7 @@ void mode_b_local_neighbor_walk(const double pos[3],
                 out.push_back(no);
             }
             no = Nextnode[no];
-        } else if(no < last_node) {
+        } else if(no < pseudo_start) {
             /* Internal node — drift if stale, then prune. */
             struct NODE *nop = &Nodes[no];
             if(nop->Ti_current != All.Ti_Current) {
@@ -211,11 +211,12 @@ void mode_b_local_neighbor_walk(const double pos[3],
             int do_open = sphere_aabb_overlap(pos, nop, R_eff);
             no = do_open ? nop->u.d.nextnode : nop->u.d.sibling;
         } else {
-            /* Foreign pseudo-particle node (LET / cross-rank). Codex
-             * constraint: never include in candidate list. Skip via
-             * the pseudo-particle's sibling (held in the underlying
-             * NODE struct still indexable via Nodes[no]). */
-            no = Nodes[no].u.d.sibling;
+            /* Pseudo-particle node (LET / cross-rank). These are not
+             * addressable NODE slots in the Phase-9 layout. Match the
+             * legacy force walkers: skip through the corresponding
+             * Nextnode[] entry, whose pseudo index is shifted by the
+             * local-node and foreign-node reservation. */
+            no = Nextnode[no - MaxNodes - MaxForeignNodes];
         }
     }
 }
