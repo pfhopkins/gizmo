@@ -1596,11 +1596,20 @@ extern "C" int gpu_gravtree_walk_primary(void)
      * GPU parallelism over Numnodestree (early-out when Ti_current matches). */
     /* Phase 7+ sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off. */
     double t_grv_start = my_second();
-    move_particles(All.Ti_Current); /* drifts all P[], invalidates arena */
+    /* Codex 2026-05-12 v2 (post-dbg27): host-side wrapper in GPU TU must
+     * use the OUT-OF-LINE host accessor `gizmo_host_ti_current()` (defined
+     * in core/predict.cc). The inline `gizmo_gpu_host_all_ptr()` accessor
+     * defined in gpu_all_mirror.h proved UNRELIABLE under nvcc_wrapper —
+     * dbg27 showed it returning the stale TU-local All_dev despite the
+     * push_macro/undef trick. The out-of-line accessor lives in a TU with
+     * no `#define All All_dev`, guaranteeing a real host read. See
+     * feedback_all_dev_trap_host_side.md (permanent memory). */
+    integertime ti_curr_host = gizmo_host_ti_current();
+    move_particles(ti_curr_host); /* drifts all P[], invalidates arena */
     double t_grv_mp = my_second();
     /* SoA must exist before the drift kernel — it writes mirror fields. */
     gpu_gravity_tree_acquire(MaxNodes + 1, Nodes_base, Extnodes_base);
-    if(gpu_force_drift_nodes(All.Ti_Current) != 0) {
+    if(gpu_force_drift_nodes(ti_curr_host) != 0) {
         endrun(929702);
     }
     double t_grv_drift_nodes = my_second();

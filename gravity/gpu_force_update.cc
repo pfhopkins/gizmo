@@ -94,8 +94,10 @@ extern "C" void gpu_force_update_tree(void)
     gpu_particles_arena_acquire(NumPart, P, CellP);
     double t_fut_arena = my_second();
 
-    /* Stage 1: drift all stale nodes to Ti_Current (reuse Phase 7.a kernel). */
-    if(gpu_force_drift_nodes(All.Ti_Current) != 0) { endrun(929703); }
+    /* Stage 1: drift all stale nodes to Ti_Current (reuse Phase 7.a kernel).
+     * Codex 2026-05-12: out-of-line host accessor; see
+     * feedback_all_dev_trap_host_side.md. */
+    if(gpu_force_drift_nodes(gizmo_host_ti_current()) != 0) { endrun(929703); }
     double t_fut_drift_nodes = my_second();
 
     const int num_active = (int)ActiveParticleList.size();
@@ -115,7 +117,10 @@ extern "C" void gpu_force_update_tree(void)
         struct NODE          *No   = Nodes;     /* UVM shifted ptr since Phase 6.8d */
         struct extNODE       *Ex   = Extnodes;  /* UVM since Phase 6.8d */
         int                   gflag = GlobFlag;
-        integertime           ti_cur = All.Ti_Current;
+        /* Codex 2026-05-12: out-of-line host accessor (used host-side
+         * here, captured by-value into the device lambda). See
+         * feedback_all_dev_trap_host_side.md. */
+        integertime           ti_cur = gizmo_host_ti_current();
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         /* Pre-compute rt_source_lum_dp per active particle on CPU (not GPU-callable). */

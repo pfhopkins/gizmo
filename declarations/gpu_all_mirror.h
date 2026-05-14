@@ -29,16 +29,23 @@
 static __managed__ struct global_data_all_processes All_dev;
 #define All All_dev
 
-/* Helper: return a pointer to the host-side All (bypassing the #define All All_dev
-   redirect in this TU).  Uses push_macro/pop_macro to locally undo the redirect so
-   the extern declaration resolves to the real global symbol, then restores it. */
+/* DEPRECATED 2026-05-12: this inline used a push_macro/pop_macro trick to
+ * "locally undo" the `#define All All_dev` redirect. Under nvcc_wrapper the
+ * trick proved UNRELIABLE — it returned the per-TU All_dev mirror instead
+ * of the host extern (density-port SP4 saga). All callers must use the
+ * canonical out-of-line `gizmo_host_all_ptr()` from declarations/allvars.cc,
+ * declared in core/proto.h. This shim now forwards to the canonical accessor
+ * so any straggler caller is still safe; remove once no callers remain.
+ * See feedback_all_dev_trap_host_side.md (permanent memory). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct global_data_all_processes *gizmo_host_all_ptr(void);
+#ifdef __cplusplus
+}
+#endif
 static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    struct global_data_all_processes *p = &All;
-#pragma pop_macro("All")
-    return p;
+    return gizmo_host_all_ptr();
 }
 
 /* Macro to generate the per-TU sync function that copies host All -> All_dev.
@@ -63,9 +70,18 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
    invariant local and self-enforcing.
    The extern declaration at block scope lets the guard appear above the TU's
    GPU_ALL_SYNC_FUNC(name) definition (which lives at end of file). */
+/* Codex 2026-05-12: the freshness guard MUST use the canonical out-of-line
+ * host accessor `gizmo_host_all_ptr()` (defined in declarations/allvars.cc)
+ * rather than the inline `gizmo_gpu_host_all_ptr()` in this header. dbg27
+ * proved the inline accessor's push_macro/undef trick is unreliable under
+ * nvcc_wrapper — it returned the TU's All_dev (stale) instead of host All.
+ * Using the out-of-line function guarantees a real host read.
+ *
+ * See feedback_all_dev_trap_host_side.md (permanent memory). */
 #define GIZMO_GPU_ENSURE_ALL_FRESH(name) do { \
     extern void gizmo_gpu_sync_all_##name(struct global_data_all_processes *); \
-    gizmo_gpu_sync_all_##name(gizmo_gpu_host_all_ptr()); \
+    extern struct global_data_all_processes *gizmo_host_all_ptr(void); \
+    gizmo_gpu_sync_all_##name(gizmo_host_all_ptr()); \
 } while(0)
 
 #else
@@ -73,12 +89,19 @@ static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
 /* Kokkos OpenMP backend — All is the regular extern from allvars.h.
    Still need the sync function stub so cooling.cc can call it. */
 
-/* Host-backend equivalent of the CUDA `gizmo_gpu_host_all_ptr()` accessor:
-   here `All` is the regular extern host global, so we just return its address.
-   This keeps Spec::populate_call_scalars portable across backends. */
+/* DEPRECATED 2026-05-12: same back-compat shim as the CUDA branch. Forwards
+ * to canonical `gizmo_host_all_ptr()` so both backends route through the same
+ * single point of truth. New code should call `gizmo_host_all_ptr()` directly.
+ * See feedback_all_dev_trap_host_side.md. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct global_data_all_processes *gizmo_host_all_ptr(void);
+#ifdef __cplusplus
+}
+#endif
 static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
-    extern struct global_data_all_processes All;
-    return &All;
+    return gizmo_host_all_ptr();
 }
 
 #define GPU_ALL_SYNC_FUNC(name) \

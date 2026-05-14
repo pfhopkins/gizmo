@@ -258,6 +258,30 @@ void *CommBuffer;		/*!< points to communication buffer, which is used at a few p
    memcpys this host All → the UVM copy each timestep. */
 struct global_data_all_processes All;
 
+/* Canonical out-of-line host accessors for `All.*`. GPU TUs include
+ * declarations/gpu_all_mirror.h, which does `#define All All_dev` to
+ * redirect bare `All` to a per-TU `__managed__` mirror. The inline
+ * gizmo_gpu_host_all_ptr() in that header proved UNRELIABLE under
+ * nvcc_wrapper: its push_macro/undef/pop_macro trick returned the
+ * TU-local mirror instead of the host extern (density-port SP4 saga,
+ * 2026-05-12). These accessors live in this TU — which never includes
+ * gpu_all_mirror.h — and therefore read the real host extern reliably.
+ * ANY host-side code in a GPU TU MUST go through these (or
+ * nlr_host_all_ptr() which now wraps gizmo_host_all_ptr()) for All.*
+ * fields that flow into host-API arguments or host control flow. Bare
+ * All.* in a GPU TU is only safe inside Kokkos device lambdas.
+ * See feedback_all_dev_trap_host_side.md (permanent memory). */
+extern "C" {
+struct global_data_all_processes *gizmo_host_all_ptr(void)
+{
+    return &All;
+}
+integertime gizmo_host_ti_current(void)
+{
+    return All.Ti_Current;
+}
+}
+
 
 
 

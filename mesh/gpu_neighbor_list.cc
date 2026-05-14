@@ -410,7 +410,9 @@ static double sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
     const double *orig_extent = idx->h_tile_orig_max_extent;
     float *pos_buf = idx->h_pos_buf;
     double max_ratio = 0.0;
-    integertime time1 = All.Ti_Current;
+    /* Codex 2026-05-12: out-of-line host accessor; see
+     * feedback_all_dev_trap_host_side.md. Host-side drift-factor input. */
+    integertime time1 = gizmo_host_ti_current();
 
     #pragma omp parallel for reduction(max:max_ratio) schedule(static)
     for(int t = 0; t < ntiles; t++) {
@@ -1600,7 +1602,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         double t_lazy0 = my_second();
         std::vector<int> ngb_host(gnl->total_pairs);
         gpu_ngb_copy_neighbors_to_host(gnl, ngb_host.data());
-        integertime time1 = All.Ti_Current;
+        /* Codex 2026-05-12: out-of-line host accessor; see
+         * feedback_all_dev_trap_host_side.md. Lazy-drift target for CSR
+         * neighbors — host-side drift_particle calls. */
+        integertime time1 = gizmo_host_ti_current();
         for(int idx_n = 0; idx_n < gnl->total_pairs; idx_n++) {
             int j = ngb_host[idx_n];
             if(j >= 0 && j < num_total) drift_particle(j, time1);

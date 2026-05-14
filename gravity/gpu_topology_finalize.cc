@@ -193,11 +193,14 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH(node_reset_ephemeral);
 
-    int MaxPart = All.MaxPart;
-    /* Snapshot scalars to locals: KOKKOS_LAMBDA captures via [=] but the
-     * GIZMO_GPU_ENSURE_ALL_FRESH guarantee for All_dev is per-call, so use
-     * locals to avoid cross-platform device-symbol footguns. */
-    integertime ti_current = All.Ti_Current;
+    /* Codex 2026-05-12: host-side scalar capture from `All.*` in a GPU TU
+     * MUST use the canonical out-of-line accessor, not bare All.* (which
+     * resolves to All_dev here and can be stale). Capture once to locals
+     * so the Kokkos lambda [=] captures the correct host values. See
+     * feedback_all_dev_trap_host_side.md. */
+    const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
+    int MaxPart = host_all->MaxPart;
+    integertime ti_current = host_all->Ti_Current;
     int         glob_flag  = GlobFlag;
 
     struct NODE    *Nodes_uvm    = Nodes_base;     /* UVM (6.8d) */

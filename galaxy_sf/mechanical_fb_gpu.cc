@@ -176,7 +176,12 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
              *             ngb_treefind_pairs_threads in old GIZMO)
              *   h_q     : src_radii_host[] (caller-supplied per-source radii) */
             double t_drift = my_second();
-            move_particles(All.Ti_Current);  /* lazy drift — was inside gizmo_density_prep_ghosts */
+            /* Codex 2026-05-12 v2: use the OUT-OF-LINE host accessor
+             * `gizmo_host_ti_current()` from predict.cc — the inline
+             * gizmo_gpu_host_all_ptr() in gpu_all_mirror.h proved
+             * unreliable under nvcc_wrapper (dbg27). See
+             * feedback_all_dev_trap_host_side.md. */
+            move_particles(gizmo_host_ti_current());  /* lazy drift — was inside gizmo_density_prep_ghosts */
             CPU_Step[CPU_DENSMISC] += timediff(t_drift, my_second());
             int nq = num_active;
             double (*qpos)[3] = (double(*)[3]) malloc((size_t)(nq > 0 ? nq : 1) * sizeof(double[3]));

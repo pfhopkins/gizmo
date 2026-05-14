@@ -20,13 +20,28 @@ extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_t
     int *active_indices, int num_active, neighbor_list_t *out,
     double search_radius_factor);
 
+/* Codex 2026-05-12: forward declaration of the out-of-line host All
+ * accessor (defined in core/predict.cc). This header is included by GPU
+ * TUs where `#define All All_dev` poisons bare All.* reads. The static
+ * inline helpers below MUST route any All.* access through this accessor.
+ * See feedback_all_dev_trap_host_side.md. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct global_data_all_processes *gizmo_host_all_ptr(void);
+integertime gizmo_host_ti_current(void);
+#ifdef __cplusplus
+}
+#endif
+
 /* Shared search/ghost-inflation factor (only grows when TURB_DIFF_DYNAMIC
    widens the dynamic-diffusion kernel). */
 static inline double gizmo_ghost_safety_factor(void)
 {
     double f = 1.0;
 #ifdef TURB_DIFF_DYNAMIC
-    f = DMAX(f, All.TurbDynamicDiffFac);
+    /* Codex 2026-05-12: out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
+    f = DMAX(f, gizmo_host_all_ptr()->TurbDynamicDiffFac);
 #endif
     return f;
 }
@@ -44,7 +59,7 @@ static inline double gizmo_ghost_safety_factor(void)
 static inline void gizmo_density_prep_ghosts(double safety)
 {
     double t0 = my_second();
-    move_particles(All.Ti_Current);
+    move_particles(gizmo_host_ti_current()); /* codex 2026-05-12 out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
     double t_drift = timediff(t0, my_second());
     double t1 = my_second();
     ghost_exchange(safety);
@@ -91,7 +106,7 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
                                                        double safety)
 {
     double t0 = my_second();
-    move_particles(All.Ti_Current);
+    move_particles(gizmo_host_ti_current()); /* codex 2026-05-12 out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
     double t_drift = timediff(t0, my_second());
 
     int alloc_n = (num_active > 0 ? num_active : 1);
@@ -157,7 +172,7 @@ static inline int gizmo_request_filtered_ghost_import_fresh(const char *caller_n
 static inline void gizmo_hydro_density_prep_ghosts(double safety)
 {
     double t0 = my_second();
-    move_particles(All.Ti_Current);
+    move_particles(gizmo_host_ti_current()); /* codex 2026-05-12 out-of-line host accessor; see feedback_all_dev_trap_host_side.md */
     double t_drift = timediff(t0, my_second());
     double t1 = my_second();
     ghost_exchange_hydro_oneway(safety);
@@ -179,6 +194,38 @@ static inline void gizmo_density_redo_ghosts_if_needed(double safety)
         ghost_exchange(safety);
         CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
     }
+}
+
+/* Fresh broad downstream-handoff import after the runner-based density()
+   path — IMPORT ONLY, NO DRIFT. Codex 2026-05-12: the iterative runner's
+   Mode A imports an EXACT-QUERY ghost pool sized to current iter actives+
+   radii — narrower than the legacy broad hydro-oneway envelope, and
+   unsuitable as the downstream pool consumed by cellcorrections /
+   gradients / hydro_force. Legacy density() handled this implicitly
+   because its top-of-routine prep_ghosts was already a broad pool that
+   persisted through finalize + redo_ghosts_if_needed (cleanup+import only,
+   no drift). The runner path cleans its exact-query pool at runner-return;
+   this helper then rebuilds the broad downstream pool from converged radii.
+   Cleanup-first is safe even if no pool exists (ghost_exchange_cleanup
+   early-returns on NumPart_before_ghost < 0).
+
+   The name avoids "prep_ghosts" because that historically implies the
+   drift+import combo (gizmo_hydro_density_prep_ghosts calls
+   move_particles(All.Ti_Current) followed by ghost_exchange_hydro_oneway).
+   Including the drift here is WRONG for the post-density handoff: by the
+   time density() returns, All.Ti_Current is the current step's source time
+   for the about-to-run hydro/cellcorrections drift. A second
+   move_particles() at the same Ti_Current is nominally a no-op but breaks
+   lazy-drift semantics in subtle ways. Concretely it caused SP4
+   drift_particle() abort 'no prediction into past allowed' with
+   time1 = 0.5 * dt_step (an earlier-than-Ti_current target) when used
+   post-density. */
+static inline void gizmo_hydro_density_import_ghosts_fresh_no_drift(double safety)
+{
+    ghost_exchange_cleanup();
+    double t0 = my_second();
+    ghost_exchange_hydro_oneway(safety);
+    CPU_Step[CPU_DENSCOMM] += timediff(t0, my_second());
 }
 
 /* Hydro-typed companion to gizmo_density_redo_ghosts_if_needed: gas-only

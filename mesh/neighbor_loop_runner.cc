@@ -127,10 +127,20 @@ static bool nlr_env_is_one(const char *name) {
  * ========================================================================== */
 
 /* Canonical accessor for host-side global `All`. See header doc — this
- * bypasses the per-TU `#define All All_dev` redirect from gpu_all_mirror.h. */
+ * bypasses the per-TU `#define All All_dev` redirect from gpu_all_mirror.h.
+ *
+ * Codex 2026-05-12 (post-dbg27): the inline `gizmo_gpu_host_all_ptr()`
+ * defined in gpu_all_mirror.h proved UNRELIABLE under nvcc_wrapper — its
+ * push_macro/undef/pop_macro trick returned the TU-local All_dev mirror
+ * instead of the real host extern. Every Spec's populate_call_scalars
+ * captured stale values into CallScalars (silent wrong physics, no
+ * immediate abort). Route through `gizmo_host_all_ptr()` (defined in
+ * declarations/allvars.cc which has NO `#define All All_dev`) so the
+ * returned pointer reliably points at host All. See
+ * feedback_all_dev_trap_host_side.md. */
 const struct global_data_all_processes * nlr_host_all_ptr(void)
 {
-    return gizmo_gpu_host_all_ptr();
+    return gizmo_host_all_ptr();
 }
 
 NlrCommonScalars nlr_common_scalars_from_all(void)
@@ -153,7 +163,7 @@ neighbor_loop_args nlr_default_args(void)
 {
     neighbor_loop_args args;
     args.P                   = P;
-    args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
+    args.CellP               = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
     args.num_total           = NumPart;
     args.active_list         = nullptr;       /* caller fills */
     args.num_active          = 0;             /* caller fills */
@@ -2209,7 +2219,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
          * extended view (Mode B paths use the original args via copy). */
         effective_args.num_total = NumPart;
         effective_args.P         = P;
-        effective_args.CellP     = (All.TotN_gas > 0) ? CellP : nullptr;
+        effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
     }
 
     /* ---- Spec lifecycle hooks (begin) ---- */
@@ -2698,7 +2708,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
          * may have realloc'd P/CellP). Matches non-iter line 2049-2051. */
         effective_args.num_total = NumPart;
         effective_args.P         = P;
-        effective_args.CellP     = (All.TotN_gas > 0) ? CellP : nullptr;
+        effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
     }
 
     /* === (2) Arena acquire ONCE per call, with refreshed args === */
@@ -2840,7 +2850,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     /* === (5) Refresh effective_args from post-import globals === */
     effective_args.num_total = NumPart;
     effective_args.P         = P;
-    effective_args.CellP     = (All.TotN_gas > 0) ? CellP : nullptr;
+    effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
 
     /* === (6) Fresh arena view of new pool === */
     GIZMO_GPU_ENSURE_ALL_FRESH(neighbor_loop_runner);
@@ -4216,16 +4226,15 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
  * Explicit template instantiations — one per migrated caller.
  *
  * Forgetting an instantiation = clean linker error at the call site. Each
- * Spec must opt in here and is implicitly acknowledging the
- * Spec::sidx_cache_kind = AllTypes (the only kind implemented in 3c.1)
- * via its constexpr declaration; cf. nlr_resolve_sidx_cache.
+ * Spec must opt in here and is implicitly acknowledging its declared
+ * Spec::sidx_cache_kind; cf. nlr_resolve_sidx_cache.
  *
  * No `run_neighbor_loop_iterative<...>` instantiations in step 2a — there
  * are no callers yet (synthetic harness lands in step 3, ags_density in 3d.4).
  * ========================================================================== */
 
-template void run_neighbor_loop<SinkEnv1Spec>(const neighbor_loop_args&);
 #ifdef SINK_PARTICLES
+template void run_neighbor_loop<SinkEnv1Spec>(const neighbor_loop_args&);
 template void run_neighbor_loop<SinkFeedSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<SinkSwkSpec>(const neighbor_loop_args&);
 #if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)

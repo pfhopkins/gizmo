@@ -59,18 +59,23 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     struct particle_data *P_gpu = gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
 
+    /* Codex 2026-05-12: capture All.* into host local from canonical accessor;
+     * see feedback_all_dev_trap_host_side.md. Bare All.* in this GPU TU
+     * would resolve to potentially-stale All_dev. */
+    const double TurbDynDiffFac_host = gizmo_host_all_ptr()->TurbDynamicDiffFac;
+
     /* Build wider CSR neighbor list: search radius = TurbDynamicDiffFac * h_i */
     gpu_neighbor_list_t gnl;
     gpu_ngb_list_build(P_gpu, num_total, active_indices_host, num_active,
                        NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gnl, NULL,
-                       All.TurbDynamicDiffFac, NULL, NULL, "diff");
+                       TurbDynDiffFac_host, NULL, NULL, "diff");
 
     /* Allocate output array in SharedSpace */
     struct DiffFilter_out *d_out = (struct DiffFilter_out *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
         ((num_active > 0) ? num_active : 1) * sizeof(struct DiffFilter_out));
 
     PRINT_STATUS("  GPU DiffFilter: %d active, %d pairs (search_fac=%.1f)",
-                 num_active, gnl.total_pairs, All.TurbDynamicDiffFac);
+                 num_active, gnl.total_pairs, TurbDynDiffFac_host);
 
     /* GPU DiffFilter accumulation kernel */
     {
@@ -80,7 +85,7 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
         struct particle_data *kp = P_gpu;
         struct gas_cell_data *kc = CellP_gpu;
         struct DiffFilter_out *kout = d_out;
-        double TurbDynDiffFac = All.TurbDynamicDiffFac;
+        double TurbDynDiffFac = TurbDynDiffFac_host;
 
         gizmo_gpu_kernel_launch("DiffFilter", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
@@ -282,8 +287,10 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
         struct DynDiff_gpu_out0 *kout0 = d_out0;
         struct DynDiff_gpu_out_iter *kout_iter = d_out_iter;
         int dyn_iter = dynamic_iteration;
-        double TurbDynDiffFac = All.TurbDynamicDiffFac;
-        double TurbDynDiffSmoothing = All.TurbDynamicDiffSmoothing;
+        /* Codex 2026-05-12: canonical host accessor; see feedback_all_dev_trap_host_side.md */
+        const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
+        double TurbDynDiffFac = host_all->TurbDynamicDiffFac;
+        double TurbDynDiffSmoothing = host_all->TurbDynamicDiffSmoothing;
 
         gizmo_gpu_kernel_launch("DynamicDiff", num_active, KOKKOS_LAMBDA(int aa) {
             int ii = active[aa];
