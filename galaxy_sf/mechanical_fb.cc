@@ -7,6 +7,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
+#include "galsf_gpu_decls.h"      /* mechanical_fb_evaluate_gpu + mechfb_{alloc,free,run_iterative} prototypes */
 
 /* Routines for mechanical feedback/enrichment models: stellar winds, supernovae, etc
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -238,67 +239,45 @@ void mechanical_fb_calc_toplevel(void)
     PRINT_STATUS("Start mechanical feedback computation...");
 
     /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
-       neighbor list across modes. See galaxy_sf/mechanical_fb_gpu.cc. */
+       neighbor list across modes. See galaxy_sf/mechfb_loop.{h,cc} (runner-template
+       port) and galaxy_sf/mechanical_fb_gpu.cc (legacy, retired in cleanup). */
     {
-#include "../galaxy_sf/galsf_gpu_decls.h"
         /* Build SUPERSET active list: any star active in ANY mode is included.
-           The per-mode mask inside the kernel skips stars not active in that mode. */
+           addFB_evaluate_active_check(ii, -2) with a negative iteration acts as
+           "check all modes" — the fb_loop_iteration<0 branch fires for every
+           event type. Canonical single-predicate form; avoids hard-coding the
+           {-2..3} range in multiple call sites (MechFBSpec::is_active is the
+           runner-side mirror of this same predicate). */
         int num_active = 0;
         for(int ii : ActiveParticleList) {
-            int any = 0;
-            for(int mm = -2; mm <= 3 && !any; mm++) {
-                if(addFB_evaluate_active_check(ii, mm)) any = 1;
-            }
-            if(any) num_active++;
+            if(addFB_evaluate_active_check(ii, -2)) num_active++;
         }
-        /* Multi-rank correctness: ghost_prep is collective in mech_fb_gpu so all
-         * ranks must agree on whether to call it. MPI_Allreduce num_active first;
-         * if no rank has any source, every rank skips the entire mech_fb path
-         * (no allocation, no kernel, no ghost_prep). Saves ~1s/step on tiny-N
-         * timebins where no SNe/winds fire. Architectural rule (Phil): NEVER
-         * loop over N_gas in a tiny-N step when no work will be done; use
-         * ActiveParticleList instead. The N_gas memset of LocalGasMechFBInfoTemp
-         * (was here pre-fix) was paying ~0.5s/step even on no-work timebins. */
+        /* Multi-rank correctness: ghost_prep is collective so all ranks must agree
+         * on whether to call it. MPI_Allreduce first; if no rank has any source,
+         * every rank skips the mech_fb path entirely (no allocation, no kernel). */
         int global_num_active = num_active;
         MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        if(global_num_active == 0) {
-            return;
-        }
+        if(global_num_active == 0) { return; }
 
-        /* allocate temporary stucture which will hold the total change, to compare when done to check for non-linear effects if too many cells act at once */
-        LocalGasMechFBInfoTemp = (struct MechFBGasDelta *) mymalloc("LocalGasMechFBInfoTemp",N_gas * sizeof(struct MechFBGasDelta));
-        N_Gas_Couplings_ThisTask = 0; /* initialize this to zero [default to assume no coupled feedback] */
-        /* Zero only gas particles. memset of N_gas is unavoidable here because
-         * this struct is indexed by particle index across all gas (kernel writes
-         * to neighbor j-indices, not just i-active sources). But it only fires
-         * when global_num_active > 0, so no waste on tiny-N no-work steps. */
-        for(int j = 0; j < N_gas; j++) {if(P[j].Type==0) {memset(&LocalGasMechFBInfoTemp[j], 0, sizeof(struct MechFBGasDelta));}}
+        LocalGasMechFBInfoTemp = mechfb_alloc_local_gas_delta(N_gas);
+        N_Gas_Couplings_ThisTask = 0;
+        mechfb_zero_local_gas_delta(LocalGasMechFBInfoTemp, N_gas);
         int *nl_active = (int *) mymalloc("mechfb_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
-        double *nl_radii = (double *) mymalloc("mechfb_nl_radii",
-            (num_active > 0 ? num_active : 1) * sizeof(double));
         {int aa = 0; for(int ii : ActiveParticleList) {
-            int any = 0;
-            for(int mm = -2; mm <= 3 && !any; mm++) {
-                if(addFB_evaluate_active_check(ii, mm)) any = 1;
-            }
-            if(any) { nl_active[aa] = ii; nl_radii[aa] = (double)P[ii].KernelRadius; aa++; }
+            if(addFB_evaluate_active_check(ii, -2)) nl_active[aa++] = ii;
         }}
         int n_coup_gpu = 0;
-        /* Always call evaluate_gpu — its wrapper fast-path handles num_active==0
-         * including the multi-rank ghost_writeback_mechfb collective, which other
-         * ranks may rely on even when this rank has no local sources. */
-        mechanical_fb_evaluate_gpu(P, CellP, NumPart,
-                                    LocalGasMechFBInfoTemp, N_gas,
-                                    nl_active, num_active, nl_radii, &n_coup_gpu);
+        mechfb_run_iterative(nl_active, num_active,
+                              LocalGasMechFBInfoTemp, N_gas, &n_coup_gpu);
         N_Gas_Couplings_ThisTask = n_coup_gpu;
-        myfree(nl_radii); myfree(nl_active);
+        myfree(nl_active);
     }
 
 
 
     verify_and_assign_local_mechfb_integrals();
-    myfree(LocalGasMechFBInfoTemp); /* free the structure */
+    mechfb_free_local_gas_delta(LocalGasMechFBInfoTemp); /* free the structure (SharedSpace) */
 }
 
 

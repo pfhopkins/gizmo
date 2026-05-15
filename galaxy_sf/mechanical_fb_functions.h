@@ -1,9 +1,11 @@
 /* mechanical_fb_functions.h — GPU-callable structs + per-pair kernel body
  * for the mechanical_fb default-scheme GPU port (B8).
  *
- * Phase 1 scope: all 6 modes (-2, -1, 0, 1, 2, 3) of addFB_evaluate default
- * scheme, MINUS cosmic-ray injection. If COSMIC_RAY_FLUID + FIRE stellar
- * evolution are both defined the kernel refuses to build (Phase 2 ports CR).
+ * Covers all 6 modes (-2, -1, 0, 1, 2, 3) of addFB_evaluate default scheme
+ * INCLUDING cosmic-ray injection (CR_DYNAMICAL_INJECTION_IN_SNE +
+ * COSMIC_RAY_FLUID + GALSF_FB_FIRE_STELLAREVOLUTION inject_cosmic_rays_into_delta
+ * helper below; deltas atomically accumulated into MechFBGasDelta, scattered
+ * to CellP[].CosmicRayEnergy/etc. host-side in verify_and_assign).
  *
  * The shared type MechFBGasDelta is used by BOTH the CPU addFB_evaluate path
  * (as the LocalGasMechFBInfoTemp element type) and the GPU kernel, so the
@@ -23,6 +25,62 @@
 #endif
 
 #ifdef GALSF_FB_MECHANICAL
+
+#include "../mesh/neighbor_loop_runner.h"  /* NlrCommonScalars */
+
+/* Cosmology + unit-factor + CR-rigidity scalars for mechfb kernel helpers.
+ * Built host-side once per call via mechfb_fill_call_scalars (mechfb_loop.cc);
+ * threaded into mechanical_fb_per_source_setup, mechanical_fb_pair_kernel, and
+ * inject_cosmic_rays_into_delta so no helper reads bare All.* (codex r6 fix:
+ * feedback_all_dev_trap_host_side.md — a per-TU All_dev mirror is unreliable). */
+struct MechFBCallScalars {
+    NlrCommonScalars common;            /* cf_atime, cf_a2inv, cf_a3inv, … */
+    double unit_length_in_kpc;
+    double unit_density_in_NHcgs;       /* unit density in n_H (protons/cm^3) */
+    double unit_energy_in_cgs;
+    double unit_mass_in_solar;
+    double unit_vel_in_kms;
+#ifdef METALS
+    double SolarAbundances0;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+    double CosmicRay_SNeFraction;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
+    double CR_global_min_rigidity_in_bin   [N_CR_PARTICLE_BINS];
+    double CR_global_max_rigidity_in_bin   [N_CR_PARTICLE_BINS];
+    double CR_global_rigidity_at_bin_center[N_CR_PARTICLE_BINS];
+#endif
+};
+
+/* Ownership-split j-side write target + oracle gate (Phase 4 / Wave 3 / 3e.1).
+ *
+ * Picks the per-gas delta buffer for j-side atomic writes from inside the
+ * pair kernel. The kernel passes:
+ *   - home_gas_delta  : SharedSpace buffer covering home-rank gas cells
+ *                       (indexed by j directly when j < num_local_gas)
+ *   - ghost_gas_delta : SharedSpace buffer covering imported-ghost gas cells
+ *                       (indexed by j - num_local_gas when j >= num_local_gas;
+ *                        nullptr for callers that don't import ghosts —
+ *                        legacy mechanical_fb_evaluate_gpu passes nullptr and
+ *                        num_local_gas = num_all so ghost branch is unreachable)
+ *
+ * Returns the per-pair MechFBGasDelta target for atomic accumulation; the
+ * j-side oracle gate (`if (oracle_dry_run) return;`) is applied SEPARATELY
+ * by the kernel BEFORE calling this helper or any atomic_add. The helper
+ * does not branch on oracle, and is safe to call after the gate.
+ *
+ * Legacy semantic preserved: ghost_gas_delta=nullptr, num_local_gas=num_all
+ * routes every j to home_gas_delta[j]. */
+KOKKOS_INLINE_FUNCTION
+static struct MechFBGasDelta *mechfb_target_gas_delta(
+    int j, int num_local_gas,
+    struct MechFBGasDelta *home_gas_delta,
+    struct MechFBGasDelta *ghost_gas_delta)
+{
+    if (j < num_local_gas) return &home_gas_delta[j];
+    return &ghost_gas_delta[j - num_local_gas];
+}
 
 /* Per-source (star) input to kernel. Host packs once per mode via
  * particle2in_addFB_fromstars + P[i].Area_weighted_sum. */
@@ -76,9 +134,16 @@ static void inject_cosmic_rays_into_delta(
     double CR_energy_to_inject, double injection_velocity, int source_type,
     int target, const double *dir,
     struct particle_data *P_arr, struct gas_cell_data *cell,
-    struct MechFBGasDelta *gas_delta)
+    /* Codex r6 fix: threaded per-call scalars; replaces bare-All reads of
+     * CR_global_min/max/center rigidity arrays inside this body. */
+    const struct MechFBCallScalars& scalars,
+    int num_local_gas,
+    struct MechFBGasDelta *home_gas_delta,
+    struct MechFBGasDelta *ghost_gas_delta)
 {
     if(CR_energy_to_inject <= 0) return;
+    struct MechFBGasDelta *gd =
+        mechfb_target_gas_delta(target, num_local_gas, home_gas_delta, ghost_gas_delta);
     double f_injected[N_CR_PARTICLE_BINS]; f_injected[0] = 1;
 #if (N_CR_PARTICLE_BINS > 1)
     double sum_in = 0.0;
@@ -97,8 +162,8 @@ static void inject_cosmic_rays_into_delta(
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
         double E_GeV = return_CRbin_kinetic_energy_in_GeV_binvalsNRR(k);
         double egy_slopemode = 1;
-        double xm = All.CR_global_min_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k];
-        double xp = All.CR_global_max_rigidity_in_bin[k] / All.CR_global_rigidity_at_bin_center[k];
+        double xm = scalars.CR_global_min_rigidity_in_bin[k] / scalars.CR_global_rigidity_at_bin_center[k];
+        double xp = scalars.CR_global_max_rigidity_in_bin[k] / scalars.CR_global_rigidity_at_bin_center[k];
         double xm_e = xm, xp_e = xp;
         if(CR_check_if_bin_is_nonrelativistic(k)) { egy_slopemode = 2; xm_e = xm*xm; xp_e = xp*xp; }
         double slope_inj = CR_energy_spectrum_injection_fraction(k, source_type, injection_velocity, 1, target, P_arr, cell);
@@ -106,16 +171,31 @@ static void inject_cosmic_rays_into_delta(
         double xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one);
         double ntot_inj = (dEcr / E_GeV) * ((gamma_one + egy_slopemode) / gamma_one) *
                           (xp_gamma_one - xm_gamma_one) / (xp_gamma_one*xp_e - xm_gamma_one*xm_e);
-        Kokkos::atomic_add(&gas_delta[target].CR_number_injected[k], ntot_inj);
+        Kokkos::atomic_add(&gd->CR_number_injected[k], ntot_inj);
 #endif
-        Kokkos::atomic_add(&gas_delta[target].CR_energy_injected[k], dEcr);
+        Kokkos::atomic_add(&gd->CR_energy_injected[k], dEcr);
         sum_dEcr += dEcr;
     }
     if(sum_dEcr > 0) {
-        for(int c = 0; c < 3; c++) Kokkos::atomic_add(&gas_delta[target].CR_dir_weighted[c], sum_dEcr * dir[c]);
+        for(int c = 0; c < 3; c++) Kokkos::atomic_add(&gd->CR_dir_weighted[c], sum_dEcr * dir[c]);
     }
 }
 #endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
+
+
+/* Host-side helpers — shared between legacy mechanical_fb_evaluate_gpu and
+ * the MechFBSpec runner-port (Phase 4 / Wave 3 / 3e.1 milestone 3). Defined
+ * in galaxy_sf/mechfb_loop.cc (single source of truth; cleanup commit will
+ * retire the legacy mechanical_fb_gpu.cc caller). All read host P (NOT All)
+ * so calling from a GPU TU with `#define All All_dev` is safe. */
+void mech_fb_local_fill(int i, int loop_iteration,
+                         struct MechFBLocalIn *loc);
+void mech_fb_apply_aws_out(const struct MechFBOut *out,
+                            int i, int loop_iteration);
+void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
+                                    struct gas_cell_data *CellP_arr,
+                                    int i,
+                                    MyFloat M_coupled);
 
 
 /* Device-callable mirror of mechanical_fb.cc:addFB_evaluate_active_check.
@@ -147,18 +227,24 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
     return 0;
 }
 
+/* MechFBCallScalars is defined above (after the #ifdef GALSF_FB_MECHANICAL gate).
+ * Helpers below are self-contained: include this header directly. */
+
 KOKKOS_INLINE_FUNCTION
 static void mechanical_fb_per_source_setup(
     const struct MechFBLocalIn& local, int loop_iteration,
+    const struct MechFBCallScalars& scalars,
     struct MechFBSourceMode& m)
 {
     m.h2 = (double)local.KernelRadius * (double)local.KernelRadius;
     double wk_dummy = 0;
     kernel_main(0.0, 1.0, 1.0, &m.kernel_zero, &wk_dummy, -1);
     kernel_hinv((double)local.KernelRadius, &m.hinv, &m.hinv3, &m.hinv4);
-    double unitlength_in_kpc = UNIT_LENGTH_IN_KPC * All.cf_atime;
-    m.density_to_n = All.cf_a3inv * UNIT_DENSITY_IN_NHCGS;
-    double unit_egy_SNe = 1.0e51 / UNIT_ENERGY_IN_CGS;
+    /* Codex r6 fix: replace bare-All reads (All.cf_atime / All.cf_a3inv) and
+     * macro reads (UNIT_*_IN_*) with threaded scalars. */
+    double unitlength_in_kpc = scalars.unit_length_in_kpc * scalars.common.cf_atime;
+    m.density_to_n = scalars.common.cf_a3inv * scalars.unit_density_in_NHcgs;
+    double unit_egy_SNe = 1.0e51 / scalars.unit_energy_in_cgs;
 
     m.wk_norm   = 1.0 / (MIN_REAL_NUMBER + fabs((double)local.Area_weighted_sum[0]));
     m.pnorm_sum = 1.0 / (MIN_REAL_NUMBER + fabs((double)local.Area_weighted_sum[10]));
@@ -180,7 +266,7 @@ static void mechanical_fb_per_source_setup(
 
         double p_terminal_multiplier_rhoZE =
             (m.pnorm_sum * (double)local.Area_weighted_sum[9]) * (Energy_injected_codeunits / unit_egy_SNe);
-        double p_terminal = sqrt(f_sedov_kin) * (4.8e5 / (UNIT_MASS_IN_SOLAR * UNIT_VEL_IN_KMS)) * p_terminal_multiplier_rhoZE;
+        double p_terminal = sqrt(f_sedov_kin) * (4.8e5 / (scalars.unit_mass_in_solar * scalars.unit_vel_in_kms)) * p_terminal_multiplier_rhoZE;
         if(m.feedback_type_is_SNe == 0) p_terminal = (double)local.Msne * v_ejecta_eff_init;
 
         double egy_0_norm_for_soln = f_sedov_kin * Energy_injected_codeunits;
@@ -198,13 +284,15 @@ static void mechanical_fb_per_source_setup(
 
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
-     * for this source at current velocity, subtracting it from the ejecta KE. */
+     * for this source at current velocity, subtracting it from the ejecta KE.
+     * Codex r6: All.CosmicRay_SNeFraction and UNIT_VEL_IN_KMS routed through
+     * scalars (precomputed in populate_call_scalars). */
     m.CR_energy_to_inject = 0;
-    if(v_ejecta_eff_init > 1000.0 / UNIT_VEL_IN_KMS)
+    if(v_ejecta_eff_init > 1000.0 / scalars.unit_vel_in_kms)
     {
-        double post_cr_corr = sqrt(1.0 - All.CosmicRay_SNeFraction);
+        double post_cr_corr = sqrt(1.0 - scalars.CosmicRay_SNeFraction);
         v_ejecta_eff_init *= post_cr_corr;
-        m.CR_energy_to_inject = (All.CosmicRay_SNeFraction / (1.0 - All.CosmicRay_SNeFraction)) *
+        m.CR_energy_to_inject = (scalars.CosmicRay_SNeFraction / (1.0 - scalars.CosmicRay_SNeFraction)) *
                                  0.5 * (double)local.Msne * v_ejecta_eff_init * v_ejecta_eff_init;
         /* also reduce Energy_injected_codeunits correspondingly (CPU version does
          * this implicitly via v_ejecta_eff *= post_cr_corr; we recompute). */
@@ -226,7 +314,23 @@ static void mechanical_fb_pair_kernel(
     int j,
     struct particle_data *P,
     struct gas_cell_data *CellP,
-    struct MechFBGasDelta *gas_delta,
+    /* Threaded per-call scalars (codex r6 fix): cosmology factors,
+     * SolarAbundances[0], unit conversions, CR rigidity arrays. Replaces
+     * bare All.* reads inside this body. Caller (runner-port pair_kernel
+     * inline / legacy mechanical_fb_evaluate_gpu lambda) builds it
+     * host-side via populate_call_scalars / mechfb_make_call_scalars_legacy. */
+    const struct MechFBCallScalars& scalars,
+    /* j-side ownership-split write target (Phase 4 / Wave 3 / 3e.1).
+     * home_gas_delta : indexed by j for j < num_local_gas
+     * ghost_gas_delta: indexed by (j - num_local_gas) for j >= num_local_gas;
+     *                  may be nullptr when caller has no imported ghosts
+     *                  (legacy passes nullptr and num_local_gas = num_all).
+     * oracle_dry_run : if true, i-side accum (myout.*) still completes but
+     *                  every j-side atomic_add is suppressed (oracle brute-pass). */
+    struct MechFBGasDelta *home_gas_delta,
+    struct MechFBGasDelta *ghost_gas_delta,
+    int  num_local_gas,
+    bool oracle_dry_run,
     const Vec3<double>& dp,  /* = local.Pos - P[j].Pos, nearest_xyz-corrected */
     double r2,
     struct MechFBOut& myout)
@@ -300,7 +404,7 @@ static void mechanical_fb_pair_kernel(
         pnorm = sqrt(pnorm);
         for(int k = 0; k < 3; k++)
         {
-            double v_ba = (Vel_j[k] - (double)local.Vel[k]) / All.cf_atime;
+            double v_ba = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
             vel_ba_2 += v_ba * v_ba;
             if(pnorm > 0) cos_vel_ba_pcoupled += v_ba * pvec[k] / pnorm;
         }
@@ -311,7 +415,7 @@ static void mechanical_fb_pair_kernel(
         wk_vec[11] = 0.5 * pnorm * pnorm * mu_inv / Mass_j;
         double n0 = DMAX(0.001, rho_j * m.density_to_n);
 #ifdef METALS
-        double z0 = DMAX(0.01, Metallicity_j[0] / All.SolarAbundances[0]);
+        double z0 = DMAX(0.01, Metallicity_j[0] / scalars.SolarAbundances0);
 #else
         double z0 = 1.0;
 #endif
@@ -399,8 +503,9 @@ static void mechanical_fb_pair_kernel(
     {
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
         /* Phase 2: CR injection via delta struct (host scatter applies in
-         * verify_and_assign_local_mechfb_integrals). */
-        {
+         * verify_and_assign_local_mechfb_integrals). j-side oracle gate
+         * applied externally below; suppress CR atomics when oracle is on. */
+        if (!oracle_dry_run) {
             double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
             double cr_to_inject = pnorm * m.CR_energy_to_inject;
@@ -408,10 +513,11 @@ static void mechanical_fb_pair_kernel(
             double cr_to_inject = 0;
 #endif
             inject_cosmic_rays_into_delta(cr_to_inject, (double)local.SNe_v_ejecta, loop_iteration,
-                                           j, crdir, P, CellP, gas_delta);
+                                           j, crdir, P, CellP, scalars,
+                                           num_local_gas, home_gas_delta, ghost_gas_delta);
         }
 #endif
-        double mom_prefactor = All.cf_atime * m.momentum_to_couple_term_units / Mass_j;
+        double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
         if(mom_prefactor > 0) {
             for(int k = 0; k < 3; k++) {
                 double d_vel = mom_prefactor * pvec[k] + massratio_ejecta * ((double)local.Vel[k] - Vel_j[k]);
@@ -419,8 +525,8 @@ static void mechanical_fb_pair_kernel(
                 Vel_j[k] += d_vel;
                 KE_final += Vel_j[k] * Vel_j[k];
             }
-            KE_initial *= 0.5 * mj_preshock * All.cf_a2inv;
-            KE_final   *= 0.5 * Mass_j     * All.cf_a2inv;
+            KE_initial *= 0.5 * mj_preshock * scalars.common.cf_a2inv;
+            KE_final   *= 0.5 * Mass_j     * scalars.common.cf_a2inv;
         }
         double d_Egy_internal = pnorm * m.U_thermal_residual_tocouple;
         if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
@@ -428,22 +534,32 @@ static void mechanical_fb_pair_kernel(
         if(d_Egy_internal > 0) InternalEnergy_j += d_Egy_internal;
     }
 
-    /* atomic accumulation into the per-gas delta struct */
-    Kokkos::atomic_add(&gas_delta[j].N_injected, 1);
-    Kokkos::atomic_add(&gas_delta[j].m_injected, Mass_j - Mass_j_0);
-    Kokkos::atomic_add(&gas_delta[j].TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
-    Kokkos::atomic_add(&gas_delta[j].KE_injected, KE_final - KE_initial);
+    /* J-side oracle gate (Phase 4 / Wave 3 / 3e.1): i-side accum (myout.*)
+     * above always completes for both production + oracle passes; j-side
+     * atomic writes below are suppressed during the oracle brute pass so
+     * the oracle's separate per-active AccumData buffer isn't contaminated
+     * by writes to the production gas_delta. The CR injection branch above
+     * has its own `if (!oracle_dry_run)` gate (CR helper takes home/ghost). */
+    if (!oracle_dry_run) {
+        /* atomic accumulation into the per-gas delta struct */
+        struct MechFBGasDelta *gd =
+            mechfb_target_gas_delta(j, num_local_gas, home_gas_delta, ghost_gas_delta);
+        Kokkos::atomic_add(&gd->N_injected, 1);
+        Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
+        Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
+        Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
 #ifdef METALS
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) {
-        Kokkos::atomic_add(&gas_delta[j].Z_injected[k], Mass_j * Metallicity_j[k] - Mass_j_0 * Metallicity_j_0[k]);
-    }
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+            Kokkos::atomic_add(&gd->Z_injected[k], Mass_j * Metallicity_j[k] - Mass_j_0 * Metallicity_j_0[k]);
+        }
 #endif
-    for(int k = 0; k < 3; k++) {
-        Kokkos::atomic_add(&gas_delta[j].p_injected[k], (Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k]) / All.cf_atime);
-    }
+        for(int k = 0; k < 3; k++) {
+            Kokkos::atomic_add(&gd->p_injected[k], (Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k]) / scalars.common.cf_atime);
+        }
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    Kokkos::atomic_add(&gas_delta[j].Mass_Where_Dust_Shocked, Mass_Where_Dust_Shocked_pair);
+        Kokkos::atomic_add(&gd->Mass_Where_Dust_Shocked, Mass_Where_Dust_Shocked_pair);
 #endif
+    }
 }
 
 #endif /* GALSF_FB_MECHANICAL */

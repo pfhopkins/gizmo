@@ -49,6 +49,29 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                                  int *n_couplings_out);
 void gizmo_gpu_sync_all_mechfb(struct global_data_all_processes *p);
 
+/* Phase 4 / Wave 3 / 3e.1 runner-template entry points (milestone 3:
+ * physics-complete, single-rank validated). Replace `mechanical_fb_evaluate_gpu`
+ * call site in mechanical_fb_calc_toplevel. All Kokkos / SharedSpace / runner
+ * contact is encapsulated inside galaxy_sf/mechfb_loop.cc so this header (and
+ * mechanical_fb.cc which is compiled non-GPU) does not need Kokkos. */
+struct MechFBGasDelta *mechfb_alloc_local_gas_delta(int n_gas);
+void                   mechfb_free_local_gas_delta(struct MechFBGasDelta *p);
+struct MechFBCallScalars;
+/* Free host-side builder for MechFBCallScalars (codex r6 fix). Used by
+ * MechFBSpec::populate_call_scalars AND by the legacy
+ * mechanical_fb_evaluate_gpu inside mechanical_fb_gpu.cc so both paths
+ * read cosmology/unit-factor/CR-rigidity values through the same scalars
+ * struct instead of bare All.*. Defined in galaxy_sf/mechfb_loop.cc. */
+void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars);
+/* Zero the gas-only portion of a SharedSpace LocalGasMechFBInfoTemp buffer.
+ * Implemented in the GPU TU (mechfb_loop.cc) via Kokkos parallel_for so the
+ * non-GPU mechanical_fb.cc TU doesn't take a backend dependency on whether
+ * SharedSpace is host-readable bytewise (codex r4-followup 2026-05-14). */
+void mechfb_zero_local_gas_delta(struct MechFBGasDelta *p, int n_gas);
+void mechfb_run_iterative(int *active_list, int num_active,
+                          struct MechFBGasDelta *LocalGasMechFBInfoTemp,
+                          int n_gas, int *n_couplings_out);
+
 
 /* ---- radfb_local: radiation_pressure_winds ---- */
 #ifdef GALSF_FB_FIRE_RT_LOCALRP

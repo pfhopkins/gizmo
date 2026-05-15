@@ -36,79 +36,19 @@
 
 #if defined(GALSF_FB_MECHANICAL)
 
+/* Legacy GPU evaluator: pulls in mechanical_fb_functions.h (MechFBCallScalars,
+ * MechFBLocalIn/Out, mech_fb_* helper prototypes, inject_cosmic_rays_into_delta).
+ * Does NOT include mechfb_loop.h — MechFBSpec / runner-template types are only
+ * needed by the runner-port path. */
 #include "mechanical_fb_functions.h"
 
 
-/* Fill MechFBLocalIn for source particle i in a given mode — mirrors
- * particle2in_addFB in mechanical_fb.cc but writes into our GPU-friendly
- * struct. particle2in_addFB_fromstars has a public declaration in proto.h. */
-static void mech_fb_local_fill(int i, int loop_iteration,
-                                struct MechFBLocalIn *loc)
-{
-    struct addFB_evaluate_data_in_ fb;
-    fb.Pos = P[i].Pos;
-    fb.Vel = P[i].Vel;
-    double heff = P[i].KernelRadius / (double)P[i].NumNgb;
-    fb.V_i = heff * heff * heff;
-    fb.KernelRadius = P[i].KernelRadius;
-#ifdef METALS
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) fb.yields[k] = 0.0;
-#endif
-    for(int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; k++) fb.Area_weighted_sum[k] = P[i].Area_weighted_sum[k];
-    fb.Msne = 0; fb.unit_mom_SNe = 0; fb.SNe_v_ejecta = 0;
-
-    if((P[i].DensityAroundParticle > 0) && (P[i].Mass > 0)) {
-        if(loop_iteration < 0) {
-            /* weighting loops — treat every source as a uniform Msne=mass probe */
-            fb.Msne = P[i].Mass;
-            fb.unit_mom_SNe = 1.0e-4;
-            fb.SNe_v_ejecta = 1.0e-4;
-        } else {
-            particle2in_addFB_fromstars(&fb, i, loop_iteration);
-            fb.unit_mom_SNe = fb.Msne * fb.SNe_v_ejecta;
-        }
-    }
-
-    loc->Pos = fb.Pos;
-    loc->Vel = fb.Vel;
-    loc->Msne = fb.Msne;
-    loc->KernelRadius = fb.KernelRadius;
-    loc->V_i = fb.V_i;
-    loc->SNe_v_ejecta = fb.SNe_v_ejecta;
-    for(int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; k++) loc->Area_weighted_sum[k] = fb.Area_weighted_sum[k];
-#ifdef METALS
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) loc->yields[k] = fb.yields[k];
-#endif
-}
-
-
-/* Host-side out2particle for Area_weighted_sum writeback between weighting modes. */
-static void mech_fb_apply_aws_out(const struct MechFBOut *out, int i, int loop_iteration)
-{
-    if(P[i].Mass <= 0) return;
-    int kmin = 0, kmax = 7;
-    if(loop_iteration == -1) { kmin = 7; kmax = AREA_WEIGHTED_SUM_ELEMENTS; }
-    for(int k = kmin; k < kmax; k++) P[i].Area_weighted_sum[k] = out->Area_weighted_sum[k];
-}
-
-/* Host/device mirror of out2particle_addFB() for coupling modes. Apply the
- * source mass loss immediately after each mode so later modes pack from the
- * updated source state, matching the CPU ordering semantics. */
-static void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
-                                          struct gas_cell_data *CellP_arr,
-                                          int i,
-                                          MyFloat M_coupled)
-{
-    if(P_arr[i].Mass <= 0) return;
-    for(int k = 0; k < 3; k++) P_arr[i].dp[k] -= M_coupled * P_arr[i].Vel[k];
-    P_arr[i].Mass -= M_coupled;
-    if(P_arr[i].Mass < 0 || P_arr[i].Mass != P_arr[i].Mass) P_arr[i].Mass = 0;
-    if(P_arr[i].Type == 0) CellP_arr[i].Mass = P_arr[i].Mass;
-#ifdef SINGLE_STAR_FB_WINDS
-    P_arr[i].Sink_Mass -= M_coupled;
-    if(P_arr[i].Sink_Mass < 0 || P_arr[i].Sink_Mass != P_arr[i].Sink_Mass) P_arr[i].Sink_Mass = 0;
-#endif
-}
+/* mech_fb_local_fill, mech_fb_apply_aws_out, mech_fb_apply_source_mass_out
+ * were promoted from `static` (TU-local) to public symbols in mechfb_loop.cc
+ * (Phase 4 / Wave 3 / 3e.1 milestone 3) so the MechFBSpec runner-port's
+ * after_iter_global + reset_per_iter_device_context can share the legacy
+ * per-source pack + per-mode source-side host writes — single source of
+ * truth across legacy + runner-port. Prototypes in mechanical_fb_functions.h. */
 
 
 /* ================================================================
@@ -272,6 +212,14 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
 
     PRINT_STATUS("  GPU mech_fb: %d sources, %d pairs", num_src, gnl.total_pairs);
 
+    /* Codex r6 fix 2026-05-14: build the per-call MechFBCallScalars once
+     * host-side via nlr_host_all_ptr(); pass into the lambda capture so the
+     * refactored mechanical_fb_per_source_setup / pair_kernel /
+     * inject_cosmic_rays_into_delta read scalars.* instead of bare All.*
+     * (the per-TU All_dev mirror in this GPU TU is not a reliable substitute). */
+    MechFBCallScalars mechfb_scalars;
+    mechfb_fill_call_scalars(&mechfb_scalars);
+
     /* Per-mode dispatch. Modes beyond -2,-1,0 are only meaningful under
        GALSF_FB_FIRE_STELLAREVOLUTION (mass return, r-process, age tracers). */
     int modes[6] = {-2, -1, 0, 1, 2, 3};
@@ -320,7 +268,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                 if(loc.KernelRadius <= 0) return;
 
                 struct MechFBSourceMode mstate;
-                mechanical_fb_per_source_setup(loc, loop_iteration, mstate);
+                mechanical_fb_per_source_setup(loc, loop_iteration, mechfb_scalars, mstate);
 
                 struct MechFBOut myout;
                 myout.M_coupled = 0;
@@ -338,8 +286,19 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                     double h2j = (double)kp[j].KernelRadius * (double)kp[j].KernelRadius;
                     if((r2 > mstate.h2) && (r2 > h2j)) continue;
                     if(r2 > mstate.r2max_phys) continue;
+                    /* Legacy GPU evaluator: single-buffer d_gas covers home + ghost
+                     * (num_local_gas = num_all). Ghost ptr = nullptr (unreachable).
+                     * oracle_dry_run = false (legacy has no oracle gate). The
+                     * mechfb_target_gas_delta helper routes every j to kg[j].
+                     * scalars threaded by-value through the Kokkos lambda capture. */
                     mechanical_fb_pair_kernel(loc, mstate, loop_iteration, j,
-                                              kp, kc, kg, dp, r2, myout);
+                                              kp, kc,
+                                              mechfb_scalars,
+                                              /*home_gas_delta */ kg,
+                                              /*ghost_gas_delta*/ (struct MechFBGasDelta*)nullptr,
+                                              /*num_local_gas  */ num_all,
+                                              /*oracle_dry_run */ false,
+                                              dp, r2, myout);
                 }
                 out_arr[aa] = myout;
             });

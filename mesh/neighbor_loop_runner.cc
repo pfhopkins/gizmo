@@ -76,6 +76,10 @@
 
 #include "../hydro/density_loop.h"
 
+#ifdef GALSF_FB_MECHANICAL
+#include "../galaxy_sf/mechfb_loop.h"
+#endif
+
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
  * File-scope static; TU-local linkage. Defined here so the threshold helpers
@@ -4504,6 +4508,18 @@ template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_ar
  * uses apply_active_writeback_iterative for oracle-safe radius
  * channeling (codex round-10 fix). See hydro/density_loop.{h,cc}. */
 template void run_neighbor_loop_iterative<DensitySpec>(const neighbor_loop_args_iterative&);
+
+/* Phase 4 Wave-3 / 3e.1: MechFBSpec — mechanical-feedback runner port
+ * (milestone 3: physics-complete pair kernel + full state-machine Spec
+ * contract). 6-mode iterative state machine over loop_iteration
+ * {-2,-1,0,1,2,3}; mode_a_rebuild_csr_every_iter=false preserves the legacy
+ * 1-CSR-shared-across-6-modes optimization. Mode A multi-rank ghost-side
+ * writes are guarded by Kokkos::abort pending milestone 3.5 (custom
+ * MechFBGasDelta ghost-writeback callback + lazy d_gas_iter). See
+ * galaxy_sf/mechfb_loop.{h,cc} + OPEN_3d_mechfb_design.md. */
+#ifdef GALSF_FB_MECHANICAL
+template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_iterative&);
+#endif
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH
  * in run_mode_a). Same idiom as sink_environment_gpu.cc:388. */
