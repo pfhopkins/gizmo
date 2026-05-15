@@ -80,8 +80,9 @@ struct MechFBActiveState {
      * has no ctx parameter. Trivially copyable; cost is a few pointers + ints
      * per active per iter. */
     struct MechFBGasDelta *LocalGasMechFBInfoTemp;   /* home-side j-write target (SharedSpace) */
-    struct MechFBGasDelta *d_gas_iter;               /* ghost-side scratch (Mode A multi-rank only; nullptr in milestone 3) */
-    int                    num_local_gas;            /* ownership-split boundary */
+    struct MechFBGasDelta *d_gas_iter;               /* ghost-side scratch (Mode A multi-rank only; nullptr when num_ghosts==0) */
+    int                    num_local_gas;            /* = N_gas      ; home/non-gas boundary */
+    int                    num_local_particles;      /* = NumPart    ; non-gas/imported-ghost boundary */
     bool                   oracle_dry_run;
     struct particle_data  *P_base;                   /* dctx.P; pair_kernel needs full P array for the refactored legacy kernel */
     struct gas_cell_data  *CellP_base;               /* dctx.CellP; nullable when CellP unavailable */
@@ -115,8 +116,9 @@ struct MechFBDeviceContext : NeighborLoopDeviceContextBase {
 
     /* Immutable across iters but device-visible (set in populate_device_context). */
     int   num_modes;                              /* 3 / 4 / 5 / 6 per FIRE flags */
-    int   num_local_gas;                          /* ownership-split boundary */
-    int   n_ghost_alloc;                          /* d_gas_iter capacity (Mode A only); 0 in Mode B */
+    int   num_local_gas;                          /* = N_gas    ; home/non-gas boundary */
+    int   num_local_particles;                    /* = NumPart  ; non-gas/imported-ghost boundary */
+    int   n_ghost_alloc;                          /* d_gas_iter capacity (Mode A multi-rank only; 0 otherwise) */
 
     /* SharedSpace pointers (host-allocated by toplevel + populate_device_context). */
     struct MechFBGasDelta      *LocalGasMechFBInfoTemp;  /* SharedSpace, length num_local_gas */
@@ -193,8 +195,26 @@ struct MechFBSpec {
         int                          mode_idx;                  /* 0..num_modes-1 */
         std::vector<MechFBLocalIn>   host_locals_scratch;       /* [num_active]; repacked each iter */
         struct MechFBGasDelta       *LocalGasMechFBInfoTemp;    /* SharedSpace ptr; owned by toplevel */
-        int                          num_local_gas;
+        int                          num_local_gas;             /* = N_gas */
+        int                          num_local_particles;       /* = NumPart (= ghost_get_num_local()) */
         int                          n_couplings_thistask;      /* accumulated host-side counter */
+
+        /* Milestone 3.5 — ghost-side scratch + ghost-writeback validation counter.
+         * Aux is the SOLE OWNER of d_gas_iter: lazy alloc/grow in
+         * reset_per_iter_device_context based on ghost_get_num_ghosts(); free
+         * via cleanup_device_context (single free path; mechfb_run_iterative
+         * does not touch d_gas_iter). DeviceContext mirrors the pointer +
+         * capacity for device-side reads. */
+        struct MechFBGasDelta       *d_gas_iter;                /* SharedSpace, length n_ghost_alloc; nullptr when num_ghosts==0 */
+        int                          n_ghost_alloc;             /* current d_gas_iter capacity */
+
+        /* MA-N validation counter: incremented in callback pack_fn each time a
+         * ghost-side MechFBGasDelta entry is shipped. End of mechfb_run_iterative
+         * MPI_Allreduce-sums across ranks and rank-0 prints; nonzero proves the
+         * new Mode-A-multi-rank ghost-writeback path was actually exercised
+         * (codex review 2026-05-14: "did not abort" is not sufficient evidence). */
+        long long                    total_ghost_packs;
+
     };
 
     /* ====================================================================
@@ -257,12 +277,15 @@ struct MechFBSpec {
 
     /* Custom ghost-writeback callback (MechFBGasDelta is a parallel array, not
      * a gas_cell_data member — manifest macros don't fit; pattern from
-     * sinks/sink_swk_loop.cc). EMPTY-BUNDLE STUB at this milestone: begin/end
-     * register an empty bundle so the runner's bundle-managed remote exchange
-     * is a no-op. Single-rank validation does not exercise it; multi-rank
-     * Mode A is guarded by the Kokkos::abort in pair_kernel below until the
-     * milestone 3.5 follow-up wires the real MechFBGasDelta payload + lazy
-     * d_gas_iter (pattern reference: sinks/sink_swk_loop.cc:194-455). */
+     * sinks/sink_swk_loop.cc:194-455). Milestone 3.5: real callback bundle in
+     * mechfb_writeback_detail (mechfb_loop.cc) ships nonzero ghost-side
+     * MechFBGasDelta entries to home ranks. ghost_writeback_begin populates
+     * the bundle's Ctx from Aux (d_gas_iter, LocalGasMechFBInfoTemp,
+     * num_local_gas, total_ghost_packs counter); ghost_writeback_end fences
+     * Kokkos so device atomic writes to d_gas_iter are visible to the host
+     * bundle scan, then calls _end_bundle which packs/MPI/applies via
+     * mechfb_gas_delta_{nonzero,zero,add} helpers (TU-local in mechfb_loop.cc;
+     * SSOT for field-touch policy). */
     static void ghost_writeback_begin(const neighbor_loop_args& args, const NeighborLoopPlan& plan);
     static void ghost_writeback_end  (const neighbor_loop_args& args, const NeighborLoopPlan& plan);
 
@@ -325,6 +348,7 @@ struct MechFBSpec {
         a.LocalGasMechFBInfoTemp = dctx.LocalGasMechFBInfoTemp;
         a.d_gas_iter             = dctx.d_gas_iter;
         a.num_local_gas          = dctx.num_local_gas;
+        a.num_local_particles    = dctx.num_local_particles;
         a.oracle_dry_run         = dctx.oracle_dry_run;
         a.P_base                 = dctx.P;
         a.CellP_base             = dctx.CellP;
@@ -388,35 +412,28 @@ struct MechFBSpec {
         if ((r2 > i_active.source_mode.h2) && (r2 > h2j)) return;
         if (r2 > i_active.source_mode.r2max_phys) return;
 
-        /* Multi-rank Mode A ghost-side write guard (milestone 3 scope).
-         * Single-rank: num_local_gas = N_gas, ghost imports = 0 → unreachable.
-         * Mode B: walks owner-local arrays → unreachable (j < num_local_gas).
-         * Mode A multi-rank: imported ghost cells are at j >= num_local_gas;
-         *   ownership-split write into d_gas_iter + custom MechFBGasDelta
-         *   ghost-writeback callback is required (design Appendix A). Deferred
-         *   to milestone 3.5 follow-up before any multi-rank Vista validation. */
-        if (neighbor.neighbor_index >= i_active.num_local_gas) {
-            if (!i_active.oracle_dry_run) {
-                Kokkos::abort("MechFBSpec::pair_kernel: Mode A multi-rank ghost-side "
-                              "write reached but d_gas_iter / custom ghost-writeback "
-                              "callback not yet implemented (milestone 3.5).");
-            }
-            return;  /* oracle pass: skip silently */
-        }
-
-        /* Forward to refactored legacy kernel. ghost_gas_delta = i_active.d_gas_iter
-         * (nullptr in milestone 3 single-rank scope; reachable only via the abort
-         * above otherwise). scalars threaded through i_active.scalars — replaces
-         * bare All.* reads inside the kernel body (codex r6 fix). */
+        /* j-side routing: three-way split via mechfb_target_gas_delta inside
+         * mechanical_fb_pair_kernel (mechanical_fb_functions.h). Home gas at
+         * j < num_local_gas → LocalGasMechFBInfoTemp[j]; imported ghost at
+         * j >= num_local_particles → d_gas_iter[j - num_local_particles];
+         * the gas-only mask in load_neighbor rejects local non-gas before
+         * we get here (defensive abort fires inside the helper if it doesn't).
+         *
+         * Milestone 3.5 (multi-rank Mode A): the d_gas_iter buffer is lazily
+         * allocated and zeroed each iter by reset_per_iter_device_context
+         * based on ghost_get_num_ghosts(); ghost_writeback_begin/end pair
+         * (declared below, defined in mechfb_loop.cc) ships nonzero deltas
+         * to home ranks via the mechfb_writeback_detail custom callback. */
         mechanical_fb_pair_kernel(
             i_active.local, i_active.source_mode, i_active.loop_iteration,
             neighbor.neighbor_index,
             i_active.P_base, i_active.CellP_base,
             i_active.scalars,
-            /*home_gas_delta */ i_active.LocalGasMechFBInfoTemp,
-            /*ghost_gas_delta*/ i_active.d_gas_iter,
-            /*num_local_gas  */ i_active.num_local_gas,
-            /*oracle_dry_run */ i_active.oracle_dry_run,
+            /*home_gas_delta      */ i_active.LocalGasMechFBInfoTemp,
+            /*ghost_gas_delta     */ i_active.d_gas_iter,
+            /*num_local_gas       */ i_active.num_local_gas,
+            /*num_local_particles */ i_active.num_local_particles,
+            /*oracle_dry_run      */ i_active.oracle_dry_run,
             dp, r2, accum);
     }
 };

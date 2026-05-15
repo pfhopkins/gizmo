@@ -69,7 +69,20 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
     aux.host_locals_scratch.assign(num_active > 0 ? num_active : 0, MechFBLocalIn{});
     aux.LocalGasMechFBInfoTemp = LocalGasMechFBInfoTemp;
     aux.num_local_gas          = num_local_gas;
+    /* num_local_particles = NumPart on this rank (pre-import). Queried at
+     * populate-time once; constant across the 6 iters of this call (mechfb
+     * neither adds nor removes particles mid-loop). Threaded into
+     * mechfb_target_gas_delta as the upper bound for the local-non-gas gap. */
+    aux.num_local_particles    = ghost_get_num_local();
     aux.n_couplings_thistask   = 0;
+
+    /* Milestone 3.5 — ghost-side scratch is grown lazily per iter inside
+     * reset_per_iter_device_context (when ghost_get_num_ghosts() exceeds
+     * current capacity), zeroed via Kokkos::parallel_for, freed in
+     * cleanup_device_context (single free path). Initial state: null/zero. */
+    aux.d_gas_iter             = nullptr;
+    aux.n_ghost_alloc          = 0;
+    aux.total_ghost_packs      = 0;
 }
 
 /* ============================================================================
@@ -250,10 +263,11 @@ void MechFBSpec::populate_device_context(const neighbor_loop_args& args,
     ctx.loop_iteration  = (aux && aux->num_modes > 0) ? aux->modes[ctx.mode_idx] : -2;
     ctx.oracle_dry_run  = false;
     ctx.num_modes       = aux ? aux->num_modes : 3;
-    ctx.num_local_gas   = aux ? aux->num_local_gas : 0;
-    ctx.n_ghost_alloc   = 0;
+    ctx.num_local_gas        = aux ? aux->num_local_gas        : 0;
+    ctx.num_local_particles  = aux ? aux->num_local_particles  : 0;
+    ctx.n_ghost_alloc        = aux ? aux->n_ghost_alloc        : 0;
     ctx.LocalGasMechFBInfoTemp = aux ? aux->LocalGasMechFBInfoTemp : nullptr;
-    ctx.d_gas_iter      = nullptr;
+    ctx.d_gas_iter      = aux ? aux->d_gas_iter : nullptr;  /* Aux owns; ctx mirrors */
 
     /* SharedSpace per_active_local — sized to num_active. Contents are filled
      * by reset_per_iter_device_context's mechfb_repack_per_active_local call
@@ -270,20 +284,30 @@ void MechFBSpec::populate_device_context(const neighbor_loop_args& args,
     }
 }
 
-/* cleanup_device_context — free SharedSpace per_active_local + d_gas_iter
- * (if Mode A ever allocated it). Idempotent on already-null pointers. */
-void MechFBSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
+/* cleanup_device_context — SOLE free path for per-call SharedSpace allocations.
+ *
+ * Owns: ctx.per_active_local (allocated in populate_device_context).
+ * Co-owns (via Aux): aux->d_gas_iter (grown lazily in
+ *   reset_per_iter_device_context). Aux holds the canonical pointer; the ctx
+ *   mirror is cleared but the storage is freed via Aux. mechfb_run_iterative
+ *   must NOT free d_gas_iter independently — this is the only path.
+ *
+ * Idempotent on already-null pointers. */
+void MechFBSpec::cleanup_device_context(const neighbor_loop_args& args,
                                          DeviceContext& ctx) {
     if (ctx.per_active_local) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(
             const_cast<MechFBLocalIn *>(ctx.per_active_local));
         ctx.per_active_local = nullptr;
     }
-    if (ctx.d_gas_iter) {
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.d_gas_iter);
-        ctx.d_gas_iter   = nullptr;
-        ctx.n_ghost_alloc = 0;
+    auto *aux = static_cast<Aux*>(args.aux);
+    if (aux && aux->d_gas_iter) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(aux->d_gas_iter);
+        aux->d_gas_iter   = nullptr;
+        aux->n_ghost_alloc = 0;
     }
+    ctx.d_gas_iter      = nullptr;
+    ctx.n_ghost_alloc   = 0;
     ctx.LocalGasMechFBInfoTemp = nullptr;
 }
 
@@ -432,6 +456,207 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
     }
 }
 
+/* ============================================================================
+ * Ghost-writeback bundle — MILESTONE 3.5 (Phase 4 / Wave 3 / 3e.1).
+ *
+ * Pattern: custom MechFBGasDelta ghost-writeback callback. Modeled on
+ * sinks/sink_swk_loop.cc:194-455, but mechfb does NOT need snapshot-diff
+ * because Aux::d_gas_iter is itself a per-iter DELTA accumulator (atomic_adds
+ * from the kernel are pre-zeroed and self-contained). The wire format
+ * collapses to {home_index, MechFBGasDelta delta} so a single struct copy
+ * packs and a single mechfb_gas_delta_add applies. The three field-touch
+ * helpers (zero/add/nonzero) are the SSOT — adding a new field to
+ * MechFBGasDelta means updating ONLY those three helpers.
+ *
+ * Lifecycle per call (= one mechfb_run_iterative invocation, 6 iters):
+ *   reset_per_iter_device_context  (per iter): lazy grow + zero d_gas_iter.
+ *   begin_bundle                    (per iter): mirror Aux→s_ctx; runner snapshot.
+ *   kernel launch                   (per iter): atomic_adds into d_gas_iter[g].
+ *   ghost_writeback_end             (per iter): fence; bundle scan packs nonzeros
+ *                                               via mechfb_gas_delta_nonzero+copy;
+ *                                               MPI Alltoallv; apply via _add;
+ *                                               cleanup_fn zeros d_gas_iter for
+ *                                               the next iter.
+ *   cleanup_device_context          (end of call): single free of Aux::d_gas_iter.
+ *
+ * MA-N validation criterion (codex review 2026-05-14): Aux::total_ghost_packs
+ * is incremented in pack_fn via a pointer stored in Ctx, then MPI_Allreduce-
+ * summed at end of mechfb_run_iterative. Nonzero proves the path was
+ * exercised — "did not abort" alone is not sufficient evidence. */
+namespace mechfb_writeback_detail {
+
+/* SSOT field-touch helpers. Gating mirrored 1:1 against MechFBGasDelta in
+ * galaxy_sf/mechanical_fb_types.h. Helpers live TU-local because the runner
+ * port is the only consumer in this commit (legacy ghost_writeback_mechfb in
+ * mesh/ghost_writeback.cc stays untouched per the layering rule — mechfb
+ * physics doesn't belong in mesh; both the legacy evaluator and the
+ * mesh-side mechfb writeback get deleted whole in the upcoming cleanup
+ * commit). KOKKOS_INLINE_FUNCTION = host+device callable. */
+KOKKOS_INLINE_FUNCTION
+static int mechfb_gas_delta_nonzero(const struct MechFBGasDelta *d) {
+    /* Invariant (verified in mechanical_fb_pair_kernel and inject_cosmic_rays_into_delta):
+     * every j-side write inside the !oracle_dry_run block increments N_injected
+     * together with any other delta field write. N_injected > 0 is therefore a
+     * sufficient predicate for "this gas cell received any deltas this iter". */
+    return (d->N_injected > 0) ? 1 : 0;
+}
+
+KOKKOS_INLINE_FUNCTION
+static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
+    d->N_injected  = 0;
+    d->m_injected  = 0;
+    d->KE_injected = 0;
+    d->TE_injected = 0;
+    for (int k = 0; k < 3; ++k) d->p_injected[k] = 0;
+    for (int k = 0; k < NUM_METAL_SPECIES; ++k) d->Z_injected[k] = 0;
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    d->Mass_Where_Dust_Shocked = 0;
+#endif
+#if defined(COSMIC_RAY_FLUID)
+    for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) d->CR_energy_injected[k] = 0;
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+    for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) d->CR_number_injected[k] = 0;
+#endif
+    for (int k = 0; k < 3; ++k) d->CR_dir_weighted[k] = 0;
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION
+static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
+                                 const struct MechFBGasDelta *src) {
+    dst->N_injected  += src->N_injected;
+    dst->m_injected  += src->m_injected;
+    dst->KE_injected += src->KE_injected;
+    dst->TE_injected += src->TE_injected;
+    for (int k = 0; k < 3; ++k) dst->p_injected[k] += src->p_injected[k];
+    for (int k = 0; k < NUM_METAL_SPECIES; ++k) dst->Z_injected[k] += src->Z_injected[k];
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+    dst->Mass_Where_Dust_Shocked += src->Mass_Where_Dust_Shocked;
+#endif
+#if defined(COSMIC_RAY_FLUID)
+    for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) dst->CR_energy_injected[k] += src->CR_energy_injected[k];
+#if defined(CRFLUID_EVOLVE_SPECTRUM)
+    for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) dst->CR_number_injected[k] += src->CR_number_injected[k];
+#endif
+    for (int k = 0; k < 3; ++k) dst->CR_dir_weighted[k] += src->CR_dir_weighted[k];
+#endif
+}
+
+/* Wire format: {home_index, full MechFBGasDelta}. Single struct copy on pack,
+ * single mechfb_gas_delta_add on apply — no field-list duplication. */
+struct Wire {
+    int                   home_index;
+    struct MechFBGasDelta delta;
+};
+
+/* Callback context. Mirrored from Aux by MechFBSpec::ghost_writeback_begin
+ * once per bundle (per iter). All pointers are non-owning. */
+struct Ctx {
+    struct MechFBGasDelta *d_gas_iter;          /* mirror of aux->d_gas_iter            */
+    struct MechFBGasDelta *home_buf;            /* = aux->LocalGasMechFBInfoTemp        */
+    int                    num_local_gas;       /* = aux->num_local_gas (apply bound)   */
+    int                    num_ghosts;          /* set by snapshot_fn                   */
+    long long             *total_ghost_packs;   /* points into aux->total_ghost_packs   */
+};
+static Ctx s_ctx{nullptr, nullptr, 0, 0, nullptr};
+
+static void snapshot_fn(void * /*vctx — using static s_ctx*/, int num_ghosts, int /*num_local*/) {
+    /* Pre-kernel hook. d_gas_iter is zeroed in reset_per_iter_device_context
+     * before any kernel launch this iter, so no work to do here besides
+     * recording the count. The Kokkos::fence between device writes and the
+     * upcoming host bundle scan lives in MechFBSpec::ghost_writeback_end
+     * (NOT here — snapshot fires pre-kernel). */
+    s_ctx.num_ghosts = num_ghosts;
+}
+
+static int delta_for_ghost_fn(void * /*vctx*/, int g, int /*num_local*/) {
+    if (s_ctx.d_gas_iter == nullptr) return 0;
+    return mechfb_gas_delta_nonzero(&s_ctx.d_gas_iter[g]);
+}
+
+static void pack_fn(void * /*vctx*/, int g, int /*num_local*/, void *out) {
+    Wire *w = static_cast<Wire*>(out);
+    w->home_index = ghost_get_home_index()[g];
+    w->delta      = s_ctx.d_gas_iter[g];                /* trivially-copyable */
+    if (s_ctx.total_ghost_packs) (*s_ctx.total_ghost_packs)++;
+}
+
+static void apply_fn(void * /*vctx*/, const void *in) {
+    const Wire *w = static_cast<const Wire*>(in);
+    /* Defensive: silent home_index OOB hides provenance bugs (codex review). */
+    if (s_ctx.home_buf == nullptr) {
+        fprintf(stderr, "mechfb apply_fn: s_ctx.home_buf is null on rank %d "
+                        "(begin must populate it from Aux).\n", ThisTask);
+        endrun(91031);
+    }
+    if (w->home_index < 0 || w->home_index >= s_ctx.num_local_gas) {
+        fprintf(stderr, "mechfb apply_fn: home_index=%d out of [0,%d) "
+                        "on rank %d.\n",
+                w->home_index, s_ctx.num_local_gas, ThisTask);
+        endrun(91032);
+    }
+    mechfb_gas_delta_add(&s_ctx.home_buf[w->home_index], &w->delta);
+}
+
+static void cleanup_fn(void * /*vctx*/) {
+    /* Zero d_gas_iter for the next iter (or next pass — defensive against any
+     * future flow that wraps multiple kernel passes inside one ghost_writeback
+     * pair; current iterative oracle is hard-stubbed on Mode A so only one
+     * pass per iter today). Storage stays allocated; cleanup_device_context
+     * is the sole free path. */
+    if (s_ctx.d_gas_iter && s_ctx.num_ghosts > 0) {
+        MechFBGasDelta *d = s_ctx.d_gas_iter;
+        const int n = s_ctx.num_ghosts;
+        Kokkos::parallel_for("mechfb_d_gas_iter_zero_cleanup", n,
+                              KOKKOS_LAMBDA(int g) {
+            mechfb_gas_delta_zero(&d[g]);
+        });
+        Kokkos::fence();
+    }
+    s_ctx.num_ghosts = 0;
+}
+
+static const struct ghost_writeback_callback callback = {
+    sizeof(Wire),
+    snapshot_fn,
+    delta_for_ghost_fn,
+    pack_fn,
+    apply_fn,
+    cleanup_fn,
+    & s_ctx,
+};
+
+static const struct ghost_writeback_callback *const raw_cbs[] = { & callback, nullptr };
+static const struct ghost_writeback_bundle bundle = { raw_cbs, 1 };
+
+}  /* namespace mechfb_writeback_detail */
+
+/* MechFBSpec::ghost_writeback_begin — mirror Aux into the callback's s_ctx
+ * BEFORE bundle begin. Aux is reachable here via args.aux per the runner-
+ * template contract (DeviceContext is NOT in args; codex review 2026-05-14). */
+void MechFBSpec::ghost_writeback_begin(const neighbor_loop_args& args,
+                                        const NeighborLoopPlan& /*plan*/) {
+    auto *aux = static_cast<Aux*>(args.aux);
+    mechfb_writeback_detail::s_ctx.d_gas_iter        = aux ? aux->d_gas_iter            : nullptr;
+    mechfb_writeback_detail::s_ctx.home_buf          = aux ? aux->LocalGasMechFBInfoTemp : nullptr;
+    mechfb_writeback_detail::s_ctx.num_local_gas     = aux ? aux->num_local_gas         : 0;
+    mechfb_writeback_detail::s_ctx.total_ghost_packs = aux ? &aux->total_ghost_packs    : nullptr;
+    /* num_ghosts is set by snapshot_fn inside begin_bundle (it's passed as the
+     * runner-side ghost_get_num_ghosts() snapshot). */
+    ghost_writeback_begin_bundle(&mechfb_writeback_detail::bundle);
+}
+
+/* MechFBSpec::ghost_writeback_end — fence device atomic writes to d_gas_iter
+ * before the host-side bundle scan (delta_for_ghost_fn / pack_fn read from
+ * the host). The runner does NOT unconditionally fence between the kernel
+ * launch and dispatch_ghost_writeback_end — this fence is load-bearing
+ * (codex review 2026-05-14). */
+void MechFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
+                                      const NeighborLoopPlan& /*plan*/) {
+    Kokkos::fence();
+    ghost_writeback_end_bundle(&mechfb_writeback_detail::bundle);
+}
+
 /* reset_per_iter_device_context — once per outer iter BEFORE per-subgroup
  * dispatch. Mutable ctx access lets us advance the mode state machine. The
  * runner re-captures ctx into each iter's kernel lambda, so the new
@@ -467,42 +692,50 @@ void MechFBSpec::reset_per_iter_device_context(
          * avoids backend-specific reordering ghosts later). */
         Kokkos::fence();
     }
+
+    /* Milestone 3.5 — lazy d_gas_iter alloc/grow for this iter's ghost imports.
+     *
+     * ghost_get_num_ghosts() returns the current rank's imported-ghost count
+     * (post-import, valid by the time the runner has issued effective_args).
+     * For Mode B / single-rank: returns 0, no allocation; ctx.d_gas_iter stays
+     * nullptr. For Mode A multi-rank: grow Aux's buffer if num_ghosts exceeds
+     * current capacity, zero it via Kokkos::parallel_for (device-aware), then
+     * mirror the pointer + capacity into ctx so load_active / pair_kernel see
+     * the right buffer.
+     *
+     * Aux is the sole owner; cleanup_device_context performs the only free. */
+    const int num_ghosts_now = ghost_get_num_ghosts();
+    if (num_ghosts_now > aux->n_ghost_alloc) {
+        if (aux->d_gas_iter) {
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(aux->d_gas_iter);
+            aux->d_gas_iter = nullptr;
+        }
+        aux->d_gas_iter = (MechFBGasDelta *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
+            num_ghosts_now * sizeof(MechFBGasDelta));
+        aux->n_ghost_alloc = num_ghosts_now;
+    }
+    if (num_ghosts_now > 0 && aux->d_gas_iter != nullptr) {
+        /* Zero used range (parallel_for + fence; mirrors the SharedSpace
+         * style used elsewhere in this TU rather than std::memset, so the
+         * backend reorders writes correctly relative to the upcoming device
+         * launch that reads/writes via Kokkos::atomic_add). */
+        MechFBGasDelta *d = aux->d_gas_iter;
+        Kokkos::parallel_for("mechfb_d_gas_iter_zero", num_ghosts_now,
+                              KOKKOS_LAMBDA(int g) {
+            mechfb_writeback_detail::mechfb_gas_delta_zero(&d[g]);
+        });
+        Kokkos::fence();
+    }
+    ctx.d_gas_iter    = aux->d_gas_iter;       /* mirror: ctx is non-owning */
+    ctx.n_ghost_alloc = aux->n_ghost_alloc;
+
 }
 
-/* ============================================================================
- * Ghost-writeback bundle — MILESTONE 3 SCOPE: empty bundle (no callback
- * registered). Single-rank correctness: num_ghosts == 0, runner's begin/end
- * bundle calls are strict no-ops (mesh/ghost_writeback.h:105,109).
- *
- * Mode A multi-rank correctness is INTENTIONALLY NOT YET PROVIDED — the
- * pair_kernel's `j >= num_local_gas` abort (mechfb_loop.h) prevents a silent
- * ghost-delta drop. The milestone 3.5 follow-up is the custom MechFBGasDelta
- * ghost-writeback callback (design Appendix A) + lazy d_gas_iter alloc in
- * reset_per_iter_device_context based on the runner's per-iter num_ghosts.
- *
- * Pattern reference: sinks/sink_swk_loop.cc:194-455 — when milestone 3.5
- * lands, the callback structure mirrors sink_swk's (snapshot/delta_for_ghost/
- * pack/apply/cleanup); the snapshot is no-op because d_gas_iter is zeroed
- * fresh each iter.
- * ========================================================================== */
-namespace mechfb_writeback_detail {
-
-static const struct ghost_writeback_bundle empty_bundle = {
-    /* callbacks   */ nullptr,
-    /* n_callbacks */ 0
-};
-
-}  /* namespace mechfb_writeback_detail */
-
-void MechFBSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
-                                        const NeighborLoopPlan& /*plan*/) {
-    ghost_writeback_begin_bundle(&mechfb_writeback_detail::empty_bundle);
-}
-
-void MechFBSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
-                                      const NeighborLoopPlan& /*plan*/) {
-    ghost_writeback_end_bundle(&mechfb_writeback_detail::empty_bundle);
-}
+/* mechfb_writeback_detail namespace + MechFBSpec::ghost_writeback_begin/end
+ * are defined ABOVE reset_per_iter_device_context (the device-callable
+ * mechfb_gas_delta_zero helper inside the namespace is referenced from
+ * reset_per_iter's lambda for the per-iter d_gas_iter zero-fill, so the
+ * namespace must be in scope at that point). */
 
 /* ============================================================================
  * Toplevel helpers — entry points for mechanical_fb.cc (non-GPU TU).
@@ -598,6 +831,23 @@ void mechfb_run_iterative(int *active_list, int num_active,
     Kokkos::fence();
 
     if (n_couplings_out) *n_couplings_out = aux.n_couplings_thistask;
+
+    /* Milestone 3.5 validation readout — proves the multi-rank Mode A
+     * ghost-writeback path was actually exercised. MA-N pass criterion:
+     * total > 0 in at least one mechfb call (codex review 2026-05-14:
+     * "did not abort" is not sufficient evidence). Single-rank / Mode B:
+     * always 0 (no ghost imports). Cheap one-shot Allreduce + rank-0 print. */
+    {
+        long long local_packs = aux.total_ghost_packs;
+        long long global_packs = 0;
+        MPI_Allreduce(&local_packs, &global_packs, 1, MPI_LONG_LONG, MPI_SUM,
+                       MPI_COMM_WORLD);
+        if (global_packs > 0 && ThisTask == 0) {
+            fprintf(stdout, "[mechfb] ghost-writeback packs this call: total=%lld\n",
+                    global_packs);
+            fflush(stdout);
+        }
+    }
 }
 
 #endif /* GALSF_FB_MECHANICAL */

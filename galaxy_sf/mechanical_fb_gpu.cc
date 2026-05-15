@@ -287,17 +287,25 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                     if((r2 > mstate.h2) && (r2 > h2j)) continue;
                     if(r2 > mstate.r2max_phys) continue;
                     /* Legacy GPU evaluator: single-buffer d_gas covers home + ghost
-                     * (num_local_gas = num_all). Ghost ptr = nullptr (unreachable).
-                     * oracle_dry_run = false (legacy has no oracle gate). The
-                     * mechfb_target_gas_delta helper routes every j to kg[j].
-                     * scalars threaded by-value through the Kokkos lambda capture. */
+                     * (num_local_gas = num_local_particles = num_all). Ghost ptr =
+                     * nullptr (unreachable: j < num_local_gas always holds, so the
+                     * first branch in mechfb_target_gas_delta fires for every j).
+                     * oracle_dry_run = false (legacy has no oracle gate). scalars
+                     * threaded by-value through the Kokkos lambda capture.
+                     *
+                     * num_local_particles added in milestone 3.5: in the runner
+                     * port it splits non-gas locals from imported ghosts; here
+                     * setting it to num_all alongside num_local_gas keeps legacy
+                     * semantics identical (both thresholds equal → ghost branch
+                     * unreachable). */
                     mechanical_fb_pair_kernel(loc, mstate, loop_iteration, j,
                                               kp, kc,
                                               mechfb_scalars,
-                                              /*home_gas_delta */ kg,
-                                              /*ghost_gas_delta*/ (struct MechFBGasDelta*)nullptr,
-                                              /*num_local_gas  */ num_all,
-                                              /*oracle_dry_run */ false,
+                                              /*home_gas_delta     */ kg,
+                                              /*ghost_gas_delta    */ (struct MechFBGasDelta*)nullptr,
+                                              /*num_local_gas      */ num_all,
+                                              /*num_local_particles*/ num_all,
+                                              /*oracle_dry_run     */ false,
                                               dp, r2, myout);
                 }
                 out_arr[aa] = myout;

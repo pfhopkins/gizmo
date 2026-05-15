@@ -56,30 +56,53 @@ struct MechFBCallScalars {
 /* Ownership-split j-side write target + oracle gate (Phase 4 / Wave 3 / 3e.1).
  *
  * Picks the per-gas delta buffer for j-side atomic writes from inside the
- * pair kernel. The kernel passes:
- *   - home_gas_delta  : SharedSpace buffer covering home-rank gas cells
- *                       (indexed by j directly when j < num_local_gas)
- *   - ghost_gas_delta : SharedSpace buffer covering imported-ghost gas cells
- *                       (indexed by j - num_local_gas when j >= num_local_gas;
- *                        nullptr for callers that don't import ghosts —
- *                        legacy mechanical_fb_evaluate_gpu passes nullptr and
- *                        num_local_gas = num_all so ghost branch is unreachable)
+ * pair kernel. P[] layout convention used here:
+ *   [0 ........... num_local_gas)       local gas cells   → home_gas_delta[j]
+ *   [num_local_gas, num_local_particles) local non-gas    → mask-violation abort
+ *   [num_local_particles, ...)          imported ghost    → ghost_gas_delta[j - num_local_particles]
+ *
+ *   - num_local_gas       = N_gas      (local gas count this rank)
+ *   - num_local_particles = NumPart    (= ghost_get_num_local() pre-import)
+ *
+ * MILESTONE 3.5 FIX: previously this helper used `j < num_local_gas` to
+ * route home vs ghost, which silently corrupted memory whenever
+ * NumPart > N_gas (any sim with non-gas particles) because imported ghosts
+ * land at indices >= NumPart, NOT >= N_gas. The middle range [N_gas, NumPart)
+ * is local non-gas — gas-only neighbor mask in load_neighbor should filter
+ * these out before we ever reach the kernel; defensive abort if we don't.
  *
  * Returns the per-pair MechFBGasDelta target for atomic accumulation; the
  * j-side oracle gate (`if (oracle_dry_run) return;`) is applied SEPARATELY
  * by the kernel BEFORE calling this helper or any atomic_add. The helper
  * does not branch on oracle, and is safe to call after the gate.
  *
- * Legacy semantic preserved: ghost_gas_delta=nullptr, num_local_gas=num_all
- * routes every j to home_gas_delta[j]. */
+ * Legacy semantic preserved: legacy mechanical_fb_evaluate_gpu passes
+ * num_local_gas = num_local_particles = num_all and ghost_gas_delta=nullptr,
+ * so every j falls in [0, num_all) → first branch → home_gas_delta[j],
+ * ghost and gap branches both unreachable. */
 KOKKOS_INLINE_FUNCTION
 static struct MechFBGasDelta *mechfb_target_gas_delta(
-    int j, int num_local_gas,
+    int j,
+    int num_local_gas,
+    int num_local_particles,
     struct MechFBGasDelta *home_gas_delta,
     struct MechFBGasDelta *ghost_gas_delta)
 {
     if (j < num_local_gas) return &home_gas_delta[j];
-    return &ghost_gas_delta[j - num_local_gas];
+    if (j >= num_local_particles) {
+        if (ghost_gas_delta == nullptr) {
+            Kokkos::abort("mechfb_target_gas_delta: ghost-side write reached "
+                          "(j >= num_local_particles) but ghost_gas_delta is "
+                          "null. reset_per_iter_device_context must allocate "
+                          "Aux::d_gas_iter whenever ghost_get_num_ghosts() > 0.");
+        }
+        return &ghost_gas_delta[j - num_local_particles];
+    }
+    Kokkos::abort("mechfb_target_gas_delta: gas-only kernel received local "
+                  "non-gas neighbor j in [num_local_gas, num_local_particles) — "
+                  "MechFBSpec::load_neighbor or legacy neighbor-list filter "
+                  "should have rejected this before pair_kernel.");
+    return home_gas_delta;  /* unreachable */
 }
 
 /* Per-source (star) input to kernel. Host packs once per mode via
@@ -138,12 +161,14 @@ static void inject_cosmic_rays_into_delta(
      * CR_global_min/max/center rigidity arrays inside this body. */
     const struct MechFBCallScalars& scalars,
     int num_local_gas,
+    int num_local_particles,
     struct MechFBGasDelta *home_gas_delta,
     struct MechFBGasDelta *ghost_gas_delta)
 {
     if(CR_energy_to_inject <= 0) return;
     struct MechFBGasDelta *gd =
-        mechfb_target_gas_delta(target, num_local_gas, home_gas_delta, ghost_gas_delta);
+        mechfb_target_gas_delta(target, num_local_gas, num_local_particles,
+                                home_gas_delta, ghost_gas_delta);
     double f_injected[N_CR_PARTICLE_BINS]; f_injected[0] = 1;
 #if (N_CR_PARTICLE_BINS > 1)
     double sum_in = 0.0;
@@ -320,21 +345,28 @@ static void mechanical_fb_pair_kernel(
      * inline / legacy mechanical_fb_evaluate_gpu lambda) builds it
      * host-side via populate_call_scalars / mechfb_make_call_scalars_legacy. */
     const struct MechFBCallScalars& scalars,
-    /* j-side ownership-split write target (Phase 4 / Wave 3 / 3e.1).
-     * home_gas_delta : indexed by j for j < num_local_gas
-     * ghost_gas_delta: indexed by (j - num_local_gas) for j >= num_local_gas;
-     *                  may be nullptr when caller has no imported ghosts
-     *                  (legacy passes nullptr and num_local_gas = num_all).
+    /* j-side ownership-split write target (Phase 4 / Wave 3 / 3e.1, milestone 3.5).
+     * Three-way index split via mechfb_target_gas_delta (see helper above):
+     *   home_gas_delta       : local gas range [0, num_local_gas)
+     *   ghost_gas_delta      : imported-ghost range [num_local_particles, ...);
+     *                          may be nullptr only when num_local_particles is
+     *                          set such that the ghost branch is unreachable
+     *                          (legacy passes num_local_gas = num_local_particles
+     *                          = num_all, so j < num_local_gas always holds).
+     *   middle gap            : local non-gas range, gas-only mask should filter
+     *                          out, defensive abort if not.
      * oracle_dry_run : if true, i-side accum (myout.*) still completes but
      *                  every j-side atomic_add is suppressed (oracle brute-pass). */
     struct MechFBGasDelta *home_gas_delta,
     struct MechFBGasDelta *ghost_gas_delta,
     int  num_local_gas,
+    int  num_local_particles,
     bool oracle_dry_run,
     const Vec3<double>& dp,  /* = local.Pos - P[j].Pos, nearest_xyz-corrected */
     double r2,
     struct MechFBOut& myout)
 {
+    const bool is_ghost = (j >= num_local_particles);
     if(P[j].Type != 0) return;
     double Mass_j = P[j].Mass;
     if(Mass_j <= 0) return;
@@ -514,7 +546,8 @@ static void mechanical_fb_pair_kernel(
 #endif
             inject_cosmic_rays_into_delta(cr_to_inject, (double)local.SNe_v_ejecta, loop_iteration,
                                            j, crdir, P, CellP, scalars,
-                                           num_local_gas, home_gas_delta, ghost_gas_delta);
+                                           num_local_gas, num_local_particles,
+                                           home_gas_delta, ghost_gas_delta);
         }
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
@@ -543,7 +576,8 @@ static void mechanical_fb_pair_kernel(
     if (!oracle_dry_run) {
         /* atomic accumulation into the per-gas delta struct */
         struct MechFBGasDelta *gd =
-            mechfb_target_gas_delta(j, num_local_gas, home_gas_delta, ghost_gas_delta);
+            mechfb_target_gas_delta(j, num_local_gas, num_local_particles,
+                                    home_gas_delta, ghost_gas_delta);
         Kokkos::atomic_add(&gd->N_injected, 1);
         Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
         Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
