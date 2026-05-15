@@ -80,10 +80,14 @@ void compute_hydro_densities_and_forces(void)
         interpolate_fluxes_opacities_gasgrains(); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
 #endif
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
+        MCBAL_LOG("pre_FB");
         compute_stellar_feedback();
+        MCBAL_LOG("post_FB");
 #endif
 
+        MCBAL_LOG("pre_grad");
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
+        MCBAL_LOG("post_grad");
 #if defined(COOLING) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */
 #endif
@@ -97,6 +101,7 @@ void compute_hydro_densities_and_forces(void)
         dynamic_diff_calc(); /* This MUST be called immediately following gradient calculations */
 #endif
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
+        MCBAL_LOG("post_hydro_force");
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
         PRINT_STATUS(" ..hydro force computation done.");
 

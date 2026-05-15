@@ -784,6 +784,14 @@ int merge_particles_ij(int i, int j)
         P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); // volume-conserving to leading order //
 #ifdef METALS
         for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} // metal-mass conserving //
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */
+        {
+            double X_H_new = 1.0 - P[j].Metallicity[0] - P[j].Metallicity[MET_OF(ELEM_He)];
+            if(X_H_new < 0) X_H_new = 0;
+            P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+        }
+#endif
 #endif
 #ifdef GALSF
         if(P[i].Type==4 && P[j].Type==4) // couple extra potentially-important fields to carry for star particles
@@ -977,6 +985,14 @@ int merge_particles_ij(int i, int j)
 #endif // CHIMES
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+    /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */
+    {
+        double X_H_new = 1.0 - P[j].Metallicity[0] - P[j].Metallicity[MET_OF(ELEM_He)];
+        if(X_H_new < 0) X_H_new = 0;
+        P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+    }
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
@@ -997,17 +1013,22 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[j].Dust[k] = wt_j*CellP[j].Dust[k] + wt_i*CellP[i].Dust[k];} /* dust-mass conserving */
 #endif
 #if defined(CHEMCOOL)
-    {/* TracAbund is n_X/n_H (abundance ratio). Convert to mass fractions
-        using pre-merge X_H, mass-weight, then convert back using merged X_H.
-        Must be done BEFORE ElementAbundance merge so we have pre-merge X_H for j. */
+    {/* TracAbund is n_X/n_H (abundance ratio).  Convert to mass fractions
+        using pre-merge X_H, mass-weight, then back to ratios using merged X_H.
+        Under our FIRE-pattern layout, X_H = 1 − Metallicity[0] − Metallicity[1]. */
 #if (CHEMISTRYNETWORK == 17)
      static const double trac_molwt[] = {2.0, 1.0, 28.0, 4.0, 4.0, 2.0, 3.0};
 #else
      static const double trac_molwt[] = {2.0, 1.0, 28.0};
 #endif
-     double X_H_i = DMAX(P[i].ElementAbundance[0], 1e-10);
-     double X_H_j = DMAX(P[j].ElementAbundance[0], 1e-10); /* pre-merge */
-     double X_H_new = wt_j * X_H_j + wt_i * X_H_i;         /* what merged X_H will be */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+     double X_H_i = DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 1e-10);  /* H at Met[1] */
+     double X_H_j = DMAX(P[j].Metallicity[MET_OF(ELEM_H)], 1e-10);
+#else
+     double X_H_i = DMAX(P[i].Metallicity[0], 1e-10);
+     double X_H_j = DMAX(P[j].Metallicity[0], 1e-10);
+#endif
+     double X_H_new = wt_j * X_H_j + wt_i * X_H_i;
      for(k=0;k<TRAC_NUM;k++) {
          double mf_i = CellP[i].TracAbund[k] * trac_molwt[k] * X_H_i;
          double mf_j = CellP[j].TracAbund[k] * trac_molwt[k] * X_H_j;
@@ -1018,9 +1039,9 @@ int merge_particles_ij(int i, int j)
      CellP[j].Temp = wt_j*CellP[j].Temp + wt_i*CellP[i].Temp;
     }
 #endif
-#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {P[j].ElementAbundance[k] = wt_j*P[j].ElementAbundance[k] + wt_i*P[i].ElementAbundance[k];} /* element-mass conserving */
-#endif
+    /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: per-element merge happens inside the
+     * Metallicity[] block below (NUM_METAL_SPECIES=27 covers all 27 slots).  No
+     * separate ElementAbundance[] array exists in this mode. */
 #if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
     P[j].DeuteriumAbundance = wt_j*P[j].DeuteriumAbundance + wt_i*P[i].DeuteriumAbundance; /* D mass conserving */
 #endif

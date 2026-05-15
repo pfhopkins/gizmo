@@ -1077,7 +1077,22 @@
 #define NUM_LIVE_SPECIES_FOR_COOLTABLES 0
 #endif
 
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+/* FIRE-pattern extended, 28 slots:
+ *   Metallicity[0]      = total Z (sum of metal mass fractions)
+ *   Metallicity[1]      = H        (computed from conservation: 1 − Z − Y, then stored)
+ *   Metallicity[2]      = He
+ *   Metallicity[3..27]  = 25 individual metals (C, N, O, F, Ne, Na, Mg, Al, Si,
+ *                         P, S, Cl, Ar, K, Ca, Sc, Ti, V, Cr, Mn, Fe, Co, Ni, Cu, Zn)
+ * Σ_{k=1..27} Metallicity[k] = X + Y + Z = 1 by construction.
+ * Index translation: Metallicity slot for StellarElement k = k + 1 (so
+ *   Met[ELEM_H+1]=Met[1]=H, Met[ELEM_He+1]=Met[2]=He, ..., Met[ELEM_Zn+1]=Met[27]=Zn).
+ * Slot 0 (total Z) is redundant with Σ_{k=3..27} Met[k] but kept for legacy
+ * cooling code that reads Metallicity[0] / SolarAbundances[0]. */
+#define NUM_METAL_SPECIES 28
+#else
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
+#endif
 #endif // METALS //
 
 
@@ -1301,10 +1316,13 @@
 
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
 #undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
+/* When METALS_INDIVIDUAL is on, the 27 resolvedism elements live inside
+ * Metallicity[] (NUM_METAL_SPECIES=27), so they no longer need passive-scalar
+ * slots.  Only Dust still needs extra slots. */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+NUM_RESOLVEDISM_ELEMENTS+NUM_RESOLVEDISM_DUST)
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+NUM_RESOLVEDISM_DUST)
 #else
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_ELEMENTS+NUM_RESOLVEDISM_DUST)
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_DUST)
 #endif
 #endif
 
@@ -1356,7 +1374,9 @@
 #endif
 #undef NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
-#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_ELEMENTS+NUM_RESOLVEDISM_DUST+TRAC_NUM+NUM_D_DIFFUSE)
+/* With NUM_METAL_SPECIES=27 (FIRE-pattern), resolvedism elements live in
+ * Metallicity[] — no extra slots needed for them. */
+#define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (NUM_RESOLVEDISM_DUST+TRAC_NUM+NUM_D_DIFFUSE)
 #else
 #define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (TRAC_NUM+NUM_D_DIFFUSE)
 #endif

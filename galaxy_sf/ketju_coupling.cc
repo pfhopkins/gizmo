@@ -32,6 +32,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "ketju_coupling.h"
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+#include "resolvedism_stellar_tables.h"
+#endif
 
 #ifdef KETJU_REGULARIZATION
 
@@ -1364,14 +1367,11 @@ static void handle_mergers(KetjuRegion &reg,
               reg.affected_tasks.root, reg.affected_tasks.comm);
 
     /* ---- Phase 3: each task executes its local part ---- */
-    int n_metals = 0, n_elements = 0;
+    int n_metals = 0;
 #ifdef METALS
-    n_metals = NUM_METAL_SPECIES;
+    n_metals = NUM_METAL_SPECIES;  /* under our flag NUM_METAL_SPECIES=27 covers all elements */
 #endif
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    n_elements = NUM_RESOLVEDISM_ELEMENTS;
-#endif
-    int buf_size = n_metals + n_elements;
+    int buf_size = n_metals;
 
     for(int m = 0; m < n_mergers; m++) {
         ketju_merger_action &act = actions[m];
@@ -1385,10 +1385,9 @@ static void handle_mergers(KetjuRegion &reg,
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
                     merged_metals[k] = P[act.idx_merged].Metallicity[k];
 #endif
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                for(int k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++)
-                    merged_metals[n_metals + k] = P[act.idx_merged].ElementAbundance[k];
-#endif
+                /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: 27 elements live in
+                 * Metallicity[NUM_METAL_SPECIES=27] under FIRE-pattern layout.
+                 * The Metallicity[] copy above already covers them. */
             }
 
             /* point-to-point transfer of metals */
@@ -1404,18 +1403,22 @@ static void handle_mergers(KetjuRegion &reg,
             }
 
             if(act.task_survivor == ThisTask) {
-#if defined(METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-                /* Legacy Metallicity[] merge — replaced by per-element EA merge under our flag */
+#if defined(METALS)
+                /* Mass-weighted Metallicity[] merge.  Under 28-slot layout
+                 * NUM_METAL_SPECIES=28 covers total Z (0), H (1), He (2), and
+                 * 25 metals (3..27). */
                 for(int k = 0; k < NUM_METAL_SPECIES; k++)
                     P[act.idx_survivor].Metallicity[k] =
                         (act.M_survivor_old * P[act.idx_survivor].Metallicity[k] +
                          act.M_merged * merged_metals[k]) / act.M_survivor_new;
-#endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                for(int k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++)
-                    P[act.idx_survivor].ElementAbundance[k] =
-                        (act.M_survivor_old * P[act.idx_survivor].ElementAbundance[k] +
-                         act.M_merged * merged_metals[n_metals + k]) / act.M_survivor_new;
+                /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */
+                {
+                    double X_H_new = 1.0 - P[act.idx_survivor].Metallicity[0] - P[act.idx_survivor].Metallicity[MET_OF(ELEM_He)];
+                    if(X_H_new < 0) X_H_new = 0;
+                    P[act.idx_survivor].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                }
+#endif
 #endif
             }
         }

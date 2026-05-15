@@ -344,26 +344,19 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                     }
 
 #ifdef METALS
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                    double Z_j = 0;
-                    for(int kk = ELEM_C; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) {
-                        double Xk;
-                        #pragma omp atomic read
-                        Xk = P[j].ElementAbundance[kk];
-                        Z_j += Xk;
-                    }
-#else
                     double Z_j;
                     #pragma omp atomic read
-                    Z_j = P[j].Metallicity[0];
-#endif
+                    Z_j = P[j].Metallicity[0];  /* total Z, slot 0 in FIRE-pattern Metallicity[] */
                     out.metal_accreted += dM * Z_j;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {
+                    /* Accrete per-element mass.  IMF_ElemAccreted/out.elem_accreted
+                     * is indexed by StellarElement (0..26 = H..Zn).  Read each
+                     * element's mass-fraction from Met[MET_OF(k)] (1..27). */
+                    for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
                         double Xk_j;
                         #pragma omp atomic read
-                        Xk_j = P[j].ElementAbundance[k];
+                        Xk_j = P[j].Metallicity[MET_OF(k)];
                         out.elem_accreted[k] += dM * Xk_j;
                     }
 #endif
@@ -660,14 +653,25 @@ void assign_stellar_masses(void)
         P[i].Metallicity[0] = (mass_acc > 0) ? IMF_MetalAccreted[i] / mass_acc : 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++)
-            P[i].ElementAbundance[k] = (mass_acc > 0) ? IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k] / mass_acc : 0;
+        /* 28-slot layout: Met[0]=total Z, Met[1]=H, Met[2]=He, Met[3..27]=metals.
+         * IMF_ElemAccreted[] is in 27-element table order (H=0..Zn=26); write each
+         * into Met[MET_OF(k)] and compute Met[0] from metal sum. */
+        if(mass_acc > 0) {
+            double Z_sum = 0;
+            for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+                P[i].Metallicity[MET_OF(k)] = IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k] / mass_acc;
+                if(k >= ELEM_C) Z_sum += P[i].Metallicity[MET_OF(k)];
+            }
+            P[i].Metallicity[0] = Z_sum;
+            /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */
+            double X_H_new = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
+            if(X_H_new < 0) X_H_new = 0;
+            P[i].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+        } else {
+            for(k = 0; k < NUM_METAL_SPECIES; k++) P[i].Metallicity[k] = 0;
+        }
 #endif
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        P[i].BirthMetallicity = resolvedism_total_Z_from_EA(i);
-#else
-        P[i].BirthMetallicity = P[i].Metallicity[0];
-#endif
+        P[i].BirthMetallicity = P[i].Metallicity[0];  /* total Z, slot 0 in both layouts */
 
         /* Log SF + IMF accretion info */
         imf_x[nimf] = P[i].Pos[0];

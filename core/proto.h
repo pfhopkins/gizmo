@@ -628,8 +628,12 @@ void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slo
 double return_resolvedism_species_for_diffusion(int i, int k);
 #endif
 
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-double resolvedism_total_Z_from_EA(int i);
+/* resolvedism_total_Z_from_EA removed: total Z = P[i].Metallicity[0] directly under 28-slot FIRE-pattern layout */
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+void resolvedism_mass_balance_log(const char *tag);
+#define MCBAL_LOG(tag) resolvedism_mass_balance_log(tag)
+#else
+#define MCBAL_LOG(tag) do {} while(0)
 #endif
 
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)

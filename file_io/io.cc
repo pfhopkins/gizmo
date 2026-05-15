@@ -976,10 +976,16 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 
         case IO_ELEMENT_ABUNDANCE:
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            /* Output 27-element ElementAbundance array (H, He, C, ..., Zn) by
+             * reading from Metallicity[MET_OF(k)] for each StellarElement k.
+             * Storage in P[] uses Metallicity[28]; this is a snapshot view in
+             * the table's 0..26 element-index space. */
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {fp[k] = (MyOutputFloat) P[pindex].ElementAbundance[k];}
+                    for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+                        fp[k] = (MyOutputFloat) P[pindex].Metallicity[MET_OF(k)];
+                    }
                     fp += NUM_RESOLVEDISM_ELEMENTS;
                     n++;
                 }

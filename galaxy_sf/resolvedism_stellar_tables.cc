@@ -65,6 +65,58 @@ static inline double interp2d(const double *arr, double logM, double logZ)
     return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
 }
 
+/* Boundary-aware bilinear: if the four corners of the (logM, logZ) cell share
+ * the same remnant_type, do standard bilinear. Otherwise the cell straddles a
+ * rem_type discontinuity (e.g. WD↔ECSN around 7-8 Msun), and the underlying
+ * physics is discontinuous — fall back to the nearest corner (same selection
+ * stellar_remnant_type uses). This guarantees that any quantity whose meaning
+ * is rem_type-conditional (M_preSN, rem_mass, per-element ejecta) stays
+ * self-consistent with the chosen rem_type, preserving the closure invariant
+ * M_preSN − rem − Σ ej = 0 at every interpolation point. */
+static inline double interp2d_rt_aware(const double *arr, double logM, double logZ)
+{
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    int rt00 = StellarTbl.remnant_type[IDX2(iz,   im  )];
+    int rt01 = StellarTbl.remnant_type[IDX2(iz,   im+1)];
+    int rt10 = StellarTbl.remnant_type[IDX2(iz+1, im  )];
+    int rt11 = StellarTbl.remnant_type[IDX2(iz+1, im+1)];
+    if(rt00 == rt01 && rt00 == rt10 && rt00 == rt11) {
+        double v00 = arr[IDX2(iz,   im  )];
+        double v01 = arr[IDX2(iz,   im+1)];
+        double v10 = arr[IDX2(iz+1, im  )];
+        double v11 = arr[IDX2(iz+1, im+1)];
+        return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+    }
+    int iz_near = (fz > 0.5) ? iz + 1 : iz;
+    int im_near = (fm > 0.5) ? im + 1 : im;
+    return arr[IDX2(iz_near, im_near)];
+}
+
+/* Boundary-aware variant for per-element ejecta arrays (extra elem stride). */
+static inline double interp2d_elem_rt_aware(const double *arr, double logM, double logZ, int elem)
+{
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    int rt00 = StellarTbl.remnant_type[IDX2(iz,   im  )];
+    int rt01 = StellarTbl.remnant_type[IDX2(iz,   im+1)];
+    int rt10 = StellarTbl.remnant_type[IDX2(iz+1, im  )];
+    int rt11 = StellarTbl.remnant_type[IDX2(iz+1, im+1)];
+    int b00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
+    int b01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
+    int b10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
+    int b11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
+    if(rt00 == rt01 && rt00 == rt10 && rt00 == rt11) {
+        return (1-fz)*(1-fm)*arr[b00] + (1-fz)*fm*arr[b01]
+             + fz*(1-fm)*arr[b10]     + fz*fm*arr[b11];
+    }
+    int iz_near = (fz > 0.5) ? iz + 1 : iz;
+    int im_near = (fm > 0.5) ? im + 1 : im;
+    return arr[(IDX2(iz_near, im_near)) * STBL_NELEM + elem];
+}
+
 /* ========================================================================
  *  Trilinear interpolation on 3D [NZ x NM x NAGE] float arrays
  * ======================================================================== */
@@ -896,7 +948,7 @@ double stellar_lifetime(double logM, double logZ)
 
 double stellar_remnant_mass(double logM, double logZ)
 {
-    return interp2d(StellarTbl.remnant_mass, logM, logZ);
+    return interp2d_rt_aware(StellarTbl.remnant_mass, logM, logZ);
 }
 
 int stellar_remnant_type(double logM, double logZ)
@@ -914,7 +966,7 @@ int stellar_remnant_type(double logM, double logZ)
 
 double stellar_M_preSN(double logM, double logZ)
 {
-    return interp2d(StellarTbl.M_preSN, logM, logZ);
+    return interp2d_rt_aware(StellarTbl.M_preSN, logM, logZ);
 }
 
 /* --- PMS duration / feedback delay (2D bilinear) --- */
@@ -1172,35 +1224,13 @@ double stellar_type_ia_yield(int elem)
 double stellar_elem_ej_SN(double logM, double logZ, int elem)
 {
     if(elem < 0 || elem >= STBL_NELEM) return 0;
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    int b00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
-    int b01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
-    int b10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
-    int b11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
-    double v00 = StellarTbl.elem_ej_SN_mass[b00];
-    double v01 = StellarTbl.elem_ej_SN_mass[b01];
-    double v10 = StellarTbl.elem_ej_SN_mass[b10];
-    double v11 = StellarTbl.elem_ej_SN_mass[b11];
-    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+    return interp2d_elem_rt_aware(StellarTbl.elem_ej_SN_mass, logM, logZ, elem);
 }
 
 double stellar_elem_ej_AGB(double logM, double logZ, int elem)
 {
     if(elem < 0 || elem >= STBL_NELEM) return 0;
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    int b00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
-    int b01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
-    int b10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
-    int b11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
-    double v00 = StellarTbl.elem_ej_AGB_mass[b00];
-    double v01 = StellarTbl.elem_ej_AGB_mass[b01];
-    double v10 = StellarTbl.elem_ej_AGB_mass[b10];
-    double v11 = StellarTbl.elem_ej_AGB_mass[b11];
-    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
+    return interp2d_elem_rt_aware(StellarTbl.elem_ej_AGB_mass, logM, logZ, elem);
 }
 
 /* Initial composition assumed by the yield table at this Z [linear in logZ] */
@@ -1243,22 +1273,11 @@ double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age,
 #endif /* GALSF_RESOLVEDISM_STELLAR_TABLES */
 
 
-/* Return total metal mass fraction Z = Σ ElementAbundance[k≥C].
-   Use this wherever physics needs total Z under GALSF_RESOLVEDISM_METALS_INDIVIDUAL,
-   instead of reading the legacy P[i].Metallicity[0]. */
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-double resolvedism_total_Z_from_EA(int i)
-{
-    double Z = 0;
-    int k;
-    for(k = ELEM_C; k < NUM_RESOLVEDISM_ELEMENTS; k++) Z += P[i].ElementAbundance[k];
-    return Z;
-}
-#endif
-
-
 /* Accessor for turbulent diffusion: returns the resolved ISM passive scalar
-   (ElementAbundance or Dust) at global index k, or -1 if k is not ours */
+   (Dust or TracAbund) at global index k, or -1 if k is not ours.
+   Resolvedism elements now live in Metallicity[NUM_METAL_SPECIES=27] (FIRE
+   pattern), so they're handled by the legacy Metallicity diffusion loop and
+   no longer need a passive-scalar slot. */
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)
 double return_resolvedism_species_for_diffusion(int i, int k)
 {
@@ -1267,59 +1286,6 @@ double return_resolvedism_species_for_diffusion(int i, int k)
     k -= (NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES + NUM_ISMDUSTCHEM_SPECIES);
 #endif
     if(k < 0) return -1;
-#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-    if(k < NUM_RESOLVEDISM_ELEMENTS) {
-#if defined(TURB_DIFF_METALS)
-        double dust_locked = 0;
-#if defined(GALSF_RESOLVEDISM_DUST)
-        if      (k == ELEM_C ) dust_locked = CellP[i].Dust[0];
-        else if (k == ELEM_O ) dust_locked = CellP[i].Dust[1];
-        else if (k == ELEM_Mg) dust_locked = CellP[i].Dust[2];
-        else if (k == ELEM_Si) dust_locked = CellP[i].Dust[3];
-        else if (k == ELEM_Fe) dust_locked = CellP[i].Dust[4];
-#endif
-#if defined(CHEMCOOL)
-        /* Return free atoms only (subtract chemcool-locked species) to match
-           the local-side packing in hydro_toplevel.cc.  Without this, atoms
-           that are also tracked as TracAbund species (H in H2/H+, C/O in CO,
-           He in He+/He++ for net 17) get diffused twice — once via the total
-           ElementAbundance gradient, once via the TracAbund mass-fraction
-           gradient — and the per-element mass leaks systematically into
-           chemistry-active cells. */
-        double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
-        if(k == ELEM_C) {
-            double CO_locked = CellP[i].TracAbund[2] * 12.0 * X_H;
-            return DMAX(P[i].ElementAbundance[k] - CO_locked - dust_locked, 0);
-        }
-        if(k == ELEM_O) {
-            double CO_locked = CellP[i].TracAbund[2] * 16.0 * X_H;
-            return DMAX(P[i].ElementAbundance[k] - CO_locked - dust_locked, 0);
-        }
-        if(k == ELEM_H) {
-            double H2_locked = CellP[i].TracAbund[0] * 2.0 * X_H;
-            double HP_locked = CellP[i].TracAbund[1] * 1.0 * X_H;
-#if (CHEMISTRYNETWORK == 17)
-            double HD_locked_H = CellP[i].TracAbund[6] * 1.0 * X_H;
-            return DMAX(P[i].ElementAbundance[k] - H2_locked - HP_locked - HD_locked_H - dust_locked, 0);
-#else
-            return DMAX(P[i].ElementAbundance[k] - H2_locked - HP_locked - dust_locked, 0);
-#endif
-        }
-#if (CHEMISTRYNETWORK == 17)
-        if(k == ELEM_He) {
-            double HeP_locked  = CellP[i].TracAbund[3] * 4.0 * X_H;
-            double HePP_locked = CellP[i].TracAbund[4] * 4.0 * X_H;
-            return DMAX(P[i].ElementAbundance[k] - HeP_locked - HePP_locked - dust_locked, 0);
-        }
-#endif
-#endif
-        return DMAX(P[i].ElementAbundance[k] - dust_locked, 0);
-#else
-        return P[i].ElementAbundance[k];
-#endif
-    }
-    k -= NUM_RESOLVEDISM_ELEMENTS;
-#endif
 #if defined(GALSF_RESOLVEDISM_DUST)
     if(k < NUM_RESOLVEDISM_DUST) return CellP[i].Dust[k];
     k -= NUM_RESOLVEDISM_DUST;
@@ -1329,7 +1295,7 @@ double return_resolvedism_species_for_diffusion(int i, int k)
         /* Return mass fraction (not abundance ratio) to match input packing.
            X_k = (n_k/n_H) * A_k * X_H.  Network 5: H2=2, H+=1, CO=28 */
         static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0};
-        double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
+        double X_H = DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 1e-10);  /* H at Met[1] */
         return CellP[i].TracAbund[k] * trac_molwt[k] * X_H;
     }
 #endif

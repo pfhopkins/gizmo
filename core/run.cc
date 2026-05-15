@@ -9,6 +9,65 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+/* Mass-conservation diagnostic for isolated-FB tests.  Logs at each call:
+ *   - Total baryonic mass (gas + stars)
+ *   - Total per-element mass Σ_cells P[i].Mass × P[i].Metallicity[k]  for k=0..27
+ *   - Per-cell Σ Met[1..27] stats (min/max/#violating |Σ−1|>tol)
+ * Subtracting consecutive log lines reveals which operation (hydro/diffusion/
+ * chemistry/FB/merge_split) leaks mass.  Tagged with `MCBAL` for grep. */
+void resolvedism_mass_balance_log(const char *tag)
+{
+    int i, k;
+    double M_gas_loc = 0, M_star_loc = 0;
+    double M_per_elem_loc[NUM_METAL_SPECIES];
+    for(k = 0; k < NUM_METAL_SPECIES; k++) M_per_elem_loc[k] = 0;
+    double sigMet_min_loc = 1e30, sigMet_max_loc = -1e30;
+    long n_viol_loc = 0;
+
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) continue;
+        if(P[i].Type == 0) {
+            M_gas_loc += P[i].Mass;
+            for(k = 0; k < NUM_METAL_SPECIES; k++)
+                M_per_elem_loc[k] += P[i].Mass * P[i].Metallicity[k];
+            double sigMet = 0;
+            for(k = 1; k < NUM_METAL_SPECIES; k++) sigMet += P[i].Metallicity[k];
+            if(sigMet < sigMet_min_loc) sigMet_min_loc = sigMet;
+            if(sigMet > sigMet_max_loc) sigMet_max_loc = sigMet;
+            if(fabs(sigMet - 1.0) > 1.0e-6) n_viol_loc++;
+        } else if(P[i].Type == 4) {
+            M_star_loc += P[i].Mass;
+        }
+    }
+
+    double M_gas, M_star;
+    double M_per_elem[NUM_METAL_SPECIES];
+    double sigMet_min, sigMet_max;
+    long n_viol;
+    MPI_Reduce(&M_gas_loc,  &M_gas,  1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&M_star_loc, &M_star, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(M_per_elem_loc, M_per_elem, NUM_METAL_SPECIES, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&sigMet_min_loc, &sigMet_min, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&sigMet_max_loc, &sigMet_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&n_viol_loc, &n_viol, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if(ThisTask == 0) {
+        double M_tot = (M_gas + M_star) * UNIT_MASS_IN_SOLAR;
+        printf("MCBAL %s  t=%.6e  M_tot=%.10e  M_gas=%.10e  M_star=%.10e  "
+               "ΣMet[1..27]: min=%.9e max=%.9e #viol=%ld\n",
+            tag, All.Time, M_tot, M_gas*UNIT_MASS_IN_SOLAR, M_star*UNIT_MASS_IN_SOLAR,
+            sigMet_min, sigMet_max, n_viol);
+        printf("MCBAL %s  per-element[k=0..27]:", tag);
+        for(k = 0; k < NUM_METAL_SPECIES; k++)
+            printf(" %.6e", M_per_elem[k]*UNIT_MASS_IN_SOLAR);
+        printf("\n");
+        fflush(stdout);
+    }
+}
+/* MCBAL_LOG is defined in proto.h so other translation units can call it. */
+#endif
+
 
 /*! \file run.c
  *  \brief  iterates over timesteps, main loop
@@ -370,25 +429,30 @@ void calculate_non_standard_physics(void)
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
+    MCBAL_LOG("pre_photoion");
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization
 #endif
 
+    MCBAL_LOG("pre_cooling");
 #ifdef COOLING	/* radiative cooling and chemistry  */
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
+    MCBAL_LOG("post_cooling");
 #ifdef GALSF_RESOLVEDISM_DUST
     resolvedism_dust_evolve(); // ISM dust sputtering (operator-split after chemistry)
 #endif
 
 
 #ifdef GALSF /* star/sink particle formation */
+    MCBAL_LOG("pre_starform_FB");
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
 #endif
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    MCBAL_LOG("post_starform_FB");
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
@@ -1105,11 +1169,7 @@ void energy_statistics(void)
     double Zmin_gas_loc = 1e30, Zmax_gas_loc = -1e30, Zmin_star_loc = 1e30, Zmax_star_loc = -1e30;
     {int ii; for(ii = 0; ii < NumPart; ii++) {
         if(P[ii].Mass <= 0) continue;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        double Z = resolvedism_total_Z_from_EA(ii);
-#else
-        double Z = P[ii].Metallicity[0];
-#endif
+        double Z = P[ii].Metallicity[0];  /* total Z (slot 0 in both layouts) */
         if(P[ii].Type == 0) { if(Z < Zmin_gas_loc) Zmin_gas_loc = Z; if(Z > Zmax_gas_loc) Zmax_gas_loc = Z; }
         if(P[ii].Type == 4) { if(Z < Zmin_star_loc) Zmin_star_loc = Z; if(Z > Zmax_star_loc) Zmax_star_loc = Z; }
     }}

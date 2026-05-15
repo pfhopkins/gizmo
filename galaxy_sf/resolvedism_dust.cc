@@ -128,15 +128,15 @@ void resolvedism_dust_evolve(void)
         if(sticking > 1e-4 && dust_total > 0) {
             double sqrtT = sqrt(T);
             /* gas-phase metal mass fractions */
-            double Z_C  = DMAX(P[i].ElementAbundance[ELEM_C]  - CellP[i].Dust[0], 0);
-            double Z_O  = DMAX(P[i].ElementAbundance[ELEM_O]  - CellP[i].Dust[1], 0);
-            double Z_Mg = DMAX(P[i].ElementAbundance[ELEM_Mg] - CellP[i].Dust[2], 0);
-            double Z_Si = DMAX(P[i].ElementAbundance[ELEM_Si] - CellP[i].Dust[3], 0);
-            double Z_Fe = DMAX(P[i].ElementAbundance[ELEM_Fe] - CellP[i].Dust[4], 0);
+            double Z_C  = DMAX(P[i].Metallicity[MET_OF(ELEM_C)]  - CellP[i].Dust[0], 0);
+            double Z_O  = DMAX(P[i].Metallicity[MET_OF(ELEM_O)]  - CellP[i].Dust[1], 0);
+            double Z_Mg = DMAX(P[i].Metallicity[MET_OF(ELEM_Mg)] - CellP[i].Dust[2], 0);
+            double Z_Si = DMAX(P[i].Metallicity[MET_OF(ELEM_Si)] - CellP[i].Dust[3], 0);
+            double Z_Fe = DMAX(P[i].Metallicity[MET_OF(ELEM_Fe)] - CellP[i].Dust[4], 0);
 
             /* condensation fractions: fraction of element already in dust */
-            double f_C  = (P[i].ElementAbundance[ELEM_C]  > 0) ? CellP[i].Dust[0] / P[i].ElementAbundance[ELEM_C]  : 1.0;
-            double f_Si = (P[i].ElementAbundance[ELEM_Si] > 0) ? CellP[i].Dust[3] / P[i].ElementAbundance[ELEM_Si] : 1.0;
+            double f_C  = (P[i].Metallicity[MET_OF(ELEM_C)]  > 0) ? CellP[i].Dust[0] / P[i].Metallicity[MET_OF(ELEM_C)]  : 1.0;
+            double f_Si = (P[i].Metallicity[MET_OF(ELEM_Si)] > 0) ? CellP[i].Dust[3] / P[i].Metallicity[MET_OF(ELEM_Si)] : 1.0;
             f_C = DMIN(f_C, 1.0); f_Si = DMIN(f_Si, 1.0);
 
             /* accretion timescale^{-1} [yr^-1] (gizmo2017 formula) */
@@ -187,11 +187,11 @@ void resolvedism_dust_evolve(void)
             if(CellP[i].Dust[k] < 0) CellP[i].Dust[k] = 0;
         }
         /* conservation: dust can't exceed total metal content */
-        CellP[i].Dust[0] = DMIN(CellP[i].Dust[0], DMAX(P[i].ElementAbundance[ELEM_C],  0));
-        CellP[i].Dust[1] = DMIN(CellP[i].Dust[1], DMAX(P[i].ElementAbundance[ELEM_O],  0));
-        CellP[i].Dust[2] = DMIN(CellP[i].Dust[2], DMAX(P[i].ElementAbundance[ELEM_Mg], 0));
-        CellP[i].Dust[3] = DMIN(CellP[i].Dust[3], DMAX(P[i].ElementAbundance[ELEM_Si], 0));
-        CellP[i].Dust[4] = DMIN(CellP[i].Dust[4], DMAX(P[i].ElementAbundance[ELEM_Fe], 0));
+        CellP[i].Dust[0] = DMIN(CellP[i].Dust[0], DMAX(P[i].Metallicity[MET_OF(ELEM_C)],  0));
+        CellP[i].Dust[1] = DMIN(CellP[i].Dust[1], DMAX(P[i].Metallicity[MET_OF(ELEM_O)],  0));
+        CellP[i].Dust[2] = DMIN(CellP[i].Dust[2], DMAX(P[i].Metallicity[MET_OF(ELEM_Mg)], 0));
+        CellP[i].Dust[3] = DMIN(CellP[i].Dust[3], DMAX(P[i].Metallicity[MET_OF(ELEM_Si)], 0));
+        CellP[i].Dust[4] = DMIN(CellP[i].Dust[4], DMAX(P[i].Metallicity[MET_OF(ELEM_Fe)], 0));
     }
 }
 

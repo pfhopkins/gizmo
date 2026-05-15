@@ -62,7 +62,13 @@ void resolvedism_determine_SNe(void)
         if(P[i].Type == 4) P[i].SNe_ThisTimeStep = 0;
     }
 
-    /* ---- Wind accumulation for living massive stars ---- */
+    /* ---- Wind accumulation for living massive stars ----
+     * Principled approach: single source of truth = stellar_elem_ej_wind_cumulative table.
+     *   cum_table_now  = Σ_k elem_ej_wind_cumulative(t, k)         (table prediction)
+     *   cum_injected   = M_init - P[i].Mass                         (what's actually been removed)
+     *   dM_pending     = max(0, cum_table_now - cum_injected)       (what still needs to be injected)
+     * P[i].WindMassAccum is overwritten to dM_pending each step (no longer a step-by-step accumulator).
+     * P[i].WindMomentumAccum is set to dM_pending * v_wind at the current age. */
 #ifdef GALSF_RESOLVEDISM_WINDS
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
@@ -79,29 +85,26 @@ void resolvedism_determine_SNe(void)
         double table_age = get_star_table_age(star_age_yr, logM, logZ);
         if(table_age <= 0) continue; /* PMS: no winds yet */
         double log_age = log10(DMAX(table_age, 100.0));
-        double M_new = stellar_M_current(logM, logZ, log_age);
-        /* Clamp: M_current must not drop below M_preSN while the star is alive.
-           The table has M_current=0 for ages beyond the lifetime, which would
-           cause the wind accumulator to swallow the entire star mass. */
-        double M_preSN_floor = stellar_M_preSN(logM, logZ);
-        if(M_new < M_preSN_floor) M_new = M_preSN_floor;
 
-        if(P[i].M_current_old > 0 && M_new < P[i].M_current_old) {
-            double dM = P[i].M_current_old - M_new; /* wind mass lost this step [Msun] */
-            double v_w = stellar_v_wind(logM, logZ, log_age); /* km/s */
-            if(v_w < 10.0) v_w = 10.0; /* floor: minimum 10 km/s */
-            P[i].WindMassAccum += dM;
-            P[i].WindMomentumAccum += dM * v_w;
-        }
-        P[i].M_current_old = M_new;
+        double cum_now_total = 0;
+        for(int kk = 0; kk < STBL_NELEM; kk++)
+            cum_now_total += stellar_elem_ej_wind_cumulative(logM, logZ, log_age, kk);
+        double M_init_solar = P[i].MstarSampleIMF[0];
+        double cum_injected = M_init_solar - P[i].Mass * UNIT_MASS_IN_SOLAR;
+        double dM_pending = cum_now_total - cum_injected;
+        if(dM_pending < 0) dM_pending = 0; /* interp noise — wait for table to catch up */
 
-        /* Check wind injection threshold: mass-dependent to prevent rapid-fire for massive stars.
-         * Low-mass (8 Msun): 1% = 0.08 Msun per dump. High-mass (300 Msun): ~15% = 45 Msun per dump.
-         * Linear interpolation: frac = 0.01 + 0.19 * (Mstar - 8) / (350 - 8), capped at 0.20 */
+        double v_w = stellar_v_wind(logM, logZ, log_age);
+        if(v_w < 10.0) v_w = 10.0;
+
+        P[i].WindMassAccum = dM_pending;                /* pending mass to inject */
+        P[i].WindMomentumAccum = dM_pending * v_w;      /* matching momentum (v at current age) */
+
+        /* Trigger: mass-dependent fractional threshold. Low-mass (8 Msun): 1%; high-mass (300 Msun): ~15%. */
         double wind_frac = 0.01 + 0.19 * DMAX(0, (Mstar - 8.0)) / (350.0 - 8.0);
         if(wind_frac > 0.20) wind_frac = 0.20;
-        if(P[i].WindMassAccum > wind_frac * Mstar) {
-            P[i].SNe_ThisTimeStep = 3; /* flag for wind injection */
+        if(dM_pending > wind_frac * Mstar) {
+            P[i].SNe_ThisTimeStep = 3;
             n_wind_local++;
         }
     }
@@ -166,14 +169,37 @@ void resolvedism_determine_SNe(void)
         double rem_mass = 1.4;   /* default: 1.4 Msun NS */
 #endif
 
-        /* Force-dump any remaining accumulated wind mass before the SN/AGB event.
-           This ensures wind mass tracked by M_current but not yet injected to gas
-           gets properly returned before the explosion yields are computed. */
+        /* Force-dump any remaining wind mass before the SN/AGB event. Refresh
+           dM_pending from the table at age=lifetime: the accumulator loop above
+           skips dead stars, so WindMassAccum may carry a stale (often zero) value
+           even when cum_table_at_end - cum_injected > 0. Without this refresh, the
+           SN step would have to absorb the leftover wind mass as zero-composition
+           bulk ejecta (FSN case), breaking Σ EA closure on recipient cells. */
 #ifdef GALSF_RESOLVEDISM_WINDS
-        if(P[i].WindMassAccum > 0) {
-            P[i].SNe_ThisTimeStep = 3; /* wind dump first — SN will fire next timestep */
-            n_wind_local++;
-            continue; /* skip SN flagging this step */
+        {
+            double table_age_end = get_star_table_age(lifetime_yr, logM, logZ);
+            if(table_age_end > 0) {
+                double log_age_end = log10(DMAX(table_age_end, 100.0));
+                double cum_now_total = 0;
+                for(int kk = 0; kk < STBL_NELEM; kk++)
+                    cum_now_total += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, kk);
+                double M_init_solar = P[i].MstarSampleIMF[0];
+                double cum_injected = M_init_solar - P[i].Mass * UNIT_MASS_IN_SOLAR;
+                double dM_pending = cum_now_total - cum_injected;
+                if(dM_pending < 0) dM_pending = 0;
+                /* Threshold above float precision (~1e-15 Msun): otherwise the
+                 * death-loop fires a wind event every step that injects zero
+                 * mass but consumes the SN-flag path via the `continue` below. */
+                if(dM_pending > 1.0e-6) {
+                    double v_w = stellar_v_wind(logM, logZ, log_age_end);
+                    if(v_w < 10.0) v_w = 10.0;
+                    P[i].WindMassAccum = dM_pending;
+                    P[i].WindMomentumAccum = dM_pending * v_w;
+                    P[i].SNe_ThisTimeStep = 3;
+                    n_wind_local++;
+                    continue; /* wind dump this step; SN flagged next step */
+                }
+            }
         }
 #endif
         /* Without winds: M_particle = M_init at death. The full Mej = M_init - rem_mass
@@ -612,27 +638,31 @@ void resolvedism_inject_sn_energy(void)
             double rem_mass = stellar_remnant_mass(logM, logZ);
             if(rem_type == REM_PISN) rem_mass = 0; /* complete disruption */
 
-            /* Mej + Z_ej from absolute elem_ej tables (matches fb_thermal/fb_momentum injection).
-             * SN: elem_ej_SN_mass [+ elem_ej_wind_cumulative(end of life) when WINDS off].
-             * AGB: elem_ej_AGB_mass. */
-            double Mej_solar = 0, Z_ej = 0;
+            /* Mej_actual = (current particle mass) - rem_mass. Matches the injection and ensures
+             * exact mass conservation. Z_ej is table-shape rescaled so total = Mej_actual. */
 #ifndef GALSF_RESOLVEDISM_WINDS
             double t_end_yr_acc = stellar_lifetime(logM, logZ);
             double log_age_end_acc = log10(DMAX(t_end_yr_acc, 100.0));
 #endif
+            double Mej_table = 0, Z_ej_table = 0;
             for(int kk = 0; kk < STBL_NELEM; kk++) {
                 double m_k;
-                if(channel == 0) { /* SN */
+                if(channel == 0) {
                     m_k = stellar_elem_ej_SN(logM, logZ, kk);
 #ifndef GALSF_RESOLVEDISM_WINDS
                     m_k += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_acc, kk);
 #endif
-                } else { /* AGB */
+                } else {
                     m_k = stellar_elem_ej_AGB(logM, logZ, kk);
                 }
-                Mej_solar += m_k;
-                if(kk >= ELEM_C) Z_ej += m_k;
+                Mej_table += m_k;
+                if(kk >= ELEM_C) Z_ej_table += m_k;
             }
+            double Mej_actual = M_star_old - rem_mass;
+            if(Mej_actual < 0) Mej_actual = 0;
+            double scale_diag = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
+            double Mej_solar = Mej_actual;
+            double Z_ej = Z_ej_table * scale_diag;
 
             n_events[channel] += 1;
             M_injected[channel] += Mej_solar;
@@ -644,8 +674,12 @@ void resolvedism_inject_sn_energy(void)
                 E_injected[channel] += Esne_erg;
             }
 
-            /* Set particle mass to remnant mass */
-            P[i].Mass = rem_mass / UNIT_MASS_IN_SOLAR;
+            /* Set particle mass to remnant mass — but never INCREASE the star's mass.
+             * If wind events already reduced P[i].Mass below rem_mass (table inconsistency
+             * between elem_ej_wind_cumulative and remnant_mass at this M/Z), leave it alone:
+             * setting P[i].Mass = rem_mass would create mass out of nothing. */
+            double rem_mass_code = rem_mass / UNIT_MASS_IN_SOLAR;
+            if(P[i].Mass > rem_mass_code) P[i].Mass = rem_mass_code;
             if(channel == 0) {
                 printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type, (rem_type==REM_PISN)?1.0e52:1.0e51);

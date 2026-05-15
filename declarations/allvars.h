@@ -473,6 +473,9 @@ extern struct global_data_all_processes
   double DeutAbund;             /*!< primordial deuterium abundance D/H by number */
   double InitialMetallicity;    /*!< initial metallicity in solar units */
 #endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+  double TestStarMass;          /*!< Msun: convert ID=1 gas particle to a star of this mass at startup; SF disabled */
+#endif
 #ifdef TREE_RAD
   double ShieldingLength;       /*!< maximum distance for column density integration in tree walk */
 #endif

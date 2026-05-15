@@ -110,26 +110,52 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
      * was never injected anywhere — it would silently vanish from the mass ledger.
      * To preserve mass conservation, fold the cumulative wind ejecta (at end of life)
      * into the SN injection so the entire returned mass is delivered in one event. */
-    (void)rem_mass; /* still used by Esne switch above */
 #ifndef GALSF_RESOLVEDISM_WINDS
     double t_end_yr = stellar_lifetime(logM, logZ);
     double log_age_end = log10(DMAX(t_end_yr, 100.0));
 #endif
-    double Mej_solar = 0;
+    /* Mass-conservation fix: inject Mej_actual = (current particle mass) - rem_mass.
+       This makes mass-removed-from-star = mass-injected-to-gas exactly.
+       Per-element shape comes from the table; rescale so total = Mej_actual. */
+    double M_pre_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    double Mej_actual = M_pre_solar - rem_mass;
+    if(Mej_actual < 0) Mej_actual = 0;
+
+    double Mej_table = 0;
+    double m_k_table[STBL_NELEM];
+    for(k = 0; k < STBL_NELEM; k++) {
+        m_k_table[k] = stellar_elem_ej_SN(logM, logZ, k);
+#ifndef GALSF_RESOLVEDISM_WINDS
+        m_k_table[k] += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, k);
+#endif
+        Mej_table += m_k_table[k];
+    }
+    double scale = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
+
     double metal_mass_solar = 0;
     for(k = 0; k < STBL_NELEM; k++) {
-        double m_k = stellar_elem_ej_SN(logM, logZ, k);
-#ifndef GALSF_RESOLVEDISM_WINDS
-        m_k += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, k);
-#endif
+        double m_k = m_k_table[k] * scale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
-        Mej_solar += m_k;
         if(k >= ELEM_C) metal_mass_solar += m_k;
     }
-    in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
+    in->Mej = Mej_actual / UNIT_MASS_IN_SOLAR;
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    {
+        double sum_y_code = 0;
+        for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) sum_y_code += in->ElemYields[kk];
+        printf("FBDBG_TH_DONOR star=%llu rem_type=%d M_pre=%.6e rem=%.6e Mej_act=%.6e Mej_tab=%.6e scale=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
+            (unsigned long long)P[i].ID, rem_type, M_pre_solar, rem_mass, Mej_actual, Mej_table, scale,
+            in->Mej*UNIT_MASS_IN_SOLAR, sum_y_code*UNIT_MASS_IN_SOLAR,
+            in->ElemYields[0]*UNIT_MASS_IN_SOLAR, in->ElemYields[1]*UNIT_MASS_IN_SOLAR,
+            in->ElemYields[2]*UNIT_MASS_IN_SOLAR, in->ElemYields[4]*UNIT_MASS_IN_SOLAR,
+            in->ElemYields[10]*UNIT_MASS_IN_SOLAR);
+        fflush(stdout);
+    }
+#endif
 
 #ifdef GALSF_RESOLVEDISM_DUST
     {
@@ -251,18 +277,8 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                        Z_old = 0;
-                        for(int kk = ELEM_C; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) {
-                            double Xk;
-                            #pragma omp atomic read
-                            Xk = P[j].ElementAbundance[kk];
-                            Z_old += Xk;
-                        }
-#else
                         #pragma omp atomic read
-                        Z_old = P[j].Metallicity[0];
-#endif
+                        Z_old = P[j].Metallicity[0];   /* total Z in FIRE-pattern layout */
                         double dMZ = wk * local.MetalMass;
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
@@ -283,15 +299,51 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     }
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                    /* 28-slot layout: write yield Y[k] for table element k (0..26)
+                     * into Met[MET_OF(k)] (= k+1) via mass-fraction blend.  Met[0]
+                     * (total Z) is updated separately above.  After the loop,
+                     * Met[1] (H) gets blended from yields like everything else
+                     * — Σ Met[1..27] stays at 1 since Σ Y[k] = Mej. */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    double dbg_sumX_pre = 0;
+                    double dbg_sumdMX = 0;
+                    for(int kk = 1; kk < NUM_METAL_SPECIES; kk++) dbg_sumX_pre += P[j].Metallicity[kk];
+                    for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) dbg_sumdMX += wk * local.ElemYields[kk];
+#endif
                     for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+                        int m = MET_OF(k);
                         double X_old;
                         #pragma omp atomic read
-                        X_old = P[j].ElementAbundance[k];
+                        X_old = P[j].Metallicity[m];
                         double dMX = wk * local.ElemYields[k];
                         double dX = (dMX - X_old * dM) / (Mass_j + dM);
                         #pragma omp atomic
-                        P[j].ElementAbundance[k] += dX;
+                        P[j].Metallicity[m] += dX;
                     }
+                    /* Force ΣMet = 1 by construction: recompute H from conservation
+                     * X_H = 1 − Z − Y.  Absorbs float32 roundoff that accumulates
+                     * across the 27-element mass-fraction blend above. */
+                    {
+                        double Z_now, Y_now;
+                        #pragma omp atomic read
+                        Z_now = P[j].Metallicity[0];
+                        #pragma omp atomic read
+                        Y_now = P[j].Metallicity[MET_OF(ELEM_He)];
+                        double X_H_new = 1.0 - Z_now - Y_now;
+                        if(X_H_new < 0) X_H_new = 0;
+                        #pragma omp atomic write
+                        P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                    }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    {
+                        double dbg_sumX_post = 0;
+                        for(int kk = 1; kk < NUM_METAL_SPECIES; kk++) dbg_sumX_post += P[j].Metallicity[kk];
+                        printf("FBDBG_TH_RECV cell=%llu wk=%.6e Mass_pre=%.6e dM=%.6e SumdMX=%.6e ratio_SumdMX_dM=%.6e SumX_pre=%.9e SumX_post=%.9e\n",
+                            (unsigned long long)P[j].ID, wk, Mass_j, dM, dbg_sumdMX,
+                            (dM>0?dbg_sumdMX/dM:0.0), dbg_sumX_pre, dbg_sumX_post);
+                        fflush(stdout);
+                    }
+#endif
 #endif
                     #pragma omp atomic
                     P[j].Mass += dM;

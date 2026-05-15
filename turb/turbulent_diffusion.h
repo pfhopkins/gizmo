@@ -75,6 +75,17 @@
                 double dmet = (Z_j-local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_hydrostep;
                 cmag = MINMOD(dmet,cmag); // limiter based on mass exchange from MFV HLLC solver //
 #endif
+                /* Symmetric per-pair donor cap: limit |cmag| so the donor cannot
+                 * lose more than 10% of its element-k mass in a single pair.  Sign
+                 * of cmag tells us the donor: cmag > 0 → element flows from j to i
+                 * (donor = j), cmag < 0 → donor = i.  Applied to BOTH sides since
+                 * the same cmag is used in Dyield_i and Dyield_j below — strictly
+                 * symmetric, preserves per-element pairwise mass conservation. */
+                double donor_mass_k = (cmag > 0) ? P[j].Mass * Z_j
+                                                 : local.Mass * local.Metallicity[k_species];
+                double pair_cap = 0.01 * donor_mass_k;  /* 1% per pair; ~50-80 pairs/cell → ≤80% cumulative drain */
+                if(fabs(cmag) > pair_cap) cmag = (cmag > 0 ? pair_cap : -pair_cap);
+
                 out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag;
                 if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag;}
             }

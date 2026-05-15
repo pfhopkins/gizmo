@@ -271,7 +271,7 @@ void init(void)
              * Dust[k] = mass fraction of dust species k relative to gas cell mass. */
             double Z_gas = 0;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            for(int kd = ELEM_C; kd < NUM_RESOLVEDISM_ELEMENTS; kd++) Z_gas += P[i].ElementAbundance[kd];
+            Z_gas = P[i].Metallicity[0];  /* total Z in slot 0 (28-slot FIRE-pattern) */
 #else
             Z_gas = All.InitMetallicityinSolar * 0.014;
 #endif
@@ -448,22 +448,31 @@ void init(void)
             };
             double Zfrac = All.InitMetallicityinSolar; /* fraction of solar metallicity */
             double Zmetal = 0;
-            /* zero all slots first (covers isotope mode extra slots) */
-            for(j = 0; j < NUM_RESOLVEDISM_ELEMENTS; j++) P[i].ElementAbundance[j] = 0;
-            /* metals (indices 2-26): scaled to requested metallicity */
-            for(j = 2; j < 27; j++) {P[i].ElementAbundance[j] = solar_elem[j] * Zfrac; Zmetal += P[i].ElementAbundance[j];}
-            /* He: primordial (1-X_prim) + enrichment scaled to solar */
-            P[i].ElementAbundance[1] = (1. - HYDROGEN_MASSFRAC) + (solar_elem[1] - (1. - HYDROGEN_MASSFRAC)) * Zfrac;
-            /* H: remainder */
-            P[i].ElementAbundance[0] = 1. - P[i].ElementAbundance[1] - Zmetal;
-        } // ElementAbundance init
+            /* 28-slot FIRE-pattern layout:
+             *   Met[0]      = total Z
+             *   Met[1]      = H  (computed via 1 − Z − Y, stored)
+             *   Met[2]      = He
+             *   Met[MET_OF(k)] = element k for k = ELEM_C..ELEM_Zn
+             * solar_elem[] is in StellarElement order (H=0, He=1, C=2, ..., Zn=26). */
+            for(j = 0; j < NUM_METAL_SPECIES; j++) P[i].Metallicity[j] = 0;
+            for(j = ELEM_C; j < NUM_RESOLVEDISM_ELEMENTS; j++) {
+                P[i].Metallicity[MET_OF(j)] = solar_elem[j] * Zfrac;
+                Zmetal += P[i].Metallicity[MET_OF(j)];
+            }
+            /* He: primordial (1−X_prim) + enrichment scaled to solar */
+            P[i].Metallicity[MET_OF(ELEM_He)] = (1. - HYDROGEN_MASSFRAC) + (solar_elem[ELEM_He] - (1. - HYDROGEN_MASSFRAC)) * Zfrac;
+            /* total Z in slot 0 */
+            P[i].Metallicity[0] = Zmetal;
+            /* H from conservation: X_H = 1 − Z − Y, stored at Met[1] */
+            P[i].Metallicity[MET_OF(ELEM_H)] = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
+        } // Metallicity[] init
 #endif
 
 #if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
         /* D mass fraction = (D/H number ratio) * (m_D/m_H) * X_H = abundD * 2 * X_H */
         if (P[i].Type == 0) {
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            double X_H_init = P[i].ElementAbundance[0];
+            double X_H_init = P[i].Metallicity[MET_OF(ELEM_H)];  /* H stored explicitly at slot 1 */
 #else
             double X_H_init = HYDROGEN_MASSFRAC;
 #endif

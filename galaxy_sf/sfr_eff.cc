@@ -453,6 +453,15 @@ void star_formation_parent_routine(void)
             /* check whether an initial (not fully-complete!) conditions for star formation are fulfilled for a given particle */
             if(CellP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
             if(All.ComovingIntegrationOn) {if(CellP[i].Density < All.OverDensThresh) {flag = 1;}} // (additional density check for cosmological runs) //
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            /* Isolated SN/wind test: only the central particle (ID=1, untouched by prior SF) is eligible for SF.
+               After the first SF event, P[i].ID_generation increments and the gate closes — exactly ONE star per run.
+               Mass is set via the IMF override below (= All.TestStarMass). All other gas particles never form stars. */
+            if(All.TestStarMass > 0) {
+                if(P[i].ID == 1 && P[i].ID_generation == 0) {flag = 0;}
+                else {flag = 1;}
+            }
+#endif
 
 #ifdef GALSF_SUBGRID_WINDS
             if(CellP[i].DelayTime > 0) {flag=1; CellP[i].DelayTime -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
@@ -493,6 +502,14 @@ void star_formation_parent_routine(void)
                 double M_drawn_imf = draw_one_mass_from_kroupa_IMF();
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                /* Override IMF draw with the user-specified test star mass for the central particle (one-shot) */
+                if(All.TestStarMass > 0 && P[i].ID == 1 && P[i].ID_generation == 0) {
+                    M_drawn_imf = All.TestStarMass;
+                    m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
+                    prob = 2.0; /* always succeeds the random check below */
+                }
+#endif
 #endif
 
 #ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF

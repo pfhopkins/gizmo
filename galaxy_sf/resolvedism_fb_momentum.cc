@@ -125,6 +125,12 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
      * Momentum still uses WindMomentumAccum (v_wind × dM integrated externally). */
 #ifdef GALSF_RESOLVEDISM_WINDS
     if(P[i].SNe_ThisTimeStep == 3) {
+        /* Mass-conservation principle: gas-injected = star-removed = P[i].WindMassAccum,
+         * which was set in the accumulator (fb.cc) to (cum_table - cum_injected_so_far).
+         * Star Mass is reduced by exactly WindMassAccum in the cleanup loop, so we
+         * use the same value here. Per-element composition comes from table delta,
+         * rescaled so Σ ElemYields == WindMassAccum exactly. */
+        double dM_wind_solar = P[i].WindMassAccum;
         double dp_cgs = P[i].WindMomentumAccum * SOLAR_MASS_CGS * 1.0e5;
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
 
@@ -133,21 +139,44 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         double log_age_now  = log10(DMAX(table_age, 100.0));
         double log_age_prev = P[i].last_wind_log_age;
 
-        double Mej_solar_winds = 0;
-        double metal_mass_solar = 0;
+        /* Per-element delta from table (cum_now - cum_prev) gives composition; rescale to dM_wind_solar. */
+        double delta_sum = 0;
+        double delta_solar[STBL_NELEM];
         for(int k = 0; k < STBL_NELEM; k++) {
             double cum_now  = stellar_elem_ej_wind_cumulative(logM, logZ, log_age_now,  k);
             double cum_prev = stellar_elem_ej_wind_cumulative(logM, logZ, log_age_prev, k);
-            double delta = cum_now - cum_prev;
-            if(delta < 0) delta = 0; /* float32 / interpolation noise floor */
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            in->ElemYields[k] = delta / UNIT_MASS_IN_SOLAR;
-#endif
-            Mej_solar_winds += delta;
-            if(k >= ELEM_C) metal_mass_solar += delta;
+            delta_solar[k] = cum_now - cum_prev;
+            delta_sum += delta_solar[k];
         }
-        in->Mej = Mej_solar_winds / UNIT_MASS_IN_SOLAR;
+        double scale = (delta_sum > 0 && dM_wind_solar > 0) ? dM_wind_solar / delta_sum : 0;
+
+        double metal_mass_solar = 0;
+        for(int k = 0; k < STBL_NELEM; k++) {
+            double m_k = delta_solar[k] * scale;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
+#endif
+            if(k >= ELEM_C) metal_mass_solar += m_k;
+        }
+        in->Mej = dM_wind_solar / UNIT_MASS_IN_SOLAR;
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+        {
+            double sum_y_code = 0;
+            for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) sum_y_code += in->ElemYields[kk];
+            double sum_delta = 0;
+            for(int kk = 0; kk < STBL_NELEM; kk++) sum_delta += delta_solar[kk];
+            printf("FBDBG_WIND_DONOR star=%llu(%.1fMsun) dM_wind=%.6e delta_sum=%.6e scale=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e log_age_prev=%.4f log_age_now=%.4f\n",
+                (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0],
+                dM_wind_solar, delta_sum, scale,
+                in->Mej*UNIT_MASS_IN_SOLAR, sum_y_code*UNIT_MASS_IN_SOLAR,
+                in->ElemYields[0]*UNIT_MASS_IN_SOLAR, in->ElemYields[1]*UNIT_MASS_IN_SOLAR,
+                in->ElemYields[2]*UNIT_MASS_IN_SOLAR, in->ElemYields[4]*UNIT_MASS_IN_SOLAR,
+                in->ElemYields[10]*UNIT_MASS_IN_SOLAR,
+                log_age_prev, log_age_now);
+            fflush(stdout);
+        }
+#endif
         return;
     }
 #endif
@@ -180,6 +209,21 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     }
     in->Mej = Mej_table_solar / UNIT_MASS_IN_SOLAR;
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    {
+        double sum_y_code = 0;
+        for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) sum_y_code += in->ElemYields[kk];
+        printf("FBDBG_AGB_DONOR star=%llu(%.1fMsun) rem_type=%d M_pre=%.6e rem=%.6e Mej_solar(unused)=%.6e Mej_tab=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
+            (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0],
+            rem_type, M_particle_solar, rem_mass, Mej_solar, Mej_table_solar,
+            in->Mej*UNIT_MASS_IN_SOLAR, sum_y_code*UNIT_MASS_IN_SOLAR,
+            in->ElemYields[0]*UNIT_MASS_IN_SOLAR, in->ElemYields[1]*UNIT_MASS_IN_SOLAR,
+            in->ElemYields[2]*UNIT_MASS_IN_SOLAR, in->ElemYields[4]*UNIT_MASS_IN_SOLAR,
+            in->ElemYields[10]*UNIT_MASS_IN_SOLAR);
+        fflush(stdout);
+    }
+#endif
 
 #ifdef GALSF_RESOLVEDISM_DUST
     {
@@ -289,18 +333,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                        Z_old = 0;
-                        for(int kk = ELEM_C; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) {
-                            double Xk;
-                            #pragma omp atomic read
-                            Xk = P[j].ElementAbundance[kk];
-                            Z_old += Xk;
-                        }
-#else
                         #pragma omp atomic read
-                        Z_old = P[j].Metallicity[0];
-#endif
+                        Z_old = P[j].Metallicity[0];   /* total Z in FIRE-pattern layout */
                         double dMZ = wk * local.MetalMass;
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
@@ -321,15 +355,49 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     }
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                    /* 28-slot layout: write yield Y[k] into Met[MET_OF(k)] via
+                     * mass-fraction blend (k=0..26 includes H).  Met[0] (total Z)
+                     * is updated separately above.  Σ Met[1..27] stays 1 since
+                     * Σ Y[k] = Mej. */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    double dbg_sumX_pre = 0;
+                    double dbg_sumdMX = 0;
+                    for(int kk = 1; kk < NUM_METAL_SPECIES; kk++) dbg_sumX_pre += P[j].Metallicity[kk];
+                    for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) dbg_sumdMX += wk * local.ElemYields[kk];
+#endif
                     for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+                        int m = MET_OF(k);
                         double X_old;
                         #pragma omp atomic read
-                        X_old = P[j].ElementAbundance[k];
+                        X_old = P[j].Metallicity[m];
                         double dMX = wk * local.ElemYields[k];
                         double dX = (dMX - X_old * dM) / (Mass_j + dM);
                         #pragma omp atomic
-                        P[j].ElementAbundance[k] += dX;
+                        P[j].Metallicity[m] += dX;
                     }
+                    /* Force ΣMet = 1 by construction (see fb_thermal for rationale). */
+                    {
+                        double Z_now, Y_now;
+                        #pragma omp atomic read
+                        Z_now = P[j].Metallicity[0];
+                        #pragma omp atomic read
+                        Y_now = P[j].Metallicity[MET_OF(ELEM_He)];
+                        double X_H_new = 1.0 - Z_now - Y_now;
+                        if(X_H_new < 0) X_H_new = 0;
+                        #pragma omp atomic write
+                        P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                    }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    {
+                        double dbg_sumX_post = 0;
+                        for(int kk = 1; kk < NUM_METAL_SPECIES; kk++) dbg_sumX_post += P[j].Metallicity[kk];
+                        printf("FBDBG_MOM_RECV star=%llu(ch=%d) cell=%llu wk=%.6e Mass_pre=%.6e dM=%.6e SumdMX=%.6e ratio_SumdMX_dM=%.6e SumX_pre=%.9e SumX_post=%.9e\n",
+                            (unsigned long long)local.StarID, local.fb_channel,
+                            (unsigned long long)P[j].ID, wk, Mass_j, dM, dbg_sumdMX,
+                            (dM>0?dbg_sumdMX/dM:0.0), dbg_sumX_pre, dbg_sumX_post);
+                        fflush(stdout);
+                    }
+#endif
 #endif
                     #pragma omp atomic
                     P[j].Mass += dM;

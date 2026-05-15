@@ -493,50 +493,10 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     k_offset += NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES + NUM_ISMDUSTCHEM_SPECIES;
 #endif
-#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-    for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {in->Metallicity[k_offset+k] = P[i].ElementAbundance[k];}
-#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
-    {/* Diffuse free atoms in each pool (H, He, C, O) by subtracting the atoms
-        locked in TracAbund species. Network 5: H2, H+ lock H; CO locks C and O.
-        Network 17: H2, H+, HD lock H; He+, He++ lock He; D+, HD lock D. */
-     double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
-#if (CHEMISTRYNETWORK == 17)
-     /* Network 17: TracAbund = {H2, H+, CO, He+, He++, D+, HD} */
-     double H2_locked_H = CellP[i].TracAbund[0] * 2.0 * X_H;
-     double HP_locked_H = CellP[i].TracAbund[1] * 1.0 * X_H;
-     double HD_locked_H = CellP[i].TracAbund[6] * 1.0 * X_H;
-     double CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
-     double CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
-     double HeP_locked_He  = CellP[i].TracAbund[3] * 4.0 * X_H;
-     double HePP_locked_He = CellP[i].TracAbund[4] * 4.0 * X_H;
-     in->Metallicity[k_offset+ELEM_H]  = DMAX(P[i].ElementAbundance[ELEM_H]  - H2_locked_H - HP_locked_H - HD_locked_H, 0);
-     in->Metallicity[k_offset+ELEM_He] = DMAX(P[i].ElementAbundance[ELEM_He] - HeP_locked_He - HePP_locked_He, 0);
-     in->Metallicity[k_offset+ELEM_C]  = DMAX(P[i].ElementAbundance[ELEM_C]  - CO_locked_C, 0);
-     in->Metallicity[k_offset+ELEM_O]  = DMAX(P[i].ElementAbundance[ELEM_O]  - CO_locked_O, 0);
-#else
-     /* Network 5: TracAbund = {H2, H+, CO} */
-     double H2_locked_H = CellP[i].TracAbund[0] * 2.0 * X_H;
-     double HP_locked_H = CellP[i].TracAbund[1] * 1.0 * X_H;
-     double CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
-     double CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
-     in->Metallicity[k_offset+ELEM_H] = DMAX(P[i].ElementAbundance[ELEM_H] - H2_locked_H - HP_locked_H, 0);
-     in->Metallicity[k_offset+ELEM_C] = DMAX(P[i].ElementAbundance[ELEM_C] - CO_locked_C, 0);
-     in->Metallicity[k_offset+ELEM_O] = DMAX(P[i].ElementAbundance[ELEM_O] - CO_locked_O, 0);
-#endif
-    }
-#endif
-#if defined(GALSF_RESOLVEDISM_DUST) && defined(TURB_DIFF_METALS)
-    /* Subtract dust-locked atoms from element pools so they don't diffuse
-       twice (once via Dust[k] below, once via ElementAbundance[k] above).
-       Dust slots: 0=C, 1=O, 2=Mg, 3=Si, 4=Fe (see precompiler_logic.h). */
-    in->Metallicity[k_offset+ELEM_C ] = DMAX(in->Metallicity[k_offset+ELEM_C ] - CellP[i].Dust[0], 0);
-    in->Metallicity[k_offset+ELEM_O ] = DMAX(in->Metallicity[k_offset+ELEM_O ] - CellP[i].Dust[1], 0);
-    in->Metallicity[k_offset+ELEM_Mg] = DMAX(in->Metallicity[k_offset+ELEM_Mg] - CellP[i].Dust[2], 0);
-    in->Metallicity[k_offset+ELEM_Si] = DMAX(in->Metallicity[k_offset+ELEM_Si] - CellP[i].Dust[3], 0);
-    in->Metallicity[k_offset+ELEM_Fe] = DMAX(in->Metallicity[k_offset+ELEM_Fe] - CellP[i].Dust[4], 0);
-#endif
-    k_offset += NUM_RESOLVEDISM_ELEMENTS;
-#endif
+    /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: 27 elements live in Metallicity[]
+     * (NUM_METAL_SPECIES=27 under FIRE-pattern layout) and are already packed
+     * by the legacy Metallicity loop at the top of this block.  No additional
+     * passive-scalar slots are needed for resolvedism elements. */
 #if defined(GALSF_RESOLVEDISM_DUST)
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {in->Metallicity[k_offset+k] = CellP[i].Dust[k];}
     k_offset += NUM_RESOLVEDISM_DUST;
@@ -551,8 +511,15 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #else
      static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0};
 #endif
-     double X_H_pack = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
-     for(k=0;k<TRAC_NUM;k++) {in->Metallicity[k_offset+k] = CellP[i].TracAbund[k] * trac_molwt[k] * X_H_pack;}
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+     double X_H_pack = DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 1e-10);  /* H stored explicitly at Met[1] */
+#else
+     double X_H_pack = DMAX(P[i].Metallicity[0], 1e-10);  /* legacy: slot 0 = total Z; X_H from HYDROGEN_MASSFRAC */
+#endif
+     for(k=0;k<TRAC_NUM;k++) {
+         double mf = CellP[i].TracAbund[k] * trac_molwt[k] * X_H_pack;
+         in->Metallicity[k_offset+k] = mf;
+     }
      k_offset += TRAC_NUM;
 #if (CHEMISTRYNETWORK == 17)
      /* D pool: free_D = total D - D_in_DP - D_in_HD (each D atom has mass 2) */
@@ -894,7 +861,19 @@ void hydro_final_operations_and_cleanup(void)
 
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
-            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
+            /* Clamp at 0 (not 0.01*old) so we don't fabricate phantom mass on the donor side
+             * when diffusion drives an element below floor.  Per-pair flux is already capped
+             * symmetrically in turbulent_diffusion.h so cumulative drain rarely overshoots. */
+            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.0);}
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            /* Force Σ Met[1..27] = 1 bit-exact: H = 1 − Z − Y absorbs any
+             * float roundoff from the 28-slot diffusion + floor clamping. */
+            {
+                double X_H_new = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
+                if(X_H_new < 0) X_H_new = 0;
+                P[i].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+            }
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange */
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
             for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
@@ -918,110 +897,26 @@ void hydro_final_operations_and_cleanup(void)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             k_offset += NUM_ISMDUSTCHEM_ELEMENTS + NUM_ISMDUSTCHEM_SOURCES + NUM_ISMDUSTCHEM_SPECIES;
 #endif
-#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
-#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
-            {/* Unpack diffusion deltas: apply to free fractions, update TracAbund,
-                then reconstruct element totals.
-                Network 5:  pools H, C, O.  Species H2, H+ lock H; CO locks C, O.
-                Network 17: pools H, He, D, C, O.  Species H2, H+, HD lock H;
-                            He+, He++ lock He; D+, HD lock D; CO locks C, O. */
-             double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
-
-#if (CHEMISTRYNETWORK == 17)
-             static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0, 4.0, 4.0, 2.0, 3.0};
-             /* --- Strip current locked fractions from elemental pools --- */
-             double old_H2_locked_H = CellP[i].TracAbund[0] * 2.0 * X_H;
-             double old_HP_locked_H = CellP[i].TracAbund[1] * 1.0 * X_H;
-             double old_HD_locked_H = CellP[i].TracAbund[6] * 1.0 * X_H;
-             double old_CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
-             double old_CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
-             double old_HeP_locked_He  = CellP[i].TracAbund[3] * 4.0 * X_H;
-             double old_HePP_locked_He = CellP[i].TracAbund[4] * 4.0 * X_H;
-             double old_DP_locked_D = CellP[i].TracAbund[5] * 2.0 * X_H;
-             double old_HD_locked_D = CellP[i].TracAbund[6] * 2.0 * X_H;
-             double free_H  = DMAX(P[i].ElementAbundance[ELEM_H]  - old_H2_locked_H - old_HP_locked_H - old_HD_locked_H, 0);
-             double free_He = DMAX(P[i].ElementAbundance[ELEM_He] - old_HeP_locked_He - old_HePP_locked_He, 0);
-             double free_C  = DMAX(P[i].ElementAbundance[ELEM_C]  - old_CO_locked_C, 0);
-             double free_O  = DMAX(P[i].ElementAbundance[ELEM_O]  - old_CO_locked_O, 0);
-             double free_D  = DMAX(P[i].DeuteriumAbundance        - old_DP_locked_D - old_HD_locked_D, 0);
-
-             /* --- Apply free-fraction diffusion deltas --- */
-             free_H  = DMAX(free_H  + CellP[i].Dyield[k_offset+ELEM_H]  / P[i].Mass, 0.01*free_H);
-             free_He = DMAX(free_He + CellP[i].Dyield[k_offset+ELEM_He] / P[i].Mass, 0.01*free_He);
-             free_C  = DMAX(free_C  + CellP[i].Dyield[k_offset+ELEM_C]  / P[i].Mass, 0.01*free_C);
-             free_O  = DMAX(free_O  + CellP[i].Dyield[k_offset+ELEM_O]  / P[i].Mass, 0.01*free_O);
-
-             /* --- Update remaining elements (skip H, He, C, O) --- */
-             for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {
-                 if(k == ELEM_H || k == ELEM_He || k == ELEM_C || k == ELEM_O) continue;
-                 P[i].ElementAbundance[k] = DMAX(P[i].ElementAbundance[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*P[i].ElementAbundance[k]);}
-
-             /* --- Update TracAbund species masses --- */
-             int trac_offset = k_offset + NUM_RESOLVEDISM_ELEMENTS;
-#if defined(GALSF_RESOLVEDISM_DUST)
-             trac_offset += NUM_RESOLVEDISM_DUST;
-#endif
-             double trac_mf[TRAC_NUM];
-             for(k=0;k<TRAC_NUM;k++) {
-                 double mf_old = CellP[i].TracAbund[k] * trac_molwt[k] * X_H;
-                 trac_mf[k] = DMAX(mf_old + CellP[i].Dyield[trac_offset+k] / P[i].Mass, 0.01 * mf_old);}
-
-             /* --- Update D pool (free_D) from its diffused slot --- */
-             int d_offset = trac_offset + TRAC_NUM;
-             free_D = DMAX(free_D + CellP[i].Dyield[d_offset] / P[i].Mass, 0.01*free_D);
-
-             /* --- Reconstruct element totals: free + locked atoms (HD splits 1/3 H, 2/3 D) --- */
-             P[i].ElementAbundance[ELEM_H]  = free_H + trac_mf[0] + trac_mf[1] + trac_mf[6] * (1.0/3.0);
-             P[i].ElementAbundance[ELEM_He] = free_He + trac_mf[3] + trac_mf[4];
-             P[i].ElementAbundance[ELEM_C]  = free_C + trac_mf[2] * (12.0/28.0);
-             P[i].ElementAbundance[ELEM_O]  = free_O + trac_mf[2] * (16.0/28.0);
-             P[i].DeuteriumAbundance        = free_D + trac_mf[5] + trac_mf[6] * (2.0/3.0);
-
-             /* --- Convert TracAbund mass fractions back to abundance ratios using NEW X_H --- */
-             double X_H_new = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
-             for(k=0;k<TRAC_NUM;k++) {
-                 CellP[i].TracAbund[k] = trac_mf[k] / (trac_molwt[k] * X_H_new);}
-#else
-             /* Network 5: H2, H+, CO */
-             static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0};
-             double old_CO_locked_C = CellP[i].TracAbund[2] * 12.0 * X_H;
-             double old_CO_locked_O = CellP[i].TracAbund[2] * 16.0 * X_H;
-             double old_H2_locked_H = CellP[i].TracAbund[0] * 2.0 * X_H;
-             double old_HP_locked_H = CellP[i].TracAbund[1] * 1.0 * X_H;
-             double free_C = DMAX(P[i].ElementAbundance[ELEM_C] - old_CO_locked_C, 0);
-             double free_O = DMAX(P[i].ElementAbundance[ELEM_O] - old_CO_locked_O, 0);
-             double free_H = DMAX(P[i].ElementAbundance[ELEM_H] - old_H2_locked_H - old_HP_locked_H, 0);
-
-             free_C = DMAX(free_C + CellP[i].Dyield[k_offset+ELEM_C] / P[i].Mass, 0.01*free_C);
-             free_O = DMAX(free_O + CellP[i].Dyield[k_offset+ELEM_O] / P[i].Mass, 0.01*free_O);
-             free_H = DMAX(free_H + CellP[i].Dyield[k_offset+ELEM_H] / P[i].Mass, 0.01*free_H);
-
-             for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {
-                 if(k == ELEM_H || k == ELEM_C || k == ELEM_O) continue;
-                 P[i].ElementAbundance[k] = DMAX(P[i].ElementAbundance[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*P[i].ElementAbundance[k]);}
-
-             int trac_offset = k_offset + NUM_RESOLVEDISM_ELEMENTS;
-#if defined(GALSF_RESOLVEDISM_DUST)
-             trac_offset += NUM_RESOLVEDISM_DUST;
-#endif
-             double trac_mf[TRAC_NUM];
-             for(k=0;k<TRAC_NUM;k++) {
-                 double mf_old = CellP[i].TracAbund[k] * trac_molwt[k] * X_H;
-                 trac_mf[k] = DMAX(mf_old + CellP[i].Dyield[trac_offset+k] / P[i].Mass, 0.01 * mf_old);}
-
-             P[i].ElementAbundance[ELEM_H] = free_H + trac_mf[0] + trac_mf[1];
-             P[i].ElementAbundance[ELEM_C] = free_C + trac_mf[2] * (12.0/28.0);
-             P[i].ElementAbundance[ELEM_O] = free_O + trac_mf[2] * (16.0/28.0);
-
-             double X_H_new = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
-             for(k=0;k<TRAC_NUM;k++) {
-                 CellP[i].TracAbund[k] = trac_mf[k] / (trac_molwt[k] * X_H_new);}
-#endif
+            /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: 27 elements live in
+             * Metallicity[NUM_METAL_SPECIES=27] under FIRE-pattern layout — the
+             * legacy Metallicity unpack loop above (line 883) already applied
+             * Dyield to all 27 slots.  H is implicit (1 − Met[0] − Met[1]) so
+             * Σ EA = 1 by construction.  No extra unpack needed. */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            /* Diagnostic: Met[0] = total Z should equal Σ_{k≥2} Met[k].
+             * Diffusion handles Met[0] and individual metals independently, so
+             * they can drift apart if the underlying solver isn't bit-conserving.
+             * Print any cell where the two disagree significantly. */
+            {
+                double Z_from_metals = 0;
+                for(int kk = MET_OF(ELEM_C); kk < NUM_METAL_SPECIES; kk++) Z_from_metals += P[i].Metallicity[kk];
+                double Z_drift = Z_from_metals - P[i].Metallicity[0];
+                if(fabs(Z_drift) > 1e-6 && P[i].Metallicity[0] > 1e-8) {
+                    printf("DIFDBG_Z cell=%llu Met[0]=%.6e Σ_metals=%.6e drift=%.6e Mass=%.4e\n",
+                        (unsigned long long)P[i].ID, P[i].Metallicity[0], Z_from_metals, Z_drift, P[i].Mass);
+                    fflush(stdout);
+                }
             }
-#else
-            for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++) {P[i].ElementAbundance[k] = DMAX(P[i].ElementAbundance[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*P[i].ElementAbundance[k]);}
-#endif
-            k_offset += NUM_RESOLVEDISM_ELEMENTS;
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
             for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[i].Dust[k] = DMAX(CellP[i].Dust[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.01*CellP[i].Dust[k]);}
@@ -1030,7 +925,7 @@ void hydro_final_operations_and_cleanup(void)
 #if defined(CHEMCOOL) && defined(TURB_DIFF_METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
             {/* TracAbund-only path (no individual elements) — should not happen in practice */
              static const double trac_molwt[TRAC_NUM] = {2.0, 1.0, 28.0};
-             double X_H = DMAX(P[i].ElementAbundance[ELEM_H], 1e-10);
+             double X_H = DMAX(P[i].Metallicity[0], 1e-10);   /* legacy: Met[0] = total Z, X_H from HYDROGEN_MASSFRAC */
              for(k=0;k<TRAC_NUM;k++) {
                  double da = CellP[i].Dyield[k_offset+k] / (P[i].Mass * trac_molwt[k] * X_H);
                  CellP[i].TracAbund[k] = DMAX(CellP[i].TracAbund[k] + da, 0.01*CellP[i].TracAbund[k]);}}

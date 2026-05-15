@@ -28,3 +28,5 @@ test/unit/test_yield_invariants
 # (re-introducing these to git permanently bloats .git history)
 galaxy_sf/stellar_tables/*.hdf5
 galaxy_sf/stellar_tables/spectra/atlas9/*.pck
+cooling/chemcool/energy-table.txt
+galaxy_sf/stellar_tables/spectra

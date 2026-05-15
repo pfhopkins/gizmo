@@ -2313,6 +2313,12 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+      strcpy(tag[nt], "TestStarMass");
+      addr[nt] = &All.TestStarMass;
+      id[nt++] = REAL;
+#endif
+
 #ifdef TREE_RAD
       strcpy(tag[nt], "ShieldingLength");
       addr[nt] = &All.ShieldingLength;

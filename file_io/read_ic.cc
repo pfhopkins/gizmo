@@ -639,7 +639,17 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 
         case IO_ELEMENT_ABUNDANCE:
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-            for(n = 0; n < pc; n++) {for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {P[offset + n].ElementAbundance[k] = *fp++;}}
+            /* Read 27-element IC abundances into Metallicity[MET_OF(k)]
+             * for k in 0..26.  Met[0] (total Z) computed from Σ metals. */
+            for(n = 0; n < pc; n++) {
+                double Z_sum = 0;
+                for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+                    double val = *fp++;
+                    P[offset + n].Metallicity[MET_OF(k)] = val;
+                    if(k >= ELEM_C) Z_sum += val;
+                }
+                P[offset + n].Metallicity[0] = Z_sum;
+            }
 #endif
             break;
 

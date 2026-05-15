@@ -168,40 +168,42 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
     if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
 
-    /* Per-particle element abundances for cooling rates */
+    /* Per-particle element abundances for cooling rates.  28-slot layout:
+     *   Met[0]=total Z, [1]=H (explicit), [2]=He, [MET_OF(k)] = element k for k>=ELEM_C.
+     *   Σ Met[1..27] = 1 by construction. */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     {
-        /* Number abundances n_X/n_H = (X_mass_frac / A_X) / (X_H / A_H) where A_X = atomic weight */
-        double X_H = DMAX(P[target].ElementAbundance[ELEM_H], 1e-10);
+        /* Number abundances n_X/n_H = (X_mass_frac / A_X) / X_H */
+        double X_H = DMAX(P[target].Metallicity[MET_OF(ELEM_H)], 1e-10);
 #ifdef GALSF_RESOLVEDISM_DUST
         /* Gas-phase abundances: total metal minus metal locked in dust */
-        double C_gas  = DMAX(P[target].ElementAbundance[ELEM_C]  - CellP[target].Dust[0], 0);
-        double O_gas  = DMAX(P[target].ElementAbundance[ELEM_O]  - CellP[target].Dust[1], 0);
-        double Si_gas = DMAX(P[target].ElementAbundance[ELEM_Si] - CellP[target].Dust[3], 0);
-        COOLR.abundc  = (C_gas  / 12.0) / (X_H / 1.0);
-        COOLR.abundo  = (O_gas  / 16.0) / (X_H / 1.0);
-        COOLR.abundsi = (Si_gas / 28.0) / (X_H / 1.0);
+        double C_gas  = DMAX(P[target].Metallicity[MET_OF(ELEM_C)]  - CellP[target].Dust[0], 0);
+        double O_gas  = DMAX(P[target].Metallicity[MET_OF(ELEM_O)]  - CellP[target].Dust[1], 0);
+        double Si_gas = DMAX(P[target].Metallicity[MET_OF(ELEM_Si)] - CellP[target].Dust[3], 0);
+        COOLR.abundc  = (C_gas  / 12.0) / X_H;
+        COOLR.abundo  = (O_gas  / 16.0) / X_H;
+        COOLR.abundsi = (Si_gas / 28.0) / X_H;
 #else
-        COOLR.abundc  = (P[target].ElementAbundance[ELEM_C]  / 12.0) / (X_H / 1.0);
-        COOLR.abundo  = (P[target].ElementAbundance[ELEM_O]  / 16.0) / (X_H / 1.0);
-        COOLR.abundsi = (P[target].ElementAbundance[ELEM_Si] / 28.0) / (X_H / 1.0);
+        COOLR.abundc  = (P[target].Metallicity[MET_OF(ELEM_C)]  / 12.0) / X_H;
+        COOLR.abundo  = (P[target].Metallicity[MET_OF(ELEM_O)]  / 16.0) / X_H;
+        COOLR.abundsi = (P[target].Metallicity[MET_OF(ELEM_Si)] / 28.0) / X_H;
 #endif
-        COOLR.abundN  = (P[target].ElementAbundance[ELEM_N]  / 14.0) / (X_H / 1.0);
+        COOLR.abundN  = (P[target].Metallicity[MET_OF(ELEM_N)]  / 14.0) / X_H;
 
 #ifdef WSS_CIE_COOL
-        /* Map ElementAbundance[15] -> Zmass[12] (mass fractions, gadget_tnt_new ordering) */
-        COOLR.Zmass[0]  = P[target].ElementAbundance[ELEM_He];  /* He */
-        COOLR.Zmass[1]  = P[target].ElementAbundance[ELEM_C];   /* C  */
-        COOLR.Zmass[2]  = P[target].ElementAbundance[ELEM_Mg];  /* Mg */
-        COOLR.Zmass[3]  = P[target].ElementAbundance[ELEM_O];   /* O  */
-        COOLR.Zmass[4]  = P[target].ElementAbundance[ELEM_Fe];  /* Fe */
-        COOLR.Zmass[5]  = P[target].ElementAbundance[ELEM_Si];  /* Si */
-        COOLR.Zmass[6]  = P[target].ElementAbundance[ELEM_H];   /* H  */
-        COOLR.Zmass[7]  = P[target].ElementAbundance[ELEM_N];   /* N  */
-        COOLR.Zmass[8]  = P[target].ElementAbundance[ELEM_Ne];  /* Ne */
-        COOLR.Zmass[9]  = P[target].ElementAbundance[ELEM_S];   /* S  */
-        COOLR.Zmass[10] = P[target].ElementAbundance[ELEM_Ca];  /* Ca */
-        COOLR.Zmass[11] = P[target].ElementAbundance[ELEM_Zn];  /* Zn */
+        /* Map Metallicity[28] -> Zmass[12] (gadget_tnt_new ordering) */
+        COOLR.Zmass[0]  = P[target].Metallicity[MET_OF(ELEM_He)]; /* He */
+        COOLR.Zmass[1]  = P[target].Metallicity[MET_OF(ELEM_C)];  /* C  */
+        COOLR.Zmass[2]  = P[target].Metallicity[MET_OF(ELEM_Mg)]; /* Mg */
+        COOLR.Zmass[3]  = P[target].Metallicity[MET_OF(ELEM_O)];  /* O  */
+        COOLR.Zmass[4]  = P[target].Metallicity[MET_OF(ELEM_Fe)]; /* Fe */
+        COOLR.Zmass[5]  = P[target].Metallicity[MET_OF(ELEM_Si)]; /* Si */
+        COOLR.Zmass[6]  = P[target].Metallicity[MET_OF(ELEM_H)];  /* H  (stored explicitly at Met[1]) */
+        COOLR.Zmass[7]  = P[target].Metallicity[MET_OF(ELEM_N)];  /* N  */
+        COOLR.Zmass[8]  = P[target].Metallicity[MET_OF(ELEM_Ne)]; /* Ne */
+        COOLR.Zmass[9]  = P[target].Metallicity[MET_OF(ELEM_S)];  /* S  */
+        COOLR.Zmass[10] = P[target].Metallicity[MET_OF(ELEM_Ca)]; /* Ca */
+        COOLR.Zmass[11] = P[target].Metallicity[MET_OF(ELEM_Zn)]; /* Zn */
 #endif
     }
 #else
@@ -230,7 +232,7 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
        dust_to_gas_ratio is in solar units: 1.0 = DGR_solar ~ 0.01 */
 #ifdef METALS
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    COOLR.dust_to_gas_ratio = All.DGRnormalized * resolvedism_total_Z_from_EA(target) / All.SolarAbundances[0];
+    COOLR.dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];
 #else
     COOLR.dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];
 #endif
@@ -416,11 +418,11 @@ double do_chemcool_step(int target, double dt, double dl, int mode)
     }
 #ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
     {
-        double X_H_local  = DMAX(P[target].ElementAbundance[ELEM_H],  1e-10);
-        double X_He_local = DMAX(P[target].ElementAbundance[ELEM_He], 0.0);
+        double X_H_local  = DMAX(P[target].Metallicity[MET_OF(ELEM_H)],  1e-10);
+        double X_He_local = DMAX(P[target].Metallicity[MET_OF(ELEM_He)], 0.0);
         CHEM_COMP.X_H_chem = X_H_local;
         CHEM_COMP.abhe     = X_He_local / (4.0 * X_H_local);
-        yn = rho * X_H_local / PROTONMASS_CGS; /* H nuclei density, exact w/ metals */
+        yn = rho * X_H_local / PROTONMASS_CGS;
     }
 #else
     yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS); /* number density of hydrogen only */

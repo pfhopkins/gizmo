@@ -224,6 +224,15 @@ extern struct gas_cell_data
 #endif
 #ifdef CHEMCOOL
     MyFloat TracAbund[TRAC_NUM];          /*!< non-equilibrium chemical abundances */
+#if defined(TURB_DIFF_METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    MyFloat Locked_pack[TRAC_NUM];        /*!< species mass-fractions captured at gradient pack time,
+                                              used at diffusion unpack to avoid pack/unpack desync
+                                              when chemistry updates TracAbund between the two. */
+    MyFloat Free_H_pack;                  /*!< pack-time free-H mass fraction (= EA[H] − Σ locked_H) */
+    MyFloat Free_He_pack;                 /*!< pack-time free-He mass fraction */
+    MyFloat Free_C_pack;                  /*!< pack-time free-C mass fraction */
+    MyFloat Free_O_pack;                  /*!< pack-time free-O mass fraction */
+#endif
     MyFloat DustTemp;                     /*!< dust temperature [K] */
     MyFloat Temp;                         /*!< gas temperature [K] */
 #ifdef OUTPUT_INDIVIDUAL_COOLRATES
