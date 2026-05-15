@@ -374,10 +374,9 @@ struct MechFBSpec {
      * num_local_gas + oracle_dry_run). The runner-port responsibilities here:
      *   1. Pre-filter (Pj.Type==0 / Mass>0, dp/r2, h_i/h_j gate, r2max gate)
      *      mirroring mechanical_fb_evaluate_gpu's inner neighbor loop.
-     *   2. Multi-rank Mode A ghost-side write guard — milestone 3 supports
-     *      single-rank (NTask=1) and Mode B (no ghost imports) only. If a
-     *      multi-rank Mode A iter ever reaches here with j in the imported
-     *      ghost range, abort loudly rather than silently dropping the delta.
+     *   2. Route j-side writes: home gas → LocalGasMechFBInfoTemp[j];
+     *      imported ghost → d_gas_iter[j-num_local_particles] (milestone 3.5
+     *      ghost-writeback path; shipped to home ranks via custom bundle callback).
      *   3. Forward to mechanical_fb_pair_kernel with ownership-split + oracle
      *      params from ActiveData. */
     KOKKOS_INLINE_FUNCTION
