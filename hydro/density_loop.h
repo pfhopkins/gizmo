@@ -1,18 +1,10 @@
-/* hydro/density_loop.h — hydro density kernel-radius / density neighbor loop.
+/* hydro/density_loop.h — hydro density runner Spec.
  *
  * Defines DensitySpec for the iterative neighbor-loop runner
- * (mesh/neighbor_loop_runner.h). Phase 4 Wave-1 hydro slot per
- * OPEN_3d_sequencing_plan.md. Replaces hydro/density.cc::density() +
- * hydro/density_gpu.cc::density_evaluate_gpu (the SPIKE).
+ * (mesh/neighbor_loop_runner.h). This replaces the legacy density()
+ * driver and retired density_evaluate_gpu path.
  *
- * Design source of truth: OPEN_3d_density_design.md v0.5. This Step 1
- * header sketches the Spec trait surface, the four data structs
- * (CallScalars / AccumData / IterScratch / Aux), the typed sidecars
- * (DensityActiveState / DensityNeighborData), and the hook signatures.
- * Hook bodies are EMPTY in this step (Step 1 compile gate); they fill
- * in across Steps 2-5.
- *
- * Step 1 invariants (codex round 4 + Step-1-blockers fixes 2026-05-12):
+ * Contract notes:
  *   - pair_kernel signature matches runner contract verbatim: 4 args
  *     (active, neighbor, accum, scalars). NO `int j` — runner doesn't
  *     pass it; if a body needs j it lives in NeighborData.
@@ -33,8 +25,7 @@
  *     via common.*; pair-kernel body reads cs.common.cf_a2inv). 10 fields.
  *   - zero_accum is per-field, NOT memset: Sink_TimeBinGasNeighbor =
  *     TIMEBINS sentinel; Sink_dr_to_NearestGasNeighbor = MAX_REAL_NUMBER;
- *     all others = 0. Implementing now (not Step 4) so the Spec is safe
- *     to instantiate at any time.
+ *     all others = 0.
  *   - uses_ghost_writeback = false: density is pure i-side accumulation.
  *     Compile-time static_assert holds the invariant.
  *   - apply_active_writeback is FINAL-ONLY for iterative Specs (runner
@@ -57,7 +48,7 @@
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 /* NOTE: caller TUs must include "../mesh/kernel.h" before this header.
  * kernel.h has no include guards; provides kernel_main / kernel_hinv used
- * by the inline pair body (lands in Step 3). */
+ * by the inline pair body. */
 
 /* Per OPEN_kokkos_inline_macro_audit.md: deferred per-header private macro
  * cleanup. Kept here as the legacy pattern for now (all current consumers
@@ -68,14 +59,12 @@
 
 #include <vector>
 
-/* Forward decls — defined in hydro/density_loop.cc. */
-int density_isactive_new(int i);  /* Step 2 fills in; staged name to avoid */
-                                  /* clashing with legacy hydro/density.cc::density_isactive */
-                                  /* during port. Renamed at Step 8 cleanup. */
+/* Forward decl — defined in hydro/density_loop.cc. */
+int density_isactive(int i);
 
 /* ============================================================================
  * (1) CallScalars — per OPEN_3d_density_design.md §14.D, deduplicated
- *     against NlrCommonScalars (codex round 4 polish 2026-05-12).
+ *     against NlrCommonScalars.
  *
  * NlrCommonScalars (mesh/neighbor_loop_runner.h:350) already carries:
  *   cf_atime, cf_a2inv, cf_a3inv, cf_hubble_a, newton_G, hubble,
@@ -92,10 +81,10 @@ int density_isactive_new(int i);  /* Step 2 fills in; staged name to avoid */
  * host_all->Time, etc. directly via nlr_host_all_ptr() per design §14.E.
  * CallScalars is the device-facing / per-iter-hot-path channel; host_all
  * is the host-only-finalize channel. Keep the split — that's the rule
- * the Phase-2 stub-only header refactor (commit 09618c0f) put in place.
+ * the runner contract uses to separate device-hot-path scalars from
+ * host-only finalization.
  *
- * Field types are EXACT legacy types from global_data_all_struct.h
- * (codex round 4: `integertime ti_current` NOT `int`; no downcasts). */
+ * Field types are exact legacy types from global_data_all_struct.h. */
 struct DensityCallScalars {
     NlrCommonScalars common;
 
@@ -124,7 +113,7 @@ struct DensityCallScalars {
  *     legacy struct ports here verbatim. Field order matches legacy.
  *     Types match legacy (MyFloat vs MyDouble; Vec3<...> vs array).
  *
- * Merge semantics per §1e (lands in Step 4 merge_accum):
+ * Merge semantics:
  *   - all fields ADD-reduced EXCEPT
  *   - Sink_TimeBinGasNeighbor: MIN, init = TIMEBINS
  *   - Sink_dr_to_NearestGasNeighbor: MIN, init = MAX_REAL_NUMBER
@@ -198,8 +187,7 @@ struct DensityAccumData {
  * §1a oracle-compatibility rationale) + iter-count tracking for the
  * iter>10 underflow warning at density.cc:441-452.
  *
- * Mutated host-side inside after_iter only (TRAP 8). Not visible
- * inside pair_kernel. ===================================================== */
+ * Mutated host-side inside after_iter only. Not visible inside pair_kernel. */
 struct DensityIterScratch {
     MyFloat  left;
     MyFloat  right;
@@ -210,8 +198,8 @@ struct DensityIterScratch {
      * the iter-loop's "effective" CN, and at iter==0 may update CellP[i]
      * to THIS iter's value (lines 313-322). Our design forbids CellP
      * writes inside after_iter; we mirror the iter-effective CN in
-     * IterScratch instead. density_finalize_post_runner (Step 5 Chunk 2)
-     * writes CellP[i].ConditionNumber at the end, from the converged
+     * IterScratch instead. density_finalize_post_runner writes
+     * CellP[i].ConditionNumber at the end, from the converged
      * accum.NV_T re-inversion. */
     double   condition_number_current;
     bool     cn_initialized;
@@ -221,11 +209,8 @@ struct DensityIterScratch {
  * (4) ActiveData — literal port of density_evaluate_data_in_
  *     (density_functions.h:33-46).
  *
- * Codex Step-1 blocker fix 2026-05-12: types match legacy verbatim;
- * extras like origin_local_idx / origin_rank dropped (runner uses
- * Mode B envelopes for that, not Spec ActiveData); TimeBin dropped
- * (j-side reads via NeighborData, not i-side); h_search is the
- * runner-managed per-iter radius (legacy KernelRadius, MyFloat).
+ * Types match legacy verbatim where the kernel needs legacy data. Fields
+ * owned by the runner, such as origin rank/index, stay out of ActiveData.
  *
  * scalars carries the CallScalars snapshot per AGS pattern so
  * pair_kernel doesn't double-thread the args. ============================ */
@@ -248,23 +233,18 @@ struct DensityActiveState {
 
 /* NeighborData — j-side per-pair sidecar. Density has NO j-side writes
  * (verified §E inventory + design §1f static_assert), so NeighborData
- * is read-only pointers to the j-side P / CellP. NO `int j` field at
- * v0.5 — codex round 4: if a future Step-3 body needs the index, it
- * lands here, not as a pair_kernel parameter. */
+ * is read-only pointers to the j-side P / CellP. neighbor_index is carried
+ * only for diagnostics/assertions, not as an extra pair_kernel argument. */
 struct DensityNeighborData {
     struct particle_data *neighbor_particle;
     struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
-    int                   neighbor_index;    /* j; diagnostic only (codex round-12 bisect 2026-05-12) */
+    int                   neighbor_index;    /* j; diagnostic / assertions */
 };
 
 /* ============================================================================
  * (5) DensitySpec — the runner-template Spec.
  *
- * Step 1 declares all traits + hook signatures. Hook bodies are EMPTY
- * stubs in density_loop.cc (or header-inline empty for KOKKOS_INLINE_FUNCTION
- * hooks). EXCEPT zero_accum, which is REAL in Step 1 because AccumData is
- * complete and the Sink-MIN sentinels would silently corrupt if
- * AccumData{} ran via the legacy memset path. ========================= */
+ * Declares the density loop traits, data structs, and hook surface. ===== */
 struct DensitySpec {
     /* Identity */
     static constexpr const char *loop_name = "density";
@@ -307,7 +287,7 @@ struct DensitySpec {
     /* Subgroup policy: single j-mask subgroup, gas-only. SupportsSubgroups
      * is OMITTED (default false_type — runner runtime-asserts single
      * subgroup at entry, TRAP 9). Per-i type branching for non-gas actives
-     * lives inside the pair_kernel body (Step 3). */
+     * lives inside the pair_kernel body. */
 
     /* Type aliases */
     using CallScalars   = DensityCallScalars;
@@ -324,12 +304,11 @@ struct DensitySpec {
      * so NoScatter — the runner's empty marker type. */
     using ScatterData   = NoScatter;
 
-    /* Aux — host-owned final-accum storage (codex round 1 B1).
+    /* Aux — host-owned final-accum storage.
      * apply_active_writeback (final-only for iterative Specs per runner
      * header lines 1272-1282) copies the converged AccumData into
      * per_active_final_accum[active_slot]. density_finalize_post_runner
-     * (Step 5) consumes it for legacy density.cc:620-795 work on
-     * P[]/CellP[]. Host-only — std::vector OK (codex round 3 T5). */
+     * consumes it for final P[]/CellP[] work. Host-only — std::vector OK. */
     struct Aux {
         /* Converged AccumData per active, copied at the post-iter-loop
          * apply_active_writeback (FINAL-only). */
@@ -342,7 +321,7 @@ struct DensitySpec {
         std::vector<double>    per_active_final_h;
     };
 
-    /* J-side write static_assert (codex round 1 B1 / round 3 T4) */
+    /* J-side write invariant. */
     static_assert(uses_ghost_writeback == false,
         "density() must remain pure i-side accumulation; if a j-side "
         "write is added, register a ghost_writeback op explicitly and "
@@ -351,15 +330,14 @@ struct DensitySpec {
     /* ====================================================================
      * Host hooks. Bodies in hydro/density_loop.cc.
      * ==================================================================== */
-    static bool        is_active(int particle_index) { return density_isactive_new(particle_index) != 0; }
+    static bool        is_active(int particle_index) { return density_isactive(particle_index) != 0; }
     static double      search_radius(const neighbor_loop_args& args, int active_slot, int i);
     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
 
     static void apply_active_writeback(const neighbor_loop_args& args,
                                        int active_slot, int i,
                                        const AccumData& accum);
-    /* Iterative-variant of apply_active_writeback (codex round-10 fix
-     * 2026-05-12). Runner calls this instead of apply_active_writeback in
+    /* Iterative variant of apply_active_writeback. Runner calls this instead of apply_active_writeback in
      * the iterative production-only post-iter-loop writeback, passing
      * the converged radius and IterScratch. Oracle-safe: runner does NOT
      * invoke this on its oracle accum buffer, so args.aux can be written
@@ -392,14 +370,11 @@ struct DensitySpec {
      * inside the iter loop). Runner SFINAE-detects absence. */
 
     /* ====================================================================
-     * Device hooks. Header-inline (TRAP 3 — pair_kernel body MUST live
-     * in this header). Step 1: zero_accum is REAL (sink sentinels);
-     * load_active/load_neighbor/pair_kernel are empty stubs.
+     * Device hooks. Header-inline because the runner instantiates the
+     * pair body from GPU translation units.
      * ==================================================================== */
 
-    /* Real zero_accum (codex round 4 blocker fix): per-field init with
-     * MIN-reduction sentinels for Sink fields. Safe to call even before
-     * Steps 2-3 fill the rest of the Spec. */
+    /* Per-field init with MIN-reduction sentinels for Sink fields. */
     KOKKOS_INLINE_FUNCTION
     static void zero_accum(AccumData& accum) {
         accum.Ngb              = 0;
@@ -454,30 +429,12 @@ struct DensitySpec {
 #endif
     }
 
-#if 0
-    /* BISECT D minimal load_active — kept for re-test if needed. */
-    KOKKOS_INLINE_FUNCTION
-    static ActiveData load_active_minimal(const NeighborLoopDeviceContextBase& ctx,
-                                  int active_slot, int i,
-                                  double h_search, const CallScalars& scalars) {
-        ActiveData a{};
-        a.pos[0]   = (MyDouble)ctx.P[i].Pos[0];
-        a.pos[1]   = (MyDouble)ctx.P[i].Pos[1];
-        a.pos[2]   = (MyDouble)ctx.P[i].Pos[2];
-        a.h_search = (MyFloat) h_search;
-        a.scalars  = scalars;
-        (void)active_slot;
-        return a;
-    }
-#endif
-    /* RESTORED FULL load_active. */
     /* load_active — snapshot P[i] / CellP[i] fields into ActiveData.
      * Reads through ctx.P / ctx.CellP (path-correct: Mode A arena P_gpu,
      * Mode B request-driven slab).
      *
-     * Two legacy-semantics requirements caught by codex round 6
-     * 2026-05-12 — both BLOCKING-physics-correctness; the pair kernel
-     * inherits whatever load_active produces:
+     * Two legacy-semantics requirements are important because the pair
+     * kernel inherits whatever load_active produces:
      *
      *   1. Vel: legacy (density_gpu.cc particle2in) uses CellP[i].VelPred
      *      for gas (Type==0) and P[i].Vel for non-gas. Pair kernel reads
@@ -503,7 +460,7 @@ struct DensitySpec {
         a.Type      = (int)     ctx.P[i].Type;
 
         /* Vel: gas uses CellP[i].VelPred; non-gas uses P[i].Vel
-         * (codex round 6 fix; mirrors density_gpu.cc particle2in). */
+         * Mirrors density_gpu.cc particle2in. */
         const bool i_is_gas = (ctx.P[i].Type == 0) && (ctx.CellP != nullptr);
         if (i_is_gas) {
             a.Vel[0] = (MyFloat)ctx.CellP[i].VelPred[0];
@@ -519,7 +476,7 @@ struct DensitySpec {
         /* Accel: PRE-SCALED legacy form for gas; zero for non-gas
          * (SPHAV_CD10 NV_A accumulator only fires on gas pairs in the
          * legacy kernel; safe zero for non-gas i means no contribution
-         * if any branch fires). codex round 6 fix. */
+         * if any branch fires). */
         if (i_is_gas) {
             a.Accel[0] = (MyFloat)(scalars.common.cf_a2inv * ctx.P[i].GravAccel[0] + ctx.CellP[i].HydroAccel[0]);
             a.Accel[1] = (MyFloat)(scalars.common.cf_a2inv * ctx.P[i].GravAccel[1] + ctx.CellP[i].HydroAccel[1]);
@@ -540,33 +497,17 @@ struct DensitySpec {
 
     /* load_neighbor — route ctx.P[j] / ctx.CellP[j] pointers.
      *
-     * Codex round-4 Step-2 caution: pair_kernel reads CellP[j] only when
-     * the j-side is gas. The Type==0 gate below guarantees neighbor_cell
-     * is non-null on every gas-neighbor path. The pair_kernel (Step 3)
-     * MUST short-circuit on neighbor.neighbor_cell == nullptr before any
-     * CellP read; the legacy pattern at density_functions.h:121-141
-     * already does so via the `if(P[j].Type==0)` gate, which the port
-     * preserves. */
+     * Density requests gas-only neighbors. Imported gas ghosts carry valid
+     * CellP state in the runner's active P/CellP view, so do not guard by
+     * local gas capacity here; doing so silently drops cross-rank gas
+     * neighbors. */
     KOKKOS_INLINE_FUNCTION
     static NeighborData load_neighbor(const NeighborLoopDeviceContextBase& ctx,
                                       int j, const IdentitySidecar& id,
                                       const ActiveData& active) {
         NeighborData n{};
         n.neighbor_particle = &ctx.P[j];
-        /* DEBUG codex round-13 hypothesis: imported ghosts may have
-         * particle index j >= All.MaxPartGas, where ctx.CellP[j] is OOB.
-         * Force neighbor_cell = nullptr in that range to avoid the
-         * speculative dereference. The pair_kernel's CellPj == nullptr
-         * early-return handles it. Remove the guard once the bug is
-         * understood / fixed properly.
-         *
-         * Note: All.MaxPartGas read here goes through the per-TU
-         * All_dev mirror (this header is included in runner TU which
-         * has #define All All_dev). MaxPartGas is sync'd via
-         * gizmo_gpu_sync_all + GIZMO_GPU_ENSURE_ALL_FRESH at dispatch
-         * entry, so the value is valid. */
-        const bool j_in_cellp_range = (j < All.MaxPartGas);
-        n.neighbor_cell     = (ctx.CellP && ctx.P[j].Type == 0 && j_in_cellp_range)
+        n.neighbor_cell     = (ctx.CellP && ctx.P[j].Type == 0)
                               ? &ctx.CellP[j] : nullptr;
         n.neighbor_index    = j;
         (void)id; (void)active;
@@ -584,55 +525,14 @@ struct DensitySpec {
      *
      * j is always gas (neighbor_type_mask = (1u << 0)); the runner's
      * load_neighbor populates neighbor_cell for every j the runner
-     * dispatches. Codex round-7 reminder: keep the legacy
-     * `local->Type == 0` gate around SPHAV_CD10 / TURB_DRIVING /
-     * NV_T blocks exactly as-is — the non-gas-i Accel zero we set
-     * in load_active should never matter under the legacy gating. */
-    /* ====================================================================
-     * BISECT STEP C1 (codex round-12, 2026-05-12): minimal pair_kernel
-     * with the FULL kernel-evaluation + r²<h² filter + the always-on
-     * accumulator block (Ngb, Rho, DrkernNgb) + the r>0 Type==0 NV_T
-     * + NV_T_face_weights block. No extra_physics, no DO_DENSITY_AROUND_NONGAS,
-     * no SPH/PRESSURE_SPH/SPHAV_CD10/TURB_DRIVING/GRAIN/SINK/RT.
-     *
-     * Bisects A + B passed (runner wiring + CellPj pointer both fine).
-     * This step tests:
-     *   - i_active.pos / i_active.h_search read
-     *   - nearest_xyz + r2 filter
-     *   - kernel_hinv + kernel_main device calls
-     *   - basic accum += (scalar)
-     *   - accum.NV_T += wk * outer_product(dp)  <-- SymmetricTensor2 write
-     *   - accum.NV_T_face_weights[k] += ...     <-- Vec3<MyDouble> write
-     *   - i_active.Type read
-     * If C1 crashes, NV_T or outer_product is the culprit (most-suspicious
-     * device operation by a wide margin). If C1 passes, the bug is in
-     * extra_physics / DO_DENSITY_AROUND_NONGAS / one of the gated blocks. */
-#if 0
-    KOKKOS_INLINE_FUNCTION
-    static void pair_kernel_bisect(const ActiveData& /*i_active*/,
-                            const NeighborData& neighbor,
-                            AccumData& accum, NoScatter& /*scatter*/) {
-        /* OLD bisect F body — kept for re-test if needed. */
-        if (neighbor.neighbor_particle == nullptr) return;
-        struct particle_data &Pj = *neighbor.neighbor_particle;
-        if (Pj.Mass <= 0) return;
-        accum.Ngb += 1.0;
-        volatile MyDouble pos0 = Pj.Pos[0];
-        accum.Ngb += pos0 * 0.0;
-        if (neighbor.neighbor_cell == nullptr) return;
-        volatile MyFloat x = neighbor.neighbor_cell->Density;
-        accum.Rho += x * 0.0;
-    }
-#endif
-    /* RESTORED FULL pair_kernel (codex round-13 plan 2026-05-12): with
-     * after_iter force-Converge below, the runner walks once and stops,
-     * giving a clean test of the full device kernel without iter feedback. */
+     * dispatches. Keep the legacy `local->Type == 0` gate around SPHAV_CD10 /
+     * TURB_DRIVING / NV_T blocks exactly as-is. */
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
-        /* CallScalars routed via i_active.scalars (load_active snapshot)
-         * — codex Step-6 contract fix 2026-05-12. AGS pattern. */
+        /* CallScalars are carried by the active snapshot, matching the AGS
+         * runner pattern and avoiding device-side global reads. */
         const CallScalars& cs = i_active.scalars;
         struct particle_data       &Pj    = *neighbor.neighbor_particle;
         struct gas_cell_data * const CellPj = neighbor.neighbor_cell;
@@ -642,7 +542,7 @@ struct DensitySpec {
          * stays gas-only. If a future contributor widens the j-mask, this
          * early return would silently drop non-gas neighbors instead of
          * processing them — rewrite the body to handle non-gas j first,
-         * THEN drop the gate. Codex round 7 note 2. */
+         * THEN drop the gate. */
         if (CellPj == nullptr) return;
 
 #ifdef GALSF_SUBGRID_WINDS

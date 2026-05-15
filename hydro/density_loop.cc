@@ -1,27 +1,12 @@
-/* hydro/density_loop.cc — DensitySpec host-side hook bodies + driver.
+/* hydro/density_loop.cc — DensitySpec host hooks and runner-driven density().
  *
- * Phase 4 Wave-1 density port; design source of truth:
- * OPEN_3d_density_design.md v0.5.
- *
- * Step 2 (this state): density_isactive_new, search_radius,
- * populate_call_scalars, density_build_active_list,
- * density_build_subgroups all implemented. apply_active_writeback,
- * merge_accum, after_iter remain empty stubs (Steps 4-5).
- *
- * The legacy `void density(void)` driver in hydro/density.cc stays
- * the active entry point throughout Steps 1-7; the new driver in
- * this file lands at Step 5 under a build-time gate
- * `-DGIZMO_NLR_DENSITY_USE_LEGACY` (per design §9.D two-binary
- * parity), then the legacy form is retired at Step 8 cleanup.
+ * This file owns the modern hydro density loop: active selection,
+ * iterative radius convergence, final P/CellP scatter, and the downstream
+ * hydro ghost handoff. The device pair body lives in density_loop.h because
+ * the runner instantiates it from GPU translation units.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
-
-/* DEBUG codex round-13 2026-05-12 — REMOVE after device-illegal-address
- * bug closes. Forces DensitySpec::after_iter to return Converged at iter 0,
- * making each density() call run exactly one device pair-kernel pass.
- * dbg14: turned OFF — testing if MaxPartGas guard alone fixes the bug. */
-/* #define GIZMO_NLR_DEBUG_DENSITY_FORCE_CONVERGE 1 */
 
 #include <cstdlib>
 #include <cstring>
@@ -38,27 +23,20 @@
 #include "density_loop.h"
 
 /* ====================================================================
- * density_isactive_new — port of hydro/density.cc:44-110.
+ * density_isactive — hydro density active-particle predicate.
  *
- * Verbatim translation of the legacy active-particle predicate with
- * All.* reads routed through nlr_host_all_ptr() (Phase-2 trap rule,
- * commit 781ecfb2 / 09618c0f). Host-only; called per-active in the
- * pre-runner active-list build and (via DensitySpec::is_active
- * inline forwarder) by the runner's active-set machinery.
- *
- * Every legacy `#ifdef` branch ports. Naming staged with `_new` suffix
- * during the port; Step 8 cleanup renames to density_isactive after
- * the legacy version in hydro/density.cc retires.
+ * Host-only. Bare All.* is avoided because this file is compiled as a GPU
+ * translation unit in some builds; nlr_host_all_ptr() is the canonical
+ * accessor for the real host global.
  * ==================================================================== */
-int density_isactive_new(int n)
+int density_isactive(int n)
 {
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
 
     /* Marker for particles done iterating — same negation pattern legacy
-     * density() uses. The new driver (Step 5) will route convergence via
-     * IterScratch.converged instead of P[i].TimeBin negation, but the
-     * predicate still has to honor the marker for any compatibility
-     * window during which the legacy density() may have set it. */
+     * density() uses. The runner path tracks convergence in IterScratch,
+     * but keeping this guard preserves compatibility with callers that
+     * check the shared predicate. */
     if(P[n].TimeBin < 0) {return 0;}
     if(P[n].Type == 0) {if(CellP[n].recent_refinement_flag == 1) return 1;}
 
@@ -129,9 +107,8 @@ int density_isactive_new(int n)
  * search_radius — per-active radius hook.
  *
  * Returns P[i].KernelRadius (legacy density's iteration variable). The
- * runner stages this into radii_uvm at iter 0 (per runner header line
- * 1252-1253); after_iter mutates per-iter via IterResult::new_h_search
- * (Step 5).
+ * runner stages this into radii_uvm at iter 0; after_iter mutates
+ * per-iter via IterResult::new_h_search.
  * ==================================================================== */
 double DensitySpec::search_radius(const neighbor_loop_args& args,
                                   int /*active_slot*/, int i) {
@@ -173,15 +150,14 @@ DensitySpec::CallScalars DensitySpec::populate_call_scalars(
 /* ====================================================================
  * density_build_active_list — host-side active particle list.
  *
- * Walks ActiveParticleList, filters with density_isactive_new, returns
- * a contiguous std::vector<int>. Consumed by the new density() driver
- * (Step 5/6) for args.active_list / args.num_active. ==================== */
+ * Walks ActiveParticleList, filters with density_isactive, and returns
+ * a contiguous std::vector<int> for the runner. ======================== */
 std::vector<int> density_build_active_list(void)
 {
     std::vector<int> active_list_concat;
     active_list_concat.reserve(NumPart);
     for (int i : ActiveParticleList) {
-        if (density_isactive_new(i)) active_list_concat.push_back(i);
+        if (density_isactive(i)) active_list_concat.push_back(i);
     }
     return active_list_concat;
 }
@@ -193,10 +169,10 @@ std::vector<int> density_build_active_list(void)
  * (gas). Per-i type branching (for non-gas active particles via
  * DO_DENSITY_AROUND_NONGAS_PARTICLES etc.) lives inside the pair-kernel
  * body; the runner subgroup is about the neighbor (j) mask, not the
- * active (i) type (codex round 3, design §1b).
+ * active (i) type.
  *
  * Backing storage for active_indices is the caller-owned vector;
- * subgroup.active_indices points into it. Caller (driver in Step 5/6)
+ * subgroup.active_indices points into it. Caller
  * must keep both alive for the duration of the runner call. ============ */
 std::vector<NlrSubgroup> density_build_subgroups(int *active_indices, int num_active)
 {
@@ -210,15 +186,14 @@ std::vector<NlrSubgroup> density_build_subgroups(int *active_indices, int num_ac
 }
 
 /* ====================================================================
- * Step 4-5 stubs — bodies in later commits. NO `#error`, just empty
- * functions that compile + link clean.
+ * Hook bodies.
  * ==================================================================== */
 
 /* ====================================================================
  * apply_active_writeback — required by the Spec contract, but for
  * DensitySpec the runner uses the iterative variant below
  * (apply_active_writeback_iterative) which carries the converged radius
- * + IterScratch. This stub stays declared/defined so existing runner
+ * + IterScratch. This hook stays declared/defined so existing runner
  * dispatch paths that fall through to the non-iterative hook (e.g.,
  * future audit/diagnostic paths) link cleanly. The body copies just
  * the accum; density_finalize_post_runner needs the radius too, which
@@ -233,7 +208,7 @@ void DensitySpec::apply_active_writeback(const neighbor_loop_args& args,
 }
 
 /* ====================================================================
- * apply_active_writeback_iterative — codex round-10 fix 2026-05-12.
+ * apply_active_writeback_iterative.
  *
  * Production-only writeback channel. The runner's iterative post-loop
  * writeback (mesh/neighbor_loop_runner.cc:~4121) calls this INSTEAD of
@@ -347,12 +322,11 @@ double DensitySpec::compare_accum(const AccumData& local, const AccumData& oracl
 /* ====================================================================
  * merge_accum — per-field combine for Mode B remote.
  *
- * TRAP 4 (runner header line 894-897): per-field op MUST match what
- * pair_kernel writes. Sum for additive fields; MIN for the two sink
- * fields (legacy density_functions.h:137, 141). Mismatch = silent
- * multi-rank corruption; only oracle catches it.
+ * Per-field op MUST match what pair_kernel writes. Sum for additive
+ * fields; MIN for the two sink fields. Mismatch = silent multi-rank
+ * corruption; only oracle catches it.
  *
- * Gating mirrors AccumData declaration verbatim (codex round 7 note 1):
+ * Gating mirrors AccumData declaration verbatim:
  * Sink_TimeBinGasNeighbor under SINK_PARTICLES; Sink_dr_to_NearestGasNeighbor
  * under (SINK_PARTICLES && (BH_ACCRETE_NEARESTFIRST||SINGLE_STAR_TIMESTEPPING)).
  * The asymmetry between declaration gate (BH || SINGLE_STAR) and
@@ -453,7 +427,7 @@ void DensitySpec::merge_accum(AccumData& local, const AccumData& peer) {
  * after_iter — bisection convergence + radius update.
  *
  * Literal port of hydro/density.cc:244-590 with the strict design
- * contract (codex round 1 B1, locked into v0.5 §1a):
+ * contract:
  *   - READS: accum (this iter's accumulated values), ctx.scratch
  *     (bisection state across iters), ctx.h_search_current (this iter's
  *     radius), ctx.scalars (CallScalars), ctx.iter_index, args.P[ctx.i]
@@ -468,24 +442,11 @@ void DensitySpec::merge_accum(AccumData& local, const AccumData& peer) {
  * happens LOCALLY here (host-side matrix inversion, doesn't write the
  * inverted matrix anywhere); the eventual write of CellP[i].NV_T and
  * CellP[i].ConditionNumber happens in density_finalize_post_runner
- * (Step 5 Chunk 2) from Aux's converged accum.
- *
- * codex round 8 will scrutinize this body for physics drift —
- * "the danger area is the strict separation we designed."
+ * from Aux's converged accum.
  * ==================================================================== */
 IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
                                     const AccumData& accum)
 {
-    /* DEBUG codex round-13 force-converge 2026-05-12: short-circuit
-     * after one iter so the device kernels execute exactly once per
-     * call. Removes iter-trajectory feedback from the bisect picture.
-     * Remove this guard after the device-illegal-address bug closes. */
-#ifdef GIZMO_NLR_DEBUG_DENSITY_FORCE_CONVERGE
-    (void)accum;
-    static_cast<Aux*>(ctx.args.aux)->per_active_final_h[ctx.subgroup_slot] = (double)ctx.h_search_current;
-    ctx.scratch.converged = true;
-    return IterResult{IterStatus::Converged, (double)ctx.h_search_current};
-#endif
     const neighbor_loop_args_iterative& args = ctx.args;
     const int          i        = ctx.i;
     const CallScalars& cs       = ctx.scalars;
@@ -828,9 +789,8 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
             if ((double)(scratch.right - scratch.left) < 1.0e-3 * (double)scratch.left) {
                 scratch.converged = true;
                 scratch.condition_number_current = ConditionNumber;
-                /* Final radius travels to finalize via
-                 * apply_active_writeback_iterative (oracle-safe channel)
-                 * per codex round-10 fix; not via Aux from here. */
+                /* Final radius travels to finalize through the oracle-safe
+                 * apply_active_writeback_iterative channel. */
                 return IterResult{IterStatus::Converged, (double)new_h};
             }
         }
@@ -943,8 +903,8 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
     if (args.P[i].Type == 0) {
         scratch.condition_number_current = ConditionNumber;
     }
-    /* Final radius travels to finalize via apply_active_writeback_iterative
-     * (oracle-safe channel) per codex round-10 fix; not via Aux from here. */
+    /* Final radius travels to finalize through the oracle-safe
+     * apply_active_writeback_iterative channel. */
     return IterResult{IterStatus::Converged, (double)new_h};
 }
 
@@ -968,8 +928,8 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
  *     #ifdef present).
  *   - Accum-scatter parity with legacy density_gpu.cc:336-401.
  *
- * NumNgb_eff > 0 ? NumNgb_eff : 1.0 guards mirror codex round 9's
- * note about degenerate empty-active-gas; flagged in comments.
+ * Degenerate empty-active-gas cases are guarded locally where normalization
+ * would otherwise divide by zero.
  * ==================================================================== */
 void density_finalize_post_runner(const std::vector<int>& active_list_concat,
                                   DensitySpec::Aux& aux,
@@ -997,7 +957,6 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 #endif
     for (int slot = 0; slot < N; ++slot) {
         const int i = active_list_concat[slot];
-        if (!density_isactive_new(i)) continue;
 
         const DensitySpec::AccumData& accum = aux.per_active_final_accum[slot];
         const double h = aux.per_active_final_h[slot];
@@ -1124,9 +1083,8 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
         /* ---- (3) Persistent NV_T inversion + FaceClosureError + CN
          * (gas-i only; mirrors legacy density.cc:271-304 final state).
          * Computes and writes the persistent CellP[i].NV_T, FaceClosureError,
-         * ConditionNumber from the converged accum. Per codex round 9:
-         * recompute from final Aux rather than relying on after_iter's
-         * scratch values. ---- */
+         * ConditionNumber from the converged accum. Recompute from final
+         * Aux rather than relying on after_iter's scratch values. ---- */
         if (P[i].Type == 0) {
             const double V_i = VOLUME_NORM_COEFF_FOR_NDIMS * pow(h, (double)NUMDIMS) / (NumNgb_eff > 0 ? NumNgb_eff : 1.0);
             const double dimensional_NV_T_normalizer = pow(h, (double)(2 - NUMDIMS));
@@ -1398,28 +1356,21 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 }
 
 /* ====================================================================
- * density() — new host driver, gated on !GIZMO_NLR_DENSITY_USE_LEGACY.
- *
- * Replaces the legacy hydro/density.cc::density() body. When the build
- * defines GIZMO_NLR_DENSITY_USE_LEGACY (two-binary parity gate per
- * OPEN_3d_density_design.md §9.D), the legacy body in density.cc
- * compiles instead; the symbol density() exists exactly once per build.
+ * density() — runner-driven host driver.
  *
  * Mirrors the AGS pattern at gravity/ags_density_loop.cc::ags_density()
  * with density-specific changes:
  *   - Single gas-only subgroup (no bm partitioning).
- *   - Oracle enabled (no hard-stub — design v0.5 §1a contract).
+ *   - Oracle enabled.
  *   - hydro-typed ghost prep + redo (vs ags-typed).
  *   - Aux carries both per_active_final_accum AND per_active_final_h
- *     (the latter populated via apply_active_writeback_iterative —
- *     codex round-10 fix).
+ *     (the latter populated via apply_active_writeback_iterative).
  *
  * Driver responsibilities:
  *   (1) host_all early exit on TotN_gas <= 0 (legacy density.cc:136).
  *   (2) Hydro-typed ghost prep BEFORE active-list build (legacy 146).
- *   (3) Build active list via density_isactive_new (Step 2 port).
- *   (4) Allocate BOTH Aux vectors to active_list.size() (codex round-10
- *       note: per_active_final_h must exist before the writeback fires).
+ *   (3) Build active list via density_isactive.
+ *   (4) Allocate both Aux vectors to active_list.size().
  *   (5) Build single gas-only subgroup; build args; drive runner.
  *   (6) density_finalize_post_runner reads Aux + writes P/CellP.
  *   (7) gizmo_hydro_density_import_ghosts_fresh_no_drift: build the broad
@@ -1434,7 +1385,6 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  *   (8) Timing: CPU_Step[CPU_MISC] += measure_time() at entry; PRINT_STATUS
  *       at end mirroring legacy line 800-802.
  * ==================================================================== */
-#ifndef GIZMO_NLR_DENSITY_USE_LEGACY
 void density(void)
 {
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
@@ -1464,8 +1414,7 @@ void density(void)
      *         only works when the pre-density pool was itself broad.) */
     const double gsl_safety = gizmo_ghost_safety_factor();
 
-    /* (2) Build active list (Step 2 port; uses density_isactive_new
-     *     with all 7 type-specific overrides). */
+    /* (2) Build active list. */
     std::vector<int> active_list_concat = density_build_active_list();
 
     /* (2.5) Legacy pre-iteration active prepass — port of density.cc:183-205.
@@ -1522,7 +1471,7 @@ void density(void)
         }
     }
 
-    /* (3) Allocate BOTH Aux vectors to num_active (codex round-10 note 2). */
+    /* (3) Allocate converged output vectors to num_active. */
     DensitySpec::Aux aux;
     aux.per_active_final_accum.resize(active_list_concat.size());
     aux.per_active_final_h    .resize(active_list_concat.size());
@@ -1586,8 +1535,6 @@ void density(void)
     /* NOTE: cellcorrections_calc is a SEPARATE step phase invoked from
      * core/accel.cc:90 after density() returns. NOT called from here. */
 }
-#endif /* !GIZMO_NLR_DENSITY_USE_LEGACY */
-
 /* GPU All_dev sync stub. density_loop.cc is in GPU_OBJS (compiled with
  * nvcc_wrapper because pair_kernel uses Kokkos atomics). Density-side
  * device kernel runs inside the runner's TU (mesh/neighbor_loop_runner.cc),

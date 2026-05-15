@@ -33,93 +33,16 @@
  */
 
 
-/*! routine to determine if a given element is actually going to be active in the density subroutines below */
-int density_isactive(int n)
-{
-    /* first check our 'marker' for particles which have finished iterating to an KernelRadius solution (if they have, dont do them again) */
-    if(P[n].TimeBin < 0) {return 0;}
-    if(P[n].Type == 0) {if(CellP[n].recent_refinement_flag == 1) return 1;}
-    
-#if defined(GRAIN_FLUID)
-    if((1 << P[n].Type) & (GRAIN_PTYPES)) {return 1;} /* any of the particle types flagged as a valid grain-type is active here */
-#endif
-
-#if defined(SINK_INTERACT_ON_GAS_TIMESTEP)
-    if(P[n].Type == 5){if(!P[n].do_gas_search_this_timestep && All.Ti_Current > 0) return 0;} /* not enough time has elapsed since the last gas interaction */
-#endif
-#if defined(RT_SOURCE_INJECTION)
-    if((1 << P[n].Type) & (RT_SOURCES))
-    {
-#if defined(GALSF)
-       if(((P[n].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[n].Type == 2)||(P[n].Type==3))))&&(P[n].Mass>0))
-        {
-            double star_age = evaluate_stellar_age_Gyr(n);
-            if((star_age < 0.1)&&(star_age > 0)&&(!isnan(star_age))) return 1;
-        }
-#else
-        if(Flag_FullStep) {return 1;} // only do on full timesteps
-#endif
-    }
-#endif
-
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    if(((P[n].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[n].Type == 2)||(P[n].Type==3))))&&(P[n].Mass>0))
-    {
-#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
-        /* check if there is going to be a SNe this timestep, in which case, we want the density info! */
-        if(P[n].SNe_ThisTimeStep>0) return 1;
-#if defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-        if(P[n].MassReturn_ThisTimeStep>0) return 1;
-#ifdef GALSF_FB_FIRE_RPROCESS
-        if(P[n].RProcessEvent_ThisTimeStep>0) return 1;
-#endif
-#if defined(GALSF_FB_FIRE_AGE_TRACERS)
-        if(P[n].AgeDeposition_ThisTimeStep>0) return 1;
-#endif
-#endif
-#endif
-        
-#if defined(GALSF)
-        if(P[n].DensityAroundParticle <= 0) return 1;
-        if(All.ComovingIntegrationOn == 0) // only do stellar age evaluation if we have to //
-        {
-            double star_age = evaluate_stellar_age_Gyr(n);
-            if(star_age < 0.035) return 1;
-        }
-#endif
-#if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
-        return 1;
-#endif
-    }
-#endif
-
-#ifdef SINK_PARTICLES
-    if(P[n].Type == 5) return 1;
-#endif
-
-    if(P[n].Type == 0 && P[n].Mass > 0) return 1;
-    return 0; /* default to 0 if no check passed */
-}
-
-
-
-
-
-/* density() lives in hydro/density_loop.cc — runner-driven (Phase 4.B.2).
- * density_isactive, cellcorrections_calc, and cellcorrections_final_operations_and_cleanup
- * remain here; they are peer step-phase entries / declarations used elsewhere. */
+/* density() and density_isactive() live in hydro/density_loop.cc. The
+ * cellcorrections routines remain here as peer step-phase entries. */
 
 
 /* Routines for a loop after the iterative density loop needed to find neighbors, etc, once all have converged, to apply additional correction terms to the cell volumes and faces (for those needed -before- the gradients loop because they alter primitive quantities needed for gradients, such as particle densities, pressures, etc.)
     This was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #ifdef HYDRO_VOLUME_CORRECTIONS
 
-/* Legacy CPU-tree scaffolding for the second density loop (CORE_FUNCTION_NAME
- * cellcorrections_evaluate + particle2in_cellcorrections / out2particle_cellcorrections
- * + the cellcorrections_evaluate function itself + matching code_block_xchange_*
- * initialize/finalize includes) was retired in Step 5 Phase D2.5-ext. The modern
- * path inside cellcorrections_calc() walks the prebuilt symmetric CSR neighbor
- * list directly. */
+/* The old CPU exchange scaffolding for cell corrections has been retired.
+ * The modern path walks the prebuilt symmetric CSR neighbor list directly. */
 
 /* final operations for after the updates are computed */
 void cellcorrections_final_operations_and_cleanup(void)
