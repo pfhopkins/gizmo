@@ -725,13 +725,13 @@ extern struct global_data_all_processes
 #endif
     
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-    double AgeTracerRateNormalization;              /* Determines Fraction of time to do age tracer deposition (with checks depending on time bin width for current star) */
+    double AgeTracerRateNormalization;              /* Determines fraction of time to deposit enrichment-age-tracer scalar weights, as the targeted number of deposition events per age bin */
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
-    double AgeTracerTimeBins[NUM_AGE_TRACERS+1];    /* Bin edges (left) for stellar age passive scalar tracers when using custom (uneven) bins the final value is the right edge of the final bin, hence a total size +1 the number of tracers */
+    double AgeTracerTimeBins[NUM_AGE_TRACERS+1];    /* Bin edges (left) for enrichment-age-tracers using custom (uneven) bins the final value is the right edge of the final bin, hence a total size +1 the number of tracers */
     char   AgeTracerListFilename[100];              /* file name to read ages from (in Myr) as a single column */
 #else
-    double AgeTracerBinStart;                       /* left bin edge of first age tracers (Myr) - for log spaced bins */
-    double AgeTracerBinEnd;                         /* right bin edge of last age tracer (Myr)  - for log spaced bins */
+    double AgeTracerBinStart;                       /* minimum age (Myr) of first age bin, used to determine default log spacing, but will include stars younger than this in first bin */
+    double AgeTracerBinEnd;                         /* maximum age (Myr) of final age bin, used to determine default log spacing, but will include stars older than this in final bin */
 #endif
 #endif
 

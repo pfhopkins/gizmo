@@ -114,7 +114,7 @@ extern ALIGN(32) struct particle_data
     MyFloat RProcessEvent_ThisTimeStep; /* R-process event tracker */
 #endif
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-    MyFloat AgeDeposition_ThisTimeStep; /* age-tracer deposition */
+    MyFloat AgeDeposition_ThisTimeStep; /* number of enrichment-age-tracer depositions at a given time */
 #endif
 #endif
 #endif
