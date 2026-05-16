@@ -145,13 +145,6 @@ void ghost_writeback_zero_swallowtime(void);
 void ghost_writeback_swallowtime(void);
 #endif
 
-/* ThermalFB variant: snapshot-based reverse communication for
- * addthermalFB j-particle writes (Mass, Density, dp, IE, Metallicity, etc.).
- * Call zero before the GPU kernel; writeback after the scatter memcpy. */
-#ifdef GALSF_FB_THERMAL
-void ghost_writeback_zero_thermalfb(void);
-void ghost_writeback_thermalfb(void);
-#endif
 
 /* sinkfeed retired in 3d.1: replaced by the bundle scaffold in
  * sinks/sink_feed_loop.cc (PARTICLE_MAX(SwallowID) +

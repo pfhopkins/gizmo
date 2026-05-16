@@ -14,14 +14,8 @@
 
 #include "mechanical_fb_types.h"  /* full struct MechFBGasDelta */
 
-/* ---- thermal_fb (B6) ---- */
-void thermal_fb_evaluate_gpu(struct particle_data *p,
-                              struct gas_cell_data *cp,
-                              int num_total,
-                              int *i_active_host, int num_active,
-                              const double *src_radii_host);
-void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *p);
-
+/* thermal_fb (B6) GPU decls retired in 3e.2: thermal_fb_evaluate_gpu and
+ * gizmo_gpu_sync_all_thermalfb removed; thermal_fb_loop.cc owns the GPU TU. */
 
 /* ---- mechanical_fb (B8) ----
  * Runs all 6 modes (-2, -1, 0, 1, 2, 3) of the default-scheme addFB_evaluate

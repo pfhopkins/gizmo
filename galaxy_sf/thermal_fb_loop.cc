@@ -328,10 +328,10 @@ double ThermalFBSpec::compare_accum(const AccumData& local, const AccumData& ora
  * (Pattern matches sinks/sink_feed_loop.cc; the runner's actual device
  * kernel for ThermalFBSpec runs inside mesh/neighbor_loop_runner.cc and
  * uses that TU's All_dev.) */
-GPU_ALL_SYNC_FUNC_STUB(thermalfbloop)
+GPU_ALL_SYNC_FUNC_STUB(thermalfb)
 
 #else  /* !GALSF_FB_THERMAL */
 
-GPU_ALL_SYNC_FUNC_STUB(thermalfbloop)
+GPU_ALL_SYNC_FUNC_STUB(thermalfb)
 
 #endif /* GALSF_FB_THERMAL */
