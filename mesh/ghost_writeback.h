@@ -96,6 +96,11 @@ struct ghost_writeback_bundle {
      * trailing nullptr entries which the count must exclude. */
     const struct ghost_writeback_callback *const *callbacks;
     int                                            n_callbacks;
+    /* Optional loop name for the rank-0 traffic print in _end_bundle.
+     * Set automatically by GHOST_WRITEBACK_BUNDLE_BEGIN(LOOP) to #LOOP.
+     * nullptr for manually-constructed bundles (e.g. swallowtime singleton)
+     * → silent (backwards-compatible). */
+    const char                                    *loop_name;
 };
 
 /* Scaffold entry points. Begin must be paired with end on the same bundle.

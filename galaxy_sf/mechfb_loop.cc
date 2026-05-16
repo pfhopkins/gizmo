@@ -627,7 +627,11 @@ static const struct ghost_writeback_callback callback = {
 };
 
 static const struct ghost_writeback_callback *const raw_cbs[] = { & callback, nullptr };
-static const struct ghost_writeback_bundle bundle = { raw_cbs, 1 };
+/* loop_name = nullptr: mechfb already prints its own MA-N evidence via
+ * Aux::total_ghost_packs at end of mechfb_run_iterative. Silent here avoids
+ * duplicating that line. Future cleanup could retire the bespoke counter
+ * and adopt the generic print by setting loop_name = "mechfb". */
+static const struct ghost_writeback_bundle bundle = { raw_cbs, 1, nullptr };
 
 }  /* namespace mechfb_writeback_detail */
 

@@ -80,6 +80,10 @@
 #include "../galaxy_sf/mechfb_loop.h"
 #endif
 
+#ifdef GALSF_FB_THERMAL
+#include "../galaxy_sf/thermal_fb_loop.h"
+#endif
+
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
  * File-scope static; TU-local linkage. Defined here so the threshold helpers
@@ -4519,6 +4523,17 @@ template void run_neighbor_loop_iterative<DensitySpec>(const neighbor_loop_args_
  * galaxy_sf/mechfb_loop.{h,cc} + OPEN_3d_mechfb_design.md. */
 #ifdef GALSF_FB_MECHANICAL
 template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_iterative&);
+#endif
+
+/* Phase 4 Wave-3 / 3e.2: ThermalFBSpec — thermal-feedback runner port.
+ * Non-iterative scatter (Type-4 stars → gas neighbors); ActiveReduceOnly +
+ * manifest-bundle ghost_writeback; sink_feed pattern. See
+ * galaxy_sf/thermal_fb_loop.{h,cc}. The Spec definition is gated on
+ * GALSF_FB_THERMAL in thermal_fb_loop.h, so the explicit instantiation must
+ * sit inside the same #ifdef (Wave 2 lesson — non-thermal Configs would
+ * otherwise hit an undefined type at this template instantiation site). */
+#ifdef GALSF_FB_THERMAL
+template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
 #endif
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH

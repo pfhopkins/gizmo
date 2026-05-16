@@ -32,32 +32,13 @@
 
 #if defined(GALSF_FB_THERMAL)
 
-#include "thermal_fb_functions.h"
-
-/* Fill ThermalFBLocalIn for source particle i from CPU global arrays. */
-static void thermal_fb_local_fill(int i,
-                                   struct particle_data *P_host,
-                                   struct gas_cell_data *CellP_host,
-                                   struct ThermalFBLocalIn *loc)
-{
-    loc->Pos            = P_host[i].Pos;
-    loc->KernelRadius   = P_host[i].KernelRadius;
-    loc->wt_sum         = P_host[i].DensityAroundParticle;
-
-    /* Get ejecta properties via CPU-only helper (mirrors particle2in_addthermalFB) */
-    struct addFB_evaluate_data_in_ fb;
-    particle2in_addFB_fromstars(&fb, i, 0);
-    loc->Msne = fb.Msne;
-    loc->Esne = 0.5f * fb.Msne * fb.SNe_v_ejecta * fb.SNe_v_ejecta;
-
-    double kz = 0, dwk_dummy = 0;
-    kernel_main(0.0, 1.0, 1.0, &kz, &dwk_dummy, -1);
-    loc->kernel_zero = (MyFloat)kz;
-
-#ifdef METALS
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) { loc->yields[k] = (MyFloat)fb.yields[k]; }
-#endif
-}
+/* SSOT — structs, inline pair body, and the host-fill / scalars helpers all
+ * live in thermal_fb_loop.h / .cc as of 3e.2. This file is a thin legacy
+ * shim retained for one transition commit so the original
+ * thermal_fb_evaluate_gpu entry point keeps compiling (no caller after
+ * thermal_fb.cc::thermal_fb_calc is rewritten this same commit). The
+ * cleanup commit retires this file entirely. */
+#include "thermal_fb_loop.h"
 
 
 /* ================================================================
@@ -112,11 +93,20 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
         }
     }
 
-    /* Fill per-source input structs (size guarded so std::vector(0) is well-defined) */
+    /* Fill per-source input structs via the SSOT host-fill helper (now lives
+     * in thermal_fb_loop.cc as of 3e.2). Size guarded so std::vector(0) is
+     * well-defined. */
     std::vector<struct ThermalFBLocalIn> src_local(num_src > 0 ? num_src : 1);
     for(int a = 0; a < num_src; a++) {
         thermal_fb_local_fill(i_active_host[a], P_host, CellP_host, &src_local[a]);
     }
+
+    /* Build per-call cosmology + unit-conversion scalars via the SSOT helper.
+     * This routes All.* reads through nlr_host_all_ptr() — required because
+     * this TU has `#define All All_dev` active via gpu_all_mirror.h and bare
+     * All.* reads would resolve to the per-TU All_dev mirror (which is
+     * unsynced; feedback_all_dev_trap_host_side). */
+    const struct ThermalFBCallScalars k_scalars = thermal_fb_build_call_scalars();
 
     /* Copy P and CellP to SharedSpace */
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
@@ -190,11 +180,17 @@ void thermal_fb_evaluate_gpu(struct particle_data *P_host,
                 int j = neighbors[nn];
                 if(kp[j].Type != 0) continue;
                 if(kp[j].Mass <= 0) continue;
+                if(kc == nullptr) continue;  /* gas-only safety; thermal_fb_pair_kernel needs Cj */
                 Vec3<double> dp = loc.Pos - kp[j].Pos;
                 nearest_xyz(dp);
                 double r2 = dp.norm_sq();
                 if(r2 <= 0 || r2 >= h2) continue;
-                thermal_fb_pair_kernel(loc, j, kp, kc, r2, dp, myout);
+                /* 3e.2 signature: (local, scalars, Pj, Cj, r2, oracle_dry_run, out).
+                 * Legacy entry point always runs production-mode (no oracle dry-run);
+                 * the runner-template caller handles oracle suppression via the
+                 * Spec hook. */
+                thermal_fb_pair_kernel(loc, k_scalars, kp[j], kc[j],
+                                       r2, /*oracle_dry_run=*/false, myout);
             }
             out_arr[aa].M_coupled = myout.M_coupled;
         });

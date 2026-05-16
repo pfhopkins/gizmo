@@ -120,6 +120,17 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
         }
     }
 
+    /* Local record count = total records this rank will send. Captured here
+     * (before send_count is freed below) for the optional rank-0 traffic
+     * print after the apply pass. Global SUM == global received (matter
+     * conservation in the alltoallv), so one MPI_Reduce gives both numbers. */
+    long long local_records_sent = 0;
+    for (int c = 0; c < N; c++) {
+        for (int t = 0; t < NTask; t++) {
+            local_records_sent += send_count[c * NTask + t];
+        }
+    }
+
     /* ---- Per-rank send byte counts and displacements. */
     int *send_bytes     = (int *) calloc(NTask, sizeof(int));
     for (int c = 0; c < N; c++) {
@@ -235,6 +246,22 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
         cb->cleanup(cb->ctx);
     }
     gpu_particles_arena_invalidate();
+
+    /* Optional rank-0 traffic print. Backwards-compatible: bundles without a
+     * loop_name (e.g. manually-constructed swallowtime_singleton_bundle)
+     * stay silent. Uses MPI-summed global record count so rank 0 reports
+     * total traffic, not just its own share — avoids false-fail on multi-
+     * rank MA-N validation when rank 0 is purely a receiver. */
+    if (bundle->loop_name != nullptr) {
+        long long global_records = 0;
+        MPI_Reduce(&local_records_sent, &global_records, 1, MPI_LONG_LONG,
+                   MPI_SUM, 0, MPI_COMM_WORLD);
+        if (ThisTask == 0 && global_records > 0) {
+            printf("  Ghost writeback (%s): %lld records exchanged (global, sent==received)\n",
+                   bundle->loop_name, global_records);
+            fflush(stdout);
+        }
+    }
 }
 
 
@@ -591,7 +618,7 @@ static const ghost_writeback_callback *const swallowtime_singleton_cbs[] = {
     & gw_detail::ParticleMinOp<MyFloat, &particle_data::SwallowTime>::callback
 };
 static const ghost_writeback_bundle swallowtime_singleton_bundle = {
-    swallowtime_singleton_cbs, 1
+    swallowtime_singleton_cbs, 1, nullptr /* loop_name: silent print */
 };
 } /* anonymous namespace */
 

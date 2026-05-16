@@ -5,9 +5,9 @@
 %
 InitCondFile                       isodisk_thermalfb_ics
 OutputDir                          output
-TimeMax                            0.03
+TimeMax                            0.001
 BoxSize                            200
-TimeBetSnapshot                    0.01
+TimeBetSnapshot                    0.0005
 MaxSizeTimestep                    0.005
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
@@ -31,7 +31,7 @@ InitGasTemp                        1e4
 CritPhysDensity                    10.
 SfEffPerFreeFall                   1.0
 InitMetallicity                    0.1
-InitStellarAge                     0.001
+InitStellarAge                     0.01
 MinSizeTimestep                    1e-15
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2
