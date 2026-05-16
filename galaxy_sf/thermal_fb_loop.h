@@ -8,9 +8,8 @@
  * machine; no per-iter scratch.
  *
  * SSOT for thermal_fb physics types and per-pair kernel — supersedes the
- * pre-port `thermal_fb_functions.h` (deleted in this commit). Legacy
- * `thermal_fb_gpu.cc` still exists for one transition commit and includes
- * this header; cleanup commit retires it.
+ * pre-port `thermal_fb_functions.h` and the legacy `thermal_fb_gpu.cc`,
+ * both retired in 3e.2.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #ifndef THERMAL_FB_LOOP_H
@@ -40,10 +39,8 @@
 #endif
 
 /* Host-side helpers (defined in thermal_fb_loop.cc). Forward-declared on the
- * incomplete struct ThermalFBLocalIn (definition follows below). Both reused
- * by the legacy `thermal_fb_gpu.cc` during the one-commit transition window
- * and deleted with that file in the cleanup commit. SSOT — neither helper
- * has a duplicate in `_gpu.cc`. */
+ * incomplete struct ThermalFBLocalIn (definition follows below). SSOT —
+ * single owner for thermal_fb host-side fill + per-call scalar build. */
 struct ThermalFBLocalIn;
 struct ThermalFBCallScalars;
 void thermal_fb_local_fill(int i,
@@ -51,9 +48,9 @@ void thermal_fb_local_fill(int i,
                             struct gas_cell_data *CellP_host,
                             struct ThermalFBLocalIn *loc);
 /* Per-call cosmology + run-invariant unit conversion factors. Routes All.*
- * reads through nlr_host_all_ptr() — safe to call from GPU TUs that have
- * `#define All All_dev` active (legacy thermal_fb_gpu.cc) AND from this
- * host-pattern TU. SSOT — Spec::populate_call_scalars forwards here. */
+ * reads through nlr_host_all_ptr() — safe from GPU TUs that have
+ * `#define All All_dev` active (e.g. neighbor_loop_runner.cc) and from
+ * plain-host TUs. SSOT — Spec::populate_call_scalars forwards here. */
 ThermalFBCallScalars thermal_fb_build_call_scalars(void);
 
 /* ============================================================================

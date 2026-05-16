@@ -8,8 +8,7 @@
  * populate/cleanup_device_context (Phase 4.A.0 UVM staging),
  * apply_active_writeback (source-side mass + momentum loss), merge_accum,
  * ghost-writeback manifest + lifecycle hooks, compare_accum, and
- * thermal_fb_local_fill (the per-source host pack — SSOT; legacy
- * `thermal_fb_gpu.cc` calls it during the one-commit transition).
+ * thermal_fb_local_fill (the per-source host pack — SSOT).
  *
  * Phase 4 / Wave 3 / 3e.2. Written by Phil Hopkins (phopkins@caltech.edu)
  * for GIZMO.
@@ -37,8 +36,7 @@
 
 /* particle2in_addFB_fromstars(in, i, fb_loop_iteration) — declared in
  * core/proto.h via stellar_evolution.h. fb_loop_iteration=0 selects the
- * thermal-feedback ejecta branch (mirrors the legacy
- * thermal_fb_gpu.cc:49 call). */
+ * thermal-feedback ejecta branch. */
 
 /* ============================================================================
  * ACTIVE PREDICATE
@@ -82,8 +80,7 @@ double ThermalFBSpec::search_radius(const neighbor_loop_args& args,
  * All.* in any GPU/Spec TU may resolve to a stale per-TU All_dev mirror under
  * nvcc_wrapper, even when this TU itself doesn't `#define All All_dev`). The
  * kernel reads NO `All.*` and NO `UNIT_*` macros — all such reads route
- * through scalars. Callable from both the Spec hook (below) AND the legacy
- * thermal_fb_gpu.cc lambda setup during the one-commit transition window. */
+ * through scalars. SSOT — single owner is Spec::populate_call_scalars. */
 ThermalFBCallScalars thermal_fb_build_call_scalars(void)
 {
     const struct global_data_all_processes *h = nlr_host_all_ptr();
