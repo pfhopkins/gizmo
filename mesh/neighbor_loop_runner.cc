@@ -84,6 +84,10 @@
 #include "../galaxy_sf/thermal_fb_loop.h"
 #endif
 
+#ifdef GALSF_FB_FIRE_RT_LOCALRP
+#include "../galaxy_sf/radfb_rp_loop.h"
+#endif
+
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
  * File-scope static; TU-local linkage. Defined here so the threshold helpers
@@ -4534,6 +4538,16 @@ template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_i
  * otherwise hit an undefined type at this template instantiation site). */
 #ifdef GALSF_FB_THERMAL
 template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
+#endif
+
+/* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.
+ * Iterative 2-pass (iter 0 wt_sum aggregation; iter 1 kick application).
+ * Ghost-writeback bundle with PARTICLE_ADD_VEC3 + new GAS_ADD_VEC3 ops.
+ * iter-gating via Aux::iter_index (set in reset_per_iter_device_context);
+ * inter-iter wt_sum staged through IterScratch by after_iter_global. See
+ * galaxy_sf/radfb_rp_loop.{h,cc} + OPEN_3d_radfb_local_design.md. */
+#ifdef GALSF_FB_FIRE_RT_LOCALRP
+template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_iterative&);
 #endif
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH

@@ -11,9 +11,15 @@
     photo-ionization terms. written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
-#if defined(GALSF_FB_FIRE_RT_LOCALRP)
-#include "galsf_gpu_decls.h"
-#endif
+/* radiation_pressure_winds_consolidated lives in galaxy_sf/radfb_rp_loop.cc
+ * (alongside RadFBRPSpec) — the toplevel runner-template caller belongs in
+ * the same two-file module as the Spec. This file stays HOST-ONLY
+ * (STARFORM_OBJS) so HII_heating_singledomain + do_the_local_ionization
+ * are NOT pulled into a GPU TU (which would inherit the
+ * gpu_all_mirror.h `#define All All_dev` trap from
+ * feedback_all_dev_trap_host_side). accel.cc:203 calls
+ * `radiation_pressure_winds_consolidated()` via core/proto.h's forward
+ * decl; the linker resolves it from radfb_rp_loop.o. */
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #include <vector>
@@ -23,15 +29,8 @@
 #include "../system/gpu_particles_arena.h"
 #endif
 
-#if defined(GALSF_FB_FIRE_RT_LOCALRP) /* first the radiation pressure coupled in the immediate vicinity of the star */
-/*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
-void radiation_pressure_winds_consolidated(void)
-{
-    radiation_pressure_winds_gpu(P, CellP, NumPart,
-                                 ActiveParticleList.data(), (int)ActiveParticleList.size());
-}
-
-#endif /* closes defined(GALSF_FB_FIRE_RT_LOCALRP)  */
+/* radiation_pressure_winds_consolidated moved → radfb_rp_loop.cc (see
+ * header comment block above). */
 
 
 

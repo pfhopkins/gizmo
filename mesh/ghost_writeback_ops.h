@@ -25,6 +25,7 @@
  *   GHOST_WRITEBACK_PARTICLE_ADD_ARRAY(f, N)    snapshot-diff additive on P[j].field[N]   [3e.2]
  *   GHOST_WRITEBACK_PARTICLE_ADD_VEC3(field)    snapshot-diff additive on P[j].field (Vec3<T>) [3e.2]
  *   GHOST_WRITEBACK_GAS_MAX(field)              home CellP[j].field = max(home, ghost)    [3e.2]
+ *   GHOST_WRITEBACK_GAS_ADD_VEC3(field)         snapshot-diff additive on CellP[j].field (Vec3<T>) [radfb_local]
  *
  * Semantics summary:
  *   ADD ops: pack(delta = post - snap), apply(home += delta).
@@ -611,6 +612,87 @@ const ghost_writeback_callback GasMaxOp<FieldT, MemPtr>::callback = {
     & GasMaxOp<FieldT, MemPtr>::s_ctx,
 };
 
+/* GasAddVec3Op<ElemT, MemPtr> — snapshot-diff additive reverse-comm for a
+ * Vec3<ElemT> field on gas_cell_data. Sibling of ParticleAddVec3Op, but acts
+ * on CellP[] (the global gas_cell_data array). Used by radfb_local for
+ * CellP[j].VelPred (per-rank predicted-velocity deltas summed additively at
+ * home). */
+template <typename ElemT, Vec3<ElemT> gas_cell_data::*MemPtr>
+struct GasAddVec3Op {
+    static_assert(std::is_arithmetic<ElemT>::value,
+                  "GHOST_WRITEBACK_GAS_ADD_VEC3 requires an arithmetic element type");
+
+    struct Ctx {
+        Vec3<ElemT> *snap;
+        int          num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int         home_index;
+        Vec3<ElemT> delta;
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (Vec3<ElemT>*) malloc(num_ghosts * sizeof(Vec3<ElemT>));
+        for (int g = 0; g < num_ghosts; g++) {
+            c->snap[g] = CellP[num_local + g].*MemPtr;
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        const Vec3<ElemT>& now = CellP[num_local + g].*MemPtr;
+        const Vec3<ElemT>& was = c->snap[g];
+        return (now[0] != was[0] || now[1] != was[1] || now[2] != was[2]) ? 1 : 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        const Vec3<ElemT>& now = CellP[num_local + g].*MemPtr;
+        const Vec3<ElemT>& was = c->snap[g];
+        d->delta[0] = now[0] - was[0];
+        d->delta[1] = now[1] - was[1];
+        d->delta[2] = now[2] - was[2];
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        CellP[d->home_index].*MemPtr += d->delta;
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename ElemT, Vec3<ElemT> gas_cell_data::*MemPtr>
+typename GasAddVec3Op<ElemT, MemPtr>::Ctx
+GasAddVec3Op<ElemT, MemPtr>::s_ctx{nullptr, 0};
+
+template <typename ElemT, Vec3<ElemT> gas_cell_data::*MemPtr>
+const ghost_writeback_callback GasAddVec3Op<ElemT, MemPtr>::callback = {
+    sizeof(typename GasAddVec3Op<ElemT, MemPtr>::Delta),
+    & GasAddVec3Op<ElemT, MemPtr>::snapshot_fn,
+    & GasAddVec3Op<ElemT, MemPtr>::delta_for_ghost_fn,
+    & GasAddVec3Op<ElemT, MemPtr>::pack_fn,
+    & GasAddVec3Op<ElemT, MemPtr>::apply_fn,
+    & GasAddVec3Op<ElemT, MemPtr>::cleanup_fn,
+    & GasAddVec3Op<ElemT, MemPtr>::s_ctx,
+};
+
 /* Small helper trait — extract ElemT from Vec3<ElemT>. Used by the
  * GHOST_WRITEBACK_PARTICLE_ADD_VEC3 macro so the science author writes only
  * the field name (not the element type) at the manifest site. */
@@ -668,6 +750,16 @@ template <typename T> struct vec3_elem<Vec3<T>> { using type = T; };
 #define GHOST_WRITEBACK_GAS_MAX(field)                                        \
     & ::gw_detail::GasMaxOp<                                                  \
         decltype(gas_cell_data::field), &gas_cell_data::field                 \
+      >::callback,
+
+/* Vec3<T> variant on gas_cell_data. `field` is declared as
+ * `Vec3<ElemT> field` on gas_cell_data (e.g. `Vec3<MyDouble> VelPred`).
+ * The macro extracts ElemT via vec3_elem<>. Sibling of
+ * GHOST_WRITEBACK_PARTICLE_ADD_VEC3 — see GasAddVec3Op. */
+#define GHOST_WRITEBACK_GAS_ADD_VEC3(field)                                   \
+    & ::gw_detail::GasAddVec3Op<                                              \
+        typename ::gw_detail::vec3_elem<decltype(gas_cell_data::field)>::type,\
+        &gas_cell_data::field                                                 \
       >::callback,
 
 /* Bundle assembly. BUNDLE_BEGIN(loop) opens an anonymous-namespace block
