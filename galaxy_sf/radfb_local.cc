@@ -331,7 +331,7 @@ static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
          * below indexes it from host code; deep_copy once to a host buffer.
          * (Host memcpy from CudaSpace segfaults on GH200.) */
         if(gnl.total_pairs > 0) {
-            gnl_neighbors_host.resize(gnl.total_pairs);
+            gnl_neighbors_host.resize((size_t)gnl.total_pairs);
             gpu_ngb_copy_neighbors_to_host(&gnl, gnl_neighbors_host.data());
         }
     }
@@ -345,12 +345,14 @@ static void hii_gpu_path(const std::vector<HIISourcePrep>& src,
     std::vector<int> cand_buf;
     std::vector<int> ngb_scratch;
     for(int aa = 0; aa < num_src; aa++) {
-        int nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
-        int nl_n = nl_end - nl_start;
+        /* offsets are int64_t (CSR row pointers); per-source candidate count
+         * is bounded by num_total < 2^31 so the local int nl_n is safe. */
+        int64_t nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
+        int nl_n = (int)(nl_end - nl_start);
         /* Filter ghosts (singledomain). The helper rechecks Type/Mass/radius. */
         cand_buf.clear();
         if((int)cand_buf.capacity() < nl_n) cand_buf.reserve(nl_n > 0 ? nl_n : 1);
-        for(int nn = nl_start; nn < nl_end; nn++) {
+        for(int64_t nn = nl_start; nn < nl_end; nn++) {
             int j_cand = gnl_neighbors[nn];
             if(j_cand >= local_count) continue; /* skip ghosts */
             cand_buf.push_back(j_cand);
