@@ -1,8 +1,9 @@
 /* galsf_gpu_decls.h — consolidated GPU dispatch declarations for galaxy_sf
- * kernels: thermal_fb, mechanical_fb, radfb_local (radiation_pressure_winds),
- * dm_dispersion.  Step 5 Phase E1a (2026-04-30) — merges the four single-line
- * radfb_local_gpu.h / thermal_fb_gpu.h / mechanical_fb_gpu.h / dm_dispersion_gpu.h
- * headers to reduce file count.
+ * kernels: thermal_fb, mechanical_fb, radfb_local (radiation_pressure_winds).
+ * dm_dispersion is now runner-ported (dm_dispersion_loop.h) and has no GPU
+ * dispatch header.  Step 5 Phase E1a (2026-04-30) — originally merged four
+ * single-line headers (radfb_local_gpu.h / thermal_fb_gpu.h /
+ * mechanical_fb_gpu.h / dm_dispersion_gpu.h); dm_dispersion_gpu.h retired 3d.D.
  *
  * Each section preserves its original feature gate.  Includers should pull
  * this single header instead of the per-kernel headers.
