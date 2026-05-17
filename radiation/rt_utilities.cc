@@ -57,7 +57,7 @@
 int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
-    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion
+    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion (P[].Mass is the SSOT for particle mass; CellP[].Mass is gas-only and is uninitialized for non-gas types, which would silently filter Type 4/5 sources)
     int active_check = 0; // default to inactive //
     
 #if defined(GALSF)
@@ -85,7 +85,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
 #if defined(RT_CHEM_PHOTOION) && !defined(GALSF) /* Hydrogen and Helium ionizing bands; this is an idealized test-problem version implementation */
     if(pp[i].Type==4)
     {
-        SET_ACTIVE_RT_CHECK(); double l_ion=All.IonizingLuminosityPerSolarMass_cgs * (cell[i].Mass * UNIT_MASS_IN_SOLAR) / UNIT_LUM_IN_CGS; // flux from star particles according to mass
+        SET_ACTIVE_RT_CHECK(); double l_ion=All.IonizingLuminosityPerSolarMass_cgs * (pp[i].Mass * UNIT_MASS_IN_SOLAR) / UNIT_LUM_IN_CGS; // flux from star particles according to mass (P[].Mass is SSOT for stars; CellP[].Mass is gas-only)
 #ifdef RT_ILIEV_TEST1
         l_ion = 5.0e48 * (13.6*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS; // 5e48 in ionizing photons per second -- constant for idealized test problem //
 #endif
@@ -109,7 +109,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
 #if (NUMDIMS == 3)
         A_base = boxSize_X * boxSize_Y;
 #endif
-        lum[RT_FREQ_BIN_GENERIC_USER_FREQ] = (cell[i].Mass/1.) * All.Vertical_Grain_Accel * C_LIGHT_CODE * ((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * A_base / (0.75*All.Grain_Q_at_MaxGrainSize); // special behavior for particular test of stratified boxes compared to explicit dust opacities
+        lum[RT_FREQ_BIN_GENERIC_USER_FREQ] = (pp[i].Mass/1.) * All.Vertical_Grain_Accel * C_LIGHT_CODE * ((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)) * A_base / (0.75*All.Grain_Q_at_MaxGrainSize); // special behavior for particular test of stratified boxes compared to explicit dust opacities (P[].Mass is SSOT for non-gas)
 #endif
     }
 #endif
@@ -154,10 +154,10 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
 int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(!((pp[i].Type == 4) || ((All.ComovingIntegrationOn==0)&&((pp[i].Type==2)||(pp[i].Type==3))))) {return 0;} // only star-type particles act in this subroutine //
-    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
+    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // (P[].Mass is SSOT for particle mass; CellP[].Mass is gas-only and uninitialized for stars)
     int active_check = 0; // default to inactive //
 #if defined(GALSF) /* basically none of these modules make sense without the GALSF module active */
-    double star_age = evaluate_stellar_age_Gyr(i), m_sol = cell[i].Mass * UNIT_MASS_IN_SOLAR;
+    double star_age = evaluate_stellar_age_Gyr(i), m_sol = pp[i].Mass * UNIT_MASS_IN_SOLAR; // (P[].Mass is SSOT for stellar mass; CellP[].Mass is zero for Type 4)
     if((star_age<=0) || isnan(star_age)) {return 0;} // calculate stellar age, will be used below, and catch for bad values
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     if(star_age > 0.1) {return 0;} // old optimization, not really needed with how we do this now //
@@ -250,10 +250,10 @@ int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct parti
 int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(pp[i].Type != 5) {return 0;} // only go forward for BH-type particles
-    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
+    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // (P[].Mass is the dynamical-mass SSOT; CellP[].Mass is gas-only and uninitialized for Type 5 sinks)
     int active_check = 0; // default to inactive //
 #if defined(SINK_PARTICLES)
-    double l_bol = sink_lum_bol(pp[i].Sink_Mdot,cell[i].Mass,i); if(l_bol <= 0) {return 0;} // no accretion luminosity -- no point in going further!
+    double l_bol = sink_lum_bol(pp[i].Sink_Mdot,pp[i].Sink_Mass,i); if(l_bol <= 0) {return 0;} // no accretion luminosity -- no point in going further! (sink_lum_bol takes the accreted sink mass — P[].Sink_Mass — not the dynamical particle mass)
     // corrections below follow  Shen, PFH, et al. 2020 to account for alpha-ox and template spectrum to get AGN set in different bands as a function of bolometric luminosity. functional form very similar to Hopkins, Richards, & Hernquist 2007, but updated values. //
     double lbol_lsun = l_bol * UNIT_LUM_IN_SOLAR, R_opt_xr; // luminosity in physical code units //
     double f_xr_0=0.0461795, R_xr_opt = pow(lbol_lsun/1.e10,0.026) / (0.0455713 + 0.140974*pow(lbol_lsun/1.e10,0.304)), Rfxr=R_xr_opt*f_xr_0; // x-ray to optical ratio normalized to its value at Lbol=1e13 solar
@@ -308,7 +308,7 @@ int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, 
 int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(pp[i].Type < 4) {return 0;} // only go forward with star or sink-type particles
-    if(cell[i].Mass <= 0 || !isfinite(cell[i].Mass)) {return 0;}
+    if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // (P[].Mass is the dynamical-mass SSOT for stars/sinks; CellP[].Mass is gas-only and uninitialized for non-gas)
     int active_check = 0, k; // default to inactive //
     
 #if defined(RT_INFRARED) /* special mid-through-far infrared band, which includes IR radiation temperature evolution */
@@ -1147,7 +1147,7 @@ double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particl
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 2)
     double r_sol = pp[i].ProtoStellarRadius_inSolar, l_sol = pp[i].StarLuminosity_Solar;
 #elif defined(SINGLE_STAR_SINK_DYNAMICS) // use generic fits based on mass
-    double l_sol=sink_lum_bol(0,cell[i].Mass,i)*UNIT_LUM_IN_SOLAR, m_sol=cell[i].Mass*UNIT_MASS_IN_SOLAR, r_sol=pow(m_sol,0.738); // L/Lsun, M/Msun, R/Rsun
+    double l_sol=sink_lum_bol(0,pp[i].Sink_Mass,i)*UNIT_LUM_IN_SOLAR, m_sol=pp[i].Sink_Mass*UNIT_MASS_IN_SOLAR, r_sol=pow(m_sol,0.738); // L/Lsun, M/Msun, R/Rsun. (Under SINGLE_STAR_SINK_DYNAMICS the relevant mass for the sink luminosity + radius scaling is the accreted sink mass — P[].Sink_Mass — not the dynamical particle mass and definitely not CellP[].Mass which is gas-only.)
 #else
     double l_sol=1., r_sol=1.; // nothing usefully defined for the above - default to solar-type stars //
 #endif
@@ -1182,9 +1182,9 @@ int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes
 {
     int value_to_return = 0;
     value_to_return = rt_get_source_luminosity(i, mode, lum, pp, cell); // call routine as normal for all bands, before adding chimes-specific details
-    if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (cell[i].Mass>0) && (pp[i].KernelRadius>0) )
+    if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) ) // (P[].Mass is SSOT for stars; CellP[].Mass is gas-only)
     {
-        int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=cell[i].Mass*UNIT_MASS_IN_SOLAR;
+        int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=pp[i].Mass*UNIT_MASS_IN_SOLAR;
         if(log_age_Myr < CHIMES_LOCAL_UV_AGE_LOW) {age_bin = 0;} else if (log_age_Myr < CHIMES_LOCAL_UV_AGE_MID) {age_bin = (int) floor(((log_age_Myr - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW) + 1);} else {
             age_bin = (int) floor((((log_age_Myr - CHIMES_LOCAL_UV_AGE_MID) / CHIMES_LOCAL_UV_DELTA_AGE_HI) + ((CHIMES_LOCAL_UV_AGE_MID - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW)) + 1);
             if (age_bin > CHIMES_LOCAL_UV_NBINS - 1) {age_bin = CHIMES_LOCAL_UV_NBINS - 1;}}
