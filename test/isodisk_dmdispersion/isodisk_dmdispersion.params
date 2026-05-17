@@ -1,0 +1,62 @@
+% Isolated disk galaxy — DM velocity dispersion (dm_dispersion / disp_density) test
+% Config: GALSF_EFFECTIVE_EQS + GALSF_SUBGRID_WINDS + GALSF_SUBGRID_WIND_SCALING=2
+% Uses isodisk ICs (reuses isodisk_ics.hdf5).  disp_density() must be called at
+% least once so that DM_VelDisp is populated before the first wind kick.
+%
+InitCondFile                       isodisk_dmdispersion_ics
+OutputDir                          output
+TimeMax                            0.005
+BoxSize                            200
+TimeBetSnapshot                    0.002
+MaxSizeTimestep                    0.005
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+UnitLength_in_cm                   3.085678e+21
+UnitMass_in_g                      1.989e+43
+UnitVelocity_in_cm_per_s           100000
+SofteningGas                       0.001
+Softening_Type1                    0.05
+Softening_Type2                    0.1
+Softening_Type3                    0.1
+Softening_Type4                    0.001
+Softening_Type5                    0.005
+SofteningGasMaxPhys                0.001
+Softening_Type1_MaxPhysLimit       0.05
+Softening_Type2_MaxPhysLimit       0.1
+Softening_Type3_MaxPhysLimit       0.1
+Softening_Type4_MaxPhysLimit       0.001
+Softening_Type5_MaxPhysLimit       0.005
+MinGasTemp                         10
+InitGasTemp                        1e4
+InitMetallicity                    0.1
+InitStellarAge                     0.01
+MinSizeTimestep                    1e-15
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+TimeBetStatistics                  0.5
+MaxMemSize                         3000
+ResubmitOn                         0
+ResubmitCommand                    none
+
+%---- sub-grid (Springel+Hernquist) effective equation of state (GALSF_EFFECTIVE_EQS)
+%     values from scripts/test_problems/isodisk.params
+MaxSfrTimescale     4.0
+TempSupernova       3.0e8
+TempClouds          1000.0
+FactorSN            0.1
+FactorEVP           3000.0
+FactorForSofterEQS  1.0
+
+%---- sub-grid decoupled winds (GALSF_SUBGRID_WINDS)
+WindEfficiency          2.0
+WindEnergyFraction      0.06
+WindFreeTravelMaxTime   0.1
+WindFreeTravelDensFac   0.1
+
+%---- variable wind velocity (GALSF_SUBGRID_WIND_SCALING=2)
+%     wind velocity = VariableWindVelFactor * CellP[i].DM_VelDisp
+VariableWindVelFactor    1.0
+VariableWindSpecMomentum 5000.
