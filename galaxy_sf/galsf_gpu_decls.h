@@ -72,13 +72,11 @@ void mechfb_run_iterative(int *active_list, int num_active,
                           int n_gas, int *n_couplings_out);
 
 
-/* ---- radfb_local: radiation_pressure_winds ---- */
-#ifdef GALSF_FB_FIRE_RT_LOCALRP
-void radiation_pressure_winds_gpu(struct particle_data *P_host,
-                                   struct gas_cell_data *CellP_host,
-                                   int num_total,
-                                   const int *i_active_host, int num_active);
-#endif
+/* ---- radfb_local: radiation_pressure_winds — runner-template ported in
+ * Phase 4 / Wave 3 / radfb_local. Toplevel
+ * radiation_pressure_winds_consolidated lives in galaxy_sf/radfb_rp_loop.cc;
+ * core/proto.h carries its forward decl. Legacy radiation_pressure_winds_gpu
+ * thin-wrapper retired in the radfb_local cleanup commit. ---- */
 
 
 /* ---- dm_dispersion (GALSF_SUBGRID_WINDS, scaling==2) ---- */

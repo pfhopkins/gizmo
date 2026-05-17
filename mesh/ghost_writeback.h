@@ -176,12 +176,11 @@ void ghost_writeback_grainbackrx(void);
  * scaffold's compound callback in sinks/sink_swk_loop.cc (snapshot +
  * CR/B-aware predicate + clamped apply). */
 
-/* RadFBRP variant: snapshot-based reverse communication for
- * radiation_pressure_winds GPU kernel j-particle writes (Vel, VelPred, dp). */
-#ifdef GALSF_FB_FIRE_RT_LOCALRP
-void ghost_writeback_zero_radfbrp(void);
-void ghost_writeback_radfbrp(void);
-#endif
+/* RadFBRP runner-template port (Phase 4 / Wave 3 / radfb_local): the
+ * legacy ghost_writeback_zero_radfbrp + ghost_writeback_radfbrp snapshot-
+ * based reverse-comm path is retired; RadFBRPSpec in
+ * galaxy_sf/radfb_rp_loop.{h,cc} now uses the generic ghost-writeback
+ * bundle (PARTICLE_ADD_VEC3 on Vel/dp + GAS_ADD_VEC3 on VelPred). */
 
 /* RT source injection variant: snapshot-based reverse communication for
  * rt_source_injection GPU kernel j-gas writes (radiation energy/source fields,
