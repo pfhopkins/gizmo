@@ -52,6 +52,7 @@
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
 
 #include <vector>
+#include <unordered_map>
 #include <cmath>
 #include <cctype>
 
@@ -86,6 +87,9 @@
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 #include "../galaxy_sf/radfb_rp_loop.h"
+#endif
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#include "../galaxy_sf/dm_dispersion_loop.h"
 #endif
 
 /* ============================================================================
@@ -1415,27 +1419,37 @@ static void mode_b_remote_evaluate_into_buffer(
     unsigned int neighbor_type_mask,                  /* explicit caller param (step 2c.3) */
     typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
     typename Spec::ActiveData *actives_out = nullptr, /* size = args.num_active OR nullptr */
-    RunnerStageTimer *tim = nullptr)
+    RunnerStageTimer *tim = nullptr,
+    typename Spec::AccumData *accums_oracle_out = nullptr, /* OracleIterative only: brute accum output */
+    const typename Spec::DeviceContext *ctx_oracle = nullptr) /* OracleIterative brute context */
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
     using DeviceCtx     = typename Spec::DeviceContext;     /* needed for oracle ctx copies (Stages 8/9) */
     using Envelope      = NlrQueryEnvelope<ActiveData>;
     using ReplyEnvelope = NlrReplyEnvelope<AccumData>;
+    using DualReplyEnvelope = NlrDualReplyEnvelope<AccumData>;
 
     /* Mode predicates (step 2c.4 SSOT extension). Constexpr so the dead
      * branches are elided per instantiation. */
     constexpr bool RUN_TREE         = (MODE == RemoteHelperMode::Production ||
-                                        MODE == RemoteHelperMode::OracleCompare);
+                                        MODE == RemoteHelperMode::OracleCompare ||
+                                        MODE == RemoteHelperMode::OracleIterative);
     constexpr bool RUN_BRUTE        = (MODE == RemoteHelperMode::OracleCompare ||
-                                        MODE == RemoteHelperMode::OracleBrutePass);
+                                        MODE == RemoteHelperMode::OracleBrutePass ||
+                                        MODE == RemoteHelperMode::OracleIterative);
     constexpr bool RUN_INLINE_COMPARE = (MODE == RemoteHelperMode::OracleCompare);
     constexpr bool BRUTE_WRITES_OUT = (MODE == RemoteHelperMode::OracleBrutePass);
+    /* OracleIterative: collect both candidate sets in one epoch, output tree
+     * -> accums_out and brute -> accums_oracle_out separately (no inline compare). */
+    constexpr bool DUAL_OUT         = (MODE == RemoteHelperMode::OracleIterative);
 
     static_assert(std::is_trivially_copyable<Envelope>::value,
         "NlrQueryEnvelope must be trivially-copyable for byte-level MPI transfer");
     static_assert(std::is_trivially_copyable<ReplyEnvelope>::value,
         "NlrReplyEnvelope must be trivially-copyable for byte-level MPI transfer");
+    static_assert(std::is_trivially_copyable<DualReplyEnvelope>::value,
+        "NlrDualReplyEnvelope must be trivially-copyable for byte-level MPI transfer");
 
     const int N    = args.num_active;     /* may be 0 on this rank; collective entry */
     const int nt   = NTask;
@@ -1596,6 +1610,16 @@ static void mode_b_remote_evaluate_into_buffer(
             evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
                                               cand_self_brute, accums_out);
         }
+        if constexpr (DUAL_OUT) {
+            /* OracleIterative: brute-first into accums_oracle_out (same epoch
+             * as tree; both candidate sets were collected pre-drift above). */
+            DeviceCtx ctx_oracle_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
+            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+                Spec::set_oracle_brute_pass(ctx_oracle_dual, true);
+            }
+            evaluate_pairs_post_drift<Spec>(ctx_oracle_dual, actives.data(), N,
+                                              cand_self_brute, accums_oracle_out);
+        }
         if constexpr (RUN_TREE) {
             StageTimer t(tim ? &tim->dt_walk_self : nullptr);
             evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
@@ -1616,10 +1640,13 @@ static void mode_b_remote_evaluate_into_buffer(
      *     back to home rank.
      *   OracleBrutePass:            brute result -> peer_replies, shipped
      *     back to home rank — peer-side brute trajectory for iterative
-     *     oracle. */
+     *     oracle.
+     *   OracleIterative:            brute -> peer_replies_oracle; tree ->
+     *     peer_replies; both are exchanged together in one dual payload. */
     const int K = (int)peer_actives.size();
     std::vector<AccumData> peer_replies(K);
     std::vector<AccumData> peer_replies_brute;
+    std::vector<AccumData> peer_replies_oracle;
     if(K > 0) {
         if constexpr (RUN_INLINE_COMPARE) {
             peer_replies_brute.assign(K, AccumData{});
@@ -1638,6 +1665,17 @@ static void mode_b_remote_evaluate_into_buffer(
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
                                               cand_peer_brute, peer_replies.data());
         }
+        if constexpr (DUAL_OUT) {
+            /* OracleIterative: peer brute -> peer_replies_oracle, peer tree
+             * -> peer_replies. Brute first for j-write specs. */
+            peer_replies_oracle.assign(K, AccumData{});
+            DeviceCtx ctx_oracle_peer_dual = (ctx_oracle != nullptr) ? *ctx_oracle : ctx;
+            if constexpr (nlr_spec_has_set_oracle_brute_pass_v<Spec>) {
+                Spec::set_oracle_brute_pass(ctx_oracle_peer_dual, true);
+            }
+            evaluate_pairs_post_drift<Spec>(ctx_oracle_peer_dual, peer_actives.data(), K,
+                                              cand_peer_brute, peer_replies_oracle.data());
+        }
         if constexpr (RUN_TREE) {
             StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
@@ -1654,38 +1692,89 @@ static void mode_b_remote_evaluate_into_buffer(
         }
     }
 
-    /* Stage 10: build reply envelopes (origin_slot/rank copied from each
-     * received query envelope), unflatten into per-peer arrays via the
-     * provenance map, then exchange. Reply envelope makes the active-side
-     * merge transport-order independent (codex Option C consistency). */
-    std::vector<std::vector<ReplyEnvelope>> replies_per_peer(nt);
-    for(int p = 0; p < nt; p++) {
-        replies_per_peer[p].assign(state.recv_counts[p], ReplyEnvelope{});
-    }
-    for(int k = 0; k < K; k++) {
-        const Provenance& pv = peer_provenance[k];
-        ReplyEnvelope& re = replies_per_peer[pv.source_peer][pv.source_qi];
-        re.origin_slot = pv.origin_slot;
-        re.origin_rank = pv.origin_rank;
-        re.accum       = peer_replies[k];
-    }
+    if constexpr (DUAL_OUT) {
+        /* Iterative oracle is temporary port-validation scaffolding. Keep the
+         * transport simple and correct: production and brute replies travel in
+         * one payload, so we do not run two reply exchanges with identical MPI
+         * tags. */
+        std::vector<std::vector<DualReplyEnvelope>> replies_per_peer(nt);
+        for (int p = 0; p < nt; p++) {
+            replies_per_peer[p].assign(state.recv_counts[p], DualReplyEnvelope{});
+        }
+        for (int k = 0; k < K; k++) {
+            const Provenance& pv = peer_provenance[k];
+            DualReplyEnvelope& re = replies_per_peer[pv.source_peer][pv.source_qi];
+            re.origin_slot  = pv.origin_slot;
+            re.origin_rank  = pv.origin_rank;
+            re.accum_prod   = peer_replies[k];
+            re.accum_oracle = peer_replies_oracle[k];
+        }
+        auto recv_replies = [&]{
+            StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
+            return mode_b_exchange_replies<Envelope, DualReplyEnvelope>(replies_per_peer, state);
+        }();
+        {
+            StageTimer t(tim ? &tim->dt_reduce : nullptr);
+            if (N > 0 && accums_oracle_out != nullptr) {
+                for (int p = 0; p < nt; p++) {
+                    if (p == rank) continue;
+                    const int q_to_p = state.sent_counts[p];
+                    for (int qi = 0; qi < q_to_p; qi++) {
+                        const DualReplyEnvelope& re = recv_replies[p][qi];
+                        if (re.origin_rank != rank) {
+                            fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
+                                    "dual reply envelope origin_rank=%d != ThisTask=%d from "
+                                    "peer=%d qi=%d. Transport/peer-side corruption?\n",
+                                    rank, Spec::loop_name, re.origin_rank, rank, p, qi);
+                            fflush(stderr);
+                            MPI_Abort(MPI_COMM_WORLD, 1);
+                        }
+                        const int slot = re.origin_slot;
+                        if (slot < 0 || slot >= N) {
+                            fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
+                                    "dual reply envelope slot %d out of range [0,%d) from peer %d.\n",
+                                    rank, Spec::loop_name, slot, N, p);
+                            fflush(stderr);
+                            MPI_Abort(MPI_COMM_WORLD, 1);
+                        }
+                        Spec::merge_accum(accums_out[slot], re.accum_prod);
+                        Spec::merge_accum(accums_oracle_out[slot], re.accum_oracle);
+                    }
+                }
+            }
+        }
+    } else {
+        /* Stage 10: build reply envelopes (origin_slot/rank copied from each
+         * received query envelope), unflatten into per-peer arrays via the
+         * provenance map, then exchange. Reply envelope makes the active-side
+         * merge transport-order independent (codex Option C consistency). */
+        std::vector<std::vector<ReplyEnvelope>> replies_per_peer(nt);
+        for(int p = 0; p < nt; p++) {
+            replies_per_peer[p].assign(state.recv_counts[p], ReplyEnvelope{});
+        }
+        for(int k = 0; k < K; k++) {
+            const Provenance& pv = peer_provenance[k];
+            ReplyEnvelope& re = replies_per_peer[pv.source_peer][pv.source_qi];
+            re.origin_slot = pv.origin_slot;
+            re.origin_rank = pv.origin_rank;
+            re.accum       = peer_replies[k];
+        }
 
-    auto recv_replies = [&]{
-        StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
-        return mode_b_exchange_replies<Envelope, ReplyEnvelope>(replies_per_peer, state);
-    }();
+        auto recv_replies = [&]{
+            StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
+            return mode_b_exchange_replies<Envelope, ReplyEnvelope>(replies_per_peer, state);
+        }();
 
-    /* Stage 11: merge replies into accums_self by envelope.origin_slot.
-     * Pinned deterministic order: ascending peer rank (self contribution
-     * already in accums_self from stage 8). Asserts each reply envelope's
-     * origin_rank == ThisTask — a transport-corruption sanity check. */
-    {
-        StageTimer t(tim ? &tim->dt_reduce : nullptr);
-        if(N > 0) {
-            for(int p = 0; p < nt; p++) {
-                if(p == rank) continue;
+        /* Stage 11: merge replies into accums_self by envelope.origin_slot.
+         * Pinned deterministic order: ascending peer rank (self contribution
+         * already in accums_self from stage 8). Asserts each reply envelope's
+         * origin_rank == ThisTask — a transport-corruption sanity check. */
+        {
+            StageTimer t(tim ? &tim->dt_reduce : nullptr);
+            for (int p = 0; p < nt; p++) {
+                if (p == rank) continue;
                 const int q_to_p = state.sent_counts[p];
-                for(int qi = 0; qi < q_to_p; qi++) {
+                for (int qi = 0; qi < q_to_p; qi++) {
                     const ReplyEnvelope& re = recv_replies[p][qi];
                     if(re.origin_rank != rank) {
                         fprintf(stderr, "[neighbor_loop_runner ABORT rank=%d caller=%s] "
@@ -3511,6 +3600,31 @@ static void nlr_iter_dispatch_subgroup_mode_b_local_with_oracle(NlrIterDriver<Sp
             drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
         }
     }
+
+    /* TEMPORARY oracle accum comparison from host vectors — UVM write broken
+     * for Vel fields (same root cause as remote path).  Build slot→accum maps
+     * for both prod and oracle, then compare over the production active set.
+     * Remove with oracle teardown. */
+    if(n_prod > 0) {
+        std::unordered_map<int,int> oracle_k_by_slot;
+        oracle_k_by_slot.reserve(n_oracle);
+        for(int k = 0; k < n_oracle; k++) {
+            int slot = drv.active_set_oracle_uvm[sg][k];
+            oracle_k_by_slot[slot] = k;
+        }
+        char origin_tag[40];
+        std::snprintf(origin_tag, sizeof(origin_tag), "iter_sg%d_it%d", sg, drv.iter_index);
+        for(int k = 0; k < n_prod; k++) {
+            int slot = drv.active_set_uvm[sg][k];
+            auto it = oracle_k_by_slot.find(slot);
+            if(it != oracle_k_by_slot.end()) {
+                emit_oracle_mismatch_if_any<Spec>(ThisTask, slot,
+                    accums_prod[k], accums_oracle[it->second],
+                    origin_tag, &drv.oracle_mismatch_count);
+            }
+        }
+        drv.oracle_accum_compared_in_dispatch = true;
+    }
 }
 
 /* ============================================================================
@@ -3577,6 +3691,95 @@ static void nlr_iter_dispatch_subgroup_oracle_b_remote(NlrIterDriver<Spec>& drv,
         drv.accum_oracle_uvm[sg][slot] = accums_compacted[k];
     }
     /* brute_guard destructor flips set_oracle_brute_pass(false) here. */
+}
+
+/* ============================================================================
+ * nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle<Spec>(drv, sg)
+ *
+ * Combined single-epoch iterative oracle for Mode B remote (NTask>1).
+ * Replaces the two-call sequence (oracle_b_remote + mode_b_remote) that
+ * ran two independent helper round-trips, causing an epoch skew: the brute
+ * oracle drifted candidates before the production tree even collected its
+ * candidate set.
+ *
+ * Uses RemoteHelperMode::OracleIterative to collect tree + brute candidate
+ * sets in ONE shared epoch (pre-drift both, drift union, evaluate brute-
+ * first then tree), receiving tree -> drv.accum_uvm and brute ->
+ * drv.accum_oracle_uvm.  Both use the PRODUCTION active set and radii so
+ * the oracle comparison is "same radius, same epoch: does tree match brute?"
+ *
+ * Oracle radii are synced to production radii after each iter so that the
+ * oracle after_iter (b.oracle) runs on the same h_search as production.
+ * ========================================================================== */
+template <typename Spec>
+static void nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle(
+    NlrIterDriver<Spec>& drv, int sg)
+{
+    using AccumData = typename Spec::AccumData;
+
+    const NlrSubgroup& sgr    = drv.args.subgroups[sg];
+    const int n_compacted     = drv.active_set_size[sg];
+
+    std::vector<int>    active_particle_indices(n_compacted);
+    std::vector<double> radii_compacted(n_compacted);
+    for (int k = 0; k < n_compacted; k++) {
+        int slot                   = drv.active_set_uvm[sg][k];
+        active_particle_indices[k] = sgr.active_indices[slot];
+        radii_compacted[k]         = drv.radii_uvm[sg][slot];
+    }
+
+    neighbor_loop_args sub = drv.args;
+    sub.active_list = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
+    sub.num_active  = n_compacted;
+
+    std::vector<AccumData> accums_prod(n_compacted);
+    std::vector<AccumData> accums_oracle(n_compacted);
+    for (int k = 0; k < n_compacted; k++) {
+        Spec::zero_accum(accums_prod[k]);
+        Spec::zero_accum(accums_oracle[k]);
+    }
+
+    mode_b_remote_evaluate_into_buffer<Spec, RemoteHelperMode::OracleIterative>(
+        sub,
+        (n_compacted > 0) ? radii_compacted.data() : nullptr,
+        drv.cs,
+        drv.ctx,
+        (unsigned int)sgr.j_type_bitmask,
+        (n_compacted > 0) ? accums_prod.data()   : nullptr,
+        /*actives_out=*/nullptr,
+        /*tim=*/nullptr,
+        (n_compacted > 0) ? accums_oracle.data() : nullptr,
+        &drv.ctx_oracle);
+
+    /* TEMPORARY oracle accum comparison — host vectors known-correct (oracle UVM
+     * mismatches); oracle UVM write is broken for Vel fields (Probe3 shows Vel=0
+     * despite correct host source).  Compare here from host vectors and set flag
+     * so b.compare skips the UVM-based emit_oracle_mismatch_if_any.
+     * Remove with oracle teardown. */
+    {
+        char origin_tag[40];
+        std::snprintf(origin_tag, sizeof(origin_tag), "iter_sg%d_it%d", sg, drv.iter_index);
+        for (int k = 0; k < n_compacted; k++) {
+            int slot = drv.active_set_uvm[sg][k];
+            emit_oracle_mismatch_if_any<Spec>(ThisTask, slot,
+                accums_prod[k], accums_oracle[k], origin_tag, &drv.oracle_mismatch_count);
+        }
+        drv.oracle_accum_compared_in_dispatch = true;
+    }
+    /* Scatter both into driver-owned per-slot buffers.  Sync oracle radii to
+     * production radii so oracle after_iter uses the same h_search. */
+    for (int k = 0; k < n_compacted; k++) {
+        int slot = drv.active_set_uvm[sg][k];
+        drv.accum_uvm[sg][slot]        = accums_prod[k];
+        drv.accum_oracle_uvm[sg][slot] = accums_oracle[k];
+        drv.radii_oracle_uvm[sg][slot] = drv.radii_uvm[sg][slot];
+    }
+    /* Sync oracle active set to production active set for this iteration so
+     * (b.oracle) after_iter iterates the same slots. */
+    drv.active_set_oracle_size[sg] = n_compacted;
+    for (int k = 0; k < n_compacted; k++) {
+        drv.active_set_oracle_uvm[sg][k] = drv.active_set_uvm[sg][k];
+    }
 }
 
 /* ============================================================================
@@ -4074,14 +4277,23 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             /* (a.oracle) Step 2c.4 G1: brute-FIRST per iter. Independent
              * oracle trajectory; Mode B only (Mode A + oracle hard-stubbed
              * at outer entry). Helpers are collective on remote — must be
-             * entered on every rank regardless of local n_compacted. */
+             * entered on every rank regardless of local n_compacted.
+             *
+             * Both single-rank and multi-rank paths use a COMBINED helper
+             * that collects tree + brute candidate sets in one shared epoch
+             * (pre-drift both → drift union → evaluate brute-first, then
+             * tree).  The old two-call remote sequence was epoch-skewed:
+             * nlr_iter_dispatch_subgroup_oracle_b_remote drifted candidates
+             * before nlr_iter_dispatch_subgroup_mode_b_remote even collected
+             * its set, causing spurious iter-sg0-it0 mismatches at the first
+             * dm_dispersion call. */
             if (drv.oracle_enabled) {
                 if (NTask == 1) {
                     nlr_iter_dispatch_subgroup_mode_b_local_with_oracle<Spec>(drv, sg);
-                    continue;
                 } else {
-                    nlr_iter_dispatch_subgroup_oracle_b_remote<Spec>(drv, sg);
+                    nlr_iter_dispatch_subgroup_mode_b_remote_with_oracle<Spec>(drv, sg);
                 }
+                continue;
             }
 
             switch (path) {
@@ -4107,6 +4319,20 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                     }
                     endrun(81202);
                     break;
+            }
+        }
+
+        /* Snapshot production active sets BEFORE after_iter compaction so
+         * (b.compare) can compare only slots evaluated this iteration, not
+         * stale slots from prior iterations whose accum_uvm entries were
+         * never updated this iter. */
+        std::vector<std::vector<int>> prod_active_snapshot;
+        if (drv.oracle_enabled) {
+            prod_active_snapshot.resize(args.num_subgroups);
+            for (int sg = 0; sg < args.num_subgroups; sg++) {
+                int n = drv.active_set_size[sg];
+                prod_active_snapshot[sg].assign(
+                    drv.active_set_uvm[sg], drv.active_set_uvm[sg] + n);
             }
         }
 
@@ -4225,7 +4451,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
             int rank_now = 0;
             MPI_Comm_rank(MPI_COMM_WORLD, &rank_now);
             for (int sg = 0; sg < args.num_subgroups; sg++) {
-                const int n_max = args.subgroups[sg].num_active_local;
                 /* Codex 2c.4 non-blocking polish (2026-05-10): encode sg + iter
                  * into the origin tag so multi-subgroup iterative mismatch
                  * lines are diagnosable. Format keeps the existing "iter_"
@@ -4234,12 +4459,33 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
                 char origin_tag[40];
                 std::snprintf(origin_tag, sizeof(origin_tag),
                               "iter_sg%d_it%d", sg, drv.iter_index);
-                for (int slot = 0; slot < n_max; slot++) {
-                    emit_oracle_mismatch_if_any<Spec>(rank_now, slot,
-                        drv.accum_uvm[sg][slot],
-                        drv.accum_oracle_uvm[sg][slot],
-                        origin_tag,
-                        &drv.oracle_mismatch_count);
+                /* Compare only slots that were active (evaluated) in this
+                 * iteration.  The old loop over 0..n_max re-emitted stale
+                 * accum_uvm entries for slots that converged in prior iters,
+                 * producing identical residuals repeating across iterations. */
+                for (int slot : prod_active_snapshot[sg]) {
+                    /* Workaround for a Vista UVM-scatter regression observed in
+                     * the dm_dispersion port (3d.D, 2026-05-16): the oracle
+                     * UVM write of multi-field AccumData silently zeroed the
+                     * non-leading fields (e.g. DMDispOut::Vx/Vy/Vz/VelDisp
+                     * after Ngb) after scatter; pre-scatter values were
+                     * correct. The dispatch helpers below now compare oracle
+                     * vs production accums from host vectors before scatter
+                     * and set this flag; here we skip the broken UVM-based
+                     * compare to avoid false mismatches.
+                     * REMOVAL CONDITION: oracle is itself temporary scaffolding
+                     * (see feedback_oracle_teardown_mandatory.md); when the
+                     * oracle path is removed entirely at end of the port
+                     * project, this flag + guard go with it. Until then, do
+                     * NOT remove without first proving the UVM-scatter
+                     * regression is fixed for multi-field AccumData. */
+                    if (!drv.oracle_accum_compared_in_dispatch) {
+                        emit_oracle_mismatch_if_any<Spec>(rank_now, slot,
+                            drv.accum_uvm[sg][slot],
+                            drv.accum_oracle_uvm[sg][slot],
+                            origin_tag,
+                            &drv.oracle_mismatch_count);
+                    }
 
                     if (drv.status_prod_uvm[sg][slot] != drv.status_oracle_uvm[sg][slot]) {
                         emit_oracle_status_mismatch<Spec>(rank_now, sg, slot,
@@ -4542,5 +4788,13 @@ template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_iterative&);
 #endif
 
-/* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH
- * in run_mode_a). Same idiom as sink_environment_gpu.cc:388. */
+/* Phase 4 Wave-4 / 3d.D: DMDispersionSpec — DM velocity dispersion runner port.
+ * Gas actives (Type==0) iterate bisection on KernelRadiusDM to enclose
+ * 64±48 DM (Type==1) neighbors; accumulates unweighted Vel sums for dispersion.
+ * ActiveReduceOnly + SidxCacheKind::None (DM tbm matches neither GasOnly nor
+ * AllTypes cache). apply_active_writeback_iterative + Aux finalize pattern
+ * mirrors DensitySpec exactly. See galaxy_sf/dm_dispersion_loop.{h,cc}. */
+#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+template void run_neighbor_loop_iterative<DMDispersionSpec>(const neighbor_loop_args_iterative&);
+#endif
+

@@ -74,27 +74,10 @@ void mechfb_run_iterative(int *active_list, int num_active,
  * thin-wrapper retired in the radfb_local cleanup commit. ---- */
 
 
-/* ---- dm_dispersion (GALSF_SUBGRID_WINDS, scaling==2) ---- */
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
-
-/* Per-active-gas output from the DM-dispersion neighbor accumulation. */
-struct dispdens_gpu_out {
-    double Ngb;
-    double DM_Vx;
-    double DM_Vy;
-    double DM_Vz;
-    double DM_Vel_Disp;
-};
-
-/* GPU dispatch: build cross-type CSR (gas i → DM j, radius = radii_host[aa]),
-   run accumulation kernel, return per-active outputs in out_host[aa]. */
-void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
-                               int *i_active_host, int num_active,
-                               const double *i_radii_host,
-                               void *out_host_void);
-
-#endif /* GALSF_SUBGRID_WIND_SCALING==2 */
-#endif /* GALSF_SUBGRID_WINDS */
+/* ---- dm_dispersion (GALSF_SUBGRID_WINDS, scaling==2) ----
+ * Legacy dispdens_gpu_out / disp_density_evaluate_gpu retired by
+ * DMDispersionSpec (3d.D port). galaxy_sf/dm_dispersion_loop.{h,cc}
+ * is the replacement; dm_dispersion_gpu.cc has been deleted.
+ * -------------------------------------------------------------------- */
 
 #endif /* GALSF_GPU_DECLS_H */

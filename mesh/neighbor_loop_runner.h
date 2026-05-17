@@ -370,13 +370,13 @@ NlrCommonScalars nlr_common_scalars_from_all(void);
 
 /* Canonical host-side accessor for the global `All` struct.
  *
- * Spec::populate_call_scalars() MUST use this (or nlr_common_scalars_from_all())
- * — NEVER bare `All`. Reason: Spec _loop.cc files are GPU TUs that include
- * declarations/gpu_all_mirror.h, which `#define All All_dev` to a per-TU
- * `__managed__` mirror. That mirror is NOT synced from host All for most TUs,
- * so a host-side hook reading `All.foo` actually reads a zero-initialized
- * device mirror. nlr_host_all_ptr() bypasses the macro and returns the real
- * host global. Found 2026-05-11 via codex round-10 trace on AGS density port. */
+ * Under the per-TU AllDeviceMirror scheme the device-pass-only macro
+ * makes bare `All.*` in host code of a GPU TU safe (reads the host
+ * extern), but Spec::populate_call_scalars() and similar host hooks
+ * are still encouraged to route through this accessor for
+ * explicit-intent and as documentation of the host-snapshot semantics.
+ * (The "must use this — NEVER bare All" requirement from the old All_dev
+ * trap era is retired; the recommendation now is stylistic.) */
 struct global_data_all_processes; /* forward decl — full struct in allvars.h */
 const struct global_data_all_processes * nlr_host_all_ptr(void);
 
@@ -622,6 +622,12 @@ enum class RemoteHelperMode : int {
     Production       = 0,
     OracleCompare    = 1,
     OracleBrutePass  = 2,
+    /* OracleIterative: collect tree + brute candidate sets in ONE shared
+     * epoch (pre-drift both, drift union, evaluate brute-first then tree).
+     * Outputs tree -> accums_out, brute -> accums_oracle_out.  Used by the
+     * iterative remote oracle combined dispatch to guarantee epoch
+     * equivalence between production and oracle trajectories. */
+    OracleIterative  = 3,
 };
 
 /* ============================================================================
@@ -1423,6 +1429,10 @@ struct NlrIterDriver {
     std::vector<double *>                     new_h_oracle_uvm;         /* same shape */
 
     long long                                 oracle_mismatch_count = 0;  /* per-call, shared across origin tags */
+    /* TEMPORARY: set true by with_oracle dispatch helpers after comparing from
+     * host vectors; b.compare uses this to skip the broken UVM-based accum
+     * comparison.  Remove with oracle teardown. */
+    bool                                      oracle_accum_compared_in_dispatch = false;
 
     /* Independent ctx_oracle lifecycle (codex 2c.4 v2 P1). Own
      * populate_device_context + cleanup_device_context calls; NEVER aliased
@@ -1814,6 +1824,18 @@ struct NlrReplyEnvelope {
     int       origin_slot;
     int       origin_rank;
     AccumData accum;
+};
+
+/* Temporary iterative-oracle transport payload.
+ * This exists only to keep the port-validation oracle from doing two reply
+ * exchanges with identical tags. The oracle path is validation scaffolding,
+ * not permanent runner architecture; remove this with the oracle teardown. */
+template <typename AccumData>
+struct NlrDualReplyEnvelope {
+    int       origin_slot;
+    int       origin_rank;
+    AccumData accum_prod;
+    AccumData accum_oracle;
 };
 
 /* ============================================================================

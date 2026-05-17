@@ -1407,6 +1407,10 @@
 #endif
 #endif
 
+#if defined(GALSF_EFFECTIVE_EQS) && defined(GALSF_SFR_CRITERION) && (GALSF_SFR_CRITERION != 0)
+#error "GALSF_EFFECTIVE_EQS requires GALSF_SFR_CRITERION=0; molecular/virial/etc. criteria are not defined for this model (molecular fraction is undefined in the effective EOS)."
+#endif
+
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
 #if !(CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)) // allow to be set to integer value to represent a >1 number of special zoom sites
