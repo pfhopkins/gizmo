@@ -26,6 +26,9 @@
  *   GHOST_WRITEBACK_PARTICLE_ADD_VEC3(field)    snapshot-diff additive on P[j].field (Vec3<T>) [3e.2]
  *   GHOST_WRITEBACK_GAS_MAX(field)              home CellP[j].field = max(home, ghost)    [3e.2]
  *   GHOST_WRITEBACK_GAS_ADD_VEC3(field)         snapshot-diff additive on CellP[j].field (Vec3<T>) [radfb_local]
+ *   GHOST_WRITEBACK_GAS_ADD_ARRAY(f, N)         snapshot-diff additive on CellP[j].field[N]        [rt_source_injection]
+ *   GHOST_WRITEBACK_GAS_ADD_2D(f, N1, N2)       snapshot-diff additive on CellP[j].field[N1][N2]   [rt_source_injection]
+ *   GHOST_WRITEBACK_GAS_ADD_VEC3_ARRAY(f, N)    snapshot-diff additive on CellP[j].field[N] (Vec3<T>) [rt_source_injection]
  *
  * Semantics summary:
  *   ADD ops: pack(delta = post - snap), apply(home += delta).
@@ -693,6 +696,282 @@ const ghost_writeback_callback GasAddVec3Op<ElemT, MemPtr>::callback = {
     & GasAddVec3Op<ElemT, MemPtr>::s_ctx,
 };
 
+/* GasAddArrayOp<ElemT, N, ArrayMemPtr> — snapshot-diff additive reverse-comm
+ * for a fixed-size array field on gas_cell_data. Sibling of ParticleAddArrayOp;
+ * differs only in CellP[] vs P[] array. Used by rt_source_injection for
+ * CellP[j].Rad_Je[N_RT_FREQ_BINS] / CellP[j].Rad_E_gamma[N_RT_FREQ_BINS] /
+ * CellP[j].Rad_E_gamma_Pred[N_RT_FREQ_BINS]. */
+template <typename ElemT, int N, ElemT (gas_cell_data::*ArrayMemPtr)[N]>
+struct GasAddArrayOp {
+    static_assert(std::is_arithmetic<ElemT>::value,
+                  "GHOST_WRITEBACK_GAS_ADD_ARRAY requires an arithmetic element type");
+    static_assert(N > 0, "GHOST_WRITEBACK_GAS_ADD_ARRAY requires N > 0");
+
+    struct Snap { ElemT v[N]; };
+
+    struct Ctx {
+        Snap *snap;
+        int   num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int   home_index;
+        ElemT delta[N];
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (Snap*) malloc(num_ghosts * sizeof(Snap));
+        for (int g = 0; g < num_ghosts; g++) {
+            for (int k = 0; k < N; k++) {
+                c->snap[g].v[k] = (CellP[num_local + g].*ArrayMemPtr)[k];
+            }
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        for (int k = 0; k < N; k++) {
+            if ((CellP[num_local + g].*ArrayMemPtr)[k] != c->snap[g].v[k]) return 1;
+        }
+        return 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        for (int k = 0; k < N; k++) {
+            d->delta[k] = (CellP[num_local + g].*ArrayMemPtr)[k] - c->snap[g].v[k];
+        }
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        for (int k = 0; k < N; k++) {
+            (CellP[d->home_index].*ArrayMemPtr)[k] += d->delta[k];
+        }
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename ElemT, int N, ElemT (gas_cell_data::*ArrayMemPtr)[N]>
+typename GasAddArrayOp<ElemT, N, ArrayMemPtr>::Ctx
+GasAddArrayOp<ElemT, N, ArrayMemPtr>::s_ctx{nullptr, 0};
+
+template <typename ElemT, int N, ElemT (gas_cell_data::*ArrayMemPtr)[N]>
+const ghost_writeback_callback GasAddArrayOp<ElemT, N, ArrayMemPtr>::callback = {
+    sizeof(typename GasAddArrayOp<ElemT, N, ArrayMemPtr>::Delta),
+    & GasAddArrayOp<ElemT, N, ArrayMemPtr>::snapshot_fn,
+    & GasAddArrayOp<ElemT, N, ArrayMemPtr>::delta_for_ghost_fn,
+    & GasAddArrayOp<ElemT, N, ArrayMemPtr>::pack_fn,
+    & GasAddArrayOp<ElemT, N, ArrayMemPtr>::apply_fn,
+    & GasAddArrayOp<ElemT, N, ArrayMemPtr>::cleanup_fn,
+    & GasAddArrayOp<ElemT, N, ArrayMemPtr>::s_ctx,
+};
+
+/* GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr> — snapshot-diff additive reverse-comm
+ * for a 2-D fixed-size array field on gas_cell_data (e.g.
+ * CellP[j].Rad_Intensity[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS] used by
+ * rt_source_injection under RT_EVOLVE_INTENSITIES). Element type ElemT extracted
+ * from the field's declared type by the manifest macro via remove_all_extents_t. */
+template <typename ElemT, int N1, int N2, ElemT (gas_cell_data::*ArrayMemPtr)[N1][N2]>
+struct GasAdd2DOp {
+    static_assert(std::is_arithmetic<ElemT>::value,
+                  "GHOST_WRITEBACK_GAS_ADD_2D requires an arithmetic element type");
+    static_assert(N1 > 0 && N2 > 0, "GHOST_WRITEBACK_GAS_ADD_2D requires N1>0 and N2>0");
+
+    struct Snap { ElemT v[N1][N2]; };
+
+    struct Ctx {
+        Snap *snap;
+        int   num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int   home_index;
+        ElemT delta[N1][N2];
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (Snap*) malloc(num_ghosts * sizeof(Snap));
+        for (int g = 0; g < num_ghosts; g++) {
+            for (int a = 0; a < N1; a++) {
+                for (int b = 0; b < N2; b++) {
+                    c->snap[g].v[a][b] = (CellP[num_local + g].*ArrayMemPtr)[a][b];
+                }
+            }
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        for (int a = 0; a < N1; a++) {
+            for (int b = 0; b < N2; b++) {
+                if ((CellP[num_local + g].*ArrayMemPtr)[a][b] != c->snap[g].v[a][b]) return 1;
+            }
+        }
+        return 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        for (int a = 0; a < N1; a++) {
+            for (int b = 0; b < N2; b++) {
+                d->delta[a][b] = (CellP[num_local + g].*ArrayMemPtr)[a][b] - c->snap[g].v[a][b];
+            }
+        }
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        for (int a = 0; a < N1; a++) {
+            for (int b = 0; b < N2; b++) {
+                (CellP[d->home_index].*ArrayMemPtr)[a][b] += d->delta[a][b];
+            }
+        }
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename ElemT, int N1, int N2, ElemT (gas_cell_data::*ArrayMemPtr)[N1][N2]>
+typename GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::Ctx
+GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::s_ctx{nullptr, 0};
+
+template <typename ElemT, int N1, int N2, ElemT (gas_cell_data::*ArrayMemPtr)[N1][N2]>
+const ghost_writeback_callback GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::callback = {
+    sizeof(typename GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::Delta),
+    & GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::snapshot_fn,
+    & GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::delta_for_ghost_fn,
+    & GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::pack_fn,
+    & GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::apply_fn,
+    & GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::cleanup_fn,
+    & GasAdd2DOp<ElemT, N1, N2, ArrayMemPtr>::s_ctx,
+};
+
+/* GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr> — snapshot-diff additive reverse-
+ * comm for a fixed-size array of Vec3<ElemT> on gas_cell_data. Used by
+ * rt_source_injection under RT_EVOLVE_FLUX for
+ * CellP[j].Rad_Flux[N_RT_FREQ_BINS] / CellP[j].Rad_Flux_Pred[N_RT_FREQ_BINS].
+ * Sibling of GasAdd2DOp but the inner shape is a Vec3<T> struct rather than a
+ * raw T[3] — pointer-to-member-array deduction does not bind to Vec3<T>. */
+template <typename ElemT, int N, Vec3<ElemT> (gas_cell_data::*ArrayMemPtr)[N]>
+struct GasAddVec3ArrayOp {
+    static_assert(std::is_arithmetic<ElemT>::value,
+                  "GHOST_WRITEBACK_GAS_ADD_VEC3_ARRAY requires an arithmetic element type");
+    static_assert(N > 0, "GHOST_WRITEBACK_GAS_ADD_VEC3_ARRAY requires N > 0");
+
+    struct Snap { Vec3<ElemT> v[N]; };
+
+    struct Ctx {
+        Snap *snap;
+        int   num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int         home_index;
+        Vec3<ElemT> delta[N];
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (Snap*) malloc(num_ghosts * sizeof(Snap));
+        for (int g = 0; g < num_ghosts; g++) {
+            for (int k = 0; k < N; k++) {
+                c->snap[g].v[k] = (CellP[num_local + g].*ArrayMemPtr)[k];
+            }
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        for (int k = 0; k < N; k++) {
+            const Vec3<ElemT>& now = (CellP[num_local + g].*ArrayMemPtr)[k];
+            const Vec3<ElemT>& was = c->snap[g].v[k];
+            if (now[0] != was[0] || now[1] != was[1] || now[2] != was[2]) return 1;
+        }
+        return 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        for (int k = 0; k < N; k++) {
+            const Vec3<ElemT>& now = (CellP[num_local + g].*ArrayMemPtr)[k];
+            const Vec3<ElemT>& was = c->snap[g].v[k];
+            d->delta[k][0] = now[0] - was[0];
+            d->delta[k][1] = now[1] - was[1];
+            d->delta[k][2] = now[2] - was[2];
+        }
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        for (int k = 0; k < N; k++) {
+            (CellP[d->home_index].*ArrayMemPtr)[k] += d->delta[k];
+        }
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename ElemT, int N, Vec3<ElemT> (gas_cell_data::*ArrayMemPtr)[N]>
+typename GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::Ctx
+GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::s_ctx{nullptr, 0};
+
+template <typename ElemT, int N, Vec3<ElemT> (gas_cell_data::*ArrayMemPtr)[N]>
+const ghost_writeback_callback GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::callback = {
+    sizeof(typename GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::Delta),
+    & GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::snapshot_fn,
+    & GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::delta_for_ghost_fn,
+    & GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::pack_fn,
+    & GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::apply_fn,
+    & GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::cleanup_fn,
+    & GasAddVec3ArrayOp<ElemT, N, ArrayMemPtr>::s_ctx,
+};
+
 /* Small helper trait — extract ElemT from Vec3<ElemT>. Used by the
  * GHOST_WRITEBACK_PARTICLE_ADD_VEC3 macro so the science author writes only
  * the field name (not the element type) at the manifest site. */
@@ -760,6 +1039,37 @@ template <typename T> struct vec3_elem<Vec3<T>> { using type = T; };
     & ::gw_detail::GasAddVec3Op<                                              \
         typename ::gw_detail::vec3_elem<decltype(gas_cell_data::field)>::type,\
         &gas_cell_data::field                                                 \
+      >::callback,
+
+/* Fixed-size scalar-array variant on gas_cell_data. `field` is declared as
+ * `ElemT field[N]` on gas_cell_data (e.g. `MyFloat Rad_Je[N_RT_FREQ_BINS]`).
+ * Sibling of GHOST_WRITEBACK_PARTICLE_ADD_ARRAY — see GasAddArrayOp. */
+#define GHOST_WRITEBACK_GAS_ADD_ARRAY(field, N)                               \
+    & ::gw_detail::GasAddArrayOp<                                             \
+        std::remove_extent_t<decltype(gas_cell_data::field)>,                 \
+        (N), &gas_cell_data::field                                            \
+      >::callback,
+
+/* 2-D scalar-array variant on gas_cell_data. `field` is declared as
+ * `ElemT field[N1][N2]` (e.g.
+ * `MyFloat Rad_Intensity[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS]`). The macro
+ * uses std::remove_all_extents_t to peel both dimensions and recover ElemT. */
+#define GHOST_WRITEBACK_GAS_ADD_2D(field, N1, N2)                             \
+    & ::gw_detail::GasAdd2DOp<                                                \
+        std::remove_all_extents_t<decltype(gas_cell_data::field)>,            \
+        (N1), (N2), &gas_cell_data::field                                     \
+      >::callback,
+
+/* Fixed-size array-of-Vec3 variant on gas_cell_data. `field` is declared as
+ * `Vec3<ElemT> field[N]` (e.g. `Vec3<MyFloat> Rad_Flux[N_RT_FREQ_BINS]`).
+ * Element type extracted via vec3_elem<> applied to the array's element type
+ * (which std::remove_extent_t exposes as Vec3<ElemT>). */
+#define GHOST_WRITEBACK_GAS_ADD_VEC3_ARRAY(field, N)                          \
+    & ::gw_detail::GasAddVec3ArrayOp<                                         \
+        typename ::gw_detail::vec3_elem<                                      \
+          std::remove_extent_t<decltype(gas_cell_data::field)>                \
+        >::type,                                                              \
+        (N), &gas_cell_data::field                                            \
       >::callback,
 
 /* Bundle assembly. BUNDLE_BEGIN(loop) opens an anonymous-namespace block

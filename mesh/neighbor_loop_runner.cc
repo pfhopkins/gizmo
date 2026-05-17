@@ -92,6 +92,10 @@
 #include "../galaxy_sf/dm_dispersion_loop.h"
 #endif
 
+#ifdef RT_SOURCE_INJECTION
+#include "../radiation/rt_source_injection_loop.h"
+#endif
+
 /* ============================================================================
  * Shared NLR utility helpers (used by env-config and threshold blocks below).
  * File-scope static; TU-local linkage. Defined here so the threshold helpers
@@ -4796,5 +4800,19 @@ template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_
  * mirrors DensitySpec exactly. See galaxy_sf/dm_dispersion_loop.{h,cc}. */
 #if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
 template void run_neighbor_loop_iterative<DMDispersionSpec>(const neighbor_loop_args_iterative&);
+#endif
+
+/* Phase 4 Wave-3 / rt_source_injection: RtSrcInjectionSpec — radiation source
+ * injection runner port. Non-iterative scatter (non-gas sources → gas); the
+ * toplevel builds the active list directly (Aux::host_locals) so
+ * nlr_build_active_list is not used. SYMMETRIC search matches the legacy GPU
+ * evaluator (correctness-required under RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION).
+ * Ghost-writeback bundle uses three new generic ops (GAS_ADD_ARRAY,
+ * GAS_ADD_2D, GAS_ADD_VEC3_ARRAY); GRAIN_RDI_TESTPROBLEM boundary condition
+ * is imposed by an owner-local post-runner fixup in
+ * radiation/rt_source_injection.cc (not inside the pair kernel). See
+ * radiation/rt_source_injection_loop.{h,cc}. */
+#ifdef RT_SOURCE_INJECTION
+template void run_neighbor_loop<RtSrcInjectionSpec>(const neighbor_loop_args&);
 #endif
 
