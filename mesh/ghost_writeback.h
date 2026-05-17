@@ -182,13 +182,10 @@ void ghost_writeback_grainbackrx(void);
  * galaxy_sf/radfb_rp_loop.{h,cc} now uses the generic ghost-writeback
  * bundle (PARTICLE_ADD_VEC3 on Vel/dp + GAS_ADD_VEC3 on VelPred). */
 
-/* RT source injection variant: snapshot-based reverse communication for
- * rt_source_injection GPU kernel j-gas writes (radiation energy/source fields,
- * optional momentum kicks, and optional flux/intensity fields). */
-#ifdef RT_SOURCE_INJECTION
-void ghost_writeback_zero_rtsrcinjection(void);
-void ghost_writeback_rtsrcinjection(void);
-#endif
+/* RT source injection variant retired in Phase 4 / Wave 3 /
+ * rt_source_injection cleanup. RtSrcInjectionSpec in
+ * radiation/rt_source_injection_loop.{h,cc} now owns the j-side
+ * reverse-comm via the generic ghost-writeback bundle. */
 
 /* --- Ghost-write detector ---------------------------------------------------
  * Debug-build instrumentation that catches "GPU kernel touched ghost particles

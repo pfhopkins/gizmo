@@ -82,9 +82,9 @@ void rt_source_injection_initial_operations_preloop(void)
 #if defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION) && defined(RT_EVOLVE_FLUX)
 /* Testproblem-specific boundary-condition fixup.
  *
- * Replaces the legacy in-pair atomic_exchange block (formerly in
- * rt_source_injection_functions.h:163-178) which mixed additive injection with
- * assignment semantics; that pattern is incompatible with the additive
+ * Replaces the legacy in-pair atomic_exchange block (formerly in the
+ * pre-port rt_source_injection_functions.h) which mixed additive injection
+ * with assignment semantics; that pattern is incompatible with the additive
  * ghost-writeback bundle the runner-port uses.
  *
  * This is an OWNER-LOCAL postpass: every rank applies the same slab-geometry
