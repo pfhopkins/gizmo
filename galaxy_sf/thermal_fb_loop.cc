@@ -23,7 +23,6 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_sync_stub.h"   /* GPU_ALL_SYNC_FUNC_STUB; no #define All All_dev */
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/constants.h"           /* UNIT_*_IN_* macros (host-side use here only) */
 #include "../core/proto.h"
@@ -319,16 +318,7 @@ double ThermalFBSpec::compare_accum(const AccumData& local, const AccumData& ora
     return std::fabs(va - vb) / denom;
 }
 
-/* GPU_ALL_SYNC_FUNC_STUB: this TU compiles via GPU_CC (in GPU_OBJS) but
- * includes gpu_all_sync_stub.h NOT gpu_all_mirror.h — so there is no
- * `#define All All_dev` here, and no per-TU All_dev mirror needs syncing.
- * (Pattern matches sinks/sink_feed_loop.cc; the runner's actual device
- * kernel for ThermalFBSpec runs inside mesh/neighbor_loop_runner.cc and
- * uses that TU's All_dev.) */
-GPU_ALL_SYNC_FUNC_STUB(thermalfb)
-
 #else  /* !GALSF_FB_THERMAL */
 
-GPU_ALL_SYNC_FUNC_STUB(thermalfb)
 
 #endif /* GALSF_FB_THERMAL */

@@ -83,12 +83,13 @@ extern struct global_data_all_processes All;
 /*  Global variables                                     */
 /*********************************************************/
 
-/* Box-size shorthands.  Always macros reading from All (= All_dev managed
-   mirror inside GPU TUs) so the same code compiles for host + device with
-   no extern globals to keep in sync.  Step 5 Phase E0 (2026-04-30) — was
-   previously CPU-only externs synced from begrun.cc.
-   All.BoxSize is always a valid field (set from the param file even for
-   non-periodic runs), so boxSize/boxHalf are unconditionally defined. */
+/* Box-size shorthands.  Always macros reading from All so the same code
+   compiles for host + device with no extern globals to keep in sync.
+   In GPU TUs the device compilation pass remaps `All` to that TU's
+   private `AllDeviceMirror` via gpu_all_mirror.h, so these macros work
+   in both contexts unchanged. All.BoxSize is always a valid field (set
+   from the param file even for non-periodic runs), so boxSize/boxHalf
+   are unconditionally defined. */
 #define boxSize (All.BoxSize)
 #define boxHalf (0.5*All.BoxSize)
 #ifdef BOX_LONG_X
@@ -392,9 +393,11 @@ extern struct Subfind_DensityOtherPropsEval_data_out
    all existing code that includes allvars.h sees the type as before. */
 #include "global_data_all_struct.h"
 
-/* In GPU TUs, gpu_all_mirror.h #defines All to (*All_ptr) — a per-TU managed
- * pointer to a shared UVM allocation.  The #ifndef guard suppresses the extern
- * declaration so the macro doesn't expand it incorrectly. */
+/* In a GPU TU during the device compilation pass, gpu_all_mirror.h defines
+ * `All` to that TU's private `AllDeviceMirror`. The #ifndef guard keeps
+ * this re-declaration of the host extern from being macro-expanded in
+ * that pass; in the host pass and in non-GPU TUs the extern is declared
+ * normally. */
 #ifndef All
 extern struct global_data_all_processes All;
 #endif

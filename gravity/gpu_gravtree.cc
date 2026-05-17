@@ -1576,7 +1576,7 @@ gpu_gravtree_walk_one(int target,
 
 extern "C" int gpu_gravtree_walk_primary(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(gravtree);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(Ewald_iter > 0) {return 0;}
 
     int num_active_total = (int) ActiveParticleList.size();
@@ -2052,7 +2052,6 @@ extern "C" int gpu_gravtree_walk_primary(void)
     return nsucceeded;
 }
 
-GPU_ALL_SYNC_FUNC(gravtree)
 
 
 /* ========================================================================= *
@@ -2247,7 +2246,7 @@ gpu_ewald_walk_one(int target,
 
 extern "C" int gpu_ewald_walk_primary(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(gravtree);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(Ewald_iter == 0) {return 0;}
 #ifdef PMGRID
     return 0; /* Ewald walk not needed under TreePM (gravtree.cc:734 gate) */

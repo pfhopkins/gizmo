@@ -605,10 +605,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 {
     (void) active_root_node; /* Phase 9 hook; unused for now */
     if(Numnodestree <= 0) {return 0;}
-    /* Sync this TU's All_dev mirror from host All before any All.* read on
-     * device or under the per-TU All->All_dev redirect.  Without this,
-     * All.MaxPart and friends read as 0 in this TU. */
-    GIZMO_GPU_ENSURE_ALL_FRESH(moment_refresh);
+    /* Defensive idempotent sync of AllDevice before any device-side All.* read. */
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int n          = Numnodestree;       /* number of internal nodes [0..n) in SoA */
     int MaxPart    = All.MaxPart;
@@ -978,5 +976,4 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
     }
 }
 
-GPU_ALL_SYNC_FUNC(moment_refresh)
 

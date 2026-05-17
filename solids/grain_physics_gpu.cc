@@ -82,7 +82,7 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
                                 const double *src_radii_host)
 {
 #if defined(GRAIN_BACKREACTION)
-    GIZMO_GPU_ENSURE_ALL_FRESH(grainphysics);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int num_src = num_active;
 
@@ -238,7 +238,7 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
                                                           const double *src_radii_grain_host)
 {
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
-    GIZMO_GPU_ENSURE_ALL_FRESH(grainphysics);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int imported_ghosts = 0;
     {
@@ -433,7 +433,6 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
 }
 
 
-GPU_ALL_SYNC_FUNC(grainphysics)
 
 #else /* fallback stubs */
 
@@ -444,6 +443,5 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *p
                                                           int *ig, int ng, const double *rg,
                                                           int *ir, int nr, const double *rr)
 { (void)p; (void)cp; (void)num_total; (void)ig; (void)ng; (void)rg; (void)ir; (void)nr; (void)rr; }
-GPU_ALL_SYNC_FUNC_STUB(grainphysics)
 
 #endif /* GRAIN_FLUID */

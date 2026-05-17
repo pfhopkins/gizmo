@@ -28,7 +28,7 @@
 
 extern "C" int gpu_force_flag_localnodes(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(pseudo_update);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(NTopleaves <= 0) {return 0;}
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -148,7 +148,7 @@ extern "C" int gpu_force_flag_localnodes(void)
 
 extern "C" int gpu_scatter_pseudo_to_soa(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(pseudo_update);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(NTopleaves <= 0) {return 0;}
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -587,7 +587,7 @@ static void topnode_resum_node_(int no_abs,
 
 extern "C" int gpu_topnode_moment_resum(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(pseudo_update);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(NTopnodes <= 0) {return 0;}
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -625,7 +625,7 @@ extern "C" int gpu_topnode_moment_resum(void)
 /* ===================================================================== */
 extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(pseudo_update);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(count <= 0) {return 0;}
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -744,7 +744,4 @@ extern "C" int gpu_set_soa_nextnode(int abs_idx, int new_nextnode)
     soa->nextnode[k] = new_nextnode;
     return 0;
 }
-
-/* Per-TU All_dev sync stub (no-op on Kokkos path). */
-GPU_ALL_SYNC_FUNC(pseudo_update)
 

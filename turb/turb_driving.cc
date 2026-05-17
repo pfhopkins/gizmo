@@ -372,7 +372,7 @@ void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* routine to actually calculate the turbulent acceleration 'driving field' force on every resolution element */
 void add_turb_accel()
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(turb);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     set_turb_ampl();
     double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
 
@@ -534,7 +534,6 @@ void log_turb_temp(void)
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(turb)
 
 
 #endif

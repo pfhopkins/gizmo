@@ -153,7 +153,7 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
                             int j_type_bitmask,
                             struct ags_force_gpu_out *out_host)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(agsforce);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Wrapper fast-path: caller-side ags_density_isactive() filter has already
      * produced num_active.  When 0, skip arena/allocs/kernel/scatter. */
@@ -413,12 +413,10 @@ void ags_force_evaluate_gpu(struct particle_data *P_host,
 }
 
 
-GPU_ALL_SYNC_FUNC(agsforce)
 
 #else /* stubs when disabled */
 
 void ags_force_evaluate_gpu(struct particle_data *, int, int *, int,
                             const double *, int, struct ags_force_gpu_out *) {}
-GPU_ALL_SYNC_FUNC_STUB(agsforce)
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

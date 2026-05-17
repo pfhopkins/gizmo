@@ -15,7 +15,6 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_sync_stub.h"  /* GPU_ALL_SYNC_FUNC_STUB; no #define All All_dev */
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede density_loop.h */
 #include "../mesh/ghost_symlist_lifecycle.h" /* gizmo_ghost_safety_factor + hydro_density_redo (post-finalize downstream refresh) */
@@ -1541,4 +1540,3 @@ void density(void)
  * which carries its own All_dev sync; this is a no-op stub keeping
  * cooling.cc's per-TU sync sweep happy if a future build adds an extern
  * declaration in cooling.cc. */
-GPU_ALL_SYNC_FUNC_STUB(density_loop)

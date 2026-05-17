@@ -100,7 +100,7 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
                                        int *i_active_host, int num_active,
                                        const double *src_radii_host)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(rtsrcinjection);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Caller supplies LOCAL active-source indices (built from ActiveParticleList +
        rt_sourceinjection_active_check). Iterating num_total here would include
@@ -247,7 +247,6 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
     if(imported_ghosts) { ghost_exchange_cleanup(); }
 }
 
-GPU_ALL_SYNC_FUNC(rtsrcinjection)
 
 #else
 
@@ -259,6 +258,5 @@ void rt_source_injection_evaluate_gpu(struct particle_data *p,
 {
     (void)p; (void)cp; (void)num_total; (void)i_active_host; (void)num_active; (void)src_radii_host;
 }
-GPU_ALL_SYNC_FUNC_STUB(rtsrcinjection)
 
 #endif /* RT_SOURCE_INJECTION */

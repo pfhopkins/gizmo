@@ -60,7 +60,7 @@ extern "C" struct Morton128 *gpu_morton_keys_acquire(int npart)
 extern "C" int gpu_morton_compute_global_keys(int npart)
 {
     if(npart <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(morton);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     if(!gpu_morton_keys_acquire(npart)) {return 1;}
 
@@ -168,5 +168,4 @@ extern "C" void gpu_morton_release(void)
     }
 }
 
-GPU_ALL_SYNC_FUNC(morton)
 

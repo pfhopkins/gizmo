@@ -58,7 +58,6 @@
 /* TILE_PERIODIC_X/Y/Z defined in sfc_tiles.h (included via gpu_neighbor_list.h) */
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(density)
 
 
 /* ================================================================
@@ -96,7 +95,7 @@ void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *C
                            int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
                            void *out_host_void, int gradient_iteration)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(density);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     double t_grad_start = my_second(); /* DIAG */
     struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
 
@@ -305,7 +304,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                         int *csr_offsets_host, int *csr_neighbors_host, int csr_total_pairs,
                         void *out_host_void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(density);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     struct hydro_data_out *out_host = (struct hydro_data_out *)out_host_void;
     double t_hyd_start = my_second(); /* Phase 7 sub-bucket timing */
 

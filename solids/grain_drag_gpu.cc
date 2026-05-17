@@ -258,7 +258,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                              int *active_indices, int num_active)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(grain);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct gas_cell_data));
     memset(compact_Cell, 0, num_active * sizeof(struct gas_cell_data));
@@ -317,12 +317,10 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(grain)
 
 #else /* stubs */
 
 void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                              int *, int) {}
-GPU_ALL_SYNC_FUNC_STUB(grain)
 
 #endif /* GRAIN_FLUID */

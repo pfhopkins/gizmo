@@ -42,7 +42,7 @@ static int                  g_domain_idx_cap    = 0;
 
 extern "C" int gpu_peano_walk_acquire(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(peanowalk);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Grow the TopNodes mirror if needed. */
     if(g_topnodes_cap < NTopnodes) {
@@ -113,5 +113,4 @@ extern "C" const int *gpu_peano_walk_domain_node_index(void)
     return g_domain_idx_dev;
 }
 
-GPU_ALL_SYNC_FUNC(peanowalk)
 

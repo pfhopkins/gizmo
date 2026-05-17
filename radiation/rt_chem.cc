@@ -287,7 +287,7 @@ void rt_get_sigma(void)
  * CPU path uses compact arrays with OpenMP. */
 void rt_update_chemistry(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(rt_chem);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     /* Build index of active gas particles */
     int N_active = 0;
     for(int i : ActiveParticleList) {if(P[i].Type == 0) N_active++;}
@@ -428,7 +428,6 @@ void rt_write_chemistry_stats(void)
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(rt_chem)
 
 
 #endif /* RT_CHEM_PHOTOION */

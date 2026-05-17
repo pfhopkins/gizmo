@@ -50,7 +50,7 @@ void dmgrad_evaluate_gpu(struct particle_data *P_host, int num_total,
                          int loop_iteration,
                          void *out_host_void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(dmgrad);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     struct dmgrad_gpu_out *out_host = (struct dmgrad_gpu_out *)out_host_void;
 
     /* Wrapper fast-path: no active sources → skip arena/allocs/kernel/scatter. */
@@ -195,12 +195,10 @@ void dmgrad_evaluate_gpu(struct particle_data *P_host, int num_total,
     gpu_particles_arena_invalidate();
 }
 
-GPU_ALL_SYNC_FUNC(dmgrad)
 
 #else /* stubs */
 
 void dmgrad_evaluate_gpu(struct particle_data *, int, int *, int, const double *,
                          const struct dmgrad_gpu_in *, int, int, void *) {}
-GPU_ALL_SYNC_FUNC_STUB(dmgrad)
 
 #endif /* DM_FUZZY */

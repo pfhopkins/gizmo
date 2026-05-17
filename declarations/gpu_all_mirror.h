@@ -1,118 +1,125 @@
-/* gpu_all_mirror.h — single-include boilerplate for GPU TUs that need All.
+/* gpu_all_mirror.h — per-TU device-visible mirror of `All`, with central
+ * auto-registered sync.
  *
- * On CUDA: defines a per-TU static __managed__ copy of All (All_dev) and
- * redirects All -> All_dev so all existing All.field syntax works on both
- * host and device code.  Each TU gets its own managed copy, synced from
- * the host All by gizmo_gpu_sync_all() each timestep.
+ * Each GPU TU that includes this header gets its own private
+ * `static __managed__ AllDeviceMirror` plus an automatic, three-layer
+ * registration of its address with a central registry owned by
+ * cooling/cooling.cc:
  *
- * On OpenMP (Kokkos host backend): no-op.  All is the regular extern global
- * from allvars.h.
+ *   1. __attribute__((constructor)) function — fires at C++ runtime
+ *      startup (before main), broad safety net registering every
+ *      TU's mirror.
+ *   2. Dispatch-boundary forced registration — every call to
+ *      GIZMO_GPU_ENSURE_ALL_FRESH() runs gizmo_all_device_mirror_register_this_tu()
+ *      first, so any TU whose constructor was elided still registers
+ *      on its first GPU dispatch. Correctness belt.
+ *   3. Registry de-duplication — double registration is harmless.
  *
- * MUST be included BEFORE allvars.h so the #define All suppresses the extern
- * declaration in allvars.h (which has #ifndef All guard).
+ * During the device compilation pass (__CUDA_ARCH__ /
+ * __HIP_DEVICE_COMPILE__), `#define All AllDeviceMirror` redirects
+ * device-side `All.*` reads to the TU's local mirror, which the central
+ * `gizmo_gpu_sync_all()` copies from host `All` before every GPU
+ * dispatch. Host-pass reads in the same TU see the regular host extern
+ * `All` (no host-wrapper macro trap).
+ *
+ * Why per-TU mirrors rather than one shared symbol:
+ * Cross-TU `extern __managed__` and `extern __device__` both require
+ * CUDA Relocatable Device Code (`-rdc=true` / `-dc`), which this
+ * Makefile does not enable. Without RDC, every cross-TU device-symbol
+ * declaration becomes a per-TU definition with its own backing
+ * allocation (`cudaGetSymbolAddress` returned err=cudaErrorInvalidSymbol
+ * in non-defining TUs on Vista's nvcc/Kokkos toolchain — measured
+ * 2026-05-17). Per-TU mirrors with auto-registered central sync gives
+ * the same correctness and the same author-facing API as a single
+ * shared mirror would, without the RDC requirement. Cost: ~30 × 33KB =
+ * ~1MB managed memory per rank, all identical post-sync. Negligible.
+ *
+ * On host-only Kokkos backends (GIZMO_GPU_COMPILER undef): `All` is the
+ * regular host extern; no mirror exists.
+ *
+ * Conventionally included before allvars.h in GPU TUs.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 #ifndef GPU_ALL_MIRROR_H
 #define GPU_ALL_MIRROR_H
 
-/* Include global_data_all_struct.h FIRST — it defines GIZMO_GPU_COMPILER
-   (via __CUDACC__/__HIPCC__ detection) which we need for the guard below,
-   and provides the struct type needed for the __managed__ declaration. */
 #include "global_data_all_struct.h"
+
+/* Host extern, declared in both compilation passes so the host pass of a
+   GPU TU sees the real host extern even when the device-pass macro fires
+   below. */
+extern struct global_data_all_processes All;
 
 #if defined(GIZMO_GPU_COMPILER)
 
-/* Per-TU managed copy of the global All struct.  __managed__ makes it
-   accessible from both host and device code within this translation unit.
-   The #define redirects all All.field accesses to the managed copy. */
-static __managed__ struct global_data_all_processes All_dev;
-#define All All_dev
-
-/* DEPRECATED 2026-05-12: this inline used a push_macro/pop_macro trick to
- * "locally undo" the `#define All All_dev` redirect. Under nvcc_wrapper the
- * trick proved UNRELIABLE — it returned the per-TU All_dev mirror instead
- * of the host extern (density-port SP4 saga). All callers must use the
- * canonical out-of-line `gizmo_host_all_ptr()` from declarations/allvars.cc,
- * declared in core/proto.h. This shim now forwards to the canonical accessor
- * so any straggler caller is still safe; remove once no callers remain.
- * See feedback_all_dev_trap_host_side.md (permanent memory). */
 #ifdef __cplusplus
 extern "C" {
 #endif
-struct global_data_all_processes *gizmo_host_all_ptr(void);
+/* Central registry entry point. Defined in cooling/cooling.cc using a
+ * Meyer's-singleton vector so static-init-order across TUs is safe.
+ * De-duplicates on call so multiple registrations of the same address
+ * are harmless. */
+void gizmo_register_all_device_mirror(struct global_data_all_processes *mirror);
 #ifdef __cplusplus
 }
 #endif
-static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
-    return gizmo_host_all_ptr();
+
+/* Per-TU private mirror in managed memory. `static __managed__` gives
+   each TU its own internal-linkage symbol. */
+static __managed__ struct global_data_all_processes AllDeviceMirror;
+
+/* Per-TU forced registration helper. Static inline + function-local
+ * static bool means each TU has its own copy of both function and flag;
+ * the flag fast-paths the no-op case after first call. Called by both
+ * the auto-registration constructor below and by GIZMO_GPU_ENSURE_ALL_FRESH()
+ * for defense-in-depth against constructor elision. */
+static inline void gizmo_all_device_mirror_register_this_tu(void) {
+    static bool registered = false;
+    if(!registered) {
+        gizmo_register_all_device_mirror(&AllDeviceMirror);
+        registered = true;
+    }
 }
 
-/* Macro to generate the per-TU sync function that copies host All -> All_dev.
-   gizmo_gpu_sync_all() in cooling.cc calls each TU's sync function.
-   Usage: place GPU_ALL_SYNC_FUNC(cooling) at file scope in each GPU TU. */
-#define GPU_ALL_SYNC_FUNC(name) \
-    void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { \
-        All_dev = *host_all; \
+/* Layer 1: broad safety net. Fires before main() in every GPU TU that
+ * includes this header. Per-TU anonymous-namespace + static keeps the
+ * function file-local. __attribute__((constructor)) is harder to elide
+ * than an anonymous-namespace static object's constructor (which was
+ * silently dropped in ~28 of ~30 TUs during 2026-05-17 dev — see
+ * OPEN_allmir_m11i_treeforce_hang.md). */
+namespace {
+    __attribute__((constructor))
+    static void _gizmo_all_device_mirror_autoreg(void) {
+        gizmo_all_device_mirror_register_this_tu();
     }
+}
 
-/* Same name, no body — for the `#else` (feature-disabled) branch of a GPU TU
-   so cooling.cc's `extern void gizmo_gpu_sync_all_<name>(...);` call still
-   resolves.  Step 5 Phase E2 (2026-04-30) — replaces ~14 hand-written
-   `void gizmo_gpu_sync_all_<X>(...) { (void)p; }` boilerplate sites. */
-#define GPU_ALL_SYNC_FUNC_STUB(name) \
-    void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
+/* Device-compilation-pass-only redirect. `__CUDA_ARCH__` is defined by
+   nvcc only during the device-side compile pass; `__HIP_DEVICE_COMPILE__`
+   is the HIP equivalent. On the host pass of the same GPU TU, the
+   redirect is NOT defined, so `All.foo` resolves to the host extern
+   declared above. */
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+#define All AllDeviceMirror
+#endif
 
-/* Freshness guard for the top of a GPU dispatch function.  Ensures this TU's
-   All_dev mirror matches host All right now (idempotent; trivial cost — a single
-   struct copy).  Use this instead of assuming gizmo_gpu_sync_all() at the top of
-   the timestep covers all mid-step All.* mutations; the guard makes the
-   invariant local and self-enforcing.
-   The extern declaration at block scope lets the guard appear above the TU's
-   GPU_ALL_SYNC_FUNC(name) definition (which lives at end of file). */
-/* Codex 2026-05-12: the freshness guard MUST use the canonical out-of-line
- * host accessor `gizmo_host_all_ptr()` (defined in declarations/allvars.cc)
- * rather than the inline `gizmo_gpu_host_all_ptr()` in this header. dbg27
- * proved the inline accessor's push_macro/undef trick is unreliable under
- * nvcc_wrapper — it returned the TU's All_dev (stale) instead of host All.
- * Using the out-of-line function guarantees a real host read.
- *
- * See feedback_all_dev_trap_host_side.md (permanent memory). */
-#define GIZMO_GPU_ENSURE_ALL_FRESH(name) do { \
-    extern void gizmo_gpu_sync_all_##name(struct global_data_all_processes *); \
-    extern struct global_data_all_processes *gizmo_host_all_ptr(void); \
-    gizmo_gpu_sync_all_##name(gizmo_host_all_ptr()); \
+/* Declared with normal C++ linkage in core/proto.h; do NOT add extern
+   "C" here — a second declaration with different linkage would conflict. */
+void gizmo_gpu_sync_all(void);
+
+/* Central no-arg freshness guard. Layer 2: forces registration of this
+ * TU's mirror (idempotent after first call), then runs the central
+ * sync. Cheap and idempotent; safe to call at the top of any GPU
+ * dispatch function. */
+#define GIZMO_GPU_ENSURE_ALL_FRESH() do { \
+    gizmo_all_device_mirror_register_this_tu(); \
+    gizmo_gpu_sync_all(); \
 } while(0)
 
-#else
+#else  /* GIZMO_GPU_COMPILER undef — pure host build */
 
-/* Kokkos OpenMP backend — All is the regular extern from allvars.h.
-   Still need the sync function stub so cooling.cc can call it. */
-
-/* DEPRECATED 2026-05-12: same back-compat shim as the CUDA branch. Forwards
- * to canonical `gizmo_host_all_ptr()` so both backends route through the same
- * single point of truth. New code should call `gizmo_host_all_ptr()` directly.
- * See feedback_all_dev_trap_host_side.md. */
-#ifdef __cplusplus
-extern "C" {
-#endif
-struct global_data_all_processes *gizmo_host_all_ptr(void);
-#ifdef __cplusplus
-}
-#endif
-static inline struct global_data_all_processes *gizmo_gpu_host_all_ptr(void) {
-    return gizmo_host_all_ptr();
-}
-
-#define GPU_ALL_SYNC_FUNC(name) \
-    void gizmo_gpu_sync_all_##name(struct global_data_all_processes *host_all) { (void)host_all; }
-
-/* Stub form — same as GPU_ALL_SYNC_FUNC on the host backend (no real sync
-   needed since All is already host-live). */
-#define GPU_ALL_SYNC_FUNC_STUB(name) GPU_ALL_SYNC_FUNC(name)
-
-/* Freshness guard — no-op on host Kokkos backend (All is already live). */
-#define GIZMO_GPU_ENSURE_ALL_FRESH(name) ((void)0)
+#define GIZMO_GPU_ENSURE_ALL_FRESH() ((void)0)
 
 #endif
 

@@ -24,4 +24,3 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *P
                                                           int *i_active_grain_host, int num_active_grain,
                                                           const double *src_radii_grain_host);
 
-void gizmo_gpu_sync_all_grainphysics(struct global_data_all_processes *p);

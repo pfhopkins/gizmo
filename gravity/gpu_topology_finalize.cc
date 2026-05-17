@@ -25,7 +25,7 @@
 extern "C" int gpu_topology_finalize_father(int n)
 {
     if(n <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(topo_finalize_father);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int MaxPart = All.MaxPart;
 
@@ -101,7 +101,7 @@ extern "C" int gpu_topology_finalize_father(int n)
 extern "C" int gpu_topology_finalize_sibling(int n)
 {
     if(n <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(topo_finalize_sibling);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int MaxPart = All.MaxPart;
 
@@ -191,7 +191,7 @@ extern "C" int gpu_topology_writeback_d_to_aos(int n)
 extern "C" int gpu_node_reset_ephemeral(int n)
 {
     if(n <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(node_reset_ephemeral);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Codex 2026-05-12: host-side scalar capture from `All.*` in a GPU TU
      * MUST use the canonical out-of-line accessor, not bare All.* (which
@@ -253,7 +253,4 @@ extern "C" void gpu_tree_free_bytes(void *p)
     if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
 }
 
-GPU_ALL_SYNC_FUNC(topo_finalize_father)
-GPU_ALL_SYNC_FUNC(topo_finalize_sibling)
-GPU_ALL_SYNC_FUNC(node_reset_ephemeral)
 

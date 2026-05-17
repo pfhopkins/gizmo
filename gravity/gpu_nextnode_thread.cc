@@ -65,7 +65,7 @@
 extern "C" int gpu_nextnode_thread(void)
 {
     if(Numnodestree <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(nextnode_thread);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int n         = Numnodestree;
     int MaxPart   = All.MaxPart;
@@ -161,5 +161,4 @@ extern "C" int gpu_nextnode_thread(void)
     return 0;
 }
 
-GPU_ALL_SYNC_FUNC(nextnode_thread)
 

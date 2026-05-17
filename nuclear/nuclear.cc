@@ -182,7 +182,7 @@ KOKKOS_FUNCTION void nuclear_fixup_mass_fractions(int j, struct particle_data *p
 void nuclear_parent_routine(void)
 {
     PRINT_STATUS("Nuclear burning update");
-    GIZMO_GPU_ENSURE_ALL_FRESH(nuclear);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Step 1: determine active gas particles eligible for burning */
     std::vector<int> burn_indices;
@@ -279,6 +279,5 @@ void nuclear_parent_routine(void)
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(nuclear)
 
 #endif /* NUCLEAR_NETWORK */

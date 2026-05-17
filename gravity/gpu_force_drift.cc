@@ -92,7 +92,7 @@ double gpu_node_drift_factor_(integertime time0, integertime time1,
 
 extern "C" int gpu_force_drift_nodes(integertime time1)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(force_drift);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     if(Numnodestree <= 0) {return 0;}
 
@@ -306,5 +306,4 @@ extern "C" void gpu_force_drift_release(void)
     }
 }
 
-GPU_ALL_SYNC_FUNC(force_drift)
 

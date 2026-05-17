@@ -45,7 +45,7 @@ void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
                                const double *i_radii_host,
                                void *out_host_void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(dispdensity);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     struct dispdens_gpu_out *out_host = (struct dispdens_gpu_out *)out_host_void;
 
     /* Wrapper fast-path: no active sources → skip arena/allocs/kernel/scatter. */
@@ -125,11 +125,9 @@ void disp_density_evaluate_gpu(struct particle_data *P_host, int num_total,
 }
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(dispdensity)
 
 #else /* stubs when disabled */
 
 void disp_density_evaluate_gpu(struct particle_data *, int, int *, int, const double *, void *) {}
-GPU_ALL_SYNC_FUNC_STUB(dispdensity)
 
 #endif /* GALSF_SUBGRID_WINDS && GALSF_SUBGRID_WIND_SCALING==2 */

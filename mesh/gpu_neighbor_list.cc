@@ -628,16 +628,14 @@ void gpu_spatial_index_build(struct particle_data *P_shared, int num_total,
     idx->box_halves[0] = boxHalf_X; idx->box_halves[1] = boxHalf_Y; idx->box_halves[2] = boxHalf_Z;
     /* Hard guard: bbox_overlaps_sphere_gpu's periodic-wrap math goes pathological
      * (every node "overlaps" every query, BVH degenerates to exhaustive scan)
-     * if box_sizes[k] is 0 while periodic_flags[k] is on. This was the latent
-     * bug pre-866aad55 caused by missing gizmo_gpu_sync_all_ngb registration.
-     * Fail loud at build time so any future regression in the All_dev sync
-     * path can never silently corrupt performance again. */
+     * if box_sizes[k] is 0 while periodic_flags[k] is on. Fail loud at the
+     * call site so any regression in the per-TU AllDeviceMirror sync can never
+     * silently corrupt performance again. */
     for(int k = 0; k < 3; k++) {
         if(idx->periodic_flags[k] && !(idx->box_sizes[k] > 0.0)) {
             printf("gpu_spatial_index_build: periodic_flags[%d]=1 but box_sizes[%d]=%g (caller='%s'). "
-                   "Likely cause: gpu_neighbor_list TU's All_dev not synced from host All. "
-                   "Check that gizmo_gpu_sync_all_ngb is registered in gizmo_gpu_sync_all() "
-                   "(cooling/cooling.cc).\n",
+                   "Likely cause: this TU's AllDeviceMirror not synced from host All. "
+                   "Confirm gizmo_gpu_sync_all() has run for this timestep.\n",
                    k, k, idx->box_sizes[k], caller_label ? caller_label : "?");
             fflush(stdout);
             endrun(913004);
@@ -1915,4 +1913,3 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(ngb)

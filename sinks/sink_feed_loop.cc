@@ -24,7 +24,6 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_sync_stub.h"  /* GPU_ALL_SYNC_FUNC_STUB; no #define All All_dev */
 #include "../declarations/gpu_numeric_macros.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_feed_loop.h */
@@ -253,15 +252,7 @@ double SinkFeedSpec::compare_accum(const AccumData& local, const AccumData& orac
     return max_rel;
 }
 
-/* GPU All_dev sync stub for cooling.cc's per-TU sync sweep. sink_feed_loop.cc
- * is host-pattern-compiled (NOT in GPU_OBJS), so this expands to a stub on
- * both Mac (OpenMP backend) and Vista (CUDA backend); there is no per-TU
- * All_dev for sink_feed_loop because the device kernel runs inside the
- * runner's TU (mesh/neighbor_loop_runner.cc) and uses that TU's All_dev. */
-GPU_ALL_SYNC_FUNC_STUB(sinkfeed)
-
 #else  /* !SINK_PARTICLES */
 
-GPU_ALL_SYNC_FUNC_STUB(sinkfeed)
 
 #endif /* SINK_PARTICLES */

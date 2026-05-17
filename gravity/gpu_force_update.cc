@@ -241,5 +241,4 @@ finish_mpi:
     }
 }
 
-GPU_ALL_SYNC_FUNC(force_update)
 

@@ -41,15 +41,12 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
-/* gpu_all_mirror.h NOT gpu_all_sync_stub.h: radfb_rp_loop.h's inline
+/* gpu_all_mirror.h: required because radfb_rp_loop.h's inline
  * radfb_rp_pair_kick calls rt_kappa (KOKKOS_INLINE_FUNCTION) which reads
- * All.* internally. When nvcc_wrapper compiles this TU for device, rt_kappa's
- * `All` must resolve to All_dev (the device mirror) — gpu_all_mirror.h
- * provides `#define All All_dev` + the device-side All_dev extern. Same
- * pattern as the legacy galaxy_sf/radfb_local_gpu.cc. NOTE: this enables
- * the feedback_all_dev_trap_host_side hazard for HOST functions in this TU
- * (host-side bare `All.*` silently reads stale All_dev mirror). All host
- * code in this TU MUST read All.* through gizmo_host_all_ptr() — see below. */
+ * All.* internally. The header's device-pass `#define All AllDeviceMirror`
+ * makes that read resolve to this TU's local per-TU mirror. Host code
+ * in this TU sees the normal host extern (the macro fires only during
+ * the device compilation pass), so bare `All.*` is safe in host wrappers. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/constants.h"           /* UNIT_*_IN_* macros (host-side use only) */
@@ -75,10 +72,10 @@
 
 bool RadFBRPSpec::is_active(int i)
 {
-    /* Host-only function in a GPU TU: bare `All.*` here would resolve to the
-     * potentially-stale All_dev mirror via gpu_all_mirror.h's
-     * `#define All All_dev`. Route via canonical out-of-line
-     * gizmo_host_all_ptr() per feedback_all_dev_trap_host_side. */
+    /* Host-only function in a GPU TU. Under the per-TU AllDeviceMirror
+     * scheme bare `All.*` here is now safe (device-pass-only macro), but
+     * the canonical out-of-line accessor is retained as explicit-intent
+     * documentation. */
     const struct global_data_all_processes *HostAll = gizmo_host_all_ptr();
     if (HostAll->ComovingIntegrationOn) {
         if (P[i].Type != 4) return false;
@@ -382,11 +379,11 @@ int radfb_rp_local_fill(int i,
                          struct RadFBRPLocalIn *loc,
                          double *src_radius_out)
 {
-    /* Host-only function in a GPU TU. Route ALL All.* / UNIT_* reads via
-     * gizmo_host_all_ptr() (feedback_all_dev_trap_host_side) — bare `All.*`
-     * in this TU resolves to All_dev via gpu_all_mirror.h's #define.
-     * UNIT_* macros expand to All.UnitMass_in_g / All.HubbleParam / etc., so
-     * those also need pre-evaluation from HostAll. */
+    /* Host-only function in a GPU TU. Under the per-TU AllDeviceMirror
+     * scheme the device-pass macro is host-pass-inert, so bare `All.*`
+     * here would read the host extern correctly. The canonical
+     * out-of-line accessor is retained as explicit-intent documentation
+     * and to give a single named local for UNIT_* pre-evaluation. */
     const struct global_data_all_processes *HostAll = gizmo_host_all_ptr();
     const double unit_mass_in_cgs    = HostAll->UnitMass_in_g / HostAll->HubbleParam;
     const double unit_vel_in_cgs     = HostAll->UnitVelocity_in_cm_per_s;
@@ -576,8 +573,8 @@ double RadFBRPSpec::compare_accum(const AccumData& local, const AccumData& oracl
  * Lives HERE (not in radfb_local.cc) so the RP runner-template wire-up stays
  * in the same two-file Spec module (header + .cc). radfb_local.cc stays
  * host-only (STARFORM_OBJS) and keeps the unrelated legacy
- * HII_heating_singledomain + do_the_local_ionization — those host functions
- * must NOT inherit a GPU TU's All_dev macro substitution. accel.cc calls
+ * HII_heating_singledomain + do_the_local_ionization in their own host
+ * TU. accel.cc calls
  * `radiation_pressure_winds_consolidated()` via its forward decl in
  * core/proto.h; the linker resolves it here.
  *
@@ -613,9 +610,8 @@ void radiation_pressure_winds_consolidated(void)
     std::vector<int>             active_src;
     std::vector<RadFBRPLocalIn>  host_locals;
     {
-        /* HostAll: route All.* via canonical gizmo_host_all_ptr() (this TU
-         * has #define All All_dev via gpu_all_mirror.h; bare All.* would
-         * silently read the stale device mirror). */
+        /* Canonical host-extern accessor; explicit-intent local for the
+         * host-side reads below. */
         const struct global_data_all_processes *HostAll = gizmo_host_all_ptr();
         if (HostAll->RP_Local_Momentum_Renormalization > 0)
         {
@@ -682,13 +678,7 @@ void radiation_pressure_winds_consolidated(void)
      * buffer. */
 }
 
-/* GPU_ALL_SYNC_FUNC for this TU's per-TU All_dev mirror (gpu_all_mirror.h
- * is included above for device-side rt_kappa). Matches the legacy
- * radfb_local_gpu.cc:384 entry. */
-GPU_ALL_SYNC_FUNC(radfbrp)
-
 #else  /* !GALSF_FB_FIRE_RT_LOCALRP */
 
-GPU_ALL_SYNC_FUNC_STUB(radfbrp)
 
 #endif /* GALSF_FB_FIRE_RT_LOCALRP */

@@ -203,7 +203,7 @@ ifeq ($(SYSTYPE),"Vista_CPU")
 ## Vista Grace ARM with Kokkos OpenMP backend (debug oracle for the GPU build).
 ## Same source code path as Vista (Kokkos kernels), just dispatched to OpenMP
 ## CPU threads instead of CUDA. GIZMO_GPU_COMPILER is NOT defined (no nvcc),
-## so __managed__ All_dev blocks are skipped and All remains the normal extern.
+## so the per-TU AllDeviceMirror blocks are skipped and All remains the normal extern.
 ## Load modules: nvidia openmpi hdf5/2.0.0 fftw3 gsl kokkos/4.5.01-omp
 ## (i.e. kokkos/4.5.01-omp NOT kokkos/4.5.01-cuda; the rest matches the CUDA build).
 ## mpicxx on Vista wraps nvc++ (NVIDIA HPC SDK), not gcc — no -foffload needed.
@@ -314,7 +314,7 @@ endif
 ## Kokkos::parallel_for dispatches to OpenMP threads, SharedSpace = HostSpace.
 ## GPU TU files (cooling.cc, density_gpu.cc, etc.) are compiled with the same mpicxx
 ## compiler but with Kokkos include flags. GIZMO_GPU_COMPILER is NOT defined (no nvcc),
-## so __managed__ All_dev blocks are skipped and All remains the normal extern global.
+## so the per-TU AllDeviceMirror blocks are skipped and All remains the normal extern global.
 ## Install: brew install kokkos (needs libomp: brew install libomp)
 ifeq ($(SYSTYPE),"MacBookCellar_Kokkos")
 CC       =  mpicc
@@ -478,9 +478,10 @@ STARFORM_OBJS = galaxy_sf/sfr_eff.o \
 # contains only HII_heating_singledomain + do_the_local_ionization (legacy
 # host code with many bare All.* reads). The RP runner-template caller
 # `radiation_pressure_winds_consolidated` lives in radfb_rp_loop.cc (a GPU
-# TU) — keeping radfb_local.cc host-only avoids inheriting gpu_all_mirror.h's
-# `#define All All_dev` which would silently break HII's All.* reads
-# (feedback_all_dev_trap_host_side).
+# TU). The macro-poisoning rationale for the split is gone under the
+# per-TU AllDeviceMirror scheme (device-pass-only macro), but keeping
+# radfb_local.cc out of GPU_OBJS still saves compile time + avoids
+# pulling Kokkos headers into the unrelated host code.
 
 SINK_OBJS = sinks/sink.o \
             sinks/sink_util.o \
@@ -683,7 +684,6 @@ sidm/dm_fuzzy_gpu.o: sidm/dm_fuzzy_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 ## sinks/sink_environment_gpu.o retired (3d.2 cleanup); legacy
 ## sink_environment_second_evaluate_gpu absorbed by SinkEnv2Spec runner port.
-## GPU_ALL_SYNC_FUNC_STUB(sinkenv) moved to sinks/sink_env1_loop.cc.
 sidm/cbe_integrator_gpu.o: sidm/cbe_integrator_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 radiation/rt_source_injection_gpu.o: radiation/rt_source_injection_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc

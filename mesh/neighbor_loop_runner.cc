@@ -37,7 +37,7 @@
 #include <utility>                                   /* std::declval for SFINAE hook detection */
 #include <Kokkos_Core.hpp>
 
-#include "../declarations/gpu_all_mirror.h"          /* MUST precede allvars.h: #define All All_dev for device code */
+#include "../declarations/gpu_all_mirror.h"          /* per-TU AllDeviceMirror + device-pass `All` redirect; include before allvars.h */
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"      /* g_global_drift_counter etc. for Mode B corridor */
 #include "../core/proto.h"
@@ -140,18 +140,12 @@ static bool nlr_env_is_one(const char *name) {
  * ghost-safety-factor source, etc.) are caller-invisible.
  * ========================================================================== */
 
-/* Canonical accessor for host-side global `All`. See header doc — this
- * bypasses the per-TU `#define All All_dev` redirect from gpu_all_mirror.h.
- *
- * Codex 2026-05-12 (post-dbg27): the inline `gizmo_gpu_host_all_ptr()`
- * defined in gpu_all_mirror.h proved UNRELIABLE under nvcc_wrapper — its
- * push_macro/undef/pop_macro trick returned the TU-local All_dev mirror
- * instead of the real host extern. Every Spec's populate_call_scalars
- * captured stale values into CallScalars (silent wrong physics, no
- * immediate abort). Route through `gizmo_host_all_ptr()` (defined in
- * declarations/allvars.cc which has NO `#define All All_dev`) so the
- * returned pointer reliably points at host All. See
- * feedback_all_dev_trap_host_side.md. */
+/* Thin wrapper over the canonical host accessor; retained for callers
+ * that already route through this name. With the per-TU AllDeviceMirror
+ * scheme's device-pass-gated `#define All AllDeviceMirror`, bare `All.*`
+ * in host code reads the host extern unconditionally, so this
+ * indirection is no longer load-bearing — kept for stability of
+ * existing call sites. */
 const struct global_data_all_processes * nlr_host_all_ptr(void)
 {
     return gizmo_host_all_ptr();
@@ -159,8 +153,6 @@ const struct global_data_all_processes * nlr_host_all_ptr(void)
 
 NlrCommonScalars nlr_common_scalars_from_all(void)
 {
-    /* MUST go through nlr_host_all_ptr(): this TU includes gpu_all_mirror.h,
-     * so bare `All` resolves to the unsynced per-TU All_dev mirror. */
     const struct global_data_all_processes *h = nlr_host_all_ptr();
     NlrCommonScalars s;
     s.cf_atime                = h->cf_atime;
@@ -1880,7 +1872,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     /* Arena + freshness (matches sinks/sink_environment_gpu.cc:76,86). The
      * caller is responsible for the args.CellP=NULL-when-no-gas decision;
      * runner does not read All.TotN_gas. */
-    GIZMO_GPU_ENSURE_ALL_FRESH(neighbor_loop_runner);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
     struct particle_data *P_gpu    = gpu_particles_arena_P();
@@ -2835,7 +2827,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
     }
 
     /* === (2) Arena acquire ONCE per call, with refreshed args === */
-    GIZMO_GPU_ENSURE_ALL_FRESH(neighbor_loop_runner);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(effective_args.num_total,
                                  effective_args.P, effective_args.CellP);
@@ -2976,7 +2968,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
     effective_args.CellP     = (gizmo_host_all_ptr()->TotN_gas > 0) ? CellP : nullptr;
 
     /* === (6) Fresh arena view of new pool === */
-    GIZMO_GPU_ENSURE_ALL_FRESH(neighbor_loop_runner);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(effective_args.num_total,
                                  effective_args.P, effective_args.CellP);
@@ -4552,4 +4544,3 @@ template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_
 
 /* Per-TU GPU All-mirror sync function (paired with GIZMO_GPU_ENSURE_ALL_FRESH
  * in run_mode_a). Same idiom as sink_environment_gpu.cc:388. */
-GPU_ALL_SYNC_FUNC(neighbor_loop_runner)

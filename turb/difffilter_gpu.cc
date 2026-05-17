@@ -48,7 +48,7 @@ void difffilter_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
                              int num_total, int *active_indices_host, int num_active,
                              void *out_host_void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(difffilter);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     struct DiffFilter_out *out_host = (struct DiffFilter_out *)out_host_void;
 
     /* Wrapper fast-path: no active gas → skip arena/allocs/kernel/scatter. */
@@ -237,7 +237,7 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
                               void *in_host_void, void *out0_host_void, void *out_iter_host_void,
                               int dynamic_iteration)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(difffilter);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     struct DynDiff_gpu_in *in_host = (struct DynDiff_gpu_in *)in_host_void;
     struct DynDiff_gpu_out0 *out0_host = (struct DynDiff_gpu_out0 *)out0_host_void;
     struct DynDiff_gpu_out_iter *out_iter_host = (struct DynDiff_gpu_out_iter *)out_iter_host_void;
@@ -414,7 +414,6 @@ void dynamicdiff_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
-GPU_ALL_SYNC_FUNC(difffilter)
 
 #else /* stubs */
 
@@ -423,6 +422,5 @@ void difffilter_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 void dynamicdiff_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
                               int, int *, int, int *, int *, int,
                               void *, void *, void *, int) {}
-GPU_ALL_SYNC_FUNC_STUB(difffilter)
 
 #endif /* TURB_DIFF_DYNAMIC */

@@ -86,7 +86,6 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
     printf("  GPU cbe_drift_kick: %d active\n", num_active);
 }
 
-GPU_ALL_SYNC_FUNC(cbeintegrator)
 
 #else
 
@@ -96,6 +95,5 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *p, int num_total,
 {
     (void)p; (void)num_total; (void)active; (void)num_active; (void)dt_arr;
 }
-GPU_ALL_SYNC_FUNC_STUB(cbeintegrator)
 
 #endif /* CBE_INTEGRATOR */

@@ -13,6 +13,5 @@ void rt_source_injection_evaluate_gpu(struct particle_data *P_host,
                                        int num_total,
                                        int *i_active_host, int num_active,
                                        const double *src_radii_host);
-void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *p);
 
 #endif /* RT_SOURCE_INJECTION_GPU_H */

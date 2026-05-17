@@ -90,7 +90,6 @@ struct sink_env_second_gpu_out {
 };
 #endif
 
-void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *);
 
 #endif /* SINK_PARTICLES */
 #endif /* SINKS_GPU_DECLS_H */

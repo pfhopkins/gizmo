@@ -57,7 +57,7 @@ static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *name
 extern "C" int gpu_topology_build_data_path(int npart)
 {
     if(npart <= 0) {return 0;}
-    GIZMO_GPU_ENSURE_ALL_FRESH(topobuild);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Acquire dependencies. */
     int rc = gpu_peano_walk_acquire();
@@ -195,7 +195,7 @@ struct BfsItem {
 
 extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH(topobuild);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
     if(new_node_count_out) {*new_node_count_out = start_node_index;}
 
     /* Dependencies. */
@@ -469,5 +469,4 @@ extern "C" void gpu_topology_build_release(void)
     g_topleaf_cap = 0;
 }
 
-GPU_ALL_SYNC_FUNC(topobuild)
 

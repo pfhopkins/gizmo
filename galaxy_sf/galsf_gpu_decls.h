@@ -16,11 +16,7 @@
 
 /* thermal_fb (B6) GPU decls retired in 3e.2: thermal_fb_evaluate_gpu
  * removed entirely; the runner-template caller in thermal_fb.cc replaces it.
- * gizmo_gpu_sync_all_thermalfb is still externed + called by cooling.cc as
- * part of the global gizmo_gpu_sync_all dispatch, but is now defined as a
- * no-op stub in thermal_fb_loop.cc (GPU_ALL_SYNC_FUNC_STUB(thermalfb)) —
- * the runner-template TU reads All via nlr_host_all_ptr(), no mirror sync
- * needed. Declaration intentionally NOT redeclared here. */
+ * Declaration intentionally NOT redeclared here. */
 
 /* ---- mechanical_fb (B8) ----
  * Runs all 6 modes (-2, -1, 0, 1, 2, 3) of the default-scheme addFB_evaluate
@@ -46,7 +42,6 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                                  int *i_active_host, int num_active,
                                  const double *src_radii_host,
                                  int *n_couplings_out);
-void gizmo_gpu_sync_all_mechfb(struct global_data_all_processes *p);
 
 /* Phase 4 / Wave 3 / 3e.1 runner-template entry points (milestone 3:
  * physics-complete, single-rank validated). Replace `mechanical_fb_evaluate_gpu`

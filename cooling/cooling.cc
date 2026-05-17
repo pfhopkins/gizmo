@@ -10,8 +10,6 @@
 #include <string>
 #include <Kokkos_Core.hpp>
 
-/* GPU All mirror: per-TU managed pointer to shared UVM allocation.
- * Must precede allvars.h so #define All suppresses the extern declaration. */
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 /* On CUDA, nvcc uses the FIRST declaration's execution-space attributes.
@@ -165,7 +163,7 @@ static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
-    GIZMO_GPU_ENSURE_ALL_FRESH(cooling); /* local re-sync of All_dev — cheap insurance against stale mid-step reads */
+    GIZMO_GPU_ENSURE_ALL_FRESH(); /* idempotent re-sync of per-TU AllDeviceMirrors — cheap insurance against stale mid-step reads */
     /* Step 1: Determine indices of active gas particles eligible for cooling. */
     std::vector<int> cool_indices;
     cool_indices.reserve(ActiveParticleList.size());
@@ -2609,112 +2607,39 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
 }
 void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
 
-/* ---- Per-TU sync function declarations ----
-   Each GPU TU defines a sync function (via GPU_ALL_SYNC_FUNC macro in
-   gpu_all_mirror.h) that copies the host All into its TU-local __managed__
-   All_dev.  gizmo_gpu_sync_all() calls them all, passing a pointer to the
-   host All so no push_macro/pop_macro gymnastics are needed in each TU. */
-extern void gizmo_gpu_sync_all_cooling(struct global_data_all_processes *);
-extern void gizmo_gpu_sync_all_eos(struct global_data_all_processes *);
-#ifdef NUCLEAR_NETWORK
-extern void gizmo_gpu_sync_all_nuclear(struct global_data_all_processes *);
-#endif
-extern void gizmo_gpu_sync_all_density(struct global_data_all_processes *);
-#ifdef RT_CHEM_PHOTOION
-extern void gizmo_gpu_sync_all_rt_chem(struct global_data_all_processes *);
-#endif
-#ifdef TURB_DRIVING
-extern void gizmo_gpu_sync_all_turb(struct global_data_all_processes *);
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-extern void gizmo_gpu_sync_all_difffilter(struct global_data_all_processes *);
-#endif
-#ifdef GRAIN_FLUID
-extern void gizmo_gpu_sync_all_grain(struct global_data_all_processes *);
-#endif
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
-extern void gizmo_gpu_sync_all_dispdensity(struct global_data_all_processes *);
-#endif
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-extern void gizmo_gpu_sync_all_agsforce(struct global_data_all_processes *);
-#endif
-#ifdef DM_FUZZY
-extern void gizmo_gpu_sync_all_dmgrad(struct global_data_all_processes *);
-#endif
-#ifdef SINK_PARTICLES
-extern void gizmo_gpu_sync_all_sinkenv(struct global_data_all_processes *);
-#endif
-#ifdef CBE_INTEGRATOR
-extern void gizmo_gpu_sync_all_cbeintegrator(struct global_data_all_processes *);
-#endif
-#ifdef RT_SOURCE_INJECTION
-extern void gizmo_gpu_sync_all_rtsrcinjection(struct global_data_all_processes *);
-#endif
-#ifdef GALSF_FB_THERMAL
-extern void gizmo_gpu_sync_all_thermalfb(struct global_data_all_processes *);
-#endif
-#ifdef SINK_PARTICLES
-extern void gizmo_gpu_sync_all_sinkfeed(struct global_data_all_processes *);
-#endif
-extern void gizmo_gpu_sync_all_ngb(struct global_data_all_processes *);
-
-void gizmo_gpu_sync_all(void) {
-    /* Get pointer to host All (undo the #define All All_dev redirect) */
-#pragma push_macro("All")
-#undef All
-    extern struct global_data_all_processes All;
-    struct global_data_all_processes *host_all = &All;
-#pragma pop_macro("All")
-    refresh_timestep_dilation_factors_for_gpu();
-    /* Sync every TU's __managed__ All_dev from host All */
-    gizmo_gpu_sync_all_cooling(host_all);
-    gizmo_gpu_sync_all_eos(host_all);
-#ifdef NUCLEAR_NETWORK
-    gizmo_gpu_sync_all_nuclear(host_all);
-#endif
-    gizmo_gpu_sync_all_density(host_all);
-#ifdef RT_CHEM_PHOTOION
-    gizmo_gpu_sync_all_rt_chem(host_all);
-#endif
-#ifdef TURB_DRIVING
-    gizmo_gpu_sync_all_turb(host_all);
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-    gizmo_gpu_sync_all_difffilter(host_all);
-#endif
-#ifdef GRAIN_FLUID
-    gizmo_gpu_sync_all_grain(host_all);
-#endif
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
-    gizmo_gpu_sync_all_dispdensity(host_all);
-#endif
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    gizmo_gpu_sync_all_agsforce(host_all);
-#endif
-#ifdef DM_FUZZY
-    gizmo_gpu_sync_all_dmgrad(host_all);
-#endif
-#ifdef SINK_PARTICLES
-    gizmo_gpu_sync_all_sinkenv(host_all);
-    gizmo_gpu_sync_all_sinkfeed(host_all);
-#endif
-#ifdef CBE_INTEGRATOR
-    gizmo_gpu_sync_all_cbeintegrator(host_all);
-#endif
-#ifdef RT_SOURCE_INJECTION
-    gizmo_gpu_sync_all_rtsrcinjection(host_all);
-#endif
-#ifdef GALSF_FB_THERMAL
-    gizmo_gpu_sync_all_thermalfb(host_all);
-#endif
-    /* gpu_neighbor_list TU's All_dev — feeds box_sizes/box_halves used by
-     * gpu_spatial_index_build's periodic-wrap math. Without this sync the
-     * mirror stays zero, periodic wrap turns gap negative in
-     * bbox_overlaps_sphere_gpu, every BVH bbox falsely "overlaps" every
-     * query, and the BVH walk degenerates to an exhaustive O(N) scan
-     * regardless of num_active. */
-    gizmo_gpu_sync_all_ngb(host_all);
+/* Central registry of per-TU AllDeviceMirror addresses.
+ * Each GPU TU's gpu_all_mirror.h include instantiates a private
+ * `static __managed__ AllDeviceMirror` plus auto-registration via a
+ * __attribute__((constructor)) function AND via the dispatch-boundary
+ * GIZMO_GPU_ENSURE_ALL_FRESH() macro. Either path lands here. The
+ * registry de-duplicates so double registration is harmless.
+ * Meyer's-singleton vector keeps static-init-order across TUs safe. */
+#if defined(GIZMO_GPU_COMPILER)
+static std::vector<struct global_data_all_processes *> &gizmo_all_device_mirror_registry(void)
+{
+    static std::vector<struct global_data_all_processes *> reg;
+    return reg;
 }
+extern "C" void gizmo_register_all_device_mirror(struct global_data_all_processes *m)
+{
+    auto &reg = gizmo_all_device_mirror_registry();
+    for(auto *x : reg) { if(x == m) return; }
+    reg.push_back(m);
+}
+#endif
 
-/* This TU's own sync function */
-GPU_ALL_SYNC_FUNC(cooling)
+/* Central host->device sync. Fences before and after the per-TU mirror
+   copies: leading fence drains any in-flight kernels reading mirrors,
+   trailing fence publishes new values to subsequent launches. On
+   host-only Kokkos backends there is no mirror; the function reduces
+   to the dilation-factor refresh + fences. */
+void gizmo_gpu_sync_all(void) {
+    refresh_timestep_dilation_factors_for_gpu();
+    Kokkos::fence();
+#if defined(GIZMO_GPU_COMPILER)
+    const struct global_data_all_processes *host_all = gizmo_host_all_ptr();
+    auto &reg = gizmo_all_device_mirror_registry();
+    for(auto *m : reg) { *m = *host_all; }
+#endif
+    Kokkos::fence();
+}

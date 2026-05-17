@@ -73,6 +73,5 @@ void dmgrad_evaluate_gpu(struct particle_data *P_host, int num_total,
 void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
                                   const int *active_host, int num_active,
                                   const double *dt_host);
-void gizmo_gpu_sync_all_cbeintegrator(struct global_data_all_processes *p);
 
 #endif /* SIDM_GPU_DECLS_H */

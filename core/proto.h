@@ -431,11 +431,10 @@ extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec);
 void ghost_exchange_cleanup(void);
 int ghost_exchange_needs_redo(void);
 /* Canonical out-of-line host accessors for `All.*` — defined in
- * declarations/allvars.cc (the TU that owns `All`). Use these from any
- * host-side code inside a GPU TU (one that includes gpu_all_mirror.h
- * and therefore has `#define All All_dev`) in place of bare `All.*`.
- * Routing through this canonical accessor is the only reliable way to
- * read the host extern from a poisoned TU. See feedback_all_dev_trap_host_side.md. */
+ * declarations/allvars.cc (the TU that owns `All`). Useful where
+ * explicit host-extern intent helps readability. With the central
+ * AllDevice mirror's device-pass-gated redirect, host wrapper code in
+ * GPU TUs may also read `All.*` directly. */
 #ifdef __cplusplus
 extern "C" {
 #endif

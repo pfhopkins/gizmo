@@ -26,7 +26,6 @@
 #include <cmath>
 
 #include "../declarations/allvars.h"
-#include "../declarations/gpu_all_sync_stub.h"  /* GPU_ALL_SYNC_FUNC_STUB; no #define All All_dev */
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_env1_loop.h */
 #include "../mesh/ghost_writeback.h"      /* scaffold + detector */
@@ -340,15 +339,7 @@ void SinkEnv1Spec::diagnostic_dump_neighbor_list(const NeighborListDumpView<Sink
     if(v.active_slot == args.num_active - 1) s_fired = 1;
 }
 
-/* GPU All_dev sync stub for cooling.cc per-TU sweep. Inherited from
- * the retired sinks/sink_environment_gpu.cc (3d.2 cleanup). sink_env1_loop.cc
- * is host-pattern compiled (NOT GPU_OBJS), so on both backends this expands
- * to a stub — sink_env1's device kernel runs inside the runner's TU
- * (mesh/neighbor_loop_runner.cc) which carries its own All_dev sync. */
-GPU_ALL_SYNC_FUNC_STUB(sinkenv)
-
 #else  /* !SINK_PARTICLES */
 
-GPU_ALL_SYNC_FUNC_STUB(sinkenv)
 
 #endif /* SINK_PARTICLES */

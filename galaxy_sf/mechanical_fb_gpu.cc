@@ -80,7 +80,7 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
                                  int *n_couplings_out)
 {
     ghost_write_detector_begin("mechanical_fb");
-    GIZMO_GPU_ENSURE_ALL_FRESH(mechfb);
+    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Caller-supplies-active-list rule: i_active_host[] holds LOCAL indices
        built from ActiveParticleList + per-mode active-check (superset across
@@ -395,7 +395,6 @@ void mechanical_fb_evaluate_gpu(struct particle_data *P_host,
     if(imported_ghosts) ghost_exchange_cleanup();
 }
 
-GPU_ALL_SYNC_FUNC(mechfb)
 
 #else
 
@@ -412,6 +411,5 @@ void mechanical_fb_evaluate_gpu(struct particle_data *p,
     (void)i_active_host; (void)num_active; (void)src_radii_host;
     if(n_couplings_out) *n_couplings_out = 0;
 }
-GPU_ALL_SYNC_FUNC_STUB(mechfb)
 
 #endif /* GALSF_FB_MECHANICAL */
