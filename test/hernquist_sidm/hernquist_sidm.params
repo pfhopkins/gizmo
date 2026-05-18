@@ -13,9 +13,9 @@ InitCondFile                       hernquist_sidm_ics
 OutputDir                          output
 
 TimeBegin                          0.0
-TimeMax                            0.004       % 2 coarse steps at MaxSizeTimestep=0.002
-TimeBetSnapshot                    0.002       % one snapshot per coarse step
-TimeBetStatistics                  0.002
+TimeMax                            0.1         % ~50 coarse steps at MaxSizeTimestep=0.002; SIDM mean-free-time in the core is ~0.002 for cross-section 1, so this lets many scatters fire
+TimeBetSnapshot                    0.01        % 10 snapshots across the run
+TimeBetStatistics                  0.01
 
 % Softening — AGS_KernelRadius is adaptive; these are the min/max bounds
 Softening_Type0                    0
