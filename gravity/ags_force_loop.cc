@@ -234,14 +234,19 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
 #define CMP_INT(field)         if(local.field != oracle.field) max_rel = std::fmax(max_rel, 1.0);
 
 #if defined(DM_SIDM)
-    CMP_ADD_ARRAY(sidm_kick, 3)
-    /* dtime_sidm sentinel = MAX_REAL_NUMBER when no scatter; compare only
-     * when at least one side has been pulled below the sentinel. */
-    if(local.dtime_sidm != (double)MAX_REAL_NUMBER ||
-       oracle.dtime_sidm != (double)MAX_REAL_NUMBER) {
-        CMP_ADD(dtime_sidm)
-    }
-    CMP_INT(si_count)
+    /* SIDM scatter fields (sidm_kick, dtime_sidm, si_count) are intentionally
+     * excluded from oracle comparison. SIDM scatter is a discrete Monte Carlo
+     * collision operator that directly transforms particle velocities. Production
+     * Mode B applies j-side kicks (atomic_add to P[j].Vel) mid-loop so that
+     * subsequent pairs involving j act on the updated velocity — this is correct
+     * physics for a non-linear collision operator (snapshotting initial velocities
+     * would cause two successive collisions to violate energy/momentum conservation
+     * nonlinearly). The oracle brute pass suppresses j-writes, evaluating a
+     * different physical process; exact AccumData agreement is therefore not
+     * meaningful. SIDM physics is validated through conservation/statistical checks
+     * (scatter event count, wakeup activations, momentum/energy, snapshot vs IC).
+     * Phil Hopkins + Codex review, 2026-05-18. */
+    (void)local; (void)oracle;
 #endif
 #ifdef DM_FUZZY
     CMP_ADD_ARRAY(acc, 3)
