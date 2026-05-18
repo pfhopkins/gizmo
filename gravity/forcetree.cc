@@ -314,6 +314,11 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * ancestor topnode moments directly in SoA.  SoA is authoritative after
      * this point — no mark_all_dirty needed. */
     if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(913341);}
+    /* LET completeness: foreign topleaf moments + N_part are now live (AoS via
+     * force_exchange_pseudodata_complete, SoA via gpu_scatter_pseudo_to_soa).
+     * Redirect provably-empty unredirected foreign topleaves to skip-to-sibling
+     * and hard-fail on any non-empty unredirected one — before the GPU walk. */
+    let_finalize_unredirected_foreign_topleaves();
     if(gpu_topnode_moment_resum() != 0)     {endrun(913342);}
     TimeOfLastTreeConstruction = All.Time;
     return Numnodestree;

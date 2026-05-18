@@ -41,6 +41,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/step_phases.h"            /* gizmo_verbose_diag */
 #include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "../core/step_phases.h"              /* gizmo_verbose_diag() */
@@ -1190,5 +1191,87 @@ extern "C" int let_run_exchange(void)
     myfree(all_active_bitmaps);
     myfree(my_active_bitmap);
     return 0;
+}
+
+/* ----------------------------------------------------------------------
+ * let_finalize_unredirected_foreign_topleaves
+ *
+ * LET completeness invariant. After let_run_exchange() (foreign subtrees
+ * installed + topleaf redirects done) AND force_exchange_pseudodata_complete()
+ * (foreign topleaf moments + N_part populated in the AoS NODE), every foreign
+ * topleaf reachable by the GPU gravity walk must be in exactly one of:
+ *
+ *   (1) redirected -- Nodes[DomainNodeIndex[t]].u.d.nextnode points into the
+ *       foreign-node range: an installed LET subtree.  Left untouched.
+ *   (2) provably empty -- still pointing into the pseudo range, AND the
+ *       foreign topleaf has BOTH zero mass moment AND zero N_part.  Such a
+ *       topleaf carries no gravitational moment and no structural payload
+ *       (RT/CR/sink/etc. ride on real particles, of which there are none),
+ *       so opening it contributes exactly nothing: rewrite nextnode := sibling
+ *       (AoS + SoA) so the walk skips it instead of hitting the pseudo.
+ *
+ * Anything else -- a topleaf still pointing into the pseudo range that is not
+ * provably empty by BOTH measures -- is a LET correctness failure: Phase 9.4
+ * retired the CPU gravity export path, so the LET MUST supply every non-empty
+ * foreign subtree.  Abort loudly with full context.
+ *
+ * mass is the physics criterion; N_part is the structural-invariant guard --
+ * a topleaf with N_part>0 must never be silently skipped even if its gravity
+ * mass moment is zero, and mass>0 with N_part==0 is an inconsistent moment.
+ * Both are transmitted to foreign nodes by force_exchange_pseudodata
+ * (forcetree.cc: pack line ~1071, unpack line ~1185).
+ *
+ * Must be called from force_treebuild() AFTER gpu_scatter_pseudo_to_soa(),
+ * before any GPU gravity walk reads the SoA.
+ * ---------------------------------------------------------------------- */
+extern "C" void let_finalize_unredirected_foreign_topleaves(void)
+{
+    if(MaxForeignNodes <= 0) return;   /* non-GPU build: LET inactive */
+
+    const long long pseudo_lo = (long long)All.MaxPart + MaxNodes + MaxForeignNodes;
+    const long long pseudo_hi = pseudo_lo + NTopleaves;
+    int n_patched = 0;
+
+    for(int t = 0; t < NTopleaves; t++)
+    {
+        if(DomainTask[t] == ThisTask) continue;          /* local topleaf */
+        int no = DomainNodeIndex[t];
+        if(no < All.MaxPart || no >= All.MaxPart + MaxNodes)
+        {
+            printf("LET finalize FATAL: foreign topleaf t=%d owner=%d has out-of-range "
+                   "DomainNodeIndex=%d (local node range [%d,%d)).\n",
+                   t, DomainTask[t], no, All.MaxPart, All.MaxPart + MaxNodes);
+            fflush(stdout); endrun(914050);
+        }
+        const long long nn = Nodes[no].u.d.nextnode;
+        if(nn < pseudo_lo || nn >= pseudo_hi) continue;  /* already redirected */
+
+        /* Still pointing at a pseudo. Skip ONLY if provably empty by BOTH
+         * the gravity moment and the structural particle count. */
+        const double mass  = (double) Nodes[no].u.d.mass;
+        const long   npart = Nodes[no].N_part;
+        if(mass <= 0.0 && npart == 0)
+        {
+            Nodes[no].u.d.nextnode = Nodes[no].u.d.sibling;
+            gpu_set_soa_nextnode(no, Nodes[no].u.d.sibling);
+            n_patched++;
+        }
+        else
+        {
+            printf("LET finalize FATAL: foreign topleaf t=%d owner_rank=%d node=%d still "
+                   "unredirected (nextnode=%d in pseudo range) and NOT provably empty: "
+                   "mass=%g N_part=%ld len=%g sibling=%d. The Locally Essential Tree failed "
+                   "to ship this subtree; Phase 9.4 retired the CPU gravity export path, so "
+                   "the LET must be complete. (rank=%d)\n",
+                   t, DomainTask[t], no, (int)nn, mass, npart, (double)Nodes[no].len,
+                   Nodes[no].u.d.sibling, ThisTask);
+            fflush(stdout); endrun(914051);
+        }
+    }
+    if(n_patched > 0 && gizmo_verbose_diag()) {
+        printf("LET finalize: rank=%d skip-to-sibling applied to %d provably-empty foreign topleaves.\n",
+               ThisTask, n_patched);
+        fflush(stdout);
+    }
 }
 
