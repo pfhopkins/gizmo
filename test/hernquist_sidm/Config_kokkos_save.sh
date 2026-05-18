@@ -6,7 +6,6 @@
 
 
 # Gravity + box setup (pure DM, no gas, no PM)
-BOX_PERIODIC
 BOX_SPATIAL_DIMENSION=3
 
 # Adaptive softening for all particle types (required for AGSForce to
