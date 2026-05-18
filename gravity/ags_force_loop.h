@@ -48,6 +48,9 @@
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 /* NOTE: caller TUs must include "../mesh/kernel.h" before this header
  * (kernel_main / kernel_hinv used by the inline pair body; no include guard). */
+#include "../core/timestep_functions.h"     /* get_particle_timestep_in_physical
+                                              * (KOKKOS_INLINE — must be visible in
+                                              * neighbor_loop_runner.cc at instantiation) */
 #include "ags_functions.h"                  /* get_particle_volume_ags_P,
                                               return_grain_cross_section_per_unit_mass_P */
 
