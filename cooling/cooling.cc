@@ -2102,6 +2102,7 @@ Mode 1: Use for the C photoionization rate: apply cross- and self-shielding fact
 */
 KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(target < 0) {return 1;} /* for non-gas elements assume the standard Habing value unless otherwise specified by special module behavior */
     MyFloat G0 = 0.;
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES)
     G0 += cell[target].Rad_Flux_UV;

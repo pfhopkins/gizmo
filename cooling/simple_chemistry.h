@@ -19,6 +19,7 @@
 KOKKOS_INLINE_FUNCTION
 MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat ne = cell[i].Density * All.cf_a3inv * HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS * x_elec;
     MyFloat G0 = get_FUV_G0(i, shieldfac, 0, pp, cell);
     return G0 * sqrt(temp) / ne + 50;
@@ -29,6 +30,7 @@ MyFloat grain_charge_psi(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac,
 KOKKOS_INLINE_FUNCTION
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, int j, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat psi = grain_charge_psi(i, temp, x_elec, shieldfac, pp, cell);
     /* Weingartner & Draine 2001 Table 3 coefficients: C[ion][7] */
     const double C_table[12][7] = {
@@ -54,6 +56,7 @@ MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfa
 KOKKOS_INLINE_FUNCTION
 MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat G0 = get_FUV_G0(i, shieldfac, 1, pp, cell);
     return 3.43e-10 * G0 + 520 * cell[i].MolecularMassFraction * Get_CosmicRayIonizationRate_cgs(i, pp, cell);
 }
@@ -62,6 +65,7 @@ MyFloat photoionization_rate_C(int i, MyFloat shieldfac, struct particle_data *p
 KOKKOS_INLINE_FUNCTION
 MyFloat cosmic_ray_ionization_rate_C(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     return 3.85 * Get_CosmicRayIonizationRate_cgs(i, pp, cell);
 }
 
@@ -80,6 +84,7 @@ MyFloat f_Oplus(MyFloat nHp) { return nHp; }
 KOKKOS_INLINE_FUNCTION
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat ionization_rate = total_ionization_rate_C(i, shieldfac, pp, cell);
     MyFloat alpha = sqrt(temp / 6.67e-3), beta = sqrt(temp / 1.943e6), gamma = 0.7849 + 0.1597 * exp(-49550 / temp);
     MyFloat k_rr = 2.995e-9 / (alpha * pow(1 + alpha, 1. - gamma) * pow(1 + beta, 1 + gamma));
@@ -97,6 +102,7 @@ MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct p
 KOKKOS_INLINE_FUNCTION
 MyFloat return_electron_fraction_from_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat x_Cplus = pp[i].Metallicity[2]/All.SolarAbundances[2] * 1.6e-4 * f_Cplus(i, temp, x_elec, shieldfac, pp, cell);
     return x_Cplus;
 }
@@ -105,6 +111,7 @@ MyFloat return_electron_fraction_from_Cplus(int i, MyFloat temp, MyFloat x_elec,
 KOKKOS_INLINE_FUNCTION
 MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat x_Oplus = pp[i].Metallicity[4]/All.SolarAbundances[4] * 3.2e-4 * f_Oplus(nHp);
     return x_Oplus;
 }
@@ -113,6 +120,7 @@ MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp, struct particle_
 KOKKOS_INLINE_FUNCTION
 MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     MyFloat zeta_cr = Get_CosmicRayIonizationRate_cgs(i, pp, cell);
     MyFloat beta_recomb = 3e-6 / sqrt(DMAX(All.MinGasTemp, temp));
     MyFloat nHcgs_local = HYDROGEN_MASSFRAC * cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;
@@ -123,6 +131,7 @@ MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, struct
 KOKKOS_INLINE_FUNCTION
 MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    if(i < 0) return 0;
     if(temp < 100) { return 0.; }
     MyFloat nHcgs_local = HYDROGEN_MASSFRAC * cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;
     MyFloat x_K = 1e-7 * pp[i].Metallicity[0]/All.SolarAbundances[0];

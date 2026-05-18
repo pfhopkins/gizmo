@@ -230,9 +230,9 @@ KOKKOS_INLINE_FUNCTION double yhelium(int target, struct particle_data *pp)
 KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(CHIMES)
-    return calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars);
+    if(target >= 0) { return calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars); } else { return 0.59; }
 #elif defined(COOLING)
-    double X=HYDROGEN_MASSFRAC, Y=1.-X, Z=0, fmol;
+    double X=HYDROGEN_MASSFRAC, Y=1.-X, Z=0, fmol=0;
 #ifdef METALS
     if(target >= 0)
     {
@@ -240,7 +240,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, d
         X = 1. - (Y+Z);
     }
 #endif
-    fmol = Get_Gas_Molecular_Mass_Fraction(target, T_guess, *xH0, *ne_guess, urad_from_uvb_in_G0, pp, cell); /* use our simple subroutine to estimate this, ignoring UVB and with clumping factor=1 */
+    if(target >= 0) { fmol = Get_Gas_Molecular_Mass_Fraction(target, T_guess, *xH0, *ne_guess, urad_from_uvb_in_G0, pp, cell); }
     return 1. / ( X*(1-0.5*fmol) + Y/4. + *ne_guess*HYDROGEN_MASSFRAC + Z/(16.+12.*fmol) ); // since our ne is defined in some routines with He, should multiply by universal
 #else
     return 4./(3.+5.*HYDROGEN_MASSFRAC); // fully-ionized H-He plasma

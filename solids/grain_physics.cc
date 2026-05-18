@@ -36,17 +36,23 @@ extern void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data
 void apply_grain_dragforce(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i, k; PRINT_STATUS("Beginning particulate/grain/PIC force evaluation.");
+    PRINT_STATUS("Beginning particulate/grain/PIC force evaluation.");
 
-    /* GPU path: gather active particles, dispatch Kokkos kernel, scatter results */
+    /* Gather only true active grains — non-grain actives are never processed by the
+       drag kernel, so filtering here makes the grain count honest for the tiny-N
+       dispatch decision inside grain_drag_evaluate_gpu. */
     {
-        int N_active = 0;
-        for(int ii : ActiveParticleList) N_active++;
-        int *grain_indices = (int *) malloc((N_active > 0 ? N_active : 1) * sizeof(int));
-        int aa = 0;
-        for(int ii : ActiveParticleList) grain_indices[aa++] = ii;
-        grain_drag_evaluate_gpu(P, CellP, grain_indices, N_active);
-        free(grain_indices);
+        int num_grain = 0;
+        for(int ii : ActiveParticleList)
+            if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) num_grain++;
+        if(num_grain > 0) {
+            int *grain_indices = (int *) malloc(num_grain * sizeof(int));
+            int aa = 0;
+            for(int ii : ActiveParticleList)
+                if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) grain_indices[aa++] = ii;
+            grain_drag_evaluate_gpu(P, CellP, grain_indices, num_grain);
+            free(grain_indices);
+        }
     }
 #if defined(GRAIN_BACKREACTION)
     grain_backrx(); /* call parent routine to assign the back-reaction force among neighbors */

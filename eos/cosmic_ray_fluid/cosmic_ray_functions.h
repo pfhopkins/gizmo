@@ -885,6 +885,7 @@ KOKKOS_INLINE_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct parti
 }
 
 KOKKOS_INLINE_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell) {
+    if(i < 0) {return 1.e-17;} /* return standard LISM background value here since we are not in a gas cell evaluating actual CR physics */
     double zeta_cr = 0;
 #if defined(COSMIC_RAY_FLUID) && (N_CR_PARTICLE_BINS > 2)
     double ecr_units=(cell[i].Density*All.cf_a3inv/pp[i].Mass)*UNIT_PRESSURE_IN_CGS; int k;

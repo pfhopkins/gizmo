@@ -276,10 +276,12 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         double temp = pow(10.,logT);
         n_elec += return_electron_fraction_from_heavy_ions(target, temp, rho, n_elec, pp, cell);
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
-        n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
-        n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);
-        n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
-        n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
+        if(target >= 0) {
+            n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
+            n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);
+            n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
+            n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
+        }
 #endif
 #endif
 
@@ -356,7 +358,7 @@ KOKKOS_INLINE_FUNCTION
 double convert_temp_to_u(double temp, double rho, int target, double *cv, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dummy;
     find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne, nH0, nHp, nHe0, nHep, nHepp, mu, &dummy, &dummy, &dummy,&dummy, pp, cell);
-    double X = HYDROGEN_MASSFRAC, Y = 1. - X, Z = 0, fmol;
+    double X = HYDROGEN_MASSFRAC, Y = 1. - X, Z = 0, fmol = 0;
 #ifdef METALS
     if (target >= 0) {
         Z = DMIN(0.25, pp[target].Metallicity[0]);
@@ -367,7 +369,7 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
     }
 #endif
     double urad_from_uvb_in_G0 = MIN_REAL_NUMBER;
-    fmol = Get_Gas_Molecular_Mass_Fraction(target, temp, *nH0, *ne, urad_from_uvb_in_G0, pp, cell);
+    if(target >= 0) { fmol = Get_Gas_Molecular_Mass_Fraction(target, temp, *nH0, *ne, urad_from_uvb_in_G0, pp, cell); }
 
     double E_i[NUM_SPECIES_IN_EOS] = {0}, cv_i[NUM_SPECIES_IN_EOS] = {0}, m_i[NUM_SPECIES_IN_EOS] = {0}, N_i[NUM_SPECIES_IN_EOS] = {0};
     double cv_mono = 1.5 * BOLTZMANN_CGS;
@@ -416,7 +418,8 @@ KOKKOS_INLINE_FUNCTION
 double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
     double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,CoolTables.Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,CoolTables.Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
-    temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS);
+    if(target >= 0) { temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS); }
+    else            { temp = u * PROTONMASS_CGS / BOLTZMANN_CGS; }
     temp = DMIN(DMAX(temp,temp_min),temp_max);
     const double tolerance = 1e-4;
     double dummy;
@@ -458,9 +461,10 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
     double temp, temp_old, temp_old_old = 0, temp_new, prefac_fun_old, prefac_fun, fac, err_old, err_new, T_bracket_errneg = 0, T_bracket_errpos = 0, T_bracket_min = 0, T_bracket_max = 1.e20, bracket_sign = 0, Lambda_filler = 0;
     double u_input = u, rho_input = rho, temp_guess;
     double T_0 = u * PROTONMASS_CGS / BOLTZMANN_CGS;
-    temp_guess = (cell[target].gamma_eos_value()-1) * T_0;
+    double gamma_minus1 = (target >= 0 ? cell[target].gamma_eos_value() : GAMMA_DEFAULT) - 1.;
+    temp_guess = gamma_minus1 * T_0;
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp_guess, rho, nH0_guess, ne_guess, 0., target, pp, cell);
-    prefac_fun = (cell[target].gamma_eos_value()-1) * (*mu_guess);
+    prefac_fun = gamma_minus1 * (*mu_guess);
     err_new = prefac_fun - temp_guess / T_0;
     if(err_new < 0) {T_bracket_errneg = temp_guess;} else {T_bracket_errpos = temp_guess;}
     temp = prefac_fun * T_0;
@@ -470,7 +474,8 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
         prefac_fun_old = prefac_fun;
         err_old = err_new;
         find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, &Lambda_filler, &Lambda_filler, &Lambda_filler, &Lambda_filler, pp, cell);
-        prefac_fun = (cell[target].gamma_eos_value()-1) * (*mu_guess);
+        gamma_minus1 = (target >= 0 ? cell[target].gamma_eos_value() : GAMMA_DEFAULT) - 1.;
+        prefac_fun = gamma_minus1 * (*mu_guess);
         temp_old = temp;
         temp_new = prefac_fun * T_0;
         err_new = (temp_new - temp_old) / T_0;

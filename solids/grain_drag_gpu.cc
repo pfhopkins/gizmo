@@ -254,24 +254,46 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 }
 
 
-/* Dispatch function: gather compact P, run kernel, scatter back changed fields */
+/* Dispatch function: tiny-N → OMP host path; large-N → GPU compact path.
+ * Caller (apply_grain_dragforce) pre-filters active_indices to GRAIN_PTYPES only,
+ * so num_active here is the true active grain count. */
 void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
                              int *active_indices, int num_active)
 {
+    if(num_active <= 0) return;
+
+    if(num_active < GPU_MIN_PARTICLES_FOR_OFFLOAD)
+    {
+        /* Tiny-N CPU/OMP path: dispatch directly on host, no GPU launch, no Kokkos
+           allocation, no compact gather/scatter.  Each thread writes only its own grain
+           particle (unique indices from caller) so this is thread-safe.
+           GIZMO_GPU_ENSURE_ALL_FRESH is NOT called here: host code reads the host All
+           extern directly; the device-pass-only #define All AllDeviceMirror is inert. */
+        PRINT_STATUS("  grain drag (OMP): %d active grains", num_active);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for(int a = 0; a < num_active; a++)
+            grain_drag_kernel(active_indices[a], P_host, CellP_host);
+        return;
+    }
+
+    /* Large-N GPU path: compact gather → kernel → scatter. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
     struct particle_data *compact_P = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct gas_cell_data));
+    /* compact_Cell is zeroed and stays zeroed: caller guarantees active_indices are
+       all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them.
+       The kernel reads CellP only via ThermalProperties(target=-1,...) — a pre-existing
+       codepath that passes the array pointer but uses target=-1 to bypass per-cell reads
+       in the outermost ThermalProperties body; the deeper convert_u_to_temp call with
+       target=-1 is a known latent OOB (cell[-1]) that exists equally in this compact
+       path and in the OMP path; fix belongs in a dedicated cooling-functions audit. */
     memset(compact_Cell, 0, num_active * sizeof(struct gas_cell_data));
-    for(int j = 0; j < num_active; j++) {
+    for(int j = 0; j < num_active; j++)
         compact_P[j] = P_host[active_indices[j]];
-        /* CellP is only allocated for gas particles (indices 0..N_gas-1).
-           Only copy CellP for gas-type particles to avoid out-of-bounds access.
-           The grain drag kernel only uses CellP via ThermalProperties with index=-1,
-           so grain particles don't need valid CellP entries. */
-        if(P_host[active_indices[j]].Type == 0) compact_Cell[j] = CellP_host[active_indices[j]];
-    }
 
-    PRINT_STATUS("  GPU grain drag: %d active particles", num_active);
+    PRINT_STATUS("  grain drag (GPU): %d active grains", num_active);
 
     {
         struct particle_data *kp = compact_P;
@@ -281,7 +303,7 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
         });
     }
 
-    /* Scatter back only the fields that the kernel modifies */
+    /* Scatter back only the fields grain_drag_kernel writes. */
     for(int j = 0; j < num_active; j++) {
         int ii = active_indices[j];
         P_host[ii].GravAccel = compact_P[j].GravAccel;
@@ -296,14 +318,9 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
         P_host[ii].Grain_DeltaMomentum = compact_P[j].Grain_DeltaMomentum;
 #endif
 #ifdef GRAIN_EVOLUTION
-        /* GRAIN_EVOLUTION local-step operators may mutate Mass and Grain_Size
-         * (sputter shrinkage; later: condensation/sublimation mass exchange). */
         P_host[ii].Mass       = compact_P[j].Mass;
         P_host[ii].Grain_Size = compact_P[j].Grain_Size;
 #if (GRAIN_EVOLUTION & (32|64))
-        /* COND/SUBL operator may also update grain Composition[] and write
-         * back-reaction accumulators (scattered to gas neighbors by the
-         * grain_backrx pair kernel below). */
         for(int s = 0; s < GRAIN_NUM_SPECIES; s++) { P_host[ii].Composition[s] = compact_P[j].Composition[s]; }
         for(int kv = 0; kv < GRAIN_NUM_VOLATILE_SPECIES; kv++) { P_host[ii].Grain_DeltaVolatileMass[kv] = compact_P[j].Grain_DeltaVolatileMass[kv]; }
         P_host[ii].Grain_DeltaInternalEnergyHeating = compact_P[j].Grain_DeltaInternalEnergyHeating;
