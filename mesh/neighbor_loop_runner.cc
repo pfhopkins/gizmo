@@ -73,6 +73,7 @@
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 #include "../gravity/ags_density_loop.h"
+#include "../gravity/ags_force_loop.h"
 #endif
 
 #include "../hydro/density_loop.h"
@@ -4761,6 +4762,11 @@ template void run_neighbor_loop_iterative<IterHarnessGhostSpec>(const neighbor_l
  * traits. See gravity/ags_density_loop.{h,cc}. */
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_args_iterative&);
+/* Wave 3 close-out: AgsForceSpec — single-pass-iterative-shaped Spec for
+ * non-gas AGS force loop (max_iters=1, after_iter always Converged); uses
+ * the iterative path so the multi-subgroup contract is available. See
+ * gravity/ags_force_loop.{h,cc}. */
+template void run_neighbor_loop_iterative<AgsForceSpec>(const neighbor_loop_args_iterative&);
 #endif
 
 /* Phase 4 Wave-1: DensitySpec — hydro density runner port (Step 6).

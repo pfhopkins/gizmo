@@ -101,6 +101,34 @@ GIZMO_RNG_INLINE double gizmo_gpu_rand_range(uint64_t key, uint64_t counter, dou
 }
 
 
+/* Compile-time FNV-1a 64-bit hash of a loop-name string. Used to derive a
+ * per-loop salt that gets XOR-mixed into the counter base of every RNG draw
+ * inside that loop. Rationale: counter-based RNG keyed only on
+ * (Ti_Current, ID_pair, tag) gives identical streams across DIFFERENT loops
+ * that happen to draw on the same (Ti, ID_pair, tag) — i.e., correlated
+ * outcomes that the original time-advancing GSL RNG could never produce by
+ * construction. Adding a loop-domain salt restores stream independence
+ * across loops without changing parity within a loop (oracle and production
+ * both see the same salted stream → oracle compare unaffected).
+ *
+ * Use as:
+ *   static constexpr uint64_t MY_LOOP_RNG_SALT = gizmo_loop_rng_salt("my_loop");
+ *   uint64_t counter = ((uint64_t)Ti_Current << 32) ^ MY_LOOP_RNG_SALT ^ tag;
+ *
+ * Constexpr → resolved at compile time, zero runtime cost, human-legible
+ * (the source-of-truth string "my_loop" lives next to the constant).
+ *
+ * FNV-1a 64-bit reference: Glenn Fowler / Phong Vo / Landon Curt Noll,
+ * IETF draft-eastlake-fnv-17 §3. Offset basis and prime are the canonical
+ * 64-bit values. */
+constexpr uint64_t gizmo_loop_rng_salt(const char *s)
+{
+    uint64_t h = 0xcbf29ce484222325ULL; /* FNV-1a 64 offset basis */
+    while(*s) { h ^= (uint64_t)(unsigned char)(*s++); h *= 0x100000001b3ULL; }
+    return h;
+}
+
+
 /* Poisson draw with mean lambda.
  *   lambda < 30: Knuth's exact algorithm — draws uniforms at counter+1, +2, ...
  *                Callers must reserve counter..counter+~3*lambda+1 in their

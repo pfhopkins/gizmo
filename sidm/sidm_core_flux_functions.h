@@ -40,6 +40,12 @@ struct SidmScatterResult {
     int set_wakeup_j;       /* 1 if P[j].wakeup should be set to -1 */
 };
 
+/* `rng_salt` is REQUIRED — a per-loop FNV-1a hash from gizmo_loop_rng_salt()
+ * (see declarations/gpu_rng.h). It is XOR-mixed into the counter so two
+ * different loops drawing SIDM scatter on the same (Ti_Current, ID_i^ID_j)
+ * pair pull independent streams. No default value — every caller must
+ * supply a named loop salt. Today's sole caller is the ags_force runner
+ * (AGS_FORCE_RNG_SALT in gravity/ags_force_loop.h). */
 template <typename LocalT, typename KernelT, typename OutT>
 KOKKOS_INLINE_FUNCTION
 SidmScatterResult sidm_core_flux_compute_pair(
@@ -49,7 +55,8 @@ SidmScatterResult sidm_core_flux_compute_pair(
     const KernelT &kernel,
     OutT &out,
     const MyDouble *geofactor_table,
-    const int *timebin_active)
+    const int *timebin_active,
+    uint64_t rng_salt)
 {
     SidmScatterResult r;
     r.scattered = 0;
@@ -74,12 +81,16 @@ SidmScatterResult sidm_core_flux_compute_pair(
 #endif
     if(prob > 0.2) { out.dtime_sidm = DMIN(out.dtime_sidm, local.dtime * (0.2 / prob)); }
 
-    /* counter-based RNG, symmetric (i,j) key: both sides of the pair see the
-       same stream. Counter = Ti_Current << 8 | tag_nibble (0 = threshold,
-       1 = scatter direction — see declarations/gpu_rng.h). */
+    /* Counter-based RNG, symmetric (i,j) key: both sides of the pair see the
+       same stream. Timestep, loop-domain salt, and draw tag are mixed into
+       one counter; the tag only needs to distinguish the two SIDM draws
+       (0 = threshold, 1 = scatter direction). Ti_Current is left-shifted
+       to keep timestep in the high half of the counter; the salt and tag
+       occupy the rest. */
     uint64_t rng_key = (uint64_t)local.ID ^ (uint64_t)P[j].ID;
-    uint64_t rng_ctr_threshold = ((uint64_t)All.Ti_Current << 8) | 0;
-    uint64_t rng_ctr_direction = ((uint64_t)All.Ti_Current << 8) | 1;
+    uint64_t ti      = ((uint64_t)All.Ti_Current) << 32;
+    uint64_t rng_ctr_threshold = ti ^ rng_salt ^ UINT64_C(0);
+    uint64_t rng_ctr_direction = ti ^ rng_salt ^ UINT64_C(1);
     if(gizmo_gpu_rand_double(rng_key, rng_ctr_threshold) >= prob) { return r; }
 
     /* scatter happens */
@@ -105,6 +116,7 @@ SidmScatterResult sidm_core_flux_compute_pair(
 #endif
 #else
     (void)local; (void)j; (void)P; (void)kernel; (void)out;
+    (void)geofactor_table; (void)timebin_active; (void)rng_salt;
 #endif /* DM_SIDM */
     return r;
 }

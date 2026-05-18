@@ -1,23 +1,11 @@
-#include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <map>
-#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../sidm/dm_fuzzy_flux_functions.h"
-#include "../sidm/sidm_core_flux_functions.h"
-#include "../sidm/cbe_integrator_flux_functions.h"
-#ifdef GRAIN_COLLISIONS
-#include "../solids/grain_helper_functions.h"
-#endif
 #include "../mesh/kernel.h"
-#include "../mesh/ghost_symlist_lifecycle.h"
-#include "ags_gpu_decls.h"
 #include "ags_functions.h"
-#include "../mesh/ghost_writeback.h"
 
 /*! \file ags_rkern.c
  *  \brief kernel length determination for non-gas particles
@@ -201,153 +189,11 @@ int AGSForce_isactive(int i)
 }
 
 
-void AGSForce_calc(void)
-{
-    CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
-    PRINT_STATUS(" ..entering AGS-Force calculation [as hydro loop for non-gas elements]\n");
-    /* before doing any operations, need to zero the appropriate memory so we can correctly do pair-wise operations */
-#if defined(DM_SIDM)
-    {int i; for (int i : ActiveParticleList) {P[i].dtime_sidm = 10.*get_particle_timestep_in_physical(i);}}
-#endif
-#ifdef CBE_INTEGRATOR
-    /* need to zero values for active particles (which will be re-calculated) before they are added below */
-    //for (int i : ActiveParticleList) {int k1,k2; for(k1=0;k1<CBE_INTEGRATOR_NBASIS;k1++) {for(k2=0;k2<CBE_INTEGRATOR_NMOMENTS;k2++) {P[i].CBE_basis_moments_dt[k1][k2] = 0;}}}
-#endif
-    /* GPU neighbor-list path for AGSForce_calc. Partition active particles
-       (isactive == 1) by their shared neighbor-type bitmask and launch the
-       GPU kernel once per group, same pattern as ags_density(). */
-    double timeall = 0, timecomp = 0, timecomm = 0, timewait = 0, t0 = 0;
-    CPU_Step[CPU_MISC] += measure_time(); t0 = my_second();
-    double ags_ghost_safety = gizmo_ghost_safety_factor();
-    gizmo_density_prep_ghosts(ags_ghost_safety);
-
-    std::map<int, std::vector<int>> bitmask_groups;
-    uint64_t local_bm_presence_f = 0;
-    for (int ii : ActiveParticleList) {
-        if(AGSForce_isactive(ii)) {
-            int bm = ags_gravity_kernel_shared_BITFLAG(P[ii].Type);
-            if(bm > 0 && bm < 64) { bitmask_groups[bm].push_back(ii); local_bm_presence_f |= (1ULL << bm); }
-        }
-    }
-    /* Symmetrise across ranks so all ranks call ghost_writeback_agsforce the same number of times. */
-    uint64_t global_bm_presence_f = local_bm_presence_f;
-    if(NTask > 1) MPI_Allreduce(&local_bm_presence_f, &global_bm_presence_f, 1, MPI_UINT64_T, MPI_BOR, MPI_COMM_WORLD);
-
-    /* Zero per-iteration i-side accumulators for active AGSForce particles.
-       These correspond to the OUTPUTFUNCTION_NAME fields that use mode==0
-       ASSIGN (not ASSIGN_ADD). */
-    for(auto& kv : bitmask_groups) {
-        for(int ii : kv.second) {
-#ifdef DM_FUZZY
-            P[ii].AGS_Dt_Numerical_QuantumPotential = 0;
-#if (DM_FUZZY > 0)
-            P[ii].AGS_Dt_Psi_Re = P[ii].AGS_Dt_Psi_Im = P[ii].AGS_Dt_Psi_Mass = 0;
-#endif
-#endif
-#if defined(CBE_INTEGRATOR)
-            P[ii].AGS_vsig = 0;
-            for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
-                for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-                    P[ii].CBE_basis_moments_dt[k1][k2] = 0;
-                }
-            }
-#endif
-        }
-    }
-
-    /* Iterate global bitmask union so all ranks call ghost_writeback_agsforce the same number of times. */
-    for(int bm = 1; bm < 64; bm++) {
-        if(!(global_bm_presence_f & (1ULL << bm))) continue;
-        std::vector<int>& ilist = bitmask_groups[bm];  /* empty if rank has none */
-        int nl_num_active = (int)ilist.size();
-        int *nl_active = (int *) mymalloc("agsforce_nl_active", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(int));
-        double *nl_radii = (double *) mymalloc("agsforce_nl_radii", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(double));
-        for(int a = 0; a < nl_num_active; a++) { nl_active[a] = ilist[a]; nl_radii[a] = P[ilist[a]].AGS_KernelRadius; }
-        struct ags_force_gpu_out *nl_outs = (struct ags_force_gpu_out *) mymalloc(
-            "agsforce_nl_outs", (nl_num_active > 0 ? nl_num_active : 1) * sizeof(struct ags_force_gpu_out));
-
-        /* Snapshot ghost Vel/dp/NInteractions + zero wakeup so post-kernel
-           values become pure deltas to reverse-communicate. */
-        ghost_write_detector_begin("ags_force");
-        ghost_writeback_zero_agsforce();
-        ags_force_evaluate_gpu(P, NumPart, nl_active, nl_num_active, nl_radii, bm, nl_outs);
-        ghost_writeback_agsforce();
-        ghost_write_detector_end();
-
-        /* Scatter i-side accumulators into P[ii] (match CPU OUTPUT semantics). */
-        for(int a = 0; a < nl_num_active; a++) {
-            int ii = nl_active[a];
-#if defined(DM_SIDM)
-            for(int k = 0; k < 3; k++) {
-                P[ii].Vel[k] += nl_outs[a].sidm_kick[k];
-                P[ii].dp[k]  += nl_outs[a].sidm_kick[k] * P[ii].Mass;
-            }
-            if(nl_outs[a].dtime_sidm < P[ii].dtime_sidm) P[ii].dtime_sidm = nl_outs[a].dtime_sidm;
-            P[ii].NInteractions += nl_outs[a].si_count;
-#endif
-#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
-            /* Phase 17b pairwise-outcome scatter. COAG: absorbed mass +
-             * per-species composition mass go to ii. Mass conservation:
-             * Σ_i Grain_DeltaCoagMass equals Σ_j (M_j set to 0), since
-             * each pair is processed exactly once by SIDM dedup.
-             * FRAG/SHAT (C8/C9): erosion-fraction multiplier applied as
-             * Grain_Size *= factor (1.0 means no event). */
-            if(P[ii].Mass > 0) {
-                if(nl_outs[a].Grain_DeltaCoagMass > 0) {
-                    double M_old = (double)P[ii].Mass;
-                    double M_new = M_old + nl_outs[a].Grain_DeltaCoagMass;
-                    /* Composition mixing: per-species mass on absorber +
-                     * per-species mass absorbed from j-neighbors. */
-                    for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
-                        double M_species_s = M_old * (double)P[ii].Composition[s] + nl_outs[a].Grain_DeltaCoag_CompositionMass[s];
-                        if(M_species_s < 0) { M_species_s = 0; }
-                        P[ii].Composition[s] = (MyFloat)(M_species_s / M_new);
-                    }
-                    /* Size update: monodisperse mass-conserving rule with
-                     * N_phys preserved on the absorber (each absorber
-                     * grain takes ~one j-grain worth of mass on average).
-                     * a_new = a_old * (M_new / M_old)^(1/3). */
-                    P[ii].Grain_Size = (MyFloat)((double)P[ii].Grain_Size * pow(M_new / M_old, 1.0 / 3.0));
-                    P[ii].Mass       = (MyDouble)M_new;
-                }
-                if(nl_outs[a].Grain_DeltaErosionFrac != 1.0 && nl_outs[a].Grain_DeltaErosionFrac > 0.0) {
-                    /* C8/C9 size shrinkage applied multiplicatively. */
-                    P[ii].Grain_Size = (MyFloat)((double)P[ii].Grain_Size * nl_outs[a].Grain_DeltaErosionFrac);
-                }
-            }
-#endif
-#ifdef DM_FUZZY
-            for(int k = 0; k < 3; k++) P[ii].GravAccel[k] += nl_outs[a].acc[k];
-            P[ii].AGS_Dt_Numerical_QuantumPotential += nl_outs[a].AGS_Dt_Numerical_QuantumPotential;
-#if (DM_FUZZY > 0)
-            P[ii].AGS_Dt_Psi_Re   += nl_outs[a].AGS_Dt_Psi_Re;
-            P[ii].AGS_Dt_Psi_Im   += nl_outs[a].AGS_Dt_Psi_Im;
-            P[ii].AGS_Dt_Psi_Mass += nl_outs[a].AGS_Dt_Psi_Mass;
-#endif
-#endif
-#if defined(CBE_INTEGRATOR)
-            if(nl_outs[a].AGS_vsig > P[ii].AGS_vsig) P[ii].AGS_vsig = nl_outs[a].AGS_vsig;
-            for(int k1 = 0; k1 < CBE_INTEGRATOR_NBASIS; k1++) {
-                for(int k2 = 0; k2 < CBE_INTEGRATOR_NMOMENTS; k2++) {
-                    P[ii].CBE_basis_moments_dt[k1][k2] += nl_outs[a].CBE_basis_moments_dt[k1][k2];
-                }
-            }
-#endif
-        }
-        myfree(nl_outs); myfree(nl_radii); myfree(nl_active);
-    }
-
-    if(NTask > 1) { ghost_exchange_cleanup(); }
-    timecomp += timediff(t0, my_second());
-    /* do final operations on results: these are operations that can be done after the complete set of iterations */
-#ifdef CBE_INTEGRATOR
-        for (int i : ActiveParticleList) {do_postgravity_cbe_calcs(i);} // do any final post-tree-walk calcs from the CBE integrator here //
-#endif
-    /* collect timing information */
-    double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
-    CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp; CPU_Step[CPU_AGSDENSWAIT] += timewait;
-    CPU_Step[CPU_AGSDENSCOMM] += timecomm; CPU_Step[CPU_AGSDENSMISC] += timeall - (timecomp + timewait + timecomm);
-}
+/* AGSForce_calc() lives in gravity/ags_force_loop.cc (Wave 3 close-out port).
+ * Moved out of this TU to keep ags_rkern.cc host-only (carries unrelated
+ * host helpers AGSForce_isactive, ags_gravity_kernel_shared_BITFLAG,
+ * ags_return_minsoft/maxsoft, do_cbe_nvt_inversion_for_faces); see
+ * reference_runner_port_checklist.md §5. */
 
 
 #endif // AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
