@@ -284,11 +284,8 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(num_active * sizeof(struct gas_cell_data));
     /* compact_Cell is zeroed and stays zeroed: caller guarantees active_indices are
        all GRAIN_PTYPES (not gas), so no valid CellP entry exists for any of them.
-       The kernel reads CellP only via ThermalProperties(target=-1,...) — a pre-existing
-       codepath that passes the array pointer but uses target=-1 to bypass per-cell reads
-       in the outermost ThermalProperties body; the deeper convert_u_to_temp call with
-       target=-1 is a known latent OOB (cell[-1]) that exists equally in this compact
-       path and in the OMP path; fix belongs in a dedicated cooling-functions audit. */
+       The kernel reads CellP only via ThermalProperties(target=-1,...), which now
+       safely handles target=-1 throughout the call stack. */
     memset(compact_Cell, 0, num_active * sizeof(struct gas_cell_data));
     for(int j = 0; j < num_active; j++)
         compact_P[j] = P_host[active_indices[j]];
