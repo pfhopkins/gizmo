@@ -95,6 +95,10 @@
 #include "../turb/difffilter_loop.h"
 #endif
 
+#ifdef DM_FUZZY
+#include "../sidm/dm_fuzzy_loop.h"
+#endif
+
 #ifdef RT_SOURCE_INJECTION
 #include "../radiation/rt_source_injection_loop.h"
 #endif
@@ -186,6 +190,7 @@ neighbor_loop_args nlr_default_args(void)
     args.num_active          = 0;             /* caller fills */
     args.aux                 = nullptr;       /* caller fills */
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
+    args.neighbor_type_mask_override = 0;      /* 0 => use Spec::neighbor_type_mask */
     return args;
 }
 
@@ -1114,7 +1119,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         collect_candidates_pre_drift<Spec>(args, radii,
-                                            (unsigned int)Spec::neighbor_type_mask,
+                                            nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                             DispatchPath::ModeB_HostWalker, cand_modeB);
     }
     {
@@ -1299,11 +1304,11 @@ static void run_mode_b_local_with_oracle(const neighbor_loop_args& args, const d
     {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         collect_candidates_pre_drift<Spec>(args, radii,
-                                            (unsigned int)Spec::neighbor_type_mask,
+                                            nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                             DispatchPath::ModeB_HostWalker, cand_modeB);
     }
     collect_candidates_pre_drift<Spec>(args, radii,
-                                        (unsigned int)Spec::neighbor_type_mask,
+                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                         DispatchPath::Brute_Oracle, cand_brute);
 
     /* Drift the union. drift_particle's early-return on time1==time0 means
@@ -1891,7 +1896,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
     constexpr RemoteHelperMode MODE = ORACLE ? RemoteHelperMode::OracleCompare
                                             : RemoteHelperMode::Production;
     mode_b_remote_evaluate_into_buffer<Spec, MODE>(args, radii, cs, ctx,
-                                                       (unsigned int)Spec::neighbor_type_mask,
+                                                       nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                                        (N > 0) ? accums_self.data() : nullptr,
                                                        (N > 0) ? actives_for_dumps.data() : nullptr,
                                                        tim);
@@ -1988,7 +1993,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
         gpu_ngb_list_build(P_gpu, args.num_total,
                            args.active_list, N,
                            Spec::search_mode,
-                           (int)Spec::neighbor_type_mask,
+                           (int)nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                            &gnl, sidx,
                            1.0, radii_uvm, NULL, Spec::loop_name,
                            nlr_spec_symmetric_j_radius_scale<Spec>());
@@ -2422,7 +2427,7 @@ void run_neighbor_loop(const neighbor_loop_args& args)
         StageTimer t_prep(tim_ptr ? &tim_ptr->dt_prep_import : nullptr);
         gizmo_request_filtered_ghost_import_fresh(Spec::loop_name,
                                                    Spec::search_mode,
-                                                   Spec::neighbor_type_mask,
+                                                   nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                                    args.active_list,
                                                    args.num_active,
                                                    radii.data(),
@@ -4833,5 +4838,14 @@ template void run_neighbor_loop<RtSrcInjectionSpec>(const neighbor_loop_args&);
 #ifdef TURB_DIFF_DYNAMIC
 template void run_neighbor_loop<DiffFilterSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<DynDiffSpec>(const neighbor_loop_args&);
+#endif
+
+/* Wave 5 / dm_fuzzy: DMGradSpec — DM_FUZZY higher-order density-gradient
+ * estimator. Non-iterative, one-way DM->DM, fixed radius P[i].AGS_KernelRadius,
+ * pure i-side reduce. The toplevel DMGrad_gradient_calc issues one call per
+ * (gradient-pass, bm group) with args.neighbor_type_mask_override = bm. See
+ * sidm/dm_fuzzy_loop.{h,cc}. */
+#ifdef DM_FUZZY
+template void run_neighbor_loop<DMGradSpec>(const neighbor_loop_args&);
 #endif
 

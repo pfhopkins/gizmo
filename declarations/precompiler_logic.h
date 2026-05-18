@@ -1418,3 +1418,8 @@
 #define SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM (1)
 #endif
 #endif
+
+
+#ifdef CBE_INTEGRATOR_WITHGRADIENTS
+#error "CBE_INTEGRATOR_WITHGRADIENTS is not implemented: the CBE gradient module is incomplete (the CBE_basis_moments_Gradients field in declarations/particle_data.h has no element type, so this option cannot compile), and the dm_fuzzy DMGrad gradient loop does not populate the CBE moment gradients. This option is scope-fenced off until the CBE gradient loop is intentionally ported. See OPEN_3d_dm_fuzzy_design.md sec 7."
+#endif
