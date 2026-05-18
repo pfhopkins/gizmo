@@ -4,6 +4,15 @@ Small DM-only Hernquist halo (Type=1 only, ~1000 particles default) with
 DM_SIDM=2 and ADAPTIVE_GRAVSOFT_FORALL=2 so the AGSForce loop actually
 dispatches on Type=1 — i.e. `ags_force_evaluate_gpu` is exercised.
 
+**Setup notes (corrected 2026-05).** This is an *isolated* halo — an open,
+non-periodic domain: the Config files carry no `BOX_PERIODIC` and the params
+no `BoxSize`. `make_ic.py` builds the IC using the gravitational constant in
+the params' code units (kpc / 1e10 Msun / km/s → G ≈ 4.3e4), NOT G=1, so the
+halo is in virial equilibrium for the units GIZMO integrates in. The IC file
+`hernquist_sidm_ics.hdf5` is generated output (gitignored) — regenerate it
+with the step-1 command below. `hernquist_dmfuzzy.params` runs the same IC as
+fuzzy dark matter (`DM_FUZZY=1`) instead of SIDM.
+
 ## Three-part validation protocol (see feedback_gpu_port_validation_protocol.md)
 
 ### Part (a) — verify GPU path fires
@@ -60,4 +69,5 @@ parts in 1e-12 as suspect.
 - `make_ic.py` — IC generator (Hernquist DF + Von Neumann velocity sampler)
 - `Config.sh` — GPU path (adaptive softening + SIDM; Kokkos always active)
 - `Config_cpu_reference.sh` — CPU tree-walk reference (same flags minus the neighbor-list one)
-- `hernquist_sidm.params` — params, including DM_InteractionCrossSection etc.
+- `hernquist_sidm.params` — SIDM params, including DM_InteractionCrossSection etc.
+- `hernquist_dmfuzzy.params` — same IC run as fuzzy dark matter (`DM_FUZZY=1`)

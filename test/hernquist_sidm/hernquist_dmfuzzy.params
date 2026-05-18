@@ -1,10 +1,10 @@
-% hernquist_sidm — small DM-only Hernquist halo with DM_SIDM scatter.
-% Used to validate the B2 AGSForce GPU port (ags_force_evaluate_gpu)
-% against the CPU tree-walk. Resolution is deliberately minimal
-% (~1000 Type=1 DM particles) for quick turnaround.
+% hernquist_dmfuzzy — small DM-only Hernquist halo run as fuzzy dark matter.
+% Smoke-test for the dm_fuzzy DMGrad runner-template port (DMGradSpec).
+% Reuses the hernquist_sidm IC (Type=1 DM, ~1000 particles); the wavefunction
+% is seeded at startup by do_dm_fuzzy_initialization.
 %
 % Required Config.sh flags: BOX_SPATIAL_DIMENSION=3,
-%                           ADAPTIVE_GRAVSOFT_FORALL=2, DM_SIDM=2.
+%                           ADAPTIVE_GRAVSOFT_FORALL=2, DM_FUZZY=1.
 % Isolated halo — open (non-periodic) domain: no BOX_PERIODIC, no BoxSize.
 %
 % Units: kpc / 1e10 Msun / km/s (isodisk convention).
@@ -54,15 +54,11 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 
-% DM_SIDM params — cross section tuned so a non-trivial number of scatters
-% happen within the first few timesteps at this resolution. Units: cm^2/g.
-% sigma=1 is physically plausible but still high enough to force many
-% scatters at this density and resolution (sigma=1000 was so extreme it
-% blew up velocities in the first step — reduced to 1 to keep the run sane).
-DM_InteractionCrossSection         1.0
-DM_DissipationFactor               0.0
-DM_KickPerCollision                0.0
-DM_InteractionVelocityScale        0.0
+% Fuzzy dark matter: particle mass in eV. TEMPORARY KLUDGE — set to 1e-18
+% (not 1e-22, the canonical ultralight scale) purely to keep this uncalibrated
+% hernquist_sidm IC from crashing on a fuzzy-DM SPE timestep runaway before the
+% DMGrad code paths are exercised. NOT a calibrated value for this IC.
+FuzzyDM_Mass_in_eV                 1e-18
 
 % Misc
 MaxMemSize                         2000
