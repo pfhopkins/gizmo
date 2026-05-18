@@ -473,7 +473,7 @@ void star_formation_parent_routine(void)
                         P[i].Mass = CellP[i].MassTrue + CellP[i].dMass;
 #endif
 #ifdef SINK_INCREASE_DYNAMIC_MASS
-                        P[i].Mass *= SINK_INCREASE_DYNAMIC_MASS; CellP[i].Mass = P[i].Mass;
+                        P[i].Mass *= SINK_INCREASE_DYNAMIC_MASS; /* P[i].Type was just set to 5 above; CellP[] is sized All.MaxPartGas and is not the SSOT for non-gas mass */
 #endif
 #ifdef SINK_ALPHADISK_ACCRETION
                         P[i].Sink_Mass_Reservoir = All.SeedReservoirMass;
@@ -534,8 +534,8 @@ void star_formation_parent_routine(void)
                         P[i].ID_generation = P[i].ID_generation + 1;
                         if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
                         P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
-                        P[i_star].Mass = mass_of_star; CellP[i_star].Mass = P[i_star].Mass;
-                        P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass;
+                        P[i_star].Mass = mass_of_star; /* i_star = NumPart+stars_spawned (>= MaxPartGas); no CellP[i_star] write — CellP[] is sized All.MaxPartGas */
+                        P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass; /* i is still gas here */
                         if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                         CellP[i].MassTrue -= P[i_star].Mass;
@@ -572,7 +572,7 @@ void star_formation_parent_routine(void)
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                         if(is_particle_single_star_eligible(i))
                         {
-                            P[i_star].Mass = CellP[i_star].Mass; /* sync mass before type conversion */
+                            /* P[i_star].Mass already holds the spawned-star mass (set above); CellP[i_star] is OOB for the spawned branch (i_star may be >= MaxPartGas), so do not round-trip through it */
                             P[i_star].Type = 5;
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
@@ -645,7 +645,7 @@ void star_formation_parent_routine(void)
 #endif
                         }
 #endif // SINGLE_STAR_SINK_DYNAMICS
-                        P[i_star].Mass = CellP[i_star].Mass; /* sync mass before type conversion */
+                        /* P[i_star].Mass already holds the intended mass; CellP[i_star] is OOB for the spawned branch (i_star may be >= MaxPartGas), so do not round-trip through it */
                         if(P[i_star].Type != 5) {P[i_star].Type = 4;} // if we didn't set to type 5 above, default to type 4
 
 #ifdef SINK_SEED_FROM_LOCALGAS

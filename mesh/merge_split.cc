@@ -532,10 +532,12 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     /* assign masses to both particles (so they sum correctly), but first record some numbers in case we need them below */
     double mass_before_split = 0, density_before_split = 0, volume_before_split = 0; mass_before_split = P[i].Mass; // save for use below
     if(P[i].Type==0) {density_before_split = CellP[i].Density; volume_before_split = mass_before_split/density_before_split;} // save for use below
-    P[j].Mass = mass_of_new_particle * P[i].Mass; CellP[j].Mass = P[j].Mass;
-    P[i].Mass -= P[j].Mass; CellP[i].Mass = P[i].Mass;
+    P[j].Mass = mass_of_new_particle * P[i].Mass;
+    P[i].Mass -= P[j].Mass;
+    if(P[i].Type==0) {CellP[j].Mass = P[j].Mass; CellP[i].Mass = P[i].Mass;} // CellP[] is sized All.MaxPartGas; only gas splits get CellP writes
 #ifdef BOX_BND_PARTICLES
-    if(P[i].ID==0)  {P[j].ID=1; double m0=P[i].Mass+P[j].Mass; P[i].Mass=P[j].Mass=m0;} CellP[i].Mass = P[i].Mass;
+    if(P[i].ID==0)  {P[j].ID=1; double m0=P[i].Mass+P[j].Mass; P[i].Mass=P[j].Mass=m0;}
+    if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
 #endif
 
     /* prepare to shift the particle locations according to the random number we drew above */
@@ -738,12 +740,12 @@ int merge_particles_ij(int i, int j)
     int k;
     if(P[i].Mass <= 0)
     {
-        P[i].Mass = 0; CellP[i].Mass = P[i].Mass;
+        P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
         return 0;
     }
     if(P[j].Mass <= 0)
     {
-        P[j].Mass = 0; CellP[j].Mass = P[j].Mass;
+        P[j].Mass = 0; if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
         return 0;
     }
     double mtot = P[j].Mass + P[i].Mass;
@@ -808,8 +810,9 @@ int merge_particles_ij(int i, int j)
         }
 #endif
         /* finally zero out the particle mass so it will be deleted */
-        P[i].Mass = 0; CellP[i].Mass = P[i].Mass;
-        P[j].Mass = mtot; CellP[j].Mass = P[j].Mass;
+        P[i].Mass = 0;
+        P[j].Mass = mtot;
+        /* (no CellP writes here: this branch is explicitly non-gas; CellP[] is sized All.MaxPartGas and indexing it for non-gas slots is OOB) */
         /* momentum shift for passing to tree (so we know how to move it) */
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
         P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
@@ -1190,7 +1193,7 @@ void rearrange_particle_sequence(void)
     for(i = 0; i < NumPart; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
-            P[i].Mass = 0; CellP[i].Mass = P[i].Mass;
+            P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
 
