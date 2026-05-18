@@ -1643,7 +1643,12 @@ extern "C" int gpu_gravtree_walk_primary(void)
     /* Phase 6.8e: soa->nextnode_aux aliases UVM Nextnode[] (set by
      * force_treeallocate); no per-walk memcpy needed. */
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-    if(!P_dev || !CellP_dev || !soa) {
+    /* CellP is legitimately NULL on a gas-free (DM-only) problem (TotN_gas==0).
+     * Every CellP_dev use in this walk + post-walk scatter is gas-gated
+     * (device: valid_gas_particle_for_rt / ptype==0; host scatter: Type==0),
+     * so a null CellP_dev is safe there. Only require it when gas exists. */
+    const bool need_cellp = (All.TotN_gas > 0);   /* host read; bare All.* is safe in GPU-TU host code (all-mirror) */
+    if(!P_dev || !soa || (need_cellp && !CellP_dev)) {
         printf("gpu_gravtree_walk_primary: failed to acquire arena or tree SoA\n");
         endrun(913200);
     }

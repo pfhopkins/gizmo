@@ -4,7 +4,6 @@
 ########################################
 
 
-BOX_PERIODIC
 BOX_SPATIAL_DIMENSION=3
 ADAPTIVE_GRAVSOFT_FORALL=2
 DM_SIDM=2

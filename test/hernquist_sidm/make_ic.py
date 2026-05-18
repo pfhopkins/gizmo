@@ -9,7 +9,9 @@ fixed output filename inside test/hernquist_sidm/.
 Physics: pure Type=1 DM, Hernquist profile (rho ~ 1/(r(1+r)^3)),
 isotropic velocity distribution drawn via Von Neumann sampling against
 the DF f(E) at each radius. Units are whatever the calling params file
-declares — scale radius a, halo mass m, and G=1 here are all free.
+declares — scale radius a and halo mass m are free; G is set to the
+code-unit value for the params' declared units (NOT G=1), so the halo is
+built in virial equilibrium for the units GIZMO actually integrates in.
 
 Usage: python make_ic.py [N_PER_SIDE [MASS [SCALE_RADIUS]]]
   defaults: N_PER_SIDE=10 (so N=1000 DM particles), mass=1, a=1.
@@ -19,7 +21,16 @@ import numpy as np
 import h5py
 from numba import jit
 
-G = 1.0
+# Gravitational constant in the units this test problem's params files declare
+# (UnitLength=kpc, UnitMass=1e10 Msun, UnitVelocity=km/s — see
+# hernquist_sidm.params / hernquist_dmfuzzy.params). The IC MUST be built with
+# the same G GIZMO integrates with — NOT G=1 — or the Hernquist halo is dropped
+# in ~G_code-times out of virial equilibrium and collapses (tiny timesteps).
+_G_CGS                = 6.67430e-8     # cm^3 g^-1 s^-2
+_UnitLength_in_cm     = 3.085678e21    # kpc
+_UnitMass_in_g        = 1.989e43       # 1e10 Msun
+_UnitVelocity_in_cm_s = 1.0e5          # km/s
+G = _G_CGS * _UnitMass_in_g / (_UnitLength_in_cm * _UnitVelocity_in_cm_s**2)
 
 # args: (0) N_per_side (default 10 → 10^3 = 1000 particles)
 #       (1) total halo mass (default 1.0)
@@ -88,7 +99,7 @@ vel = np.c_[v_mag*np.cos(phi_v)*np.sin(theta_v),
 boxsize = 10.0 * a  # halo fits comfortably inside
 pos = pos * a + boxsize/2
 vel = vel * np.sqrt(G * M_tot / a)
-pot = pot * M_tot / a
+pot = pot * G * M_tot / a
 
 # Pure DM halo — no gas particles. The code must handle TotN_gas==0 cleanly
 # so this IC doubles as a no-gas regression case.

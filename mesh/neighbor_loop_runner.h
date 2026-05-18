@@ -1044,7 +1044,30 @@ struct neighbor_loop_args {
     double ghost_safety_factor;  /* caller fills via gizmo_ghost_safety_factor()
                                   * unconditionally; runner uses ONLY on paths
                                   * that call gizmo_request_filtered_ghost_import. */
+    unsigned int neighbor_type_mask_override;
+                                 /* 0 (default — set by nlr_default_args) => the
+                                  * non-iterative runner uses Spec::neighbor_type_mask.
+                                  * Non-zero => that mask is used for THIS call instead.
+                                  * Lets a non-iterative caller supply a runtime
+                                  * neighbor-type mask without the iterative runner's
+                                  * subgroup machinery (dm_fuzzy DMGrad: per-bm calls
+                                  * with bm = ags_gravity_kernel_shared_BITFLAG). The
+                                  * iterative runner is unaffected — it uses
+                                  * NlrSubgroup::j_type_bitmask. */
 };
+
+/* Effective neighbor-type mask for a non-iterative run_neighbor_loop call:
+ * args.neighbor_type_mask_override when set, else the Spec constexpr. MUST be
+ * used at EVERY non-iterative mask site (ghost import, Mode A CSR build, Mode B
+ * candidate collection, remote eval, oracle/brute) so production and oracle
+ * agree on the neighbor set. */
+static inline unsigned int
+nlr_effective_neighbor_type_mask(const neighbor_loop_args& args,
+                                 unsigned int spec_mask)
+{
+    return args.neighbor_type_mask_override ? args.neighbor_type_mask_override
+                                            : spec_mask;
+}
 
 /* Iterative-call args — extends neighbor_loop_args with subgroup batch.
  *

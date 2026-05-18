@@ -260,6 +260,11 @@ int  let_unpack_and_install(const struct LETNodeWire *recv_buf,
  *  steps above; resets Numforeignnodes to 0 first. */
 int  let_run_exchange(void);
 
+/*! LET completeness finalizer.  Call from force_treebuild() after
+ *  gpu_scatter_pseudo_to_soa(): redirects provably-empty unredirected foreign
+ *  topleaves to skip-to-sibling, aborts on any non-empty unredirected one. */
+void let_finalize_unredirected_foreign_topleaves(void);
+
 #ifdef __cplusplus
 }
 #endif
