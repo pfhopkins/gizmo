@@ -81,6 +81,7 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
     pp[idx].Grain_DeltaInternalEnergyHeating = 0;
 #endif
 
+    pp[idx].Grain_AccelTimeMin = MAX_REAL_NUMBER; /* safe default: drag not computable yet (e.g. dt==0 at IC) */
     double dt = get_particle_timestep_in_physical(idx, pp);
     double vgas_mag = sqrt((pp[idx].Gas_Velocity - pp[idx].Vel).norm_sq()) / All.cf_atime;
     int grain_subtype = 1;

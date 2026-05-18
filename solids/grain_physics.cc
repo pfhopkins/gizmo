@@ -55,6 +55,12 @@ void apply_grain_dragforce(void)
         }
     }
 #if defined(GRAIN_BACKREACTION)
+    /* Reset active gas Grain_AccelTimeMin to MAX_REAL_NUMBER before grain_backrx min-applies
+     * grain constraints. grain_backrx only reduces the field, never resets it. Without this,
+     * gas particles retain zero from IC struct zero-fill, collapsing their timestep to zero.
+     * This matches the implicit reset the old code did via scatter-back on every drag call. */
+    for(int ii : ActiveParticleList)
+        if(P[ii].Type == 0) P[ii].Grain_AccelTimeMin = MAX_REAL_NUMBER;
     grain_backrx(); /* call parent routine to assign the back-reaction force among neighbors */
 #endif
     PRINT_STATUS(" ..particulate/grain/PIC force evaluation done.");
