@@ -69,6 +69,12 @@ void compute_hydro_densities_and_forces(void)
   if(All.TotN_gas > 0)
     {
         PRINT_STATUS("Start hydrodynamics computation...");
+        /* Hydro corridor entry: decide Mode A vs Mode B once for the whole
+         * corridor span (density → cellcorrections → gradients → hydro_force).
+         * Wave 5 commit 4: state+lifecycle infra only. No consumer reads
+         * gizmo_hydro_corridor_get_mode() yet; behavior unchanged except
+         * diagnostic print under GIZMO_VERBOSE_DIAG. */
+        gizmo_hydro_corridor_decide_mode();
         /* density() internally handles ghost_exchange prep + redo (neighbor-list path)
            via the ghost_symlist_lifecycle helpers. Same for gradients and hydro_force. */
         double t_bench_density_start = my_second();
@@ -137,6 +143,10 @@ void compute_hydro_densities_and_forces(void)
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
         gizmo_step_phase_record("hydro_force", t_bench_hydro);
+        /* Hydro corridor exit: reset mode to UNSET. Any unexpected
+         * gizmo_hydro_corridor_get_mode() outside the corridor span will
+         * read UNSET and is therefore detectable. */
+        gizmo_hydro_corridor_end();
         STEP_PHASE_TIME("compute_addl_forces", compute_additional_forces_for_all_particles()); /* other accelerations that need to be computed are done here */
         /* Feed GPU-path kernel timings into CPU_Step accumulators for cpu.txt output.
            drift+ghost+redo feeds are done inside density()/gradients()/hydro_force() via
