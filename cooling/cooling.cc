@@ -1774,8 +1774,13 @@ double GetLambdaSpecies(long k_index, long index_x0y0, long index_x0y1, long ind
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
 void selfshield_local_incident_uv_flux(void)
 {   /* include local self-shielding with the following */
-    int i; for (int i : ActiveParticleList)
+    const int n_act = (int)ActiveParticleList.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int idx = 0; idx < n_act; ++idx)
     {
+        int i = ActiveParticleList[idx];
         if(P[i].Type==0)
         {
             if((CellP[i].Rad_Flux_UV>0) && (P[i].KernelRadius>0) && (CellP[i].Density>0) && (P[i].Mass>0) && (All.Time>0))

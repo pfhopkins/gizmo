@@ -87,18 +87,18 @@ P0 status: **COMPLETE 2026-05-19** — both P0 items done (A1 `2950b7e1`, A4 `11
 
 | ID | Item | Rating | Notes |
 |---|---|---:|---|
-| G1 | `cooling/selfshield_local_incident_uv_flux()` | P3 | Active gas host loop for local UV attenuation/self-shielding. Likely small, but host-only. |
-| G2 | `cooling/disk_betacool.h::disk_betacool_parent_routine()` | P3 | Already OMP active-list local loop. |
-| G3 | `cooling/planet_heating.h::planet_heating_parent_routine()` | P3 | Already OMP active-list local loop. |
+| G1 | `cooling/selfshield_local_incident_uv_flux()` | CLOSED | Small active-gas local UV attenuation/self-shielding pass. Now index-based OpenMP; no GPU/runner work warranted. |
+| G2 | `cooling/disk_betacool.h::disk_betacool_parent_routine()` | CLOSED | Already OMP active-list local loop; optional test-problem physics, mutually exclusive with `COOLING`. No GPU/runner work warranted. |
+| G3 | `cooling/planet_heating.h::planet_heating_parent_routine()` | CLOSED | Already OMP active-list local loop; small local heating update. No GPU/runner work warranted. |
 | G4 | `cooling/chimes/*` network/table loops | CLOSED | Intentional CPU CHIMES dependency. Broad library-style chemistry/table machinery; current cooling path routes CHIMES away from GPU. Not a runner/dual-dispatch item unless Phil opens a dedicated CHIMES port campaign. |
 
 ## H. Cosmic Ray / EOS Local Functions
 
 | ID | Item | Rating | Notes |
 |---|---|---:|---|
-| H1 | `eos/cosmic_ray_fluid/cosmic_ray_utilities.cc::CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients()` | P2 | Local coefficient body; actual loop may live in EOS/gradient/cooling callers. Affects portability of local coefficient loops. |
-| H2 | `eos/cosmic_ray_fluid/cosmic_ray_functions.h::CR_cooling_and_losses*()` | P2/P3 | Kokkos-inline local body; affects cooling/kick local-loop portability. |
-| H3 | `CR_initialize_multibin_quantities()` | P3 | Initialization/spectral-bin setup, not a per-step hotspot. |
+| H1 | `eos/cosmic_ray_fluid/cosmic_ray_utilities.cc::CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients()` | CLOSED | Gradients/hydro corridor item: called from `hydro/gradients.cc`, not a standalone loop-port target in this audit. Defer to the parallel gradients/hydro branch. |
+| H2 | `eos/cosmic_ray_fluid/cosmic_ray_functions.h::CR_cooling_and_losses*()` | CLOSED | Runs inside `cooling.cc::do_the_cooling_for_particle()`, so it already rides the cooling CPU/GPU dual-dispatch path. Any remaining performance/stack concern belongs under B9 cooling hygiene, not a CR-specific port. |
+| H3 | `CR_initialize_multibin_quantities()` | CLOSED | Startup-only CR spectral-bin/LUT initialization from `begrun.cc`; host-only is intentional. |
 
 ## I. Gravity / Tree / PM Infrastructure
 
