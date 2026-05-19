@@ -219,12 +219,6 @@ void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
 void find_particles_and_save_them(int num);
-void lineofsight_output(void);
-void sum_over_processors_and_normalize(void);
-void absorb_along_lines_of_sight(void);
-void output_lines_of_sight(int num);
-integertime find_next_lineofsighttime(integertime time0);
-void add_along_lines_of_sight(void);
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode);
 void x86_fix(void) ;
 

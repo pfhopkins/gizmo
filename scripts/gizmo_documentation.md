@@ -2261,9 +2261,6 @@ These flags govern snapshot outputs (what is saved and how it is saved).
 #OUTPUT_TIMESTEP                # outputs timesteps for each particle
 #OUTPUT_COOLRATE                # outputs cooling rate, and conduction rate if enabled
 #OUTPUT_COOLRATE_DETAIL         # outputs cooling rate term by term [saves all individually to snapshot]
-#OUTPUT_LINEOFSIGHT				# enables on-the-fly output of Ly-alpha absorption spectra. requires METALS and COOLING.
-#OUTPUT_LINEOFSIGHT_SPECTRUM    # computes power spectrum of these (requires additional code integration)
-#OUTPUT_LINEOFSIGHT_PARTICLES   # computes power spectrum of these (requires additional code integration)
 #OUTPUT_POWERSPEC               # compute and output cosmological power spectra. requires BOX_PERIODIC and PMGRID.
 #OUTPUT_RECOMPUTE_POTENTIAL     # update potential every output even it EVALPOTENTIAL is set
 #OUTPUT_DENS_AROUND_NONGAS        # output gas density in neighborhood of stars [collisionless particle types], not just gas
@@ -2321,12 +2318,6 @@ The remaining flags in this section all turn on/off additional (optional) output
 **OUTPUT\_COOLRATE**: Add particle cooling rate to snapshots (HDF5 "CoolingRate"). Enabling **OUTPUT\_COOLRATE\_DETAIL** in addition produces many additional details.
 
 **OUTPUT\_COOLRATE\_DETAIL**: Outputs cooling rate term by term (saves all individually to snapshot) -- this separates things like metal-line cooling, molecular, dust, hydrodynamic work, etc, useful for detailed modeling and diagnosis.
-
-**OUTPUT\_LINEOFSIGHT**: Enables on-the-fly output of Ly-alpha absorption spectra. Requires METALS and COOLING.
-
-**OUTPUT\_LINEOFSIGHT\_SPECTRUM**:  Computes power spectrum of the line-of-sight spectrum (requires additional code integration, using modules from GADGET-3 which are proprietary but listed here for completeness for the users who use those hooks). 
-
-**OUTPUT\_LINEOFSIGHT\_PARTICLES**: Computes power spectrum of the particles projected along the line-of-sight on-the-fly (requires additional code integration, using modules from GADGET-3 which are proprietary but listed here for completeness for the users who use those hooks).
 
 **OUTPUT\_POWERSPEC**: Compute and output cosmological matter power spectra. Requires BOX_PERIODIC and PMGRID.
 

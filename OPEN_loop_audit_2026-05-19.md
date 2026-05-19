@@ -44,12 +44,12 @@ P0 status: **COMPLETE 2026-05-19** — both P0 items done (A1 `2950b7e1`, A4 `11
 
 | ID | Item | Rating | Notes |
 |---|---|---:|---|
-| C1 | `core/predict.cc::gizmo_full_drift_to()` | P2/P3 | Full `NumPart` OMP drift, marks h-dirty and refreshes arena. Core infrastructure; real loop but semantics are central. |
+| C1 | `core/predict.cc::gizmo_full_drift_to()` | CLOSED | **Reviewed 2026-05-19 — no work.** Full-N OMP drift, but idempotent-cache-gated (`g_last_full_drift_Ti`) and invoked only at domain-decomp boundaries / output / restart — NOT per timestep. The per-step drift is the lazy active-only `move_particles()` (C2). No tiny-N globals violation; the whole-pool h-dirty mark is a self-documented optional narrowing, not a defect. Dual-dispatch payoff weak (rare invocation). |
 | C2 | `core/predict.cc::move_particles()` | P2 | Active-list drift is currently serial over `ActiveParticleList`; lazy-drift/h-dirty semantics make this delicate. Candidate for local parallelization or explicit waiver. |
 | C3 | `core/kicks.cc` first/second half kicks | P2/P3 | OMP host loops; under MFV paths can scan `NumPart` with active-or-gas condition. Core local candidate, but very central and branch-heavy. |
-| C4 | `core/kicks.cc::apply_long_range_kick()` | P2/P3 | Full `NumPart` PM kick loop. Tied to PM long-range gravity path. |
+| C4 | `core/kicks.cc::apply_long_range_kick()` | CLOSED | **Reviewed 2026-05-19 — no work.** Full-N OMP PM kick, but called only on PM (long-range) steps (`All.PM_Ti_begstep/endstep == All.Ti_Current`) — top-bin steps where every particle is active, so full-N is the correct work set; never called on tiny-N steps. No violation. Trivial per-particle work; standalone dual-dispatch payoff minimal — rides along if the PM path (I1/I2) GPU-ports. |
 | C5 | `core/timestep.cc` timestep assignment loops | P2 | Active-list local loops every step. Cheaper per particle than cooling, but broad and systematic. |
-| C6 | `core/timestep.cc` DEDNER fastest-wave reduction | P3 | Low-priority core/timestep host reduction. Host-only OpenMP `NumPart` gas reduction plus MPI max, gated by DEDNER/top-bin conditions. The reduction itself is not intrinsically serial, but it lives inside central timestep/timebin machinery and is hydro-adjacent; do not port standalone unless profiling or broader timestep/hydro work reopens it. |
+| C6 | `core/timestep.cc` DEDNER fastest-wave reduction | CLOSED | **Reviewed 2026-05-19 — no work.** Host OpenMP `NumPart` gas reduction + MPI max, behind `#ifdef DIVBCLEANING_DEDNER` and gated on `HighestActiveTimeBin == HighestOccupiedTimeBin` (or one-time `FastestWaveSpeed==0` init) — runs only on top-bin steps (all-active); skipped on tiny-N steps. Correctly gated, no violation. Do not port standalone unless broader timestep/hydro work reopens it. |
 
 ## D. Neighbor/Search-Like Custom Paths Outside Runner
 
@@ -62,7 +62,7 @@ P0 status: **COMPLETE 2026-05-19** — both P0 items done (A1 `2950b7e1`, A4 `11
 | D5 | `structure/group_search.cc::group_search_build_cross_type_nl()` | CLOSED | Shared FOF/Subfind catalogue helper wrapping cross-type neighbor lists. Not a timestep loop or standalone port target. |
 | D6 | `structure/fof.cc` FOF neighbor-list + CPU grouping/property aggregation | CLOSED | Catalogue/on-the-fly halo finder. Scheduled by snapshot/on-the-fly FoF cadence; CPU grouping/properties are special infrastructure. |
 | D7 | `structure/subfind/*` modern and local treefind paths | CLOSED | Snapshot/catalogue infrastructure. Key density/link/nearest-two paths already route through modern group-search helpers; not runner/dual-dispatch work. |
-| D8 | `structure/lineofsight.cc` line-of-sight loops | P3 | Diagnostic compiles and main spectrum deposition is OMP, but `lineofsight_output()` appears unreachable: params/init state exist, no scheduler call found. Needs keep-vs-retire/restore-call decision. |
+| D8 | `structure/lineofsight.cc` line-of-sight loops | CLOSED | Retired ancient unreachable `OUTPUT_LINEOFSIGHT*` diagnostic. The GADGET-era path had no scheduler call in GIZMO; future work should use/port LIGHTCONE-style machinery instead of carrying this dead code. |
 
 ## E. Modified Gradient / Hydro/MHD Known Or Other-Branch Items Still On List
 

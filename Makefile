@@ -522,8 +522,7 @@ FOF_OBJS =	structure/fof.o \
 			structure/subfind/subfind_loctree.o \
 			structure/subfind/subfind_potential.o \
 			structure/subfind/subfind_density.o \
-			structure/twopoint.o \
-			structure/lineofsight.o
+			structure/twopoint.o
 
 MISC_OBJS = sidm/cbe_integrator.o \
 			sidm/dm_fuzzy.o \
@@ -776,4 +775,3 @@ compile_time_info.cc: $(CONFIG)
 
 clean:
 	rm -f $(OBJS) $(GPU_OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
-

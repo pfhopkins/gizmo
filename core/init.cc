@@ -135,11 +135,6 @@ void init(void)
         else {All.SnapshotFileCount = RestartSnapNum + 1;}
     }
 
-#ifdef OUTPUT_LINEOFSIGHT
-    All.Ti_nextlineofsight = (int) (log(All.TimeFirstLineOfSight / All.TimeBegin) / All.Timebase_interval);
-    if(RestartFlag == 2) {endrun(78787);}
-#endif
-
     All.TotNumOfForces = 0;
     All.TopNodeAllocFactor = 0.008; /* this will start from a low value and be iteratively increased until it is well-behaved */
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM

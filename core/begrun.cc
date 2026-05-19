@@ -1762,16 +1762,9 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
-#ifdef OUTPUT_LINEOFSIGHT
-      strcpy(tag[nt], "TimeFirstLineOfSight");
-      addr[nt] = &All.TimeFirstLineOfSight;
-      id[nt++] = REAL;
-#endif
-
-
 #ifdef COSMIC_RAY_FLUID
-        strcpy(tag[nt], "CosmicRayDiffusionCoeff");
-        addr[nt] = &All.CosmicRayDiffusionCoeff;
+      strcpy(tag[nt], "CosmicRayDiffusionCoeff");
+      addr[nt] = &All.CosmicRayDiffusionCoeff;
         id[nt++] = REAL;
 #endif
 
@@ -3175,7 +3168,6 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	      if(P[i].TimeBin <= 0) {printf("Attempted to restructure integer timeline but ran into an error in readjust_timebase(). The minimum timebin for particle %d has been reached -- need smaller timesteps. Exiting.\n", i); endrun(8765);}
 	    }
 	}
-    All.Ti_nextlineofsight /= 2;
   }
   All.TimeMax = TimeMax_new;
 }

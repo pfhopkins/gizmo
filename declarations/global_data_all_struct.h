@@ -191,11 +191,6 @@ struct global_data_all_processes
   double TotalMeshSize[2];
 #endif
 
-  integertime Ti_nextlineofsight;
-#ifdef OUTPUT_LINEOFSIGHT
-  double TimeFirstLineOfSight;
-#endif
-
   int    CPU_TimeBinCountMeasurements[TIMEBINS];
   double CPU_TimeBinMeasurements[TIMEBINS][NUMBER_OF_MEASUREMENTS_TO_RECORD];
   int LevelToTimeBin[GRAVCOSTLEVELS];
