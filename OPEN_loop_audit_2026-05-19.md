@@ -13,6 +13,8 @@ Ratings:
 
 P4 top-level status: reviewed/done for this loop-audit pass. Do not start local work on P4 items from this branch unless Phil explicitly reopens one after the parallel branch merges.
 
+P0 status: **COMPLETE 2026-05-19** — both P0 items done (A1 `2950b7e1`, A4 `11f69d40`), on `wave5_next` (rebased onto `gpu_kokkos_unified`, pushed).
+
 ## A. Dead, Orphaned, Merge-Gap, Naming/Comment Cleanup
 
 | ID | Item | Rating | Notes |
@@ -145,7 +147,7 @@ P4 top-level status: reviewed/done for this loop-audit pass. Do not start local 
 
 ## Suggested Review Order
 
-1. P0 cleanup: A4 stale comments.
+1. P0 cleanup: **COMPLETE 2026-05-19** — A1 (`2950b7e1`) + A4 (`11f69d40`). No P0 items remain.
 2. Big missed hot paths: B2 dust chemistry, B3/B4 RT drift-kick/subcycle, E1 MG/modified-gradient audit, I1/I2 PM gravity.
 3. Pure-local dual-dispatch hygiene: B8 `rt_chem`, B7 `nuclear`, B9 cooling template.
 4. Custom search/NGL: D1 merge/split, D2 HII, D3 powerspectra, D4 twopoint, D5-D7 structure/group/subfind/FOF.
