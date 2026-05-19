@@ -233,7 +233,7 @@ static void gasgrain_rt_gas_search_pair_kernel(
        contribution to the gas-cell-centered current density:
          dJ_d = (Z_j q_e / m_grain_single) * M_j * wk_i * (v_grain - v_gas)
        Z_grain estimated inline from the grain Draine-Sutin tau parameter
-       (same expression as solids/grain_drag_gpu.cc::grain_drag_kernel:91 for
+       (same expression as solids/grain_drag.cc::grain_drag_kernel for
        GRAIN_LORENTZFORCE — this is the existing per-grain-charge approximation).
        Result accumulated in cgs (esu/cm^2/s); units are conservative because
        all factors are converted to physical cgs explicitly here. */

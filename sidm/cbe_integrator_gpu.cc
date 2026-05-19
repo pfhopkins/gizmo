@@ -3,7 +3,7 @@
  * post-gravity finalization (called from gravity/ags_force_loop.cc after the
  * AGSForce iterative neighbor loop closes).
  *
- * Both entries follow the same shape as solids/grain_drag_gpu.cc:
+ * Both entries follow the same shape as solids/grain_drag.cc:
  *   - tiny-N (num_active < GPU_MIN_PARTICLES_FOR_OFFLOAD): direct host call
  *     in an OMP parallel-for loop. No arena, no Kokkos allocation, no
  *     compact gather. Each active index is unique → thread-safe.

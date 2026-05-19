@@ -249,7 +249,7 @@ void grain_evolution_apply_sputter(int i, struct particle_data *P, double dt)
      * (Vel and Gas_Velocity, both in code peculiar units) converts to an
      * effective impinging-ion temperature (Tielens 1994 §4.5;
      * Hu+2019 Eq. 22). Same code-unit -> CGS convention used by the grain
-     * drag kernel (solids/grain_drag_gpu.cc:72). */
+     * drag kernel (solids/grain_drag.cc). */
     Vec3<double> dv_code = P[i].Vel - P[i].Gas_Velocity;
     double v_drift_cgs2 = dv_code.norm_sq() / (All.cf_atime*All.cf_atime) * UNIT_VEL_IN_CGS * UNIT_VEL_IN_CGS;
     T_eff += 0.5 * PROTONMASS_CGS * v_drift_cgs2 / BOLTZMANN_CGS;
@@ -451,7 +451,7 @@ void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
 
 /* Per-superparticle local step. Dispatches to the active local-operator bits
  * (3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL). All operators run inside
- * grain_drag_kernel (solids/grain_drag_gpu.cc) and any back-reaction they
+ * grain_drag_kernel (solids/grain_drag.cc) and any back-reaction they
  * generate piggybacks on the generic grainbackrx ghost-writeback bundle in
  * solids/grain_physics_loop.cc. No parallel pass. */
 KOKKOS_INLINE_FUNCTION

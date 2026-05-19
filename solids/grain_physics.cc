@@ -26,7 +26,7 @@
 
 #ifdef GRAIN_FLUID
 
-extern void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int *, int);
+extern void grain_drag_evaluate(struct particle_data *, struct gas_cell_data *, int *, int);
 
 /* function to apply the drag on the grains from surrounding gas properties */
 void apply_grain_dragforce(void)
@@ -36,7 +36,7 @@ void apply_grain_dragforce(void)
 
     /* Gather only true active grains — non-grain actives are never processed by the
        drag kernel, so filtering here makes the grain count honest for the tiny-N
-       dispatch decision inside grain_drag_evaluate_gpu. */
+       dispatch decision inside grain_drag_evaluate. */
     {
         int num_grain = 0;
         for(int ii : ActiveParticleList)
@@ -46,7 +46,7 @@ void apply_grain_dragforce(void)
             int aa = 0;
             for(int ii : ActiveParticleList)
                 if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) grain_indices[aa++] = ii;
-            grain_drag_evaluate_gpu(P, CellP, grain_indices, num_grain);
+            grain_drag_evaluate(P, CellP, grain_indices, num_grain);
             free(grain_indices);
         }
     }

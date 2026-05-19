@@ -1,8 +1,8 @@
-/* grain_drag_gpu.cc — GPU-accelerated grain drag force evaluation.
+/* grain_drag.cc — grain drag force evaluation with CPU/GPU adaptive dispatch.
  *
- * GPU translation unit: GPU translation unit (Kokkos/nvcc_wrapper).
- * Provides grain_drag_evaluate_gpu() which runs the per-particle grain drag/Lorentz
- * force computation via Kokkos::parallel_for.
+ * GPU translation unit (Kokkos/nvcc_wrapper).
+ * Provides grain_drag_evaluate() which runs the per-particle grain drag/Lorentz
+ * force computation with an OpenMP tiny-N path and a Kokkos large-N path.
  *
  * Called from apply_grain_dragforce() in grain_physics.cc.
  *
@@ -258,8 +258,8 @@ static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell
 /* Dispatch function: tiny-N → OMP host path; large-N → GPU compact path.
  * Caller (apply_grain_dragforce) pre-filters active_indices to GRAIN_PTYPES only,
  * so num_active here is the true active grain count. */
-void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
-                             int *active_indices, int num_active)
+void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *CellP_host,
+                         int *active_indices, int num_active)
 {
     if(num_active <= 0) return;
 
@@ -335,7 +335,6 @@ void grain_drag_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data 
 
 #else /* stubs */
 
-void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
-                             int *, int) {}
+void grain_drag_evaluate(struct particle_data *, struct gas_cell_data *, int *, int) {}
 
 #endif /* GRAIN_FLUID */

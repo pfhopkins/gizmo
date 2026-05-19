@@ -1,6 +1,8 @@
-/* sidm_gpu_decls.h — consolidated GPU dispatch declarations for sidm
- * kernels: dm_fuzzy (DMGrad) and cbe_integrator (CBE drift+kick).  Step 5
- * Phase E1c (2026-04-30) — merges dm_fuzzy_gpu.h + cbe_integrator_gpu.h.
+/* sidm_gpu_decls.h — GPU dispatch declarations for SIDM/CBE helpers.
+ *
+ * CBE drift/kick remains a direct adaptive CPU/GPU dispatch routine. DM_FUZZY
+ * DMGrad moved to the runner-template path in dm_fuzzy_loop.{h,cc}; no DM_FUZZY
+ * declarations live here.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
