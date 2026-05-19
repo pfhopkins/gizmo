@@ -197,3 +197,64 @@ void gizmo_hydro_corridor_end(void)
      * gizmo_hydro_cleanup_symlist_and_ghosts() (called after
      * hydro_force) still owns the free. Double-free would crash. */
 }
+
+void gizmo_hydro_corridor_mass_guardrail_check(void)
+{
+    /* Diag-gated. Zero cost in production. */
+    if(!gizmo_verbose_diag()) return;
+
+    /* Scan ActiveParticleList for gas members with Mass<=0. Track first
+     * offender locally for the diagnostic; collective Allreduce'd before
+     * any rank aborts so the endrun is rank-coherent. */
+    int    local_violation_count    = 0;
+    int    first_offender_local_idx = -1;
+    long long first_offender_id     = -1;
+    double first_offender_mass      = 0.0;
+    int    local_active_gas         = 0;
+
+    for(int ii : ActiveParticleList) {
+        if(P[ii].Type != 0) continue;
+        local_active_gas++;
+        if(P[ii].Mass <= 0) {
+            if(first_offender_local_idx < 0) {
+                first_offender_local_idx = ii;
+                first_offender_id        = (long long)P[ii].ID;
+                first_offender_mass      = (double)P[ii].Mass;
+            }
+            local_violation_count++;
+        }
+    }
+
+    int global_violation_count = local_violation_count;
+    int global_active_gas      = local_active_gas;
+    if(NTask > 1) {
+        MPI_Allreduce(&local_violation_count, &global_violation_count, 1,
+                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&local_active_gas, &global_active_gas, 1,
+                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    }
+
+    if(global_violation_count > 0) {
+        /* Violation: print on flagging ranks, then collective endrun. */
+        if(local_violation_count > 0) {
+            printf("FATAL: corridor Mass-guardrail violation on rank=%d: "
+                   "local_count=%d (global=%d), first offender: P[%d].ID=%lld "
+                   "P[%d].Mass=%.6e (was active-gas post-FB; corridor's broad "
+                   "row list contains a semantically-dead row — see "
+                   "OPEN_3d_hydro_corridor_design.md §1.5)\n",
+                   ThisTask, local_violation_count, global_violation_count,
+                   first_offender_local_idx, first_offender_id,
+                   first_offender_local_idx, first_offender_mass);
+            fflush(stdout);
+        }
+        endrun(7311);
+    }
+
+    /* Clean pass: one-line confirmation per step (verbose-diag only)
+     * so devs can see the safety mechanism is alive. */
+    if(ThisTask == 0) {
+        printf("[CORRIDOR_GUARD step=%d] scanned %d active gas, 0 Mass<=0 violations\n",
+               (int)All.NumCurrentTiStep, global_active_gas);
+        fflush(stdout);
+    }
+}

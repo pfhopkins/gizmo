@@ -115,6 +115,15 @@ void compute_hydro_densities_and_forces(void)
         STEP_PHASE_TIME("compute_stellar_feedback", compute_stellar_feedback());
 #endif
 
+        /* Wave 5 commit 5c: corridor Mass-guardrail. Defensive observability
+         * check (diag-gated) — scans ActiveParticleList for any gas with
+         * Mass<=0 post-feedback. The per-row enabled flag in
+         * CellcorrectionsSpec (commit 5b) already silently handles such
+         * rows; this guardrail is the broader backstop that becomes
+         * load-bearing once commit 9 unlocks NTask>1 corridor CSR
+         * consumption. See OPEN_3d_hydro_corridor_design.md §1.5. */
+        gizmo_hydro_corridor_mass_guardrail_check();
+
         double t_bench_grad_start = my_second();
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
 #ifdef MHD_MODIFIED_GRADIENT

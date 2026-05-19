@@ -109,4 +109,26 @@ const nlr_external_csr * gizmo_hydro_corridor_external_csr(void);
  * free gizmo_sym_*; that stays with gizmo_hydro_cleanup_symlist_and_ghosts). */
 void gizmo_hydro_corridor_end(void);
 
+/* Mass<=0 topology guardrail (Wave 5 commit 5c). Defensive runtime check
+ * called immediately AFTER compute_stellar_feedback(): scans
+ * ActiveParticleList for any gas member with Mass<=0. If any rank flags a
+ * violation (MPI_Allreduce'd for coherent abort), endrun(7311) with the
+ * offending cell index + ID + Mass on the flagging rank.
+ *
+ * Gated by gizmo_verbose_diag() — debug-build observability check; zero
+ * cost in production runs. The per-row `enabled` flag in CellcorrectionsSpec
+ * (commit 5b) already handles Mass<=0 silently for cellcorrections's
+ * narrow filter; this guardrail is the broader observability backstop that
+ * becomes load-bearing once commit 9 unlocks NTask>1 corridor CSR
+ * consumption (where Mass<=0 on a cross-rank ghost is harder to detect
+ * per-row).
+ *
+ * §1.5 of OPEN_3d_hydro_corridor_design.md: the topology audit established
+ * positions / KernelRadius / active-membership / ghost set are invariant
+ * across the corridor span. The one exception is gas Mass<=0 events
+ * (sink swallow, full SF conversion mid-step) — if those ever happen,
+ * the corridor's broad active list contains "semantically-dead" rows
+ * and the guardrail catches it loudly. */
+void gizmo_hydro_corridor_mass_guardrail_check(void);
+
 #endif /* HYDRO_CORRIDOR_H */
