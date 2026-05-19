@@ -155,8 +155,23 @@ void dynamic_diff_calc(void) {
                             construct_gradient(DynamicDiffDataPasser[i].GradVelocity_hat[k], i);
                             local_slopelimiter(DynamicDiffDataPasser[i].GradVelocity_hat[k], DynamicDiffDataPasser[i].Maxima.Velocity_hat[k], DynamicDiffDataPasser[i].Minima.Velocity_hat[k], a_limiter, h_lim, stol, 0,0,0);
                         }
+                    } /* construct_gradient + slope-limit of GradVelocity_hat is iteration-0 only */
 
-                        /* Slope-limit the VelShear_hat tensor */
+                    /* Reconstruct (and slope-limit) the VelShear_hat tensor from
+                       the stored GradVelocity_hat. VelShear_hat is consumed
+                       unconditionally below (denominator, numerator, and the
+                       OUTPUT_TURB_DIFF_DYNAMIC_ERROR branch); construct_gradient
+                       above only populates GradVelocity_hat on iteration 0.
+                       NOTE: the multi-iteration path (TurbDynamicDiffIterations
+                       > 0) is currently force-disabled in begrun.cc, so in
+                       supported runs this loop only ever executes iteration 0.
+                       This is a latent correctness fix — byte-identical to the
+                       old code on the iter-0 path, but should multi-iteration
+                       ever be re-enabled it prevents an uninitialized-stack read
+                       of VelShear_hat on iterations >= 1. The reconstruction is
+                       cheap/deterministic; the expensive construct_gradient call
+                       stays iter-0-only. */
+                    {
                         double shearfac_max = 0.5 * sqrt(CellP[i].Velocity_hat.norm_sq()) / CellP[i].h_turb;
 
                         for (k = 0; k < 3; k++) {

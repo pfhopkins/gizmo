@@ -2855,7 +2855,13 @@ void read_parameter_file(char *fname)
 #endif
 
 #ifdef TURB_DIFF_DYNAMIC
-    All.TurbDynamicDiffIterations = 0; /* D. Rennehan: This has NOT been tested above 0 */
+    /* Multi-iteration dynamic diffusion is disabled — untested above 0
+       (D. Rennehan). Note the TurbDynamicDiffIterations parameter registration
+       is also commented out above (~line 1994), so a value supplied in the
+       parameterfile is reported as "ignored" by the parser; this line is the
+       authoritative setting and the iteration loop in turb/dynamic_diffusion.cc
+       therefore always runs exactly once (iteration 0). */
+    All.TurbDynamicDiffIterations = 0;
 #endif
 #if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
     if(All.ComovingIntegrationOn) {All.ErrTolForceAcc = 0.005; All.ErrTolIntAccuracy = 0.05;}
