@@ -86,6 +86,10 @@
 #include "../galaxy_sf/thermal_fb_loop.h"
 #endif
 
+#ifdef HYDRO_VOLUME_CORRECTIONS
+#include "../hydro/cellcorrections_loop.h"
+#endif
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 #include "../galaxy_sf/radfb_rp_loop.h"
 #endif
@@ -4916,6 +4920,16 @@ template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_i
  * otherwise hit an undefined type at this template instantiation site). */
 #ifdef GALSF_FB_THERMAL
 template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
+#endif
+
+/* Wave 5 corridor / cellcorrections: CellcorrectionsSpec — first-pass
+ * volume corrections (Volume_1 = sum_j Volume_0[j]^2 wk(r, h_j)).
+ * NotIterative GasOnly Spec, no j-side writes, no ghost-writeback;
+ * first corridor consumer in the chain. See
+ * hydro/cellcorrections_loop.{h,cc} and OPEN_3d_hydro_corridor_design.md
+ * commit 5a. */
+#ifdef HYDRO_VOLUME_CORRECTIONS
+template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
 #endif
 
 /* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.
