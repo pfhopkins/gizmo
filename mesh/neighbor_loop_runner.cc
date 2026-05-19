@@ -192,6 +192,7 @@ neighbor_loop_args nlr_default_args(void)
     args.aux                 = nullptr;       /* caller fills */
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
     args.neighbor_type_mask_override = 0;      /* 0 => use Spec::neighbor_type_mask */
+    args.external_csr        = nullptr;        /* nullptr => runner builds its own CSR */
     return args;
 }
 
@@ -1929,6 +1930,72 @@ static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const 
 }
 
 /* ============================================================================
+ * External-CSR staging helpers (Wave 5 hydro corridor support).
+ *
+ * When args.external_csr is non-null, Mode A skips gpu_ngb_list_build and
+ * instead stages the caller's host CSR into Kokkos memory shaped like a
+ * gpu_neighbor_list_t — so the rest of run_mode_a is path-agnostic. Only
+ * the build site (replaced with this helper) and the free site (the
+ * matching helper below) differ between the two paths.
+ *
+ * The spatial-index fields of gnl (d_tiles / d_bvh / d_pool / ntiles /
+ * bvh_root / periodic_flags / box_sizes / box_halves) stay zero/null
+ * because the pair_kernel does not read them (it uses nearest_xyz which
+ * reads All.BoxSize_* via the AllDeviceMirror).
+ *
+ * The runner OWNS the SharedSpace/DeviceSpace allocations made here and
+ * frees them in nlr_free_external_csr_gnl(). It does NOT free the caller's
+ * host buffers (active_indices / offsets / neighbors). Contract: caller
+ * keeps host CSR alive for the duration of every run_neighbor_loop call
+ * that injects it; the corridor design owns CSR across multiple consumers
+ * by holding it in the gizmo_sym_* globals. */
+static inline void
+nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
+                                gpu_neighbor_list_t *gnl)
+{
+    /* zero-init everything; we touch only what we own */
+    memset(gnl, 0, sizeof(*gnl));
+
+    gnl->num_active  = ext->num_active;
+    gnl->total_pairs = ext->total_pairs;
+
+    const size_t off_bytes = (size_t)(ext->num_active + 1) * sizeof(int64_t);
+    const size_t act_bytes = (size_t)(ext->num_active > 0 ? ext->num_active : 1)
+                             * sizeof(int);
+    const int64_t pairs = ext->total_pairs;
+    const size_t nbr_bytes = (size_t)(pairs > 0 ? pairs : 1) * sizeof(int);
+
+    /* offsets and d_active in SharedSpace (UVM) — host memcpy is fine */
+    gnl->offsets  = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(off_bytes);
+    gnl->d_active = (int *)     Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(act_bytes);
+    memcpy(gnl->offsets,  ext->offsets,          off_bytes);
+    memcpy(gnl->d_active, ext->active_indices,   act_bytes);
+
+    /* neighbors in DeviceSpace (GPU HBM) — must deep_copy from host view */
+    gnl->neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(nbr_bytes);
+    if(pairs > 0) {
+        Kokkos::View<const int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            h_n(ext->neighbors, (size_t)pairs);
+        Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            d_n(gnl->neighbors, (size_t)pairs);
+        Kokkos::deep_copy(d_n, h_n);
+    }
+}
+
+static inline void
+nlr_free_external_csr_gnl(gpu_neighbor_list_t *gnl)
+{
+    if(gnl->neighbors) Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(gnl->neighbors);
+    if(gnl->d_active)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->d_active);
+    if(gnl->offsets)   Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gnl->offsets);
+    gnl->neighbors = nullptr;
+    gnl->d_active  = nullptr;
+    gnl->offsets   = nullptr;
+    gnl->num_active = 0;
+    gnl->total_pairs = 0;
+}
+
+/* ============================================================================
  * run_mode_a<Spec> — generic Mode A path through the GPU NGL pipeline.
  *
  * Three-epoch staging contract (see neighbor_loop_runner.h doc):
@@ -1940,6 +2007,12 @@ static void run_mode_b_remote_with_oracle(const neighbor_loop_args& args, const 
  * parallel_for + fence + check_last_error (declarations/gpu_dispatch_templates.h).
  * No additional explicit fence is needed before host-side d_accums readback
  * — the launch helper already fenced.
+ *
+ * External CSR injection (args.external_csr != nullptr): the caller has
+ * already built a symmetric gas CSR (e.g. corridor's gizmo_sym_*) and we
+ * stage it into the gnl shape via nlr_stage_external_csr_into_gnl() instead
+ * of calling gpu_ngb_list_build. SidxCacheKind::GasOnly only; other Specs
+ * MUST leave args.external_csr null. Existing Specs unaffected.
  * ========================================================================== */
 
 template <typename Spec>
@@ -1985,11 +2058,48 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     struct gas_cell_data *CellP_gpu = (args.CellP != nullptr)
                                         ? gpu_particles_arena_CellP() : nullptr;
 
-    /* NGL build using pre-arena radii. SIDX cache resolved from spec. */
+    /* NGL build using pre-arena radii. SIDX cache resolved from spec.
+     * Hydro-corridor external-CSR path: when args.external_csr is non-null
+     * the caller has already built a symmetric gas CSR — stage it into gnl
+     * shape and skip the build. Contract: GasOnly Specs only. */
     gpu_neighbor_list_t gnl;
     gpu_spatial_index_t *sidx = nlr_resolve_sidx_cache(Spec::sidx_cache_kind,
                                                        Spec::loop_name);
-    {
+    if(args.external_csr != nullptr) {
+        /* Runtime checks — cannot be static_assert because that would fire
+         * at template instantiation for every NotIterative Spec, including
+         * non-GasOnly ones (sink_env1, dm_fuzzy, etc.) whose callers never
+         * set external_csr. Compile-time enforcement is impossible since
+         * external_csr is a runtime args field, not a Spec constexpr.
+         *
+         * All checks are UNCONDITIONAL (not GIZMO_VERBOSE_DIAG-gated):
+         * external CSR injection is a sharp tool, contract violations
+         * cause silent wrong-particle writeback (kernel stages for
+         * external_csr->active_indices[aa] but writeback applies
+         * d_accums[aa] to args.active_list[aa]). Fail loud always. */
+        const nlr_external_csr *ec = args.external_csr;
+        if(Spec::sidx_cache_kind != SidxCacheKind::GasOnly) {
+            endrun(7300);  /* External CSR injection requires GasOnly cache */
+        }
+        if(ec->num_active != N) {
+            endrun(7301);  /* External CSR num_active mismatch with args */
+        }
+        if(!ec->active_indices) endrun(7302);
+        if(!ec->offsets)        endrun(7303);
+        if(ec->total_pairs < 0) endrun(7304);
+        if(ec->total_pairs > 0 && !ec->neighbors) endrun(7305);
+        if(N > 0 && ec->offsets[0] != 0)           endrun(7306);
+        if(N > 0 && ec->offsets[N] != ec->total_pairs) endrun(7307);
+        /* Row order MUST match args.active_list elementwise — otherwise
+         * the kernel accumulates for ec->active_indices[aa] but the host
+         * writeback re-applies d_accums[aa] to args.active_list[aa]. */
+        for(int aa = 0; aa < N; aa++) {
+            if(ec->active_indices[aa] != args.active_list[aa]) endrun(7308);
+            if(ec->offsets[aa+1] < ec->offsets[aa])            endrun(7309);
+        }
+        StageTimer t(tim ? &tim->dt_collect : nullptr);
+        nlr_stage_external_csr_into_gnl(ec, &gnl);
+    } else {
         StageTimer t(tim ? &tim->dt_collect : nullptr);
         gpu_ngb_list_build(P_gpu, args.num_total,
                            args.active_list, N,
@@ -2096,11 +2206,16 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
 
     /* Cleanup. SIDX cache pointer passed so the free leaves cached storage
      * intact for sink_feed/sink_swk reuse (matches existing
-     * sink_environment_gpu.cc:261 idiom). */
+     * sink_environment_gpu.cc:261 idiom). External-CSR path frees only what
+     * we staged (gnl offsets/neighbors/d_active); caller owns host CSR. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_actives);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
-    gpu_ngb_list_free(&gnl, sidx);
+    if(args.external_csr != nullptr) {
+        nlr_free_external_csr_gnl(&gnl);
+    } else {
+        gpu_ngb_list_free(&gnl, sidx);
+    }
     gpu_particles_arena_mark_clean_after_scatter(Spec::loop_name);
 }
 

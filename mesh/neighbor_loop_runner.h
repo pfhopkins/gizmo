@@ -1033,6 +1033,41 @@ enum class DispatchPath : int {
  * radii once via Spec::search_radius and reuses them for any prep
  * (Mode A) and the chosen walker.
  * ========================================================================== */
+/* External symmetric gas-gas CSR injection (hydro corridor support — added
+ * for Wave 5 cellcorrections/gradients/hydro_force port chain). When the
+ * caller has already built a symmetric gas CSR (e.g. via the corridor's
+ * gizmo_gradients_prep_symlist) that's intended to be SHARED across multiple
+ * runner-Spec consumers in one step, it can be injected here instead of the
+ * runner re-building it per call. The runner stages the host CSR into
+ * Kokkos-managed memory for device dispatch but does NOT free the caller's
+ * host buffers; the caller owns CSR lifetime across the whole corridor.
+ *
+ * Contract requirements (UNCONDITIONALLY enforced at runtime via endrun in
+ * run_mode_a — external CSR is a sharp tool, violations cause silent
+ * wrong-particle writeback because d_accums[aa] is later applied to
+ * args.active_list[aa], not to ec->active_indices[aa]):
+ *   - active_indices[] equals args.active_list[] elementwise (endrun 7308)
+ *   - num_active equals args.num_active (endrun 7301)
+ *   - offsets[0] == 0 and offsets[num_active] == total_pairs (7306/7307)
+ *   - offsets monotonic non-decreasing per row (7309)
+ *   - Symmetric pair structure: for every (a -> j), there exists (b -> i)
+ *     where b is the home slot of j and i is in j's neighbor list
+ *     (not runtime-checkable — caller-asserted invariant)
+ *   - SidxCacheKind::GasOnly Specs only — other kinds rejected (endrun 7300)
+ *   - active_indices / offsets non-null; neighbors non-null iff total_pairs>0
+ *     (endrun 7302/7303/7304/7305)
+ *
+ * Mode B ignores external_csr entirely (request-driven walker does not need
+ * a CSR). Only consumed by Mode A. */
+struct nlr_external_csr {
+    int        *active_indices;  /* len num_active; MUST equal args.active_list */
+    int         num_active;
+    int64_t    *offsets;         /* len (num_active+1); 64-bit row pointers */
+    int        *neighbors;       /* len total_pairs; 32-bit local indices */
+    int64_t     total_pairs;
+    const char *owner_name;      /* diagnostic, e.g. "corridor:gradients" */
+};
+
 struct neighbor_loop_args {
     struct particle_data *P;
     struct gas_cell_data *CellP;
@@ -1054,6 +1089,13 @@ struct neighbor_loop_args {
                                   * with bm = ags_gravity_kernel_shared_BITFLAG). The
                                   * iterative runner is unaffected — it uses
                                   * NlrSubgroup::j_type_bitmask. */
+    const nlr_external_csr *external_csr = nullptr;
+                                 /* nullptr (default) => runner builds its own CSR
+                                  * via gpu_ngb_list_build (legacy behavior).
+                                  * non-null => Mode A skips the build and stages
+                                  * the provided host CSR into Kokkos memory.
+                                  * Mode B / iterative runner ignore. See struct
+                                  * nlr_external_csr above for contract details. */
 };
 
 /* Effective neighbor-type mask for a non-iterative run_neighbor_loop call:
