@@ -372,7 +372,6 @@ void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* routine to actually calculate the turbulent acceleration 'driving field' force on every resolution element */
 void add_turb_accel()
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH();
     set_turb_ampl();
     double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
 
@@ -383,6 +382,7 @@ void add_turb_accel()
     if(N_active == 0) {free(turb_indices); PRINT_STATUS("Finished turbulence driving (acceleration) computation"); return;}
 
     if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+        GIZMO_GPU_ENSURE_ALL_FRESH(); /* All-mirror dispatch-boundary belt; the turb_accel kernel itself reads no All.* but keep the call at the GPU dispatch point per the All-mirror convention */
         /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
         double *gpu_mode = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
         double *gpu_aka  = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(StNModes * 3 * sizeof(double));
@@ -429,28 +429,16 @@ void add_turb_accel()
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_mode);
 
     } else
-    { /* CPU path */
-        struct particle_data *compact_P    = (struct particle_data *) malloc(N_active * sizeof(struct particle_data));
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) malloc(N_active * sizeof(struct gas_cell_data));
-        for(int j = 0; j < N_active; j++)
-        {
-            compact_P[j]    = P[turb_indices[j]];
-            compact_Cell[j] = CellP[turb_indices[j]];
-        }
+    { /* CPU path — tiny-N: run the SSOT kernel directly over the global
+         P/CellP arrays via turb_indices, no compact gather/scatter, no GPU
+         mirror sync (matches the grain_drag tiny-N cleanup philosophy). */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
         for(int j = 0; j < N_active; j++)
         {
-            add_turb_accel_for_particle(j, compact_P, compact_Cell, StMode, StAka, StAkb, StAmpl, StNModes, fac_sol);
+            add_turb_accel_for_particle(turb_indices[j], P, CellP, StMode, StAka, StAkb, StAmpl, StNModes, fac_sol);
         }
-        for(int j = 0; j < N_active; j++)
-        {
-            int ii = turb_indices[j];
-            CellP[ii] = compact_Cell[j];
-        }
-        free(compact_Cell);
-        free(compact_P);
     } /* end CPU/GPU path selection */
 
     free(turb_indices);
