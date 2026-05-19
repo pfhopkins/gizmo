@@ -163,7 +163,6 @@ static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
-    GIZMO_GPU_ENSURE_ALL_FRESH(); /* idempotent re-sync of per-TU AllDeviceMirrors — cheap insurance against stale mid-step reads */
     /* Step 1: Determine indices of active gas particles eligible for cooling. */
     std::vector<int> cool_indices;
     cool_indices.reserve(ActiveParticleList.size());
@@ -195,6 +194,7 @@ void cooling_parent_routine(void)
      */
 #if !defined(CHIMES)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+    GIZMO_GPU_ENSURE_ALL_FRESH(); /* device cooling reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
