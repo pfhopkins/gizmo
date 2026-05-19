@@ -287,7 +287,6 @@ void rt_get_sigma(void)
  * CPU path uses compact arrays with OpenMP. */
 void rt_update_chemistry(void)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH();
     /* Build index of active gas particles */
     int N_active = 0;
     for(int i : ActiveParticleList) {if(P[i].Type == 0) N_active++;}
@@ -296,6 +295,7 @@ void rt_update_chemistry(void)
 
     if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD)
     {
+        GIZMO_GPU_ENSURE_ALL_FRESH(); /* device RT chemistry kernel reads All mirrors; tiny-N CPU path reads host All directly */
         /* Gather into compact SharedSpace arrays */
         int batch_n = N_active;
         struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_n * sizeof(struct particle_data));
