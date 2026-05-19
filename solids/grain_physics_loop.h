@@ -127,6 +127,10 @@ struct GrainBackrxSpec {
                                              const NeighborLoopPlan& plan);
     static void        ghost_writeback_end  (const neighbor_loop_args& args,
                                              const NeighborLoopPlan& plan);
+    /* populate_device_context: required because DeviceContext extends the base.
+     * oracle_dry_run is default-initialized to false; no UVM allocation needed. */
+    static void populate_device_context(const neighbor_loop_args& /*args*/,
+                                        DeviceContext& /*ctx*/) {}
 
     /* Device hooks — header-inline. */
 

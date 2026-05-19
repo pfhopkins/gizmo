@@ -30,6 +30,7 @@
 #include "../mesh/kernel.h"            /* MUST precede grain_physics_loop.h (no include guards) */
 #include "grain_physics_loop.h"
 #include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_writeback_ops.h"   /* GHOST_WRITEBACK_BUNDLE_* manifest macros — explicit include, not pulled transitively (matches thermal_fb_loop.cc) */
 
 #ifdef GRAIN_FLUID
 
@@ -147,8 +148,25 @@ void GrainBackrxSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 void grain_backrx_calc(void)
 {
     PRINT_STATUS(" ..assigning grain back-reaction to gas [runner]");
+
+    /* Build the active-grain list via the engine helper (filters by
+     * GrainBackrxSpec::is_active, MPI_Allreduce-gates on the global count).
+     * Without this the runner sees num_active=0 and does nothing. */
+    int *active_list = nullptr;
+    int  num_active = 0, num_global_active = 0;
+    if(!nlr_build_active_list(GrainBackrxSpec::is_active,
+                               &active_list, &num_active, &num_global_active,
+                               "grain_backrx_active_list")) {
+        CPU_Step[CPU_DRAGFORCE] += measure_time();
+        return;
+    }
+
     neighbor_loop_args args = nlr_default_args();
+    args.active_list = active_list;
+    args.num_active  = num_active;
     run_neighbor_loop<GrainBackrxSpec>(args);
+
+    nlr_free_active_list(active_list);
     CPU_Step[CPU_DRAGFORCE] += measure_time();
 }
 
@@ -319,14 +337,32 @@ void grain_rt_opacity_calc(void)
 #endif
             }
         }
-        neighbor_loop_args args = nlr_default_args();
-        run_neighbor_loop<GrainRTGasSpec>(args);
+        int *active_list = nullptr;
+        int  num_active = 0, num_global_active = 0;
+        if(nlr_build_active_list(GrainRTGasSpec::is_active,
+                                  &active_list, &num_active, &num_global_active,
+                                  "grain_rt_gas_active_list")) {
+            neighbor_loop_args args = nlr_default_args();
+            args.active_list = active_list;
+            args.num_active  = num_active;
+            run_neighbor_loop<GrainRTGasSpec>(args);
+            nlr_free_active_list(active_list);
+        }
     }
 
     /* Direction 2: grain sources → gas neighbors (radiation acceleration). */
     {
-        neighbor_loop_args args = nlr_default_args();
-        run_neighbor_loop<GrainRTGrainSpec>(args);
+        int *active_list = nullptr;
+        int  num_active = 0, num_global_active = 0;
+        if(nlr_build_active_list(GrainRTGrainSpec::is_active,
+                                  &active_list, &num_active, &num_global_active,
+                                  "grain_rt_grain_active_list")) {
+            neighbor_loop_args args = nlr_default_args();
+            args.active_list = active_list;
+            args.num_active  = num_active;
+            run_neighbor_loop<GrainRTGrainSpec>(args);
+            nlr_free_active_list(active_list);
+        }
     }
 
     CPU_Step[CPU_DRAGFORCE] += measure_time();
