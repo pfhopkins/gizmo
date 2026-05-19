@@ -36,19 +36,7 @@
 #endif
 /* above sets fraction of particles selected for sphere placement. Will be scaled with total particle number so that a fixed value should give roughly the same noise level in the meaurement, indpendent of simulation size */
 
-struct twopointdata_in
-{
-  Vec3<MyDouble> Pos;
-  MyFloat Rs;
-  int NodeList[NODELISTLENGTH];
-}
- *TwoPointDataIn, *TwoPointDataGet;
-
-
-#define SQUARE_IT(x) ((x)*(x))
-
-
-static long long Count[BINS_TP], Count_bak[BINS_TP];
+static long long Count[BINS_TP];
 static long long CountSpheres[BINS_TP];
 static double Xi[BINS_TP];
 static double Rbin[BINS_TP];
@@ -57,9 +45,6 @@ static double R0, R1;		/* inner and outer radius for correlation function determ
 
 static double logR0;
 static double binfac;
-static double PartMass;
-
-static MyFloat *RsList;
 
 
 
@@ -67,17 +52,13 @@ static MyFloat *RsList;
  */
 void twopoint(void)
 {
-    int i, j, k, bin, n, ndone, ndone_flag, dummy, nexport, nimport, place, recvTask, ngrp;
-    double p, rs, vol, scaled_frac, tstart, tend, mass, masstot; long long *countbuf;
+    int i, j, bin, n;
+    double p, rs, vol, scaled_frac, tstart, tend; long long *countbuf;
     PRINT_STATUS("begin two-point correlation function..."); tstart = my_second();
     /* set inner and outer radius for the bins that are used for the correlation function estimate */
     R0 = All.ForceSoftening[1] / 3.; R1 = All.BoxSize / 2; /* we assume that type=1 is the primary type */
     scaled_frac = FRACTION_TP * 1.0e7 / All.TotNumPart; logR0 = log(R0); binfac = BINS_TP / (log(R1) - log(R0));
-    for(i = 0, mass = 0; i < NumPart; i++) {mass += P[i].Mass;}
-    MPI_Allreduce(&mass, &masstot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); PartMass = masstot / All.TotNumPart;
     for(i = 0; i < BINS_TP; i++) {Count[i] = 0; CountSpheres[i] = 0;}
-    /* allocate buffers to arrange communication */
-    RsList = (MyFloat *) mymalloc("RsList", NumPart * sizeof(MyFloat));
 
     gizmo_rng_t saved_rng = random_generator;
     gizmo_rng_init(&random_generator, (uint64_t)P[0].ID + (uint64_t)ThisTask);
@@ -125,7 +106,6 @@ void twopoint(void)
                 rs = pow(pow(R0, ALPHA) + p * (pow(R1, ALPHA) - pow(R0, ALPHA)), 1 / ALPHA);
                 bin = (int) ((log(rs) - logR0) * binfac);
                 rs = exp((bin + 1) / binfac + logR0);
-                RsList[i] = rs;
                 for(j = 0; j <= bin; j++) {CountSpheres[j]++;}
                 active_idx.push_back(i);
                 active_radii.push_back((double)rs);
@@ -198,8 +178,6 @@ void twopoint(void)
     }
     random_generator = saved_rng;
 
-    myfree(RsList);
-
     /* Now compute the actual correlation function */
     countbuf = (long long int *) mymalloc("countbuf", NTask * BINS_TP * sizeof(long long));
     MPI_Allgather(Count, BINS_TP * sizeof(long long), MPI_BYTE, countbuf, BINS_TP * sizeof(long long), MPI_BYTE, MPI_COMM_WORLD);
@@ -235,216 +213,4 @@ void twopoint_save(void)
       fclose(fd);
     }
 }
-
-
-
-
-/*! This function counts the pairs in a sphere
- */
-/*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
-int twopoint_count_local(int target, int mode, int *nexport, int *nsend_local)
-{
-  int startnode, listindex = 0;
-  MyDouble *pos;
-  MyFloat rs;
-
-  if(mode == 0)
-    {
-      pos = P[target].Pos.data_ptr();
-      rs = RsList[target];
-      memcpy(Count_bak, Count, sizeof(long long) * BINS_TP);
-    }
-  else
-    {
-      pos = TwoPointDataGet[target].Pos.data_ptr();
-      rs = TwoPointDataGet[target].Rs;
-    }
-
-
-  /* Now start the actual tree-walk for this particle */
-
-  if(mode == 0)
-    {
-      startnode = All.MaxPart;	/* root node */
-    }
-  else
-    {
-      startnode = TwoPointDataGet[target].NodeList[0];
-      startnode = Nodes[startnode].u.d.nextnode;	/* open it */
-    }
-
-  while(startnode >= 0)
-    {
-      while(startnode >= 0)
-	{
-	  if(twopoint_ngb_treefind_variable(pos, rs, target, &startnode, mode, nexport, nsend_local) < 0)
-	    {
-	      /* in this case restore the count-table */
-	      memcpy(Count, Count_bak, sizeof(long long) * BINS_TP); {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-	    }
-	}
-
-      if(mode == 1)
-	{
-	  listindex++;
-	  if(listindex < NODELISTLENGTH)
-	    {
-	      startnode = TwoPointDataGet[target].NodeList[listindex];
-	      if(startnode >= 0)
-		startnode = Nodes[startnode].u.d.nextnode;	/* open it */
-	    }
-	}
-    }
-
-  return 0;
-}
-
-
-
-
-
-/*! This function finds all particles within the radius "rsearch", and counts them in the bins used for the two-point correlation function.
- *    this is a custom version of "ngb_treefind_variable", hard-coded for a square box (no shearing!) and variable search threshold radii, 
- *    bin-dumping, etc. as a result, updates to the core neighbor search routine will not alter this subroutine
- */
-/*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
-int twopoint_ngb_treefind_variable(MyDouble searchcenter[3], MyFloat rsearch, int target, int *startnode, int mode, int *nexport, int *nsend_local)
-{
-  double r2, r, ri, ro;
-  int no, p, bin, task, bin2, nexport_save;
-  struct NODE *current;
-  MyDouble dx, dy, dz, dist;
-  MyDouble xtmp; xtmp=0;
-
-  nexport_save = *nexport;
-
-  no = *startnode;
-
-  while(no >= 0)
-    {
-      if(no < All.MaxPart)	/* single particle */
-	{
-	  p = no;
-	  no = Nextnode[no];
-
-	  dx = NGB_PERIODIC_BOX_LONG_X(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  dy = NGB_PERIODIC_BOX_LONG_Y(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-	  dz = NGB_PERIODIC_BOX_LONG_Z(P[p].Pos[0] - searchcenter[0], P[p].Pos[1] - searchcenter[1], P[p].Pos[2] - searchcenter[2],-1);
-
-	  r2 = dx * dx + dy * dy + dz * dz;
-
-	  if(r2 >= R0 * R0 && r2 < R1 * R1)
-	    {
-	      if(r2 < rsearch * rsearch)
-		{
-		  bin = (int) ((log(sqrt(r2)) - logR0) * binfac);
-		  if(bin < BINS_TP)
-		    Count[bin]++;
-		}
-	    }
-	}
-      else
-	{
-	  if(no >= All.MaxPart + MaxNodes + MaxForeignNodes)	/* pseudo particle */
-	    {
-	      if(mode == 1)
-		endrun(123127);
-
-	      if(target >= 0)	/* if no target is given, export will not occur */
-		{
-		  if(Exportflag[task = DomainTask[no - (All.MaxPart + MaxNodes + MaxForeignNodes)]] != target)
-		    {
-		      Exportflag[task] = target;
-		      Exportnodecount[task] = NODELISTLENGTH;
-		    }
-
-		  if(Exportnodecount[task] == NODELISTLENGTH)
-		    {
-		      if(*nexport >= All.BunchSize)
-			{
-			  *nexport = nexport_save;
-			  if(nexport_save == 0) {endrun(13004);}	/* in this case, the buffer is too small to process even a single particle */
-			  for(task = 0; task < NTask; task++) {nsend_local[task] = 0;}
-			  for(no = 0; no < nexport_save; no++) {nsend_local[DataIndexTable[no].Task]++;}
-			  return -1; /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-			}
-		      Exportnodecount[task] = 0;
-		      Exportindex[task] = *nexport;
-		      DataIndexTable[*nexport].Task = task;
-		      DataIndexTable[*nexport].Index = target;
-		      DataIndexTable[*nexport].IndexGet = *nexport;
-		      *nexport = *nexport + 1;
-		      nsend_local[task]++;
-		    }
-
-		  DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]++] =
-		    DomainNodeIndex[no - (All.MaxPart + MaxNodes + MaxForeignNodes)];
-
-		  if(Exportnodecount[task] < NODELISTLENGTH)
-		    DataNodeList[Exportindex[task]].NodeList[Exportnodecount[task]] = -1;
-		}
-
-	      no = Nextnode[no - MaxNodes];
-	      continue;
-	    }
-
-	  current = &Nodes[no];
-
-	  if(mode == 1)
-	    {
-	      if(current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL))	/* we reached a top-level node again, which means that we are done with the branch */
-		{
-		  *startnode = -1;
-		  return 0;
-		}
-	    }
-
-	  no = current->u.d.sibling;	/* make skipping the branch the default */
-
-	  dist = rsearch + 0.5 * current->len;
-	  dx = NGB_PERIODIC_BOX_LONG_X(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dx > dist) continue;
-	  dy = NGB_PERIODIC_BOX_LONG_Y(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dy > dist) continue;
-	  dz = NGB_PERIODIC_BOX_LONG_Z(current->center[0]-searchcenter[0],current->center[1]-searchcenter[1],current->center[2]-searchcenter[2],-1);
-	  if(dz > dist) continue;
-	  /* now test against the minimal sphere enclosing everything */
-	  dist += CUBE_EDGEFACTOR_1 * current->len;
-	  if((r2 = dx * dx + dy * dy + dz * dz) > dist * dist) continue;
-
-	  r = sqrt(r2);
-
-	  ri = r - CUBE_EDGEFACTOR_2 * current->len;
-	  ro = r + CUBE_EDGEFACTOR_2 * current->len;
-
-	  if(ri >= R0 && ro < R1)
-	    {
-	      if(ro < rsearch)
-		{
-		  bin = (int) ((log(ri) - logR0) * binfac);
-		  bin2 = (int) ((log(ro) - logR0) * binfac);
-		  if(bin == bin2)
-		    {
-		      if(mode == 1)
-			{
-			  if((current->u.d.bitflags & (1 << BITFLAG_TOPLEVEL)))
-			    continue;
-			}
-		      Count[bin] += (long long)(current->u.d.mass / PartMass);
-		      continue;
-		    }
-		}
-	    }
-
-	  no = current->u.d.nextnode;	/* ok, we need to open the node */
-	}
-    }
-
-  *startnode = -1;
-  return 0;
-}
-
-
-
-
 #endif

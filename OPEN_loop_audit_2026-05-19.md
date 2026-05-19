@@ -56,13 +56,13 @@ P0 status: **COMPLETE 2026-05-19** — both P0 items done (A1 `2950b7e1`, A4 `11
 | ID | Item | Rating | Notes |
 |---|---|---:|---|
 | D1 | `mesh/merge_split.cc` direct `gpu_ngb_list_build` + host decision/execution | P2 | Real bespoke NGL path. Merge/split mutates topology and has local-only semantics, so may stay custom; still needs explicit classification. |
-| D2 | `galaxy_sf/radfb_local.cc::HII_heating_singledomain()` | P2/P3 | Custom direct-NGL/local-walker hybrid. Documented serial-greedy ordering and singledomain/no-ghost-writeback semantics; likely special case, but keep open. |
-| D3 | `turb/turb_powerspectra.cc` nearest-gas slab fill | P3 | Direct arbitrary-source GPU NGL, MPI allgather/reduction, FFT-grid nearest-gas query. Not normal runner shape; review memory/scaling. |
-| D4 | `structure/twopoint.cc` direct NGL plus old `twopoint_ngb_treefind_variable` remnants | P3 | Diagnostic/interim. File says proper port should be gravity-tree based, not normal NGL. Still an unported/custom search path. |
-| D5 | `structure/group_search.cc::group_search_build_cross_type_nl()` | P3 | CPU `neighbor_list_t` helper used by structure modules; wraps cross-type neighbor lists. |
-| D6 | `structure/fof.cc` FOF neighbor-list + CPU grouping/property aggregation | P3 | Partially GPU search, CPU group binning/properties/exchange. On-the-fly/catalogue, not every-step physics. |
-| D7 | `structure/subfind/*` modern and local treefind paths | P3 | Postprocessing/catalogue; includes `subfind_locngb_treefind*` and modern neighbor-list users. |
-| D8 | `structure/lineofsight.cc` line-of-sight loops | P3 | OMP diagnostic loops, host-only. |
+| D2 | `galaxy_sf/radfb_local.cc::HII_heating_singledomain()` | CLOSED | Special custom loop: serial-greedy singledomain semantics, no ghost writeback. Already has tiny-source local-walker vs large-source GPU-NGL dispatch. No runner work. |
+| D3 | `turb/turb_powerspectra.cc` nearest-gas slab fill | CLOSED | Scheduled turbulence-spectrum diagnostic, not timestep tiny-N physics. Direct arbitrary-source GPU NGL is for FFT-grid slab cells; runner/dual-dispatch not applicable. |
+| D4 | `structure/twopoint.cc` direct NGL plus old `twopoint_ngb_treefind_variable` remnants | CLOSED | Diagnostic/interim restart-only path. Dead legacy `twopoint_ngb_treefind_variable`/`twopoint_count_local` remnants removed; future production-scale improvement would be a gravity-tree pair-count walk, not runner/dual-dispatch work. |
+| D5 | `structure/group_search.cc::group_search_build_cross_type_nl()` | CLOSED | Shared FOF/Subfind catalogue helper wrapping cross-type neighbor lists. Not a timestep loop or standalone port target. |
+| D6 | `structure/fof.cc` FOF neighbor-list + CPU grouping/property aggregation | CLOSED | Catalogue/on-the-fly halo finder. Scheduled by snapshot/on-the-fly FoF cadence; CPU grouping/properties are special infrastructure. |
+| D7 | `structure/subfind/*` modern and local treefind paths | CLOSED | Snapshot/catalogue infrastructure. Key density/link/nearest-two paths already route through modern group-search helpers; not runner/dual-dispatch work. |
+| D8 | `structure/lineofsight.cc` line-of-sight loops | P3 | Diagnostic compiles and main spectrum deposition is OMP, but `lineofsight_output()` appears unreachable: params/init state exist, no scheduler call found. Needs keep-vs-retire/restore-call decision. |
 
 ## E. Modified Gradient / Hydro/MHD Known Or Other-Branch Items Still On List
 
@@ -77,11 +77,11 @@ P0 status: **COMPLETE 2026-05-19** — both P0 items done (A1 `2950b7e1`, A4 `11
 
 | ID | Item | Rating | Notes |
 |---|---|---:|---|
-| F1 | `sinks/sink_util.cc::sink_start()` | P3 | Builds active sink temp map and `IndexMapToTempStruc` on host. Setup/bookkeeping; likely host. |
+| F1 | `sinks/sink_util.cc::sink_start()` | CLOSED | Host setup/bookkeeping: counts active sinks, assigns compact temp indices, allocates/fills `SinkTempInfo`. Not a runner/dual-dispatch target. |
 | F2 | `sinks/sink_util.cc::sink_properties_loop()` | P2 | Local per-sink physics: mdot, drag, long-range radiation-prep. Sparse but real pure-local-ish candidate. |
-| F3 | `sinks/sink.cc::sink_final_operations()` | P3 | Host active sink updates/bookkeeping, logs, moment/mass updates. |
-| F4 | `sinks/sink_swallow_and_kick.cc::spawn_sink_wind_feedback()` | P3 | Topology/particle creation loop, likely host-special. |
-| F5 | `sinks/sink_swallow_and_kick.cc` spawned-particle initialization loop | P3 | Timebin, active-list, and particle insertion bookkeeping; likely host-special. |
+| F3 | `sinks/sink.cc::sink_final_operations()` | CLOSED | Host finalization after runner sink loops: mass/momentum updates, timebin summaries, file output, optional promotion/removal. Not a clean GPU/local-kernel target. |
+| F4 | `sinks/sink_swallow_and_kick.cc::spawn_sink_wind_feedback()` | CLOSED | Particle-creation/topology path followed by `rearrange_particle_sequence()`. Keep host-special; no runner/dual-dispatch work. |
+| F5 | `sinks/sink_swallow_and_kick.cc` spawned-particle initialization loop | CLOSED | Serial/order-sensitive initialization of appended particles, active/timebin lists, IDs, conservation updates, and dirty-radius markers. Keep host-special. |
 
 ## G. Cooling / Local Heating / Small Physics Loops
 
