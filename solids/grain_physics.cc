@@ -7,7 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#include "../solids/grain_physics_gpu.h"
+#include "../solids/grain_physics_loop_api.h"
 
 /*
 
@@ -25,10 +25,6 @@
 
 
 #ifdef GRAIN_FLUID
-
-#if defined(GRAIN_BACKREACTION)
-void grain_backrx(void);
-#endif
 
 extern void grain_drag_evaluate_gpu(struct particle_data *, struct gas_cell_data *, int *, int);
 
@@ -61,7 +57,7 @@ void apply_grain_dragforce(void)
      * This matches the implicit reset the old code did via scatter-back on every drag call. */
     for(int ii : ActiveParticleList)
         if(P[ii].Type == 0) P[ii].Grain_AccelTimeMin = MAX_REAL_NUMBER;
-    grain_backrx(); /* call parent routine to assign the back-reaction force among neighbors */
+    grain_backrx_calc(); /* assign the back-reaction force among neighbors [runner port] */
 #endif
     PRINT_STATUS(" ..particulate/grain/PIC force evaluation done.");
     CPU_Step[CPU_DRAGFORCE] += measure_time();
@@ -77,29 +73,6 @@ void apply_grain_dragforce(void)
  'work' between neighbors, but all of the parallelization, looping, communication blocks,
  etc, are all handled for you. */
 
-void grain_backrx(void)
-{
-    PRINT_STATUS(" ..assigning grain back-reaction to gas");
-    {
-        /* Build LOCAL active grain list (i-type restricted by GRAIN_PTYPES). */
-        int num_active = 0;
-        for(int i : ActiveParticleList) {
-            if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) num_active++;
-        }
-        int *nl_active = (int *) mymalloc("grainbackrx_nl_active",
-            (num_active > 0 ? num_active : 1) * sizeof(int));
-        double *nl_radii = (double *) mymalloc("grainbackrx_nl_radii",
-            (num_active > 0 ? num_active : 1) * sizeof(double));
-        {int aa = 0; for(int i : ActiveParticleList) {
-            if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) {
-                nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
-            }
-        }}
-        grain_backrx_evaluate_gpu(P, CellP, NumPart, nl_active, num_active, nl_radii);
-        myfree(nl_radii); myfree(nl_active);
-        CPU_Step[CPU_DRAGFORCE] += measure_time();
-    }
-}
 
 
 
@@ -129,31 +102,7 @@ void grain_backrx(void)
 
 void interpolate_fluxes_opacities_gasgrains(void)
 {
-    PRINT_STATUS(" ..assigning opacities to gas from the grain distribution, and interpolating radiation fields to grains");
-    {
-        int num_gas = 0, num_grain = 0;
-        for(int i : ActiveParticleList) {
-            if(P[i].TimeBin < 0 || P[i].Mass <= 0 || P[i].KernelRadius <= 0) continue;
-            if(P[i].Type == 0) num_gas++;
-            if((1 << P[i].Type) & (GRAIN_PTYPES)) num_grain++;
-        }
-        int ng = (num_gas > 0 ? num_gas : 1), nr = (num_grain > 0 ? num_grain : 1);
-        int *nl_active_gas   = (int *)    mymalloc("gasgrainrt_nl_gas_active",   ng * sizeof(int));
-        double *nl_radii_gas = (double *) mymalloc("gasgrainrt_nl_gas_radii",    ng * sizeof(double));
-        int *nl_active_grain   = (int *)    mymalloc("gasgrainrt_nl_grain_active", nr * sizeof(int));
-        double *nl_radii_grain = (double *) mymalloc("gasgrainrt_nl_grain_radii",  nr * sizeof(double));
-        {int ag = 0, ar = 0; for(int i : ActiveParticleList) {
-            if(P[i].TimeBin < 0 || P[i].Mass <= 0 || P[i].KernelRadius <= 0) continue;
-            if(P[i].Type == 0) { nl_active_gas[ag] = i; nl_radii_gas[ag] = (double)P[i].KernelRadius; ag++; }
-            if((1 << P[i].Type) & (GRAIN_PTYPES)) { nl_active_grain[ar] = i; nl_radii_grain[ar] = (double)P[i].KernelRadius; ar++; }
-        }}
-        interpolate_fluxes_opacities_gasgrains_evaluate_gpu(P, CellP, NumPart,
-            nl_active_gas, num_gas, nl_radii_gas,
-            nl_active_grain, num_grain, nl_radii_grain);
-        myfree(nl_radii_grain); myfree(nl_active_grain);
-        myfree(nl_radii_gas); myfree(nl_active_gas);
-        CPU_Step[CPU_DRAGFORCE] += measure_time();
-    }
+    grain_rt_opacity_calc(); /* runner port: GrainRTGasSpec + GrainRTGrainSpec */
 }
 
 

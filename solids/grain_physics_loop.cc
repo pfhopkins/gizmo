@@ -1,0 +1,337 @@
+/* solids/grain_physics_loop.cc — host hooks + ghost-writeback bundle for
+ * GrainBackrxSpec (GRAIN_BACKREACTION) and GrainRTGasSpec + GrainRTGrainSpec
+ * (RT_OPACITY_FROM_EXPLICIT_GRAINS), plus toplevel callers
+ * grain_backrx_calc() and grain_rt_opacity_calc().
+ *
+ * Device-callable hooks (pair_kernel, zero_accum, load_active, load_neighbor)
+ * live in grain_physics_loop.h so the runner instantiates them from GPU TUs.
+ * This file owns: is_active, search_radius, populate_call_scalars,
+ * apply_active_writeback, merge_accum, compare_accum, set_oracle_brute_pass,
+ * ghost_writeback_begin/end (GrainBackrxSpec), and the two toplevels.
+ *
+ * Replaces grain_backrx_evaluate_gpu + ghost_writeback_{zero_,}grainbackrx
+ * and interpolate_fluxes_opacities_gasgrains_evaluate_gpu from
+ * solids/grain_physics_gpu.cc (retired in the cleanup commit).
+ *
+ * See OPEN_3d_grain_physics_design.md.
+ *
+ * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
+ */
+#include <mpi.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <vector>
+#include <Kokkos_Core.hpp>
+
+#include "../declarations/allvars.h"
+#include "../core/proto.h"
+#include "../mesh/kernel.h"            /* MUST precede grain_physics_loop.h (no include guards) */
+#include "grain_physics_loop.h"
+#include "../mesh/ghost_writeback.h"
+
+#ifdef GRAIN_FLUID
+
+/* ============================================================================
+ * Finite-aware relative-error helper for compare_accum.
+ * Same pattern as difffilter_loop.cc / dm_fuzzy_loop.cc.
+ * ========================================================================== */
+namespace {
+inline bool nlr_is_finite(double x) { return (x == x) && (x - x == 0.0); }
+
+inline double nlr_rel_update(double max_rel, double a, double b) {
+    if(!nlr_is_finite(a) || !nlr_is_finite(b)) return 1e30;
+    const double denom = std::fmax(1.0, std::fmax(std::fabs(a), std::fabs(b)));
+    const double rel   = std::fabs(a - b) / denom;
+    return (rel > max_rel) ? rel : max_rel;
+}
+} /* anonymous namespace */
+
+
+/* ============================================================================
+ * GrainBackrxSpec host hooks.
+ * ========================================================================== */
+#if defined(GRAIN_BACKREACTION)
+
+bool GrainBackrxSpec::is_active(int i)
+{
+    return (((1 << P[i].Type) & (GRAIN_PTYPES))
+            && P[i].TimeBin >= 0
+            && P[i].Mass > 0
+            && P[i].KernelRadius > 0);
+}
+
+double GrainBackrxSpec::search_radius(const neighbor_loop_args& args,
+                                      int /*active_slot*/, int i)
+{
+    return (double)args.P[i].KernelRadius;
+}
+
+GrainBackrxSpec::CallScalars
+GrainBackrxSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
+{
+    return nlr_common_scalars_from_all();
+}
+
+/* No i-side accumulation — apply_active_writeback is a no-op. */
+void GrainBackrxSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
+                                             int /*active_slot*/, int /*i*/,
+                                             const AccumData& /*accum*/)
+{}
+
+void GrainBackrxSpec::merge_accum(AccumData& /*local_accum*/,
+                                  const AccumData& /*peer_accum*/)
+{}
+
+/* AccumData is empty; oracle compare trivially passes. */
+double GrainBackrxSpec::compare_accum(const AccumData& /*local*/,
+                                      const AccumData& /*oracle*/)
+{
+    return 0.0;
+}
+
+/* Propagate oracle flag to DeviceContext so load_neighbor can carry it into
+ * NeighborData and pair_kernel can suppress j-writes during the brute pass. */
+void GrainBackrxSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on)
+{
+    ctx.oracle_dry_run = on;
+}
+
+/* Ghost-writeback bundle for GrainBackrxSpec.
+ *
+ * MANIFEST — one macro per ghost-written field.
+ * Coverage matches the legacy ghost_writeback_{zero_,}grainbackrx in
+ * mesh/ghost_writeback.cc (retired in the cleanup commit):
+ *   P[j].Vel[k]                        (always, Vec3)
+ *   P[j].dp[k]                         (always, Vec3)
+ *   P[j].Grain_AccelTimeMin            (always, min-reduce)
+ *   CellP[j].VelPred[k]               (always, Vec3)
+ *   CellP[j].VolatileSpecies[kv]       (GRAIN_EVOLUTION & (32|64), array)
+ *   CellP[j].InternalEnergy            (GRAIN_EVOLUTION & (32|64))
+ *   CellP[j].InternalEnergyPred        (GRAIN_EVOLUTION & (32|64))
+ *
+ * All ops already exist in mesh/ghost_writeback_ops.h; no new ops required.
+ * PARTICLE_MIN uses post<snap predicate — correct for atomic_min semantics. */
+GHOST_WRITEBACK_BUNDLE_BEGIN(grainbackrx)
+    GHOST_WRITEBACK_PARTICLE_ADD_VEC3(Vel)
+    GHOST_WRITEBACK_PARTICLE_ADD_VEC3(dp)
+    GHOST_WRITEBACK_PARTICLE_MIN(Grain_AccelTimeMin)
+    GHOST_WRITEBACK_GAS_ADD_VEC3(VelPred)
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (32|64))
+    GHOST_WRITEBACK_GAS_ADD_ARRAY(VolatileSpecies, GRAIN_NUM_VOLATILE_SPECIES)
+    GHOST_WRITEBACK_GAS_ADD(InternalEnergy)
+    GHOST_WRITEBACK_GAS_ADD(InternalEnergyPred)
+#endif
+GHOST_WRITEBACK_BUNDLE_END(grainbackrx)
+
+void GrainBackrxSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
+                                            const NeighborLoopPlan& /*plan*/)
+{
+    ghost_writeback_begin_bundle(grainbackrx_ghost_writeback_bundle_ptr());
+}
+
+void GrainBackrxSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
+                                          const NeighborLoopPlan& /*plan*/)
+{
+    ghost_writeback_end_bundle(grainbackrx_ghost_writeback_bundle_ptr());
+}
+
+/* Toplevel: grain_backrx_calc — replaces grain_backrx_evaluate_gpu +
+ * ghost_writeback_{zero_,}grainbackrx.
+ *
+ * Hard invariant (codex-locked): active gas Grain_AccelTimeMin is reset to
+ * MAX_REAL_NUMBER in apply_grain_dragforce() BEFORE this call. PARTICLE_MIN
+ * only reduces the field; stale low values would permanently collapse gas
+ * timesteps. This reset lives in grain_physics.cc, not here. */
+void grain_backrx_calc(void)
+{
+    PRINT_STATUS(" ..assigning grain back-reaction to gas [runner]");
+    neighbor_loop_args args = nlr_default_args();
+    run_neighbor_loop<GrainBackrxSpec>(args);
+    CPU_Step[CPU_DRAGFORCE] += measure_time();
+}
+
+#endif /* GRAIN_BACKREACTION */
+
+
+/* ============================================================================
+ * GrainRTGasSpec host hooks.
+ * ========================================================================== */
+#if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
+
+bool GrainRTGasSpec::is_active(int i)
+{
+    return (P[i].Type == 0
+            && P[i].TimeBin >= 0
+            && P[i].Mass > 0
+            && P[i].KernelRadius > 0);
+}
+
+double GrainRTGasSpec::search_radius(const neighbor_loop_args& args,
+                                     int /*active_slot*/, int i)
+{
+    return (double)args.P[i].KernelRadius;
+}
+
+GrainRTGasSpec::CallScalars
+GrainRTGasSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
+{
+    return nlr_common_scalars_from_all();
+}
+
+/* Additive i-side scatter: += matches legacy ASSIGN_ADD(mode=0) semantics.
+ * The toplevel grain_rt_opacity_calc pre-zeroes J_dust_cell under
+ * MHD_BATTERY_MECHANISMS & 8 before the runner call (design §G invariant 2). */
+void GrainRTGasSpec::apply_active_writeback(const neighbor_loop_args& args,
+                                            int /*active_slot*/, int i,
+                                            const AccumData& accum)
+{
+    args.CellP[i].InterpolatedGeometricDustCrossSection +=
+        accum.InterpolatedGeometricDustCrossSection;
+    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+        args.CellP[i].Interpolated_Opacity[k] += accum.Interpolated_Opacity[k];
+    }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    for(int k = 0; k < 3; k++) {
+        args.CellP[i].J_dust_cell[k] += (MyDouble)accum.J_dust_contribution[k];
+    }
+#endif
+}
+
+void GrainRTGasSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+{
+    local_accum.InterpolatedGeometricDustCrossSection +=
+        peer_accum.InterpolatedGeometricDustCrossSection;
+    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+        local_accum.Interpolated_Opacity[k] += peer_accum.Interpolated_Opacity[k];
+    }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    for(int k = 0; k < 3; k++) {
+        local_accum.J_dust_contribution[k] += peer_accum.J_dust_contribution[k];
+    }
+#endif
+}
+
+double GrainRTGasSpec::compare_accum(const AccumData& local, const AccumData& oracle)
+{
+    double max_rel = 0.0;
+    max_rel = nlr_rel_update(max_rel,
+                             (double)local.InterpolatedGeometricDustCrossSection,
+                             (double)oracle.InterpolatedGeometricDustCrossSection);
+    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+        max_rel = nlr_rel_update(max_rel,
+                                 (double)local.Interpolated_Opacity[k],
+                                 (double)oracle.Interpolated_Opacity[k]);
+    }
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+    for(int k = 0; k < 3; k++) {
+        max_rel = nlr_rel_update(max_rel,
+                                 (double)local.J_dust_contribution[k],
+                                 (double)oracle.J_dust_contribution[k]);
+    }
+#endif
+    return max_rel;
+}
+
+void GrainRTGasSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
+
+
+/* ============================================================================
+ * GrainRTGrainSpec host hooks.
+ * ========================================================================== */
+
+bool GrainRTGrainSpec::is_active(int i)
+{
+    return (((1 << P[i].Type) & (GRAIN_PTYPES))
+            && P[i].TimeBin >= 0
+            && P[i].Mass > 0
+            && P[i].KernelRadius > 0);
+}
+
+double GrainRTGrainSpec::search_radius(const neighbor_loop_args& args,
+                                       int /*active_slot*/, int i)
+{
+    return (double)args.P[i].KernelRadius;
+}
+
+GrainRTGrainSpec::CallScalars
+GrainRTGrainSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
+{
+    return nlr_common_scalars_from_all();
+}
+
+/* Scatter radiation acceleration onto the grain source.
+ * Division by All.cf_a2inv matches the legacy scatter in grain_physics_gpu.cc. */
+void GrainRTGrainSpec::apply_active_writeback(const neighbor_loop_args& args,
+                                              int /*active_slot*/, int i,
+                                              const AccumData& accum)
+{
+    args.P[i].GravAccel += accum.Interpolated_Radiation_Acceleration / All.cf_a2inv;
+}
+
+void GrainRTGrainSpec::merge_accum(AccumData& local_accum, const AccumData& peer_accum)
+{
+    for(int k = 0; k < 3; k++) {
+        local_accum.Interpolated_Radiation_Acceleration[k] +=
+            peer_accum.Interpolated_Radiation_Acceleration[k];
+    }
+}
+
+double GrainRTGrainSpec::compare_accum(const AccumData& local, const AccumData& oracle)
+{
+    double max_rel = 0.0;
+    for(int k = 0; k < 3; k++) {
+        max_rel = nlr_rel_update(max_rel,
+                                 (double)local.Interpolated_Radiation_Acceleration[k],
+                                 (double)oracle.Interpolated_Radiation_Acceleration[k]);
+    }
+    return max_rel;
+}
+
+void GrainRTGrainSpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool /*on*/) {}
+
+
+/* ============================================================================
+ * grain_rt_opacity_calc — toplevel for both RT Specs.
+ *
+ * Hard invariant (codex-locked): under MHD_BATTERY_MECHANISMS & 8, active gas
+ * CellP[i].J_dust_cell is zeroed here before run_neighbor_loop<GrainRTGasSpec>.
+ * GrainRTGasSpec::apply_active_writeback uses += so without this pre-zero the
+ * field would accumulate stale values from previous steps.
+ * ========================================================================== */
+void grain_rt_opacity_calc(void)
+{
+    PRINT_STATUS(" ..interpolating RT fluxes/opacities from grain distribution [runner]");
+
+    /* Direction 1: gas sources → grain neighbors (opacity accumulation).
+     * Pre-zero all fields that apply_active_writeback accumulates with +=.
+     * InterpolatedGeometricDustCrossSection and Interpolated_Opacity are reset
+     * unconditionally (legacy only zeroed J_dust_cell; this fixes the stale
+     * cross-section/opacity accumulation bug where prior-step values persisted). */
+    {
+        for(int i : ActiveParticleList) {
+            if(P[i].Type == 0 && P[i].Mass > 0) {
+                CellP[i].InterpolatedGeometricDustCrossSection = 0;
+                for(int k = 0; k < N_RT_FREQ_BINS; k++) CellP[i].Interpolated_Opacity[k] = 0;
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 8)
+                CellP[i].J_dust_cell = {};
+#endif
+            }
+        }
+        neighbor_loop_args args = nlr_default_args();
+        run_neighbor_loop<GrainRTGasSpec>(args);
+    }
+
+    /* Direction 2: grain sources → gas neighbors (radiation acceleration). */
+    {
+        neighbor_loop_args args = nlr_default_args();
+        run_neighbor_loop<GrainRTGrainSpec>(args);
+    }
+
+    CPU_Step[CPU_DRAGFORCE] += measure_time();
+}
+
+#endif /* RT_OPACITY_FROM_EXPLICIT_GRAINS */
+
+#endif /* GRAIN_FLUID */
