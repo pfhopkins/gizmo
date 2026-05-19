@@ -522,16 +522,21 @@ void hydro_gradient_calc(void)
     double smoothInv = 1.0 / All.TurbDynamicDiffSmoothing;
 #endif
 
-    /* allocate buffers to arrange communication */
-    long long NTaskTimesNumPart;
-    GasGradDataPasser = (struct temporary_data_topass *) mymalloc("GasGradDataPasser",N_gas * sizeof(struct temporary_data_topass));
-    NTaskTimesNumPart = maxThreads * NumPart; size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
-                                                             sizeof(struct GasGraddata_in) + sizeof(struct GasGraddata_out) +
-                                                             sizemax(sizeof(struct GasGraddata_in),sizeof(struct GasGraddata_out))));
-    Ngblist.resize(NTaskTimesNumPart);
-    DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
-    DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
+    /* GasGradDataPasser: per-active scratch carrying Maxima/Minima/BGrad/etc.
+     * accumulated across MHD-CG iterations. Owned by a local std::vector so it
+     * lives OFF the mymalloc LIFO stack — the gizmo_sym_neighbor_list
+     * (allocated by gizmo_gradients_prep_symlist above) stays at the top of
+     * the mymalloc stack and is freely refreshable between MHD-CG iterations
+     * (gizmo_gradients_refresh_symlist call below).
+     *
+     * Note: the legacy tree-walk MPI export machinery (DataIndexTable,
+     * DataNodeList, Ngblist.resize, All.BunchSize compute) that used to live
+     * here was unused on the GPU symlist path — removed locally. The globals
+     * Ngblist / All.BunchSize / DataIndexTable / DataNodeList themselves are
+     * still used by other tree-walk callers and are untouched here. */
+    std::vector<struct temporary_data_topass> gas_grad_passer_storage(
+        (N_gas > 0 ? (size_t)N_gas : 1));
+    GasGradDataPasser = gas_grad_passer_storage.data();
 
     /* before doing any operations, need to zero the appropriate memory so we can correctly do pair-wise operations */
     for (int i : ActiveParticleList)
@@ -811,12 +816,25 @@ void hydro_gradient_calc(void)
 #endif
             } // closes Ptype == 0 check
 #endif
+
+        /* MHD-CG cross-rank ghost-staleness fix (vs gizmo-cpp legacy
+         * `hydro/gradients.cc:761` which re-exports CURRENT post-between-iter
+         * owner state every iteration). The MHD_CONSTRAINED_GRADIENT branch
+         * of the pair body reads CellP[j].Gradients.B from cross-rank ghost
+         * copies; the host block above just updated owner-side
+         * CellP[i].Gradients.B / FlagForConstrainedGradients / Gradients.Phi.
+         * Refresh ghosts so the next iteration's kernel sees fresh owner
+         * state. Skipped after the final iteration (no more kernel calls
+         * follow). NTask>1 only — single-rank has no ghosts.
+         * GasGradDataPasser is off the mymalloc stack (local std::vector),
+         * so the symlist stays at LIFO top and refresh is unobstructed.
+         * See OPEN_3d_hydro_corridor_design.md §0. */
+#if defined(MHD_CONSTRAINED_GRADIENT)
+        if(gradient_iteration + 1 < NUMBER_OF_GRADIENT_ITERATIONS && NTask > 1) {
+            gizmo_gradients_refresh_symlist(gsl_safety, gsl_safety);
+        }
+#endif
     } // closes gradient_iteration
-
-    myfree(DataNodeList);
-    myfree(DataIndexTable);
-    
-
 
     /* do final operations on results: these are operations that can be done after the complete set of iterations */
     for (int i : ActiveParticleList)
@@ -1194,8 +1212,10 @@ void hydro_gradient_calc(void)
         }
 
 
-    /* free the temporary structure we created for the MinMax and additional data passing */
-    myfree(GasGradDataPasser);
+    /* GasGradDataPasser was moved off the mymalloc LIFO stack into a local
+     * std::vector (gas_grad_passer_storage above) — destruction at function
+     * scope exit handles cleanup. Null the file-static pointer for hygiene. */
+    GasGradDataPasser = nullptr;
 
     /* collect some timing information */
     t1 = WallclockTime = my_second();
