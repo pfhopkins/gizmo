@@ -16,13 +16,12 @@
  *   - after_iter_global (iter > 10 print only — design v0.4.3 §6)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
  *   - set_oracle_brute_pass HARD-STUB (terminate-on-true; AGS validation
- *     uses two-binary parity, not in-runner oracle — codex round-7)
+ *     used two-binary parity, not in-runner oracle — codex round-7)
  *   - compare_accum diagnostic (unused for AGS unless caller endrun guard
  *     against GIZMO_NLR_ORACLE=1 fails; oracle is hard-stubbed)
  *
- * Phase 4 port 3d.4. Replaces gravity/ags_density_gpu.cc (still present in
- * tree at this commit; deleted by the post-3d.4 cleanup commit per design
- * v0.4.3 §11 step 11 once two-binary parity passes).
+ * Phase 4 port 3d.4. Replaces the now-deleted gravity/ags_density_gpu.cc
+ * (retired in the post-3d.4 cleanup commit after two-binary parity passed).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
@@ -174,9 +173,9 @@ void AgsDensitySpec::set_oracle_brute_pass(DeviceContext& /*ctx*/, bool on)
     if(on) {
         terminate("AgsDensitySpec::set_oracle_brute_pass: oracle is "
                   "hard-stubbed for AGS — after_iter mutates P[i] which "
-                  "contaminates brute-pass pair_kernel reads. Use two-"
-                  "binary parity (runner build vs legacy build) for "
-                  "validation. See OPEN_3d_agsdensity_design.md §3a / §7.");
+                  "contaminates brute-pass pair_kernel reads, so the "
+                  "in-runner oracle is unavailable for AgsDensitySpec. "
+                  "See OPEN_3d_agsdensity_design.md §3a / §7.");
     }
 }
 
@@ -205,7 +204,8 @@ void AgsDensitySpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  * MERGE_ACCUM — Mode B remote peer accumulator merge.
  *
  * Manifest pattern matching sink_feed_loop.cc::merge_accum. Per-field op
- * MUST match what pair_kernel writes; the oracle (PB-O) catches drift.
+ * MUST match what pair_kernel writes (field parity was validated by the
+ * retired two-binary route; the in-runner oracle is hard-stubbed for AGS).
  *
  * AGS_vsig_max is MAX-merged (legacy ASSIGN_MAX in scatter); everything
  * else is ADD-merged. AGS_FACE NV_T fields are ADD-merged (each peer
@@ -686,7 +686,7 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  * endrun guard is ever bypassed (defense-in-depth — emit a sane
  * comparison rather than UB).
  *
- * AGS validation is done via two-binary parity (runner build vs post-fix
+ * AGS validation was done via two-binary parity (runner build vs post-fix
  * legacy build), not in-runner oracle. See design v0.4.3 §3a / §7.
  * ========================================================================== */
 double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& oracle)
@@ -719,7 +719,8 @@ double AgsDensitySpec::compare_accum(const AccumData& local, const AccumData& or
  *   1. Hard-stub oracle: endrun if GIZMO_NLR_ORACLE=1 is set
  *      (AgsDensitySpec::after_iter mutates P[i], which contaminates
  *      brute-pass pair_kernel reads of P[j].AGS_vsig — see design v0.4.3
- *      §3a / §7). Two-binary parity is the validation route, not oracle.
+ *      §3a / §7). Two-binary parity was the validation route before the
+ *      legacy path was retired; the in-runner oracle remains hard-stubbed.
  *
  *   2. Per-active pre-loop init (legacy rkern.cc:94-98): for each
  *      ags-active i, capture entry-time AGS_KernelRadius into the

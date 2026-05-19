@@ -9,9 +9,8 @@
  * `4b76b094`) extended with the partition-by-subgroup contract +
  * rebuild-every-iter correctness fallback.
  *
- * Replaces gravity/ags_density_gpu.cc (still in-tree as the LEGACY_PARITY
- * comparison source until the post-3d.4 cleanup commit per design v0.4.2
- * §11 step 11).
+ * Replaces the now-deleted gravity/ags_density_gpu.cc (retired in the
+ * post-3d.4 cleanup commit after two-binary parity validation passed).
  *
  * Per-pair physics: ports the body at ags_density_gpu.cc:118-205 verbatim,
  * with NlrCommonScalars / per-active host-fill routing instead of direct
@@ -23,8 +22,8 @@
  * §10.2: partition-key assertion (debug-gated, validates `bm key drift`
  * is impossible across iters); CSR fallback rule (`mode_a_rebuild_csr_every_iter`
  * defaults false; flip to true only if a real PA-A divergence appears);
- * and cross-rank positive-wakeup propagation (validation via LEGACY_PARITY
- * + VERIFY_REVERSE_COMM + FORCE_CROSS_RANK_WAKEUP gates in the caller).
+ * and cross-rank positive-wakeup propagation (validated by the two-binary
+ * parity route, since retired).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
@@ -449,7 +448,8 @@ struct AgsDensitySpec {
      * contaminates the brute oracle pass's pair_kernel reads of
      * P[j].AGS_vsig (the wakeup threshold). Caller (ags_rkern.cc::ags_density)
      * endruns if GIZMO_NLR_ORACLE=1 is set. Two-binary parity (runner-build
-     * vs legacy-build) is the validation route, not in-runner oracle. */
+     * vs legacy-build) was the validation route before the legacy path was
+     * retired; the in-runner oracle remains hard-stubbed for AGS. */
     static void set_oracle_brute_pass(DeviceContext& ctx, bool on);
 
     /* Partition-key hook (design v0.4.3 §5a). Returns the bm key for the
