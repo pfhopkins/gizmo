@@ -182,7 +182,6 @@ KOKKOS_FUNCTION void nuclear_fixup_mass_fractions(int j, struct particle_data *p
 void nuclear_parent_routine(void)
 {
     PRINT_STATUS("Nuclear burning update");
-    GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Step 1: determine active gas particles eligible for burning */
     std::vector<int> burn_indices;
@@ -199,6 +198,7 @@ void nuclear_parent_routine(void)
     /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
 #if !defined(CHIMES)
   if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+    GIZMO_GPU_ENSURE_ALL_FRESH(); /* device nuclear network reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_BURN_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_BURN_BATCH_SIZE) ? N_active : GPU_BURN_BATCH_SIZE;
