@@ -61,7 +61,7 @@ struct MechFBActiveState {
     /* Per-mode active flag — populated in load_active via
      * mechanical_fb_star_active_check(i, loop_iteration, dctx.P). Mirrors the
      * legacy `if (!mechanical_fb_star_active_check(...)) return;` guard at the
-     * top of mechanical_fb_evaluate_gpu's kernel (line 316). Without it, a
+     * top of the retired legacy evaluator's kernel. Without it, a
      * source in the toplevel superset that is NOT active for THIS specific
      * mode would still run pair_kernel for every neighbor — for modes 0+ that
      * would atomic-add N_injected even with otherwise-zero deltas (codex r7
@@ -144,8 +144,8 @@ struct MechFBSpec {
     /* Identity */
     static constexpr const char *loop_name = "mechfb";
 
-    /* Search policy: mirrors legacy mechanical_fb_evaluate_gpu (NGB_SEARCH_SYMMETRIC
-     * + gas-only) at mechanical_fb_gpu.cc:270 (gpu_ngb_list_build call). */
+    /* Search policy: NGB_SEARCH_SYMMETRIC + gas-only — mirrors the
+     * retired legacy evaluator's gpu_ngb_list_build call. */
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (1u << 0);   /* gas only */
     static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
@@ -329,8 +329,8 @@ struct MechFBSpec {
          * fix). */
         a.scalars = scalars;
 
-        /* Per-mode active mask (codex r7 fix) — mirrors legacy
-         * mechanical_fb_evaluate_gpu:316. ctx.P points at the runner-managed
+        /* Per-mode active mask (codex r7 fix) — mirrors the retired legacy
+         * evaluator's per-mode active guard. ctx.P points at the runner-managed
          * particle array (Mode A: arena P_gpu; Mode B: owner-local P), both
          * of which have stable .SNe_ThisTimeStep / .MassReturn_ThisTimeStep /
          * etc. for the duration of the runner call. */
@@ -383,8 +383,8 @@ struct MechFBSpec {
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
-        /* Per-mode active mask (codex r7 fix) — equivalent of legacy
-         * mechanical_fb_evaluate_gpu:316. Sources in the toplevel superset
+        /* Per-mode active mask (codex r7 fix) — equivalent of the retired
+         * legacy evaluator's per-mode active guard. Sources in the toplevel superset
          * that are NOT active for THIS specific mode short-circuit the entire
          * pair body. Without this guard, mode>=0 calls for inactive sources
          * still increment N_injected per pair with otherwise-zero deltas. */
@@ -398,8 +398,8 @@ struct MechFBSpec {
         if (Pj.Mass <= 0) return;
         if (neighbor.neighbor_cell == nullptr) return;  /* gas-only safety */
 
-        /* Position delta + r² filters (legacy mechanical_fb_gpu.cc:333-340
-         * + mechanical_fb_pair_kernel:239-242). */
+        /* Position delta + r² filters (mirrors the retired legacy evaluator's
+         * inner neighbor loop + mechanical_fb_pair_kernel:239-242). */
         Vec3<double> dp;
         dp[0] = (double)i_active.local.Pos[0] - (double)Pj.Pos[0];
         dp[1] = (double)i_active.local.Pos[1] - (double)Pj.Pos[1];

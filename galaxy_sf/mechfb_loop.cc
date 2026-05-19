@@ -5,7 +5,8 @@
  * Milestone 3 (physics-complete): full Spec contract — real host methods,
  * oracle/state-machine plumbing, ghost_writeback bundle; real mech_fb_local_fill
  * / mech_fb_apply_aws_out / mech_fb_apply_source_mass_out (promoted from
- * static in mechanical_fb_gpu.cc, now SSOT shared by both paths);
+ * `static` when the legacy mechanical_fb_gpu.cc evaluator still existed; now
+ * the sole SSOT for these helpers);
  * real reset_per_iter_device_context (repack + mode-machine advance).
  *
  * SSOT design: ../OPEN_3d_mechfb_design.md (v0.4-final, codex-approved).
@@ -38,7 +39,7 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration);
 
 /* ============================================================================
  * mechfb_compute_num_modes — picks 3/4/5/6 modes per FIRE config.
- * Mirrors the per-mode dispatch count in mechanical_fb_gpu.cc:277-287.
+ * Mirrors the per-mode dispatch count of the retired legacy evaluator.
  * ========================================================================== */
 int mechfb_compute_num_modes(void) {
     int num_modes = 3;
@@ -86,8 +87,9 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
 }
 
 /* ============================================================================
- * Public mech_fb_* helpers — promoted from `static` in mechanical_fb_gpu.cc
- * (milestone 3) so legacy + runner-port share a single source of truth.
+ * Public mech_fb_* helpers — promoted from `static` (milestone 3) when the
+ * legacy mechanical_fb_gpu.cc evaluator still existed; now the sole source
+ * of truth, used only by the MechFBSpec runner-port.
  * ========================================================================== */
 
 void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
@@ -152,8 +154,8 @@ void mech_fb_apply_source_mass_out(struct particle_data *P_arr,
  * into the SharedSpace per_active_local buffer. Called from
  * reset_per_iter_device_context at the start of every iter.
  *
- * Mirrors mechanical_fb_gpu.cc:294-296 (the per-mode `for(aa) mech_fb_local_fill`
- * inside the legacy mode loop). Reads HOST P[i] — which carries any
+ * Mirrors the per-mode `for(aa) mech_fb_local_fill` inside the retired legacy
+ * evaluator's mode loop. Reads HOST P[i] — which carries any
  * Area_weighted_sum / Mass updates the previous mode's after_iter_global
  * applied (codex r6 moved per-mode source-side host writes out of after_iter
  * to keep oracle's dual-walk from double-applying).
@@ -188,7 +190,7 @@ bool MechFBSpec::is_active(int particle_index) {
     return addFB_evaluate_active_check(particle_index, -2) != 0;
 }
 
-/* search_radius — per-active radius. Mirrors mechanical_fb_gpu.cc:295's
+/* search_radius — per-active radius. Mirrors the retired legacy evaluator's
  * `nl_radii[aa] = (double)P[ii].KernelRadius`. The runner uses the radius
  * to drive Mode A CSR construction + Mode B walk extents; mechfb is not
  * radius-iterative so this value is constant across iters. */
@@ -201,11 +203,9 @@ double MechFBSpec::search_radius(const neighbor_loop_args& args,
  * few mechfb-specific All.* snapshots). Reads `All` via nlr_host_all_ptr()
  * per the canonical-accessor rule (feedback_all_dev_trap_host_side.md). */
 /* Shared builder for MechFBCallScalars (codex r6 fix). Used by
- *   - MechFBSpec::populate_call_scalars (runner-port path)
- *   - legacy mechanical_fb_evaluate_gpu inside mechanical_fb_gpu.cc
- * so both paths read cosmology / unit-factor / CR-rigidity values from the
- * SAME canonical host All via nlr_host_all_ptr() — no bare All.* inside the
- * kernel-callable helpers regardless of which dispatch path invoked them. */
+ * MechFBSpec::populate_call_scalars so cosmology / unit-factor / CR-rigidity
+ * values are read from the canonical host All via nlr_host_all_ptr() — no
+ * bare All.* inside the kernel-callable helpers. */
 void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars) {
     if (!scalars) return;
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();

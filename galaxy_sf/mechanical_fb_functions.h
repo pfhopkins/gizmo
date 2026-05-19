@@ -76,10 +76,11 @@ struct MechFBCallScalars {
  * by the kernel BEFORE calling this helper or any atomic_add. The helper
  * does not branch on oracle, and is safe to call after the gate.
  *
- * Legacy semantic preserved: legacy mechanical_fb_evaluate_gpu passes
+ * Historical note: the retired legacy evaluator passed
  * num_local_gas = num_local_particles = num_all and ghost_gas_delta=nullptr,
- * so every j falls in [0, num_all) → first branch → home_gas_delta[j],
- * ghost and gap branches both unreachable. */
+ * so every j fell in [0, num_all) → first branch → home_gas_delta[j], with
+ * the ghost and gap branches unreachable. The MechFBSpec runner-port supplies
+ * the real three-way split. */
 KOKKOS_INLINE_FUNCTION
 static struct MechFBGasDelta *mechfb_target_gas_delta(
     int j,
@@ -208,11 +209,11 @@ static void inject_cosmic_rays_into_delta(
 #endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
 
 
-/* Host-side helpers — shared between legacy mechanical_fb_evaluate_gpu and
- * the MechFBSpec runner-port (Phase 4 / Wave 3 / 3e.1 milestone 3). Defined
- * in galaxy_sf/mechfb_loop.cc (single source of truth; cleanup commit will
- * retire the legacy mechanical_fb_gpu.cc caller). All read host P (NOT All)
- * so calling from a GPU TU with `#define All All_dev` is safe. */
+/* Host-side helpers for the MechFBSpec runner-port (Phase 4 / Wave 3 / 3e.1
+ * milestone 3). Defined in galaxy_sf/mechfb_loop.cc (single source of truth;
+ * originally shared with the now-retired legacy mechanical_fb_gpu.cc
+ * evaluator). All read host P (NOT All) so calling from a GPU TU with
+ * `#define All All_dev` is safe. */
 void mech_fb_local_fill(int i, int loop_iteration,
                          struct MechFBLocalIn *loc);
 void mech_fb_apply_aws_out(const struct MechFBOut *out,
@@ -341,9 +342,8 @@ static void mechanical_fb_pair_kernel(
     struct gas_cell_data *CellP,
     /* Threaded per-call scalars (codex r6 fix): cosmology factors,
      * SolarAbundances[0], unit conversions, CR rigidity arrays. Replaces
-     * bare All.* reads inside this body. Caller (runner-port pair_kernel
-     * inline / legacy mechanical_fb_evaluate_gpu lambda) builds it
-     * host-side via populate_call_scalars / mechfb_make_call_scalars_legacy. */
+     * bare All.* reads inside this body. Caller (runner-port pair_kernel)
+     * builds it host-side via populate_call_scalars. */
     const struct MechFBCallScalars& scalars,
     /* j-side ownership-split write target (Phase 4 / Wave 3 / 3e.1, milestone 3.5).
      * Three-way index split via mechfb_target_gas_delta (see helper above):

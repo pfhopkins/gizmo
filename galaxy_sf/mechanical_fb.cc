@@ -7,7 +7,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
-#include "galsf_gpu_decls.h"      /* mechanical_fb_evaluate_gpu + mechfb_{alloc,free,run_iterative} prototypes */
+#include "galsf_gpu_decls.h"      /* mechfb_{alloc,free,run_iterative,fill_call_scalars} prototypes */
 
 /* Routines for mechanical feedback/enrichment models: stellar winds, supernovae, etc
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -240,7 +240,7 @@ void mechanical_fb_calc_toplevel(void)
 
     /* B8 GPU port: dispatch all 6 modes at once on the GPU, sharing a single
        neighbor list across modes. See galaxy_sf/mechfb_loop.{h,cc} (runner-template
-       port) and galaxy_sf/mechanical_fb_gpu.cc (legacy, retired in cleanup). */
+       port); the legacy galaxy_sf/mechanical_fb_gpu.cc evaluator has been deleted. */
     {
         /* Build SUPERSET active list: any star active in ANY mode is included.
            addFB_evaluate_active_check(ii, -2) with a negative iteration acts as

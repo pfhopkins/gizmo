@@ -51,7 +51,7 @@
  *   sink_environment_loop              { req=Type5  sup=caller mask r=KernelRadius_sink }
  *   sink_feed_loop                     { req=Type5  sup=caller mask r=KernelRadius_sink }
  *   sink_swallow_and_kick_loop         { req=Type5  sup=caller mask r=KernelRadius_sink }
- *   mech_fb (mechanical_fb_evaluate_gpu){ req=caller actives sup=Type0 r=source_h }
+ *   mech_fb (mechfb_loop)              { req=caller actives sup=Type0 r=source_h }
  *   thermal_fb_evaluate_gpu            { req=caller actives sup=Type0 r=source_h }
  *   HII_heating_singledomain           { req=caller actives sup=Type0 r=R_HII or KernelRadius }
  *   radiation_pressure_winds (gpu)     { req=caller actives sup=Type0 r=source_h }
