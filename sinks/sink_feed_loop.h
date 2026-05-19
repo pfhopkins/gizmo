@@ -83,7 +83,9 @@ int  sink_feed_is_active(int i);
 struct SinkFeedCallScalars {
     NlrCommonScalars common;             /* cf_atime, cf_a2inv, newton_G, ... */
     double           sink_radius_grav;   /* SinkParticle_GravityKernelRadius */
+#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
     double           sink_accreted_fraction;  /* All.Sink_accreted_fraction */
+#endif
     uint64_t         rng_step;           /* (uint64_t)NumCurrentTiStep ^ 0xfeed5117ULL */
 };
 

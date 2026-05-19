@@ -156,11 +156,17 @@ struct SinkSwallowOut {
 struct SinkSwkCallScalars {
     NlrCommonScalars common;                       /* cf_atime, cf_a2inv, cf_hubble_a, comoving_integration_on, ... */
     double sink_radius_grav;                       /* SinkParticle_GravityKernelRadius */
+#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
     double sink_accreted_fraction;                 /* All.Sink_accreted_fraction */
+#endif
     double sink_feedback_factor;                   /* All.SinkFeedbackFactor */
     double sink_radiative_efficiency;              /* All.SinkRadiativeEfficiency */
+#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
     double sink_outflow_velocity;                  /* All.Sink_outflow_velocity */
+#endif
+#ifdef SINK_PHOTONMOMENTUM
     double sink_rad_momentum_factor;               /* All.Sink_Rad_MomentumFactor */
+#endif
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
     double sink_cr_injection_efficiency;           /* All.Sink_CosmicRay_Injection_Efficiency */
 #endif

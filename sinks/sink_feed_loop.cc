@@ -72,7 +72,9 @@ SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     CallScalars scalars;
     scalars.common                 = nlr_common_scalars_from_all();
     scalars.sink_radius_grav       = SinkParticle_GravityKernelRadius;
+#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
     scalars.sink_accreted_fraction = h->Sink_accreted_fraction;
+#endif
     scalars.rng_step               = (uint64_t)h->NumCurrentTiStep ^ 0xfeed5117ULL;
     return scalars;
 }
