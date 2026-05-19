@@ -3,10 +3,12 @@
  * After a GPU neighbor loop writes to ghost j-particles (via Kokkos atomics),
  * ghost_writeback communicates those modifications back to the home MPI ranks.
  *
- * Usage pattern for each loop that modifies j-particles:
- *   1. ghost_writeback_zero_hydro()       — zero accumulator fields on ghosts
- *   2. [run GPU kernel with atomic j-writes]
- *   3. ghost_writeback_hydro()            — scan, pack, reverse MPI, apply
+ * Runner-template loops reverse-communicate j-particle writes through the
+ * generic bundle scaffold below (ghost_writeback_begin_bundle /
+ * ghost_writeback_end_bundle, with manifest ops from ghost_writeback_ops.h).
+ * The hydro flux loop is the one remaining bespoke entry point
+ * (ghost_writeback_zero_hydro / ghost_writeback_hydro), kept until the
+ * hydro corridor port migrates it onto the bundle scaffold.
  *
  * The ghost provenance map (home rank + index per ghost) is built during
  * ghost_exchange() and freed in ghost_exchange_cleanup(). Accessors are
@@ -98,8 +100,7 @@ struct ghost_writeback_bundle {
     int                                            n_callbacks;
     /* Optional loop name for the rank-0 traffic print in _end_bundle.
      * Set automatically by GHOST_WRITEBACK_BUNDLE_BEGIN(LOOP) to #LOOP.
-     * nullptr for manually-constructed bundles (e.g. swallowtime singleton)
-     * → silent (backwards-compatible). */
+     * nullptr for manually-constructed bundles → silent (backwards-compatible). */
     const char                                    *loop_name;
 };
 
@@ -125,43 +126,25 @@ void ghost_writeback_zero_hydro(void);
  * and apply the deltas. Call after the hydro force loop, before cleanup. */
 void ghost_writeback_hydro(void);
 
-/* SwallowTime variant: reverse-communicates minimum SwallowTime written to
- * ghost particles by the sink_environment GPU kernel (under
- * SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS).  Zero snapshots the
- * pre-kernel values; swallowtime sends any ghost whose SwallowTime decreased
- * back to its home rank and applies a min there.
- * Only compiled when SINGLE_STAR_SINK_DYNAMICS is enabled (field only exists then). */
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-void ghost_writeback_zero_swallowtime(void);
-void ghost_writeback_swallowtime(void);
-#endif
+/* SwallowTime variant retired: the ghost_writeback_{zero_,}swallowtime
+ * compatibility wrappers had no remaining callers — SinkEnv1Spec in
+ * sinks/sink_env1_loop.cc reverse-communicates SwallowTime via the generic
+ * bundle scaffold (PARTICLE_MIN on particle_data::SwallowTime). */
 
 
 /* sinkfeed retired in 3d.1: replaced by the bundle scaffold in
  * sinks/sink_feed_loop.cc (PARTICLE_MAX(SwallowID) +
  * GAS_ADD(Injected_Sink_Energy) ops). */
 
-/* MechFB variant: reverse communication for mechanical_fb GPU kernel per-gas
- * MechFBGasDelta accumulator. Unlike the snapshot-based patterns above,
- * the MechFBGasDelta buffer is allocated fresh and zeroed each top-level
- * invocation, so the FULL ghost entry IS the delta — no snapshot needed.
- * Input: ghost_full_buf[num_local .. num_local+num_ghost) holds ghost deltas.
- *        home_buf[0..n_gas) is the home-rank destination (already contains
- *        home-cell deltas from the kernel). MPI reduces ghost→home and
- *        accumulates into home_buf[home_index]. */
-#ifdef GALSF_FB_MECHANICAL
-struct MechFBGasDelta;
-void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
-                             struct MechFBGasDelta *home_buf,
-                             int n_gas);
-#endif
+/* MechFB variant retired: the ghost_writeback_mechfb compatibility wrapper
+ * had no remaining callers — MechFBSpec in galaxy_sf/mechfb_loop.cc owns the
+ * per-gas MechFBGasDelta reverse-comm via its mechfb_writeback_detail custom
+ * generic-bundle callback. */
 
-/* Grain backreaction (B7a): snapshot-based reverse communication for
- * grain_backrx_evaluate j-particle writes (Vel, VelPred, dp, Grain_AccelTimeMin[min-update]). */
-#if defined(GRAIN_FLUID) && defined(GRAIN_BACKREACTION)
-void ghost_writeback_zero_grainbackrx(void);
-void ghost_writeback_grainbackrx(void);
-#endif
+/* Grain backreaction (B7a) retired: the ghost_writeback_{zero_,}grainbackrx
+ * compatibility wrappers had no remaining callers — GrainBackrxSpec in
+ * solids/grain_physics_loop.cc reverse-communicates the grain_backrx
+ * j-writes via the generic ghost-writeback bundle. */
 
 /* sinkswallow retired in 3d.3 (port + cleanup): replaced by the bundle
  * scaffold's compound callback in sinks/sink_swk_loop.cc (snapshot +

@@ -487,11 +487,10 @@ namespace mechfb_writeback_detail {
 
 /* SSOT field-touch helpers. Gating mirrored 1:1 against MechFBGasDelta in
  * galaxy_sf/mechanical_fb_types.h. Helpers live TU-local because the runner
- * port is the only consumer in this commit (legacy ghost_writeback_mechfb in
- * mesh/ghost_writeback.cc stays untouched per the layering rule — mechfb
- * physics doesn't belong in mesh; both the legacy evaluator and the
- * mesh-side mechfb writeback get deleted whole in the upcoming cleanup
- * commit). KOKKOS_INLINE_FUNCTION = host+device callable. */
+ * port is the sole consumer — the legacy mechanical_fb_gpu.cc evaluator and
+ * the mesh-side ghost_writeback_mechfb wrapper have both been deleted (mechfb
+ * physics does not belong in mesh). KOKKOS_INLINE_FUNCTION = host+device
+ * callable. */
 KOKKOS_INLINE_FUNCTION
 static int mechfb_gas_delta_nonzero(const struct MechFBGasDelta *d) {
     /* Invariant (verified in mechanical_fb_pair_kernel and inject_cosmic_rays_into_delta):

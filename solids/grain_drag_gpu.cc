@@ -55,8 +55,8 @@ extern struct cooling_tables_t CoolTables;
  * Under GRAIN_EVOLUTION, also runs the per-superparticle local-step
  * operators (sputter; later: COND/SUBL) at the end of the kernel so they
  * share the same Gas_* and dt computation, and the same back-reaction
- * writeback machinery (extended ghost_writeback_grainbackrx) as the drag
- * itself. */
+ * writeback machinery (the generic grainbackrx ghost-writeback bundle in
+ * solids/grain_physics_loop.cc) as the drag itself. */
 KOKKOS_FUNCTION
 static void grain_drag_kernel(int idx, struct particle_data *pp, struct gas_cell_data *cellp)
 {

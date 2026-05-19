@@ -452,9 +452,8 @@ void grain_evolution_apply_cond_subl(int i, struct particle_data *P, double dt)
 /* Per-superparticle local step. Dispatches to the active local-operator bits
  * (3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL). All operators run inside
  * grain_drag_kernel (solids/grain_drag_gpu.cc) and any back-reaction they
- * generate piggybacks on the existing GRAIN_BACKREACTION ghost-writeback
- * infrastructure (mesh/ghost_writeback.cc::ghost_writeback_grainbackrx,
- * extended for the new fields). No parallel pass. */
+ * generate piggybacks on the generic grainbackrx ghost-writeback bundle in
+ * solids/grain_physics_loop.cc. No parallel pass. */
 KOKKOS_INLINE_FUNCTION
 void grain_evolution_local_step(int i, struct particle_data *P, double dt)
 {

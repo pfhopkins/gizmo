@@ -13,8 +13,9 @@
 #ifdef GALSF_FB_MECHANICAL
 
 /* Per-gas accumulation struct. Layout is shared across CPU + GPU paths,
- * and across the ghost-writeback MPI reduction. Do not reorder without
- * updating ghost_writeback_mechfb in mesh/ghost_writeback.cc. */
+ * and across the ghost-writeback MPI reduction. Field additions must update
+ * mechfb_gas_delta_{nonzero,zero,add} and the mechfb_writeback_detail
+ * callback path in galaxy_sf/mechfb_loop.cc. */
 struct MechFBGasDelta
 {
     int N_injected;
