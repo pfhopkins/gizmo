@@ -9,8 +9,10 @@
 
 
 /* ---- cbe_integrator (C1) ---- */
-void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host, int num_total,
-                                  const int *active_host, int num_active,
-                                  const double *dt_host);
+void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
+                                 const int *active_indices, int num_active,
+                                 const double *dt_host);
+void cbe_postgravity_evaluate_gpu(struct particle_data *P_host,
+                                  const int *active_indices, int num_active);
 
 #endif /* SIDM_GPU_DECLS_H */

@@ -75,7 +75,7 @@ void do_first_halfstep_kick(void)
                 k++;
             }
         }
-        cbe_drift_kick_evaluate_gpu(P, NumPart, cbe_active, k, cbe_dt);
+        cbe_drift_kick_evaluate_gpu(P, cbe_active, k, cbe_dt);
         myfree(cbe_dt); myfree(cbe_active);
     }
 #endif
@@ -131,7 +131,7 @@ void do_second_halfstep_kick(void)
                 k++;
             }
         }
-        cbe_drift_kick_evaluate_gpu(P, NumPart, cbe_active, k, cbe_dt);
+        cbe_drift_kick_evaluate_gpu(P, cbe_active, k, cbe_dt);
         myfree(cbe_dt); myfree(cbe_active);
     }
 #endif

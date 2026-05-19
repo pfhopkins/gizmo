@@ -39,6 +39,7 @@
 #include "../mesh/ghost_writeback_ops.h"
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "../system/gpu_particles_arena.h"
+#include "../sidm/sidm_gpu_decls.h"
 
 /* Flux helper templates are now included by ags_force_loop.h itself, so the
  * Spec header is self-sufficient (required because neighbor_loop_runner.cc
@@ -495,9 +496,10 @@ void AGSForce_calc(void)
     if(NTask > 1) ghost_exchange_cleanup();
     timecomp += timediff(t0, my_second());
 
-    /* CBE post-tree-walk per-active finalization (legacy gravity/ags_rkern.cc:343-345). */
+    /* CBE post-tree-walk per-active finalization (legacy gravity/ags_rkern.cc:343-345).
+       Active set is exactly ActiveParticleList — no extra gating; matches legacy. */
 #ifdef CBE_INTEGRATOR
-    for(int i : ActiveParticleList) { do_postgravity_cbe_calcs(i); }
+    cbe_postgravity_evaluate_gpu(P, ActiveParticleList.data(), (int)ActiveParticleList.size());
 #endif
 
     double t1 = WallclockTime = my_second();

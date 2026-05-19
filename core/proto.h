@@ -944,10 +944,10 @@ void special_rt_feedback_injection(void);
 
 #ifdef CBE_INTEGRATOR
 void do_cbe_initialization(void);
-void do_cbe_drift_kick(int i, double dt);
-/* do_cbe_flux_computation moved to sidm/cbe_integrator_functions.h
-   (KOKKOS_INLINE_FUNCTION). */
-void do_postgravity_cbe_calcs(int i);
+/* do_cbe_flux_computation, do_cbe_drift_kick_kernel, do_cbe_postgravity_kernel
+   live in sidm/cbe_integrator_functions.h (KOKKOS_INLINE_FUNCTION). The host
+   entry points are cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
+   (sidm/sidm_gpu_decls.h). */
 #endif
 
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)

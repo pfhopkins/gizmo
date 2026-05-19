@@ -13,9 +13,17 @@
 #define CBE_INTEGRATOR_FUNCTIONS_H
 
 #include "../declarations/allvars.h"
+#include "../declarations/gpu_rng.h"
 
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
+#endif
+
+#ifdef CBE_INTEGRATOR
+/* Per-loop FNV-1a salt for the drift-kick basis-resplit RNG. Mixed into the
+ * counter so the CBE drift-kick stream is independent of any other loop that
+ * happens to share (Ti_Current, ID, tag). See gpu_rng.h for rationale. */
+static constexpr uint64_t CBE_DRIFT_KICK_RNG_SALT = gizmo_loop_rng_salt("cbe_drift_kick");
 #endif
 
 
@@ -69,9 +77,7 @@ double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS],
  * Mirrors do_cbe_drift_kick() in cbe_integrator.cc but takes an explicit
  * particle ref so it runs in both CPU and GPU (Kokkos) contexts.
  * get_random_number() replaced by counter-based gpu_rng (same statistics,
- * deterministic per particle-ID + timestep). */
-#include "../declarations/gpu_rng.h"
-
+ * deterministic per particle-ID + timestep + loop-domain salt). */
 KOKKOS_INLINE_FUNCTION
 static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt)
 {
@@ -139,10 +145,64 @@ static void do_cbe_drift_kick_kernel(struct particle_data& pi, double dt)
         for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
         {
             double dq = 0.5*pi.CBE_basis_moments[jmax][k];
-            if(k>0 && k<4) {dq *= 1. + 0.001*(gizmo_gpu_rand_double(pi.ID ^ ((uint64_t)jmax*65537ULL) ^ ((uint64_t)k*131071ULL), (uint64_t)All.Ti_Current) - 0.5);}
+            if(k>0 && k<4) {
+                uint64_t key = (uint64_t)pi.ID ^ ((uint64_t)jmax*65537ULL) ^ ((uint64_t)k*131071ULL);
+                uint64_t counter = ((uint64_t)All.Ti_Current << 32) ^ CBE_DRIFT_KICK_RNG_SALT;
+                dq *= 1. + 0.001*(gizmo_gpu_rand_double(key, counter) - 0.5);
+            }
             pi.CBE_basis_moments[jmax][k] -= dq;
             pi.CBE_basis_moments[jmin][k] += dq;
         }
+    }
+}
+
+/* GPU-callable per-particle post-gravity finalization for the CBE integrator.
+ * Mirrors do_postgravity_cbe_calcs() (originally in cbe_integrator.cc) but
+ * takes an explicit particle ref so it runs in both CPU and GPU contexts.
+ *
+ * Moment ordering: 0, x, y, z, xx, yy, zz, xy, xz, yz
+ *
+ * Operations (pure i-side):
+ *   - Sum dmom_tot across basis functions.
+ *   - Fold dmom_tot[1..3] / Mass into pi.GravAccel (cosmological-unit shift).
+ *   - Subtract that residual back out of pi.CBE_basis_moments_dt so the net
+ *     momentum flux across basis functions is zero to FP precision.
+ *   - For NMOMENTS > 4, shift the second-moment derivatives from dT to dS
+ *     (subtract the v.v outer-product contribution) and clamp diagonal
+ *     components non-negative when dm[0] > 0.
+ */
+KOKKOS_INLINE_FUNCTION
+static void do_cbe_postgravity_kernel(struct particle_data& pi)
+{
+    int j, k;
+    double dmom_tot[CBE_INTEGRATOR_NMOMENTS] = {0};
+    double m_inv = 1. / pi.Mass;
+    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++) {
+        for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++) {
+            dmom_tot[k] += pi.CBE_basis_moments_dt[j][k];
+        }
+    }
+    Vec3<double> dv0 = {m_inv * dmom_tot[1], m_inv * dmom_tot[2], m_inv * dmom_tot[3]};
+    pi.GravAccel += dv0 / All.cf_a2inv;
+    for(j=0;j<CBE_INTEGRATOR_NBASIS;j++)
+    {
+        pi.CBE_basis_moments_dt[j][0] -= pi.CBE_basis_moments[j][0] * (m_inv * dmom_tot[0]);
+        for(k=0;k<3;k++) {
+            pi.CBE_basis_moments_dt[j][k+1] -= pi.CBE_basis_moments[j][0] * dv0[k];
+        }
+#if (CBE_INTEGRATOR_NMOMENTS > 4)
+        {
+            double dS[6] = {0};
+            dS[0] = pi.CBE_basis_moments_dt[j][4] - m_inv * (pi.CBE_basis_moments_dt[j][1]*pi.CBE_basis_moments[j][1] + pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments_dt[j][1]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments[j][1];
+            dS[1] = pi.CBE_basis_moments_dt[j][5] - m_inv * (pi.CBE_basis_moments_dt[j][2]*pi.CBE_basis_moments[j][2] + pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments_dt[j][2]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments[j][2];
+            dS[2] = pi.CBE_basis_moments_dt[j][6] - m_inv * (pi.CBE_basis_moments_dt[j][3]*pi.CBE_basis_moments[j][3] + pi.CBE_basis_moments[j][3]*pi.CBE_basis_moments_dt[j][3]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][3]*pi.CBE_basis_moments[j][3];
+            dS[3] = pi.CBE_basis_moments_dt[j][7] - m_inv * (pi.CBE_basis_moments_dt[j][1]*pi.CBE_basis_moments[j][2] + pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments_dt[j][2]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments[j][2];
+            dS[4] = pi.CBE_basis_moments_dt[j][8] - m_inv * (pi.CBE_basis_moments_dt[j][1]*pi.CBE_basis_moments[j][3] + pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments_dt[j][3]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][1]*pi.CBE_basis_moments[j][3];
+            dS[5] = pi.CBE_basis_moments_dt[j][9] - m_inv * (pi.CBE_basis_moments_dt[j][2]*pi.CBE_basis_moments[j][3] + pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments_dt[j][3]) + m_inv*m_inv * pi.CBE_basis_moments_dt[j][0] * pi.CBE_basis_moments[j][2]*pi.CBE_basis_moments[j][3];
+            if(pi.CBE_basis_moments_dt[j][0] > 0) { for(k=0;k<3;k++) {dS[k] = DMAX(dS[k], 0.);} }
+            for(k=4;k<CBE_INTEGRATOR_NMOMENTS;k++) { pi.CBE_basis_moments_dt[j][k] = dS[k-4]; }
+        }
+#endif
     }
 }
 
