@@ -14,6 +14,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
+#include "../mesh/neighbor_list.h"            /* gizmo_sym_* globals */
+#include "../mesh/neighbor_loop_runner.h"     /* nlr_external_csr */
+#include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_gradients_prep_symlist */
 #include "hydro_corridor.h"
 
 /* Default adaptive threshold (sum of global_num_active_gas) below which
@@ -135,7 +138,62 @@ GizmoHydroCorridorMode gizmo_hydro_corridor_get_mode(void)
     return g_corridor_mode;
 }
 
+/* Corridor-owned view of the gizmo_sym_* shared CSR. Populated by
+ * gizmo_hydro_corridor_begin_csr() in the MODE_A && NTask==1 case; cleared
+ * by gizmo_hydro_corridor_end() at corridor exit. Does NOT own the
+ * underlying buffer — gizmo_sym_neighbor_list is freed by the legacy
+ * gizmo_hydro_cleanup_symlist_and_ghosts() after hydro_force(). */
+static nlr_external_csr g_corridor_csr;
+static bool             g_corridor_csr_valid = false;
+
+void gizmo_hydro_corridor_begin_csr(void)
+{
+    /* Conservative scope for commit 5b: NTask == 1 only. Multi-rank
+     * ghost field-value staleness (after compute_stellar_feedback) is
+     * not yet handled — see hydro_corridor.h for rationale + commit 9
+     * targeted-refresh follow-up. */
+    if(g_corridor_mode != GizmoHydroCorridorMode::MODE_A) return;
+    if(NTask != 1) return;
+
+    /* Build gizmo_sym_* via the existing legacy machinery. This is the
+     * same build hydro_gradient_calc would do at its top in the
+     * pre-corridor path; we hoist it here so cellcorrections can also
+     * consume it without rebuilding. */
+    const double gsl_safety = gizmo_ghost_safety_factor();
+    gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
+
+    /* Populate the corridor's view. The gizmo_sym_* globals live as
+     * long as gizmo_hydro_cleanup_symlist_and_ghosts() hasn't been
+     * called (i.e., until after hydro_force()), which spans the whole
+     * corridor — safe for cellcorrections, gradients (skipping their
+     * own prep), and hydro_force to all consume the same buffers. */
+    g_corridor_csr.active_indices = gizmo_sym_active_indices;
+    g_corridor_csr.num_active     = gizmo_sym_num_active;
+    g_corridor_csr.offsets        = gizmo_sym_neighbor_list.offsets;
+    g_corridor_csr.neighbors      = gizmo_sym_neighbor_list.neighbors;
+    g_corridor_csr.total_pairs    = gizmo_sym_neighbor_list.total_pairs;
+    g_corridor_csr.owner_name     = "corridor:hydro_5b";
+    g_corridor_csr_valid          = true;
+
+    if(ThisTask == 0 && gizmo_verbose_diag()) {
+        printf("[CORRIDOR_CSR step=%d] built (NTask=1, MODE_A): num_active=%d total_pairs=%lld\n",
+               (int)All.NumCurrentTiStep,
+               g_corridor_csr.num_active,
+               (long long)g_corridor_csr.total_pairs);
+        fflush(stdout);
+    }
+}
+
+const nlr_external_csr * gizmo_hydro_corridor_external_csr(void)
+{
+    return g_corridor_csr_valid ? &g_corridor_csr : nullptr;
+}
+
 void gizmo_hydro_corridor_end(void)
 {
-    g_corridor_mode = GizmoHydroCorridorMode::UNSET;
+    g_corridor_mode      = GizmoHydroCorridorMode::UNSET;
+    g_corridor_csr_valid = false;
+    /* Note: do NOT free gizmo_sym_* here. The legacy
+     * gizmo_hydro_cleanup_symlist_and_ghosts() (called after
+     * hydro_force) still owns the free. Double-free would crash. */
 }

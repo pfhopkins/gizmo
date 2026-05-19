@@ -92,6 +92,13 @@ void compute_hydro_densities_and_forces(void)
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
+        /* Hydro corridor CSR begin (Wave 5 commit 5b). Builds the shared
+         * symmetric gas CSR when corridor mode is MODE_A AND NTask==1,
+         * for consumption by cellcorrections + (legacy) gradients +
+         * (legacy) hydro_force. No-op otherwise. Downstream Specs read
+         * via gizmo_hydro_corridor_external_csr(). */
+        gizmo_hydro_corridor_begin_csr();
+
 #ifdef HYDRO_VOLUME_CORRECTIONS
         STEP_PHASE_TIME("cellcorrections_calc", cellcorrections_calc()); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
 #endif

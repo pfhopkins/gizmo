@@ -18,6 +18,8 @@ extern void gradient_evaluate_gpu(struct particle_data *, struct gas_cell_data *
                                   int, int *, int, int64_t *, int *, int64_t, void *, int);
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "compute_finitevol_faces_functions.h"
+#include "hydro_corridor.h"     /* gizmo_hydro_corridor_external_csr — skip prep
+                                  * when corridor pre-built gizmo_sym_* */
 
 
 
@@ -502,13 +504,22 @@ void hydro_gradient_calc(void)
        The CSR is reused by hydro_force. Helper is a no-op on the tree-walk build. */
     double gsl_safety = gizmo_ghost_safety_factor();
     double t_diag_symlist_start = my_second(); /* DIAG */
-    gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
+    /* Commit 5b: if the hydro corridor already built gizmo_sym_* (NTask==1
+     * Mode A — see hydro_corridor.cc), skip the legacy prep here to avoid
+     * the LIFO-stack double-allocation trap. The corridor's CSR is reused
+     * verbatim by this gradient pass and downstream hydro_force; the legacy
+     * gizmo_hydro_cleanup_symlist_and_ghosts() still owns the free. */
+    const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
+    if(!corridor_built_csr) {
+        gizmo_gradients_prep_symlist(gsl_safety, gsl_safety);
+    }
     double t_grad_after_symlist = my_second();
     gizmo_step_phase_record("gradient_prep_symlist", timediff(t_diag_symlist_start, t_grad_after_symlist));
     if(ThisTask == 0 && gizmo_verbose_diag()) {
-        printf("[DIAG_SYMNL step=%d N=%d pairs=%lld] symlist_build=%.3f\n",
+        printf("[DIAG_SYMNL step=%d N=%d pairs=%lld] symlist_build=%.3f%s\n",
                (int)All.NumCurrentTiStep, gizmo_sym_num_active, (long long)(gizmo_sym_neighbor_list.total_pairs),
-               timediff(t_diag_symlist_start, my_second()));
+               timediff(t_diag_symlist_start, my_second()),
+               corridor_built_csr ? " (skipped: corridor built CSR)" : "");
         fflush(stdout);
     }
     int i, j, k, k1, ndone, ndone_flag, recvTask, place, save_NextParticle;

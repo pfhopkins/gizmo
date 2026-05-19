@@ -410,6 +410,7 @@ void cellcorrections_final_operations_and_cleanup(void);
  * mode via gizmo_hydro_corridor_get_mode() — include hydro_corridor.h
  * for the enum + accessor. Wave 5 corridor port chain. */
 void gizmo_hydro_corridor_decide_mode(void);
+void gizmo_hydro_corridor_begin_csr(void);
 void gizmo_hydro_corridor_end(void);
 
 size_t sizemax(size_t a, size_t b);

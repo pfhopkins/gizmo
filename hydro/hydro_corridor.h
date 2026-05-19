@@ -70,8 +70,43 @@ void gizmo_hydro_corridor_decide_mode(void);
  * corridor span (before decide_mode or after end). */
 GizmoHydroCorridorMode gizmo_hydro_corridor_get_mode(void);
 
+/* Build the corridor's shared symmetric gas CSR (commit 5b).
+ *
+ * Called from core/accel.cc::compute_hydro_densities_and_forces between
+ * force_update_hmax() and cellcorrections_calc(). Conservative scope:
+ *   MODE_A && NTask == 1  -> call gizmo_gradients_prep_symlist + populate
+ *                            file-static nlr_external_csr describing the
+ *                            resulting gizmo_sym_* globals. Downstream
+ *                            consumers (cellcorrections, gradients)
+ *                            consume via gizmo_hydro_corridor_external_csr().
+ *   MODE_A && NTask  > 1  -> no-op for now. Multi-rank ghost field-value
+ *                            staleness after compute_stellar_feedback is not
+ *                            yet handled (commit 9 targeted refresh + dirty
+ *                            mark); building corridor CSR here without that
+ *                            plumbing would either let gradients consume
+ *                            stale ghosts or double-allocate gizmo_sym_*
+ *                            when the legacy prep call inside
+ *                            hydro_gradient_calc fires.
+ *   MODE_B / UNSET        -> no-op. Mode B is request-driven, no CSR; UNSET
+ *                            means decide_mode wasn't called (defensive).
+ * Lifetime: the underlying gizmo_sym_* globals are STILL freed by the
+ * legacy gizmo_hydro_cleanup_symlist_and_ghosts() after hydro_force();
+ * gizmo_hydro_corridor_end() only clears the corridor's file-static
+ * pointer view (no extra free). */
+void gizmo_hydro_corridor_begin_csr(void);
+
+/* Accessor for downstream corridor consumers (cellcorrections, gradients
+ * skip-prep). Returns a non-null pointer iff gizmo_hydro_corridor_begin_csr
+ * populated a usable Mode-A CSR for this corridor span (NTask == 1 case
+ * in commit 5b). Returns nullptr otherwise — callers MUST fall back to
+ * their legacy own-CSR-build path. */
+struct nlr_external_csr;
+const nlr_external_csr * gizmo_hydro_corridor_external_csr(void);
+
 /* Tear down the corridor at the end of hydro work for this step. Resets
- * the mode to UNSET so any unexpected read between steps is detectable. */
+ * the mode to UNSET so any unexpected read between steps is detectable.
+ * Also clears the corridor's file-static external_csr view (does NOT
+ * free gizmo_sym_*; that stays with gizmo_hydro_cleanup_symlist_and_ghosts). */
 void gizmo_hydro_corridor_end(void);
 
 #endif /* HYDRO_CORRIDOR_H */

@@ -1033,6 +1033,14 @@ enum class DispatchPath : int {
  * radii once via Spec::search_radius and reuses them for any prep
  * (Mode A) and the chosen walker.
  * ========================================================================== */
+/* NlrForceMode — A/B dispatch override values. Defined here (early in the
+ * header) rather than near the env-var doc block below because struct
+ * neighbor_loop_args' in-class default initializer for `dispatch_override`
+ * needs the enum to be visible at that point. The companion env-var
+ * resolution functions (gizmo_nlr_force_mode, gizmo_nlr_force_mode_for)
+ * are declared below near their documentation. */
+enum class NlrForceMode { None = 0, A = 1, B = 2 };
+
 /* External symmetric gas-gas CSR injection (hydro corridor support — added
  * for Wave 5 cellcorrections/gradients/hydro_force port chain). When the
  * caller has already built a symmetric gas CSR (e.g. via the corridor's
@@ -1096,6 +1104,15 @@ struct neighbor_loop_args {
                                   * the provided host CSR into Kokkos memory.
                                   * Mode B / iterative runner ignore. See struct
                                   * nlr_external_csr above for contract details. */
+    NlrForceMode dispatch_override = NlrForceMode::None;
+                                 /* None (default) => normal priority: env vars
+                                  * GIZMO_<LOOPNAME>_FORCE_MODE > GIZMO_NLR_FORCE_MODE
+                                  * > adaptive threshold. Non-None => per-call
+                                  * override winning ABOVE env vars (corridor mode
+                                  * decision in hydro/hydro_corridor.cc uses this
+                                  * to enforce coherent Mode A/B across all
+                                  * corridor consumers — cellcorrections/gradients/
+                                  * hydro_force as they are runner-ported). */
 };
 
 /* Effective neighbor-type mask for a non-iterative run_neighbor_loop call:
@@ -1871,7 +1888,9 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  * Warnings: rank-0 only, cached one-shot per env-var key.
  * ========================================================================== */
 
-enum class NlrForceMode { None = 0, A = 1, B = 2 };
+/* NlrForceMode is defined above struct neighbor_loop_args because its
+ * in-class default initializer for the dispatch_override field needs
+ * the enum to be fully visible. See declaration above near line 1030. */
 
 int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
 NlrForceMode gizmo_nlr_force_mode(void);              /* None / A / B */

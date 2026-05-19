@@ -23,6 +23,8 @@
 #include "../mesh/kernel.h"                   /* MUST precede cellcorrections_loop.h
                                                 * — kernel.h has no include guards */
 #include "../mesh/neighbor_loop_runner.h"
+#include "../mesh/neighbor_list.h"     /* gizmo_sym_* globals (corridor CSR view) */
+#include "hydro_corridor.h"             /* mode + external_csr accessors */
 #include "cellcorrections_loop.h"
 
 /* Note: do NOT include declarations/gpu_all_mirror.h here. That header
@@ -69,28 +71,59 @@ void cellcorrections_calc(void)
     double t00 = my_second();
     PRINT_STATUS(" ..calculating first-order corrections to cell sizes/faces");
 
-    /* Active list: gas + Mass>0 + GasGrad_isactive + KernelRadius>0
-     * (matches legacy hydro/density.cc:79-86 filter exactly via
-     * CellcorrectionsSpec::is_active). */
-    int *active_list = nullptr;
+    /* Commit 5b corridor consumption: when the corridor has built a Mode-A
+     * external CSR (NTask==1 only in 5b — see hydro_corridor.cc), consume
+     * it directly using the corridor's BROAD row list (Type==0 && Mass>0).
+     * The narrow GasGrad_isactive predicate is applied per-row inside the
+     * Spec via ActiveData::enabled — rows that don't pass contribute zero,
+     * so apply_active_writeback's += leaves CellP[i].Volume_1 untouched.
+     * Otherwise (Mode B, UNSET, or NTask>1 conservative fallback), build
+     * the narrow active list ourselves — the legacy 5a behavior. */
+    const nlr_external_csr *corridor_csr = gizmo_hydro_corridor_external_csr();
+    const GizmoHydroCorridorMode corridor_mode = gizmo_hydro_corridor_get_mode();
+
+    int *active_list_local = nullptr;       /* allocated by nlr_build_active_list in fallback */
     int  num_active = 0, num_global_active = 0;
-    if(!nlr_build_active_list(CellcorrectionsSpec::is_active,
-                               &active_list, &num_active, &num_global_active,
-                               "cellcorrections_active")) {
-        /* No active gas anywhere globally — nothing to do (and no
-         * cleanup pass needed; nlr_build_active_list freed the unused
-         * active_list buffer for us before returning false). */
-        CPU_Step[CPU_DENSMISC] += measure_time();
-        return;
+    neighbor_loop_args args = nlr_default_args();
+
+    if(corridor_csr != nullptr) {
+        /* Mode A external-CSR path. Row list = corridor's broad list
+         * (gizmo_sym_active_indices); ownership stays with the corridor
+         * (no nlr_free_active_list call from here). */
+        args.active_list = corridor_csr->active_indices;
+        args.num_active  = corridor_csr->num_active;
+        args.external_csr     = corridor_csr;
+        args.dispatch_override = NlrForceMode::A;
+        if(ThisTask == 0 && gizmo_verbose_diag()) {
+            printf("[CELLCORRECTIONS] consuming corridor external_csr: num_active=%d total_pairs=%lld\n",
+                   corridor_csr->num_active, (long long)corridor_csr->total_pairs);
+            fflush(stdout);
+        }
+    } else {
+        /* Fallback: 5a behavior — narrow active list built here. */
+        if(!nlr_build_active_list(CellcorrectionsSpec::is_active,
+                                   &active_list_local, &num_active, &num_global_active,
+                                   "cellcorrections_active")) {
+            /* No active gas anywhere globally — nothing to do. */
+            CPU_Step[CPU_DENSMISC] += measure_time();
+            return;
+        }
+        args.active_list = active_list_local;
+        args.num_active  = num_active;
+        /* Corridor mode-decision is still enforced even when the corridor
+         * didn't pre-build a CSR for us — forces runner dispatch to match
+         * the corridor-wide A/B choice (NTask>1 Mode A; Mode B any rank
+         * count). UNSET / None leaves the runner's adaptive/env logic. */
+        if(corridor_mode == GizmoHydroCorridorMode::MODE_A) {
+            args.dispatch_override = NlrForceMode::A;
+        } else if(corridor_mode == GizmoHydroCorridorMode::MODE_B) {
+            args.dispatch_override = NlrForceMode::B;
+        }
     }
 
-    neighbor_loop_args args = nlr_default_args();
-    args.active_list = active_list;
-    args.num_active  = num_active;
-    /* aux unused; external_csr unused (commit 5b will add corridor injection) */
     run_neighbor_loop<CellcorrectionsSpec>(args);
 
-    nlr_free_active_list(active_list);
+    if(active_list_local) nlr_free_active_list(active_list_local);
 
     /* Final per-active closure: Density = Mass / Volume_1, set_eos_pressure.
      * This still lives in hydro/density.cc as a host helper (no need to pull

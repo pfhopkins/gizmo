@@ -22,12 +22,17 @@
 
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
+#include "gradient_functions.h"               /* GasGrad_isactive_gpu — KOKKOS_INLINE
+                                                * (host+device callable narrow
+                                                * predicate; used by load_active's
+                                                * `enabled` flag) */
 /* NOTE: caller translation units must include "../mesh/kernel.h" BEFORE
  * this header. kernel.h has no include guards (defines static inline
  * kernel_main / kernel_hinv used by the pair body below); double-include
  * triggers redefinition errors. The runner and cellcorrections_loop.cc
  * both include kernel.h first per this convention (sink_env1_loop.h
- * follows the same pattern). */
+ * follows the same pattern). gradient_functions.h is also include-guard-
+ * free for kernel.h reasons — same ordering applies. */
 
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
@@ -48,6 +53,14 @@ struct CellcorrectionsActiveData {
     double       h_search;  /* per-active radius (P[i].KernelRadius) — required
                              * by runner's Mode B remote walker contract
                              * (mesh/neighbor_loop_runner.cc:927) */
+    bool         enabled;   /* commit 5b external-CSR contract: corridor row
+                             * list is broad (Type==0 && Mass>0) but the
+                             * narrow filter (KernelRadius>0, Density>0,
+                             * GasGrad_isactive, …) is finer. Set in
+                             * load_active; pair_kernel early-returns if
+                             * false so subset-non-members contribute zero.
+                             * For the legacy 5a / Mode B path the active
+                             * list is already narrow, so enabled=true. */
 };
 
 struct CellcorrectionsAccum {
@@ -72,6 +85,12 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
                                         const CellcorrectionsNeighborData &nb,
                                         CellcorrectionsAccum &out)
 {
+    /* Per-row narrow-filter gate (commit 5b external-CSR consumption):
+     * corridor row list is broad; rows that fail the narrow GasGrad_isactive
+     * predicate contribute zero. apply_active_writeback's += keeps
+     * CellP[i].Volume_1 untouched for disabled rows (accum stays 0). */
+    if(!active.enabled) return;
+
     Vec3<double> dp;
     dp[0] = active.pos[0] - nb.pos[0];
     dp[1] = active.pos[1] - nb.pos[1];
@@ -163,6 +182,16 @@ struct CellcorrectionsSpec {
         ActiveData active;
         active.pos      = ctx.P[i].Pos;
         active.h_search = h_search;
+        /* Narrow-active filter via the existing device-callable
+         * GasGrad_isactive_gpu() — same predicate gradients uses, ensures
+         * cellcorrections's "enabled" rows match what gradients will see.
+         * For the 5a / Mode B path the runner-built active list is already
+         * narrow so this is tautologically true; for the corridor-broad-
+         * row-list / external-CSR path this flags subset-non-members so
+         * the pair_kernel early-returns and accum stays zero. */
+        active.enabled = ctx.CellP
+                          ? (GasGrad_isactive_gpu(i, ctx.P, ctx.CellP) != 0)
+                          : false;
         return active;
     }
 
