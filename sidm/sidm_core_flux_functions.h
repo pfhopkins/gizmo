@@ -1,22 +1,23 @@
 /* sidm_core_flux_functions.h -- per-pair SIDM scattering decision + kick.
  *
- * Replaces the fragment sidm/sidm_core_flux_computation.h. Body guarded by
- * DM_SIDM so the caller (ags_rkern.cc AGSForce_evaluate) can invoke
+ * KOKKOS_INLINE_FUNCTION; guarded by DM_SIDM so the sole caller
+ * (AgsForceSpec::pair_kernel in gravity/ags_force_loop.h) can invoke
  * unconditionally.
  *
  * SIDM scatter is a genuine two-sided physics event: when a scatter occurs,
  * both i and j receive momentum kicks. The i-side update goes into the caller
- * out struct directly; the j-side delta is returned in SidmScatterResult and
- * the caller applies it atomically (OMP atomic today on the CPU tree-walk;
- * will switch to Kokkos::atomic in the B2 AGSForce GPU port).
+ * out struct (merged via AccumData); the j-side delta is returned in
+ * SidmScatterResult and applied by the caller via Kokkos::atomic_add on
+ * P[j].Vel / P[j].dp (and atomic_max on P[j].wakeup).
  *
- * RNG: currently uses the host-side GSL generator via gsl_rng_uniform and
- * calculate_interact_kick. The B2 port will migrate these to the counter-based
- * GPU RNG (declarations/gpu_rng.h). For now the structural port preserves the
- * exact GSL stream so behaviour is bit-identical to the fragment.
+ * RNG: counter-based gizmo_gpu_rand_double keyed on (local.ID ^ P[j].ID),
+ * with a per-loop salt XOR-mixed into the counter (see gpu_rng.h
+ * gizmo_loop_rng_salt). Identical statistics and identical streams on CPU
+ * and GPU; no GSL.
  *
- * Requires allvars.h / proto.h and sidm/sidm_core.h for
- * prob_of_interaction / prob_of_grain_interaction / calculate_interact_kick.
+ * Helpers (prob_of_interaction_tab, prob_of_grain_interaction_tab,
+ * calculate_interact_kick_rng) live in sidm/sidm_helper_functions.h and
+ * solids/grain_helper_functions.h.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */

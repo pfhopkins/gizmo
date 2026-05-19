@@ -125,15 +125,6 @@ void ghost_writeback_zero_hydro(void);
  * and apply the deltas. Call after the hydro force loop, before cleanup. */
 void ghost_writeback_hydro(void);
 
-/* AGSForce variant: reverse-communicates the full AGS j-side delta set
- *   (Vel[3], dp[3], NInteractions, wakeup) — everything the CPU tree-walk
- * wrote into neighbors inside the AGSForce loop. Zero is called before
- * the GPU kernel; the scatter version runs after, before cleanup. Only
- * the fields that exist in the current build are packed (the dp/
- * NInteractions fields live under #ifdef DM_SIDM). */
-void ghost_writeback_zero_agsforce(void);
-void ghost_writeback_agsforce(void);
-
 /* SwallowTime variant: reverse-communicates minimum SwallowTime written to
  * ghost particles by the sink_environment GPU kernel (under
  * SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS).  Zero snapshots the

@@ -12,29 +12,24 @@
 
 #define GSLWORKSIZE 100000
 
-/*! \file sidm_routines.c
- *  \brief Fuctions and routines needed for the calculations of dark matter self interactions
+/*! \file sidm_core.cc
+ *  \brief Host-only startup initialization for the DM_SIDM module:
+ *         GeoFactorTable population (GSL quadrature) and per-particle
+ *         scatter-counter zeroing. Called once each from core/begrun.cc
+ *         and core/init.cc.
  *
- *  This file contains the functions and routines necesary for the computation of
- *  the self-interaction probabilities and the velocity kicks due to the interactios.
- *  Originally written by Miguel Rocha, rocham@uci.edu. Oct 2010. Updated on 2014 & re-written by PFH March 2018
- */
-
-/*! This function calculates the interaction probability between two particles.
- *  It checks if comoving integration is on and does the necesary change of
- *  variables and units.
+ *         The per-pair scatter physics (prob_of_interaction, isotropic
+ *         kick, g_geo) lives in sidm/sidm_helper_functions.h as
+ *         KOKKOS_INLINE_FUNCTION and is invoked from the AgsForceSpec
+ *         pair kernel via sidm/sidm_core_flux_functions.h. Nothing in
+ *         the per-step hot path is host-only any more.
+ *
+ *         Originally written by Miguel Rocha, rocham@uci.edu (Oct 2010);
+ *         updated 2014 and re-written by PFH March 2018; GPU migration
+ *         of the hot path completed with the AgsForceSpec port.
  */
 
 #ifdef DM_SIDM
-
-/* prob_of_interaction / calculate_interact_kick / g_geo used to live here as
-   host-only functions with GSL RNG and global-GeoFactorTable access. They
-   have been moved to sidm/sidm_helper_functions.h as KOKKOS_INLINE_FUNCTION
-   so both the CPU tree-walk (via sidm_core_flux_functions.h) and the B2
-   GPU AGSForce kernel can call them unchanged. CPU callers now pass
-   `GeoFactorTable` explicitly; the scatter RNG uses the counter-based
-   generator in declarations/gpu_rng.h. See that header for the migration
-   rationale. */
 
 /*! This routine initializes the table that will be used to get the geometrical factor
  *  as a function of the two particle separations. It populates a table with the results of the numerical integration */

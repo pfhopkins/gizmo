@@ -342,7 +342,7 @@ void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
     }
     /* Host mutated ghost particles; force the next arena acquire to re-
      * stage P. Mirrors the legacy invalidate at the end of
-     * ghost_writeback_zero_agsforce (mesh/ghost_writeback.cc:452). */
+     * the retired ghost_writeback_zero_agsforce path (now deleted). */
     gpu_particles_arena_invalidate();
 #endif
     ghost_writeback_begin_bundle(ags_force_ghost_writeback_bundle_ptr());
