@@ -28,9 +28,9 @@ extern void hydro_evaluate_gpu(struct particle_data *, struct gas_cell_data *,
 
 /* ======================================================================================== */
 /* GPU dispatcher (transport_subcycle_exchange_fluxes below) consumes hydro_data_out
-   directly. Legacy CPU-tree scaffolding (code_block_xchange_initialize.h, INPUT_STRUCT_NAME,
-   OUTPUT_STRUCT_NAME, particle2in_transport, out2particle_transport, transport_flux_evaluate)
-   was retired in Step 5 Phase D1. */
+   directly. Legacy CPU-tree scaffolding (particle2in_transport,
+   out2particle_transport, transport_flux_evaluate, and the old code_block_xchange
+   headers) was retired in Step 5 Phase D1. */
 
 
 /* ===== INITIAL OPERATIONS (zero rate arrays) ===== */

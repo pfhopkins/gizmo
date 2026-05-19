@@ -28,10 +28,10 @@
 
 /* dynamic_diff_vel_calc() below drives the DiffFilterSpec runner loop via
    difffilter_vel_calc_gpu_toplevel() (turb/difffilter_loop.cc). Legacy
-   CPU-tree scaffolding (code_block_xchange_initialize.h, INPUT_STRUCT_NAME,
-   OUTPUT_STRUCT_NAME, particle2in_DiffFilter, out2particle_DiffFilter,
-   DiffFilter_evaluate) was retired in Step 5 Phase D1; the legacy GPU shim
-   difffilter_gpu.cc was retired by DiffFilterSpec (Wave 5). */
+   CPU-tree scaffolding (particle2in_DiffFilter, out2particle_DiffFilter,
+   DiffFilter_evaluate, and the old code_block_xchange headers) was retired
+   in Step 5 Phase D1; the legacy GPU shim difffilter_gpu.cc was retired by
+   DiffFilterSpec (Wave 5). */
 
 /* operations that need to be performed before entering the main loop */
 void dynamic_diff_vel_calc_initial_operations_preloop(void);

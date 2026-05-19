@@ -105,8 +105,8 @@ static double fac_magnetic_pressure;
 
 
 /* GPU dispatcher consumes hydro_data_in/out directly from hydro_structs.h.
-   The legacy export-buffer scaffolding (code_block_xchange_initialize.h, INPUT_STRUCT_NAME,
-   OUTPUT_STRUCT_NAME, particle2in_hydra, hydro_force_evaluate) was retired in Step 5 Phase D1. */
+   The legacy export-buffer scaffolding (particle2in_hydra, hydro_force_evaluate,
+   and the old code_block_xchange headers) was retired in Step 5 Phase D1. */
 
 /* --------------------------------------------------------------------------------- */
 /* this subroutine adds the output variables back to the particle values */

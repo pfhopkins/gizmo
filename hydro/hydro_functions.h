@@ -40,10 +40,8 @@
 #include "../radiation/rt_diffusion_explicit_functions.h"
 
 /* Requires: allvars.h, proto.h, kernel.h, reimann.h included before this header.
-   Also requires: Conserved_var_Riemann, kernel_hydra, INPUT_STRUCT_NAME, OUTPUT_STRUCT_NAME
-   defined (from hydro_toplevel.cc via code_block_xchange_initialize.h).
-   This header is #include'd from within hydro_toplevel.cc or the GPU TU after those
-   struct definitions are in scope. */
+   Also requires Conserved_var_Riemann, kernel_hydra, and caller-provided
+   INPUT_STRUCT_NAME / OUTPUT_STRUCT_NAME aliases to be in scope. */
 
 /* Portable atomic operations: Kokkos atomics on GPU, direct write on CPU.
    On CPU the caller ensures thread safety via OpenMP atomics at a higher level. */
