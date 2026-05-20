@@ -332,10 +332,6 @@ void set_sink_mdot(int i, int n, double dt)
             double sigma_enc = (SinkTempInfo[i].Malt_in_Kernel + P[n].Mass) / (M_PI*rmax_for_accrate*rmax_for_accrate); // effective surface density [total gravitating mass / area]
             mdot *= sigma_enc / (sigma_enc + sigma_crit);
 #endif
-#ifdef OUTPUT_ADDITIONAL_RUNINFO
-            printf(" ..Sink accretion kernel :: mdot %g Norm %g fdisk %g mass_1e8msun %g fgas %g f0 %g mdisk_9 %g rmax_100 %g \n",
-                   mdot,fac,f_disk_for_accrate,sink_mass_units,fgas_for_accrate,f0_for_accrate,mdisk_for_accrate_units,rmax_for_accrate_units);
-#endif
         } // if(fgas_for_accrate<=0)
     } // if(SinkTempInfo[i].Mgas_in_Kernel > 0)
     mdot *= All.SinkAccretionFactor; // this is a pure normalization multiplier here
