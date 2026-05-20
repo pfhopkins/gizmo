@@ -783,12 +783,18 @@ void hydro_gradient_calc(void)
     aux.passer    = passer_base;
     aux.grad_iter = 0;
 
-    int *fallback_active_list = nullptr;
-    int  fallback_num_active  = 0, fallback_num_global_active = 0;
-    bool fallback_built       = false;
-    bool nothing_to_do        = false;
+    /* Active-list source: the corridor path uses the corridor's pre-built
+     * broad list; the non-corridor path reuses gizmo_sym_active_indices
+     * (also broad — built by gizmo_gradients_prep_symlist above). Using
+     * gizmo_sym_* directly (rather than a fresh nlr_build_active_list)
+     * matches the legacy GPU walker exactly AND keeps the LIFO clean:
+     * an in-iter nlr_build_active_list would mymalloc on top of the sym_*
+     * arena, blocking the §0 between-iter gizmo_gradients_refresh_symlist
+     * from freeing sym_neighbor_list — abort 814. */
+    const bool nothing_to_do =
+        (corridor_csr == nullptr) && (gizmo_sym_num_active_global <= 0);
 
-    for(int grad_iter = 0; grad_iter < NUMBER_OF_GRADIENT_ITERATIONS; grad_iter++) {
+    for(int grad_iter = 0; (!nothing_to_do) && grad_iter < NUMBER_OF_GRADIENT_ITERATIONS; grad_iter++) {
         aux.grad_iter = grad_iter;
 
         /* (5a) Zero per-iter passer fields (mirrors gradients.cc:637-646). */
@@ -805,8 +811,9 @@ void hydro_gradient_calc(void)
         }
 
         /* (5b) Build args. Corridor MODE_A NTask=1 path consumes external
-         * CSR with the corridor's broad row list. Fallback path builds the
-         * broad active list ourselves once and reuses across iterations. */
+         * CSR with the corridor's broad row list. Non-corridor path uses
+         * gizmo_sym_active_indices directly (also broad, owned by
+         * prep_symlist). */
         neighbor_loop_args args = nlr_default_args();
         args.aux = &aux;
 
@@ -816,19 +823,8 @@ void hydro_gradient_calc(void)
             args.external_csr      = corridor_csr;
             args.dispatch_override = NlrForceMode::A;
         } else {
-            if(!fallback_built) {
-                if(!nlr_build_active_list(GradientsSpec::is_active,
-                                           &fallback_active_list,
-                                           &fallback_num_active,
-                                           &fallback_num_global_active,
-                                           "gradients_active")) {
-                    nothing_to_do = true;
-                    break;
-                }
-                fallback_built = true;
-            }
-            args.active_list = fallback_active_list;
-            args.num_active  = fallback_num_active;
+            args.active_list = gizmo_sym_active_indices;
+            args.num_active  = gizmo_sym_num_active;
             if(corridor_mode == GizmoHydroCorridorMode::MODE_A) {
                 args.dispatch_override = NlrForceMode::A;
             } else if(corridor_mode == GizmoHydroCorridorMode::MODE_B) {
@@ -983,8 +979,6 @@ void hydro_gradient_calc(void)
         }
 #endif
     } /* end grad_iter loop */
-
-    if(fallback_active_list) { nlr_free_active_list(fallback_active_list); }
 
     /* (6) Post-iter finalization loop — SERIAL per codex round-6.
      *
@@ -1463,5 +1457,5 @@ void hydro_gradient_calc(void)
     gizmo_step_phase_record("gradient_refresh_symlist", timediff(t_grad_before_refresh, t_grad_outer_end));
     gizmo_step_phase_record("gradient_outer_total",     timediff(t_grad_outer_start,    t_grad_outer_end));
 
-    (void)t0; (void)t1; (void)fallback_num_global_active;
+    (void)t0; (void)t1;
 }
