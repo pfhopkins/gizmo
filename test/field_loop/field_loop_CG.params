@@ -3,8 +3,13 @@
 %        HYDRO_MESHLESS_FINITE_MASS
 %        BOX_PERIODIC
 %        BOX_SPATIAL_DIMENSION=2
+%        OUTPUT_BFIELD_DIVCLEAN_INFO
 %        MAGNETIC
 %        SELFGRAVITY_OFF
+%        INPUT_IN_DOUBLEPRECISION
+%        OUTPUT_IN_DOUBLEPRECISION
+%        DEVELOPER_MODE
+%        MHD_CONSTRAINED_GRADIENT=1
 %
 InitCondFile                       field_loop_ics
 OutputDir                          output_CG
