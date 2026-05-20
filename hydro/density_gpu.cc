@@ -383,7 +383,8 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                 memset(&Fluxes, 0, sizeof(Fluxes));
                 hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
-                                          kTimeBinActive, kNeedWakeup);
+                                          kTimeBinActive, kNeedWakeup,
+                                          /*allow_j_writes=*/true);
             }
 
             /* Store output for this particle */
