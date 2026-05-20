@@ -980,25 +980,27 @@ void hydro_gradient_calc(void)
 #endif
     } /* end grad_iter loop */
 
-    /* (6) Post-iter finalization loop — SERIAL per codex round-6.
+    /* (6) Post-iter finalization loop — OMP-parallel.
      *
-     * OMP-safety audit (logged for commit 7c follow-up): the per-i body
-     * touches CellP[i] / P[i] only (no CellP[j] / P[j] cross-particle
-     * writes — those happened during pair-kernel and were reduced into
-     * accum before apply_active_writeback ran). The three calculate_and_
-     * assign_* helpers below take `(i, P, CellP)` and were inspected for
-     * per-i purity:
-     *   - calculate_and_assign_conduction_and_viscosity_coefficients
-     *   - calculate_and_assign_nonideal_mhd_coefficients
-     *   - calculate_and_assign_turbulent_diffusion_coefficients
-     * Findings recorded in the commit message; OMP parallelization is
-     * deferred to commit 7c with the OMP_NUM_THREADS={1,4} B-field
-     * invariance gate.
+     * Per-i pure body: every write targets CellP[i] / P[i] only (no
+     * CellP[j] / P[j] cross-particle writes — those happened during the
+     * pair-kernel and were reduced into accum before apply_active_writeback
+     * ran). The three calculate_and_assign_* helpers (eos/eos.cc:372,
+     * :492, :567) take (i, P, CellP) and were audited per-i pure: zero
+     * cell[non-i] / pp[non-i] indexing.
      *
-     * Body is verbatim from hydro/gradients.cc:851-1223 (with
-     * GasGradDataPasser[i] mechanically rewritten as passer_base[i]). */
+     * schedule(dynamic) absorbs the substantial #ifdef-gated per-i cost
+     * imbalance (RT block + KERNEL_CRK_FACES tensor inversion + MHD-CG
+     * slope-limit work). Range-for over ActiveParticleList rewritten to
+     * indexed for so OMP can partition. Body verbatim from
+     * hydro/gradients.cc:851-1223 (with GasGradDataPasser[i] mechanically
+     * rewritten as passer_base[i]). */
     if(!nothing_to_do) {
-    for(int i : ActiveParticleList) {
+    const int n_active_total = (int)ActiveParticleList.size();
+    const int *active_list_data = ActiveParticleList.data();
+#pragma omp parallel for schedule(dynamic)
+    for(int aa = 0; aa < n_active_total; aa++) {
+        int i = active_list_data[aa];
         if(P[i].Type != 0) continue;
         int k, k1;
         construct_gradient(CellP[i].Gradients.Density, i);
