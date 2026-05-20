@@ -323,6 +323,9 @@ static void mg_cg_solve(void)
 
     /* Count active gas cells (for mean projection) */
     long long ngas_local = 0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:ngas_local)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) ngas_local++; }
     long long ngas_global;
     MPI_Allreduce(&ngas_local, &ngas_global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -332,14 +335,23 @@ static void mg_cg_solve(void)
        consistency. Then project r, z, p each iteration to keep CG in the
        complement of the null space, where R is positive definite. */
     double bsum_local = 0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:bsum_local)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) bsum_local += MG_Rows[i].rhs; }
     double bsum_global;
     MPI_Allreduce(&bsum_local, &bsum_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     double bmean = bsum_global / (double)ngas_global;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) MG_Rows[i].rhs -= bmean; }
 
     /* initialize CG: x=0, r=b, z=SSOR^{-1}r, p=z */
     double rz_local = 0, rz_global, bnorm_local = 0, bnorm_global;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:bnorm_local)
+#endif
     for(i = 0; i < N_gas; i++) {
         if(P[i].Type != 0) continue;
         x[i] = 0;
@@ -356,10 +368,16 @@ static void mg_cg_solve(void)
     /* z = SSOR preconditioner applied to r, then project out mean, set p=z */
     mg_ssor_precondition(r, z);
     double zmean_local = 0, zmean_global;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:zmean_local)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) zmean_local += z[i]; }
     MPI_Allreduce(&zmean_local, &zmean_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     zmean_global /= (double)ngas_global;
     rz_local = 0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:rz_local)
+#endif
     for(i = 0; i < N_gas; i++) {
         if(P[i].Type != 0) continue;
         z[i] -= zmean_global;
@@ -377,6 +395,9 @@ static void mg_cg_solve(void)
         mg_exchange_ghost_c(p);
 
         /* Ap = R * p */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
         for(i = 0; i < N_gas; i++) {
             if(P[i].Type != 0) { Ap[i] = 0; continue; }
             Ap[i] = MG_Rows[i].Rdiag * p[i];
@@ -396,6 +417,9 @@ static void mg_cg_solve(void)
 
         /* alpha = rz / pAp */
         double pAp_local = 0, pAp_global;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:pAp_local)
+#endif
         for(i = 0; i < N_gas; i++) { if(P[i].Type != 0) continue; pAp_local += p[i] * Ap[i]; }
         MPI_Allreduce(&pAp_local, &pAp_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(pAp_global <= 0) break;
@@ -403,6 +427,9 @@ static void mg_cg_solve(void)
 
         /* x += alpha*p, r -= alpha*Ap */
         double rnorm_local = 0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:rnorm_local)
+#endif
         for(i = 0; i < N_gas; i++) {
             if(P[i].Type != 0) continue;
             x[i] += alpha * p[i];
@@ -419,10 +446,16 @@ static void mg_cg_solve(void)
         /* z = SSOR^{-1} r, then project out mean from z */
         mg_ssor_precondition(r, z);
         double zmean_loc = 0, zmean_glob;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:zmean_loc)
+#endif
         for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) zmean_loc += z[i]; }
         MPI_Allreduce(&zmean_loc, &zmean_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         zmean_glob /= (double)ngas_global;
         double rz_new_local = 0, rz_new_global;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:rz_new_local)
+#endif
         for(i = 0; i < N_gas; i++) {
             if(P[i].Type != 0) continue;
             z[i] -= zmean_glob;
@@ -434,6 +467,9 @@ static void mg_cg_solve(void)
         double beta = rz_new_global / (rz_global + 1.0e-60);
         rz_global = rz_new_global;
         double pmean_loc = 0, pmean_glob;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:pmean_loc)
+#endif
         for(i = 0; i < N_gas; i++) {
             if(P[i].Type != 0) continue;
             p[i] = z[i] + beta * p[i];
@@ -441,6 +477,9 @@ static void mg_cg_solve(void)
         }
         MPI_Allreduce(&pmean_loc, &pmean_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         pmean_glob /= (double)ngas_global;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
         for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) p[i] -= pmean_glob; }
     }
 
@@ -449,9 +488,15 @@ static void mg_cg_solve(void)
 
     /* store solution (subtract mean so c has zero mean — the constant mode is arbitrary) */
     double xmean_local = 0, xmean_global;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:xmean_local)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) xmean_local += x[i]; }
     MPI_Allreduce(&xmean_local, &xmean_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     xmean_global /= (double)ngas_global;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(i = 0; i < N_gas; i++) {
         if(P[i].Type != 0) continue;
         CellP[i].MG_cgcoeff = x[i] - xmean_global;
@@ -494,6 +539,9 @@ static void mg_solve_hypre(void)
     /* project RHS to zero mean (graph Laplacian null-space removal) */
     long long ngas_active_local = 0;
     double bsum_local = 0;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:ngas_active_local,bsum_local)
+#endif
     for(i = 0; i < N_gas; i++) {
         if(P[i].Type != 0) continue;
         ngas_active_local++;
@@ -504,6 +552,9 @@ static void mg_solve_hypre(void)
     MPI_Allreduce(&ngas_active_local, &ngas_active_global, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&bsum_local, &bsum_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     double bmean = bsum_global / (double)ngas_active_global;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) MG_Rows[i].rhs -= bmean; }
 
     /* build Hypre IJ matrix */
@@ -514,6 +565,9 @@ static void mg_solve_hypre(void)
 
     /* find max non-zeros per row for temp array sizing */
     int max_nnz = 1;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(max:max_nnz)
+#endif
     for(i = 0; i < N_gas; i++) {
         int nnz = 1 + MG_Rows[i].n_local + MG_Rows[i].n_remote;
         if(nnz > max_nnz) max_nnz = nnz;
@@ -568,6 +622,9 @@ static void mg_solve_hypre(void)
     HYPRE_BigInt *row_inds = (HYPRE_BigInt *) malloc(N_gas * sizeof(HYPRE_BigInt));
     HYPRE_Real *rhs_vals = (HYPRE_Real *) malloc(N_gas * sizeof(HYPRE_Real));
     HYPRE_Real *x_vals = (HYPRE_Real *) calloc(N_gas, sizeof(HYPRE_Real));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(i = 0; i < N_gas; i++) {
         row_inds[i] = (HYPRE_BigInt)(global_offset + i);
         rhs_vals[i] = (P[i].Type == 0) ? MG_Rows[i].rhs : 0.0;
@@ -620,9 +677,15 @@ static void mg_solve_hypre(void)
     /* extract solution and subtract mean */
     HYPRE_IJVectorGetValues(x_vec, (HYPRE_Int)N_gas, row_inds, x_vals);
     double xmean_local = 0, xmean_global;
+#ifdef _OPENMP
+#pragma omp parallel for reduction(+:xmean_local)
+#endif
     for(i = 0; i < N_gas; i++) { if(P[i].Type == 0) xmean_local += x_vals[i]; }
     MPI_Allreduce(&xmean_local, &xmean_global, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     xmean_global /= (double)ngas_active_global;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(i = 0; i < N_gas; i++) {
         CellP[i].MG_cgcoeff = (P[i].Type == 0) ? x_vals[i] - xmean_global : 0;
     }
