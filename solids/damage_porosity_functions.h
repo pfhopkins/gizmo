@@ -22,12 +22,15 @@
 #include "jutzi_crush_curve.h"
 
 #ifdef EOS_DAMAGE_POROSITY
-/* Kokkos is only needed for the body's KOKKOS_INLINE_FUNCTION declarations.
- * Pulling it in unconditionally would drag every TU that includes this header
- * (e.g. solids/elastic_physics.cc, which the host compiler builds) through the
- * CUDA-aware compile path, breaking builds that don't define EOS_DAMAGE_POROSITY
- * (fire_m11i, etc.). */
-#include <Kokkos_Core.hpp>
+/* KOKKOS_INLINE_FUNCTION fallback: GPU TUs (cooling.cc et al.) already include
+ * <Kokkos_Core.hpp> upstream and get the real `inline __device__ __host__`
+ * expansion.  Host-only TUs (solids/elastic_physics.cc — built by mpicxx, not
+ * nvcc_wrapper) must NOT pull <Kokkos_Core.hpp> in transitively: under Vista
+ * CUDA Kokkos, doing so triggers Kokkos_Setup_Cuda.hpp's `__CUDACC__` precondition
+ * and fails the build.  Same fallback pattern as eos/eos_functions.h. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
 
 /* convenience accessor for whether a sub-bit is on (compile-time when the
  * runtime flag is a literal in tests; runtime otherwise) */
