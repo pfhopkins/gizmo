@@ -90,6 +90,10 @@
 #include "../hydro/cellcorrections_loop.h"
 #endif
 
+/* Wave 5 hydro corridor commit 7: GradientsSpec always built (gradients
+ * has no master #ifdef gate — every hydro build runs hydro_gradient_calc). */
+#include "../hydro/gradients_loop.h"
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 #include "../galaxy_sf/radfb_rp_loop.h"
 #endif
@@ -4946,6 +4950,15 @@ template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
 #ifdef HYDRO_VOLUME_CORRECTIONS
 template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
 #endif
+
+/* Wave 5 hydro corridor commit 7: GradientsSpec — runner port of the legacy
+ * `gradient_evaluate_gpu` walker. Broad active list (Type==0 && Mass>0)
+ * matching the legacy GPU walker; narrow GasGrad_isactive filter stays at
+ * the neighbor side inside gradient_accumulate_neighbor. Symmetric gas-gas
+ * topology — second corridor consumer (after CellcorrectionsSpec) and
+ * direct precursor to HydroForceSpec (commit 8). See
+ * hydro/gradients_loop.{h,cc} + OPEN_3d_gradientsspec_design.md. */
+template void run_neighbor_loop<GradientsSpec>(const neighbor_loop_args&);
 
 /* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.
  * Iterative 2-pass (iter 0 wt_sum aggregation; iter 1 kick application).
