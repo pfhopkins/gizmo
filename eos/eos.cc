@@ -85,286 +85,36 @@ double return_user_desired_target_pressure(int i)
 #endif
 /* Function bodies now in _functions.h headers (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
-   providing externally-visible symbols for other TUs that link via proto.h. */
+   providing externally-visible symbols for other TUs that link via proto.h.
+   EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES turns on the
+   EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/HYDRO_GENERATE_TARGET_MESH branches
+   inside set_eos_pressure_impl — those branches call host-only routines
+   (eos_compute, aneos_compute, calculate_tillotson_eos,
+   return_user_desired_target_pressure/density) and must not be parsed by
+   device-side includers (cooling.cc).  Only this TU enables them so the
+   host external symbol behaves exactly as the pre-refactor function. */
 #undef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION
+#define EOS_FUNCTIONS_ENABLE_HOST_ONLY_BRANCHES
 #include "eos_functions.h"
 
 #pragma omp end declare target
 
-/* set_eos_pressure — compute pressure and soundspeed from EOS.
-   Calls ThermalProperties (in cooling.cc via cooling_functions.h) by external
-   linkage. Do NOT include cooling_functions.h here — doing so creates __host__
-   non-inline strong symbols for ThermalProperties/convert_u_to_temp/
-   find_abundances_and_rates that override cooling.cc's inline versions at link
-   time, producing wrong results on CUDA (bisected to commits f8d2619f..63474bcd). */
+/* set_eos_pressure — host symbol; the actual body lives in eos/eos_functions.h
+   as KOKKOS_INLINE_FUNCTION set_eos_pressure_impl (audit-E1 follow-up, 2026-05-20).
+   Migration preserves public API and external linkage exactly: existing host
+   callers (kicks/predict/sfr_eff/merge_split/init/density/density_loop/cooling-
+   scatter-fallback) continue to call this symbol unchanged.  The header pattern
+   matches the established Get_Gas_Molecular_Mass_Fraction / yhelium etc. setup
+   (single source of truth in eos_functions.h, external host symbol generated
+   in eos.cc via the `#undef KOKKOS_INLINE_FUNCTION` mechanism in this TU).
+   Do NOT include cooling_functions.h here — doing so creates __host__ non-inline
+   strong symbols for ThermalProperties/convert_u_to_temp/find_abundances_and_rates
+   that override cooling.cc's inline versions at link time, producing wrong results
+   on CUDA (bisected to commits f8d2619f..63474bcd). */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0; 
-    if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
-    cell[i].Gamma = gamma_eos_index;
-    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
-
-#ifdef COOLING
-#ifdef GIZMO_TRACK_ELECTRON_STATE
-    double ne_battery_save = 1.0; /* electron fraction (per H), used to populate n_e_cell below; default = fully ionized for pre-init */
-#endif
-    if(All.Time <= All.TimeBegin) {
-        temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS; /* use whatever was initialized already, because this hasn't been fully iterated in the cooling routine yet */
-    } else {
-        double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
-        temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell);
-        cell[i].Gamma = cell[i].gamma_eos_value();
-#ifdef GIZMO_TRACK_ELECTRON_STATE
-        ne_battery_save = ne;
-#endif
-
-        #ifdef GIZMO_DEBUG_RT_COOLING
-        /* EOS_DIAG: trace first set_eos_pressure calls to find when Temperature goes wrong */
-        {
-            static int eos_diag_n = 0;
-            if(eos_diag_n < 30 && (pp[i].ID == 1 || pp[i].ID == 100 || pp[i].ID == 1000)) {
-                printf("[EOS_DIAG] ID=%llu call=%d u0=%.6e rho=%.6e ne_out=%.6e mu=%.6e T=%.6e gamma=%.6e cf_a3inv=%.10e\n",
-                    (unsigned long long)pp[i].ID, eos_diag_n, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, ne, mu_meanwt, temp, gamma_eos_index, All.cf_a3inv);
-                fflush(stdout);
-            }
-            eos_diag_n++;
-        }
-        #endif /* GIZMO_DEBUG_RT_COOLING */
-    }
-#else
-    temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS;
-#endif
-    cell[i].Temperature = temp;
-
-#ifdef GIZMO_TRACK_ELECTRON_STATE
-    /* electron number density cache; consumed by the Biermann battery (grad n_e)
-       and by the 2-T plasma integrator (u_e <-> T_e mapping). */
-#ifdef COOLING
-    cell[i].n_e_cell = ne_battery_save * cell[i].nHcgs();
-#else
-    cell[i].n_e_cell = cell[i].nHcgs(); /* no chemistry tracked: assume fully ionized */
-#endif
-    /* electron-temperature cache. Battery-only (no TWO_TEMPERATURE_PLASMA):
-       T_e == T_gas every step. Under TWO_TEMPERATURE_PLASMA: this is the
-       one-time LTE seed (initial T_e = TwoTemp_InitialTeOverTgas * T_gas);
-       after the first cooling step the integrator owns u_e_cell + T_e_cell
-       and we leave them alone here. */
-#ifdef TWO_TEMPERATURE_PLASMA
-    if(!(cell[i].u_e_cell > 0)) {
-        const double T_e_init = temp * All.TwoTemp_InitialTeOverTgas;
-        const double rho_phys = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
-        const double u_e_phys = 1.5 * cell[i].n_e_cell * BOLTZMANN_CGS * T_e_init / rho_phys; /* erg/g */
-        cell[i].T_e_cell = T_e_init;
-        cell[i].u_e_cell = u_e_phys / UNIT_SPECEGY_IN_CGS;
-    }
-#else
-    cell[i].T_e_cell = temp;
-#endif
-#endif
-
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
-    /* Reset Tier-2 EMF accumulator each step. Each enabled bit's per-cell
-       builder (radiative below, dust further below) ADDS its contribution. */
-    cell[i].E_battery_T2_cell = {};
-#endif
-
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 2)
-    /* Tier-2 radiative-ionization battery EMF (Durrive & Langer 2015 / Harrison 1973):
-         alpha[k] = (sigma_HI[k] n_HI + sigma_HeI[k] n_HeI + sigma_HeII[k] n_HeII)
-                    / (n_e * e * c)
-         E_RI = sum_k alpha[k] * F_rad[k]                             [statvolt/cm = G]
-       Sum over photoionizing bands; gradient pass + curl in hydro_toplevel turn this
-       into dB/dt|_RI. Requires RT_EVOLVE_FLUX (for cell.Rad_Flux) and RT_CHEM_PHOTOION
-       (for cell.HI / sigma_HI / etc.); precompiler_logic.h enforces this.
-
-       F_rad units: cell.Rad_Flux[k] is stored as F_phys * V_phys in code units. We use
-       vol_inv = Density*cf_a3inv/Mass = 1/V_phys_code, then UNIT_FLUX_IN_CGS to get
-       physical cgs flux. (cf. gravtree.cc:351, where vol_inv is computed identically.) */
-    {
-        Vec3<MyDouble> E_RI = {};
-        double n_e_cgs = 0;
-#if (MHD_BATTERY_MECHANISMS & 1)
-        n_e_cgs = cell[i].n_e_cell;
-#else
-#ifdef COOLING
-        n_e_cgs = ne_battery_save * cell[i].nHcgs();
-#else
-        n_e_cgs = cell[i].nHcgs();
-#endif
-#endif
-        if((n_e_cgs > 0) && (pp[i].Mass > 0) && (cell[i].Density > 0)) {
-            const double nH = cell[i].nHcgs();
-            const double n_HI = cell[i].HI * nH;
-#ifdef RT_CHEM_PHOTOION_HE
-            const double He_per_H = (1.0 - HYDROGEN_MASSFRAC) / (4.0 * HYDROGEN_MASSFRAC);
-            const double n_HeI  = cell[i].HeI  * nH * He_per_H;
-            const double n_HeII = cell[i].HeII * nH * He_per_H;
-#endif
-            const double inv_neec = 1.0 / (n_e_cgs * ELECTRONCHARGE_CGS * C_LIGHT_CGS);
-            const double vol_inv_code = cell[i].Density * All.cf_a3inv / pp[i].Mass;
-            const double rad_flux_to_cgs = vol_inv_code * UNIT_FLUX_IN_CGS;
-
-            for(int k=0; k<N_RT_FREQ_BINS; k++) {
-                double sig_x_n = All.rt_ion_sigma_HI[k] * n_HI;
-#ifdef RT_CHEM_PHOTOION_HE
-                sig_x_n += All.rt_ion_sigma_HeI[k]  * n_HeI;
-                sig_x_n += All.rt_ion_sigma_HeII[k] * n_HeII;
-#endif
-                if(sig_x_n > 0) {
-                    const double alpha_k = sig_x_n * inv_neec;
-                    for(int kd=0; kd<3; kd++) {
-                        E_RI[kd] += alpha_k * cell[i].Rad_Flux[k][kd] * rad_flux_to_cgs;
-                    }
-                }
-            }
-        }
-        cell[i].E_battery_T2_cell += E_RI;
-    }
-#endif
-
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
-    /* Tier-2 dust battery EMF (Soliman, Hopkins & Squire 2025). Currently a
-       scaffolded stub returning {0,0,0}; SHS25 Eqs. 9, 10-12, 16-18 still to
-       be implemented in solids/dust_battery_functions.h. */
-    cell[i].E_battery_T2_cell += dust_battery_assemble_E_cell(i, cell, pp);
-#endif
-
-#ifdef EOS_SUBSTELLAR_ISM
-    press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
-#endif
-
-#ifdef GALSF_EFFECTIVE_EQS
-    if(cell[i].Density*All.cf_a3inv >= All.PhysDensThresh) {press = All.FactorForSofterEQS * press + (1 - All.FactorForSofterEQS)  * (gamma_eos_index-1) * cell[i].Density * All.InitGasU;}
-#endif
-
-#ifdef EOS_HELMHOLTZ
-    struct eos_input eos_in;
-    struct eos_output eos_out;
-    eos_in.rho  = cell[i].Density;
-    eos_in.eps  = cell[i].InternalEnergyPred;
-    eos_in.Ye   = cell[i].Ye;
-    eos_in.Abar = cell[i].Abar;
-    eos_in.temp = cell[i].Temperature;
-    int ierr = eos_compute(&eos_in, &eos_out);
-    assert(!ierr);
-    press      = eos_out.press;
-    soundspeed = eos_out.csound;
-    cell[i].Temperature = eos_out.temp;
-#endif
-
-#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
-    /* Per-particle solid-EOS dispatch keyed on CompositionType. With a
-       single solid-EOS flag enabled, the switch reduces to one case and
-       is bit-identical to pre-17c. With multiple solid-EOS flags enabled
-       (post-17d), eos_branch_of() partitions the CompositionType ID
-       space; see eos/composition_registry.h. */
-    switch(eos_branch_of(cell[i].CompositionType)) {
-#ifdef EOS_TILLOTSON
-        case EOS_BRANCH_TILLOTSON:
-            press = cell[i].calculate_tillotson_eos();
-            soundspeed = cell[i].SoundSpeed;
-            break;
-#endif
-#ifdef EOS_ANEOS
-        case EOS_BRANCH_ANEOS: {
-            int aneos_mat = aneos_subindex(cell[i].CompositionType);
-            double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
-            double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
-            double aneos_T_guess = cell[i].Temperature;
-            double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
-            int aneos_phase;
-            aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                          &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
-            press      = aneos_P / UNIT_PRESSURE_IN_CGS;
-            soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
-            cell[i].Temperature = aneos_T_guess;
-            cell[i].PhaseID = aneos_phase;
-            break;
-        }
-#endif
-        default:
-            break;
-    }
-#endif
-
-#ifdef EOS_MHD_CORE_BAROTROPIC
-    press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.));
-#endif
-#ifdef EOS_ENFORCE_ADIABAT
-    press = EOS_ENFORCE_ADIABAT * pow(cell[i].Density, gamma_eos_index);
-#endif
-#if defined(EOS_ENFORCE_ADIABAT) || defined(EOS_MHD_CORE_BAROTROPIC)
-#ifdef TURB_DRIVING
-    cell[i].EgyDiss += (cell[i].InternalEnergy - press / (cell[i].Density * (gamma_eos_index-1.)));
-#endif
-    cell[i].InternalEnergy = cell[i].InternalEnergyPred = press / (cell[i].Density * (gamma_eos_index-1.));
-#endif
-
-#ifdef EOS_GMC_BAROTROPIC
-    gamma_eos_index=7./5.; double rho=cell[i].density_for_energy(), nH_cgs=rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS;
-    if(nH_cgs > 2.30181e16) {gamma_eos_index=5./3.;}
-    if (nH_cgs < 1.49468e8) {press = 6.60677e-16 * nH_cgs;}
-    else if (nH_cgs < 2.30181e11) {press = 1.00585e-16 * pow(nH_cgs, 1.1);}
-    else if (nH_cgs < 2.30181e16) {press = 3.92567e-20 * pow(nH_cgs, gamma_eos_index);}
-    else if (nH_cgs < 2.30181e21) {press = 3.1783e-15 * pow(nH_cgs, 1.1);}
-    else {press = 2.49841e-27 * pow(nH_cgs, gamma_eos_index);}
-#if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(EOS_GMC_BAROTROPIC)
-#if (EOS_GMC_BAROTROPIC==1)
-    if (nH_cgs < 6e10) {press = 6.60677e-16 * nH_cgs;}
-    else press = 3.964062e-5 * pow(nH_cgs/6e10,1.4);
-#endif
-#endif
-    press /= UNIT_PRESSURE_IN_CGS;
-    cell[i].InternalEnergy = cell[i].InternalEnergyPred = press / (rho * (gamma_eos_index-1.));
-#endif
-
-#ifdef COSMIC_RAY_FLUID
-    double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
-    int k_CRegy; for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
-    {
-        press += Get_Gas_CosmicRayPressure(i, k_CRegy, cell);
-        soundspeed2 += GAMMA_COSMICRAY(k_CRegy) * (GAMMA_COSMICRAY(k_CRegy)-1.) * cell[i].CosmicRayEnergyPred[k_CRegy] / cell[i].Mass;
-#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-        press += (1.5-1) * cell[i].Density * (cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]);
-        soundspeed2 += 1.5*(1.5-1)*(cell[i].CosmicRayAlfvenEnergy[k_CRegy][0]+cell[i].CosmicRayAlfvenEnergy[k_CRegy][1]) / cell[i].Mass;
-#endif
-    }
-    soundspeed = sqrt(soundspeed2);
-#endif
-
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-    soundspeed = sqrt(gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred + (4./3.)*(1./3.)*cell[i].SubGrid_CosmicRayEnergyDensity/cell[i].Density);
-    press += (1./3.) * cell[i].SubGrid_CosmicRayEnergyDensity;
-#endif
-
-#ifdef RT_RADPRESSURE_IN_HYDRO
-    int k_freq; double gamma_rad=4./3., fluxlim=1; double soundspeed2 = gamma_eos_index*(gamma_eos_index-1) * cell[i].InternalEnergyPred;
-    if(cell[i].Mass>0 && cell[i].Density>0) {for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
-    {
-        press += (gamma_rad-1.) * cell[i].flux_limiter(k_freq) * cell[i].Rad_E_gamma_Pred[k_freq] * cell[i].Density / cell[i].Mass;
-        soundspeed2 += gamma_rad*(gamma_rad-1.) * cell[i].Rad_E_gamma_Pred[k_freq] / cell[i].Mass;
-    }}
-    soundspeed = sqrt(soundspeed2);
-#endif
-
-#if defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE)
-    double h_eff = DMAX(pp[i].Get_Particle_Size(), KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER*ForceSoftening_KernelRadius(i));
-    double NJeans = 4;
-    double xJeans = (NJeans * NJeans / gamma_eos_index) * All.G * h_eff*h_eff * cell[i].Density * cell[i].Density /All.cf_atime;
-    if(xJeans>press) press=xJeans;
-#endif
-
-#if defined(HYDRO_GENERATE_TARGET_MESH)
-    press = return_user_desired_target_pressure(i) * (cell[i].Density / return_user_desired_target_density(i));
-    cell[i].InternalEnergy = cell[i].InternalEnergyPred = return_user_desired_target_pressure(i) / ((gamma_eos_index-1) * cell[i].Density);
-#endif
-
-#ifdef EOS_GENERAL
-    if(soundspeed == 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / cell[i].density_for_energy());} else {cell[i].SoundSpeed = soundspeed;}
-#endif
-
-    cell[i].Pressure = press;
+    set_eos_pressure_impl(i, pp, cell);
 }
 
 
