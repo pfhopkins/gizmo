@@ -751,10 +751,6 @@
 #undef MHD_CONSTRAINED_GRADIENT
 #endif
 #define MHD_CONSTRAINED_GRADIENT 1
-/* Modern symmetric-CSR path is the only supported build (Vista field_loop validated 2026-04-28). */
-#ifndef MG_USE_MODERN_BUILD
-#define MG_USE_MODERN_BUILD 1
-#endif
 #endif
 
 
