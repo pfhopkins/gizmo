@@ -201,6 +201,20 @@ void cooling_parent_routine(void)
     struct particle_data *compact_P    = (struct particle_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct particle_data));
     struct gas_cell_data *compact_Cell = (struct gas_cell_data *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(batch_cap * sizeof(struct gas_cell_data));
 
+#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
+    /* TEMP audit-E1 Phase 1d: per-cooling-call ORACLE accumulators.  Compares the
+     * post-cooling device EOS kernel output against the host set_eos_pressure
+     * symbol on a scratch copy of the same compact inputs.  Detects the
+     * pre-93897f62 wrong-results-on-CUDA failure mode (bisected f8d2619f..63474bcd)
+     * and any future device/host divergence.  Bounded summary only — no per-particle
+     * floods.  Compile-time #ifdef GIZMO_POSTCOOL_ORACLE; default-off; strip once
+     * the port is fully blessed. */
+    double oracle_max_rel_Press = 0.0, oracle_max_rel_Temp = 0.0, oracle_max_rel_Gamma = 0.0, oracle_max_rel_Cs = 0.0;
+    long long oracle_n_mismatch = 0;
+    unsigned long long oracle_first_mismatch_ID = 0ULL;
+    const double oracle_tol = 1.0e-10;
+#endif
+
     for(int batch_start = 0; batch_start < N_active; batch_start += GPU_COOL_BATCH_SIZE)
     {
         int batch_n = N_active - batch_start;
@@ -294,6 +308,14 @@ void cooling_parent_routine(void)
          * itself calls ThermalProperties→convert_u_to_temp→hydrogen_molecule chain,
          * which the cooling loop already exercises; nesting would double the
          * stack at the H200 OOM limit. */
+#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
+        /* ORACLE: snapshot compact arrays BEFORE the device EOS kernel so we can
+         * re-run the host wrapper on the same inputs and diff afterwards. */
+        struct particle_data *oracle_P_scratch = (struct particle_data *) malloc(batch_n * sizeof(struct particle_data));
+        struct gas_cell_data *oracle_Cell_scratch = (struct gas_cell_data *) malloc(batch_n * sizeof(struct gas_cell_data));
+        memcpy(oracle_P_scratch,    compact_P,    batch_n * sizeof(struct particle_data));
+        memcpy(oracle_Cell_scratch, compact_Cell, batch_n * sizeof(struct gas_cell_data));
+#endif
 #ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
         {
             struct particle_data *kp = compact_P;
@@ -302,6 +324,39 @@ void cooling_parent_routine(void)
                 set_eos_pressure_impl(j, kp, kc);
             }, batch_start);
         }
+#endif
+#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
+        /* ORACLE: re-run the public host wrapper set_eos_pressure on the scratch
+         * (codex pattern — the wrapper is the reference path all existing host
+         * callers use; matching the wrapper, not the inline impl, is what we want). */
+        for(int j = 0; j < batch_n; j++) {
+            set_eos_pressure(j, oracle_P_scratch, oracle_Cell_scratch);
+        }
+        /* Diff the EOS-written scalar fields, accumulate bounded summary stats.
+         * Track max relative diff per field plus a global mismatch count above
+         * oracle_tol and the first offending particle ID.  No per-particle output. */
+        for(int j = 0; j < batch_n; j++) {
+            #define POSTCOOL_ORACLE_CMP(field, accum) do { \
+                double a = compact_Cell[j].field; \
+                double b = oracle_Cell_scratch[j].field; \
+                double dn = fabs(a - b); \
+                double dd = fabs(b) + 1.0e-300; \
+                double rd = dn / dd; \
+                if(rd > (accum)) (accum) = rd; \
+                if(rd > oracle_tol) { \
+                    oracle_n_mismatch++; \
+                    if(oracle_first_mismatch_ID == 0ULL) oracle_first_mismatch_ID = (unsigned long long)compact_P[j].ID; \
+                } \
+            } while(0)
+            POSTCOOL_ORACLE_CMP(Pressure,    oracle_max_rel_Press);
+            POSTCOOL_ORACLE_CMP(Temperature, oracle_max_rel_Temp);
+            POSTCOOL_ORACLE_CMP(Gamma,       oracle_max_rel_Gamma);
+#ifdef EOS_GENERAL
+            POSTCOOL_ORACLE_CMP(SoundSpeed,  oracle_max_rel_Cs);
+#endif
+            #undef POSTCOOL_ORACLE_CMP
+        }
+        free(oracle_P_scratch); free(oracle_Cell_scratch);
 #endif
 
         /* Scatter batch back.  set_eos_pressure runs on host ONLY for builds that
@@ -330,6 +385,25 @@ void cooling_parent_routine(void)
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
+
+#if defined(GIZMO_POSTCOOL_ORACLE) && defined(POST_COOLING_DEVICE_EOS_SUPPORTED)
+    /* MPI-aggregate the bounded ORACLE summary across ranks (audit-E1 Phase 1d).
+     * Single-line print on rank 0 — no per-particle data, no per-batch lines.
+     * MPI_MAX on the first-mismatch ID is a deliberate "best effort first";
+     * for forensic detail re-run a smaller config or raise the tolerance. */
+    double local_max[4] = { oracle_max_rel_Press, oracle_max_rel_Temp, oracle_max_rel_Gamma, oracle_max_rel_Cs };
+    double global_max[4];
+    MPI_Allreduce(local_max, global_max, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    long long global_n_mismatch = 0;
+    MPI_Allreduce(&oracle_n_mismatch, &global_n_mismatch, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    unsigned long long global_first_ID = 0ULL;
+    MPI_Allreduce(&oracle_first_mismatch_ID, &global_first_ID, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    if(ThisTask == 0) {
+        printf("[POSTCOOL_ORACLE] step=%lld N_active=%d tol=%.1e   max_rel: Pressure=%.3e Temperature=%.3e Gamma=%.3e SoundSpeed=%.3e   mismatches=%lld first_ID=%llu\n",
+            (long long)All.NumCurrentTiStep, N_active, oracle_tol, global_max[0], global_max[1], global_max[2], global_max[3], global_n_mismatch, global_first_ID);
+        fflush(stdout);
+    }
+#endif
 
   } else
 #endif
