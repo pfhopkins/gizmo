@@ -49,7 +49,6 @@ extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_t
 
 #define MG_CG_MAX_ITER 500
 #define MG_CG_TOL 1.0e-13
-#define MG_MAX_NGB_PER_PARTICLE 128 /* initial allocation per particle; grown if needed */
 
 /* ==================================================================================== */
 /* Persistent sparse matrix storage                                                      */
@@ -892,6 +891,9 @@ static void mg_build_matrix_modern(int *mg_active_indices, int mg_num_active,
                                    const neighbor_list_t *mg_neighbor_list)
 {
     /* Initialize per-particle matrix rows */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(int i = 0; i < N_gas; i++) {
         MG_Rows[i].Rdiag = 0;
         MG_Rows[i].rhs = 0;
@@ -903,7 +905,14 @@ static void mg_build_matrix_modern(int *mg_active_indices, int mg_num_active,
     int *ghost_home_index = ghost_get_home_index();
     int num_local = ghost_get_num_local();
 
-    /* Walk symmetric CSR; for each row i, accumulate i's row only. */
+    /* Walk symmetric CSR; for each row i, accumulate i's row only. Each thread
+     * writes only MG_Rows[i] (with i unique per aa-slot since mg_active_indices
+     * lists every local gas row once); mg_add_local_entry/mg_add_remote_entry
+     * realloc on per-row buffers, so per-row independence holds.
+     * schedule(dynamic) because the neighbor-pair work varies widely by row. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
     for(int aa = 0; aa < mg_num_active; aa++) {
         int i = mg_active_indices[aa];
         if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].Density <= 0) continue;
@@ -916,9 +925,9 @@ static void mg_build_matrix_modern(int *mg_active_indices, int mg_num_active,
         double V_i = P[i].Mass / CellP[i].Density;
         double Bi[3]; for(int k=0;k<3;k++) { Bi[k] = CellP[i].BPred[k] * CellP[i].Density / P[i].Mass; }
 
-        int n_off     = mg_neighbor_list->offsets[aa];
-        int n_off_end = mg_neighbor_list->offsets[aa+1];
-        for(int nn = n_off; nn < n_off_end; nn++) {
+        int64_t n_off     = mg_neighbor_list->offsets[aa];
+        int64_t n_off_end = mg_neighbor_list->offsets[aa+1];
+        for(int64_t nn = n_off; nn < n_off_end; nn++) {
             int j = mg_neighbor_list->neighbors[nn];
             if(P[j].Type != 0 || P[j].Mass <= 0 || CellP[j].Density <= 0) continue;
 
