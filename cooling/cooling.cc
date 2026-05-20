@@ -282,14 +282,41 @@ void cooling_parent_routine(void)
         }
 #endif /* GIZMO_DEBUG_RT_COOLING */
 
-        /* Scatter batch back and call set_eos_pressure on host
-         * (skipped on-device to avoid doubling device stack depth) */
+        /* Post-cooling EOS device kernel (audit-E1 Phase 1c).  Runs the body of
+         * set_eos_pressure on the compact arrays in-place, BEFORE scatter-back.
+         * Gated by POST_COOLING_DEVICE_EOS_SUPPORTED (defined iff
+         * EOS_HELMHOLTZ/EOS_TILLOTSON/EOS_ANEOS/HYDRO_GENERATE_TARGET_MESH are all
+         * inactive — see declarations/precompiler_logic.h).  In supported builds,
+         * the host scatter loop below skips set_eos_pressure.  In unsupported
+         * builds the device path is compiled out and the host scatter call below
+         * runs exactly as before this commit.  Separate kernel from the cooling
+         * loop above to keep per-launch device stack depth bounded — set_eos_pressure
+         * itself calls ThermalProperties→convert_u_to_temp→hydrogen_molecule chain,
+         * which the cooling loop already exercises; nesting would double the
+         * stack at the H200 OOM limit. */
+#ifdef POST_COOLING_DEVICE_EOS_SUPPORTED
+        {
+            struct particle_data *kp = compact_P;
+            struct gas_cell_data *kc = compact_Cell;
+            gizmo_gpu_kernel_launch("post_cooling_eos", batch_n, KOKKOS_LAMBDA(int j) {
+                set_eos_pressure_impl(j, kp, kc);
+            }, batch_start);
+        }
+#endif
+
+        /* Scatter batch back.  set_eos_pressure runs on host ONLY for builds that
+         * don't support the device post-cooling EOS kernel above (solid-EOS or
+         * HYDRO_GENERATE_TARGET_MESH builds).  Other deferred-tail calls (dust,
+         * molecfrac, DelayTimeHII) still run on host here — Phase 2 will move
+         * them to the post-cooling kernel too. */
         for(int j = 0; j < batch_n; j++)
         {
             int i = cool_indices[batch_start + j];
             CellP[i] = compact_Cell[j];
             P[i]     = compact_P[j];
+#ifndef POST_COOLING_DEVICE_EOS_SUPPORTED
             set_eos_pressure(i, P, CellP);
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             double dtime = get_particle_timestep_in_physical(i, P);
 #ifdef TRANSPORT_SUBCYCLE_COOLING
