@@ -1059,14 +1059,10 @@ void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, st
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) && !defined(COOL_MOLECFRAC_NONEQM)
     // Need local mach number for grain size evolution routines which is taken from nonequilibrium H2 calculations
     // If nonequilibrium H2 not used then need to calculate the mach number here
-
-    // define a number of variables needed in the shielding module
     double dx_cell = pp[i].Get_Particle_Size() * All.cf_atime; // cell size
-    double surface_density_H2_0 = 5.e14 * PROTONMASS_CGS, x_exp_fac=0.00085, w0=0.2; // characteristic cgs column for -molecular line- self-shielding
-    w0 = 0.035; // actual calibration from Drain, Gnedin, Richings, others: 0.2 is more appropriate as a re-calibration for sims doing local eqm without ability to resolve shielding at higher columns
-    double v_thermal_rms = 0.111*sqrt(T); // sqrt(3*kB*T/2*mp), since want rms thermal speed of -molecular H2- in kms
+    double v_thermal_rms = 0.111*sqrt(temp); // sqrt(3*kB*T/2*mp), in km/s; RMS thermal speed of molecular H2
     double gradv = cell[i].velocity_gradient_norm();
-    double dv_turb=gradv*dx_cell*UNIT_VEL_IN_KMS; // delta-velocity across cell
+    double dv_turb = gradv * dx_cell * UNIT_VEL_IN_KMS; // delta-velocity across cell in km/s
     cell[i].ISMDustChem_MachNumber = dv_turb / (v_thermal_rms/sqrt(3.));
 #endif
 
