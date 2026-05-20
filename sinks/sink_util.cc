@@ -170,6 +170,9 @@ double evaluate_sink_cosmicray_efficiency(double mdot, double mass, long pindex)
 void sink_properties_loop(void) /* Note, normalize_temp_info_struct is now done at the end of sink_environment_loop(), so that final quantities are available for the second environment loop if needed */
 {
     int i, n; double dt;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) private(n, dt) if(N_active_loc_Sink >= 16)
+#endif
     for(i=0; i<N_active_loc_Sink; i++)
     {
         n = SinkTempInfo[i].index;
