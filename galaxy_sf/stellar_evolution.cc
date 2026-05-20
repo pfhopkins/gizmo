@@ -382,7 +382,9 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt)
     else /* STELLAR POPULATION VERSION: now do stellar-population-averaged inputs */
     {
         D_RETURN_FRAC = 0.01; // fraction of particle mass to return on a recycling step //
+#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
         if(All.StellarMassLoss_Rate_Renormalization <= 0) {return;}
+#endif
         double star_age=evaluate_stellar_age_Gyr(i), ZZ=Z_for_stellar_evol(i);
 #if (GALSF_FB_FIRE_STELLAREVOLUTION == 1)
         if(star_age<=0.001){p=4.76317;} else {if(star_age<=0.0035){p=4.76317*pow(10.,1.838*(0.79+log10(ZZ))*(log10(star_age)-(-3.00)));} else {
@@ -402,7 +404,9 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt)
         double f_agb=0.1, t_agb=0.8, x_agb=t_agb/DMAX(t,1.e-4); x_agb*=x_agb; p += f_agb * pow(x_agb,0.8) * (exp(-DMIN(50.,x_agb*x_agb*x_agb)) + 1./(100. + x_agb)); /* May 28, 2022: re-fit AGB component based on inputs from Caleb Choban: previous model for FIRE-3 doesn't make sense for stars 1.5-4 Msol, can't possibly give sub-Chandrasekhar WDs or the correct initial-final mass relation. Here we re-fit the AGB mass loss for the Geneva v00 (rotating models show too little), 2013 tracks, 1x solar, times at same resolution as above, using the 'Empirical' wind prescription in STARBURST99. Have validated that nothing else, including wind specific energies, changes - only the mass-loss rates */
 #endif
         if(star_age < 0.033) {p *= 0.01 + calculate_relative_light_to_mass_ratio_from_imf(star_age,i,1);} // late-time independent of massive stars
+#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
         p *= All.StellarMassLoss_Rate_Renormalization * (dt*UNIT_TIME_IN_GYR); // fraction of particle mass expected to return in the timestep //
+#endif
         p = 1.0 - exp(-p); // need to account for p>1 cases //
     }
     
