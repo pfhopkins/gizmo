@@ -199,6 +199,10 @@ KOKKOS_INLINE_FUNCTION double evaluate_cr_transport_reductionfactor(int target, 
 #endif
 }
 
+/* Forward decl: defined L~267. Called from CR_energy_spectrum_injection_fraction below
+   under #if (N_CR_PARTICLE_BINS > 2) — definition site is later in this header. */
+KOKKOS_INLINE_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CRegy);
+
 /* routine which determines the fraction of injected CR energy per 'bin' of CR energy.
     source type [0=SNe; 1=stellar winds; 2-4=unused; 5=sink/AGN]; shock_vel in code units;
     return_index_in_bin=0 returns the energy fraction, =1 returns the injection spectral slope. */
