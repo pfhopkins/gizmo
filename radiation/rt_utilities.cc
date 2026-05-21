@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../nuclear/nuclear.h"   /* nuclear_neutrino_ye_feedback (NUCLEAR_NETWORK_NEUTRINOS) */
 #include "../mesh/kernel.h"
 /* Function bodies now in rt_functions.h (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
@@ -818,7 +819,6 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #endif
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
     if(mode==0) { /* after RT kick, update Ye from neutrino absorption */
-        extern void nuclear_neutrino_ye_feedback(int i, double dt_code, struct particle_data *pp, struct gas_cell_data *cell);
         nuclear_neutrino_ye_feedback(i, dt_entr, pp, cell);
     }
 #endif
