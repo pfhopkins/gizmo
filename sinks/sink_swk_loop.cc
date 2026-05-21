@@ -476,17 +476,7 @@ static inline const ghost_writeback_bundle *sink_swk_ghost_writeback_bundle_ptr(
  * IMPORTED-GHOST LIFECYCLE HOOKS
  * ========================================================================== */
 
-void SinkSwkSpec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                              const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("sink_swk");
-}
-
-void SinkSwkSpec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                            const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (loop_name = "sink_swk"). */
 
 void SinkSwkSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                          const NeighborLoopPlan& /*plan*/)

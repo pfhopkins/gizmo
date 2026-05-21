@@ -369,9 +369,8 @@ struct RtSrcInjectionSpec {
         ctx.oracle_dry_run = on;
     }
 
-    /* Ghost-writeback + write-detector bookkeeping. */
-    static void ghost_write_detector_begin(const neighbor_loop_args&, const NeighborLoopPlan&);
-    static void ghost_write_detector_end  (const neighbor_loop_args&, const NeighborLoopPlan&);
+    /* Ghost-writeback + write-detector bookkeeping.
+     * Detector uses runner default (loop_name = "rtsrcinjection"). */
     static void ghost_writeback_begin     (const neighbor_loop_args&, const NeighborLoopPlan&);
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 

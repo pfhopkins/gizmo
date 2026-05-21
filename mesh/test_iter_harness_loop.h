@@ -469,11 +469,8 @@ struct IterHarnessGhostSpec {
 
     static bool is_active(int /*i*/) { return false; }
 
-    /* Lifecycle hooks — definitions in test_iter_harness_loop.cc. */
-    static void ghost_write_detector_begin (const struct neighbor_loop_args&,
-                                              const struct NeighborLoopPlan&);
-    static void ghost_write_detector_end   (const struct neighbor_loop_args&,
-                                              const struct NeighborLoopPlan&);
+    /* Lifecycle hooks — definitions in test_iter_harness_loop.cc.
+     * ghost_write_detector_begin/end: runner default (loop_name = "iter_harness_ghost"). */
     static void ghost_writeback_begin      (const struct neighbor_loop_args&,
                                               const struct NeighborLoopPlan&);
     static void ghost_writeback_end        (const struct neighbor_loop_args&,

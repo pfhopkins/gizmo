@@ -55,14 +55,7 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(iter_harness_ghost)
     GHOST_WRITEBACK_PARTICLE_MAX(NlrIterHarnessJFlag)
 GHOST_WRITEBACK_BUNDLE_END(iter_harness_ghost)
 
-void IterHarnessGhostSpec::ghost_write_detector_begin(
-        const neighbor_loop_args& /*args*/, const NeighborLoopPlan& /*plan*/) {
-    ::ghost_write_detector_begin("iter_harness_ghost");
-}
-void IterHarnessGhostSpec::ghost_write_detector_end(
-        const neighbor_loop_args& /*args*/, const NeighborLoopPlan& /*plan*/) {
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (loop_name = "iter_harness_ghost"). */
 void IterHarnessGhostSpec::ghost_writeback_begin(
         const neighbor_loop_args& /*args*/, const NeighborLoopPlan& /*plan*/) {
     ghost_writeback_begin_bundle(iter_harness_ghost_ghost_writeback_bundle_ptr());
