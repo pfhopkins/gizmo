@@ -28,11 +28,10 @@
 
 
 /* Host-side fill of SinkFeedLocalIn for source particle i. Mirrors the
- * legacy sink_feed_local_fill from sinks/sink_feed_gpu.cc:49–107
- * verbatim, with one cleanup: the SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
- * fill is gated out by the corresponding compile guard in
- * sinks/sink_feed_loop.h (eligibility array isn't yet wired through the
- * runner DeviceContext extension). */
+ * legacy sink_feed_local_fill from sinks/sink_feed_gpu.cc:49-107
+ * verbatim. SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES now wired: per-i
+ * eligibility is filled here (per-j eligibility is filled in
+ * sink_feed_loop.cc::populate_device_context). */
 static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
 {
     int j_tempinfo = P[i].IndexMapToTempStruc;
@@ -83,6 +82,14 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
     loc->thermal_energy = (MyFloat)(sink_lum_bol((double)P[i].Sink_Mdot,
                                                   (double)P[i].Sink_Mass, -1)
                                     * (double)loc->Dt);
+#endif
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    /* Per-i eligibility for the binary-merge-away criterion. Mirrors the
+     * legacy sink_feed.cc:46 fill on the CPU path. Per-j eligibility is
+     * filled by sink_feed_loop.cc::populate_device_context over the
+     * full ctx.num_total range. */
+    loc->Sink_eligible_for_binary_merge_away =
+        is_star_eligible_for_binary_merge_away(i);
 #endif
 }
 

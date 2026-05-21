@@ -867,3 +867,171 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
 #endif /* RT_INFRARED */
 
 
+/* ========================================================================
+ * slab_averaging_function — (1 - exp(-x))/x, smooth fit valid all x.
+ * Used by hydro_toplevel.cc + rt_update_driftkick + cooling. Pure function.
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+double slab_averaging_function(double x)
+{
+    /* this fitting function is accurate to ~0.1% at all x, and extrapolates to the correct limits without the pathological behaviors of (1-exp(-x))/x for very small/large x */
+    return (1.00000000000 + x*(0.21772719088733913 + x*(0.047076512011644776 + x*0.005068307557496351))) /
+           (1.00000000000 + x*(0.71772719088733920 + x*(0.239273440788647680 + x*(0.046750496137263675 + x*0.005068307557496351))));
+}
+
+
+/* ========================================================================
+ * check_if_absorbed_photons_can_be_reemitted_into_same_band — compile-time
+ * gate per band controlling whether RP can exceed absorbed photon momentum.
+ * Pure function. Independent of RADTRANSFER (called from hydro/cooling
+ * paths outside the RADTRANSFER guard).
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq)
+{
+    int checker = 0; // default to no, but this isn't always true
+#if defined(GALSF_FB_FIRE_RT_LONGRANGE)
+    if(kfreq==RT_FREQ_BIN_FIRE_IR) {checker=1;} // skip
+#endif
+#if defined(RT_FREEFREE)
+    if(kfreq==RT_FREQ_BIN_FREEFREE) {checker=1;} // skip
+#endif
+#if defined(RT_GENERIC_USER_FREQ)
+    if(kfreq==RT_FREQ_BIN_GENERIC_USER_FREQ) {checker=1;} // skip
+#endif
+#if defined(RT_INFRARED)
+    if(kfreq==RT_FREQ_BIN_INFRARED) {checker=1;} // skip
+#endif
+    return checker;
+}
+
+
+#ifdef RADTRANSFER
+/* ========================================================================
+ * rt_eddington_update_calculation — compute the Eddington tensor under
+ * whichever closure is active (M1, FLD, or default isotropic). OTVET path
+ * returns immediately because that closure is built elsewhere (gravity).
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell)
+{
+#ifdef RT_OTVET
+    return; /* eddington tensor is calculated elsewhere [in the gravity subroutine]: don't mess with it here! */
+#endif
+#if defined(RT_M1) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+    /* calculate the eddington tensor with the M1 closure */
+    int k_freq, k; double fmag_j, V_j_inv = cell[j].Density / pp[j].Mass; Vec3<double> n_flux_j;
+    for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
+    {
+        n_flux_j = {};
+        Vec3<double> flux_vol = cell[j].Rad_Flux[k_freq] * V_j_inv;
+        fmag_j = flux_vol.norm_sq();
+        if(fmag_j <= 0) {fmag_j=0;} else {fmag_j=sqrt(fmag_j); n_flux_j = flux_vol/fmag_j;}
+        double f_chifac = fmag_j / (MIN_REAL_NUMBER + C_LIGHT_CODE_REDUCED * cell[j].Rad_E_gamma[k_freq] * V_j_inv);
+        if(f_chifac < 0) {f_chifac=0;}
+        if(fmag_j <= 0) {f_chifac = 0;}
+        // restrict values of f_chifac to physical range.
+        double f_min = 0.01, f_max = 0.9999;
+        if(f_chifac < f_min) {f_chifac = f_min;}
+        if(f_chifac > f_max) {f_chifac = f_max;}
+        double chi_j = (3.+4.*f_chifac*f_chifac) / (5. + 2.*sqrt(4. - 3.*f_chifac*f_chifac));
+        double chifac_iso_j = 0.5 * (1.-chi_j);
+        double chifac_n_j = 0.5 * (3.*chi_j-1.);
+        for(k=0;k<3;k++) for(int k2=k;k2<3;k2++) {cell[j].ET[k_freq][k][k2] = chifac_n_j * n_flux_j[k]*n_flux_j[k2];}
+        cell[j].ET[k_freq][0][0] += chifac_iso_j; cell[j].ET[k_freq][1][1] += chifac_iso_j; cell[j].ET[k_freq][2][2] += chifac_iso_j;
+    }
+    return;
+#endif
+#ifdef RT_FLUXLIMITEDDIFFUSION
+    /* always assume the isotropic eddington tensor */
+    int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {cell[j].ET[k_freq].set_isotropic(1./3.);}
+    return;
+#endif
+
+    /* if nothing is set, default to guess the isotropic eddington tensor */
+    {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {cell[j].ET[k_freq].set_isotropic(1./3.);}}
+    return;
+}
+#endif /* RADTRANSFER */
+
+
+#if defined(RT_ISRF_BACKGROUND) && defined(RADTRANSFER)
+/* ========================================================================
+ * get_background_isrf_urad — ISRF energy density per band, code units.
+ * Reads All.RadiationBackgroundRedshift, All.InterstellarRadiationFieldStrength.
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+void get_background_isrf_urad(int i, double *urad){
+    int k;
+    for(k = 0; k < N_RT_FREQ_BINS; k++)
+    {
+        urad[k] = MIN_REAL_NUMBER;
+#ifdef RT_INFRARED
+	double fac_uCMB = 1.;
+	fac_uCMB = pow(1+All.RadiationBackgroundRedshift, 4);
+        if(k==RT_FREQ_BIN_INFRARED){urad[k] = (All.InterstellarRadiationFieldStrength * 0.39 + fac_uCMB * 0.26) * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // 0.33 eV/cm^3 is dust emission peak, 0.26 is CMB - note how this bin actually lumps the two together
+#endif
+#ifdef RT_OPTICAL_NIR
+        if(k==RT_FREQ_BIN_OPTICAL_NIR){urad[k] = All.InterstellarRadiationFieldStrength * 0.54 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
+#endif
+#ifdef RT_NUV
+        if(k==RT_FREQ_BIN_NUV){urad[k] = All.InterstellarRadiationFieldStrength * 0.024 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
+#endif
+#ifdef RT_PHOTOELECTRIC
+        if(k==RT_FREQ_BIN_PHOTOELECTRIC){urad[k] = All.InterstellarRadiationFieldStrength * 1.7  / UNIT_EGY_DENSITY_IN_HABING;} // Draine 1978 value = 1.7 Habing
+#endif
+    }
+}
+
+
+/* ========================================================================
+ * background_isrf_cmb_Teff — energy-weighted effective temperature of the
+ * background ISRF+CMB sum (for the lumped IR band).
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+double background_isrf_cmb_Teff(void){
+    // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
+    // Necessary because current IR band treatment lumps both radiation fields together
+    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = 100.;
+#ifdef RT_INFRARED
+    Trad_ISRF = DMIN(All.InitRadiationTemp, 100.);
+#endif
+    double fac_TCMB= 1.+All.RadiationBackgroundRedshift, fac_uCMB = pow(fac_TCMB,4);
+    double urad_CMB_CGS_eV = fac_uCMB * 0.262, Trad_CMB = 2.73 * fac_TCMB;
+    return (urad_ISRF_CGS_eV * Trad_ISRF + urad_CMB_CGS_eV * Trad_CMB) / (urad_ISRF_CGS_eV + urad_CMB_CGS_eV); // weighting by SED energy
+}
+
+
+/* ========================================================================
+ * rt_apply_boundary_conditions — at outer 10% of box, clamp Rad_E_gamma and
+ * (IR) Radiation/Dust temperatures to the background ISRF+CMB.
+ * Calls get_background_isrf_urad + background_isrf_cmb_Teff above.
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double urad[N_RT_FREQ_BINS]; int k, k_dir;
+    get_background_isrf_urad(i, urad);
+    // if we are within 10% of the box length of the edge:
+    if(DMAX(DMAX(pp[i].Pos[0],pp[i].Pos[1]),pp[i].Pos[2]) > 0.9*All.BoxSize || DMIN(DMIN(pp[i].Pos[0],pp[i].Pos[1]),pp[i].Pos[2]) < 0.1*All.BoxSize)
+    {
+        for(k = 0; k < N_RT_FREQ_BINS; k++)
+        {
+            cell[i].Rad_E_gamma[k] = urad[k] * cell[i].Mass/(cell[i].Density * All.cf_a3inv);
+#ifdef RT_EVOLVE_FLUX
+            for(k_dir = 0; k_dir < 3; k_dir++){cell[i].Rad_Flux[k][k_dir] = 0;}
+#endif
+#ifdef RT_INFRARED
+            if(k==RT_FREQ_BIN_INFRARED) {
+                cell[i].Radiation_Temperature = background_isrf_cmb_Teff();
+                cell[i].Dust_Temperature = DMIN(All.InitRadiationTemp,100.);
+            }
+#endif
+        }
+    } else {
+        for(k = 0; k < N_RT_FREQ_BINS; k++){cell[i].Rad_E_gamma[k] = DMAX(cell[i].Rad_E_gamma[k], MIN_REAL_NUMBER);}
+    }
+}
+#endif /* RT_ISRF_BACKGROUND && RADTRANSFER */
+
+

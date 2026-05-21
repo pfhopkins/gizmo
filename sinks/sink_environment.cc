@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+/* Kokkos_Core.hpp MUST precede allvars.h: macros.h #defines `terminate(...)`
+ * which would mangle std::terminate inside Kokkos's transitive <exception>
+ * include. Required because sink_env1_loop.h emits Kokkos::atomic_min
+ * inline under SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. */
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"

@@ -64,17 +64,22 @@ SinkSwkSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     CallScalars scalars;
     scalars.common                   = nlr_common_scalars_from_all();
     scalars.sink_radius_grav         = SinkParticle_GravityKernelRadius;
-#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
-    scalars.sink_accreted_fraction   = h->Sink_accreted_fraction;
-#endif
     scalars.sink_feedback_factor     = h->SinkFeedbackFactor;
     scalars.sink_radiative_efficiency= h->SinkRadiativeEfficiency;
 #if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
+    scalars.sink_accreted_fraction   = h->Sink_accreted_fraction;
     scalars.sink_outflow_velocity    = h->Sink_outflow_velocity;
+#else
+    scalars.sink_accreted_fraction   = 0.0;
+    scalars.sink_outflow_velocity    = 0.0;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     scalars.sink_rad_momentum_factor = h->Sink_Rad_MomentumFactor;
+#else
+    scalars.sink_rad_momentum_factor = 0.0;
 #endif
+    /* Fallback zeros above are never observed: every pair-body reader of
+     * these scalars is itself under the same #ifdef gate. */
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
     scalars.sink_cr_injection_efficiency = h->Sink_CosmicRay_Injection_Efficiency;
 #endif

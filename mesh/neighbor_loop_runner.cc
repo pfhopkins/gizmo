@@ -1000,14 +1000,32 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
     using ScatterData  = typename Spec::ScatterData;
     for(int aa = 0; aa < N; aa++) {
         Spec::zero_accum(accums[aa]);
-        const auto& a = actives[aa];
         ScatterData s{};                              /* NoScatter for ActiveReduceOnly */
         const auto& cands = per_active_cands[aa];
-        for(size_t kk = 0; kk < cands.size(); kk++) {
-            int j = cands[kk];
-            IdentitySidecar id{};                     /* NoIdentity */
-            NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
-            Spec::pair_kernel(a, nb, accums[aa], s);
+        if constexpr (nlr_spec_has_bind_active_to_eval_context_v<Spec>) {
+            /* Spec needs per-eval-pass rebinding of rank-local + eval-pass-local
+             * fields embedded in ActiveData (P_base / CellP_base / oracle_dry_run
+             * / per-rank gas-delta ptrs / per-rank index bounds). Take a local
+             * mutable copy, refresh from the eval ctx, then walk. See
+             * nlr_spec_has_bind_active_to_eval_context_v in
+             * mesh/neighbor_loop_runner.h for the contract. */
+            typename Spec::ActiveData a = actives[aa];
+            Spec::bind_active_to_eval_context(ctx, a);
+            for(size_t kk = 0; kk < cands.size(); kk++) {
+                int j = cands[kk];
+                IdentitySidecar id{};                 /* NoIdentity */
+                NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
+                Spec::pair_kernel(a, nb, accums[aa], s);
+            }
+        } else {
+            /* No bind hook: walk by const-ref, no copy. */
+            const auto& a = actives[aa];
+            for(size_t kk = 0; kk < cands.size(); kk++) {
+                int j = cands[kk];
+                IdentitySidecar id{};                 /* NoIdentity */
+                NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
+                Spec::pair_kernel(a, nb, accums[aa], s);
+            }
         }
     }
 }
@@ -1582,6 +1600,14 @@ static void mode_b_remote_evaluate_into_buffer(
             peer_provenance.push_back({p, qi, env.origin_slot, env.origin_rank});
         }
     }
+
+    /* Note: receiver-side binding of peer_actives (and per-eval-pass rebinding
+     * of both self actives and peer actives) is performed inside
+     * evaluate_pairs_post_drift, gated on
+     * nlr_spec_has_bind_active_to_eval_context_v<Spec>. The bind runs once
+     * per active per eval pass with the EXACT eval ctx, so oracle brute-pass
+     * vs tree-pass and Production vs Oracle ctx copies are all bound
+     * correctly. No standalone post-flatten rebind needed here. */
 
     /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
     std::vector<std::vector<int>> cand_peer_tree, cand_peer_brute;

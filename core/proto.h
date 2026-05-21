@@ -835,7 +835,7 @@ GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, str
     return cell[i].flux_limiter(k_freq) * C_LIGHT_CODE_REDUCED / (1.e-45 + cell[i].Rad_Kappa[k_freq] * cell[i].Density*All.cf_a3inv);
 }
 #endif
-void rt_eddington_update_calculation(int j, struct gas_cell_data *cell);
+void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef RT_SOURCE_INJECTION

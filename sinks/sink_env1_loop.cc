@@ -25,6 +25,11 @@
 #include <cstring>
 #include <cmath>
 
+/* Kokkos_Core.hpp MUST precede allvars.h: macros.h #defines `terminate(...)`
+ * which would mangle std::terminate inside Kokkos's transitive <exception>
+ * include. Required because sink_env1_loop.h emits Kokkos::atomic_min
+ * inline under SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. */
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_env1_loop.h */
@@ -59,6 +64,21 @@ SinkEnv1Spec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     scalars.common           = nlr_common_scalars_from_all();
     scalars.sink_radius_grav = SinkParticle_GravityKernelRadius;
     return scalars;
+}
+
+/* Phase 4.A.0 device-context lifecycle. sink_env1 has no UVM-allocated
+ * per-active state (unlike sink_feed/sink_swk), so populate only seeds
+ * the oracle dry-run flag and cleanup is a no-op. The pair is declared
+ * for symmetric runner-contract pairing. */
+void SinkEnv1Spec::populate_device_context(const neighbor_loop_args& /*args*/,
+                                            DeviceContext& ctx)
+{
+    ctx.oracle_dry_run = false;
+}
+
+void SinkEnv1Spec::cleanup_device_context(const neighbor_loop_args& /*args*/,
+                                           DeviceContext& /*ctx*/)
+{
 }
 
 /* Copy AccumData into args.aux->per_active_accum[active_slot]. The caller

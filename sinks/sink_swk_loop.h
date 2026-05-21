@@ -156,17 +156,16 @@ struct SinkSwallowOut {
 struct SinkSwkCallScalars {
     NlrCommonScalars common;                       /* cf_atime, cf_a2inv, cf_hubble_a, comoving_integration_on, ... */
     double sink_radius_grav;                       /* SinkParticle_GravityKernelRadius */
-#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
-    double sink_accreted_fraction;                 /* All.Sink_accreted_fraction */
-#endif
+    /* The next four fields are populated only under their matching #ifdef gates
+     * in sink_swk_loop.cc::populate_call_scalars (zero otherwise). Pair-body
+     * readers are themselves under matching #ifdefs, so the fallback zero is
+     * never observed. Declared unconditionally so the struct shape doesn't
+     * shift with Config and populate code can do unconditional zero-init. */
+    double sink_accreted_fraction;                 /* All.Sink_accreted_fraction (SINK_WIND_KICK||SINK_WIND_SPAWN) */
     double sink_feedback_factor;                   /* All.SinkFeedbackFactor */
     double sink_radiative_efficiency;              /* All.SinkRadiativeEfficiency */
-#if defined(SINK_WIND_KICK) || defined(SINK_WIND_SPAWN)
-    double sink_outflow_velocity;                  /* All.Sink_outflow_velocity */
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-    double sink_rad_momentum_factor;               /* All.Sink_Rad_MomentumFactor */
-#endif
+    double sink_outflow_velocity;                  /* All.Sink_outflow_velocity (SINK_WIND_KICK||SINK_WIND_SPAWN) */
+    double sink_rad_momentum_factor;               /* All.Sink_Rad_MomentumFactor (SINK_PHOTONMOMENTUM) */
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS)
     double sink_cr_injection_efficiency;           /* All.Sink_CosmicRay_Injection_Efficiency */
 #endif
