@@ -47,9 +47,10 @@
 #include "../declarations/gpu_rng.h"            /* gizmo_gpu_rand_double */
 #include "../radiation/rt_functions.h"          /* rt_kappa, RT_FREQ_BIN_FIRE_* */
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Per-loop RNG XOR shift — STREAM INTENTIONALLY CHANGED from legacy.
  *

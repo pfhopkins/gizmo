@@ -34,9 +34,10 @@
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Host-side helpers (defined in thermal_fb_loop.cc). Forward-declared on the
  * incomplete struct ThermalFBLocalIn (definition follows below). SSOT —

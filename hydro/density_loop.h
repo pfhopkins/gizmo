@@ -50,12 +50,10 @@
  * kernel.h has no include guards; provides kernel_main / kernel_hinv used
  * by the inline pair body. */
 
-/* Per OPEN_kokkos_inline_macro_audit.md: deferred per-header private macro
- * cleanup. Kept here as the legacy pattern for now (all current consumers
- * include Kokkos_Core before this header). */
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 #include <vector>
 

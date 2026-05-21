@@ -23,6 +23,11 @@
 #ifndef HYDRO_FORCE_LOOP_H
 #define HYDRO_FORCE_LOOP_H
 
+/* Kokkos_Core.hpp MUST precede declarations/allvars.h: allvars.h pulls in
+ * declarations/macros.h which #defines `terminate(...)`; that macro mangles
+ * std::terminate inside Kokkos transitive <exception> include if allvars.h
+ * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
@@ -53,9 +58,10 @@
  * kernel_main / kernel_hinv used by the pair body. Matches the
  * cellcorrections_loop.h / gradients_loop.h / sink_env1_loop.h convention. */
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* ============================================================================
  * Per-pair physics types.

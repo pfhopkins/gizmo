@@ -43,11 +43,10 @@
  * kernel_main, used by the pair body below). The runner and the sink
  * loop's .cc both include kernel.h first; new callers must do the same. */
 
-/* Make sure KOKKOS_INLINE_FUNCTION is defined; if Kokkos is unavailable
- * (host-only TUs), fall back to plain inline. */
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Forward-decl from sinks/sink.h (active-particle predicate). */
 int sink_isactive(int i);

@@ -45,13 +45,10 @@
  * kernel.h has no include guards; defines kernel_main / kernel_gravity /
  * kernel_hinv used by the inline pair body below. */
 
-/* See OPEN_kokkos_inline_macro_audit.md in project memory: the deferred
- * cleanup converts this fallback to a private per-header macro. Kept here
- * as the legacy pattern for now (not a 3d.4 blocker — all current consumers
- * include Kokkos_Core before this header). */
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Forward decls — defined caller-side in gravity/ags_rkern.cc. */
 int    ags_density_isactive(int i);

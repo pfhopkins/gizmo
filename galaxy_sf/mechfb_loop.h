@@ -19,6 +19,13 @@
 
 #include <vector>
 
+/* Kokkos_Core.hpp MUST precede declarations/allvars.h (pulled in transitively
+ * by mechanical_fb_functions.h below): allvars.h pulls declarations/macros.h
+ * which #defines `terminate(...)`, mangling std::terminate inside Kokkos
+ * transitive <exception> include if it comes first. Same convention as
+ * sinks/sink_feed_loop.h / sink_swk_loop.h. */
+#include <Kokkos_Core.hpp>
+
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"     /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "mechanical_fb_types.h"             /* struct MechFBGasDelta */
@@ -27,9 +34,10 @@
 
 #ifdef GALSF_FB_MECHANICAL
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* ============================================================================
  * ActiveData — per-source state visible to the device kernel.

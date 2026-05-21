@@ -32,9 +32,10 @@
 #include "neighbor_loop_runner.h"
 #include "mode_b_local_walker.h"
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Env predicates the harness consumes. Defined in test_iter_harness_loop.cc. */
 bool gizmo_nlr_iter_harness_run_enabled(void);

@@ -54,9 +54,10 @@
 #include "rt_functions.h"                      /* rt_get_donation_target_bin, RT_BAND_IS_IONIZING */
 #include "rt_source_injection_local_in.h"      /* RtSrcLocalIn (host-clean) */
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* ============================================================================
  * Pade-coefficient slab-averaged optical-depth factor — relocated verbatim from

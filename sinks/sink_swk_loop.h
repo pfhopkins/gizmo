@@ -36,9 +36,10 @@
 /* NOTE: caller TUs must include "../mesh/kernel.h" BEFORE this header
  * (kernel_main, NEAREST_XYZ; same convention as sink_feed_loop.h). */
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Forward decls. */
 int sink_isactive(int i);

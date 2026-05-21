@@ -16,6 +16,11 @@
 #ifndef CELLCORRECTIONS_LOOP_H
 #define CELLCORRECTIONS_LOOP_H
 
+/* Kokkos_Core.hpp MUST precede declarations/allvars.h: allvars.h pulls in
+ * declarations/macros.h which #defines `terminate(...)`; that macro mangles
+ * std::terminate inside Kokkos transitive <exception> include if allvars.h
+ * comes first. Same convention as sinks/sink_feed_loop.h / sink_swk_loop.h. */
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
@@ -34,9 +39,10 @@
  * follows the same pattern). gradient_functions.h is also include-guard-
  * free for kernel.h reasons — same ordering applies. */
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Forward-decl from hydro/gradients.cc — the GasGrad_isactive predicate
  * gates gradients-eligible cells; cellcorrections must match it

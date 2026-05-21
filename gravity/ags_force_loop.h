@@ -64,9 +64,10 @@
 #include "../sidm/dm_fuzzy_flux_functions.h"
 #include "../sidm/sidm_core_flux_functions.h"
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
-#endif
+/* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
+ * unconditionally above. This Spec carries device-callable pair-kernel
+ * accessors; misordered includes must compile-fail loudly, not silently
+ * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
 /* Forward decls — defined in gravity/ags_rkern.cc (host SSOT). */
 int AGSForce_isactive(int i);
