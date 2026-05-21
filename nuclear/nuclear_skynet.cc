@@ -54,7 +54,7 @@ void nuclear_skynet_init(void)
     /* build restricted species list for aprox13 */
     std::vector<std::string> species_names;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
-        species_names.push_back(Nuclide::GetName(nuclear_aprox13_Z[k], nuclear_aprox13_A[k]));
+        species_names.push_back(Nuclide::GetName(nuclear_aprox13_Z(k), nuclear_aprox13_A(k)));
     }
 
     /* create nuclide library */
@@ -71,14 +71,14 @@ void nuclear_skynet_init(void)
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
         skynet_species_map[k] = -1;
         for (int s = 0; s < skynet_n_species; s++) {
-            if (nuclides[s].A() == nuclear_aprox13_A[k] && nuclides[s].Z() == nuclear_aprox13_Z[k]) {
+            if (nuclides[s].A() == nuclear_aprox13_A(k) && nuclides[s].Z() == nuclear_aprox13_Z(k)) {
                 skynet_species_map[k] = s;
                 break;
             }
         }
         if (skynet_species_map[k] < 0 && ThisTask == 0) {
             printf("  WARNING: species Z=%d A=%d not found in SkyNet library\n",
-                   nuclear_aprox13_Z[k], nuclear_aprox13_A[k]);
+                   nuclear_aprox13_Z(k), nuclear_aprox13_A(k));
         }
     }
 
@@ -117,7 +117,7 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
     std::vector<double> Y_in(skynet_n_species, 0.0);
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
         if (skynet_species_map[k] >= 0) {
-            Y_in[skynet_species_map[k]] = in->X[k] / (double)nuclear_aprox13_A[k];
+            Y_in[skynet_species_map[k]] = in->X[k] / (double)nuclear_aprox13_A(k);
         }
     }
 
@@ -134,7 +134,7 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
     double sum = 0;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
         if (skynet_species_map[k] >= 0 && skynet_species_map[k] < (int)Y_final.size()) {
-            out->X[k] = Y_final[skynet_species_map[k]] * (double)nuclear_aprox13_A[k];
+            out->X[k] = Y_final[skynet_species_map[k]] * (double)nuclear_aprox13_A(k);
         } else {
             out->X[k] = in->X[k];
         }
@@ -148,7 +148,7 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
     /* energy: binding energy difference */
     double de_cgs = 0;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
-        de_cgs += (out->X[k] - in->X[k]) * nuclear_aprox13_BE_per_A[k] * 1.602176634e-6 * 6.02214076e23;
+        de_cgs += (out->X[k] - in->X[k]) * nuclear_aprox13_BE_per_A(k) * 1.602176634e-6 * 6.02214076e23;
     }
     out->de = de_cgs / UNIT_SPECEGY_IN_CGS;
     out->edot = (dt_s > 0) ? de_cgs / dt_s / (UNIT_SPECEGY_IN_CGS / UNIT_TIME_IN_CGS) : 0;

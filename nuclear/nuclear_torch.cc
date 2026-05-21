@@ -78,13 +78,13 @@ int nuclear_torch_solve(const struct nuclear_input *in, struct nuclear_output *o
        // pack Y = X/A
        double Y_in[NUM_NUCLEAR_SPECIES], Y_out[NUM_NUCLEAR_SPECIES];
        for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++)
-           Y_in[xnet_species_map[k]] = in->X[k] / nuclear_aprox13_A[k];
+           Y_in[xnet_species_map[k]] = in->X[k] / nuclear_aprox13_A(k);
 
        double energy_released;
        xnet_solve_c(1, &rho_cgs, &T9, &dt_s, Y_in, Y_out, &energy_released);
 
        for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++)
-           out->X[k] = Y_out[xnet_species_map[k]] * nuclear_aprox13_A[k];
+           out->X[k] = Y_out[xnet_species_map[k]] * nuclear_aprox13_A(k);
        out->de = energy_released / UNIT_SPECEGY_IN_CGS;
     */
 

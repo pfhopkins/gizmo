@@ -42,26 +42,44 @@ enum nuclear_species_aprox13 {
     NUCLEAR_NI56 = 12
 };
 
-/* atomic numbers and mass numbers for the 13 species */
-GIZMO_GPU_DEVICE static constexpr int nuclear_aprox13_A[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
-GIZMO_GPU_DEVICE static constexpr int nuclear_aprox13_Z[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
+/* Atomic mass numbers, atomic numbers, and binding energies per nucleon
+ * (from AME2020) for the 13 aprox13 species. Exposed as KOKKOS_INLINE_FUNCTION
+ * accessors with function-local constexpr storage so the host and device
+ * instances of inline functions that call them each get a copy in their
+ * respective address spaces. Namespace-scope `__device__ static constexpr`
+ * arrays cannot be safely read by the host instance of a __host__ __device__
+ * inline function (#20091-D); function-local constexpr removes that
+ * ambiguity. See feedback_gpu §B.4b + codex 2026-05-21 Phase C review. */
+#ifndef KOKKOS_INLINE_FUNCTION
+#define KOKKOS_INLINE_FUNCTION inline
+#endif
 
-/* binding energies per nucleon [MeV] (from AME2020) — used for energy generation */
-GIZMO_GPU_DEVICE static constexpr double nuclear_aprox13_BE_per_A[] = {
-    7.07392,  /* He4  */
-    7.68014,  /* C12  */
-    7.97621,  /* O16  */
-    8.03224,  /* Ne20 */
-    8.26069,  /* Mg24 */
-    8.44774,  /* Si28 */
-    8.49311,  /* S32  */
-    8.51986,  /* Ar36 */
-    8.55128,  /* Ca40 */
-    8.53350,  /* Ti44 */
-    8.57232,  /* Cr48 */
-    8.60956,  /* Fe52 */
-    8.64278   /* Ni56 */
-};
+KOKKOS_INLINE_FUNCTION int nuclear_aprox13_A(int k) {
+    constexpr int data[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
+    return data[k];
+}
+KOKKOS_INLINE_FUNCTION int nuclear_aprox13_Z(int k) {
+    constexpr int data[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
+    return data[k];
+}
+KOKKOS_INLINE_FUNCTION double nuclear_aprox13_BE_per_A(int k) {
+    constexpr double data[] = {
+        7.07392,  /* He4  */
+        7.68014,  /* C12  */
+        7.97621,  /* O16  */
+        8.03224,  /* Ne20 */
+        8.26069,  /* Mg24 */
+        8.44774,  /* Si28 */
+        8.49311,  /* S32  */
+        8.51986,  /* Ar36 */
+        8.55128,  /* Ca40 */
+        8.53350,  /* Ti44 */
+        8.57232,  /* Cr48 */
+        8.60956,  /* Fe52 */
+        8.64278   /* Ni56 */
+    };
+    return data[k];
+}
 
 
 /* ---------------------------------------------------------------------------

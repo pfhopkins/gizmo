@@ -41,9 +41,9 @@ KOKKOS_INLINE_FUNCTION void nuclear_compute_ye_abar(const double X[NUM_NUCLEAR_S
 {
     double sum_X_over_A = 0, sum_Z_X_over_A = 0;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
-        double x = X[k] / (double) nuclear_aprox13_A[k];
+        double x = X[k] / (double) nuclear_aprox13_A(k);
         sum_X_over_A   += x;
-        sum_Z_X_over_A += (double) nuclear_aprox13_Z[k] * x;
+        sum_Z_X_over_A += (double) nuclear_aprox13_Z(k) * x;
     }
     if (sum_X_over_A > 0) {
         *Abar_out = 1.0 / sum_X_over_A;
@@ -72,25 +72,36 @@ inline constexpr int NR = 12;  /* number of reactions */
 } /* namespace nuclear_aprox13_internal */
 
 /* Q-values [MeV] for the 12 reactions: Q = BE(product) - BE(reactants).
-   Computed from AME2020 mass excess values. */
-GIZMO_GPU_DEVICE static constexpr double Q_MeV[] = {
-    7.2748,   /* 3 He4 -> C12 */
-    7.1616,   /* C12(a,g)O16 */
-    4.7300,   /* O16(a,g)Ne20 */
-    9.3166,   /* Ne20(a,g)Mg24 */
-    9.9842,   /* Mg24(a,g)Si28 */
-    6.9483,   /* Si28(a,g)S32 */
-    6.6413,   /* S32(a,g)Ar36 */
-    7.0404,   /* Ar36(a,g)Ca40 */
-    5.1267,   /* Ca40(a,g)Ti44 */
-    7.6938,   /* Ti44(a,g)Cr48 */
-    7.9381,   /* Cr48(a,g)Fe52 */
-    8.0068,   /* Fe52(a,g)Ni56 */
-};
+   Computed from AME2020 mass excess values. Accessor with function-local
+   constexpr — see nuclear.h header comment on the #20091-D fix. */
+KOKKOS_INLINE_FUNCTION double Q_MeV(int r) {
+    constexpr double data[] = {
+        7.2748,   /* 3 He4 -> C12 */
+        7.1616,   /* C12(a,g)O16 */
+        4.7300,   /* O16(a,g)Ne20 */
+        9.3166,   /* Ne20(a,g)Mg24 */
+        9.9842,   /* Mg24(a,g)Si28 */
+        6.9483,   /* Si28(a,g)S32 */
+        6.6413,   /* S32(a,g)Ar36 */
+        7.0404,   /* Ar36(a,g)Ca40 */
+        5.1267,   /* Ca40(a,g)Ti44 */
+        7.6938,   /* Ti44(a,g)Cr48 */
+        7.9381,   /* Cr48(a,g)Fe52 */
+        8.0068,   /* Fe52(a,g)Ni56 */
+    };
+    return data[r];
+}
 
-/* Species A and Z (from nuclear.h) */
-GIZMO_GPU_DEVICE static constexpr int A_sp[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
-GIZMO_GPU_DEVICE static constexpr int Z_sp[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
+/* Species A and Z (from nuclear.h) — accessor with function-local constexpr,
+ * see nuclear.h header comment on the #20091-D fix. */
+KOKKOS_INLINE_FUNCTION int A_sp(int k) {
+    constexpr int data[] = {4, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56};
+    return data[k];
+}
+KOKKOS_INLINE_FUNCTION int Z_sp(int k) {
+    constexpr int data[] = {2,  6,  8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28};
+    return data[k];
+}
 
 
 /* =========================================================================
@@ -259,18 +270,18 @@ KOKKOS_INLINE_FUNCTION static void compute_rates(double T9, double fwd[nuclear_a
 
     /* reaction 0: 3a -> C12 (3-body, needs T9^3 and extra density factor) */
     {
-        double Q_over_T9 = 11.6045 * Q_MeV[0] * T9i;
+        double Q_over_T9 = 11.6045 * Q_MeV(0) * T9i;
         rev[0] = 2.003e+20 * T932 * T932 * T932 * exp(-Q_over_T9);
         if (!isfinite(rev[0])) rev[0] = 0.0;
     }
 
     /* reactions 1-11: standard (a,g) 2-body */
     for (int r = 1; r < NR; r++) {
-        double Q_over_T9 = 11.6045 * Q_MeV[r] * T9i;
+        double Q_over_T9 = 11.6045 * Q_MeV(r) * T9i;
         if (Q_over_T9 > 500.0) { rev[r] = 0.0; continue; }
 
-        int A_tgt = A_sp[r];       /* target nucleus */
-        int A_prod = A_sp[r + 1];  /* product nucleus */
+        int A_tgt = A_sp(r);       /* target nucleus */
+        int A_prod = A_sp(r + 1);  /* product nucleus */
         double mfac = pow((4.0 * (double)A_tgt) / (double)A_prod, 1.5);
         double C_rev = mfac * 4.8359e+09;
         rev[r] = fwd[r] * C_rev * T932 * exp(-Q_over_T9);
@@ -311,11 +322,11 @@ KOKKOS_INLINE_FUNCTION static void nuclear_rhs(double rho, double T9, const doub
     }
 
     /* energy generation */
-    double edot = net0 * Q_MeV[0];
+    double edot = net0 * Q_MeV(0);
     for (int r = 1; r < NR; r++) {
         double rf = fwd[r] * rhoNA * Y[0] * Y[r];
         double rr = rev[r] * Y[r + 1];
-        edot += (rf - rr) * Q_MeV[r];
+        edot += (rf - rr) * Q_MeV(r);
     }
     *edot_out = edot * MeV_to_erg * avo;
 }
@@ -504,7 +515,7 @@ KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in,
         nuclear_compute_ye_abar(out->X, &out->Ye, &out->Abar);
         double de_cgs = 0;
         for (int k = 0; k < NS; k++) {
-            de_cgs += (out->X[k] - X_old[k]) * nuclear_aprox13_BE_per_A[k] * MeV_to_erg * avo;
+            de_cgs += (out->X[k] - X_old[k]) * nuclear_aprox13_BE_per_A(k) * MeV_to_erg * avo;
         }
         out->de = de_cgs / UNIT_SPECEGY_IN_CGS;
         out->edot = (dt_cgs > 0) ? de_cgs / dt_cgs / (UNIT_SPECEGY_IN_CGS / UNIT_TIME_IN_CGS) : 0;
@@ -515,7 +526,7 @@ KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in,
     /* convert mass fractions to molar abundances: Y = X / A */
     double Y_old[NS], Y_new[NS];
     for (int k = 0; k < NS; k++) {
-        Y_old[k] = (in->X[k] > 0) ? in->X[k] / (double)A_sp[k] : 0.0;
+        Y_old[k] = (in->X[k] > 0) ? in->X[k] / (double)A_sp(k) : 0.0;
     }
 
     /* estimate shortest burning timescale for subcycling */
@@ -617,7 +628,7 @@ KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in,
     /* convert back to mass fractions and clamp */
     double sum = 0;
     for (int k = 0; k < NS; k++) {
-        out->X[k] = Y_new[k] * (double)A_sp[k];
+        out->X[k] = Y_new[k] * (double)A_sp(k);
         if (out->X[k] < 0) out->X[k] = 0;
         if (out->X[k] > 1) out->X[k] = 1;
         sum += out->X[k];
@@ -629,7 +640,7 @@ KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in,
     /* energy release from binding energy difference */
     double de_binding = 0;
     for (int k = 0; k < NS; k++) {
-        de_binding += (out->X[k] - in->X[k]) * nuclear_aprox13_BE_per_A[k]
+        de_binding += (out->X[k] - in->X[k]) * nuclear_aprox13_BE_per_A(k)
                     * 1.602176634e-6 * 6.02214076e23;
     }
     out->de   = de_binding / UNIT_SPECEGY_IN_CGS;
@@ -664,10 +675,8 @@ KOKKOS_INLINE_FUNCTION int nuclear_aprox13_solve(const struct nuclear_input *in,
    Nuclear Statistical Equilibrium (NSE) for high-temperature regime.
    ========================================================================= */
 
-/* Aliases — use constexpr pointers so they're device-accessible */
-GIZMO_GPU_DEVICE static constexpr const double *BE_per_A = nuclear_aprox13_BE_per_A;
-GIZMO_GPU_DEVICE static constexpr const int *A_species = A_sp;
-GIZMO_GPU_DEVICE static constexpr const int *Z_species = Z_sp;
+/* Aliases retired with the Phase C accessor refactor — call
+ * nuclear_aprox13_BE_per_A(k) / A_sp(k) / Z_sp(k) directly. */
 
 KOKKOS_INLINE_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, double Ye,
                              double X_out[NUM_NUCLEAR_SPECIES])
@@ -679,9 +688,9 @@ KOKKOS_INLINE_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, d
 
     /* find the most-bound species */
     int i_peak = NUCLEAR_NI56;
-    double Q_peak = BE_per_A[i_peak] * A_species[i_peak] - (A_species[i_peak] / 4.0) * BE_per_A[NUCLEAR_HE4] * 4.0;
+    double Q_peak = nuclear_aprox13_BE_per_A(i_peak) * A_sp(i_peak) - (A_sp(i_peak) / 4.0) * nuclear_aprox13_BE_per_A(NUCLEAR_HE4) * 4.0;
 
-    double saha_param = Q_peak / kT_MeV - (A_species[i_peak] / 4.0 - 1.0) * log(rho_cgs * avo / (T9 * T9 * sqrt(T9) * 1.0e27));
+    double saha_param = Q_peak / kT_MeV - (A_sp(i_peak) / 4.0 - 1.0) * log(rho_cgs * avo / (T9 * T9 * sqrt(T9) * 1.0e27));
 
     double f_heavy;
     if (saha_param > 30.0) {
@@ -696,9 +705,9 @@ KOKKOS_INLINE_FUNCTION void nuclear_nse_composition(double rho_cgs, double T9, d
     X_out[i_peak]      = f_heavy;
 
     if (f_heavy > 0.01 && f_heavy < 0.99) {
-        double Q_fe52 = BE_per_A[NUCLEAR_FE52] * A_species[NUCLEAR_FE52]
-                      - (A_species[NUCLEAR_FE52] / 4.0) * BE_per_A[NUCLEAR_HE4] * 4.0;
-        double saha_fe52 = Q_fe52 / kT_MeV - (A_species[NUCLEAR_FE52] / 4.0 - 1.0)
+        double Q_fe52 = nuclear_aprox13_BE_per_A(NUCLEAR_FE52) * A_sp(NUCLEAR_FE52)
+                      - (A_sp(NUCLEAR_FE52) / 4.0) * nuclear_aprox13_BE_per_A(NUCLEAR_HE4) * 4.0;
+        double saha_fe52 = Q_fe52 / kT_MeV - (A_sp(NUCLEAR_FE52) / 4.0 - 1.0)
                          * log(rho_cgs * avo / (T9 * T9 * sqrt(T9) * 1.0e27));
         double f_fe52 = 1.0 / (1.0 + exp(-saha_fe52));
 
