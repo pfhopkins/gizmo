@@ -472,6 +472,58 @@ template <typename Spec>
 constexpr bool nlr_spec_has_set_oracle_brute_pass_v =
     nlr_spec_has_set_oracle_brute_pass<Spec>::value;
 
+/* SFINAE detection of optional Spec::bind_active_to_eval_context.
+ *
+ * A Spec whose ActiveData carries rank-local context fields (rank-local
+ * pointers like P_base / CellP_base, rank-local index bounds, gas-delta
+ * write targets, the oracle_dry_run flag — anything that depends on which
+ * eval pass / which rank is doing the walk) MUST define this hook. The
+ * runner invokes it for every active right before pair_kernel inside
+ * evaluate_pairs_post_drift, so the active's rank-local + eval-pass-local
+ * snapshots are refreshed to the eval ctx in use.
+ *
+ * Signature: static void Spec::bind_active_to_eval_context(
+ *                                  const DeviceContext& eval_ctx,
+ *                                  ActiveData& active);
+ *
+ * Why per-eval-pass (not just per-flatten on the receiver):
+ *   - PEER-eval correctness on a remote rank: ActiveData arrived via MPI
+ *     envelope carrying the SENDER's rank-local snapshots; receiver must
+ *     overwrite with its own values.
+ *   - Oracle correctness on ANY rank: the runner's oracle paths (inline
+ *     compare / iterative dual) build a LOCAL ctx_oracle_* by copying ctx
+ *     and flipping oracle_dry_run via set_oracle_brute_pass — but the
+ *     ActiveData snapshot taken at load_active still carries the OLD
+ *     oracle_dry_run. Without per-eval-pass binding, pair_kernel sees
+ *     oracle_dry_run=false on the brute pass too, j-side writes fire
+ *     twice, and the oracle silently reports no mismatch (atomic-min is
+ *     idempotent; atomic-add doubles → 2× coupling). Codex flagged this
+ *     gap 2026-05-20 after the initial rebind-only fix.
+ *
+ * Specs whose ActiveData is purely physical (pos/vel/mass/scalars only) do
+ * NOT need this hook; the trait returns false and the runner skips the call.
+ *
+ * Incident: MechFBActiveState (galaxy_sf/mechfb_loop.h:54) embeds P_base,
+ * CellP_base, LocalGasMechFBInfoTemp, d_gas_iter, num_local_gas,
+ * num_local_particles, oracle_dry_run — all rank-local or eval-pass-local.
+ * Ship-then-deref on the peer caused np=2 wind_singlestar SIGSEGV in
+ * mechanical_fb_pair_kernel during PEER eval. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_bind_active_to_eval_context : std::false_type {};
+
+template <typename Spec>
+struct nlr_spec_has_bind_active_to_eval_context<
+    Spec,
+    std::void_t<decltype(Spec::bind_active_to_eval_context(
+        std::declval<const typename Spec::DeviceContext&>(),
+        std::declval<typename Spec::ActiveData&>()))>>
+    : std::true_type {};
+
+template <typename Spec>
+constexpr bool nlr_spec_has_bind_active_to_eval_context_v =
+    nlr_spec_has_bind_active_to_eval_context<Spec>::value;
+
+
 /* nlr_spec_symmetric_j_radius_scale — optional Spec hook.
  *
  * A Spec whose SYMMETRIC search must reach scaled-j neighbors (effective
