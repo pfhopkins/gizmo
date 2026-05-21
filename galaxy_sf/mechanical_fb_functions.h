@@ -212,8 +212,7 @@ static void inject_cosmic_rays_into_delta(
 /* Host-side helpers for the MechFBSpec runner-port (Phase 4 / Wave 3 / 3e.1
  * milestone 3). Defined in galaxy_sf/mechfb_loop.cc (single source of truth;
  * originally shared with the now-retired legacy mechanical_fb_gpu.cc
- * evaluator). All read host P (NOT All) so calling from a GPU TU with
- * `#define All All_dev` is safe. */
+ * evaluator). All read host P only — no All.* access from these helpers. */
 void mech_fb_local_fill(int i, int loop_iteration,
                          struct MechFBLocalIn *loc);
 void mech_fb_apply_aws_out(const struct MechFBOut *out,

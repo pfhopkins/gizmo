@@ -40,14 +40,8 @@
 #include <vector>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
-/* gpu_all_mirror.h: required because radfb_rp_loop.h's inline
- * radfb_rp_pair_kick calls rt_kappa (KOKKOS_INLINE_FUNCTION) which reads
- * All.* internally. The header's device-pass `#define All AllDeviceMirror`
- * makes that read resolve to this TU's local per-TU mirror. Host code
- * in this TU sees the normal host extern (the macro fires only during
- * the device compilation pass), so bare `All.*` is safe in host wrappers. */
-#include "../declarations/gpu_all_mirror.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/constants.h"           /* UNIT_*_IN_* macros (host-side use only) */
 #include "../core/proto.h"

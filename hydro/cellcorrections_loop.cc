@@ -17,6 +17,7 @@
 #include <vector>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
@@ -26,14 +27,6 @@
 #include "../mesh/neighbor_list.h"     /* gizmo_sym_* globals (corridor CSR view) */
 #include "hydro_corridor.h"             /* mode + external_csr accessors */
 #include "cellcorrections_loop.h"
-
-/* Note: do NOT include declarations/gpu_all_mirror.h here. That header
- * transitively pulls in declarations/macros.h (via global_data_all_struct.h)
- * which defines a `terminate(x)` macro; if it precedes allvars.h's
- * `<vector>` → `<exception>` chain, libc++ `void terminate() _NOEXCEPT`
- * gets macro-mangled. Existing Spec _loop.cc files (thermal_fb, sink_env1,
- * density) follow this pattern — All-mirror registration is auto-via global
- * constructor in cooling/cooling.cc, no explicit per-TU include needed. */
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 

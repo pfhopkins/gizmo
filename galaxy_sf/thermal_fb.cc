@@ -10,6 +10,7 @@
  * and our other GPU TUs. Made unconditional rather than gated on
  * GALSF_FB_THERMAL so the include order is uniform in both Config branches. */
 #include <Kokkos_Core.hpp>
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"   /* MUST precede thermal_fb_loop.h below — kernel.h

@@ -25,6 +25,7 @@
 #include <vector>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"            /* MUST precede grain_physics_loop.h (no include guards) */

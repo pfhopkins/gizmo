@@ -35,6 +35,7 @@
 #include <cmath>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../core/proto.h"
@@ -57,9 +58,10 @@ double SinkSwkSpec::search_radius(const neighbor_loop_args& args,
 SinkSwkSpec::CallScalars
 SinkSwkSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
-    /* MUST go through nlr_host_all_ptr() — this TU has `#define All All_dev`
-     * active via gpu_all_mirror.h, and the per-TU All_dev is unsynced. See
-     * neighbor_loop_runner.h doc on nlr_host_all_ptr(). */
+    /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. Under
+     * 93897f62 the redirect is device-pass-only, so bare All.* in this host
+     * hook would also be correct; the accessor documents that these reads
+     * run on the host pass. */
     const struct global_data_all_processes *h = nlr_host_all_ptr();
     CallScalars scalars;
     scalars.common                   = nlr_common_scalars_from_all();

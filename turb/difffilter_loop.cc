@@ -8,8 +8,7 @@
  * apply_active_writeback, merge_accum, compare_accum, set_oracle_brute_pass,
  * symmetric_neighbor_radius_scale, and the toplevels.
  *
- * Host-hooks TU — mirrors dm_dispersion_loop.cc: no gpu_all_mirror.h; All.*
- * reads route through nlr_host_all_ptr(). Replaces turb/difffilter_gpu.cc.
+ * Replaces turb/difffilter_gpu.cc.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
@@ -20,6 +19,7 @@
 #include <cmath>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"            /* MUST precede difffilter_loop.h (no include guards) */

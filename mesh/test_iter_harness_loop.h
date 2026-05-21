@@ -207,8 +207,9 @@ struct IterHarnessSpec {
 
     /* ============ Hooks ============ */
     static CallScalars populate_call_scalars(const neighbor_loop_args& /*args*/) {
-        /* Must use nlr_host_all_ptr() — this hook is instantiated in
-         * neighbor_loop_runner.cc which has `#define All All_dev` active. */
+        /* Uses nlr_host_all_ptr() for explicit host-snapshot intent. Under
+         * 93897f62 the device-pass redirect is gated on __CUDA_ARCH__, so
+         * bare All.* in this host hook would also be correct. */
         const struct global_data_all_processes *h = nlr_host_all_ptr();
         CallScalars cs{};
         cs.common.cf_atime = h->cf_atime;

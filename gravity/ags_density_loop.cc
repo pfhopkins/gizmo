@@ -33,6 +33,7 @@
 #include <cmath>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../core/proto.h"
@@ -94,12 +95,11 @@ double AgsDensitySpec::search_radius(const neighbor_loop_args& args,
  * by value (captured into the device lambda via the runner's
  * trivially-copyable CallScalars staging).
  *
- * MUST go through nlr_host_all_ptr() (or nlr_common_scalars_from_all()) —
- * NEVER bare `All`. This TU has `#define All All_dev` active via
- * gpu_all_mirror.h, and the per-TU All_dev is unsynced. Documented in
- * neighbor_loop_runner.h. Bug originally surfaced here via codex round-10
- * trace (AGS_DesNumNgb=0 → bisection inversion → radius collapse →
- * endrun(888)). */
+ * Uses nlr_host_all_ptr() for explicit host-snapshot intent — the underlying
+ * macro redirect retired in 93897f62 (now device-pass-only), but the
+ * accessor convention documents which side of host/device this read lives
+ * on. Bug originally surfaced here via codex round-10 trace (AGS_DesNumNgb=0
+ * → bisection inversion → radius collapse → endrun(888)). */
 AgsDensitySpec::CallScalars
 AgsDensitySpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
@@ -776,10 +776,11 @@ void ags_density(void)
     CPU_Step[CPU_MISC] += measure_time();
     double t00_truestart = my_second();
 
-    /* Canonical host All accessor. Required even after this TU dropped
-     * gpu_all_mirror.h: keeps reads durable against any future include
-     * topology drift, per the NLR host-All-accessor rule (commit 781ecfb2).
-     * Used at three sites below outside Spec::populate_call_scalars. */
+    /* Canonical host All accessor — stylistic intent-tag for host-snapshot
+     * reads in this scope. Under 93897f62 the redirect is device-pass-only,
+     * so bare All.* would also be correct here; the accessor documents that
+     * these reads run on the host pass. Used at three sites below outside
+     * Spec::populate_call_scalars. */
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
 
     /* (2) AGS_Prev[] alloc + per-active pre-loop init. AGS_Prev[] is used

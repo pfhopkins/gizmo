@@ -48,9 +48,9 @@ void thermal_fb_local_fill(int i,
                             struct gas_cell_data *CellP_host,
                             struct ThermalFBLocalIn *loc);
 /* Per-call cosmology + run-invariant unit conversion factors. Routes All.*
- * reads through nlr_host_all_ptr() — safe from GPU TUs that have
- * `#define All All_dev` active (e.g. neighbor_loop_runner.cc) and from
- * plain-host TUs. SSOT — Spec::populate_call_scalars forwards here. */
+ * reads through nlr_host_all_ptr() for explicit host-snapshot intent;
+ * correct from any TU under the 93897f62 device-pass-only redirect. SSOT —
+ * Spec::populate_call_scalars forwards here. */
 ThermalFBCallScalars thermal_fb_build_call_scalars(void);
 
 /* ============================================================================

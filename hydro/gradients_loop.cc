@@ -31,6 +31,7 @@
 #include <vector>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
@@ -43,13 +44,6 @@
 #include "hydro_corridor.h"                   /* mode + external_csr accessors */
 #include "compute_finitevol_faces_functions.h"
 #include "gradients_loop.h"
-
-/* Note: do NOT include declarations/gpu_all_mirror.h here. That header
- * transitively pulls in declarations/macros.h's `terminate(x)` macro before
- * allvars.h's <vector> → <exception> chain — libc++ `terminate()` gets
- * mangled. Same trap as cellcorrections_loop.cc. All-mirror registration
- * is auto-via the global constructor in cooling/cooling.cc; no per-TU
- * include required. */
 
 /* MAX/MIN macros mirroring the legacy preset versions from
  * hydro/gradients.cc (mode parameter ignored — these are the symmetric

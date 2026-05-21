@@ -31,6 +31,7 @@
 #include <cmath>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/step_phases.h"
@@ -45,12 +46,6 @@
 #include "hydro_corridor.h"
 #include "hydro_force_loop.h"
 
-/* Note: do NOT include declarations/gpu_all_mirror.h here. That header
- * transitively pulls in declarations/macros.h's `terminate(x)` macro before
- * allvars.h's <vector> -> <exception> chain — libc++ terminate() gets
- * macro-mangled. Same trap as cellcorrections_loop.cc / gradients_loop.cc.
- * All-mirror registration is auto-via the global constructor in
- * cooling/cooling.cc; no per-TU include needed. */
 
 /* External symbol exposed by the legacy hydro_force toplevel that the new
  * toplevel below replaces. NeedToWakeupParticles_local is the global

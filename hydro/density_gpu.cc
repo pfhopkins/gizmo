@@ -10,7 +10,8 @@
  * — gradients now live in hydro/gradients_loop.{h,cc}.
  *
  * Architecture follows the cooling.cc pattern:
- *   - __managed__ All_dev with #define All All_dev for GPU global access
+ *   - declarations/gpu_all_mirror.h provides static __managed__ AllDeviceMirror
+ *     per TU with device-pass `#define All AllDeviceMirror` redirect (93897f62)
  *   - Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE> for device-accessible data
  *   - CPU gather → GPU kernel → CPU scatter
  *

@@ -1597,13 +1597,11 @@ extern "C" int gpu_gravtree_walk_primary(void)
     /* Phase 7+ sub-bucket timing — env-gated; no-op when GIZMO_VERBOSE_DIAG off. */
     double t_grv_start = my_second();
     /* Codex 2026-05-12 v2 (post-dbg27): host-side wrapper in GPU TU must
-     * use the OUT-OF-LINE host accessor `gizmo_host_ti_current()` (defined
-     * in core/predict.cc). The inline `gizmo_gpu_host_all_ptr()` accessor
-     * defined in gpu_all_mirror.h proved UNRELIABLE under nvcc_wrapper —
-     * dbg27 showed it returning the stale TU-local All_dev despite the
-     * push_macro/undef trick. The out-of-line accessor lives in a TU with
-     * no `#define All All_dev`, guaranteeing a real host read. See
-     * feedback_all_dev_trap_host_side.md (permanent memory). */
+     * use the out-of-line host accessor `gizmo_host_ti_current()` (defined
+     * in core/predict.cc). Retained as belt-and-suspenders documentation
+     * of host-snapshot intent for this call site; under 93897f62 the
+     * device-pass redirect is gated on __CUDA_ARCH__ so direct host reads
+     * are also correct. */
     integertime ti_curr_host = gizmo_host_ti_current();
     move_particles(ti_curr_host); /* drifts all P[], invalidates arena */
     double t_grv_mp = my_second();

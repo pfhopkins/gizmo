@@ -22,6 +22,7 @@
 #include <vector>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../declarations/gpu_numeric_macros.h"
 #include "../declarations/constants.h"           /* UNIT_*_IN_* macros (host-side use here only) */
@@ -74,12 +75,12 @@ double ThermalFBSpec::search_radius(const neighbor_loop_args& args,
 }
 
 /* thermal_fb_build_call_scalars — SSOT for the per-call cosmology + unit-
- * conversion struct. Reads `All.*` exclusively via the canonical
- * nlr_host_all_ptr() accessor (see feedback_all_dev_trap_host_side: bare
- * All.* in any GPU/Spec TU may resolve to a stale per-TU All_dev mirror under
- * nvcc_wrapper, even when this TU itself doesn't `#define All All_dev`). The
- * kernel reads NO `All.*` and NO `UNIT_*` macros — all such reads route
- * through scalars. SSOT — single owner is Spec::populate_call_scalars. */
+ * conversion struct. Routes `All.*` reads through nlr_host_all_ptr() as
+ * stylistic intent-tagging for host-snapshot semantics (under 93897f62 the
+ * device-pass redirect is gated on __CUDA_ARCH__, so bare host reads are
+ * also correct). The kernel reads NO `All.*` and NO `UNIT_*` macros — all
+ * such reads route through scalars. SSOT — single owner is
+ * Spec::populate_call_scalars. */
 ThermalFBCallScalars thermal_fb_build_call_scalars(void)
 {
     const struct global_data_all_processes *h = nlr_host_all_ptr();

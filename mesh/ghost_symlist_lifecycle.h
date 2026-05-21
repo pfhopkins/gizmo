@@ -20,11 +20,10 @@ extern void gpu_build_symmetric_neighbor_list(struct particle_data *P, int num_t
     int *active_indices, int num_active, neighbor_list_t *out,
     double search_radius_factor);
 
-/* Codex 2026-05-12: forward declaration of the out-of-line host All
- * accessor (defined in core/predict.cc). This header is included by GPU
- * TUs where `#define All All_dev` poisons bare All.* reads. The static
- * inline helpers below MUST route any All.* access through this accessor.
- * See feedback_all_dev_trap_host_side.md. */
+/* Forward declaration of the out-of-line host All accessor (defined in
+ * core/predict.cc). Retained as a stylistic intent-tag for host-snapshot
+ * reads — under 93897f62 the device-pass redirect is gated on
+ * __CUDA_ARCH__, so bare All.* in host code is also correct. */
 #ifdef __cplusplus
 extern "C" {
 #endif

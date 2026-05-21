@@ -30,6 +30,7 @@
  * include. Required because sink_env1_loop.h emits Kokkos::atomic_min
  * inline under SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. */
 #include <Kokkos_Core.hpp>
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede sink_env1_loop.h */

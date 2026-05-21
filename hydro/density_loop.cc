@@ -8,12 +8,14 @@
  * Written by Phil Hopkins (phopkins@caltech.edu) and Claude for GIZMO.
  */
 
+#include <mpi.h>            /* MPI_Datatype used in declarations/typedefs.h via gpu_all_mirror.h's transitive include */
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
 #include <vector>
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"               /* MUST precede density_loop.h */

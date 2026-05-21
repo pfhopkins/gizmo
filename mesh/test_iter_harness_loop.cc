@@ -22,8 +22,10 @@
  * pattern): allvars.h pulls in macros.h which #defines `terminate(...)`,
  * conflicting with std::terminate() in <exception> that Kokkos_Core transitively
  * includes. */
+#include <mpi.h>            /* MPI_Datatype used in declarations/typedefs.h via gpu_all_mirror.h's transitive include */
 #include <Kokkos_Core.hpp>
 
+#include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
 
 #ifdef GIZMO_NLR_ITER_HARNESS_TEST
@@ -32,7 +34,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdarg>
-#include <mpi.h>
 #include "../core/proto.h"               /* my_second, move_particles, ghost_exchange, ghost_exchange_cleanup */
 #include "test_iter_harness_loop.h"
 #include "neighbor_loop_runner.h"
