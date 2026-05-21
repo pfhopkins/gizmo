@@ -31,21 +31,6 @@
 
 #ifdef SINK_PARTICLES
 
-/* ----------------------------------------------------------------------------
- * Compile-time guard: SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES requires a per-j
- * eligibility flag (`is_star_eligible_for_binary_merge_away(j)`) that is
- * computed on the host and shipped to the device as a UVM array. The legacy
- * sink_feed_gpu.cc allocated `sink_binary_merge_eligible_host[num_all]` and
- * passed it to the kernel. Wiring this through the runner needs an
- * additional UVM pointer in SinkFeedDeviceContext (parallel to
- * per_active_local) plus per-particle host-side fill in
- * populate_device_context. Defer until enabled. Mirror of sink_env1_loop.h's
- * similar guard for SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS.
- * --------------------------------------------------------------------------*/
-#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
-#error "SinkFeedSpec: SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES requires extending SinkFeedDeviceContext with a per-particle eligibility array allocation + populate_device_context fill. Add the extension before enabling this flag with the runner-driven sink_feed."
-#endif
-
 /* (Kokkos_Core.hpp pulled in above the SINK_PARTICLES guard for stdlib-
  * header ordering — see comment at top of file.) */
 
@@ -122,6 +107,11 @@ struct SinkFeedLocalIn {
 #ifdef SINK_ALPHADISK_ACCRETION
     MyFloat Sink_Mass_Reservoir;
 #endif
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    /* Per-source eligibility for binary-merge-away. Filled host-side in
+     * sink_feed_fill_local via is_star_eligible_for_binary_merge_away(i). */
+    int Sink_eligible_for_binary_merge_away;
+#endif
 #ifdef SINK_CALC_LOCAL_ANGLEWEIGHTS
     Vec3<MyFloat> Jgas_in_Kernel;
 #endif
@@ -180,6 +170,18 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
                                                   suppresses j-side atomic writes when true.
                                                   Default-initialised to false in
                                                   populate_device_context. */
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    /* UVM, length ctx.num_total. Same index space as ctx.P[j] — covers
+     * local + imported-ghost slots after the Mode-A ghost-import step
+     * (which appends ghosts to global P[] and grows NumPart BEFORE
+     * populate_device_context fires; see runner.cc Mode-A entry ordering).
+     * 1 iff P[j].Type==5 && is_star_eligible_for_binary_merge_away(j).
+     * Allocated INDEPENDENTLY of num_active: Mode B remote responder ranks
+     * with N==0 still walk this rank's local pool for peer queries (per
+     * runner.cc "Every rank participates even if N == 0") and load_neighbor
+     * reads dctx.binary_merge_eligible[j] regardless of N. */
+    const unsigned char *binary_merge_eligible;
+#endif
 };
 
 /* ============================================================================
@@ -236,7 +238,11 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
                                   SinkFeedOut& out,
-                                  bool oracle_dry_run)
+                                  bool oracle_dry_run
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+                                  , unsigned char neighbor_binary_merge_eligible
+#endif
+                                  )
 {
     const SinkFeedLocalIn& local       = active.local;
     const SinkFeedCallScalars& scalars = active.scalars;
@@ -316,6 +322,9 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
         if(((local.ID != neighbor_particle.ID) || (r2 > 0)) &&
            (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
+            /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda
+             * const-prop bug on int gate vars assigned conditionally —
+             * "allow_sink_merger" is a named known-vulnerable case). */
             volatile int allow_sink_merger = 1;
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
@@ -324,8 +333,28 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                (neighbor_particle.ID > local.ID))                      allow_sink_merger = 0;
             double max_rmerge = 1.0 * sink_radius;
             double max_mmerge = 10. * neighbor_particle.Sink_Formation_Mass;
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+            /* MERGE_AWAY: helper folds the eligibility checks + extends
+             * max_rmerge by softening / kernel-radius / orbital-period
+             * floors, and overrides max_mmerge to 10 * neighbor.Mass.
+             * Replaces the unconditional sink_check_boundedness_gpu gate
+             * (the legacy CPU path also drops the boundedness check
+             * when MERGE_AWAY is on — see legacy sink_feed.cc:216-227). */
+            sink_apply_binary_merge_away_limits(local.Sink_eligible_for_binary_merge_away,
+                                                (int)neighbor_binary_merge_eligible,
+                                                soft_j,
+                                                (double)local.KernelRadius,
+                                                (double)neighbor_particle.KernelRadius,
+                                                (double)local.Mass,
+                                                (double)neighbor_particle.Mass,
+                                                sink_radius,
+                                                &allow_sink_merger,
+                                                &max_rmerge, &max_mmerge,
+                                                scalars.common.cf_atime);
+#else
             if(!sink_check_boundedness_gpu(neighbor_particle, cell_ref,
                                            vrel, vesc, r, sink_radius)) allow_sink_merger = 0;
+#endif
             if(r >= max_rmerge)                  allow_sink_merger = 0;
             if(neighbor_particle.Mass > max_mmerge) allow_sink_merger = 0;
             if(allow_sink_merger == 1)
@@ -503,6 +532,11 @@ struct SinkFeedSpec {
         bool oracle_dry_run;                     /* propagated from ctx by load_neighbor;
                                                     pair body suppresses j-side atomic
                                                     writes when true (oracle brute pass). */
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+        unsigned char binary_merge_eligible;    /* propagated from ctx.binary_merge_eligible[j]
+                                                   by load_neighbor; passed through to the
+                                                   merge-away helper in the pair body. */
+#endif
     };
 
     /* Per-active aux passed by caller through args.aux. The Aux struct
@@ -587,6 +621,9 @@ struct SinkFeedSpec {
         neighbor.neighbor_particle = &dctx.P[j];
         neighbor.neighbor_cell     = (dctx.CellP && dctx.P[j].Type == 0) ? &dctx.CellP[j] : nullptr;
         neighbor.oracle_dry_run    = dctx.oracle_dry_run;
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+        neighbor.binary_merge_eligible = dctx.binary_merge_eligible[j];
+#endif
         return neighbor;
     }
 
@@ -611,7 +648,11 @@ struct SinkFeedSpec {
     {
         sink_feed_pair_kernel(active, *neighbor.neighbor_particle,
                               neighbor.neighbor_cell, accum,
-                              neighbor.oracle_dry_run);
+                              neighbor.oracle_dry_run
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+                              , neighbor.binary_merge_eligible
+#endif
+                              );
     }
 
     static void apply_active_writeback(const neighbor_loop_args& args,

@@ -98,6 +98,17 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
 }
 
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+/* cf_atime is threaded as a parameter (NOT read from All.cf_atime inline)
+ * so the helper is safely callable from a device kernel — TRAP 1 (no
+ * bare All.* in KOKKOS_INLINE_FUNCTION bodies). The caller in the runner
+ * pair body passes scalars.common.cf_atime which was captured in
+ * populate_call_scalars on the host.
+ *
+ * allow_sink_merger is `volatile int *` to match the caller's local
+ * `volatile int allow_sink_merger` — required per [[feedback_gpu]] §D.3
+ * to defeat the nvc++ device-lambda const-propagation bug on int gate
+ * vars assigned conditionally. The named instance "allow_sink_merger"
+ * is one of the known-vulnerable cases in that section's table. */
 KOKKOS_INLINE_FUNCTION
 static void sink_apply_binary_merge_away_limits(int local_eligible,
                                                 int neighbor_eligible,
@@ -107,9 +118,10 @@ static void sink_apply_binary_merge_away_limits(int local_eligible,
                                                 double local_mass,
                                                 double neighbor_mass,
                                                 double sink_radius,
-                                                int *allow_sink_merger,
+                                                volatile int *allow_sink_merger,
                                                 double *max_rmerge,
-                                                double *max_mmerge)
+                                                double *max_mmerge,
+                                                double cf_atime)
 {
     if(local_eligible == 0) *allow_sink_merger = 0;
     if(neighbor_eligible == 0) *allow_sink_merger = 0;
@@ -119,7 +131,7 @@ static void sink_apply_binary_merge_away_limits(int local_eligible,
     *max_rmerge = DMIN(*max_rmerge, 10. * sink_radius);
     {
         double dt_min_orbit_yr = 100.;
-        double rmax_dt = 0.000485 / (All.cf_atime * UNIT_LENGTH_IN_PC) *
+        double rmax_dt = 0.000485 / (cf_atime * UNIT_LENGTH_IN_PC) *
             pow(((neighbor_mass + local_mass) * UNIT_MASS_IN_SOLAR / 100.) *
                 (dt_min_orbit_yr * dt_min_orbit_yr / (100. * 100.)), 1./3.);
         *max_rmerge = DMAX(*max_rmerge, rmax_dt);

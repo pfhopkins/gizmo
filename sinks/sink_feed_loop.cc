@@ -146,30 +146,67 @@ void SinkFeedSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
 void SinkFeedSpec::populate_device_context(const neighbor_loop_args& args,
                                             DeviceContext& ctx)
 {
-    /* Oracle dry-run flag defaults off; runner flips on for the brute pass
-     * via Spec::set_oracle_brute_pass, which reads/writes a copied ctx. */
-    ctx.oracle_dry_run = false;
+    /* Null all UVM pointers BEFORE any early-return so cleanup is safe on
+     * every path. Oracle dry-run flag defaults off; runner flips on for
+     * the brute pass via Spec::set_oracle_brute_pass on a copied ctx. */
+    ctx.oracle_dry_run    = false;
+    ctx.per_active_local  = nullptr;
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    ctx.binary_merge_eligible = nullptr;
+#endif
 
     Aux *aux = nlr_aux<SinkFeedSpec>(args);
     const int N = args.num_active;
-    if(N <= 0) {
-        ctx.per_active_local = nullptr;
-        return;
+    if(N > 0) {
+        SinkFeedLocalIn *uvm = (SinkFeedLocalIn *)
+            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkFeedLocalIn));
+        std::memcpy(uvm, aux->host_locals, N * sizeof(SinkFeedLocalIn));
+        ctx.per_active_local = uvm;
     }
-    SinkFeedLocalIn *uvm = (SinkFeedLocalIn *)
-        Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(N * sizeof(SinkFeedLocalIn));
-    std::memcpy(uvm, aux->host_locals, N * sizeof(SinkFeedLocalIn));
-    ctx.per_active_local = uvm;
+
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    /* binary_merge_eligible is sized ctx.num_total — same index space as
+     * ctx.P[j]. Covers local + imported-ghost slots (Mode-A ghost-import
+     * appends ghosts to global P[] BEFORE this hook runs). Gated
+     * INDEPENDENTLY of args.num_active: Mode-B-remote responder ranks
+     * with N==0 still walk this rank's local pool for peer queries and
+     * load_neighbor reads dctx.binary_merge_eligible[j]. The fill loop
+     * uses global P[j] (not ctx.P[j]) to remain consistent with
+     * is_star_eligible_for_binary_merge_away(j), which itself reads
+     * global P[j]. Mode-A post-import invariant (NumPart == ctx.num_total,
+     * P grown to include ghosts) guarantees safety. */
+    const int n_total = ctx.num_total;
+    if(n_total > 0) {
+        unsigned char *elig = (unsigned char *)
+            Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(
+                (size_t)n_total * sizeof(unsigned char));
+        for(int j = 0; j < n_total; j++) {
+            elig[j] = (P[j].Type == 5
+                       && is_star_eligible_for_binary_merge_away(j)) ? 1 : 0;
+        }
+        ctx.binary_merge_eligible = elig;
+    }
+#endif
 }
 
 void SinkFeedSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
                                            DeviceContext& ctx)
 {
+    /* Free each pointer independently; null after free so a second
+     * cleanup (defensive — runner only invokes cleanup once per dispatch)
+     * would be a no-op. */
     if(ctx.per_active_local) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(
             const_cast<SinkFeedLocalIn *>(ctx.per_active_local));
         ctx.per_active_local = nullptr;
     }
+#ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
+    if(ctx.binary_merge_eligible) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(
+            const_cast<unsigned char *>(ctx.binary_merge_eligible));
+        ctx.binary_merge_eligible = nullptr;
+    }
+#endif
 }
 
 /* ============================================================================
