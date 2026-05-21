@@ -244,17 +244,7 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(sink_feed)
 #endif
 GHOST_WRITEBACK_BUNDLE_END(sink_feed)
 
-void SinkFeedSpec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                               const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("sink_feed");
-}
-
-void SinkFeedSpec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                             const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (loop_name = "sink_feed"). */
 
 void SinkFeedSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)

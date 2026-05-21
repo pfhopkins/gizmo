@@ -312,17 +312,7 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(ags_force)
 GHOST_WRITEBACK_BUNDLE_END(ags_force)
 
 
-void AgsForceSpec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                                const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("ags_force");
-}
-
-void AgsForceSpec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                              const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (loop_name = "ags_force"). */
 
 void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                            const NeighborLoopPlan& /*plan*/)

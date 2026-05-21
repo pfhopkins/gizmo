@@ -388,10 +388,7 @@ struct AgsForceSpec {
     static constexpr bool uses_ghost_write_detector = true;
     static constexpr bool uses_ghost_writeback      = true;
 
-    static void ghost_write_detector_begin (const neighbor_loop_args&,
-                                             const NeighborLoopPlan&);
-    static void ghost_write_detector_end   (const neighbor_loop_args&,
-                                             const NeighborLoopPlan&);
+    /* ghost_write_detector_begin/end: runner default (loop_name = "ags_force"). */
     static void ghost_writeback_begin      (const neighbor_loop_args&,
                                              const NeighborLoopPlan&);
     static void ghost_writeback_end        (const neighbor_loop_args&,

@@ -305,6 +305,11 @@ struct SinkEnv1Spec {
     /* (1) Loop identity. Drives env-var prefixes (GIZMO_SINK_ENV1_*) and
      *     PHASE0_NLR `loop=` field. */
     static constexpr const char *loop_name = "sink_env1";
+    /* Legacy detector label preserved; differs from loop_name. Predates the
+     * runner-template loop_name convention. Without this, the runner default
+     * would label this Spec's detector "sink_env1" instead of the historical
+     * "sink_environment", silently changing diagnostic output. */
+    static constexpr const char *ghost_write_detector_name = "sink_environment";
 
     /* (2) Search policy. */
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
@@ -386,10 +391,9 @@ struct SinkEnv1Spec {
      *   ghost_write_detector_end
      *   ghost_exchange_cleanup               (in runner; NTask>1 only)
      */
-    static void ghost_write_detector_begin (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
-    static void ghost_write_detector_end   (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
+    /* ghost_write_detector_begin/end use the runner default
+     * (::ghost_write_detector_begin(ghost_write_detector_name) /
+     * ::ghost_write_detector_end()) — no Spec hook needed. */
     static void ghost_writeback_begin      (const struct neighbor_loop_args&,
                                              const struct NeighborLoopPlan&);
     static void ghost_writeback_end        (const struct neighbor_loop_args&,

@@ -2371,23 +2371,49 @@ struct nlr_has_hook_gwb_end<Spec,
                                        std::declval<const NeighborLoopPlan&>()))>
     : std::true_type {};
 
+/* Optional label override: Spec::ghost_write_detector_name. Absent ⇒ runner
+ * default labels the detector with Spec::loop_name. Used for the two
+ * sink_env Specs whose detector labels predate the runner-template loop_name
+ * convention and need to be preserved. */
+template <typename Spec, typename = void>
+struct nlr_has_ghost_write_detector_name : std::false_type {};
+template <typename Spec>
+struct nlr_has_ghost_write_detector_name<Spec, decltype((void)Spec::ghost_write_detector_name)>
+    : std::true_type {};
+
+template <typename Spec>
+static constexpr const char *nlr_ghost_write_detector_name()
+{
+    if constexpr (nlr_has_ghost_write_detector_name<Spec>::value) {
+        return Spec::ghost_write_detector_name;
+    } else {
+        return Spec::loop_name;
+    }
+}
+
 /* Dispatch wrappers. Each gates on:
  *   (a) `uses_*` trait true (Spec opted in)
  *   (b) `nlr_path_uses_imported_ghosts(plan.path)` — for SinkEnv1Spec these
  *        hooks are imported-ghost-only per Stage 2c audit. The path gate
  *        IS the policy; the hook trait is the Spec opt-in.
- *   (c) hook method exists (SFINAE; absent ⇒ silent no-op).
- * Future Specs that need a different gating may add their own dispatch
- * helpers; this set covers SinkEnv1Spec E1. */
+ *   (c) hook method exists (SFINAE) — present ⇒ Spec custom hook fires;
+ *        absent ⇒ runner default fires (::ghost_write_detector_begin(name)
+ *        / ::ghost_write_detector_end()). The dispatcher enforces that
+ *        begin/end hook presence is symmetric: defining begin without end
+ *        (or vice versa) is a compile error, not a half-default. */
 
 template <typename Spec>
 static void nlr_dispatch_ghost_write_detector_begin(const neighbor_loop_args& args,
                                                     const NeighborLoopPlan& plan)
 {
     if constexpr (nlr_uses_ghost_write_detector_v<Spec>()) {
+        static_assert(nlr_has_hook_gwd_begin<Spec>::value == nlr_has_hook_gwd_end<Spec>::value,
+                      "Spec must define both ghost_write_detector_begin/end or neither");
         if(nlr_path_uses_imported_ghosts(plan.path)) {
             if constexpr (nlr_has_hook_gwd_begin<Spec>::value) {
                 Spec::ghost_write_detector_begin(args, plan);
+            } else {
+                ::ghost_write_detector_begin(nlr_ghost_write_detector_name<Spec>());
             }
         }
     }
@@ -2397,9 +2423,13 @@ static void nlr_dispatch_ghost_write_detector_end(const neighbor_loop_args& args
                                                   const NeighborLoopPlan& plan)
 {
     if constexpr (nlr_uses_ghost_write_detector_v<Spec>()) {
+        static_assert(nlr_has_hook_gwd_begin<Spec>::value == nlr_has_hook_gwd_end<Spec>::value,
+                      "Spec must define both ghost_write_detector_begin/end or neither");
         if(nlr_path_uses_imported_ghosts(plan.path)) {
             if constexpr (nlr_has_hook_gwd_end<Spec>::value) {
                 Spec::ghost_write_detector_end(args, plan);
+            } else {
+                ::ghost_write_detector_end();
             }
         }
     }

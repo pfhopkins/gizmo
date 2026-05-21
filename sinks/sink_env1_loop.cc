@@ -196,17 +196,8 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(sink_env1)
      * appropriate physics flag #ifdef. */
 GHOST_WRITEBACK_BUNDLE_END(sink_env1)
 
-void SinkEnv1Spec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                               const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("sink_environment");
-}
-
-void SinkEnv1Spec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                             const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (see sink_env1_loop.h
+ * ghost_write_detector_name override). */
 
 void SinkEnv1Spec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)

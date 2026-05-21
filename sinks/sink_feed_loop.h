@@ -557,10 +557,8 @@ struct SinkFeedSpec {
     static constexpr bool uses_ghost_write_detector = true;
     static constexpr bool uses_ghost_writeback      = true;
 
-    static void ghost_write_detector_begin (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
-    static void ghost_write_detector_end   (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
+    /* ghost_write_detector_begin/end: runner default (calls
+     * ::ghost_write_detector_begin(loop_name) / ::ghost_write_detector_end()). */
     static void ghost_writeback_begin      (const struct neighbor_loop_args&,
                                              const struct NeighborLoopPlan&);
     static void ghost_writeback_end        (const struct neighbor_loop_args&,

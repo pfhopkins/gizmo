@@ -247,17 +247,7 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(rtsrcinjection)
 #endif
 GHOST_WRITEBACK_BUNDLE_END(rtsrcinjection)
 
-void RtSrcInjectionSpec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                                      const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("rtsrcinjection");
-}
-
-void RtSrcInjectionSpec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                                    const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (loop_name = "rtsrcinjection"). */
 
 void RtSrcInjectionSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                                  const NeighborLoopPlan& /*plan*/)

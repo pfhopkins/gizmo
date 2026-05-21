@@ -98,26 +98,11 @@ void SinkEnv2Spec::cleanup_device_context(const neighbor_loop_args& /*args*/,
     }
 }
 
-/* ============================================================================
- * GHOST-DETECTOR LIFECYCLE
- *
- * sink_env2 is a pure aggregator; the detector audits that no kernel
- * write to imported ghosts occurred (mirrors sink_env1 + the legacy
- * sink_environment.cc:210 ghost_write_detector_begin pair). No
- * ghost_writeback bundle (uses_ghost_writeback = false in the Spec).
- * ========================================================================== */
-
-void SinkEnv2Spec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                               const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("sink_environment_second");
-}
-
-void SinkEnv2Spec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                             const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default fires
+ * ::ghost_write_detector_begin("sink_environment_second") /
+ * ::ghost_write_detector_end() via the ghost_write_detector_name override
+ * in sink_env2_loop.h. sink_env2 has no ghost_writeback bundle
+ * (uses_ghost_writeback = false). */
 
 /* ============================================================================
  * DIAGNOSTICS — env-gated. Two MyFloat fields → byte-walk as MyFloat.

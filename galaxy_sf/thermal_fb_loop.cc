@@ -279,17 +279,7 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(thermalfb)
 #endif
 GHOST_WRITEBACK_BUNDLE_END(thermalfb)
 
-void ThermalFBSpec::ghost_write_detector_begin(const neighbor_loop_args& /*args*/,
-                                                 const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_begin("thermalfb");
-}
-
-void ThermalFBSpec::ghost_write_detector_end(const neighbor_loop_args& /*args*/,
-                                               const NeighborLoopPlan& /*plan*/)
-{
-    ::ghost_write_detector_end();
-}
+/* ghost_write_detector_begin/end: runner default (loop_name = "thermalfb"). */
 
 void ThermalFBSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                             const NeighborLoopPlan& /*plan*/)

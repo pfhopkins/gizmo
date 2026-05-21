@@ -187,10 +187,7 @@ struct HydroForceSpec
      *   ghost_write_detector_end.
      * Mode B skips these (no imported ghosts; j-writes land on owner rank
      * directly via request-driven P2P). Bodies in hydro_force_loop.cc. */
-    static void ghost_write_detector_begin(const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
-    static void ghost_write_detector_end  (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
+    /* ghost_write_detector_begin/end: runner default (loop_name = "hydro_force"). */
     static void ghost_writeback_begin     (const struct neighbor_loop_args&,
                                              const struct NeighborLoopPlan&);
     static void ghost_writeback_end       (const struct neighbor_loop_args&,

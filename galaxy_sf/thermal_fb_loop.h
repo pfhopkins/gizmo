@@ -272,12 +272,24 @@ struct ThermalFBSpec {
      * tuned so all valid stars fire at once) — max residual is ~1e-4 across
      * 24 slots. 1e-3 sits an order of magnitude above that, treating the
      * oracle as an "algorithmic parity" gate rather than a bit-precision gate
-     * (per codex review 2026-05-15). The legacy thermal_fb_pair_kernel had
-     * the same read/write self-dependence; the kernel-redesign needed to
-     * actually remove it (snapshot + delta accumulator across mass / density
-     * / metals / IE) is a real follow-up design item, NOT a quick port
-     * cleanup. Surfaced for Wave 3+ design queue (see
-     * OPEN_thermalfb_kernel_order_dependence_followup.md when authored). */
+     * (per codex review 2026-05-15).
+     *
+     * **This is physics-correct, NOT a deferred bug.** Phil 2026-05-21
+     * decision: scatter-feedback loops (thermal SNe, mechanical SNe, etc.)
+     * describe sequential physical events. Source N's mass loss / metal
+     * enrichment / energy injection genuinely changes the gas state that
+     * source N+1's deposit acts on; the order dependence is a property of
+     * the physics, not a numerics artifact. A "snapshot Pj.Mass / Cj.Density
+     * / Cj.InternalEnergy / Pj.Metallicity[*] + delta-accumulate +
+     * post-loop apply" redesign would erase the physical compounding and
+     * produce results that DON'T match the physical scenario the algorithm
+     * is meant to represent — that redesign is REJECTED, do not implement.
+     * The oracle tolerance is the right model: it confirms "algorithmic
+     * parity" (same arithmetic, same inputs) without demanding bit-precision
+     * against a counterfactual snapshot model. See
+     * gpu_bench_new/archive/OPEN_thermalfb_kernel_order_dependence_followup.md
+     * for the full discussion + the rationale behind rejecting the
+     * snapshot redesign. The same reasoning applies to mechanical_fb. */
     static constexpr double accum_tolerance = 1e-3;
 
     /* Type aliases. */
@@ -333,9 +345,8 @@ struct ThermalFBSpec {
         ctx.oracle_dry_run = on;
     }
 
-    /* Ghost-writeback + write-detector bookkeeping. */
-    static void ghost_write_detector_begin(const neighbor_loop_args&, const NeighborLoopPlan&);
-    static void ghost_write_detector_end  (const neighbor_loop_args&, const NeighborLoopPlan&);
+    /* Ghost-writeback + write-detector bookkeeping.
+     * Detector uses runner default (loop_name = "thermalfb"). */
     static void ghost_writeback_begin     (const neighbor_loop_args&, const NeighborLoopPlan&);
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 

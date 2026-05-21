@@ -138,6 +138,11 @@ struct SinkEnv2Spec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "sink_env2";
+    /* Legacy detector label preserved; differs from loop_name. Predates the
+     * runner-template loop_name convention. Without this, the runner default
+     * would label this Spec's detector "sink_env2" instead of the historical
+     * "sink_environment_second". */
+    static constexpr const char *ghost_write_detector_name = "sink_environment_second";
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;
@@ -180,10 +185,9 @@ struct SinkEnv2Spec {
     static constexpr bool uses_ghost_write_detector = true;
     static constexpr bool uses_ghost_writeback      = false;
 
-    static void ghost_write_detector_begin (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
-    static void ghost_write_detector_end   (const struct neighbor_loop_args&,
-                                             const struct NeighborLoopPlan&);
+    /* ghost_write_detector_begin/end use the runner default
+     * (::ghost_write_detector_begin(ghost_write_detector_name) /
+     * ::ghost_write_detector_end()) — no Spec hook needed. */
 
     /* Per-active host hooks. */
     static double      search_radius(const neighbor_loop_args& args,
