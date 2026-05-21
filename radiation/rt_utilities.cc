@@ -455,21 +455,21 @@ void rt_define_effective_frequencies_in_bands(void)
 /***********************************************************************************************************/
 /* calculate the eddington tensor according to the different closure option[s] adopted */
 /***********************************************************************************************************/
-void rt_eddington_update_calculation(int j, struct gas_cell_data *cell)
+void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef RT_OTVET
     return; /* eddington tensor is calculated elsewhere [in the gravity subroutine]: don't mess with it here! */
 #endif
 #if defined(RT_M1) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     /* calculate the eddington tensor with the M1 closure */
-    int k_freq, k; double fmag_j, V_j_inv = CellP[j].Density / P[j].Mass; Vec3<double> n_flux_j;
+    int k_freq, k; double fmag_j, V_j_inv = cell[j].Density / pp[j].Mass; Vec3<double> n_flux_j;
     for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
     {
         n_flux_j = {};
-        Vec3<double> flux_vol = CellP[j].Rad_Flux[k_freq] * V_j_inv;
+        Vec3<double> flux_vol = cell[j].Rad_Flux[k_freq] * V_j_inv;
         fmag_j = flux_vol.norm_sq();
         if(fmag_j <= 0) {fmag_j=0;} else {fmag_j=sqrt(fmag_j); n_flux_j = flux_vol/fmag_j;}
-        double f_chifac = fmag_j / (MIN_REAL_NUMBER + C_LIGHT_CODE_REDUCED * CellP[j].Rad_E_gamma[k_freq] * V_j_inv);
+        double f_chifac = fmag_j / (MIN_REAL_NUMBER + C_LIGHT_CODE_REDUCED * cell[j].Rad_E_gamma[k_freq] * V_j_inv);
         if(f_chifac < 0) {f_chifac=0;}
         if(fmag_j <= 0) {f_chifac = 0;}
         // restrict values of f_chifac to physical range.
@@ -479,19 +479,19 @@ void rt_eddington_update_calculation(int j, struct gas_cell_data *cell)
         double chi_j = (3.+4.*f_chifac*f_chifac) / (5. + 2.*sqrt(4. - 3.*f_chifac*f_chifac));
         double chifac_iso_j = 0.5 * (1.-chi_j);
         double chifac_n_j = 0.5 * (3.*chi_j-1.);
-        for(k=0;k<3;k++) for(int k2=k;k2<3;k2++) {CellP[j].ET[k_freq][k][k2] = chifac_n_j * n_flux_j[k]*n_flux_j[k2];}
-        CellP[j].ET[k_freq][0][0] += chifac_iso_j; CellP[j].ET[k_freq][1][1] += chifac_iso_j; CellP[j].ET[k_freq][2][2] += chifac_iso_j;
+        for(k=0;k<3;k++) for(int k2=k;k2<3;k2++) {cell[j].ET[k_freq][k][k2] = chifac_n_j * n_flux_j[k]*n_flux_j[k2];}
+        cell[j].ET[k_freq][0][0] += chifac_iso_j; cell[j].ET[k_freq][1][1] += chifac_iso_j; cell[j].ET[k_freq][2][2] += chifac_iso_j;
     }
     return;
 #endif
 #ifdef RT_FLUXLIMITEDDIFFUSION
     /* always assume the isotropic eddington tensor */
-    int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[j].ET[k_freq].set_isotropic(1./3.);}
+    int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {cell[j].ET[k_freq].set_isotropic(1./3.);}
     return;
 #endif
 
     /* if nothing is set, default to guess the isotropic eddington tensor */
-    {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {CellP[j].ET[k_freq].set_isotropic(1./3.);}}
+    {int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {cell[j].ET[k_freq].set_isotropic(1./3.);}}
     return;
 }
 
@@ -811,7 +811,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {pp[i].dp[k_dir]+=pp[i].Vel[k_dir]*(mom_fac-1.)*cell[i].Mass; pp[i].Vel[k_dir]*=mom_fac;} else {cell[i].VelPred[k_dir] *= mom_fac;}}}
 #endif
 
-    if(mode > 0) {rt_eddington_update_calculation(i, cell);} /* update the eddington tensor (if we calculate it) as well */
+    if(mode > 0) {rt_eddington_update_calculation(i, pp, cell);} /* update the eddington tensor (if we calculate it) as well */
 
 #ifdef RT_ISRF_BACKGROUND
     if(mode==0) {rt_apply_boundary_conditions(i, pp, cell);} /* if we have any special boundary conditions (e.g. fixed ISRF at box edge) apply this here */

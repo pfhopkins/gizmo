@@ -126,7 +126,7 @@ void transport_subcycle_kick(void)
            DtInternalEnergy each sub-step to prevent accumulation, but keep the final
            sub-step's contribution so the cooling function sees the correct IR heating rate. */
         rt_update_driftkick(i, sub_dt, 0, P, CellP); /* kick: advance conserved variables */
-        rt_eddington_update_calculation(i, CellP);
+        rt_eddington_update_calculation(i, P, CellP);
         /* update opacities — Rad_Kappa (especially IR band) depends on Dust_Temperature and
            Radiation_Temperature which were just modified by rt_update_driftkick. Stale opacities
            cause the transport flux computation in subsequent sub-steps to use the wrong diffusion rate. */

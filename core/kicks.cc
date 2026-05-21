@@ -506,7 +506,7 @@ void set_predicted_quantities_for_extra_physics(int i)
             CellP[i].Rad_Flux_Pred[kf] = CellP[i].Rad_Flux[kf];
 #endif
         }
-        rt_eddington_update_calculation(i, CellP);
+        rt_eddington_update_calculation(i, P, CellP);
 #endif
 #ifdef RT_EVOLVE_INTENSITIES
         for(kf=0;kf<N_RT_FREQ_BINS;kf++) {for(k=0;k<N_RT_INTENSITY_BINS;k++) {CellP[i].Rad_Intensity_Pred[kf][k] = CellP[i].Rad_Intensity[kf][k];}}
