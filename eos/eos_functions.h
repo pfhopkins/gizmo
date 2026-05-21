@@ -331,8 +331,17 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
  * COSMIC_RAY_FLUID. Include cosmic_ray_functions.h here (AFTER
  * Get_Gas_Ionized_Fraction above, which cosmic_ray_functions.h calls) so the
  * inline body is visible to any TU pulling this header in (cooling.cc etc.)
- * without requiring each caller to pre-include cosmic_ray_functions.h. */
+ * without requiring each caller to pre-include cosmic_ray_functions.h.
+ *
+ * MUST be gated on COSMIC_RAY_FLUID to mirror eos.cc's own pre-include
+ * (eos/eos.cc:77-79). The three functions Get_CosmicRayEnergyDensity_cgs,
+ * Get_CosmicRayIonizationRate_cgs, CR_gas_heating live OUTSIDE the
+ * COSMIC_RAY_FLUID #ifdef in cosmic_ray_functions.h; including unconditionally
+ * here would cause eos.cc's non-inline re-include of eos_functions.h to emit
+ * strong symbols for those three, dup'ing cosmic_ray_utilities.o. */
+#ifdef COSMIC_RAY_FLUID
 #include "cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
 
 KOKKOS_INLINE_FUNCTION
 void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data *cell)
