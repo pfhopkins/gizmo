@@ -499,7 +499,7 @@ void resolvedism_determine_SNe(void)
  *  removed — now in resolvedism_fb_thermal.cc and resolvedism_fb_momentum.cc) */
 
 
-void resolvedism_inject_sn_energy(void)
+void resolvedism_inject_fb_energy(void)
 {
     /* ---- Pass 0: Momentum injection (wind + AGB) — before SN so final winds fire first ---- */
     resolvedism_fb_momentum_calc(0);
@@ -674,12 +674,12 @@ void resolvedism_inject_sn_energy(void)
                 E_injected[channel] += Esne_erg;
             }
 
-            /* Set particle mass to remnant mass — but never INCREASE the star's mass.
-             * If wind events already reduced P[i].Mass below rem_mass (table inconsistency
-             * between elem_ej_wind_cumulative and remnant_mass at this M/Z), leave it alone:
-             * setting P[i].Mass = rem_mass would create mass out of nothing. */
-            double rem_mass_code = rem_mass / UNIT_MASS_IN_SOLAR;
-            if(P[i].Mass > rem_mass_code) P[i].Mass = rem_mass_code;
+            /* P[i].Mass has already been reduced by the measured-coupling pattern in
+             * the fb_thermal / fb_momentum walks' out2particle (FIRE-style): star
+             * lost exactly Σ_j dM that was deposited on gas neighbors, so total
+             * mass is bit-exact conserved per event.  The final mass differs from
+             * the table remnant mass by ~1% scatter (whatever Σ wk_j actually was);
+             * trading exact-remnant-mass for exact-budget-closure on the injection. */
             if(channel == 0) {
                 printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type, (rem_type==REM_PISN)?1.0e52:1.0e51);

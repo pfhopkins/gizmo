@@ -153,7 +153,7 @@ void compute_stellar_feedback(void)
 #endif
 
 #ifdef GALSF_RESOLVEDISM_FB
-    resolvedism_inject_sn_energy(); /* resolved-ISM SN/AGB/wind/radpressure injection — runs here (right after density()) so wt_sum = DensityAroundParticle is fresh, mirroring FIRE's pattern */
+    resolvedism_inject_fb_energy(); /* resolved-ISM SN/Ia + AGB/wind + radpressure injection.  Uses FIRE-style measured-coupling: dying star is reduced by the actually-deposited mass (M_coupled accumulated in each FB walk's out2particle) → bit-exact mass conservation per event regardless of Σ wk_j ≠ 1. */
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 

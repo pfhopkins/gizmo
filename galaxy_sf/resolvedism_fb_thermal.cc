@@ -12,7 +12,7 @@
  * Injects thermal energy, ejecta mass, metal yields, and dust (destruction + injection).
  * Uses ngb_treefind_variable_threads (one-way search) — no momentum conservation needed.
  *
- * Called from resolvedism_inject_sn_energy() AFTER the momentum pass. */
+ * Called from resolvedism_inject_fb_energy() AFTER the momentum pass. */
 
 #ifdef GALSF_RESOLVEDISM_FB
 
@@ -173,13 +173,20 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 
 struct OUTPUT_STRUCT_NAME
 {
-    MyFloat dummy; /* thermal injection has no star-side return data */
+    /* Mass actually deposited to gas neighbors during the walk.  Used in
+     * out2particle to reduce the dying star by exactly the amount that was
+     * injected → bit-exact mass conservation regardless of Σ_j wk_j ≠ 1.
+     * Mirrors FIRE thermal_fb / mechanical_fb measured-coupling pattern. */
+    MyFloat M_coupled;
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
 void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
-    /* No recoil needed for thermal energy injection */
+    if(P[i].Mass > 0) {
+        P[i].Mass -= out->M_coupled;
+        if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
+    }
 }
 
 int resolvedismFB_thermal_active_check(int i);
@@ -347,6 +354,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #endif
                     #pragma omp atomic
                     P[j].Mass += dM;
+                    /* Accumulate actual deposition for measured-coupling reduction
+                     * on the dying star (FIRE pattern); see out2particle. */
+                    out.M_coupled += dM;
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }

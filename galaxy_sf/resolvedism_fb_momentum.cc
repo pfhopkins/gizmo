@@ -12,7 +12,7 @@
  * Injects momentum kicks + ejecta mass + metal yields + dust (AGB only).
  * Uses ngb_treefind_pairs_threads (mutual visibility for momentum conservation).
  *
- * Called from resolvedism_inject_sn_energy() BEFORE the thermal pass.
+ * Called from resolvedism_inject_fb_energy() BEFORE the thermal pass.
  * Pass 0: wind + AGB ejecta (mass + metals + momentum)
  * Pass 1: radiation pressure (momentum only, no mass) */
 
@@ -239,17 +239,27 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 struct OUTPUT_STRUCT_NAME
 {
     MyFloat MomentumInjected[3];
+    /* Mass actually deposited to gas neighbors during the wind/AGB walk
+     * (loop_iteration 0).  Radpressure (loop_iteration 1) injects no mass
+     * so M_coupled stays 0 there.  Used in out2particle to reduce the
+     * dying star by exactly the amount that was injected → bit-exact mass
+     * conservation regardless of Σ_j wk_j ≠ 1. */
+    MyFloat M_coupled;
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
 void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
-    /* Star recoil for momentum conservation */
+    /* Star recoil for momentum conservation, then mass reduction by measured
+     * deposition (FIRE measured-coupling pattern).  Apply recoil first while
+     * the original star mass is still on P[i]. */
     if(P[i].Mass > 0) {
         int k;
         for(k = 0; k < 3; k++) {
             P[i].Vel[k] -= out->MomentumInjected[k] * All.cf_atime / P[i].Mass;
         }
+        P[i].Mass -= out->M_coupled;
+        if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
     }
 }
 
@@ -401,6 +411,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #endif
                     #pragma omp atomic
                     P[j].Mass += dM;
+                    /* Accumulate actual deposition for measured-coupling reduction
+                     * on the dying star (FIRE pattern); see out2particle. */
+                    out.M_coupled += dM;
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }
