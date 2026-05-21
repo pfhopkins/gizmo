@@ -1,12 +1,13 @@
-/* density_gpu.cc — GPU-accelerated gradient + hydro evaluators via Kokkos.
+/* density_gpu.cc — GPU-accelerated hydro evaluator via Kokkos.
  *
- * GPU translation unit (Kokkos/nvcc_wrapper). It provides:
- *   1. gradient_evaluate_gpu() — gradients/closure (B3)
- *   2. hydro_evaluate_gpu()    — Riemann/flux loop  (B4)
+ * GPU translation unit (Kokkos/nvcc_wrapper). Provides hydro_evaluate_gpu()
+ * — Riemann/flux loop (B4).
  *
  * The legacy density_evaluate_gpu / density_gpu_session_* path was retired
  * in Phase 4.B.2 when density() migrated to the runner template
- * (hydro/density_loop.cc).
+ * (hydro/density_loop.cc). The legacy gradient_evaluate_gpu walker was
+ * retired in hydro corridor commit 7 (GradientsSpec) + commit 7b cleanup
+ * — gradients now live in hydro/gradients_loop.{h,cc}.
  *
  * Architecture follows the cooling.cc pattern:
  *   - __managed__ All_dev with #define All All_dev for GPU global access
@@ -75,209 +76,12 @@
    shared with the symmetric neighbor list build in accel.cc. */
 #include "../mesh/gpu_neighbor_list.h"
 
-/* Density's spatial index is now the module-shared g_step_sidx (mesh/gpu_neighbor_list.cc),
+/* Density's spatial index is now the module-shared g_step_sidx
+ * (mesh/gpu_neighbor_list.cc). */
 
-/* ================================================================
-   GPU gradient kernel (B3)
-   ================================================================
-   For each active particle: load data, iterate symmetric CSR neighbors,
-   accumulate gradients via gradient_functions.h, return output structs.
-   The caller (gradients.cc) does the scatter into CellP + GasGradDataPasser.
-   ================================================================ */
-
-/* Entry point for GPU gradient evaluation.
- * Takes a pre-built symmetric CSR neighbor list (offsets/neighbors).
- * Fills out_host[0..num_active-1] with accumulated gradient outputs.
- * Caller must allocate out_host (num_active * sizeof(GasGraddata_out_)).
- * gradient_iteration: 0 = standard gradients, >0 = MHD constrained gradient iteration */
-void gradient_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *CellP_host,
-                           int num_total, int *active_indices_host, int num_active,
-                           int64_t *csr_offsets_host, int *csr_neighbors_host, int64_t csr_total_pairs,
-                           void *out_host_void, int gradient_iteration)
-{
-    GIZMO_GPU_ENSURE_ALL_FRESH();
-    double t_grad_start = my_second(); /* DIAG */
-    struct GasGraddata_out_ *out_host = (struct GasGraddata_out_ *)out_host_void;
-
-    /* Persistent decomp-scoped arena (Step 13 Phase 1). Replaces per-call
-     * SharedSpace alloc+memcpy of P/CellP. Acquire is a no-op fast path when
-     * the arena is already valid from a prior kernel in this step. */
-    gpu_particles_arena_set_site("density_gpu_gradients");
-    gpu_particles_arena_acquire(num_total, P_host, CellP_host);
-    struct particle_data *P_gpu = gpu_particles_arena_P();
-    struct gas_cell_data *CellP_gpu = gpu_particles_arena_CellP();
-    double t_grad_arena = my_second(); /* DIAG: end of arena acquire */
-
-    /* Copy CSR neighbor list to SharedSpace (offsets 64-bit; neighbor values int) */
-    int64_t *d_offsets = (int64_t *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)(num_active + 1) * sizeof(int64_t));
-    int *d_neighbors = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>((size_t)((csr_total_pairs > 0) ? csr_total_pairs : 1) * sizeof(int));
-    int *d_active = (int *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(int));
-    memcpy(d_offsets, csr_offsets_host, (size_t)(num_active + 1) * sizeof(int64_t));
-    memcpy(d_neighbors, csr_neighbors_host, (size_t)csr_total_pairs * sizeof(int));
-    memcpy(d_active, active_indices_host, num_active * sizeof(int));
-    double t_grad_csr_copy = my_second(); /* DIAG: end of CSR copy to SharedSpace */
-
-    /* Allocate output array in SharedSpace */
-    struct GasGraddata_out_ *d_out = (struct GasGraddata_out_ *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(((num_active > 0) ? num_active : 1) * sizeof(struct GasGraddata_out_));
-
-    PRINT_STATUS("  GPU gradient: %d active, %lld pairs", num_active, (long long)csr_total_pairs);
-
-    /* GPU gradient accumulation kernel */
-    {
-        int64_t *offsets = d_offsets;
-        int *neighbors = d_neighbors;
-        int *active = d_active;
-        struct particle_data *kp = P_gpu;
-        struct gas_cell_data *kc = CellP_gpu;
-        struct GasGraddata_out_ *kout = d_out;
-        int grad_iter = gradient_iteration;
-
-        gizmo_gpu_kernel_launch("gradient_kernel", num_active, KOKKOS_LAMBDA(int aa) {
-            int ii = active[aa];
-
-            /* particle2in equivalent: load searching particle data */
-            struct GasGraddata_in_ local;
-            memset(&local, 0, sizeof(local));
-            local.Pos = kp[ii].Pos;
-            local.KernelRadius = kp[ii].KernelRadius;
-            local.Mass = kp[ii].Mass;
-            if(local.Mass < 0) {local.Mass = 0;}
-            int sph_gradients_flag_i = SHOULD_I_USE_SPH_GRADIENTS(kc[ii].ConditionNumber);
-            if(sph_gradients_flag_i) {local.Mass *= -1;}
-#ifdef MHD_CONSTRAINED_GRADIENT
-            if(grad_iter > 0) {if(kc[ii].FlagForConstrainedGradients <= 0) {local.Mass = 0;}}
-#endif
-
-            /* Load gradient quantities */
-            local.GQuant.Density = kc[ii].Density;
-            local.GQuant.Pressure = kc[ii].Pressure;
-            local.GQuant.Velocity = kc[ii].VelPred;
-#ifdef MAGNETIC
-            local.GQuant.B = kc[ii].BPred * (kc[ii].Density / kp[ii].Mass);
-#ifdef DIVBCLEANING_DEDNER
-            local.GQuant.Phi = kc[ii].PhiPred / kp[ii].Mass;
-#endif
-#endif
-#ifdef DOGRAD_INTERNAL_ENERGY
-            local.GQuant.InternalEnergy = kc[ii].InternalEnergyPred;
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-            local.GQuant.ElectronNumberDensity = kc[ii].n_e();
-            local.GQuant.ElectronTemperature   = kc[ii].T_e();
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
-            local.GQuant.E_battery_T2 = kc[ii].E_battery_T2_cell;
-#endif
-#ifdef DOGRAD_SOUNDSPEED
-            local.GQuant.SoundSpeed = kc[ii].effective_soundspeed();
-#endif
-#ifdef COSMIC_RAY_FLUID
-            for(int k=0;k<N_CR_PARTICLE_BINS;k++) {local.GQuant.CosmicRayPressure[k] = Get_Gas_CosmicRayPressure(ii, k, kc);}
-#endif
-#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-            for(int k=0;k<NUM_METAL_SPECIES;k++) {local.GQuant.Metallicity[k] = kp[ii].Metallicity[k];}
-#endif
-#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
-            {for(int k=0;k<N_RT_FREQ_BINS;k++) {
-                 local.GQuant.Rad_E_gamma[k] = kc[ii].Rad_E_gamma_Pred[k]; /* store RAW, kernel applies V_i_inv */
-                 local.GQuant.Rad_E_gamma_ET[k] = kc[ii].ET[k]; /* store RAW ET tensor, kernel multiplies with Rad_E_gamma*V_i_inv */
-#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-                 for(int k2=0;k2<3;k2++) {local.GQuant.Rad_Flux[k][k2] = kc[ii].Rad_Flux_Pred[k][k2];} /* store RAW, kernel applies V_i_inv */
-#endif
-             }}
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-            local.GQuant.Velocity_bar = kc[ii].Velocity_bar;
-            local.Norm_hat = kc[ii].Norm_hat;
-#ifdef GALSF_SUBGRID_WINDS
-            local.DelayTime = kc[ii].DelayTime;
-#endif
-#endif
-#ifdef MHD_CONSTRAINED_GRADIENT
-            local.ConditionNumber = kc[ii].ConditionNumber;
-            local.NV_T = kc[ii].NV_T;
-            for(int k=0;k<3;k++) for(int k2=0;k2<3;k2++) {local.BGrad[k][k2] = kc[ii].Gradients.B[k][k2];}
-#ifdef MHD_MODIFIED_GRADIENT
-            local.MG_cgcoeff = kc[ii].MG_cgcoeff;
-#endif
-#ifdef MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV
-            local.PhiGrad = kc[ii].Gradients.Phi;
-#endif
-#endif
-
-            if(sph_gradients_flag_i) {local.Mass *= -1;} /* negate Mass as flag for SPH gradients */
-
-            /* Initialize output */
-            struct GasGraddata_out_ out;
-            memset(&out, 0, sizeof(out));
-
-            /* Pre-compute kernel quantities */
-            double h_i = local.KernelRadius;
-            double hinv, hinv3, hinv4;
-            kernel_hinv(h_i, &hinv, &hinv3, &hinv4);
-            if(local.Mass < 0) {local.Mass *= -1;} /* restore for V_i computation */
-            double V_i = local.Mass / local.GQuant.Density;
-            if(sph_gradients_flag_i) {local.Mass *= -1;} /* re-negate for kernel */
-
-            int kernel_mode_i = -1;
-            if(sph_gradients_flag_i) kernel_mode_i = 0;
-#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
-            kernel_mode_i = 0;
-#endif
-
-            struct kernel_GasGrad kernel;
-            kernel.h_i = h_i;
-
-            /* Accumulate over symmetric neighbors */
-            for(int64_t idx = offsets[aa]; idx < offsets[aa + 1]; idx++)
-            {
-                int j = neighbors[idx];
-                gradient_accumulate_neighbor(&local, &out, &kernel, j,
-                                             sph_gradients_flag_i, V_i,
-                                             hinv, hinv3, hinv4, kernel_mode_i,
-                                             kp, kc);
-            }
-
-            /* Store output for this particle */
-            kout[aa] = out;
-        }); /* end gizmo_gpu_kernel_launch */
-    }
-    double t_grad_kernel = my_second(); /* DIAG: kernel already fence'd by gizmo_gpu_kernel_launch */
-
-    /* Copy output back to host */
-    memcpy(out_host, d_out, num_active * sizeof(struct GasGraddata_out_));
-    double t_grad_copyout = my_second(); /* DIAG: end of output copy */
-
-    /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
-     * Invalidate: gradients.cc post-scatters d_out values into host CellP.Gradients
-     * after we return, so host will diverge from arena before the next kernel. */
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_out);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_active);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_neighbors);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_offsets);
-    gpu_particles_arena_invalidate();
-
-    {
-        double t_arena    = timediff(t_grad_start,    t_grad_arena);
-        double t_csr_copy = timediff(t_grad_arena,    t_grad_csr_copy);
-        double t_kernel   = timediff(t_grad_csr_copy, t_grad_kernel);
-        double t_out_copy = timediff(t_grad_kernel,   t_grad_copyout);
-        /* Phase 7 sub-buckets — env-gated; no-op when GIZMO_VERBOSE_DIAG off */
-        gizmo_step_phase_record("gradient_arena",    t_arena);
-        gizmo_step_phase_record("gradient_csr_copy", t_csr_copy);
-        gizmo_step_phase_record("gradient_kernel",   t_kernel);
-        gizmo_step_phase_record("gradient_out_copy", t_out_copy);
-        if(ThisTask == 0 && gizmo_verbose_diag()) {
-            long long pairs_mb = (long long)csr_total_pairs * 2 * (long long)sizeof(int) / (1024*1024);
-            printf("[DIAG_GRAD step=%d N=%d pairs=%lld(~%lldMB)] arena=%.3f csr_copy=%.3f gpu_kernel=%.3f out_copy=%.3f total=%.3f\n",
-                   (int)All.NumCurrentTiStep, num_active, (long long)csr_total_pairs, pairs_mb,
-                   t_arena, t_csr_copy, t_kernel, t_out_copy,
-                   timediff(t_grad_start, t_grad_copyout));
-            fflush(stdout);
-        }
-    }
-}
-
+/* gradient_evaluate_gpu retired in hydro corridor commit 7 (GradientsSpec) +
+ * cleanup commit 7b. Gradients now run via the runner Spec contract — see
+ * hydro/gradients_loop.{h,cc}. */
 
 /* ================================================================
    GPU hydro force kernel (B3b)
@@ -492,7 +296,10 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
             for(int k=0;k<NUM_METAL_SPECIES;k++) {local.Gradients.Metallicity[k] = kc[ii].Gradients.Metallicity[k];}
 #endif
-#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
+            /* local.Metallicity field gated by TURB_DIFF_METALS||(METALS&&MFV)
+             * in hydro_structs.h:129 — original bare ISMDUSTCHEM gate here
+             * was over-broad and never compiled for METALS+MFM+ISMDC. */
             for(int ki=0;ki<ismdc_n;ki++) {local.Metallicity[ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+ki] = ismdc[aa*ismdc_n+ki];}
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -579,7 +386,8 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
                 memset(&Fluxes, 0, sizeof(Fluxes));
                 hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
-                                          kTimeBinActive, kNeedWakeup);
+                                          kTimeBinActive, kNeedWakeup,
+                                          /*allow_j_writes=*/true);
             }
 
             /* Store output for this particle */
@@ -650,8 +458,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
      * The scatter above syncs wakeup+dMass; any other arena-side writes by
      * the kernel may be unscattered, so invalidate to force the next kernel
-     * to re-acquire from host. (ghost_writeback_hydro already invalidates,
-     * but be defensive in case hydro is invoked again before that runs.) */
+     * to re-acquire from host. */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     if(d_ismdc) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ismdc); }
 #endif

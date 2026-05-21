@@ -396,6 +396,16 @@ void cellcorrections_calc(void);
 void cellcorrections_final_operations_and_cleanup(void);
 #endif
 
+/* Hydro corridor lifecycle (hydro/hydro_corridor.{h,cc}) — corridor span:
+ * decide before density(), end after hydro_force(). Future consumers
+ * (cellcorrections / gradients / hydro_force as runner Specs) read the
+ * mode via gizmo_hydro_corridor_get_mode() — include hydro_corridor.h
+ * for the enum + accessor. Wave 5 corridor port chain. */
+void gizmo_hydro_corridor_decide_mode(void);
+void gizmo_hydro_corridor_begin_csr(void);
+void gizmo_hydro_corridor_mass_guardrail_check(void);
+void gizmo_hydro_corridor_end(void);
+
 size_t sizemax(size_t a, size_t b);
 
 void reconstruct_timebins(void);

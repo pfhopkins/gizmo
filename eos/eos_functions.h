@@ -326,6 +326,14 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
  * those branches are active — so the no-op device path is never reached on
  * those builds and the host wrapper remains the single source of truth.
  * ========================================================================== */
+
+/* set_eos_pressure_impl below calls Get_Gas_CosmicRayPressure under
+ * COSMIC_RAY_FLUID. Include cosmic_ray_functions.h here (AFTER
+ * Get_Gas_Ionized_Fraction above, which cosmic_ray_functions.h calls) so the
+ * inline body is visible to any TU pulling this header in (cooling.cc etc.)
+ * without requiring each caller to pre-include cosmic_ray_functions.h. */
+#include "cosmic_ray_fluid/cosmic_ray_functions.h"
+
 KOKKOS_INLINE_FUNCTION
 void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {

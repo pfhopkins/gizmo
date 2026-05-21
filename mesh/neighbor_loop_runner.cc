@@ -86,6 +86,18 @@
 #include "../galaxy_sf/thermal_fb_loop.h"
 #endif
 
+#ifdef HYDRO_VOLUME_CORRECTIONS
+#include "../hydro/cellcorrections_loop.h"
+#endif
+
+/* Wave 5 hydro corridor commit 7: GradientsSpec always built (gradients
+ * has no master #ifdef gate — every hydro build runs hydro_gradient_calc). */
+#include "../hydro/gradients_loop.h"
+
+/* Wave 5 hydro corridor commit 8: HydroForceSpec always built (closes the
+ * corridor; every hydro build runs hydro_force). */
+#include "../hydro/hydro_force_loop.h"
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 #include "../galaxy_sf/radfb_rp_loop.h"
 #endif
@@ -197,6 +209,7 @@ neighbor_loop_args nlr_default_args(void)
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
     args.neighbor_type_mask_override = 0;      /* 0 => use Spec::neighbor_type_mask */
     args.external_csr        = nullptr;        /* nullptr => runner builds its own CSR */
+    args.dispatch_override   = NlrForceMode::None; /* None => env/adaptive */
     return args;
 }
 
@@ -2438,7 +2451,14 @@ void run_neighbor_loop(const neighbor_loop_args& args)
      * same frozen query — it does NOT cross-validate Mode A. Mode A vs
      * Mode B active-epoch consistency is a separate concern, deferred.
      */
-    const NlrForceMode force_mode = gizmo_nlr_force_mode_for(Spec::loop_name);
+    /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive.
+     * The args field is the corridor mode-decision hook (hydro_corridor.cc): when
+     * a corridor consumer sets this to force coherent Mode A or Mode B across the
+     * whole hydro corridor (cellcorrections/gradients/hydro_force), the per-call
+     * override wins over env vars so corridor coherence is enforced, not advisory. */
+    const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
+                                      ? args.dispatch_override
+                                      : gizmo_nlr_force_mode_for(Spec::loop_name);
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
     const bool oracle_on = gizmo_nlr_oracle_enabled_global() ||
@@ -4032,7 +4052,14 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args)
      * num_active for threshold uses the UNION across all subgroups (base
      * args.num_active per the doc convention). 2c.2 is single-subgroup-only;
      * 2c.3 multi-subgroup walker mask-threading lands separately. */
-    const NlrForceMode force_mode = gizmo_nlr_force_mode_for(Spec::loop_name);
+    /* Dispatch priority: args.dispatch_override > per-loop env > global env > adaptive
+     * (mirrors non-iter site near line 2442). Iterative Specs (density, ags_density,
+     * mechfb, etc.) generally won't set dispatch_override in commit 5b since the
+     * corridor mode flows through cellcorrections/gradients/hydro_force; preserved
+     * here for completeness and future use. */
+    const NlrForceMode force_mode = (args.dispatch_override != NlrForceMode::None)
+                                      ? args.dispatch_override
+                                      : gizmo_nlr_force_mode_for(Spec::loop_name);
     DispatchPath path;
     int forced_modeb_global_active = -1;
     if (force_mode == NlrForceMode::A) {
@@ -4921,6 +4948,35 @@ template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_i
 #ifdef GALSF_FB_THERMAL
 template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
 #endif
+
+/* Wave 5 corridor / cellcorrections: CellcorrectionsSpec — first-pass
+ * volume corrections (Volume_1 = sum_j Volume_0[j]^2 wk(r, h_j)).
+ * NotIterative GasOnly Spec, no j-side writes, no ghost-writeback;
+ * first corridor consumer in the chain. See
+ * hydro/cellcorrections_loop.{h,cc} and OPEN_3d_hydro_corridor_design.md
+ * commit 5a. */
+#ifdef HYDRO_VOLUME_CORRECTIONS
+template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
+#endif
+
+/* Wave 5 hydro corridor commit 7: GradientsSpec — runner port of the legacy
+ * `gradient_evaluate_gpu` walker. Broad active list (Type==0 && Mass>0)
+ * matching the legacy GPU walker; narrow GasGrad_isactive filter stays at
+ * the neighbor side inside gradient_accumulate_neighbor. Symmetric gas-gas
+ * topology — second corridor consumer (after CellcorrectionsSpec) and
+ * direct precursor to HydroForceSpec (commit 8). See
+ * hydro/gradients_loop.{h,cc} + OPEN_3d_gradientsspec_design.md. */
+template void run_neighbor_loop<GradientsSpec>(const neighbor_loop_args&);
+
+/* Wave 5 hydro corridor commit 8: HydroForceSpec — runner port of the legacy
+ * `hydro_evaluate_gpu` walker. Closes the corridor (third + final consumer
+ * after CellcorrectionsSpec and GradientsSpec). uses_ghost_writeback=true
+ * with a snapshot-diff bundle (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass))
+ * for Mode A imported-ghost lifecycle; Mode B direct-owner-rank j-writes
+ * via request-driven P2P. Helper hydro_accumulate_neighbor gained the
+ * allow_j_writes gate in commit 8a (a2cb965a) so the oracle brute pass
+ * doesn't double-apply j-writes. See hydro/hydro_force_loop.{h,cc}. */
+template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
 /* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.
  * Iterative 2-pass (iter 0 wt_sum aggregation; iter 1 kick application).

@@ -69,6 +69,12 @@ void compute_hydro_densities_and_forces(void)
   if(All.TotN_gas > 0)
     {
         PRINT_STATUS("Start hydrodynamics computation...");
+        /* Hydro corridor entry: decide Mode A vs Mode B once for the whole
+         * corridor span (density → cellcorrections → gradients → hydro_force).
+         * Wave 5 commit 4: state+lifecycle infra only. No consumer reads
+         * gizmo_hydro_corridor_get_mode() yet; behavior unchanged except
+         * diagnostic print under GIZMO_VERBOSE_DIAG. */
+        gizmo_hydro_corridor_decide_mode();
         /* density() internally handles ghost_exchange prep + redo (neighbor-list path)
            via the ghost_symlist_lifecycle helpers. Same for gradients and hydro_force. */
         double t_bench_density_start = my_second();
@@ -86,6 +92,13 @@ void compute_hydro_densities_and_forces(void)
 
         PRINT_STATUS(" ..density & tree-update computation done...");
 
+        /* Hydro corridor CSR begin (Wave 5 commit 5b). Builds the shared
+         * symmetric gas CSR when corridor mode is MODE_A AND NTask==1,
+         * for consumption by cellcorrections + (legacy) gradients +
+         * (legacy) hydro_force. No-op otherwise. Downstream Specs read
+         * via gizmo_hydro_corridor_external_csr(). */
+        gizmo_hydro_corridor_begin_csr();
+
 #ifdef HYDRO_VOLUME_CORRECTIONS
         STEP_PHASE_TIME("cellcorrections_calc", cellcorrections_calc()); /* must be called after density, and after the update of hmax in the tree [because it depends on bi-directional search], but before gradients where quantities dependent on volumetric elements such as density are needed */
 #endif
@@ -101,6 +114,15 @@ void compute_hydro_densities_and_forces(void)
 #ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
         STEP_PHASE_TIME("compute_stellar_feedback", compute_stellar_feedback());
 #endif
+
+        /* Wave 5 commit 5c: corridor Mass-guardrail. Defensive observability
+         * check (diag-gated) — scans ActiveParticleList for any gas with
+         * Mass<=0 post-feedback. The per-row enabled flag in
+         * CellcorrectionsSpec (commit 5b) already silently handles such
+         * rows; this guardrail is the broader backstop that becomes
+         * load-bearing once commit 9 unlocks NTask>1 corridor CSR
+         * consumption. See OPEN_3d_hydro_corridor_design.md §1.5. */
+        gizmo_hydro_corridor_mass_guardrail_check();
 
         double t_bench_grad_start = my_second();
         hydro_gradient_calc(); /* calculates the gradients of hydrodynamical quantities  */
@@ -137,6 +159,10 @@ void compute_hydro_densities_and_forces(void)
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
         double t_bench_hydro = timediff(t_bench_hydro_start, my_second());
         gizmo_step_phase_record("hydro_force", t_bench_hydro);
+        /* Hydro corridor exit: reset mode to UNSET. Any unexpected
+         * gizmo_hydro_corridor_get_mode() outside the corridor span will
+         * read UNSET and is therefore detectable. */
+        gizmo_hydro_corridor_end();
         STEP_PHASE_TIME("compute_addl_forces", compute_additional_forces_for_all_particles()); /* other accelerations that need to be computed are done here */
         /* Feed GPU-path kernel timings into CPU_Step accumulators for cpu.txt output.
            drift+ghost+redo feeds are done inside density()/gradients()/hydro_force() via

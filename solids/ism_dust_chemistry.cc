@@ -517,7 +517,9 @@ void ISMDustChem_get_wind_dust_yields(double *yields, int i, struct gas_cell_dat
         double f_agb=0.1, t_agb=0.8, x_agb=t_agb/DMAX(star_age,1.e-4); x_agb*=x_agb; wind_rate = f_agb * pow(x_agb,0.8) * (exp(-DMIN(50.,x_agb*x_agb*x_agb)) + 1./(100. + x_agb)); /* only need AGB component for FIRE-3 */
 #endif
         if(star_age < 0.033) {wind_rate *= 0.01 + calculate_relative_light_to_mass_ratio_from_imf(star_age,i,1);} // late-time independent of massive stars
+#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
         wind_rate *= All.StellarMassLoss_Rate_Renormalization;
+#endif
         for (k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {species_yields[k] = DMAX(0.,species_yields[k]/wind_rate);}
         // Now check to make sure there are enough metals in the wind to produce the dust since the metal and dust yields are calculated separately
         // If not renorm dust species which are made up of the element in question
