@@ -114,7 +114,19 @@ void transport_subcycle_exchange_fluxes(void)
 void transport_subcycle_kick(void)
 {
     double sub_frac = All.Transport_Subcycle_dt_fraction;
-    for(int idx : ActiveParticleList) {
+    /* Per-i pure-local kernel: body writes only to P[i]/CellP[i]; the
+     * mutating drift-kick helpers (rt_update_driftkick,
+     * CosmicRay_Update_DriftKick) already have OMP exposure via
+     * do_kick_for_extra_physics (core/kicks.cc), and the auxiliary
+     * per-cell calls here (rt_eddington_update_calculation, rt_kappa)
+     * read/write only per-i state. Guard by n_act >= 16 to avoid OMP
+     * overhead on tiny active sets (matches sink_properties_loop, F2). */
+    const int n_act = (int)ActiveParticleList.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) if(n_act >= 16)
+#endif
+    for(int _a = 0; _a < n_act; _a++) {
+        int idx = ActiveParticleList[_a];
         if(P[idx].Type != 0 || P[idx].Mass <= 0) continue;
         int i = idx;
         double sub_dt = get_particle_timestep_in_physical(i, P) * sub_frac;
