@@ -171,8 +171,7 @@ void HydroForceSpec::set_oracle_brute_pass(DeviceContext& ctx, bool on)
 /* ============================================================================
  * Ghost-region pre-zero + lifecycle hooks (Mode A only).
  *
- * ghost_writeback_begin replaces the legacy ghost_writeback_zero_hydro()
- * (mesh/ghost_writeback.cc:279). Zeros ONLY the ghost region (j in
+ * ghost_writeback_begin zeros ONLY the ghost region (j in
  * [num_local, num_local+num_ghosts)) — NOT home-rank — because home-rank
  * accumulators are zeroed by hydro_force_initial_operations_preloop()
  * upstream. Then call gpu_particles_arena_invalidate() so the next kernel

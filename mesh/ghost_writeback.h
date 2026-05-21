@@ -4,9 +4,10 @@
  * ghost_writeback communicates those modifications back to the home MPI ranks.
  *
  * Usage pattern for each loop that modifies j-particles:
- *   1. ghost_writeback_zero_hydro()       — zero accumulator fields on ghosts
+ *   1. ghost_writeback_begin_bundle()  — snapshot ghost-region values
  *   2. [run GPU kernel with atomic j-writes]
- *   3. ghost_writeback_hydro()            — scan, pack, reverse MPI, apply
+ *   3. ghost_writeback_end_bundle()    — diff, pack, reverse MPI, apply
+ * Each Spec declares its bundle via a GHOST_WRITEBACK_*(field) manifest.
  *
  * The ghost provenance map (home rank + index per ghost) is built during
  * ghost_exchange() and freed in ghost_exchange_cleanup(). Accessors are
@@ -115,15 +116,6 @@ struct ghost_writeback_bundle {
  */
 void ghost_writeback_begin_bundle(const struct ghost_writeback_bundle *bundle);
 void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
-
-/* Zero the hydro accumulator fields (dMass, wakeup) on all ghost particles.
- * Call before the hydro force loop so post-kernel values ARE the deltas. */
-void ghost_writeback_zero_hydro(void);
-
-/* Scan ghost particles for nonzero hydro modifications (dMass, wakeup),
- * pack into compact delta structs, reverse MPI_Alltoallv to home ranks,
- * and apply the deltas. Call after the hydro force loop, before cleanup. */
-void ghost_writeback_hydro(void);
 
 /* SwallowTime variant: reverse-communicates minimum SwallowTime written to
  * ghost particles by the sink_environment GPU kernel (under

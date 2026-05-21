@@ -458,8 +458,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
     /* Cleanup SharedSpace (P/CellP owned by arena — do NOT free here).
      * The scatter above syncs wakeup+dMass; any other arena-side writes by
      * the kernel may be unscattered, so invalidate to force the next kernel
-     * to re-acquire from host. (ghost_writeback_hydro already invalidates,
-     * but be defensive in case hydro is invoked again before that runs.) */
+     * to re-acquire from host. */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     if(d_ismdc) { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_ismdc); }
 #endif
