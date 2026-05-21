@@ -22,29 +22,22 @@
 #ifndef SINK_ENV1_LOOP_H
 #define SINK_ENV1_LOOP_H
 
+/* Kokkos_Core.hpp MUST precede allvars.h: macros.h #defines `terminate(...)`
+ * which would mangle std::terminate inside Kokkos's transitive <exception>
+ * include. The inline pair body below emits Kokkos::atomic_min under
+ * SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS. Mirrors
+ * sink_feed_loop.h / sink_swk_loop.h. */
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 
 #ifdef SINK_PARTICLES
 
-/* ----------------------------------------------------------------------------
- * Compile-time guard: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS path
- * needs a per-pair atomic min on neighbor_particle.SwallowTime inside the
- * pair_kernel (not just a snapshot-diff reverse-comm in ghost_writeback).
- * That j-side atomic-write substrate is not yet wired through the runner
- * (SymmetricPairScatter / future per-pair scatter channel). The Pass B.iv
- * ghost-writeback scaffold + manifest carries the i-active snapshot-diff
- * SwallowTime path, but the SINK_GRAVCAPTURE_GAS combination additionally
- * needs the per-pair atomic write inside the pair body, which is still
- * gated out here. This is the sole guard for that combination across the
- * sink_env1 stack — do not narrow it.
- * --------------------------------------------------------------------------*/
-#if defined(SINK_GRAVCAPTURE_GAS) && defined(SINGLE_STAR_SINK_DYNAMICS)
-#error "SinkEnv1Spec: SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS j-side SwallowTime atomic write inside the pair_kernel is not yet wired through the runner's per-pair scatter substrate. The ghost-writeback path is wired (Pass B.iv) but is i-active snapshot-diff only. Do not enable SINGLE_STAR_SINK_DYNAMICS with SINK_GRAVCAPTURE_GAS until the per-pair scatter substrate lands."
-#endif
-
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "sinks_gpu_decls.h"                  /* struct sink_env_gpu_out */
+#include "sink_functions.h"                   /* sink_vesc_gpu, sink_check_boundedness_gpu —
+                                                 used inline in pair body under
+                                                 SINK_GRAVCAPTURE_GAS. */
 /* NOTE: caller translation units must include "../mesh/kernel.h" BEFORE
  * this header. kernel.h has no include guards (it defines static inline
  * kernel_main, used by the pair body below). The runner and the sink
@@ -102,6 +95,17 @@ struct SinkEnv1ActiveState {
     SinkEnv1CallScalars scalars;        /* per-call cosmology + gravity */
 };
 
+/* DeviceContext extension. Carries `oracle_dry_run`, flipped on by
+ * SinkEnv1Spec::set_oracle_brute_pass for the brute oracle pass so the
+ * j-side SwallowTime atomic-min below is suppressed (would otherwise
+ * write twice: once on the tree pass, once on the brute pass). Defaults
+ * false in populate_device_context. Mirrors SinkFeedDeviceContext +
+ * SinkSwkDeviceContext. Trivially copyable: runner captures by value
+ * into device lambda. */
+struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
+    bool oracle_dry_run;
+};
+
 /* ============================================================================
  * Inline pair body — single source of truth for sink_env1 per-pair physics.
  * Called from SinkEnv1Spec::pair_kernel, used by all three runner paths
@@ -111,18 +115,22 @@ struct SinkEnv1ActiveState {
  * Caller is responsible for the per-active early-return (Mass<=0 || h<=0).
  *
  * J-side writes:
- *   - SINGLE_STAR_SINK_DYNAMICS: neighbor_particle.SwallowTime is atomically min'd. The
- *     SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS combination is currently #error-guarded
- *     above (the runner's SymmetricPairScatter channel does not yet carry
- *     this through).
- *   - SINK_GRAVCAPTURE_GAS: accum.mass_to_swallow_edd accumulates; no j-write.
+ *   - SINGLE_STAR_SINK_DYNAMICS + SINK_GRAVCAPTURE_GAS: a per-pair atomic min
+ *     on neighbor_particle.SwallowTime fires inside the boundedness-passed
+ *     branch of the SINK_GRAVCAPTURE_GAS body. Suppressed under
+ *     oracle_dry_run. Reverse-comm to the home rank goes through the
+ *     existing GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime) bundle in
+ *     sinks/sink_env1_loop.cc.
+ *   - SINK_GRAVCAPTURE_GAS (without SINGLE_STAR_SINK_DYNAMICS):
+ *     accum.mass_to_swallow_edd accumulates i-side; no j-write.
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION
 static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
-                                  const struct particle_data& neighbor_particle,
+                                  struct particle_data& neighbor_particle,
                                   const struct gas_cell_data* neighbor_cell,
-                                  struct sink_env_gpu_out& accum)
+                                  struct sink_env_gpu_out& accum,
+                                  bool oracle_dry_run)
 {
     /* Self-skip / mass / type-5 filter. */
     if(neighbor_particle.Mass <= 0 || neighbor_particle.Type == 5 || neighbor_particle.ID == active.id) return;
@@ -222,9 +230,11 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
     }
 
     /* SINK_GRAVCAPTURE_GAS path — boundedness check + SwallowID-based
-     * mass-marked-swallow accumulation. SINGLE_STAR_SINK_DYNAMICS is
-     * compile-guarded out at top of header (j-side SwallowTime atomic write
-     * not yet carried through SymmetricPairScatter channel). */
+     * mass-marked-swallow accumulation. Under SINGLE_STAR_SINK_DYNAMICS,
+     * the boundedness-passed branch also atomic-min's a per-pair tff into
+     * neighbor_particle.SwallowTime (suppressed under oracle_dry_run;
+     * reverse-comm via GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime) bundle
+     * in sink_env1_loop.cc). */
 #ifdef SINK_GRAVCAPTURE_GAS
 #ifdef GRAIN_FLUID
     if(neighbor_particle.Mass > 0 && (neighbor_particle.Type == 0 || ((1<<neighbor_particle.Type) & GRAIN_PTYPES)))
@@ -259,6 +269,16 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
             if(spec_mom >= active.scalars.common.newton_G * (active.mass + (double)neighbor_particle.Mass) * local_sink_radius) { return; }
 #endif
             if(sink_check_boundedness_gpu(neighbor_particle, neighbor_cell_local, vrel, vbound, dr_code, local_sink_radius) == 1) {
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+                if(!oracle_dry_run) {
+                    const double eps = DMAX(dr_code,
+                                            DMAX((double)neighbor_particle.KernelRadius, ags_h_i)
+                                            * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER);
+                    const double tff_pair = eps * eps * eps
+                                            / ((double)active.mass + (double)neighbor_particle.Mass);
+                    Kokkos::atomic_min(&neighbor_particle.SwallowTime, (MyFloat)tff_pair);
+                }
+#endif
                 if(neighbor_particle.SwallowID < active.id) { accum.mass_to_swallow_edd += (MyFloat)neighbor_particle.Mass; }
             }
         }
@@ -315,10 +335,12 @@ struct SinkEnv1Spec {
     using CallScalars   = SinkEnv1CallScalars;
     using ActiveData    = SinkEnv1ActiveState;
     using AccumData     = struct sink_env_gpu_out;
+    using DeviceContext = SinkEnv1DeviceContext;        /* file-scope struct above */
 
     struct NeighborData {
-        const struct particle_data *neighbor_particle;
-        const struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
+        struct particle_data       *neighbor_particle;  /* non-const: pair body atomic-min's SwallowTime */
+        const struct gas_cell_data *neighbor_cell;      /* nullptr for non-gas / when no CellP */
+        bool                        oracle_dry_run;     /* propagated from ctx by load_neighbor */
     };
 
     /* (7) Per-active aux passed by caller through neighbor_loop_args::aux.
@@ -390,7 +412,7 @@ struct SinkEnv1Spec {
      * build). Byte-exact reconstruction of the legacy GPU lambda's q-packing
      * block. */
     KOKKOS_INLINE_FUNCTION
-    static ActiveData load_active(const NeighborLoopDeviceContextBase& ctx,
+    static ActiveData load_active(const DeviceContext& ctx,
                                    int active_slot, int i,
                                    double h_search,
                                    const CallScalars& scalars)
@@ -430,7 +452,7 @@ struct SinkEnv1Spec {
     /* Build NeighborData for j. ctx.P/ctx.CellP are UVM under Mode A; in
      * Mode B walker they are P_host/CellP_host — same shape. */
     KOKKOS_INLINE_FUNCTION
-    static NeighborData load_neighbor(const NeighborLoopDeviceContextBase& ctx,
+    static NeighborData load_neighbor(const DeviceContext& ctx,
                                        int j,
                                        const IdentitySidecar& /*id*/,
                                        const ActiveData& /*active*/)
@@ -438,7 +460,16 @@ struct SinkEnv1Spec {
         NeighborData neighbor;
         neighbor.neighbor_particle = &ctx.P[j];
         neighbor.neighbor_cell     = (ctx.CellP && ctx.P[j].Type == 0) ? &ctx.CellP[j] : nullptr;
+        neighbor.oracle_dry_run    = ctx.oracle_dry_run;
         return neighbor;
+    }
+
+    /* Oracle brute-pass hook (Phase 4.A.0 contract): runner copies ctx and
+     * calls this before the brute evaluate pass to suppress j-side writes.
+     * Mirror of SinkFeedSpec::set_oracle_brute_pass. */
+    static void set_oracle_brute_pass(DeviceContext& ctx, bool on)
+    {
+        ctx.oracle_dry_run = on;
     }
 
     /* The physics — forwards to the inline pair body above. */
@@ -448,7 +479,9 @@ struct SinkEnv1Spec {
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
-        sink_env1_pair_kernel(active, *neighbor.neighbor_particle, neighbor.neighbor_cell, accum);
+        sink_env1_pair_kernel(active, *neighbor.neighbor_particle,
+                              neighbor.neighbor_cell, accum,
+                              neighbor.oracle_dry_run);
     }
 
     /* (11) Host writebacks (post-dispatch). */
@@ -474,10 +507,16 @@ struct SinkEnv1Spec {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
-    /* sink_env1 uses base DeviceContext unchanged. Specs that need host-
-     * staged per-active state (e.g., sink_feed) declare a derived
-     * DeviceContext + populate_device_context per Phase 4.A.0. */
-    using DeviceContext  = NeighborLoopDeviceContextBase;
+    /* DeviceContext = SinkEnv1DeviceContext is declared in the PHYSICS
+     * BLOCK above (alongside the other using aliases) so all inline
+     * DeviceContext-typed method declarations below can see it. The
+     * derived struct itself is file-scope above SinkEnv1Spec. */
+
+    /* Phase 4.A.0 device-context lifecycle. populate sets
+     * oracle_dry_run=false; cleanup is a no-op body (declared anyway
+     * for symmetric runner-contract pairing — no UVM allocs to free). */
+    static void populate_device_context(const neighbor_loop_args& args, DeviceContext& ctx);
+    static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
 
     /* ====================================================================
      * DIAGNOSTICS — env-gated; safe to ignore for physics edits.

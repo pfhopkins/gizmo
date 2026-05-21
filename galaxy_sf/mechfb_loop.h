@@ -344,7 +344,20 @@ struct MechFBSpec {
         mechanical_fb_per_source_setup(a.local, a.loop_iteration, a.scalars, a.source_mode);
 
         /* Snapshot DeviceContext fields the pair kernel needs but cannot read
-         * directly (pair_kernel has no ctx parameter). */
+         * directly (pair_kernel has no ctx parameter).
+         *
+         * MPI- AND ORACLE-SAFETY: every field set below is rank-local AND
+         * eval-pass-local. They get OVERWRITTEN by
+         * MechFBSpec::bind_active_to_eval_context (below) inside the runner's
+         * evaluate_pairs_post_drift, once per active per eval pass, using the
+         * exact eval ctx in play. So:
+         *   - Mode-B-remote PEER eval on a receiver rank uses receiver's ctx
+         *     (not sender's stale pointers shipped via MPI envelope).
+         *   - Oracle brute-pass uses ctx_oracle_*.oracle_dry_run = true (not
+         *     the false captured here at original load_active time), so j-side
+         *     atomic writes are suppressed during brute as designed.
+         * The values set here matter only for the FIRST eval pass on the
+         * active rank in Production mode (the bind hook is idempotent there). */
         a.LocalGasMechFBInfoTemp = dctx.LocalGasMechFBInfoTemp;
         a.d_gas_iter             = dctx.d_gas_iter;
         a.num_local_gas          = dctx.num_local_gas;
@@ -354,6 +367,37 @@ struct MechFBSpec {
         a.CellP_base             = dctx.CellP;
 
         return a;
+    }
+
+    /* Per-eval-pass binding hook (see nlr_spec_has_bind_active_to_eval_context
+     * docstring in mesh/neighbor_loop_runner.h). The runner calls this for
+     * every active right before its pair_kernel inside evaluate_pairs_post_drift,
+     * with the EXACT ctx of that eval pass — so:
+     *   1. Mode-B-remote PEER eval: receiver's ctx values overwrite the
+     *      sender's rank-local snapshots that arrived via MPI envelope
+     *      (fixes the np=2 wind_singlestar SIGSEGV in mechanical_fb_pair_kernel
+     *      where rank 0 was using rank 1's P_base etc).
+     *   2. Oracle paths (OracleCompare / OracleIterative): the runner copies
+     *      ctx into ctx_oracle_* and flips oracle_dry_run via
+     *      set_oracle_brute_pass on the COPY. Without per-eval-pass binding,
+     *      active.oracle_dry_run would stay at the original ctx's value
+     *      (false) on the brute pass, j-side atomic_adds would fire twice,
+     *      and the oracle would silently miss the double-coupling. Codex
+     *      flagged this 2026-05-20 after the initial rebind-only fix.
+     *
+     * Source-owned physics fields (pos, h_search, local, source_mode,
+     * loop_iteration, is_active_this_mode, scalars) are preserved here — they
+     * describe the sender's star / per-call physics and are stable across
+     * ranks and eval passes. */
+    static void bind_active_to_eval_context(const DeviceContext& eval_ctx,
+                                             ActiveData& active) {
+        active.LocalGasMechFBInfoTemp = eval_ctx.LocalGasMechFBInfoTemp;
+        active.d_gas_iter             = eval_ctx.d_gas_iter;
+        active.num_local_gas          = eval_ctx.num_local_gas;
+        active.num_local_particles    = eval_ctx.num_local_particles;
+        active.oracle_dry_run         = eval_ctx.oracle_dry_run;
+        active.P_base                 = eval_ctx.P;
+        active.CellP_base             = eval_ctx.CellP;
     }
 
     KOKKOS_INLINE_FUNCTION
