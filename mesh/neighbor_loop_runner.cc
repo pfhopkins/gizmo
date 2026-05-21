@@ -94,6 +94,10 @@
  * has no master #ifdef gate — every hydro build runs hydro_gradient_calc). */
 #include "../hydro/gradients_loop.h"
 
+/* Wave 5 hydro corridor commit 8: HydroForceSpec always built (closes the
+ * corridor; every hydro build runs hydro_force). */
+#include "../hydro/hydro_force_loop.h"
+
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 #include "../galaxy_sf/radfb_rp_loop.h"
 #endif
@@ -4959,6 +4963,16 @@ template void run_neighbor_loop<CellcorrectionsSpec>(const neighbor_loop_args&);
  * direct precursor to HydroForceSpec (commit 8). See
  * hydro/gradients_loop.{h,cc} + OPEN_3d_gradientsspec_design.md. */
 template void run_neighbor_loop<GradientsSpec>(const neighbor_loop_args&);
+
+/* Wave 5 hydro corridor commit 8: HydroForceSpec — runner port of the legacy
+ * `hydro_evaluate_gpu` walker. Closes the corridor (third + final consumer
+ * after CellcorrectionsSpec and GradientsSpec). uses_ghost_writeback=true
+ * with a snapshot-diff bundle (PARTICLE_MAX(wakeup) + MFV GAS_ADD(dMass))
+ * for Mode A imported-ghost lifecycle; Mode B direct-owner-rank j-writes
+ * via request-driven P2P. Helper hydro_accumulate_neighbor gained the
+ * allow_j_writes gate in commit 8a (a2cb965a) so the oracle brute pass
+ * doesn't double-apply j-writes. See hydro/hydro_force_loop.{h,cc}. */
+template void run_neighbor_loop<HydroForceSpec>(const neighbor_loop_args&);
 
 /* Phase 4 Wave-3 / radfb_local: RadFBRPSpec — local radiation-pressure winds.
  * Iterative 2-pass (iter 0 wt_sum aggregation; iter 1 kick application).
