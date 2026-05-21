@@ -9,6 +9,94 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
+/* mbary_step_checkpoint: always-on mass-balance leak locator.  Logs to
+ * <OutputDir>/mass_balance_steps.txt one line per checkpoint where EITHER
+ * M_bary (total baryonic mass) OR M_Z (total gas metal mass) deviates from
+ * the previous call by more than 1e-14 fractional.  M_Z change between
+ * pre/post_diff_unpack catches metal-diffusion leaks; M_bary change at any
+ * tag catches mass leaks.  Use it to bracket suspect operations. */
+void mbary_step_checkpoint(const char *tag)
+{
+    static double last_M_tot = -1.0;
+    static double last_M_Z   = -1.0;
+    static long long call_count = 0;
+    int i;
+    double M_gas_loc = 0, M_star_loc = 0, M_Z_loc = 0;
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) continue;
+        if(P[i].Type == 0) {
+            M_gas_loc += P[i].Mass;
+#if defined(METALS)
+            M_Z_loc += P[i].Mass * P[i].Metallicity[0];  /* gas metal mass = Σ M·Met[0] */
+#endif
+        }
+        else if(P[i].Type == 4) {
+            M_star_loc += P[i].Mass;
+        }
+    }
+    double M_gas = 0, M_star = 0, M_Z = 0;
+    MPI_Allreduce(&M_gas_loc,  &M_gas,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&M_star_loc, &M_star, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&M_Z_loc,    &M_Z,    1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    double M_tot = M_gas + M_star;
+    if(ThisTask == 0) {
+        int should_log = 0;
+        double dM = 0.0, dZ = 0.0;
+        if(last_M_tot < 0) { should_log = 1; }
+        else {
+            dM = M_tot - last_M_tot;
+            dZ = M_Z   - last_M_Z;
+            double frac_M = (last_M_tot > 0) ? fabs(dM) / last_M_tot : 0.0;
+            double frac_Z = (last_M_Z   > 0) ? fabs(dZ) / last_M_Z   : 0.0;
+            if(frac_M > 1.0e-14 || frac_Z > 1.0e-14) should_log = 1;
+        }
+        if(should_log) {
+            char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+            snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/mass_balance_steps.txt", All.OutputDir);
+            FILE *f = fopen(path, "a");
+            if(f) {
+                if(ftell(f) == 0) {
+                    fprintf(f, "### Per-checkpoint M_bary + M_Z delta trace for leak localization.\n");
+                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for either M_bary or M_Z (or first call).\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]\n");
+                }
+                fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e\n",
+                    call_count, tag, All.Time, M_tot, dM, M_Z, dZ);
+                fclose(f);
+            }
+        }
+        last_M_tot = M_tot;
+        last_M_Z   = M_Z;
+        call_count++;
+    }
+}
+
+/* diff_unpack_breakdown_log: writes per-step pair-flux Σ Dyield[0] and clamp-correction
+ * Σ M·(post-pre-Dyield/Mass) to <OutputDir>/diff_unpack_breakdown.txt.  Pair-flux total
+ * should be ~0 if diffusion solver is conservative; clamp contribution should be ~0 if
+ * the DMAX(.., 0.0) floor never fires.  Pinpoints which mechanism leaks metal mass. */
+void diff_unpack_breakdown_log(double dMZ_pair_loc, double dMZ_clamp_loc)
+{
+    double dMZ_pair = 0, dMZ_clamp = 0;
+    MPI_Allreduce(&dMZ_pair_loc,  &dMZ_pair,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&dMZ_clamp_loc, &dMZ_clamp, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {
+        char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+        snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/diff_unpack_breakdown.txt", All.OutputDir);
+        FILE *f = fopen(path, "a");
+        if(f) {
+            if(ftell(f) == 0) {
+                fprintf(f, "### Per-step diffusion unpack breakdown of dM_Z contribution.\n");
+                fprintf(f, "###   dM_Z_pair_flux: Σ_cells Dyield[0] (should be 0 if solver is conservative).\n");
+                fprintf(f, "###   dM_Z_clamp:     Σ_cells M·(post_Met[0] − pre_Met[0] − Dyield[0]/M) — non-zero iff DMAX(,0) floor fires.\n");
+                fprintf(f, "###   (1) time  (2) dM_Z_pair_flux[code]  (3) dM_Z_clamp[code]\n");
+            }
+            fprintf(f, "%.10e  %+.16e  %+.16e\n", All.Time, dMZ_pair, dMZ_clamp);
+            fclose(f);
+        }
+    }
+}
+
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
 /* Mass-conservation diagnostic for isolated-FB tests.  Logs at each call:
  *   - Total baryonic mass (gas + stars)
@@ -251,8 +339,10 @@ void run(void)
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
         {
+            MBARY_STEP("pre_merge_split");
             merge_and_split_particles();
             rearrange_particle_sequence();
+            MBARY_STEP("post_merge_split");
         }
 #endif
         
@@ -447,9 +537,13 @@ void calculate_non_standard_physics(void)
 
 #ifdef GALSF /* star/sink particle formation */
     MCBAL_LOG("pre_starform_FB");
+    MBARY_STEP("pre_sf_spawn");
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
+    MBARY_STEP("post_sf_spawn");
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    MBARY_STEP("pre_imf_accrete");
     assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
+    MBARY_STEP("post_imf_accrete");
 #endif
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
     MCBAL_LOG("post_starform_FB");

@@ -796,6 +796,15 @@ double get_logL_pe(double mass);
 double get_logS_ly(double mass);
 int get_index(double search);
 #endif
+
+/* Always-on mass-balance leak locator: log per-checkpoint M_bary + M_Z delta
+ * to mass_balance_steps.txt; bracket suspect operations with MBARY_STEP("tag"). */
+void mbary_step_checkpoint(const char *tag);
+#define MBARY_STEP(tag) mbary_step_checkpoint(tag)
+
+/* Diff-unpack breakdown: pair-flux total vs clamp-correction contributions to dM_Z. */
+void diff_unpack_breakdown_log(double dMZ_pair_loc, double dMZ_clamp_loc);
+
 #ifdef GALSF_RESOLVEDISM_FB
 void resolvedism_determine_SNe(void);
 void resolvedism_inject_fb_energy(void);

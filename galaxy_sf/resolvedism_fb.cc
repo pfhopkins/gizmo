@@ -502,10 +502,14 @@ void resolvedism_determine_SNe(void)
 void resolvedism_inject_fb_energy(void)
 {
     /* ---- Pass 0: Momentum injection (wind + AGB) — before SN so final winds fire first ---- */
+    MBARY_STEP("pre_fb_mom_p0");
     resolvedism_fb_momentum_calc(0);
+    MBARY_STEP("post_fb_mom_p0");
 
     /* ---- Pass 1: Thermal injection (SN + Type Ia) ---- */
+    MBARY_STEP("pre_fb_thermal");
     resolvedism_fb_thermal_calc();
+    MBARY_STEP("post_fb_thermal");
 
     /* Budget tracking: local accumulators for [0]=SN, [1]=AGB, [2]=wind, [3]=radpressure, [4]=Ia */
     double n_events[5] = {0,0,0,0,0};
@@ -532,12 +536,13 @@ void resolvedism_inject_fb_energy(void)
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
 #ifdef GALSF_RESOLVEDISM_WINDS
-        /* Wind injection complete: reset accumulators, reduce star mass */
+        /* Wind injection complete: tally budget only.  Star mass has already
+         * been reduced by the measured-coupling out2particle in the fb_momentum
+         * walk above (out->M_coupled), so do NOT reduce P[i].Mass here — that
+         * would double-deduct. */
         if(P[i].SNe_ThisTimeStep == 3) {
-            double dM_wind = P[i].WindMassAccum; /* Msun */
+            double dM_wind = P[i].WindMassAccum; /* Msun, for budget tracking */
             double dp_wind = P[i].WindMomentumAccum * SOLAR_MASS_CGS * 1.0e5; /* g*cm/s */
-            P[i].Mass -= dM_wind / UNIT_MASS_IN_SOLAR;
-            if(P[i].Mass < 0) P[i].Mass = 0;
 
             n_events[2] += 1;
             M_injected[2] += dM_wind;
@@ -611,7 +616,11 @@ void resolvedism_inject_fb_energy(void)
             Z_injected[4] += Z_ia;
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
-            P[i].Mass = 0; /* WD fully disrupted */
+            /* Do NOT set P[i].Mass = 0 here — the fb_thermal walk's out2particle
+             * has already reduced star mass via measured-coupling (M_coupled).
+             * Forcing 0 would silently absorb any residual from Σ wk_j ≠ 1, hiding
+             * a leak.  WD is effectively disrupted: star mass is whatever the
+             * walk actually deposited to the gas neighbors (~0). */
             P[i].M_drawn_Ia = 0; /* no longer eligible */
             P[i].SNe_ThisTimeStep = -1;
             continue;
