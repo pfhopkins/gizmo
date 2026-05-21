@@ -434,6 +434,15 @@ void hydro_accumulate_neighbor(
      * state — without this gate the brute pass would double-apply
      * j-side writes that the main pass already applied, corrupting
      * the simulation. Same shape as sink_feed's oracle_dry_run pattern. */
+    /* Signal velocity for timestepping (i-side accum — MUST update every pair
+     * regardless of allow_j_writes. Without this update outside the gate,
+     * the oracle brute pass (allow_j_writes=false) leaves out.MaxSignalVel
+     * stuck at the kernel.sound_i seed → uniform 2× mismatch against the
+     * tree pass. Bug introduced by commit 8a (allow_j_writes gate) which
+     * accidentally swallowed this i-side update; surfaced by the commit 8
+     * runtime matrix oracle pass on 2026-05-20. */
+    if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
+
     if(allow_j_writes) {
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -456,9 +465,6 @@ void hydro_accumulate_neighbor(
         /* if dt_i > dt_j: j will handle this pair when it's active */
     }
 #endif
-
-    /* Signal velocity for timestepping */
-    if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
 
     /* Wakeup check: if j is inactive and signal velocity exceeds threshold,
        flag it for wakeup. Uses Kokkos atomics for thread safety. */
