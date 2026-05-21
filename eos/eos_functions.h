@@ -18,6 +18,21 @@
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
+#ifndef KOKKOS_FUNCTION
+#define KOKKOS_FUNCTION
+#endif
+
+/* Forward declaration for get_equilibrium_dust_temperature_estimate (body in
+ * radiation/rt_functions.h). Needed here because return_dust_to_metals_ratio_vs_solar
+ * (defined below in this header) calls it under the COOL_LOW_TEMPERATURES branch.
+ * KOKKOS_FUNCTION (NOT KOKKOS_INLINE_FUNCTION) attribute so the host external symbol
+ * still gets emitted by radiation/rt_utilities.cc's non-inline re-include pass;
+ * KOKKOS_INLINE_FUNCTION here would make the function inline everywhere, suppressing
+ * the strong host symbol and causing link errors from eos.o/io.o/gravtree.cc callers.
+ * The KOKKOS_FUNCTION attribute is enough for nvc++ to recognize the call as
+ * device-callable inside __host__ __device__ inlining contexts (avoids silent
+ * #20011-D physics error on the device pass). */
+KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 
 /* return an estimate of the Hydrogen molecular fraction of gas */
 KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)

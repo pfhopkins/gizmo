@@ -33,6 +33,7 @@
 #include "viscosity_functions.h"
 #include "nonideal_mhd_functions.h"
 #include "../solids/elastic_stress_tensor_force_functions.h"
+#include "../solids/elastic_physics_functions.h"  /* get_negative_pressure_tensilecorrfac (KOKKOS_INLINE) for hydro_accumulate_neighbor device pass */
 #include "../turb/turbulent_diffusion_functions.h"
 #include "../turb/chimes_turbulent_ion_diffusion_functions.h"
 #include "../eos/cosmic_ray_fluid/cosmic_ray_diffusion_functions.h"

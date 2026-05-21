@@ -17,6 +17,13 @@
 #endif
 
 #include "../system/bracketed_rootfind_functions.h"
+/* rt_kappa and other device-callable functions below reference
+ * return_dust_to_metals_ratio_vs_solar (defined as KOKKOS_INLINE_FUNCTION in
+ * eos/eos_functions.h). Without this include, TUs that pull rt_functions.h
+ * but not eos_functions.h see only the core/proto.h __host__-only forward
+ * declaration, and nvc++ emits warning #20011-D (silent physics error on the
+ * device pass). Self-contained header avoids per-caller pre-include burden. */
+#include "../eos/eos_functions.h"
 
 /* ========================================================================
  * dust_planck_mean_opacity — Semenov 2003 table interpolation
@@ -375,6 +382,97 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
 #endif
 
     return Tdust;
+}
+
+
+/* ========================================================================
+ * get_equilibrium_dust_temperature_estimate — three-component CMB+ISRF+IR
+ * equilibrium dust temperature estimator.
+ *
+ * Moved here (from cooling/cooling.cc) so eos_functions.h's
+ * return_dust_to_metals_ratio_vs_solar can call it from device passes without
+ * triggering nvc++ warning #20011-D (silent-physics on GPU). Body identical
+ * to the prior cooling.cc copy; rt_kappa / rt_kappa_adaptive_IR_band /
+ * rt_eqm_dust_temp are defined ABOVE in this same header so the inline body
+ * has them in scope. evaluate_NH_from_GradRho is GIZMO_GPU_FUNCTION via
+ * predict_functions.h and remains device-callable across TUs.
+ *
+ * cooling.cc still calls this function; the forward declarations in
+ * cooling.cc need to be retired alongside this move (handled in same commit).
+ * rt_utilities.cc remains the owner of the non-inline host external symbol
+ * via its existing #undef KOKKOS_INLINE_FUNCTION re-include of rt_functions.h.
+ * ======================================================================== */
+KOKKOS_INLINE_FUNCTION
+double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell)
+{
+#if defined(RT_INFRARED)
+    if(i >= 0) {return cell[i].Dust_Temperature;} // this is pre-computed -- simply return it
+#endif
+    /* simple three-component model [can do fancier] with cmb, dust, high-energy photons */
+    double e_CMB=0.262*All.cf_a3inv/All.cf_atime, T_cmb=2.73/All.cf_atime; // CMB [energy in eV/cm^3, T in K]
+    double e_IR=0.31, Tdust_ext=DMAX(30.,T_cmb); // Milky way ISRF from Draine (2011), assume peak of dust emission at ~100 microns
+    double e_HiEgy=0.66, T_hiegy=5800.; // Milky way ISRF from Draine (2011), assume peak of stellar emission at ~0.6 microns [can still have hot dust, this effect is pretty weak]
+#ifdef RT_ISRF_BACKGROUND
+    e_IR *= All.InterstellarRadiationFieldStrength; e_HiEgy *= All.InterstellarRadiationFieldStrength; // need to re-scale the assumed ISRF components
+    if(!All.ComovingIntegrationOn){
+	e_CMB *= pow(1.+All.RadiationBackgroundRedshift,4);
+ 	T_cmb *= (1.+All.RadiationBackgroundRedshift);
+    }
+#endif
+
+    if(i >= 0)
+    {
+#ifdef SINGLE_STAR_SINK_DYNAMICS // treatment using direct dust temperature solver accounting for absorption and gas-dust coupling - want this when capturing the dynamics of dense collapsing cores
+	double absorption_rate=0, vol_inv = cell[i].Density * All.cf_a3inv / cell[i].Mass, fac_abs = C_LIGHT_CODE * cell[i].Density * All.cf_a3inv;
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) // we have information about individual radiation bands and their opacities; use these to compute dust absorption rate
+	for(int k=0;k<N_RT_FREQ_BINS;k++){
+	    if(RT_BAND_IS_IONIZING(k)) {continue;} // skip ionizing bands where the dust cross section is not accounted for
+	    absorption_rate += fac_abs * rt_kappa(i,k, pp, cell) * cell[i].Rad_E_gamma_Pred[k] * vol_inv;
+	}
+#endif
+	absorption_rate += (e_CMB/UNIT_PRESSURE_IN_EV) * fac_abs * rt_kappa_adaptive_IR_band(i,T_cmb,T_cmb,0,1, pp, cell); // CMB absorption; assume cloud is optically-thin to the CMB
+#if defined(RT_ISRF_BACKGROUND) // account for additional optical + IR radiation field with extinction
+	double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp); // column density in code units
+	double kappa_IR = rt_kappa_adaptive_IR_band(i,20.,20.,0,1, pp, cell); // assume Trad=20 for IR dust opacity
+	double Zfac = 1.;
+#ifdef METALS
+	Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];
+#endif
+	double kappa_opt = 180. * Zfac * UNIT_SURFDEN_IN_CGS;
+	double tau_opt = kappa_opt*column;
+	e_HiEgy += 7.8e-3 * pow(All.cf_atime,3.9)/(1.+pow(DMAX(-1.+1./All.cf_atime,0.001)/1.7,4.4)); // extragalactic UV/optical background
+	absorption_rate += fac_abs * kappa_opt * (e_HiEgy/UNIT_PRESSURE_IN_EV) * exp(DMAX(-tau_opt,-100));
+	absorption_rate += fac_abs * kappa_IR * ((-0.5*expm1(DMAX(-tau_opt,-100)) * e_HiEgy + e_IR)/UNIT_PRESSURE_IN_EV); // this assumes absorbed ONIR photons are reradiated into IR, factor of 0.5 assumes 1/2 of reradiated IR photons do not go deeper into the cloud
+#endif
+	// OK now we have our dust absorption rate, let's call the solver
+	double Tdust = rt_eqm_dust_temp(i, T, absorption_rate, pp, cell);
+	return Tdust;
+#endif // SINGLE_STAR_SINK_DYNAMICS
+
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY) // use actual explicitly-evolved radiation field, if possible
+        e_HiEgy=0; e_IR = 0; int k; double E_tot_to_evol_eVcgs = (cell[i].Density*All.cf_a3inv/cell[i].Mass) * UNIT_PRESSURE_IN_EV;
+        for(k=0;k<N_RT_FREQ_BINS;k++) {e_HiEgy+=cell[i].Rad_E_gamma_Pred[k];}
+#if defined(GALSF_FB_FIRE_RT_LONGRANGE)
+        e_IR += cell[i].Rad_E_gamma_Pred[RT_FREQ_BIN_FIRE_IR]; // note IR
+#endif
+#if defined(RT_INFRARED)
+        e_IR += cell[i].Rad_E_gamma_Pred[RT_FREQ_BIN_INFRARED]; Tdust_ext = cell[i].Radiation_Temperature; // note IR [irrelevant b/c of call above, but we'll keep this as a demo]
+#endif
+        e_HiEgy -= e_IR; // don't double-count the IR component flagged above //
+        e_IR *= E_tot_to_evol_eVcgs; e_HiEgy *= E_tot_to_evol_eVcgs;
+#endif
+    }
+    e_HiEgy += shielding_factor_for_exgalbg * 7.8e-3 * pow(All.cf_atime,3.9)/(1.+pow(DMAX(-1.+1./All.cf_atime,0.001)/1.7,4.4)); // this comes from the cosmic optical+UV backgrounds. small correction, so treat simply, and ignore when self-shielded.
+    double Tdust_eqm = 10.; // arbitrary initial value //
+    if(Tdust_ext*e_IR < 1.e-10 * (T_cmb*e_CMB + T_hiegy*e_HiEgy)) { // IR term is totally negligible [or zero exactly], use simpler expression assuming constant temperature for it to avoid sensitivity to floating-pt errors //
+        Tdust_eqm = 2.92 * pow(Tdust_ext*e_IR + T_cmb*e_CMB + T_hiegy*e_HiEgy, 1./5.); // approximate equilibrium temp assuming Q~1/lambda [beta=1 opacity law], assuming background IR temp is a fixed constant [relevant in IR-thin limit, but we don't know T_rad, so this is a guess anyways]
+    } else { // IR term is not vanishingly small. we will assume the IR radiation temperature is equal to the local Tdust. lacking any direct evolution of that field, this is a good proxy, and exact in the locally-IR-optically-thick limit. in the locally-IR-thin limit it slightly under-estimates Tdust, but usually in that limit the other terms dominate anyways, so this is pretty safe //
+        double T0=2.92, q=pow(T0*e_IR,0.25), y=(T_cmb*e_CMB + T_hiegy*e_HiEgy)/(T0*e_IR*q); if(y<=1) {Tdust_eqm=T0*q*(0.8+sqrt(0.04+0.1*y));} else {double y5=pow(y,0.2), y5_3=y5*y5*y5, y5_4=y5_3*y5; Tdust_eqm=T0*q*(1.+15.*y5_4+sqrt(1.+30.*y5_4+25.*y5_4*y5_4))/(20.*y5_3);} // this gives an extremely accurate and exactly-joined solution to the full quintic equation assuming T_rad_IR=T_dust
+    }
+#if defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+    cell[i].Dust_Temperature = DMAX(DMIN(Tdust_eqm , 2000.) , 1.);
+#endif
+    return DMAX(DMIN(Tdust_eqm , 2000.) , 1.); // limit at sublimation temperature or some very low temp //
 }
 #endif /* COOLING */
 

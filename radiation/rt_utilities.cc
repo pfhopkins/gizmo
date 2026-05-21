@@ -6,6 +6,14 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+/* Pre-include eos_functions.h (and cosmic_ray_functions.h transitively, under
+ * COSMIC_RAY_FLUID) with inline-semantic KOKKOS_INLINE_FUNCTION so #pragma once
+ * locks them BEFORE the non-inline re-include of rt_functions.h below.
+ * rt_functions.h pulls in eos_functions.h to make return_dust_to_metals_ratio_vs_solar
+ * device-callable from rt_kappa (fixes nvc++ warning #20011-D); without this
+ * pre-include the non-inline pass would emit strong external symbols for every
+ * function in eos_functions.h, duplicating eos.cc's emissions and failing the link. */
+#include "../eos/eos_functions.h"
 /* Function bodies now in rt_functions.h (single source of truth).
    Define KOKKOS_INLINE_FUNCTION as empty so functions are non-inline here,
    providing externally-visible symbols for other TUs that link via proto.h. */
