@@ -698,6 +698,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 void hydro_final_operations_and_cleanup(void)
 {
     int i,k;
+    /* Diffusion unpack breakdown accumulators (line 867 clamp diagnostic). */
+    double dMZ_pair_loc = 0;   /* Σ Dyield[0]: 0 if pair-flux solver conservative */
+    double dMZ_clamp_loc = 0;  /* Σ M·(clamp_correction): non-zero iff DMAX(,0) fires on Met[0] */
     for(i = FirstActiveParticle; i >= 0; i = NextActiveParticle[i])
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
@@ -864,7 +867,27 @@ void hydro_final_operations_and_cleanup(void)
             /* Clamp at 0 (not 0.01*old) so we don't fabricate phantom mass on the donor side
              * when diffusion drives an element below floor.  Per-pair flux is already capped
              * symmetrically in turbulent_diffusion.h so cumulative drain rarely overshoots. */
-            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.0);}
+            {
+                /* Breakdown for diff_unpack_breakdown.txt:
+                 *   pair-flux contribution to dM_Z = Dyield[0]   (Σ over all cells should be 0 if solver conservative)
+                 *   clamp contribution to dM_Z    = M·(post − pre − Dyield[0]/M)   (>0 iff floor fired on Met[0]) */
+                double Z0_before = P[i].Metallicity[0];
+                /* Combine i-side accumulated Dyield (this cell's own walks) with
+                 * Dyield_pending (j-side writes from neighbors' walks accumulated
+                 * while this cell was inactive across possibly multiple steps). */
+                double Dy0       = CellP[i].Dyield[0] + CellP[i].Dyield_pending[0];
+                dMZ_pair_loc += Dy0;
+                for(k=0;k<NUM_METAL_SPECIES;k++) {
+                    double total_d = CellP[i].Dyield[k] + CellP[i].Dyield_pending[k];
+                    P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + total_d / P[i].Mass, 0.0);
+                }
+                double Z0_after = P[i].Metallicity[0];
+                dMZ_clamp_loc += P[i].Mass * (Z0_after - Z0_before) - Dy0;
+                /* Reset Dyield_pending now that this cell has consumed it.  Do NOT
+                 * reset in preloop — would clobber accumulated j-side contributions
+                 * from neighbors' walks during this cell's inactive steps. */
+                for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield_pending[k] = 0;}
+            }
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             /* Force Σ Met[1..27] = 1 bit-exact: H = 1 − Z − Y absorbs any
              * float roundoff from the 28-slot diffusion + floor clamping. */
@@ -1032,7 +1055,9 @@ void hydro_final_operations_and_cleanup(void)
         } // closes P[i].Type==0 check and so closes loop over particles i
     } // for (loop over active particles) //
 
-    
+    /* Diff-unpack breakdown: pinpoint pair-flux vs clamp contribution to dM_Z. */
+    diff_unpack_breakdown_log(dMZ_pair_loc, dMZ_clamp_loc);
+
 #ifdef TURB_DRIVING
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE // if this is enabled, we only update as frequently as the driving phases are recomputed, as set by TurbDrive_TimeBetweenTurbUpdates. To avoid large errors, must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
     if(new_turbforce_needed_this_timestep()){add_turb_accel();}
@@ -1144,7 +1169,9 @@ void hydro_force(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    MBARY_STEP("pre_diff_unpack");
     hydro_final_operations_and_cleanup(); /* do final operations on results */
+    MBARY_STEP("post_diff_unpack");
     /* collect timing information */
     double t1; t1 = WallclockTime = my_second(); timeall = timediff(t00_truestart, t1);
     CPU_Step[CPU_HYDCOMPUTE] += timecomp; CPU_Step[CPU_HYDWAIT] += timewait; CPU_Step[CPU_HYDCOMM] += timecomm;

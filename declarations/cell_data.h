@@ -160,6 +160,11 @@ extern struct gas_cell_data
     
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+    /* j-side scatter buffer for cross-timebin pair-flux conservation: neighbors'
+     * walks add their contribution here while this cell is inactive.  Consumed +
+     * reset only at the unpack site, NOT in preloop (which would clobber values
+     * accumulated across multiple prior inactive steps). */
+    MyDouble Dyield_pending[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
 #endif
     
 #ifdef HYDRO_SPH

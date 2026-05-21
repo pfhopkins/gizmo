@@ -86,8 +86,14 @@
                 double pair_cap = 0.01 * donor_mass_k;  /* 1% per pair; ~50-80 pairs/cell → ≤80% cumulative drain */
                 if(fabs(cmag) > pair_cap) cmag = (cmag > 0 ? pair_cap : -pair_cap);
 
-                out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag;
-                if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag;}
+                /* Dual-walk Dyield_pending scatter: each perspective contributes
+                 * 0.5*cmag.  Per pair both walks happen, so totals across walks
+                 * apply +cmag to i (via Dyield) and −cmag to j (via Dyield_pending).
+                 * The pending buffer lets the j-side write survive across timebins:
+                 * an inactive cell j accumulates contributions from active neighbors'
+                 * walks until j eventually unpacks.  Bit-exact pair conservation. */
+                out.Dyield[k_species]               += 0.5 * cmag;
+                CellP[j].Dyield_pending[k_species]  -= 0.5 * cmag;
             }
         }
     }
