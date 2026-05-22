@@ -43,7 +43,13 @@ struct MechFBCallScalars {
 #ifdef METALS
     double SolarAbundances0;
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+    /* Mirrors All.CosmicRay_SNeFraction (global_data_all_struct.h:408-410).
+     * CR_DYNAMICAL_INJECTION_IN_SNE is defined whenever COSMIC_RAY_FLUID OR
+     * COSMIC_RAY_SUBGRID_LEBRON is, and the upstream field is in the same
+     * gate — the mirror must match (not be narrowed to COSMIC_RAY_FLUID only)
+     * or the LEBRON-subgrid + FIRE_BHS path fails to compile (Phase D
+     * 2026-05-21). */
     double CosmicRay_SNeFraction;
 #endif
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)

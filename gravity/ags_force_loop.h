@@ -403,11 +403,53 @@ struct AgsForceSpec {
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
 
     KOKKOS_INLINE_FUNCTION
-    static int active_subgroup_key(const DeviceContext& /*ctx*/, int i,
-                                    const CallScalars& /*scalars*/)
+    static int active_subgroup_key(const DeviceContext& ctx, int i,
+                                    const CallScalars& scalars)
     {
-        /* Partition key matches the caller's bitmask_groups partition. */
-        return ags_gravity_kernel_shared_BITFLAG(P[i].Type);
+        /* Partition key matches the caller's bitmask_groups partition. Mirror
+         * of ags_gravity_kernel_shared_BITFLAG (ags_rkern.cc) inlined here as
+         * device-callable logic — the named function is host-only and reading
+         * bare P[] / All.* from inside a __host__ __device__ inline triggers
+         * #20094-D + #20011-D. Same pattern + branches as
+         * AgsDensitySpec::active_subgroup_key (gravity/ags_density_loop.h).
+         * Reads Type via ctx.particle_type(i) and ComovingIntegrationOn via
+         * scalars.common.comoving_integration_on (codex round-9 path).
+         * Phase D fix 2026-05-21 (config 107 MAGNETIC+GRAIN_*). */
+        const short int t = ctx.particle_type(i);
+
+#ifdef ADAPTIVE_GRAVSOFT_FORALL
+        if(!((1 << t) & (ADAPTIVE_GRAVSOFT_FORALL))) { return 0; }
+#endif
+
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        if(!((1 << t) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))) {
+            return ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION;
+        }
+#endif
+
+        if(t == 0) { return 1; }
+
+#if (ADAPTIVE_GRAVSOFT_FORALL & 32) && defined(SINK_PARTICLES)
+        if(t == 5) { return 1; }
+#endif
+
+#if defined(GALSF) && ( (ADAPTIVE_GRAVSOFT_FORALL & 16) || (ADAPTIVE_GRAVSOFT_FORALL & 8) || (ADAPTIVE_GRAVSOFT_FORALL & 4) )
+        if(scalars.common.comoving_integration_on) {
+            if(t == 4) { return 17; }       /* 2^0 + 2^4 */
+        } else {
+            if((t == 4) || (t == 2) || (t == 3)) { return 29; }  /* 2^0 + 2^2 + 2^3 + 2^4 */
+        }
+#endif
+
+#ifdef DM_SIDM
+        if((1 << t) & (DM_SIDM)) { return DM_SIDM; }
+#endif
+
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+        return (1 << t);
+#endif
+
+        return 0;
     }
 
     /* Fill ActiveData[slot] on device. Reads directly from ctx.P[i] — no

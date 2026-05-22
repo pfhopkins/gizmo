@@ -229,7 +229,11 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars) {
 #ifdef METALS
     scalars->SolarAbundances0 = host_all->SolarAbundances[0];
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+    /* Gate must match the struct field gate in mechanical_fb_functions.h:46
+     * and the upstream All.CosmicRay_SNeFraction gate in
+     * global_data_all_struct.h:408 (defined under
+     * COSMIC_RAY_FLUID || COSMIC_RAY_SUBGRID_LEBRON). */
     scalars->CosmicRay_SNeFraction = host_all->CosmicRay_SNeFraction;
 #endif
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)

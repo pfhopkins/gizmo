@@ -62,7 +62,14 @@ double gpu_force_softening_kernel_radius(const struct particle_data *Pp, int p)
 {
     return Pp[p].ForceSoftening;
 }
+#endif
 
+/* AGS_zeta field is gated (particle_data.h:331) on
+ * ADAPTIVE_GRAVSOFT_FORGAS || AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+ * (the latter auto-defines under FORALL/CBE_INTEGRATOR/DM_FUZZY/SIDM).
+ * The accessor must match the field gate — NOT include GALSF_MERGER_STARCLUSTER_PARTICLES
+ * alone, which doesn't enable AGS_zeta. Phase D fix 2026-05-21 config 126. */
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 static KOKKOS_INLINE_FUNCTION
 double gpu_get_ags_zeta(const struct particle_data *Pp, int p)
 {
@@ -525,8 +532,10 @@ gpu_gravtree_walk_one(int target,
 #ifdef SINK_DYNFRICTION_FROMTREE
         double m_j_eff_for_df = 0.0;
 #endif
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+        int ptype_sec = -1;   /* assigned at L572-ish (outer gate includes MERGER_STARCLUSTER); only USED under FORGAS/FORALL sub-gates. Matches CPU forcetree.cc:1672 unconditional decl. Phase D fix 2026-05-21 config 126. */
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-        int ptype_sec = -1;
         double zeta_sec = 0.0;
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
