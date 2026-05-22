@@ -22,6 +22,15 @@
 #define KOKKOS_FUNCTION
 #endif
 
+/* NOTE (Phase D 2026-05-21 config 118): the EOS_TRUELOVE_PRESSURE branch in
+ * set_eos_pressure_impl below uses KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER from
+ * mesh/kernel.h. We do NOT include mesh/kernel.h here: kernel.h lacks
+ * header guards and re-defining its inline-static helpers in the same TU
+ * (when another header already pulled it in) causes redefinition errors.
+ * Consumers (cooling/cooling.cc, eos/eos.cc) MUST include mesh/kernel.h
+ * BEFORE this header under the EOS_TRUELOVE_PRESSURE /
+ * TRUELOVE_CRITERION_PRESSURE gate. */
+
 /* Forward declaration for get_equilibrium_dust_temperature_estimate (body in
  * radiation/rt_functions.h). Needed here because return_dust_to_metals_ratio_vs_solar
  * (defined below in this header) calls it under the COOL_LOW_TEMPERATURES branch.
@@ -622,7 +631,15 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
 
 #if defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE)
-    double h_eff = DMAX(pp[i].Get_Particle_Size(), KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER*ForceSoftening_KernelRadius(i));
+    /* ForceSoftening_KernelRadius(p) (gravity/forcetree.cc) is just
+     * `return P[p].ForceSoftening;` — inline directly via pp[] so this
+     * KOKKOS_INLINE_FUNCTION doesn't depend on the host-only forward decl
+     * being visible (cooling.cc deliberately includes eos_functions.h
+     * BEFORE proto.h for nvcc execution-space precedence — see
+     * cooling.cc:15-20 comment). KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER macro
+     * comes from mesh/kernel.h, included at top of this file under the same
+     * gate. Phase D fix 2026-05-21 config 118 EOS_TRUELOVE_PRESSURE. */
+    double h_eff = DMAX(pp[i].Get_Particle_Size(), KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER*pp[i].ForceSoftening);
     double NJeans = 4;
     double xJeans = (NJeans * NJeans / gamma_eos_index) * All.G * h_eff*h_eff * cell[i].Density * cell[i].Density /All.cf_atime;
     if(xJeans>press) press=xJeans;

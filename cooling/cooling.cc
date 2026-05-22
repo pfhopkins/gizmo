@@ -33,6 +33,15 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
  * caller) can call it from device passes without nvc++ warning #20011-D. */
 GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
 GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho, double rkern, double rho, double numngb_ndim, double include_h, int target, struct particle_data *pp);
+#if defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE)
+/* mesh/kernel.h needed BEFORE eos_functions.h: KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER
+ * macro is used inside eos_functions.h's set_eos_pressure_impl Truelove
+ * pressure branch. Cannot be included from inside eos_functions.h itself —
+ * kernel.h has no header guards and would trigger same-TU
+ * redefinition/reinclude errors if pulled in by both eos_functions.h and
+ * any other consumer in the same TU. Phase D fix 2026-05-21 config 118. */
+#include "../mesh/kernel.h"
+#endif
 #include "../eos/eos_functions.h"
 #include "../eos/hydrogen_molecule_functions.h"
 #include "../core/timestep_functions.h"

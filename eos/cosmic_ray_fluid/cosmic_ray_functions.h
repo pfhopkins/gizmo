@@ -20,6 +20,13 @@ KOKKOS_INLINE_FUNCTION double CR_return_spectral_slope_target(int target, int k_
 KOKKOS_INLINE_FUNCTION double CR_return_mean_rigidity_in_bin_in_GV(int target, int k_bin, struct gas_cell_data *cell);
 #endif
 
+/* Forward decl: defined ~L103. The CRFLUID_REDUCED_C_CODE(k) macro
+ * (declarations/precompiler_logic.h:850) expands to return_CRbin_M1speed(k),
+ * used by cosmicrayfluid_rsol_corrfac immediately below (under
+ * CRFLUID_ALT_RSOL_FORM) and by several other inline-body call sites
+ * earlier in this header than the definition. Phase D fix 2026-05-21. */
+KOKKOS_INLINE_FUNCTION double return_CRbin_M1speed(int k_CRegy);
+
 KOKKOS_INLINE_FUNCTION double cosmicrayfluid_rsol_corrfac(int k) {
 #if defined(CRFLUID_ALT_RSOL_FORM)
     return ((CRFLUID_REDUCED_C_CODE(k))/(C_LIGHT_CODE));

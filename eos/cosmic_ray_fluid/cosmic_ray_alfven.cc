@@ -5,6 +5,10 @@
 #include <math.h>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
+#include "cosmic_ray_functions.h"   /* return_CRbin_CR_rigidity_in_GV etc. used
+                                       under CRFLUID_EVOLVE_SCATTERINGWAVES below;
+                                       same include pattern as cosmic_ray_utilities.cc.
+                                       Surfaced 2026-05-21 Phase D config 25. */
 
 /*! Routines for cosmic ray 'fluid' modules (as opposed to the explicit CR-PIC methods, which are in the grain+particles section of the code)
 * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.

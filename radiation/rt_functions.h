@@ -25,6 +25,17 @@
  * device pass). Self-contained header avoids per-caller pre-include burden. */
 #include "../eos/eos_functions.h"
 
+/* Forward decl: rt_kappa is defined at ~L522, but called earlier in this
+ * file from rt_eqm_dust_temp (under SINGLE_STAR_SINK_DYNAMICS + RADTRANSFER,
+ * e.g. SSP_HYBRID Config). cooling.cc includes rt_functions.h BEFORE
+ * proto.h (see cooling.cc:15-20 comment on nvcc execution-space attribute
+ * precedence), so the proto.h:829 host-only forward decl isn't visible at
+ * the call site either. Same gate as the definition.
+ * Phase D fix 2026-05-21 (Config 31 SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS). */
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
+KOKKOS_INLINE_FUNCTION double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
+#endif
+
 /* ========================================================================
  * dust_planck_mean_opacity — Semenov 2003 table interpolation
  * (moved from radiation/rt_dust_opacity.cc)
