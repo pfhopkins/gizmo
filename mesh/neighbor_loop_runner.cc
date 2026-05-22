@@ -101,7 +101,7 @@
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 #include "../galaxy_sf/radfb_rp_loop.h"
 #endif
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 #include "../galaxy_sf/dm_dispersion_loop.h"
 #endif
 #ifdef TURB_DIFF_DYNAMIC
@@ -5046,7 +5046,7 @@ template void run_neighbor_loop_iterative<RadFBRPSpec>(const neighbor_loop_args_
  * ActiveReduceOnly + SidxCacheKind::None (DM tbm matches neither GasOnly nor
  * AllTypes cache). apply_active_writeback_iterative + Aux finalize pattern
  * mirrors DensitySpec exactly. See galaxy_sf/dm_dispersion_loop.{h,cc}. */
-#if defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 template void run_neighbor_loop_iterative<DMDispersionSpec>(const neighbor_loop_args_iterative&);
 #endif
 

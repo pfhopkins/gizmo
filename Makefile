@@ -469,7 +469,8 @@ EOSCOOL_OBJS =  \
 STARFORM_OBJS = galaxy_sf/sfr_eff.o \
                 galaxy_sf/stellar_evolution.o \
                 galaxy_sf/mechanical_fb.o \
-                galaxy_sf/radfb_local.o
+                galaxy_sf/radfb_local.o \
+                galaxy_sf/dm_heating.o
 # galaxy_sf/thermal_fb.o is in GPU_OBJS (3e.2): the runner-template caller
 # transitively includes thermal_fb_loop.h → Kokkos_Core.hpp, so the TU must
 # build with $(GPU_CC) (nvcc_wrapper on Vista) like sinks/sink_feed.o.

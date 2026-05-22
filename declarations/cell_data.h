@@ -252,14 +252,19 @@ extern struct gas_cell_data
 #if (GALSF_SUBGRID_WIND_SCALING==1)
     MyFloat HostHaloMass;             /*!< host halo mass estimator for wind launching velocity */
 #endif
-#if (GALSF_SUBGRID_WIND_SCALING==2)
-    MyFloat  KernelRadiusDM;                   /*!< smoothing length to find neighboring dark matter particles */
+#endif
+
+#ifdef DM_DISPERSION_LOOP_ACTIVE
+    /* DM-dispersion support fields. Relocated out of GALSF_SUBGRID_WINDS
+     * nesting so DM_HEATING-only builds (no winds) also have these fields
+     * available, consistent with the dispersion loop being compiled. */
+    MyFloat  KernelRadiusDM;          /*!< smoothing length to find neighboring dark matter particles */
     MyDouble NumNgbDM;                /*!< number of neighbor dark matter particles */
     MyDouble DM_Vx;
     MyDouble DM_Vy;
     MyDouble DM_Vz;
-    MyDouble DM_VelDisp; /*!< surrounding DM velocity and velocity dispersion */
-#endif
+    MyDouble DM_VelDisp;              /*!< surrounding DM 1D velocity dispersion (physical) */
+    MyDouble DM_Rho;                  /*!< kernel-weighted DM mass density at gas cell (physical) */
 #endif
     
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)

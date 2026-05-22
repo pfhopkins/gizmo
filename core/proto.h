@@ -673,11 +673,13 @@ void radiation_pressure_winds_consolidated(void);
 #if defined(SINK_PARTICLES)
 #endif
 
-#ifdef GALSF_SUBGRID_WINDS
-#if (GALSF_SUBGRID_WIND_SCALING==2)
+#ifdef DM_DISPERSION_LOOP_ACTIVE
 void disp_setup_smoothinglengths(void);
 void disp_density(void);
 #endif
+
+#ifdef DM_HEATING
+void apply_dm_heating(void);
 #endif
 
 
