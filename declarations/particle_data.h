@@ -5,6 +5,13 @@ extern ALIGN(32) struct particle_data
 {
     short int Type;                 /*!< flags particle type.  0=gas, 1=halo/high-res dm, 2=alt dm/disk/collisionless, 3=pic/dust/bulge/alt dm, 4=new stars, 5=sink */
     short int TimeBin;
+#ifdef HYDRO_MULTIFLUID
+    /* Canonical Lagrangian-fluid partition ID (see declarations/multifluid_helpers.h).
+     * Placed in existing alignment padding between TimeBin (4 bytes used so far)
+     * and 8-byte-aligned MyIDType ID below — expected sizeof(particle_data)
+     * UNCHANGED vs the same Config with the gate off. Verified at init.cc. */
+    unsigned char FluidType;
+#endif
     MyIDType ID;                    /*! < unique ID of particle (assigned at beginning of the simulation) */
     MyIDType ID_child_number;       /*! < child number for particles 'split' from main (retain ID, get new child number) */
 #ifndef SINK_WIND_SPAWN
