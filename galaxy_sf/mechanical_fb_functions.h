@@ -23,6 +23,9 @@
 #if defined(COSMIC_RAY_FLUID)
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"  /* KOKKOS_INLINE CR helpers */
 #endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+#include "../solids/ism_dust_chemistry_functions.h"  /* KOKKOS_INLINE ISMDustChem_Return_Mass_Where_Dust_Shocked (Phase D 2026-05-21 #20011-D fix) */
+#endif
 
 #ifdef GALSF_FB_MECHANICAL
 

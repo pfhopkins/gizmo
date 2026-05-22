@@ -236,7 +236,8 @@ void dump_memory_table(void);
 void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, const char *label, const char *func, const char *file, int line);
 
 /* Get_Particle_Size is now a member function of particle_data — use P[i].Get_Particle_Size() or pp[i].Get_Particle_Size() */
-double INLINE_FUNC Get_Particle_Expected_Area(double h);
+/* Get_Particle_Expected_Area moved to core/predict_functions.h as
+ * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
 double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -532,9 +533,10 @@ double cumulative_AGB_dust_returns(int dust_type, double star_age, double z);
 void update_dense_molecular_fields(int i, double temp, double rho, double nh0, double ne, struct particle_data *pp, struct gas_cell_data *cell);
 void update_dust_accretion(int i, double dtime_gyr, double temp, double rho, struct particle_data *pp, struct gas_cell_data *cell);
 void update_dust_sputtering(int i, double dtime_gyr, double temp, double rho, struct particle_data *pp, struct gas_cell_data *cell);
-double Lambda_Dust_HighTemperature_Gas_ISM(int target, double T, double n_elec, struct particle_data *pp, struct gas_cell_data *cell);
+/* Lambda_Dust_HighTemperature_Gas_ISM and ISMDustChem_Return_Mass_Where_Dust_Shocked
+ * migrated to solids/ism_dust_chemistry_functions.h as KOKKOS_INLINE_FUNCTION
+ * (Phase D 2026-05-21 #20011-D fix). */
 double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, int k, double mass, struct gas_cell_data *cell);
-double ISMDustChem_Return_Mass_Where_Dust_Shocked(double rho_cell_in_code_units, double Esne51_into_cell, double mass_preshock_in_code_units, double Z_cell);
 void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, double m0, double mf, double *Z_injected);
 void ISMDustChem_update_iron_inclusions(int i, struct particle_data *pp, struct gas_cell_data *cell);
 void ISMDustChem_get_elem_yields_from_species_yields(double *dust_yields, double *species_yields);
@@ -900,7 +902,8 @@ void AGSForce_calc(void);
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
 void advect_mesh_point(int i, double dt);
-double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec);
+/* calculate_face_area_for_cartesian_mesh moved to core/predict_functions.h as
+ * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
 #endif
 
 #if (SINGLE_STAR_TIMESTEPPING > 0)

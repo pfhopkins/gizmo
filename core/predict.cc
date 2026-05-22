@@ -469,18 +469,10 @@ void do_box_wrapping(void)
 
 
 
-double INLINE_FUNC Get_Particle_Expected_Area(double h)
-{
-#if (NUMDIMS == 1)
-    return 2;
-#endif
-#if (NUMDIMS == 2)
-    return 2 * M_PI * h;
-#endif
-#if (NUMDIMS == 3)
-    return 4 * M_PI * h * h;
-#endif
-}
+/* Get_Particle_Expected_Area migrated to core/predict_functions.h as
+ * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix — called from
+ * KOKKOS_INLINE_FUNCTION compute_finitevol_faces template under
+ * SLOPE_LIMITER_TOLERANCE==0). */
 
 
 /* evaluate_NH_from_GradRho: definition now in predict_functions.h (single source of truth).
@@ -666,23 +658,10 @@ void advect_mesh_point(int i, double dt)
 
 
 
-/* routine to calculate the overlapping face area of two cuboids in NDIMS dimensions based on their relative positions */
-double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec)
-{
-    Face_Area_Vec = {}; double Face_Area_Norm;
-#if (NUMDIMS==1)
-    Face_Area_Norm = 1; Face_Area_Vec[0] = Face_Area_Norm * dp[0]/fabs(dp[0]);
-#elif (NUMDIMS==2)
-    if(fabs(dp[0]) > fabs(dp[1])) {Face_Area_Vec[0] = Face_Area_Norm = std::max(0.,l_side-fabs(dp[1])) * dp[0]/fabs(dp[0]) * All.cf_atime;} else {Face_Area_Vec[1] = Face_Area_Norm = std::max(0.,l_side-fabs(dp[0])) * dp[1]/fabs(dp[1]) * All.cf_atime;}
-#else
-    Vec3<double> dp_abs = {fabs(dp[0]), fabs(dp[1]), fabs(dp[2])};
-    int kdir;
-    if((dp_abs[0]>=dp_abs[1])&&(dp_abs[0]>=dp_abs[2])) {kdir=0;} else if ((dp_abs[1]>=dp_abs[0])&&(dp_abs[1]>=dp_abs[2])) {kdir=1;} else {kdir=2;}
-    Face_Area_Norm=1; for(int k=0;k<3;k++) {if(k!=kdir) {Face_Area_Norm *= std::max(0.,l_side-dp_abs[k]) * All.cf_atime*All.cf_atime;}}
-    Face_Area_Vec[kdir] = Face_Area_Norm * dp[kdir]/fabs(dp[kdir]);
-#endif
-    return fabs(Face_Area_Norm);
-}
+/* calculate_face_area_for_cartesian_mesh migrated to core/predict_functions.h
+ * as KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix: was host-only,
+ * called from KOKKOS_INLINE_FUNCTION compute_finitevol_faces template under
+ * HYDRO_REGULAR_GRID Config). */
 
 #endif
 

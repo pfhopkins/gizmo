@@ -53,6 +53,12 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #include "../core/predict_functions.h"
 /* CR utility functions (cosmic_ray_utilities.cc is not GPU_OBJS) */
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
+/* Lambda_Dust_HighTemperature_Gas_ISM (called from CoolingRate which is
+ * KOKKOS_INLINE_FUNCTION) — migrated to header to clear #20011-D.
+ * Phase D 2026-05-21. */
+#include "../solids/ism_dust_chemistry_functions.h"
+#endif
 /* Simple steady-state chemistry — single source in simple_chemistry.h */
 #include "./simple_chemistry.h"
 /* NOTE: set_eos_pressure is intentionally NOT inlined here.  Its body calls

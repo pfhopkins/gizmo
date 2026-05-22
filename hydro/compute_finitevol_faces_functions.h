@@ -1,3 +1,10 @@
+#pragma once
+
+/* calculate_face_area_for_cartesian_mesh is KOKKOS_INLINE_FUNCTION-defined
+ * here (Phase D 2026-05-21 #20011-D fix). Include early so all consumers see
+ * the device-callable definition before the compute_finitevol_faces template. */
+#include "../core/predict_functions.h"
+
 /* compute_finitevol_faces_functions.h -- MFM/MFV face-area construction as a
  * proper function template. Replaces the #include-fragment
  * hydro/compute_finitevol_faces.h.
