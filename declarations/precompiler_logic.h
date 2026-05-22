@@ -327,6 +327,19 @@
 
 #endif // FIRE_PHYSICS_DEFAULTS clauses
 
+/* SINK_COMPTON_HEATING shares the per-sink angle-weighted luminosity tree
+ * infrastructure (mass_sinklumwt_forradfb, NODE::sink_lum / sink_lum_grad,
+ * pseudo-node aggregation) with SINK_PHOTONMOMENTUM — the Compton incident
+ * flux IS the same angle-weighted luminosity the rad-pressure module reads.
+ * Legacy code carried this implication; it was incorrectly dropped during
+ * refactor. The rad-pressure momentum-kick term itself remains independently
+ * disable-able at runtime via the All.PhotonMomentum_Coupled_Fraction
+ * parameter, so a Compton-only physics setup is still expressible. Placed
+ * OUTSIDE the FIRE_PHYSICS_DEFAULTS clauses block so it fires for any Config
+ * that explicitly enables SINK_COMPTON_HEATING. Phase D 2026-05-21. */
+#if defined(SINK_COMPTON_HEATING) && !defined(SINK_PHOTONMOMENTUM)
+#define SINK_PHOTONMOMENTUM
+#endif
 
 
 #ifdef GALSF_SFR_CRITERION // flag for pure cross-compatibility [identical functionality, just ease-of-use for galaxy simulators here]
@@ -798,6 +811,19 @@
 #define SINK_CALC_DISTANCES
 #endif
 #endif
+#endif
+#endif
+
+/* GRAVITY_TESTPROBLEM_RT used as a numeric acceleration value in
+ * gravity/analytic_gravity.h:41 — `P[i].GravAccel[0] -= (GRAVITY_TESTPROBLEM_RT)`.
+ * If user enables the flag without a value (e.g. test/rt/Config.sh just has
+ * "GRAVITY_TESTPROBLEM_RT"), default to 0.5 (standard Rayleigh-Taylor
+ * acceleration in code units). User-set numeric values are preserved.
+ * Phase D fix 2026-05-21 config 121. */
+#if defined(GRAVITY_TESTPROBLEM_RT)
+#if !CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(GRAVITY_TESTPROBLEM_RT)
+#undef GRAVITY_TESTPROBLEM_RT
+#define GRAVITY_TESTPROBLEM_RT 0.5
 #endif
 #endif
 
