@@ -119,7 +119,12 @@ void begrun(void)
 #ifdef BOX_LONG_X
     L_box_towrap *= BOX_LONG_X;
 #endif
-    All.Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
+    /* Shearing_Box_Vel_Offset is a macro (allvars.h:118) expanding to
+       (All.Shearing_Box_Vel_Offset); use the bare macro name — `All.`
+       prefix double-resolves and errors with "expected a member name"
+       under nvc++. Phase D fix 2026-05-21, same root cause as
+       timestep.cc:1414. */
+    Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
     calc_shearing_box_pos_offset();
 #endif
 

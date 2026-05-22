@@ -1409,10 +1409,13 @@ void process_wake_ups(void)
 #ifdef BOX_SHEARING
 void calc_shearing_box_pos_offset(void) /* function that calculates the shear-offset between the shear-periodic boundaries in a shearing box */
 {
-    /* Shearing_Box_*_Offset are macros into All.* (Step 5 Phase E0).
-       Single write — no separate host extern + All-sync needed. */
-    All.Shearing_Box_Pos_Offset = All.Shearing_Box_Vel_Offset * All.Time;
-    while(All.Shearing_Box_Pos_Offset > boxSize_Y) {All.Shearing_Box_Pos_Offset -= boxSize_Y;}
+    /* Shearing_Box_*_Offset are macros (allvars.h:118-119) that already
+       expand to (All.Shearing_Box_*_Offset). Use the bare macro names — the
+       `All.` prefix was double-resolving via the macro and yielding
+       "expected a member name" under nvc++. Phase D fix 2026-05-21
+       (config 82 BOX_SHEARING=1). */
+    Shearing_Box_Pos_Offset = Shearing_Box_Vel_Offset * All.Time;
+    while(Shearing_Box_Pos_Offset > boxSize_Y) {Shearing_Box_Pos_Offset -= boxSize_Y;}
 }
 #endif
 
