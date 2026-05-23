@@ -125,6 +125,42 @@
 #define EOS_GENERAL
 #endif
 
+/* HYDRO_MULTIFLUID forces EOS_GENERAL so per-cell SoundSpeed/Pressure/Temperature
+ * are saved per-element and FluidType branches (per OPEN_hydro_multifluid_design.md §6)
+ * live in one place — the EOS compute path — instead of being scattered through
+ * hydro readers. Separate block (not appended to the mega-#if above) per design-doc
+ * Phase 2 §14. */
+#ifdef HYDRO_MULTIFLUID
+#ifndef EOS_GENERAL
+#define EOS_GENERAL
+#endif
+#endif
+
+/* HYDRO_MULTIFLUID_NOOP_TEST is a TEST-ONLY flag that disables the hydro-corridor
+ * cross-fluid skip predicate (the always-true if-return in each pair body when all
+ * FluidType=0) so strict bit-identity Test 2 can compare against the EOS_GENERAL
+ * baseline without the predicate's codegen-induced ULP-level FP-reorder. Real
+ * science builds NEVER set this flag — the predicate is required for correctness
+ * the moment any non-default FluidType exists. The two guards below enforce
+ * test-only-ness: (1) the flag requires HYDRO_MULTIFLUID; (2) the flag cannot
+ * combine with any subflag that enables non-default FluidTypes. */
+#if defined(HYDRO_MULTIFLUID_NOOP_TEST) && !defined(HYDRO_MULTIFLUID)
+#error "HYDRO_MULTIFLUID_NOOP_TEST requires HYDRO_MULTIFLUID. The no-op test flag exists only to disable the corridor skip predicate for strict Test 2 bit-identity validation."
+#endif
+
+/* CHECKLIST when adding any future HYDRO_MULTIFLUID_* subflag that enables a
+ * non-default FluidType (e.g. HYDRO_MULTIFLUID_MULTI_T_PLASMA): append the
+ * new subflag to the OR-list in the #if below so the NOOP_TEST guard remains
+ * complete. Failure to do so would let a developer combine the no-op test
+ * flag with the new subflag, silently disabling the corridor skip predicate
+ * while non-default fluids exist → incorrect physics. Also tracked in
+ * gpu_bench_new/OPEN_hydro_multifluid_design.md §14 Phase 5 sub-module
+ * checklist. */
+#if defined(HYDRO_MULTIFLUID_NOOP_TEST) && \
+   (defined(HYDRO_MULTIFLUID_DUSTGAS) || defined(HYDRO_MULTIFLUID_IONNEUTRAL))
+#error "HYDRO_MULTIFLUID_NOOP_TEST is for all-FluidType=0 strict-bit-identity validation ONLY and cannot combine with any HYDRO_MULTIFLUID_* subflag that enables non-default fluids. Disabling the corridor predicate while non-default fluids exist would produce incorrect physics."
+#endif
+
 #if defined(CBE_INTEGRATOR) || defined(DM_FUZZY)
 #define AGS_FACE_CALCULATION_IS_ACTIVE
 #endif

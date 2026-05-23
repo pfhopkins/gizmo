@@ -545,12 +545,16 @@ struct DensitySpec {
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
-#ifdef HYDRO_MULTIFLUID
+#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
         /* Corridor invariant (see hydro/hydro_corridor.h): every operator in
          * the hydro corridor must skip cross-fluid pairs with the same
          * packed-byte predicate, on the same packed FluidType in ActiveData/
          * NeighborData. Placed FIRST (before any kernel/accumulator state)
-         * so cross-fluid pairs cost only this single byte compare. */
+         * so cross-fluid pairs cost only this single byte compare.
+         * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
+         * identity Test 2 validation builds ONLY (init.cc hard-fails any
+         * nonzero FluidType in that mode; subflag combine forbidden by
+         * precompiler_logic.h). */
         if (!same_lagrangian_fluid_id(i_active.FluidType, neighbor.FluidType)) return;
 #endif
         /* CallScalars are carried by the active snapshot, matching the AGS

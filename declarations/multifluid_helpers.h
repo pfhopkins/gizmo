@@ -9,21 +9,35 @@
  *
  * Design contract:
  *   - Canonical FluidIDs are STABLE across Configs. Sub-flags
- *     (HYDRO_MULTIFLUID_DUSTGAS, _IONNEUTRAL, ...) gate which CLOSURES
- *     and COUPLING MODULES are enabled, NOT which IDs exist. A snapshot
- *     written with one Config can be read by another with the same IDs.
+ *     (HYDRO_MULTIFLUID_DUSTGAS, _IONNEUTRAL, ...) gate which handled
+ *     cases inside the existing master compute functions (per design §6 —
+ *     EOS / cooling / opacity / conductivity / viscosity / SF eligibility /
+ *     dust evolution, each branched in-place via switch(P[i].FluidType)
+ *     inside the EXISTING function that already populates that quantity)
+ *     and which cross-fluid coupling cases inside the existing evaluator /
+ *     backreaction-pair prototypes (per design §7, §8) are enabled.
+ *     Sub-flags do NOT gate which IDs exist. A snapshot written with one
+ *     Config can be read by another with the same IDs.
  *   - NEVER renumber a canonical ID. NEVER reuse a retired ID.
  *   - The _id predicates operate on packed bytes from ActiveData /
  *     NeighborData (the only safe place to read FluidType in a runner
  *     pair body). NO `same_lagrangian_fluid_P(int i, int j)` host-sugar
  *     helper exists — reading global P[] from a KOKKOS_INLINE_FUNCTION
  *     is a device-correctness footgun.
+ *   - There is NO per-property "fluid_*" dispatcher layer (no
+ *     fluid_eos_pressure, fluid_cooling_update, fluid_opacity_band, etc.).
+ *     FluidType variation lives where the quantity is computed, not at
+ *     readers. See design §6 + §16 non-goal.
  *
  * Init-time validation (see init.cc): every FluidType value actually
- * present in the loaded particle set must have an enabled closure in
- * every ENABLED physics dispatcher family. Unknown-but-present FluidType
- * is a HARD FAIL. Dispatcher `default:` cases are gizmo_device_abort()
- * poison paths, never silent fallback to baseline physics.
+ * present in the loaded particle set must have a handled case in every
+ * ENABLED physics master compute function and every enabled coupling
+ * pair/evaluator prototype (per design §3, §6). Unknown-but-present
+ * FluidType is a HARD FAIL. The `default:` case inside each in-place
+ * switch(P[i].FluidType) block is a hard-abort guard, NOT a silent
+ * fallback to baseline physics. (In the current Phase 0–2 framework
+ * state, no non-default cases exist yet; the init.cc check therefore
+ * hard-fails on any nonzero FluidType outright — see init.cc.)
  *
  * Padding note (see declarations/particle_data.h): FluidType is placed
  * after `short int TimeBin` and before `MyIDType ID`, consuming one byte

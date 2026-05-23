@@ -428,14 +428,16 @@ struct HydroForceSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
-#ifdef HYDRO_MULTIFLUID
+#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
         /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
          * placed FIRST, before kernel zero-init, MaxSignalVel update, or any
          * accumulator mutation. The accum.MaxSignalVel fmax below is
          * idempotent for both intra- and cross-fluid pairs (runner already
          * zero_accum'd before the first pair), but a cross-fluid pair MUST
          * NOT contribute even an idempotent mutation per the design's
-         * intra-fluid-pair-only contract. */
+         * intra-fluid-pair-only contract.
+         * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
+         * identity Test 2 validation builds only. */
         if (!same_lagrangian_fluid_id(active.FluidType, neighbor.FluidType)) return;
 #endif
         struct kernel_hydra kernel;

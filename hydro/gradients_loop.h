@@ -377,9 +377,11 @@ struct GradientsSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
-#ifdef HYDRO_MULTIFLUID
+#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
         /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
-         * placed FIRST, before kernel construction or accumulator mutation. */
+         * placed FIRST, before kernel construction or accumulator mutation.
+         * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
+         * identity Test 2 validation builds only. */
         if (!same_lagrangian_fluid_id(active.FluidType, neighbor.FluidType)) return;
 #endif
         struct kernel_GasGrad kernel;

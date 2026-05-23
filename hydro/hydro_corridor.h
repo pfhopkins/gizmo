@@ -11,15 +11,21 @@
  * (different predicate, different packed source, different operator
  * skipping but not another) breaks corridor face-area/volume/pressure-
  * reconstruction topology and produces non-conservative results. See
- * declarations/multifluid_helpers.h for the SSOT predicate. The skip is
- * a no-op (#ifdef HYDRO_MULTIFLUID) in default builds — when undef the
- * FluidType field and predicate do not exist at all; when defined with
- * all particles FluidType=0 (Phase 0/1 invariant) the predicate evaluates
- * true for every pair, preserving baseline physics bit-identically (Test 2).
+ * declarations/multifluid_helpers.h for the SSOT predicate. The gate is
+ * `#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)` —
+ * default builds without HYDRO_MULTIFLUID don't compile the predicate at
+ * all; HYDRO_MULTIFLUID + any non-default FluidType requires the predicate
+ * for correctness (the always-true predicate is harmless when all FluidType=0
+ * but its inserted entry block produces ULP-level codegen FP-reorder ~1e-12
+ * cumulative on long runs); HYDRO_MULTIFLUID_NOOP_TEST is the TEST-ONLY
+ * flag that compiles the predicate out for strict-bit-identity Test 2
+ * validation builds (hard-#error in precompiler_logic.h forbids combining
+ * the no-op test flag with any subflag enabling non-default fluids).
  *
  * Audit grep: rg 'same_lagrangian_fluid_id' should return ONLY (a) the
  * primitive definitions in multifluid_helpers.h, (b) call sites inside
- * #ifdef HYDRO_MULTIFLUID gates in the corridor pair bodies above.
+ * `#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)`
+ * gates in the corridor pair bodies above.
  * ---------------------------------------------------------------------------
  *
  * The hydro corridor is the block of neighbor-loop work spanning density()
