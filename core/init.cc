@@ -796,6 +796,65 @@ void init(void)
     if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
 #endif
 
+#ifdef HYDRO_MULTIFLUID
+    /* Multifluid Phase 0 init-time checks (see declarations/multifluid_helpers.h
+     * and gpu_bench_new/OPEN_hydro_multifluid_design.md). Three checks:
+     *   (1) Struct layout: log sizeof(particle_data) + offsetof(FluidType, ID).
+     *       In the expected case FluidType lands in the existing alignment hole
+     *       between TimeBin and 8-byte-aligned ID, so sizeof is UNCHANGED from
+     *       baseline. Any shift means the placement has been pushed out of the
+     *       padding by another field addition and FluidType must be re-placed.
+     *   (2) Default-zero invariant: every particle should be FLUID_DEFAULT(=0)
+     *       at this point. allocate.cc zeros at alloc time; IC read overwrites
+     *       only if the IO_FLUIDTYPE dataset is present. Phase 0 has no enabled
+     *       non-default closures, so any non-zero FluidType is unsupported and
+     *       must hard-fail rather than silently proceed (see design §6:
+     *       dispatcher default cases are poison paths; Phase 0d enforces the
+     *       same discipline at init time).
+     *   (3) Counts: number of particles in each FluidType bucket, rank-0 log.
+     * When sub-flags (HYDRO_MULTIFLUID_DUSTGAS, _IONNEUTRAL, ...) enable closures
+     * in future phases, check (2) loosens to "every present FluidType has an
+     * enabled closure across every enabled physics dispatcher family." */
+    if(ThisTask == 0) {
+        printf("Multifluid: sizeof(particle_data)=%zu  offsetof(FluidType)=%zu  offsetof(ID)=%zu  (HYDRO_MULTIFLUID enabled)\n",
+               sizeof(struct particle_data),
+               offsetof(struct particle_data, FluidType),
+               offsetof(struct particle_data, ID));
+    }
+    {
+        long long ft_counts[256] = {0};
+        for(i = 0; i < NumPart; i++) {ft_counts[(unsigned int) P[i].FluidType]++;}
+        long long local_nonzero = 0;
+        for(int k = 1; k < 256; k++) {local_nonzero += ft_counts[k];}
+        long long global_nonzero = 0;
+        MPI_Allreduce(&local_nonzero, &global_nonzero, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(global_nonzero > 0) {
+            if(ThisTask == 0) {
+                printf("Multifluid HARD FAIL: %lld particles have non-zero FluidType but Phase 0 has no enabled non-default closures. "
+                       "Either the IC supplied FluidType values for an unenabled fluid, or a sub-flag (e.g. HYDRO_MULTIFLUID_DUSTGAS) "
+                       "is required. Local breakdown on rank 0:\n", global_nonzero);
+                for(int k = 1; k < 256; k++) {
+                    if(ft_counts[k] > 0) {printf("  FluidType=%d: %lld particles (rank 0)\n", k, ft_counts[k]);}
+                }
+            }
+            endrun(91823);
+        }
+        long long local_total = (long long) NumPart;
+        long long global_total = 0, global_default = 0;
+        MPI_Allreduce(&local_total,    &global_total,   1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&ft_counts[0],   &global_default, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0) {
+            printf("Multifluid: %lld particles, all in FLUID_DEFAULT (=0). Phase 0 default-zero invariant satisfied.\n",
+                   global_default);
+            if(global_default != global_total) {
+                printf("Multifluid INTERNAL ERROR: default+nonzero count mismatch (default=%lld total=%lld).\n",
+                       global_default, global_total);
+                endrun(91824);
+            }
+        }
+    }
+#endif
+
 #ifdef TEST_FOR_IDUNIQUENESS
     test_id_uniqueness();
 #endif

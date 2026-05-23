@@ -73,6 +73,15 @@ void allocate_memory(void)
 	}
       bytes_tot += bytes;
 
+#ifdef HYDRO_MULTIFLUID
+      /* Default-zero FluidType for every allocated slot so that IO_FLUIDTYPE absence
+       * in the IC leaves particles at FLUID_DEFAULT (=0) rather than uninitialized
+       * memory. read_ic's IO_FLUIDTYPE block overwrites this when the dataset is
+       * present; the HDF5 missing-dataset handler silently skips when absent, in
+       * which case this zero pass is the only initializer. */
+      for(int _i_ft = 0; _i_ft < All.MaxPart; _i_ft++) {P[_i_ft].FluidType = 0;}
+#endif
+
       if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));}
     }
 
