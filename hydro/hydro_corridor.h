@@ -1,5 +1,27 @@
 /* hydro/hydro_corridor.h — hydro corridor mode-decision + lifecycle.
  *
+ * ---------------------------------------------------------------------------
+ * BINDING INVARIANT — HYDRO_MULTIFLUID (gpu_bench_new/OPEN_hydro_multifluid_design.md §4):
+ * Every pair operator in the hydro corridor (density, gradients,
+ * cellcorrections, hydro_force) MUST consult same_lagrangian_fluid_id(
+ * active.FluidType, neighbor.FluidType) — operating on the SAME packed
+ * FluidType bytes in their Spec's ActiveData/NeighborData — and early-
+ * return cross-fluid pairs BEFORE any kernel construction or accumulator
+ * mutation. The skip must be placed FIRST in each pair body. Any deviation
+ * (different predicate, different packed source, different operator
+ * skipping but not another) breaks corridor face-area/volume/pressure-
+ * reconstruction topology and produces non-conservative results. See
+ * declarations/multifluid_helpers.h for the SSOT predicate. The skip is
+ * a no-op (#ifdef HYDRO_MULTIFLUID) in default builds — when undef the
+ * FluidType field and predicate do not exist at all; when defined with
+ * all particles FluidType=0 (Phase 0/1 invariant) the predicate evaluates
+ * true for every pair, preserving baseline physics bit-identically (Test 2).
+ *
+ * Audit grep: rg 'same_lagrangian_fluid_id' should return ONLY (a) the
+ * primitive definitions in multifluid_helpers.h, (b) call sites inside
+ * #ifdef HYDRO_MULTIFLUID gates in the corridor pair bodies above.
+ * ---------------------------------------------------------------------------
+ *
  * The hydro corridor is the block of neighbor-loop work spanning density()
  * through hydro_force() whose downstream consumers (cellcorrections,
  * gradients, hydro_force) share the symmetric gas-gas neighbor topology

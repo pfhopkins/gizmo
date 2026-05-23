@@ -24,6 +24,7 @@
 #define HYDRO_FORCE_LOOP_H
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "../core/timestep_functions.h"       /* get_particle_timestep_in_physical */
@@ -427,6 +428,16 @@ struct HydroForceSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
+#ifdef HYDRO_MULTIFLUID
+        /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
+         * placed FIRST, before kernel zero-init, MaxSignalVel update, or any
+         * accumulator mutation. The accum.MaxSignalVel fmax below is
+         * idempotent for both intra- and cross-fluid pairs (runner already
+         * zero_accum'd before the first pair), but a cross-fluid pair MUST
+         * NOT contribute even an idempotent mutation per the design's
+         * intra-fluid-pair-only contract. */
+        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.FluidType)) return;
+#endif
         struct kernel_hydra kernel;
         for(size_t b = 0; b < sizeof(kernel); b++) ((char*)&kernel)[b] = 0;
         kernel.h_i           = active.local.KernelRadius;

@@ -43,6 +43,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
 
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"   /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
@@ -544,6 +545,14 @@ struct DensitySpec {
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
+#ifdef HYDRO_MULTIFLUID
+        /* Corridor invariant (see hydro/hydro_corridor.h): every operator in
+         * the hydro corridor must skip cross-fluid pairs with the same
+         * packed-byte predicate, on the same packed FluidType in ActiveData/
+         * NeighborData. Placed FIRST (before any kernel/accumulator state)
+         * so cross-fluid pairs cost only this single byte compare. */
+        if (!same_lagrangian_fluid_id(i_active.FluidType, neighbor.FluidType)) return;
+#endif
         /* CallScalars are carried by the active snapshot, matching the AGS
          * runner pattern and avoiding device-side global reads. */
         const CallScalars& cs = i_active.scalars;

@@ -17,6 +17,7 @@
 #define CELLCORRECTIONS_LOOP_H
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 
@@ -91,6 +92,11 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
                                         const CellcorrectionsNeighborData &nb,
                                         CellcorrectionsAccum &out)
 {
+#ifdef HYDRO_MULTIFLUID
+    /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
+     * placed FIRST, before any other gate or kernel work. */
+    if (!same_lagrangian_fluid_id(active.FluidType, nb.FluidType)) return;
+#endif
     /* Per-row narrow-filter gate (commit 5b external-CSR consumption):
      * corridor row list is broad; rows that fail the narrow GasGrad_isactive
      * predicate contribute zero. apply_active_writeback's += keeps
