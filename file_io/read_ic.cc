@@ -1239,6 +1239,23 @@ void read_file(char *fname, int readTask, int lastTask)
                                         H5Sclose(hdf5_dataspace_in_file);
                                         H5Dclose(hdf5_dataset);
                                       }
+                                      else
+                                      {
+                                        /* Dataset absent (H5Dopen returned < 0 under suppressed error reporting,
+                                         * i.e. this is an optional dataset legitimately missing from the IC).
+                                         * Zero CommBuffer so empty_read_buffer's per-block dispatch reads zeros
+                                         * for this absent optional dataset — this is the canonical default for
+                                         * any optional field in the HDF5 IC reader (e.g. HYDRO_MULTIFLUID
+                                         * FluidType absent → particles get FLUID_DEFAULT=0). Without this memset,
+                                         * the dispatch reads stale CommBuffer contents from a previous block and
+                                         * produces uninitialized garbage. Multi-rank safe: the subsequent
+                                         * MPI_Ssend of CommBuffer sends zeros to non-reader ranks. Scope: HDF5
+                                         * ICFormat==3 only; legacy unformatted GADGET ICs (ICFormat==1,2) take
+                                         * the my_fread path above and never reach this branch, and per-Phil
+                                         * those formats are confined to specific cosmological-simulation use
+                                         * cases that initialize differently anyway. */
+                                        memset(CommBuffer, 0, bytes_per_blockelement * pc);
+                                      }
                                     }
 
                                 }
