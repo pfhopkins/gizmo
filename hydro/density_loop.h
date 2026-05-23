@@ -228,6 +228,9 @@ struct DensityActiveState {
     MyFloat            DelayTime;
 #endif
     int                Type;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char      FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
     DensityCallScalars scalars;
 };
 
@@ -239,6 +242,9 @@ struct DensityNeighborData {
     struct particle_data *neighbor_particle;
     struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
     int                   neighbor_index;    /* j; diagnostic / assertions */
+#ifdef HYDRO_MULTIFLUID
+    unsigned char         FluidType;         /* packed P[j].FluidType — pair-body API, avoid dereferencing neighbor_particle on hot path */
+#endif
 };
 
 /* ============================================================================
@@ -490,6 +496,10 @@ struct DensitySpec {
         a.DelayTime = i_is_gas ? (MyFloat)ctx.CellP[i].DelayTime : (MyFloat)0;
 #endif
 
+#ifdef HYDRO_MULTIFLUID
+        a.FluidType = ctx.P[i].FluidType;
+#endif
+
         a.scalars = scalars;
         (void)active_slot;
         return a;
@@ -510,6 +520,9 @@ struct DensitySpec {
         n.neighbor_cell     = (ctx.CellP && ctx.P[j].Type == 0)
                               ? &ctx.CellP[j] : nullptr;
         n.neighbor_index    = j;
+#ifdef HYDRO_MULTIFLUID
+        n.FluidType         = ctx.P[j].FluidType;
+#endif
         (void)id; (void)active;
         return n;
     }

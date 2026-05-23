@@ -76,6 +76,10 @@ struct HydroForceActiveData
 
     /* Per-active input — the per-particle hydra block */
     struct hydro_data_in local;
+
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
 };
 
 /* NeighborData carries the integer j plus the j-owning rank's pointers /
@@ -92,6 +96,9 @@ struct HydroForceNeighborData
     int                  *TimeBinActive_ptr;    /* evaluating ctx UVM */
     int                  *need_wakeup_ptr;      /* evaluating ctx UVM; nullptr under oracle dry-run */
     bool                  oracle_dry_run;       /* gates allow_j_writes */
+#ifdef HYDRO_MULTIFLUID
+    unsigned char         FluidType;            /* packed P[j].FluidType */
+#endif
 };
 
 /* DeviceContext extension. UVM pointers backing the per-call scratch the
@@ -377,6 +384,9 @@ struct HydroForceSpec
 #ifdef GALSF_SUBGRID_WINDS
         local.DelayTime = kc[i].DelayTime;
 #endif
+#ifdef HYDRO_MULTIFLUID
+        active.FluidType = ctx.P[i].FluidType;
+#endif
         return active;
     }
 
@@ -399,6 +409,9 @@ struct HydroForceSpec
         nb.TimeBinActive_ptr  = ctx.TimeBinActive_uvm;
         nb.oracle_dry_run     = ctx.oracle_dry_run;
         nb.need_wakeup_ptr    = ctx.oracle_dry_run ? nullptr : ctx.need_wakeup_uvm;
+#ifdef HYDRO_MULTIFLUID
+        nb.FluidType          = ctx.P[j].FluidType;
+#endif
         return nb;
     }
 

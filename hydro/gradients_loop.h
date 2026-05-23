@@ -116,6 +116,9 @@ struct GradientsActiveData
     double V_i;
     int    sph_gradients_flag_i;
     int    kernel_mode_i;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char FluidType;   /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
 };
 
 /* NeighborData carries the integer index j plus the base P/CellP pointers.
@@ -127,6 +130,9 @@ struct GradientsNeighborData
     int                   j;
     struct particle_data *P;
     struct gas_cell_data *CellP;
+#ifdef HYDRO_MULTIFLUID
+    unsigned char         FluidType;  /* packed P[j].FluidType */
+#endif
 };
 
 /* Aux carries the legacy `GasGradDataPasser` base pointer + the current
@@ -341,6 +347,9 @@ struct GradientsSpec
 #if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
         active.kernel_mode_i = 0;
 #endif
+#ifdef HYDRO_MULTIFLUID
+        active.FluidType = ctx.P[i].FluidType;
+#endif
         return active;
     }
 
@@ -350,7 +359,12 @@ struct GradientsSpec
                                        const IdentitySidecar& /*id*/,
                                        const ActiveData& /*active*/)
     {
-        return NeighborData{j, ctx.P, ctx.CellP};
+        NeighborData nb{j, ctx.P, ctx.CellP
+#ifdef HYDRO_MULTIFLUID
+                        , ctx.P[j].FluidType
+#endif
+        };
+        return nb;
     }
 
     /* The physics — forwards to the unchanged inline pair body. const_cast
