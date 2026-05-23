@@ -259,6 +259,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_FLUIDTYPE:
+#ifdef HYDRO_MULTIFLUID
+            for(n = 0; n < pc; n++) {P[offset + n].FluidType = (unsigned char) (*ip_int++);}
+#endif
+            break;
+
         case IO_Z:			/* Gas and star metallicity */
 #ifdef METALS
             for(n = 0; n < pc; n++) {
@@ -965,6 +971,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #endif
 #ifdef PIC_MHD
                    && blocknr != IO_GRAINTYPE
+#endif
+#ifdef HYDRO_MULTIFLUID
+                   && blocknr != IO_FLUIDTYPE
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(INPUT_READ_SINKPROPS)
                    && blocknr != IO_R_PROTOSTAR

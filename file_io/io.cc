@@ -525,6 +525,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_FLUIDTYPE:      /* HYDRO_MULTIFLUID Lagrangian partition ID */
+#ifdef HYDRO_MULTIFLUID
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = (int) P[pindex].FluidType;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_VSTURB_DISS:
 #if defined(TURB_DRIVING)
             for(n = 0; n < pc; pindex++)
@@ -1945,6 +1956,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSCOMP:
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
+        case IO_FLUIDTYPE:
             bytes_per_blockelement = sizeof(int);
             break;
 
@@ -2265,6 +2277,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_EOSCOMP:
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
+        case IO_FLUIDTYPE:
             typekey = 0;		/* native int */
             break;
 
@@ -2333,6 +2346,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_GRAINSIZE:
         case IO_DUST_TO_GAS:
         case IO_GRAINTYPE:
+        case IO_FLUIDTYPE:
         case IO_DELAYTIME:
         case IO_HSMS:
         case IO_POT:
@@ -2592,6 +2606,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_CBE_MOMENTS:
         case IO_TIDALTENSORPS:
         case IO_DUST_TO_GAS:
+        case IO_FLUIDTYPE:
             return nall;
             break;
 
@@ -2874,6 +2889,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_GRAINTYPE:
 #ifdef PIC_MHD
+            return 1;
+#endif
+            break;
+
+        case IO_FLUIDTYPE:
+#ifdef HYDRO_MULTIFLUID
             return 1;
 #endif
             break;
@@ -3543,6 +3564,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_GRAINTYPE:
             strncpy(label, "GRTP", 4);
             break;
+        case IO_FLUIDTYPE:
+            strncpy(label, "FLTP", 4);
+            break;
         case IO_DELAYTIME:
             strncpy(label, "DETI", 4);
             break;
@@ -4001,6 +4025,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_GRAINTYPE:
             strcpy(buf, "PICParticleType");
+            break;
+        case IO_FLUIDTYPE:
+            strcpy(buf, "FluidType");
             break;
         case IO_HSMS:
             strcpy(buf, "StellarKernelMaxRadius");
