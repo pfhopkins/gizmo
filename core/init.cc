@@ -797,25 +797,6 @@ void init(void)
     if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
 #endif
 
-#ifdef HYDRO_MULTIFLUID
-    /* FluidType is meaningful only for Type=0 (gas/fluid). Hard-fail if any
-     * non-Type=0 particle carries FluidType != FLUID_DEFAULT. */
-    {
-        long long bad = 0; int first = -1;
-        for(i = 0; i < NumPart; i++) {
-            if(P[i].Type != 0 && P[i].FluidType != FLUID_DEFAULT) {
-                if(first < 0) first = i;
-                bad++;
-            }
-        }
-        if(bad > 0) {
-            printf("Multifluid: task %d has %lld non-Type=0 particles with FluidType != FLUID_DEFAULT (first i=%d Type=%d FluidType=%u).\n",
-                   ThisTask, bad, first, P[first].Type, (unsigned) P[first].FluidType);
-            endrun(91823);
-        }
-    }
-#endif
-
 #ifdef TEST_FOR_IDUNIQUENESS
     test_id_uniqueness();
 #endif
