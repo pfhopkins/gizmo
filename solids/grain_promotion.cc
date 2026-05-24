@@ -39,6 +39,16 @@ void grain_promotion_parent_routine(void)
         /* Initialize CellP BEFORE type change */
         grain_promotion_init_cellp(i);
 
+        /* TODO Phase 5 (HYDRO_MULTIFLUID_DUSTGAS): when the dust-gas submodule
+         * lands and puts grains on FluidType=FLUID_DUST_GRAIN, this promotion
+         * site (grain → gas Type=0) must also reset
+         *     #ifdef HYDRO_MULTIFLUID
+         *         P[i].FluidType = FLUID_DEFAULT;
+         *     #endif
+         * here, AFTER the Type change below, so the promoted particle joins the
+         * default-gas fluid partition. Until HYDRO_MULTIFLUID_DUSTGAS is enabled,
+         * FluidType=FLUID_DEFAULT for all particles (Phase 0 init.cc hard-fail
+         * guarantee), so this reset is a no-op and is intentionally deferred. */
         P[i].Type = 0;
         TimeBinCountGas[P[i].TimeBin]++;
         P[i].wakeup = -1;

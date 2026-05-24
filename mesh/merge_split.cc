@@ -11,6 +11,7 @@
 #include "../system/eigen_symmetric.h"
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h" /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */
@@ -275,6 +276,14 @@ void merge_and_split_particles(void)
     int n_particles_merged,n_particles_split,n_particles_gas_split,MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;
     (void)dummy; (void)numngb_inbox; (void)startnode; (void)n; /* may go unused on modern path */
     Gas_split=0; n_particles_merged=0; n_particles_split=0; n_particles_gas_split=0; MPI_n_particles_merged=0; MPI_n_particles_split=0; MPI_n_particles_gas_split=0;
+#ifdef HYDRO_MULTIFLUID
+    /* §9 item 7: cross-fluid merger HARD REFUSE. Counted only when the
+     * candidate pair would otherwise be a valid merger candidate (passed all
+     * mass / flag / threshold gates) and is rejected SOLELY because the two
+     * particles carry different FluidType. Aggregated count printed rank-0
+     * per design §11 — never per-candidate spam. */
+    long long cross_fluid_merger_refusals = 0, MPI_cross_fluid_merger_refusals = 0;
+#endif
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
 
     // TO: need initialization
@@ -382,6 +391,16 @@ void merge_and_split_particles(void)
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+#ifdef HYDRO_MULTIFLUID
+                    /* §9 item 7: refuse the pair only if it would otherwise be a valid candidate
+                     * (do_allow_merger==1 after all other gates) but the two carry different FluidType.
+                     * This makes the diagnostic mean "real merger candidate blocked by FluidType",
+                     * not "cross-fluid neighbor seen in the search". */
+                    if (do_allow_merger && !same_lagrangian_fluid_id(P[i].FluidType, P[j].FluidType)) {
+                        cross_fluid_merger_refusals++;
+                        do_allow_merger = 0;
+                    }
+#endif
                     if (do_allow_merger) {threshold_val=m_eff; target_for_merger=j;}
                 }
                 if (target_for_merger >= 0) {
@@ -441,12 +460,21 @@ void merge_and_split_particles(void)
     MPI_Allreduce(&n_particles_merged, &MPI_n_particles_merged, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&n_particles_gas_split, &MPI_n_particles_gas_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#ifdef HYDRO_MULTIFLUID
+    MPI_Allreduce(&cross_fluid_merger_refusals, &MPI_cross_fluid_merger_refusals, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+#endif
     if(ThisTask == 0)
     {
         if(MPI_n_particles_merged > 0 || MPI_n_particles_split > 0)
         {
             printf("Particle split/merge check: %d particles merged, %d particles split (%d gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
         }
+#ifdef HYDRO_MULTIFLUID
+        if(MPI_cross_fluid_merger_refusals > 0)
+        {
+            printf("Multifluid: cross_fluid_merger_refusals=%lld (otherwise-eligible candidate pairs blocked solely by FluidType mismatch; see merge_split.cc).\n", MPI_cross_fluid_merger_refusals);
+        }
+#endif
     }
     /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must- be called immediately after this routine! */
     All.TotNumPart += (long long)MPI_n_particles_split;
