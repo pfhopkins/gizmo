@@ -243,9 +243,6 @@ struct DensityNeighborData {
     struct particle_data *neighbor_particle;
     struct gas_cell_data *neighbor_cell;     /* nullptr for non-gas / when no CellP */
     int                   neighbor_index;    /* j; diagnostic / assertions */
-#ifdef HYDRO_MULTIFLUID
-    unsigned char         FluidType;         /* packed P[j].FluidType — pair-body API, avoid dereferencing neighbor_particle on hot path */
-#endif
 };
 
 /* ============================================================================
@@ -522,7 +519,6 @@ struct DensitySpec {
                               ? &ctx.CellP[j] : nullptr;
         n.neighbor_index    = j;
 #ifdef HYDRO_MULTIFLUID
-        n.FluidType         = ctx.P[j].FluidType;
 #endif
         (void)id; (void)active;
         return n;
@@ -546,16 +542,7 @@ struct DensitySpec {
                             const NeighborData& neighbor,
                             AccumData& accum, NoScatter& /*scatter*/) {
 #if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
-        /* Corridor invariant (see hydro/hydro_corridor.h): every operator in
-         * the hydro corridor must skip cross-fluid pairs with the same
-         * packed-byte predicate, on the same packed FluidType in ActiveData/
-         * NeighborData. Placed FIRST (before any kernel/accumulator state)
-         * so cross-fluid pairs cost only this single byte compare.
-         * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
-         * identity Test 2 validation builds ONLY (init.cc hard-fails any
-         * nonzero FluidType in that mode; subflag combine forbidden by
-         * precompiler_logic.h). */
-        if (!same_lagrangian_fluid_id(i_active.FluidType, neighbor.FluidType)) return;
+        if (!same_lagrangian_fluid_id(i_active.FluidType, neighbor.neighbor_particle->FluidType)) return;
 #endif
         /* CallScalars are carried by the active snapshot, matching the AGS
          * runner pattern and avoiding device-side global reads. */

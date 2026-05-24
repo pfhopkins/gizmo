@@ -131,9 +131,6 @@ struct GradientsNeighborData
     int                   j;
     struct particle_data *P;
     struct gas_cell_data *CellP;
-#ifdef HYDRO_MULTIFLUID
-    unsigned char         FluidType;  /* packed P[j].FluidType */
-#endif
 };
 
 /* Aux carries the legacy `GasGradDataPasser` base pointer + the current
@@ -360,11 +357,7 @@ struct GradientsSpec
                                        const IdentitySidecar& /*id*/,
                                        const ActiveData& /*active*/)
     {
-        NeighborData nb{j, ctx.P, ctx.CellP
-#ifdef HYDRO_MULTIFLUID
-                        , ctx.P[j].FluidType
-#endif
-        };
+        NeighborData nb{j, ctx.P, ctx.CellP};
         return nb;
     }
 
@@ -378,11 +371,7 @@ struct GradientsSpec
                              NoScatter& /*scatter*/)
     {
 #if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
-        /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
-         * placed FIRST, before kernel construction or accumulator mutation.
-         * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
-         * identity Test 2 validation builds only. */
-        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.FluidType)) return;
+        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
 #endif
         struct kernel_GasGrad kernel;
         kernel.h_i = active.local.KernelRadius;

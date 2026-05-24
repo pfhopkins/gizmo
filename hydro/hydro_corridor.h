@@ -1,33 +1,5 @@
 /* hydro/hydro_corridor.h — hydro corridor mode-decision + lifecycle.
  *
- * ---------------------------------------------------------------------------
- * BINDING INVARIANT — HYDRO_MULTIFLUID (gpu_bench_new/OPEN_hydro_multifluid_design.md §4):
- * Every pair operator in the hydro corridor (density, gradients,
- * cellcorrections, hydro_force) MUST consult same_lagrangian_fluid_id(
- * active.FluidType, neighbor.FluidType) — operating on the SAME packed
- * FluidType bytes in their Spec's ActiveData/NeighborData — and early-
- * return cross-fluid pairs BEFORE any kernel construction or accumulator
- * mutation. The skip must be placed FIRST in each pair body. Any deviation
- * (different predicate, different packed source, different operator
- * skipping but not another) breaks corridor face-area/volume/pressure-
- * reconstruction topology and produces non-conservative results. See
- * declarations/multifluid_helpers.h for the SSOT predicate. The gate is
- * `#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)` —
- * default builds without HYDRO_MULTIFLUID don't compile the predicate at
- * all; HYDRO_MULTIFLUID + any non-default FluidType requires the predicate
- * for correctness (the always-true predicate is harmless when all FluidType=0
- * but its inserted entry block produces ULP-level codegen FP-reorder ~1e-12
- * cumulative on long runs); HYDRO_MULTIFLUID_NOOP_TEST is the TEST-ONLY
- * flag that compiles the predicate out for strict-bit-identity Test 2
- * validation builds (hard-#error in precompiler_logic.h forbids combining
- * the no-op test flag with any subflag enabling non-default fluids).
- *
- * Audit grep: rg 'same_lagrangian_fluid_id' should return ONLY (a) the
- * primitive definitions in multifluid_helpers.h, (b) call sites inside
- * `#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)`
- * gates in the corridor pair bodies above.
- * ---------------------------------------------------------------------------
- *
  * The hydro corridor is the block of neighbor-loop work spanning density()
  * through hydro_force() whose downstream consumers (cellcorrections,
  * gradients, hydro_force) share the symmetric gas-gas neighbor topology

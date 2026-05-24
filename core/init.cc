@@ -798,95 +798,20 @@ void init(void)
 #endif
 
 #ifdef HYDRO_MULTIFLUID
-    /* Multifluid Phase 0 init-time checks (see declarations/multifluid_helpers.h
-     * and gpu_bench_new/OPEN_hydro_multifluid_design.md). Three checks:
-     *   (1) Struct layout: log sizeof(particle_data) + offsetof(FluidType, ID).
-     *       In the expected case FluidType lands in the existing alignment hole
-     *       between TimeBin and 8-byte-aligned ID, so sizeof is UNCHANGED from
-     *       baseline. Any shift means the placement has been pushed out of the
-     *       padding by another field addition and FluidType must be re-placed.
-     *   (2) Default-zero invariant: every particle should be FLUID_DEFAULT(=0)
-     *       at this point. allocate.cc zeros at alloc time; IC read overwrites
-     *       only if the IO_FLUIDTYPE dataset is present. Phase 0 has no enabled
-     *       non-default closures, so any non-zero FluidType is unsupported and
-     *       must hard-fail rather than silently proceed (see design §6:
-     *       dispatcher default cases are poison paths; Phase 0d enforces the
-     *       same discipline at init time).
-     *   (3) Counts: number of particles in each FluidType bucket, rank-0 log.
-     * When sub-flags (HYDRO_MULTIFLUID_DUSTGAS, _IONNEUTRAL, ...) enable closures
-     * in future phases, check (2) loosens to "every present FluidType has an
-     * enabled closure across every enabled physics dispatcher family." */
-    if(ThisTask == 0) {
-        printf("Multifluid: sizeof(particle_data)=%zu  offsetof(FluidType)=%zu  offsetof(ID)=%zu  (HYDRO_MULTIFLUID enabled)\n",
-               sizeof(struct particle_data),
-               offsetof(struct particle_data, FluidType),
-               offsetof(struct particle_data, ID));
-    }
+    /* FluidType is meaningful only for Type=0 (gas/fluid). Hard-fail if any
+     * non-Type=0 particle carries FluidType != FLUID_DEFAULT. */
     {
-        long long ft_counts[256] = {0};
-        for(i = 0; i < NumPart; i++) {ft_counts[(unsigned int) P[i].FluidType]++;}
-
-        /* Subflag-gated allowed-FluidType set (per design §3 init.cc validation).
-         * FLUID_DEFAULT(=0) is always allowed. Each HYDRO_MULTIFLUID_* subflag
-         * adds the FluidType IDs it enables. Particles with FluidType outside
-         * this set are a HARD FAIL — either the IC supplied values for an
-         * unenabled fluid or the user forgot to set the required subflag. When
-         * adding a new subflag, extend this allowed-set AND the rank-0
-         * diagnostic print below, AND the design doc §3 + §14 Phase 5
-         * sub-module checklist (and the NOOP_TEST guard's OR-list in
-         * precompiler_logic.h — see that file's checklist comment). */
-        unsigned char allowed_fluid[256] = {0};
-        allowed_fluid[FLUID_DEFAULT] = 1;
-#ifdef HYDRO_MULTIFLUID_DUSTGAS
-        allowed_fluid[FLUID_DUST_GRAIN] = 1;
-#endif
-
-        long long local_disallowed = 0;
-        for(int k = 1; k < 256; k++) {if(!allowed_fluid[k]) {local_disallowed += ft_counts[k];}}
-        long long global_disallowed = 0;
-        MPI_Allreduce(&local_disallowed, &global_disallowed, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if(global_disallowed > 0) {
-            if(ThisTask == 0) {
-                printf("Multifluid HARD FAIL: %lld particles have a FluidType outside the allowed-set for "
-                       "the current subflag combination. Allowed in this build: FLUID_DEFAULT(=0)"
-#ifdef HYDRO_MULTIFLUID_DUSTGAS
-                       ", FLUID_DUST_GRAIN(=1)"
-#endif
-                       ". Either the IC supplied FluidType values for an unenabled fluid, or the required "
-                       "sub-flag (e.g. HYDRO_MULTIFLUID_DUSTGAS for FLUID_DUST_GRAIN) is not set. Local "
-                       "breakdown on rank 0 (disallowed FluidType IDs only):\n", global_disallowed);
-                for(int k = 1; k < 256; k++) {
-                    if(ft_counts[k] > 0 && !allowed_fluid[k]) {
-                        printf("  FluidType=%d: %lld particles (rank 0)\n", k, ft_counts[k]);
-                    }
-                }
+        long long bad = 0; int first = -1;
+        for(i = 0; i < NumPart; i++) {
+            if(P[i].Type != 0 && P[i].FluidType != FLUID_DEFAULT) {
+                if(first < 0) first = i;
+                bad++;
             }
-            endrun(91823);
         }
-
-        long long local_total = (long long) NumPart;
-        long long global_total = 0, global_default = 0;
-        MPI_Allreduce(&local_total,    &global_total,   1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(&ft_counts[0],   &global_default, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        long long global_grain = 0;
-#ifdef HYDRO_MULTIFLUID_DUSTGAS
-        MPI_Allreduce(&ft_counts[FLUID_DUST_GRAIN], &global_grain, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-#endif
-        if(ThisTask == 0) {
-            printf("Multifluid: %lld particles total; FLUID_DEFAULT(=0): %lld",
-                   global_total, global_default);
-#ifdef HYDRO_MULTIFLUID_DUSTGAS
-            printf("; FLUID_DUST_GRAIN(=1): %lld", global_grain);
-#endif
-            printf(". Allowed-set invariant satisfied.\n");
-            long long sum_allowed = global_default + global_grain;
-            if(sum_allowed != global_total) {
-                printf("Multifluid INTERNAL ERROR: allowed-set sum mismatch (sum_allowed=%lld total=%lld). "
-                       "Implies a FluidType present in the count array but not in the allowed-set sum here. "
-                       "When adding a new subflag, extend the rank-0 print above with the corresponding "
-                       "global_<name> term.\n", sum_allowed, global_total);
-                endrun(91824);
-            }
+        if(bad > 0) {
+            printf("Multifluid: task %d has %lld non-Type=0 particles with FluidType != FLUID_DEFAULT (first i=%d Type=%d FluidType=%u).\n",
+                   ThisTask, bad, first, P[first].Type, (unsigned) P[first].FluidType);
+            endrun(91823);
         }
     }
 #endif

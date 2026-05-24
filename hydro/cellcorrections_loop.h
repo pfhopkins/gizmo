@@ -93,10 +93,6 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
                                         CellcorrectionsAccum &out)
 {
 #if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
-    /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
-     * placed FIRST, before any other gate or kernel work.
-     * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
-     * identity Test 2 validation builds only. */
     if (!same_lagrangian_fluid_id(active.FluidType, nb.FluidType)) return;
 #endif
     /* Per-row narrow-filter gate (commit 5b external-CSR consumption):

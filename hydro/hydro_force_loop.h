@@ -97,9 +97,6 @@ struct HydroForceNeighborData
     int                  *TimeBinActive_ptr;    /* evaluating ctx UVM */
     int                  *need_wakeup_ptr;      /* evaluating ctx UVM; nullptr under oracle dry-run */
     bool                  oracle_dry_run;       /* gates allow_j_writes */
-#ifdef HYDRO_MULTIFLUID
-    unsigned char         FluidType;            /* packed P[j].FluidType */
-#endif
 };
 
 /* DeviceContext extension. UVM pointers backing the per-call scratch the
@@ -411,7 +408,6 @@ struct HydroForceSpec
         nb.oracle_dry_run     = ctx.oracle_dry_run;
         nb.need_wakeup_ptr    = ctx.oracle_dry_run ? nullptr : ctx.need_wakeup_uvm;
 #ifdef HYDRO_MULTIFLUID
-        nb.FluidType          = ctx.P[j].FluidType;
 #endif
         return nb;
     }
@@ -429,16 +425,7 @@ struct HydroForceSpec
                              NoScatter& /*scatter*/)
     {
 #if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
-        /* Corridor invariant (see hydro/hydro_corridor.h): cross-fluid skip
-         * placed FIRST, before kernel zero-init, MaxSignalVel update, or any
-         * accumulator mutation. The accum.MaxSignalVel fmax below is
-         * idempotent for both intra- and cross-fluid pairs (runner already
-         * zero_accum'd before the first pair), but a cross-fluid pair MUST
-         * NOT contribute even an idempotent mutation per the design's
-         * intra-fluid-pair-only contract.
-         * HYDRO_MULTIFLUID_NOOP_TEST disables the predicate for strict-bit-
-         * identity Test 2 validation builds only. */
-        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.FluidType)) return;
+        if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
 #endif
         struct kernel_hydra kernel;
         for(size_t b = 0; b < sizeof(kernel); b++) ((char*)&kernel)[b] = 0;
