@@ -30,14 +30,21 @@
  *     readers. See design §6 + §16 non-goal.
  *
  * Init-time validation (see init.cc): every FluidType value actually
- * present in the loaded particle set must have a handled case in every
- * ENABLED physics master compute function and every enabled coupling
- * pair/evaluator prototype (per design §3, §6). Unknown-but-present
- * FluidType is a HARD FAIL. The `default:` case inside each in-place
- * switch(P[i].FluidType) block is a hard-abort guard, NOT a silent
- * fallback to baseline physics. (In the current Phase 0–2 framework
- * state, no non-default cases exist yet; the init.cc check therefore
- * hard-fails on any nonzero FluidType outright — see init.cc.)
+ * present in the loaded particle set must be in the SUBFLAG-GATED
+ * ALLOWED SET. FLUID_DEFAULT(=0) is always allowed. Each
+ * HYDRO_MULTIFLUID_* subflag adds the FluidType IDs it enables
+ * (HYDRO_MULTIFLUID_DUSTGAS → adds FLUID_DUST_GRAIN; future
+ * HYDRO_MULTIFLUID_IONNEUTRAL → adds FLUID_ION + FLUID_NEUTRAL; etc.).
+ * Particles with FluidType outside the allowed-set are a HARD FAIL —
+ * either the IC supplied values for an unenabled fluid or the user
+ * forgot to set the required subflag. The `default:` case inside each
+ * in-place switch(P[i].FluidType) block in the master compute functions
+ * is a hard-abort guard, NOT a silent fallback to baseline physics.
+ * Adding a new subflag REQUIRES updating four sites in lockstep: (a)
+ * this comment; (b) the allowed_fluid[] table in init.cc; (c) the
+ * rank-0 diagnostic print in init.cc; (d) the NOOP_TEST guard's
+ * OR-list in declarations/precompiler_logic.h. Design doc §3 + §14
+ * Phase 5 checklist track this.
  *
  * Padding note (see declarations/particle_data.h): FluidType is placed
  * after `short int TimeBin` and before `MyIDType ID`, consuming one byte

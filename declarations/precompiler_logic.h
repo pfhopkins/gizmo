@@ -125,6 +125,30 @@
 #define EOS_GENERAL
 #endif
 
+/* HYDRO_MULTIFLUID_* subflag → parent HYDRO_MULTIFLUID implication block.
+ * Per OPEN_hydro_multifluid_design.md §14 Phase 3+ enablement model: each
+ * subflag that activates non-default FluidTypes (HYDRO_MULTIFLUID_DUSTGAS,
+ * future HYDRO_MULTIFLUID_IONNEUTRAL etc.) implies the parent HYDRO_MULTIFLUID,
+ * so users only need to set the subflag and the framework activates
+ * automatically. Avoids the "remember two flags" config footgun (codex Phase 3a
+ * review). Placed BEFORE the HYDRO_MULTIFLUID → EOS_GENERAL block below so the
+ * subflag → MULTIFLUID → EOS_GENERAL chain resolves correctly in a single pass. */
+#if defined(HYDRO_MULTIFLUID_DUSTGAS) && !defined(HYDRO_MULTIFLUID)
+#define HYDRO_MULTIFLUID
+#endif
+
+/* HYDRO_MULTIFLUID_DUSTGAS requires GRAIN_FLUID — the dust-gas multi-fluid
+ * demonstrator (Phase 3+) generalizes the existing GRAIN_FLUID dust-gas
+ * coupling via the FluidType lens (solids/grain_drag_gpu.cc evaluator +
+ * solids/grain_physics_functions.h::grain_backrx_pair_kernel backreaction).
+ * Without GRAIN_FLUID there is no dust path to generalize and the subflag is
+ * meaningless. Per codex Phase 3a review. (GRAIN_BACKREACTION is NOT made
+ * mandatory here — Phase 3b/3c will decide whether to require it once the
+ * eligibility refactor lands; for now the minimum is the GRAIN_FLUID parent.) */
+#if defined(HYDRO_MULTIFLUID_DUSTGAS) && !defined(GRAIN_FLUID)
+#error "HYDRO_MULTIFLUID_DUSTGAS requires GRAIN_FLUID. The dust-gas multi-fluid demonstrator generalizes the existing GRAIN_FLUID coupling via the FluidType lens; without GRAIN_FLUID there is nothing to generalize."
+#endif
+
 /* HYDRO_MULTIFLUID forces EOS_GENERAL so per-cell SoundSpeed/Pressure/Temperature
  * are saved per-element and FluidType branches (per OPEN_hydro_multifluid_design.md §6)
  * live in one place — the EOS compute path — instead of being scattered through

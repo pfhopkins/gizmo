@@ -4,6 +4,7 @@
 #include <mpi.h>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  /* FluidID enum (no-op when HYDRO_MULTIFLUID undef) */
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../eos/composition_registry.h"
@@ -824,31 +825,66 @@ void init(void)
     {
         long long ft_counts[256] = {0};
         for(i = 0; i < NumPart; i++) {ft_counts[(unsigned int) P[i].FluidType]++;}
-        long long local_nonzero = 0;
-        for(int k = 1; k < 256; k++) {local_nonzero += ft_counts[k];}
-        long long global_nonzero = 0;
-        MPI_Allreduce(&local_nonzero, &global_nonzero, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if(global_nonzero > 0) {
+
+        /* Subflag-gated allowed-FluidType set (per design §3 init.cc validation).
+         * FLUID_DEFAULT(=0) is always allowed. Each HYDRO_MULTIFLUID_* subflag
+         * adds the FluidType IDs it enables. Particles with FluidType outside
+         * this set are a HARD FAIL — either the IC supplied values for an
+         * unenabled fluid or the user forgot to set the required subflag. When
+         * adding a new subflag, extend this allowed-set AND the rank-0
+         * diagnostic print below, AND the design doc §3 + §14 Phase 5
+         * sub-module checklist (and the NOOP_TEST guard's OR-list in
+         * precompiler_logic.h — see that file's checklist comment). */
+        unsigned char allowed_fluid[256] = {0};
+        allowed_fluid[FLUID_DEFAULT] = 1;
+#ifdef HYDRO_MULTIFLUID_DUSTGAS
+        allowed_fluid[FLUID_DUST_GRAIN] = 1;
+#endif
+
+        long long local_disallowed = 0;
+        for(int k = 1; k < 256; k++) {if(!allowed_fluid[k]) {local_disallowed += ft_counts[k];}}
+        long long global_disallowed = 0;
+        MPI_Allreduce(&local_disallowed, &global_disallowed, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(global_disallowed > 0) {
             if(ThisTask == 0) {
-                printf("Multifluid HARD FAIL: %lld particles have non-zero FluidType but Phase 0 has no enabled non-default closures. "
-                       "Either the IC supplied FluidType values for an unenabled fluid, or a sub-flag (e.g. HYDRO_MULTIFLUID_DUSTGAS) "
-                       "is required. Local breakdown on rank 0:\n", global_nonzero);
+                printf("Multifluid HARD FAIL: %lld particles have a FluidType outside the allowed-set for "
+                       "the current subflag combination. Allowed in this build: FLUID_DEFAULT(=0)"
+#ifdef HYDRO_MULTIFLUID_DUSTGAS
+                       ", FLUID_DUST_GRAIN(=1)"
+#endif
+                       ". Either the IC supplied FluidType values for an unenabled fluid, or the required "
+                       "sub-flag (e.g. HYDRO_MULTIFLUID_DUSTGAS for FLUID_DUST_GRAIN) is not set. Local "
+                       "breakdown on rank 0 (disallowed FluidType IDs only):\n", global_disallowed);
                 for(int k = 1; k < 256; k++) {
-                    if(ft_counts[k] > 0) {printf("  FluidType=%d: %lld particles (rank 0)\n", k, ft_counts[k]);}
+                    if(ft_counts[k] > 0 && !allowed_fluid[k]) {
+                        printf("  FluidType=%d: %lld particles (rank 0)\n", k, ft_counts[k]);
+                    }
                 }
             }
             endrun(91823);
         }
+
         long long local_total = (long long) NumPart;
         long long global_total = 0, global_default = 0;
         MPI_Allreduce(&local_total,    &global_total,   1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&ft_counts[0],   &global_default, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long long global_grain = 0;
+#ifdef HYDRO_MULTIFLUID_DUSTGAS
+        MPI_Allreduce(&ft_counts[FLUID_DUST_GRAIN], &global_grain, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+#endif
         if(ThisTask == 0) {
-            printf("Multifluid: %lld particles, all in FLUID_DEFAULT (=0). Phase 0 default-zero invariant satisfied.\n",
-                   global_default);
-            if(global_default != global_total) {
-                printf("Multifluid INTERNAL ERROR: default+nonzero count mismatch (default=%lld total=%lld).\n",
-                       global_default, global_total);
+            printf("Multifluid: %lld particles total; FLUID_DEFAULT(=0): %lld",
+                   global_total, global_default);
+#ifdef HYDRO_MULTIFLUID_DUSTGAS
+            printf("; FLUID_DUST_GRAIN(=1): %lld", global_grain);
+#endif
+            printf(". Allowed-set invariant satisfied.\n");
+            long long sum_allowed = global_default + global_grain;
+            if(sum_allowed != global_total) {
+                printf("Multifluid INTERNAL ERROR: allowed-set sum mismatch (sum_allowed=%lld total=%lld). "
+                       "Implies a FluidType present in the count array but not in the allowed-set sum here. "
+                       "When adding a new subflag, extend the rank-0 print above with the corresponding "
+                       "global_<name> term.\n", sum_allowed, global_total);
                 endrun(91824);
             }
         }
