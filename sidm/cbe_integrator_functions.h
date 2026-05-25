@@ -28,6 +28,64 @@ static constexpr uint64_t CBE_DRIFT_KICK_RNG_SALT = gizmo_loop_rng_salt("cbe_dri
 
 
 #ifdef CBE_INTEGRATOR
+
+/* --------------------------------------------------------------------------
+ * Basis-pair cost and outgoing-side assignment helpers (2026-05-24).
+ *
+ * Conservation principle: the C step in cbe_integrator_flux_functions.h
+ * applies -F to source basis and +F to target basis for every transfer.
+ * Global mass/p/T conservation holds regardless of which pairing rule is
+ * used; different rules produce different mixing patterns.
+ *
+ * Only velocity-only cost + greedy outgoing assignment are exposed here
+ * (matches the corrected post-Commit-0 inline path). Other cost forms (W2,
+ * free-slot-fallback) and assignment forms (Hungarian) will land with
+ * their implementations and dimensional/realizability handling intact;
+ * see also the 'theta uses dp not Face_Area_Vec' note in
+ * cbe_integrator_flux_functions.h.
+ * -------------------------------------------------------------------------- */
+
+/* Velocity-only squared cost between two basis components:
+ *     C = sum over k of (v_a_k - v_b_k)^2
+ * Matches the corrected post-Commit-0 inline path in
+ * cbe_integrator_flux_functions.h. Basis-mass denominators floored at
+ * MIN_REAL_NUMBER to avoid NaN. */
+KOKKOS_INLINE_FUNCTION
+double cbe_cost_v_only(const double moments_a[CBE_INTEGRATOR_NMOMENTS],
+                       const double moments_b[CBE_INTEGRATOR_NMOMENTS])
+{
+    double inv_a = 1.0 / DMAX(moments_a[0], MIN_REAL_NUMBER);
+    double inv_b = 1.0 / DMAX(moments_b[0], MIN_REAL_NUMBER);
+    double c = 0;
+    for(int k=0; k<3; k++) {
+        double dv = moments_a[k+1] * inv_a - moments_b[k+1] * inv_b;
+        c += dv * dv;
+    }
+    return c;
+}
+
+
+/* Outgoing-side greedy assignment: given an NBASIS x NBASIS cost matrix C,
+ * fill beta_of_alpha[m] = argmin_n C[m][n] for each row m. Multiple alphas
+ * may collide on the same beta (asymmetric). Matches the corrected
+ * post-Commit-0 inline argmin behavior.
+ *
+ * Call once with C for a-side outgoing, once with C^T for b-side outgoing. */
+KOKKOS_INLINE_FUNCTION
+void cbe_assign_outgoing_greedy(
+    const double C[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS],
+    int beta_of_alpha[CBE_INTEGRATOR_NBASIS])
+{
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        double best = MAX_REAL_NUMBER; int best_n = 0;
+        for(int n=0; n<CBE_INTEGRATOR_NBASIS; n++) {
+            if(C[m][n] < best) { best = C[m][n]; best_n = n; }
+        }
+        beta_of_alpha[m] = best_n;
+    }
+}
+
+
 KOKKOS_INLINE_FUNCTION
 double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS],
                                double vface_dot_A,

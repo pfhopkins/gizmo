@@ -110,34 +110,30 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
 
     /* find best-match basis pairs across the two sides.
      *
-     * NOTE (2026-05-24): current rule = one-sided greedy argmin from each side.
-     * Cost is squared velocity-difference per dimension. A one-sided Hungarian
-     * per side may give modestly better matching on stress cases; future work.
-     *
-     * Pj denominator bug fixed below: previously the [m_j][k+1]/[m][0] line divided
-     * m_j's momentum by m's mass on side j, producing a nonsense cost. Fixed to
-     * [m_j][k+1]/[m_j][0]. Basis-mass denominators floored at MIN_REAL_NUMBER. */
+     * Pairing is factored through cbe_cost_v_only() and cbe_assign_outgoing_greedy()
+     * in cbe_integrator_functions.h. The cost is squared velocity difference
+     * per dimension (matches the corrected post-Commit-0 inline path). The
+     * greedy assignment takes a single direction's cost matrix and produces
+     * beta_of_alpha; we call it once for the a-side outgoing direction and
+     * once with the transpose for the b-side. cbe_cost_v_only is symmetric
+     * in its two arguments, so cost_matrix_T is just the index-swap of
+     * cost_matrix. */
     int matching_basis_j_for_basis_in_i[CBE_INTEGRATOR_NBASIS];
     int matching_basis_i_for_basis_in_j[CBE_INTEGRATOR_NBASIS];
-    double wt_i[CBE_INTEGRATOR_NBASIS], wt_j[CBE_INTEGRATOR_NBASIS];
     double vsig = 0;
+    double cost_matrix[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        wt_i[m] = wt_j[m] = MAX_REAL_NUMBER;
-    }
-    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        double inv_m_i = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
-        for(int m_j=0; m_j<CBE_INTEGRATOR_NBASIS; m_j++) {
-            double inv_m_j = 1.0 / DMAX(Pj_CBE_basis_moments[m_j][0], MIN_REAL_NUMBER);
-            double cos_ij = 0;
-            for(int k=0; k<3; k++) {
-                double q1 = local_CBE_basis_moments[m][k+1]   * inv_m_i;
-                double q2 = Pj_CBE_basis_moments[m_j][k+1]    * inv_m_j;
-                cos_ij += (q1 - q2) * (q1 - q2);
-            }
-            if(cos_ij < wt_i[m])   { wt_i[m] = cos_ij;   matching_basis_j_for_basis_in_i[m]   = m_j; }
-            if(cos_ij < wt_j[m_j]) { wt_j[m_j] = cos_ij; matching_basis_i_for_basis_in_j[m_j] = m; }
+        for(int n=0; n<CBE_INTEGRATOR_NBASIS; n++) {
+            cost_matrix[m][n] = cbe_cost_v_only(local_CBE_basis_moments[m],
+                                                Pj_CBE_basis_moments[n]);
         }
     }
+    cbe_assign_outgoing_greedy(cost_matrix, matching_basis_j_for_basis_in_i);
+    double cost_matrix_T[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++)
+        for(int n=0; n<CBE_INTEGRATOR_NBASIS; n++)
+            cost_matrix_T[n][m] = cost_matrix[m][n];
+    cbe_assign_outgoing_greedy(cost_matrix_T, matching_basis_i_for_basis_in_j);
 
     /* now compute fluxes */
     double wt_prefac_i = -rho_i / local.Mass;
