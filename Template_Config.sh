@@ -67,11 +67,6 @@
 # --------------------------------------- Additional Fluid Physics
 ####################################################################################################
 ## ----------------------------------------------------------------------------------------------------
-# --------------------------------------- Multi-Fluid Framework (Lagrangian-partition multi-fluid)
-#HYDRO_MULTIFLUID               # Lagrangian multi-fluid partition: Type=0 particles carry a FluidType ID (see declarations/multifluid_helpers.h); hydro pair operators skip cross-FluidType pairs. Force-implies EOS_GENERAL.
-#HYDRO_MULTIFLUID_DUST_DRAG     # Cross-fluid drag coupling for Type==0 dust-as-fluid (FluidType=FLUID_DUST_GRAIN) elements against Type==0 default-fluid (FluidType=FLUID_DEFAULT) gas; reuses existing grain drag/backreaction kernels.
-#HYDRO_MULTIFLUID_IONNEUTRAL    # Two-fluid ion-neutral ambipolar drag: Type==0+FluidType=FLUID_ION ions coupled to Type==0+FluidType=FLUID_DEFAULT neutrals via Draine ambipolar form (tstop_inv = <sigma v>_in / (m_i+m_n) * rho_neutral; hardcoded HI/H+ values, edit grain_drag_kernel for other regimes). Neutrals carry B=0 in IC; corridor skip keeps it so. Mutually exclusive with GRAIN_FLUID / HYDRO_MULTIFLUID_DUST_DRAG.
-## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Gas (or Material) Equations-of-State [some EOS options for specific regimes, like galaxy or star formation simulations, are also described in the blocks below for those sections]
 #EOS_GAMMA=(5.0/3.0)            # Polytropic Index of Gas (for an ideal gas law): if not set and no other (more complex) EOS set, defaults to GAMMA=5/3
 #EOS_HELMHOLTZ                  # Use Timmes & Swesty 2000 EOS (for e.g. stellar or degenerate equations of state); if additional tables needed, download at http://www.tapir.caltech.edu/~phopkins/public/helm_table.dat (or the GitHub site)
@@ -126,6 +121,13 @@
 #GRAIN_BACKREACTION             # account for momentum of grains pushing back on gas (from drag terms); users should cite Moseley et al., 2018, arXiv:1810.08214.
 #GRAIN_LORENTZFORCE             # charged grains feel Lorentz forces (requires MAGNETIC); if used with GRAIN_EPSTEIN_STOKES flag, will also compute Coulomb drag (grain charges self-consistently computed from gas properties). Need to set GrainType=2. Please cite Seligman et al., 2019, MNRAS 485 3991
 #GRAIN_COLLISIONS               # model collisions between grains (super-particles; so this is stochastic). Default = hard-sphere scattering, with options for inelastic or velocity-dependent terms. Approved users please cite papers above and Rocha et al., MNRAS 2013, 430, 81
+## ----------------------------------------------------------------------------------------------------
+# --------------------------------------- Multi-Fluid Framework (Lagrangian-partition multi-fluid)
+#HYDRO_MULTIFLUID               # Lagrangian multi-fluid partition: Type=0 particles carry a FluidType ID (see declarations/multifluid_helpers.h); hydro pair operators skip cross-FluidType pairs. Force-implies EOS_GENERAL.
+#HYDRO_MULTIFLUID_DUST_DRAG     # Cross-fluid drag coupling for Type==0 dust-as-fluid (FluidType=FLUID_DUST_GRAIN) elements against Type==0 default-fluid (FluidType=FLUID_DEFAULT) gas; reuses existing grain drag/backreaction kernels.
+#HYDRO_MULTIFLUID_IONNEUTRAL    # Two-fluid ion-neutral ambipolar drag: Type==0+FluidType=FLUID_ION ions coupled to Type==0+FluidType=FLUID_DEFAULT neutrals via Draine ambipolar form (tstop_inv = <sigma v>_in / (m_i+m_n) * rho_neutral; hardcoded HI/H+ values, edit grain_drag_kernel for other regimes). Neutrals carry B=0 in IC; corridor skip keeps it so. Mutually exclusive with GRAIN_FLUID / HYDRO_MULTIFLUID_DUST_DRAG.
+#HYDRO_MULTIFLUID_DM            # Dark-fluid placeholder: Type=0+FluidType=FLUID_DM particles get a dedicated trivial adiabatic EOS (γ=5/3) and dedicated do_dark_cooling_for_particle hook (placeholder; see sidm/dm_fluid_functions.h for user-extension API). Gas->star/sink promotion redirected to Type=3 inert. Feedback kernels (mechfb, thermalfb, sink wind/kick, HII, radfb_local) skip FLUID_DM neighbors so DM gas does not feel baryonic stellar feedback. RT radiation pressure on FLUID_DM gas zeroed (no RHD on dark fluid in this minimal model).
+## ----------------------------------------------------------------------------------------------------
 ####################################################################################################
 
 

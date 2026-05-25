@@ -41,6 +41,7 @@
 
 #include "../declarations/gpu_all_mirror.h"   /* per-TU AllDeviceMirror; safe in host pass too */
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 
 #ifdef RT_SOURCE_INJECTION
 
@@ -440,6 +441,9 @@ struct RtSrcInjectionSpec {
 
         /* Defensive Type / Mass re-checks (mask should have ensured Type==0). */
         if (Pj.Type != 0)  return;
+#ifdef HYDRO_MULTIFLUID_DM
+        if (Pj.FluidType == FLUID_DM) return; /* skip dark-fluid neighbors */
+#endif
         if (Pj.Mass <= 0)  return;
 
         Vec3<double> dp;

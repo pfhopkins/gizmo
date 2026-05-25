@@ -19,9 +19,14 @@
 #define KOKKOS_INLINE_FUNCTION inline
 #endif
 
+#include "../declarations/multifluid_helpers.h"
+
 /* return an estimate of the Hydrogen molecular fraction of gas */
 KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef HYDRO_MULTIFLUID_DM
+    if(pp[i].FluidType == FLUID_DM) return 0; /* dark fluid: no molecular tracking in placeholder model */
+#endif
 #ifdef GALSF_EFFECTIVE_EQS
     return 0; /* in the effective equation of state, H2 is not tracked explicitly here and the cooling function explicitly assumes an ionized+atomic medium. the 'molecular' compoennt is part of the implicit sub-grid model for clouds. so any non-zero value here will be invalid */
 #endif

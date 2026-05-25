@@ -7,6 +7,7 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "gpu_gravtree.h"
 #include "../system/gpu_particles_arena.h"
@@ -363,7 +364,11 @@ void gravity_tree(void)
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX) /* multiply by volume to use standard 'finite volume-like' quantity as elsewhere in-code */
         if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_Flux[kf] *= P[i].Mass/(CellP[i].Density*All.cf_a3inv);}} // convert to standard finite-volume-like units //
 #if !defined(RT_DISABLE_RAD_PRESSURE) // if we save the fluxes, we didnt apply forces on-the-spot, which means we appky them here //
-        if((P[i].Type==0) && (P[i].Mass>0))
+        if((P[i].Type==0) && (P[i].Mass>0)
+#ifdef HYDRO_MULTIFLUID_DM
+           && (P[i].FluidType != FLUID_DM)   /* dark fluid does not feel baryonic RT radiation pressure */
+#endif
+          )
         {
             int kfreq; double vol_inv=CellP[i].Density*All.cf_a3inv/P[i].Mass, h_i=P[i].Get_Particle_Size()*All.cf_atime, sigma_eff_i=P[i].Mass/(h_i*h_i);
             Vec3<double> radacc={};

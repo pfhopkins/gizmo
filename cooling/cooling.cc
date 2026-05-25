@@ -12,6 +12,7 @@
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 /* On CUDA, nvcc uses the FIRST declaration's execution-space attributes.
    proto.h declares RT functions as host-only (no __device__).  If proto.h
    is seen first, device calls get stubs returning 0.  Fix: include the RT
@@ -37,6 +38,7 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
 KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 #include "../radiation/rt_functions.h"
 #include "../core/proto.h"
+#include "../sidm/dm_fluid_functions.h"
 #include "./cooling.h"
 /* evaluate_NH_from_GradRho — single source in predict_functions.h */
 #include "../core/predict_functions.h"
@@ -357,6 +359,18 @@ void cooling_parent_routine(void)
 KOKKOS_FUNCTION
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef HYDRO_MULTIFLUID_DM
+    /* dark fluid evolves adiabatically by default; DM_COOLING (host-only Roy
+     * chain) dispatch lives inline so the no-op short-circuit compiles for
+     * device under KOKKOS_FUNCTION. Users running DM_COOLING on GPU need to
+     * port the dm_DoCooling chain to a Kokkos-device-callable form. */
+    if(pp[i].FluidType == FLUID_DM) {
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+        do_dark_cooling_for_particle(i, pp, cell);
+#endif
+        return;
+    }
+#endif
     double unew, dtime = get_particle_timestep_in_physical(i, pp), ne_in, ne_out;
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dtime *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times in the subcycle loop, each with dt/N */

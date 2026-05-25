@@ -24,6 +24,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 
 #ifdef SINK_PARTICLES
 
@@ -239,6 +240,10 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
     const double              h_i        = (double)local.KernelRadius;
 
     if(neighbor_particle.Mass <= 0) return;
+#ifdef HYDRO_MULTIFLUID_DM
+    /* skip dark-fluid gas: not coupled to baryonic sinks via accretion or feedback. */
+    if(neighbor_particle.Type == 0 && neighbor_particle.FluidType == FLUID_DM) return;
+#endif
 
     /* dpos / r2 with periodic wrap (mirrors sink_swallow_and_kick_gpu.cc:291-293). */
     Vec3<double> dpos;

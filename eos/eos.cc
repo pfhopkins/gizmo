@@ -12,7 +12,9 @@
 #include "../declarations/gpu_all_mirror.h"
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../sidm/dm_fluid_functions.h"
 #include "../mesh/kernel.h"
 
 #include "../declarations/gpu_numeric_macros.h"
@@ -100,7 +102,10 @@ double return_user_desired_target_pressure(int i)
    time, producing wrong results on CUDA (bisected to commits f8d2619f..63474bcd). */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0; 
+#ifdef HYDRO_MULTIFLUID_DM
+    if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
+#endif
+    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0;
     if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
     cell[i].Gamma = gamma_eos_index;
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();

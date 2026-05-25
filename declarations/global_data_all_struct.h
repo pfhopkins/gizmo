@@ -79,6 +79,12 @@ struct global_data_all_processes
   double InitGasTemp;		/*!< may be used to set the temperature in the IC's */
   double InitGasU;		/*!< the same, but converted to thermal energy per unit mass */
   double MinGasTemp;		/*!< may be used to set a floor for the gas temperature */
+#ifdef HYDRO_MULTIFLUID_DM_COOLING
+  double ADM_FineStructure;     /*!< alpha_ADM (SM value 7.2973525693e-3) */
+  double ADM_ProtonMass;        /*!< m_p_ADM in g (SM value PROTONMASS_CGS) */
+  double ADM_ElectronMass;      /*!< m_e_ADM in g (SM value ELECTRONMASS) */
+  double ADM_MolecularFraction; /*!< dark-H2 fraction by mass, 0..1 */
+#endif
 #ifdef DISK_BETA_COOL
   double BetaCool_Beta;         /*!< beta in t_cool = beta / Omega */
   double BetaCool_Tirr;         /*!< irradiation-floor temperature [K]; 0 disables floor */
