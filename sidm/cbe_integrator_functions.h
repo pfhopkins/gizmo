@@ -86,6 +86,90 @@ void cbe_assign_outgoing_greedy(
 }
 
 
+/* --------------------------------------------------------------------------
+ * Per-face root-found face-normal velocity v_F_n (Wave-CBE Commit 3,
+ * 2026-05-25). Replaces the bulk-average vface_new computation in
+ * cbe_integrator_flux_functions.h with a scalar normal v_F chosen so the
+ * basis-summed mass flux across the face is machine-zero. Per harness
+ * test_density_wave_root_found this drops per-cell mass drift by ~11
+ * orders of magnitude vs the paper-formula bulk average.
+ *
+ * Residual function. Returns net per-unit-area face mass flux at trial
+ * v_F_n, in (rho * v) units. Theta convention: face-normal Ahat (i->j),
+ * a-side basis outgoing iff v_alpha_n_i > v_F_n; b-side basis outgoing
+ * iff v_alpha_n_j < v_F_n. K_i[m] = m_i[m][0] * rho_i / M_i (>=0) folds
+ * the wt_prefac density factor in so the returned residual matches the
+ * actual flux update sign-for-sign.
+ *
+ * Piecewise-linear monotonically increasing in v_F_n: the unique zero
+ * is well-defined when the bracket spans it. Bisection is sufficient
+ * (codex's "boring, device-safe" pick; no Brent edge cases on Kokkos
+ * device headers). Hand-rolled brent can swap in behind the same
+ * interface later if profiling shows root-find cost matters.
+ * -------------------------------------------------------------------------- */
+KOKKOS_INLINE_FUNCTION
+double cbe_face_mass_residual_per_unit_area(
+    double v_F_n,
+    const double v_alpha_n_i[CBE_INTEGRATOR_NBASIS],
+    const double v_alpha_n_j[CBE_INTEGRATOR_NBASIS],
+    const double K_i[CBE_INTEGRATOR_NBASIS],
+    const double K_j[CBE_INTEGRATOR_NBASIS])
+{
+    double r = 0;
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        double dv_i = v_alpha_n_i[m] - v_F_n;
+        double dv_j = v_alpha_n_j[m] - v_F_n;
+        if(dv_i > 0) r += dv_i * K_i[m];
+        if(dv_j < 0) r += dv_j * K_j[m];
+    }
+    return r;
+}
+
+
+/* Bisection root-find for v_F_n with bracket-widen-up-to-4x and explicit
+ * fallback flagged via bracket_ok_out=0. Matches the harness brentq
+ * widening loop in cadence; uses bisection instead of Brent for device
+ * portability. 40 iters of bisection in a unit bracket converges to
+ * ~1e-12, matching the harness xtol. NO silent midpoint -- on failure
+ * the caller's analytic fallback v_F is used and the bracket_fail
+ * counter is incremented. */
+KOKKOS_INLINE_FUNCTION
+double cbe_face_solve_v_F_normal(
+    const double v_alpha_n_i[CBE_INTEGRATOR_NBASIS],
+    const double v_alpha_n_j[CBE_INTEGRATOR_NBASIS],
+    const double K_i[CBE_INTEGRATOR_NBASIS],
+    const double K_j[CBE_INTEGRATOR_NBASIS],
+    double v_F_lo, double v_F_hi,
+    double fallback_v_F_n,
+    int *bracket_ok_out)
+{
+    double lo = v_F_lo, hi = v_F_hi;
+    double f_lo = cbe_face_mass_residual_per_unit_area(lo, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+    double f_hi = cbe_face_mass_residual_per_unit_area(hi, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+    int bracketed = (f_lo * f_hi <= 0) ? 1 : 0;
+    for(int widen = 0; widen < 4 && !bracketed; widen++) {
+        double mid  = 0.5 * (lo + hi);
+        double half = 4.0 * 0.5 * (hi - lo);
+        lo = mid - half; hi = mid + half;
+        f_lo = cbe_face_mass_residual_per_unit_area(lo, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+        f_hi = cbe_face_mass_residual_per_unit_area(hi, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+        if(f_lo * f_hi <= 0) { bracketed = 1; break; }
+    }
+    if(!bracketed) {
+        *bracket_ok_out = 0;
+        return fallback_v_F_n;
+    }
+    *bracket_ok_out = 1;
+    for(int it=0; it<40; it++) {
+        double mid = 0.5 * (lo + hi);
+        double f_mid = cbe_face_mass_residual_per_unit_area(mid, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+        if(f_lo * f_mid <= 0) { hi = mid; f_hi = f_mid; }
+        else                  { lo = mid; f_lo = f_mid; }
+    }
+    return 0.5 * (lo + hi);
+}
+
+
 KOKKOS_INLINE_FUNCTION
 double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS],
                                double vface_dot_A,

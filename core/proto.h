@@ -969,6 +969,9 @@ void do_cbe_initialization(void);
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
 void cbe_step_diagnostics_reset(void);
 void cbe_step_diagnostics_emit(void);
+void cbe_step_diagnostics_observe_face(double face_residual_max,
+                                        double face_residual_sum,
+                                        long long bracket_fail_count);
 #endif
 #endif
 

@@ -158,6 +158,15 @@ struct AgsForceOut {
 #if defined(CBE_INTEGRATOR)
     double AGS_vsig;              /* MAX-reduced */
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    /* Wave-CBE Commit 3 root-found v_F diagnostic counters. Per-pair
+     * updates in sidm/cbe_integrator_flux_functions.h; merged in
+     * AgsForceSpec::merge_accum; ingested into the host-side CbeStepAccum
+     * via cbe_step_diagnostics_observe() from apply_active_writeback. */
+    double    cbe_face_residual_max;   /* MAX over faces of |sum_basis F_m*A| */
+    double    cbe_face_residual_sum;   /* SUM over faces of |sum_basis F_m*A| */
+    long long cbe_bracket_fail_count;  /* SUM over faces of root-find bracket fails */
+#endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
     /* Phase 17b pairwise outcomes; multiplicative erosion sentinel = 1.0

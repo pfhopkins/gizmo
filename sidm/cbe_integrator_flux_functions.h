@@ -51,15 +51,16 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     double Face_Area_Vec[3];
     double Face_Area_Norm = 0;
     double vface_guess[3];
-    double vf0_dot_dp = 0;
     for(int k=0; k<3; k++) {
         Face_Area_Vec[k] = -(kernel.wk_i * V_i * (local.NV_T[k][0]*kernel.dp[0] + local.NV_T[k][1]*kernel.dp[1] + local.NV_T[k][2]*kernel.dp[2])
                            + kernel.wk_j * V_j * (P[j].NV_T[k][0]*kernel.dp[0] + P[j].NV_T[k][1]*kernel.dp[1] + P[j].NV_T[k][2]*kernel.dp[2])) * All.cf_atime * All.cf_atime;
         Face_Area_Norm += Face_Area_Vec[k] * Face_Area_Vec[k];
         vface_guess[k] = 0.5 * (local.Vel[k] + P[j].Vel[k]) / All.cf_atime;
-        vf0_dot_dp += vface_guess[k] * kernel.dp[k];
     }
     Face_Area_Norm = sqrt(Face_Area_Norm);
+    if(!(Face_Area_Norm > 0)) { return r; }
+    double inv_FAN = 1.0 / Face_Area_Norm;
+    double A_hat[3] = { Face_Area_Vec[0]*inv_FAN, Face_Area_Vec[1]*inv_FAN, Face_Area_Vec[2]*inv_FAN };
 
     /* load basis moments, boosted to the physical frame */
     double local_CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
@@ -75,38 +76,107 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         }
     }
 
-    /* center-of-motion frame: determine which bases are approaching, define face velocity.
-     *
-     * NOTE (2026-05-24): the 'theta' gate below uses the center-separation direction
-     * (kernel.dp), NOT the MFM face-normal (Face_Area_Vec). Both can be valid in
-     * different regimes; needs derivation alongside the eventual root-found v_F.
-     *
-     * Basis-mass denominators floored at MIN_REAL_NUMBER to avoid NaN from
-     * near-empty bases. */
-    double vface_new[3] = {0};
-    double theta_i[CBE_INTEGRATOR_NBASIS] = {0};
-    double theta_j[CBE_INTEGRATOR_NBASIS] = {0};
-    double v_wt_sum = 0;
+    /* Per-basis face-normal velocities and density kernels for the root-find
+     * residual. K_i[m] = m_i[m][0] * rho_i / M_i (>=0) folds the wt_prefac
+     * density factor in so the residual we drive to zero is the actual face
+     * mass-flux update sign-for-sign (codex caution: same theta rule, same
+     * matching, same prefactors as the flux loop below). */
+    double v_alpha_n_i[CBE_INTEGRATOR_NBASIS], v_alpha_n_j[CBE_INTEGRATOR_NBASIS];
+    double K_i[CBE_INTEGRATOR_NBASIS], K_j[CBE_INTEGRATOR_NBASIS];
+    double pad = 0;
+    double inv_M_i = 1.0 / DMAX(local.Mass, MIN_REAL_NUMBER);
+    double inv_M_j = 1.0 / DMAX(P[j].Mass, MIN_REAL_NUMBER);
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        double vi_dot_dp = 0, vj_dot_dp = 0;
-        double inv_m_i = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
-        double inv_m_j = 1.0 / DMAX(Pj_CBE_basis_moments[m][0],    MIN_REAL_NUMBER);
-        for(int k=0; k<3; k++) {
-            vi_dot_dp += (local_CBE_basis_moments[m][k+1] * inv_m_i - vface_guess[k]) * kernel.dp[k];
-            vj_dot_dp += (Pj_CBE_basis_moments[m][k+1]    * inv_m_j - vface_guess[k]) * kernel.dp[k];
+        double inv_mi = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
+        double inv_mj = 1.0 / DMAX(Pj_CBE_basis_moments[m][0],    MIN_REAL_NUMBER);
+        v_alpha_n_i[m] = (local_CBE_basis_moments[m][1]*A_hat[0]
+                       +  local_CBE_basis_moments[m][2]*A_hat[1]
+                       +  local_CBE_basis_moments[m][3]*A_hat[2]) * inv_mi;
+        v_alpha_n_j[m] = (Pj_CBE_basis_moments[m][1]*A_hat[0]
+                       +  Pj_CBE_basis_moments[m][2]*A_hat[1]
+                       +  Pj_CBE_basis_moments[m][3]*A_hat[2]) * inv_mj;
+        K_i[m] = local_CBE_basis_moments[m][0] * rho_i * inv_M_i;
+        K_j[m] = Pj_CBE_basis_moments[m][0]    * rho_j * inv_M_j;
+#if (CBE_INTEGRATOR_NMOMENTS > 4)
+        /* Pad bracket with per-basis 1D dispersion = sqrt(trace(S)/m). Same
+         * scale that enters the SM signal-speed term in
+         * do_cbe_flux_computation; ensures bracket spans any plausible
+         * v_F_normal even when basis bulk velocities collapse. */
+        double trS_i = (local_CBE_basis_moments[m][4]+local_CBE_basis_moments[m][5]+local_CBE_basis_moments[m][6])*inv_mi;
+        double trS_j = (Pj_CBE_basis_moments[m][4]+Pj_CBE_basis_moments[m][5]+Pj_CBE_basis_moments[m][6])*inv_mj;
+        double sig = DMAX(sqrt(DMAX(trS_i,0.0)), sqrt(DMAX(trS_j,0.0)));
+        if(sig > pad) pad = sig;
+#endif
+    }
+    /* Below-NMOMENTS-4 absolute floor on pad: a fraction of the velocity
+     * spread so the bracket has nonzero width even if all basis velocities
+     * happen to coincide. bracket-widen-4x handles the rest. */
+    {
+        double v_spread = 0;
+        for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+            v_spread = DMAX(v_spread, fabs(v_alpha_n_i[m]));
+            v_spread = DMAX(v_spread, fabs(v_alpha_n_j[m]));
         }
-        if(vi_dot_dp < 0) { theta_i[m] = 1; }
-        if(vj_dot_dp > 0) { theta_j[m] = 1; }
-        double w0_i = theta_i[m] * rho_i / local.Mass;
-        double w0_j = theta_j[m] * rho_j / P[j].Mass;
-        v_wt_sum += w0_i * local_CBE_basis_moments[m][0] + w0_j * Pj_CBE_basis_moments[m][0];
-        for(int k=0; k<3; k++) { vface_new[k] += w0_i * local_CBE_basis_moments[m][k+1] + w0_j * Pj_CBE_basis_moments[m][k+1]; }
+        double floor_pad = 1.0e-8 * v_spread + MIN_REAL_NUMBER;
+        if(pad < floor_pad) pad = floor_pad;
     }
 
-    double vface[3] = {0};
-    if(!((v_wt_sum > MIN_REAL_NUMBER) && (v_wt_sum < MAX_REAL_NUMBER))) { return r; }
+    /* Bracket from min/max basis normal velocities (both sides), padded. */
+    double v_F_lo = MAX_REAL_NUMBER, v_F_hi = -MAX_REAL_NUMBER;
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        if(v_alpha_n_i[m] < v_F_lo) v_F_lo = v_alpha_n_i[m];
+        if(v_alpha_n_i[m] > v_F_hi) v_F_hi = v_alpha_n_i[m];
+        if(v_alpha_n_j[m] < v_F_lo) v_F_lo = v_alpha_n_j[m];
+        if(v_alpha_n_j[m] > v_F_hi) v_F_hi = v_alpha_n_j[m];
+    }
+    v_F_lo -= pad; v_F_hi += pad;
 
-    for(int k=0; k<3; k++) { vface[k] = vface_new[k] / v_wt_sum; }
+    /* Initial bulk-tangential vface for the SM dispersion term in
+     * do_cbe_flux_computation (vface argument at functions.h:107 enters
+     * only the NMOMENTS>4 dv2 term). Use the new theta-on-Ahat convention
+     * with v_F_guess = vface_guess . Ahat as initial estimate; the final
+     * v_F_normal will be substituted into the normal component below. The
+     * bulk tangential is second-order in (v - vface) so a small estimate
+     * mismatch is acceptable here. */
+    double v_F_guess = vface_guess[0]*A_hat[0] + vface_guess[1]*A_hat[1] + vface_guess[2]*A_hat[2];
+    double vface_bulk[3] = {0};
+    double v_wt_sum = 0;
+    double theta_i[CBE_INTEGRATOR_NBASIS] = {0};
+    double theta_j[CBE_INTEGRATOR_NBASIS] = {0};
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        if(v_alpha_n_i[m] - v_F_guess > 0) {
+            double w = K_i[m]; v_wt_sum += w;
+            double inv_mi = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
+            for(int k=0; k<3; k++) vface_bulk[k] += w * local_CBE_basis_moments[m][k+1] * inv_mi;
+        }
+        if(v_alpha_n_j[m] - v_F_guess < 0) {
+            double w = K_j[m]; v_wt_sum += w;
+            double inv_mj = 1.0 / DMAX(Pj_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
+            for(int k=0; k<3; k++) vface_bulk[k] += w * Pj_CBE_basis_moments[m][k+1] * inv_mj;
+        }
+    }
+    if(!((v_wt_sum > MIN_REAL_NUMBER) && (v_wt_sum < MAX_REAL_NUMBER))) { return r; }
+    double inv_wt = 1.0 / v_wt_sum;
+    double vface_bulk_unit[3] = { vface_bulk[0]*inv_wt, vface_bulk[1]*inv_wt, vface_bulk[2]*inv_wt };
+    double vbulk_dot_Ahat = vface_bulk_unit[0]*A_hat[0] + vface_bulk_unit[1]*A_hat[1] + vface_bulk_unit[2]*A_hat[2];
+
+    /* Root-find face-normal v_F. On bracket failure fallback to the bulk
+     * normal (vbulk_dot_Ahat) and flag in bracket_ok. */
+    int bracket_ok = 0;
+    double v_F_normal = cbe_face_solve_v_F_normal(
+        v_alpha_n_i, v_alpha_n_j, K_i, K_j,
+        v_F_lo, v_F_hi, vbulk_dot_Ahat, &bracket_ok);
+
+    /* vface = (I - Ahat Ahat^T) vface_bulk + v_F_normal * Ahat. */
+    double vface[3];
+    for(int k=0; k<3; k++) vface[k] = vface_bulk_unit[k] + (v_F_normal - vbulk_dot_Ahat) * A_hat[k];
+
+    /* Final theta gates use the converged v_F_normal -- consistent with the
+     * residual the root-find drove to zero. */
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        if(v_alpha_n_i[m] - v_F_normal > 0) theta_i[m] = 1;
+        if(v_alpha_n_j[m] - v_F_normal < 0) theta_j[m] = 1;
+    }
 
     /* find best-match basis pairs across the two sides.
      *
@@ -165,6 +235,21 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     if(!(timebin_active[P[j].TimeBin]) && (All.Time > All.TimeBegin)) {
         if(vsig > WAKEUP * P[j].AGS_vsig) { r.set_wakeup_j = 1; }
     }
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    /* Wave-CBE Commit 3 diagnostic: residual at the converged v_F_normal,
+     * converted to dM/dt units by multiplying by Face_Area_Norm. The
+     * residual function returns per-unit-area flux folded with the same
+     * density prefactors used by the flux loop above, so this is the
+     * actual signed mass-flux drift the face would induce on i. */
+    {
+        double R_final = cbe_face_mass_residual_per_unit_area(
+            v_F_normal, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
+        double abs_R_full = fabs(R_final) * Face_Area_Norm;
+        if(abs_R_full > out.cbe_face_residual_max) out.cbe_face_residual_max = abs_R_full;
+        out.cbe_face_residual_sum += abs_R_full;
+        if(!bracket_ok) out.cbe_bracket_fail_count += 1;
+    }
+#endif
 #else
     (void)local; (void)j; (void)P; (void)kernel; (void)out;
 #endif /* CBE_INTEGRATOR */

@@ -141,6 +141,22 @@ void cbe_step_diagnostics_reset(void)
 }
 
 
+/* Wave-CBE Commit 3 observer: called once per active particle from
+ * AgsForceSpec::apply_active_writeback with that particle's merged
+ * AgsForceOut.cbe_face_residual_* and cbe_bracket_fail_count. Per-rank
+ * step-local aggregation; MPI reduction happens in cbe_step_diagnostics_emit. */
+void cbe_step_diagnostics_observe_face(double face_residual_max,
+                                        double face_residual_sum,
+                                        long long bracket_fail_count)
+{
+    if(face_residual_max > CbeStepAccum.face_mass_flux_residual_max) {
+        CbeStepAccum.face_mass_flux_residual_max = face_residual_max;
+    }
+    CbeStepAccum.face_mass_flux_residual_sum += face_residual_sum;
+    CbeStepAccum.bracket_fail_count          += bracket_fail_count;
+}
+
+
 void cbe_step_diagnostics_emit(void)
 {
     double rmax_local = CbeStepAccum.face_mass_flux_residual_max;

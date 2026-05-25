@@ -166,6 +166,11 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
             P[i].CBE_basis_moments_dt[k1][k2] += accum.CBE_basis_moments_dt[k1][k2];
         }
     }
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    cbe_step_diagnostics_observe_face(accum.cbe_face_residual_max,
+                                       accum.cbe_face_residual_sum,
+                                       accum.cbe_bracket_fail_count);
+#endif
 #endif
     (void)accum; (void)i;
 }
@@ -202,6 +207,11 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
             local_accum.CBE_basis_moments_dt[k1][k2] += peer_accum.CBE_basis_moments_dt[k1][k2];
         }
     }
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    ACCUM_MAX(cbe_face_residual_max)
+    ACCUM_ADD(cbe_face_residual_sum)
+    ACCUM_ADD(cbe_bracket_fail_count)
+#endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
     ACCUM_ADD(Grain_DeltaCoagMass)
