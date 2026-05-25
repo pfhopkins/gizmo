@@ -186,15 +186,20 @@ double cbe_face_solve_v_F_normal(
  * gradient pass (when it lands) and the per-pair reconstruction so they
  * cannot drift apart on cf_a3inv / cf_atime / NMOMENTS handling.
  *
- * Output:
- *   Q[m][0]    = comoving mass density of basis m            (g cm^-3 a^-3)
- *   Q[m][1..3] = comoving momentum density (physical-frame v) = Q[m][0]*v_phys
- *   Q[m][4..9] = comoving stress density (only when NMOMENTS==10; the
- *                3D-second-moment fence in precompiler_logic.h ensures the
- *                3D layout [4]/[5]/[6]=diag, [7]/[8]/[9]=off-diag holds).
+ * Output (codex 2026-05-25 wording correction: in this codebase
+ * `cf_a3inv * density_code` = physical density in code units, NOT a
+ * comoving-frame density — the `a3inv` factor turns the comoving-volume
+ * cell-integrated U into a physical-frame density.):
+ *   Q[m][0]    = physical-frame mass density of basis m   (code units)
+ *   Q[m][1..3] = physical-frame momentum density          = Q[m][0]*v_phys
+ *   Q[m][4..9] = physical-frame stress density (only when NMOMENTS==10;
+ *                the 3D-second-moment fence in precompiler_logic.h
+ *                ensures the 3D layout [4]/[5]/[6]=diag,
+ *                [7]/[8]/[9]=off-diag holds).
  *
- * "Flux-frame" = physical-frame momentum baked in, matches what
- * do_cbe_flux_computation expects. NOT a generic U/V conversion. */
+ * "Flux-frame" = physical-frame momentum baked in (v_phys = Vel/cf_atime
+ * folded into the [1..3] slots so do_cbe_flux_computation's vsig matches
+ * v_phys directly). NOT a generic U/V conversion. */
 KOKKOS_INLINE_FUNCTION
 void cbe_build_flux_frame_Q_from_stored_moments(
     const double U[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
