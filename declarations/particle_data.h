@@ -369,9 +369,10 @@ extern ALIGN(32) struct particle_data
 #ifdef CBE_INTEGRATOR
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];         /* moments per basis function */
     double CBE_basis_moments_dt[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];      /* time-derivative of moments per basis function */
-#ifdef CBE_INTEGRATOR_WITHGRADIENTS
-    CBE_basis_moments_Gradients[CBE_INTEGRATOR_NBASIS][3]; /* gradients of the scalar weight of each basis function */
-#endif
+/* Gradient storage for CBE_INTEGRATOR_WITHGRADIENTS removed (2026-05-24): the
+ * prior CBE_basis_moments_Gradients placeholder was malformed (no type,
+ * scalar-only). Gradients will be transient scratch / loop state when the CBE
+ * gradient/reconstruction loop is implemented, not a persistent particle field. */
 #endif
 
     /* member functions */

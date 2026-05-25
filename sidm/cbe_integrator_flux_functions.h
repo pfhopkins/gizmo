@@ -75,16 +75,25 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         }
     }
 
-    /* center-of-motion frame: determine which bases are approaching, define face velocity */
+    /* center-of-motion frame: determine which bases are approaching, define face velocity.
+     *
+     * NOTE (2026-05-24): the 'theta' gate below uses the center-separation direction
+     * (kernel.dp), NOT the MFM face-normal (Face_Area_Vec). Both can be valid in
+     * different regimes; needs derivation alongside the eventual root-found v_F.
+     *
+     * Basis-mass denominators floored at MIN_REAL_NUMBER to avoid NaN from
+     * near-empty bases. */
     double vface_new[3] = {0};
     double theta_i[CBE_INTEGRATOR_NBASIS] = {0};
     double theta_j[CBE_INTEGRATOR_NBASIS] = {0};
     double v_wt_sum = 0;
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         double vi_dot_dp = 0, vj_dot_dp = 0;
+        double inv_m_i = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
+        double inv_m_j = 1.0 / DMAX(Pj_CBE_basis_moments[m][0],    MIN_REAL_NUMBER);
         for(int k=0; k<3; k++) {
-            vi_dot_dp += (local_CBE_basis_moments[m][k+1] / local_CBE_basis_moments[m][0] - vface_guess[k]) * kernel.dp[k];
-            vj_dot_dp += (Pj_CBE_basis_moments[m][k+1]    / Pj_CBE_basis_moments[m][0]    - vface_guess[k]) * kernel.dp[k];
+            vi_dot_dp += (local_CBE_basis_moments[m][k+1] * inv_m_i - vface_guess[k]) * kernel.dp[k];
+            vj_dot_dp += (Pj_CBE_basis_moments[m][k+1]    * inv_m_j - vface_guess[k]) * kernel.dp[k];
         }
         if(vi_dot_dp < 0) { theta_i[m] = 1; }
         if(vj_dot_dp > 0) { theta_j[m] = 1; }
@@ -99,7 +108,15 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
 
     for(int k=0; k<3; k++) { vface[k] = vface_new[k] / v_wt_sum; }
 
-    /* find best-match basis pairs across the two sides */
+    /* find best-match basis pairs across the two sides.
+     *
+     * NOTE (2026-05-24): current rule = one-sided greedy argmin from each side.
+     * Cost is squared velocity-difference per dimension. A one-sided Hungarian
+     * per side may give modestly better matching on stress cases; future work.
+     *
+     * Pj denominator bug fixed below: previously the [m_j][k+1]/[m][0] line divided
+     * m_j's momentum by m's mass on side j, producing a nonsense cost. Fixed to
+     * [m_j][k+1]/[m_j][0]. Basis-mass denominators floored at MIN_REAL_NUMBER. */
     int matching_basis_j_for_basis_in_i[CBE_INTEGRATOR_NBASIS];
     int matching_basis_i_for_basis_in_j[CBE_INTEGRATOR_NBASIS];
     double wt_i[CBE_INTEGRATOR_NBASIS], wt_j[CBE_INTEGRATOR_NBASIS];
@@ -108,11 +125,13 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         wt_i[m] = wt_j[m] = MAX_REAL_NUMBER;
     }
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        double inv_m_i = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
         for(int m_j=0; m_j<CBE_INTEGRATOR_NBASIS; m_j++) {
+            double inv_m_j = 1.0 / DMAX(Pj_CBE_basis_moments[m_j][0], MIN_REAL_NUMBER);
             double cos_ij = 0;
             for(int k=0; k<3; k++) {
-                double q1 = local_CBE_basis_moments[m][k+1]   / local_CBE_basis_moments[m][0];
-                double q2 = Pj_CBE_basis_moments[m_j][k+1]    / Pj_CBE_basis_moments[m][0];
+                double q1 = local_CBE_basis_moments[m][k+1]   * inv_m_i;
+                double q2 = Pj_CBE_basis_moments[m_j][k+1]    * inv_m_j;
                 cos_ij += (q1 - q2) * (q1 - q2);
             }
             if(cos_ij < wt_i[m])   { wt_i[m] = cos_ij;   matching_basis_j_for_basis_in_i[m]   = m_j; }
