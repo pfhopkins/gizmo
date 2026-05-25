@@ -4,7 +4,7 @@
 #include <mpi.h>
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  /* FluidID enum (no-op when HYDRO_MULTIFLUID undef) */
+#include "../declarations/multifluid_helpers.h" 
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../eos/composition_registry.h"
@@ -381,15 +381,21 @@ void init(void)
 #endif
 #endif // closes rdi_testproblem
             }
+        } // closes check on restartflag and particle type
+#endif // closes grain_fluid
+
+
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
+        if(RestartFlag == 0) {
             P[i].Gas_Density = P[i].Gas_InternalEnergy = 0; P[i].Gas_Velocity = {}; P[i].Grain_AccelTimeMin = MAX_REAL_NUMBER;
 #if defined(GRAIN_BACKREACTION)
             P[i].Grain_DeltaMomentum = {};
 #endif
-#if defined(GRAIN_LORENTZFORCE)
+#if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
             P[i].Gas_B = {};
 #endif
-        } // closes check on restartflag and particle type
-#endif // closes grain_fluid
+        }
+#endif
 
 
 #ifdef METALS

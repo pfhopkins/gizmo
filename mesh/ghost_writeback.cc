@@ -508,7 +508,7 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
 /* Snapshot-based reverse communication for grain_backrx_evaluate j-writes:
  * Vel, VelPred, dp (additive) and Grain_AccelTimeMin (min update). */
 
-#if defined(GRAIN_FLUID) && defined(GRAIN_BACKREACTION)
+#if defined(GRAIN_BACKREACTION)
 
 struct ghost_delta_grainbackrx_t {
     int home_index;
@@ -694,7 +694,7 @@ void ghost_writeback_grainbackrx(void)
     gpu_particles_arena_invalidate(); /* host CellP/P updated; arena stale */
 }
 
-#endif /* GRAIN_FLUID && GRAIN_BACKREACTION */
+#endif /* GRAIN_BACKREACTION */
 
 
 

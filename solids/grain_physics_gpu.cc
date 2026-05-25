@@ -18,6 +18,7 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../system/gpu_particles_arena.h"
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 
@@ -30,7 +31,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h"
 #include "grain_physics_gpu.h"
 
-#if defined(GRAIN_FLUID)
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 
 #include "grain_physics_functions.h"
 
@@ -85,7 +86,6 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     int num_src = num_active;
-
     int imported_ghosts = 0;
     {
         int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
@@ -101,8 +101,9 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
     int num_all = ghost_get_num_local() + ghost_get_num_ghosts();
     if(num_all <= 0) num_all = num_total;
 
-    /* Wrapper fast-path: no source grains → skip arena/allocs/kernel/scatter.
-     * Preserve ghost_writeback collectives (each self-guards). */
+    /* Wrapper fast-path: no source grains (Type=3 or dust-fluid) → skip
+     * arena/allocs/kernel/scatter. Preserve ghost_writeback collectives
+     * (each self-guards). */
     if(num_src == 0) {
         ghost_writeback_zero_grainbackrx();
         ghost_writeback_grainbackrx();
@@ -150,6 +151,9 @@ void grain_backrx_evaluate_gpu(struct particle_data *P_host,
             for(int64_t nn = start; nn < end; nn++) {
                 int j = neighbors[nn];
                 if(kp[j].Mass <= 0) continue;
+    #ifdef HYDRO_MULTIFLUID
+                if(kp[j].FluidType != FLUID_DEFAULT) continue;
+    #endif
                 Vec3<double> dp = loc.Pos - kp[j].Pos;
                 nearest_xyz(dp);
                 double r2 = dp.norm_sq();
@@ -444,4 +448,4 @@ void interpolate_fluxes_opacities_gasgrains_evaluate_gpu(struct particle_data *p
                                                           int *ir, int nr, const double *rr)
 { (void)p; (void)cp; (void)num_total; (void)ig; (void)ng; (void)rg; (void)ir; (void)nr; (void)rr; }
 
-#endif /* GRAIN_FLUID */
+#endif /* DO_FLUID_ALTSPECIES_DRAG_CALCULATION */

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h" 
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #if defined(DM_SIDM)
@@ -508,13 +509,13 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
-#ifdef GRAIN_FLUID
-    if((1 << P[p].Type) & (GRAIN_PTYPES))
+#ifdef DO_FLUID_ALTSPECIES_DRAG_CALCULATION
+    if(IS_PARTICLE_DRAGVALID(P[p].Type, P[p].FluidType))
     {
         csnd = CellP[p].soundspeed2_from_u(P[p].Gas_InternalEnergy);
         csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
-#if defined(GRAIN_LORENTZFORCE)
-        csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density);
+#if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
+        csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density + MIN_REAL_NUMBER);
 #endif
         csnd = sqrt(csnd);
         double L_particle = P[p].Get_Particle_Size();

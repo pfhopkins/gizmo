@@ -69,7 +69,8 @@
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Multi-Fluid Framework (Lagrangian-partition multi-fluid)
 #HYDRO_MULTIFLUID               # Lagrangian multi-fluid partition: Type=0 particles carry a FluidType ID (see declarations/multifluid_helpers.h); hydro pair operators skip cross-FluidType pairs. Force-implies EOS_GENERAL.
-#HYDRO_MULTIFLUID_NOOP_TEST     # TEST-ONLY: compiles out the hydro corridor cross-fluid skip predicate for strict bit-identity validation against the EOS_GENERAL baseline. NEVER set in a science run. Requires HYDRO_MULTIFLUID.
+#HYDRO_MULTIFLUID_DUST_DRAG     # Cross-fluid drag coupling for Type==0 dust-as-fluid (FluidType=FLUID_DUST_GRAIN) elements against Type==0 default-fluid (FluidType=FLUID_DEFAULT) gas; reuses existing grain drag/backreaction kernels.
+#HYDRO_MULTIFLUID_IONNEUTRAL    # Two-fluid ion-neutral ambipolar drag: Type==0+FluidType=FLUID_ION ions coupled to Type==0+FluidType=FLUID_DEFAULT neutrals via Draine ambipolar form (tstop_inv = <sigma v>_in / (m_i+m_n) * rho_neutral; hardcoded HI/H+ values, edit grain_drag_kernel for other regimes). Neutrals carry B=0 in IC; corridor skip keeps it so. Mutually exclusive with GRAIN_FLUID / HYDRO_MULTIFLUID_DUST_DRAG.
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Gas (or Material) Equations-of-State [some EOS options for specific regimes, like galaxy or star formation simulations, are also described in the blocks below for those sections]
 #EOS_GAMMA=(5.0/3.0)            # Polytropic Index of Gas (for an ideal gas law): if not set and no other (more complex) EOS set, defaults to GAMMA=5/3

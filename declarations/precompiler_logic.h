@@ -131,10 +131,6 @@
 #endif
 #endif
 
-#if defined(HYDRO_MULTIFLUID_NOOP_TEST) && !defined(HYDRO_MULTIFLUID)
-#error "HYDRO_MULTIFLUID_NOOP_TEST requires HYDRO_MULTIFLUID."
-#endif
-
 #if defined(CBE_INTEGRATOR) || defined(DM_FUZZY)
 #define AGS_FACE_CALCULATION_IS_ACTIVE
 #endif
@@ -791,6 +787,28 @@
 #endif
 #endif
 #endif
+
+
+#if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) || defined(HYDRO_MULTIFLUID_IONNEUTRAL)
+  #define DO_FLUID_ALTSPECIES_DRAG_CALCULATION
+  #if defined(GRAIN_FLUID)
+   #define IS_PARTICLE_DRAGVALID(Type, FluidType) ((1 << (Type)) & (GRAIN_PTYPES))
+  #endif
+  #if defined(HYDRO_MULTIFLUID_DUST_DRAG)
+   #define IS_PARTICLE_DRAGVALID(Type, FluidType) ((Type==0) && (FluidType == FLUID_DUST_GRAIN))
+  #endif
+  #if defined(HYDRO_MULTIFLUID_IONNEUTRAL)
+   #define IS_PARTICLE_DRAGVALID(Type, FluidType) ((Type==0) && (FluidType == FLUID_ION))
+  #endif
+
+  #if (defined(GRAIN_LORENTZFORCE) || defined(HYDRO_MULTIFLUID_DUST_DRAG)) && defined(MAGNETIC)
+   #define DO_FLUID_DRAG_CALCULATION_WITHBFIELDS
+  #endif
+  #if defined(HYDRO_MULTIFLUID) && !defined(GRAIN_BACKREACTION)
+   #define GRAIN_BACKREACTION /* no 'passive' option for the multifluid case */
+  #endif
+#endif
+
 
 
 #if defined(COOL_MOLECFRAC)

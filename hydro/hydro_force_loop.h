@@ -24,7 +24,7 @@
 #define HYDRO_FORCE_LOOP_H
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
+#include "../declarations/multifluid_helpers.h"  
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "../core/timestep_functions.h"       /* get_particle_timestep_in_physical */
@@ -74,10 +74,8 @@ struct HydroForceActiveData
     /* Mode B remote walker requirements */
     Vec3<double> pos;
     double       h_search;
-
     /* Per-active input — the per-particle hydra block */
     struct hydro_data_in local;
-
 #ifdef HYDRO_MULTIFLUID
     unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
 #endif
@@ -407,8 +405,6 @@ struct HydroForceSpec
         nb.TimeBinActive_ptr  = ctx.TimeBinActive_uvm;
         nb.oracle_dry_run     = ctx.oracle_dry_run;
         nb.need_wakeup_ptr    = ctx.oracle_dry_run ? nullptr : ctx.need_wakeup_uvm;
-#ifdef HYDRO_MULTIFLUID
-#endif
         return nb;
     }
 
@@ -424,7 +420,7 @@ struct HydroForceSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
-#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
+#if defined(HYDRO_MULTIFLUID)
         if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
 #endif
         struct kernel_hydra kernel;

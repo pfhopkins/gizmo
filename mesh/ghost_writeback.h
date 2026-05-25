@@ -150,7 +150,7 @@ void ghost_writeback_mechfb(struct MechFBGasDelta *ghost_full_buf,
 
 /* Grain backreaction (B7a): snapshot-based reverse communication for
  * grain_backrx_evaluate j-particle writes (Vel, VelPred, dp, Grain_AccelTimeMin[min-update]). */
-#if defined(GRAIN_FLUID) && defined(GRAIN_BACKREACTION)
+#if defined(GRAIN_BACKREACTION)
 void ghost_writeback_zero_grainbackrx(void);
 void ghost_writeback_grainbackrx(void);
 #endif

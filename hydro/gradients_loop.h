@@ -20,7 +20,7 @@
 #define GRADIENTS_LOOP_H
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
+#include "../declarations/multifluid_helpers.h" 
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "gradient_functions.h"               /* Quantities_for_Gradients,
@@ -370,7 +370,7 @@ struct GradientsSpec
                              AccumData& accum,
                              NoScatter& /*scatter*/)
     {
-#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
+#if defined(HYDRO_MULTIFLUID) 
         if (!same_lagrangian_fluid_id(active.FluidType, neighbor.P[neighbor.j].FluidType)) return;
 #endif
         struct kernel_GasGrad kernel;

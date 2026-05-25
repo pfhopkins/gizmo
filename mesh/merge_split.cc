@@ -11,7 +11,7 @@
 #include "../system/eigen_symmetric.h"
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h" /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
+#include "../declarations/multifluid_helpers.h" 
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_* */

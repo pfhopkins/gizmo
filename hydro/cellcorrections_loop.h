@@ -17,7 +17,7 @@
 #define CELLCORRECTIONS_LOOP_H
 
 #include "../declarations/allvars.h"
-#include "../declarations/multifluid_helpers.h"  /* same_lagrangian_fluid_id (no-op when HYDRO_MULTIFLUID undef) */
+#include "../declarations/multifluid_helpers.h"  
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 
@@ -92,7 +92,7 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
                                         const CellcorrectionsNeighborData &nb,
                                         CellcorrectionsAccum &out)
 {
-#if defined(HYDRO_MULTIFLUID) && !defined(HYDRO_MULTIFLUID_NOOP_TEST)
+#if defined(HYDRO_MULTIFLUID) 
     if (!same_lagrangian_fluid_id(active.FluidType, nb.FluidType)) return;
 #endif
     /* Per-row narrow-filter gate (commit 5b external-CSR consumption):

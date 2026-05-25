@@ -525,7 +525,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
-        case IO_FLUIDTYPE:      /* HYDRO_MULTIFLUID Lagrangian partition ID */
+        case IO_FLUIDTYPE:      /* Lagrangian partition ID */
 #ifdef HYDRO_MULTIFLUID
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)

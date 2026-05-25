@@ -192,7 +192,7 @@ void compute_additional_forces_for_all_particles(void)
 #if defined(DM_FUZZY) || defined(CBE_INTEGRATOR) || defined(DM_SIDM)
     AGSForce_calc();
 #endif
-#ifdef GRAIN_FLUID
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
     apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
 #endif
 }

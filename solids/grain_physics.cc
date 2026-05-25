@@ -5,6 +5,7 @@
 #include <math.h>
 
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"  
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../solids/grain_physics_gpu.h"
@@ -24,7 +25,7 @@
 
 
 
-#ifdef GRAIN_FLUID
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 
 #if defined(GRAIN_BACKREACTION)
 void grain_backrx(void);
@@ -42,14 +43,15 @@ void apply_grain_dragforce(void)
        drag kernel, so filtering here makes the grain count honest for the tiny-N
        dispatch decision inside grain_drag_evaluate_gpu. */
     {
+        auto drag_eligible_caller = [](int ii) {
+            return IS_PARTICLE_DRAGVALID(P[ii].Type, P[ii].FluidType) && (P[ii].Mass > 0);
+        };
         int num_grain = 0;
-        for(int ii : ActiveParticleList)
-            if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) num_grain++;
+        for(int ii : ActiveParticleList) if(drag_eligible_caller(ii)) num_grain++;
         if(num_grain > 0) {
             int *grain_indices = (int *) malloc(num_grain * sizeof(int));
             int aa = 0;
-            for(int ii : ActiveParticleList)
-                if(((1 << P[ii].Type) & (GRAIN_PTYPES)) && (P[ii].Mass > 0)) grain_indices[aa++] = ii;
+            for(int ii : ActiveParticleList) if(drag_eligible_caller(ii)) grain_indices[aa++] = ii;
             grain_drag_evaluate_gpu(P, CellP, grain_indices, num_grain);
             free(grain_indices);
         }
@@ -84,14 +86,14 @@ void grain_backrx(void)
         /* Build LOCAL active grain list (i-type restricted by GRAIN_PTYPES). */
         int num_active = 0;
         for(int i : ActiveParticleList) {
-            if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) num_active++;
+            if((IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) num_active++;
         }
         int *nl_active = (int *) mymalloc("grainbackrx_nl_active",
             (num_active > 0 ? num_active : 1) * sizeof(int));
         double *nl_radii = (double *) mymalloc("grainbackrx_nl_radii",
             (num_active > 0 ? num_active : 1) * sizeof(double));
         {int aa = 0; for(int i : ActiveParticleList) {
-            if(((1 << P[i].Type) & (GRAIN_PTYPES)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) {
+            if((IS_PARTICLE_DRAGVALID(P[i].Type, P[i].FluidType)) && (P[i].TimeBin >= 0) && (P[i].Mass > 0) && (P[i].KernelRadius > 0)) {
                 nl_active[aa] = i; nl_radii[aa] = (double)P[i].KernelRadius; aa++;
             }
         }}

@@ -136,8 +136,10 @@ extern ALIGN(32) struct particle_data
     MyFloat NewStar_Momentum_For_JetFeedback; /* amount of momentum to return from protostellar jet sub-grid model */
 #endif
     
+#if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)
 #if defined(GRAIN_FLUID)
     MyFloat Grain_Size;
+#endif
     MyFloat Gas_Density;
     MyFloat Gas_InternalEnergy;
     Vec3<MyFloat> Gas_Velocity;
@@ -145,7 +147,7 @@ extern ALIGN(32) struct particle_data
 #if defined(GRAIN_BACKREACTION)
     Vec3<MyFloat> Grain_DeltaMomentum;
 #endif
-#if defined(GRAIN_LORENTZFORCE)
+#if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
     Vec3<MyFloat> Gas_B;
 #endif
 #if defined(GRAIN_EVOLUTION)
