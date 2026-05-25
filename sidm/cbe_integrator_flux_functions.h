@@ -155,10 +155,28 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             for(int k=0; k<3; k++) vface_bulk[k] += w * Pj_CBE_basis_moments[m][k+1] * inv_mj;
         }
     }
-    if(!((v_wt_sum > MIN_REAL_NUMBER) && (v_wt_sum < MAX_REAL_NUMBER))) { return r; }
-    double inv_wt = 1.0 / v_wt_sum;
-    double vface_bulk_unit[3] = { vface_bulk[0]*inv_wt, vface_bulk[1]*inv_wt, vface_bulk[2]*inv_wt };
-    double vbulk_dot_Ahat = vface_bulk_unit[0]*A_hat[0] + vface_bulk_unit[1]*A_hat[1] + vface_bulk_unit[2]*A_hat[2];
+    /* No-outgoing-basis-at-vface_guess fallback: codex 2026-05-25. The
+     * theta active set at vface_guess can be empty (e.g. all basis pairs
+     * approach the face from the same side at the geometric mean
+     * estimate). Previously we returned early and skipped both the
+     * root-find AND the flux update -- silently dropping the face. The
+     * root-find itself is robust to an empty active set at one end of
+     * the bracket (R(v_F_n) is identically zero there; bisection still
+     * brackets the unique zero further into the range), so use
+     * vface_guess as the tangential carrier and let the root-find run. */
+    double vface_bulk_unit[3];
+    double vbulk_dot_Ahat;
+    if((v_wt_sum > MIN_REAL_NUMBER) && (v_wt_sum < MAX_REAL_NUMBER)) {
+        double inv_wt = 1.0 / v_wt_sum;
+        vface_bulk_unit[0] = vface_bulk[0]*inv_wt;
+        vface_bulk_unit[1] = vface_bulk[1]*inv_wt;
+        vface_bulk_unit[2] = vface_bulk[2]*inv_wt;
+    } else {
+        vface_bulk_unit[0] = vface_guess[0];
+        vface_bulk_unit[1] = vface_guess[1];
+        vface_bulk_unit[2] = vface_guess[2];
+    }
+    vbulk_dot_Ahat = vface_bulk_unit[0]*A_hat[0] + vface_bulk_unit[1]*A_hat[1] + vface_bulk_unit[2]*A_hat[2];
 
     /* Root-find face-normal v_F. On bracket failure fallback to the bulk
      * normal (vbulk_dot_Ahat) and flag in bracket_ok. */

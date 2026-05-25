@@ -101,11 +101,12 @@ void cbe_assign_outgoing_greedy(
  * the wt_prefac density factor in so the returned residual matches the
  * actual flux update sign-for-sign.
  *
- * Piecewise-linear monotonically increasing in v_F_n: the unique zero
- * is well-defined when the bracket spans it. Bisection is sufficient
- * (codex's "boring, device-safe" pick; no Brent edge cases on Kokkos
- * device headers). Hand-rolled brent can swap in behind the same
- * interface later if profiling shows root-find cost matters.
+ * Piecewise-linear monotonically DECREASING in v_F_n (each active term
+ * loses magnitude as v_F_n rises): R(v_F_lo) >= 0 >= R(v_F_hi) when the
+ * bracket spans the unique zero. Bisection is sufficient (codex's
+ * "boring, device-safe" pick; no Brent edge cases on Kokkos device
+ * headers). Hand-rolled brent can swap in behind the same interface
+ * later if profiling shows root-find cost matters.
  * -------------------------------------------------------------------------- */
 KOKKOS_INLINE_FUNCTION
 double cbe_face_mass_residual_per_unit_area(
@@ -129,10 +130,12 @@ double cbe_face_mass_residual_per_unit_area(
 /* Bisection root-find for v_F_n with bracket-widen-up-to-4x and explicit
  * fallback flagged via bracket_ok_out=0. Matches the harness brentq
  * widening loop in cadence; uses bisection instead of Brent for device
- * portability. 40 iters of bisection in a unit bracket converges to
- * ~1e-12, matching the harness xtol. NO silent midpoint -- on failure
- * the caller's analytic fallback v_F is used and the bracket_fail
- * counter is incremented. */
+ * portability. Scale-aware termination: stop when (hi-lo) drops below
+ * tol_abs + tol_rel * max(|lo|,|hi|), so high-velocity (cosmological)
+ * brackets reach machine-eps relative precision rather than absolute
+ * 1e-12. Iteration cap = 60 (matches harness brentq xtol/rtol scale).
+ * NO silent midpoint -- on bracket failure the caller's analytic
+ * fallback v_F is used and bracket_fail_count is incremented. */
 KOKKOS_INLINE_FUNCTION
 double cbe_face_solve_v_F_normal(
     const double v_alpha_n_i[CBE_INTEGRATOR_NBASIS],
@@ -160,7 +163,11 @@ double cbe_face_solve_v_F_normal(
         return fallback_v_F_n;
     }
     *bracket_ok_out = 1;
-    for(int it=0; it<40; it++) {
+    const double tol_abs = 1e-12;
+    const double tol_rel = 1e-12;
+    for(int it=0; it<60; it++) {
+        double scale = DMAX(fabs(lo), fabs(hi));
+        if((hi - lo) <= tol_abs + tol_rel * scale) break;
         double mid = 0.5 * (lo + hi);
         double f_mid = cbe_face_mass_residual_per_unit_area(mid, v_alpha_n_i, v_alpha_n_j, K_i, K_j);
         if(f_lo * f_mid <= 0) { hi = mid; f_hi = f_mid; }

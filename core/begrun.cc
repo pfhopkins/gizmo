@@ -819,8 +819,8 @@ void open_outputfiles(void)
     else if(RestartFlag == 0 && ThisTask == 0) {
         fprintf(FdCbeDiagnostics, "%s CBE per-output-interval diagnostic counters. One line per energy_statistics() emit. Columns:\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (1) Simulation time [code units]\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over faces (Commit 3 populates; 0 otherwise)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over faces (Commit 3)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations (Commit 3 populates; 0 otherwise)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations (Commit 3); note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count (Commit 3)\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count (Commit 4)\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 4)\n", prefix_char);

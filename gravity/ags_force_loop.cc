@@ -277,6 +277,15 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
                                      (double)oracle.CBE_basis_moments_dt[k1][k2]));
         }
     }
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    /* Wave-CBE Commit 3 diagnostic counters. Mirrors merge_accum
+     * field-for-field per the local pattern (the oracle would otherwise
+     * silently false-pass when a counter disagrees between local and
+     * oracle paths). */
+    CMP_ADD(cbe_face_residual_max)
+    CMP_ADD(cbe_face_residual_sum)
+    CMP_INT(cbe_bracket_fail_count)
+#endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
     CMP_ADD(Grain_DeltaCoagMass)

@@ -115,9 +115,14 @@ if(j > 1)
  * --------------------------------------------------------------------------- */
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
 struct cbe_step_accumulators {
-    /* Populated by Wave-CBE Commit 3 (root-found v_F): */
-    double face_mass_flux_residual_max;   /* max |sum_basis F_m * A| seen on any face */
-    double face_mass_flux_residual_sum;   /* sum of |sum_basis F_m * A| over faces */
+    /* Populated by Wave-CBE Commit 3 (root-found v_F). NOTE: aggregated
+     * over per-pair evaluations (AGSForce visits an i-j pair once when i
+     * is active; geometric faces with both endpoints active contribute
+     * twice). residual_max is the worst single evaluation; residual_sum
+     * is the sum across all pair evaluations on this rank in the
+     * interval. */
+    double face_mass_flux_residual_max;   /* max |sum_basis F_m * A| over pair evaluations */
+    double face_mass_flux_residual_sum;   /* sum |sum_basis F_m * A| over pair evaluations */
     long long bracket_fail_count;         /* root-find bracket-widening failures */
     /* Populated by Wave-CBE Commit 4 (gradient/reconstruction): */
     long long recon_rho_clamp_count;      /* Q-face rho < eps clamps */
