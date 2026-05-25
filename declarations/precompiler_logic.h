@@ -1423,3 +1423,7 @@
 #ifdef CBE_INTEGRATOR_WITHGRADIENTS
 #error "CBE_INTEGRATOR_WITHGRADIENTS is not implemented: the CBE gradient/reconstruction loop is not yet ported. Planned design uses transient scratch storage shape [NBASIS][NMOMENTS][3], MFM-LSQ + Barth-Jespersen limiter on Q=U/V, basis-aligned across neighbors. The malformed CBE_basis_moments_Gradients placeholder field was removed (2026-05-24) since gradients should be loop scratch, not a persistent particle field. Option remains scope-fenced until the CBE gradient loop is intentionally ported."
 #endif
+
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(CBE_INTEGRATOR)
+#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires CBE_INTEGRATOR."
+#endif

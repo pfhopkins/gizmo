@@ -229,6 +229,9 @@ FILE *FdSinkWindDetails;
 #endif
 #endif
 #endif
+#if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)) && defined(CBE_INTEGRATOR)
+FILE *FdCbeDiagnostics;
+#endif
 
 
 

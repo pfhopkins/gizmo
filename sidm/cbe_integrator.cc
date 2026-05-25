@@ -89,4 +89,83 @@ if(j > 1)
 }
 
 
+/* ---------------------------------------------------------------------------
+ * Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
+ * 2026-05-24). Gated by CBE_INTEGRATOR_OUTPUT_MOREINFO (or the broader
+ * OUTPUT_ADDITIONAL_RUNINFO) so production runs can purge the entire
+ * diagnostic subsystem by disabling the flag.
+ *
+ * Host-side per-rank counters accumulated by future Wave-CBE commits
+ * (3 = root-found v_F, 4 = gradient/reconstruction, 5 = SPD repair), then
+ * MPI-reduced and emitted to FdCbeDiagnostics (cbe_diagnostics.txt; opened
+ * in core/begrun.cc under the same gate). Reset at each emit so the values
+ * represent the accumulated total since the previous output.
+ *
+ * Aggregation path note: per-pair updates from inside AGSForce/GPU
+ * kernels must go through the existing AgsForceOut accumulator / merge /
+ * writeback pattern, not via direct writes to these globals. The pair-loop
+ * infrastructure runs reductions onto per-particle out-structs which get
+ * merged onto host particles in the post-loop step; the CBE counter
+ * updates will hook there. This commit only defines the host-side
+ * holding/reduce/emit scaffold; counters stay at zero until populated.
+ *
+ * No call site is added in this commit (Commit 3 will add the hook from
+ * energy_statistics or equivalent once the counter writes are real). The
+ * file is opened (with a column-header comment) but stays header-only.
+ * --------------------------------------------------------------------------- */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+struct cbe_step_accumulators {
+    /* Populated by Wave-CBE Commit 3 (root-found v_F): */
+    double face_mass_flux_residual_max;   /* max |sum_basis F_m * A| seen on any face */
+    double face_mass_flux_residual_sum;   /* sum of |sum_basis F_m * A| over faces */
+    long long bracket_fail_count;         /* root-find bracket-widening failures */
+    /* Populated by Wave-CBE Commit 4 (gradient/reconstruction): */
+    long long recon_rho_clamp_count;      /* Q-face rho < eps clamps */
+    long long recon_S_clamp_count;        /* Q-face Sxx < 0 clamps */
+    /* Populated by Wave-CBE Commit 5 (SPD repair): */
+    double repair_dP_sum;                 /* sum |dP| introduced by repair */
+    double repair_dT_sum;                 /* sum |dT| introduced by repair */
+};
+static struct cbe_step_accumulators CbeStepAccum;
+
+
+void cbe_step_diagnostics_reset(void)
+{
+    CbeStepAccum.face_mass_flux_residual_max = 0;
+    CbeStepAccum.face_mass_flux_residual_sum = 0;
+    CbeStepAccum.bracket_fail_count          = 0;
+    CbeStepAccum.recon_rho_clamp_count       = 0;
+    CbeStepAccum.recon_S_clamp_count         = 0;
+    CbeStepAccum.repair_dP_sum               = 0;
+    CbeStepAccum.repair_dT_sum               = 0;
+}
+
+
+void cbe_step_diagnostics_emit(void)
+{
+    double rmax_local = CbeStepAccum.face_mass_flux_residual_max;
+    double rsum_local = CbeStepAccum.face_mass_flux_residual_sum;
+    long long brk_local = CbeStepAccum.bracket_fail_count;
+    long long rc_local  = CbeStepAccum.recon_rho_clamp_count;
+    long long sc_local  = CbeStepAccum.recon_S_clamp_count;
+    double dP_local = CbeStepAccum.repair_dP_sum;
+    double dT_local = CbeStepAccum.repair_dT_sum;
+    double rmax, rsum, dP, dT;
+    long long brk, rc, sc;
+    MPI_Reduce(&rmax_local, &rmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&rsum_local, &rsum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&brk_local,  &brk,  1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&rc_local,   &rc,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&sc_local,   &sc,   1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&dP_local,   &dP,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&dT_local,   &dT,   1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0 && FdCbeDiagnostics != NULL) {
+        fprintf(FdCbeDiagnostics, "%.16g %.16g %.16g %lld %lld %lld %.16g %.16g\n",
+                All.Time, rmax, rsum, brk, rc, sc, dP, dT);
+        fflush(FdCbeDiagnostics);
+    }
+}
+#endif
+
+
 #endif

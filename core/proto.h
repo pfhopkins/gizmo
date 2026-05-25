@@ -960,6 +960,16 @@ void do_cbe_initialization(void);
    live in sidm/cbe_integrator_functions.h (KOKKOS_INLINE_FUNCTION). The host
    entry points are cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
    (sidm/sidm_gpu_decls.h). */
+/* Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
+ * 2026-05-24). Counters defined in sidm/cbe_integrator.cc; populated by
+ * later commits; emitted to FdCbeDiagnostics (cbe_diagnostics.txt) when
+ * the CBE_INTEGRATOR_OUTPUT_MOREINFO gate is set (or under the broader
+ * OUTPUT_ADDITIONAL_RUNINFO gate). Gated entirely so production runs can
+ * purge the diagnostic subsystem by disabling the flag. */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+void cbe_step_diagnostics_reset(void);
+void cbe_step_diagnostics_emit(void);
+#endif
 #endif
 
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)

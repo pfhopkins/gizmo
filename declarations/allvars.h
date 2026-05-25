@@ -324,6 +324,9 @@ extern FILE *FdSinkSwallowDetails;
 #ifdef OUTPUT_SINK_FORMATION_PROPS
 extern FILE *FdSinkFormationDetails;
 #endif
+#if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)) && defined(CBE_INTEGRATOR)
+extern FILE *FdCbeDiagnostics;
+#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
 #ifdef SINK_OUTPUT_MOREINFO

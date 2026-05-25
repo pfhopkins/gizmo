@@ -808,6 +808,26 @@ void open_outputfiles(void)
     if(!(FdInfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "energy.txt");
     if(!(FdEnergy = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+#if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
+    /* CBE per-output-interval diagnostic counters log (Wave-CBE Commit 2,
+     * 2026-05-24). Counters populated by Wave-CBE Commits 3 (root-found
+     * v_F), 4 (gradient/reconstruction), 5 (SPD repair); columns
+     * documented in the header line written below. Separate file rather
+     * than tagged lines in energy.txt to keep energy.txt fixed-column. */
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "cbe_diagnostics.txt");
+    if(!(FdCbeDiagnostics = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    else if(RestartFlag == 0 && ThisTask == 0) {
+        fprintf(FdCbeDiagnostics, "%s CBE per-output-interval diagnostic counters. One line per energy_statistics() emit. Columns:\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (1) Simulation time [code units]\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over faces (Commit 3 populates; 0 otherwise)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over faces (Commit 3)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count (Commit 3)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count (Commit 4)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 4)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair (Commit 5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
+    }
+#endif
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "timings.txt");
     if(!(FdTimings = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 
