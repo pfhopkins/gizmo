@@ -1430,3 +1430,22 @@
 #if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(OUTPUT_ADDITIONAL_RUNINFO)
 #error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
 #endif
+
+/* CBE_INTEGRATOR_SECONDMOMENT dimension fence (Wave-CBE pre-Commit-4
+ * guardrail, codex 2026-05-25). The do_cbe_flux_computation /
+ * do_cbe_drift_kick_kernel / do_cbe_postgravity_kernel bodies in
+ * sidm/cbe_integrator_functions.h hard-code the 3D 10-moment tensor
+ * layout (moments[4]/[5]/[6] = diag Sxx/Syy/Szz, moments[7]/[8]/[9] =
+ * off-diag Sxy/Sxz/Syz). NMOMENTS = 3 (1D) and NMOMENTS = 6 (2D) use
+ * different index layouts -- silently mis-indexed by the same code,
+ * which would corrupt fluxes without raising a compile error. The
+ * hardcoded init at sidm/cbe_integrator.cc:62 and the Commit-3 pad
+ * computation at sidm/cbe_integrator_flux_functions.h:100 inherit the
+ * same assumption. Until dimension-aware moment-index helpers land
+ * (deferred until/unless 1D or 2D production CBE is actually wanted),
+ * fence non-3D second-moment CBE at compile time. */
+#if defined(CBE_INTEGRATOR) && defined(CBE_INTEGRATOR_SECONDMOMENT)
+#if (BOX_SPATIAL_DIMENSION != 3) || defined(ONEDIM) || defined(TWODIMS)
+#error "CBE_INTEGRATOR_SECONDMOMENT currently only supports BOX_SPATIAL_DIMENSION == 3 (without ONEDIM/TWODIMS). The do_cbe_* tensor index layout in sidm/cbe_integrator_functions.h is the 3D 10-moment layout (diag = [4]/[5]/[6], off-diag = [7]/[8]/[9]); 1D (NMOMENTS=3) and 2D (NMOMENTS=6) would silently mis-index moments. Add dimension-aware moment-index helpers before unfencing."
+#endif
+#endif
