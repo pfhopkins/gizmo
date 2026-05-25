@@ -1,0 +1,51 @@
+% Ion-neutral ambipolar drag relaxation test (HYDRO_MULTIFLUID_IONNEUTRAL).
+%
+% 1D periodic box, two uniform Type=0 fluids:
+%   FluidType=FLUID_DEFAULT (0) = neutrals, B=0
+%   FluidType=FLUID_ION     (2) = ions, B=Bx0 along x
+% Initial relative velocity v_ion - v_neutral = 1e-4 along x; analytic decay
+%   d(Δv)/dt = -γ_AD (ρ_i + ρ_n) Δv  =>  Δv(t) = Δv0 exp(-t / t_damp)
+% with t_damp = 1 / [γ_AD (ρ_i + ρ_n)].
+%
+% Units chosen so γ_AD_code = γ_AD_cgs · UnitDensity · UnitTime = 1:
+%   γ_AD_cgs        ≈ 5.69e14 cm^3 g^-1 s^-1 (HI/H+, Draine; see grain_drag_gpu.cc)
+%   UnitLength      = 1 cm
+%   UnitVelocity    = 1 cm/s   => UnitTime = 1 s
+%   UnitMass        = 1.76e-15 g  => UnitDensity = 1.76e-15 g/cm^3
+%   γ_AD_code       = 5.69e14 · 1.76e-15 · 1 ≈ 1.00
+% With ρ_i = ρ_n = 0.5 (code) => t_damp = 1 / (1 · 1) = 1 code time.
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_PERIODIC
+%        BOX_SPATIAL_DIMENSION=1
+%        EOS_GAMMA=(5./3.)
+%        EOS_ENFORCE_ADIABAT=(3./5.)
+%        SELFGRAVITY_OFF
+%        HYDRO_MULTIFLUID
+%        HYDRO_MULTIFLUID_IONNEUTRAL
+%        MAGNETIC
+%
+InitCondFile                       ionneutral_drag_ics
+OutputDir                          output
+TimeMax                            5.0
+BoxSize                            1
+TimeBetSnapshot                    0.5
+DesNumNgb                          4
+MaxNumNgbDeviation                 1e-6
+MaxMemSize                         1000
+PartAllocFactor                    10
+MaxSizeTimestep                    0.05
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  1.0
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.76e-15
+UnitVelocity_in_cm_per_s           1.0
+UnitMagneticField_in_gauss         1.0
+DivBcleaningParabolicSigma         1.0
+DivBcleaningHyperbolicSigma        1.0
