@@ -42,11 +42,6 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     CbeFluxResult r; r.set_wakeup_j = 0;
 #ifdef CBE_INTEGRATOR
     double V_i = local.V_i, V_j = get_particle_volume_ags_P(j, P);
-    double rho_i = local.Mass / V_i * All.cf_a3inv;
-    double rho_j = P[j].Mass / V_j * All.cf_a3inv;
-    double psi_i, psi_j;
-    psi_i = 0.5; psi_j = 1 - psi_i;
-    rho_i *= psi_i; rho_j *= psi_j;
 
     double Face_Area_Vec[3];
     double Face_Area_Norm = 0;
@@ -62,55 +57,82 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     double inv_FAN = 1.0 / Face_Area_Norm;
     double A_hat[3] = { Face_Area_Vec[0]*inv_FAN, Face_Area_Vec[1]*inv_FAN, Face_Area_Vec[2]*inv_FAN };
 
-    /* load basis moments, boosted to the physical frame */
-    double local_CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
-    double Pj_CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
-    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
-            local_CBE_basis_moments[m][k] = local.CBE_basis_moments[m][k];
-            Pj_CBE_basis_moments[m][k]    = P[j].CBE_basis_moments[m][k];
-            if((k>0) && (k<4)) {
-                local_CBE_basis_moments[m][k] += local_CBE_basis_moments[m][0] * local.Vel[k-1] / All.cf_atime;
-                Pj_CBE_basis_moments[m][k]    += Pj_CBE_basis_moments[m][0]    * P[j].Vel[k-1] / All.cf_atime;
-            }
-        }
+    /* Wave-CBE Commit 4 (2026-05-25): build "flux-frame" Q on both sides
+     * via the SSOT helper so the cosmology / velocity-boost convention
+     * matches whatever the future CbeGradientsSpec uses for its LSQ.
+     * Stored basis moments are U-frame (cell-integrated, basis-frame
+     * momentum); Q is per-volume comoving density with physical-frame
+     * momentum baked in -- exactly what do_cbe_flux_computation expects. */
+    double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    {
+        double Vel_i_code[3] = { local.Vel[0], local.Vel[1], local.Vel[2] };
+        double Vel_j_code[3] = { P[j].Vel[0],  P[j].Vel[1],  P[j].Vel[2]  };
+        cbe_build_flux_frame_Q_from_stored_moments(
+            local.CBE_basis_moments, Vel_i_code, V_i, All.cf_a3inv, All.cf_atime, Q_i);
+        cbe_build_flux_frame_Q_from_stored_moments(
+            P[j].CBE_basis_moments, Vel_j_code, V_j, All.cf_a3inv, All.cf_atime, Q_j);
     }
 
-    /* Per-basis face-normal velocities and density kernels for the root-find
-     * residual. K_i[m] = m_i[m][0] * rho_i / M_i (>=0) folds the wt_prefac
-     * density factor in so the residual we drive to zero is the actual face
-     * mass-flux update sign-for-sign (codex caution: same theta rule, same
-     * matching, same prefactors as the flux loop below). */
+    /* Face reconstruction (Wave-CBE Commit 4 Phase 1 = scaffolding):
+     * gradient pass not yet wired in this commit; Q_face = Q (cell-centered)
+     * for now, which is the zeroth-order MFM face state. Commit 4 Phase 2
+     * (next commit on this branch) lands the CbeGradientsSpec + BJ +
+     * ghost-import + actual reconstruction:
+     *     Q_face_i[m][k] = Q_i[m][k] - psi_i * grad_Q_i[m][k] . kernel.dp
+     *     Q_face_j[m][k] = Q_j[m][k] + psi_j * grad_Q_j[m][k] . kernel.dp
+     * with psi_i = h_j / (h_i+h_j) = MFM FACE POSITION weight (NOT a flux
+     * share). With grad = 0 today, Q_face equals Q at cell centers but the
+     * downstream code path is already plumbed for the Phase-2 wire-in. */
+    double Qface_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    double Qface_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+            Qface_i[m][k] = Q_i[m][k];
+            Qface_j[m][k] = Q_j[m][k];
+        }
+    }
+    /* Density clamp + counter (density-only in Commit 4; full SPD repair on
+     * the stress slots is deferred to Commit 5 -- partial diagonal-only
+     * clamping risks producing realizable-looking-but-not-SPD face states.
+     * Counter feeds AgsForceOut.cbe_recon_rho_clamp_count). */
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
+    cbe_clamp_face_Q(Qface_i, &out.cbe_recon_rho_clamp_count);
+    cbe_clamp_face_Q(Qface_j, &out.cbe_recon_rho_clamp_count);
+#else
+    cbe_clamp_face_Q(Qface_i, (long long*)0);
+    cbe_clamp_face_Q(Qface_j, (long long*)0);
+#endif
+
+    /* Guarded per-basis face-normal velocities + K (= clamped face density).
+     * The helper returns K=0, v_n=0 for any basis clamped inactive, so the
+     * residual / cost-matrix / flux loop all naturally skip those bases. */
     double v_alpha_n_i[CBE_INTEGRATOR_NBASIS], v_alpha_n_j[CBE_INTEGRATOR_NBASIS];
     double K_i[CBE_INTEGRATOR_NBASIS], K_j[CBE_INTEGRATOR_NBASIS];
+    cbe_face_K_and_vn_from_Q(Qface_i, A_hat, K_i, v_alpha_n_i);
+    cbe_face_K_and_vn_from_Q(Qface_j, A_hat, K_j, v_alpha_n_j);
+
+    /* Dispersion-based bracket pad (NMOMENTS>4 only; fence guarantees the
+     * 3D [4]/[5]/[6]=diag layout). 1D dispersion = sqrt(trace(S)/rho); use
+     * the face-state Qface to be consistent with the K, v_n above. */
     double pad = 0;
-    double inv_M_i = 1.0 / DMAX(local.Mass, MIN_REAL_NUMBER);
-    double inv_M_j = 1.0 / DMAX(P[j].Mass, MIN_REAL_NUMBER);
-    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        double inv_mi = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
-        double inv_mj = 1.0 / DMAX(Pj_CBE_basis_moments[m][0],    MIN_REAL_NUMBER);
-        v_alpha_n_i[m] = (local_CBE_basis_moments[m][1]*A_hat[0]
-                       +  local_CBE_basis_moments[m][2]*A_hat[1]
-                       +  local_CBE_basis_moments[m][3]*A_hat[2]) * inv_mi;
-        v_alpha_n_j[m] = (Pj_CBE_basis_moments[m][1]*A_hat[0]
-                       +  Pj_CBE_basis_moments[m][2]*A_hat[1]
-                       +  Pj_CBE_basis_moments[m][3]*A_hat[2]) * inv_mj;
-        K_i[m] = local_CBE_basis_moments[m][0] * rho_i * inv_M_i;
-        K_j[m] = Pj_CBE_basis_moments[m][0]    * rho_j * inv_M_j;
 #if (CBE_INTEGRATOR_NMOMENTS > 4)
-        /* Pad bracket with per-basis 1D dispersion = sqrt(trace(S)/m). Same
-         * scale that enters the SM signal-speed term in
-         * do_cbe_flux_computation; ensures bracket spans any plausible
-         * v_F_normal even when basis bulk velocities collapse. */
-        double trS_i = (local_CBE_basis_moments[m][4]+local_CBE_basis_moments[m][5]+local_CBE_basis_moments[m][6])*inv_mi;
-        double trS_j = (Pj_CBE_basis_moments[m][4]+Pj_CBE_basis_moments[m][5]+Pj_CBE_basis_moments[m][6])*inv_mj;
-        double sig = DMAX(sqrt(DMAX(trS_i,0.0)), sqrt(DMAX(trS_j,0.0)));
-        if(sig > pad) pad = sig;
-#endif
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        if(Qface_i[m][0] > MIN_REAL_NUMBER) {
+            double trS_i = (Qface_i[m][4] + Qface_i[m][5] + Qface_i[m][6]) / Qface_i[m][0];
+            double sig_i = sqrt(DMAX(trS_i, 0.0));
+            if(sig_i > pad) pad = sig_i;
+        }
+        if(Qface_j[m][0] > MIN_REAL_NUMBER) {
+            double trS_j = (Qface_j[m][4] + Qface_j[m][5] + Qface_j[m][6]) / Qface_j[m][0];
+            double sig_j = sqrt(DMAX(trS_j, 0.0));
+            if(sig_j > pad) pad = sig_j;
+        }
     }
-    /* Below-NMOMENTS-4 absolute floor on pad: a fraction of the velocity
-     * spread so the bracket has nonzero width even if all basis velocities
-     * happen to coincide. bracket-widen-4x handles the rest. */
+#endif
+    /* NMOMENTS=4 (or NMOMENTS>4 with all-zero S) pad floor: small fraction
+     * of the velocity spread so the bracket has nonzero width even when
+     * basis velocities coincide. bracket-widen-4x handles degenerate cases. */
     {
         double v_spread = 0;
         for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
@@ -121,49 +143,56 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         if(pad < floor_pad) pad = floor_pad;
     }
 
-    /* Bracket from min/max basis normal velocities (both sides), padded. */
+    /* Bracket from min/max basis normal velocities (both sides, ACTIVE
+     * bases only -- K==0 rows have v_n=0 by construction and would
+     * artificially squeeze the bracket toward 0). Padded by the dispersion
+     * scale above. */
     double v_F_lo = MAX_REAL_NUMBER, v_F_hi = -MAX_REAL_NUMBER;
+    int any_active = 0;
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        if(v_alpha_n_i[m] < v_F_lo) v_F_lo = v_alpha_n_i[m];
-        if(v_alpha_n_i[m] > v_F_hi) v_F_hi = v_alpha_n_i[m];
-        if(v_alpha_n_j[m] < v_F_lo) v_F_lo = v_alpha_n_j[m];
-        if(v_alpha_n_j[m] > v_F_hi) v_F_hi = v_alpha_n_j[m];
+        if(K_i[m] > 0) {
+            if(v_alpha_n_i[m] < v_F_lo) v_F_lo = v_alpha_n_i[m];
+            if(v_alpha_n_i[m] > v_F_hi) v_F_hi = v_alpha_n_i[m];
+            any_active = 1;
+        }
+        if(K_j[m] > 0) {
+            if(v_alpha_n_j[m] < v_F_lo) v_F_lo = v_alpha_n_j[m];
+            if(v_alpha_n_j[m] > v_F_hi) v_F_hi = v_alpha_n_j[m];
+            any_active = 1;
+        }
     }
+    /* All-clamped degenerate case: nothing to flux through this face. Skip
+     * cleanly (no spurious bracket_fail, no flux, no NaN). */
+    if(!any_active) { return r; }
     v_F_lo -= pad; v_F_hi += pad;
 
     /* Initial bulk-tangential vface for the SM dispersion term in
-     * do_cbe_flux_computation (vface argument at functions.h:107 enters
-     * only the NMOMENTS>4 dv2 term). Use the new theta-on-Ahat convention
-     * with v_F_guess = vface_guess . Ahat as initial estimate; the final
-     * v_F_normal will be substituted into the normal component below. The
-     * bulk tangential is second-order in (v - vface) so a small estimate
-     * mismatch is acceptable here. */
+     * do_cbe_flux_computation (NMOMENTS>4 only). Use theta-on-Ahat with
+     * v_F_guess = vface_guess . Ahat as initial estimate; final v_F_normal
+     * replaces the normal component below. Tangential is second-order in
+     * (v - vface) so a small mismatch is acceptable. */
     double v_F_guess = vface_guess[0]*A_hat[0] + vface_guess[1]*A_hat[1] + vface_guess[2]*A_hat[2];
     double vface_bulk[3] = {0};
     double v_wt_sum = 0;
     double theta_i[CBE_INTEGRATOR_NBASIS] = {0};
     double theta_j[CBE_INTEGRATOR_NBASIS] = {0};
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        if(v_alpha_n_i[m] - v_F_guess > 0) {
+        if(K_i[m] > 0 && v_alpha_n_i[m] - v_F_guess > 0) {
             double w = K_i[m]; v_wt_sum += w;
-            double inv_mi = 1.0 / DMAX(local_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
-            for(int k=0; k<3; k++) vface_bulk[k] += w * local_CBE_basis_moments[m][k+1] * inv_mi;
+            double inv_Q0 = 1.0 / Qface_i[m][0];
+            for(int k=0; k<3; k++) vface_bulk[k] += w * Qface_i[m][k+1] * inv_Q0;
         }
-        if(v_alpha_n_j[m] - v_F_guess < 0) {
+        if(K_j[m] > 0 && v_alpha_n_j[m] - v_F_guess < 0) {
             double w = K_j[m]; v_wt_sum += w;
-            double inv_mj = 1.0 / DMAX(Pj_CBE_basis_moments[m][0], MIN_REAL_NUMBER);
-            for(int k=0; k<3; k++) vface_bulk[k] += w * Pj_CBE_basis_moments[m][k+1] * inv_mj;
+            double inv_Q0 = 1.0 / Qface_j[m][0];
+            for(int k=0; k<3; k++) vface_bulk[k] += w * Qface_j[m][k+1] * inv_Q0;
         }
     }
-    /* No-outgoing-basis-at-vface_guess fallback: codex 2026-05-25. The
-     * theta active set at vface_guess can be empty (e.g. all basis pairs
-     * approach the face from the same side at the geometric mean
-     * estimate). Previously we returned early and skipped both the
-     * root-find AND the flux update -- silently dropping the face. The
-     * root-find itself is robust to an empty active set at one end of
-     * the bracket (R(v_F_n) is identically zero there; bisection still
-     * brackets the unique zero further into the range), so use
-     * vface_guess as the tangential carrier and let the root-find run. */
+    /* No-outgoing-basis-at-vface_guess fallback (codex 2026-05-25): the
+     * theta active set at vface_guess can be empty; the root-find itself
+     * is robust to that (R == 0 at empty end of bracket, bisection finds
+     * the unique zero further in), so use vface_guess as tangential
+     * carrier rather than skipping the face. */
     double vface_bulk_unit[3];
     double vbulk_dot_Ahat;
     if((v_wt_sum > MIN_REAL_NUMBER) && (v_wt_sum < MAX_REAL_NUMBER)) {
@@ -178,8 +207,8 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     }
     vbulk_dot_Ahat = vface_bulk_unit[0]*A_hat[0] + vface_bulk_unit[1]*A_hat[1] + vface_bulk_unit[2]*A_hat[2];
 
-    /* Root-find face-normal v_F. On bracket failure fallback to the bulk
-     * normal (vbulk_dot_Ahat) and flag in bracket_ok. */
+    /* Root-find face-normal v_F. K=0 rows contribute 0 to the residual so
+     * the root location depends only on the active-basis set. */
     int bracket_ok = 0;
     double v_F_normal = cbe_face_solve_v_F_normal(
         v_alpha_n_i, v_alpha_n_j, K_i, K_j,
@@ -189,31 +218,26 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     double vface[3];
     for(int k=0; k<3; k++) vface[k] = vface_bulk_unit[k] + (v_F_normal - vbulk_dot_Ahat) * A_hat[k];
 
-    /* Final theta gates use the converged v_F_normal -- consistent with the
-     * residual the root-find drove to zero. */
+    /* Final theta gates use the converged v_F_normal. K==0 rows are forced
+     * inactive (theta=0) regardless of v_alpha_n. */
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
-        if(v_alpha_n_i[m] - v_F_normal > 0) theta_i[m] = 1;
-        if(v_alpha_n_j[m] - v_F_normal < 0) theta_j[m] = 1;
+        if(K_i[m] > 0 && v_alpha_n_i[m] - v_F_normal > 0) theta_i[m] = 1;
+        if(K_j[m] > 0 && v_alpha_n_j[m] - v_F_normal < 0) theta_j[m] = 1;
     }
 
-    /* find best-match basis pairs across the two sides.
-     *
-     * Pairing is factored through cbe_cost_v_only() and cbe_assign_outgoing_greedy()
-     * in cbe_integrator_functions.h. The cost is squared velocity difference
-     * per dimension (matches the corrected post-Commit-0 inline path). The
-     * greedy assignment takes a single direction's cost matrix and produces
-     * beta_of_alpha; we call it once for the a-side outgoing direction and
-     * once with the transpose for the b-side. cbe_cost_v_only is symmetric
-     * in its two arguments, so cost_matrix_T is just the index-swap of
-     * cost_matrix. */
+    /* Greedy basis-pair matching. Pre-Commit-4 used the cell-centered +
+     * boosted moment arrays; cost is symmetric under the U->Q conversion
+     * (cost = sum (v_a - v_b)^2 = pure velocity difference, density-rescaled
+     * away), so feeding Qface here gives identical matchings to the old
+     * path on rows with K>0 and well-defined matchings (no NaN from
+     * div-by-zero in v) on rows with K==0. */
     int matching_basis_j_for_basis_in_i[CBE_INTEGRATOR_NBASIS];
     int matching_basis_i_for_basis_in_j[CBE_INTEGRATOR_NBASIS];
     double vsig = 0;
     double cost_matrix[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NBASIS];
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         for(int n=0; n<CBE_INTEGRATOR_NBASIS; n++) {
-            cost_matrix[m][n] = cbe_cost_v_only(local_CBE_basis_moments[m],
-                                                Pj_CBE_basis_moments[n]);
+            cost_matrix[m][n] = cbe_cost_v_only(Qface_i[m], Qface_j[n]);
         }
     }
     cbe_assign_outgoing_greedy(cost_matrix, matching_basis_j_for_basis_in_i);
@@ -223,9 +247,14 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
             cost_matrix_T[n][m] = cost_matrix[m][n];
     cbe_assign_outgoing_greedy(cost_matrix_T, matching_basis_i_for_basis_in_j);
 
-    /* now compute fluxes */
-    double wt_prefac_i = -rho_i / local.Mass;
-    double wt_prefac_j = -rho_j / P[j].Mass;
+    /* Flux loop. Wave-CBE Commit 4 retires the psi=0.5 / wt_prefac scheme:
+     * with face-reconstructed Q passed to do_cbe_flux_computation, fluxes[0]
+     * = vsig * Q_face[0] is the actual dM/dt flux density at the face
+     * (units mass/time once multiplied by the face normal length implicit
+     * in vsig). The flux update direction is -flux into the source basis
+     * and +flux into the matched destination basis -- i.e. just sign
+     * convention, no more density-per-side share. */
+    const double wt_prefac = -1.0;
     double vface_dot_A = vface[0]*Face_Area_Vec[0] + vface[1]*Face_Area_Vec[1] + vface[2]*Face_Area_Vec[2];
     for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
         int j_m = matching_basis_j_for_basis_in_i[m];
@@ -233,16 +262,16 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
         double flux[CBE_INTEGRATOR_NMOMENTS] = {0};
         double vsig_i = 0, vsig_j = 0;
         if(theta_i[m] == 1) {
-            vsig_i = do_cbe_flux_computation(local_CBE_basis_moments[m], vface_dot_A, vface, Face_Area_Vec, Pj_CBE_basis_moments[j_m], flux);
+            vsig_i = do_cbe_flux_computation(Qface_i[m], vface_dot_A, vface, Face_Area_Vec, Qface_j[j_m], flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
-                flux[k] *= wt_prefac_i;
+                flux[k] *= wt_prefac;
                 out.CBE_basis_moments_dt[m][k] += flux[k];
             }
         }
         if(theta_j[m] == 1) {
-            vsig_j = do_cbe_flux_computation(Pj_CBE_basis_moments[m], vface_dot_A, vface, Face_Area_Vec, local_CBE_basis_moments[i_m], flux);
+            vsig_j = do_cbe_flux_computation(Qface_j[m], vface_dot_A, vface, Face_Area_Vec, Qface_i[i_m], flux);
             for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
-                flux[k] *= wt_prefac_j;
+                flux[k] *= wt_prefac;
                 out.CBE_basis_moments_dt[i_m][k] += flux[k];
             }
         }
@@ -255,10 +284,7 @@ CbeFluxResult cbe_integrator_flux_compute_pair(
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
     /* Wave-CBE Commit 3 diagnostic: residual at the converged v_F_normal,
-     * converted to dM/dt units by multiplying by Face_Area_Norm. The
-     * residual function returns per-unit-area flux folded with the same
-     * density prefactors used by the flux loop above, so this is the
-     * actual signed mass-flux drift the face would induce on i. */
+     * converted to dM/dt units by multiplying by Face_Area_Norm. */
     {
         double R_final = cbe_face_mass_residual_per_unit_area(
             v_F_normal, v_alpha_n_i, v_alpha_n_j, K_i, K_j);

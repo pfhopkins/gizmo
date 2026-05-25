@@ -177,6 +177,100 @@ double cbe_face_solve_v_F_normal(
 }
 
 
+/* --------------------------------------------------------------------------
+ * Wave-CBE Commit 4 (2026-05-25) — SSOT conversion from stored basis-frame
+ * moments to "flux-frame" Q. The pre-Commit-4 path inlined this in
+ * cbe_integrator_flux_compute_pair (cosmology factor + velocity boost at
+ * flux_functions.h:45-76, then a hardcoded ψ=0.5 prefactor downstream).
+ * Commit 4 hoists the conversion into one helper used by BOTH the
+ * gradient pass (when it lands) and the per-pair reconstruction so they
+ * cannot drift apart on cf_a3inv / cf_atime / NMOMENTS handling.
+ *
+ * Output:
+ *   Q[m][0]    = comoving mass density of basis m            (g cm^-3 a^-3)
+ *   Q[m][1..3] = comoving momentum density (physical-frame v) = Q[m][0]*v_phys
+ *   Q[m][4..9] = comoving stress density (only when NMOMENTS==10; the
+ *                3D-second-moment fence in precompiler_logic.h ensures the
+ *                3D layout [4]/[5]/[6]=diag, [7]/[8]/[9]=off-diag holds).
+ *
+ * "Flux-frame" = physical-frame momentum baked in, matches what
+ * do_cbe_flux_computation expects. NOT a generic U/V conversion. */
+KOKKOS_INLINE_FUNCTION
+void cbe_build_flux_frame_Q_from_stored_moments(
+    const double U[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double Vel_code[3],
+    double V_i,
+    double cf_a3inv,
+    double cf_atime,
+    double Q_out[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS])
+{
+    double inv_V = 1.0 / DMAX(V_i, MIN_REAL_NUMBER);
+    double inv_a = 1.0 / cf_atime;
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) {
+            Q_out[m][k] = U[m][k] * inv_V * cf_a3inv;
+        }
+        /* Velocity boost on the momentum slots [1..3]. Mirrors flux_functions.h
+         * pre-Commit-4 lines 71-74. */
+        for(int k=1; k<4 && k<CBE_INTEGRATOR_NMOMENTS; k++) {
+            Q_out[m][k] += Q_out[m][0] * Vel_code[k-1] * inv_a;
+        }
+    }
+}
+
+
+/* Density-only face-Q clamp + counter (codex 2026-05-25 #6 + #5). For each
+ * basis with Q_face[m][0] <= MIN_REAL_NUMBER, zero the ENTIRE basis row.
+ * Rationale: leaving nonzero momentum/stress at zero density would crash
+ * do_cbe_flux_computation's m_inv = 1/moments[0] divide. Zeroing the row
+ * marks the basis inactive at this face -- the downstream cbe_face_K_and_vn
+ * helper gives it K=0, v_n=0 so it contributes nothing to the residual or
+ * the flux loop.
+ *
+ * Stress (S-tensor) clamps DELIBERATELY DEFERRED to Wave-CBE Commit 5 SPD
+ * repair. Partial diagonal-only clamping without off-diagonal Cauchy-Schwarz
+ * enforcement risks producing realizable-looking-but-not-actually-SPD face
+ * states -- a new failure mode the legacy code didn't have. Commit 5's full
+ * SPD repair is the right home; recon_S_clamp_count stays 0 in Commit 4. */
+KOKKOS_INLINE_FUNCTION
+void cbe_clamp_face_Q(
+    double Qface[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    long long *rho_clamp_count)
+{
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        if(Qface[m][0] <= MIN_REAL_NUMBER) {
+            for(int k=0; k<CBE_INTEGRATOR_NMOMENTS; k++) Qface[m][k] = 0.0;
+            if(rho_clamp_count) (*rho_clamp_count)++;
+        }
+    }
+}
+
+
+/* Guarded face-Q -> (K[m], v_alpha_n[m]) construction for the root-find +
+ * theta gate (codex 2026-05-25 #5). On rows with Qface[m][0] > eps, this is
+ * the standard v = momentum/density projection onto Ahat; on clamped-inactive
+ * rows (Qface[m][0]==0 after cbe_clamp_face_Q), it returns K=0, v_n=0 so
+ * the residual function and the flux loop both naturally skip the basis. */
+KOKKOS_INLINE_FUNCTION
+void cbe_face_K_and_vn_from_Q(
+    const double Qface[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS],
+    const double Ahat[3],
+    double K[CBE_INTEGRATOR_NBASIS],
+    double v_alpha_n[CBE_INTEGRATOR_NBASIS])
+{
+    for(int m=0; m<CBE_INTEGRATOR_NBASIS; m++) {
+        if(Qface[m][0] > MIN_REAL_NUMBER) {
+            double inv_Q0 = 1.0 / Qface[m][0];
+            v_alpha_n[m] = (Qface[m][1]*Ahat[0] + Qface[m][2]*Ahat[1] + Qface[m][3]*Ahat[2]) * inv_Q0;
+            K[m]         = Qface[m][0];
+        } else {
+            v_alpha_n[m] = 0.0;
+            K[m]         = 0.0;
+        }
+    }
+}
+
+
 KOKKOS_INLINE_FUNCTION
 double do_cbe_flux_computation(double moments[CBE_INTEGRATOR_NMOMENTS],
                                double vface_dot_A,

@@ -163,9 +163,14 @@ struct AgsForceOut {
      * updates in sidm/cbe_integrator_flux_functions.h; merged in
      * AgsForceSpec::merge_accum; ingested into the host-side CbeStepAccum
      * via cbe_step_diagnostics_observe() from apply_active_writeback. */
-    double    cbe_face_residual_max;   /* MAX over faces of |sum_basis F_m*A| */
-    double    cbe_face_residual_sum;   /* SUM over faces of |sum_basis F_m*A| */
-    long long cbe_bracket_fail_count;  /* SUM over faces of root-find bracket fails */
+    double    cbe_face_residual_max;       /* MAX over faces of |sum_basis F_m*A| */
+    double    cbe_face_residual_sum;       /* SUM over faces of |sum_basis F_m*A| */
+    long long cbe_bracket_fail_count;      /* SUM over faces of root-find bracket fails */
+    /* Wave-CBE Commit 4 face-reconstruction clamp counters. Density-only
+     * clamp populated by cbe_clamp_face_Q; stress S-clamp deferred to
+     * Commit 5 SPD repair (cbe_recon_S_clamp_count stays 0 in Commit 4). */
+    long long cbe_recon_rho_clamp_count;   /* SUM over faces+sides of density clamps */
+    long long cbe_recon_S_clamp_count;     /* SUM, populated in Commit 5 only */
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)

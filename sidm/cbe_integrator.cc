@@ -162,6 +162,18 @@ void cbe_step_diagnostics_observe_face(double face_residual_max,
 }
 
 
+/* Wave-CBE Commit 4 observer: per-active particle's merged
+ * AgsForceOut.cbe_recon_rho_clamp_count / cbe_recon_S_clamp_count.
+ * S-clamp stays 0 in Commit 4 (full SPD repair = Commit 5); the field
+ * is plumbed now so wiring doesn't need a touch when Commit 5 lands. */
+void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
+                                         long long S_clamp_count)
+{
+    CbeStepAccum.recon_rho_clamp_count += rho_clamp_count;
+    CbeStepAccum.recon_S_clamp_count   += S_clamp_count;
+}
+
+
 void cbe_step_diagnostics_emit(void)
 {
     double rmax_local = CbeStepAccum.face_mass_flux_residual_max;

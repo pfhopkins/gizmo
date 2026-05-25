@@ -170,6 +170,8 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     cbe_step_diagnostics_observe_face(accum.cbe_face_residual_max,
                                        accum.cbe_face_residual_sum,
                                        accum.cbe_bracket_fail_count);
+    cbe_step_diagnostics_observe_recon(accum.cbe_recon_rho_clamp_count,
+                                        accum.cbe_recon_S_clamp_count);
 #endif
 #endif
     (void)accum; (void)i;
@@ -211,6 +213,8 @@ void AgsForceSpec::merge_accum(AccumData& local_accum, const AccumData& peer_acc
     ACCUM_MAX(cbe_face_residual_max)
     ACCUM_ADD(cbe_face_residual_sum)
     ACCUM_ADD(cbe_bracket_fail_count)
+    ACCUM_ADD(cbe_recon_rho_clamp_count)
+    ACCUM_ADD(cbe_recon_S_clamp_count)
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
@@ -278,13 +282,15 @@ double AgsForceSpec::compare_accum(const AccumData& local, const AccumData& orac
         }
     }
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO)
-    /* Wave-CBE Commit 3 diagnostic counters. Mirrors merge_accum
+    /* Wave-CBE Commit 3/4 diagnostic counters. Mirrors merge_accum
      * field-for-field per the local pattern (the oracle would otherwise
      * silently false-pass when a counter disagrees between local and
      * oracle paths). */
     CMP_ADD(cbe_face_residual_max)
     CMP_ADD(cbe_face_residual_sum)
     CMP_INT(cbe_bracket_fail_count)
+    CMP_INT(cbe_recon_rho_clamp_count)
+    CMP_INT(cbe_recon_S_clamp_count)
 #endif
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)

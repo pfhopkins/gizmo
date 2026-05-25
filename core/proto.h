@@ -972,6 +972,8 @@ void cbe_step_diagnostics_emit(void);
 void cbe_step_diagnostics_observe_face(double face_residual_max,
                                         double face_residual_sum,
                                         long long bracket_fail_count);
+void cbe_step_diagnostics_observe_recon(long long rho_clamp_count,
+                                         long long S_clamp_count);
 #endif
 #endif
 
