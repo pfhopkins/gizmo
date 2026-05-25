@@ -1427,3 +1427,6 @@
 #if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(CBE_INTEGRATOR)
 #error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires CBE_INTEGRATOR."
 #endif
+#if defined(CBE_INTEGRATOR_OUTPUT_MOREINFO) && !defined(OUTPUT_ADDITIONAL_RUNINFO)
+#error "CBE_INTEGRATOR_OUTPUT_MOREINFO requires OUTPUT_ADDITIONAL_RUNINFO: the cbe_diagnostics.txt opener (begrun.cc:open_outputfiles) and the future emit() call site (energy_statistics) both sit inside #ifdef OUTPUT_ADDITIONAL_RUNINFO. Standalone CBE-diagnostic output without OUTPUT_ADDITIONAL_RUNINFO would need its own output-plumbing commit; not supported yet."
+#endif
