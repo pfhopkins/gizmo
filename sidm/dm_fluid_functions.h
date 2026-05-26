@@ -67,6 +67,7 @@ static KOKKOS_INLINE_FUNCTION void set_dark_eos_pressure(int i, struct particle_
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
 
 #include "../declarations/gizmo_quadrature.h"
+#include "../core/timestep_functions.h"      /* get_particle_timestep_in_physical (called by do_dark_cooling_for_particle below) */
 
 /* ---- cooling tables (inline globals: one instance shared across TUs) ---- */
 inline int    NCOOLTAB_DM_g     = 2000;     /* table size */

@@ -13,7 +13,10 @@ enum FluidID
     FLUID_DEFAULT     = 0,
     FLUID_DUST_GRAIN  = 1,   /* Type=0 dust-like fluid, not Type=3 grains */
     FLUID_ION         = 2,
-    FLUID_NEUTRAL     = 3,   /* reserved stub: HYDRO_MULTIFLUID_IONNEUTRAL uses FLUID_DEFAULT for neutrals by convention (see Template_Config.sh); not explicitly used in the default setup, here for future multi-species extensions */
+    /* FLUID_NEUTRAL: reserved stub for future multi-species setups; not used
+     * in the default HYDRO_MULTIFLUID_IONNEUTRAL build, which puts neutrals in
+     * FLUID_DEFAULT by convention (see Template_Config.sh). */
+    FLUID_NEUTRAL     = 3,
     FLUID_DM          = 4,   /* dark fluid (e.g. atomic/mirror DM); promotes to Type=3 inert under HYDRO_MULTIFLUID_DM */
     FLUID_TYPE_MAX_ID = 255   /* uint8 ceiling */
 };
